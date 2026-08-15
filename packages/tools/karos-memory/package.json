@@ -1,0 +1,9 @@
+{
+  "name": "@agent-engine/tool-karos-memory",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Structured, retrieved-not-loaded-whole instance memory.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts"
+}

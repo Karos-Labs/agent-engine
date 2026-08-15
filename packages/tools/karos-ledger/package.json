@@ -1,0 +1,9 @@
+{
+  "name": "@agent-engine/tool-karos-ledger",
+  "private": true,
+  "version": "0.0.1",
+  "description": "The one place all deliverables, events, and briefs are written.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts"
+}

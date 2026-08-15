@@ -1,0 +1,9 @@
+{
+  "name": "@agent-engine/tool-karos-client",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Read-only, tenant-bound client data: profile, brand, voice rules, competitors, executives, config.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts"
+}

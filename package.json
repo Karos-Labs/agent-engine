@@ -1,0 +1,17 @@
+{
+  "name": "agent-engine",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Karos Labs autonomous agent runtime — BaseAgent, durable workflow orchestration, and the shared MCP tool layer. See docs/RFC-01-agent-engine-core.md.",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "packages/*",
+    "packages/tools/*"
+  ],
+  "scripts": {
+    "build": "echo \"not implemented yet — see docs/RFC-01-agent-engine-core.md section 14\" && exit 1",
+    "test": "echo \"not implemented yet — see docs/RFC-01-agent-engine-core.md section 14\" && exit 1"
+  }
+}

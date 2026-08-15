@@ -1,0 +1,9 @@
+{
+  "name": "@agent-engine/workflow",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Layer 1 durable-workflow primitives: step.code, step.agent, step.gate, fanout, and the gate() signal. Firestore adapter first, Postgres and Temporal adapters later.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts"
+}

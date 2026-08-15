@@ -1,0 +1,9 @@
+{
+  "name": "@agent-engine/core",
+  "private": true,
+  "version": "0.0.1",
+  "description": "BaseAgent, AgentContext, ModelRouter, and the shared type contracts every agent and workflow step is built on.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts"
+}

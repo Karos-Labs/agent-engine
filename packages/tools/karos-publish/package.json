@@ -1,0 +1,9 @@
+{
+  "name": "@agent-engine/tool-karos-publish",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Capability-scoped, draft-first publishing.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts"
+}

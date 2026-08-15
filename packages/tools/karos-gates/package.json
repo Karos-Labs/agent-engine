@@ -1,0 +1,9 @@
+{
+  "name": "@agent-engine/tool-karos-gates",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Deterministic validators with typed verdicts (pass / content_fail / tooling_error).",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts"
+}

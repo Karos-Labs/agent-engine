@@ -1,0 +1,9 @@
+{
+  "name": "@agent-engine/tool-karos-research",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Egress-bound, cached, freshness-enforced external research pulls.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts"
+}
