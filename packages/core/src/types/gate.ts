@@ -1,0 +1,90 @@
+import { z } from "zod";
+
+/**
+ * The three verdict kinds every gate tool and every tool call resolve to,
+ * everywhere in the system (RFC-01 §6): `content_fail` is real signal about
+ * wrong/non-compliant content; `tooling_error` means something broke and must
+ * never be mistaken for a content judgment.
+ */
+export const GateVerdictKindSchema = z.enum(["pass", "content_fail", "tooling_error"]);
+export type GateVerdictKind = z.infer<typeof GateVerdictKindSchema>;
+
+/**
+ * A gate tool's typed return value (RFC-01 §5.6). A gate never silently
+ * rewrites its input — on `content_fail` it returns the reason to the
+ * producer, which revises (bounded by `maxRevisions`) — and a `tooling_error`
+ * is never recorded as a content verdict.
+ */
+export const GateVerdictSchema = z.discriminatedUnion("verdict", [
+  z.object({
+    verdict: z.literal("pass"),
+    evidence: z.array(z.string()),
+    toolVersion: z.string().min(1),
+  }),
+  z.object({
+    verdict: z.literal("content_fail"),
+    evidence: z.array(z.string()),
+    reason: z.string().min(1),
+    toolVersion: z.string().min(1),
+  }),
+  z.object({
+    verdict: z.literal("tooling_error"),
+    reason: z.string().min(1),
+    toolVersion: z.string().min(1),
+  }),
+]);
+export type GateVerdict = z.infer<typeof GateVerdictSchema>;
+
+/** The human-gate kinds a Layer 1 workflow can await (RFC-01 §8.3). */
+export const GateKindSchema = z.enum([
+  "brand_confirm",
+  "batch_review",
+  "policy_change",
+  "publish_approve",
+  "connect_credential",
+]);
+export type GateKind = z.infer<typeof GateKindSchema>;
+
+export const GateTimeoutSchema = z.object({
+  /** e.g. "24h", "3d" — parsed by the Layer 1 adapter, not this package. */
+  duration: z.string().min(1),
+  onTimeout: z.enum(["hold", "auto_approve", "escalate"]),
+});
+export type GateTimeout = z.infer<typeof GateTimeoutSchema>;
+
+/**
+ * A reason is mandatory on rejection — this is what feeds the learning loop
+ * (RFC-01 §8.3) — so it is enforced here rather than left to callers to
+ * remember.
+ */
+export const GateResponseSchema = z
+  .object({
+    decision: z.enum(["approve", "reject"]),
+    actor: z.string().min(1),
+    reason: z.string().min(1).optional(),
+    /** ISO 8601 timestamp. */
+    at: z.string().min(1),
+  })
+  .superRefine((val, ctx) => {
+    if (val.decision === "reject" && !val.reason) {
+      ctx.addIssue({
+        code: "custom",
+        message: "reason is mandatory when decision is 'reject' (RFC-01 §8.3)",
+        path: ["reason"],
+      });
+    }
+  });
+export type GateResponse = z.infer<typeof GateResponseSchema>;
+
+/** One shape for the whole system's human-in-the-loop signal (RFC-01 §8.3). */
+export const GateSchema = z.object({
+  kind: GateKindSchema,
+  runId: z.string().min(1),
+  slotId: z.string().min(1).optional(),
+  /** Typed per `kind`; the portal renders without special-casing. */
+  payload: z.unknown(),
+  requiredRole: z.string().min(1),
+  timeout: GateTimeoutSchema,
+  response: GateResponseSchema.optional(),
+});
+export type Gate = z.infer<typeof GateSchema>;

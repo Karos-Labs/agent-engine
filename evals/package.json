@@ -1,0 +1,19 @@
+{
+  "name": "@agent-engine/evals",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Golden runs and deterministic gate assertions — see docs/RFC-01-agent-engine-core.md section 12.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "test": "npm run typecheck && vitest run"
+  },
+  "dependencies": {
+    "@agent-engine/core": "^0.0.1",
+    "@agent-engine/tool-karos-gates": "^0.0.1",
+    "zod": "^4.4.3"
+  }
+}

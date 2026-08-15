@@ -546,4 +546,47 @@ Phase 1 is complete when:
 
 ---
 
-*Hand this document to Claude Code together with RFC-02 (Agent Migration Playbook). Recommended framing for the first implementation session: "Build Phase 1 of RFC-01 — start with the tool registry (§9) and `BaseAgent` (§5), since the tool layer pays off even before the workflow layer exists."*
+## 16. Findings from a direct read of the real `karos-agents` and `karosCMO` repos (verified this session)
+
+Everything below was read directly (not inferred) from the connected `karos-agents` and `karosCMO` folders, specifically while investigating the X agent (the RFC-02 pilot). Each finding changes something concrete in this RFC or is urgent enough to act on independently of it.
+
+### 16.1 System prompts already live in git as raw string literals — confirmed, not assumed
+
+`karosCMO/scripts/register-x-agent-v2.ts` registers X Agent v2 as a `customAgents` Firestore document. Its entire system prompt — several hundred words of operational instructions — is a plain JavaScript template literal (`const INSTRUCTIONS = \`...\``) committed directly in that script, then copied verbatim into a Firestore document field (`instructions`) when the script runs. This is the exact anti-pattern you flagged: the prompt's source of truth is a script file mixed in with deployment code, not a managed, versioned, independently-editable store, and — as §16.2 below shows — it has already drifted from the "official" skill doc it's supposedly wrapping.
+
+**Recommendation:** move craft-policy/system-prompt content (RFC-01 §1.3, §5.2 `skillRef`) into its own versioned store, referenced by ID from `BaseAgent` step configs, rather than embedded in either a skill's Markdown body *or* a deployment script. Two real options, not a foregone conclusion:
+
+- **A Firestore-backed prompt store** (a `promptVersions` collection: `{promptId, version, content, updatedBy, updatedAt, status}`), consistent with everything else in the stack and requiring no new vendor integration. `BaseAgent`'s `skillRef` resolves to `promptId@version` instead of a file path.
+- **Vertex AI's prompt management surface** (Vertex AI Studio's prompt gallery / prompt versioning, which Google has been actively building out) — worth evaluating specifically if you want prompt experiments and evals tied directly into Vertex's own tooling. Flagged as worth a spike, not a default, since this session did not verify its exact current API maturity against your other requirements (multi-tenant scoping, append-only edit history per RFC-01 §10) — re-check before committing.
+
+Either way: **git keeps the code that reads the prompt store; it stops holding the prompt content itself.** This is a bigger change than it sounds, because it also fixes §16.2.
+
+### 16.2 A live, concrete example of prompt/doc drift — the X agent's actual behavior already diverged from its own committed skill
+
+`products/building/x-agent-v2/SKILL.md`, `references/run-protocol.md`, and `references/lanes.md` (committed, read directly) describe a **batched run**: one run drafts N posts (5/10/21) across six lanes, with slot ids `p01`–`p10`. But `register-x-agent-v2.ts`'s `INSTRUCTIONS` field — the thing actually running in production — contains an explicit, dated override: *"One run produces exactly one post. This is the product ruling of 2026-08-11 and it supersedes the skill's own batch framing wherever the two disagree."*
+
+This is not a hypothetical drift risk — it is a **present-tense fact about the agent you're about to migrate first**: the git-committed skill and the deployed behavior already disagree, and the only reason anyone knows which one is current is that someone wrote it into a Firestore-bound instructions string. This is exactly the failure mode §16.1 fixes, and it means **RFC-02's X-agent migration (§3) must be built against the one-post-per-run behavior actually running today, not the batch framing in the committed skill files** — see the corrected worked example below.
+
+### 16.3 Secrets are currently leaking into Cloud Run audit logs — act on this regardless of `agent-engine`
+
+Also found while reading the X agent's operational history (`scripts/cowork-handoff-x-agent-fix.md`, a real incident handoff dated this month): `ANTHROPIC_API_KEY`/`CLAUDE_API_KEY`, `XAI_API_KEY`, and `APIFY_TOKEN` are currently visible in plaintext in `karoscmo-prep`'s Cloud Run Job `RunJob` audit logs, because `agent-service/src/queue/worker.ts`'s `buildRunnerEnv` injects them as per-execution `--update-env-vars` rather than mounted `--set-secrets` from Secret Manager. This is a live exposure, not a design discussion — **recommend rotating those three keys in Secret Manager independently of anything in this RFC**, and treating it as urgent regardless of the `agent-engine` timeline.
+
+For `agent-engine` itself: **rule — no credential is ever passed to a container as a literal environment variable value.** Every secret (Anthropic/model API keys, connector tokens) is mounted from Secret Manager at container start. Add this explicitly to §10's write-fence/credential-scoping rules; it was implicit before, it should not be implicit anymore given a real instance of the alternative already happened.
+
+### 16.4 An idle-connection bug worth avoiding by design in the new runner
+
+The same incident (§16.3's source doc) root-caused a separate, now-fixed bug: the agent-runner container made infrequent callbacks (minutes apart) to its own internal API; Cloud Run's load balancer silently closed the idle backend connection in the gap, and Node's default `fetch` reused the dead socket, failing as an opaque `TypeError: fetch failed` — which then surfaced as the generic, unhelpful `"job container exited without reporting"` because the error's `cause` wasn't logged. Fixed via a dedicated `undici.Agent` with `keepAliveTimeout: 1` (effectively disabling connection reuse) for these specific infrequent calls.
+
+**For `agent-engine`:** any internal service-to-service call made infrequently within a long-running step (a workflow worker pinging back a status, a step reporting progress) should either use a fresh connection per call or an explicitly short keep-alive, not a default pooled HTTP client — and always log `err.cause`, not just `err.stack`, so a network-layer failure is distinguishable from an application error at the point it's logged, not just at the point it's typed (RFC-01 §6's `tooling_error` category exists precisely to prevent this exact class of bug from being misreported as a content failure).
+
+### 16.5 The X agent already straddles both portal agent-definition systems — this sharpens §7.5, it doesn't just inform it
+
+`register-x-agent-v2.ts` registers X v2 as a `customAgents` document (`enabled: false`, `source.status: "unreviewed"`) — the older, hardcoded agent-definition system (RFC-01 §7.5). But the incident handoff in §16.3 references a **live `dynamicAgentSpecId`** (`huMsrTKukcdqjz5sU7cX`) for "X Agent" runs on the `prep` Firestore database — the newer Dynamic Agent Studio system (RFC-01 §7.1–§7.3). **Both exist right now, for the same agent, and this session could not determine from the files read which one is actually authoritative for current X traffic.** Don't guess: confirm with Shlomi which of these two is live before RFC-02's X-agent migration starts, since it changes which contract `agent-engine` needs to satisfy at cutover (the `DynamicAgentRunReport` shape per §7, or the older custom-agent job shape, or — plausibly — both, if traffic is currently split).
+
+### 16.6 Firestore's prep/production split is already a real, working pattern — reuse it
+
+`karosCMO` already runs two Firestore databases in one GCP project (`(default)` for production, a named `prep` database for the pre-production environment), with `karoscmo-prep` auto-deploying on push to `main` and production promoted only via a manual, approval-gated GitHub Actions workflow (`promote-production.yml`). This directly validates and extends RFC-01 §8.4a: `agent-engine`'s Firestore-backed workflow store should adopt the same `prep`/`(default)` database split already operating today, rather than inventing a different environment-separation convention.
+
+---
+
+*Hand this document to Claude Code together with RFC-02 (Agent Migration Playbook). Recommended framing for the first implementation session: "Build Phase 1 of RFC-01 — start with the tool registry (§9) and `BaseAgent` (§5), since the tool layer pays off even before the workflow layer exists." Read §16 first if this is a fresh session — it contains findings from the real codebase that override some of the illustrative assumptions earlier in this document.*

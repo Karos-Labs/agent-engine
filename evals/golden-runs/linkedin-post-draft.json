@@ -1,0 +1,22 @@
+{
+  "id": "linkedin-post-draft-remote-work",
+  "description": "A LinkedIn post draft about the shift toward flexible/remote work, sourced from a Q3 client survey.",
+  "agentId": "linkedin-agent",
+  "input": {
+    "topic": "remote work",
+    "platform": "linkedin",
+    "clientSlug": "acme",
+    "voiceRules": { "tone": "confident, no jargon" }
+  },
+  "endorsedOutput": {
+    "text": "We've noticed a clear shift in how teams approach remote work this quarter. According to our Q3 client survey, 68% of respondents said flexible scheduling improved output. If your team is rethinking its own setup, our latest guide walks through the changes worth trying first.",
+    "platform": "linkedin"
+  },
+  "gateArgs": {
+    "brandCompliance": {
+      "forbiddenTerms": ["guaranteed", "cheapest", "#1 in the industry"]
+    }
+  },
+  "endorsedBy": "tomer@karoslabs.com",
+  "endorsedAt": "2026-08-15T00:00:00Z"
+}

@@ -91,36 +91,57 @@ Per RFC-01 §12:
 
 ---
 
-## 3. Reference worked example: X Agent (e13), end to end
+## 3. Reference worked example: X Agent, end to end (corrected against the real repo)
 
-X is the recommended pilot: it's already the most rebuilt agent in the current system, its research leg is a single connector (so the pilot isn't gated on multi-connector tool work), and it already has a documented run-protocol to translate from.
+X is the recommended pilot: it already has the most detailed documented run-protocol of any agent to translate from, and its research leg is comparatively narrow (xAI search + a news pull). **This section was rewritten after a direct read of `products/building/x-agent-v2/` and the karosCMO scripts that register it — the version below reflects the real, currently-deployed behavior, which differs from what the committed `SKILL.md` describes. See RFC-01 §16.2 for how that drift happened and why it matters beyond just this agent.**
 
-### Setup workflow (runs once per client)
+### The correction that matters before anything else
 
-| # | Step | Tier | Tools | Output |
+`products/building/x-agent-v2/SKILL.md` and its `references/` (`run-protocol.md`, `lanes.md`) describe a **batched run**: one run drafts N posts (5, 10, or 21) across six lanes, with slot ids `p01`–`p10`. That is the committed, in-repo design. **It is not what currently runs.** The system prompt actually deployed to production (embedded in `karosCMO/scripts/register-x-agent-v2.ts`) carries an explicit, dated override: *"One run produces exactly one post. This is the product ruling of 2026-08-11 and it supersedes the skill's own batch framing wherever the two disagree."* One run belongs to one identity (the company page, or a single seat); it drafts a single post, choosing one avenue by a fixed precedence (client's request → identity's stated lane preference → identity's top-weighted lane), and delivers exactly one post even if the request asks for "a batch."
+
+**Build the migrated agent against the one-post-per-run behavior.** The batch framing below (slot fan-out, six lanes competing in one run) is preserved in this document only because the underlying step *mechanics* (research-once, gate-per-draft, resumable numbered steps) are still exactly right and still worth reusing — just with slot count effectively fixed at 1 for now. If the product later reverts to real batching, the fan-out primitive (RFC-01 §5.5, §8.2) is what you'd re-enable; don't build a special one-post-only code path that would need to be undone.
+
+### The real run protocol (from `references/run-protocol.md`, read in full)
+
+The existing v2 skill already thinks in almost exactly RFC-01's terms, which is precisely why it's the best pilot:
+
+- **Run identity**: `clients/<slug>/outputs/x-agent/<YYYY-MM-DD>-<account>-<nn>/attempt-<k>/`, where `<account>` is the triggering identity, `<nn>` is that identity's same-day sequence (assigned once, at open, recorded rather than recomputed), and `<k>` is the attempt number (resume continues the same attempt; a deliberate re-run opens the next one). This maps directly onto RFC-01 §8.1's run identity + slot identity, with the useful correction that "assigned once, recorded, never recounted" is exactly the discipline a Firestore-doc-per-run gives you for free (RFC-01 §8.4a).
+- **Slot ids from position, never content** (`pXX`, assigned at the subject-selection step) — this is the *exact* rule RFC-01 §8.1 independently specifies, already present and already correctly reasoned about in the real skill ("a model asked to name the same subject twice produces two different names, so a content-derived id... cannot dedupe, resume, or address anything reliably").
+- **Pin inputs before reading them** (step 01 copies every file the run will read) — maps onto RFC-01's checkpoint/idempotency discipline; the tool-registry equivalent is a `client.*`/`research.*` read that gets snapshotted into the run's own Firestore step record rather than re-read live on resume.
+- **Save paid payloads before parsing** (steps 04/05 write the full verbatim research response before anything filters it) — exactly RFC-01 §9.1's tool design rules in practice; `research.pull` (RFC-01 §9.2) should persist the raw payload as part of its own write, not leave that to the calling step.
+- **Three real outcomes, not the generic two**: `delivered` (posts passed every gate), `held` (nothing cleared the gates honestly — a legitimate, non-failure outcome), `blocked_intake` (the client hasn't supplied required inputs yet — a client-side gap, not an agent fault). **Reconcile this with RFC-01 §6's outcome taxonomy explicitly**: `held` is this agent's name for a clean `content_fail`-driven empty result (not `failed`), and `blocked_intake` deserves its own recognizable status rather than being folded into a generic failure — the skill's authors independently arrived at the same principle RFC-01 argues for (don't collapse distinct outcomes into "failed") and it's worth preserving their exact vocabulary in the migrated agent's status reporting where it doesn't conflict with the portal's `JobStatus` enum (RFC-01 §7.1).
+
+### Setup workflow (runs once per client — out of scope for the v2 skill itself, confirm current state before rebuilding)
+
+The v2 skill explicitly assumes a client that's already been built (foundation, voice profile, seeded topic catalog) — building that is a separate, earlier skill this document doesn't re-derive. Confirm with Shlomi whether that setup path also needs a workflow rewrite in this pass, or whether it's out of scope for the pilot (recommendation: out of scope — migrate the recurring, on-demand run first, since that's what's live and what §16.5's open question is actually about).
+
+### Recurring, on-demand run (per click — corrected to one-post-per-run)
+
+| # | Step (real, from `run-protocol.md`) | Tier | Tools | Resume semantics |
 |---|---|---|---|---|
-| 1 | Load intake | code | `client.getProfile`, `client.getExecutives` | Resolved seats + company handle |
-| 2 | Validate intake | code | `gate.intakeComplete` | Hard gate: no handle, no seat |
-| 3 | Derive voice | agent, bounded | skill: voice-craft | Voice profile per seat |
-| 4 | Seed topic catalog | agent, bounded | `research.pull`, `topics.topUp` | Catalog with ~2 weeks of runway |
-| 5 | Write setup outputs | code | `ledger.upsertBrief`, `client.writePolicy` | Persisted client policy + brief |
+| 00 | Intake check | code | `client.getProfile` | Hard gate: no foundation file yet → outcome `blocked_intake`, stop |
+| 01 | Pin inputs + assemble context | code | `client.*`, `memory.read` | Inputs copied/snapshotted once; read-only after this step |
+| 02 | Assemble "shelf" (recent posts, feedback, radar) | code | `client.*` | Cached per run |
+| 03 | Feeds + feedback pull | code | `research.pull` (shelf-scoped) | — |
+| 04 | xSearch research pull | agent, bounded | `research.pull`, `research.checkFreshness` | Verbatim payload persisted before parsing (rule above) |
+| 05 | News research pull | agent, bounded | `research.pull` | Same rule |
+| 06 | Candidate subjects + drops | agent, bounded | craft skill (subject selection) | — |
+| 07 | Choose the one subject (precedence rule above) | code | — | Slot id `p01` assigned here, from position |
+| 08 | Angle it | agent, bounded | craft skill: `x-craft.md` §4 (load-bearing — see note below) | — |
+| 09 | Draft | agent, bounded | craft skill, `render.preview` | Per-attempt checkpoint |
+| 10 | Machine gate (`lint.mjs`, ported to a typed tool) | gate | `gate.lintPost` | Typed verdict; a tooling failure in the linter itself is never recorded as a content rejection (this was a real, named bug in v1 — see the SKILL.md's own "four changes that matter") |
+| 11 | Claim gate | gate | `gate.numbersSourced`-style tool, given the source text directly (not just the claim) | Content-level failure returns to step 09 with the reason |
+| 12 | Compliance gate | gate | `gate.brandCompliance` | Same |
+| 13 | Write client deliverable + manifest | code | `ledger.writeDeliverable` | Idempotent on `(run_id, slot_id)`; manifest makes step 13 itself resumable (the one step whose product lives outside `internal/`) |
+| 14 | Delivery check | code | verifies `client/` against the manifest | Catches a half-written client folder |
+| 15 | Commit (ledger, topic catalog, learning log) | code | `topics.commit`, `memory.appendDecision`, `ledger.feedbackAppend` | Runs only after the deliverable exists on disk/in Firestore; each sub-write recorded as it completes, checked for "already written" before appending (prevents double-counting on a resumed commit) |
 
-### Recurring producer workflow (per run)
+**Two craft-policy notes to carry forward, not lose in the rewrite:**
 
-| # | Step | Tier | Tools | Resume semantics |
-|---|---|---|---|---|
-| 1 | Intake & angle | code | `client.getConfig` | Pure, always recomputed |
-| 2 | Assemble context | code | `client.*`, `memory.read` | Cached per run |
-| 3 | Research pull | agent, bounded | `research.pull`, `research.checkFreshness` | One pull serves all slots |
-| 4 | Write research run | code | `research.writeRun` | Requires a `pull_id` |
-| 5 | Plan slots | code | `topics.reserve` | Slot ids assigned here |
-| 6..N | Draft, gate, revise once — **per slot** | agent per slot | craft skill, `gate.*` | Per-slot checkpoint |
-| N+1 | Assemble batch | code | `render.*` | — |
-| N+2 | **Batch review gate** | gate | typed payload | Timeout → escalate to PM |
-| N+3 | Deliver | code | `ledger.writeDeliverable`, `ledger.appendEvent`, `ledger.upsertBrief` | Idempotent on `(run_id, slot_id)` |
-| N+4 | Learn | code | `topics.commit`, `memory.appendDecision`, `ledger.feedbackAppend` | **Runs after the gate, by construction** |
+- `x-craft.md` section 4 is explicitly called out in the skill's own docs as load-bearing: it's specifically what closes the quality gap between model tiers on the highest-volume lane, and the measured model-tier parity that justifies running this on `claude-sonnet-5` instead of a more expensive tier holds *only* with those rules in place. When this becomes a `skillRef` in the new prompt store (RFC-01 §16.1), migrate this section with the same care as code — don't summarize it away.
+- The real `customAgents` Firestore document for X v2 already declares its resolved model explicitly (`model: "claude-sonnet-5"`, overriding a platform default of a heavier tier) with a comment citing a "cost-parity-tested choice" — this is a real, already-validated instance of RFC-01 §5.4/§7.3's tiering policy in action, not a hypothetical. Carry the same model choice forward rather than re-deciding it from scratch.
 
-**What doesn't change for the person configuring this in the Studio:** the five questions they've always asked about an agent — what does it read, what can it publish, what needs my approval, can I still change its voice by talking to Claude, what did it decide and why — all still have answers, and question four gets a *better* answer than today: craft rules, voice, formats and judgment stay in Markdown editable by talking to Claude; what moves to code is the plumbing nobody was hand-editing anyway. State this explicitly when you present the migrated agent — it's the objection that stalls agent rebuilds when it isn't addressed up front.
+**What doesn't change for the person configuring this in the Studio:** the five questions they've always asked about an agent — what does it read, what can it publish, what needs my approval, can I still change its voice by talking to Claude, what did it decide and why — all still have answers, and question four gets a *better* answer than today: craft rules, voice, formats and judgment stay editable by talking to Claude (now via the prompt store in RFC-01 §16.1, not a raw file); what moves to code is the plumbing nobody was hand-editing anyway. State this explicitly when you present the migrated agent — it's the objection that stalls agent rebuilds when it isn't addressed up front.
 
 ---
 
@@ -186,6 +207,8 @@ An agent's migration is complete when:
 1. Which of this agent's current connectors/fallback chains are still current vs. stale (mirrors the kind of drift already found across the corpus for other agents — worth a quick check per agent rather than assuming the existing prose is current).
 2. Any agent-specific publish constraints or platform caps that need to become a typed tool rule (e.g. per-post pricing caps, per-24h publish limits) rather than a documented-but-unenforced number.
 3. Whether this agent's eval rubric needs a platform-specific judge dimension beyond the shared voice/hook/convention set.
+4. **Which portal agent-definition system is actually authoritative for this agent right now** — confirmed necessary specifically for X (RFC-01 §16.5): a `customAgents` document and a separate `dynamicAgentSpecId` both exist for "X Agent," and this session could not determine which one carries live traffic from the files read alone. Check this for every agent before assuming the contract described in RFC-01 §7 is the only one in play — don't guess, ask Shlomi.
+5. **Whether the committed skill still matches what's actually deployed**, the way X's did not (RFC-01 §16.2: the committed `SKILL.md`/`references/` describe a batched run; the live, Firestore-embedded instructions override it to one-post-per-run, dated 2026-08-11). Check the actual `customAgents`/dynamic-agent-spec document's `instructions`/`prompt` fields against the committed skill for every agent before treating the git-committed version as ground truth — this migration is the forcing function that ends the drift for good (RFC-01 §16.1), but until it's done for a given agent, the deployed prompt wins any disagreement.
 
 ---
 

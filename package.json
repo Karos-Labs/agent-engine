@@ -8,10 +8,16 @@
   },
   "workspaces": [
     "packages/*",
-    "packages/tools/*"
+    "packages/tools/*",
+    "evals"
   ],
   "scripts": {
     "build": "echo \"not implemented yet — see docs/RFC-01-agent-engine-core.md section 14\" && exit 1",
     "test": "echo \"not implemented yet — see docs/RFC-01-agent-engine-core.md section 14\" && exit 1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
   }
 }

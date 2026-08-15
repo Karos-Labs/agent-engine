@@ -1,0 +1,161 @@
+import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { promises as fs } from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import type { AgentContext } from "@agent-engine/core";
+import { WorkspaceStore } from "@agent-engine/tool-common";
+import { createKarosLedgerTools } from "../src/index.js";
+
+const ctx: AgentContext = {
+  runId: "run_1",
+  clientSlug: "acme",
+  productId: "linkedin",
+  runKind: "recurring",
+  metadata: {},
+};
+
+describe("karos-ledger", () => {
+  let rootDir: string;
+  let store: WorkspaceStore;
+  let tools: ReturnType<typeof createKarosLedgerTools>;
+
+  beforeEach(async () => {
+    rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "karos-ledger-"));
+    store = new WorkspaceStore(rootDir);
+    tools = createKarosLedgerTools(store);
+  });
+
+  afterEach(async () => {
+    await fs.rm(rootDir, { recursive: true, force: true });
+  });
+
+  describe("ledger.writeDeliverable", () => {
+    it("is idempotent on (runId, slotId, kind): a retried write does not duplicate the record", async () => {
+      const args = { runId: "run_1", slotId: "slot_1", kind: "linkedin-post", deliverable: { body: "v1" } };
+      const first = await tools["ledger.writeDeliverable"]!.execute(args, { ctx });
+      const second = await tools["ledger.writeDeliverable"]!.execute({ ...args, deliverable: { body: "v2" } }, { ctx });
+
+      expect(first).toEqual({ status: "success", result: { id: "run_1__slot_1__linkedin-post", created: true } });
+      expect(second).toEqual({ status: "success", result: { id: "run_1__slot_1__linkedin-post", created: false } });
+
+      const stored = await store.readJson<{ deliverable: { body: string } }>("acme", [
+        "ledger",
+        "deliverables",
+        "run_1",
+        "slot_1",
+        "linkedin-post",
+      ]);
+      expect(stored?.deliverable).toEqual({ body: "v2" });
+    });
+
+    it("keeps different kinds for the same runId/slotId as separate records", async () => {
+      await tools["ledger.writeDeliverable"]!.execute({ runId: "run_1", slotId: "slot_1", kind: "linkedin-post", deliverable: {} }, { ctx });
+      await tools["ledger.writeDeliverable"]!.execute({ runId: "run_1", slotId: "slot_1", kind: "twitter-post", deliverable: {} }, { ctx });
+
+      const entries = await store.listJson("acme", ["ledger", "deliverables", "run_1", "slot_1"]);
+      expect(entries.map((e) => e.id).sort()).toEqual(["linkedin-post", "twitter-post"]);
+    });
+  });
+
+  describe("ledger.appendEvent", () => {
+    it("is idempotent on (runId, eventId): replaying the same eventId does not grow the log", async () => {
+      const args = { runId: "run_1", eventId: "evt_1", level: "info" as const, message: "started" };
+      await tools["ledger.appendEvent"]!.execute(args, { ctx });
+      const second = await tools["ledger.appendEvent"]!.execute(args, { ctx });
+
+      expect(second).toEqual({ status: "success", result: { id: "run_1__evt_1", created: false } });
+      const events = await store.listJson("acme", ["ledger", "events", "run_1"]);
+      expect(events).toHaveLength(1);
+    });
+
+    it("appends distinct events under the same run", async () => {
+      await tools["ledger.appendEvent"]!.execute({ runId: "run_1", eventId: "evt_1", level: "info", message: "started" }, { ctx });
+      await tools["ledger.appendEvent"]!.execute({ runId: "run_1", eventId: "evt_2", level: "success", message: "done" }, { ctx });
+
+      const events = await store.listJson("acme", ["ledger", "events", "run_1"]);
+      expect(events).toHaveLength(2);
+    });
+  });
+
+  describe("ledger.upsertBrief", () => {
+    it("is idempotent on briefId: the second call overwrites rather than duplicating", async () => {
+      const first = await tools["ledger.upsertBrief"]!.execute({ briefId: "brief_1", content: { v: 1 } }, { ctx });
+      const second = await tools["ledger.upsertBrief"]!.execute({ briefId: "brief_1", content: { v: 2 } }, { ctx });
+
+      expect(first).toEqual({ status: "success", result: { id: "brief_1", created: true } });
+      expect(second).toEqual({ status: "success", result: { id: "brief_1", created: false } });
+
+      const entries = await store.listJson("acme", ["ledger", "briefs"]);
+      expect(entries).toHaveLength(1);
+      expect((entries[0]?.data as { content: unknown }).content).toEqual({ v: 2 });
+    });
+  });
+
+  describe("ledger.dashboardSnapshot", () => {
+    it("is idempotent on runId", async () => {
+      await tools["ledger.dashboardSnapshot"]!.execute({ runId: "run_1", snapshot: { a: 1 } }, { ctx });
+      const second = await tools["ledger.dashboardSnapshot"]!.execute({ runId: "run_1", snapshot: { a: 2 } }, { ctx });
+
+      expect(second).toEqual({ status: "success", result: { id: "run_1", created: false } });
+      const entries = await store.listJson("acme", ["ledger", "dashboard-snapshots"]);
+      expect(entries).toHaveLength(1);
+    });
+  });
+
+  describe("ledger.feedbackAppend", () => {
+    it("requires a reason on rejection", async () => {
+      const outcome = await tools["ledger.feedbackAppend"]!.execute(
+        { runId: "run_1", feedbackId: "fb_1", decision: "reject", actor: "jane@karoslabs.com" },
+        { ctx },
+      );
+      expect(outcome.status).toBe("tooling_error");
+    });
+
+    it("allows an approval with no reason, and a rejection with one", async () => {
+      const approve = await tools["ledger.feedbackAppend"]!.execute(
+        { runId: "run_1", feedbackId: "fb_1", decision: "approve", actor: "jane@karoslabs.com" },
+        { ctx },
+      );
+      const reject = await tools["ledger.feedbackAppend"]!.execute(
+        { runId: "run_1", feedbackId: "fb_2", decision: "reject", actor: "jane@karoslabs.com", reason: "voice mismatch" },
+        { ctx },
+      );
+      expect(approve.status).toBe("success");
+      expect(reject.status).toBe("success");
+    });
+
+    it("is idempotent on (runId, feedbackId)", async () => {
+      const args = { runId: "run_1", feedbackId: "fb_1", decision: "approve" as const, actor: "jane@karoslabs.com" };
+      await tools["ledger.feedbackAppend"]!.execute(args, { ctx });
+      const second = await tools["ledger.feedbackAppend"]!.execute(args, { ctx });
+      expect(second).toEqual({ status: "success", result: { id: "run_1__fb_1", created: false } });
+    });
+  });
+
+  describe("tenant scoping", () => {
+    it("ignores a model-supplied clientSlug override and writes under ctx.clientSlug instead", async () => {
+      await tools["ledger.writeDeliverable"]!.execute(
+        { runId: "run_1", kind: "linkedin-post", deliverable: {}, clientSlug: "attacker-corp" } as never,
+        { ctx },
+      );
+
+      const acmeEntries = await store.listJson("acme", ["ledger", "deliverables", "run_1", "_"]);
+      expect(acmeEntries).toHaveLength(1);
+      const attackerExists = await store.exists("attacker-corp", ["ledger", "deliverables", "run_1", "_", "linkedin-post"]);
+      expect(attackerExists).toBe(false);
+    });
+
+    it("keeps two tenants' deliverables fully separate on disk", async () => {
+      const acmeCtx: AgentContext = { ...ctx, clientSlug: "acme" };
+      const globexCtx: AgentContext = { ...ctx, clientSlug: "globex" };
+
+      await tools["ledger.writeDeliverable"]!.execute({ runId: "run_1", kind: "linkedin-post", deliverable: { body: "acme" } }, { ctx: acmeCtx });
+      await tools["ledger.writeDeliverable"]!.execute({ runId: "run_1", kind: "linkedin-post", deliverable: { body: "globex" } }, { ctx: globexCtx });
+
+      const acme = await store.readJson<{ deliverable: { body: string } }>("acme", ["ledger", "deliverables", "run_1", "_", "linkedin-post"]);
+      const globex = await store.readJson<{ deliverable: { body: string } }>("globex", ["ledger", "deliverables", "run_1", "_", "linkedin-post"]);
+      expect(acme?.deliverable.body).toBe("acme");
+      expect(globex?.deliverable.body).toBe("globex");
+    });
+  });
+});

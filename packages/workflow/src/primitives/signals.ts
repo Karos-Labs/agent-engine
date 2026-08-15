@@ -1,0 +1,83 @@
+/**
+ * "Throw to pause": a `step.gate` call with no response yet throws this,
+ * unwinding the whole workflow function. `WorkflowEngine.run()` catches it
+ * at the top and returns `awaiting_gate` — RFC-01 §8.1's "a multi-day wait
+ * does not hold a process open" taken literally: the process really does
+ * return, and resume is a fresh `run()` call later, after `resolveGate()`
+ * has recorded a response. On resume, every earlier `step.code`/`step.agent`
+ * call short-circuits via checkpoint, so replaying the function from the top
+ * is cheap.
+ */
+export class AwaitingGateSignal extends Error {
+  constructor(public readonly gateId: string) {
+    super(`awaiting gate response for "${gateId}"`);
+    this.name = "AwaitingGateSignal";
+  }
+}
+
+/**
+ * Thrown by workflow code (never by `step.agent` itself — Layer 1 makes zero
+ * content judgments, RFC-01 §4) to explicitly resolve the run to `failed`
+ * after inspecting a `step.agent` result's `content_fail` status. Accepts an
+ * optional `cause` (RFC-01 §16.4) so the underlying error, if any, survives
+ * into `WorkflowEngine`'s `describeError`-based reporting rather than being
+ * dropped at the point this is thrown.
+ */
+export class WorkflowContentFailure extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "WorkflowContentFailure";
+  }
+}
+
+/**
+ * Thrown by workflow code to explicitly resolve the run to `degraded` after
+ * inspecting a `step.agent` result's `tooling_error`/`budget_exceeded`
+ * status — RFC-01 §6: never recorded as a content verdict. Accepts an
+ * optional `cause` (RFC-01 §16.4) for the same reason as `WorkflowContentFailure`.
+ */
+export class WorkflowToolingFailure extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "WorkflowToolingFailure";
+  }
+}
+
+/** A per-run dollar ceiling was hit before the next `step.agent` call — enforced before spend, not audited after (RFC-01 §8.1). */
+export class WorkflowBudgetExceeded extends Error {
+  constructor(
+    public readonly runId: string,
+    public readonly spentUsd: number,
+    public readonly maxUsd: number,
+  ) {
+    super(`run "${runId}" budget ceiling exceeded: spent $${spentUsd.toFixed(6)} of a $${maxUsd.toFixed(6)} ceiling`);
+    this.name = "WorkflowBudgetExceeded";
+  }
+}
+
+/**
+ * Thrown by workflow code when the pipeline ran cleanly to completion but
+ * nothing honestly cleared its content gates — RFC-01 §16.2 / RFC-02 §3's
+ * `held` outcome. This is a legitimate, non-failure empty result: resolves
+ * the run to `held`, never `failed` — conflating the two is exactly the
+ * misclassification this outcome exists to prevent.
+ */
+export class WorkflowHeld extends Error {
+  constructor(reason: string, options?: { cause?: unknown }) {
+    super(reason, options);
+    this.name = "WorkflowHeld";
+  }
+}
+
+/**
+ * Thrown by workflow code when the client hasn't supplied required intake
+ * yet — RFC-01 §16.2 / RFC-02 §3's `blocked_intake` outcome. A client-side
+ * gap, not an agent fault: resolves the run to `blocked_intake`, never
+ * `failed`/`degraded`.
+ */
+export class WorkflowBlockedIntake extends Error {
+  constructor(reason: string, options?: { cause?: unknown }) {
+    super(reason, options);
+    this.name = "WorkflowBlockedIntake";
+  }
+}
