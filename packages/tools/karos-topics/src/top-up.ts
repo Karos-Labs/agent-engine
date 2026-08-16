@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { WorkspaceStore } from "@agent-engine/tool-common";
+import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, success } from "@agent-engine/tool-common";
 import { normalizeTopic, readCatalog, writeCatalog } from "./catalog.js";
 
@@ -16,7 +16,7 @@ export interface TopUpResult {
 }
 
 /** Idempotent per topic: adding the same topic (by trimmed, lowercased form) again is a no-op. */
-export function createTopUp(store: WorkspaceStore) {
+export function createTopUp(store: WorkspaceStoreLike) {
   return defineTool<TopUpInput, TopUpResult>({
     name: "topics.topUp",
     version: TOOL_VERSION,

@@ -1,6 +1,6 @@
 /**
  * One JSON record per draft, stored at `["publish", "drafts", draftId]`
- * (RFC-01 §9.2) — tenant-scoped by `WorkspaceStore` construction, keyed by
+ * (RFC-01 §9.2) — tenant-scoped by `WorkspaceStoreLike` construction, keyed by
  * the caller-supplied `draftId` so every write in this package is naturally
  * idempotent on that id.
  */

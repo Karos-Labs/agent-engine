@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { WorkspaceStore } from "@agent-engine/tool-common";
+import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, notAvailable, success } from "@agent-engine/tool-common";
 
 const TOOL_VERSION = "1.0.0";
@@ -15,7 +15,7 @@ export type ClientConfig = Record<string, unknown>;
  * Read-only lookup of the tenant's config (RFC-01 §9.1/§9.2). Tenant comes
  * from `context.ctx.clientSlug` only — this tool takes no arguments.
  */
-export function createGetConfig(store: WorkspaceStore) {
+export function createGetConfig(store: WorkspaceStoreLike) {
   return defineTool<GetConfigInput, ClientConfig>({
     name: "client.getConfig",
     version: TOOL_VERSION,

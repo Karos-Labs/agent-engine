@@ -1,5 +1,5 @@
 import type { AgentToolRegistry } from "@agent-engine/core";
-import type { WorkspaceStore } from "@agent-engine/tool-common";
+import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { createKarosClientTools } from "@agent-engine/tool-karos-client";
 import { createKarosGatesTools } from "@agent-engine/tool-karos-gates";
 import { createKarosLedgerTools } from "@agent-engine/tool-karos-ledger";
@@ -30,7 +30,7 @@ export * from "@agent-engine/tool-karos-topics";
  * explicitly (e.g. pointed at a temp directory) so every server reads and
  * writes the same isolated workspace, which is exactly what tests need.
  */
-export function createAllKarosTools(store?: WorkspaceStore): AgentToolRegistry {
+export function createAllKarosTools(store?: WorkspaceStoreLike): AgentToolRegistry {
   return {
     ...createKarosClientTools(store),
     ...createKarosGatesTools(),

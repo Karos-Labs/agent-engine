@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { WorkspaceStore } from "@agent-engine/tool-common";
+import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { contentFail, defineTool, notAvailable, success } from "@agent-engine/tool-common";
 import { readCatalog, reservationSegments, writeCatalog, type ReservationRecord } from "./catalog.js";
 
@@ -14,7 +14,7 @@ export interface ReleaseResult {
 }
 
 /** Returns a reservation's topics to the available floor (e.g. the run that reserved them failed). Idempotent: releasing twice is a no-op. */
-export function createRelease(store: WorkspaceStore) {
+export function createRelease(store: WorkspaceStoreLike) {
   return defineTool<ReleaseInput, ReleaseResult>({
     name: "topics.release",
     version: TOOL_VERSION,

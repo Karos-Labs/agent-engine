@@ -3,6 +3,7 @@ import { createAllKarosTools } from "@agent-engine/tools";
 import { createApp } from "./app.js";
 import { createDurableStoreFromEnv } from "./wiring/durable-store.js";
 import { createServerPromptStore } from "./wiring/prompt-store.js";
+import { createServerWorkspaceStore } from "./wiring/workspace-store.js";
 
 /** Cloud Run injects `PORT`; 8080 is Cloud Run's own documented default for when it's unset locally. */
 function resolvePort(): number {
@@ -15,9 +16,9 @@ function main(): void {
   const durableStore = createDurableStoreFromEnv();
   const promptStore = createServerPromptStore();
   const router = createModelRouterFromEnv();
-  // No store argument: falls back to `createWorkspaceStore()`'s own
-  // `KAROS_WORKSPACE_ROOT`-driven default (see `@agent-engine/tool-common`).
-  const tools = createAllKarosTools();
+  // GCS-backed when GCS_WORKSPACE_BUCKET is set (required for a real, stateless
+  // Cloud Run deployment — see wiring/workspace-store.ts); file-backed otherwise.
+  const tools = createAllKarosTools(createServerWorkspaceStore());
 
   const app = createApp({ durableStore, runtimeDeps: { tools, promptStore, router } });
 

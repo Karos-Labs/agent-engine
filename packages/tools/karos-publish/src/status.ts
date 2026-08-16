@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { WorkspaceStore } from "@agent-engine/tool-common";
+import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, notAvailable, success } from "@agent-engine/tool-common";
 import { draftSegments, type DraftRecord } from "./types.js";
 
@@ -20,7 +20,7 @@ export interface StatusResult {
 }
 
 /** Read-only status lookup. Returns `not_available` when the draft id is unknown. */
-export function createStatus(store: WorkspaceStore) {
+export function createStatus(store: WorkspaceStoreLike) {
   return defineTool<StatusInput, StatusResult>({
     name: "publish.status",
     version: TOOL_VERSION,

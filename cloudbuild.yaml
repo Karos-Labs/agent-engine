@@ -1,0 +1,129 @@
+# Cloud Build pipeline for apps/agent-server (RFC-01 §7, §8; RFC-02).
+#
+# Prerequisites (one-time, per GCP project) — see the Phase 4 setup guide
+# for the full explanation of each:
+#   1. Enable APIs: cloudbuild.googleapis.com, artifactregistry.googleapis.com,
+#      run.googleapis.com, secretmanager.googleapis.com, firestore.googleapis.com,
+#      storage.googleapis.com, aiplatform.googleapis.com.
+#   2. Create the Artifact Registry Docker repository named by `_REPOSITORY`.
+#   3. Create a Secret Manager secret named by `_ANTHROPIC_SECRET_NAME` holding
+#      the Anthropic API key, and grant the Cloud Build service account
+#      `roles/secretmanager.secretAccessor` on it.
+#   4. Create (or choose) the runtime Service Account named by
+#      `_SERVICE_ACCOUNT` and grant it `roles/aiplatform.user`,
+#      `roles/datastore.user`, and `roles/storage.objectAdmin` (scoped to the
+#      `_GCS_WORKSPACE_BUCKET` bucket) — see wiring/durable-store.ts,
+#      wiring/prompt-store.ts, and wiring/workspace-store.ts.
+#   5. Grant the Cloud Build service account `roles/run.admin` and
+#      `roles/iam.serviceAccountUser` (on `_SERVICE_ACCOUNT`) so step 5 below
+#      can actually deploy.
+#
+# The substitution defaults below are template placeholders, not real
+# values — a trigger (or `gcloud builds submit --substitutions=...`) must
+# supply real ones for `_SERVICE_ACCOUNT` and `_ANTHROPIC_SECRET_NAME` at
+# minimum before this pipeline can deploy anything.
+
+steps:
+  # 0. Install once — every later step shares this via Cloud Build's
+  #    persistent /workspace volume.
+  - id: install
+    name: node:22
+    entrypoint: npm
+    args: ["ci"]
+
+  # 1. Fast workspace-wide typecheck (RFC-01 §14) — fails before anything
+  #    slower (tests, docker build) runs against code that doesn't compile.
+  - id: typecheck
+    name: node:22
+    entrypoint: npx
+    args: ["tsc", "--noEmit"]
+    waitFor: ["install"]
+
+  # 2. Every workspace's own unit/integration suite. The root package.json's
+  #    own "test" script is a placeholder (see RFC-01 §14) — `--workspaces`
+  #    is the real "run everything" command this project's own verification
+  #    passes have used throughout; each package's own "test" script already
+  #    runs its own typecheck + vitest.
+  - id: test
+    name: node:22
+    entrypoint: npm
+    args: ["test", "--workspaces", "--if-present"]
+    waitFor: ["typecheck"]
+
+  # 3. Multi-stage build (see apps/agent-server/Dockerfile) — build context
+  #    is the repo root, since this is an npm-workspaces monorepo and the
+  #    image needs every workspace package the server depends on.
+  - id: docker-build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - apps/agent-server/Dockerfile
+      - -t
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/agent-engine:$COMMIT_SHA"
+      - -t
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/agent-engine:latest"
+      - .
+    waitFor: ["test"]
+
+  # 4. Push both tags to Artifact Registry.
+  - id: docker-push-sha
+    name: gcr.io/cloud-builders/docker
+    args: ["push", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/agent-engine:$COMMIT_SHA"]
+    waitFor: ["docker-build"]
+  - id: docker-push-latest
+    name: gcr.io/cloud-builders/docker
+    args: ["push", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/agent-engine:latest"]
+    waitFor: ["docker-build"]
+
+  # 5. Deploy the just-pushed image to Cloud Run. `--no-allow-unauthenticated`
+  #    is the safe default for a service karosCMO/Portal call server-to-server
+  #    — switch to `--allow-unauthenticated` explicitly if this service ever
+  #    needs to accept unauthenticated public traffic.
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - "${_SERVICE_NAME}"
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/agent-engine:$COMMIT_SHA
+      - --region=${_REGION}
+      - --platform=managed
+      - --port=8080
+      - --service-account=${_SERVICE_ACCOUNT}
+      - --no-allow-unauthenticated
+      - --min-instances=${_MIN_INSTANCES}
+      - --max-instances=${_MAX_INSTANCES}
+      - --concurrency=${_CONCURRENCY}
+      - --set-env-vars=GOOGLE_CLOUD_PROJECT=${PROJECT_ID},VERTEX_AI_LOCATION=${_REGION},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET},PROMPT_STORE_DRIVER=${_PROMPT_STORE_DRIVER}
+      - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_SECRET_NAME}:latest
+    waitFor: ["docker-push-sha", "docker-push-latest"]
+
+# Template defaults — override every `_SERVICE_ACCOUNT`/`_ANTHROPIC_SECRET_NAME`
+# (and anything else that matters for your environment) via the Cloud Build
+# trigger's own substitution variables, not by editing this file per-environment.
+substitutions:
+  _REGION: us-central1
+  _REPOSITORY: agent-engine-repo
+  _SERVICE_NAME: agent-engine-server
+  # No safe default — must be set by the trigger. A service account with zero
+  # permissions is worse than a build failing loudly for forgetting to set this.
+  _SERVICE_ACCOUNT: REPLACE_ME_SERVICE_ACCOUNT_EMAIL
+  _ANTHROPIC_SECRET_NAME: REPLACE_ME_SECRET_MANAGER_SECRET_ID
+  _FIRESTORE_DATABASE_ID: "(default)"
+  # Required for real Cloud Run state persistence (RFC-01 §9.2) — see
+  # apps/agent-server/src/wiring/workspace-store.ts. Left blank only works
+  # for a single-instance, non-resumable local/demo deployment.
+  _GCS_WORKSPACE_BUCKET: ""
+  _PROMPT_STORE_DRIVER: file
+  _MIN_INSTANCES: "0"
+  _MAX_INSTANCES: "5"
+  _CONCURRENCY: "10"
+
+# Required whenever a build specifies a non-default service account or
+# substitution-driven config like this one.
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 1800s

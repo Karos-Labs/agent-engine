@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { IdempotentWriteResult, WorkspaceStore } from "@agent-engine/tool-common";
+import type { IdempotentWriteResult, WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, success } from "@agent-engine/tool-common";
 import { draftSegments, type DraftRecord } from "./types.js";
 
@@ -18,7 +18,7 @@ export type DraftInput = z.infer<typeof DraftInputSchema>;
  * lands the draft back in `status: "draft"` — a re-draft supersedes any
  * prior scheduling rather than merging with it.
  */
-export function createDraft(store: WorkspaceStore) {
+export function createDraft(store: WorkspaceStoreLike) {
   return defineTool<DraftInput, IdempotentWriteResult>({
     name: "publish.draft",
     version: TOOL_VERSION,

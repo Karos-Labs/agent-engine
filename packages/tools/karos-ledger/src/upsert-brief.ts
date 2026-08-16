@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { IdempotentWriteResult, WorkspaceStore } from "@agent-engine/tool-common";
+import type { IdempotentWriteResult, WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, success } from "@agent-engine/tool-common";
 
 const TOOL_VERSION = "1.0.0";
@@ -11,7 +11,7 @@ export const UpsertBriefInputSchema = z.object({
 export type UpsertBriefInput = z.infer<typeof UpsertBriefInputSchema>;
 
 /** Idempotent on `briefId` — an upsert by definition: the same id always overwrites, never duplicates. */
-export function createUpsertBrief(store: WorkspaceStore) {
+export function createUpsertBrief(store: WorkspaceStoreLike) {
   return defineTool<UpsertBriefInput, IdempotentWriteResult>({
     name: "ledger.upsertBrief",
     version: TOOL_VERSION,

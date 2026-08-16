@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { WorkspaceStore } from "@agent-engine/tool-common";
+import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, notAvailable, success } from "@agent-engine/tool-common";
 
 const TOOL_VERSION = "1.0.0";
@@ -23,7 +23,7 @@ export interface Executive {
  * An existing-but-empty array is a normal `success` with an empty list — only
  * a genuinely missing file is `not_available`.
  */
-export function createGetExecutives(store: WorkspaceStore) {
+export function createGetExecutives(store: WorkspaceStoreLike) {
   return defineTool<GetExecutivesInput, Executive[]>({
     name: "client.getExecutives",
     version: TOOL_VERSION,

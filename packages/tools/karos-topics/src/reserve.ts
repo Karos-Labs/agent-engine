@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { WorkspaceStore } from "@agent-engine/tool-common";
+import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { contentFail, defineTool, success } from "@agent-engine/tool-common";
 import { normalizeTopic, readCatalog, reservationSegments, writeCatalog, type ReservationRecord } from "./catalog.js";
 
@@ -24,7 +24,7 @@ export interface ReserveResult {
  * `reservationKey`: a retried call with the same key returns the exact same
  * reservation instead of consuming more of the catalog.
  */
-export function createReserve(store: WorkspaceStore) {
+export function createReserve(store: WorkspaceStoreLike) {
   return defineTool<ReserveInput, ReserveResult>({
     name: "topics.reserve",
     version: TOOL_VERSION,

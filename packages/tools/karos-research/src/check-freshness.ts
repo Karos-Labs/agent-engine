@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { WorkspaceStore } from "@agent-engine/tool-common";
+import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, notAvailable, parseDurationMs, success } from "@agent-engine/tool-common";
 import { latestRun } from "./runs.js";
 
@@ -21,7 +21,7 @@ export interface CheckFreshnessResult {
 }
 
 /** `not_available` when the job has never run — RFC-01 §6's own example of the outcome. */
-export function createCheckFreshness(store: WorkspaceStore) {
+export function createCheckFreshness(store: WorkspaceStoreLike) {
   return defineTool<CheckFreshnessInput, CheckFreshnessResult>({
     name: "research.checkFreshness",
     version: TOOL_VERSION,

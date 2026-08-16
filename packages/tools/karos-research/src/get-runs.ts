@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { WorkspaceStore } from "@agent-engine/tool-common";
+import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, success } from "@agent-engine/tool-common";
 import { listRuns } from "./runs.js";
 
@@ -22,7 +22,7 @@ export interface GetRunsResult {
 }
 
 /** Newest-first run history for a job — summaries with handles, not the full cached payload (RFC-01 §9.1 rule 4). */
-export function createGetRuns(store: WorkspaceStore) {
+export function createGetRuns(store: WorkspaceStoreLike) {
   return defineTool<GetRunsInput, GetRunsResult>({
     name: "research.getRuns",
     version: TOOL_VERSION,

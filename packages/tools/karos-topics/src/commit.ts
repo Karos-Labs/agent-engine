@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { WorkspaceStore } from "@agent-engine/tool-common";
+import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { contentFail, defineTool, notAvailable, success } from "@agent-engine/tool-common";
 import { readCatalog, reservationSegments, writeCatalog, type ReservationRecord } from "./catalog.js";
 
@@ -15,7 +15,7 @@ export interface CommitResult {
 }
 
 /** Consumes a reservation's topics off the catalog floor for good. Idempotent: committing twice is a no-op. */
-export function createCommit(store: WorkspaceStore) {
+export function createCommit(store: WorkspaceStoreLike) {
   return defineTool<CommitInput, CommitResult>({
     name: "topics.commit",
     version: TOOL_VERSION,

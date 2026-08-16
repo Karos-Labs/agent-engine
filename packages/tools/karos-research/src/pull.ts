@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import type { WorkspaceStore } from "@agent-engine/tool-common";
+import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, parseDurationMs, success } from "@agent-engine/tool-common";
 import { latestRun, runSegments, type RunRecord } from "./runs.js";
 
@@ -32,7 +32,7 @@ export interface PullResult {
  * tool exists to enforce is fully real and testable, while the actual HTTP
  * call is a follow-up adapter swap, not a change to this tool's contract.
  */
-export function createPull(store: WorkspaceStore) {
+export function createPull(store: WorkspaceStoreLike) {
   return defineTool<PullInput, PullResult>({
     name: "research.pull",
     version: TOOL_VERSION,

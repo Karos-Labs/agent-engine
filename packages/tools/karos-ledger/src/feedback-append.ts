@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { IdempotentWriteResult, WorkspaceStore } from "@agent-engine/tool-common";
+import type { IdempotentWriteResult, WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, success } from "@agent-engine/tool-common";
 
 const TOOL_VERSION = "1.0.0";
@@ -21,7 +21,7 @@ export const FeedbackAppendInputSchema = z
 export type FeedbackAppendInput = z.infer<typeof FeedbackAppendInputSchema>;
 
 /** Idempotent on `(runId, feedbackId)` — an append-only feedback log for the learning loop (RFC-01 §8.2's `learn` step). */
-export function createFeedbackAppend(store: WorkspaceStore) {
+export function createFeedbackAppend(store: WorkspaceStoreLike) {
   return defineTool<FeedbackAppendInput, IdempotentWriteResult>({
     name: "ledger.feedbackAppend",
     version: TOOL_VERSION,

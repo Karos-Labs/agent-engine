@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { WorkspaceStore } from "@agent-engine/tool-common";
+import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, notAvailable, success } from "@agent-engine/tool-common";
 
 const TOOL_VERSION = "1.0.0";
@@ -21,7 +21,7 @@ export interface ClientBrand {
  * Read-only lookup of the tenant's brand kit (RFC-01 §9.1/§9.2). Tenant comes
  * from `context.ctx.clientSlug` only — this tool takes no arguments.
  */
-export function createGetBrand(store: WorkspaceStore) {
+export function createGetBrand(store: WorkspaceStoreLike) {
   return defineTool<GetBrandInput, ClientBrand>({
     name: "client.getBrand",
     version: TOOL_VERSION,

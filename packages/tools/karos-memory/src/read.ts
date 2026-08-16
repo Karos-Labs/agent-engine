@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { WorkspaceStore } from "@agent-engine/tool-common";
+import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, success } from "@agent-engine/tool-common";
 
 const TOOL_VERSION = "1.0.0";
@@ -44,7 +44,7 @@ export type ReadResult =
  * a missing-data error, so all three branches return `success`, never
  * `not_available`.
  */
-export function createRead(store: WorkspaceStore) {
+export function createRead(store: WorkspaceStoreLike) {
   return defineTool<ReadInput, ReadResult>({
     name: "memory.read",
     version: TOOL_VERSION,

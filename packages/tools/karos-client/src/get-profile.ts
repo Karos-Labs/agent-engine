@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { WorkspaceStore } from "@agent-engine/tool-common";
+import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, notAvailable, success } from "@agent-engine/tool-common";
 
 const TOOL_VERSION = "1.0.0";
@@ -28,7 +28,7 @@ export interface ClientProfile {
  * schema declares no fields at all, so there is nothing a caller could
  * override even by accident.
  */
-export function createGetProfile(store: WorkspaceStore) {
+export function createGetProfile(store: WorkspaceStoreLike) {
   return defineTool<GetProfileInput, ClientProfile>({
     name: "client.getProfile",
     version: TOOL_VERSION,

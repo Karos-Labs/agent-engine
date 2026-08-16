@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { IdempotentWriteResult, WorkspaceStore } from "@agent-engine/tool-common";
+import type { IdempotentWriteResult, WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, success } from "@agent-engine/tool-common";
 
 const TOOL_VERSION = "1.0.0";
@@ -11,7 +11,7 @@ export const DashboardSnapshotInputSchema = z.object({
 export type DashboardSnapshotInput = z.infer<typeof DashboardSnapshotInputSchema>;
 
 /** Idempotent on `runId` — one dashboard snapshot per run, overwritten on retry. */
-export function createDashboardSnapshot(store: WorkspaceStore) {
+export function createDashboardSnapshot(store: WorkspaceStoreLike) {
   return defineTool<DashboardSnapshotInput, IdempotentWriteResult>({
     name: "ledger.dashboardSnapshot",
     version: TOOL_VERSION,

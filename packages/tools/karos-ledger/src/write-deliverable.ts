@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { IdempotentWriteResult, WorkspaceStore } from "@agent-engine/tool-common";
+import type { IdempotentWriteResult, WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, success } from "@agent-engine/tool-common";
 
 const TOOL_VERSION = "1.0.0";
@@ -19,7 +19,7 @@ export type WriteDeliverableInput = z.infer<typeof WriteDeliverableInputSchema>;
  * RFC-01 §9.1 rule 2. Retrying the same write after a partial failure lands
  * on the same record, not a duplicate one.
  */
-export function createWriteDeliverable(store: WorkspaceStore) {
+export function createWriteDeliverable(store: WorkspaceStoreLike) {
   return defineTool<WriteDeliverableInput, IdempotentWriteResult>({
     name: "ledger.writeDeliverable",
     version: TOOL_VERSION,

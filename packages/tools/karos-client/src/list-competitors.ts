@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { WorkspaceStore } from "@agent-engine/tool-common";
+import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, notAvailable, success } from "@agent-engine/tool-common";
 
 const TOOL_VERSION = "1.0.0";
@@ -27,7 +27,7 @@ export interface Competitor {
  * a genuinely missing file (client never onboarded this data) is
  * `not_available`.
  */
-export function createListCompetitors(store: WorkspaceStore) {
+export function createListCompetitors(store: WorkspaceStoreLike) {
   return defineTool<ListCompetitorsInput, Competitor[]>({
     name: "client.listCompetitors",
     version: TOOL_VERSION,

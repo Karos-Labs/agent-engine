@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { WorkspaceStore } from "@agent-engine/tool-common";
+import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, notAvailable, success } from "@agent-engine/tool-common";
 import type { HypothesisRecord } from "./read.js";
 
@@ -28,7 +28,7 @@ export interface ResolveHypothesisResult {
  * as any other write here. There's no separate idempotency key to track
  * because the write target (`hypothesisId`) is already the natural one.
  */
-export function createResolveHypothesis(store: WorkspaceStore) {
+export function createResolveHypothesis(store: WorkspaceStoreLike) {
   return defineTool<ResolveHypothesisInput, ResolveHypothesisResult>({
     name: "memory.resolveHypothesis",
     version: TOOL_VERSION,

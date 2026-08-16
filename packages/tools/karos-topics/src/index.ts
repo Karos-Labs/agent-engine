@@ -1,5 +1,5 @@
 import type { AgentToolRegistry } from "@agent-engine/core";
-import { createWorkspaceStore, type WorkspaceStore } from "@agent-engine/tool-common";
+import { createWorkspaceStore, type WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { createReserve } from "./reserve.js";
 import { createCommit } from "./commit.js";
 import { createRelease } from "./release.js";
@@ -12,7 +12,7 @@ export * from "./release.js";
 export * from "./top-up.js";
 
 /** The `karos-topics` MCP server's tool registry (RFC-01 §9.2) — the no-repeat / topic-catalog contract, as code. */
-export function createKarosTopicsTools(store: WorkspaceStore = createWorkspaceStore()): AgentToolRegistry {
+export function createKarosTopicsTools(store: WorkspaceStoreLike = createWorkspaceStore()): AgentToolRegistry {
   return {
     "topics.reserve": createReserve(store),
     "topics.commit": createCommit(store),

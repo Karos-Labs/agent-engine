@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { noopGitCommitter, type GitCommitter } from "./git-committer.js";
 
 export interface WorkspaceStoreWriteResult {
+  /** The record's address in whichever backend actually stored it — a filesystem path for `WorkspaceStore`, a GCS object key for `GcsWorkspaceStore`. */
   filePath: string;
   /** False when this exact path already held a record — the idempotent-retry case. */
   created: boolean;
@@ -14,7 +15,24 @@ export interface WorkspaceStoreListEntry<T> {
   data: T;
 }
 
-function sanitizeSegment(segment: string): string {
+/**
+ * The narrow contract every `karos-*` tool actually depends on (RFC-01
+ * §9.2) — deliberately excludes `WorkspaceStore`'s own `filePath`/`dirPath`
+ * helper methods, which are filesystem-specific implementation details no
+ * tool calls externally (confirmed: none of the ~30 `karos-*` tool
+ * constructors touch them). Both the file+git `WorkspaceStore` and the
+ * cloud-native `GcsWorkspaceStore` implement this same shape, so a tool
+ * package never needs to know which backend it's actually talking to.
+ */
+export interface WorkspaceStoreLike {
+  exists(clientSlug: string, segments: readonly string[]): Promise<boolean>;
+  readJson<T>(clientSlug: string, segments: readonly string[]): Promise<T | undefined>;
+  writeJson<T>(clientSlug: string, segments: readonly string[], data: T): Promise<WorkspaceStoreWriteResult>;
+  listJson<T>(clientSlug: string, segments: readonly string[]): Promise<Array<WorkspaceStoreListEntry<T>>>;
+}
+
+/** Shared by every `WorkspaceStoreLike` backend (including `GcsWorkspaceStore`) — the Layer 3 half of the same path-traversal invariant `BaseAgent`'s write-fence enforces at Layer 2. */
+export function sanitizeSegment(segment: string): string {
   if (!segment || segment.includes("..") || segment.includes("/") || segment.includes("\\") || segment.includes("\0")) {
     throw new Error(`WorkspaceStore: invalid path segment "${segment}"`);
   }
@@ -35,7 +53,7 @@ function sanitizeSegment(segment: string): string {
  * again (RFC-01 §8.4a's Firestore idiom, reproduced here without Firestore)
  * — no separate compare-and-set layer needed.
  */
-export class WorkspaceStore {
+export class WorkspaceStore implements WorkspaceStoreLike {
   constructor(
     private readonly rootDir: string,
     private readonly gitCommitter: GitCommitter = noopGitCommitter,

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { WorkspaceStore } from "@agent-engine/tool-common";
+import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, success } from "@agent-engine/tool-common";
 
 const TOOL_VERSION = "1.0.0";
@@ -21,7 +21,7 @@ export interface UpdateBeliefsResult {
  * (the merge result is the same either way), which needs no special handling
  * — there's no caller-supplied key to dedupe against here.
  */
-export function createUpdateBeliefs(store: WorkspaceStore) {
+export function createUpdateBeliefs(store: WorkspaceStoreLike) {
   return defineTool<UpdateBeliefsInput, UpdateBeliefsResult>({
     name: "memory.updateBeliefs",
     version: TOOL_VERSION,

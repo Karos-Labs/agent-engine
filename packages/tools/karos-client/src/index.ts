@@ -1,5 +1,5 @@
 import type { AgentToolRegistry } from "@agent-engine/core";
-import { createWorkspaceStore, type WorkspaceStore } from "@agent-engine/tool-common";
+import { createWorkspaceStore, type WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { createGetProfile } from "./get-profile.js";
 import { createGetBrand } from "./get-brand.js";
 import { createGetVoiceRules } from "./get-voice-rules.js";
@@ -20,7 +20,7 @@ export * from "./get-config.js";
  * resolves its tenant from `context.ctx.clientSlug`; none accepts a
  * tenant-shaped argument.
  */
-export function createKarosClientTools(store: WorkspaceStore = createWorkspaceStore()): AgentToolRegistry {
+export function createKarosClientTools(store: WorkspaceStoreLike = createWorkspaceStore()): AgentToolRegistry {
   return {
     "client.getProfile": createGetProfile(store),
     "client.getBrand": createGetBrand(store),

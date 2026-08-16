@@ -24,6 +24,7 @@
     "@agent-engine/campaign-orchestrator": "^0.0.1",
     "express": "^5.1.0",
     "firebase-admin": "^13.5.0",
+    "@google-cloud/storage": "^7.18.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

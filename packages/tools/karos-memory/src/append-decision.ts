@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { IdempotentWriteResult, WorkspaceStore } from "@agent-engine/tool-common";
+import type { IdempotentWriteResult, WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, success } from "@agent-engine/tool-common";
 
 const TOOL_VERSION = "1.0.0";
@@ -13,7 +13,7 @@ export const AppendDecisionInputSchema = z.object({
 export type AppendDecisionInput = z.infer<typeof AppendDecisionInputSchema>;
 
 /** Idempotent on `decisionId` — an append-only decision log with no duplicate rows on replay. */
-export function createAppendDecision(store: WorkspaceStore) {
+export function createAppendDecision(store: WorkspaceStoreLike) {
   return defineTool<AppendDecisionInput, IdempotentWriteResult>({
     name: "memory.appendDecision",
     version: TOOL_VERSION,

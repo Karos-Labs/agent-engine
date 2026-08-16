@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { WorkspaceStore } from "@agent-engine/tool-common";
+import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, notAvailable, success } from "@agent-engine/tool-common";
 import { draftSegments, type DraftRecord } from "./types.js";
 
@@ -26,7 +26,7 @@ export interface ScheduleResult {
  * yet" — `not_available`, not a tooling error). Idempotent: calling again
  * with the exact same `publishAt` on an already-scheduled draft is a no-op.
  */
-export function createSchedule(store: WorkspaceStore) {
+export function createSchedule(store: WorkspaceStoreLike) {
   return defineTool<ScheduleInput, ScheduleResult>({
     name: "publish.schedule",
     version: TOOL_VERSION,

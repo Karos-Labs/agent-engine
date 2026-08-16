@@ -1,4 +1,4 @@
-import type { WorkspaceStore } from "@agent-engine/tool-common";
+import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 
 export type TopicStatus = "available" | "reserved" | "committed";
 
@@ -25,10 +25,10 @@ export function normalizeTopic(topic: string): string {
   return topic.trim().toLowerCase();
 }
 
-export async function readCatalog(store: WorkspaceStore, clientSlug: string): Promise<TopicRecord[]> {
+export async function readCatalog(store: WorkspaceStoreLike, clientSlug: string): Promise<TopicRecord[]> {
   return (await store.readJson<TopicRecord[]>(clientSlug, [...CATALOG_SEGMENTS])) ?? [];
 }
 
-export async function writeCatalog(store: WorkspaceStore, clientSlug: string, catalog: TopicRecord[]): Promise<void> {
+export async function writeCatalog(store: WorkspaceStoreLike, clientSlug: string, catalog: TopicRecord[]): Promise<void> {
   await store.writeJson(clientSlug, [...CATALOG_SEGMENTS], catalog);
 }

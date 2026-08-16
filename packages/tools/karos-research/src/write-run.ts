@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { IdempotentWriteResult, WorkspaceStore } from "@agent-engine/tool-common";
+import type { IdempotentWriteResult, WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, success } from "@agent-engine/tool-common";
 import { runSegments, type RunRecord } from "./runs.js";
 
@@ -14,7 +14,7 @@ export const WriteRunInputSchema = z.object({
 export type WriteRunInput = z.infer<typeof WriteRunInputSchema>;
 
 /** Idempotent on `(job, runId)` — records one research leg's result. */
-export function createWriteRun(store: WorkspaceStore) {
+export function createWriteRun(store: WorkspaceStoreLike) {
   return defineTool<WriteRunInput, IdempotentWriteResult>({
     name: "research.writeRun",
     version: TOOL_VERSION,
