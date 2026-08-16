@@ -9,7 +9,9 @@
   "workspaces": [
     "packages/*",
     "packages/tools/*",
-    "evals"
+    "evals",
+    "agents/*",
+    "apps/*"
   ],
   "scripts": {
     "build": "echo \"not implemented yet — see docs/RFC-01-agent-engine-core.md section 14\" && exit 1",
@@ -18,6 +20,7 @@
   "devDependencies": {
     "@types/node": "^26.2.0",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "tsx": "^4.23.12"
   }
 }

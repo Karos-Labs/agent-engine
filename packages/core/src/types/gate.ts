@@ -42,6 +42,9 @@ export const GateKindSchema = z.enum([
   "policy_change",
   "publish_approve",
   "connect_credential",
+  // The campaign orchestrator's human review pause before a multi-channel
+  // bundle ships (RFC-02 §4) — one review per campaign, not per channel.
+  "campaign_review",
 ]);
 export type GateKind = z.infer<typeof GateKindSchema>;
 

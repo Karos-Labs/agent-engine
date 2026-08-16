@@ -1,0 +1,25 @@
+{
+  "id": "x-post-four-day-week",
+  "description": "An X post about early four-day-week pilot data, sourced from an internal client survey.",
+  "agentId": "x-agent",
+  "input": {
+    "topic": "four-day work week pilots",
+    "clientSlug": "acme",
+    "xHandle": "@acmehq",
+    "voiceRules": { "tone": "confident, no jargon" }
+  },
+  "endorsedOutput": {
+    "text": "More teams are testing 4-day weeks this quarter. Early internal data [1] shows steady output with fewer sick days. Worth watching if your team is rethinking its schedule.",
+    "hook": "More teams are testing 4-day weeks this quarter.",
+    "angle": "data-point",
+    "targetHandle": "@acmehq",
+    "platform": "x"
+  },
+  "gateArgs": {
+    "brandCompliance": {
+      "forbiddenTerms": ["guaranteed", "the best", "#1", "cheapest"]
+    }
+  },
+  "endorsedBy": "tomer@karoslabs.com",
+  "endorsedAt": "2026-08-16T00:00:00Z"
+}

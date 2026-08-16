@@ -1,0 +1,34 @@
+{
+  "name": "@agent-engine/agent-server",
+  "private": true,
+  "version": "0.0.1",
+  "description": "The Cloud Run HTTP entrypoint (RFC-01 §7, §8; RFC-02): receives run-execution requests from karosCMO/Portal, dispatches to the right agent workflow by productId, and returns run status / DynamicAgentRunReport.",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "test": "npm run typecheck && vitest run",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@agent-engine/core": "^0.0.1",
+    "@agent-engine/tool-common": "^0.0.1",
+    "@agent-engine/tools": "^0.0.1",
+    "@agent-engine/workflow": "^0.0.1",
+    "@agent-engine/agent-x": "^0.0.1",
+    "@agent-engine/agent-linkedin": "^0.0.1",
+    "@agent-engine/agent-reddit": "^0.0.1",
+    "@agent-engine/agent-blog": "^0.0.1",
+    "@agent-engine/agent-newsletter": "^0.0.1",
+    "@agent-engine/campaign-orchestrator": "^0.0.1",
+    "express": "^5.1.0",
+    "firebase-admin": "^13.5.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "supertest": "^7.1.4",
+    "@types/supertest": "^6.0.3"
+  }
+}

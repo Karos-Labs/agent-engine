@@ -1,0 +1,15 @@
+node_modules
+**/node_modules
+**/dist
+.git
+.karos-workspace
+**/.karos-workspace
+docs
+scripts
+evals
+**/__tests__
+**/*.test.ts
+# Root-level docs only — NOT **/*.md, which would also exclude the agents'
+# prompts/**/*.md files (the actual runtime prompt content FilePromptStore
+# reads from disk).
+/*.md

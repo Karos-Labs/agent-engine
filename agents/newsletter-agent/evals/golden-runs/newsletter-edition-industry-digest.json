@@ -1,0 +1,39 @@
+{
+  "id": "newsletter-edition-onboarding-digest",
+  "description": "A weekly industry digest newsletter edition leading with a structured-onboarding case study, sourced from an internal engineering-team retrospective.",
+  "agentId": "newsletter-agent",
+  "input": {
+    "topic": "structured engineering onboarding",
+    "clientSlug": "acme",
+    "targetAudience": "engineering leaders at mid-size B2B SaaS companies",
+    "frequency": "weekly",
+    "voiceRules": { "tone": "confident, no jargon" }
+  },
+  "endorsedOutput": {
+    "subjectLine": "3 teams cut onboarding time in half — here's how",
+    "previewText": "Plus: async standups are quietly replacing daily syncs at a few of our favorite teams.",
+    "intro": "This week we're looking at what's actually working for engineering teams right now — not theory, just what teams tried and what happened.",
+    "sections": [
+      {
+        "heading": "Structured onboarding cuts ramp time",
+        "body": "Teams that moved to a fixed four-day onboarding structure saw new-hire ramp time drop 47% [1] compared to their old ad hoc process.",
+        "linkUrl": "https://example.com/onboarding"
+      },
+      {
+        "heading": "Async standups are gaining ground",
+        "body": "A few teams we talked to have replaced daily video standups with async written updates, citing fewer interruptions during deep-work blocks."
+      }
+    ],
+    "callToAction": { "text": "Read the full onboarding breakdown", "url": "https://example.com/onboarding-full" },
+    "signoff": "— The Acme Weekly Team",
+    "text": "This week we're looking at what's actually working for engineering teams right now — not theory, just what teams tried and what happened.\n\n## Structured onboarding cuts ramp time\n\nTeams that moved to a fixed four-day onboarding structure saw new-hire ramp time drop 47% [1] compared to their old ad hoc process.\n\n## Async standups are gaining ground\n\nA few teams we talked to have replaced daily video standups with async written updates, citing fewer interruptions during deep-work blocks.\n\nRead the full onboarding breakdown\n\n— The Acme Weekly Team",
+    "platform": "newsletter"
+  },
+  "gateArgs": {
+    "brandCompliance": {
+      "forbiddenTerms": ["guaranteed", "the best", "#1", "cheapest"]
+    }
+  },
+  "endorsedBy": "tomer@karoslabs.com",
+  "endorsedAt": "2026-08-16T00:00:00Z"
+}

@@ -10,12 +10,23 @@ const PLATFORM_MAX_LENGTH: Record<string, number> = {
   linkedin: 3000,
   instagram: 2200,
   facebook: 5000,
+  // Reddit's real selftext body limit — the post title has its own, much
+  // shorter 300-character limit, checked separately (not by this gate).
+  reddit: 40000,
+  // A long-form editorial ceiling for a single blog post (~3,000-4,000
+  // words) — the title and meta description have their own much shorter
+  // limits, checked separately (not by this gate).
+  blog: 20000,
+  // A newsletter edition's body ceiling — the subject line (~70 chars) and
+  // preview text/preheader (~140 chars) have their own much shorter limits,
+  // checked separately (not by this gate).
+  newsletter: 10000,
   generic: 5000,
 };
 
 export const LintPostInputSchema = z.object({
   text: z.string(),
-  platform: z.enum(["twitter", "x", "linkedin", "instagram", "facebook", "generic"]).default("generic"),
+  platform: z.enum(["twitter", "x", "linkedin", "instagram", "facebook", "reddit", "blog", "newsletter", "generic"]).default("generic"),
 });
 export type LintPostInput = z.infer<typeof LintPostInputSchema>;
 

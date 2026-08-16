@@ -34,6 +34,27 @@ describe("gate.lintPost", () => {
     expect(verdict.verdict).toBe("content_fail");
   });
 
+  it("uses Reddit's much longer selftext limit (40000), not the generic 5000", async () => {
+    const withinReddit = await verdictOf("gate.lintPost", { text: "x".repeat(10000), platform: "reddit" });
+    expect(withinReddit.verdict).toBe("pass");
+    const overReddit = await verdictOf("gate.lintPost", { text: "x".repeat(40001), platform: "reddit" });
+    expect(overReddit.verdict).toBe("content_fail");
+  });
+
+  it("uses blog's long-form editorial ceiling (20000), not the generic 5000", async () => {
+    const withinBlog = await verdictOf("gate.lintPost", { text: "x".repeat(12000), platform: "blog" });
+    expect(withinBlog.verdict).toBe("pass");
+    const overBlog = await verdictOf("gate.lintPost", { text: "x".repeat(20001), platform: "blog" });
+    expect(overBlog.verdict).toBe("content_fail");
+  });
+
+  it("uses newsletter's 10000-char body ceiling, not the generic 5000", async () => {
+    const withinNewsletter = await verdictOf("gate.lintPost", { text: "x".repeat(8000), platform: "newsletter" });
+    expect(withinNewsletter.verdict).toBe("pass");
+    const overNewsletter = await verdictOf("gate.lintPost", { text: "x".repeat(10001), platform: "newsletter" });
+    expect(overNewsletter.verdict).toBe("content_fail");
+  });
+
   it("fails text with an unresolved markdown link", async () => {
     const verdict = await verdictOf("gate.lintPost", { text: "Check out [our site]() for more.", platform: "generic" });
     expect(verdict.verdict).toBe("content_fail");

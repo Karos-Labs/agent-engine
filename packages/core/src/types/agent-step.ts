@@ -29,6 +29,14 @@ export const AgentStepConfigSchema = z.object({
       /** e.g. "gate.brand_compliance". */
       gateTool: z.string().min(1),
       maxRevisions: z.number().int().positive().default(1),
+      /**
+       * Static fields merged onto the draft before it's sent to the gate tool,
+       * winning over anything the model happened to include (e.g. `{platform: "x"}`
+       * for `gate.lintPost`) — the draft's own schema defaults don't apply until
+       * *after* self-critique runs, so a gate that branches on a field like
+       * `platform` cannot rely on the raw draft alone.
+       */
+      gateArgs: z.record(z.string(), z.unknown()).optional(),
     })
     .optional(),
 });
@@ -45,6 +53,7 @@ export interface AgentStepConfig<TOutput> {
   selfCritique?: {
     gateTool: string;
     maxRevisions?: number;
+    gateArgs?: Record<string, unknown>;
   };
 }
 

@@ -1,0 +1,27 @@
+{
+  "id": "linkedin-post-hybrid-anchor-days",
+  "description": "A LinkedIn post about fixed hybrid anchor-days reducing scheduling conflicts, sourced from an internal client survey.",
+  "agentId": "linkedin-agent",
+  "input": {
+    "topic": "hybrid work anchor days",
+    "clientSlug": "acme",
+    "voiceRules": { "tone": "confident, no jargon" }
+  },
+  "endorsedOutput": {
+    "headline": "Hybrid teams: what the attendance data actually shows",
+    "hook": "We looked at attendance data across our hybrid client base this quarter, and the pattern surprised us.",
+    "body": "Teams with a fixed two-day in-office schedule reported 18% [1] fewer scheduling conflicts than teams with fully flexible policies. The difference wasn't about enforcement — it was about predictability. When everyone knows Tuesday and Thursday are the anchor days, coordination stops being a weekly negotiation.",
+    "hashtags": ["HybridWork", "FutureOfWork", "TeamProductivity"],
+    "callToAction": "If your team is still negotiating its hybrid policy week to week, a fixed anchor-day structure might be worth testing before assuming full flexibility is the answer.",
+    "targetAudience": "People leaders and operations managers at mid-size companies evaluating hybrid work policies",
+    "text": "We looked at attendance data across our hybrid client base this quarter, and the pattern surprised us.\n\nTeams with a fixed two-day in-office schedule reported 18% [1] fewer scheduling conflicts than teams with fully flexible policies. The difference wasn't about enforcement — it was about predictability. When everyone knows Tuesday and Thursday are the anchor days, coordination stops being a weekly negotiation.\n\nIf your team is still negotiating its hybrid policy week to week, a fixed anchor-day structure might be worth testing before assuming full flexibility is the answer.\n\n#HybridWork #FutureOfWork #TeamProductivity",
+    "platform": "linkedin"
+  },
+  "gateArgs": {
+    "brandCompliance": {
+      "forbiddenTerms": ["guaranteed", "the best", "#1", "cheapest"]
+    }
+  },
+  "endorsedBy": "tomer@karoslabs.com",
+  "endorsedAt": "2026-08-16T00:00:00Z"
+}

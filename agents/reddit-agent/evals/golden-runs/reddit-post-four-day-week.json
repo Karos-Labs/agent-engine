@@ -1,0 +1,27 @@
+{
+  "id": "reddit-post-four-day-week-smallbusiness",
+  "description": "A Reddit discussion post in r/smallbusiness about a 4-day-week trial's early results, sourced from an internal client survey.",
+  "agentId": "reddit-agent",
+  "input": {
+    "topic": "four-day work week pilots",
+    "clientSlug": "acme",
+    "targetSubreddits": ["smallbusiness", "startups"],
+    "voiceRules": { "tone": "conversational, no jargon" }
+  },
+  "endorsedOutput": {
+    "title": "Our team switched to a 4-day week 3 months ago — sharing what actually changed",
+    "hook": "We run a small B2B SaaS shop and moved most of engineering to a 4-day week last quarter as a trial.",
+    "body": "We run a small B2B SaaS shop and moved most of engineering to a 4-day week last quarter as a trial.\n\nInternal tracking showed an 18% [1] drop in reported sick days across the team, and shipped feature count stayed roughly flat. The biggest surprise wasn't productivity — it was that fewer people asked for one-off remote days once the schedule already had a built-in break.\n\nHas anyone else run a trial like this? Curious what broke for you that didn't show up in the first month.",
+    "targetSubreddit": "smallbusiness",
+    "flair": "",
+    "text": "Our team switched to a 4-day week 3 months ago — sharing what actually changed\n\nWe run a small B2B SaaS shop and moved most of engineering to a 4-day week last quarter as a trial.\n\nInternal tracking showed an 18% [1] drop in reported sick days across the team, and shipped feature count stayed roughly flat. The biggest surprise wasn't productivity — it was that fewer people asked for one-off remote days once the schedule already had a built-in break.\n\nHas anyone else run a trial like this? Curious what broke for you that didn't show up in the first month.",
+    "platform": "reddit"
+  },
+  "gateArgs": {
+    "brandCompliance": {
+      "forbiddenTerms": ["guaranteed", "the best", "#1", "cheapest"]
+    }
+  },
+  "endorsedBy": "tomer@karoslabs.com",
+  "endorsedAt": "2026-08-16T00:00:00Z"
+}

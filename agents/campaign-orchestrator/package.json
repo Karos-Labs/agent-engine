@@ -1,0 +1,27 @@
+{
+  "name": "@agent-engine/campaign-orchestrator",
+  "private": true,
+  "version": "0.0.1",
+  "description": "The Campaign Lead Orchestrator — the RFC-02 §4 migration: a CampaignStrategyAgent plus its Layer 1 workflow, fanning out across the five channel agents' own workflows (X, LinkedIn, Reddit, Blog, Newsletter) per RFC-01 §5.5, gated by one human campaign review before the bundle ships.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "test": "npm run typecheck && vitest run"
+  },
+  "dependencies": {
+    "@agent-engine/core": "^0.0.1",
+    "@agent-engine/tool-common": "^0.0.1",
+    "@agent-engine/tool-karos-gates": "^0.0.1",
+    "@agent-engine/tools": "^0.0.1",
+    "@agent-engine/workflow": "^0.0.1",
+    "@agent-engine/agent-x": "^0.0.1",
+    "@agent-engine/agent-linkedin": "^0.0.1",
+    "@agent-engine/agent-reddit": "^0.0.1",
+    "@agent-engine/agent-blog": "^0.0.1",
+    "@agent-engine/agent-newsletter": "^0.0.1",
+    "zod": "^4.4.3"
+  }
+}

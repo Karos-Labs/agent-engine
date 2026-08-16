@@ -1,0 +1,30 @@
+{
+  "id": "blog-post-structured-onboarding-rollout",
+  "description": "A long-form B2B/technical article about a structured 4-day onboarding rollout, sourced from an internal engineering-team retrospective.",
+  "agentId": "blog-agent",
+  "input": {
+    "topic": "structured engineering onboarding",
+    "clientSlug": "acme",
+    "targetKeywords": ["engineering onboarding", "developer ramp-up time"],
+    "contentPillars": ["engineering culture", "team operations"],
+    "voiceRules": { "tone": "confident, no jargon" }
+  },
+  "endorsedOutput": {
+    "title": "How We Cut Onboarding Time in Half With a Structured 4-Day Rollout",
+    "slug": "structured-four-day-onboarding-rollout",
+    "excerpt": "A breakdown of the onboarding changes that actually moved the needle for our engineering team, and the one metric that mattered most.",
+    "bodyMarkdown": "## The problem with our old onboarding\n\nNew engineers took nearly a month before they shipped their first meaningful change. Most of that time wasn't spent learning the codebase — it was spent figuring out who to ask and where things lived.\n\n## What we actually changed\n\nWe restructured the first week into four fixed days: environment setup, a guided codebase walkthrough with a paired engineer, a small scoped ticket, and a review session with the whole team. Nothing changed about the technical content — the structure was the change.\n\n## The results after one quarter\n\nAcross the twelve engineers who went through the new process, median time to first merged pull request dropped 47% [1], from 19 days to about 10. Retention at the 90-day mark also held steady, which mattered as much to us as the speed.\n\n## What we'd do differently\n\nThe biggest gap was documentation for the paired-engineer sessions — two people ran it differently in ways new hires noticed. If you're trying this, write the walkthrough script down before your first cohort, not after.\n\nIf your team is rethinking its own onboarding, a structured first week is worth testing before you assume the problem is your documentation.",
+    "headersList": ["The problem with our old onboarding", "What we actually changed", "The results after one quarter", "What we'd do differently"],
+    "metaDescription": "How a structured 4-day onboarding rollout cut new-hire ramp time in half — what changed, what we measured, and what to copy.",
+    "estimatedReadMinutes": 4,
+    "text": "How We Cut Onboarding Time in Half With a Structured 4-Day Rollout\n\n## The problem with our old onboarding\n\nNew engineers took nearly a month before they shipped their first meaningful change. Most of that time wasn't spent learning the codebase — it was spent figuring out who to ask and where things lived.\n\n## What we actually changed\n\nWe restructured the first week into four fixed days: environment setup, a guided codebase walkthrough with a paired engineer, a small scoped ticket, and a review session with the whole team. Nothing changed about the technical content — the structure was the change.\n\n## The results after one quarter\n\nAcross the twelve engineers who went through the new process, median time to first merged pull request dropped 47% [1], from 19 days to about 10. Retention at the 90-day mark also held steady, which mattered as much to us as the speed.\n\n## What we'd do differently\n\nThe biggest gap was documentation for the paired-engineer sessions — two people ran it differently in ways new hires noticed. If you're trying this, write the walkthrough script down before your first cohort, not after.\n\nIf your team is rethinking its own onboarding, a structured first week is worth testing before you assume the problem is your documentation.",
+    "platform": "blog"
+  },
+  "gateArgs": {
+    "brandCompliance": {
+      "forbiddenTerms": ["guaranteed", "the best", "#1", "cheapest"]
+    }
+  },
+  "endorsedBy": "tomer@karoslabs.com",
+  "endorsedAt": "2026-08-16T00:00:00Z"
+}

@@ -1,0 +1,54 @@
+{
+  "id": "campaign-q3-structured-onboarding-launch",
+  "description": "A multi-channel B2B product launch campaign leading with a structured-onboarding case study, scheduled across all five channels.",
+  "agentId": "campaign-orchestrator",
+  "input": {
+    "clientSlug": "acme",
+    "campaignGoals": "Launch awareness for the new structured-onboarding product feature across every channel this quarter.",
+    "voiceRules": { "tone": "confident, no jargon" }
+  },
+  "endorsedOutput": {
+    "campaignName": "Q3 Structured Onboarding Launch",
+    "theme": "Structured processes deliver measurable team performance gains",
+    "targetPillars": ["engineering culture", "team operations", "product-led growth"],
+    "channelSlots": [
+      {
+        "slotId": "launch-x",
+        "channel": "x",
+        "targetAudience": "engineering leaders scrolling X for a quick, sharp data point",
+        "angle": "data-point",
+        "keyMessage": "Structured 4-day onboarding cut new-hire ramp time by 47%"
+      },
+      {
+        "slotId": "launch-linkedin",
+        "channel": "linkedin",
+        "targetAudience": "B2B SaaS engineering managers and VPs browsing LinkedIn",
+        "angle": "thought-leadership",
+        "keyMessage": "Predictable onboarding structure builds team trust faster than flexibility alone"
+      },
+      {
+        "slotId": "launch-reddit",
+        "channel": "reddit",
+        "targetAudience": "r/ExperiencedDevs and r/EngineeringManagement readers who distrust marketing posts",
+        "angle": "value-add-discussion",
+        "keyMessage": "Here's exactly what we changed about onboarding and what happened afterward"
+      },
+      {
+        "slotId": "launch-blog",
+        "channel": "blog",
+        "targetAudience": "technical readers researching onboarding practices in depth",
+        "angle": "conceptual-guide",
+        "keyMessage": "A full breakdown of the four-day onboarding structure and its measured results"
+      },
+      {
+        "slotId": "launch-newsletter",
+        "channel": "newsletter",
+        "targetAudience": "newsletter subscribers who want a curated weekly digest, not a sales pitch",
+        "angle": "curated-digest",
+        "keyMessage": "This week's roundup leads with our onboarding case study alongside two related team-ops stories"
+      }
+    ]
+  },
+  "endorsedBy": "tomer@karoslabs.com",
+  "endorsedAt": "2026-08-16T00:00:00Z"
+}

@@ -1,3 +1,4 @@
 export * from "./aliases.js";
 export * from "./model-router.js";
+export * from "./create-model-router-from-env.js";
 export * from "./adapters/index.js";

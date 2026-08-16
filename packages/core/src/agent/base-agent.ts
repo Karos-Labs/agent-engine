@@ -277,7 +277,13 @@ export abstract class BaseAgent<TOutput> {
   }
 
   /** Self-critique (RFC-01 §5.6): a mandatory call to a typed gate tool, never a free-text "check your work". */
-  private async runGateCheck(ctx: AgentContext, gateToolName: string, draft: TOutput, stepIndex: number): Promise<GateCheckOutcome> {
+  private async runGateCheck(
+    ctx: AgentContext,
+    gateToolName: string,
+    draft: TOutput,
+    stepIndex: number,
+    gateArgs?: Record<string, unknown>,
+  ): Promise<GateCheckOutcome> {
     const startedAt = this.clock();
     const gateTool = this.runtime.tools[gateToolName];
 
@@ -288,9 +294,10 @@ export abstract class BaseAgent<TOutput> {
       };
     }
 
+    const args = gateArgs ? { ...draft, ...gateArgs } : draft;
     let outcome: AgentToolOutcome<unknown>;
     try {
-      outcome = await gateTool.execute(draft, { ctx });
+      outcome = await gateTool.execute(args, { ctx });
     } catch (err) {
       outcome = { status: "tooling_error", reason: describeError(err) };
     }
@@ -342,7 +349,7 @@ export abstract class BaseAgent<TOutput> {
     let stepIndex = stepIndexAfterDraft;
 
     for (;;) {
-      const gateResult = await this.runGateCheck(ctx, gateToolName, currentDraft, stepIndex);
+      const gateResult = await this.runGateCheck(ctx, gateToolName, currentDraft, stepIndex, this.config.selfCritique.gateArgs);
       steps.push(gateResult.telemetry);
       stepIndex++;
 
