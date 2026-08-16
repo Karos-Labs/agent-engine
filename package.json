@@ -15,7 +15,8 @@
   ],
   "scripts": {
     "build": "echo \"not implemented yet — see docs/RFC-01-agent-engine-core.md section 14\" && exit 1",
-    "test": "echo \"not implemented yet — see docs/RFC-01-agent-engine-core.md section 14\" && exit 1"
+    "test": "echo \"not implemented yet — see docs/RFC-01-agent-engine-core.md section 14\" && exit 1",
+    "dev:server": "npm run dev --workspace=@agent-engine/agent-server"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

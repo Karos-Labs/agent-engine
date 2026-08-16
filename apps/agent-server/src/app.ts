@@ -1,5 +1,6 @@
 import express, { type Application } from "express";
 import type { DurableStepStore } from "@agent-engine/workflow";
+import { createDocsRouter } from "./routes/docs.js";
 import { createHealthRouter } from "./routes/health.js";
 import { createRunsRouter, type RunsRouterDeps } from "./routes/runs.js";
 
@@ -18,6 +19,7 @@ export function createApp(deps: CreateAppDeps): Application {
   const app = express();
   app.use(express.json());
   app.use(createHealthRouter());
+  app.use(createDocsRouter());
   app.use(createRunsRouter(deps));
   return app;
 }

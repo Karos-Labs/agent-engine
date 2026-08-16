@@ -9,7 +9,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.test.json",
     "test": "npm run typecheck && vitest run",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "dev": "tsx watch src/server.ts"
   },
   "dependencies": {
     "@agent-engine/core": "^0.0.1",
@@ -25,11 +26,14 @@
     "express": "^5.1.0",
     "firebase-admin": "^13.5.0",
     "@google-cloud/storage": "^7.18.0",
+    "swagger-ui-express": "^5.0.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/express": "^5.0.3",
     "supertest": "^7.1.4",
-    "@types/supertest": "^6.0.3"
+    "@types/supertest": "^6.0.3",
+    "@types/swagger-ui-express": "^4.1.8",
+    "tsx": "^4.23.12"
   }
 }
