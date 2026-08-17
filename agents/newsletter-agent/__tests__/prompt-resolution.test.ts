@@ -19,8 +19,8 @@ function sampleDraft() {
     intro: "An intro.",
     sections: [{ heading: "A heading", body: "A body." }],
     callToAction: { text: "Do something", url: "https://example.com" },
-    signoff: "— The Team",
-    text: "An intro.\n\n## A heading\n\nA body.\n\nDo something\n\n— The Team",
+    signoff: "The Team",
+    text: "An intro.\n\n## A heading\n\nA body.\n\nDo something\n\nThe Team",
   };
 }
 

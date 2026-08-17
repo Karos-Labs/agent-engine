@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { LINKEDIN_ARCHETYPES } from "../../src/workflow/types.js";
 
 /**
  * A golden run for the LinkedIn agent (RFC-01 §12 bullet 1): a frozen input
@@ -21,6 +22,7 @@ export const LinkedInGoldenRunSchema = z.object({
     hashtags: z.array(z.string()),
     callToAction: z.string().min(1),
     targetAudience: z.string().min(1),
+    archetype: z.enum(LINKEDIN_ARCHETYPES),
     text: z.string().min(1),
     platform: z.literal("linkedin"),
   }),

@@ -24,10 +24,10 @@ function spyOnAllTools(tools: AgentToolRegistry): { spied: AgentToolRegistry; ca
 function goodDraft() {
   const intro = "This week we're looking at what's actually working for engineering teams right now.";
   const sections = [
-    { heading: "Structured onboarding cuts ramp time", body: "New-hire ramp time dropped 47% [1] after a fixed four-day onboarding rollout." },
+    { heading: "Structured onboarding cuts ramp time", body: "New-hire ramp time dropped sharply after a fixed four-day onboarding rollout." },
   ];
   const callToAction = { text: "Read the full breakdown", url: "https://example.com/full" };
-  const signoff = "— The Acme Weekly Team";
+  const signoff = "The Acme Weekly Team";
   const text = `${intro}\n\n${sections.map((s) => `## ${s.heading}\n\n${s.body}`).join("\n\n")}\n\n${callToAction.text}\n\n${signoff}`;
   return {
     subjectLine: "3 teams cut onboarding time in half",
@@ -55,7 +55,7 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
     const promptStore = makePromptStore();
     const router = fakeRouterSequence([finalTurn(goodDraft())]);
     const { spied, callCounts } = spyOnAllTools(env.tools);
-    const workflowFn = createNewsletterAgentWorkflow({ tools: spied, promptStore, router });
+    const workflowFn = createNewsletterAgentWorkflow({ tools: spied, promptStore, router, autoApprove: true });
 
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
@@ -76,7 +76,7 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
     expect(callCounts()).toEqual(countsAfterFirst);
 
     const stepRecords = await durableStore.listSteps(params.runId);
-    expect(stepRecords).toHaveLength(16);
+    expect(stepRecords).toHaveLength(20);
     expect(stepRecords.every((s) => s.status === "completed")).toBe(true);
   });
 
@@ -85,7 +85,7 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
     const router = fakeRouterSequence([finalTurn(goodDraft())]);
     const { spied, callCounts } = spyOnAllTools(env.tools);
 
-    // A wrapper that throws once persistence starts (after step 13), simulating a crash
+    // A wrapper that throws once persistence starts (after step 17), simulating a crash
     // partway through, then behaves normally afterwards.
     let deliverablePersisted = false;
     const crashOnceTools: AgentToolRegistry = {
@@ -109,7 +109,7 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
         }),
       },
     };
-    const workflowFn = createNewsletterAgentWorkflow({ tools: crashOnceTools, promptStore, router });
+    const workflowFn = createNewsletterAgentWorkflow({ tools: crashOnceTools, promptStore, router, autoApprove: true });
 
     const runId = "newsletter_run_resume_crash";
     const durableStore = new MemoryDurableStepStore();
@@ -119,12 +119,12 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
     expect(first.status).toBe("degraded");
 
     const stepsAfterCrash = await durableStore.listSteps(runId);
-    const step13 = stepsAfterCrash.find((s) => s.stepId === "13-persist-deliverable");
-    const step14 = stepsAfterCrash.find((s) => s.stepId === "14-persist-manifest");
-    expect(step13?.status).toBe("completed");
-    // step 14's own tool call threw, so its checkpoint is recorded but as "failed" — not
+    const step17 = stepsAfterCrash.find((s) => s.stepId === "17-persist-deliverable");
+    const step18 = stepsAfterCrash.find((s) => s.stepId === "18-persist-manifest");
+    expect(step17?.status).toBe("completed");
+    // step 18's own tool call threw, so its checkpoint is recorded but as "failed", not
     // "completed" — which is exactly what makes step-code re-run it (not skip it) on resume.
-    expect(step14?.status).toBe("failed");
+    expect(step18?.status).toBe("failed");
 
     const draftCallCountAfterCrash = callCounts()["ledger.writeDeliverable"];
     expect(router.complete).toHaveBeenCalledTimes(1);
@@ -138,7 +138,7 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
     expect(callCounts()["ledger.writeDeliverable"]).toBe(draftCallCountAfterCrash);
 
     const finalSteps = await durableStore.listSteps(runId);
-    expect(finalSteps).toHaveLength(16);
+    expect(finalSteps).toHaveLength(20);
     expect(finalSteps.every((s) => s.status === "completed")).toBe(true);
   });
 });

@@ -25,13 +25,14 @@ function goodDraft() {
   return {
     headline: "Anchor days cut scheduling friction",
     hook: "We looked at attendance data across our hybrid client base this quarter, and the pattern surprised us.",
-    body: "Teams with a fixed two-day in-office schedule reported 18% [1] fewer scheduling conflicts than teams with fully flexible policies.",
+    body: "Teams with a fixed two-day in-office schedule reported meaningfully fewer scheduling conflicts than teams with fully flexible policies.",
     hashtags: ["HybridWork", "FutureOfWork"],
     callToAction: "If your team is still negotiating its hybrid policy week to week, a fixed anchor-day structure might be worth testing.",
     targetAudience: "People leaders evaluating hybrid work policies",
+    archetype: "teardown-framework" as const,
     text:
       "We looked at attendance data across our hybrid client base this quarter, and the pattern surprised us.\n\n" +
-      "Teams with a fixed two-day in-office schedule reported 18% [1] fewer scheduling conflicts than teams with fully flexible policies.\n\n" +
+      "Teams with a fixed two-day in-office schedule reported meaningfully fewer scheduling conflicts than teams with fully flexible policies.\n\n" +
       "If your team is still negotiating its hybrid policy week to week, a fixed anchor-day structure might be worth testing.\n\n" +
       "#HybridWork #FutureOfWork",
   };
@@ -52,7 +53,7 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
     const promptStore = makePromptStore();
     const router = fakeRouterSequence([finalTurn(goodDraft())]);
     const { spied, callCounts } = spyOnAllTools(env.tools);
-    const workflowFn = createLinkedInAgentWorkflow({ tools: spied, promptStore, router });
+    const workflowFn = createLinkedInAgentWorkflow({ tools: spied, promptStore, router, autoApprove: true });
 
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
@@ -73,7 +74,7 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
     expect(callCounts()).toEqual(countsAfterFirst);
 
     const stepRecords = await durableStore.listSteps(params.runId);
-    expect(stepRecords).toHaveLength(16);
+    expect(stepRecords).toHaveLength(19);
     expect(stepRecords.every((s) => s.status === "completed")).toBe(true);
   });
 
@@ -82,7 +83,7 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
     const router = fakeRouterSequence([finalTurn(goodDraft())]);
     const { spied, callCounts } = spyOnAllTools(env.tools);
 
-    // A wrapper that throws once persistence starts (after step 13), simulating a crash
+    // A wrapper that throws once persistence starts (after step 16), simulating a crash
     // partway through, then behaves normally afterwards.
     let deliverablePersisted = false;
     const crashOnceTools: AgentToolRegistry = {
@@ -106,7 +107,7 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
         }),
       },
     };
-    const workflowFn = createLinkedInAgentWorkflow({ tools: crashOnceTools, promptStore, router });
+    const workflowFn = createLinkedInAgentWorkflow({ tools: crashOnceTools, promptStore, router, autoApprove: true });
 
     const runId = "linkedin_run_resume_crash";
     const durableStore = new MemoryDurableStepStore();
@@ -116,12 +117,12 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
     expect(first.status).toBe("degraded");
 
     const stepsAfterCrash = await durableStore.listSteps(runId);
-    const step13 = stepsAfterCrash.find((s) => s.stepId === "13-persist-deliverable");
-    const step14 = stepsAfterCrash.find((s) => s.stepId === "14-persist-manifest");
-    expect(step13?.status).toBe("completed");
-    // step 14's own tool call threw, so its checkpoint is recorded but as "failed" — not
+    const step14 = stepsAfterCrash.find((s) => s.stepId === "16-persist-deliverable");
+    const step15 = stepsAfterCrash.find((s) => s.stepId === "17-persist-manifest");
+    expect(step14?.status).toBe("completed");
+    // step 17's own tool call threw, so its checkpoint is recorded but as "failed" — not
     // "completed" — which is exactly what makes step-code re-run it (not skip it) on resume.
-    expect(step14?.status).toBe("failed");
+    expect(step15?.status).toBe("failed");
 
     const draftCallCountAfterCrash = callCounts()["ledger.writeDeliverable"];
     expect(router.complete).toHaveBeenCalledTimes(1);
@@ -135,7 +136,7 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
     expect(callCounts()["ledger.writeDeliverable"]).toBe(draftCallCountAfterCrash);
 
     const finalSteps = await durableStore.listSteps(runId);
-    expect(finalSteps).toHaveLength(16);
+    expect(finalSteps).toHaveLength(19);
     expect(finalSteps.every((s) => s.status === "completed")).toBe(true);
   });
 });

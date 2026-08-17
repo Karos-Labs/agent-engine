@@ -1,6 +1,6 @@
-import type { AgentContext, AgentToolRegistry, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
+import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
 import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure } from "@agent-engine/workflow";
-import { NewsletterDraftAgent } from "../agent/newsletter-draft-agent.js";
+import { NewsletterDraftAgent, type NewsletterPostOutput } from "../agent/newsletter-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
 import type {
   NewsletterAgentWorkflowResult,
@@ -16,6 +16,14 @@ export interface CreateNewsletterAgentWorkflowOptions {
   tools: AgentToolRegistry;
   promptStore: PromptStore;
   router: ModelRouter;
+  /**
+   * Skips step 13's human `batch_review` gate and records a synthetic
+   * `actor: "system"` approval instead — off by default, so a real run
+   * genuinely pauses at `awaiting_gate` until a human reviews it (RFC-01
+   * §8.3). Intended for tests/demos/evals that need a synchronous happy
+   * path, never for production wiring.
+   */
+  autoApprove?: boolean;
 }
 
 function toAgentContext(wf: WorkflowContext): AgentContext {
@@ -26,6 +34,52 @@ function toAgentContext(wf: WorkflowContext): AgentContext {
     runKind: wf.runKind,
     ...(wf.slotId !== undefined ? { slotId: wf.slotId } : {}),
     metadata: {},
+  };
+}
+
+/**
+ * Force-injects the client's compliance footer onto a draft's `text` — the
+ * migration-audit fix for the Newsletter agent's missing structural
+ * compliance surface. Mirrors the legacy `compliance-gate.mjs`'s "never let
+ * the model author the footer" rule: `footerDisclaimer`, `companyAddress`,
+ * and `unsubscribeUrl` are read from the client's own `brand` config only —
+ * never from whatever the model itself may have put in those (optional,
+ * model-writable-by-schema) fields — and always overwrite them.
+ *
+ * Runs AFTER `gate.brandCompliance`'s hype/forbidden-terms scan (step 10),
+ * not before it — a Phase-2.5 fix. The scan used to run on the
+ * already-composed text, which meant a client's own legitimately-configured
+ * disclaimer (e.g. "we do not offer guaranteed returns") could contain a
+ * banned hype phrase's substring and trip the gate on its own required legal
+ * language. The hype bank is a check on what the MODEL wrote, not on what
+ * the platform deterministically appends afterward, so it only ever sees the
+ * author-generated body/sections. `gate.numbersSourced` and
+ * `render.preview`'s body-length check still run on the composed (footer
+ * included) text at steps 11/13, and step 12 structurally verifies the
+ * footer actually landed, so nothing about the final persisted deliverable
+ * is left unchecked.
+ */
+function composeCompliantDraft(draft: NewsletterPostOutput, brand: Record<string, unknown>): NewsletterPostOutput {
+  const footerDisclaimer = brand["requiredDisclaimer"] as string | undefined;
+  const companyAddress = brand["companyAddress"] as string | undefined;
+  const unsubscribeUrl = brand["unsubscribeUrl"] as string | undefined;
+
+  const footerLines: string[] = [];
+  if (footerDisclaimer) footerLines.push(footerDisclaimer);
+  if (companyAddress) footerLines.push(companyAddress);
+  if (unsubscribeUrl) footerLines.push(`Unsubscribe: ${unsubscribeUrl}`);
+
+  if (footerLines.length === 0) {
+    // Nothing configured for this client — leave the draft exactly as authored.
+    return draft;
+  }
+
+  return {
+    ...draft,
+    ...(footerDisclaimer !== undefined ? { footerDisclaimer } : {}),
+    ...(companyAddress !== undefined ? { companyAddress } : {}),
+    ...(unsubscribeUrl !== undefined ? { unsubscribeUrl } : {}),
+    text: `${draft.text}\n\n${footerLines.join("\n")}`,
   };
 }
 
@@ -49,9 +103,17 @@ async function runGate(
 
 /**
  * `createNewsletterAgentWorkflow()` (RFC-02 §5 — "same recipe" as the X,
- * LinkedIn, Reddit, and Blog pilots): the 16-step recurring/on-demand run
- * protocol, steps `00`–`15`. One edition, one run (RFC-01 §16.2's ruling) —
+ * LinkedIn, Reddit, and Blog pilots): the 20-step recurring/on-demand run
+ * protocol, steps `00`–`19`. One edition, one run (RFC-01 §16.2's ruling) —
  * no fan-out here; every newsletter run produces at most one deliverable.
+ * Grew three steps past the original 17-step recipe in Phase 2.5: the
+ * hype-language scan (10) and the footer-injection structural check (12) are
+ * now distinct steps rather than one combined "verify-brand-compliance" (so
+ * the scan never sees text the platform itself appended), and
+ * `gate.noPlaceholder`/`gate.leakCheck` (13/14) are now actually wired into
+ * the run instead of existing only for offline evals. Step 16 is a mandatory
+ * human `batch_review` gate (RFC-01 §8.3) unless `options.autoApprove` opts
+ * out.
  */
 export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWorkflowOptions) {
   const tools: AgentToolRegistry = { ...options.tools, "render.preview": renderPreview };
@@ -200,9 +262,32 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
     if (draftResult.status !== "completed") {
       throw new WorkflowToolingFailure(`draft step resolved to "${draftResult.status}"`);
     }
-    const draft = draftResult.finalOutput!;
+    const authoredDraft = draftResult.finalOutput!;
 
-    await wf.step.code("10-verify-numbers-sourced", async () => {
+    // Hype/forbidden-terms scan runs on the MODEL's own authored text, before the
+    // platform's compliance footer is anywhere near it (Phase-2.5 fix — see
+    // composeCompliantDraft's doc comment for why this ordering matters).
+    // requiredDisclaimer is deliberately omitted here: the footer that satisfies
+    // it hasn't been injected yet, and its presence is verified structurally at
+    // step 12 instead, not by re-running this hype-scanning gate against it.
+    await wf.step.code("10-verify-brand-compliance", async () => {
+      const forbiddenTerms = clientContext.brand["forbiddenTerms"] as string[] | undefined;
+      const verdict = await runGate(tools, "gate.brandCompliance", { text: authoredDraft.text, forbiddenTerms: forbiddenTerms ?? [] }, ctx);
+      if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.brandCompliance: ${verdict.reason}`);
+      if (verdict.verdict === "content_fail") throw new WorkflowHeld(`brand compliance failed: ${verdict.reason}`);
+      return verdict;
+    });
+
+    // Force-inject the client's locked compliance footer (disclaimer, company
+    // address, unsubscribe link) onto the model's own draft — never the model's
+    // own field, always the platform's (see composeCompliantDraft's doc comment
+    // above). Plain, deterministic code (not its own step) — a pure function of
+    // already-checkpointed step 09's output and step 01's client context, so
+    // resuming a run recomputes the exact same value without adding a step
+    // boundary.
+    const draft = composeCompliantDraft(authoredDraft, clientContext.brand);
+
+    await wf.step.code("11-verify-numbers-sourced", async () => {
       const sources = candidateSummary.hasNumericInsight ? [candidateSummary.sourceLabel] : [];
       const verdict = await runGate(tools, "gate.numbersSourced", { text: draft.text, sources }, ctx);
       if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.numbersSourced: ${verdict.reason}`);
@@ -210,15 +295,44 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
       return verdict;
     });
 
-    await wf.step.code("11-verify-brand-compliance", async () => {
-      const forbiddenTerms = clientContext.brand["forbiddenTerms"] as string[] | undefined;
-      const verdict = await runGate(tools, "gate.brandCompliance", { text: draft.text, forbiddenTerms: forbiddenTerms ?? [] }, ctx);
-      if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.brandCompliance: ${verdict.reason}`);
-      if (verdict.verdict === "content_fail") throw new WorkflowHeld(`brand compliance failed: ${verdict.reason}`);
+    // Structural backstop, not a re-run of the hype-scanning gate: confirms the
+    // footer this workflow itself just composed actually landed in the final
+    // text. A failure here means composeCompliantDraft was bypassed or broken —
+    // an internal bug, never a content problem — so it's a tooling failure, not
+    // a held run.
+    await wf.step.code("12-verify-compliance-footer", (): void => {
+      const requiredDisclaimer = clientContext.brand["requiredDisclaimer"] as string | undefined;
+      const companyAddress = clientContext.brand["companyAddress"] as string | undefined;
+      const unsubscribeUrl = clientContext.brand["unsubscribeUrl"] as string | undefined;
+      const lower = draft.text.toLowerCase();
+      const missing = [
+        requiredDisclaimer && !lower.includes(requiredDisclaimer.toLowerCase()) ? "footerDisclaimer" : undefined,
+        companyAddress && !lower.includes(companyAddress.toLowerCase()) ? "companyAddress" : undefined,
+        unsubscribeUrl && !lower.includes(unsubscribeUrl.toLowerCase()) ? "unsubscribeUrl" : undefined,
+      ].filter((field): field is string => field !== undefined);
+      if (missing.length > 0) {
+        throw new WorkflowToolingFailure(`compliance footer failed to inject configured field(s): ${missing.join(", ")}`);
+      }
+    });
+
+    // The shipped artifact's final gate pair — an unresolved placeholder or a
+    // leaked credential/internal term must hold the run before it ever reaches
+    // persistence, matching legacy's hard, unconditional delivery gates.
+    await wf.step.code("13-verify-no-placeholder", async () => {
+      const verdict = await runGate(tools, "gate.noPlaceholder", { text: draft.text }, ctx);
+      if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.noPlaceholder: ${verdict.reason}`);
+      if (verdict.verdict === "content_fail") throw new WorkflowHeld(`unresolved placeholder: ${verdict.reason}`);
       return verdict;
     });
 
-    await wf.step.code("12-render-preview-check", async () => {
+    await wf.step.code("14-verify-no-leak", async () => {
+      const verdict = await runGate(tools, "gate.leakCheck", { text: draft.text }, ctx);
+      if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.leakCheck: ${verdict.reason}`);
+      if (verdict.verdict === "content_fail") throw new WorkflowHeld(`leak check failed: ${verdict.reason}`);
+      return verdict;
+    });
+
+    await wf.step.code("15-render-preview-check", async () => {
       const outcome = await tools["render.preview"]!.execute(
         { subjectLine: draft.subjectLine, previewText: draft.previewText, text: draft.text },
         { ctx },
@@ -236,14 +350,31 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
       return preview;
     });
 
-    // ── 13-14: deliverable & manifest persistence ──
-    const deliverableId = await wf.step.code("13-persist-deliverable", async (): Promise<string> => {
+    // ── 16: human batch-review gate — nothing ships without a real approval ──
+    const reviewDecision: GateResponse = options.autoApprove
+      ? await wf.step.code("16-batch-review", () => ({
+          decision: "approve" as const,
+          actor: "system",
+          at: new Date().toISOString(),
+        }))
+      : await wf.step.gate("16-batch-review", {
+          kind: "batch_review",
+          payload: { runId: wf.runId, mainStory: selected.mainStory, theme, preview: draft.text },
+          requiredRole: "account_manager",
+          timeout: { duration: "24h", onTimeout: "hold" },
+        });
+    if (reviewDecision.decision !== "approve") {
+      throw new WorkflowHeld(`batch rejected: ${reviewDecision.reason ?? "no reason given"}`);
+    }
+
+    // ── 17-18: deliverable & manifest persistence ──
+    const deliverableId = await wf.step.code("17-persist-deliverable", async (): Promise<string> => {
       const outcome = await tools["ledger.writeDeliverable"]!.execute({ runId: wf.runId, kind: "newsletter-edition", deliverable: draft }, { ctx });
       if (outcome.status !== "success") throw new WorkflowToolingFailure(`ledger.writeDeliverable failed: ${outcome.status}`);
       return (outcome.result as { id: string }).id;
     });
 
-    await wf.step.code("14-persist-manifest", async () => {
+    await wf.step.code("18-persist-manifest", async () => {
       await tools["ledger.dashboardSnapshot"]!.execute(
         {
           runId: wf.runId,
@@ -259,8 +390,8 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
       );
     });
 
-    // ── 15: commit updates (topics.commit, memory.appendDecision, ledger.feedbackAppend) ──
-    await wf.step.code("15-commit-and-record", async () => {
+    // ── 19: commit updates (topics.commit, memory.appendDecision, ledger.feedbackAppend) ──
+    await wf.step.code("19-commit-and-record", async () => {
       if (selected.source === "reserved" && reservation.reservationKey) {
         await tools["topics.commit"]!.execute({ reservationKey: reservation.reservationKey }, { ctx });
       }
@@ -272,7 +403,7 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
         { ctx },
       );
       await tools["ledger.feedbackAppend"]!.execute(
-        { runId: wf.runId, feedbackId: `${wf.runId}__auto`, decision: "approve", actor: "system" },
+        { runId: wf.runId, feedbackId: `${wf.runId}__review`, decision: reviewDecision.decision, actor: reviewDecision.actor },
         { ctx },
       );
     });

@@ -15,6 +15,9 @@
   "gateArgs": {
     "brandCompliance": {
       "forbiddenTerms": ["guaranteed", "cheapest", "#1 in the industry"]
+    },
+    "numbersSourced": {
+      "sources": ["Q3 client survey: 68% of respondents said flexible scheduling improved output."]
     }
   },
   "endorsedBy": "tomer@karoslabs.com",

@@ -9,7 +9,7 @@ function baseFields() {
   return {
     sections: [{ heading: "A heading", body: "A body." }],
     callToAction: { text: "Do something", url: "https://example.com" },
-    signoff: "— The Team",
+    signoff: "The Team",
   };
 }
 
@@ -24,7 +24,7 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
     await env.cleanup();
   });
 
-  it("an unsourced numeric claim fails gate.numbersSourced at step 10 -> held", async () => {
+  it("an unsourced numeric claim fails gate.numbersSourced at step 11 -> held", async () => {
     const promptStore = makePromptStore();
     const intro = "Teams using anchor days saw scheduling conflicts fall 43% this quarter.";
     const router = fakeRouterSequence([
@@ -33,7 +33,7 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
         subjectLine: "A reasonable subject line",
         previewText: "A reasonable preview text.",
         intro,
-        text: `${intro}\n\n## A heading\n\nA body.\n\nDo something\n\n— The Team`,
+        text: `${intro}\n\n## A heading\n\nA body.\n\nDo something\n\nThe Team`,
       }),
     ]);
     const workflowFn = createNewsletterAgentWorkflow({ tools: env.tools, promptStore, router });
@@ -49,11 +49,12 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
     const stepRecords = await durableStore.listSteps("newsletter_run_gate_numbers");
     const ids = stepRecords.map((s) => s.stepId);
     expect(ids).toContain("09-draft-post");
-    expect(ids).toContain("10-verify-numbers-sourced");
-    expect(ids).not.toContain("11-verify-brand-compliance");
+    expect(ids).toContain("10-verify-brand-compliance");
+    expect(ids).toContain("11-verify-numbers-sourced");
+    expect(ids).not.toContain("12-verify-compliance-footer");
   });
 
-  it("a forbidden brand term fails gate.brandCompliance at step 11 -> held", async () => {
+  it("a forbidden brand term fails gate.brandCompliance at step 10 -> held", async () => {
     const promptStore = makePromptStore();
     const intro = "This approach is guaranteed to work for every team, every time.";
     const router = fakeRouterSequence([
@@ -62,7 +63,7 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
         subjectLine: "A reasonable subject line",
         previewText: "A reasonable preview text.",
         intro,
-        text: `${intro}\n\n## A heading\n\nA body.\n\nDo something\n\n— The Team`,
+        text: `${intro}\n\n## A heading\n\nA body.\n\nDo something\n\nThe Team`,
       }),
     ]);
     const workflowFn = createNewsletterAgentWorkflow({ tools: env.tools, promptStore, router });
@@ -77,8 +78,8 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
 
     const stepRecords = await durableStore.listSteps("newsletter_run_gate_brand");
     const ids = stepRecords.map((s) => s.stepId);
-    expect(ids).toContain("11-verify-brand-compliance");
-    expect(ids).not.toContain("12-render-preview-check");
+    expect(ids).toContain("10-verify-brand-compliance");
+    expect(ids).not.toContain("11-verify-numbers-sourced");
   });
 
   it("an over-limit first draft triggers a single self-critique revision, then completes", async () => {
@@ -93,17 +94,17 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
         subjectLine: "A reasonable subject line",
         previewText: "A reasonable preview text.",
         intro,
-        text: `${intro}\n\n## A heading\n\nA body.\n\nDo something\n\n— The Team`,
+        text: `${intro}\n\n## A heading\n\nA body.\n\nDo something\n\nThe Team`,
       }),
       finalTurn({
         ...baseFields(),
         subjectLine: "A reasonable subject line",
         previewText: "A reasonable preview text.",
         intro: "A shorter intro this time.",
-        text: "A shorter intro this time.\n\n## A heading\n\nA body.\n\nDo something\n\n— The Team",
+        text: "A shorter intro this time.\n\n## A heading\n\nA body.\n\nDo something\n\nThe Team",
       }),
     ]);
-    const workflowFn = createNewsletterAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createNewsletterAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
@@ -115,10 +116,10 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
     expect(result.output.mainStory).toBeTruthy();
 
     const stepRecords = await durableStore.listSteps("newsletter_run_gate_revision");
-    expect(stepRecords.map((s) => s.stepId)).toContain("15-commit-and-record");
+    expect(stepRecords.map((s) => s.stepId)).toContain("19-commit-and-record");
   });
 
-  it("a subject line over the 70-char limit is caught at step 12, distinct from preview/body limits", async () => {
+  it("a subject line over the 70-char limit is caught at step 15, distinct from preview/body limits", async () => {
     const promptStore = makePromptStore();
     const tooLongSubject = "This subject line is way too long for an inbox. ".repeat(3); // > 70 chars
     const intro = "A short, reasonable intro.";
@@ -128,10 +129,10 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
         subjectLine: tooLongSubject,
         previewText: "A reasonable preview text.",
         intro,
-        text: `${intro}\n\n## A heading\n\nA body.\n\nDo something\n\n— The Team`,
+        text: `${intro}\n\n## A heading\n\nA body.\n\nDo something\n\nThe Team`,
       }),
     ]);
-    const workflowFn = createNewsletterAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createNewsletterAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
@@ -142,7 +143,7 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
     expect(result.reason).toMatch(/subject line exceeds the 70-character limit/i);
   });
 
-  it("a preview text over the 140-char limit is caught at step 12, distinct from subject/body limits", async () => {
+  it("a preview text over the 140-char limit is caught at step 15, distinct from subject/body limits", async () => {
     const promptStore = makePromptStore();
     const tooLongPreview = "This preview text is going to run on for quite a while, well past what any inbox client would actually render for a subscriber. ".repeat(2);
     const intro = "A short, reasonable intro.";
@@ -152,10 +153,10 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
         subjectLine: "A reasonable subject line",
         previewText: tooLongPreview,
         intro,
-        text: `${intro}\n\n## A heading\n\nA body.\n\nDo something\n\n— The Team`,
+        text: `${intro}\n\n## A heading\n\nA body.\n\nDo something\n\nThe Team`,
       }),
     ]);
-    const workflowFn = createNewsletterAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createNewsletterAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 

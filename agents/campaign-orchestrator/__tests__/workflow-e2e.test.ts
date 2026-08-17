@@ -81,9 +81,30 @@ describe("end-to-end: the 16-step campaign orchestrator workflow (multi-channel 
     const slotsBeforeGate = await durableStore.listSlots(params.runId, "channel-fanout");
     expect(slotsBeforeGate).toHaveLength(5);
     expect(slotsBeforeGate.every((s) => s.status === "completed")).toBe(true);
-    // Every channel's own nested 16-step workflow really executed under this run.
+    // Every channel's own nested workflow really executed under this run. Each
+    // channel restructured its own workflow independently in Phase 2.5 Batch 2
+    // (lane/archetype/thread-selection steps inserted before the draft), so the
+    // draft step's own id/number now differs per channel — the plan's slot order
+    // is x/linkedin/reddit/blog/newsletter. Reddit's draft step is also named
+    // "-draft-reply", not "-draft-post", since it drafts a reply, not a post.
+    const draftStepSuffix = (slotIndex: number): string => {
+      switch (slotIndex) {
+        case 0:
+          return "10-draft-post"; // x: 08-select-lane, 09-check-engagement-cap precede it
+        case 1:
+          return "09-draft-post"; // linkedin: 08-determine-archetype precedes it
+        case 2:
+          return "12-draft-reply"; // reddit: 08-select-target-thread, 09-check-thread-not-answered, 10-verify-subreddit-eligibility, 11-determine-angle precede it
+        case 3:
+          return "09-draft-post"; // blog: unchanged
+        case 4:
+          return "09-draft-post"; // newsletter: unchanged
+        default:
+          throw new Error(`unexpected slot index ${slotIndex}`);
+      }
+    };
     for (let i = 0; i < 5; i++) {
-      const nestedDraftStep = stepsBeforeGate.find((s) => s.stepId === `channel-fanout__slot_${i}::09-draft-post`);
+      const nestedDraftStep = stepsBeforeGate.find((s) => s.stepId === `channel-fanout__slot_${i}::${draftStepSuffix(i)}`);
       expect(nestedDraftStep?.status).toBe("completed");
     }
 
@@ -111,7 +132,7 @@ describe("end-to-end: the 16-step campaign orchestrator workflow (multi-channel 
     // on the real file-backed WorkspaceStore under the same run, tenant-scoped.
     const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
     expect(deliverables.map((d) => d.id).sort()).toEqual(
-      ["blog-post", "campaign-bundle", "linkedin-post", "newsletter-edition", "reddit-post", "x-post"].sort(),
+      ["blog-post", "campaign-bundle", "linkedin-post", "newsletter-edition", "reddit-reply", "x-post"].sort(),
     );
 
     const stepRecords = await durableStore.listSteps(params.runId);
@@ -120,7 +141,7 @@ describe("end-to-end: the 16-step campaign orchestrator workflow (multi-channel 
     const descriptors: DynamicAgentStepDescriptor[] = [
       ...ORCHESTRATOR_STEP_IDS.map((stepId) => ({ stepId, label: stepId, type: stepId === "07-generate-strategy-plan" ? ("ai" as const) : ("code" as const) })),
       ...slotRecords.map((slot, i) => ({ stepId: slot.slotId, label: `channel slot ${i}`, type: "code" as const })),
-      ...[0, 1, 2, 3, 4].map((i) => ({ stepId: `channel-fanout__slot_${i}::09-draft-post`, label: `channel ${i} draft`, type: "ai" as const })),
+      ...[0, 1, 2, 3, 4].map((i) => ({ stepId: `channel-fanout__slot_${i}::${draftStepSuffix(i)}`, label: `channel ${i} draft`, type: "ai" as const })),
     ];
     const runRecord = await durableStore.getRun(params.runId);
     const report = serializeToDynamicAgentRunReport({
@@ -136,7 +157,7 @@ describe("end-to-end: the 16-step campaign orchestrator workflow (multi-channel 
     expect(report.steps.every((s) => s.status === "done")).toBe(true);
 
     // Cost/token telemetry really aggregates across every child channel's own draft step.
-    const draftStepReports = report.steps.filter((s) => s.stepId.endsWith("::09-draft-post"));
+    const draftStepReports = report.steps.filter((s) => s.stepId.endsWith("-draft-post") || s.stepId.endsWith("-draft-reply"));
     expect(draftStepReports).toHaveLength(5);
     for (const draftStep of draftStepReports) {
       expect(draftStep.costUsd).toBeGreaterThan(0);

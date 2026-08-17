@@ -29,6 +29,8 @@ export const BlogGoldenRunSchema = z.object({
   gateArgs: z
     .object({
       brandCompliance: z.object({ forbiddenTerms: z.array(z.string()).optional() }).optional(),
+      /** Real source content backing this article's numeric claims — `gate.numbersSourced` is strict: a claim's exact figure must literally appear here, a citation marker in the text alone is not enough. */
+      numbersSourced: z.object({ sources: z.array(z.string()).optional() }).optional(),
     })
     .default({}),
   endorsedBy: z.string().min(1),

@@ -10,6 +10,13 @@ import { BaseAgent, type AgentStepConfig } from "@agent-engine/core";
  * article exactly as it will be published (`title` + `bodyMarkdown`) — the
  * single field every gate and the render check actually operate on, same
  * role `text` plays on the X, LinkedIn, and Reddit agents' output.
+ * `faqItems` is an optional-but-structurally-present FAQ block for
+ * GEO/AI-answer-engine targeting — real structured Q&A data, not prose
+ * buried inside `bodyMarkdown`; an empty array is valid when the article
+ * genuinely has no distinct questions to answer. `canonicalUrl` is derived
+ * by the workflow from the client's own configured domain plus this
+ * article's `slug` when a domain is available, and left unset otherwise —
+ * never fabricated by the model itself.
  */
 export const BlogPostOutputSchema = z.object({
   title: z.string().min(1),
@@ -20,6 +27,8 @@ export const BlogPostOutputSchema = z.object({
   metaDescription: z.string().min(1),
   estimatedReadMinutes: z.number().positive(),
   text: z.string().min(1),
+  faqItems: z.array(z.object({ question: z.string().min(1), answer: z.string().min(1) })).default([]),
+  canonicalUrl: z.string().url().optional(),
 });
 export type BlogPostOutput = z.infer<typeof BlogPostOutputSchema>;
 

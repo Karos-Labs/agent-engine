@@ -6,11 +6,19 @@ import {
   type DynamicAgentStepDescriptor,
 } from "@agent-engine/workflow";
 import { createRedditAgentWorkflow } from "../src/workflow/create-reddit-agent-workflow.js";
-import { fakeRouterSequence, finalTurn, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import {
+  DEFAULT_TARGET_THREAD_TITLE,
+  DEFAULT_TARGET_THREAD_URL,
+  fakeRouterSequence,
+  finalTurn,
+  makePromptStore,
+  setupTestEnvironment,
+  type TestEnvironment,
+} from "./test-helpers.js";
 
 const params = { runId: "reddit_run_1", clientSlug: "acme", productId: "reddit-agent", runKind: "recurring" as const };
 
-const ALL_16_STEP_IDS = [
+const ALL_22_STEP_IDS = [
   "00-intake-check",
   "01-load-client-context",
   "02-load-memory-shelf",
@@ -19,33 +27,42 @@ const ALL_16_STEP_IDS = [
   "05-extract-candidate-summary",
   "06-reserve-topic",
   "07-select-candidate",
-  "08-determine-angle",
-  "09-draft-post",
-  "10-verify-numbers-sourced",
-  "11-verify-brand-compliance",
-  "12-render-preview-check",
-  "13-persist-deliverable",
-  "14-persist-manifest",
-  "15-commit-and-record",
+  "08-select-target-thread",
+  "09-check-thread-not-answered",
+  "10-verify-subreddit-eligibility",
+  "11-determine-angle",
+  "12-draft-reply",
+  "13-verify-numbers-sourced",
+  "14-verify-brand-compliance",
+  "15-verify-no-placeholder",
+  "16-verify-leak-check",
+  "17-render-preview-check",
+  "18-batch-review",
+  "19-persist-deliverable",
+  "20-persist-manifest",
+  "21-commit-and-record",
 ];
 
 function goodDraft() {
-  const title = "Our team switched to a 4-day week 3 months ago — sharing what actually changed";
-  const body =
+  const replyBody =
     "We run a small B2B SaaS shop and moved most of engineering to a 4-day week last quarter as a trial.\n\n" +
-    "Internal tracking showed an 18% [1] drop in reported sick days across the team.\n\n" +
-    "Has anyone else run a trial like this?";
+    "Sick days dropped noticeably across the team, and shipped feature count stayed roughly flat.\n\n" +
+    "Has anyone else run a trial like this? Curious what broke for you that didn't show up in the first month.";
   return {
-    title,
-    body,
+    targetThreadUrl: DEFAULT_TARGET_THREAD_URL,
+    targetThreadTitle: DEFAULT_TARGET_THREAD_TITLE,
+    replyBody,
     targetSubreddit: "smallbusiness",
-    flair: "",
-    hook: "We run a small B2B SaaS shop and moved most of engineering to a 4-day week last quarter as a trial.",
-    text: `${title}\n\n${body}`,
+    disclosureIncluded: false,
+    text: replyBody,
   };
 }
 
-describe("end-to-end: the 16-step Reddit agent workflow", () => {
+function goodDraftRouter() {
+  return fakeRouterSequence([finalTurn(goodDraft())]);
+}
+
+describe("end-to-end: the 22-step Reddit agent reply-only workflow", () => {
   let env: TestEnvironment;
 
   beforeEach(async () => {
@@ -56,10 +73,10 @@ describe("end-to-end: the 16-step Reddit agent workflow", () => {
     await env.cleanup();
   });
 
-  it("executes all 16 steps and resolves to completed / domainOutcome: delivered", async () => {
+  it("executes all 22 steps and resolves to completed / domainOutcome: delivered (auto-approved gate)", async () => {
     const promptStore = makePromptStore();
-    const router = fakeRouterSequence([finalTurn(goodDraft())]);
-    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router });
+    const router = goodDraftRouter();
+    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
 
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
@@ -68,26 +85,31 @@ describe("end-to-end: the 16-step Reddit agent workflow", () => {
     expect(result.status).toBe("completed");
     if (result.status !== "completed") throw new Error("unreachable");
     expect(result.output.topic).toBeTruthy();
+    expect(result.output.targetThreadUrl).toBe(DEFAULT_TARGET_THREAD_URL);
     expect(result.output.targetSubreddit).toBe("smallbusiness");
     expect(result.totalCostUsd).toBeGreaterThan(0);
 
     const stepRecords = await durableStore.listSteps(params.runId);
     const executedIds = stepRecords.map((s) => s.stepId).sort();
-    expect(executedIds).toEqual([...ALL_16_STEP_IDS].sort());
+    expect(executedIds).toEqual([...ALL_22_STEP_IDS].sort());
     expect(stepRecords.every((s) => s.status === "completed")).toBe(true);
 
     // The deliverable really landed on the real file-backed WorkspaceStore, tenant-scoped.
     const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
-    expect(deliverables.map((d) => d.id)).toEqual(["reddit-post"]);
+    expect(deliverables.map((d) => d.id)).toEqual(["reddit-reply"]);
 
-    // The reserved topic was actually committed (consumed) at step 15, not left dangling.
+    // The reserved topic was actually committed (consumed) at the final step, not left dangling.
     const catalog = await env.store.readJson<Array<{ status: string }>>("acme", ["topics", "catalog"]);
     expect(catalog?.some((t) => t.status === "committed")).toBe(true);
 
-    const descriptors: DynamicAgentStepDescriptor[] = ALL_16_STEP_IDS.map((stepId) => ({
+    // The target thread URL is recorded so a future run's step 09 dedup check can find it.
+    const decisions = await env.store.listJson("acme", ["memory", "decisions"]);
+    expect(decisions.some((d) => (d.data as { summary: string }).summary.includes(DEFAULT_TARGET_THREAD_URL))).toBe(true);
+
+    const descriptors: DynamicAgentStepDescriptor[] = ALL_22_STEP_IDS.map((stepId) => ({
       stepId,
       label: stepId,
-      type: stepId === "09-draft-post" ? "ai" : "code",
+      type: stepId === "12-draft-reply" ? "ai" : "code",
     }));
     const runRecord = await durableStore.getRun(params.runId);
     const report = serializeToDynamicAgentRunReport({
@@ -101,8 +123,106 @@ describe("end-to-end: the 16-step Reddit agent workflow", () => {
 
     expect(report.domainOutcome).toBe("delivered");
     expect(report.steps.every((s) => s.status === "done")).toBe(true);
-    const draftStep = report.steps.find((s) => s.stepId === "09-draft-post")!;
+    const draftStep = report.steps.find((s) => s.stepId === "12-draft-reply")!;
     expect(draftStep.costUsd).toBeGreaterThan(0);
     expect(draftStep.model).toBe("claude-sonnet-4-6");
+  });
+
+  it("pauses at the human batch-review gate by default, then resumes to completed on approval (RFC-01 §8.3)", async () => {
+    const promptStore = makePromptStore();
+    const router = goodDraftRouter();
+    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router });
+
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+
+    const first = await engine.run(workflowFn, params);
+    expect(first.status).toBe("awaiting_gate");
+    if (first.status !== "awaiting_gate") throw new Error("unreachable");
+    expect(first.pendingGateId).toContain("18-batch-review");
+
+    const deliverablesBeforeApproval = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
+    expect(deliverablesBeforeApproval).toHaveLength(0);
+
+    await engine.resolveGate(params.runId, "18-batch-review", {
+      decision: "approve",
+      actor: "jane@karoslabs.com",
+      at: new Date(2026, 7, 16).toISOString(),
+    });
+
+    const second = await engine.run(workflowFn, params);
+    expect(second.status).toBe("completed");
+    expect(router.complete).toHaveBeenCalledTimes(1);
+
+    const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
+    expect(deliverables.map((d) => d.id)).toEqual(["reddit-reply"]);
+
+    const stepRecords = await durableStore.listSteps(params.runId);
+    const nonGateStepIds = ALL_22_STEP_IDS.filter((id) => id !== "18-batch-review");
+    expect(stepRecords.map((s) => s.stepId).sort()).toEqual([...nonGateStepIds].sort());
+    expect(stepRecords.every((s) => s.status === "completed")).toBe(true);
+  });
+
+  it("rejects the batch review with a reason -> held, and the deliverable never ships", async () => {
+    const promptStore = makePromptStore();
+    const router = goodDraftRouter();
+    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router });
+
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+
+    await engine.run(workflowFn, params);
+    await engine.resolveGate(params.runId, "18-batch-review", {
+      decision: "reject",
+      actor: "jane@karoslabs.com",
+      reason: "not on brand this week",
+      at: new Date(2026, 7, 16).toISOString(),
+    });
+
+    const result = await engine.run(workflowFn, params);
+    expect(result.status).toBe("held");
+    if (result.status !== "held") throw new Error("unreachable");
+    expect(result.reason).toMatch(/batch rejected/i);
+
+    const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
+    expect(deliverables).toHaveLength(0);
+  });
+
+  it("holds the run when the client has no target thread candidate — a submission-only fallback is never fabricated", async () => {
+    const noThreadEnv = await setupTestEnvironment({ withTargetThread: false });
+    const promptStore = makePromptStore();
+    const router = fakeRouterSequence([finalTurn(goodDraft())]);
+    const workflowFn = createRedditAgentWorkflow({ tools: noThreadEnv.tools, promptStore, router, autoApprove: true });
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+
+    const result = await engine.run(workflowFn, { ...params, runId: "reddit_run_no_thread" });
+
+    expect(result.status).toBe("held");
+    if (result.status !== "held") throw new Error("unreachable");
+    expect(result.reason).toMatch(/no target thread available/i);
+    expect(router.complete).not.toHaveBeenCalled();
+
+    await noThreadEnv.cleanup();
+  });
+
+  it("holds the run when requestedThreadUrl isn't a real reddit.com thread URL", async () => {
+    await env.store.writeJson("acme", ["client", "config"], {
+      targetSubreddits: ["smallbusiness"],
+      requestedThreadUrl: "https://example.com/not-reddit",
+      requestedThreadTitle: "Not a real thread",
+    });
+    const promptStore = makePromptStore();
+    const router = fakeRouterSequence([finalTurn(goodDraft())]);
+    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+
+    const result = await engine.run(workflowFn, { ...params, runId: "reddit_run_bad_thread_url" });
+
+    expect(result.status).toBe("held");
+    if (result.status !== "held") throw new Error("unreachable");
+    expect(result.reason).toMatch(/doesn't look like a real reddit\.com thread URL/i);
+    expect(router.complete).not.toHaveBeenCalled();
   });
 });

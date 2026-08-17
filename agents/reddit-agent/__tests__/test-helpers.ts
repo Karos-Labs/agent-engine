@@ -46,9 +46,21 @@ export interface TestEnvironment {
 
 const BASE_CTX_FIELDS = { clientSlug: "acme", productId: "reddit-agent", runKind: "recurring" as const };
 
-export async function setupTestEnvironment(opts: { withTargetSubreddits?: boolean; withBrand?: boolean } = {}): Promise<TestEnvironment> {
+/**
+ * Phase 1 has no live thread-discovery backend (see workflow step 08's own
+ * comment), so a target thread only ever comes from an explicit client
+ * intake candidate — this is the one every test that expects the run to
+ * reach a real thread uses by default.
+ */
+export const DEFAULT_TARGET_THREAD_URL = "https://www.reddit.com/r/smallbusiness/comments/abc123/our_team_tried_a_4_day_week/";
+export const DEFAULT_TARGET_THREAD_TITLE = "Our team tried a 4-day work week: anyone else run a trial like this?";
+
+export async function setupTestEnvironment(
+  opts: { withTargetSubreddits?: boolean; withBrand?: boolean; withTargetThread?: boolean } = {},
+): Promise<TestEnvironment> {
   const withTargetSubreddits = opts.withTargetSubreddits ?? true;
   const withBrand = opts.withBrand ?? true;
+  const withTargetThread = opts.withTargetThread ?? true;
   const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "reddit-agent-test-"));
   const store = new WorkspaceStore(rootDir);
   const tools = createAllKarosTools(store);
@@ -60,7 +72,10 @@ export async function setupTestEnvironment(opts: { withTargetSubreddits?: boolea
     await store.writeJson("acme", ["client", "brand"], { forbiddenTerms: ["guaranteed", "the best", "#1"] });
   }
   if (withTargetSubreddits) {
-    await store.writeJson("acme", ["client", "config"], { targetSubreddits: ["smallbusiness", "startups"] });
+    await store.writeJson("acme", ["client", "config"], {
+      targetSubreddits: ["smallbusiness", "startups"],
+      ...(withTargetThread ? { requestedThreadUrl: DEFAULT_TARGET_THREAD_URL, requestedThreadTitle: DEFAULT_TARGET_THREAD_TITLE } : {}),
+    });
   }
   await tools["topics.topUp"]!.execute({ topics: ["four-day work weeks", "remote hiring", "customer support tooling"] }, { ctx: seedCtx });
 

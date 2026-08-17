@@ -150,8 +150,10 @@ async function runXAgentDemo(workspaceStore: WorkspaceStore, tools: ReturnType<t
 
   const draft: XPostOutput = {
     text: "More teams are testing 4-day weeks this quarter. Early internal data [1] shows steady output with fewer sick days.",
+    mainPostText: "More teams are testing 4-day weeks this quarter. Early internal data [1] shows steady output with fewer sick days.",
     hook: "More teams are testing 4-day weeks this quarter.",
     angle: "data-point",
+    lane: "knowledge",
     targetHandle: "@acmecorp",
     mediaRefs: [],
   };
@@ -230,6 +232,7 @@ async function runLinkedInAgentDemo(workspaceStore: WorkspaceStore, tools: Retur
     hashtags: ["HybridWork", "FutureOfWork"],
     callToAction: "If your team is still negotiating its hybrid policy week to week, a fixed anchor-day structure might be worth testing.",
     targetAudience: "People leaders and operations managers evaluating hybrid work policies",
+    archetype: "industry-reaction",
     text:
       "We looked at attendance data across our hybrid client base this quarter, and the pattern surprised us.\n\n" +
       "Teams with a fixed two-day in-office schedule reported 18% [1] fewer scheduling conflicts than teams with fully flexible policies.\n\n" +

@@ -13,22 +13,23 @@ const SRC_ROOT = path.join(HERE, "..", "src");
 const ctx: AgentContext = { runId: "run_1", clientSlug: "acme", productId: "reddit-agent", runKind: "recurring", metadata: {} };
 
 function sampleDraft() {
+  const replyBody = "A reply.";
   return {
-    title: "A title",
-    body: "A body.",
+    targetThreadUrl: "https://www.reddit.com/r/smallbusiness/comments/abc123/a_thread/",
+    targetThreadTitle: "A thread",
+    replyBody,
     targetSubreddit: "smallbusiness",
-    flair: "",
-    hook: "A hook.",
-    text: "A title\n\nA body.",
+    disclosureIncluded: false,
+    text: replyBody,
   };
 }
 
 describe("PromptStore resolution (RFC-01 §16.1)", () => {
-  it("resolves 'reddit-craft@1' to the real prompts/reddit-craft/1.md file content", async () => {
+  it("resolves 'reddit-craft@2' to the real prompts/reddit-craft/2.md file content", async () => {
     const promptStore = makePromptStore();
-    const resolved = await promptStore.getPrompt("reddit-craft", "1");
-    expect(resolved).toContain("Hook construction");
-    expect(resolved).toContain("One post, one run");
+    const resolved = await promptStore.getPrompt("reddit-craft", "2");
+    expect(resolved).toContain("Comments only, never original posts");
+    expect(resolved).toContain("four answer shapes");
   });
 
   it("resolves 'reddit-craft' (no version) to prompts/reddit-craft/latest.md", async () => {
@@ -45,7 +46,7 @@ describe("PromptStore resolution (RFC-01 §16.1)", () => {
 
     await agent.run(ctx, {});
 
-    const expectedPrompt = readFileSync(path.join(PROMPTS_ROOT, "reddit-craft", "1.md"), "utf8");
+    const expectedPrompt = readFileSync(path.join(PROMPTS_ROOT, "reddit-craft", "2.md"), "utf8");
     expect(router.complete).toHaveBeenCalledWith(
       expect.any(String),
       expect.anything(),
@@ -82,20 +83,20 @@ describe("zero hardcoded prompts (RFC-01 §16.1)", () => {
     return files;
   }
 
-  // Distinctive phrases from prompts/reddit-craft/1.md — if any of these appear
+  // Distinctive phrases from prompts/reddit-craft/2.md — if any of these appear
   // in TypeScript source, the craft content has been duplicated as a literal
   // instead of living only in the markdown file resolved via PromptStore.
   const CRAFT_CONTENT_MARKERS = [
-    "Redditors can tell a marketing post from a real one within a sentence",
-    'No manufactured enthusiasm ("This is INSANE, you guys")',
+    "Redditors can tell a marketing reply from a real one within a sentence",
+    "That was wrong. A thread to reply to has already been selected for you",
     "never invent a plausible-sounding statistic",
     "No competitor names, ever, even neutrally.",
   ];
 
   it("sanity check: the markers really do appear in the prompt file (so the negative check below is meaningful)", () => {
-    const promptContent = readFileSync(path.join(PROMPTS_ROOT, "reddit-craft", "1.md"), "utf8");
+    const promptContent = readFileSync(path.join(PROMPTS_ROOT, "reddit-craft", "2.md"), "utf8");
     for (const marker of CRAFT_CONTENT_MARKERS) {
-      expect(promptContent.includes(marker), `expected "${marker}" to actually be in reddit-craft/1.md`).toBe(true);
+      expect(promptContent.includes(marker), `expected "${marker}" to actually be in reddit-craft/2.md`).toBe(true);
     }
   });
 
@@ -113,6 +114,6 @@ describe("zero hardcoded prompts (RFC-01 §16.1)", () => {
 
   it("RedditDraftAgent's config carries a skillRef, not an inline system prompt field", () => {
     const configSource = readFileSync(path.join(SRC_ROOT, "agent", "reddit-draft-agent.ts"), "utf8");
-    expect(configSource).toMatch(/skillRef:\s*"reddit-craft@1"/);
+    expect(configSource).toMatch(/skillRef:\s*"reddit-craft@2"/);
   });
 });

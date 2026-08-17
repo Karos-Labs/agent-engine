@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { BaseAgent, type AgentStepConfig } from "@agent-engine/core";
+import { LINKEDIN_ARCHETYPES } from "../workflow/types.js";
 
 /**
  * A single LinkedIn post (RFC-02 §5). `headline`, `hook`, `body`,
@@ -8,7 +9,13 @@ import { BaseAgent, type AgentStepConfig } from "@agent-engine/core";
  * published (`hook` + `body` + `callToAction` + hashtags) — the single
  * field every gate and the render check actually operate on, same role
  * `text` plays on the X agent's output. `headline` is never published; it's
- * an internal working title for the client's content calendar.
+ * an internal working title for the client's content calendar. `archetype`
+ * is the restored lane/mix concept (Phase 2.5 Batch 2.2, source of truth
+ * `linkedin-voice-by-industry.md`'s 11 founder archetypes) — the model
+ * echoes back which archetype it actually wrote the post in (it is handed
+ * a chosen archetype as input; this field is the ground truth of what
+ * shipped, which is what the workflow records for the next run's
+ * never-repeat-the-last-lane check).
  */
 export const LinkedInPostOutputSchema = z.object({
   headline: z.string().min(1),
@@ -18,6 +25,7 @@ export const LinkedInPostOutputSchema = z.object({
   callToAction: z.string().min(1),
   targetAudience: z.string().min(1),
   text: z.string().min(1),
+  archetype: z.enum(LINKEDIN_ARCHETYPES),
 });
 export type LinkedInPostOutput = z.infer<typeof LinkedInPostOutputSchema>;
 
@@ -45,7 +53,7 @@ export class LinkedInDraftAgent extends BaseAgent<LinkedInPostOutput> {
     // Pinned — RFC-02 §5: claude-sonnet-4-6 today, claude-sonnet-5 is an
     // equally acceptable pin once available; never a fallback for a pinned step.
     modelPolicy: { policy: "pinned", model: "claude-sonnet-4-6" },
-    skillRef: "linkedin-craft@1",
+    skillRef: "linkedin-craft@2",
     selfCritique: { gateTool: "gate.lintPost", maxRevisions: 1, gateArgs: { platform: "linkedin" } },
   };
 }

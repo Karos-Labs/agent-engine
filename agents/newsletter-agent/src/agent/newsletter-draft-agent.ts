@@ -20,10 +20,15 @@ export type NewsletterCallToAction = z.infer<typeof NewsletterCallToActionSchema
  * A single newsletter edition (RFC-02 §5). `subjectLine` and `previewText`
  * are inbox metadata — they never appear inside the sent body itself, so
  * they're deliberately excluded from `text`. `text` is the fully composed
- * edition body exactly as it will be sent (`intro` + each section's
+ * edition body as the model authors it (`intro` + each section's
  * `heading`/`body` + `callToAction.text` + `signoff`) — the single field
  * every gate and the render check's body limit actually operate on, same
- * role `text` plays on the X, LinkedIn, Reddit, and Blog agents' output.
+ * role `text` plays on the X, LinkedIn, Reddit, and Blog agents' output. The
+ * workflow (`create-newsletter-agent-workflow.ts`, right after this step)
+ * force-appends the client's compliance footer — `footerDisclaimer`,
+ * `companyAddress`, `unsubscribeUrl` — onto `text` before any gate runs, so
+ * the version every gate and the persisted deliverable actually see is the
+ * true sent body, footer included.
  */
 export const NewsletterPostOutputSchema = z.object({
   subjectLine: z.string().min(1),
@@ -33,6 +38,25 @@ export const NewsletterPostOutputSchema = z.object({
   callToAction: NewsletterCallToActionSchema,
   signoff: z.string().min(1),
   text: z.string().min(1),
+  /**
+   * The client's locked compliance footer (e.g. "Acme Corp does not provide
+   * financial advice; results may vary.") — never authored by the model.
+   * Optional because not every client needs full compliance footer
+   * treatment, but structurally present so the workflow has a real field to
+   * force-inject the client's `requiredDisclaimer` into (RFC-02 §5's
+   * migration-audit fix: the legacy `compliance-gate.mjs` force-injected
+   * this at render time and never let the model write it itself).
+   */
+  footerDisclaimer: z.string().optional(),
+  /**
+   * The client's unsubscribe link — never authored by the model. The
+   * workflow populates this from the client's brand config, the same
+   * "platform supplies it, the model never touches it" rule as
+   * `footerDisclaimer`.
+   */
+  unsubscribeUrl: z.string().optional(),
+  /** The client's CAN-SPAM-required physical mailing address — never authored by the model, populated by the workflow the same way. */
+  companyAddress: z.string().optional(),
 });
 export type NewsletterPostOutput = z.infer<typeof NewsletterPostOutputSchema>;
 

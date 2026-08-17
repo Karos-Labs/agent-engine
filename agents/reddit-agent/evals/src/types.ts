@@ -2,12 +2,18 @@ import { z } from "zod";
 
 /**
  * A golden run for the Reddit agent (RFC-01 §12 bullet 1): a frozen input
- * bundle plus a human-endorsed Reddit post, signed off before the first
- * automated run. Scoped to Reddit specifically (fixed `platform: "reddit"`,
- * the real 300-char title / 40,000-char body limits) rather than reusing
- * the generic `evals/` package's `GoldenRun` — small and Reddit-specific
- * enough that a shared type would cost more than it saves. Mirrors the X
- * and LinkedIn agents' golden-run schemas (same recipe, RFC-02 §5).
+ * bundle plus a human-endorsed Reddit reply, signed off before the first
+ * automated run. Scoped to Reddit specifically (the real 10,000-character
+ * comment limit) rather than reusing the generic `evals/` package's
+ * `GoldenRun` — small and Reddit-specific enough that a shared type would
+ * cost more than it saves. Mirrors the X and LinkedIn agents' golden-run
+ * schemas (same recipe, RFC-02 §5).
+ *
+ * Phase 2.5 Batch 2.1: `endorsedOutput` was reshaped from a submission
+ * (`title`/`body`/`targetSubreddit`/`flair`/`hook`/`platform`) to a reply
+ * (`targetThreadUrl`/`targetThreadTitle`/`replyBody`/`targetSubreddit`/
+ * `disclosureIncluded`/`text`), matching `RedditReplyOutputSchema` — legacy's
+ * non-negotiable rule is "comments only, never original posts."
  */
 export const RedditGoldenRunSchema = z.object({
   id: z.string().min(1),
@@ -15,13 +21,13 @@ export const RedditGoldenRunSchema = z.object({
   agentId: z.string().min(1),
   input: z.record(z.string(), z.unknown()),
   endorsedOutput: z.object({
-    title: z.string().min(1),
-    body: z.string().min(1),
+    targetThreadUrl: z.string().min(1),
+    targetThreadTitle: z.string().min(1),
+    parentCommentId: z.string().min(1).optional(),
+    replyBody: z.string().min(1),
     targetSubreddit: z.string().min(1),
-    flair: z.string(),
-    hook: z.string().min(1),
+    disclosureIncluded: z.boolean(),
     text: z.string().min(1),
-    platform: z.literal("reddit"),
   }),
   gateArgs: z
     .object({

@@ -99,7 +99,34 @@ just finished, not restate the article's whole premise as a sales pitch.
 - No wall-of-text sections — if a paragraph runs past five or six
   sentences without a break, it needs to split.
 
-## 9. slug, excerpt, estimatedReadMinutes, and text
+## 9. Direct-answer framing and the FAQ block (GEO / AI-answer-engine targeting)
+
+Every article leads with a direct, concrete answer to its own title question,
+in one paragraph near the top, in the first one to two sentences, before any
+scene-setting or story preamble. This is not conditional on the target
+keyword being phrased as a question ("how do I...", "what is...") — it
+applies universally. The direct-answer paragraph is the single most-quoted
+element of any article: write it so it makes sense lifted out on its own,
+with no surrounding sentence, because that is exactly what happens to it — a
+reader skimming the page, or an AI answer engine (ChatGPT, Perplexity, an AI
+Overview) summarizing and citing it, should be able to read just the opening
+and already have the real answer, not a promise that the answer is coming
+further down.
+
+When the article substantively answers two or more genuinely distinct
+questions, populate `faqItems` with 2-4 Q&A pairs drawn directly from what
+the article already says. Each answer must be traceable to a claim already
+substantiated in `bodyMarkdown` — never invent a fact for `faqItems` that
+isn't already in the article. Each answer must also be fully self-contained:
+write it as its own citation-worthy paragraph that makes complete sense
+read in isolation, never "see above," "as covered earlier," or any other
+reference back to the main body — an answer engine quoting an FAQ answer
+will never show the rest of the page alongside it. Not every article earns
+an FAQ block: if there's nothing genuinely distinct to ask and answer beyond
+the body's own structure, leave `faqItems` as an empty array rather than
+padding it out with restated section headers.
+
+## 10. slug, excerpt, estimatedReadMinutes, and text
 
 `excerpt` is the one- to two-sentence teaser used on a blog index page —
 distinct from `metaDescription`, which is written for a search results

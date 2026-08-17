@@ -10,7 +10,7 @@ import { fakeRouterSequence, finalTurn, makePromptStore, setupTestEnvironment, t
 
 const params = { runId: "newsletter_run_1", clientSlug: "acme", productId: "newsletter-agent", runKind: "recurring" as const };
 
-const ALL_16_STEP_IDS = [
+const ALL_20_STEP_IDS = [
   "00-intake-check",
   "01-load-client-context",
   "02-load-memory-shelf",
@@ -21,22 +21,29 @@ const ALL_16_STEP_IDS = [
   "07-select-candidates",
   "08-determine-edition-theme",
   "09-draft-post",
-  "10-verify-numbers-sourced",
-  "11-verify-brand-compliance",
-  "12-render-preview-check",
-  "13-persist-deliverable",
-  "14-persist-manifest",
-  "15-commit-and-record",
+  "10-verify-brand-compliance",
+  "11-verify-numbers-sourced",
+  "12-verify-compliance-footer",
+  "13-verify-no-placeholder",
+  "14-verify-no-leak",
+  "15-render-preview-check",
+  "16-batch-review",
+  "17-persist-deliverable",
+  "18-persist-manifest",
+  "19-commit-and-record",
 ];
 
 function goodDraft() {
   const intro = "This week we're looking at what's actually working for engineering teams right now.";
+  // No numeric claims: sources is always [] in production today (research.pull
+  // is a Phase-1 stand-in), and gate.numbersSourced now cross-checks the exact
+  // figure against source content rather than accepting a bare citation marker.
   const sections = [
-    { heading: "Structured onboarding cuts ramp time", body: "New-hire ramp time dropped 47% [1] after a fixed four-day onboarding rollout." },
+    { heading: "Structured onboarding cuts ramp time", body: "New-hire ramp time dropped sharply after a fixed four-day onboarding rollout." },
     { heading: "Async standups are gaining ground", body: "A few teams have replaced daily standups with async written updates." },
   ];
   const callToAction = { text: "Read the full breakdown", url: "https://example.com/full" };
-  const signoff = "— The Acme Weekly Team";
+  const signoff = "The Acme Weekly Team";
   const text =
     `${intro}\n\n` +
     sections.map((s) => `## ${s.heading}\n\n${s.body}`).join("\n\n") +
@@ -52,7 +59,11 @@ function goodDraft() {
   };
 }
 
-describe("end-to-end: the 16-step Newsletter agent workflow", () => {
+function goodDraftRouter() {
+  return fakeRouterSequence([finalTurn(goodDraft())]);
+}
+
+describe("end-to-end: the 20-step Newsletter agent workflow", () => {
   let env: TestEnvironment;
 
   beforeEach(async () => {
@@ -63,10 +74,10 @@ describe("end-to-end: the 16-step Newsletter agent workflow", () => {
     await env.cleanup();
   });
 
-  it("executes all 16 steps and resolves to completed / domainOutcome: delivered", async () => {
+  it("executes all 20 steps and resolves to completed / domainOutcome: delivered (auto-approved gate)", async () => {
     const promptStore = makePromptStore();
-    const router = fakeRouterSequence([finalTurn(goodDraft())]);
-    const workflowFn = createNewsletterAgentWorkflow({ tools: env.tools, promptStore, router });
+    const router = goodDraftRouter();
+    const workflowFn = createNewsletterAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
 
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
@@ -80,14 +91,14 @@ describe("end-to-end: the 16-step Newsletter agent workflow", () => {
 
     const stepRecords = await durableStore.listSteps(params.runId);
     const executedIds = stepRecords.map((s) => s.stepId).sort();
-    expect(executedIds).toEqual([...ALL_16_STEP_IDS].sort());
+    expect(executedIds).toEqual([...ALL_20_STEP_IDS].sort());
     expect(stepRecords.every((s) => s.status === "completed")).toBe(true);
 
     // The deliverable really landed on the real file-backed WorkspaceStore, tenant-scoped.
     const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
     expect(deliverables.map((d) => d.id)).toEqual(["newsletter-edition"]);
 
-    // The reserved topics were actually committed (consumed) at step 15, not left dangling.
+    // The reserved topics were actually committed (consumed) at step 16, not left dangling.
     const catalog = await env.store.readJson<Array<{ status: string }>>("acme", ["topics", "catalog"]);
     expect(catalog?.some((t) => t.status === "committed")).toBe(true);
 
@@ -95,7 +106,7 @@ describe("end-to-end: the 16-step Newsletter agent workflow", () => {
     const committedCount = catalog?.filter((t) => t.status === "committed").length ?? 0;
     expect(committedCount).toBeGreaterThan(1);
 
-    const descriptors: DynamicAgentStepDescriptor[] = ALL_16_STEP_IDS.map((stepId) => ({
+    const descriptors: DynamicAgentStepDescriptor[] = ALL_20_STEP_IDS.map((stepId) => ({
       stepId,
       label: stepId,
       type: stepId === "09-draft-post" ? "ai" : "code",
@@ -115,5 +126,65 @@ describe("end-to-end: the 16-step Newsletter agent workflow", () => {
     const draftStep = report.steps.find((s) => s.stepId === "09-draft-post")!;
     expect(draftStep.costUsd).toBeGreaterThan(0);
     expect(draftStep.model).toBe("claude-sonnet-4-6");
+  });
+
+  it("pauses at the human batch-review gate by default, then resumes to completed on approval (RFC-01 §8.3)", async () => {
+    const promptStore = makePromptStore();
+    const router = goodDraftRouter();
+    const workflowFn = createNewsletterAgentWorkflow({ tools: env.tools, promptStore, router });
+
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+
+    const first = await engine.run(workflowFn, params);
+    expect(first.status).toBe("awaiting_gate");
+    if (first.status !== "awaiting_gate") throw new Error("unreachable");
+    expect(first.pendingGateId).toContain("16-batch-review");
+
+    const deliverablesBeforeApproval = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
+    expect(deliverablesBeforeApproval).toHaveLength(0);
+
+    await engine.resolveGate(params.runId, "16-batch-review", {
+      decision: "approve",
+      actor: "jane@karoslabs.com",
+      at: new Date(2026, 7, 16).toISOString(),
+    });
+
+    const second = await engine.run(workflowFn, params);
+    expect(second.status).toBe("completed");
+    expect(router.complete).toHaveBeenCalledTimes(1);
+
+    const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
+    expect(deliverables.map((d) => d.id)).toEqual(["newsletter-edition"]);
+
+    const stepRecords = await durableStore.listSteps(params.runId);
+    const nonGateStepIds = ALL_20_STEP_IDS.filter((id) => id !== "16-batch-review");
+    expect(stepRecords.map((s) => s.stepId).sort()).toEqual([...nonGateStepIds].sort());
+    expect(stepRecords.every((s) => s.status === "completed")).toBe(true);
+  });
+
+  it("rejects the batch review with a reason -> held, and the deliverable never ships", async () => {
+    const promptStore = makePromptStore();
+    const router = goodDraftRouter();
+    const workflowFn = createNewsletterAgentWorkflow({ tools: env.tools, promptStore, router });
+
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+
+    await engine.run(workflowFn, params);
+    await engine.resolveGate(params.runId, "16-batch-review", {
+      decision: "reject",
+      actor: "jane@karoslabs.com",
+      reason: "not on brand this week",
+      at: new Date(2026, 7, 16).toISOString(),
+    });
+
+    const result = await engine.run(workflowFn, params);
+    expect(result.status).toBe("held");
+    if (result.status !== "held") throw new Error("unreachable");
+    expect(result.reason).toMatch(/batch rejected/i);
+
+    const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
+    expect(deliverables).toHaveLength(0);
   });
 });

@@ -28,7 +28,7 @@ export async function runBlogDeterministicAssertions(goldenRun: BlogGoldenRun): 
     { check: "gate.noPlaceholder", gate: "gate.noPlaceholder", args: { text } },
     { check: "gate.brandCompliance", gate: "gate.brandCompliance", args: { text, ...goldenRun.gateArgs.brandCompliance } },
     { check: "gate.leakCheck", gate: "gate.leakCheck", args: { text } },
-    { check: "gate.numbersSourced", gate: "gate.numbersSourced", args: { text } },
+    { check: "gate.numbersSourced", gate: "gate.numbersSourced", args: { text, sources: goldenRun.gateArgs.numbersSourced?.sources ?? [] } },
   ];
 
   for (const { check, gate, args } of gateChecks) {
@@ -57,11 +57,16 @@ export async function runBlogDeterministicAssertions(goldenRun: BlogGoldenRun): 
   if (previewOutcome.status !== "success") {
     results.push({ goldenRunId: goldenRun.id, check: "render.preview", verdict: "tooling_error", reason: previewOutcome.reason });
   } else if (!previewOutcome.result.withinLimit) {
+    const floorReason = !previewOutcome.result.wordCountWithinFloor
+      ? `, ${previewOutcome.result.wordCount} words (under the minimum)`
+      : previewOutcome.result.wordCountAboveCeiling
+        ? `, ${previewOutcome.result.wordCount} words (over the target ceiling)`
+        : "";
     results.push({
       goldenRunId: goldenRun.id,
       check: "render.preview",
       verdict: "content_fail",
-      reason: `title ${previewOutcome.result.titleCharacterCount} / meta ${previewOutcome.result.metaDescriptionCharacterCount} / body ${previewOutcome.result.bodyCharacterCount} chars — over a blog limit`,
+      reason: `title ${previewOutcome.result.titleCharacterCount} / meta ${previewOutcome.result.metaDescriptionCharacterCount} / body ${previewOutcome.result.bodyCharacterCount} chars${floorReason} — outside a blog limit`,
     });
   } else {
     results.push({ goldenRunId: goldenRun.id, check: "render.preview", verdict: "pass" });

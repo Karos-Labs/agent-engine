@@ -10,7 +10,7 @@ import { fakeRouterSequence, finalTurn, makePromptStore, setupTestEnvironment, t
 
 const params = { runId: "linkedin_run_1", clientSlug: "acme", productId: "linkedin-agent", runKind: "recurring" as const };
 
-const ALL_16_STEP_IDS = [
+const ALL_19_STEP_IDS = [
   "00-intake-check",
   "01-load-client-context",
   "02-load-memory-shelf",
@@ -19,33 +19,41 @@ const ALL_16_STEP_IDS = [
   "05-extract-candidate-summary",
   "06-reserve-topic",
   "07-select-candidate",
-  "08-determine-angle",
+  "08-determine-archetype",
   "09-draft-post",
   "10-verify-numbers-sourced",
   "11-verify-brand-compliance",
   "12-render-preview-check",
-  "13-persist-deliverable",
-  "14-persist-manifest",
-  "15-commit-and-record",
+  "13-verify-no-placeholder",
+  "14-verify-no-leak",
+  "15-batch-review",
+  "16-persist-deliverable",
+  "17-persist-manifest",
+  "18-commit-and-record",
 ];
 
 function goodDraft() {
   return {
     headline: "Anchor days cut scheduling friction",
     hook: "We looked at attendance data across our hybrid client base this quarter, and the pattern surprised us.",
-    body: "Teams with a fixed two-day in-office schedule reported 18% [1] fewer scheduling conflicts than teams with fully flexible policies.",
+    body: "Teams with a fixed two-day in-office schedule reported meaningfully fewer scheduling conflicts than teams with fully flexible policies.",
     hashtags: ["HybridWork", "FutureOfWork"],
     callToAction: "If your team is still negotiating its hybrid policy week to week, a fixed anchor-day structure might be worth testing.",
     targetAudience: "People leaders evaluating hybrid work policies",
+    archetype: "teardown-framework" as const,
     text:
       "We looked at attendance data across our hybrid client base this quarter, and the pattern surprised us.\n\n" +
-      "Teams with a fixed two-day in-office schedule reported 18% [1] fewer scheduling conflicts than teams with fully flexible policies.\n\n" +
+      "Teams with a fixed two-day in-office schedule reported meaningfully fewer scheduling conflicts than teams with fully flexible policies.\n\n" +
       "If your team is still negotiating its hybrid policy week to week, a fixed anchor-day structure might be worth testing.\n\n" +
       "#HybridWork #FutureOfWork",
   };
 }
 
-describe("end-to-end: the 16-step LinkedIn agent workflow", () => {
+function goodDraftRouter() {
+  return fakeRouterSequence([finalTurn(goodDraft())]);
+}
+
+describe("end-to-end: the 19-step LinkedIn agent workflow", () => {
   let env: TestEnvironment;
 
   beforeEach(async () => {
@@ -56,10 +64,10 @@ describe("end-to-end: the 16-step LinkedIn agent workflow", () => {
     await env.cleanup();
   });
 
-  it("executes all 16 steps and resolves to completed / domainOutcome: delivered", async () => {
+  it("executes all 19 steps and resolves to completed / domainOutcome: delivered (auto-approved gate)", async () => {
     const promptStore = makePromptStore();
-    const router = fakeRouterSequence([finalTurn(goodDraft())]);
-    const workflowFn = createLinkedInAgentWorkflow({ tools: env.tools, promptStore, router });
+    const router = goodDraftRouter();
+    const workflowFn = createLinkedInAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
 
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
@@ -73,18 +81,18 @@ describe("end-to-end: the 16-step LinkedIn agent workflow", () => {
 
     const stepRecords = await durableStore.listSteps(params.runId);
     const executedIds = stepRecords.map((s) => s.stepId).sort();
-    expect(executedIds).toEqual([...ALL_16_STEP_IDS].sort());
+    expect(executedIds).toEqual([...ALL_19_STEP_IDS].sort());
     expect(stepRecords.every((s) => s.status === "completed")).toBe(true);
 
     // The deliverable really landed on the real file-backed WorkspaceStore, tenant-scoped.
     const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
     expect(deliverables.map((d) => d.id)).toEqual(["linkedin-post"]);
 
-    // The reserved topic was actually committed (consumed) at step 15, not left dangling.
+    // The reserved topic was actually committed (consumed) at step 18, not left dangling.
     const catalog = await env.store.readJson<Array<{ status: string }>>("acme", ["topics", "catalog"]);
     expect(catalog?.some((t) => t.status === "committed")).toBe(true);
 
-    const descriptors: DynamicAgentStepDescriptor[] = ALL_16_STEP_IDS.map((stepId) => ({
+    const descriptors: DynamicAgentStepDescriptor[] = ALL_19_STEP_IDS.map((stepId) => ({
       stepId,
       label: stepId,
       type: stepId === "09-draft-post" ? "ai" : "code",
@@ -104,5 +112,65 @@ describe("end-to-end: the 16-step LinkedIn agent workflow", () => {
     const draftStep = report.steps.find((s) => s.stepId === "09-draft-post")!;
     expect(draftStep.costUsd).toBeGreaterThan(0);
     expect(draftStep.model).toBe("claude-sonnet-4-6");
+  });
+
+  it("pauses at the human batch-review gate by default, then resumes to completed on approval (RFC-01 §8.3)", async () => {
+    const promptStore = makePromptStore();
+    const router = goodDraftRouter();
+    const workflowFn = createLinkedInAgentWorkflow({ tools: env.tools, promptStore, router });
+
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+
+    const first = await engine.run(workflowFn, params);
+    expect(first.status).toBe("awaiting_gate");
+    if (first.status !== "awaiting_gate") throw new Error("unreachable");
+    expect(first.pendingGateId).toContain("15-batch-review");
+
+    const deliverablesBeforeApproval = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
+    expect(deliverablesBeforeApproval).toHaveLength(0);
+
+    await engine.resolveGate(params.runId, "15-batch-review", {
+      decision: "approve",
+      actor: "jane@karoslabs.com",
+      at: new Date(2026, 7, 16).toISOString(),
+    });
+
+    const second = await engine.run(workflowFn, params);
+    expect(second.status).toBe("completed");
+    expect(router.complete).toHaveBeenCalledTimes(1);
+
+    const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
+    expect(deliverables.map((d) => d.id)).toEqual(["linkedin-post"]);
+
+    const stepRecords = await durableStore.listSteps(params.runId);
+    const nonGateStepIds = ALL_19_STEP_IDS.filter((id) => id !== "15-batch-review");
+    expect(stepRecords.map((s) => s.stepId).sort()).toEqual([...nonGateStepIds].sort());
+    expect(stepRecords.every((s) => s.status === "completed")).toBe(true);
+  });
+
+  it("rejects the batch review with a reason -> held, and the deliverable never ships", async () => {
+    const promptStore = makePromptStore();
+    const router = goodDraftRouter();
+    const workflowFn = createLinkedInAgentWorkflow({ tools: env.tools, promptStore, router });
+
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+
+    await engine.run(workflowFn, params);
+    await engine.resolveGate(params.runId, "15-batch-review", {
+      decision: "reject",
+      actor: "jane@karoslabs.com",
+      reason: "not on brand this week",
+      at: new Date(2026, 7, 16).toISOString(),
+    });
+
+    const result = await engine.run(workflowFn, params);
+    expect(result.status).toBe("held");
+    if (result.status !== "held") throw new Error("unreachable");
+    expect(result.reason).toMatch(/batch rejected/i);
+
+    const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
+    expect(deliverables).toHaveLength(0);
   });
 });

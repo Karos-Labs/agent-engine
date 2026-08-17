@@ -15,9 +15,16 @@ export const XGoldenRunSchema = z.object({
   input: z.record(z.string(), z.unknown()),
   endorsedOutput: z.object({
     text: z.string().min(1),
+    /** Restored alongside `packages/tools/karos-gates`' shared gates going live at runtime (Phase 2.5 batch 2.3) — same content as `text`; see `XPostOutputSchema`'s own doc comment for why the two fields are required to be identical rather than one deriving from the other. */
+    mainPostText: z.string().min(1),
+    firstReplyUrl: z.string().url().optional(),
     hook: z.string().min(1),
     angle: z.string().min(1),
+    /** The six lanes restored from `x-agent-v2/references/lanes.md`; see `XDraftAgent`'s `LaneSchema` for the canonical list. */
+    lane: z.enum(["build-in-public", "knowledge", "pov", "news-reaction", "quote-comment", "engagement"]),
     targetHandle: z.string().min(1),
+    targetPostHandle: z.string().min(1).optional(),
+    targetPostUrl: z.string().url().optional(),
     platform: z.literal("x"),
   }),
   gateArgs: z

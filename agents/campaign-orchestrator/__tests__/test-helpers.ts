@@ -60,17 +60,24 @@ export function finalTurn(output: unknown, opts: { model?: string; inputTokens?:
 /** One valid, gate-passing draft per channel — reused across tests so the fan-out's happy path is consistent everywhere. */
 export function goodChannelDraft(channel: CampaignChannel): unknown {
   switch (channel) {
-    case "x":
+    case "x": {
+      // No numeric claim: production `sources` is always [] (research.pull is a
+      // Phase-1 stand-in) and gate.numbersSourced now verifies the exact figure
+      // against real source content, not just a citation marker.
+      const mainPostText = "More teams are testing 4-day weeks this quarter. Early internal data shows steady output with fewer sick days.";
       return {
-        text: "More teams are testing 4-day weeks this quarter. Early internal data [1] shows steady output with fewer sick days.",
+        text: mainPostText,
+        mainPostText,
         hook: "More teams are testing 4-day weeks this quarter.",
         angle: "data-point",
+        lane: "knowledge",
         targetHandle: "@acmecorp",
         mediaRefs: [],
       };
+    }
     case "linkedin": {
       const hook = "We looked at attendance data across our hybrid client base this quarter, and the pattern surprised us.";
-      const body = "Teams with a fixed two-day in-office schedule reported 18% [1] fewer scheduling conflicts than teams with fully flexible policies.";
+      const body = "Teams with a fixed two-day in-office schedule reported fewer scheduling conflicts than teams with fully flexible policies.";
       const callToAction = "If your team is still negotiating its hybrid policy week to week, a fixed anchor-day structure might be worth testing.";
       return {
         headline: "Anchor days cut scheduling friction",
@@ -80,46 +87,88 @@ export function goodChannelDraft(channel: CampaignChannel): unknown {
         callToAction,
         targetAudience: "People leaders evaluating hybrid work policies",
         text: `${hook}\n\n${body}\n\n${callToAction}`,
+        archetype: "industry-reaction",
       };
     }
     case "reddit": {
-      const title = "Our team switched to a 4-day week 3 months ago — sharing what actually changed";
-      const body =
+      const targetThreadTitle = "Our team switched to a 4-day week 3 months ago: sharing what actually changed";
+      const replyBody =
         "We run a small B2B SaaS shop and moved most of engineering to a 4-day week last quarter as a trial.\n\n" +
-        "Internal tracking showed an 18% [1] drop in reported sick days across the team.\n\n" +
-        "Has anyone else run a trial like this?";
+        "Internal tracking showed a real drop in reported sick days across the team.\n\n" +
+        "Happy to share more detail if it's useful for your own trial.";
       return {
-        title,
-        body,
+        targetThreadUrl: "https://www.reddit.com/r/smallbusiness/comments/abc123/our_team_switched_to_a_4day_week/",
+        targetThreadTitle,
+        replyBody,
         targetSubreddit: "smallbusiness",
-        flair: "",
-        hook: "We run a small B2B SaaS shop and moved most of engineering to a 4-day week last quarter as a trial.",
-        text: `${title}\n\n${body}`,
+        disclosureIncluded: false,
+        text: replyBody,
       };
     }
     case "blog": {
       const title = "How We Cut Onboarding Time in Half With a Structured 4-Day Rollout";
+      // 600+ words -- the blog channel's own gate enforces a minimum-length floor
+      // (RFC-02 §5 migration audit remediation), so a stub-length fixture here would
+      // hold the whole campaign fan-out, not just this one slot.
       const bodyMarkdown =
-        "## The problem with our old onboarding\n\nNew engineers took nearly a month before they shipped anything meaningful.\n\n" +
-        "## The results after one quarter\n\nMedian time to first merged pull request dropped 47% [1], from 19 days to about 10.";
+        "## The problem with our old onboarding\n\n" +
+        "New engineers took nearly a month before they shipped anything meaningful, and that gap was never caused by a shortage of " +
+        "ability. Most new hires spent the bulk of their first three weeks trying to figure out who owned a given service, which " +
+        "document was current and which had been abandoned two reorganizations ago, and where the actual source of truth lived for a " +
+        "system that touched their work. The technical material itself was rarely the real blocker. A capable engineer could read the " +
+        "codebase just fine; what slowed everyone down was the absence of a predictable path through that first week, so every cohort " +
+        "effectively reinvented onboarding from scratch and asked the same scattered questions that had already been answered for " +
+        "someone else three months earlier.\n\n" +
+        "## What we actually changed\n\n" +
+        "We restructured the first week into four fixed days, each with one specific and narrow goal instead of a loose list of things " +
+        "a new hire should eventually get around to. Day one was environment setup end to end: local build, full test suite, and a " +
+        "single deploy to a sandbox environment, so that by the end of day one every new engineer had concrete proof their machine " +
+        "actually worked. Day two paired the new hire with an engineer who walked through the two or three systems most relevant to " +
+        "their team, focused on how the pieces connect to each other rather than reading every file line by line. Day three handed the " +
+        "new hire a small, genuinely scoped ticket chosen in advance by their manager, so nobody spent the morning hunting for something " +
+        "appropriate to work on. Day four closed the week with a short review session involving the whole team, where the new hire " +
+        "walked through what they built and asked the questions that had piled up over the previous three days.\n\n" +
+        "## The results after one quarter\n\n" +
+        "Median time to first merged pull request dropped sharply, from about 19 days down to about 10. Just as important, the variance between " +
+        "individual engineers narrowed sharply: under the old approach some new hires needed six weeks before their first real " +
+        "contribution while others needed nine days, and that spread alone made it hard to plan work around new team members with any " +
+        "real confidence. Retention at the ninety-day mark also held steady across the cohort, which mattered to us as much as raw " +
+        "speed did, since a faster ramp that came at the cost of early attrition would not have counted as a genuine win.\n\n" +
+        "## What we'd do differently\n\n" +
+        "The biggest gap in our first run was documentation for the paired-engineer session on day two: two different pairs ran that " +
+        "session in noticeably different ways, and new hires noticed the inconsistency immediately once they compared notes with each " +
+        "other. If your team decides to try something similar, write the walkthrough script down before your first cohort goes through " +
+        "it, not after you have already seen where it went sideways. We also underestimated how much day three depended on managers " +
+        "actually preparing a ticket in advance; the one week where a manager scrambled to find a ticket the morning of day three was " +
+        "the one week where the whole schedule slipped. If your team is rethinking its own onboarding, a structured first week is worth " +
+        "testing before you assume the underlying problem is your documentation, your codebase, or your new hires themselves.\n\n" +
+        "## One more thing worth naming\n\n" +
+        "It is tempting to treat a rollout like this as finished once the first cohort clears it successfully, but the real test comes " +
+        "with the second and third cohorts, run by people who were not in the room when the plan was designed. Write the reasoning down " +
+        "alongside the schedule itself, not just the steps: explain why day one is environment setup and not a lecture on architecture, " +
+        "why the ticket on day three has to be scoped small enough to finish in a single day, and why the whole plan tops out at four " +
+        "days instead of stretching to a full two weeks. A team that only inherits the checklist tends to drift from it the first time " +
+        "a deadline gets tight, while a team that inherits the reasoning behind the checklist is far more likely to adapt it sensibly " +
+        "instead of quietly abandoning it.";
       return {
         title,
         slug: "structured-four-day-onboarding-rollout",
         excerpt: "A breakdown of the onboarding changes that actually moved the needle for our engineering team.",
         bodyMarkdown,
-        headersList: ["The problem with our old onboarding", "The results after one quarter"],
+        headersList: ["The problem with our old onboarding", "What we actually changed", "The results after one quarter", "What we'd do differently"],
         metaDescription: "How a structured 4-day onboarding rollout cut new-hire ramp time in half.",
-        estimatedReadMinutes: 3,
+        estimatedReadMinutes: 5,
         text: `${title}\n\n${bodyMarkdown}`,
+        faqItems: [],
       };
     }
     case "newsletter": {
       const intro = "This week we're looking at what's actually working for engineering teams right now.";
       const sections = [
-        { heading: "Structured onboarding cuts ramp time", body: "New-hire ramp time dropped 47% [1] after a fixed four-day onboarding rollout." },
+        { heading: "Structured onboarding cuts ramp time", body: "New-hire ramp time dropped sharply after a fixed four-day onboarding rollout." },
       ];
       const callToAction = { text: "Read the full breakdown", url: "https://example.com/full" };
-      const signoff = "— The Acme Weekly Team";
+      const signoff = "The Acme Weekly Team";
       const text = `${intro}\n\n${sections.map((s) => `## ${s.heading}\n\n${s.body}`).join("\n\n")}\n\n${callToAction.text}\n\n${signoff}`;
       return {
         subjectLine: "3 teams cut onboarding time in half",
@@ -163,6 +212,10 @@ export async function setupTestEnvironment(
   const config: Record<string, unknown> = {
     xHandle: "@acmecorp",
     targetSubreddits: ["smallbusiness", "startups"],
+    // Reddit's reply-only model (Phase 2.5 Batch 2.1) has no live thread-discovery
+    // backend yet -- a run needs an explicit target thread supplied via intake.
+    requestedThreadUrl: "https://www.reddit.com/r/smallbusiness/comments/abc123/our_team_switched_to_a_4day_week/",
+    requestedThreadTitle: "Our team switched to a 4-day week 3 months ago: sharing what actually changed",
     targetKeywords: ["engineering onboarding", "developer ramp-up time"],
     contentPillars: ["engineering culture", "team operations"],
     targetAudience: "engineering leaders at mid-size B2B SaaS companies",

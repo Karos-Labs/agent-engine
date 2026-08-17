@@ -1,12 +1,14 @@
-import type { AgentContext, AgentToolRegistry, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
+import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
 import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure } from "@agent-engine/workflow";
-import { XDraftAgent } from "../agent/x-draft-agent.js";
+import { XDraftAgent, type Lane } from "../agent/x-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
+import { countRecentEngagementPosts, ENGAGEMENT_DAILY_CAP, selectLane } from "./lane.js";
 import type {
   XAgentWorkflowResult,
   XCandidateSummary,
   XClientContext,
   XIntakeConfig,
+  XRecentDecision,
   XSelectedCandidate,
   XTopicReservation,
 } from "./types.js";
@@ -16,6 +18,16 @@ export interface CreateXAgentWorkflowOptions {
   tools: AgentToolRegistry;
   promptStore: PromptStore;
   router: ModelRouter;
+  /**
+   * Skips step 15's human `batch_review` gate and records a synthetic
+   * `actor: "system"` approval instead — off by default, so a real run
+   * genuinely pauses at `awaiting_gate` until a human reviews it (RFC-01
+   * §8.3), matching every migrated channel's own legacy "never auto-publish"
+   * guardrail. Intended for tests/demos/evals that need a synchronous
+   * happy path, never for production wiring (`apps/agent-server` leaves this
+   * unset).
+   */
+  autoApprove?: boolean;
 }
 
 function toAgentContext(wf: WorkflowContext): AgentContext {
@@ -47,11 +59,31 @@ async function runGate(
   return outcome.result as GateVerdict;
 }
 
+/** A bare `http(s)://` link — the mechanical half of "post clean, link in first reply" (x-craft.md §5). */
+const BARE_URL_PATTERN = /https?:\/\//i;
+
 /**
- * `createXAgentWorkflow()` (RFC-02 §3): the 16-step recurring/on-demand run
- * protocol, steps `00`–`15`. One post, one run (RFC-01 §16.2's ruling) — no
+ * `createXAgentWorkflow()` (RFC-02 §3): the 21-step recurring/on-demand run
+ * protocol, steps `00`–`20`. One post, one run (RFC-01 §16.2's ruling) — no
  * fan-out here, unlike the LinkedIn pilot; every X run produces at most one
- * deliverable.
+ * deliverable. Step 15 is a mandatory human `batch_review` gate (RFC-01
+ * §8.3) — nothing persists until a real human approves, unless
+ * `options.autoApprove` explicitly opts out (tests/demos only).
+ *
+ * Phase 2.5 batch 2.3 restored two previously-missing pieces of domain logic
+ * versus the legacy predecessors (`x-agent-v2` primary, `x-agent` v1
+ * secondary):
+ *
+ * 1. **The lane system** (steps 08-09): `references/lanes.md`'s six content
+ *    lanes, a "never the same lane twice in a row" rotation, and an
+ *    engagement-lane daily cap check.
+ * 2. **"Post clean, link in first reply"** (step 13): a mechanical check
+ *    that a link never lands in the post body itself when `firstReplyUrl`
+ *    is set (x-craft.md §5).
+ *
+ * It also wires `gate.noPlaceholder` and `gate.leakCheck` (steps 16-17) —
+ * both existed in `packages/tools/karos-gates` but were previously dead code
+ * outside `evals/src/run-assertions.ts`, never actually called at runtime.
  */
 export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
   const tools: AgentToolRegistry = { ...options.tools, "render.preview": renderPreview };
@@ -89,11 +121,13 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       return outcome.status === "success" ? outcome.result : { scope: "beliefs", beliefs: {} };
     });
 
-    const recentDecisions = await wf.step.code("03-load-recent-decisions", async (): Promise<string[]> => {
+    // Full decision rows (not just summaries) — the lane rotation and the
+    // engagement daily cap both need `at` timestamps, not just insertion order.
+    const recentDecisions = await wf.step.code("03-load-recent-decisions", async (): Promise<XRecentDecision[]> => {
       const outcome = await tools["memory.read"]!.execute({ scope: "decisions" }, { ctx });
       if (outcome.status !== "success") return [];
-      const result = outcome.result as { scope: string; items: Array<{ summary: string }> };
-      return result.items.map((item) => item.summary);
+      const result = outcome.result as { scope: string; items: XRecentDecision[] };
+      return result.items;
     });
 
     // ── 04-05: research pull (persisting verbatim raw payloads inside research.pull itself) ──
@@ -119,9 +153,9 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       };
     });
 
-    // ── 06-08: candidate selection and angle determination ──
+    // ── 06-09: candidate selection, lane selection and the engagement cap ──
     const reservation = await wf.step.code("06-reserve-topic", async (): Promise<XTopicReservation> => {
-      const excludeTopics = recentDecisions;
+      const excludeTopics = recentDecisions.map((d) => d.summary);
       const outcome = await tools["topics.reserve"]!.execute(
         { reservationKey: `${wf.runId}__topic`, count: 1, excludeTopics },
         { ctx },
@@ -150,16 +184,47 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       throw new WorkflowHeld("no candidate topic available for this run — nothing honestly cleared selection");
     });
 
-    const angle = await wf.step.code("08-determine-angle", (): string => {
-      return candidateSummary.hasNumericInsight ? "data-point" : "trend-observation";
+    // Restored lane system (lanes.md): an explicit request wins, otherwise a
+    // deterministic "never twice in a row, least-recently-used, weight as
+    // tiebreak" rotation — see lane.ts for exactly what's simplified versus
+    // lanes.md's real per-identity weighted batch mix. `angle` stays the
+    // pre-existing (simplified) two-value derivation; lanes.md's own angle
+    // step ("the specific take, distinct from every prior angle") is a
+    // judgment call this pilot leaves to the drafting model via the prompt,
+    // same as before.
+    const laneSelection = await wf.step.code("08-select-lane", (): { lane: Lane; angle: string } => {
+      const lane = selectLane(intake.requestedLane, recentDecisions);
+      const angle = candidateSummary.hasNumericInsight ? "data-point" : "trend-observation";
+      return { lane, angle };
     });
 
-    // ── 09-12: draft execution via XDraftAgent, with machine/claim/compliance gates ──
+    // Engagement-lane daily cap (x-craft.md §4: "defaults... 5 actions/day").
+    // A no-op for every other lane. Runs before drafting so an over-cap run
+    // holds without spending a model call. Per-account/per-roster caps are
+    // NOT checked here — there is no roster/account model in this agent yet
+    // (a real, honest gap versus legacy's "Roster membership is a compliance
+    // gate, not a preference").
+    await wf.step.code("09-check-engagement-cap", () => {
+      if (laneSelection.lane !== "engagement") {
+        return { lane: laneSelection.lane, held: false, engagementCountInWindow: 0 };
+      }
+      const now = Date.now();
+      const countInWindow = countRecentEngagementPosts(recentDecisions, now);
+      if (countInWindow >= ENGAGEMENT_DAILY_CAP) {
+        throw new WorkflowHeld(
+          `engagement lane daily cap reached: ${countInWindow} engagement-lane post(s) already recorded in the last 24h (cap: ${ENGAGEMENT_DAILY_CAP})`,
+        );
+      }
+      return { lane: laneSelection.lane, held: false, engagementCountInWindow: countInWindow };
+    });
+
+    // ── 10-14: draft execution via XDraftAgent, with machine/claim/compliance/link gates ──
     const draftAgent = new XDraftAgent({ router: options.router, tools, promptStore: options.promptStore });
-    const draftResult = await wf.step.agent("09-draft-post", draftAgent, {
+    const draftResult = await wf.step.agent("10-draft-post", draftAgent, {
       topic: selected.topic,
       source: selected.source,
-      angle,
+      lane: laneSelection.lane,
+      angle: laneSelection.angle,
       targetHandle: intake.xHandle,
       voiceRules: clientContext.voiceRules,
     });
@@ -170,9 +235,22 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
     if (draftResult.status !== "completed") {
       throw new WorkflowToolingFailure(`draft step resolved to "${draftResult.status}"`);
     }
-    const draft = draftResult.finalOutput!;
+    // Phase 2.5 fix-batch: `mainPostText` is schema-required to carry the same
+    // content as `text` (see XPostOutputSchema's own doc comment), but that
+    // was only ever "enforced by prompt instruction" — every content gate
+    // below (`gate.numbersSourced`, `gate.brandCompliance`, `render.preview`,
+    // and the agent's own self-critique `gate.lintPost` call) checks `text`
+    // only, so a banned phrase, unsourced number, or over-limit string could
+    // hide in a diverging `mainPostText` while `text` passed every check.
+    // Structurally deriving `mainPostText` from the model's own gated `text`
+    // here — rather than trusting the model to keep the two fields in sync,
+    // or re-running every gate a second time against a second field — closes
+    // that gap by construction: whatever content actually cleared every gate
+    // is exactly what step 13's link-placement check (and everything
+    // downstream) now sees.
+    const draft = { ...draftResult.finalOutput!, mainPostText: draftResult.finalOutput!.text };
 
-    await wf.step.code("10-verify-numbers-sourced", async () => {
+    await wf.step.code("11-verify-numbers-sourced", async () => {
       const sources = candidateSummary.hasNumericInsight ? [candidateSummary.sourceLabel] : [];
       const verdict = await runGate(tools, "gate.numbersSourced", { text: draft.text, sources }, ctx);
       if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.numbersSourced: ${verdict.reason}`);
@@ -180,7 +258,7 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       return verdict;
     });
 
-    await wf.step.code("11-verify-brand-compliance", async () => {
+    await wf.step.code("12-verify-brand-compliance", async () => {
       const forbiddenTerms = clientContext.brand["forbiddenTerms"] as string[] | undefined;
       const verdict = await runGate(tools, "gate.brandCompliance", { text: draft.text, forbiddenTerms: forbiddenTerms ?? [] }, ctx);
       if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.brandCompliance: ${verdict.reason}`);
@@ -188,7 +266,21 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       return verdict;
     });
 
-    await wf.step.code("12-render-preview-check", async () => {
+    // "Post clean, link in first reply" (x-craft.md §5): when the draft set a
+    // `firstReplyUrl`, the main post body must not ALSO carry a bare link —
+    // that means the model put the link in the wrong place. No check runs
+    // when `firstReplyUrl` is unset (x-craft.md's own launch-post exception,
+    // "the link IS the news", is a judgment call left to the drafting model).
+    await wf.step.code("13-verify-link-placement", () => {
+      if (draft.firstReplyUrl && BARE_URL_PATTERN.test(draft.mainPostText)) {
+        throw new WorkflowHeld(
+          "mainPostText contains a bare link even though firstReplyUrl is set — links must go in the first reply, never the main post body (x-craft.md §5)",
+        );
+      }
+      return { checked: true };
+    });
+
+    await wf.step.code("14-render-preview-check", async () => {
       const outcome = await tools["render.preview"]!.execute({ text: draft.text }, { ctx });
       if (outcome.status !== "success") throw new WorkflowToolingFailure(`render.preview failed: ${outcome.status}`);
       const preview = outcome.result as RenderPreviewResult;
@@ -198,35 +290,70 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       return preview;
     });
 
-    // ── 13-14: deliverable & manifest persistence ──
-    const deliverableId = await wf.step.code("13-persist-deliverable", async (): Promise<string> => {
+    // ── 15: human batch-review gate — nothing ships without a real approval ──
+    const reviewDecision: GateResponse = options.autoApprove
+      ? await wf.step.code("15-batch-review", () => ({
+          decision: "approve" as const,
+          actor: "system",
+          at: new Date().toISOString(),
+        }))
+      : await wf.step.gate("15-batch-review", {
+          kind: "batch_review",
+          payload: { runId: wf.runId, topic: selected.topic, lane: laneSelection.lane, angle: laneSelection.angle, preview: draft.text },
+          requiredRole: "account_manager",
+          timeout: { duration: "24h", onTimeout: "hold" },
+        });
+    if (reviewDecision.decision !== "approve") {
+      throw new WorkflowHeld(`batch rejected: ${reviewDecision.reason ?? "no reason given"}`);
+    }
+
+    // ── 16-17: previously-dead gates, wired in right before persistence ──
+    await wf.step.code("16-verify-no-placeholder", async () => {
+      const verdict = await runGate(tools, "gate.noPlaceholder", { text: draft.text }, ctx);
+      if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.noPlaceholder: ${verdict.reason}`);
+      if (verdict.verdict === "content_fail") throw new WorkflowHeld(`unresolved placeholder: ${verdict.reason}`);
+      return verdict;
+    });
+
+    await wf.step.code("17-verify-no-leak", async () => {
+      const verdict = await runGate(tools, "gate.leakCheck", { text: draft.text }, ctx);
+      if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.leakCheck: ${verdict.reason}`);
+      if (verdict.verdict === "content_fail") throw new WorkflowHeld(`leak check failed: ${verdict.reason}`);
+      return verdict;
+    });
+
+    // ── 18-19: deliverable & manifest persistence ──
+    const deliverableId = await wf.step.code("18-persist-deliverable", async (): Promise<string> => {
       const outcome = await tools["ledger.writeDeliverable"]!.execute({ runId: wf.runId, kind: "x-post", deliverable: draft }, { ctx });
       if (outcome.status !== "success") throw new WorkflowToolingFailure(`ledger.writeDeliverable failed: ${outcome.status}`);
       return (outcome.result as { id: string }).id;
     });
 
-    await wf.step.code("14-persist-manifest", async () => {
+    await wf.step.code("19-persist-manifest", async () => {
       await tools["ledger.dashboardSnapshot"]!.execute(
-        { runId: wf.runId, snapshot: { topic: selected.topic, source: selected.source, angle, deliverableId } },
+        { runId: wf.runId, snapshot: { topic: selected.topic, source: selected.source, lane: laneSelection.lane, angle: laneSelection.angle, deliverableId } },
         { ctx },
       );
     });
 
-    // ── 15: commit updates (topics.commit, memory.appendDecision, ledger.feedbackAppend) ──
-    await wf.step.code("15-commit-and-record", async () => {
+    // ── 20: commit updates (topics.commit, memory.appendDecision, ledger.feedbackAppend) ──
+    await wf.step.code("20-commit-and-record", async () => {
       if (selected.source === "reserved" && reservation.reservationKey) {
         await tools["topics.commit"]!.execute({ reservationKey: reservation.reservationKey }, { ctx });
       }
       await tools["memory.appendDecision"]!.execute(
-        { decisionId: `${wf.runId}__decision`, summary: `Posted about "${selected.topic}" (angle: ${angle})` },
+        {
+          decisionId: `${wf.runId}__decision`,
+          summary: `Posted about "${selected.topic}" (lane: ${laneSelection.lane}, angle: ${laneSelection.angle})`,
+        },
         { ctx },
       );
       await tools["ledger.feedbackAppend"]!.execute(
-        { runId: wf.runId, feedbackId: `${wf.runId}__auto`, decision: "approve", actor: "system" },
+        { runId: wf.runId, feedbackId: `${wf.runId}__review`, decision: reviewDecision.decision, actor: reviewDecision.actor },
         { ctx },
       );
     });
 
-    return { topic: selected.topic, angle, targetHandle: intake.xHandle, deliverableId };
+    return { topic: selected.topic, angle: laneSelection.angle, lane: laneSelection.lane, targetHandle: intake.xHandle, deliverableId };
   };
 }

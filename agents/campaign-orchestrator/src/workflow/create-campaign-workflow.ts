@@ -20,6 +20,15 @@ export interface ChannelRuntimeOptions {
   tools: AgentToolRegistry;
   promptStore: PromptStore;
   router: ModelRouter;
+  /**
+   * Always `true` here (never surfaced as an orchestrator-level option): the
+   * campaign's own `13-campaign-review` gate is the single human checkpoint
+   * for the whole bundle (RFC-02 §4) — a channel pausing at its own
+   * per-channel `13-batch-review` gate mid-fan-out would mean five separate
+   * approvals instead of one, which is exactly what the campaign gate exists
+   * to replace.
+   */
+  autoApprove: true;
 }
 
 export interface CreateCampaignWorkflowOptions {
@@ -53,7 +62,7 @@ function toAgentContext(wf: WorkflowContext): AgentContext {
   };
 }
 
-/** Dispatches to the right channel's own, already-proven `createXAgentWorkflow()`-style factory — every channel's own 16-step workflow runs unmodified, just inside this slot. */
+/** Dispatches to the right channel's own, already-proven `createXAgentWorkflow()`-style factory — every channel's own 17-step workflow runs unmodified (with its own per-channel gate auto-approved), just inside this slot. */
 async function runChannelSlot(
   channel: CampaignChannel,
   channelOptions: ChannelRuntimeOptions,
@@ -216,6 +225,7 @@ export function createCampaignWorkflow(options: CreateCampaignWorkflowOptions) {
         tools: options.tools,
         promptStore: options.channelPromptStores[slot.channel],
         router: options.channelRouters[slot.channel],
+        autoApprove: true,
       };
       return runChannelSlot(slot.channel, channelOptions, slotCtx);
     });

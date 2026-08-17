@@ -4,7 +4,14 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentContext } from "@agent-engine/core";
 import { WorkspaceStore } from "@agent-engine/tool-common";
-import { createKarosClientTools, type ClientProfile, type ClientBrand, type Competitor, type Executive } from "../src/index.js";
+import {
+  createKarosClientTools,
+  type ClientProfile,
+  type ClientBrand,
+  type Competitor,
+  type Executive,
+  type SubredditRulesEntry,
+} from "../src/index.js";
 
 const ctx: AgentContext = {
   runId: "run_1",
@@ -132,6 +139,61 @@ describe("karos-client", () => {
 
       const outcome = await tools["client.getExecutives"]!.execute({}, { ctx });
       expect(outcome).toEqual({ status: "success", result: [] });
+    });
+  });
+
+  describe("client.getSubredditRules", () => {
+    it("returns configStatus: unconfigured when no subreddit-rules file exists at all", async () => {
+      const outcome = await tools["client.getSubredditRules"]!.execute({ subreddit: "smallbusiness" }, { ctx });
+      expect(outcome).toEqual({
+        status: "success",
+        result: { subreddit: "smallbusiness", configStatus: "unconfigured", offLimits: false, aiContentBanned: false, disclosureRequired: false },
+      });
+    });
+
+    it("returns configStatus: unconfigured for a subreddit that isn't in the configured map", async () => {
+      const rules: Record<string, SubredditRulesEntry> = { startups: { offLimits: true } };
+      await store.writeJson("acme", ["client", "subreddit-rules"], rules);
+
+      const outcome = await tools["client.getSubredditRules"]!.execute({ subreddit: "smallbusiness" }, { ctx });
+      expect(outcome).toEqual({
+        status: "success",
+        result: { subreddit: "smallbusiness", configStatus: "unconfigured", offLimits: false, aiContentBanned: false, disclosureRequired: false },
+      });
+    });
+
+    it("returns the configured entry's fields, matched case-insensitively", async () => {
+      const rules: Record<string, SubredditRulesEntry> = {
+        smallbusiness: { offLimits: false, aiContentBanned: true, disclosureRequired: true, requiredDisclosure: "I work for Acme", minKarma: 100, minAccountAgeDays: 30 },
+      };
+      await store.writeJson("acme", ["client", "subreddit-rules"], rules);
+
+      const outcome = await tools["client.getSubredditRules"]!.execute({ subreddit: "SmallBusiness" }, { ctx });
+      expect(outcome).toEqual({
+        status: "success",
+        result: {
+          subreddit: "SmallBusiness",
+          configStatus: "configured",
+          offLimits: false,
+          aiContentBanned: true,
+          disclosureRequired: true,
+          requiredDisclosure: "I work for Acme",
+          minKarma: 100,
+          minAccountAgeDays: 30,
+        },
+      });
+    });
+
+    it("keeps two tenants' subreddit rules fully separate", async () => {
+      const acmeCtx: AgentContext = { ...ctx, clientSlug: "acme" };
+      const globexCtx: AgentContext = { ...ctx, clientSlug: "globex" };
+      await store.writeJson("acme", ["client", "subreddit-rules"], { smallbusiness: { offLimits: true } } satisfies Record<string, SubredditRulesEntry>);
+
+      const acmeOutcome = await tools["client.getSubredditRules"]!.execute({ subreddit: "smallbusiness" }, { ctx: acmeCtx });
+      const globexOutcome = await tools["client.getSubredditRules"]!.execute({ subreddit: "smallbusiness" }, { ctx: globexCtx });
+
+      expect(acmeOutcome.status === "success" && (acmeOutcome.result as { configStatus: string }).configStatus).toBe("configured");
+      expect(globexOutcome.status === "success" && (globexOutcome.result as { configStatus: string }).configStatus).toBe("unconfigured");
     });
   });
 

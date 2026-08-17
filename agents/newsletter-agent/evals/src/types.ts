@@ -34,6 +34,7 @@ export const NewsletterGoldenRunSchema = z.object({
   gateArgs: z
     .object({
       brandCompliance: z.object({ forbiddenTerms: z.array(z.string()).optional() }).optional(),
+      numbersSourced: z.object({ sources: z.array(z.string()).optional() }).optional(),
     })
     .default({}),
   endorsedBy: z.string().min(1),

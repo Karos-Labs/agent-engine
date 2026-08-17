@@ -40,8 +40,8 @@ describe("Layer 3 tool registry — cross-cutting", () => {
   it("merges all seven servers' tools into one registry with no name collisions", () => {
     const expectedPrefixes = ["client.", "gate.", "ledger.", "memory.", "publish.", "research.", "topics."];
     const names = Object.keys(tools);
-    // 6 client + 5 gates + 5 ledger + 5 memory + 3 publish + 4 research + 4 topics = 32
-    expect(names.length).toBe(32);
+    // 7 client + 6 gates + 5 ledger + 5 memory + 3 publish + 4 research + 4 topics = 34
+    expect(names.length).toBe(34);
     for (const prefix of expectedPrefixes) {
       expect(names.some((n) => n.startsWith(prefix))).toBe(true);
     }

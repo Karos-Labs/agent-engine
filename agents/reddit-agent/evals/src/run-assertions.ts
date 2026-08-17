@@ -13,18 +13,33 @@ const EVAL_CTX: AgentContext = {
 
 const gates = createKarosGatesTools();
 
+/** The Reddit-specific pitch-tells from legacy's `check-draft.mjs` (`PITCH_TELLS`/`BANNED_PHRASES`) not already covered by `karos-gates`' shared bank — mirrors `RedditDraftAgent`'s own self-critique `bannedPhrases`. */
+const REDDIT_EXTRA_BANNED_PHRASES = [
+  "lets dive in",
+  "id be happy to help",
+  "honoured to",
+  "move the needle for you",
+  "feel free to pm",
+  "shoot me a dm",
+  "happy to jump on a call",
+  "check out my",
+  "our platform helps",
+];
+
 /**
  * Deterministic assertions for the Reddit agent (RFC-01 §12 bullet 2): every
  * `karos-gates` check plus the mechanical `render.preview` character-limit
- * check (title and body both), run against a golden run's endorsed post.
- * Fast, free, zero model cost.
+ * check, run against a golden run's endorsed reply (`text`, the flattened
+ * field every gate and the render check actually operate on — identical to
+ * `replyBody` since a reply has no separate title). Fast, free, zero model
+ * cost.
  */
 export async function runRedditDeterministicAssertions(goldenRun: RedditGoldenRun): Promise<RedditDeterministicAssertionResult[]> {
-  const { title, text, platform } = goldenRun.endorsedOutput;
+  const { text } = goldenRun.endorsedOutput;
   const results: RedditDeterministicAssertionResult[] = [];
 
   const gateChecks: Array<{ check: string; gate: string; args: unknown }> = [
-    { check: "gate.lintPost", gate: "gate.lintPost", args: { text, platform } },
+    { check: "gate.lintPost", gate: "gate.lintPost", args: { text, platform: "reddit", bannedPhrases: REDDIT_EXTRA_BANNED_PHRASES } },
     { check: "gate.noPlaceholder", gate: "gate.noPlaceholder", args: { text } },
     { check: "gate.brandCompliance", gate: "gate.brandCompliance", args: { text, ...goldenRun.gateArgs.brandCompliance } },
     { check: "gate.leakCheck", gate: "gate.leakCheck", args: { text } },
@@ -51,9 +66,11 @@ export async function runRedditDeterministicAssertions(goldenRun: RedditGoldenRu
     });
   }
 
-  // The mechanical character-limit check — Reddit's real 300-char title / 40000-char
-  // body limits, not gate.lintPost's single-field platform lookup.
-  const previewOutcome = await renderPreview.execute({ title, text }, { ctx: EVAL_CTX });
+  // The mechanical character-limit check — Reddit's real 10,000-character
+  // comment limit, not gate.lintPost's more permissive submission-era "reddit"
+  // platform entry (still 40,000 chars, a leftover from the pre-restoration
+  // submission shape).
+  const previewOutcome = await renderPreview.execute({ text }, { ctx: EVAL_CTX });
   if (previewOutcome.status !== "success") {
     results.push({ goldenRunId: goldenRun.id, check: "render.preview", verdict: "tooling_error", reason: previewOutcome.reason });
   } else if (!previewOutcome.result.withinLimit) {
@@ -61,7 +78,7 @@ export async function runRedditDeterministicAssertions(goldenRun: RedditGoldenRu
       goldenRunId: goldenRun.id,
       check: "render.preview",
       verdict: "content_fail",
-      reason: `title ${previewOutcome.result.titleCharacterCount} chars / body ${previewOutcome.result.bodyCharacterCount} chars — over a Reddit limit`,
+      reason: `reply ${previewOutcome.result.characterCount} chars — over Reddit's comment limit`,
     });
   } else {
     results.push({ goldenRunId: goldenRun.id, check: "render.preview", verdict: "pass" });

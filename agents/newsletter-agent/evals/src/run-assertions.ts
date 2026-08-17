@@ -28,7 +28,7 @@ export async function runNewsletterDeterministicAssertions(goldenRun: Newsletter
     { check: "gate.noPlaceholder", gate: "gate.noPlaceholder", args: { text } },
     { check: "gate.brandCompliance", gate: "gate.brandCompliance", args: { text, ...goldenRun.gateArgs.brandCompliance } },
     { check: "gate.leakCheck", gate: "gate.leakCheck", args: { text } },
-    { check: "gate.numbersSourced", gate: "gate.numbersSourced", args: { text } },
+    { check: "gate.numbersSourced", gate: "gate.numbersSourced", args: { text, ...goldenRun.gateArgs.numbersSourced } },
   ];
 
   for (const { check, gate, args } of gateChecks) {
@@ -61,7 +61,7 @@ export async function runNewsletterDeterministicAssertions(goldenRun: Newsletter
       goldenRunId: goldenRun.id,
       check: "render.preview",
       verdict: "content_fail",
-      reason: `subject ${previewOutcome.result.subjectLineCharacterCount} / preview ${previewOutcome.result.previewTextCharacterCount} / body ${previewOutcome.result.bodyCharacterCount} chars — over a newsletter limit`,
+      reason: `subject ${previewOutcome.result.subjectLineCharacterCount} / preview ${previewOutcome.result.previewTextCharacterCount} / body ${previewOutcome.result.bodyCharacterCount} chars, over a newsletter limit`,
     });
   } else {
     results.push({ goldenRunId: goldenRun.id, check: "render.preview", verdict: "pass" });

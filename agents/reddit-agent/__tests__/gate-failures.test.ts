@@ -1,18 +1,28 @@
 import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createRedditAgentWorkflow } from "../src/workflow/create-reddit-agent-workflow.js";
-import { fakeRouterSequence, finalTurn, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import {
+  DEFAULT_TARGET_THREAD_TITLE,
+  DEFAULT_TARGET_THREAD_URL,
+  fakeRouterSequence,
+  finalTurn,
+  makePromptStore,
+  setupTestEnvironment,
+  type TestEnvironment,
+} from "./test-helpers.js";
 
 const baseParams = { clientSlug: "acme", productId: "reddit-agent", runKind: "recurring" as const };
 
 function baseFields() {
   return {
+    targetThreadUrl: DEFAULT_TARGET_THREAD_URL,
+    targetThreadTitle: DEFAULT_TARGET_THREAD_TITLE,
     targetSubreddit: "smallbusiness",
-    flair: "",
+    disclosureIncluded: false,
   };
 }
 
-describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
+describe("content gate failures (RFC-02 §5 steps 13-17)", () => {
   let env: TestEnvironment;
 
   beforeEach(async () => {
@@ -23,13 +33,10 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
     await env.cleanup();
   });
 
-  it("an unsourced numeric claim fails gate.numbersSourced at step 10 -> held", async () => {
+  it("an unsourced numeric claim fails gate.numbersSourced at step 13 -> held", async () => {
     const promptStore = makePromptStore();
-    const title = "What happened after we tried a 4-day week";
-    const body = "Teams using anchor days saw scheduling conflicts fall 43% this quarter.";
-    const router = fakeRouterSequence([
-      finalTurn({ ...baseFields(), title, body, hook: body, text: `${title}\n\n${body}` }),
-    ]);
+    const replyBody = "Teams using anchor days saw scheduling conflicts fall 43% this quarter.";
+    const router = fakeRouterSequence([finalTurn({ ...baseFields(), replyBody, text: replyBody })]);
     const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
@@ -42,18 +49,15 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
 
     const stepRecords = await durableStore.listSteps("reddit_run_gate_numbers");
     const ids = stepRecords.map((s) => s.stepId);
-    expect(ids).toContain("09-draft-post");
-    expect(ids).toContain("10-verify-numbers-sourced");
-    expect(ids).not.toContain("11-verify-brand-compliance");
+    expect(ids).toContain("12-draft-reply");
+    expect(ids).toContain("13-verify-numbers-sourced");
+    expect(ids).not.toContain("14-verify-brand-compliance");
   });
 
-  it("a forbidden brand term fails gate.brandCompliance at step 11 -> held", async () => {
+  it("a forbidden brand term fails gate.brandCompliance at step 14 -> held", async () => {
     const promptStore = makePromptStore();
-    const title = "Our results after switching schedules";
-    const body = "This approach is guaranteed to work for every team, every time.";
-    const router = fakeRouterSequence([
-      finalTurn({ ...baseFields(), title, body, hook: body, text: `${title}\n\n${body}` }),
-    ]);
+    const replyBody = "This approach is guaranteed to work for every team, every time.";
+    const router = fakeRouterSequence([finalTurn({ ...baseFields(), replyBody, text: replyBody })]);
     const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
@@ -66,28 +70,65 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
 
     const stepRecords = await durableStore.listSteps("reddit_run_gate_brand");
     const ids = stepRecords.map((s) => s.stepId);
-    expect(ids).toContain("11-verify-brand-compliance");
-    expect(ids).not.toContain("12-render-preview-check");
+    expect(ids).toContain("14-verify-brand-compliance");
+    expect(ids).not.toContain("15-verify-no-placeholder");
+  });
+
+  it("a placeholder marker left in the draft fails gate.noPlaceholder at step 15 -> held", async () => {
+    const promptStore = makePromptStore();
+    const replyBody = "Here's what worked for us: {{insert real number here}} once we tried it.";
+    const router = fakeRouterSequence([finalTurn({ ...baseFields(), replyBody, text: replyBody })]);
+    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router });
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+
+    const result = await engine.run(workflowFn, { ...baseParams, runId: "reddit_run_gate_placeholder" });
+
+    expect(result.status).toBe("held");
+    if (result.status !== "held") throw new Error("unreachable");
+    expect(result.reason).toMatch(/placeholder/i);
+
+    const stepRecords = await durableStore.listSteps("reddit_run_gate_placeholder");
+    const ids = stepRecords.map((s) => s.stepId);
+    expect(ids).toContain("15-verify-no-placeholder");
+    expect(ids).not.toContain("16-verify-leak-check");
+  });
+
+  it("a leaked local file path in the draft fails gate.leakCheck at step 16 -> held", async () => {
+    const promptStore = makePromptStore();
+    const replyBody = "Here's the config file we used: C:\\Users\\jane\\acme\\internal-config.json, worked great.";
+    const router = fakeRouterSequence([finalTurn({ ...baseFields(), replyBody, text: replyBody })]);
+    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router });
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+
+    const result = await engine.run(workflowFn, { ...baseParams, runId: "reddit_run_gate_leak" });
+
+    expect(result.status).toBe("held");
+    if (result.status !== "held") throw new Error("unreachable");
+    expect(result.reason).toMatch(/leak/i);
+
+    const stepRecords = await durableStore.listSteps("reddit_run_gate_leak");
+    const ids = stepRecords.map((s) => s.stepId);
+    expect(ids).toContain("16-verify-leak-check");
+    expect(ids).not.toContain("17-render-preview-check");
   });
 
   it("an over-limit first draft triggers a single self-critique revision, then completes", async () => {
     const promptStore = makePromptStore();
-    const title = "A reasonable title";
-    const tooLongBody = "This paragraph is way too long for a single Reddit post body. ".repeat(700); // > 40000 chars, fails gate.lintPost
+    const tooLongBody = "This paragraph is way too long for a single Reddit reply body. ".repeat(700); // > 40000 chars, fails gate.lintPost
     // No `platform` field on either turn's output — RedditDraftAgent's own
-    // `gateArgs: {platform: "reddit"}` is what pins gate.lintPost to the
-    // 40000-char limit here, not something the model has to remember to include.
+    // `gateArgs: {platform: "reddit"}` is what pins gate.lintPost's self-critique
+    // check here, not something the model has to remember to include.
     const router = fakeRouterSequence([
-      finalTurn({ ...baseFields(), title, body: tooLongBody, hook: "This paragraph is way too long.", text: `${title}\n\n${tooLongBody}` }),
+      finalTurn({ ...baseFields(), replyBody: tooLongBody, text: tooLongBody }),
       finalTurn({
         ...baseFields(),
-        title,
-        body: "Trying a shorter version this time — has anyone else tried a similar schedule change?",
-        hook: "Trying a shorter version this time.",
-        text: `${title}\n\nTrying a shorter version this time — has anyone else tried a similar schedule change?`,
+        replyBody: "Trying a shorter version this time: has anyone else tried a similar schedule change?",
+        text: "Trying a shorter version this time: has anyone else tried a similar schedule change?",
       }),
     ]);
-    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
@@ -99,24 +140,29 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
     expect(result.output.topic).toBeTruthy();
 
     const stepRecords = await durableStore.listSteps("reddit_run_gate_revision");
-    expect(stepRecords.map((s) => s.stepId)).toContain("15-commit-and-record");
+    expect(stepRecords.map((s) => s.stepId)).toContain("21-commit-and-record");
   });
 
-  it("a title over Reddit's 300-char limit is caught at step 12, distinct from the body limit", async () => {
+  it("a reply over Reddit's 10000-character comment limit is caught at step 17, distinct from gate.lintPost's own 40000-char submission-era ceiling", async () => {
     const promptStore = makePromptStore();
-    const tooLongTitle = "This is a title. ".repeat(20); // > 300 chars
-    const body = "A short, reasonable body with a real question at the end. Anyone else tried this?";
+    // Long enough to clear render.preview's real 10,000-char comment limit but
+    // still comfortably under gate.lintPost's 40,000-char "reddit" platform
+    // ceiling — so this trips ONLY the workflow-level render check, proving the
+    // two limits are genuinely distinct rather than the same number twice.
+    const overCommentLimitBody = "A genuinely long real reply with real specifics, repeated many times over. ".repeat(150); // ~11400 chars
     const router = fakeRouterSequence([
-      finalTurn({ ...baseFields(), title: tooLongTitle, body, hook: body, text: `${tooLongTitle}\n\n${body}` }),
+      finalTurn({ ...baseFields(), replyBody: overCommentLimitBody, text: overCommentLimitBody }),
     ]);
-    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
-    const result = await engine.run(workflowFn, { ...baseParams, runId: "reddit_run_gate_title_limit" });
+    const result = await engine.run(workflowFn, { ...baseParams, runId: "reddit_run_gate_comment_limit" });
 
     expect(result.status).toBe("held");
     if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/title exceeds Reddit's 300-character limit/i);
+    expect(result.reason).toMatch(/exceeds Reddit's 10000-character comment limit/i);
+    // Only one model call: gate.lintPost's self-critique never objected to this length.
+    expect(router.complete).toHaveBeenCalledTimes(1);
   });
 });

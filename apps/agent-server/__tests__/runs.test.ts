@@ -22,24 +22,59 @@ describe("POST /api/v1/runs/start", () => {
     await env.cleanup();
   });
 
-  it("runs the X agent end to end and returns a delivered report", async () => {
-    const res = await request(app)
+  it("runs the X agent end to end: pauses for human batch review, then resumes to a delivered report", async () => {
+    const startRes = await request(app)
       .post("/api/v1/runs/start")
       .send({ clientSlug: "acme", productId: "x-agent", runKind: "recurring", inputParams: {} });
 
-    expect(res.status).toBe(201);
-    expect(typeof res.body.runId).toBe("string");
-    expect(res.body.status).toBe("completed");
-    expect(res.body.report.domainOutcome).toBe("delivered");
-    expect(res.body.report.steps).toHaveLength(16);
+    expect(startRes.status).toBe(201);
+    expect(typeof startRes.body.runId).toBe("string");
+    expect(startRes.body.status).toBe("awaiting_gate");
+    // X's own workflow grew to 21 steps in Phase 2.5 Batch 2.3 (lane selection,
+    // engagement-cap check, and link-placement verification) -- its batch-review
+    // gate now lands at step 15, not 13.
+    expect(startRes.body.pendingGateId).toContain("15-batch-review");
+    const { runId } = startRes.body;
+
+    const resumeRes = await request(app)
+      .post(`/api/v1/runs/${runId}/resume`)
+      .send({ gateId: "15-batch-review", resolution: { decision: "approve", actor: "jane@karoslabs.com" } });
+
+    expect(resumeRes.status).toBe(200);
+    expect(resumeRes.body.status).toBe("completed");
+    expect(resumeRes.body.report.domainOutcome).toBe("delivered");
+    expect(resumeRes.body.report.steps).toHaveLength(21);
+    // Phase 2.5 fix-batch regression check: a genuinely completed/delivered
+    // run's own review-gate step must report as done/approved, never as
+    // "failed: step did not run" (the report-serializer gate-status bug).
+    const gateStep = resumeRes.body.report.steps.find((s: { stepId: string }) => s.stepId === "15-batch-review");
+    expect(gateStep?.status).toBe("done");
+    expect(gateStep?.error).toBeUndefined();
   });
 
-  it("runs each of the five channel agents end to end", async () => {
+  it("runs each of the five channel agents end to end: pauses for human batch review, then resumes to delivered", async () => {
     for (const productId of ["linkedin-agent", "reddit-agent", "blog-agent", "newsletter-agent"] as const) {
-      const res = await request(app).post("/api/v1/runs/start").send({ clientSlug: "acme", productId, runKind: "recurring" });
-      expect(res.status, `${productId} should return 201`).toBe(201);
-      expect(res.body.status, `${productId} should complete`).toBe("completed");
-      expect(res.body.report.domainOutcome, `${productId} should be delivered`).toBe("delivered");
+      const startRes = await request(app).post("/api/v1/runs/start").send({ clientSlug: "acme", productId, runKind: "recurring" });
+      expect(startRes.status, `${productId} should return 201`).toBe(201);
+      expect(startRes.body.status, `${productId} should pause for review`).toBe("awaiting_gate");
+      const { runId } = startRes.body;
+      // Reddit's own gate lands one step later ("14-batch-review") than the other
+      // four channels' shared "13-batch-review" — its own pre-draft subreddit-
+      // eligibility check (step 09) shifts everything after it by one.
+      const gateId: string = startRes.body.pendingGateId.slice(`${runId}__`.length);
+
+      const resumeRes = await request(app)
+        .post(`/api/v1/runs/${runId}/resume`)
+        .send({ gateId, resolution: { decision: "approve", actor: "jane@karoslabs.com" } });
+      expect(resumeRes.status, `${productId} should resume cleanly`).toBe(200);
+      expect(resumeRes.body.status, `${productId} should complete`).toBe("completed");
+      expect(resumeRes.body.report.domainOutcome, `${productId} should be delivered`).toBe("delivered");
+
+      // Phase 2.5 fix-batch regression check, across every channel: the resolved
+      // review-gate step must report as done, never "failed: step did not run".
+      const gateStep = resumeRes.body.report.steps.find((s: { stepId: string }) => s.stepId === gateId);
+      expect(gateStep?.status, `${productId}'s ${gateId} step should report done`).toBe("done");
+      expect(gateStep?.error, `${productId}'s ${gateId} step should have no error`).toBeUndefined();
     }
   });
 
@@ -93,11 +128,30 @@ describe("GET /api/v1/runs/:runId/status", () => {
   it("returns the same status/report for a run that was already started", async () => {
     const startRes = await request(app).post("/api/v1/runs/start").send({ clientSlug: "acme", productId: "blog-agent", runKind: "recurring" });
     const { runId } = startRes.body;
+    expect(startRes.body.status).toBe("awaiting_gate");
 
     const statusRes = await request(app).get(`/api/v1/runs/${runId}/status`);
     expect(statusRes.status).toBe(200);
-    expect(statusRes.body.status).toBe("completed");
-    expect(statusRes.body.report.domainOutcome).toBe("delivered");
+    expect(statusRes.body.status).toBe("awaiting_gate");
+    expect(statusRes.body.pendingGateId).toBe(startRes.body.pendingGateId);
+
+    // Blog's own batch-review gate lands at step 15 (Phase 2.5 Batch 2.4 grew its
+    // workflow by two steps for the newly-wired noPlaceholder/leakCheck gates).
+    const resumeRes = await request(app)
+      .post(`/api/v1/runs/${runId}/resume`)
+      .send({ gateId: "15-batch-review", resolution: { decision: "approve", actor: "jane@karoslabs.com" } });
+    expect(resumeRes.body.status).toBe("completed");
+
+    const statusAfterResumeRes = await request(app).get(`/api/v1/runs/${runId}/status`);
+    expect(statusAfterResumeRes.status).toBe(200);
+    expect(statusAfterResumeRes.body.status).toBe("completed");
+    expect(statusAfterResumeRes.body.report.domainOutcome).toBe("delivered");
+
+    // Phase 2.5 fix-batch regression check: fetched independently via GET
+    // /status (not just the resume response), the gate step must still report done.
+    const gateStep = statusAfterResumeRes.body.report.steps.find((s: { stepId: string }) => s.stepId === "15-batch-review");
+    expect(gateStep?.status).toBe("done");
+    expect(gateStep?.error).toBeUndefined();
   });
 
   it("returns 404 for an unknown runId", async () => {
@@ -139,6 +193,13 @@ describe("POST /api/v1/runs/:runId/resume — campaign orchestrator gate", () =>
     // The dynamically-discovered fan-out slots (5 channels) all show up as their own report entries.
     const slotSteps = resumeRes.body.report.steps.filter((s: { stepId: string }) => s.stepId.startsWith("channel-fanout__slot_"));
     expect(slotSteps.length).toBeGreaterThan(0);
+
+    // Phase 2.5 fix-batch regression check: the top-level campaign-review gate
+    // must report as done on a genuinely completed/delivered run, never
+    // "failed: step did not run".
+    const gateStep = resumeRes.body.report.steps.find((s: { stepId: string }) => s.stepId === "13-campaign-review");
+    expect(gateStep?.status).toBe("done");
+    expect(gateStep?.error).toBeUndefined();
   });
 
   it("rejects a reject-decision resume with no notes (reason is mandatory on reject, RFC-01 §8.3)", async () => {

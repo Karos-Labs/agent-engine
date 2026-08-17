@@ -2,6 +2,8 @@
 export interface XIntakeConfig {
   xHandle: string;
   requestedTopic?: string;
+  /** An explicit lane request for this run (lanes.md: "the customer's run request wins"). Any of `LANE_VALUES`; anything else is ignored and the rotation fallback decides instead. */
+  requestedLane?: string;
   [key: string]: unknown;
 }
 
@@ -23,6 +25,21 @@ export interface XTopicReservation {
   topics: string[];
 }
 
+/**
+ * A single `memory.read({scope:"decisions"})` row, widened past
+ * `DecisionRecord`'s own shape to explicitly surface `at` — the append
+ * timestamp `memory.appendDecision` always writes but `AppendDecisionInputSchema`
+ * doesn't name as a field — since the lane rotation and the engagement daily
+ * cap both need real recency, not just insertion order (`listJson` sorts by
+ * filename, which is a decision id, not a timestamp).
+ */
+export interface XRecentDecision {
+  decisionId: string;
+  summary: string;
+  at?: number;
+  [key: string]: unknown;
+}
+
 export type XCandidateSource = "requested" | "reserved" | "research";
 
 export interface XSelectedCandidate {
@@ -33,6 +50,7 @@ export interface XSelectedCandidate {
 export interface XAgentWorkflowResult {
   topic: string;
   angle: string;
+  lane: string;
   targetHandle: string;
   deliverableId: string;
 }

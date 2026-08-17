@@ -112,11 +112,25 @@ the edition versus which ones aren't worth including is yours.
 
 ## 10. signoff and text
 
-`signoff` is the short closing line before the compliance footer (e.g. "—
-The [Client] Team") — never a second call to action dressed as a goodbye.
+`signoff` is the short closing line before the compliance footer (e.g. "The
+[Client] Team" or "Talk soon, The [Client] Team") — never a second call to
+action dressed as a goodbye, and never an em dash or en dash anywhere in it
+(`gate.lintPost`'s mechanical anti-slop check rejects both characters
+outright, in the signoff exactly as anywhere else in the edition).
 `text` is the fully composed edition body exactly as it will be sent —
 `intro`, then each section's `heading` and `body` in order, then
 `callToAction.text`, then `signoff` — the single field every length and
 content gate checks (the subject line and preview text are checked
 separately, since they never appear inside the body itself), so it must
 always match the other fields exactly, never drift from them.
+
+Do not write a compliance footer, disclaimer, or unsubscribe link into
+`intro`, any section, `callToAction`, `signoff`, or `text` yourself. The
+output schema has three separate fields for this — `footerDisclaimer`,
+`unsubscribeUrl`, `companyAddress` — and the platform fills them in from the
+client's own brand configuration after you draft, appending them onto the
+sent body itself. Leave all three out of your output entirely (they are
+optional). If the client requires a disclaimer or an unsubscribe link, it
+will be added for you; authoring your own version of it yourself would just
+create a duplicate, or a version that doesn't match the client's actual
+legal/compliance requirements.

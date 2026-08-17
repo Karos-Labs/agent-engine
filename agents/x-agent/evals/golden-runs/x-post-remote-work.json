@@ -10,8 +10,10 @@
   },
   "endorsedOutput": {
     "text": "More teams are testing 4-day weeks this quarter. Early internal data [1] shows steady output with fewer sick days. Worth watching if your team is rethinking its schedule.",
+    "mainPostText": "More teams are testing 4-day weeks this quarter. Early internal data [1] shows steady output with fewer sick days. Worth watching if your team is rethinking its schedule.",
     "hook": "More teams are testing 4-day weeks this quarter.",
     "angle": "data-point",
+    "lane": "knowledge",
     "targetHandle": "@acmehq",
     "platform": "x"
   },

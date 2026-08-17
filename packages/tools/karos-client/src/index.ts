@@ -6,6 +6,7 @@ import { createGetVoiceRules } from "./get-voice-rules.js";
 import { createListCompetitors } from "./list-competitors.js";
 import { createGetExecutives } from "./get-executives.js";
 import { createGetConfig } from "./get-config.js";
+import { createGetSubredditRules } from "./get-subreddit-rules.js";
 
 export * from "./get-profile.js";
 export * from "./get-brand.js";
@@ -13,6 +14,7 @@ export * from "./get-voice-rules.js";
 export * from "./list-competitors.js";
 export * from "./get-executives.js";
 export * from "./get-config.js";
+export * from "./get-subreddit-rules.js";
 
 /**
  * The `karos-client` MCP server's tool registry (RFC-01 §9.1/§9.2) — a
@@ -28,5 +30,6 @@ export function createKarosClientTools(store: WorkspaceStoreLike = createWorkspa
     "client.listCompetitors": createListCompetitors(store),
     "client.getExecutives": createGetExecutives(store),
     "client.getConfig": createGetConfig(store),
+    "client.getSubredditRules": createGetSubredditRules(store),
   };
 }

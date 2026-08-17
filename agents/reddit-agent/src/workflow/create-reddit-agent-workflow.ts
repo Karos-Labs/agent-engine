@@ -1,4 +1,4 @@
-import type { AgentContext, AgentToolRegistry, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
+import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
 import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure } from "@agent-engine/workflow";
 import { RedditDraftAgent } from "../agent/reddit-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
@@ -8,6 +8,7 @@ import type {
   RedditClientContext,
   RedditIntakeConfig,
   RedditSelectedCandidate,
+  RedditSelectedThread,
   RedditTopicReservation,
 } from "./types.js";
 
@@ -16,6 +17,27 @@ export interface CreateRedditAgentWorkflowOptions {
   tools: AgentToolRegistry;
   promptStore: PromptStore;
   router: ModelRouter;
+  /**
+   * Skips step 18's human `batch_review` gate and records a synthetic
+   * `actor: "system"` approval instead — off by default, so a real run
+   * genuinely pauses at `awaiting_gate` until a human reviews it (RFC-01
+   * §8.3). Intended for tests/demos/evals that need a synchronous happy
+   * path, never for production wiring.
+   */
+  autoApprove?: boolean;
+}
+
+/**
+ * Matches a real Reddit thread URL and captures its subreddit — deliberately
+ * requires the `/comments/` segment (not just any reddit.com path) so this
+ * never mistakes a profile, a subreddit-front-page, or a search-results URL
+ * for an actual thread. A mechanical string parse, never a guess: nothing
+ * here fabricates a subreddit name that isn't literally in the URL.
+ */
+const REDDIT_THREAD_URL_PATTERN = /^https?:\/\/(?:www\.|old\.|new\.|m\.)?reddit\.com\/r\/([A-Za-z0-9_]+)\/comments\/\S+/i;
+
+function parseSubredditFromThreadUrl(url: string): string | undefined {
+  return REDDIT_THREAD_URL_PATTERN.exec(url.trim())?.[1];
 }
 
 function toAgentContext(wf: WorkflowContext): AgentContext {
@@ -48,11 +70,35 @@ async function runGate(
 }
 
 /**
- * `createRedditAgentWorkflow()` (RFC-02 §5 — "same recipe" as the X and
- * LinkedIn pilots): the 16-step recurring/on-demand run protocol, steps
- * `00`–`15`. One post, one run (RFC-01 §16.2's ruling) — no fan-out here;
- * every Reddit run produces at most one deliverable, in exactly one
- * target subreddit.
+ * `createRedditAgentWorkflow()` — Phase 2.5 Batch 2.1's domain-logic
+ * restoration: the reply-only run protocol, steps `00`-`21`. Legacy's
+ * non-negotiable rule is "comments only, never original posts"
+ * (`reddit-agent-v2/SKILL.md` line 9; `references/reddit-craft.md` §1: "We
+ * do not start threads") — the pre-restoration workflow drafted an original
+ * submission (title/body/targetSubreddit/flair) into a target subreddit it
+ * picked itself, the exact opposite of the legacy model. This version:
+ *
+ * - Selects an existing thread to reply to (step 08) rather than picking a
+ *   subreddit to post into — and, since Phase 1 has no live thread-discovery
+ *   backend (see step 08's own comment), that selection can only come from
+ *   an explicit client-supplied candidate. A run with no such candidate is
+ *   honestly `held`, exactly like a run with no candidate topic was already
+ *   `held` before this batch.
+ * - Deduplicates on the target thread's URL (step 09), a real, working
+ *   check against this client's own decision history — legacy's
+ *   `answered_thread_urls` (`run-protocol.md` §11), simplified to the tools
+ *   this codebase already wires into every agent (`memory.read`/
+ *   `memory.appendDecision`) instead of a bespoke ledger file.
+ * - Extends the pre-draft subreddit eligibility gate (step 10) and the
+ *   post-draft recheck (step 14) with the account warming/mention-cooldown
+ *   checks `gate.subredditRules` now supports.
+ * - Runs `gate.noPlaceholder` and `gate.leakCheck` as real workflow steps
+ *   (15, 16) for the first time — both gates existed in `karos-gates`
+ *   already but, before this batch, were only ever exercised by `evals/`,
+ *   never called at runtime.
+ *
+ * Step 18 is a mandatory human `batch_review` gate (RFC-01 §8.3) unless
+ * `options.autoApprove` opts out.
  */
 export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOptions) {
   const tools: AgentToolRegistry = { ...options.tools, "render.preview": renderPreview };
@@ -66,7 +112,13 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
       if (configOutcome.status !== "success") {
         throw new WorkflowBlockedIntake("client config is not available yet — cannot determine target subreddits");
       }
-      const config = configOutcome.result as { targetSubreddits?: string[]; requestedTopic?: string; requestedSubreddit?: string };
+      const config = configOutcome.result as {
+        targetSubreddits?: string[];
+        requestedTopic?: string;
+        requestedSubreddit?: string;
+        requestedThreadUrl?: string;
+        requestedThreadTitle?: string;
+      };
       if (!config.targetSubreddits || config.targetSubreddits.length === 0) {
         throw new WorkflowBlockedIntake("client has not configured any target subreddits yet");
       }
@@ -78,6 +130,8 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
         targetSubreddits: config.targetSubreddits,
         ...(config.requestedTopic !== undefined ? { requestedTopic: config.requestedTopic } : {}),
         ...(config.requestedSubreddit !== undefined ? { requestedSubreddit: config.requestedSubreddit } : {}),
+        ...(config.requestedThreadUrl !== undefined ? { requestedThreadUrl: config.requestedThreadUrl } : {}),
+        ...(config.requestedThreadTitle !== undefined ? { requestedThreadTitle: config.requestedThreadTitle } : {}),
       };
     });
 
@@ -121,8 +175,12 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
     const candidateSummary = await wf.step.code("05-extract-candidate-summary", (): RedditCandidateSummary => {
       // Phase 1's research.pull is a stand-in with no real external search backend yet
       // (see packages/tools/karos-research/src/pull.ts) — so there is no real numeric
-      // insight to extract. This derives a low-confidence, clearly-labeled fallback
-      // candidate from the query itself, never a fabricated statistic.
+      // insight to extract, and no real live thread to point to (finding one means
+      // scanning subreddit RSS/API feeds, exactly the kind of external integration
+      // this stand-in never performs). This derives a low-confidence, clearly-labeled
+      // fallback question-pattern candidate from the query itself, never a fabricated
+      // statistic and never a fabricated thread URL — a real target thread can only
+      // come from step 08's explicit intake candidate.
       return {
         candidateTopic: research.query,
         hasNumericInsight: false,
@@ -130,7 +188,7 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
       };
     });
 
-    // ── 06-08: subreddit, topic, and angle selection (authenticity/value-add focus) ──
+    // ── 06-07: recurring-question-pattern / angle-context selection ──
     const reservation = await wf.step.code("06-reserve-topic", async (): Promise<RedditTopicReservation> => {
       const excludeTopics = recentDecisions;
       const outcome = await tools["topics.reserve"]!.execute(
@@ -147,47 +205,126 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
     });
 
     const selected = await wf.step.code("07-select-candidate", (): RedditSelectedCandidate => {
-      // Single post selection precedence (RFC-02 §5, "same recipe" as X §3): an
-      // explicit client request wins, then a reserved catalog topic, then the
-      // research-derived fallback.
-      let topic: string;
-      let source: RedditSelectedCandidate["source"];
+      // Recurring-question-pattern selection precedence (legacy's "recurring question
+      // pool", subreddit-sourcing.md §3): an explicit client request wins, then a
+      // reserved catalog pattern, then the research-derived fallback. This is context
+      // for the draft's angle, not the target thread — that's step 08, entirely separate.
       if (intake.requestedTopic) {
-        topic = intake.requestedTopic;
-        source = "requested";
-      } else if (reservation.topics.length > 0) {
-        topic = reservation.topics[0]!;
-        source = "reserved";
-      } else if (candidateSummary.candidateTopic) {
-        topic = candidateSummary.candidateTopic;
-        source = "research";
-      } else {
-        throw new WorkflowHeld("no candidate topic available for this run — nothing honestly cleared selection");
+        return { topic: intake.requestedTopic, source: "requested" };
       }
-
-      // Subreddit selection: an explicit client request wins (if it's actually one of
-      // the client's configured subreddits), otherwise the first configured subreddit.
-      const targetSubreddit =
-        intake.requestedSubreddit && intake.targetSubreddits.includes(intake.requestedSubreddit)
-          ? intake.requestedSubreddit
-          : intake.targetSubreddits[0]!;
-
-      return { topic, source, targetSubreddit };
+      if (reservation.topics.length > 0) {
+        return { topic: reservation.topics[0]!, source: "reserved" };
+      }
+      if (candidateSummary.candidateTopic) {
+        return { topic: candidateSummary.candidateTopic, source: "research" };
+      }
+      throw new WorkflowHeld("no candidate question-pattern available for this run — nothing honestly cleared selection");
     });
 
-    const angle = await wf.step.code("08-determine-angle", (): string => {
-      // Reddit's craft policy is explicitly non-promotional (reddit-craft@1 §4) —
-      // the non-numeric default angle names that value-add framing directly.
-      return candidateSummary.hasNumericInsight ? "data-point" : "value-add-discussion";
+    // ── 08: select the target thread — the reply-only model's central selection step ──
+    const selectedThread = await wf.step.code("08-select-target-thread", (): RedditSelectedThread => {
+      // Legacy's real value is here: "finding the right thread is the expensive
+      // skill; writing the reply is nearly free" (reddit-agent-v2 SKILL.md). Finding
+      // one means scanning subreddit RSS feeds / the Reddit API for live threads
+      // worth replying to — exactly the kind of external-service integration
+      // research.pull itself stands in for above (step 04/05's comment), and
+      // building it is out of scope for Phase 1. So the only honest source of a
+      // target thread today is an explicit client-supplied candidate through
+      // intake — never a URL synthesized from a query string. A run with no such
+      // candidate is held, not forced through with a fabricated thread.
+      if (!intake.requestedThreadUrl || !intake.requestedThreadTitle) {
+        throw new WorkflowHeld(
+          "no target thread available for this run — Phase 1 has no live thread-discovery backend (RSS/API scanning is out of scope, see step 08's own comment); supply requestedThreadUrl + requestedThreadTitle via client intake to reply to a specific thread",
+        );
+      }
+      const targetSubreddit = parseSubredditFromThreadUrl(intake.requestedThreadUrl);
+      if (!targetSubreddit) {
+        throw new WorkflowHeld(
+          `requestedThreadUrl "${intake.requestedThreadUrl}" doesn't look like a real reddit.com thread URL (expected .../r/<subreddit>/comments/...)`,
+        );
+      }
+      return { targetThreadUrl: intake.requestedThreadUrl, targetThreadTitle: intake.requestedThreadTitle, targetSubreddit };
     });
 
-    // ── 09-12: draft execution via RedditDraftAgent, with machine/claim/compliance gates ──
+    // ── 09: thread-level dedup — never two replies to one thread (reddit-craft.md §6.6) ──
+    await wf.step.code("09-check-thread-not-answered", async () => {
+      const outcome = await tools["memory.read"]!.execute({ scope: "decisions" }, { ctx });
+      if (outcome.status !== "success") {
+        return { checked: false };
+      }
+      const result = outcome.result as { scope: string; items: Array<{ summary: string }> };
+      // Step 21 records the target thread URL verbatim inside the decision summary
+      // it appends — a real, working substring check against this client's own
+      // history, not a stub. Simplified from legacy's bespoke `answered_thread_urls`
+      // ledger (`run-protocol.md` §11) to the memory tools this codebase already
+      // wires into every agent.
+      const alreadyAnswered = result.items.some((item) => item.summary.includes(selectedThread.targetThreadUrl));
+      if (alreadyAnswered) {
+        throw new WorkflowHeld(
+          `thread ${selectedThread.targetThreadUrl} was already answered in a prior run for this client — never two replies to one thread from any account (reddit-craft.md §6.6)`,
+        );
+      }
+      return { checked: true, priorDecisionCount: result.items.length };
+    });
+
+    // ── 10: subreddit eligibility — never even draft for an off-limits, AI-content-banned, or below-gate subreddit ──
+    const subredditRulesLookup = await wf.step.code("10-verify-subreddit-eligibility", async () => {
+      const outcome = await tools["client.getSubredditRules"]!.execute({ subreddit: selectedThread.targetSubreddit }, { ctx });
+      const rules =
+        outcome.status === "success"
+          ? (outcome.result as {
+              configStatus: "configured" | "unconfigured";
+              offLimits: boolean;
+              aiContentBanned: boolean;
+              disclosureRequired: boolean;
+              requiredDisclosure?: string;
+              minKarma?: number;
+              minAccountAgeDays?: number;
+              mentionCooldownDays?: number;
+              lastMentionAt?: string;
+              accountWarmingUntil?: string;
+            })
+          : { configStatus: "unconfigured" as const, offLimits: false, aiContentBanned: false, disclosureRequired: false };
+      // Disclosure/mention depends on the draft's own text, which doesn't exist yet
+      // at this pre-draft point — re-checked at step 14 once real text exists, where
+      // mentionAttempted is derived from the draft's own disclosureIncluded flag.
+      // Karma, account age, the legacy warming period, and the per-subreddit mention
+      // cooldown are all Phase-1-stubbed pending real account-state storage (no live
+      // karma, no live warming history, no live mention ledger) — an unset
+      // threshold/value means "cannot check," not "assume it fails" (gate.subredditRules'
+      // own contract). The CHECK LOGIC itself is real: a client that does configure
+      // these fields on client.getSubredditRules gets them genuinely enforced, both
+      // here and at step 14, exactly as the gate's own fixture-driven tests prove.
+      const verdict = await runGate(
+        tools,
+        "gate.subredditRules",
+        { text: "", subreddit: selectedThread.targetSubreddit, ...rules, disclosureRequired: false, mentionAttempted: false },
+        ctx,
+      );
+      if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.subredditRules: ${verdict.reason}`);
+      if (verdict.verdict === "content_fail") throw new WorkflowHeld(`subreddit eligibility check failed: ${verdict.reason}`);
+      return rules;
+    });
+
+    // ── 11: angle — the reply-shape taxonomy (reddit-answer-formulas.md §Formula menu) ──
+    const angle = await wf.step.code("11-determine-angle", (): string => {
+      // A deterministic starting hint, not a hard rule — reddit-craft@2 names all
+      // four shapes (thorough value, personal experience, comparison/decision-help,
+      // correction-with-receipts) and the model picks whichever the thread's actual
+      // angle calls for. This just seeds the more common of the two data-agnostic
+      // defaults.
+      return candidateSummary.hasNumericInsight ? "thorough-value" : "personal-experience";
+    });
+
+    // ── 12-17: draft execution via RedditDraftAgent, with the full gate stack ──
     const draftAgent = new RedditDraftAgent({ router: options.router, tools, promptStore: options.promptStore });
-    const draftResult = await wf.step.agent("09-draft-post", draftAgent, {
+    const draftResult = await wf.step.agent("12-draft-reply", draftAgent, {
       topic: selected.topic,
       source: selected.source,
       angle,
-      targetSubreddit: selected.targetSubreddit,
+      targetThreadUrl: selectedThread.targetThreadUrl,
+      targetThreadTitle: selectedThread.targetThreadTitle,
+      targetSubreddit: selectedThread.targetSubreddit,
       voiceRules: clientContext.voiceRules,
     });
 
@@ -199,7 +336,7 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
     }
     const draft = draftResult.finalOutput!;
 
-    await wf.step.code("10-verify-numbers-sourced", async () => {
+    await wf.step.code("13-verify-numbers-sourced", async () => {
       const sources = candidateSummary.hasNumericInsight ? [candidateSummary.sourceLabel] : [];
       const verdict = await runGate(tools, "gate.numbersSourced", { text: draft.text, sources }, ctx);
       if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.numbersSourced: ${verdict.reason}`);
@@ -207,56 +344,135 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
       return verdict;
     });
 
-    await wf.step.code("11-verify-brand-compliance", async () => {
+    await wf.step.code("14-verify-brand-compliance", async () => {
       const forbiddenTerms = clientContext.brand["forbiddenTerms"] as string[] | undefined;
-      const verdict = await runGate(tools, "gate.brandCompliance", { text: draft.text, forbiddenTerms: forbiddenTerms ?? [] }, ctx);
-      if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.brandCompliance: ${verdict.reason}`);
-      if (verdict.verdict === "content_fail") throw new WorkflowHeld(`brand compliance failed: ${verdict.reason}`);
+      const brandVerdict = await runGate(tools, "gate.brandCompliance", { text: draft.text, forbiddenTerms: forbiddenTerms ?? [] }, ctx);
+      if (brandVerdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.brandCompliance: ${brandVerdict.reason}`);
+      if (brandVerdict.verdict === "content_fail") throw new WorkflowHeld(`brand compliance failed: ${brandVerdict.reason}`);
+
+      // Disclosure/warming/cooldown are the subreddit-rules checks that need real
+      // draft text — re-run now that it exists, reusing step 10's lookup.
+      // mentionAttempted is derived from the draft's own disclosureIncluded flag:
+      // Phase 1 has no account.json-style mention-name text scanner, and an
+      // undisclosed mention is already rejected by the disclosure check below, so
+      // "disclosed" and "mentioned" are the same event in practice today.
+      const disclosureVerdict = await runGate(
+        tools,
+        "gate.subredditRules",
+        {
+          text: draft.text,
+          subreddit: selectedThread.targetSubreddit,
+          ...subredditRulesLookup,
+          mentionAttempted: draft.disclosureIncluded,
+          now: new Date().toISOString(),
+        },
+        ctx,
+      );
+      if (disclosureVerdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.subredditRules: ${disclosureVerdict.reason}`);
+      if (disclosureVerdict.verdict === "content_fail") throw new WorkflowHeld(`subreddit mention/disclosure check failed: ${disclosureVerdict.reason}`);
+
+      return { brandVerdict, disclosureVerdict };
+    });
+
+    // ── 15-16: gate.noPlaceholder / gate.leakCheck — wired into a real run for the first time ──
+    await wf.step.code("15-verify-no-placeholder", async () => {
+      const verdict = await runGate(tools, "gate.noPlaceholder", { text: draft.text }, ctx);
+      if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.noPlaceholder: ${verdict.reason}`);
+      if (verdict.verdict === "content_fail") throw new WorkflowHeld(`unresolved placeholder left in draft: ${verdict.reason}`);
       return verdict;
     });
 
-    await wf.step.code("12-render-preview-check", async () => {
-      const outcome = await tools["render.preview"]!.execute({ title: draft.title, text: draft.text }, { ctx });
+    await wf.step.code("16-verify-leak-check", async () => {
+      const verdict = await runGate(tools, "gate.leakCheck", { text: draft.text }, ctx);
+      if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.leakCheck: ${verdict.reason}`);
+      if (verdict.verdict === "content_fail") throw new WorkflowHeld(`draft appears to leak a credential, path, or internal-only term: ${verdict.reason}`);
+      return verdict;
+    });
+
+    await wf.step.code("17-render-preview-check", async () => {
+      const outcome = await tools["render.preview"]!.execute({ text: draft.text }, { ctx });
       if (outcome.status !== "success") throw new WorkflowToolingFailure(`render.preview failed: ${outcome.status}`);
       const preview = outcome.result as RenderPreviewResult;
       if (!preview.withinLimit) {
-        const reason = !preview.titleWithinLimit
-          ? `title exceeds Reddit's 300-character limit (${preview.titleCharacterCount} chars)`
-          : `post exceeds Reddit's 40000-character body limit (${preview.bodyCharacterCount} chars)`;
-        throw new WorkflowHeld(reason);
+        throw new WorkflowHeld(`reply exceeds Reddit's 10000-character comment limit (${preview.characterCount} chars)`);
       }
       return preview;
     });
 
-    // ── 13-14: deliverable & manifest persistence ──
-    const deliverableId = await wf.step.code("13-persist-deliverable", async (): Promise<string> => {
-      const outcome = await tools["ledger.writeDeliverable"]!.execute({ runId: wf.runId, kind: "reddit-post", deliverable: draft }, { ctx });
+    // ── 18: human batch-review gate — nothing ships without a real approval ──
+    const reviewDecision: GateResponse = options.autoApprove
+      ? await wf.step.code("18-batch-review", () => ({
+          decision: "approve" as const,
+          actor: "system",
+          at: new Date().toISOString(),
+        }))
+      : await wf.step.gate("18-batch-review", {
+          kind: "batch_review",
+          payload: {
+            runId: wf.runId,
+            topic: selected.topic,
+            angle,
+            targetThreadUrl: selectedThread.targetThreadUrl,
+            targetSubreddit: selectedThread.targetSubreddit,
+            preview: draft.text,
+          },
+          requiredRole: "account_manager",
+          timeout: { duration: "24h", onTimeout: "hold" },
+        });
+    if (reviewDecision.decision !== "approve") {
+      throw new WorkflowHeld(`batch rejected: ${reviewDecision.reason ?? "no reason given"}`);
+    }
+
+    // ── 19-20: deliverable & manifest persistence ──
+    const deliverableId = await wf.step.code("19-persist-deliverable", async (): Promise<string> => {
+      const outcome = await tools["ledger.writeDeliverable"]!.execute({ runId: wf.runId, kind: "reddit-reply", deliverable: draft }, { ctx });
       if (outcome.status !== "success") throw new WorkflowToolingFailure(`ledger.writeDeliverable failed: ${outcome.status}`);
       return (outcome.result as { id: string }).id;
     });
 
-    await wf.step.code("14-persist-manifest", async () => {
+    await wf.step.code("20-persist-manifest", async () => {
       await tools["ledger.dashboardSnapshot"]!.execute(
-        { runId: wf.runId, snapshot: { topic: selected.topic, source: selected.source, angle, targetSubreddit: selected.targetSubreddit, deliverableId } },
+        {
+          runId: wf.runId,
+          snapshot: {
+            topic: selected.topic,
+            source: selected.source,
+            angle,
+            targetThreadUrl: selectedThread.targetThreadUrl,
+            targetSubreddit: selectedThread.targetSubreddit,
+            deliverableId,
+          },
+        },
         { ctx },
       );
     });
 
-    // ── 15: commit updates (topics.commit, memory.appendDecision, ledger.feedbackAppend) ──
-    await wf.step.code("15-commit-and-record", async () => {
+    // ── 21: commit updates (topics.commit, memory.appendDecision, ledger.feedbackAppend) ──
+    await wf.step.code("21-commit-and-record", async () => {
       if (selected.source === "reserved" && reservation.reservationKey) {
         await tools["topics.commit"]!.execute({ reservationKey: reservation.reservationKey }, { ctx });
       }
+      // The target thread URL is recorded verbatim in this summary — step 09's
+      // dedup check on a future run reads it back with a plain substring search.
       await tools["memory.appendDecision"]!.execute(
-        { decisionId: `${wf.runId}__decision`, summary: `Posted about "${selected.topic}" in r/${selected.targetSubreddit} (angle: ${angle})` },
+        {
+          decisionId: `${wf.runId}__decision`,
+          summary: `Replied to thread ${selectedThread.targetThreadUrl} in r/${selectedThread.targetSubreddit} (topic: "${selected.topic}", angle: ${angle})`,
+        },
         { ctx },
       );
       await tools["ledger.feedbackAppend"]!.execute(
-        { runId: wf.runId, feedbackId: `${wf.runId}__auto`, decision: "approve", actor: "system" },
+        { runId: wf.runId, feedbackId: `${wf.runId}__review`, decision: reviewDecision.decision, actor: reviewDecision.actor },
         { ctx },
       );
     });
 
-    return { topic: selected.topic, angle, targetSubreddit: selected.targetSubreddit, deliverableId };
+    return {
+      targetThreadUrl: selectedThread.targetThreadUrl,
+      targetSubreddit: selectedThread.targetSubreddit,
+      topic: selected.topic,
+      angle,
+      deliverableId,
+    };
   };
 }

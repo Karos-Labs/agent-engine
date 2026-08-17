@@ -11,6 +11,7 @@ function baseFields() {
     hashtags: ["HybridWork"],
     callToAction: "Think about it.",
     targetAudience: "Operations leaders",
+    archetype: "teardown-framework" as const,
   };
 }
 
@@ -85,7 +86,7 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
         text: "Remote teams keep experimenting with anchor days.\n\nWorth watching if yours is rethinking its hybrid schedule.\n\n#HybridWork",
       }),
     ]);
-    const workflowFn = createLinkedInAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createLinkedInAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
@@ -97,7 +98,7 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
     expect(result.output.topic).toBeTruthy();
 
     const stepRecords = await durableStore.listSteps("linkedin_run_gate_revision");
-    expect(stepRecords.map((s) => s.stepId)).toContain("15-commit-and-record");
+    expect(stepRecords.map((s) => s.stepId)).toContain("18-commit-and-record");
   });
 
   it("a draft exactly at the character limit passes both gate.lintPost and render.preview at step 12", async () => {
@@ -106,12 +107,96 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
     const router = fakeRouterSequence([
       finalTurn({ ...baseFields(), hook: "A", body: exactlyAtLimitText, text: exactlyAtLimitText }),
     ]);
-    const workflowFn = createLinkedInAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createLinkedInAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
     const result = await engine.run(workflowFn, { ...baseParams, runId: "linkedin_run_gate_at_limit" });
 
     expect(result.status).toBe("completed");
+  });
+
+  it("brand.requiredDisclaimer is actually passed to gate.brandCompliance and holds the run when the draft omits it", async () => {
+    await env.store.writeJson("acme", ["client", "brand"], {
+      forbiddenTerms: ["guaranteed", "the best", "#1"],
+      requiredDisclaimer: "Results may vary by team.",
+    });
+    const promptStore = makePromptStore();
+    const text = "We tried a new onboarding flow this month and tracked how a small group of customers responded.";
+    const router = fakeRouterSequence([finalTurn({ ...baseFields(), hook: text, body: text, text })]);
+    const workflowFn = createLinkedInAgentWorkflow({ tools: env.tools, promptStore, router });
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+
+    const result = await engine.run(workflowFn, { ...baseParams, runId: "linkedin_run_gate_disclaimer_missing" });
+
+    expect(result.status).toBe("held");
+    if (result.status !== "held") throw new Error("unreachable");
+    expect(result.reason).toMatch(/brand compliance failed/i);
+    expect(result.reason).toMatch(/disclaimer/i);
+  });
+
+  it("a draft that includes the client's required disclaimer verbatim clears gate.brandCompliance", async () => {
+    await env.store.writeJson("acme", ["client", "brand"], {
+      forbiddenTerms: ["guaranteed", "the best", "#1"],
+      requiredDisclaimer: "Results may vary by team.",
+    });
+    const promptStore = makePromptStore();
+    const text =
+      "We tried a new onboarding flow this month and tracked how a small group of customers responded.\n\nResults may vary by team.";
+    const router = fakeRouterSequence([finalTurn({ ...baseFields(), hook: text, body: text, text })]);
+    const workflowFn = createLinkedInAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+
+    const result = await engine.run(workflowFn, { ...baseParams, runId: "linkedin_run_gate_disclaimer_present" });
+
+    expect(result.status).toBe("completed");
+  });
+
+  it("an unresolved placeholder marker holds the run at gate.noPlaceholder (step 13), never reaching step 14", async () => {
+    const promptStore = makePromptStore();
+    const hook = "We tried something new with our onboarding flow this month.";
+    const body = "We rolled out {{FEATURE_NAME}} to a small group of customers and tracked how they responded.";
+    const callToAction = "Let us know if a similar approach might help your team.";
+    const text = `${hook}\n\n${body}\n\n${callToAction}\n\n#HybridWork`;
+    const router = fakeRouterSequence([finalTurn({ ...baseFields(), hook, body, callToAction, text })]);
+    const workflowFn = createLinkedInAgentWorkflow({ tools: env.tools, promptStore, router });
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+
+    const result = await engine.run(workflowFn, { ...baseParams, runId: "linkedin_run_gate_placeholder" });
+
+    expect(result.status).toBe("held");
+    if (result.status !== "held") throw new Error("unreachable");
+    expect(result.reason).toMatch(/placeholder/i);
+
+    const stepRecords = await durableStore.listSteps("linkedin_run_gate_placeholder");
+    const ids = stepRecords.map((s) => s.stepId);
+    expect(ids).toContain("13-verify-no-placeholder");
+    expect(ids).not.toContain("14-verify-no-leak");
+  });
+
+  it("a leaked local file path holds the run at gate.leakCheck (step 14), never reaching batch-review", async () => {
+    const promptStore = makePromptStore();
+    const hook = "We tried something new with our onboarding flow this month.";
+    const body = "Full rollout notes live at C:\\Users\\jane\\rollout-notes.txt if you want the detailed breakdown.";
+    const callToAction = "Happy to share more context if useful.";
+    const text = `${hook}\n\n${body}\n\n${callToAction}\n\n#HybridWork`;
+    const router = fakeRouterSequence([finalTurn({ ...baseFields(), hook, body, callToAction, text })]);
+    const workflowFn = createLinkedInAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+
+    const result = await engine.run(workflowFn, { ...baseParams, runId: "linkedin_run_gate_leak" });
+
+    expect(result.status).toBe("held");
+    if (result.status !== "held") throw new Error("unreachable");
+    expect(result.reason).toMatch(/leak/i);
+
+    const stepRecords = await durableStore.listSteps("linkedin_run_gate_leak");
+    const ids = stepRecords.map((s) => s.stepId);
+    expect(ids).toContain("14-verify-no-leak");
+    expect(ids).not.toContain("15-batch-review");
   });
 });

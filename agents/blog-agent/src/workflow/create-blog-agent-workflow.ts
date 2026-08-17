@@ -1,7 +1,8 @@
-import type { AgentContext, AgentToolRegistry, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
+import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
 import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure } from "@agent-engine/workflow";
 import { BlogDraftAgent } from "../agent/blog-draft-agent.js";
-import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
+import { renderPreview, BLOG_MIN_WORD_COUNT, BLOG_MAX_WORD_COUNT, type RenderPreviewResult } from "../tools/render-preview.js";
+import { buildBlogJsonLd, type BlogJsonLd } from "../tools/json-ld.js";
 import type {
   BlogAgentWorkflowResult,
   BlogCandidateSummary,
@@ -16,6 +17,37 @@ export interface CreateBlogAgentWorkflowOptions {
   tools: AgentToolRegistry;
   promptStore: PromptStore;
   router: ModelRouter;
+  /**
+   * Skips step 15's human `batch_review` gate and records a synthetic
+   * `actor: "system"` approval instead — off by default, so a real run
+   * genuinely pauses at `awaiting_gate` until a human reviews it (RFC-01
+   * §8.3). Intended for tests/demos/evals that need a synchronous happy
+   * path, never for production wiring.
+   */
+  autoApprove?: boolean;
+}
+
+/**
+ * Builds `https://{client-domain}/blog/{slug}` from the client's own
+ * configured `website` field (RFC-02 §5's canonical-URL remediation) — the
+ * only source of truth for the domain half, never fabricated. Returns
+ * `undefined` (leaving `canonicalUrl` unset) when the client has no
+ * `website` configured, or when the configured value isn't parseable as a
+ * host at all; a bare hostname like `"acme.com"` and a full URL like
+ * `"https://www.acme.com/"` both resolve to the same canonical URL.
+ */
+function deriveCanonicalUrl(website: unknown, slug: string): string | undefined {
+  if (typeof website !== "string" || website.trim().length === 0) return undefined;
+  const trimmed = website.trim();
+  const withProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  let host: string;
+  try {
+    host = new URL(withProtocol).host;
+  } catch {
+    return undefined;
+  }
+  if (!host) return undefined;
+  return `https://${host}/blog/${slug}`;
 }
 
 function toAgentContext(wf: WorkflowContext): AgentContext {
@@ -49,9 +81,17 @@ async function runGate(
 
 /**
  * `createBlogAgentWorkflow()` (RFC-02 §5 — "same recipe" as the X,
- * LinkedIn, and Reddit pilots): the 16-step recurring/on-demand run
- * protocol, steps `00`–`15`. One article, one run (RFC-01 §16.2's ruling) —
- * no fan-out here; every blog run produces at most one deliverable.
+ * LinkedIn, and Reddit pilots): the 19-step recurring/on-demand run
+ * protocol, steps `00`–`18`. One article, one run (RFC-01 §16.2's ruling) —
+ * no fan-out here; every blog run produces at most one deliverable. Step 15
+ * is a mandatory human `batch_review` gate (RFC-01 §8.3) unless
+ * `options.autoApprove` opts out. Steps 13-14 (`gate.noPlaceholder`,
+ * `gate.leakCheck`) were added in the Phase 2.5 domain-logic remediation —
+ * both gates existed in `packages/tools/karos-gates` since the original
+ * migration but were never wired into any workflow's actual step sequence
+ * (only ever exercised by `evals/src/run-assertions.ts`), so a real run
+ * could ship a draft with an unresolved template placeholder or a leaked
+ * credential/path with nothing ever catching it.
  */
 export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions) {
   const tools: AgentToolRegistry = { ...options.tools, "render.preview": renderPreview };
@@ -219,6 +259,22 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
       return verdict;
     });
 
+    // KNOWN GAP (deliberately out of scope for this batch): this gate's substring
+    // matching has no negation awareness, so a legitimate negated mention of a
+    // banned term — e.g. "this is not a guaranteed strategy" — is wrongly refused
+    // exactly like a genuine violation would be. Legacy specifically built a
+    // `{phrase, unless: [...]}` shape to avoid this (`karos-agents/products/
+    // building/blog-agent-v2/setup/SKILL.md` step 03, `run.mjs`'s "defect 7").
+    // `gate.brandCompliance` (`packages/tools/karos-gates/src/brand-compliance.ts`)
+    // is a SHARED gate used by every channel, not just blog — a real fix means
+    // either extending its matching logic there (cross-cutting, another engineer's
+    // scope this batch) or building a blog-local negation pre-filter here. A
+    // pre-filter was deliberately not added: reimplementing "is this term actually
+    // negated" locally, on top of a shared gate whose own banned-term bank
+    // (`DEFAULT_BANNED_PROMISE_PHRASES` plus this client's `forbiddenTerms`) can
+    // change independently of this file, risks silently drifting out of sync with
+    // what the shared gate actually checks — worse than the false-positive it
+    // would fix. Tracked here as a known miss versus legacy, not a silent one.
     await wf.step.code("11-verify-brand-compliance", async () => {
       const forbiddenTerms = clientContext.brand["forbiddenTerms"] as string[] | undefined;
       const verdict = await runGate(tools, "gate.brandCompliance", { text: draft.text, forbiddenTerms: forbiddenTerms ?? [] }, ctx);
@@ -239,20 +295,82 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
           ? `title exceeds the 120-character limit (${preview.titleCharacterCount} chars)`
           : !preview.metaDescriptionWithinLimit
             ? `metaDescription exceeds the 160-character SEO limit (${preview.metaDescriptionCharacterCount} chars)`
-            : `article exceeds the 20000-character long-form limit (${preview.bodyCharacterCount} chars)`;
+            : !preview.bodyWithinLimit
+              ? `article exceeds the 20000-character long-form limit (${preview.bodyCharacterCount} chars)`
+              : preview.wordCountAboveCeiling
+                ? `article is ${preview.wordCount} words, over the ${BLOG_MAX_WORD_COUNT}-word target ceiling for a long-form piece`
+                : `article is only ${preview.wordCount} words, below the ${BLOG_MIN_WORD_COUNT}-word minimum for a real long-form piece`;
         throw new WorkflowHeld(reason);
       }
       return preview;
     });
 
-    // ── 13-14: deliverable & manifest persistence ──
-    const deliverableId = await wf.step.code("13-persist-deliverable", async (): Promise<string> => {
-      const outcome = await tools["ledger.writeDeliverable"]!.execute({ runId: wf.runId, kind: "blog-post", deliverable: draft }, { ctx });
+    // ── 13-14: gate.noPlaceholder / gate.leakCheck — restored dead gates (Phase 2.5
+    // remediation): both existed in packages/tools/karos-gates since the original
+    // migration, but were never called by any workflow's real step sequence, only
+    // ever exercised in evals/src/run-assertions.ts. Grouped with the other content
+    // gates (10-12), all of which run before the human review gate below. ──
+    await wf.step.code("13-verify-no-placeholder", async () => {
+      const verdict = await runGate(tools, "gate.noPlaceholder", { text: draft.text }, ctx);
+      if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.noPlaceholder: ${verdict.reason}`);
+      if (verdict.verdict === "content_fail") throw new WorkflowHeld(`unresolved placeholder found: ${verdict.reason}`);
+      return verdict;
+    });
+
+    await wf.step.code("14-verify-no-leak", async () => {
+      const verdict = await runGate(tools, "gate.leakCheck", { text: draft.text }, ctx);
+      if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.leakCheck: ${verdict.reason}`);
+      if (verdict.verdict === "content_fail") throw new WorkflowHeld(`leak check failed: ${verdict.reason}`);
+      return verdict;
+    });
+
+    // ── 15: human batch-review gate — nothing ships without a real approval ──
+    const reviewDecision: GateResponse = options.autoApprove
+      ? await wf.step.code("15-batch-review", () => ({
+          decision: "approve" as const,
+          actor: "system",
+          at: new Date().toISOString(),
+        }))
+      : await wf.step.gate("15-batch-review", {
+          kind: "batch_review",
+          payload: { runId: wf.runId, topic: selected.topic, angle, preview: draft.text },
+          requiredRole: "account_manager",
+          timeout: { duration: "24h", onTimeout: "hold" },
+        });
+    if (reviewDecision.decision !== "approve") {
+      throw new WorkflowHeld(`batch rejected: ${reviewDecision.reason ?? "no reason given"}`);
+    }
+
+    // ── 16-17: deliverable & manifest persistence ──
+    const deliverableId = await wf.step.code("16-persist-deliverable", async (): Promise<string> => {
+      // canonicalUrl is derived deterministically from the client's own configured
+      // domain, never taken from the model's draft — a draft-supplied value (should
+      // one ever appear) is discarded here rather than trusted.
+      const { canonicalUrl: _modelSuppliedCanonicalUrl, ...draftWithoutCanonicalUrl } = draft;
+      const canonicalUrl = deriveCanonicalUrl(clientContext.profile["website"], draft.slug);
+      // JSON-LD structured data (SEO/GEO remediation): a `BlogPosting` object always,
+      // a `FAQPage` object too when the draft's own `faqItems` is non-empty — built
+      // from the draft's own fields plus this same deterministic canonicalUrl, never
+      // the model's own guess. `authorName` falls back to the tenant slug (never a
+      // placeholder string) when the client has no display name configured.
+      // Persisted as a structured object (`jsonLd`), not a pre-serialized string —
+      // see json-ld.ts's own module comment for why.
+      const authorName = (clientContext.profile["name"] as string | undefined) ?? wf.clientSlug;
+      const jsonLd: BlogJsonLd = buildBlogJsonLd({
+        title: draft.title,
+        metaDescription: draft.metaDescription,
+        ...(canonicalUrl ? { canonicalUrl } : {}),
+        authorName,
+        datePublished: new Date().toISOString(),
+        faqItems: draft.faqItems,
+      });
+      const deliverable = { ...draftWithoutCanonicalUrl, ...(canonicalUrl ? { canonicalUrl } : {}), jsonLd };
+      const outcome = await tools["ledger.writeDeliverable"]!.execute({ runId: wf.runId, kind: "blog-post", deliverable }, { ctx });
       if (outcome.status !== "success") throw new WorkflowToolingFailure(`ledger.writeDeliverable failed: ${outcome.status}`);
       return (outcome.result as { id: string }).id;
     });
 
-    await wf.step.code("14-persist-manifest", async () => {
+    await wf.step.code("17-persist-manifest", async () => {
       await tools["ledger.dashboardSnapshot"]!.execute(
         {
           runId: wf.runId,
@@ -262,8 +380,8 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
       );
     });
 
-    // ── 15: commit updates (topics.commit, memory.appendDecision, ledger.feedbackAppend) ──
-    await wf.step.code("15-commit-and-record", async () => {
+    // ── 18: commit updates (topics.commit, memory.appendDecision, ledger.feedbackAppend) ──
+    await wf.step.code("18-commit-and-record", async () => {
       if (selected.source === "reserved" && reservation.reservationKey) {
         await tools["topics.commit"]!.execute({ reservationKey: reservation.reservationKey }, { ctx });
       }
@@ -272,7 +390,7 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
         { ctx },
       );
       await tools["ledger.feedbackAppend"]!.execute(
-        { runId: wf.runId, feedbackId: `${wf.runId}__auto`, decision: "approve", actor: "system" },
+        { runId: wf.runId, feedbackId: `${wf.runId}__review`, decision: reviewDecision.decision, actor: reviewDecision.actor },
         { ctx },
       );
     });

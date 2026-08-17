@@ -10,7 +10,7 @@ import { fakeRouterSequence, finalTurn, makePromptStore, setupTestEnvironment, t
 
 const params = { runId: "blog_run_1", clientSlug: "acme", productId: "blog-agent", runKind: "recurring" as const };
 
-const ALL_16_STEP_IDS = [
+const ALL_19_STEP_IDS = [
   "00-intake-check",
   "01-load-client-context",
   "02-load-memory-shelf",
@@ -24,30 +24,78 @@ const ALL_16_STEP_IDS = [
   "10-verify-numbers-sourced",
   "11-verify-brand-compliance",
   "12-render-preview-check",
-  "13-persist-deliverable",
-  "14-persist-manifest",
-  "15-commit-and-record",
+  "13-verify-no-placeholder",
+  "14-verify-no-leak",
+  "15-batch-review",
+  "16-persist-deliverable",
+  "17-persist-manifest",
+  "18-commit-and-record",
 ];
 
 function goodDraft() {
   const title = "How We Cut Onboarding Time in Half With a Structured 4-Day Rollout";
   const bodyMarkdown =
-    "## The problem with our old onboarding\n\nNew engineers took nearly a month before they shipped anything meaningful.\n\n" +
-    "## What we actually changed\n\nWe restructured the first week into four fixed days.\n\n" +
-    "## The results after one quarter\n\nMedian time to first merged pull request dropped 47% [1], from 19 days to about 10.";
+    "## The problem with our old onboarding\n\n" +
+    "New engineers took nearly a month before they shipped anything meaningful, and that gap was not caused by a lack of ability. " +
+    "Most new hires spent the bulk of their first three weeks trying to figure out who to ask about a given system, which service " +
+    "actually owned a piece of logic, and where the current version of a runbook lived. The technical material itself was rarely the " +
+    "blocker. A new engineer could read the codebase just fine; what slowed everyone down was the absence of a predictable path through " +
+    "that first week. Every cohort effectively reinvented onboarding from scratch, asking the same scattered questions in Slack channels " +
+    "that had already answered them for someone else three months earlier. Managers noticed the pattern in retrospectives long before " +
+    "anyone treated it as a process problem worth fixing directly, and for a while the informal fix was simply to assign a buddy and hope " +
+    "the pairing worked out. Some pairings worked well. Many did not, and there was no consistent floor under the experience regardless " +
+    "of which engineer happened to be free that week.\n\n" +
+    "## What we actually changed\n\n" +
+    "We restructured the first week into four fixed days, each with a specific and narrow goal instead of a loose list of things a new " +
+    "hire should eventually get around to. Day one was environment setup end to end: local build, test suite, and a single deploy to a " +
+    "sandbox environment, so that by the end of day one every new engineer had proof their machine actually worked. Day two paired the " +
+    "new hire with an engineer who walked through the two or three systems most relevant to their team, focusing on how pieces connect " +
+    "rather than reading every file line by line. Day three handed the new hire a small, genuinely scoped ticket, chosen in advance by " +
+    "their manager so nobody spent the morning hunting for something appropriate to work on. Day four closed the week with a short " +
+    "review session involving the whole team, where the new hire walked through what they built and asked the questions that had piled " +
+    "up over the previous three days. Nothing about the underlying technical content changed; the structure around it was the entire " +
+    "intervention, and that distinction mattered enormously once we started measuring results.\n\n" +
+    "## The results after one quarter\n\n" +
+    "Across the twelve engineers who went through the new process, median time to first merged pull request dropped sharply [1], falling " +
+    "from nineteen days down to about ten. Just as important, the variance between individual engineers narrowed sharply: under the old " +
+    "approach some new hires needed six weeks before their first real contribution while others needed nine days, and that spread alone " +
+    "made it hard to plan work around new team members with any confidence. Retention at the ninety-day mark also held steady across the " +
+    "cohort, which mattered to us as much as raw speed did, since a faster ramp that came at the cost of early attrition would not have " +
+    "been a real win. Manager-reported confidence in new hires by the end of week one rose noticeably too, even though that metric is " +
+    "harder to quantify cleanly than a pull request timestamp.\n\n" +
+    "## What we would do differently\n\n" +
+    "The biggest gap in our first run was documentation for the paired-engineer session on day two: two different pairs ran that session " +
+    "in noticeably different ways, and new hires noticed the inconsistency immediately when they compared notes with each other. If your " +
+    "team decides to try something similar, write the walkthrough script down before your first cohort goes through it, not after you " +
+    "have already seen where it went sideways. We also underestimated how much day three depended on managers actually preparing a " +
+    "ticket in advance; the one cohort where a manager scrambled to find a ticket the morning of day three was the one week where the " +
+    "whole schedule slipped.\n\n" +
+    "If your team is rethinking its own onboarding process, a structured first week is worth testing before you assume the underlying " +
+    "problem is your documentation, your codebase, or your new hires themselves. The structure was the fix in our case, and it is worth " +
+    "ruling out before reaching for a heavier one.";
   return {
     title,
     slug: "structured-four-day-onboarding-rollout",
     excerpt: "A breakdown of the onboarding changes that actually moved the needle for our engineering team.",
     bodyMarkdown,
-    headersList: ["The problem with our old onboarding", "What we actually changed", "The results after one quarter"],
+    headersList: [
+      "The problem with our old onboarding",
+      "What we actually changed",
+      "The results after one quarter",
+      "What we would do differently",
+    ],
     metaDescription: "How a structured 4-day onboarding rollout cut new-hire ramp time in half.",
-    estimatedReadMinutes: 3,
+    estimatedReadMinutes: 5,
     text: `${title}\n\n${bodyMarkdown}`,
+    faqItems: [],
   };
 }
 
-describe("end-to-end: the 16-step Blog agent workflow", () => {
+function goodDraftRouter() {
+  return fakeRouterSequence([finalTurn(goodDraft())]);
+}
+
+describe("end-to-end: the 19-step Blog agent workflow", () => {
   let env: TestEnvironment;
 
   beforeEach(async () => {
@@ -58,10 +106,10 @@ describe("end-to-end: the 16-step Blog agent workflow", () => {
     await env.cleanup();
   });
 
-  it("executes all 16 steps and resolves to completed / domainOutcome: delivered", async () => {
+  it("executes all 19 steps and resolves to completed / domainOutcome: delivered (auto-approved gate)", async () => {
     const promptStore = makePromptStore();
-    const router = fakeRouterSequence([finalTurn(goodDraft())]);
-    const workflowFn = createBlogAgentWorkflow({ tools: env.tools, promptStore, router });
+    const router = goodDraftRouter();
+    const workflowFn = createBlogAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
 
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
@@ -75,18 +123,18 @@ describe("end-to-end: the 16-step Blog agent workflow", () => {
 
     const stepRecords = await durableStore.listSteps(params.runId);
     const executedIds = stepRecords.map((s) => s.stepId).sort();
-    expect(executedIds).toEqual([...ALL_16_STEP_IDS].sort());
+    expect(executedIds).toEqual([...ALL_19_STEP_IDS].sort());
     expect(stepRecords.every((s) => s.status === "completed")).toBe(true);
 
     // The deliverable really landed on the real file-backed WorkspaceStore, tenant-scoped.
     const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
     expect(deliverables.map((d) => d.id)).toEqual(["blog-post"]);
 
-    // The reserved topic was actually committed (consumed) at step 15, not left dangling.
+    // The reserved topic was actually committed (consumed) at step 16, not left dangling.
     const catalog = await env.store.readJson<Array<{ status: string }>>("acme", ["topics", "catalog"]);
     expect(catalog?.some((t) => t.status === "committed")).toBe(true);
 
-    const descriptors: DynamicAgentStepDescriptor[] = ALL_16_STEP_IDS.map((stepId) => ({
+    const descriptors: DynamicAgentStepDescriptor[] = ALL_19_STEP_IDS.map((stepId) => ({
       stepId,
       label: stepId,
       type: stepId === "09-draft-post" ? "ai" : "code",
@@ -106,5 +154,65 @@ describe("end-to-end: the 16-step Blog agent workflow", () => {
     const draftStep = report.steps.find((s) => s.stepId === "09-draft-post")!;
     expect(draftStep.costUsd).toBeGreaterThan(0);
     expect(draftStep.model).toBe("claude-sonnet-4-6");
+  });
+
+  it("pauses at the human batch-review gate by default, then resumes to completed on approval (RFC-01 §8.3)", async () => {
+    const promptStore = makePromptStore();
+    const router = goodDraftRouter();
+    const workflowFn = createBlogAgentWorkflow({ tools: env.tools, promptStore, router });
+
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+
+    const first = await engine.run(workflowFn, params);
+    expect(first.status).toBe("awaiting_gate");
+    if (first.status !== "awaiting_gate") throw new Error("unreachable");
+    expect(first.pendingGateId).toContain("15-batch-review");
+
+    const deliverablesBeforeApproval = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
+    expect(deliverablesBeforeApproval).toHaveLength(0);
+
+    await engine.resolveGate(params.runId, "15-batch-review", {
+      decision: "approve",
+      actor: "jane@karoslabs.com",
+      at: new Date(2026, 7, 16).toISOString(),
+    });
+
+    const second = await engine.run(workflowFn, params);
+    expect(second.status).toBe("completed");
+    expect(router.complete).toHaveBeenCalledTimes(1);
+
+    const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
+    expect(deliverables.map((d) => d.id)).toEqual(["blog-post"]);
+
+    const stepRecords = await durableStore.listSteps(params.runId);
+    const nonGateStepIds = ALL_19_STEP_IDS.filter((id) => id !== "15-batch-review");
+    expect(stepRecords.map((s) => s.stepId).sort()).toEqual([...nonGateStepIds].sort());
+    expect(stepRecords.every((s) => s.status === "completed")).toBe(true);
+  });
+
+  it("rejects the batch review with a reason -> held, and the deliverable never ships", async () => {
+    const promptStore = makePromptStore();
+    const router = goodDraftRouter();
+    const workflowFn = createBlogAgentWorkflow({ tools: env.tools, promptStore, router });
+
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+
+    await engine.run(workflowFn, params);
+    await engine.resolveGate(params.runId, "15-batch-review", {
+      decision: "reject",
+      actor: "jane@karoslabs.com",
+      reason: "not on brand this week",
+      at: new Date(2026, 7, 16).toISOString(),
+    });
+
+    const result = await engine.run(workflowFn, params);
+    expect(result.status).toBe("held");
+    if (result.status !== "held") throw new Error("unreachable");
+    expect(result.reason).toMatch(/batch rejected/i);
+
+    const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
+    expect(deliverables).toHaveLength(0);
   });
 });

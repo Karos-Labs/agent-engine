@@ -59,6 +59,103 @@ describe("gate.lintPost", () => {
     const verdict = await verdictOf("gate.lintPost", { text: "Check out [our site]() for more.", platform: "generic" });
     expect(verdict.verdict).toBe("content_fail");
   });
+
+  it("fails text containing an em dash", async () => {
+    const verdict = await verdictOf("gate.lintPost", { text: "We shipped it — faster than expected." });
+    expect(verdict.verdict).toBe("content_fail");
+  });
+
+  it("fails text containing an en dash", async () => {
+    const verdict = await verdictOf("gate.lintPost", { text: "See pages 4–8 for details." });
+    expect(verdict.verdict).toBe("content_fail");
+  });
+
+  it("fails text with a single exclamation mark (default limit is 0, zero-tolerance)", async () => {
+    const verdict = await verdictOf("gate.lintPost", { text: "We shipped it!" });
+    expect(verdict.verdict).toBe("content_fail");
+  });
+
+  it("passes text with a single exclamation mark when maxExclamationMarks explicitly raises the limit", async () => {
+    const verdict = await verdictOf("gate.lintPost", { text: "We shipped it!", maxExclamationMarks: 1 });
+    expect(verdict.verdict).toBe("pass");
+  });
+
+  it("fails text with a literal double ASCII hyphen (the typed em-dash stand-in)", async () => {
+    const verdict = await verdictOf("gate.lintPost", { text: "We shipped it -- and it works." });
+    expect(verdict.verdict).toBe("content_fail");
+  });
+
+  it("fails text with more exclamation marks than the limit", async () => {
+    const verdict = await verdictOf("gate.lintPost", { text: "We shipped it! It works! Try it!" });
+    expect(verdict.verdict).toBe("content_fail");
+  });
+
+  it("respects a custom maxExclamationMarks", async () => {
+    const verdict = await verdictOf("gate.lintPost", { text: "Wow! Amazing! Incredible!", maxExclamationMarks: 3 });
+    expect(verdict.verdict).toBe("pass");
+  });
+
+  it.each(["We're thrilled to announce this.", "So excited to share this.", "Honored to partner with you.", "This is a total game-changer.", "Let's dive in.", "A rich tapestry of ideas."])(
+    "fails a default AI-cliche phrase: %s",
+    async (text) => {
+      const verdict = await verdictOf("gate.lintPost", { text });
+      expect(verdict.verdict).toBe("content_fail");
+    },
+  );
+
+  it("fails a client-specific banned phrase passed via bannedPhrases", async () => {
+    const verdict = await verdictOf("gate.lintPost", { text: "Unlock your full potential today.", bannedPhrases: ["unlock your full potential"] });
+    expect(verdict.verdict).toBe("content_fail");
+  });
+
+  it("skips the anti-slop check entirely when checkAntiSlop is false", async () => {
+    const verdict = await verdictOf("gate.lintPost", { text: "We shipped it — thrilled to announce!!", checkAntiSlop: false });
+    expect(verdict.verdict).toBe("pass");
+  });
+
+  it.each(["Here's a walkthrough. Check out my latest project on GitHub.", "Our platform helps teams ship faster."])(
+    "fails a legacy pitch-tell phrase restored to the shared bank: %s",
+    async (text) => {
+      const verdict = await verdictOf("gate.lintPost", { text });
+      expect(verdict.verdict).toBe("content_fail");
+    },
+  );
+
+  describe("false-positive exemptions (Phase 2.5 fix-batch)", () => {
+    it("passes a markdown table delimiter row without flagging it as a double hyphen", async () => {
+      const verdict = await verdictOf("gate.lintPost", {
+        text: "A quick comparison.\n\n| Plan | Price |\n|---|---|\n| Basic | $10 |\n| Pro | $20 |",
+      });
+      expect(verdict.verdict).toBe("pass");
+    });
+
+    it("passes a markdown table delimiter row with alignment colons", async () => {
+      const verdict = await verdictOf("gate.lintPost", { text: "| Plan | Price |\n|:---|---:|\n| Basic | $10 |" });
+      expect(verdict.verdict).toBe("pass");
+    });
+
+    it("passes a CLI-style flag token without flagging it as a double hyphen", async () => {
+      const verdict = await verdictOf("gate.lintPost", { text: "Run the command with the --dry-run flag first to preview changes." });
+      expect(verdict.verdict).toBe("pass");
+    });
+
+    it("still fails a genuine double-hyphen dash used as an em-dash stand-in, even in text that also has a CLI flag", async () => {
+      const verdict = await verdictOf("gate.lintPost", {
+        text: "Run it with --dry-run first--that way nothing ships by accident.",
+      });
+      expect(verdict.verdict).toBe("content_fail");
+    });
+
+    it("passes embedded CSS containing !important without flagging it as an exclamation mark", async () => {
+      const verdict = await verdictOf("gate.lintPost", { text: "Add this rule: .banner { display: none !important; }" });
+      expect(verdict.verdict).toBe("pass");
+    });
+
+    it("still fails a genuine exclamation mark in text that also contains !important", async () => {
+      const verdict = await verdictOf("gate.lintPost", { text: "Add this rule: .banner { display: none !important; } Ship it now!" });
+      expect(verdict.verdict).toBe("content_fail");
+    });
+  });
 });
 
 describe("gate.noPlaceholder", () => {
@@ -99,6 +196,48 @@ describe("gate.brandCompliance", () => {
     });
     expect(verdict.verdict).toBe("content_fail");
   });
+
+  it("passes but flags configStatus: unconfigured when no rules are set at all", async () => {
+    const verdict = await verdictOf("gate.brandCompliance", { text: "Anything at all." });
+    expect(verdict.verdict).toBe("pass");
+    expect(verdict["configStatus"]).toBe("unconfigured");
+    expect((verdict["evidence"] as string[])[0]).toMatch(/no brand compliance rules configured/i);
+  });
+
+  it("reports configStatus: configured when forbiddenTerms is set, even with an empty list result", async () => {
+    const verdict = await verdictOf("gate.brandCompliance", { text: "Anything at all.", forbiddenTerms: ["banned-word"] });
+    expect(verdict.verdict).toBe("pass");
+    expect(verdict["configStatus"]).toBe("configured");
+  });
+
+  it("reports configStatus: configured when only requiredDisclaimer is set", async () => {
+    const verdict = await verdictOf("gate.brandCompliance", { text: "Results may vary.", requiredDisclaimer: "results may vary" });
+    expect(verdict.verdict).toBe("pass");
+    expect(verdict["configStatus"]).toBe("configured");
+  });
+
+  it.each(["This strategy offers guaranteed returns.", "It's a completely risk-free opportunity.", "Enjoy guaranteed income for life.", "There is zero risk involved.", "Lock in a guaranteed profit today."])(
+    "fails a default banned promise/hype phrase even with no forbiddenTerms configured: %s",
+    async (text) => {
+      const verdict = await verdictOf("gate.brandCompliance", { text });
+      expect(verdict.verdict).toBe("content_fail");
+      expect(verdict["reason"]).toMatch(/banned promise\/hype phrase/i);
+    },
+  );
+
+  it("matches a banned promise/hype phrase case-insensitively", async () => {
+    const verdict = await verdictOf("gate.brandCompliance", { text: "GUARANTEED RETURNS every single month." });
+    expect(verdict.verdict).toBe("content_fail");
+  });
+
+  it("the banned promise/hype bank is always active, on top of a client's own forbiddenTerms", async () => {
+    const verdict = await verdictOf("gate.brandCompliance", {
+      text: "This is risk-free and also the cheapest option.",
+      forbiddenTerms: ["cheapest"],
+    });
+    expect(verdict.verdict).toBe("content_fail");
+    expect(verdict["evidence"]).toEqual(expect.arrayContaining(["risk-free", "cheapest"]));
+  });
 });
 
 describe("gate.leakCheck", () => {
@@ -127,13 +266,21 @@ describe("gate.numbersSourced", () => {
     expect((await verdictOf("gate.numbersSourced", { text: "We had a great quarter." })).verdict).toBe("pass");
   });
 
-  it("passes a numeric claim with a citation marker", async () => {
+  it("fails a numeric claim that has a citation marker but no source content backing the actual figure", async () => {
     const verdict = await verdictOf("gate.numbersSourced", { text: "Revenue grew 43% [1] year over year." });
-    expect(verdict.verdict).toBe("pass");
+    expect(verdict.verdict).toBe("content_fail");
   });
 
-  it("passes a numeric claim backed by an attached source", async () => {
+  it("fails a numeric claim whose source is attached but doesn't actually contain the figure", async () => {
     const verdict = await verdictOf("gate.numbersSourced", { text: "Revenue grew 43% year over year.", sources: ["Q3 earnings report"] });
+    expect(verdict.verdict).toBe("content_fail");
+  });
+
+  it("passes a numeric claim whose exact figure is verified against the attached source content", async () => {
+    const verdict = await verdictOf("gate.numbersSourced", {
+      text: "Revenue grew 43% year over year.",
+      sources: ["Q3 earnings report: revenue grew 43% year over year, driven by enterprise renewals."],
+    });
     expect(verdict.verdict).toBe("pass");
   });
 
@@ -142,9 +289,215 @@ describe("gate.numbersSourced", () => {
     expect(verdict.verdict).toBe("content_fail");
   });
 
+  it("fails when the source contains a different figure than the one claimed (legacy's '15-20 does not support 20' rule)", async () => {
+    const verdict = await verdictOf("gate.numbersSourced", {
+      text: "Revenue grew 43% year over year.",
+      sources: ["Q3 earnings report: revenue grew between 15% and 20% year over year."],
+    });
+    expect(verdict.verdict).toBe("content_fail");
+  });
+
   it("fails a dollar-figure claim with no source", async () => {
     const verdict = await verdictOf("gate.numbersSourced", { text: "We raised $1.2 million in funding." });
     expect(verdict.verdict).toBe("content_fail");
+  });
+
+  it("Phase 2.5 fix-batch regression: a source saying a range's upper bound ('15-20%') does not verify an isolated claim of that endpoint ('20%')", async () => {
+    const verdict = await verdictOf("gate.numbersSourced", {
+      text: "Revenue grew 20% year over year.",
+      sources: ["The report showed 15-20% growth across the portfolio."],
+    });
+    expect(verdict.verdict).toBe("content_fail");
+    expect(verdict["evidence"]).toEqual(["20%"]);
+  });
+
+  it("Phase 2.5 fix-batch regression: a source containing a larger number ('145%') does not verify an unrelated claim that happens to be a digit-suffix of it ('45%')", async () => {
+    const verdict = await verdictOf("gate.numbersSourced", {
+      text: "Churn rose 45% this quarter.",
+      sources: ["Internal tracking showed churn rose 145% this quarter."],
+    });
+    expect(verdict.verdict).toBe("content_fail");
+    expect(verdict["evidence"]).toEqual(["45%"]);
+  });
+
+  it("still passes when the exact claimed figure appears in the source as its own standalone number, not as a fragment of a larger one", async () => {
+    const verdict = await verdictOf("gate.numbersSourced", {
+      text: "Revenue grew 20% year over year.",
+      sources: ["The report showed a clean 20% growth figure across the portfolio."],
+    });
+    expect(verdict.verdict).toBe("pass");
+  });
+});
+
+describe("gate.subredditRules", () => {
+  it("passes but flags configStatus: unconfigured when nothing is configured", async () => {
+    const verdict = await verdictOf("gate.subredditRules", { text: "A fine post.", subreddit: "smallbusiness" });
+    expect(verdict.verdict).toBe("pass");
+    expect(verdict["configStatus"]).toBe("unconfigured");
+  });
+
+  it("fails when the subreddit is off-limits for this client", async () => {
+    const verdict = await verdictOf("gate.subredditRules", {
+      text: "A fine post.",
+      subreddit: "smallbusiness",
+      configStatus: "configured",
+      offLimits: true,
+    });
+    expect(verdict.verdict).toBe("content_fail");
+    expect(verdict["reason"]).toMatch(/off-limits/i);
+  });
+
+  it("fails when the subreddit bans AI-assisted content", async () => {
+    const verdict = await verdictOf("gate.subredditRules", {
+      text: "A fine post.",
+      subreddit: "smallbusiness",
+      configStatus: "configured",
+      aiContentBanned: true,
+    });
+    expect(verdict.verdict).toBe("content_fail");
+    expect(verdict["reason"]).toMatch(/ai-assisted/i);
+  });
+
+  it("fails when disclosure is required and the draft is missing it", async () => {
+    const verdict = await verdictOf("gate.subredditRules", {
+      text: "A fine post with no disclosure.",
+      subreddit: "smallbusiness",
+      configStatus: "configured",
+      disclosureRequired: true,
+      requiredDisclosure: "I work for Acme",
+    });
+    expect(verdict.verdict).toBe("content_fail");
+  });
+
+  it("passes when disclosure is required and the draft includes it", async () => {
+    const verdict = await verdictOf("gate.subredditRules", {
+      text: "Full disclosure: I work for Acme. Here's what we found.",
+      subreddit: "smallbusiness",
+      configStatus: "configured",
+      disclosureRequired: true,
+      requiredDisclosure: "I work for Acme",
+    });
+    expect(verdict.verdict).toBe("pass");
+  });
+
+  it("fails when the account's karma is below the configured minimum", async () => {
+    const verdict = await verdictOf("gate.subredditRules", {
+      text: "A fine post.",
+      subreddit: "smallbusiness",
+      configStatus: "configured",
+      minKarma: 100,
+      accountKarma: 10,
+    });
+    expect(verdict.verdict).toBe("content_fail");
+  });
+
+  it("fails when the account is younger than the configured minimum age", async () => {
+    const verdict = await verdictOf("gate.subredditRules", {
+      text: "A fine post.",
+      subreddit: "smallbusiness",
+      configStatus: "configured",
+      minAccountAgeDays: 30,
+      accountAgeDays: 2,
+    });
+    expect(verdict.verdict).toBe("content_fail");
+  });
+
+  it("passes when a karma floor is configured but the account's karma isn't known (cannot check, not assumed to fail)", async () => {
+    const verdict = await verdictOf("gate.subredditRules", {
+      text: "A fine post.",
+      subreddit: "smallbusiness",
+      configStatus: "configured",
+      minKarma: 100,
+    });
+    expect(verdict.verdict).toBe("pass");
+  });
+
+  it("passes cleanly when fully configured and nothing is violated", async () => {
+    const verdict = await verdictOf("gate.subredditRules", {
+      text: "A fine post.",
+      subreddit: "smallbusiness",
+      configStatus: "configured",
+      minKarma: 100,
+      accountKarma: 500,
+    });
+    expect(verdict.verdict).toBe("pass");
+    expect(verdict["configStatus"]).toBe("configured");
+  });
+
+  it("fails a mention attempted while the account is still in its warming period", async () => {
+    const verdict = await verdictOf("gate.subredditRules", {
+      text: "Full disclosure: I work for Acme.",
+      subreddit: "smallbusiness",
+      configStatus: "configured",
+      mentionAttempted: true,
+      accountWarmingUntil: "2026-09-01T00:00:00.000Z",
+      now: "2026-08-15T00:00:00.000Z",
+    });
+    expect(verdict.verdict).toBe("content_fail");
+    expect(verdict["reason"]).toMatch(/warming/i);
+  });
+
+  it("passes a mention attempted once the warming period has elapsed", async () => {
+    const verdict = await verdictOf("gate.subredditRules", {
+      text: "Full disclosure: I work for Acme.",
+      subreddit: "smallbusiness",
+      configStatus: "configured",
+      mentionAttempted: true,
+      accountWarmingUntil: "2026-01-01T00:00:00.000Z",
+      now: "2026-08-15T00:00:00.000Z",
+    });
+    expect(verdict.verdict).toBe("pass");
+  });
+
+  it("does not check warming when no mention was attempted (a value-only reply during warming is fine)", async () => {
+    const verdict = await verdictOf("gate.subredditRules", {
+      text: "Here's what actually worked for us, no product mentioned.",
+      subreddit: "smallbusiness",
+      configStatus: "configured",
+      mentionAttempted: false,
+      accountWarmingUntil: "2099-01-01T00:00:00.000Z",
+      now: "2026-08-15T00:00:00.000Z",
+    });
+    expect(verdict.verdict).toBe("pass");
+  });
+
+  it("fails a mention attempted before the per-subreddit mention cooldown has elapsed", async () => {
+    const verdict = await verdictOf("gate.subredditRules", {
+      text: "Full disclosure: I work for Acme.",
+      subreddit: "smallbusiness",
+      configStatus: "configured",
+      mentionAttempted: true,
+      lastMentionAt: "2026-08-01T00:00:00.000Z",
+      mentionCooldownDays: 60,
+      now: "2026-08-15T00:00:00.000Z",
+    });
+    expect(verdict.verdict).toBe("content_fail");
+    expect(verdict["reason"]).toMatch(/cooldown/i);
+  });
+
+  it("passes a mention attempted once the cooldown window has elapsed", async () => {
+    const verdict = await verdictOf("gate.subredditRules", {
+      text: "Full disclosure: I work for Acme.",
+      subreddit: "smallbusiness",
+      configStatus: "configured",
+      mentionAttempted: true,
+      lastMentionAt: "2026-01-01T00:00:00.000Z",
+      mentionCooldownDays: 60,
+      now: "2026-08-15T00:00:00.000Z",
+    });
+    expect(verdict.verdict).toBe("pass");
+  });
+
+  it("cannot check the cooldown without a caller-supplied now (passes rather than assuming failure)", async () => {
+    const verdict = await verdictOf("gate.subredditRules", {
+      text: "Full disclosure: I work for Acme.",
+      subreddit: "smallbusiness",
+      configStatus: "configured",
+      mentionAttempted: true,
+      lastMentionAt: "2026-08-01T00:00:00.000Z",
+      mentionCooldownDays: 60,
+    });
+    expect(verdict.verdict).toBe("pass");
   });
 });
 
@@ -170,6 +523,8 @@ function defaultArgsFor(toolName: string): unknown {
       return { text: "fine" };
     case "gate.numbersSourced":
       return { text: "fine" };
+    case "gate.subredditRules":
+      return { text: "fine", subreddit: "smallbusiness" };
     default:
       throw new Error(`no default args for ${toolName}`);
   }

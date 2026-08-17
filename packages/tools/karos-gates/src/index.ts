@@ -4,12 +4,14 @@ import { noPlaceholder } from "./no-placeholder.js";
 import { brandCompliance } from "./brand-compliance.js";
 import { leakCheck } from "./leak-check.js";
 import { numbersSourced } from "./numbers-sourced.js";
+import { subredditRules } from "./subreddit-rules.js";
 
 export * from "./lint-post.js";
 export * from "./no-placeholder.js";
 export * from "./brand-compliance.js";
 export * from "./leak-check.js";
 export * from "./numbers-sourced.js";
+export * from "./subreddit-rules.js";
 
 /** The `karos-gates` MCP server's tool registry (RFC-01 §9.2) — deterministic validators, no model calls. */
 export function createKarosGatesTools(): AgentToolRegistry {
@@ -19,5 +21,6 @@ export function createKarosGatesTools(): AgentToolRegistry {
     "gate.brandCompliance": brandCompliance,
     "gate.leakCheck": leakCheck,
     "gate.numbersSourced": numbersSourced,
+    "gate.subredditRules": subredditRules,
   };
 }

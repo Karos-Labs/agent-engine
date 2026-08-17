@@ -1,8 +1,94 @@
-import { serializeToDynamicAgentRunReport, type DurableStepStore, type DynamicAgentRunReport, type DynamicAgentStepDescriptor } from "@agent-engine/workflow";
+import {
+  qualifyGateId,
+  serializeToDynamicAgentRunReport,
+  type DurableStepStore,
+  type DynamicAgentRunReport,
+  type DynamicAgentStepDescriptor,
+  type StepRecord,
+} from "@agent-engine/workflow";
 import type { ProductId } from "./wiring/workflows.js";
 
-/** The fixed 16-step id shape every channel agent shares (RFC-02 §5 — "same recipe"). Only step "09-draft-post" is an agent step; every other step is code. */
-const CHANNEL_AGENT_STEP_IDS = [
+/**
+ * Every channel's own step-id shape (Phase 2.5 Batch 2 restored each
+ * channel's distinct domain logic — lanes, archetypes, thread-selection —
+ * so the five channels no longer share one fixed step count/shape the way
+ * they did before that batch). Each list's "ai" step is the one draft step
+ * a human-facing report should badge as a model call; everything else is
+ * mechanical `step.code`.
+ */
+const X_AGENT_STEP_IDS = [
+  "00-intake-check",
+  "01-load-client-context",
+  "02-load-memory-shelf",
+  "03-load-recent-decisions",
+  "04-research-pull",
+  "05-extract-candidate-summary",
+  "06-reserve-topic",
+  "07-select-candidate",
+  "08-select-lane",
+  "09-check-engagement-cap",
+  "10-draft-post",
+  "11-verify-numbers-sourced",
+  "12-verify-brand-compliance",
+  "13-verify-link-placement",
+  "14-render-preview-check",
+  "15-batch-review",
+  "16-verify-no-placeholder",
+  "17-verify-no-leak",
+  "18-persist-deliverable",
+  "19-persist-manifest",
+  "20-commit-and-record",
+] as const;
+
+const LINKEDIN_AGENT_STEP_IDS = [
+  "00-intake-check",
+  "01-load-client-context",
+  "02-load-memory-shelf",
+  "03-load-recent-decisions",
+  "04-research-pull",
+  "05-extract-candidate-summary",
+  "06-reserve-topic",
+  "07-select-candidate",
+  "08-determine-archetype",
+  "09-draft-post",
+  "10-verify-numbers-sourced",
+  "11-verify-brand-compliance",
+  "12-render-preview-check",
+  "13-verify-no-placeholder",
+  "14-verify-no-leak",
+  "15-batch-review",
+  "16-persist-deliverable",
+  "17-persist-manifest",
+  "18-commit-and-record",
+] as const;
+
+/** Reddit's own shape — the longest of the five: a pre-draft thread-selection/eligibility run (steps 08-11) precedes drafting a reply, never an original post (Phase 2.5 Batch 2.1's reply-only restoration). */
+const REDDIT_AGENT_STEP_IDS = [
+  "00-intake-check",
+  "01-load-client-context",
+  "02-load-memory-shelf",
+  "03-load-recent-decisions",
+  "04-research-pull",
+  "05-extract-candidate-summary",
+  "06-reserve-topic",
+  "07-select-candidate",
+  "08-select-target-thread",
+  "09-check-thread-not-answered",
+  "10-verify-subreddit-eligibility",
+  "11-determine-angle",
+  "12-draft-reply",
+  "13-verify-numbers-sourced",
+  "14-verify-brand-compliance",
+  "15-verify-no-placeholder",
+  "16-verify-leak-check",
+  "17-render-preview-check",
+  "18-batch-review",
+  "19-persist-deliverable",
+  "20-persist-manifest",
+  "21-commit-and-record",
+] as const;
+
+const BLOG_AGENT_STEP_IDS = [
   "00-intake-check",
   "01-load-client-context",
   "02-load-memory-shelf",
@@ -16,10 +102,97 @@ const CHANNEL_AGENT_STEP_IDS = [
   "10-verify-numbers-sourced",
   "11-verify-brand-compliance",
   "12-render-preview-check",
-  "13-persist-deliverable",
-  "14-persist-manifest",
-  "15-commit-and-record",
+  "13-verify-no-placeholder",
+  "14-verify-no-leak",
+  "15-batch-review",
+  "16-persist-deliverable",
+  "17-persist-manifest",
+  "18-commit-and-record",
 ] as const;
+
+/** Newsletter's own shape — the hype-language scan (10) and the footer-injection structural check (12) are distinct steps so the scan never sees the platform's own injected compliance footer (Phase 2.5 Batch 1.3's self-tripping-bug fix). */
+const NEWSLETTER_AGENT_STEP_IDS = [
+  "00-intake-check",
+  "01-load-client-context",
+  "02-load-memory-shelf",
+  "03-load-recent-decisions",
+  "04-research-pull",
+  "05-extract-candidate-summary",
+  "06-reserve-topics",
+  "07-select-candidates",
+  "08-determine-edition-theme",
+  "09-draft-post",
+  "10-verify-brand-compliance",
+  "11-verify-numbers-sourced",
+  "12-verify-compliance-footer",
+  "13-verify-no-placeholder",
+  "14-verify-no-leak",
+  "15-render-preview-check",
+  "16-batch-review",
+  "17-persist-deliverable",
+  "18-persist-manifest",
+  "19-commit-and-record",
+] as const;
+
+/** Each channel's own draft step id — the one step a report should badge "ai" rather than "code". */
+const DRAFT_STEP_ID_BY_PRODUCT: Record<Exclude<ProductId, "campaign-orchestrator">, string> = {
+  "x-agent": "10-draft-post",
+  "linkedin-agent": "09-draft-post",
+  "reddit-agent": "12-draft-reply",
+  "blog-agent": "09-draft-post",
+  "newsletter-agent": "09-draft-post",
+};
+
+/** Every channel's own possible draft-step suffix, used to recover which nested step is "the draft" for one fan-out slot without needing to know which channel occupies it (RFC-02 §4's per-slot isolation means slot order isn't fixed). */
+const CHANNEL_DRAFT_STEP_SUFFIXES = Array.from(new Set(Object.values(DRAFT_STEP_ID_BY_PRODUCT)));
+
+/**
+ * Each channel's own human batch-review gate id (Phase 2.5 fix-batch). Gates
+ * are persisted separately from steps/slots (`store.saveGate()`/`getGate()`,
+ * never `listSteps()`/`listSlots()`) — a descriptor for one of these ids used
+ * to fall straight through `serializeOneStep()`'s "never reached" branch
+ * even on a genuinely completed, delivered run, reporting a real review gate
+ * as `{status:"failed", error:"step did not run"}`. `buildRunReport` below
+ * joins against `store.getGate()` for exactly these ids before serializing,
+ * so a resolved gate reports its real status instead.
+ */
+const GATE_STEP_ID_BY_PRODUCT: Record<Exclude<ProductId, "campaign-orchestrator">, string> = {
+  "x-agent": "15-batch-review",
+  "linkedin-agent": "15-batch-review",
+  "reddit-agent": "18-batch-review",
+  "blog-agent": "15-batch-review",
+  "newsletter-agent": "16-batch-review",
+};
+
+/** The orchestrator's own top-level gate id — see `GATE_STEP_ID_BY_PRODUCT`'s doc comment. Nested per-channel gates never apply here: `create-campaign-workflow.ts` fixes every channel slot's `autoApprove: true`, so each channel's own review step runs as an auto-approved `step.code`, not a real `step.gate` — it already appears correctly in `stepRecords`. */
+const CAMPAIGN_GATE_STEP_ID = "13-campaign-review";
+
+/**
+ * Fetches every gate id relevant to this product/run and, for each one that
+ * has actually been resolved (a human approved or rejected it), synthesizes
+ * a `StepRecord`-shaped entry so the serializer sees it as a real, completed
+ * step rather than "never reached". A gate that's still pending (part of an
+ * `awaiting_gate` run) is deliberately left alone — "not yet reached" is the
+ * correct read for that case, and it isn't the bug this join exists to fix.
+ */
+async function resolvedGateStepRecords(durableStore: DurableStepStore, runId: string, gateIds: readonly string[]): Promise<StepRecord[]> {
+  const records: StepRecord[] = [];
+  for (const gateId of gateIds) {
+    const gate = await durableStore.getGate(qualifyGateId(runId, gateId));
+    if (!gate?.response) continue;
+    records.push({
+      stepId: gateId,
+      kind: "code",
+      status: "completed",
+      output: { decision: gate.response.decision, actor: gate.response.actor, ...(gate.response.reason !== undefined ? { reason: gate.response.reason } : {}) },
+      costUsd: 0,
+      durationMs: 0,
+      startedAt: 0,
+      completedAt: 0,
+    });
+  }
+  return records;
+}
 
 /** The orchestrator's own top-level steps (RFC-02 §4) — the fan-out itself (`channel-fanout`) isn't a `step.code` id, so it isn't listed here; its slots and their nested steps are discovered dynamically below. */
 const CAMPAIGN_ORCHESTRATOR_STEP_IDS = [
@@ -40,30 +213,54 @@ const CAMPAIGN_ORCHESTRATOR_STEP_IDS = [
   "15-commit-and-record",
 ] as const;
 
-function channelAgentDescriptors(): DynamicAgentStepDescriptor[] {
-  return CHANNEL_AGENT_STEP_IDS.map((stepId) => ({ stepId, label: stepId, type: stepId === "09-draft-post" ? "ai" : "code" }));
+function channelAgentDescriptors(productId: Exclude<ProductId, "campaign-orchestrator">): DynamicAgentStepDescriptor[] {
+  const stepIds: readonly string[] =
+    productId === "reddit-agent"
+      ? REDDIT_AGENT_STEP_IDS
+      : productId === "linkedin-agent"
+        ? LINKEDIN_AGENT_STEP_IDS
+        : productId === "blog-agent"
+          ? BLOG_AGENT_STEP_IDS
+          : productId === "newsletter-agent"
+            ? NEWSLETTER_AGENT_STEP_IDS
+            : X_AGENT_STEP_IDS;
+  const draftStepId = DRAFT_STEP_ID_BY_PRODUCT[productId];
+  return stepIds.map((stepId) => ({ stepId, label: stepId, type: stepId === draftStepId ? "ai" : "code" }));
 }
 
-function campaignOrchestratorDescriptors(slotIds: readonly string[]): DynamicAgentStepDescriptor[] {
+/**
+ * Builds each fan-out slot's descriptors from what actually ran, not a fixed
+ * assumption — since Phase 2.5 Batch 2 gave each channel its own step shape,
+ * a slot's draft step id now depends on which channel occupies it (not fixed
+ * per slot index), so it's recovered by checking which of the five known
+ * draft-step suffixes actually has a recorded step under this slot.
+ */
+function campaignOrchestratorDescriptors(slotIds: readonly string[], stepRecords: readonly { stepId: string }[]): DynamicAgentStepDescriptor[] {
   const topLevel: DynamicAgentStepDescriptor[] = CAMPAIGN_ORCHESTRATOR_STEP_IDS.map((stepId) => ({
     stepId,
     label: stepId,
     type: stepId === "07-generate-strategy-plan" ? "ai" : "code",
   }));
-  const perSlot: DynamicAgentStepDescriptor[] = slotIds.flatMap((slotId, index) => [
-    { stepId: slotId, label: `channel slot ${index}`, type: "code" as const },
-    { stepId: `${slotId}::09-draft-post`, label: `channel ${index} draft`, type: "ai" as const },
-  ]);
+  const recordedStepIds = new Set(stepRecords.map((r) => r.stepId));
+  const perSlot: DynamicAgentStepDescriptor[] = slotIds.flatMap((slotId, index) => {
+    const draftStepId = CHANNEL_DRAFT_STEP_SUFFIXES.map((suffix) => `${slotId}::${suffix}`).find((candidateId) => recordedStepIds.has(candidateId));
+    const entries: DynamicAgentStepDescriptor[] = [{ stepId: slotId, label: `channel slot ${index}`, type: "code" }];
+    if (draftStepId !== undefined) {
+      entries.push({ stepId: draftStepId, label: `channel ${index} draft`, type: "ai" });
+    }
+    return entries;
+  });
   return [...topLevel, ...perSlot];
 }
 
 /**
  * Builds the `DynamicAgentRunReport` for one run (RFC-01 §7.2), adaptively:
- * the five channel agents always follow the same fixed 16-step shape, but
- * the campaign orchestrator's own fan-out schedules a plan-dependent number
- * of channel slots — known only after the run actually reaches that step —
- * so its descriptor list is built from whatever slot records actually exist
- * for this run, not a static constant.
+ * each of the five channel agents now follows its own fixed step shape
+ * (Phase 2.5 Batch 2 restored distinct domain logic per channel), and the
+ * campaign orchestrator's own fan-out schedules a plan-dependent number of
+ * channel slots — known only after the run actually reaches that step — so
+ * its descriptor list is built from whatever slot/step records actually
+ * exist for this run, not a static constant.
  */
 export async function buildRunReport(
   durableStore: DurableStepStore,
@@ -75,18 +272,26 @@ export async function buildRunReport(
 
   let descriptors: DynamicAgentStepDescriptor[];
   let slotRecords: Awaited<ReturnType<DurableStepStore["listSlots"]>> = [];
+  let gateIds: readonly string[];
   if (productId === "campaign-orchestrator") {
     slotRecords = await durableStore.listSlots(runId, "channel-fanout");
-    descriptors = campaignOrchestratorDescriptors(slotRecords.map((slot) => slot.slotId));
+    descriptors = campaignOrchestratorDescriptors(
+      slotRecords.map((slot) => slot.slotId),
+      stepRecords,
+    );
+    gateIds = [CAMPAIGN_GATE_STEP_ID];
   } else {
-    descriptors = channelAgentDescriptors();
+    descriptors = channelAgentDescriptors(productId);
+    gateIds = [GATE_STEP_ID_BY_PRODUCT[productId]];
   }
+
+  const gateStepRecords = await resolvedGateStepRecords(durableStore, runId, gateIds);
 
   return serializeToDynamicAgentRunReport({
     specId: `spec_${productId}`,
     specVersion: 1,
     steps: descriptors,
-    stepRecords,
+    stepRecords: [...stepRecords, ...gateStepRecords],
     slotRecords,
     ...(runRecord !== undefined ? { runRecord } : {}),
   });
