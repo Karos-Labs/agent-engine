@@ -1,0 +1,148 @@
+/**
+ * Shared types for the SEO & GEO deterministic scoring engine (RFC-04 Phase 4/6).
+ * Every shape here mirrors a concept named explicitly in
+ * `seo-geo-scoring-config.json` / `seo-geo-capture-config.json` / the
+ * routing config — see `src/config/*.data.ts` for the verbatim source data.
+ */
+
+/** One of the 5 fixed AI-visibility engines (`seo-geo-capture-config.json` `engines[]`). */
+export const SEO_GEO_VISIBILITY_ENGINES = ["chatgpt", "perplexity", "gemini", "claude", "copilot"] as const;
+export type SeoGeoVisibilityEngine = (typeof SEO_GEO_VISIBILITY_ENGINES)[number];
+
+/**
+ * `capture_tier` enum (`seo-geo-capture-config.json`): how a (prompt, engine)
+ * cell's answer was obtained. `UNAVAILABLE` is the honest terminal state —
+ * never a fabricated zero, and excluded from `N_e` (RFC-04 §4's connector
+ * overlay ladder terminal state).
+ */
+export const SEO_GEO_CAPTURE_TIERS = ["MEASURED", "MEASURED_grounded", "ESTIMATED", "UNAVAILABLE"] as const;
+export type SeoGeoCaptureTier = (typeof SEO_GEO_CAPTURE_TIERS)[number];
+
+/**
+ * `grade_data_only_rule` (scoring config): every input that feeds a grade
+ * must trace to real measured/first-party/third-party-real-answer data.
+ * `estimated` inputs are excluded from the grade and shown as context only;
+ * `unavailable` inputs are excluded and shown as "pending", never guessed.
+ */
+export type DataCoverage = "measured" | "estimated" | "unavailable";
+
+/** One `inputs[]` entry's raw measurement, keyed by the normalization primitive it feeds. */
+export type InputMeasurementData =
+  | { kind: "boolean"; measured: boolean }
+  | { kind: "count"; actual: number }
+  | { kind: "ratio"; value: number }
+  | { kind: "percentage"; valuePct: number }
+  | { kind: "stepped"; value: number }
+  | { kind: "multiBool"; subBools: boolean[] }
+  /** For `combine` inputs: field name (matching the config's `legs[].field`) -> raw value. */
+  | { kind: "combine"; fields: Record<string, number | boolean> };
+
+export interface InputMeasurement {
+  data: InputMeasurementData;
+  /** Required when the config input carries a `gate` block (e.g. GEO-18 anti-stuffing). */
+  gatePass?: boolean | undefined;
+  /** `grade_data_only_rule`: an `estimated`/`unavailable` measurement scores 0 and is excluded from `dataCoveragePct`'s numerator. */
+  coverage: DataCoverage;
+}
+
+export interface EvaluatedInput {
+  recId: string;
+  bucket: string;
+  measure: string;
+  inputKey: string;
+  weight: number;
+  norm: number;
+  points: number;
+  coverage: DataCoverage;
+  gated: boolean;
+  /**
+   * The normalization primitive this instance was scored with
+   * (`normalization_fns`) — carried through to `seoGeo.recommend` so the
+   * fire-state classifier can apply `trigger.fires_when`'s explicit
+   * `boolean`/`multi_bool` override ("norm==1 pass else fail", no
+   * "approaching" tier) rather than the generic continuous pass/
+   * approaching/fail bands meant for ratio-typed inputs.
+   */
+  normalization: "boolean" | "count_with_target" | "ratio_clamp" | "percentage" | "lower_is_better_stepped" | "multi_bool" | "combine";
+}
+
+export interface BucketSubtotal {
+  bucket: string;
+  weightTotal: number;
+  points: number;
+}
+
+export interface ScoreBreakdown {
+  /** `round_half_up` applied once to the 0-100 total (unmeasured inputs contribute 0 points, per `grade_data_only_rule`). */
+  score: number;
+  weightTotal: number;
+  dataCoveragePct: number;
+  /** True whenever `dataCoveragePct < 100` — mirrors `grade_data_only_rule`'s "labelled partial until coverage is complete". */
+  partial: boolean;
+  bucketSubtotals: BucketSubtotal[];
+  inputs: EvaluatedInput[];
+}
+
+/** A single (prompt × engine) capture cell — the load-bearing subset of `seo-geo-capture-config.json`'s ~29-field record. */
+export interface SeoGeoCaptureCell {
+  promptId: string;
+  engine: SeoGeoVisibilityEngine;
+  captureTier: SeoGeoCaptureTier;
+  brandMentioned: boolean;
+  brandFirstMentionCharOffset?: number | undefined;
+  brandCited: boolean;
+  brandFirstCitationOrdinal?: number | undefined;
+  /**
+   * Competitor roster members named in this answer, each with the char
+   * offset of their first mention (`seo-geo-capture-config.json`
+   * `response_set.per_prompt_engine_fields`'s `competitors_named[].
+   * {brand_id, char_offset}`) — required to determine BOTH-14's
+   * "first_named" leg (who was mentioned first: client or a competitor),
+   * not just whether a competitor was mentioned at all.
+   */
+  competitorsNamed: Array<{ brandId: string; charOffset: number }>;
+  citations: Array<{ domain: string; ordinal: number }>;
+  /** brandId (including "client") -> mention count in this answer, for share-of-voice. */
+  mentionCounts: Record<string, number>;
+  /** Per-mention sentiment, pre-classified and frozen (`net_sentiment`'s cached-label rule) — this scoring layer never classifies. */
+  sentimentPerMention: Array<{ mentionIndex: number; label: "pos" | "neg" | "neutral" }>;
+}
+
+/** Which raw-count denominator a per-engine metric divides by — RFC-04's flagged, not-silently-resolved "N vs N_e" decision (Daniel). */
+export type VisibilityDenominator = "N" | "N_e";
+
+export interface PerEngineVisibilityMetrics {
+  engine: SeoGeoVisibilityEngine;
+  n: number;
+  nEffective: number;
+  denominatorUsed: VisibilityDenominator;
+  citationShare: number;
+  mentionShare: number;
+  ghostCitationRate: number;
+  firstPositionRate: number;
+  netSentiment: number;
+  /** GEO-36: diagnostic only, never folded into the Visibility Index (would double-count citation share). */
+  engineIndexDiagnostic: number | null;
+}
+
+export interface VisibilityMetricsResult {
+  perEngine: PerEngineVisibilityMetrics[];
+  citationShareBlended: number;
+  mentionRateBlended: number;
+  shareOfVoiceClient: number;
+  rankFirstCompetitor: string | null;
+  clientDomains: string[];
+  rosterSize: number;
+}
+
+export interface VisibilityIndexResult {
+  index: number;
+  componentNorms: Array<{ recId: string; name: string; weight: number; norm: number; points: number }>;
+}
+
+/** The alternate `geo_score_model` ("geo-score-v3") diagnostic — PROPOSED, pending Ines's sign-off. Never the canonical GEO number. */
+export interface GeoScoreModelResult {
+  overall: number;
+  perEngine: Array<{ engine: SeoGeoVisibilityEngine; score: number }>;
+  weightsStatus: string;
+}

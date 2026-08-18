@@ -1,0 +1,19 @@
+{
+  "name": "@agent-engine/tool-karos-seo-geo",
+  "private": true,
+  "version": "0.0.1",
+  "description": "SEO & GEO deterministic scoring (RFC-04 Phase 4/6) — pure TypeScript port of the karos-agents lab-spec scoring/routing configs. Zero LLM judgment calls.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "test": "npm run typecheck && vitest run"
+  },
+  "dependencies": {
+    "@agent-engine/core": "^0.0.1",
+    "@agent-engine/tool-common": "^0.0.1",
+    "zod": "^4.4.3"
+  }
+}

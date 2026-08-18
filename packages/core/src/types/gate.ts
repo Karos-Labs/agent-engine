@@ -45,6 +45,15 @@ export const GateKindSchema = z.enum([
   // The campaign orchestrator's human review pause before a multi-channel
   // bundle ships (RFC-02 §4) — one review per campaign, not per channel.
   "campaign_review",
+  // The SEO & GEO agent's Phase 1 gate (RFC-04 §2/§4): a client/account-manager
+  // sign-off on the frozen prompt set + competitor roster before AI-visibility
+  // capture spends any budget — the source skill's own "sign-off file in the
+  // lab and an approval screen on the platform" made a first-class Gate.
+  "prompt_set_review",
+  // The SEO & GEO agent's Phase 7 gate (RFC-04 §2): "nothing is generated or
+  // shipped past this point without sign-off" — approves which fired
+  // recommendations get a drafted fix before the bounded fix-draft agent runs.
+  "fix_generation_review",
 ]);
 export type GateKind = z.infer<typeof GateKindSchema>;
 

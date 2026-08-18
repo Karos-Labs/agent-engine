@@ -1,0 +1,81 @@
+{
+  "id": "intel-report-acme-onboarding",
+  "description": "Acme Corp's first-ever onboarding Intel Report, competing against one tracked competitor (Rival Corp) in B2B SaaS.",
+  "agentId": "intel-report-agent",
+  "input": {
+    "clientSlug": "acme",
+    "profile": { "name": "Acme Corp", "industry": "B2B SaaS" },
+    "competitors": [{ "name": "Rival Corp" }]
+  },
+  "sources": [
+    "B2B SaaS competitive landscape vs. Rival Corp",
+    "Rival Corp raised a $12 million Series B round this year, according to public funding records.",
+    "Rival Corp's signup flow reaches the pricing page in a single click; Acme's requires two extra clicks."
+  ],
+  "endorsedOutput": {
+    "dimensionScores": [
+      { "dimension": "contentMessaging", "score": 75 },
+      { "dimension": "conversion", "score": 68 },
+      { "dimension": "seo", "score": 55 },
+      { "dimension": "geo", "score": 35 },
+      { "dimension": "positioning", "score": 82 },
+      { "dimension": "brand", "score": 78 },
+      { "dimension": "growth", "score": 60 },
+      { "dimension": "social", "score": 84 }
+    ],
+    "contentAnalysis": "Acme's blog leans heavily on product-announcement posts and rarely publishes practitioner-voiced content, which reads as less credible to technical buyers than Rival Corp's engineering-led series.",
+    "conversionAnalysis": "Acme's signup flow requires two extra clicks to reach pricing compared to Rival Corp's single-click path, a meaningful friction point for a self-serve buyer evaluating both products back to back.",
+    "seoAnalysis": "Acme ranks for its own brand terms but not for the category terms Rival Corp already owns in organic search.",
+    "geoAnalysis": "Acme has no visible presence in AI-assistant-cited answers for its category, while Rival Corp already appears in generative answer engines for comparable queries.",
+    "positioningAnalysis": "Acme positions itself as the affordable option, a lane already crowded by Rival Corp's own recent messaging shift toward the same claim.",
+    "brandAnalysis": "Acme's brand voice stays consistent across channels, a genuine strength relative to Rival Corp's noticeably different tone between its blog and its social presence.",
+    "growthAnalysis": "Rival Corp closed a $12 million Series B round this year and has visibly increased its outbound hiring since, a growth signal Acme's own funding stage cannot yet match head-on.",
+    "swot": {
+      "strengths": [
+        "Consistent brand voice across every channel.",
+        "Self-serve signup requires no sales call, unlike Rival Corp's gated pricing page.",
+        "Founder-led blog voice reads as more authentic than Rival Corp's agency-written posts.",
+        "No tracked competitor currently contests Acme's category-definition claim."
+      ],
+      "weaknesses": [
+        "Signup flow adds two extra clicks versus the category leader's single-click path.",
+        "No visible presence in AI-assistant-cited answers for the category.",
+        "Blog leans on product-announcement posts rather than practitioner-voiced content.",
+        "Organic ranking for category terms trails Rival Corp."
+      ],
+      "opportunities": [
+        "No tracked competitor currently owns the GEO / AI-answer-engine presence lane.",
+        "Practitioner-voiced content is an unclaimed lane relative to Rival Corp's engineering-led series.",
+        "Rival Corp's recent funding round signals it will invest further in category-term SEO, making a first-mover GEO play more valuable now."
+      ],
+      "threats": [
+        "Rival Corp's new $12 million Series B funds further category-term SEO investment.",
+        "Rival Corp's single-click signup path could become the category's default buyer expectation.",
+        "Rival Corp's recent messaging shift toward 'affordable option' crowds Acme's own positioning claim."
+      ]
+    },
+    "recommendations": [
+      { "number": 1, "title": "Cut signup flow to one click", "description": "Match Rival Corp's conversion path directly to close the friction gap.", "priority": 1, "priorityLabel": "High", "tag": "quick-win" },
+      { "number": 2, "title": "Build a GEO presence plan", "description": "No tracked competitor currently owns this lane; a first-mover position is available.", "priority": 2, "priorityLabel": "Medium", "tag": "strategic" }
+    ],
+    "competitorRankings": [
+      { "company": "Rival Corp", "score": 78, "grade": "B", "rank": 1, "bestDimension": "conversion", "weakestDimension": "brand" }
+    ],
+    "competitors": [
+      {
+        "company": "Rival Corp",
+        "marketTier": "Leader",
+        "overlap": "High",
+        "deepDive": true,
+        "positioning": "Same target segment, same core self-serve product",
+        "threatLevel": "HIGH",
+        "source": "report"
+      }
+    ],
+    "brandSynchronizationUpdate": "The scan validates Acme's consistent cross-channel brand voice as a real differentiator against Rival Corp's noticeably shifting tone between blog and social — protect this as-is rather than changing it. Rival Corp's recent pivot toward 'affordable option' messaging erodes territory Acme's own positioning currently leans on; the brand team should either sharpen a distinct value claim beyond price or explicitly evolve the positioning to lead with the practitioner-credibility and self-serve-simplicity strengths this report surfaced, which Rival Corp does not currently contest."
+  },
+  "expectedOverallScore": 70,
+  "expectedOverallGrade": "B",
+  "endorsedBy": "tomer@karoslabs.com",
+  "endorsedAt": "2026-08-18T00:00:00Z"
+}

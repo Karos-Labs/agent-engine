@@ -1,0 +1,22 @@
+{
+  "name": "@agent-engine/agent-instagram",
+  "private": true,
+  "version": "0.0.1",
+  "description": "The Instagram Agent (RFC-03): a native agent-engine build of the legacy carousel-agent-v2 product — three BaseAgents (research, copywriting, image vetting) plus the 9-step Layer 1 workflow (open run -> freeze style config -> claim topic -> research -> write copy -> vet images -> emit slides-data.json -> render -> deliver+log), preserving all three v1->v2 legacy-defect fixes (bounded context per step, one deterministic render path via publish.renderCarousel, topics.reserve as the sole dedup gate).",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "test": "npm run typecheck && vitest run"
+  },
+  "dependencies": {
+    "@agent-engine/core": "^0.0.1",
+    "@agent-engine/tool-common": "^0.0.1",
+    "@agent-engine/tool-karos-publish": "^0.0.1",
+    "@agent-engine/tools": "^0.0.1",
+    "@agent-engine/workflow": "^0.0.1",
+    "zod": "^4.4.3"
+  }
+}

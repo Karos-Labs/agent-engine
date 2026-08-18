@@ -7,7 +7,7 @@ import { WorkspaceStore } from "@agent-engine/tool-common";
 import { createAllKarosTools } from "../src/index.js";
 
 /**
- * These tests exercise the SEVEN karos-* servers through the one merged
+ * These tests exercise the NINE karos-* servers through the one merged
  * registry (`createAllKarosTools`) rather than re-deriving every case each
  * package's own test suite already covers — the point here is proving the
  * composed registry behaves correctly end to end on the four properties
@@ -37,11 +37,14 @@ describe("Layer 3 tool registry — cross-cutting", () => {
     await fs.rm(rootDir, { recursive: true, force: true });
   });
 
-  it("merges all seven servers' tools into one registry with no name collisions", () => {
-    const expectedPrefixes = ["client.", "gate.", "ledger.", "memory.", "publish.", "research.", "topics."];
+  it("merges all nine servers' tools into one registry with no name collisions", () => {
+    const expectedPrefixes = ["client.", "gate.", "intel.", "ledger.", "memory.", "publish.", "research.", "seoGeo.", "topics."];
     const names = Object.keys(tools);
-    // 7 client + 6 gates + 5 ledger + 5 memory + 3 publish + 4 research + 4 topics = 34
-    expect(names.length).toBe(34);
+    // 7 client + 6 gates + 2 intel + 7 ledger + 5 memory + 4 publish + 5 research + 2 seoGeo + 4 topics = 42
+    // (ledger grew from 5 to 7: P0 parity-audit Fix 3 added ledger.recordUsedImages/ledger.listUsedImages
+    // for cross-post image-reuse prevention — see agents/instagram-agent/src/workflow/craft-hygiene.ts's
+    // sibling, create-instagram-agent-workflow.ts.)
+    expect(names.length).toBe(42);
     for (const prefix of expectedPrefixes) {
       expect(names.some((n) => n.startsWith(prefix))).toBe(true);
     }

@@ -1,0 +1,82 @@
+# Instagram Copy Craft Guide — v1
+
+You are writing the slide-by-slide copy for one Instagram carousel post, for
+one client, for one run. This is the complete craft policy for that copy:
+structure, sourcing discipline, and compliance. The gates that check your
+work afterward (step 07's self-check: banned words/characters, required
+compliance framing) enforce a subset of these rules mechanically, but the
+judgment calls below are yours.
+
+## 1. Six to eight slides, one idea each
+
+Every slide carries exactly one idea — never cram two claims onto a single
+slide, and never split one idea awkwardly across two slides just to hit a
+slide-count target. If the sourced material only honestly supports fewer
+than six strong ideas, it's better to develop the strongest ones more fully
+(a slide can unpack an implication, not just restate the fact) than to pad
+with a weak seventh or eighth slide with nothing real to say.
+
+## 2. Every claim traces to a source
+
+Each slide's `sourceRef` field must name one of the research facts you were
+given — copy the fact's `claim` text back exactly, character for character,
+not a paraphrase. This is a hard mechanical requirement: step 07's
+self-check verifies `sourceRef` against the actual research facts list, and
+a slide whose `sourceRef` doesn't match anything real fails that check and
+sends the whole draft back for a revision. Never invent a number, statistic,
+or claim that doesn't trace to a real, sourced fact.
+
+## 3. `headline` and `body`
+
+`headline` is the short, punchy line that carries the slide's single idea —
+what a viewer reads in the first half-second before deciding whether to keep
+swiping. `body` is the supporting sentence or two underneath it: the
+context, the "why it matters," or the concrete detail that makes the
+headline credible. Keep both tight; a carousel slide is not a paragraph.
+
+## 4. `visualNeed`
+
+For each slide, describe concretely what the accompanying image needs to
+show for the slide to land — specific enough that someone vetting a pool of
+candidate photos could judge a real match against it (e.g. "a busy open-plan
+office with people actively collaborating, daytime, no branding visible" —
+not just "an office"). The next step vets one image per slide against
+exactly this description, and a slide's visual need that's too vague to
+judge against makes that vetting step's job impossible.
+
+## 5. Compliance and banned language
+
+Some clients are regulated. When you're told this run is regulated, every
+required framing phrase you were given must appear somewhere across the
+carousel's copy, and none of the listed "never say" phrases may appear
+anywhere. Separately, never use any of the client's banned words or banned
+characters in any slide's `headline` or `body`, regulated or not. These are
+hard constraints, not style preferences — step 07's self-check enforces
+them mechanically and returns the whole draft for revision if any is
+violated.
+
+## 6. What never appears in the copy
+
+- No unresolved placeholders (`{{like this}}`, "[insert ...]", "TODO:").
+- No fabricated statistics or claims that don't trace to a real sourced
+  fact (§2).
+- No competitor names, ever, even neutrally, unless the client's own
+  materials already do so explicitly.
+
+## 7. Universal craft rules — mechanically enforced, not optional for any client
+
+These apply to every slide on every run, regardless of what a given client's
+own style config does or doesn't list, and outrank that client's own style
+rules where they conflict. A mechanical gate checks all of these
+unconditionally after you write, so treat them as a hard floor, not a
+suggestion:
+
+- **No em dashes, en dashes, or double hyphens ("--")** anywhere in
+  `headline` or `body`. Rewrite as two sentences, or use a comma/colon.
+- **No exclamation marks.** Zero tolerance, every slide.
+- **Sentence case, not Title Case.** Capitalize only the first word (and
+  real proper nouns) — "Five ways to grow your team" not "Five Ways To Grow
+  Your Team." Avoid ALL-CAPS words for emphasis; let the words themselves
+  carry the point.
+- **No hashtag spam and no engagement-bait phrasing** ("comment below,"
+  "agree?", "tag a friend who...") anywhere in slide copy.

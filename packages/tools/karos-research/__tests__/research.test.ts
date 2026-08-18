@@ -139,6 +139,57 @@ describe("karos-research", () => {
     });
   });
 
+  describe("research.captureVisibility", () => {
+    const args = {
+      promptId: "p1",
+      promptText: "who are the best acme alternatives?",
+      engine: "chatgpt" as const,
+      clientDomains: ["acme.com"],
+      window: "24h",
+    };
+
+    it("performs a fresh capture and records a new run when nothing is cached for this (engine, promptId)", async () => {
+      const outcome = await tools["research.captureVisibility"]!.execute(args, { ctx });
+      expect(outcome.status).toBe("success");
+      const result = (outcome as { result: { fromCache: boolean; cell: { captureTier: string; engine: string } } }).result;
+      expect(result.fromCache).toBe(false);
+      expect(result.cell.engine).toBe("chatgpt");
+      // Phase 1 has no real capture adapter wired up — honestly UNAVAILABLE, never a fabricated answer.
+      expect(result.cell.captureTier).toBe("UNAVAILABLE");
+    });
+
+    it("caches per (engine, promptId), not per generic job — a different prompt or engine never collides", async () => {
+      await tools["research.captureVisibility"]!.execute(args, { ctx });
+      const otherPrompt = await tools["research.captureVisibility"]!.execute({ ...args, promptId: "p2" }, { ctx });
+      const otherEngine = await tools["research.captureVisibility"]!.execute({ ...args, engine: "claude" }, { ctx });
+
+      expect((otherPrompt as { result: { fromCache: boolean } }).result.fromCache).toBe(false);
+      expect((otherEngine as { result: { fromCache: boolean } }).result.fromCache).toBe(false);
+    });
+
+    it("returns the cached cell without recapturing when inside the freshness window", async () => {
+      const first = await tools["research.captureVisibility"]!.execute(args, { ctx });
+      vi.setSystemTime(new Date("2026-01-01T01:00:00Z")); // +1h, inside 24h window
+      const second = await tools["research.captureVisibility"]!.execute(args, { ctx });
+
+      const firstRunId = (first as { result: { runId: string } }).result.runId;
+      const secondResult = (second as { result: { runId: string; fromCache: boolean } }).result;
+      expect(secondResult.fromCache).toBe(true);
+      expect(secondResult.runId).toBe(firstRunId);
+    });
+
+    it("recaptures once the cached cell goes stale", async () => {
+      const first = await tools["research.captureVisibility"]!.execute(args, { ctx });
+      vi.setSystemTime(new Date("2026-01-02T01:00:00Z")); // +25h, outside 24h window
+      const second = await tools["research.captureVisibility"]!.execute(args, { ctx });
+
+      const firstRunId = (first as { result: { runId: string } }).result.runId;
+      const secondResult = (second as { result: { runId: string; fromCache: boolean } }).result;
+      expect(secondResult.fromCache).toBe(false);
+      expect(secondResult.runId).not.toBe(firstRunId);
+    });
+  });
+
   describe("tenant scoping", () => {
     it("ignores a model-supplied clientSlug override in favor of ctx.clientSlug", async () => {
       await tools["research.writeRun"]!.execute(

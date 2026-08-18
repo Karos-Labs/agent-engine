@@ -16,10 +16,12 @@
     "@agent-engine/tool-common": "^0.0.1",
     "@agent-engine/tool-karos-client": "^0.0.1",
     "@agent-engine/tool-karos-gates": "^0.0.1",
+    "@agent-engine/tool-karos-intel": "^0.0.1",
     "@agent-engine/tool-karos-ledger": "^0.0.1",
     "@agent-engine/tool-karos-memory": "^0.0.1",
     "@agent-engine/tool-karos-publish": "^0.0.1",
     "@agent-engine/tool-karos-research": "^0.0.1",
+    "@agent-engine/tool-karos-seo-geo": "^0.0.1",
     "@agent-engine/tool-karos-topics": "^0.0.1",
     "zod": "^4.4.3"
   }

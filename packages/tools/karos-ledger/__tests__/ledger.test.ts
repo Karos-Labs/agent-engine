@@ -132,6 +132,34 @@ describe("karos-ledger", () => {
     });
   });
 
+  describe("ledger.recordUsedImages / ledger.listUsedImages (cross-post image-reuse prevention, P0 parity audit Fix 3)", () => {
+    it("records image paths and lists them back, deduped and idempotent on replay", async () => {
+      const first = await tools["ledger.recordUsedImages"]!.execute({ imagePaths: ["a.png", "b.png"] }, { ctx });
+      expect(first).toEqual({ status: "success", result: { added: 2, total: 2 } });
+
+      // Replaying the same paths (e.g. a retried/resumed delivery) adds nothing new.
+      const second = await tools["ledger.recordUsedImages"]!.execute({ imagePaths: ["a.png", "c.png"] }, { ctx });
+      expect(second).toEqual({ status: "success", result: { added: 1, total: 3 } });
+
+      const listed = await tools["ledger.listUsedImages"]!.execute({}, { ctx });
+      expect(listed).toEqual({ status: "success", result: { imagePaths: ["a.png", "b.png", "c.png"] } });
+    });
+
+    it("returns an empty list for a client with nothing recorded yet", async () => {
+      const listed = await tools["ledger.listUsedImages"]!.execute({}, { ctx });
+      expect(listed).toEqual({ status: "success", result: { imagePaths: [] } });
+    });
+
+    it("keeps two tenants' used-image sets fully separate", async () => {
+      const acmeCtx: AgentContext = { ...ctx, clientSlug: "acme" };
+      const globexCtx: AgentContext = { ...ctx, clientSlug: "globex" };
+
+      await tools["ledger.recordUsedImages"]!.execute({ imagePaths: ["acme-only.png"] }, { ctx: acmeCtx });
+      const globexList = await tools["ledger.listUsedImages"]!.execute({}, { ctx: globexCtx });
+      expect(globexList).toEqual({ status: "success", result: { imagePaths: [] } });
+    });
+  });
+
   describe("tenant scoping", () => {
     it("ignores a model-supplied clientSlug override and writes under ctx.clientSlug instead", async () => {
       await tools["ledger.writeDeliverable"]!.execute(
