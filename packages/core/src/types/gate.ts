@@ -54,6 +54,40 @@ export const GateKindSchema = z.enum([
   // shipped past this point without sign-off" — approves which fired
   // recommendations get a drafted fix before the bounded fix-draft agent runs.
   "fix_generation_review",
+  // The Reputation Agent's mandatory human gate (RFC-08 §6/§11 item 5): every
+  // approved draft reply is held here before anything is considered
+  // "published" — today's only legal autonomy state is `approve-all` (no
+  // reply-publish credential exists yet, RFC-08 §6), so this gate is never
+  // skipped, only auto-approved in tests via `autoApprove`. Approval means
+  // "visible to a human to post by hand," never "agent-engine posted it" —
+  // the workflow never calls a publish tool on either side of this gate.
+  "reputation_approve_all",
+  // Landing Builder's Phase 6 human review gate (RFC-07 §4 phase 6 / §5 /
+  // AGENT-INVOCATION.md §5): "first ~5-7 clients: route every result through
+  // human review before deploy regardless of status" — the gradual-autonomy
+  // rollout the source product spec already scoped. Held before the built
+  // site is ever considered a deliverable, on both `status: ok` and
+  // `status: needs_human` outcomes, exactly like `reputation_approve_all`'s
+  // "never skipped, only auto-approved in tests" posture.
+  "landing_craft_review",
+  // Branded Shorts' one-time per-client onboarding gate (RFC-06 §2's Style
+  // Exploration / SKILL.md "per-client onboarding" step 2): three candidate
+  // style directions are proposed from the client's brand, a human ("Karos
+  // ops or the client" — SKILL.md's own words) locks exactly one, and that
+  // locked choice becomes the client's `brand-profile.json`/
+  // `graphics-language.md` for every video going forward. The only human
+  // touchpoint per client (PORTAL-ONEPAGER.md "One choice, once") — never
+  // re-asked once locked.
+  "style_exploration_lock",
+  // Branded Shorts' per-video delivery gate (RFC-06 §2 stage 7 / SKILL.md
+  // `requires_approval: true` / PORTAL-ONEPAGER.md "Nothing is published
+  // from here: finished files come to you and you post them"): a finished
+  // short clears every deterministic gate (cut/graphics/cutaway/self-eval)
+  // before it is even eligible for this gate, but it is never handed to the
+  // client as a delivered asset until a human approves it — same
+  // never-skipped, only-auto-approved-in-tests posture as
+  // `reputation_approve_all`/`landing_craft_review`.
+  "branded_shorts_delivery_review",
 ]);
 export type GateKind = z.infer<typeof GateKindSchema>;
 

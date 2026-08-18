@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+/* ============================================================
+   ENGINE TOKEN CONTRACT (semantic roles — the template reads these).
+   Components only ever use role utilities: bg-ground, text-fg, text-accent,
+   border-edge, etc. Per client, only the VALUES below change; the role names
+   and the components stay constant. globals.css is the single per-client skin.
+
+   FORGE skin: ink ground (dark mode IS the brand), bone type, ember accent.
+   Ratio 70/22/8. Archivo (display) · Inter (body) · JetBrains Mono (numbers).
+   Accent ~8% only: CTAs, key numbers, active states. Never large fields.
+   ============================================================ */
+
+:root {
+  --ground:   #0B0B0C; /* page background — 70 */
+  --ground-2: #15151A; /* raised surfaces / panels */
+  --fg:       #F2F0EC; /* foreground type — 22 */
+  --fg-2:     #C7C5BE; /* muted body text */
+  --accent:   #FF4D00; /* brand accent — 8 · CTAs, key numbers, active states */
+  --accent-2: #FF7A33; /* hover / lighter accent */
+  --muted:    #3A3D44; /* secondary surfaces / borders / large ghost numerals */
+  --edge:     #26262C; /* hairlines / dividers */
+
+  /* rgb triplets for translucent gradients/glows (rgb(var(--x) / a)) */
+  --accent-rgb: 255 77 0;
+  --fg-rgb:     242 240 236;
+
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@theme inline {
+  --color-ground: var(--ground);
+  --color-ground-2: var(--ground-2);
+  --color-fg: var(--fg);
+  --color-fg-2: var(--fg-2);
+  --color-accent: var(--accent);
+  --color-accent-2: var(--accent-2);
+  --color-muted: var(--muted);
+  --color-edge: var(--edge);
+
+  --font-display: var(--font-archivo);
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-jetbrains-mono);
+}
+
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+body {
+  background: var(--ground);
+  color: var(--fg);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection { background: var(--accent); color: var(--ground); }
+
+.font-display { font-weight: 800; letter-spacing: -0.02em; }

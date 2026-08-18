@@ -1,0 +1,23 @@
+{
+  "name": "@agent-engine/agent-landing-builder",
+  "private": true,
+  "version": "0.0.1",
+  "description": "The Landing Builder agent (s6, RFC-07) — the 7-phase INTAKE -> REFERENCE -> COPY -> COMPOSE -> MAKE -> GATE -> OUTPUT pipeline that turns one client's brand contract + intake facts into a standalone Next.js site, built on the sandboxed karos-landing tooling (template copy, write-fenced site writer, three-layer gate) plus a mandatory human review gate before delivery.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "test": "npm run typecheck && vitest run"
+  },
+  "dependencies": {
+    "@agent-engine/core": "^0.0.1",
+    "@agent-engine/tool-common": "^0.0.1",
+    "@agent-engine/tool-karos-gates": "^0.0.1",
+    "@agent-engine/tool-karos-landing": "^0.0.1",
+    "@agent-engine/tools": "^0.0.1",
+    "@agent-engine/workflow": "^0.0.1",
+    "zod": "^4.4.3"
+  }
+}

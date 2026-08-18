@@ -37,14 +37,15 @@ describe("Layer 3 tool registry — cross-cutting", () => {
     await fs.rm(rootDir, { recursive: true, force: true });
   });
 
-  it("merges all nine servers' tools into one registry with no name collisions", () => {
-    const expectedPrefixes = ["client.", "gate.", "intel.", "ledger.", "memory.", "publish.", "research.", "seoGeo.", "topics."];
+  it("merges all ten servers' tools into one registry with no name collisions", () => {
+    const expectedPrefixes = ["client.", "gate.", "intel.", "ledger.", "memory.", "publish.", "reputation.", "research.", "seoGeo.", "topics."];
     const names = Object.keys(tools);
-    // 7 client + 6 gates + 2 intel + 7 ledger + 5 memory + 4 publish + 5 research + 2 seoGeo + 4 topics = 42
+    // 7 client + 6 gates + 2 intel + 7 ledger + 5 memory + 4 publish + 3 reputation + 5 research + 2 seoGeo + 4 topics = 45
     // (ledger grew from 5 to 7: P0 parity-audit Fix 3 added ledger.recordUsedImages/ledger.listUsedImages
     // for cross-post image-reuse prevention — see agents/instagram-agent/src/workflow/craft-hygiene.ts's
-    // sibling, create-instagram-agent-workflow.ts.)
-    expect(names.length).toBe(42);
+    // sibling, create-instagram-agent-workflow.ts. reputation.* is new: RFC-08's triage/capture/doctrineGate —
+    // reputation.publish is deliberately absent, permanently gated inside agents/reputation-agent's own workflow.)
+    expect(names.length).toBe(45);
     for (const prefix of expectedPrefixes) {
       expect(names.some((n) => n.startsWith(prefix))).toBe(true);
     }

@@ -1,0 +1,127 @@
+{
+  "_comment": "The headline B4 guarantee: a pulse that re-ingests ONLY a trailing window (every review already seen, every fired signature already alerted) must not re-fire any crisis. Same fictional gym and records as cross-pulse-input.json, six hours later. The burst forms no trigger (no new member), the seen keyword reviews form no trigger, and the still-live trustpilot dip is suppressed by its ledgered signature. crisis.fired must be false.",
+  "now": "2026-07-27T18:00:00Z",
+  "baseline_rating_avg": { "trustpilot": 4.6 },
+  "already_responded_ids": [],
+  "seen_review_ids": [
+    "google:kettle-main:rev-old1",
+    "google:kettle-main:rev-old2",
+    "google:kettle-main:rev-new1",
+    "google:kettle-main:rev-kw-old",
+    "trustpilot:kettle-tp:rev-kw-new",
+    "trustpilot:kettle-tp:rev-tp1",
+    "trustpilot:kettle-tp:rev-tp2"
+  ],
+  "alerted_crisis_signatures": [
+    "rating_dip|trustpilot|trustpilot:kettle-tp:rev-kw-new,trustpilot:kettle-tp:rev-tp1,trustpilot:kettle-tp:rev-tp2",
+    "negative_burst|google+trustpilot|google:kettle-main:rev-new1,google:kettle-main:rev-old1,google:kettle-main:rev-old2,trustpilot:kettle-tp:rev-kw-new",
+    "crisis_keywords|trustpilot|trustpilot:kettle-tp:rev-kw-new"
+  ],
+  "reviews": [
+    {
+      "review_id": "google:kettle-main:rev-old1",
+      "platform": "google", "source": "gbp_api", "capture_tier": "MEASURED",
+      "listing_id": "kettle-main", "listing_label": "Kettle & Core",
+      "rating": 1, "author": "P. L.", "author_badge": null, "language": "en",
+      "text": "Half the machines out of order again.",
+      "created_at": "2026-07-25T18:00:00Z", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/g/rev-old1",
+      "captured_at": "2026-07-27T17:00:00Z", "raw_sha256": "xp-sha-old1",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "neg",
+        "factual_error": false, "fixable_complaint": true,
+        "detailed_positive": false, "service_recovery_opportunity": false
+      }
+    },
+    {
+      "review_id": "google:kettle-main:rev-old2",
+      "platform": "google", "source": "gbp_api", "capture_tier": "MEASURED",
+      "listing_id": "kettle-main", "listing_label": "Kettle & Core",
+      "rating": 2, "author": "M. V.", "author_badge": null, "language": "en",
+      "text": "Locker room was a mess this morning.",
+      "created_at": "2026-07-26T08:00:00Z", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/g/rev-old2",
+      "captured_at": "2026-07-27T17:00:00Z", "raw_sha256": "xp-sha-old2",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "neg",
+        "factual_error": false, "fixable_complaint": true,
+        "detailed_positive": false, "service_recovery_opportunity": false
+      }
+    },
+    {
+      "review_id": "google:kettle-main:rev-new1",
+      "platform": "google", "source": "gbp_api", "capture_tier": "MEASURED",
+      "listing_id": "kettle-main", "listing_label": "Kettle & Core",
+      "rating": 1, "author": "T. R.", "author_badge": null, "language": "en",
+      "text": "They cancelled my class at the last minute.",
+      "created_at": "2026-07-27T09:00:00Z", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/g/rev-new1",
+      "captured_at": "2026-07-27T17:00:00Z", "raw_sha256": "xp-sha-new1",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "neg",
+        "factual_error": false, "fixable_complaint": true,
+        "detailed_positive": false, "service_recovery_opportunity": true
+      }
+    },
+    {
+      "review_id": "google:kettle-main:rev-kw-old",
+      "platform": "google", "source": "gbp_api", "capture_tier": "MEASURED",
+      "listing_id": "kettle-main", "listing_label": "Kettle & Core",
+      "rating": 3, "author": "J. N.", "author_badge": null, "language": "en",
+      "text": "Decent gym but the squat rack feels unsafe.",
+      "created_at": "2026-07-24T10:00:00Z", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/g/rev-kw-old",
+      "captured_at": "2026-07-27T17:00:00Z", "raw_sha256": "xp-sha-kwold",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "mixed",
+        "factual_error": false, "fixable_complaint": true,
+        "detailed_positive": false, "service_recovery_opportunity": false
+      }
+    },
+    {
+      "review_id": "trustpilot:kettle-tp:rev-kw-new",
+      "platform": "trustpilot", "source": "apify_scrape", "capture_tier": "ESTIMATED",
+      "listing_id": "kettle-tp", "listing_label": "Kettle & Core",
+      "rating": 2, "author": "D. F.", "author_badge": null, "language": "en",
+      "text": "Double billed this month, filing a chargeback with my bank.",
+      "created_at": "2026-07-27T10:00:00Z", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/tp/rev-kw-new",
+      "captured_at": "2026-07-27T17:00:00Z", "raw_sha256": "xp-sha-kwnew",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "neg",
+        "factual_error": false, "fixable_complaint": true,
+        "detailed_positive": false, "service_recovery_opportunity": true
+      }
+    },
+    {
+      "review_id": "trustpilot:kettle-tp:rev-tp1",
+      "platform": "trustpilot", "source": "apify_scrape", "capture_tier": "ESTIMATED",
+      "listing_id": "kettle-tp", "listing_label": "Kettle & Core",
+      "rating": 4, "author": "K. S.", "author_badge": null, "language": "en",
+      "text": "Good range of weights.",
+      "created_at": "2026-07-23T10:00:00Z", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/tp/rev-tp1",
+      "captured_at": "2026-07-27T17:00:00Z", "raw_sha256": "xp-sha-tp1",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "pos",
+        "factual_error": false, "fixable_complaint": false,
+        "detailed_positive": false, "service_recovery_opportunity": false
+      }
+    },
+    {
+      "review_id": "trustpilot:kettle-tp:rev-tp2",
+      "platform": "trustpilot", "source": "apify_scrape", "capture_tier": "ESTIMATED",
+      "listing_id": "kettle-tp", "listing_label": "Kettle & Core",
+      "rating": 3, "author": "A. G.", "author_badge": null, "language": "en",
+      "text": "Average experience, gets crowded after work.",
+      "created_at": "2026-07-24T10:00:00Z", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/tp/rev-tp2",
+      "captured_at": "2026-07-27T17:00:00Z", "raw_sha256": "xp-sha-tp2",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "neutral",
+        "factual_error": false, "fixable_complaint": false,
+        "detailed_positive": false, "service_recovery_opportunity": false
+      }
+    }
+  ]
+}

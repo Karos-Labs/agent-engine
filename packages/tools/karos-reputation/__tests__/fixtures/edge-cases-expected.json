@@ -1,0 +1,190 @@
+{
+ "crisis": {
+  "fired": false,
+  "triggers": []
+ },
+ "now": "2026-07-20T12:00:00Z",
+ "results": [
+  {
+   "crisis_hit": false,
+   "draft_attached": false,
+   "reason": "below thresholds (value 5, urgency 0)",
+   "review_id": "g2:tallyup:rev-d1",
+   "route": "NO_ACTION",
+   "signals": [],
+   "urgency_score": 0,
+   "value_score": 5
+  },
+  {
+   "crisis_hit": false,
+   "draft_attached": false,
+   "reason": "below thresholds (value 5, urgency 0)",
+   "review_id": "g2:tallyup:rev-d2",
+   "route": "NO_ACTION",
+   "signals": [],
+   "urgency_score": 0,
+   "value_score": 5
+  },
+  {
+   "crisis_hit": false,
+   "draft_attached": false,
+   "reason": "below thresholds (value 5, urgency 0)",
+   "review_id": "g2:tallyup:rev-d3",
+   "route": "NO_ACTION",
+   "signals": [],
+   "urgency_score": 0,
+   "value_score": 5
+  },
+  {
+   "crisis_hit": false,
+   "draft_attached": false,
+   "reason": "below thresholds (value 30, urgency 35)",
+   "review_id": "google:marg-main:rev-b1",
+   "route": "NO_ACTION",
+   "signals": [
+    "rating_1",
+    "fixable_complaint"
+   ],
+   "urgency_score": 35,
+   "value_score": 30
+  },
+  {
+   "crisis_hit": false,
+   "draft_attached": false,
+   "reason": "below thresholds (value 30, urgency 35)",
+   "review_id": "google:marg-main:rev-b2",
+   "route": "NO_ACTION",
+   "signals": [
+    "rating_1",
+    "fixable_complaint"
+   ],
+   "urgency_score": 35,
+   "value_score": 30
+  },
+  {
+   "crisis_hit": false,
+   "draft_attached": false,
+   "reason": "below thresholds (value 10, urgency 35)",
+   "review_id": "google:marg-main:rev-b3",
+   "route": "NO_ACTION",
+   "signals": [
+    "rating_1"
+   ],
+   "urgency_score": 35,
+   "value_score": 10
+  },
+  {
+   "crisis_hit": false,
+   "draft_attached": false,
+   "reason": "below thresholds (value 24, urgency 0)",
+   "review_id": "google:marg-main:rev-decay",
+   "route": "NO_ACTION",
+   "signals": [
+    "has_question",
+    "recency_decay:0.6"
+   ],
+   "urgency_score": 0,
+   "value_score": 24
+  },
+  {
+   "crisis_hit": false,
+   "draft_attached": true,
+   "reason": "value 50 >= 40",
+   "review_id": "google:marg-main:rev-factual",
+   "route": "RESPOND",
+   "signals": [
+    "factual_error",
+    "service_recovery_opportunity"
+   ],
+   "urgency_score": 0,
+   "value_score": 50
+  },
+  {
+   "crisis_hit": false,
+   "draft_attached": false,
+   "reason": "below thresholds (value 20, urgency 0)",
+   "review_id": "google:marg-main:rev-naive",
+   "route": "NO_ACTION",
+   "signals": [
+    "detailed_positive"
+   ],
+   "urgency_score": 0,
+   "value_score": 20
+  },
+  {
+   "crisis_hit": false,
+   "draft_attached": false,
+   "reason": "below thresholds (value 0, urgency 35)",
+   "review_id": "google:marg-main:rev-old-a",
+   "route": "NO_ACTION",
+   "signals": [
+    "rating_1",
+    "fixable_complaint",
+    "recency_decay:0.0"
+   ],
+   "urgency_score": 35,
+   "value_score": 0
+  },
+  {
+   "crisis_hit": false,
+   "draft_attached": false,
+   "reason": "below thresholds (value 0, urgency 35)",
+   "review_id": "google:marg-main:rev-old-b",
+   "route": "NO_ACTION",
+   "signals": [
+    "rating_1",
+    "fixable_complaint",
+    "recency_decay:0.0"
+   ],
+   "urgency_score": 35,
+   "value_score": 0
+  },
+  {
+   "crisis_hit": false,
+   "draft_attached": false,
+   "reason": "below thresholds (value 0, urgency 35)",
+   "review_id": "google:marg-main:rev-old-c",
+   "route": "NO_ACTION",
+   "signals": [
+    "rating_1",
+    "fixable_complaint",
+    "recency_decay:0.0"
+   ],
+   "urgency_score": 35,
+   "value_score": 0
+  },
+  {
+   "crisis_hit": true,
+   "draft_attached": false,
+   "reason": "below thresholds (value 0, urgency 40)",
+   "review_id": "google:marg-main:rev-old-kw",
+   "route": "NO_ACTION",
+   "signals": [
+    "crisis_keywords:scam",
+    "recency_decay:0.0"
+   ],
+   "urgency_score": 40,
+   "value_score": 0
+  },
+  {
+   "crisis_hit": false,
+   "draft_attached": false,
+   "reason": "below thresholds (value 25, urgency 25)",
+   "review_id": "trustpilot:tallyup-tp:rev-min",
+   "route": "NO_ACTION",
+   "signals": [
+    "rating_2",
+    "fixable_complaint"
+   ],
+   "urgency_score": 25,
+   "value_score": 25
+  }
+ ],
+ "summary": {
+  "flag": 0,
+  "no_action": 13,
+  "respond": 1,
+  "unavailable": 0
+ },
+ "triage_config_version": "1.2.0"
+}

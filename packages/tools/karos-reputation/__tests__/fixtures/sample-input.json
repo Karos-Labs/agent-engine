@@ -1,0 +1,154 @@
+{
+  "_comment": "Fixture capture input for the self-test. All businesses, authors, and reviews are FICTIONAL (a made-up cafe 'Fern & Filter' and a made-up PT-BR fintech app 'Zumo'). Covers: RESPOND, FLAG with and without draft, NO_ACTION (low value / already responded / recency decay), owner-response gate, ledger gate, crisis keywords in EN and PT, negative burst across platforms, rating dip, and an UNAVAILABLE tombstone.",
+  "now": "2026-07-20T12:00:00Z",
+  "baseline_rating_avg": { "google": 4.6 },
+  "already_responded_ids": ["google:fern-main:rev-007"],
+  "reviews": [
+    {
+      "review_id": "google:fern-main:rev-001",
+      "platform": "google", "source": "gbp_api", "capture_tier": "MEASURED",
+      "listing_id": "fern-main", "listing_label": "Fern & Filter - Main St",
+      "rating": 2, "author": "M. R.", "author_badge": null, "language": "en",
+      "text": "Waited 40 minutes and my order came out wrong. Is the kitchen understaffed on weekends?",
+      "created_at": "2026-07-18T09:00:00Z", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/g/rev-001",
+      "captured_at": "2026-07-20T11:00:00Z", "raw_sha256": "fixture-sha-001",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "neg",
+        "factual_error": false, "fixable_complaint": true,
+        "detailed_positive": false, "service_recovery_opportunity": true
+      }
+    },
+    {
+      "review_id": "google:fern-main:rev-002",
+      "platform": "google", "source": "gbp_api", "capture_tier": "MEASURED",
+      "listing_id": "fern-main", "listing_label": "Fern & Filter - Main St",
+      "rating": 5, "author": "A. K.", "author_badge": null, "language": "en",
+      "text": "The cortado was perfect and the staff remembered my usual. The corner table by the window is the best work seat in the neighborhood.",
+      "created_at": "2026-07-16T15:00:00Z", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/g/rev-002",
+      "captured_at": "2026-07-20T11:00:00Z", "raw_sha256": "fixture-sha-002",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "pos",
+        "factual_error": false, "fixable_complaint": false,
+        "detailed_positive": true, "service_recovery_opportunity": false
+      }
+    },
+    {
+      "review_id": "yelp:fern-yelp:rev-003",
+      "platform": "yelp", "source": "yelp_fusion", "capture_tier": "MEASURED",
+      "listing_id": "fern-yelp", "listing_label": "Fern & Filter",
+      "rating": 1, "author": "T. B.", "author_badge": "elite", "language": "en",
+      "text": "This place is a scam and I want everyone to know it.",
+      "created_at": "2026-07-17T14:00:00Z", "updated_at": null,
+      "owner_response": { "text": "We are sorry to hear this and have reached out privately.", "responded_at": "2026-07-18T10:00:00Z" },
+      "url": "https://example.invalid/y/rev-003",
+      "captured_at": "2026-07-20T11:00:00Z", "raw_sha256": "fixture-sha-003",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "neg",
+        "factual_error": false, "fixable_complaint": false,
+        "detailed_positive": false, "service_recovery_opportunity": false
+      }
+    },
+    {
+      "review_id": "yelp:fern-yelp:rev-004",
+      "platform": "yelp", "source": "apify_scrape", "capture_tier": "ESTIMATED",
+      "listing_id": "fern-yelp", "listing_label": "Fern & Filter",
+      "rating": 3, "author": "S. L.", "author_badge": null, "language": "en",
+      "text": "Slow service on weekends but the pastries are decent and the room is calm.",
+      "created_at": "2026-07-15T11:00:00Z", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/y/rev-004",
+      "captured_at": "2026-07-20T11:00:00Z", "raw_sha256": "fixture-sha-004",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "mixed",
+        "factual_error": false, "fixable_complaint": true,
+        "detailed_positive": false, "service_recovery_opportunity": false
+      }
+    },
+    {
+      "review_id": "google:fern-main:rev-005",
+      "platform": "google", "source": "gbp_api", "capture_tier": "MEASURED",
+      "listing_id": "fern-main", "listing_label": "Fern & Filter - Main St",
+      "rating": 1, "author": "P. N.", "author_badge": null, "language": "en",
+      "text": "Cold food, rude staff, never again.",
+      "created_at": "2026-07-19T10:00:00Z", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/g/rev-005",
+      "captured_at": "2026-07-20T11:00:00Z", "raw_sha256": "fixture-sha-005",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "neg",
+        "factual_error": false, "fixable_complaint": true,
+        "detailed_positive": false, "service_recovery_opportunity": true
+      }
+    },
+    {
+      "review_id": "google:fern-main:rev-006",
+      "platform": "google", "source": "gbp_api", "capture_tier": "MEASURED",
+      "listing_id": "fern-main", "listing_label": "Fern & Filter - Main St",
+      "rating": 1, "author": "V. O.", "author_badge": null, "language": "en",
+      "text": "Terrible experience tonight.",
+      "created_at": "2026-07-19T20:00:00Z", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/g/rev-006",
+      "captured_at": "2026-07-20T11:00:00Z", "raw_sha256": "fixture-sha-006",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "neg",
+        "factual_error": false, "fixable_complaint": true,
+        "detailed_positive": false, "service_recovery_opportunity": false
+      }
+    },
+    {
+      "review_id": "google:fern-main:rev-007",
+      "platform": "google", "source": "gbp_api", "capture_tier": "MEASURED",
+      "listing_id": "fern-main", "listing_label": "Fern & Filter - Main St",
+      "rating": 2, "author": "H. W.", "author_badge": null, "language": "en",
+      "text": "They forgot half the order. Might give it one more chance.",
+      "created_at": "2026-07-20T06:00:00Z", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/g/rev-007",
+      "captured_at": "2026-07-20T11:00:00Z", "raw_sha256": "fixture-sha-007",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "neg",
+        "factual_error": false, "fixable_complaint": false,
+        "detailed_positive": false, "service_recovery_opportunity": true
+      }
+    },
+    {
+      "review_id": "appstore:zumo-ios:rev-008",
+      "platform": "appstore", "source": "appstore_rss", "capture_tier": "MEASURED",
+      "listing_id": "zumo-ios", "listing_label": "Zumo (iOS)",
+      "rating": 4, "author": "quietseeker", "author_badge": null, "language": "en",
+      "text": "Great app for tracking my savings. Any plans for an Android version?",
+      "created_at": "2026-01-05T09:00:00Z", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/a/rev-008",
+      "captured_at": "2026-07-20T11:00:00Z", "raw_sha256": "fixture-sha-008",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "pos",
+        "factual_error": false, "fixable_complaint": false,
+        "detailed_positive": false, "service_recovery_opportunity": false
+      }
+    },
+    {
+      "review_id": "reclameaqui:zumo-ra:rev-009",
+      "platform": "reclameaqui", "source": "apify_scrape", "capture_tier": "ESTIMATED",
+      "listing_id": "zumo-ra", "listing_label": "Zumo",
+      "rating": 1, "author": "C. F.", "author_badge": null, "language": "pt",
+      "text": "Isso é golpe. Vou denunciar no procon.",
+      "created_at": "2026-07-19T13:00:00Z", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/r/rev-009",
+      "captured_at": "2026-07-20T11:00:00Z", "raw_sha256": "fixture-sha-009",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "neg",
+        "factual_error": false, "fixable_complaint": true,
+        "detailed_positive": false, "service_recovery_opportunity": true
+      }
+    },
+    {
+      "review_id": "google:fern-main:rev-010",
+      "platform": "google", "source": "gbp_api", "capture_tier": "UNAVAILABLE",
+      "listing_id": "fern-main", "listing_label": "Fern & Filter - Main St",
+      "rating": null, "author": null, "author_badge": null, "language": null,
+      "text": null,
+      "created_at": "2026-07-20T08:00:00Z", "updated_at": null,
+      "owner_response": null, "url": null,
+      "captured_at": "2026-07-20T11:00:00Z", "raw_sha256": "fixture-sha-010"
+    }
+  ]
+}

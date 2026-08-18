@@ -1,0 +1,19 @@
+{
+  "name": "@agent-engine/tool-karos-video",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Branded Shorts (RFC-06) deterministic video-rendering tool adapters: typed Zod wrappers around the product's existing Python engine (cut_check.py, brand_check.py, graphic_qa.py, cutaway_check.py, brand_assets_check.py, build_short.py). Adapter, never infra — no rendering logic is reimplemented in TypeScript.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "test": "npm run typecheck && vitest run"
+  },
+  "dependencies": {
+    "@agent-engine/core": "^0.0.1",
+    "@agent-engine/tool-common": "^0.0.1",
+    "zod": "^4.4.3"
+  }
+}

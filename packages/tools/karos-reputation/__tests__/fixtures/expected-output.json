@@ -1,0 +1,224 @@
+{
+ "crisis": {
+  "fired": true,
+  "triggers": [
+   {
+    "baseline_rating_avg": 4.6,
+    "platform": "google",
+    "review_ids": [
+     "google:fern-main:rev-001",
+     "google:fern-main:rev-002",
+     "google:fern-main:rev-005",
+     "google:fern-main:rev-006",
+     "google:fern-main:rev-007"
+    ],
+    "signature": "rating_dip|google|google:fern-main:rev-001,google:fern-main:rev-002,google:fern-main:rev-005,google:fern-main:rev-006,google:fern-main:rev-007",
+    "suppressed": false,
+    "type": "rating_dip",
+    "window_rating_avg": 2.2,
+    "window_review_count": 5
+   },
+   {
+    "review_ids": [
+     "google:fern-main:rev-001",
+     "google:fern-main:rev-005",
+     "google:fern-main:rev-006",
+     "google:fern-main:rev-007",
+     "reclameaqui:zumo-ra:rev-009",
+     "yelp:fern-yelp:rev-003"
+    ],
+    "signature": "negative_burst|google+reclameaqui+yelp|google:fern-main:rev-001,google:fern-main:rev-005,google:fern-main:rev-006,google:fern-main:rev-007,reclameaqui:zumo-ra:rev-009,yelp:fern-yelp:rev-003",
+    "suppressed": false,
+    "type": "negative_burst"
+   },
+   {
+    "reviews": [
+     {
+      "keywords": [
+       "denunciar",
+       "golpe",
+       "procon"
+      ],
+      "review_id": "reclameaqui:zumo-ra:rev-009"
+     },
+     {
+      "keywords": [
+       "scam"
+      ],
+      "review_id": "yelp:fern-yelp:rev-003"
+     }
+    ],
+    "signature": "crisis_keywords|reclameaqui+yelp|reclameaqui:zumo-ra:rev-009,yelp:fern-yelp:rev-003",
+    "suppressed": false,
+    "type": "crisis_keywords"
+   }
+  ]
+ },
+ "now": "2026-07-20T12:00:00Z",
+ "results": [
+  {
+   "crisis_hit": false,
+   "draft_attached": false,
+   "reason": "below thresholds (value 0, urgency 0)",
+   "review_id": "appstore:zumo-ios:rev-008",
+   "route": "NO_ACTION",
+   "signals": [
+    "has_question",
+    "recency_decay:0.0"
+   ],
+   "urgency_score": 0,
+   "value_score": 0
+  },
+  {
+   "crisis_hit": false,
+   "draft_attached": true,
+   "reason": "value 75 >= 40",
+   "review_id": "google:fern-main:rev-001",
+   "route": "RESPOND",
+   "signals": [
+    "rating_2",
+    "burst_context",
+    "has_question",
+    "fixable_complaint",
+    "service_recovery_opportunity"
+   ],
+   "urgency_score": 45,
+   "value_score": 75
+  },
+  {
+   "crisis_hit": false,
+   "draft_attached": false,
+   "reason": "below thresholds (value 20, urgency 0)",
+   "review_id": "google:fern-main:rev-002",
+   "route": "NO_ACTION",
+   "signals": [
+    "detailed_positive"
+   ],
+   "urgency_score": 0,
+   "value_score": 20
+  },
+  {
+   "crisis_hit": false,
+   "draft_attached": true,
+   "proposed_action": {
+    "action": "Part of a negative burst: reply to each member individually (never copy-paste), name the shared issue once the cause is known, and watch the crisis panel for the burst trigger.",
+    "id": "burst-response"
+   },
+   "reason": "urgency 55 >= 50",
+   "review_id": "google:fern-main:rev-005",
+   "route": "FLAG",
+   "signals": [
+    "rating_1",
+    "burst_context",
+    "fixable_complaint",
+    "service_recovery_opportunity"
+   ],
+   "urgency_score": 55,
+   "value_score": 45
+  },
+  {
+   "crisis_hit": false,
+   "draft_attached": false,
+   "proposed_action": {
+    "action": "Part of a negative burst: reply to each member individually (never copy-paste), name the shared issue once the cause is known, and watch the crisis panel for the burst trigger.",
+    "id": "burst-response"
+   },
+   "reason": "urgency 55 >= 50",
+   "review_id": "google:fern-main:rev-006",
+   "route": "FLAG",
+   "signals": [
+    "rating_1",
+    "burst_context",
+    "fixable_complaint"
+   ],
+   "urgency_score": 55,
+   "value_score": 30
+  },
+  {
+   "crisis_hit": false,
+   "draft_attached": false,
+   "reason": "already responded",
+   "review_id": "google:fern-main:rev-007",
+   "route": "NO_ACTION",
+   "signals": [
+    "rating_2",
+    "burst_context",
+    "service_recovery_opportunity",
+    "already_responded"
+   ],
+   "urgency_score": 45,
+   "value_score": 25
+  },
+  {
+   "crisis_hit": false,
+   "draft_attached": false,
+   "reason": "capture leg unavailable this run; tombstone only",
+   "review_id": "google:fern-main:rev-010",
+   "route": "NO_ACTION",
+   "signals": [
+    "capture_unavailable"
+   ],
+   "urgency_score": 0,
+   "value_score": 0
+  },
+  {
+   "crisis_hit": true,
+   "draft_attached": true,
+   "proposed_action": {
+    "action": "Escalate today: alert the owner, post one calm public acknowledgment (no arguing specifics), and move the conversation to a direct channel. Draft attached when eligible.",
+    "id": "crisis-escalation"
+   },
+   "reason": "urgency 95 >= 50",
+   "review_id": "reclameaqui:zumo-ra:rev-009",
+   "route": "FLAG",
+   "signals": [
+    "rating_1",
+    "crisis_keywords:denunciar,golpe,procon",
+    "burst_context",
+    "fixable_complaint",
+    "service_recovery_opportunity"
+   ],
+   "urgency_score": 95,
+   "value_score": 40
+  },
+  {
+   "crisis_hit": true,
+   "draft_attached": false,
+   "proposed_action": {
+    "action": "Already answered publicly: no new reply — keep the review in the monthly themes only.",
+    "id": "already-responded"
+   },
+   "reason": "urgency 105 >= 50",
+   "review_id": "yelp:fern-yelp:rev-003",
+   "route": "FLAG",
+   "signals": [
+    "rating_1",
+    "crisis_keywords:scam",
+    "influence_badge",
+    "burst_context",
+    "already_responded"
+   ],
+   "urgency_score": 105,
+   "value_score": 8
+  },
+  {
+   "crisis_hit": false,
+   "draft_attached": false,
+   "reason": "below thresholds (value 28, urgency 0)",
+   "review_id": "yelp:fern-yelp:rev-004",
+   "route": "NO_ACTION",
+   "signals": [
+    "fixable_complaint"
+   ],
+   "urgency_score": 0,
+   "value_score": 28
+  }
+ ],
+ "summary": {
+  "flag": 4,
+  "no_action": 4,
+  "respond": 1,
+  "unavailable": 1
+ },
+ "triage_config_version": "1.2.0"
+}

@@ -1,0 +1,159 @@
+{
+ "crisis": {
+  "fired": true,
+  "triggers": [
+   {
+    "baseline_rating_avg": 4.6,
+    "platform": "trustpilot",
+    "review_ids": [
+     "trustpilot:kettle-tp:rev-kw-new",
+     "trustpilot:kettle-tp:rev-tp1",
+     "trustpilot:kettle-tp:rev-tp2"
+    ],
+    "signature": "rating_dip|trustpilot|trustpilot:kettle-tp:rev-kw-new,trustpilot:kettle-tp:rev-tp1,trustpilot:kettle-tp:rev-tp2",
+    "suppressed": true,
+    "type": "rating_dip",
+    "window_rating_avg": 3.0,
+    "window_review_count": 3
+   },
+   {
+    "review_ids": [
+     "google:kettle-main:rev-new1",
+     "google:kettle-main:rev-old1",
+     "google:kettle-main:rev-old2",
+     "trustpilot:kettle-tp:rev-kw-new"
+    ],
+    "signature": "negative_burst|google+trustpilot|google:kettle-main:rev-new1,google:kettle-main:rev-old1,google:kettle-main:rev-old2,trustpilot:kettle-tp:rev-kw-new",
+    "suppressed": false,
+    "type": "negative_burst"
+   },
+   {
+    "reviews": [
+     {
+      "keywords": [
+       "chargeback"
+      ],
+      "review_id": "trustpilot:kettle-tp:rev-kw-new"
+     }
+    ],
+    "signature": "crisis_keywords|trustpilot|trustpilot:kettle-tp:rev-kw-new",
+    "suppressed": false,
+    "type": "crisis_keywords"
+   }
+  ]
+ },
+ "now": "2026-07-27T12:00:00Z",
+ "results": [
+  {
+   "crisis_hit": true,
+   "draft_attached": false,
+   "reason": "below thresholds (value 30, urgency 40)",
+   "review_id": "google:kettle-main:rev-kw-old",
+   "route": "NO_ACTION",
+   "signals": [
+    "crisis_keywords:unsafe",
+    "fixable_complaint"
+   ],
+   "urgency_score": 40,
+   "value_score": 30
+  },
+  {
+   "crisis_hit": false,
+   "draft_attached": true,
+   "proposed_action": {
+    "action": "Part of a negative burst: reply to each member individually (never copy-paste), name the shared issue once the cause is known, and watch the crisis panel for the burst trigger.",
+    "id": "burst-response"
+   },
+   "reason": "urgency 55 >= 50",
+   "review_id": "google:kettle-main:rev-new1",
+   "route": "FLAG",
+   "signals": [
+    "rating_1",
+    "burst_context",
+    "fixable_complaint",
+    "service_recovery_opportunity"
+   ],
+   "urgency_score": 55,
+   "value_score": 45
+  },
+  {
+   "crisis_hit": false,
+   "draft_attached": false,
+   "proposed_action": {
+    "action": "Part of a negative burst: reply to each member individually (never copy-paste), name the shared issue once the cause is known, and watch the crisis panel for the burst trigger.",
+    "id": "burst-response"
+   },
+   "reason": "urgency 55 >= 50",
+   "review_id": "google:kettle-main:rev-old1",
+   "route": "FLAG",
+   "signals": [
+    "rating_1",
+    "burst_context",
+    "fixable_complaint"
+   ],
+   "urgency_score": 55,
+   "value_score": 30
+  },
+  {
+   "crisis_hit": false,
+   "draft_attached": false,
+   "reason": "below thresholds (value 30, urgency 45)",
+   "review_id": "google:kettle-main:rev-old2",
+   "route": "NO_ACTION",
+   "signals": [
+    "rating_2",
+    "burst_context",
+    "fixable_complaint"
+   ],
+   "urgency_score": 45,
+   "value_score": 30
+  },
+  {
+   "crisis_hit": true,
+   "draft_attached": true,
+   "proposed_action": {
+    "action": "Escalate today: alert the owner, post one calm public acknowledgment (no arguing specifics), and move the conversation to a direct channel. Draft attached when eligible.",
+    "id": "crisis-escalation"
+   },
+   "reason": "urgency 85 >= 50",
+   "review_id": "trustpilot:kettle-tp:rev-kw-new",
+   "route": "FLAG",
+   "signals": [
+    "rating_2",
+    "crisis_keywords:chargeback",
+    "burst_context",
+    "fixable_complaint",
+    "service_recovery_opportunity"
+   ],
+   "urgency_score": 85,
+   "value_score": 40
+  },
+  {
+   "crisis_hit": false,
+   "draft_attached": false,
+   "reason": "below thresholds (value 5, urgency 0)",
+   "review_id": "trustpilot:kettle-tp:rev-tp1",
+   "route": "NO_ACTION",
+   "signals": [],
+   "urgency_score": 0,
+   "value_score": 5
+  },
+  {
+   "crisis_hit": false,
+   "draft_attached": false,
+   "reason": "below thresholds (value 5, urgency 0)",
+   "review_id": "trustpilot:kettle-tp:rev-tp2",
+   "route": "NO_ACTION",
+   "signals": [],
+   "urgency_score": 0,
+   "value_score": 5
+  }
+ ],
+ "summary": {
+  "flag": 3,
+  "no_action": 4,
+  "respond": 0,
+  "unavailable": 0
+ },
+ "triage_config_version": "1.2.0"
+}

@@ -1,0 +1,20 @@
+{
+  "name": "@agent-engine/tool-karos-landing",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Landing Builder (s6, RFC-07) sandboxed tooling — template copy, a write-fenced site writer, the Layer 1 deterministic gate (token drift/font fidelity/brand lint/structure/carry-forward), and the Layer 2 Playwright render check. `engine/template/` is read-only; every write is structurally bounded to one client's `OUTPUT_PATH/site`.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "test": "npm run typecheck && vitest run"
+  },
+  "dependencies": {
+    "@agent-engine/core": "^0.0.1",
+    "@agent-engine/tool-common": "^0.0.1",
+    "playwright": "1.53.0",
+    "zod": "^4.4.3"
+  }
+}

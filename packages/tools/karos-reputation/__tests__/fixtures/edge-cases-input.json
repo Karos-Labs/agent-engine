@@ -1,0 +1,218 @@
+{
+  "_comment": "Negative-path + arithmetic coverage for the self-test. All FICTIONAL (a made-up bookshop 'Marginalia Books' and a made-up SaaS 'Tallyup'). Exercises what the happy-path fixture does not: partial recency-decay interpolation (a 90-day review whose route flips to NO_ACTION), the factual_error value signal driving RESPOND, a naive (zoneless) timestamp, the three 'crisis does NOT fire' paths: rating dip below delta (g2 4.33 vs 4.5 baseline), negative burst too spread out (three 1-stars 4-5 days apart), min_reviews skip (one trustpilot review in window), AND the max_trigger_age_days bound (an ancient three-1-star cluster within 72h plus an ancient 'scam' keyword review, ~300 days old: they still score urgency but fire NO crisis trigger). crisis.fired must be false here.",
+  "now": "2026-07-20T12:00:00Z",
+  "baseline_rating_avg": { "g2": 4.5, "trustpilot": 4.8 },
+  "already_responded_ids": [],
+  "reviews": [
+    {
+      "review_id": "google:marg-main:rev-decay",
+      "platform": "google", "source": "gbp_api", "capture_tier": "MEASURED",
+      "listing_id": "marg-main", "listing_label": "Marginalia Books",
+      "rating": 4, "author": "R. E.", "author_badge": null, "language": "en",
+      "text": "Do you host evening book clubs? Lovely shop otherwise.",
+      "created_at": "2026-04-21T12:00:00Z", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/g/rev-decay",
+      "captured_at": "2026-07-20T11:00:00Z", "raw_sha256": "edge-sha-decay",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "pos",
+        "factual_error": false, "fixable_complaint": false,
+        "detailed_positive": false, "service_recovery_opportunity": false
+      }
+    },
+    {
+      "review_id": "google:marg-main:rev-factual",
+      "platform": "google", "source": "gbp_api", "capture_tier": "MEASURED",
+      "listing_id": "marg-main", "listing_label": "Marginalia Books",
+      "rating": 3, "author": "D. O.", "author_badge": null, "language": "en",
+      "text": "Your listing says you close at 6 but the door sign says 8. Happy to come back either way.",
+      "created_at": "2026-07-18T09:00:00Z", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/g/rev-factual",
+      "captured_at": "2026-07-20T11:00:00Z", "raw_sha256": "edge-sha-factual",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "neutral",
+        "factual_error": true, "fixable_complaint": false,
+        "detailed_positive": false, "service_recovery_opportunity": true
+      }
+    },
+    {
+      "review_id": "google:marg-main:rev-naive",
+      "platform": "google", "source": "manual_export", "capture_tier": "MEASURED",
+      "listing_id": "marg-main", "listing_label": "Marginalia Books",
+      "rating": 5, "author": "S. P.", "author_badge": null, "language": "en",
+      "text": "Best little bookshop, the staff picks shelf is always spot on.",
+      "created_at": "2026-07-18T15:00:00", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/g/rev-naive",
+      "captured_at": "2026-07-20T11:00:00Z", "raw_sha256": "edge-sha-naive",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "pos",
+        "factual_error": false, "fixable_complaint": false,
+        "detailed_positive": true, "service_recovery_opportunity": false
+      }
+    },
+    {
+      "review_id": "google:marg-main:rev-b1",
+      "platform": "google", "source": "gbp_api", "capture_tier": "MEASURED",
+      "listing_id": "marg-main", "listing_label": "Marginalia Books",
+      "rating": 1, "author": "A. A.", "author_badge": null, "language": "en",
+      "text": "Rude at checkout.",
+      "created_at": "2026-07-10T20:00:00Z", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/g/rev-b1",
+      "captured_at": "2026-07-20T11:00:00Z", "raw_sha256": "edge-sha-b1",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "neg",
+        "factual_error": false, "fixable_complaint": true,
+        "detailed_positive": false, "service_recovery_opportunity": false
+      }
+    },
+    {
+      "review_id": "google:marg-main:rev-b2",
+      "platform": "google", "source": "gbp_api", "capture_tier": "MEASURED",
+      "listing_id": "marg-main", "listing_label": "Marginalia Books",
+      "rating": 1, "author": "B. B.", "author_badge": null, "language": "en",
+      "text": "Long wait, disorganized.",
+      "created_at": "2026-07-14T20:00:00Z", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/g/rev-b2",
+      "captured_at": "2026-07-20T11:00:00Z", "raw_sha256": "edge-sha-b2",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "neg",
+        "factual_error": false, "fixable_complaint": true,
+        "detailed_positive": false, "service_recovery_opportunity": false
+      }
+    },
+    {
+      "review_id": "google:marg-main:rev-b3",
+      "platform": "google", "source": "gbp_api", "capture_tier": "MEASURED",
+      "listing_id": "marg-main", "listing_label": "Marginalia Books",
+      "rating": 1, "author": "C. C.", "author_badge": null, "language": "en",
+      "text": "Not a good visit.",
+      "created_at": "2026-07-19T20:00:00Z", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/g/rev-b3",
+      "captured_at": "2026-07-20T11:00:00Z", "raw_sha256": "edge-sha-b3",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "neg",
+        "factual_error": false, "fixable_complaint": false,
+        "detailed_positive": false, "service_recovery_opportunity": false
+      }
+    },
+    {
+      "review_id": "g2:tallyup:rev-d1",
+      "platform": "g2", "source": "manual_export", "capture_tier": "MEASURED",
+      "listing_id": "tallyup", "listing_label": "Tallyup",
+      "rating": 4, "author": "team-lead-1", "author_badge": null, "language": "en",
+      "text": "Solid tool, does the job.",
+      "created_at": "2026-07-15T10:00:00Z", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/g2/rev-d1",
+      "captured_at": "2026-07-20T11:00:00Z", "raw_sha256": "edge-sha-d1",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "pos",
+        "factual_error": false, "fixable_complaint": false,
+        "detailed_positive": false, "service_recovery_opportunity": false
+      }
+    },
+    {
+      "review_id": "g2:tallyup:rev-d2",
+      "platform": "g2", "source": "manual_export", "capture_tier": "MEASURED",
+      "listing_id": "tallyup", "listing_label": "Tallyup",
+      "rating": 4, "author": "team-lead-2", "author_badge": null, "language": "en",
+      "text": "Works well for our team.",
+      "created_at": "2026-07-16T10:00:00Z", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/g2/rev-d2",
+      "captured_at": "2026-07-20T11:00:00Z", "raw_sha256": "edge-sha-d2",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "pos",
+        "factual_error": false, "fixable_complaint": false,
+        "detailed_positive": false, "service_recovery_opportunity": false
+      }
+    },
+    {
+      "review_id": "g2:tallyup:rev-d3",
+      "platform": "g2", "source": "manual_export", "capture_tier": "MEASURED",
+      "listing_id": "tallyup", "listing_label": "Tallyup",
+      "rating": 5, "author": "team-lead-3", "author_badge": null, "language": "en",
+      "text": "Great support.",
+      "created_at": "2026-07-17T10:00:00Z", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/g2/rev-d3",
+      "captured_at": "2026-07-20T11:00:00Z", "raw_sha256": "edge-sha-d3",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "pos",
+        "factual_error": false, "fixable_complaint": false,
+        "detailed_positive": false, "service_recovery_opportunity": false
+      }
+    },
+    {
+      "review_id": "google:marg-main:rev-old-a",
+      "platform": "google", "source": "gbp_api", "capture_tier": "MEASURED",
+      "listing_id": "marg-main", "listing_label": "Marginalia Books",
+      "rating": 1, "author": "O. A.", "author_badge": null, "language": "en",
+      "text": "Closed early, wasted trip.",
+      "created_at": "2025-09-20T10:00:00Z", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/g/rev-old-a",
+      "captured_at": "2026-07-20T11:00:00Z", "raw_sha256": "edge-sha-old-a",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "neg",
+        "factual_error": false, "fixable_complaint": true,
+        "detailed_positive": false, "service_recovery_opportunity": false
+      }
+    },
+    {
+      "review_id": "google:marg-main:rev-old-b",
+      "platform": "google", "source": "gbp_api", "capture_tier": "MEASURED",
+      "listing_id": "marg-main", "listing_label": "Marginalia Books",
+      "rating": 1, "author": "O. B.", "author_badge": null, "language": "en",
+      "text": "Nobody at the till for ages.",
+      "created_at": "2025-09-21T10:00:00Z", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/g/rev-old-b",
+      "captured_at": "2026-07-20T11:00:00Z", "raw_sha256": "edge-sha-old-b",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "neg",
+        "factual_error": false, "fixable_complaint": true,
+        "detailed_positive": false, "service_recovery_opportunity": false
+      }
+    },
+    {
+      "review_id": "google:marg-main:rev-old-c",
+      "platform": "google", "source": "gbp_api", "capture_tier": "MEASURED",
+      "listing_id": "marg-main", "listing_label": "Marginalia Books",
+      "rating": 1, "author": "O. C.", "author_badge": null, "language": "en",
+      "text": "Order never arrived.",
+      "created_at": "2025-09-22T10:00:00Z", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/g/rev-old-c",
+      "captured_at": "2026-07-20T11:00:00Z", "raw_sha256": "edge-sha-old-c",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "neg",
+        "factual_error": false, "fixable_complaint": true,
+        "detailed_positive": false, "service_recovery_opportunity": false
+      }
+    },
+    {
+      "review_id": "google:marg-main:rev-old-kw",
+      "platform": "google", "source": "gbp_api", "capture_tier": "MEASURED",
+      "listing_id": "marg-main", "listing_label": "Marginalia Books",
+      "rating": 3, "author": "O. K.", "author_badge": null, "language": "en",
+      "text": "The gift card felt like a scam at the time, though they sorted it.",
+      "created_at": "2025-09-22T14:00:00Z", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/g/rev-old-kw",
+      "captured_at": "2026-07-20T11:00:00Z", "raw_sha256": "edge-sha-old-kw",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "mixed",
+        "factual_error": false, "fixable_complaint": false,
+        "detailed_positive": false, "service_recovery_opportunity": false
+      }
+    },
+    {
+      "review_id": "trustpilot:tallyup-tp:rev-min",
+      "platform": "trustpilot", "source": "apify_scrape", "capture_tier": "ESTIMATED",
+      "listing_id": "tallyup-tp", "listing_label": "Tallyup",
+      "rating": 2, "author": "E. M.", "author_badge": null, "language": "en",
+      "text": "Onboarding was slow.",
+      "created_at": "2026-07-16T10:00:00Z", "updated_at": null,
+      "owner_response": null, "url": "https://example.invalid/tp/rev-min",
+      "captured_at": "2026-07-20T11:00:00Z", "raw_sha256": "edge-sha-min",
+      "annotations": {
+        "classifier_model_id": "fixture", "sentiment": "neg",
+        "factual_error": false, "fixable_complaint": true,
+        "detailed_positive": false, "service_recovery_opportunity": false
+      }
+    }
+  ]
+}

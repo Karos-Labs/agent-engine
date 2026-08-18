@@ -1,0 +1,23 @@
+{
+  "name": "@agent-engine/agent-reputation",
+  "private": true,
+  "version": "0.0.1",
+  "description": "The Reputation Agent (r2 migration, RFC-08) — the review triage/response/crisis-monitoring pulse runner built on the already-ported deterministic karos-reputation tooling (triage/capture/doctrine gate), plus a scaffolded slow-cadence analysis workflow. The model extracts, arithmetic routes.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "test": "npm run typecheck && vitest run"
+  },
+  "dependencies": {
+    "@agent-engine/core": "^0.0.1",
+    "@agent-engine/tool-common": "^0.0.1",
+    "@agent-engine/tool-karos-gates": "^0.0.1",
+    "@agent-engine/tool-karos-reputation": "^0.0.1",
+    "@agent-engine/tools": "^0.0.1",
+    "@agent-engine/workflow": "^0.0.1",
+    "zod": "^4.4.3"
+  }
+}
