@@ -25,7 +25,18 @@ describe("withWorkflowStepSpan", () => {
         // A real Span object even with no SDK registered — every method is safe to call.
         expect(span).toBeDefined();
         expect(typeof span.setAttribute).toBe("function");
-        recordCostAndTokens(span, { costUsd: 0.01, inputTokensCached: 10, inputTokensUncached: 90, outputTokens: 20 });
+        recordCostAndTokens(span, {
+          runId: "run_1",
+          clientId: "acme",
+          agentId: "linkedin",
+          model: "claude-sonnet-4-6",
+          costUsd: 0.01,
+          inputTokensCached: 10,
+          inputTokensUncached: 90,
+          outputTokens: 20,
+          durationMs: 120,
+          status: "completed",
+        });
         setAttribute();
         return null;
       },

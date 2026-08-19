@@ -1,4 +1,5 @@
 import { createModelRouterFromEnv } from "@agent-engine/core";
+import { initTelemetry } from "@agent-engine/telemetry";
 import { createAllKarosTools } from "@agent-engine/tools";
 import { createApp } from "./app.js";
 import { createDurableStoreFromEnv } from "./wiring/durable-store.js";
@@ -12,7 +13,10 @@ function resolvePort(): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 8080;
 }
 
-function main(): void {
+async function main(): Promise<void> {
+  // No-ops without GOOGLE_CLOUD_PROJECT — see packages/telemetry/src/tracer.ts.
+  await initTelemetry();
+
   const durableStore = createDurableStoreFromEnv();
   const promptStore = createServerPromptStore();
   const router = createModelRouterFromEnv();
@@ -53,4 +57,7 @@ function main(): void {
   process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
-main();
+main().catch((err) => {
+  console.error("fatal error during startup", err);
+  process.exit(1);
+});
