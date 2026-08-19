@@ -24,9 +24,26 @@ export function getTracer(): Tracer {
 let started = false;
 
 /**
- * Starts real OpenTelemetry tracing, exporting directly to Cloud Trace — no
- * Collector, mirroring karosCMO's Phase 2 topology
- * (src/instrumentation.node.ts). No-ops without `GOOGLE_CLOUD_PROJECT` set.
+ * Google Cloud's native OTLP endpoint for Cloud Trace — the replacement for
+ * the archived `@google-cloud/opentelemetry-cloud-trace-exporter` package
+ * (deprecated, archived after 2026-10-30; see
+ * https://github.com/GoogleCloudPlatform/opentelemetry-operations-js/blob/main/MIGRATION.md).
+ * Still direct-to-Cloud-Trace, no Collector (Phase 2 plan decision).
+ */
+const TELEMETRY_OTLP_TRACES_ENDPOINT = "https://telemetry.googleapis.com/v1/traces";
+
+/**
+ * Starts real OpenTelemetry tracing, exporting directly to Cloud Trace via
+ * the standard OTLP exporter — no Collector, mirroring karosCMO's Phase 2
+ * topology (src/instrumentation.node.ts). No-ops without
+ * `GOOGLE_CLOUD_PROJECT` set.
+ *
+ * A standard OTLP exporter has no built-in notion of Google credentials
+ * (unlike the old TraceExporter) — the migration guide's documented pattern
+ * is an async `headers()` callback that re-fetches a fresh bearer token from
+ * ADC on every export (tokens expire hourly; `authClient.getRequestHeaders()`
+ * handles the caching/refresh internally, so `getClient()` is only called
+ * once here).
  *
  * Must be called explicitly by a real entrypoint (apps/agent-server's
  * `main()`) — NEVER at module-import time. Every span-helpers test and every
@@ -39,14 +56,23 @@ export async function initTelemetry(): Promise<void> {
   if (started || !process.env.GOOGLE_CLOUD_PROJECT) return;
   started = true;
 
-  const [{ NodeSDK }, { BatchSpanProcessor }, { resourceFromAttributes }, { ATTR_SERVICE_NAME, ATTR_DEPLOYMENT_ENVIRONMENT_NAME }, { TraceExporter }] =
-    await Promise.all([
-      import("@opentelemetry/sdk-node"),
-      import("@opentelemetry/sdk-trace-node"),
-      import("@opentelemetry/resources"),
-      import("@opentelemetry/semantic-conventions"),
-      import("@google-cloud/opentelemetry-cloud-trace-exporter"),
-    ]);
+  const [
+    { NodeSDK },
+    { BatchSpanProcessor },
+    { resourceFromAttributes },
+    { ATTR_SERVICE_NAME, ATTR_DEPLOYMENT_ENVIRONMENT_NAME },
+    { OTLPTraceExporter },
+    { gcpDetector },
+    { GoogleAuth },
+  ] = await Promise.all([
+    import("@opentelemetry/sdk-node"),
+    import("@opentelemetry/sdk-trace-node"),
+    import("@opentelemetry/resources"),
+    import("@opentelemetry/semantic-conventions"),
+    import("@opentelemetry/exporter-trace-otlp-proto"),
+    import("@opentelemetry/resource-detector-gcp"),
+    import("google-auth-library"),
+  ]);
 
   // Same prep/prod signal agent-engine's own cloudbuild.yaml already sets
   // (FIRESTORE_DATABASE_ID: "(default)" for prod, "prep" for prep) — reused
@@ -54,12 +80,24 @@ export async function initTelemetry(): Promise<void> {
   // instrumentation.node.ts convention.
   const environment = process.env.FIRESTORE_DATABASE_ID === "prep" ? "prep" : "prod";
 
+  const auth = new GoogleAuth({ scopes: "https://www.googleapis.com/auth/cloud-platform" });
+  const authClient = await auth.getClient();
+
   const sdk = new NodeSDK({
+    resourceDetectors: [gcpDetector],
     resource: resourceFromAttributes({
       [ATTR_SERVICE_NAME]: INSTRUMENTATION_NAME,
       [ATTR_DEPLOYMENT_ENVIRONMENT_NAME]: environment,
     }),
-    spanProcessor: new BatchSpanProcessor(new TraceExporter({ projectId: process.env.GOOGLE_CLOUD_PROJECT })),
+    spanProcessor: new BatchSpanProcessor(
+      new OTLPTraceExporter({
+        url: TELEMETRY_OTLP_TRACES_ENDPOINT,
+        async headers(): Promise<Record<string, string>> {
+          const rawHeaders = await authClient.getRequestHeaders();
+          return Object.fromEntries(rawHeaders.entries());
+        },
+      }),
+    ),
   });
   sdk.start();
 }
