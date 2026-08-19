@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type OpenAI from "openai";
 import type { CompletionRequest, CompletionResult, ModelAdapter } from "./types.js";
+import { withRetry, type RetryOptions } from "./retry.js";
 
 /**
  * Adapter for any OpenAI-compatible chat-completions endpoint — the real
@@ -11,7 +12,12 @@ import type { CompletionRequest, CompletionResult, ModelAdapter } from "./types.
  *
  * Structured output uses `response_format: json_schema` (native OpenAI
  * Structured Outputs, which LiteLLM also proxies), converting the step's
- * `outputSchema` with zod v4's `z.toJSONSchema`.
+ * `outputSchema` with zod v4's `z.toJSONSchema`. The API call itself is
+ * wrapped in a bounded exponential-backoff retry (RetryOptions, default 3
+ * attempts) for transient 429/5xx/network failures — `ModelRouter`'s own
+ * fallback-model logic (for the `portable`/`commodity` tiers this adapter
+ * serves) is a separate, higher-level concern; this only smooths over a
+ * transient blip on the same endpoint.
  */
 export class OpenAICompatibleAdapter implements ModelAdapter {
   readonly providerId: string;
@@ -19,6 +25,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
   constructor(
     private readonly client: OpenAI,
     providerId = "openai",
+    private readonly retryOptions: RetryOptions = {},
   ) {
     this.providerId = providerId;
   }
@@ -26,18 +33,22 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
   async complete<TOutput>(req: CompletionRequest<TOutput>): Promise<CompletionResult<TOutput>> {
     const jsonSchema = z.toJSONSchema(req.schema);
 
-    const response = await this.client.chat.completions.create({
-      model: req.model,
-      ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
-      messages: [
-        ...(req.system ? [{ role: "system" as const, content: req.system }] : []),
-        { role: "user" as const, content: req.prompt },
-      ],
-      response_format: {
-        type: "json_schema",
-        json_schema: { name: "step_output", schema: jsonSchema, strict: true },
-      },
-    });
+    const response = await withRetry(
+      () =>
+        this.client.chat.completions.create({
+          model: req.model,
+          ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
+          messages: [
+            ...(req.system ? [{ role: "system" as const, content: req.system }] : []),
+            { role: "user" as const, content: req.prompt },
+          ],
+          response_format: {
+            type: "json_schema",
+            json_schema: { name: "step_output", schema: jsonSchema, strict: true },
+          },
+        }),
+      this.retryOptions,
+    );
 
     const choice = response.choices[0];
     const raw = choice?.message.content;

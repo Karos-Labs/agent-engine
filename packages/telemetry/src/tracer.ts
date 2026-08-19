@@ -1,4 +1,8 @@
 import { trace, type Tracer } from "@opentelemetry/api";
+// Type-only: erased at compile time, so this does not pull the OTel SDK
+// dependency graph into every workspace that imports this module the way a
+// runtime import would — see the `started` comment below for why that matters.
+import type { NodeSDK } from "@opentelemetry/sdk-node";
 
 const INSTRUMENTATION_NAME = "agent-engine";
 const INSTRUMENTATION_VERSION = "0.0.1";
@@ -22,6 +26,8 @@ export function getTracer(): Tracer {
 // initTelemetry() actually runs. Keeps `tsc`/vitest fast and side-effect-free
 // for every package that doesn't call it.
 let started = false;
+/** Set by `initTelemetry()` so `shutdownTelemetry()` has something to flush. */
+let sdkInstance: NodeSDK | null = null;
 
 /**
  * Google Cloud's native OTLP endpoint for Cloud Trace — the replacement for
@@ -100,4 +106,19 @@ export async function initTelemetry(): Promise<void> {
     ),
   });
   sdk.start();
+  sdkInstance = sdk;
+}
+
+/**
+ * Flushes and shuts down the SDK started by `initTelemetry()`, if any.
+ * `BatchSpanProcessor` buffers spans for ~5s before exporting — without an
+ * explicit shutdown, whatever a Cloud Run/agent-server instance was doing
+ * when it received SIGTERM (disproportionately the spans worth having) is
+ * still sitting in that buffer and is lost when the process exits. A no-op
+ * when telemetry was never started (no `GOOGLE_CLOUD_PROJECT`, or called
+ * from a context — tests, tooling — that never called `initTelemetry`).
+ */
+export async function shutdownTelemetry(): Promise<void> {
+  if (!sdkInstance) return;
+  await sdkInstance.shutdown();
 }

@@ -4,7 +4,35 @@ import type {
   FirestoreDocumentSnapshot,
   FirestoreLike,
   FirestoreQuerySnapshot,
+  FirestoreTransaction,
 } from "../src/adapters/firestore/index.js";
+
+/**
+ * Real Firestore throws `Cannot use "undefined" as a Firestore value` on any
+ * `.set()`/`.update()` whose document tree contains a literal `undefined`
+ * anywhere (top-level or nested), unless the client was constructed with
+ * `ignoreUndefinedProperties: true` — which nothing in this codebase sets.
+ * The fake modeled `undefined` as "field simply not there," silently
+ * accepting it — exactly the gap that let a void `step.code` output
+ * (`output: undefined`) pass every test against this fake while crashing the
+ * first time the same workflow ran against real Firestore (a security/
+ * reliability audit finding). Mirroring the strict, no-opt-out behavior here
+ * makes that class of bug fail the *test*, not just production.
+ */
+function assertNoUndefinedValues(value: unknown, fieldPath = ""): void {
+  if (value === undefined) {
+    throw new Error(`FakeFirestore: Cannot use "undefined" as a Firestore value${fieldPath ? ` (found in field "${fieldPath}")` : ""}`);
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, i) => assertNoUndefinedValues(item, fieldPath ? `${fieldPath}.${i}` : String(i)));
+    return;
+  }
+  if (value !== null && typeof value === "object" && !(value instanceof Date)) {
+    for (const [key, val] of Object.entries(value)) {
+      assertNoUndefinedValues(val, fieldPath ? `${fieldPath}.${key}` : key);
+    }
+  }
+}
 
 /**
  * A minimal in-memory double for `FirestoreLike`, used only to verify
@@ -22,6 +50,7 @@ class FakeDoc implements FirestoreDocumentRef {
   }
 
   async set(data: Record<string, unknown>, options?: { merge?: boolean }): Promise<unknown> {
+    assertNoUndefinedValues(data);
     this.data = options?.merge && this.data ? { ...this.data, ...data } : { ...data };
     return undefined;
   }
@@ -68,5 +97,29 @@ export class FakeFirestore implements FirestoreLike {
       this.collections.set(path, col);
     }
     return col;
+  }
+
+  /**
+   * Not a real ACID transaction (this fake has no concurrent callers to
+   * isolate) — it exists so `FirestoreDurableStepStore.claimRun`'s own logic
+   * (read, branch on status, conditionally write) can be exercised against
+   * this fake exactly as it runs against real Firestore. Real transactions
+   * buffer every write until the callback returns and commit as a batch;
+   * this mirrors that by collecting each `tx.set()` and awaiting all of them
+   * only after `updateFunction` resolves.
+   */
+  async runTransaction<T>(updateFunction: (tx: FirestoreTransaction) => Promise<T>): Promise<T> {
+    const pendingWrites: Promise<unknown>[] = [];
+    const tx: FirestoreTransaction = {
+      get: (ref) => ref.get(),
+      set: (ref, data, options) => {
+        const written = ref.set(data, options);
+        pendingWrites.push(written);
+        return written;
+      },
+    };
+    const result = await updateFunction(tx);
+    await Promise.all(pendingWrites);
+    return result;
   }
 }

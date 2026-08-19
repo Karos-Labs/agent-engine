@@ -11,7 +11,7 @@ import type {
 import { GateVerdictSchema } from "../types/gate.js";
 import { computeStepCostUsd, summarizeStepTelemetry } from "../telemetry/pricing.js";
 import type { RouterCompleteOptions } from "../router/model-router.js";
-import type { AgentToolOutcome } from "./tool.js";
+import type { AgentToolOutcome, AgentToolRegistry } from "./tool.js";
 import { enforceWriteFence } from "./write-fence.js";
 import { parseSkillRef } from "./prompt-store.js";
 import { describeError } from "./errors.js";
@@ -125,11 +125,43 @@ export abstract class BaseAgent<TOutput> {
     );
   }
 
+  /**
+   * The `tool` field is constrained to exactly `config.allowedTools` — never
+   * a free-form string — so a disallowed tool name fails structured-output
+   * validation at the adapter itself, before it ever reaches `runOneTurn`
+   * (RFC-01 §5.5, §14 DoD: "enforces allowedTools narrowing"). When a step
+   * declares no tools at all, the union drops the `tool_call` variant
+   * entirely — the model can only ever produce a final output.
+   */
   private buildTurnSchema(): ZodSchema<ReActTurn<TOutput>> {
-    return z.discriminatedUnion("type", [
-      z.object({ type: z.literal("tool_call"), thought: z.string().optional(), tool: z.string().min(1), args: z.unknown() }),
-      z.object({ type: z.literal("final"), thought: z.string().optional(), output: this.config.outputSchema }),
-    ]);
+    const finalVariant = z.object({ type: z.literal("final"), thought: z.string().optional(), output: this.config.outputSchema });
+    if (this.config.allowedTools.length === 0) {
+      return finalVariant as unknown as ZodSchema<ReActTurn<TOutput>>;
+    }
+    const toolVariant = z.object({
+      type: z.literal("tool_call"),
+      thought: z.string().optional(),
+      tool: z.enum(this.config.allowedTools as [string, ...string[]]),
+      args: z.unknown(),
+    });
+    return z.discriminatedUnion("type", [toolVariant, finalVariant]);
+  }
+
+  /**
+   * Only the tools this step declared in `allowedTools` are ever reachable
+   * from the ReAct loop — the execution context never exposes the full
+   * registry, so a tool outside this step's declared scope cannot be
+   * discovered or invoked even by an injected instruction naming it exactly.
+   */
+  private scopedTools(): AgentToolRegistry {
+    const scoped: AgentToolRegistry = {};
+    for (const name of this.config.allowedTools) {
+      const tool = this.runtime.tools[name];
+      if (tool) {
+        scoped[name] = tool;
+      }
+    }
+    return scoped;
   }
 
   private clock(): number {
@@ -187,6 +219,32 @@ export abstract class BaseAgent<TOutput> {
     }
 
     // turn.type === "tool_call" — Action: exactly one tool call, arguments validated before execution.
+    // Defense-in-depth: buildTurnSchema()'s z.enum(allowedTools) already makes a
+    // disallowed tool name unparseable at the adapter, but this loop must never
+    // trust that every ModelRouter implementation actually re-validates the
+    // model's raw output against the schema it was given (RFC-01 §5.5, §14 DoD).
+    if (!this.config.allowedTools.includes(turn.tool)) {
+      return {
+        kind: "tooling_error",
+        telemetry: {
+          stepIndex,
+          ...(turn.thought !== undefined ? { thought: turn.thought } : {}),
+          toolCall: {
+            name: turn.tool,
+            args: turn.args,
+            result: { error: `tool "${turn.tool}" is not in this step's allowedTools` },
+            toolVersion: "allowlist",
+          },
+          modelUsed: completion.modelUsed,
+          inputTokens: completion.inputTokens,
+          outputTokens: completion.outputTokens,
+          durationMs,
+          costUsd,
+          status: "tooling_error",
+        },
+      };
+    }
+
     const fence = enforceWriteFence(ctx, turn.tool, turn.args);
     if (!fence.allowed) {
       transcript.push({ role: "write_fence_block", tool: turn.tool, reason: fence.reason });
@@ -206,7 +264,7 @@ export abstract class BaseAgent<TOutput> {
       };
     }
 
-    const tool = this.runtime.tools[turn.tool];
+    const tool = this.scopedTools()[turn.tool];
     if (!tool) {
       return {
         kind: "tooling_error",

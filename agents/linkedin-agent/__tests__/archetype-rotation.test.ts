@@ -161,6 +161,44 @@ describe("archetype mix-tracking: the restored lane/rotation decision tree (lane
     expect(recorded?.data.summary).toContain("archetype: community-question");
   });
 
+  it("a multi-channel audit finding: a more-recent decision from a DIFFERENT channel must not disable the never-repeat rule", async () => {
+    // The older decision is LinkedIn's own last post — a real archetype to never-repeat.
+    await env.store.writeJson("acme", ["memory", "decisions", "seed_linkedin_older"], {
+      decisionId: "seed_linkedin_older",
+      summary: 'Posted about "rollout process" (archetype: teardown-framework)',
+      at: Date.now() - 120_000,
+    });
+    // The newer decision is from a DIFFERENT channel (e.g. x-agent's own summary shape,
+    // "(lane: ...)" not "(archetype: ...)") — "decisions" is a client-wide memory scope
+    // shared across every channel, so a client running LinkedIn alongside other channels
+    // has entries like this one interleaved in the same scope. Before the fix, taking
+    // the single most-recent decision *overall* found this one, it didn't parse an
+    // archetype, and lastArchetype silently came back undefined — letting the rotation
+    // repeat "teardown-framework" even though it was genuinely the immediately-prior
+    // LinkedIn post.
+    await env.store.writeJson("acme", ["memory", "decisions", "seed_other_channel_newer"], {
+      decisionId: "seed_other_channel_newer",
+      summary: 'Posted about "quarterly roadmap" (lane: knowledge)',
+      at: Date.now() - 1_000,
+    });
+    const promptStore = makePromptStore();
+    const router = fakeRouterSequence([finalTurn(goodDraft())]);
+    const workflowFn = createLinkedInAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+    const result = await engine.run(workflowFn, { ...baseParams, runId: "linkedin_run_archetype_multichannel" });
+
+    expect(result.status).toBe("completed");
+    const draftInput = draftInputFromCall(router);
+    // priorArchetype correctly resolves to "teardown-framework" (the older, LinkedIn-own
+    // decision) despite the newer non-LinkedIn decision sorting first by timestamp; the
+    // rotation (summaries.length=2, so rotationIndex=2) then lands on "industry-reaction",
+    // the first candidate in the rotated order that isn't the just-excluded prior archetype.
+    expect(draftInput.archetype).not.toBe("teardown-framework");
+    expect(draftInput.archetype).toBe("industry-reaction");
+  });
+
   it("Phase 2.5 fix-batch: 6 consecutive real runs touch more than 2 distinct archetypes, never repeating back-to-back (regression test for the 2-cycle rotation bug)", async () => {
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);

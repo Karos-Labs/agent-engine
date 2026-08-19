@@ -247,11 +247,19 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
       const outcome = await tools["memory.read"]!.execute({ scope: "decisions" }, { ctx });
       if (outcome.status !== "success") return { summaries: [] };
       const result = outcome.result as { scope: string; items: Array<{ summary: string; at?: number }> };
-      // Most-recent-first, by the decision's own recorded timestamp — listJson
-      // returns entries sorted by filename (the decisionId), not by time, so
-      // this is what actually makes "the immediately-prior run" well-defined.
-      const sortedByRecency = [...result.items].sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
-      const lastArchetype = sortedByRecency.length > 0 ? extractArchetypeFromSummary(sortedByRecency[0]!.summary) : undefined;
+      // Filtered to only decisions that actually parse an archetype, then sorted
+      // most-recent-first by the decision's own recorded timestamp (mirroring
+      // x-agent's lane.ts) — "decisions" is a client-wide memory scope, so a client
+      // running LinkedIn alongside other channels has non-LinkedIn decisions
+      // interleaved here too. Taking the single most-recent decision *overall*
+      // (regardless of channel) silently disabled "never repeat the last archetype"
+      // (lanes.md §2 — the rule that does most of the rotation's dedup work)
+      // whenever another channel's run happened to be more recent than LinkedIn's
+      // own last post (a multi-channel dedup audit finding).
+      const archetypeBearing = result.items
+        .map((item) => ({ at: item.at ?? 0, archetype: extractArchetypeFromSummary(item.summary) }))
+        .filter((item): item is { at: number; archetype: LinkedInArchetype } => item.archetype !== undefined);
+      const lastArchetype = archetypeBearing.slice().sort((a, b) => b.at - a.at)[0]?.archetype;
       return {
         summaries: result.items.map((item) => item.summary),
         ...(lastArchetype !== undefined ? { lastArchetype } : {}),

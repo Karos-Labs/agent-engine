@@ -44,6 +44,18 @@ export interface CostAndTokenAttributes {
   outputTokens: number;
   durationMs: number;
   status: string;
+  /**
+   * Discriminator columns (2026-08). `runId` above is `WorkflowRuntime.runId`
+   * — the WHOLE workflow run's id, shared by every step inside it — so
+   * without these, two step rows from the same run are indistinguishable
+   * from each other, and from a portal-originated row that happens to reuse
+   * the value space differently. `jobId` restates `runId` under the name the
+   * portal's own rows use for "the overall run", `stepId` isolates this row
+   * to one step within it, and `operation` names what kind of step it was.
+   */
+  jobId?: string;
+  stepId?: string;
+  operation?: string;
 }
 
 function setIdentityAttributes(span: Span, attrs: IdentityAttributes): void {
@@ -90,6 +102,13 @@ async function insertAgentRunRow(attrs: CostAndTokenAttributes): Promise<void> {
           status: attrs.status,
           errorDetails: null,
           timestamp: new Date().toISOString(),
+          operation: attrs.operation ?? null,
+          jobId: attrs.jobId ?? null,
+          stepId: attrs.stepId ?? null,
+          // Every row this package writes is engine-originated — the
+          // portal's own inserts (src/lib/telemetry/bi-tracker.ts) stamp
+          // "portal" themselves.
+          source: "agent-engine",
         },
       ],
       { ignoreUnknownValues: true, skipInvalidRows: false },

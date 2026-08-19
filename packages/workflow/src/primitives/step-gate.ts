@@ -8,6 +8,21 @@ export function qualifyGateId(runId: string, id: string): string {
 }
 
 /**
+ * Accepts either id shape a caller might reasonably hold: the workflow-local
+ * id (`"15-batch-review"`) or the fully qualified store key
+ * (`"${runId}__15-batch-review"`, exactly what `WorkflowRunResult`'s own
+ * `pendingGateId` and `GET /status` hand back). Round-tripping the qualified
+ * id the API itself returned used to double-qualify it
+ * (`"${runId}__${runId}__..."`) and 404 — a gate-lifecycle audit finding.
+ * `WorkflowEngine.resolveGate` calls this instead of `qualifyGateId` so both
+ * shapes resolve to the same record.
+ */
+export function normalizeGateId(runId: string, id: string): string {
+  const prefix = `${runId}__`;
+  return id.startsWith(prefix) ? id : qualifyGateId(runId, id);
+}
+
+/**
  * `step.gate(id, def)` (RFC-01 §8.1/§8.3): registers the gate on first call,
  * then throws `AwaitingGateSignal` until `WorkflowEngine.resolveGate` records
  * a response — at which point a later `run()` call replays up to this same

@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { WorkflowContext } from "../src/index.js";
 import {
+  GateAlreadyResolvedError,
   MemoryDurableStepStore,
   WorkflowBlockedIntake,
+  WorkflowConcurrentRunError,
   WorkflowContentFailure,
   WorkflowEngine,
   WorkflowHeld,
@@ -323,8 +325,11 @@ describe("domain outcomes: held and blocked_intake (RFC-01 §16.2 / RFC-02 §3)"
     const runRecord = await store.getRun("run_1");
     expect(runRecord?.status).toBe("held");
     expect(runRecord?.reason).toBe("no draft cleared brand review after 1 revision");
-    // never recorded under the "failure" field — held is not a failure (RFC-01 §16.2).
-    expect(runRecord?.failureReason).toBeUndefined();
+    // Never recorded under the "failure" field — held is not a failure (RFC-01 §16.2).
+    // Explicitly null, not merely absent: every transition writes a complete snapshot of
+    // the three optional fields so a later transition can't inherit a stale one (see
+    // WorkflowEngine.run()'s terminalRunFields).
+    expect(runRecord?.failureReason).toBeNull();
   });
 
   it("resolves to 'blocked_intake' — a client-side gap, never conflated with 'failed'/'degraded'", async () => {
@@ -424,5 +429,192 @@ describe("network/logging hygiene: err.cause preservation (RFC-01 §16.4)", () =
     expect(result.status).toBe("completed");
     const outcomes = result.status === "completed" ? result.output : [];
     expect(outcomes[0]).toMatchObject({ status: "failed", reason: "draft failed (cause: upstream 503)" });
+  });
+});
+
+describe("optimistic concurrency (a reliability audit finding)", () => {
+  it("rejects a second run() call while the first is genuinely mid-flight (status still 'running')", async () => {
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+
+    // Get a run into "running" and leave it there, standing in for a still-in-flight
+    // execution (or one that crashed without ever reaching a terminal status).
+    await store.createRunIfNotExists({
+      runId: "run_1",
+      clientSlug: "acme",
+      productId: "linkedin",
+      runKind: "recurring",
+      status: "running",
+      createdAt: 0,
+      updatedAt: 0,
+    });
+
+    const workflowFn = async (wf: WorkflowContext) => wf.step.code("noop", () => "done");
+    await expect(engine.run(workflowFn, baseParams)).rejects.toThrow(WorkflowConcurrentRunError);
+  });
+
+  it("lets a second call proceed once the first genuinely finishes (claimed sequentially, not blocked forever)", async () => {
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+
+    const workflowFn = async (wf: WorkflowContext) => {
+      const response = await wf.step.gate("review", {
+        kind: "batch_review",
+        payload: {},
+        requiredRole: "account_manager",
+        timeout: { duration: "24h", onTimeout: "escalate" },
+      });
+      return response.decision;
+    };
+
+    const paused = await engine.run(workflowFn, baseParams);
+    expect(paused.status).toBe("awaiting_gate");
+
+    await engine.resolveGate("run_1", "review", { decision: "approve", actor: "jane@karoslabs.com", at: "2026-08-15T00:00:00Z" });
+
+    // Two "resumes" back to back — the first claims and completes; a genuinely concurrent
+    // second one arriving after the first already finished must succeed too (completed is
+    // claimable — see RESUMABLE_FROM_STATUSES), never treated as a lost race.
+    const first = await engine.run(workflowFn, baseParams);
+    expect(first.status).toBe("completed");
+    const second = await engine.run(workflowFn, baseParams);
+    expect(second.status).toBe("completed");
+  });
+
+  it("preserves the originally-set budget ceiling across a resume that supplies no budget of its own", async () => {
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+    const expensiveAgent = makeSimpleAgent(
+      DraftOutputSchema,
+      fakeRouterAlwaysFinal({ body: "x" }, { inputTokens: 1_000_000, outputTokens: 1_000_000 }),
+    );
+
+    const workflowFn = async (wf: WorkflowContext) => {
+      const response = await wf.step.gate("review", {
+        kind: "batch_review",
+        payload: {},
+        requiredRole: "account_manager",
+        timeout: { duration: "24h", onTimeout: "escalate" },
+      });
+      // Two expensive calls AFTER the gate — if the budget ceiling set at start doesn't
+      // carry over into the resumed call, these silently exceed it uncounted.
+      await wf.step.agent("draft1", expensiveAgent, {});
+      await wf.step.agent("draft2", expensiveAgent, {});
+      return response.decision;
+    };
+
+    const paused = await engine.run(workflowFn, { ...baseParams, budget: { maxTotalCostUsd: 0.001 } });
+    expect(paused.status).toBe("awaiting_gate");
+
+    await engine.resolveGate("run_1", "review", { decision: "approve", actor: "jane@karoslabs.com", at: "2026-08-15T00:00:00Z" });
+
+    // Deliberately omits `budget` here — params.budget ?? existingRun?.budget must recover it.
+    const resumed = await engine.run(workflowFn, baseParams);
+    expect(resumed.status).toBe("failed");
+    expect(resumed.status === "failed" ? resumed.failureReason : "").toMatch(/budget ceiling exceeded/);
+  });
+});
+
+describe("gate lifecycle: id symmetry and overwrite protection (a gate-lifecycle audit finding)", () => {
+  it("resolveGate accepts the fully qualified gate id, not just the workflow-local one", async () => {
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+    const afterGate = vi.fn((approved: boolean) => ({ approved }));
+
+    const workflowFn = async (wf: WorkflowContext) => {
+      const response = await wf.step.gate("batch-review", {
+        kind: "batch_review",
+        payload: {},
+        requiredRole: "account_manager",
+        timeout: { duration: "24h", onTimeout: "escalate" },
+      });
+      return afterGate(response.decision === "approve");
+    };
+
+    const paused = await engine.run(workflowFn, baseParams);
+    expect(paused.status === "awaiting_gate" ? paused.pendingGateId : null).toBe("run_1__batch-review");
+
+    // Round-trips the exact qualified id the engine itself handed back — this used to
+    // double-qualify to "run_1__run_1__batch-review" and 404.
+    await engine.resolveGate("run_1", "run_1__batch-review", { decision: "approve", actor: "jane@karoslabs.com", at: "2026-08-15T00:00:00Z" });
+
+    const resumed = await engine.run(workflowFn, baseParams);
+    expect(resumed.status).toBe("completed");
+  });
+
+  it("rejects resolving an already-resolved gate rather than overwriting the audit trail", async () => {
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+
+    const workflowFn = async (wf: WorkflowContext) =>
+      wf.step.gate("batch-review", {
+        kind: "batch_review",
+        payload: {},
+        requiredRole: "account_manager",
+        timeout: { duration: "24h", onTimeout: "escalate" },
+      });
+
+    await engine.run(workflowFn, baseParams);
+    await engine.resolveGate("run_1", "batch-review", { decision: "approve", actor: "jane@karoslabs.com", at: "2026-08-15T00:00:00Z" });
+
+    await expect(
+      engine.resolveGate("run_1", "batch-review", { decision: "reject", actor: "mallory@example.com", at: "2026-08-15T01:00:00Z" }),
+    ).rejects.toThrow(GateAlreadyResolvedError);
+
+    // The original, legitimate decision must survive untouched.
+    const gate = await store.getGate("run_1__batch-review");
+    expect(gate?.response?.decision).toBe("approve");
+    expect(gate?.response?.actor).toBe("jane@karoslabs.com");
+  });
+});
+
+describe("terminal-transition field hygiene (a reliability audit finding)", () => {
+  it("clears a stale failureReason once a previously-failed run is retried to completion", async () => {
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+    let shouldFail = true;
+
+    const workflowFn = async (wf: WorkflowContext) => {
+      if (shouldFail) {
+        throw new WorkflowContentFailure("first attempt failed content review");
+      }
+      return wf.step.code("proceed", () => "ok");
+    };
+
+    const first = await engine.run(workflowFn, baseParams);
+    expect(first.status).toBe("failed");
+    expect((await store.getRun("run_1"))?.failureReason).toBe("first attempt failed content review");
+
+    shouldFail = false;
+    const second = await engine.run(workflowFn, baseParams);
+    expect(second.status).toBe("completed");
+
+    const runRecord = await store.getRun("run_1");
+    expect(runRecord?.status).toBe("completed");
+    // The old failure must not survive into the now-completed record.
+    expect(runRecord?.failureReason).toBeNull();
+  });
+
+  it("clears a stale pendingGateId once a resumed run completes", async () => {
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+
+    const workflowFn = async (wf: WorkflowContext) =>
+      wf.step.gate("batch-review", {
+        kind: "batch_review",
+        payload: {},
+        requiredRole: "account_manager",
+        timeout: { duration: "24h", onTimeout: "escalate" },
+      });
+
+    await engine.run(workflowFn, baseParams);
+    expect((await store.getRun("run_1"))?.pendingGateId).toBe("run_1__batch-review");
+
+    await engine.resolveGate("run_1", "batch-review", { decision: "approve", actor: "jane@karoslabs.com", at: "2026-08-15T00:00:00Z" });
+    await engine.run(workflowFn, baseParams);
+
+    const runRecord = await store.getRun("run_1");
+    expect(runRecord?.status).toBe("completed");
+    expect(runRecord?.pendingGateId).toBeNull();
   });
 });

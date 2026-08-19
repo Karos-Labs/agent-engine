@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { CompletionRequest, CompletionResult, ModelAdapter } from "./types.js";
+import { withRetry, type RetryOptions } from "./retry.js";
 
 const STRUCTURED_OUTPUT_TOOL_NAME = "emit_output";
 
@@ -14,30 +15,41 @@ const STRUCTURED_OUTPUT_TOOL_NAME = "emit_output";
  * constraint any tool-input schema has.
  *
  * The client is constructor-injected so this adapter is testable without a
- * network call and without an API key.
+ * network call and without an API key. The API call itself is wrapped in a
+ * bounded exponential-backoff retry (RetryOptions, default 3 attempts) for
+ * transient 429/5xx/network failures — retrying the same pinned model, never
+ * swapping it, so this doesn't violate §5.4's "a pinned step never silently
+ * swaps models" rule.
  */
 export class AnthropicAdapter implements ModelAdapter {
   readonly providerId = "anthropic";
 
-  constructor(private readonly client: Anthropic) {}
+  constructor(
+    private readonly client: Anthropic,
+    private readonly retryOptions: RetryOptions = {},
+  ) {}
 
   async complete<TOutput>(req: CompletionRequest<TOutput>): Promise<CompletionResult<TOutput>> {
     const jsonSchema = z.toJSONSchema(req.schema) as unknown as Anthropic.Tool.InputSchema;
 
-    const response = await this.client.messages.create({
-      model: req.model,
-      max_tokens: req.maxTokens ?? 4096,
-      ...(req.system !== undefined ? { system: req.system } : {}),
-      messages: [{ role: "user", content: req.prompt }],
-      tools: [
-        {
-          name: STRUCTURED_OUTPUT_TOOL_NAME,
-          description: "Return the final structured output for this step.",
-          input_schema: jsonSchema,
-        },
-      ],
-      tool_choice: { type: "tool", name: STRUCTURED_OUTPUT_TOOL_NAME },
-    });
+    const response = await withRetry(
+      () =>
+        this.client.messages.create({
+          model: req.model,
+          max_tokens: req.maxTokens ?? 4096,
+          ...(req.system !== undefined ? { system: req.system } : {}),
+          messages: [{ role: "user", content: req.prompt }],
+          tools: [
+            {
+              name: STRUCTURED_OUTPUT_TOOL_NAME,
+              description: "Return the final structured output for this step.",
+              input_schema: jsonSchema,
+            },
+          ],
+          tool_choice: { type: "tool", name: STRUCTURED_OUTPUT_TOOL_NAME },
+        }),
+      this.retryOptions,
+    );
 
     const toolUse = response.content.find(
       (block): block is Anthropic.ToolUseBlock => block.type === "tool_use" && block.name === STRUCTURED_OUTPUT_TOOL_NAME,

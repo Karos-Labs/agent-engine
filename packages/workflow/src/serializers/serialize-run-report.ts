@@ -118,7 +118,11 @@ function domainOutcomeFromRun(runRecord: RunRecord | undefined): { domainOutcome
     return { domainOutcome: "delivered" };
   }
   if (runRecord.status === "held" || runRecord.status === "blocked_intake") {
-    return { domainOutcome: runRecord.status, ...(runRecord.reason !== undefined ? { domainOutcomeReason: runRecord.reason } : {}) };
+    // != null (not !== undefined): `reason` is now `string | null | undefined` — a
+    // terminal transition to any OTHER status explicitly clears it to `null` (see
+    // WorkflowEngine.run()'s terminalRunFields), so both "never set" and "cleared" must
+    // be excluded here, even though this branch's own two statuses always set a real string.
+    return { domainOutcome: runRecord.status, ...(runRecord.reason != null ? { domainOutcomeReason: runRecord.reason } : {}) };
   }
   return {};
 }
@@ -134,7 +138,24 @@ export function serializeToDynamicAgentRunReport(params: SerializeToDynamicAgent
   const stepsById = new Map(params.stepRecords.map((s) => [s.stepId, s] as const));
   const slotsById = new Map(params.slotRecords.map((s) => [s.slotId, s] as const));
 
-  const steps = params.steps.map((descriptor) => serializeOneStep(descriptor, stepsById.get(descriptor.stepId) ?? slotsById.get(descriptor.stepId)));
+  // A descriptor with no record is either "the run genuinely stopped here" (a terminal
+  // status — a real failure worth reporting) or "not reached yet because the run is
+  // paused behind a gate, or is still running" (RFC-01 §8.3: awaiting_gate is a healthy,
+  // expected wait, not a failure). Only when `runRecord` says the run is actually
+  // in-flight do we know which one we're looking at — reporting the second case as
+  // `status:"failed"` is exactly the false-failure bug a paused/running run must never
+  // surface (a reliability audit finding). With no `runRecord` supplied at all, status is
+  // unknown, so this keeps the previous, conservative "unreached = failed" behavior.
+  const runIsInFlight = params.runRecord?.status === "awaiting_gate" || params.runRecord?.status === "running";
+
+  const steps = params.steps.reduce<DynamicAgentRunStep[]>((acc, descriptor) => {
+    const record = stepsById.get(descriptor.stepId) ?? slotsById.get(descriptor.stepId);
+    if (!record && runIsInFlight) {
+      return acc; // not yet reached, run is healthy — omit rather than misreport as failed
+    }
+    acc.push(serializeOneStep(descriptor, record));
+    return acc;
+  }, []);
 
   const failedIndex = steps.findIndex((step) => step.status === "failed");
 

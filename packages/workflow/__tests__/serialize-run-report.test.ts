@@ -156,6 +156,75 @@ describe("serializeToDynamicAgentRunReport", () => {
     expect(report.hasPartialOutput).toBe(true); // step 0 (assemble-context) did produce usable output
   });
 
+  it("omits an unreached step, rather than reporting it failed, when the run is awaiting_gate", () => {
+    const report = serializeToDynamicAgentRunReport({
+      specId: "spec_1",
+      specVersion: 1,
+      steps: [
+        { stepId: "assemble-context", label: "Assemble context", type: "code" },
+        { stepId: "batch-review", label: "Batch review", type: "code" },
+      ],
+      stepRecords: [makeCodeStep()],
+      slotRecords: [],
+      runRecord: makeRunRecord({ status: "awaiting_gate", pendingGateId: "run_1__batch-review" }),
+    });
+
+    expect(report.steps).toHaveLength(1);
+    expect(report.steps[0]).toMatchObject({ stepId: "assemble-context", status: "done" });
+    expect(report.failedStepId).toBeUndefined();
+    expect(report.hasPartialOutput).toBeUndefined();
+  });
+
+  it("omits an unreached step the same way when the run is still running", () => {
+    const report = serializeToDynamicAgentRunReport({
+      specId: "spec_1",
+      specVersion: 1,
+      steps: [
+        { stepId: "assemble-context", label: "Assemble context", type: "code" },
+        { stepId: "draft", label: "Draft the post", type: "ai" },
+      ],
+      stepRecords: [makeCodeStep()],
+      slotRecords: [],
+      runRecord: makeRunRecord({ status: "running" }),
+    });
+
+    expect(report.steps).toHaveLength(1);
+    expect(report.failedStepId).toBeUndefined();
+  });
+
+  it("still reports a genuinely failed step as failed even while the run is awaiting_gate (a real failure can't reach a gate, but the serializer must not paper over one if it's there)", () => {
+    const report = serializeToDynamicAgentRunReport({
+      specId: "spec_1",
+      specVersion: 1,
+      steps: [
+        { stepId: "assemble-context", label: "Assemble context", type: "code" },
+        { stepId: "boom", label: "Boom", type: "code" },
+      ],
+      stepRecords: [makeCodeStep(), makeCodeStep({ stepId: "boom", status: "failed", output: null, error: "unexpected bug" })],
+      slotRecords: [],
+      runRecord: makeRunRecord({ status: "awaiting_gate" }),
+    });
+
+    expect(report.steps).toHaveLength(2);
+    expect(report.failedStepId).toBe("boom");
+  });
+
+  it("keeps the old 'unreached = failed' behavior when no runRecord is supplied at all (status unknown)", () => {
+    const report = serializeToDynamicAgentRunReport({
+      specId: "spec_1",
+      specVersion: 1,
+      steps: [
+        { stepId: "assemble-context", label: "Assemble context", type: "code" },
+        { stepId: "batch-review", label: "Batch review", type: "code" },
+      ],
+      stepRecords: [makeCodeStep()],
+      slotRecords: [],
+    });
+
+    expect(report.steps).toHaveLength(2);
+    expect(report.steps[1]).toMatchObject({ stepId: "batch-review", status: "failed" });
+  });
+
   it("serializes a fan-out slot the same way as a top-level agent step", () => {
     const slot: SlotRecord = {
       slotId: "drafts__slot_0",

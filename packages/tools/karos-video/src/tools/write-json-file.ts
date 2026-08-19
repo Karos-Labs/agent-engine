@@ -2,6 +2,8 @@ import { z } from "zod";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { defineTool, success, toolingError } from "@agent-engine/tool-common";
+import { resolveRuntime, type KarosVideoToolOptions } from "../config.js";
+import { assertNoTraversalOrNul, assertWithinTenantWorkRoot } from "../sandbox.js";
 
 const TOOL_VERSION = "1.0.0";
 
@@ -29,13 +31,29 @@ export interface WriteJsonFileResult {
  * for it — real disk, one job, matching RFC-06 §3's own observation that
  * this product needs "real disk and CPU/time budget" no other tool in this
  * bundle requires.
+ *
+ * Security-audit finding: this tool otherwise accepts an arbitrary path with
+ * no tenant scoping — an unfenced write primitive. Every `path` argument is
+ * checked for traversal (`..`) and NUL bytes unconditionally; when a
+ * `workRoot` is configured (constructor option or `BRANDED_SHORTS_WORK_ROOT`)
+ * the path is additionally confined to `<workRoot>/<ctx.clientSlug>/…`,
+ * symlink-escape-checked the same way `karos-landing`'s site sandbox is (see
+ * `../sandbox.js`).
  */
-export function createWriteJsonFile() {
+export function createWriteJsonFile(options: KarosVideoToolOptions = {}) {
+  const runtime = resolveRuntime(options);
+
   return defineTool<WriteJsonFileInput, WriteJsonFileResult>({
     name: "video.writeJsonFile",
     version: TOOL_VERSION,
     inputSchema: WriteJsonFileInputSchema,
-    async execute({ path, data }) {
+    async execute({ path, data }, { ctx }) {
+      if (runtime.workRoot !== undefined) {
+        await assertWithinTenantWorkRoot(runtime.workRoot, ctx.clientSlug, path, "path");
+      } else {
+        assertNoTraversalOrNul(path, "path");
+      }
+
       const json = JSON.stringify(data, null, 2);
       try {
         await mkdir(dirname(path), { recursive: true });

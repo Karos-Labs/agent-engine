@@ -77,6 +77,12 @@ export async function runStepAgent<TOutput>(
         outputTokens: result.totalTokens.output,
         durationMs: completedAt - startedAt,
         status: result.status,
+        // Discriminator columns (2026-08) — `runId` above is the WHOLE
+        // workflow run's id, shared by every step.agent() call inside it, so
+        // without `stepId` two rows from the same run can't be told apart.
+        jobId: runtime.runId,
+        stepId,
+        operation: "workflow_step_agent",
       });
       span.setAttribute("agent_status", result.status);
 

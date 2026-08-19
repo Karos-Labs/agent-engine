@@ -92,10 +92,26 @@ export async function captureAppstore(
   fetchImpl: ReputationFetchImpl,
   delay: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 ): Promise<CaptureLegOutcome> {
-  let records = await appstorePages(req, fetchImpl);
-  if (records.length === 0) {
-    await delay(3000); // the feed flakes intermittently; one retry is cheap
+  // Every dead-leg exit from this adapter goes through here — ADAPTERS.md rule 1: a
+  // tombstone, never a silent zero. Hoisted above the fetch/parse below so a thrown
+  // network error or a malformed-JSON page also resolves to a tombstone rather than an
+  // uncaught exception — unlike gbp.ts/yelp.ts, this leg previously had no try/catch
+  // around its fetch loop at all, so one flaky response aborted the whole multi-leg
+  // capture call and erased the sibling legs' already-captured results (a tooling
+  // isolation audit finding: capture-tool.ts's own per-leg try/catch is the other half
+  // of this fix).
+  const dead = (reason: string): CaptureLegOutcome =>
+    unavailableLeg({ leg: "appstore", platform: "appstore", source: "appstore_rss", listingId: req.listingId, listingLabel: req.listingLabel, reason });
+
+  let records: Review[];
+  try {
     records = await appstorePages(req, fetchImpl);
+    if (records.length === 0) {
+      await delay(3000); // the feed flakes intermittently; one retry is cheap
+      records = await appstorePages(req, fetchImpl);
+    }
+  } catch (err) {
+    return dead(`App Store RSS feed request/parse failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   const meta = await appstoreLookup(req.appId, req.country, fetchImpl);
@@ -110,9 +126,6 @@ export async function captureAppstore(
 
   // Empty feed: honest only if the storefront really has nothing (the
   // tombstone rule — a dead leg is UNAVAILABLE, never a fabricated zero).
-  const dead = (reason: string): CaptureLegOutcome =>
-    unavailableLeg({ leg: "appstore", platform: "appstore", source: "appstore_rss", listingId: req.listingId, listingLabel: req.listingLabel, reason });
-
   if (!meta.listed) {
     return dead(`app not found in storefront "${req.country}" (check the client's platform roster)`);
   }

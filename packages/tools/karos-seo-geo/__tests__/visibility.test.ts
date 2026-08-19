@@ -82,6 +82,49 @@ describe("computeVisibilityMetrics (seo-geo-scoring-config.json visibility.metri
   });
 });
 
+describe("mention_rate_blended honors denominator='N_e' (a scoring-formula-fidelity audit finding)", () => {
+  it("divides by Σ max(nEffective, 1) across engines, not raw N × engines, when denominator is 'N_e'", () => {
+    const nMode = computeVisibilityMetrics({
+      cells,
+      promptCount: 2,
+      clientDomains: ["client.com"],
+      competitorRoster: ["competitorA"],
+      denominator: "N",
+    });
+    const neMode = computeVisibilityMetrics({
+      cells,
+      promptCount: 2,
+      clientDomains: ["client.com"],
+      competitorRoster: ["competitorA"],
+      denominator: "N_e",
+    });
+
+    // "N" mode: 1 named-slot / (N=2 * 5 engines) = 0.1 (matches the default-denominator test above).
+    expect(nMode.mentionRateBlended).toBeCloseTo(0.1);
+
+    // "N_e" mode: chatgpt has 1 MEASURED cell out of its 2 (p2 is UNAVAILABLE), so its own
+    // nEffective is 1; the other 4 engines have zero cells at all, so max(nEffective,1)=1
+    // each. Denominator = 1 (chatgpt) + 4*1 (empty engines) = 5, not promptCount*engines=10 —
+    // the same 1 named slot now reads as 1/5 = 0.2, correctly reflecting that only 1 of the
+    // 5 measured-cell-slots that actually exist named the client, not 1 of 10 raw prompt slots.
+    expect(neMode.mentionRateBlended).toBeCloseTo(0.2);
+    expect(neMode.mentionRateBlended).not.toBeCloseTo(nMode.mentionRateBlended);
+  });
+
+  it("each per-engine mentionShare is unaffected — only the blended aggregate's denominator changes", () => {
+    const neMode = computeVisibilityMetrics({
+      cells,
+      promptCount: 2,
+      clientDomains: ["client.com"],
+      competitorRoster: ["competitorA"],
+      denominator: "N_e",
+    });
+    const chatgpt = neMode.perEngine.find((e) => e.engine === "chatgpt")!;
+    expect(chatgpt.nEffective).toBe(1);
+    expect(chatgpt.mentionShare).toBeCloseTo(1); // 1 named / nEffective=1
+  });
+});
+
 describe("BOTH-14 first(p,e) fidelity regression (parity audit P0: a competitor named anywhere must not disqualify a genuinely-first client)", () => {
   it("the client still ranks first when named BEFORE a competitor in the same answer, even though a competitor is also named", () => {
     const metrics = computeVisibilityMetrics({

@@ -35,10 +35,21 @@ export const RunRecordSchema = z.object({
   updatedAt: z.number(),
   budget: WorkflowBudgetSchema.optional(),
   totalCostUsd: z.number().nonnegative().optional(),
-  failureReason: z.string().optional(),
-  pendingGateId: z.string().optional(),
+  /**
+   * `failureReason`/`pendingGateId`/`reason` are `.nullable()` as well as
+   * `.optional()`: every terminal (or re-entrant) transition in
+   * `WorkflowEngine.run()` explicitly writes `null` into whichever of these
+   * three don't apply to the new status, rather than leaving a prior
+   * transition's value sitting there under `merge:true` semantics — a run
+   * that failed once, was retried, and completed must not still report the
+   * old `failureReason` forever (a reliability audit finding). `undefined`/
+   * absent means "never set" (a fresh run); `null` means "explicitly not
+   * applicable to the current status."
+   */
+  failureReason: z.string().nullable().optional(),
+  pendingGateId: z.string().nullable().optional(),
   /** Explains a `held`/`blocked_intake` outcome — kept distinct from `failureReason` since neither is a failure (RFC-01 §16.2). */
-  reason: z.string().optional(),
+  reason: z.string().nullable().optional(),
 });
 export type RunRecord = z.infer<typeof RunRecordSchema>;
 
@@ -91,6 +102,18 @@ export const GateRecordSchema = GateSchema.extend({
 export type GateRecord = z.infer<typeof GateRecordSchema>;
 
 /**
+ * The outcome of `claimRun` — whether *this* call's `patch` actually landed.
+ * `run` is always the record as it stands after the call: the freshly
+ * patched one when `claimed`, or whatever another writer left in place when
+ * not — a caller checking `claimed` never needs a second read to see why it
+ * lost the race.
+ */
+export interface RunClaimResult {
+  claimed: boolean;
+  run: RunRecord;
+}
+
+/**
  * The small internal interface every durable-workflow primitive is built
  * against (RFC-01 §8.4's "swap the adapter, not the workflow code" principle)
  * — `step.code`/`step.agent`/`step.gate`/`fanout` never talk to Firestore or
@@ -105,6 +128,19 @@ export interface DurableStepStore {
   /** Idempotent create: returns the existing record unchanged if one is already there. */
   createRunIfNotExists(run: RunRecord): Promise<RunRecord>;
   updateRun(runId: string, patch: Partial<Omit<RunRecord, "runId">>): Promise<void>;
+  /**
+   * Atomically transitions an existing run: `patch` is applied only if the
+   * run's *current* status is one of `allowedFromStatuses` — the
+   * optimistic-concurrency guard against two near-simultaneous resumes (or a
+   * resume racing a still-in-flight run) both proceeding past the same
+   * checkpoint (a reliability audit finding). `FirestoreDurableStepStore`
+   * implements this with a real transaction; `MemoryDurableStepStore`'s
+   * synchronous check-then-write body is already race-free under Node's
+   * single-threaded event loop (no `await` between the read and the write).
+   * Throws — never silently no-ops — if the run does not exist at all, the
+   * same "caller bug, not a valid state" contract `updateRun` already has.
+   */
+  claimRun(runId: string, allowedFromStatuses: readonly RunStatus[], patch: Partial<Omit<RunRecord, "runId">>): Promise<RunClaimResult>;
 
   getStep(runId: string, stepId: string): Promise<StepRecord | undefined>;
   saveStep(runId: string, step: StepRecord): Promise<void>;

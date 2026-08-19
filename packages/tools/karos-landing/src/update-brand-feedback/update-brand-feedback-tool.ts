@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { z } from "zod";
-import { defineTool, success, contentFail, toolingError } from "@agent-engine/tool-common";
+import { defineTool, success, contentFail, toolingError, sanitizeSegment } from "@agent-engine/tool-common";
 import type { LandingEngineConfig } from "../config.js";
 import { BrandJsonSchema, BrandFeedbackRoundSchema } from "../types.js";
 
@@ -27,9 +27,11 @@ export interface UpdateBrandFeedbackResult {
  * This is the ONE narrow, non-arbitrary write this package makes into the
  * otherwise-read-only bundle root (`landing.readBundle`'s domain): always
  * exactly `<bundlesRoot>/<clientSlug>/brand.json`, never a caller-supplied
- * path — there is no relative-path argument here at all, so there is no
- * traversal surface to fence in the first place (narrower than the site
- * sandbox, which at least accepts a relative path to validate).
+ * path — there is no relative-path argument here at all (narrower than the
+ * site sandbox, which at least accepts a relative path to validate). The one
+ * remaining variable, `ctx.clientSlug`, is run through `sanitizeSegment`
+ * before it touches a path, so a `..`/`/`/`\`/NUL-bearing slug throws
+ * (`tooling_error`) instead of resolving outside `bundlesRoot`.
  *
  * Enforces FEEDBACK.md §4 step 0's "Reject if round != next expected"
  * idempotency rule directly: `entry.round` must equal
@@ -44,7 +46,7 @@ export function createUpdateBrandFeedback(config: LandingEngineConfig) {
     version: TOOL_VERSION,
     inputSchema: UpdateBrandFeedbackInputSchema,
     async execute({ entry }, { ctx }) {
-      const brandPath = path.join(config.bundlesRoot, ctx.clientSlug, "brand.json");
+      const brandPath = path.join(config.bundlesRoot, sanitizeSegment(ctx.clientSlug), "brand.json");
 
       let raw: string;
       try {

@@ -24,7 +24,13 @@ export const TriageConfigSchema = z.object({
     fixable_complaint: z.number(),
     service_recovery_opportunity: z.number(),
     detailed_positive: z.number(),
-    platform_visibility: z.record(z.string(), z.number()),
+    // `default` is required — `triage.ts` falls back to it (`vis[review.platform] ?? vis.default`)
+    // for any platform not explicitly listed. A plain z.record can't express a required key
+    // alongside arbitrary others, so a per-client config override that omitted `default` used
+    // to pass validation and then silently score every unlisted-platform review as NaN — the
+    // deterministic routing authority (RFC-08: "the model extracts, arithmetic routes")
+    // degrading with no error anywhere (a triage-config-hardening audit finding).
+    platform_visibility: z.object({ default: z.number() }).catchall(z.number()),
   }),
   recency_decay: z.object({
     full_value_within_days: z.number(),

@@ -1,5 +1,5 @@
 import { createModelRouterFromEnv } from "@agent-engine/core";
-import { initTelemetry } from "@agent-engine/telemetry";
+import { initTelemetry, shutdownTelemetry } from "@agent-engine/telemetry";
 import { createAllKarosTools } from "@agent-engine/tools";
 import { createApp } from "./app.js";
 import { createDurableStoreFromEnv } from "./wiring/durable-store.js";
@@ -42,7 +42,14 @@ async function main(): Promise<void> {
         console.error("error while closing server", err);
         process.exitCode = 1;
       }
-      process.exit();
+      // Flush whatever spans BatchSpanProcessor was still buffering — without
+      // this, the trace of the request that was in flight when SIGTERM
+      // landed (disproportionately the one worth having) is dropped, not
+      // just delayed. Best-effort: a stuck exporter must not hold the
+      // process open past the 10s grace window below.
+      shutdownTelemetry()
+        .catch((e: unknown) => console.error("error flushing telemetry on shutdown", e))
+        .finally(() => process.exit());
     });
 
     // Cloud Run gives a limited grace period after SIGTERM before SIGKILL —
