@@ -28,6 +28,7 @@ import {
   serializeToDynamicAgentRunReport,
   type DynamicAgentStepDescriptor,
   type StepRecord,
+  type WorkflowContext,
 } from "@agent-engine/workflow";
 import { createXAgentWorkflow, type XPostOutput } from "@agent-engine/agent-x";
 import { createLinkedInAgentWorkflow, type LinkedInPostOutput } from "@agent-engine/agent-linkedin";
@@ -104,7 +105,12 @@ const LINKEDIN_PROMPTS_ROOT = path.join(__dirname, "..", "agents", "linkedin-age
 
 const CLIENT_SLUG = "acme-corp";
 
-const ALL_16_STEP_IDS = [
+// Both agents' *current* step protocols (RFC-02 §3/§5) — kept as two separate
+// lists rather than one shared one because they've drifted apart: X gained a
+// lane-selection step (08) and an engagement-cap check (09) LinkedIn never
+// had, shifting everything after by one, and each agent's own gate/persist
+// steps landed on different numbers as a result.
+const X_STEP_IDS = [
   "00-intake-check",
   "01-load-client-context",
   "02-load-memory-shelf",
@@ -113,18 +119,74 @@ const ALL_16_STEP_IDS = [
   "05-extract-candidate-summary",
   "06-reserve-topic",
   "07-select-candidate",
-  "08-determine-angle",
+  "08-select-lane",
+  "09-check-engagement-cap",
+  "10-draft-post",
+  "11-verify-numbers-sourced",
+  "12-verify-brand-compliance",
+  "13-verify-link-placement",
+  "14-render-preview-check",
+  "15-batch-review",
+  "16-verify-no-placeholder",
+  "17-verify-no-leak",
+  "18-persist-deliverable",
+  "19-persist-manifest",
+  "20-commit-and-record",
+];
+
+const LINKEDIN_STEP_IDS = [
+  "00-intake-check",
+  "01-load-client-context",
+  "02-load-memory-shelf",
+  "03-load-recent-decisions",
+  "04-research-pull",
+  "05-extract-candidate-summary",
+  "06-reserve-topic",
+  "07-select-candidate",
+  "08-determine-archetype",
   "09-draft-post",
   "10-verify-numbers-sourced",
   "11-verify-brand-compliance",
   "12-render-preview-check",
-  "13-persist-deliverable",
-  "14-persist-manifest",
-  "15-commit-and-record",
+  "13-verify-no-placeholder",
+  "14-verify-no-leak",
+  "15-batch-review",
+  "16-persist-deliverable",
+  "17-persist-manifest",
+  "18-commit-and-record",
 ];
 
-function stepDescriptors(): DynamicAgentStepDescriptor[] {
-  return ALL_16_STEP_IDS.map((stepId) => ({ stepId, label: stepId, type: stepId === "09-draft-post" ? "ai" : "code" }));
+/** The mandatory human batch-review gate every migrated channel shares (RFC-01 §8.3) — same id, same kind, in both workflows. */
+const BATCH_REVIEW_GATE_ID = "15-batch-review";
+
+function stepDescriptors(stepIds: readonly string[], draftStepId: string): DynamicAgentStepDescriptor[] {
+  return stepIds.map((stepId) => ({ stepId, label: stepId, type: stepId === draftStepId ? "ai" : "code" }));
+}
+
+/**
+ * `step.gate` pauses a run rather than blocking a process (RFC-01 §8.1/§8.3)
+ * — `engine.run()` returns `awaiting_gate` instead of holding anything open.
+ * This is the demo's stand-in for a human reviewer: resolve the gate, then
+ * call `run()` again. Every earlier `step.code`/`step.agent` short-circuits
+ * via checkpoint, so the replay only actually executes what comes after the
+ * gate — the same mechanic `gate-pause-and-resume.test.ts` verifies for real.
+ */
+async function approveGateIfPending<T>(
+  engine: WorkflowEngine,
+  workflowFn: (wf: WorkflowContext) => Promise<T>,
+  params: { runId: string; clientSlug: string; productId: string; runKind: "recurring" },
+  result: Awaited<ReturnType<WorkflowEngine["run"]>>,
+): Promise<Awaited<ReturnType<WorkflowEngine["run"]>>> {
+  if (result.status !== "awaiting_gate") return result;
+  ok(`run paused at "${result.pendingGateId}" — the mandatory human batch-review gate (RFC-01 §8.3)`);
+  narrate(`Simulating a human reviewer: engine.resolveGate(runId, "${BATCH_REVIEW_GATE_ID}", {decision: "approve", ...})...`);
+  await engine.resolveGate(params.runId, BATCH_REVIEW_GATE_ID, {
+    decision: "approve",
+    actor: "demo-script@karoslabs.com",
+    at: new Date().toISOString(),
+  });
+  narrate("Resuming: engine.run(...) again — every step before the gate short-circuits via checkpoint...");
+  return engine.run(workflowFn, params);
 }
 
 /** Pulls the bare `GateVerdict` out of a self-critique gate row in an agent step's telemetry (RFC-01 §5.6 — never wrapped like a regular tool_call). */
@@ -164,9 +226,9 @@ async function runXAgentDemo(workspaceStore: WorkspaceStore, tools: ReturnType<t
   const engine = new WorkflowEngine(durableStore);
   const params = { runId: "demo_x_run", clientSlug: CLIENT_SLUG, productId: "x-agent", runKind: "recurring" as const };
 
-  sub("[2/6] EXECUTING THE 16-STEP WORKFLOW");
+  sub("[2/6] EXECUTING THE 21-STEP WORKFLOW");
   narrate('engine.run(createXAgentWorkflow({tools, promptStore, router}), params)...');
-  const result = await engine.run(workflowFn, params);
+  const result = await approveGateIfPending(engine, workflowFn, params, await engine.run(workflowFn, params));
   if (result.status === "completed") {
     ok(`run completed — total cost: $${result.totalCostUsd.toFixed(6)}`);
   } else {
@@ -180,8 +242,8 @@ async function runXAgentDemo(workspaceStore: WorkspaceStore, tools: ReturnType<t
   info("query", research.query);
   info("window", "24h");
 
-  sub("[4/6] THE DRAFT — text, hook, angle (step 09-draft-post)");
-  const draftStep = (await durableStore.getStep(params.runId, "09-draft-post")) as StepRecord;
+  sub("[4/6] THE DRAFT — text, hook, angle (step 10-draft-post)");
+  const draftStep = (await durableStore.getStep(params.runId, "10-draft-post")) as StepRecord;
   const draftExec = draftStep.output as AgentExecutionResult<XPostOutput>;
   const finalDraft = draftExec.finalOutput!;
   info("text", finalDraft.text);
@@ -192,12 +254,12 @@ async function runXAgentDemo(workspaceStore: WorkspaceStore, tools: ReturnType<t
   sub("[5/6] GATE VERDICTS");
   const lintVerdict = findSelfCritiqueVerdict(draftExec, "gate.lintPost");
   ok(`self-critique gate.lintPost (280-char check, platform: "x") → ${lintVerdict?.verdict ?? "unknown"} — ${lintVerdict ? gateDetail(lintVerdict) : ""}`);
-  const brandStep = (await durableStore.getStep(params.runId, "11-verify-brand-compliance")) as StepRecord;
+  const brandStep = (await durableStore.getStep(params.runId, "12-verify-brand-compliance")) as StepRecord;
   const brandVerdict = brandStep.output as GateVerdict;
-  ok(`workflow gate.brandCompliance (step 11) → ${brandVerdict.verdict} — ${gateDetail(brandVerdict)}`);
-  const numbersStep = (await durableStore.getStep(params.runId, "10-verify-numbers-sourced")) as StepRecord;
+  ok(`workflow gate.brandCompliance (step 12) → ${brandVerdict.verdict} — ${gateDetail(brandVerdict)}`);
+  const numbersStep = (await durableStore.getStep(params.runId, "11-verify-numbers-sourced")) as StepRecord;
   const numbersVerdict = numbersStep.output as GateVerdict;
-  ok(`workflow gate.numbersSourced (step 10) → ${numbersVerdict.verdict} — ${gateDetail(numbersVerdict)}`);
+  ok(`workflow gate.numbersSourced (step 11) → ${numbersVerdict.verdict} — ${gateDetail(numbersVerdict)}`);
 
   sub("[6/6] FINAL DELIVERABLE + DynamicAgentRunReport");
   info("deliverable", finalDraft);
@@ -206,7 +268,7 @@ async function runXAgentDemo(workspaceStore: WorkspaceStore, tools: ReturnType<t
   const report = serializeToDynamicAgentRunReport({
     specId: "spec_x_agent_demo",
     specVersion: 1,
-    steps: stepDescriptors(),
+    steps: stepDescriptors(X_STEP_IDS, "10-draft-post"),
     stepRecords,
     slotRecords: [],
     ...(runRecord !== undefined ? { runRecord } : {}),
@@ -228,14 +290,19 @@ async function runLinkedInAgentDemo(workspaceStore: WorkspaceStore, tools: Retur
   const draft: LinkedInPostOutput = {
     headline: "Anchor days cut scheduling friction",
     hook: "We looked at attendance data across our hybrid client base this quarter, and the pattern surprised us.",
-    body: "Teams with a fixed two-day in-office schedule reported 18% [1] fewer scheduling conflicts than teams with fully flexible policies.",
+    // No bare numeric claim (e.g. "18%") — gate.numbersSourced (workflow step
+    // 10) fails any percentage/currency/multiplier claim whose exact figure
+    // doesn't appear in `sources`, and this demo's research.pull stand-in
+    // never sets hasNumericInsight, so sources is always empty (same reason
+    // the X agent's fake draft below only gestures at "data" without a figure).
+    body: "Teams with a fixed two-day in-office schedule reported meaningfully fewer scheduling conflicts [1] than teams with fully flexible policies.",
     hashtags: ["HybridWork", "FutureOfWork"],
     callToAction: "If your team is still negotiating its hybrid policy week to week, a fixed anchor-day structure might be worth testing.",
     targetAudience: "People leaders and operations managers evaluating hybrid work policies",
     archetype: "industry-reaction",
     text:
       "We looked at attendance data across our hybrid client base this quarter, and the pattern surprised us.\n\n" +
-      "Teams with a fixed two-day in-office schedule reported 18% [1] fewer scheduling conflicts than teams with fully flexible policies.\n\n" +
+      "Teams with a fixed two-day in-office schedule reported meaningfully fewer scheduling conflicts [1] than teams with fully flexible policies.\n\n" +
       "If your team is still negotiating its hybrid policy week to week, a fixed anchor-day structure might be worth testing.\n\n" +
       "#HybridWork #FutureOfWork",
   };
@@ -246,9 +313,9 @@ async function runLinkedInAgentDemo(workspaceStore: WorkspaceStore, tools: Retur
   const engine = new WorkflowEngine(durableStore);
   const params = { runId: "demo_linkedin_run", clientSlug: CLIENT_SLUG, productId: "linkedin-agent", runKind: "recurring" as const };
 
-  sub("[2/6] EXECUTING THE 16-STEP WORKFLOW");
+  sub("[2/6] EXECUTING THE 19-STEP WORKFLOW");
   narrate('engine.run(createLinkedInAgentWorkflow({tools, promptStore, router}), params)...');
-  const result = await engine.run(workflowFn, params);
+  const result = await approveGateIfPending(engine, workflowFn, params, await engine.run(workflowFn, params));
   if (result.status === "completed") {
     ok(`run completed — total cost: $${result.totalCostUsd.toFixed(6)}`);
   } else {
@@ -290,7 +357,7 @@ async function runLinkedInAgentDemo(workspaceStore: WorkspaceStore, tools: Retur
   const report = serializeToDynamicAgentRunReport({
     specId: "spec_linkedin_agent_demo",
     specVersion: 1,
-    steps: stepDescriptors(),
+    steps: stepDescriptors(LINKEDIN_STEP_IDS, "09-draft-post"),
     stepRecords,
     slotRecords: [],
     ...(runRecord !== undefined ? { runRecord } : {}),
@@ -320,7 +387,7 @@ async function main(): Promise<void> {
   await runLinkedInAgentDemo(workspaceStore, tools);
 
   section("DEMO COMPLETE");
-  ok("both agents ran their real 16-step workflow to completion (domainOutcome: \"delivered\")");
+  ok("both agents ran their real workflow to completion, including the batch-review gate pause/resume (domainOutcome: \"delivered\")");
   ok("PromptStore resolved both skillRefs from their own versioned markdown files — no hardcoded prompt strings");
   ok("every gate verdict came from a real karos-gates tool call, not a simulated result");
 
