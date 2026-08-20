@@ -5,7 +5,7 @@ import * as path from "node:path";
 import request from "supertest";
 import type { Application } from "express";
 import { createAllKarosTools, WorkspaceStore } from "@agent-engine/tools";
-import { MemoryDurableStepStore } from "@agent-engine/workflow";
+import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createApp } from "../src/app.js";
 import { setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 
@@ -235,5 +235,60 @@ describe("POST /api/v1/runs/:runId/resume — campaign orchestrator gate", () =>
       .send({ gateId: "13-campaign-review", resolution: { decision: "approve", actor: "jane@karoslabs.com" } });
 
     expect(res.status).toBe(404);
+  });
+});
+
+describe("POST /api/v1/runs/:runId/resume — concurrency and gate-lifecycle guards (a reliability audit finding)", () => {
+  let env: TestEnvironment;
+  let app: Application;
+
+  beforeEach(async () => {
+    env = await setupTestEnvironment();
+    app = createApp({ durableStore: env.durableStore, runtimeDeps: env.runtimeDeps });
+  });
+
+  afterEach(async () => {
+    await env.cleanup();
+  });
+
+  it("returns 409, not 500, when resuming a run that already completed", async () => {
+    const startRes = await request(app)
+      .post("/api/v1/runs/start")
+      .send({ clientSlug: "acme", productId: "blog-agent", runKind: "recurring" });
+    const { runId } = startRes.body;
+
+    const firstResume = await request(app)
+      .post(`/api/v1/runs/${runId}/resume`)
+      .send({ gateId: "15-batch-review", resolution: { decision: "approve", actor: "jane@karoslabs.com" } });
+    expect(firstResume.status).toBe(200);
+    expect(firstResume.body.status).toBe("completed");
+
+    // The run is now "completed" — a second resume of the same run is not a valid
+    // in-flight-gate resume, and must not be reported as an unexpected 500.
+    const secondResume = await request(app)
+      .post(`/api/v1/runs/${runId}/resume`)
+      .send({ gateId: "15-batch-review", resolution: { decision: "approve", actor: "jane@karoslabs.com" } });
+    expect(secondResume.status).toBe(409);
+    expect(secondResume.body.error).toMatch(/not awaiting a gate/i);
+  });
+
+  it("returns 409, not 404 or 500, when the gate was already resolved by someone else (a concurrent approval)", async () => {
+    const startRes = await request(app)
+      .post("/api/v1/runs/start")
+      .send({ clientSlug: "acme", productId: "blog-agent", runKind: "recurring" });
+    const { runId } = startRes.body;
+
+    // Simulates a second, concurrent approval channel resolving the same gate directly
+    // against the shared store — the run record is still "awaiting_gate" (only
+    // WorkflowEngine.run() flips that), so this HTTP request's own pre-check passes, and
+    // it reaches engine.resolveGate() to find the gate itself already answered.
+    const rivalEngine = new WorkflowEngine(env.durableStore);
+    await rivalEngine.resolveGate(runId, "15-batch-review", { decision: "approve", actor: "mallory@example.com", at: "2026-08-15T00:00:00Z" });
+
+    const res = await request(app)
+      .post(`/api/v1/runs/${runId}/resume`)
+      .send({ gateId: "15-batch-review", resolution: { decision: "approve", actor: "jane@karoslabs.com" } });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/already resolved/i);
   });
 });

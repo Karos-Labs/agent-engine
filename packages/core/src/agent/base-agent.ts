@@ -11,7 +11,7 @@ import type {
 import { GateVerdictSchema } from "../types/gate.js";
 import { computeStepCostUsd, summarizeStepTelemetry } from "../telemetry/pricing.js";
 import type { RouterCompleteOptions } from "../router/model-router.js";
-import type { AgentToolOutcome } from "./tool.js";
+import type { AgentToolOutcome, AgentToolRegistry } from "./tool.js";
 import { enforceWriteFence } from "./write-fence.js";
 import { parseSkillRef } from "./prompt-store.js";
 import { describeError } from "./errors.js";
@@ -129,21 +129,25 @@ export abstract class BaseAgent<TOutput> {
   /**
    * Each allowed tool as `{name, inputSchema}` rather than a bare name.
    *
-   * A name alone leaves the model guessing the argument shape, and a wrong
-   * guess is fatal: `runOneTurn` rejects args that fail the tool's own
-   * `inputSchema` as a `tooling_error`, which ends the whole step with no
-   * retry. Real runs died here — the model called `gate.numbersSourced` with
-   * `{claim, sourceText}` against a tool that declares `{text, sources[]}`.
-   * The schema is the tool's own, so this can never drift from what
-   * `runOneTurn` actually validates against.
+   * `buildTurnSchema` constrains which tool the model may *name*, but nothing
+   * constrains the `args` it invents for that tool — `args` is `z.unknown()`
+   * by necessity, since one turn schema has to cover every tool. So a name
+   * alone still leaves the model guessing the argument shape, and real runs
+   * died on it: the model called `gate.numbersSourced` with
+   * `{claim, sourceText}` against a tool declaring `{text, sources[]}`.
+   * Advertising each tool's own `inputSchema` closes that gap, and because it
+   * *is* the tool's own schema it can never drift from what `runOneTurn`
+   * validates against.
    *
-   * A tool that isn't in the registry, or whose schema can't be represented
-   * as JSON Schema, degrades to the bare name instead of failing the step —
-   * an unadvertised schema is a worse prompt, not a broken run.
+   * A tool whose schema can't be represented as JSON Schema degrades to the
+   * bare name instead of failing the step — a less informative prompt is not
+   * a broken run. Reads through `scopedTools()` so this can only ever
+   * advertise tools the loop can actually reach.
    */
   private describeAllowedTools(): Array<{ name: string; inputSchema?: unknown }> {
+    const scoped = this.scopedTools();
     return this.config.allowedTools.map((name) => {
-      const tool = this.runtime.tools[name];
+      const tool = scoped[name];
       if (!tool) return { name };
       try {
         return { name, inputSchema: z.toJSONSchema(tool.inputSchema) };
@@ -153,11 +157,43 @@ export abstract class BaseAgent<TOutput> {
     });
   }
 
+  /**
+   * The `tool` field is constrained to exactly `config.allowedTools` — never
+   * a free-form string — so a disallowed tool name fails structured-output
+   * validation at the adapter itself, before it ever reaches `runOneTurn`
+   * (RFC-01 §5.5, §14 DoD: "enforces allowedTools narrowing"). When a step
+   * declares no tools at all, the union drops the `tool_call` variant
+   * entirely — the model can only ever produce a final output.
+   */
   private buildTurnSchema(): ZodSchema<ReActTurn<TOutput>> {
-    return z.discriminatedUnion("type", [
-      z.object({ type: z.literal("tool_call"), thought: z.string().optional(), tool: z.string().min(1), args: z.unknown() }),
-      z.object({ type: z.literal("final"), thought: z.string().optional(), output: this.config.outputSchema }),
-    ]);
+    const finalVariant = z.object({ type: z.literal("final"), thought: z.string().optional(), output: this.config.outputSchema });
+    if (this.config.allowedTools.length === 0) {
+      return finalVariant as unknown as ZodSchema<ReActTurn<TOutput>>;
+    }
+    const toolVariant = z.object({
+      type: z.literal("tool_call"),
+      thought: z.string().optional(),
+      tool: z.enum(this.config.allowedTools as [string, ...string[]]),
+      args: z.unknown(),
+    });
+    return z.discriminatedUnion("type", [toolVariant, finalVariant]);
+  }
+
+  /**
+   * Only the tools this step declared in `allowedTools` are ever reachable
+   * from the ReAct loop — the execution context never exposes the full
+   * registry, so a tool outside this step's declared scope cannot be
+   * discovered or invoked even by an injected instruction naming it exactly.
+   */
+  private scopedTools(): AgentToolRegistry {
+    const scoped: AgentToolRegistry = {};
+    for (const name of this.config.allowedTools) {
+      const tool = this.runtime.tools[name];
+      if (tool) {
+        scoped[name] = tool;
+      }
+    }
+    return scoped;
   }
 
   private clock(): number {
@@ -222,6 +258,32 @@ export abstract class BaseAgent<TOutput> {
     }
 
     // turn.type === "tool_call" — Action: exactly one tool call, arguments validated before execution.
+    // Defense-in-depth: buildTurnSchema()'s z.enum(allowedTools) already makes a
+    // disallowed tool name unparseable at the adapter, but this loop must never
+    // trust that every ModelRouter implementation actually re-validates the
+    // model's raw output against the schema it was given (RFC-01 §5.5, §14 DoD).
+    if (!this.config.allowedTools.includes(turn.tool)) {
+      return {
+        kind: "tooling_error",
+        telemetry: {
+          stepIndex,
+          ...(turn.thought !== undefined ? { thought: turn.thought } : {}),
+          toolCall: {
+            name: turn.tool,
+            args: turn.args,
+            result: { error: `tool "${turn.tool}" is not in this step's allowedTools` },
+            toolVersion: "allowlist",
+          },
+          modelUsed: completion.modelUsed,
+          inputTokens: completion.inputTokens,
+          outputTokens: completion.outputTokens,
+          durationMs,
+          costUsd,
+          status: "tooling_error",
+        },
+      };
+    }
+
     const fence = enforceWriteFence(ctx, turn.tool, turn.args);
     if (!fence.allowed) {
       transcript.push({ role: "write_fence_block", tool: turn.tool, reason: fence.reason });
@@ -241,15 +303,19 @@ export abstract class BaseAgent<TOutput> {
       };
     }
 
-    // A hallucinated tool name and malformed arguments are both *model*
-    // mistakes, not broken infrastructure — so they resolve as a normal
-    // observation the model sees and can correct on its next turn, still
-    // bounded by `maxSteps`. Treating them as fatal made a single bad guess
-    // kill an otherwise-healthy run, which is exactly what happened in
-    // practice: identical inputs would succeed or fail depending on how the
-    // model happened to shape one tool call. The tool is never executed in
-    // either branch — only the feedback path changed.
-    const tool = this.runtime.tools[turn.tool];
+    // Resolved against the step's own scoped registry, never the full one, so
+    // a tool outside `allowedTools` is unreachable even if something names it
+    // exactly. Reaching the `!tool` branch below therefore means a *declared*
+    // tool is missing from the runtime registry (a wiring gap), not that the
+    // model invented a name — `buildTurnSchema`'s enum already rules that out.
+    //
+    // Both that case and malformed `args` resolve as a normal observation the
+    // model can act on next turn, still bounded by `maxSteps`, rather than
+    // killing the step outright. Treating them as fatal made a single bad
+    // argument guess end an otherwise-healthy run — identical inputs would
+    // succeed or fail depending on how the model happened to shape one call.
+    // The tool is never executed in either branch; only the feedback changed.
+    const tool = this.scopedTools()[turn.tool];
     if (!tool) {
       const reason = `no tool registered as "${turn.tool}" — allowed tools for this step: ${this.config.allowedTools.join(", ") || "(none)"}`;
       return {

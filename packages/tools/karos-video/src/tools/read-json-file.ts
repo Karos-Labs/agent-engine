@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { readFile } from "node:fs/promises";
 import { defineTool, success, toolingError } from "@agent-engine/tool-common";
+import { resolveRuntime, type KarosVideoToolOptions } from "../config.js";
+import { assertNoTraversalOrNul, assertWithinTenantWorkRoot } from "../sandbox.js";
 
 const TOOL_VERSION = "1.0.0";
 
@@ -20,13 +22,26 @@ export interface ReadJsonFileResult {
  * on-disk JSON the Python engine also reads by path) through a Layer 3 tool
  * rather than a raw `node:fs` call from `step.code`, matching the "all I/O
  * through tools" convention every other migrated agent's workflow follows.
+ *
+ * Security-audit finding: same unfenced-path issue as `video.writeJsonFile`
+ * — every `path` is traversal/NUL-checked unconditionally, and confined to
+ * `<workRoot>/<ctx.clientSlug>/…` when a `workRoot` is configured. See
+ * `../sandbox.js`.
  */
-export function createReadJsonFile() {
+export function createReadJsonFile(options: KarosVideoToolOptions = {}) {
+  const runtime = resolveRuntime(options);
+
   return defineTool<ReadJsonFileInput, ReadJsonFileResult>({
     name: "video.readJsonFile",
     version: TOOL_VERSION,
     inputSchema: ReadJsonFileInputSchema,
-    async execute({ path }) {
+    async execute({ path }, { ctx }) {
+      if (runtime.workRoot !== undefined) {
+        await assertWithinTenantWorkRoot(runtime.workRoot, ctx.clientSlug, path, "path");
+      } else {
+        assertNoTraversalOrNul(path, "path");
+      }
+
       let raw: string;
       try {
         raw = await readFile(path, "utf8");

@@ -120,6 +120,18 @@ describe.each<[string, () => DurableStepStore]>([
     expect(fanout2Slots.map((s) => s.slotId)).toEqual(["fanout_2__slot_0"]);
   });
 
+  it("saveStep normalizes an undefined output to null (a void step.code callback) rather than crashing", async () => {
+    const store = makeStore();
+    await store.saveStep("run_1", makeStep({ output: undefined }));
+    expect((await store.getStep("run_1", "step_1"))?.output).toBeNull();
+  });
+
+  it("saveSlot normalizes an undefined output to null the same way saveStep does", async () => {
+    const store = makeStore();
+    await store.saveSlot("run_1", makeSlot({ output: undefined }));
+    expect((await store.getSlot("run_1", "fanout_1__slot_0"))?.output).toBeNull();
+  });
+
   it("gate get/save round-trips and a save with a response overwrites the pending record", async () => {
     const store = makeStore();
     expect(await store.getGate("run_1__batch-review")).toBeUndefined();
@@ -132,6 +144,25 @@ describe.each<[string, () => DurableStepStore]>([
     );
     const resolved = await store.getGate("run_1__batch-review");
     expect(resolved?.response?.decision).toBe("approve");
+  });
+});
+
+describe("FakeFirestore — matches real Firestore's rejection of literal undefined values", () => {
+  it("throws on a top-level undefined field, exactly as real Firestore's set() does", async () => {
+    const db = new FakeFirestore();
+    await expect(db.collection("agentEngineRuns").doc("x").set({ status: "running", failureReason: undefined })).rejects.toThrow(/undefined/i);
+  });
+
+  it("throws on an undefined value nested inside the document, not just at the top level", async () => {
+    const db = new FakeFirestore();
+    await expect(db.collection("agentEngineRuns").doc("x").set({ payload: { drafts: [{ text: undefined }] } })).rejects.toThrow(/undefined/i);
+  });
+
+  it("does not throw when the same shape uses null instead — proving the fix, not just the fixture, is what's under test", async () => {
+    const db = new FakeFirestore();
+    await db.collection("agentEngineRuns").doc("x").set({ status: "running", failureReason: null });
+    const snap = await db.collection("agentEngineRuns").doc("x").get();
+    expect(snap.data()).toEqual({ status: "running", failureReason: null });
   });
 });
 

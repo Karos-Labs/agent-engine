@@ -1,4 +1,5 @@
 import { createModelRouterFromEnv } from "@agent-engine/core";
+import { initTelemetry, shutdownTelemetry } from "@agent-engine/telemetry";
 import { createAllKarosTools } from "@agent-engine/tools";
 import { createApp } from "./app.js";
 import { createDurableStoreFromEnv } from "./wiring/durable-store.js";
@@ -12,7 +13,10 @@ function resolvePort(): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 8080;
 }
 
-function main(): void {
+async function main(): Promise<void> {
+  // No-ops without GOOGLE_CLOUD_PROJECT — see packages/telemetry/src/tracer.ts.
+  await initTelemetry();
+
   const durableStore = createDurableStoreFromEnv();
   const promptStore = createServerPromptStore();
   const router = createModelRouterFromEnv();
@@ -38,7 +42,14 @@ function main(): void {
         console.error("error while closing server", err);
         process.exitCode = 1;
       }
-      process.exit();
+      // Flush whatever spans BatchSpanProcessor was still buffering — without
+      // this, the trace of the request that was in flight when SIGTERM
+      // landed (disproportionately the one worth having) is dropped, not
+      // just delayed. Best-effort: a stuck exporter must not hold the
+      // process open past the 10s grace window below.
+      shutdownTelemetry()
+        .catch((e: unknown) => console.error("error flushing telemetry on shutdown", e))
+        .finally(() => process.exit());
     });
 
     // Cloud Run gives a limited grace period after SIGTERM before SIGKILL —
@@ -53,4 +64,7 @@ function main(): void {
   process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
-main();
+main().catch((err) => {
+  console.error("fatal error during startup", err);
+  process.exit(1);
+});

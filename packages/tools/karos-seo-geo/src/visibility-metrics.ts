@@ -127,9 +127,18 @@ export function computeVisibilityMetrics(options: ComputeVisibilityMetricsOption
   });
 
   const citationShareBlended = perEngine.reduce((sum, e) => sum + e.citationShare, 0) / perEngine.length;
+  // `mentionShare_e * max(nEffective_e, 1)` cancels back out to the raw named count per
+  // engine (mentionShare is itself namedCount / max(nEffective,1)) — so this sum is just
+  // Σ namedCount across engines regardless of denominator mode. The blended RATE, though,
+  // must divide by a denominator that agrees with `denominator`: raw `N × engines` when
+  // `"N"`, or the measured-only `Σ max(nEffective, 1)` when `"N_e"` — previously this
+  // always used the raw-N denominator even when the caller asked for `"N_e"`, so the one
+  // aggregate feeding GEO-35's named_mention_rate silently ignored the N-vs-N_e choice
+  // every per-engine metric otherwise honors (a scoring-formula-fidelity audit finding).
   const totalNamedAcrossEngines = perEngine.reduce((sum, e) => sum + e.mentionShare * Math.max(e.nEffective, 1), 0);
-  const totalPromptSlots = promptCount * engines.length;
-  const mentionRateBlended = totalPromptSlots > 0 ? totalNamedAcrossEngines / totalPromptSlots : 0;
+  const blendedMentionDenominator =
+    denominator === "N_e" ? perEngine.reduce((sum, e) => sum + Math.max(e.nEffective, 1), 0) : promptCount * engines.length;
+  const mentionRateBlended = blendedMentionDenominator > 0 ? totalNamedAcrossEngines / blendedMentionDenominator : 0;
 
   // GEO-27 share_of_voice: SOV[b] = mentions(b) / sum_{b' in roster} mentions(b') * 100.
   const mentionTotals: Record<string, number> = {};

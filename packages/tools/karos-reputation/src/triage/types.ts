@@ -122,8 +122,12 @@ export interface TriageConfig {
   proposed_actions: {
     rules: Array<{
       id: string;
-      when_any_signal?: string[];
-      when_any_signal_prefix?: string[];
+      // `| undefined` (not just `?`): matches Zod's `.optional()` inferred output shape
+      // under `exactOptionalPropertyTypes` — removing triage-tool.ts's `as TriageConfig`
+      // cast (a triage-config-hardening audit finding) surfaced that this interface
+      // and TriageConfigSchema had silently disagreed here all along.
+      when_any_signal?: string[] | undefined;
+      when_any_signal_prefix?: string[] | undefined;
       action: string;
     }>;
     already_responded: string;

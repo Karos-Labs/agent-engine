@@ -1,4 +1,4 @@
-import type { DurableStepStore, GateRecord, RunRecord, SlotRecord, StepRecord } from "../types.js";
+import type { DurableStepStore, GateRecord, RunClaimResult, RunRecord, RunStatus, SlotRecord, StepRecord } from "../types.js";
 import type { FirestoreCollectionRef, FirestoreDocumentRef, FirestoreLike } from "./firestore-types.js";
 
 export interface FirestoreDurableStepStoreOptions {
@@ -84,13 +84,38 @@ export class FirestoreDurableStepStore implements DurableStepStore {
     await this.runDoc(runId).set(patch, { merge: true });
   }
 
+  async claimRun(runId: string, allowedFromStatuses: readonly RunStatus[], patch: Partial<Omit<RunRecord, "runId">>): Promise<RunClaimResult> {
+    return this.db.runTransaction(async (tx) => {
+      const ref = this.runDoc(runId);
+      const snap = await tx.get(ref);
+      if (!snap.exists) {
+        throw new Error(`FirestoreDurableStepStore [database="${this.databaseId}"]: no run found for "${runId}"`);
+      }
+      const existing = snap.data() as RunRecord;
+      if (!allowedFromStatuses.includes(existing.status)) {
+        return { claimed: false, run: existing };
+      }
+      const updated = { ...existing, ...patch };
+      // A transaction's set() is buffered until commit and replayed on conflict — a second,
+      // concurrent transaction reading the same doc before this one commits sees the
+      // pre-claim status and correctly loses the race, rather than both winning.
+      tx.set(ref, patch, { merge: true });
+      return { claimed: true, run: updated };
+    });
+  }
+
   async getStep(runId: string, stepId: string): Promise<StepRecord | undefined> {
     const snap = await this.stepsCollection(runId).doc(stepId).get();
     return snap.exists ? (snap.data() as StepRecord) : undefined;
   }
 
   async saveStep(runId: string, step: StepRecord): Promise<void> {
-    await this.stepsCollection(runId).doc(step.stepId).set(step, { merge: true });
+    // A void `step.code`/`step.agent` callback checkpoints `output: undefined` — real
+    // Firestore's `set()` throws on any literal `undefined` in the document (a P1 audit
+    // finding: this crashed every run past such a step in production while every test
+    // against the in-memory store passed). Normalized here, at the persistence boundary,
+    // rather than at each call site, so no future step primitive can reintroduce it.
+    await this.stepsCollection(runId).doc(step.stepId).set({ ...step, output: step.output ?? null }, { merge: true });
   }
 
   async listSteps(runId: string): Promise<StepRecord[]> {
@@ -104,7 +129,8 @@ export class FirestoreDurableStepStore implements DurableStepStore {
   }
 
   async saveSlot(runId: string, slot: SlotRecord): Promise<void> {
-    await this.slotsCollection(runId).doc(slot.slotId).set(slot, { merge: true });
+    // Same undefined-output hazard as saveStep, for a fan-out slot's own checkpoint.
+    await this.slotsCollection(runId).doc(slot.slotId).set({ ...slot, output: slot.output ?? null }, { merge: true });
   }
 
   async listSlots(runId: string, fanoutId: string): Promise<SlotRecord[]> {

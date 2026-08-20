@@ -147,6 +147,91 @@ describe("BaseAgent — tenant write-fence", () => {
     expect(result.finalOutput).toBeNull();
     expect(files.execute).not.toHaveBeenCalled();
   });
+
+  it("blocks a tool call whose path-like argument is an absolute filesystem path", async () => {
+    const video = fakeTool("video.writeJsonFile", async () => ({ status: "success", result: { ok: true } }));
+    const router = fakeRouter([toolCallTurn("video.writeJsonFile", { path: "/etc/cron.d/x", content: {} })]);
+    const runtime: BaseAgentRuntime = { router, tools: { "video.writeJsonFile": video } };
+
+    const agent = new MockAgent(runtime, baseConfig({ allowedTools: ["video.writeJsonFile"] }));
+    const result = await agent.run(ctx, {});
+
+    expect(result.status).toBe("tooling_error");
+    expect(video.execute).not.toHaveBeenCalled();
+    const blockResult = result.steps[0]?.toolCall?.result as { blocked: boolean; reason: string };
+    expect(blockResult.blocked).toBe(true);
+    expect(blockResult.reason).toMatch(/absolute or URL-shaped path/i);
+  });
+
+  it("blocks a tool call whose path-like argument is a file:// URI", async () => {
+    const video = fakeTool("video.readJsonFile", async () => ({ status: "success", result: {} }));
+    const router = fakeRouter([toolCallTurn("video.readJsonFile", { jobPath: "file:///etc/passwd" })]);
+    const runtime: BaseAgentRuntime = { router, tools: { "video.readJsonFile": video } };
+
+    const agent = new MockAgent(runtime, baseConfig({ allowedTools: ["video.readJsonFile"] }));
+    const result = await agent.run(ctx, {});
+
+    expect(result.status).toBe("tooling_error");
+    expect(video.execute).not.toHaveBeenCalled();
+  });
+
+  it("does not block a legitimate http(s) URL argument that isn't a path-like field", async () => {
+    const renderCheck = fakeTool("landing.renderCheck", async () => ({ status: "success", result: { pass: true } }));
+    const router = fakeRouter([toolCallTurn("landing.renderCheck", { baseUrl: "http://localhost:3005" }), finalTurn({ body: "ok" })]);
+    const runtime: BaseAgentRuntime = { router, tools: { "landing.renderCheck": renderCheck } };
+
+    const agent = new MockAgent(runtime, baseConfig({ allowedTools: ["landing.renderCheck"] }));
+    const result = await agent.run(ctx, {});
+
+    expect(renderCheck.execute).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe("completed");
+  });
+});
+
+describe("BaseAgent — allowedTools enforcement", () => {
+  it("rejects a tool call for a tool outside this step's allowedTools, without invoking it", async () => {
+    // Present in the runtime's full registry, but not declared in this step's allowedTools —
+    // the fake router bypasses the adapter's own schema.parse(), so this exercises the
+    // explicit runOneTurn membership check, not just buildTurnSchema()'s z.enum.
+    const ledger = fakeTool("ledger.writeDeliverable", async () => ({ status: "success", result: { ok: true } }));
+    const router = fakeRouter([toolCallTurn("ledger.writeDeliverable", { data: "x" })]);
+    const runtime: BaseAgentRuntime = { router, tools: { "ledger.writeDeliverable": ledger } };
+
+    const agent = new MockAgent(runtime, baseConfig({ allowedTools: ["research.pull"] }));
+    const result = await agent.run(ctx, {});
+
+    expect(result.status).toBe("tooling_error");
+    expect(result.finalOutput).toBeNull();
+    expect(ledger.execute).not.toHaveBeenCalled();
+    expect(result.steps[0]?.status).toBe("tooling_error");
+    const blocked = result.steps[0]?.toolCall?.result as { error: string };
+    expect(blocked.error).toMatch(/not in this step's allowedTools/i);
+  });
+
+  it("rejects any tool call when the step declares no tools at all", async () => {
+    const ledger = fakeTool("ledger.writeDeliverable", async () => ({ status: "success", result: { ok: true } }));
+    const router = fakeRouter([toolCallTurn("ledger.writeDeliverable", { data: "x" })]);
+    const runtime: BaseAgentRuntime = { router, tools: { "ledger.writeDeliverable": ledger } };
+
+    const agent = new MockAgent(runtime, baseConfig({ allowedTools: [] }));
+    const result = await agent.run(ctx, {});
+
+    expect(result.status).toBe("tooling_error");
+    expect(result.finalOutput).toBeNull();
+    expect(ledger.execute).not.toHaveBeenCalled();
+  });
+
+  it("still permits a tool call for a tool that is genuinely in allowedTools", async () => {
+    const research = fakeTool("research.pull", async () => ({ status: "success", result: { hits: 1 } }));
+    const router = fakeRouter([toolCallTurn("research.pull", { query: "x" }), finalTurn({ body: "ok" })]);
+    const runtime: BaseAgentRuntime = { router, tools: { "research.pull": research } };
+
+    const agent = new MockAgent(runtime, baseConfig({ allowedTools: ["research.pull"] }));
+    const result = await agent.run(ctx, {});
+
+    expect(result.status).toBe("completed");
+    expect(research.execute).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("BaseAgent — self-critique gate", () => {

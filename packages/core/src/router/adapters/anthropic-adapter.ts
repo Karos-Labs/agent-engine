@@ -1,6 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { CompletionRequest, CompletionResult, ModelAdapter } from "./types.js";
 import { toRootObjectJsonSchema, unwrapRootPayload } from "./root-object-schema.js";
+import { withRetry, type RetryOptions } from "./retry.js";
 
 const STRUCTURED_OUTPUT_TOOL_NAME = "emit_output";
 
@@ -31,30 +32,41 @@ const DEFAULT_MAX_TOKENS = 16384;
  * property; `unwrapRootPayload` takes it back off before parsing.
  *
  * The client is constructor-injected so this adapter is testable without a
- * network call and without an API key.
+ * network call and without an API key. The API call itself is wrapped in a
+ * bounded exponential-backoff retry (RetryOptions, default 3 attempts) for
+ * transient 429/5xx/network failures — retrying the same pinned model, never
+ * swapping it, so this doesn't violate §5.4's "a pinned step never silently
+ * swaps models" rule.
  */
 export class AnthropicAdapter implements ModelAdapter {
   readonly providerId = "anthropic";
 
-  constructor(private readonly client: Anthropic) {}
+  constructor(
+    private readonly client: Anthropic,
+    private readonly retryOptions: RetryOptions = {},
+  ) {}
 
   async complete<TOutput>(req: CompletionRequest<TOutput>): Promise<CompletionResult<TOutput>> {
     const { schema: jsonSchema, wrapped } = toRootObjectJsonSchema(req.schema);
 
-    const response = await this.client.messages.create({
-      model: req.model,
-      max_tokens: req.maxTokens ?? DEFAULT_MAX_TOKENS,
-      ...(req.system !== undefined ? { system: req.system } : {}),
-      messages: [{ role: "user", content: req.prompt }],
-      tools: [
-        {
-          name: STRUCTURED_OUTPUT_TOOL_NAME,
-          description: "Return the final structured output for this step.",
-          input_schema: jsonSchema as unknown as Anthropic.Tool.InputSchema,
-        },
-      ],
-      tool_choice: { type: "tool", name: STRUCTURED_OUTPUT_TOOL_NAME },
-    });
+    const response = await withRetry(
+      () =>
+        this.client.messages.create({
+          model: req.model,
+          max_tokens: req.maxTokens ?? DEFAULT_MAX_TOKENS,
+          ...(req.system !== undefined ? { system: req.system } : {}),
+          messages: [{ role: "user", content: req.prompt }],
+          tools: [
+            {
+              name: STRUCTURED_OUTPUT_TOOL_NAME,
+              description: "Return the final structured output for this step.",
+              input_schema: jsonSchema as unknown as Anthropic.Tool.InputSchema,
+            },
+          ],
+          tool_choice: { type: "tool", name: STRUCTURED_OUTPUT_TOOL_NAME },
+        }),
+      this.retryOptions,
+    );
 
     // A truncated response is not a partial answer — the structured output is
     // cut mid-JSON and unparseable. Say so precisely instead of surfacing the

@@ -1,0 +1,745 @@
+<title>Engine Health & Parity Scorecard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --ground: #f5f7f4;
+    --surface: #ffffff;
+    --surface-2: #eef1ed;
+    --ink: #13181a;
+    --ink-soft: #3a423e;
+    --muted: #616b64;
+    --faint: #8a938c;
+    --edge: #dde2dc;
+    --edge-strong: #c9d1c8;
+    --accent: #1c8a5c;
+    --accent-soft: #e3f2ea;
+    --p0: #cf2f28;
+    --p0-bg: #fbe9e8;
+    --p1: #b4720d;
+    --p1-bg: #f9efdd;
+    --p2: #5f6b78;
+    --p2-bg: #eceef1;
+    --good: #1c8a5c;
+    --shadow: 0 1px 2px rgba(20,24,26,.04), 0 6px 20px rgba(20,24,26,.05);
+    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0d1110;
+      --surface: #141a18;
+      --surface-2: #1b2220;
+      --ink: #e9ede9;
+      --ink-soft: #c3ccc5;
+      --muted: #8d968e;
+      --faint: #6a736c;
+      --edge: #242d29;
+      --edge-strong: #33403a;
+      --accent: #45c98a;
+      --accent-soft: #12271d;
+      --p0: #ff6f66;
+      --p0-bg: #2a1615;
+      --p1: #e3a94f;
+      --p1-bg: #2a2011;
+      --p2: #93a0ad;
+      --p2-bg: #1a2026;
+      --good: #45c98a;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 28px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0d1110;
+    --surface: #141a18;
+    --surface-2: #1b2220;
+    --ink: #e9ede9;
+    --ink-soft: #c3ccc5;
+    --muted: #8d968e;
+    --faint: #6a736c;
+    --edge: #242d29;
+    --edge-strong: #33403a;
+    --accent: #45c98a;
+    --accent-soft: #12271d;
+    --p0: #ff6f66;
+    --p0-bg: #2a1615;
+    --p1: #e3a94f;
+    --p1-bg: #2a2011;
+    --p2: #93a0ad;
+    --p2-bg: #1a2026;
+    --good: #45c98a;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 28px rgba(0,0,0,.35);
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    line-height: 1.6;
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px 100px; }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  /* ---- Masthead ---- */
+  header.mast {
+    padding: 60px 0 40px;
+    border-bottom: 1px solid var(--edge);
+  }
+  .mast .kicker {
+    display: flex; align-items: center; gap: 10px;
+    color: var(--accent);
+    margin-bottom: 22px;
+  }
+  .mast .kicker .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 4px var(--accent-soft);
+  }
+  .mast h1 {
+    font-size: clamp(30px, 5.2vw, 52px);
+    line-height: 1.04;
+    letter-spacing: -.02em;
+    margin: 0 0 18px;
+    font-weight: 660;
+    text-wrap: balance;
+  }
+  .mast .lede {
+    font-size: clamp(16px, 2.1vw, 19px);
+    color: var(--ink-soft);
+    max-width: 60ch;
+    margin: 0;
+  }
+  .meta-row {
+    margin-top: 30px;
+    display: flex; flex-wrap: wrap; gap: 8px 28px;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+  .meta-row b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ---- Verdict band ---- */
+  .verdict {
+    margin-top: 40px;
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    gap: 34px;
+    align-items: center;
+    background: var(--surface);
+    border: 1px solid var(--edge);
+    border-radius: 16px;
+    padding: 34px;
+    box-shadow: var(--shadow);
+  }
+  .gauge { display: flex; flex-direction: column; align-items: center; text-align: center; }
+  .ring { position: relative; width: 190px; height: 190px; }
+  .ring svg { transform: rotate(-90deg); display: block; }
+  .ring .val {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+  }
+  .ring .num {
+    font-family: var(--font-mono);
+    font-size: 52px; font-weight: 640;
+    letter-spacing: -.03em;
+    color: var(--ink);
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .ring .den { font-family: var(--font-mono); font-size: 13px; color: var(--faint); margin-top: 4px; }
+  .grade-tag {
+    margin-top: 16px;
+    font-family: var(--font-mono);
+    font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--p1);
+    background: var(--p1-bg);
+    padding: 6px 12px; border-radius: 999px;
+    font-weight: 600;
+  }
+  .verdict-body h2 { margin: 0 0 12px; font-size: 20px; letter-spacing: -.01em; }
+  .verdict-body p { margin: 0 0 12px; color: var(--ink-soft); font-size: 15.3px; }
+  .verdict-body p:last-child { margin-bottom: 0; }
+
+  /* ---- Section headers ---- */
+  section { margin-top: 64px; }
+  .sec-head { margin-bottom: 26px; }
+  .sec-head h2 {
+    font-size: 13px;
+    font-family: var(--font-mono);
+    letter-spacing: .12em; text-transform: uppercase;
+    color: var(--ink);
+    margin: 8px 0 0;
+    display: flex; align-items: baseline; gap: 12px;
+  }
+  .sec-head h2 .idx { color: var(--accent); }
+  .sec-head .sub { color: var(--muted); font-size: 14px; margin: 8px 0 0; }
+
+  /* ---- Category meters ---- */
+  .meters { display: grid; gap: 14px; }
+  .meter {
+    background: var(--surface);
+    border: 1px solid var(--edge);
+    border-radius: 12px;
+    padding: 20px 22px;
+    display: grid;
+    grid-template-columns: 1fr 92px;
+    gap: 6px 18px;
+    align-items: center;
+    box-shadow: var(--shadow);
+  }
+  .meter .name { font-weight: 620; font-size: 16px; letter-spacing: -.01em; }
+  .meter .score {
+    font-family: var(--font-mono);
+    font-size: 28px; font-weight: 640;
+    text-align: right;
+    grid-row: span 2;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -.02em;
+  }
+  .meter .score small { font-size: 14px; color: var(--faint); font-weight: 500; }
+  .meter .track {
+    grid-column: 1 / 2;
+    height: 7px; border-radius: 4px;
+    background: var(--surface-2);
+    overflow: hidden;
+  }
+  .meter .fill { height: 100%; border-radius: 4px; }
+  .meter .note { grid-column: 1 / 2; font-size: 13.5px; color: var(--muted); margin-top: 2px; }
+
+  /* ---- Findings ---- */
+  .sev-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 22px; }
+  .chip {
+    font-family: var(--font-mono);
+    font-size: 12px; font-weight: 600;
+    padding: 5px 11px; border-radius: 7px;
+    display: inline-flex; align-items: center; gap: 7px;
+    border: 1px solid transparent;
+  }
+  .chip .b { width: 9px; height: 9px; border-radius: 2px; }
+  .chip.p0 { color: var(--p0); background: var(--p0-bg); } .chip.p0 .b { background: var(--p0); }
+  .chip.p1 { color: var(--p1); background: var(--p1-bg); } .chip.p1 .b { background: var(--p1); }
+  .chip.p2 { color: var(--p2); background: var(--p2-bg); } .chip.p2 .b { background: var(--p2); }
+
+  .finding {
+    background: var(--surface);
+    border: 1px solid var(--edge);
+    border-left: 3px solid var(--edge-strong);
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin-bottom: 12px;
+    box-shadow: var(--shadow);
+  }
+  .finding.p0 { border-left-color: var(--p0); }
+  .finding.p1 { border-left-color: var(--p1); }
+  .finding.p2 { border-left-color: var(--p2); }
+  .finding .top {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px;
+    margin-bottom: 12px;
+  }
+  .tag {
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 700;
+    letter-spacing: .05em;
+    padding: 3px 8px; border-radius: 5px;
+  }
+  .tag.p0 { color: #fff; background: var(--p0); }
+  .tag.p1 { color: #fff; background: var(--p1); }
+  .tag.p2 { color: #fff; background: var(--p2); }
+  .finding h3 { margin: 0; font-size: 16.5px; letter-spacing: -.01em; flex: 1 1 320px; }
+  .finding .dim { font-family: var(--font-mono); font-size: 11px; color: var(--faint); letter-spacing: .04em; text-transform: uppercase; }
+  .loc {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--accent);
+    background: var(--accent-soft);
+    padding: 2px 8px; border-radius: 5px;
+    display: inline-block;
+    word-break: break-all;
+  }
+  .finding dl { margin: 14px 0 0; display: grid; grid-template-columns: 108px 1fr; gap: 9px 16px; }
+  .finding dt {
+    font-family: var(--font-mono);
+    font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--faint); padding-top: 2px;
+  }
+  .finding dd { margin: 0; font-size: 14.6px; color: var(--ink-soft); }
+  .finding dd.fix { color: var(--ink); }
+  .finding dd b { color: var(--ink); font-weight: 620; }
+
+  details.more {
+    margin-top: 10px;
+    border: 1px solid var(--edge);
+    border-radius: 10px;
+    background: var(--surface);
+    overflow: hidden;
+  }
+  details.more > summary {
+    cursor: pointer; padding: 16px 22px;
+    font-family: var(--font-mono); font-size: 13px; letter-spacing: .03em;
+    color: var(--ink); list-style: none;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  }
+  details.more > summary::-webkit-details-marker { display: none; }
+  details.more > summary::after { content: "+"; color: var(--accent); font-size: 18px; }
+  details.more[open] > summary::after { content: "\2212"; }
+  details.more > summary:hover { background: var(--surface-2); }
+  .p2list { border-top: 1px solid var(--edge); }
+  .p2row {
+    display: grid; grid-template-columns: 1fr; gap: 4px;
+    padding: 15px 22px;
+    border-bottom: 1px solid var(--edge);
+  }
+  .p2row:last-child { border-bottom: none; }
+  .p2row .r-top { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: baseline; }
+  .p2row .r-title { font-weight: 600; font-size: 14.5px; }
+  .p2row .r-loc { font-family: var(--font-mono); font-size: 12px; color: var(--accent); word-break: break-all; }
+  .p2row .r-body { font-size: 13.8px; color: var(--muted); }
+
+  /* ---- Verification terminal ---- */
+  .term {
+    background: #0c100f;
+    border: 1px solid #1e2723;
+    border-radius: 12px;
+    padding: 22px 24px;
+    font-family: var(--font-mono);
+    font-size: 13.5px;
+    line-height: 1.85;
+    color: #cdd6cf;
+    overflow-x: auto;
+    box-shadow: var(--shadow);
+  }
+  .term .prompt { color: #52c98a; }
+  .term .flag { color: #7fa4c8; }
+  .term .ok { color: #6fd39b; }
+  .term .dim2 { color: #6a736c; }
+  .term .hl { color: #f0f3ef; font-weight: 600; }
+  .term .warn { color: #e3a94f; }
+  .term .line { white-space: pre; }
+
+  .vgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
+  .vstat {
+    background: var(--surface); border: 1px solid var(--edge);
+    border-radius: 10px; padding: 16px 18px; box-shadow: var(--shadow);
+  }
+  .vstat .n { font-family: var(--font-mono); font-size: 26px; font-weight: 640; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .vstat .l { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+  .vstat .n.pass { color: var(--good); }
+
+  /* ---- Strengths ---- */
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--edge);
+    border-radius: 10px; padding: 18px 20px; box-shadow: var(--shadow);
+  }
+  .card h4 { margin: 0 0 6px; font-size: 15px; letter-spacing: -.01em; display: flex; align-items: center; gap: 9px; }
+  .card h4 .m { color: var(--good); font-family: var(--font-mono); font-size: 14px; }
+  .card p { margin: 0; font-size: 14px; color: var(--ink-soft); }
+
+  footer {
+    margin-top: 72px; padding-top: 28px;
+    border-top: 1px solid var(--edge);
+    font-family: var(--font-mono); font-size: 12px; color: var(--faint);
+    display: flex; flex-wrap: wrap; gap: 6px 24px; justify-content: space-between;
+  }
+
+  @media (max-width: 760px) {
+    .verdict { grid-template-columns: 1fr; gap: 26px; text-align: center; }
+    .gauge { align-items: center; }
+    .verdict-body { text-align: left; }
+    .vgrid { grid-template-columns: 1fr; }
+    .cols { grid-template-columns: 1fr; }
+    .finding dl { grid-template-columns: 1fr; gap: 3px 0; }
+    .finding dt { padding-top: 10px; }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .fill, .ring circle { transition: none; }
+  }
+  a { color: var(--accent); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+</style>
+
+<div class="wrap">
+
+  <header class="mast">
+    <div class="kicker eyebrow"><span class="dot"></span>Karos Labs · agent-engine · 360° audit</div>
+    <h1>Engine Health &amp; Parity Scorecard</h1>
+    <p class="lede">A full-repository architectural, security, domain-parity and quality audit of the autonomous agent runtime — BaseAgent, durable workflow orchestration, the MCP tool layer, and all twelve migrated agents.</p>
+    <div class="meta-row">
+      <span>commit <b>f17e640</b></span>
+      <span>branch <b>master</b></span>
+      <span>scanned <b>~585 TS files · 13 tool pkgs · 12 agents</b></span>
+      <span>date <b>2026-08-19</b></span>
+    </div>
+
+    <div class="verdict">
+      <div class="gauge">
+        <div class="ring">
+          <svg width="190" height="190" viewBox="0 0 190 190" aria-hidden="true">
+            <circle cx="95" cy="95" r="82" fill="none" stroke="var(--surface-2)" stroke-width="14"></circle>
+            <circle cx="95" cy="95" r="82" fill="none" stroke="var(--p1)" stroke-width="14"
+                    stroke-linecap="round" stroke-dasharray="515.2" stroke-dashoffset="128.8"></circle>
+          </svg>
+          <div class="val">
+            <div class="num">75</div>
+            <div class="den">/ 100</div>
+          </div>
+        </div>
+        <div class="grade-tag">Healthy · ship-blocked</div>
+      </div>
+      <div class="verdict-body">
+        <h2>Strong bones, one load-bearing crack</h2>
+        <p>The three-layer design is genuinely well built: the layering invariant holds, the deterministic-scoring boundary (&ldquo;the model extracts, arithmetic routes&rdquo;) is exemplary and fixture-locked, and the test culture is real — <b>1,294 tests pass, zero typecheck errors</b>, with no test theater.</p>
+        <p>It is held below its design quality by <b>one P0</b> — <code style="font-family:var(--font-mono);font-size:.85em">allowedTools</code> is advisory, not enforced — which opens a prompt-injection→pre-gate-write path, plus a cluster of <b>P1s</b> exactly where the RFCs demanded rigor: gate resume, concurrency, and a production-only Firestore crash. Fix the P0 and the six architecture P1s before enabling any credentialed agent.</p>
+      </div>
+    </div>
+  </header>
+
+  <!-- SCORES -->
+  <section id="scores">
+    <div class="sec-head">
+      <p class="eyebrow">Deliverable 1</p>
+      <h2><span class="idx">01</span> Health scores by dimension</h2>
+      <p class="sub">Weighted composite: Architecture 30% · Security 25% · Domain Parity 25% · Quality 20%.</p>
+    </div>
+    <div class="meters">
+      <div class="meter">
+        <div class="name">Architecture &amp; Agent Loop</div>
+        <div class="score">64<small>/100</small></div>
+        <div class="track"><div class="fill" style="width:64%;background:var(--p1)"></div></div>
+        <div class="note">Layering &amp; resume-by-replay are excellent; capped by the P0 and six P1s in gate/concurrency/state handling.</div>
+      </div>
+      <div class="meter">
+        <div class="name">Security &amp; Sandboxing</div>
+        <div class="score">68<small>/100</small></div>
+        <div class="track"><div class="fill" style="width:68%;background:var(--p1)"></div></div>
+        <div class="note">Landing write-fence is thoughtfully layered; unsanitized slugs, model-authored build code, and unfenced <code style="font-family:var(--font-mono);font-size:.85em">video.*</code> pull it down.</div>
+      </div>
+      <div class="meter">
+        <div class="name">Domain &amp; Business Logic Parity</div>
+        <div class="score">87<small>/100</small></div>
+        <div class="track"><div class="fill" style="width:87%;background:var(--good)"></div></div>
+        <div class="note">Every counted constraint — 11 archetypes, 6 lanes, 13-field schema, 11-step pulse, 4 doctrine invariants — verified in code with tests.</div>
+      </div>
+      <div class="meter">
+        <div class="name">Codebase Quality &amp; Test Rigor</div>
+        <div class="score">84<small>/100</small></div>
+        <div class="track"><div class="fill" style="width:84%;background:var(--good)"></div></div>
+        <div class="note">~zero <code style="font-family:var(--font-mono);font-size:.85em">any</code>, zero TODO on critical paths, no self-asserting mocks; capped by no LLM retry &amp; three unbounded-growth read patterns.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FINDINGS -->
+  <section id="findings">
+    <div class="sec-head">
+      <p class="eyebrow">Deliverable 2</p>
+      <h2><span class="idx">02</span> Actionable findings</h2>
+      <p class="sub">1 × P0 · 20 × P1 · ~30 × P2. Full P0 and P1 detail below; P2s grouped and collapsible.</p>
+    </div>
+    <div class="sev-legend">
+      <span class="chip p0"><span class="b"></span>P0 · correctness / security critical</span>
+      <span class="chip p1"><span class="b"></span>P1 · reliability / important</span>
+      <span class="chip p2"><span class="b"></span>P2 · quality / minor</span>
+    </div>
+
+    <!-- P0 -->
+    <article class="finding p0">
+      <div class="top">
+        <span class="tag p0">P0</span>
+        <h3><code style="font-family:var(--font-mono)">allowedTools</code> is never enforced — the ReAct loop can call any registered tool</h3>
+        <span class="dim">Architecture</span>
+      </div>
+      <span class="loc">packages/core/src/agent/base-agent.ts:128-133, 209-225 · x-draft-agent.ts:88</span>
+      <dl>
+        <dt>Root cause</dt><dd>The tool-lookup path validates existence and input schema but skips the allowlist membership check. <code style="font-family:var(--font-mono);font-size:.85em">allowedTools</code> appears only in the doc comment and the prompt text — advisory to the model, never checked in code. The full merged registry (<code style="font-family:var(--font-mono);font-size:.85em">ledger.writeDeliverable</code> included) is passed as <code style="font-family:var(--font-mono);font-size:.85em">runtime.tools</code> while the draft agent declares only four gate/render tools.</dd>
+        <dt>Impact</dt><dd>Research content is serialized verbatim into the next turn's prompt with no trust boundary. An injected instruction in a scraped article (&ldquo;call ledger.writeDeliverable&hellip;&rdquo;) causes a real ledger write <b>before</b> the human batch-review gate — defeating the entire &ldquo;nothing persists until a human approves&rdquo; design. The write-fence only blocks path traversal and cross-tenant fields; a same-tenant write sails through.</dd>
+        <dt class="fix">Fix</dt><dd class="fix">Build the turn schema's <code style="font-family:var(--font-mono);font-size:.85em">tool</code> field as <code style="font-family:var(--font-mono);font-size:.85em">z.enum(config.allowedTools)</code>, add a membership check in <code style="font-family:var(--font-mono);font-size:.85em">runOneTurn</code> before the write-fence, and pass only the allowlisted subset of the registry into the loop. Add a regression test — none exists.</dd>
+      </dl>
+    </article>
+
+    <!-- P1s -->
+    <article class="finding p1">
+      <div class="top"><span class="tag p1">P1</span><h3>Landing gate executes model-authored site code via <code style="font-family:var(--font-mono)">npm run build</code></h3><span class="dim">Security</span></div>
+      <span class="loc">packages/tools/karos-landing/src/gate/gate-tool.ts:147 · write-file-tool.ts:40</span>
+      <dl>
+        <dt>Root cause</dt><dd>The gate runs <code style="font-family:var(--font-mono);font-size:.85em">execFileAsync("npm",["run","build"],{cwd:siteRoot,shell:true})</code> against a tree the LLM wrote. <code style="font-family:var(--font-mono);font-size:.85em">writeSiteFile</code> fences <em>where</em> files land but has no filename allowlist, so <code style="font-family:var(--font-mono);font-size:.85em">next.config.ts</code>/<code style="font-family:var(--font-mono);font-size:.85em">package.json</code> are writable — and Next.js executes them at build time.</dd>
+        <dt>Impact</dt><dd>Prompt-injected brand/scrape content steers the make-agent to write a malicious <code style="font-family:var(--font-mono);font-size:.85em">next.config.ts</code>; the gate build runs attacker JS on the host, inheriting <code style="font-family:var(--font-mono);font-size:.85em">ANTHROPIC_API_KEY</code>, GCP ADC and the GCS bucket. <b>Becomes P0 the moment landing-builder deploys alongside credentialed workloads.</b></dd>
+        <dt class="fix">Fix</dt><dd class="fix">Run the build in an isolated, credential-free, network-restricted sandbox; drop <code style="font-family:var(--font-mono);font-size:.85em">shell:true</code>; deny writes to <code style="font-family:var(--font-mono);font-size:.85em">next.config.*</code>/<code style="font-family:var(--font-mono);font-size:.85em">package*.json</code>.</dd>
+      </dl>
+    </article>
+
+    <article class="finding p1">
+      <div class="top"><span class="tag p1">P1</span><h3><code style="font-family:var(--font-mono)">clientSlug</code> path traversal in landing bundle tools</h3><span class="dim">Security</span></div>
+      <span class="loc">read-bundle-tool.ts:63 · update-brand-feedback-tool.ts:47 · runs.ts:19</span>
+      <dl>
+        <dt>Root cause</dt><dd>Both tools build <code style="font-family:var(--font-mono);font-size:.85em">path.join(bundlesRoot, ctx.clientSlug, …)</code> with the raw slug, unlike <code style="font-family:var(--font-mono);font-size:.85em">siteRootForClient</code> which runs it through <code style="font-family:var(--font-mono);font-size:.85em">sanitizeSegment</code>. Ingress only validates <code style="font-family:var(--font-mono);font-size:.85em">z.string().min(1)</code>.</dd>
+        <dt>Impact</dt><dd>A run with <code style="font-family:var(--font-mono);font-size:.85em">clientSlug="../../../../etc/attacker"</code> reads and writes JSON outside <code style="font-family:var(--font-mono);font-size:.85em">bundlesRoot</code> — arbitrary-directory read/write scoped only by a caller-supplied string.</dd>
+        <dt class="fix">Fix</dt><dd class="fix">Wrap the slug in <code style="font-family:var(--font-mono);font-size:.85em">sanitizeSegment</code> in both tools and add a slug charset regex (<code style="font-family:var(--font-mono);font-size:.85em">/^[a-z0-9][a-z0-9-]*$/</code>) at <code style="font-family:var(--font-mono);font-size:.85em">StartRunRequestSchema</code> so the invariant isn't per-backend.</dd>
+      </dl>
+    </article>
+
+    <article class="finding p1">
+      <div class="top"><span class="tag p1">P1</span><h3><code style="font-family:var(--font-mono)">video.*</code> tools are unfenced; the write-fence ignores absolute paths</h3><span class="dim">Security · Tooling</span></div>
+      <span class="loc">karos-video/src/tools/write-json-file.ts:38 · read-json-file.ts:29 · core/src/agent/write-fence.ts:8</span>
+      <dl>
+        <dt>Root cause</dt><dd>The video tools accept an arbitrary <code style="font-family:var(--font-mono);font-size:.85em">path</code> with no tenant scoping or containment; the only backstop, <code style="font-family:var(--font-mono);font-size:.85em">enforceWriteFence</code>, flags <code style="font-family:var(--font-mono);font-size:.85em">..</code> segments but not <code style="font-family:var(--font-mono);font-size:.85em">path.isAbsolute()</code> — <code style="font-family:var(--font-mono);font-size:.85em">/etc/cron.d/x</code> passes.</dd>
+        <dt>Impact</dt><dd>Mitigated today (branded-shorts agents declare <code style="font-family:var(--font-mono);font-size:.85em">allowedTools:[]</code> and paths come from code steps), but any future step granting a <code style="font-family:var(--font-mono);font-size:.85em">video.*</code> tool, or a malicious path in client config, yields arbitrary-path file read/write.</dd>
+        <dt class="fix">Fix</dt><dd class="fix">Bind a per-tenant work-root and validate via a <code style="font-family:var(--font-mono);font-size:.85em">resolveSandboxedWritePath</code>-style check; extend the write-fence to reject absolute and URL-shaped paths.</dd>
+      </dl>
+    </article>
+
+    <article class="finding p1">
+      <div class="top"><span class="tag p1">P1</span><h3><code style="font-family:var(--font-mono)">step.code</code> returning <code style="font-family:var(--font-mono)">undefined</code> crashes real Firestore — tests mask it</h3><span class="dim">Architecture</span></div>
+      <span class="loc">step-code.ts:36-48 · firestore-store.ts:93 · create-x-agent-workflow.ts:332-337 · fake-firestore.ts:24-27</span>
+      <dl>
+        <dt>Root cause</dt><dd>Several code steps (e.g. X step 19 <code style="font-family:var(--font-mono);font-size:.85em">persist-manifest</code>) have no return, so <code style="font-family:var(--font-mono);font-size:.85em">output: undefined</code> is checkpointed. Real Firestore rejects <code style="font-family:var(--font-mono);font-size:.85em">undefined</code> unless <code style="font-family:var(--font-mono);font-size:.85em">ignoreUndefinedProperties</code> is set (it isn't anywhere). The fake store happily stores it, so the whole suite passes.</dd>
+        <dt>Impact</dt><dd>On real GCP wiring, every run that survives the human gate crashes at the next void code step — <b>after</b> the deliverable was persisted — and is marked <code style="font-family:var(--font-mono);font-size:.85em">degraded</code>. Affects five of the migrated agents in production only.</dd>
+        <dt class="fix">Fix</dt><dd class="fix">Normalize <code style="font-family:var(--font-mono);font-size:.85em">output ?? null</code> in <code style="font-family:var(--font-mono);font-size:.85em">saveStep</code> (or enable <code style="font-family:var(--font-mono);font-size:.85em">ignoreUndefinedProperties</code>), and make the fake store throw on <code style="font-family:var(--font-mono);font-size:.85em">undefined</code> so tests match production.</dd>
+      </dl>
+    </article>
+
+    <article class="finding p1">
+      <div class="top"><span class="tag p1">P1</span><h3>No concurrency guard — the same run executes twice in parallel</h3><span class="dim">Architecture · Quality</span></div>
+      <span class="loc">apps/agent-server/src/routes/runs.ts:82-138 · workflow-engine.ts:58-74</span>
+      <dl>
+        <dt>Root cause</dt><dd>Resume never checks <code style="font-family:var(--font-mono);font-size:.85em">status === "awaiting_gate"</code>; <code style="font-family:var(--font-mono);font-size:.85em">run()</code> unconditionally flips to <code style="font-family:var(--font-mono);font-size:.85em">running</code> with no lease/lock (the RFC's Redis lock is unimplemented). <code style="font-family:var(--font-mono);font-size:.85em">POST /start</code> mints a fresh UUID per request.</dd>
+        <dt>Impact</dt><dd>Two near-simultaneous approvals (double-click / retried request) both invoke the LLM and re-execute post-gate steps — double model spend and last-write-wins telemetry. A portal retry on start silently creates a second full run.</dd>
+        <dt class="fix">Fix</dt><dd class="fix">Optimistic lease via compare-and-set on <code style="font-family:var(--font-mono);font-size:.85em">status</code>; reject resume of a non-<code style="font-family:var(--font-mono);font-size:.85em">awaiting_gate</code> run with HTTP 409; accept a client idempotency key on start.</dd>
+      </dl>
+    </article>
+
+    <article class="finding p1">
+      <div class="top"><span class="tag p1">P1</span><h3>Report serializer reports false failures for paused / running runs</h3><span class="dim">Architecture</span></div>
+      <span class="loc">serialize-run-report.ts:82-85, 139-151 · apps/agent-server/src/report.ts:171-195</span>
+      <dl>
+        <dt>Root cause</dt><dd>A missing step record serializes as <code style="font-family:var(--font-mono);font-size:.85em">status:"failed", error:"step did not run"</code>, and <code style="font-family:var(--font-mono);font-size:.85em">failedStepId</code>/<code style="font-family:var(--font-mono);font-size:.85em">failedStepIndex</code> are derived from those synthetic failures. The serializer conflates &ldquo;not reached&rdquo; with &ldquo;failed.&rdquo;</dd>
+        <dt>Impact</dt><dd>Every legitimately paused run returns a report claiming <code style="font-family:var(--font-mono);font-size:.85em">failedStepId:"15-batch-review"</code> plus 5–6 more &ldquo;failed&rdquo; steps — the portal shows a failed job for a healthy run waiting on a human. Returned in the very response that says <code style="font-family:var(--font-mono);font-size:.85em">awaiting_gate</code>.</dd>
+        <dt class="fix">Fix</dt><dd class="fix">Omit unreached descriptors when status is <code style="font-family:var(--font-mono);font-size:.85em">awaiting_gate</code>/<code style="font-family:var(--font-mono);font-size:.85em">running</code>; never derive <code style="font-family:var(--font-mono);font-size:.85em">failedStepId</code> from synthetic entries (the contract already tolerates a shorter <code style="font-family:var(--font-mono);font-size:.85em">steps</code> array).</dd>
+      </dl>
+    </article>
+
+    <article class="finding p1">
+      <div class="top"><span class="tag p1">P1</span><h3>Gate-id API asymmetry — round-tripping the returned id 404s</h3><span class="dim">Architecture</span></div>
+      <span class="loc">step-gate.ts:6-8, 37 · workflow-engine.ts:95-102, 133-140 · runs.ts:101-118</span>
+      <dl>
+        <dt>Root cause</dt><dd>The engine returns the <em>qualified</em> <code style="font-family:var(--font-mono);font-size:.85em">pendingGateId</code> (<code style="font-family:var(--font-mono);font-size:.85em">${runId}__${id}</code>) but <code style="font-family:var(--font-mono);font-size:.85em">resolveGate</code> re-qualifies the id it receives — two id namespaces leak across the same boundary in opposite directions.</dd>
+        <dt>Impact</dt><dd>A client POSTing back the <code style="font-family:var(--font-mono);font-size:.85em">pendingGateId</code> it was given gets <code style="font-family:var(--font-mono);font-size:.85em">runId__runId__15-batch-review</code> → 404. Both demo and smoke scripts already hardcode the local id as a workaround; the engine asymmetry is unfixed.</dd>
+        <dt class="fix">Fix</dt><dd class="fix">Make <code style="font-family:var(--font-mono);font-size:.85em">resolveGate</code> accept either form (strip a <code style="font-family:var(--font-mono);font-size:.85em">${runId}__</code> prefix), or return the local id and keep the qualified id internal. Document one canonical shape in OpenAPI.</dd>
+      </dl>
+    </article>
+
+    <article class="finding p1">
+      <div class="top"><span class="tag p1">P1</span><h3>Stale <code style="font-family:var(--font-mono)">pendingGateId</code> / <code style="font-family:var(--font-mono)">failureReason</code> survive terminal transitions</h3><span class="dim">Architecture</span></div>
+      <span class="loc">workflow-engine.ts:90 · memory-store.ts:42 · firestore-store.ts:84 · runs.ts:154-159</span>
+      <dl>
+        <dt>Root cause</dt><dd>The completion patch is <code style="font-family:var(--font-mono);font-size:.85em">{status, updatedAt, totalCostUsd}</code> and never clears prior fields; <code style="font-family:var(--font-mono);font-size:.85em">merge:true</code> semantics preserve them. <code style="font-family:var(--font-mono);font-size:.85em">GET /status</code> emits <code style="font-family:var(--font-mono);font-size:.85em">pendingGateId</code> whenever defined.</dd>
+        <dt>Impact</dt><dd>A resumed-to-completion run still returns <code style="font-family:var(--font-mono);font-size:.85em">{status:"completed", pendingGateId:"…"}</code> — a client polling for pending gates re-surfaces a settled gate forever; a recovered run keeps its old <code style="font-family:var(--font-mono);font-size:.85em">failureReason</code>.</dd>
+        <dt class="fix">Fix</dt><dd class="fix">Clear inapplicable fields on each terminal transition (<code style="font-family:var(--font-mono);font-size:.85em">FieldValue.delete()</code>), or gate <code style="font-family:var(--font-mono);font-size:.85em">pendingGateId</code> on <code style="font-family:var(--font-mono);font-size:.85em">status==="awaiting_gate"</code> in the route.</dd>
+      </dl>
+    </article>
+
+    <article class="finding p1">
+      <div class="top"><span class="tag p1">P1</span><h3>Budget is dropped on resume and never set by the server</h3><span class="dim">Architecture</span></div>
+      <span class="loc">workflow-engine.ts:59-84 · runs.ts:69, 122-127 · step-agent.ts:32-37</span>
+      <dl>
+        <dt>Root cause</dt><dd>On an existing run, budget comes only from <code style="font-family:var(--font-mono);font-size:.85em">params.budget</code> — the persisted <code style="font-family:var(--font-mono);font-size:.85em">existingRun.budget</code> is ignored; neither start nor resume ever passes one.</dd>
+        <dt>Impact</dt><dd>RFC-01's &ldquo;budget enforced before spend&rdquo; is structurally present but inert in the deployed server; even a caller who sets it at start loses the ceiling on the post-gate half of the run.</dd>
+        <dt class="fix">Fix</dt><dd class="fix"><code style="font-family:var(--font-mono);font-size:.85em">const budget = params.budget ?? existingRun?.budget</code> threaded into the runtime, plus an env-configurable default per-run ceiling in the route.</dd>
+      </dl>
+    </article>
+
+    <article class="finding p1">
+      <div class="top"><span class="tag p1">P1</span><h3>App Store capture leg: unguarded fetch/parse wipes sibling legs</h3><span class="dim">Tooling</span></div>
+      <span class="loc">karos-reputation/src/capture/appstore.ts:39-48, 95-101 · capture-tool.ts:33-55</span>
+      <dl>
+        <dt>Root cause</dt><dd><code style="font-family:var(--font-mono);font-size:.85em">appstorePages</code> calls <code style="font-family:var(--font-mono);font-size:.85em">fetch</code>+<code style="font-family:var(--font-mono);font-size:.85em">JSON.parse</code> with no try/catch, unlike the GBP/Yelp adapters which route every failure through <code style="font-family:var(--font-mono);font-size:.85em">dead()</code>.</dd>
+        <dt>Impact</dt><dd>A DNS failure or an HTML error page returned with HTTP 200 throws, aborts the sequential leg loop, and turns the <b>entire</b> multi-leg capture into <code style="font-family:var(--font-mono);font-size:.85em">tooling_error</code> — already-captured GBP/Yelp outcomes are discarded and no UNAVAILABLE tombstone is written, violating the three-outcome-per-leg contract.</dd>
+        <dt class="fix">Fix</dt><dd class="fix">Wrap the appstore calls in try/catch returning <code style="font-family:var(--font-mono);font-size:.85em">dead(reason)</code>; add per-leg try/catch in <code style="font-family:var(--font-mono);font-size:.85em">capture-tool.ts</code> so no single adapter can erase siblings.</dd>
+      </dl>
+    </article>
+
+    <article class="finding p1">
+      <div class="top"><span class="tag p1">P1</span><h3>Triage config NaN hazard hidden behind an <code style="font-family:var(--font-mono)">as</code> cast</h3><span class="dim">Tooling</span></div>
+      <span class="loc">karos-reputation/src/triage/schemas.ts:27 · triage-tool.ts:24 · triage.ts:124-125</span>
+      <dl>
+        <dt>Root cause</dt><dd>The runtime schema (<code style="font-family:var(--font-mono);font-size:.85em">z.record(string, number)</code>) can't require <code style="font-family:var(--font-mono);font-size:.85em">platform_visibility.default</code>, and an <code style="font-family:var(--font-mono);font-size:.85em">as TriageConfig</code> cast papers over the gap the engine depends on.</dd>
+        <dt>Impact</dt><dd>A per-client config override that omits <code style="font-family:var(--font-mono);font-size:.85em">"default"</code> passes validation; every review on an unlisted platform scores <code style="font-family:var(--font-mono);font-size:.85em">value = NaN</code>, so respond-worthy reviews silently route to NO-ACTION. The deterministic routing authority — the one thing that must never be wrong — degrades silently.</dd>
+        <dt class="fix">Fix</dt><dd class="fix">Model as <code style="font-family:var(--font-mono);font-size:.85em">z.object({default:z.number()}).catchall(z.number())</code> and delete the cast so the compiler re-checks the bridge.</dd>
+      </dl>
+    </article>
+
+    <article class="finding p1">
+      <div class="top"><span class="tag p1">P1</span><h3>LinkedIn's never-repeat rule silently no-ops for multi-channel clients</h3><span class="dim">Domain Parity</span></div>
+      <span class="loc">karos-memory/src/append-decision.ts:22-23 · read.ts:58 · create-linkedin-agent-workflow.ts:253-254</span>
+      <dl>
+        <dt>Root cause</dt><dd>Memory keys decisions under <code style="font-family:var(--font-mono);font-size:.85em">clientSlug</code> only — no <code style="font-family:var(--font-mono);font-size:.85em">productId</code> segmentation — and one shared store serves all agents. LinkedIn extracts <code style="font-family:var(--font-mono);font-size:.85em">lastArchetype</code> from only the single most-recent decision.</dd>
+        <dt>Impact</dt><dd>For a client running X/blog/newsletter alongside LinkedIn (the normal case), the most-recent decision is usually another channel's → <code style="font-family:var(--font-mono);font-size:.85em">lastArchetype</code> is undefined → the &ldquo;never same lane as last post&rdquo; rule (which does most of the dedup work) no-ops, and the rotation index advances on other channels' runs.</dd>
+        <dt class="fix">Fix</dt><dd class="fix">Mirror X's <code style="font-family:var(--font-mono);font-size:.85em">lane.ts:73-77</code> — take the most recent decision that actually parses an archetype — or add a product-scoped decision field.</dd>
+      </dl>
+    </article>
+
+    <article class="finding p1">
+      <div class="top"><span class="tag p1">P1</span><h3>No retry / backoff anywhere on LLM calls</h3><span class="dim">Quality</span></div>
+      <span class="loc">packages/core/src/router/model-router.ts:63-66 · anthropic-adapter.ts:27</span>
+      <dl>
+        <dt>Root cause</dt><dd>The pinned tier gets exactly one attempt; the adapter sets no timeout and never checks <code style="font-family:var(--font-mono);font-size:.85em">stop_reason</code> (a <code style="font-family:var(--font-mono);font-size:.85em">max_tokens</code>-truncated tool_use throws a confusing <code style="font-family:var(--font-mono);font-size:.85em">schema.parse</code> error).</dd>
+        <dt>Impact</dt><dd>One transient 429 during a 19-step run → turn <code style="font-family:var(--font-mono);font-size:.85em">tooling_error</code> → whole run <code style="font-family:var(--font-mono);font-size:.85em">degraded</code>, requiring manual resume.</dd>
+        <dt class="fix">Fix</dt><dd class="fix">Bounded exponential backoff on 429/5xx/timeout inside the adapters (retrying the same model doesn't violate the &ldquo;pinned never swaps&rdquo; rule); check <code style="font-family:var(--font-mono);font-size:.85em">stop_reason</code>.</dd>
+      </dl>
+    </article>
+
+    <article class="finding p1">
+      <div class="top"><span class="tag p1">P1</span><h3>Unbounded full-history reads on hot paths (research &amp; memory)</h3><span class="dim">Quality</span></div>
+      <span class="loc">karos-research/src/runs.ts:20-29 · karos-memory/src/read.ts:57-62</span>
+      <dl>
+        <dt>Root cause</dt><dd><code style="font-family:var(--font-mono);font-size:.85em">latestRun()</code> lists and parses <em>all</em> historical run records (each with its full payload) on every cache check; <code style="font-family:var(--font-mono);font-size:.85em">memory.read</code> lists <em>all</em> decisions despite the &ldquo;retrieved-not-loaded-whole&rdquo; doc claim. Both scopes grow monotonically per run.</dd>
+        <dt>Impact</dt><dd>A recurring client on the GCS backend triggers hundreds of sequential object downloads per <code style="font-family:var(--font-mono);font-size:.85em">research.pull</code> within a year — multi-second latency and memory proportional to total history; the <code style="font-family:var(--font-mono);font-size:.85em">excludeTopics</code> list fed to <code style="font-family:var(--font-mono);font-size:.85em">topics.reserve</code> grows without limit.</dd>
+        <dt class="fix">Fix</dt><dd class="fix">Write a <code style="font-family:var(--font-mono);font-size:.85em">latest.json</code> pointer per research job; add a <code style="font-family:var(--font-mono);font-size:.85em">limit</code>/<code style="font-family:var(--font-mono);font-size:.85em">since</code> parameter to <code style="font-family:var(--font-mono);font-size:.85em">memory.read</code> and slice in the tool.</dd>
+      </dl>
+    </article>
+
+    <article class="finding p1">
+      <div class="top"><span class="tag p1">P1</span><h3>GCS &amp; file workspace stores diverge — listing order, prefix scope, sequential I/O</h3><span class="dim">Quality</span></div>
+      <span class="loc">common/src/adapters/gcs/gcs-workspace-store.ts:58-69 · file-git/workspace-store.ts:100-116</span>
+      <dl>
+        <dt>Root cause</dt><dd>The GCS store downloads objects sequentially in a for-await loop, uses a <em>recursive</em> prefix, and sorts with <code style="font-family:var(--font-mono);font-size:.85em">localeCompare</code>; the file store lists direct children only and sorts by code-unit order. The two &ldquo;interchangeable&rdquo; backends return different result sets. Untested.</dd>
+        <dt>Impact</dt><dd>A 50-entry listing costs ~5s on GCS; nested layouts return different entries between lab and prod — a latent correctness bug the adapter-swap principle is meant to prevent.</dd>
+        <dt class="fix">Fix</dt><dd class="fix">Bounded <code style="font-family:var(--font-mono);font-size:.85em">Promise.all</code> for downloads; match the file store's direct-children scope and code-unit comparator; add a cross-backend conformance test.</dd>
+      </dl>
+    </article>
+
+    <article class="finding p1">
+      <div class="top"><span class="tag p1">P1</span><h3>LLM adapters have zero tests</h3><span class="dim">Quality</span></div>
+      <span class="loc">packages/core/src/router/adapters/anthropic-adapter.ts · openai-compatible-adapter.ts</span>
+      <dl>
+        <dt>Root cause</dt><dd>The only code that talks to the actual model APIs — response-shape handling, token accounting, the missing-<code style="font-family:var(--font-mono);font-size:.85em">tool_use</code> error path — is untested, despite the client being constructor-injected specifically for testability.</dd>
+        <dt>Impact</dt><dd>The highest-risk boundary (external API shape drift, cost mis-accounting) has no regression net; the cache-write-token undercount (P2) lives here undetected.</dd>
+        <dt class="fix">Fix</dt><dd class="fix">Table-driven tests against a fake client covering token accounting (cached/uncached/cache-creation), <code style="font-family:var(--font-mono);font-size:.85em">stop_reason</code> variants, and the no-tool_use path.</dd>
+      </dl>
+    </article>
+
+    <article class="finding p1">
+      <div class="top"><span class="tag p1">P1</span><h3><code style="font-family:var(--font-mono)">resolveGate</code> silently overwrites an already-resolved gate</h3><span class="dim">Architecture · Quality</span></div>
+      <span class="loc">packages/workflow/src/engine/workflow-engine.ts:133-140</span>
+      <dl>
+        <dt>Root cause</dt><dd>No guard against resolving a gate that already carries a response; the new decision overwrites the old with no test covering it.</dd>
+        <dt>Impact</dt><dd>A second resolve after approval can flip the audit record of a human decision post-completion — the durable trail of who approved what stops being trustworthy.</dd>
+        <dt class="fix">Fix</dt><dd class="fix">Reject a resolve when <code style="font-family:var(--font-mono);font-size:.85em">response</code> is already set (idempotent no-op if identical), and record both decisions if a re-decision is a real product need.</dd>
+      </dl>
+    </article>
+
+    <article class="finding p1">
+      <div class="top"><span class="tag p1">P1</span><h3>Blended mention rate ignores the caller's N_e denominator</h3><span class="dim">Domain Parity</span></div>
+      <span class="loc">karos-seo-geo/src/visibility-metrics.ts:130-132 · visibility-index.ts:46</span>
+      <dl>
+        <dt>Root cause</dt><dd>The blended rate is always <code style="font-family:var(--font-mono);font-size:.85em">namedCount / (N × engines)</code> regardless of <code style="font-family:var(--font-mono);font-size:.85em">denominator:"N_e"</code>, while every per-engine metric honors the parameter.</dd>
+        <dt>Impact</dt><dd>The one aggregate feeding GEO-35's <code style="font-family:var(--font-mono);font-size:.85em">named_mention_rate</code> always uses raw N, so RFC-04's &ldquo;compute the N_e alternative without recapturing&rdquo; promise is only half-true — the client-facing GEO grade shifts under the wrong denominator.</dd>
+        <dt class="fix">Fix</dt><dd class="fix">Divide by <code style="font-family:var(--font-mono);font-size:.85em">Σ max(nEffective,1)</code> when <code style="font-family:var(--font-mono);font-size:.85em">denominator==="N_e"</code>, or document the N-only blend deliberately next to the N-vs-N_e decision comment.</dd>
+      </dl>
+    </article>
+
+    <article class="finding p1">
+      <div class="top"><span class="tag p1">P1</span><h3>Build script omits the three newest tool packages and their agents</h3><span class="dim">Quality · Release</span></div>
+      <span class="loc">package.json:17 · apps/agent-server/src/wiring/workflows.ts:11-18</span>
+      <dl>
+        <dt>Root cause</dt><dd>The <code style="font-family:var(--font-mono);font-size:.85em">build</code> chain lists most workspaces explicitly but omits <code style="font-family:var(--font-mono);font-size:.85em">tool-karos-reputation</code>, <code style="font-family:var(--font-mono);font-size:.85em">-landing</code>, <code style="font-family:var(--font-mono);font-size:.85em">-video</code> and the reputation / landing-builder / branded-shorts agents. None are server-dispatchable yet, so it's internally consistent — but unguarded.</dd>
+        <dt>Impact</dt><dd><code style="font-family:var(--font-mono);font-size:.85em">npm run build</code> never compiles the three newest packages; a compile-breaking regression in those six workspaces passes the build undetected (only <code style="font-family:var(--font-mono);font-size:.85em">tsc --noEmit</code>/tests catch it), and stale <code style="font-family:var(--font-mono);font-size:.85em">dist/</code> could ship.</dd>
+        <dt class="fix">Fix</dt><dd class="fix">Replace the hand-maintained chain with <code style="font-family:var(--font-mono);font-size:.85em">tsc --build</code> over project references or <code style="font-family:var(--font-mono);font-size:.85em">npm run build --workspaces --if-present</code>, so new workspaces are compiled automatically.</dd>
+      </dl>
+    </article>
+
+    <details class="more">
+      <summary>P2 findings — quality &amp; minor (representative selection of ~30)</summary>
+      <div class="p2list">
+        <div class="p2row"><div class="r-top"><span class="r-title">O(n²) Firestore reads for budget &amp; reports</span><span class="r-loc">step-agent.ts:32-37 · report.ts:270</span></div><div class="r-body">Full <code style="font-family:var(--font-mono);font-size:.85em">listSteps</code> before every agent step (when budget set) and on every <code style="font-family:var(--font-mono);font-size:.85em">/status</code> poll. Fine at ~20 steps, wrong shape for fanout campaigns. Fix: running <code style="font-family:var(--font-mono);font-size:.85em">totalCostUsd</code> on the run record.</div></div>
+        <div class="p2row"><div class="r-top"><span class="r-title">Whole workflow executes inline in the HTTP request</span><span class="r-loc">apps/agent-server/src/routes/runs.ts:69</span></div><div class="r-body"><code style="font-family:var(--font-mono);font-size:.85em">POST /start</code> awaits a multi-minute run (incl. a 300s npm build); a Cloud Run timeout or client retry strands the run <code style="font-family:var(--font-mono);font-size:.85em">running</code> forever with no reaper. Fix: 202 + background execution + stale-<code style="font-family:var(--font-mono);font-size:.85em">running</code> sweep.</div></div>
+        <div class="p2row"><div class="r-top"><span class="r-title">Gate timeouts are decorative</span><span class="r-loc">core/src/types/gate.ts:94-99 · step-gate.ts:31</span></div><div class="r-body"><code style="font-family:var(--font-mono);font-size:.85em">onTimeout</code>/<code style="font-family:var(--font-mono);font-size:.85em">duration</code> are persisted but never acted on — a forgotten gate is stuck forever, inverting RFC-01 §8.3. Fix: scheduled sweep applying <code style="font-family:var(--font-mono);font-size:.85em">onTimeout</code>.</div></div>
+        <div class="p2row"><div class="r-top"><span class="r-title">No app-layer authz — tenant is caller-asserted</span><span class="r-loc">apps/agent-server/src/routes/runs.ts:57-69</span></div><div class="r-body">No authn/authz middleware; any Cloud Run invoker can act on any tenant. Safe only while exactly one trusted caller holds invoker rights. Fix: OIDC verify + slug entitlement check.</div></div>
+        <div class="p2row"><div class="r-top"><span class="r-title">Internal error strings returned to clients</span><span class="r-loc">apps/agent-server/src/routes/runs.ts:78,97,116,136,149</span></div><div class="r-body"><code style="font-family:var(--font-mono);font-size:.85em">err.message</code> leaked verbatim in 500/404 bodies. Fix: generic message + correlation id, log detail server-side.</div></div>
+        <div class="p2row"><div class="r-top"><span class="r-title">Prompt store fails quiet in production</span><span class="r-loc">create-prompt-store-from-env.ts:76-80</span></div><div class="r-body">Unset <code style="font-family:var(--font-mono);font-size:.85em">PROMPT_STORE_DRIVER</code> yields an empty in-memory store; the server boots, then 100% of skill-ref runs degrade with no startup error. Fix: refuse <code style="font-family:var(--font-mono);font-size:.85em">memory</code> driver when a GCP project is configured.</div></div>
+        <div class="p2row"><div class="r-top"><span class="r-title">Anthropic adapter ignores cache-creation tokens</span><span class="r-loc">core/src/router/adapters/anthropic-adapter.ts:52-60</span></div><div class="r-body"><code style="font-family:var(--font-mono);font-size:.85em">cache_creation_input_tokens</code> (billed at a premium) vanish from telemetry and cost. Fix: add a <code style="font-family:var(--font-mono);font-size:.85em">cacheCreation</code> rate/field.</div></div>
+        <div class="p2row"><div class="r-top"><span class="r-title">Fabricated timestamp defaults poison triage</span><span class="r-loc">karos-reputation/src/capture/gbp.ts:71 · yelp.ts:60</span></div><div class="r-body">Missing API timestamps become <code style="font-family:var(--font-mono);font-size:.85em">""</code> / a literal <code style="font-family:var(--font-mono);font-size:.85em">"Z"</code>; one such record later throws in <code style="font-family:var(--font-mono);font-size:.85em">parseTs</code> and fails the whole triage. Fix: skip-and-count or <code style="font-family:var(--font-mono);font-size:.85em">safeParse</code> each record.</div></div>
+        <div class="p2row"><div class="r-top"><span class="r-title">Static config ingested via double-casts, never validated</span><span class="r-loc">karos-seo-geo/src/scoring-config.ts:26-64 · recommend.ts:71</span></div><div class="r-body">The client-facing grade's rubric loads through <code style="font-family:var(--font-mono);font-size:.85em">as unknown as</code> casts; a typo'd <code style="font-family:var(--font-mono);font-size:.85em">.data.ts</code> degrades to a silently wrong grade. Fix: Zod-parse each config asset once at module load.</div></div>
+        <div class="p2row"><div class="r-top"><span class="r-title">No tool output validation at external-data boundaries</span><span class="r-loc">tool-factory.ts (no output schema) · gbp.ts:55 · appstore.ts:30,47</span></div><div class="r-body">Outputs are TS-typed only; external JSON and cached store files cross via bare casts (<code style="font-family:var(--font-mono);font-size:.85em">"N/A"</code> rating → <code style="font-family:var(--font-mono);font-size:.85em">NaN</code>). <code style="font-family:var(--font-mono);font-size:.85em">video.transcribe</code> is the only adapter that Zod-parses its response. Fix: <code style="font-family:var(--font-mono);font-size:.85em">safeParse</code> at the adapter boundary.</div></div>
+        <div class="p2row"><div class="r-top"><span class="r-title">No HTTP timeouts / unbounded pagination on external adapters</span><span class="r-loc">gbp.ts:44-78 · yelp.ts:42 · transcribe.ts:73,81-85</span></div><div class="r-body">Every <code style="font-family:var(--font-mono);font-size:.85em">fetch</code> relies on runtime defaults; a hung endpoint stalls for minutes; the whole video is buffered in memory. Fix: <code style="font-family:var(--font-mono);font-size:.85em">AbortSignal.timeout</code>, page cap, streamed upload.</div></div>
+        <div class="p2row"><div class="r-top"><span class="r-title">topics.reserve read-modify-write is non-atomic</span><span class="r-loc">karos-topics/src/reserve.ts:78-118</span></div><div class="r-body">Two concurrent runs can reserve the same topic (last-write-wins), breaking the no-repeat floor. Same pattern in <code style="font-family:var(--font-mono);font-size:.85em">used-images.ts</code>, <code style="font-family:var(--font-mono);font-size:.85em">update-beliefs.ts</code>. Fix: per-client mutex or version compare-on-write.</div></div>
+        <div class="p2row"><div class="r-top"><span class="r-title">Fan-out siblings keep writing after a gate unwinds the run</span><span class="r-loc">packages/workflow/src/primitives/fanout.ts:36-82</span></div><div class="r-body">On <code style="font-family:var(--font-mono);font-size:.85em">AwaitingGateSignal</code>, sibling slot promises keep running and still <code style="font-family:var(--font-mono);font-size:.85em">saveSlot</code>/<code style="font-family:var(--font-mono);font-size:.85em">saveStep</code> (the &ldquo;results discarded&rdquo; comment is inaccurate). Fix: abort signal into slot contexts.</div></div>
+        <div class="p2row"><div class="r-top"><span class="r-title">Step-id registry triplicated → silent false failures</span><span class="r-loc">workflow files · apps/agent-server/src/report.ts:19-214 · e2e tests</span></div><div class="r-body">Adding a step without updating <code style="font-family:var(--font-mono);font-size:.85em">report.ts</code> yields a <code style="font-family:var(--font-mono);font-size:.85em">{status:"failed"}</code> row — the exact bug class the file's own comment says already happened. Fix: workflow factories export their descriptors.</div></div>
+        <div class="p2row"><div class="r-top"><span class="r-title">Branded-shorts declared cut spans unvalidated</span><span class="r-loc">karos-video · types.ts:16 · cut-planner.ts:81-82</span></div><div class="r-body"><code style="font-family:var(--font-mono);font-size:.85em">span</code> only requires two nonneg numbers (no ordering, no bound); a reversed/out-of-range span silently widens kept footage unless external <code style="font-family:var(--font-mono);font-size:.85em">cut_check.py</code> catches it. Fix: clamp to the spoken window, reject degenerate spans at intake.</div></div>
+        <div class="p2row"><div class="r-top"><span class="r-title">video.assetsCheck built &amp; registered but never called</span><span class="r-loc">karos-video/src/tools/assets-check.ts:17-23</span></div><div class="r-body">The 0-byte-font guard has no call site in either workflow; the incident it exists to prevent is only caught late as a render-time <code style="font-family:var(--font-mono);font-size:.85em">tooling_error</code>. Fix: add an assets-check step to onboarding.</div></div>
+        <div class="p2row"><div class="r-top"><span class="r-title">Reddit compliance flags keyed on model self-report</span><span class="r-loc">create-reddit-agent-workflow.ts:366</span></div><div class="r-body"><code style="font-family:var(--font-mono);font-size:.85em">mentionAttempted</code> is derived from the draft's own <code style="font-family:var(--font-mono);font-size:.85em">disclosureIncluded</code> flag, so a model can bypass warming/cooldown. Dedup is also exact-substring (no URL normalization). Fix: mechanical mention-name scan; normalize to <code style="font-family:var(--font-mono);font-size:.85em">(subreddit, threadId)</code>.</div></div>
+        <div class="p2row"><div class="r-top"><span class="r-title">Dead / drifted parameters &amp; comments</span><span class="r-loc">reserve.ts:77,93 · newsletter-draft-agent.ts:27-31 · render-carousel.ts:26</span></div><div class="r-body"><code style="font-family:var(--font-mono);font-size:.85em">excludeTopics</code> passes summaries that can never match a topic (dedup no-op); a stale newsletter comment contradicts the correct footer ordering; <code style="font-family:var(--font-mono);font-size:.85em">renderCarousel</code> declares an unused tenant-shaped <code style="font-family:var(--font-mono);font-size:.85em">client</code> field. Fix: pass topic strings, refresh the comment, delete the dead field.</div></div>
+      </div>
+    </details>
+  </section>
+
+  <!-- VERIFICATION -->
+  <section id="verify">
+    <div class="sec-head">
+      <p class="eyebrow">Deliverable 3</p>
+      <h2><span class="idx">03</span> Test &amp; typecheck verification</h2>
+      <p class="sub">Run at HEAD (f17e640) across every workspace. Both gates green.</p>
+    </div>
+    <div class="vgrid">
+      <div class="vstat"><div class="n pass">0</div><div class="l">TypeScript errors · <code style="font-family:var(--font-mono);font-size:.85em">tsc --noEmit</code></div></div>
+      <div class="vstat"><div class="n pass">1,294</div><div class="l">Tests passed · 0 failed · 1 skipped</div></div>
+      <div class="vstat"><div class="n">31</div><div class="l">Workspaces · 161 test files</div></div>
+    </div>
+    <div class="term" role="img" aria-label="Terminal output of typecheck and test runs, both passing">
+<div class="line"><span class="prompt">$</span> npx tsc <span class="flag">--noEmit</span></div>
+<div class="line"><span class="ok">&#10003;</span> <span class="hl">exit 0</span> <span class="dim2">— zero type errors across all workspaces</span></div>
+<div class="line">&nbsp;</div>
+<div class="line"><span class="prompt">$</span> npm test <span class="flag">--workspaces --if-present</span></div>
+<div class="line"><span class="dim2">  Test Files  161 passed (161)</span></div>
+<div class="line"><span class="ok">       Tests  1294 passed</span> <span class="warn">| 1 skipped</span> <span class="dim2">(1295)</span></div>
+<div class="line"><span class="dim2">  ─────────────────────────────────────────────</span></div>
+<div class="line"><span class="dim2">  core · workflow · telemetry · tool-common ......</span> <span class="ok">pass</span></div>
+<div class="line"><span class="dim2">  karos-client/research/topics/gates/ledger ......</span> <span class="ok">pass</span></div>
+<div class="line"><span class="dim2">  karos-memory/publish/intel/seo-geo .............</span> <span class="ok">pass</span></div>
+<div class="line"><span class="dim2">  karos-reputation/landing/video .................</span> <span class="ok">pass</span></div>
+<div class="line"><span class="dim2">  agents: x·linkedin·reddit·blog·newsletter ......</span> <span class="ok">pass</span></div>
+<div class="line"><span class="dim2">  agents: instagram·seo-geo·intel·reputation .....</span> <span class="ok">pass</span></div>
+<div class="line"><span class="dim2">  agents: landing-builder·branded-shorts .........</span> <span class="ok">pass</span></div>
+<div class="line"><span class="dim2">  agent-server · campaign-orchestrator · evals ...</span> <span class="ok">pass</span></div>
+<div class="line"><span class="ok">&#10003;</span> <span class="hl">exit 0</span></div>
+<div class="line">&nbsp;</div>
+<div class="line"><span class="dim2"># note:</span> 1 skipped = instagram Chromium e2e (<span class="warn">skipIf(!isChromiumInstalled())</span>)</div>
+<div class="line"><span class="dim2"># note:</span> <span class="warn">npm run build</span> omits 3 newest tool pkgs + 3 agents (see P1)</div>
+    </div>
+    <p style="color:var(--muted);font-size:14px;margin-top:16px;max-width:70ch">Static verification is genuinely clean — but note two blind spots the green run hides: the fake Firestore accepts <code style="font-family:var(--font-mono);font-size:.85em">undefined</code> values that real Firestore rejects (P1), and the real-Chromium render path is skipped in this environment. The gates prove the code compiles and the modelled behavior is correct; they do not prove the production storage/render substrate behaves identically.</p>
+  </section>
+
+  <!-- STRENGTHS -->
+  <section id="strengths">
+    <div class="sec-head">
+      <p class="eyebrow">Context for the score</p>
+      <h2><span class="idx">04</span> What is genuinely strong</h2>
+      <p class="sub">The findings above are corrections to an already-high baseline — these controls are real, not aspirational.</p>
+    </div>
+    <div class="cols">
+      <div class="card"><h4><span class="m">&#10003;</span>The layering invariant holds</h4><p>BaseAgent performs zero direct I/O; Layer 1 makes zero content judgments. The durable-store interface is small enough that the Firestore↔memory swap is real and tested, keeping the Temporal path open.</p></div>
+      <div class="card"><h4><span class="m">&#10003;</span>&ldquo;Model extracts, arithmetic routes&rdquo;</h4><p>Zero LLM-decided numbers found anywhere in scope. SEO scoring, reputation triage (a scrupulous banker's-rounding Python port), and intel scoring are pure functions, fixture-locked, with the doctrine gate's arithmetic able to override a model &ldquo;pass.&rdquo;</p></div>
+      <div class="card"><h4><span class="m">&#10003;</span>Resume-by-replay is elegant &amp; safe</h4><p>The throw-to-pause gate design with checkpoint short-circuiting is deterministic; <code style="font-family:var(--font-mono);font-size:.85em">scopedStepId</code> designs out sibling-slot checkpoint collisions. Idempotency keys on every commit-phase write.</p></div>
+      <div class="card"><h4><span class="m">&#10003;</span>Tests assert side effects, not mocks</h4><p>Fake only the LLM; run the real engine, real tools, real file store in a temp dir; assert durable outcomes and spy call-counts across simulated crashes. Zero <code style="font-family:var(--font-mono);font-size:.85em">skip/only/todo</code>, zero self-asserting mocks, near-zero <code style="font-family:var(--font-mono);font-size:.85em">any</code>.</p></div>
+      <div class="card"><h4><span class="m">&#10003;</span>Every counted constraint verified</h4><p>11 LinkedIn archetypes, 6 X lanes, 13-field competitor schema, 11-step reputation pulse, 4 doctrine invariants, 600-word blog floor, locked-closed <code style="font-family:var(--font-mono);font-size:.85em">reputation.publish</code>, append-only feedback trail — all present and enforced in code.</p></div>
+      <div class="card"><h4><span class="m">&#10003;</span>Honest failure taxonomy</h4><p><code style="font-family:var(--font-mono);font-size:.85em">tooling_error</code> never masquerades as a content verdict; UNAVAILABLE is surfaced rather than zero-filled; <code style="font-family:var(--font-mono);font-size:.85em">describeError</code> walks <code style="font-family:var(--font-mono);font-size:.85em">.cause</code> chains; the four-outcome taxonomy was extended with <code style="font-family:var(--font-mono);font-size:.85em">held</code>/<code style="font-family:var(--font-mono);font-size:.85em">blocked_intake</code> end-to-end.</p></div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Karos Labs · agent-engine health &amp; parity audit</span>
+    <span>read-only · 6-dimension fan-out · verified against source at f17e640</span>
+  </footer>
+
+</div>

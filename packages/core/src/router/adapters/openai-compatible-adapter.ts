@@ -1,6 +1,7 @@
 import type OpenAI from "openai";
 import type { CompletionRequest, CompletionResult, ModelAdapter } from "./types.js";
 import { toRootObjectJsonSchema, unwrapRootPayload } from "./root-object-schema.js";
+import { withRetry, type RetryOptions } from "./retry.js";
 
 /**
  * Adapter for any OpenAI-compatible chat-completions endpoint — the real
@@ -25,6 +26,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
   constructor(
     private readonly client: OpenAI,
     providerId = "openai",
+    private readonly retryOptions: RetryOptions = {},
   ) {
     this.providerId = providerId;
   }
@@ -32,18 +34,22 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
   async complete<TOutput>(req: CompletionRequest<TOutput>): Promise<CompletionResult<TOutput>> {
     const { schema: jsonSchema, wrapped } = toRootObjectJsonSchema(req.schema);
 
-    const response = await this.client.chat.completions.create({
-      model: req.model,
-      ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
-      messages: [
-        ...(req.system ? [{ role: "system" as const, content: req.system }] : []),
-        { role: "user" as const, content: req.prompt },
-      ],
-      response_format: {
-        type: "json_schema",
-        json_schema: { name: "step_output", schema: jsonSchema, strict: true },
-      },
-    });
+    const response = await withRetry(
+      () =>
+        this.client.chat.completions.create({
+          model: req.model,
+          ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
+          messages: [
+            ...(req.system ? [{ role: "system" as const, content: req.system }] : []),
+            { role: "user" as const, content: req.prompt },
+          ],
+          response_format: {
+            type: "json_schema",
+            json_schema: { name: "step_output", schema: jsonSchema, strict: true },
+          },
+        }),
+      this.retryOptions,
+    );
 
     const choice = response.choices[0];
     const raw = choice?.message.content;

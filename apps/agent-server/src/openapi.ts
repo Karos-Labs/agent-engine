@@ -197,6 +197,10 @@ export const openApiDocument: OpenApiDocument = {
             description: "Invalid request body (bad shape, or an unrecognized productId).",
             content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } },
           },
+          "409": {
+            description: "An optimistic-concurrency claim on this runId was lost to a concurrent request — practically unreachable for a freshly generated runId.",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } },
+          },
           "500": {
             description: "The run failed unexpectedly.",
             content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } },
@@ -229,6 +233,10 @@ export const openApiDocument: OpenApiDocument = {
           },
           "404": {
             description: "No run found for this runId.",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } },
+          },
+          "409": {
+            description: "The run is not currently awaiting a gate, its gate was already resolved by someone else, or a concurrent resume request won the race first.",
             content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } },
           },
           "500": {

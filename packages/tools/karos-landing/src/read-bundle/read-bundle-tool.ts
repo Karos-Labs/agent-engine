@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { z } from "zod";
-import { defineTool, success, contentFail } from "@agent-engine/tool-common";
+import { defineTool, success, contentFail, sanitizeSegment } from "@agent-engine/tool-common";
 import type { LandingEngineConfig } from "../config.js";
 import { BrandJsonSchema, type BrandJson } from "../types.js";
 
@@ -53,6 +53,11 @@ async function listFilesRecursive(root: string, dir: string = root): Promise<str
  * (real, actionable intake-data signal, per RFC-01 §6), never a
  * `tooling_error` — the bundle genuinely isn't ready, which is exactly the
  * `blocked_intake` condition the workflow's step 00 checks for.
+ *
+ * `ctx.clientSlug` is run through `sanitizeSegment` before it ever touches a
+ * path (same rule `siteRootForClient` already follows) — a run whose slug
+ * contains `..`/`/`/`\`/NUL throws (surfaced by `defineTool` as
+ * `tooling_error`) instead of resolving outside `bundlesRoot`.
  */
 export function createReadBundle(config: LandingEngineConfig) {
   return defineTool<ReadBundleInput, ReadBundleResult>({
@@ -60,7 +65,7 @@ export function createReadBundle(config: LandingEngineConfig) {
     version: TOOL_VERSION,
     inputSchema: ReadBundleInputSchema,
     async execute(_input, { ctx }) {
-      const bundleRoot = path.join(config.bundlesRoot, ctx.clientSlug);
+      const bundleRoot = path.join(config.bundlesRoot, sanitizeSegment(ctx.clientSlug));
 
       let brandRaw: string;
       try {

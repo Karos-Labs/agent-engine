@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { GateResponseSchema, RunKindSchema } from "@agent-engine/core";
-import { WorkflowEngine, type DurableStepStore } from "@agent-engine/workflow";
+import { GateAlreadyResolvedError, WorkflowConcurrentRunError, WorkflowEngine, type DurableStepStore } from "@agent-engine/workflow";
 import { buildRunReport } from "../report.js";
 import { KNOWN_PRODUCT_IDS, buildWorkflowForProduct, isKnownProductId, type AgentRuntimeDeps, type ProductId } from "../wiring/workflows.js";
 
@@ -15,8 +15,14 @@ export interface RunsRouterDeps {
   now?: () => string;
 }
 
+// Charset-locked at the API boundary so a path-traversal-shaped slug
+// (`../../etc`, an embedded `/`, `\`, or NUL) never reaches a tool — the
+// per-tool `sanitizeSegment` calls throughout `packages/tools/*` are
+// defense-in-depth, not the only fence, once this holds at ingress.
+const CLIENT_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+
 const StartRunRequestSchema = z.object({
-  clientSlug: z.string().min(1),
+  clientSlug: z.string().min(1).regex(CLIENT_SLUG_PATTERN, "clientSlug must be lowercase alphanumeric segments separated by hyphens"),
   productId: z.enum(KNOWN_PRODUCT_IDS),
   runKind: RunKindSchema,
   /**
@@ -75,6 +81,12 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
         report,
       });
     } catch (err) {
+      if (err instanceof WorkflowConcurrentRunError) {
+        // Astronomically unlikely for a freshly generated runId, but a defensive backstop
+        // if the id generator is ever swapped for something less collision-proof.
+        res.status(409).json({ error: err.message });
+        return;
+      }
       res.status(500).json({ error: "run failed unexpectedly", message: err instanceof Error ? err.message : String(err) });
     }
   });
@@ -90,6 +102,16 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
     const runRecord = await deps.durableStore.getRun(runId);
     if (!runRecord) {
       res.status(404).json({ error: `no run found for "${runId}"` });
+      return;
+    }
+    // Fast, common-case rejection for the exact scenario the concurrency audit finding
+    // named: resuming a run that isn't actually paused at a gate (already running,
+    // already completed, or resumed by someone else a moment ago). The store-level
+    // claimRun inside engine.run() below is the real, race-proof backstop — this check
+    // just turns the ordinary sequential case into a clean, fast 409 instead of a wasted
+    // resolveGate call followed by a claim failure.
+    if (runRecord.status !== "awaiting_gate") {
+      res.status(409).json({ error: `run "${runId}" is not awaiting a gate (current status: "${runRecord.status}")` });
       return;
     }
     const productId = mapProductId(runRecord.productId);
@@ -113,6 +135,10 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
     try {
       await engine.resolveGate(runId, gateId, responseParsed.data);
     } catch (err) {
+      if (err instanceof GateAlreadyResolvedError) {
+        res.status(409).json({ error: err.message });
+        return;
+      }
       res.status(404).json({ error: err instanceof Error ? err.message : String(err) });
       return;
     }
@@ -133,6 +159,13 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
         report,
       });
     } catch (err) {
+      if (err instanceof WorkflowConcurrentRunError) {
+        // The true race-closing backstop: a second resume request that slipped past the
+        // status pre-check above (both read "awaiting_gate" before either wrote) loses
+        // here instead, at the store's atomic claim.
+        res.status(409).json({ error: err.message });
+        return;
+      }
       res.status(500).json({ error: "resume failed unexpectedly", message: err instanceof Error ? err.message : String(err) });
     }
   });
@@ -154,7 +187,11 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
     res.status(200).json({
       runId,
       status: runRecord.status,
-      ...(runRecord.pendingGateId !== undefined ? { pendingGateId: runRecord.pendingGateId } : {}),
+      // != null (not !== undefined): a terminal transition now explicitly clears this to
+      // `null` rather than leaving a prior awaiting_gate's value sitting there (see
+      // WorkflowEngine.run()'s terminalRunFields) — both "never set" and "explicitly
+      // cleared" must be omitted from the response, only a real pending id included.
+      ...(runRecord.pendingGateId != null ? { pendingGateId: runRecord.pendingGateId } : {}),
       report,
     });
   });

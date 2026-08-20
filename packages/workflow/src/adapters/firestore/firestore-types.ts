@@ -28,6 +28,22 @@ export interface FirestoreCollectionRef {
   get(): Promise<FirestoreQuerySnapshot>;
 }
 
+/**
+ * The minimal slice of the real Admin SDK's `Transaction` this adapter needs
+ * for `claimRun`'s atomic compare-and-set (RFC-01 §8.1's "ordering... a
+ * property of the workflow graph, not a convention someone has to
+ * remember," extended to run-level re-entrancy). Real Firestore transactions
+ * buffer every `get()` before any write and replay automatically on a
+ * write-write conflict — that retry-on-conflict behavior is exactly what
+ * makes this a true compare-and-set rather than the same read-then-write
+ * race `updateRun` alone would have.
+ */
+export interface FirestoreTransaction {
+  get(ref: FirestoreDocumentRef): Promise<FirestoreDocumentSnapshot>;
+  set(ref: FirestoreDocumentRef, data: Record<string, unknown>, options?: { merge?: boolean }): unknown;
+}
+
 export interface FirestoreLike {
   collection(path: string): FirestoreCollectionRef;
+  runTransaction<T>(updateFunction: (tx: FirestoreTransaction) => Promise<T>): Promise<T>;
 }

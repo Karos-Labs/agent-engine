@@ -18,6 +18,11 @@ import * as path from "node:path";
 
 const TOOL_VERSION = "1.0.0";
 const execFileAsync = promisify(execFile);
+// Resolved explicitly (never via `shell: true`) so a client-influenced value reaching this
+// call — the working directory is a build product of client/scraped content — can never be
+// interpreted by a shell; `npm.cmd` is npm's real executable name on Windows (`npm` alone is
+// a shell shim there and is not directly spawnable by execFile without a shell).
+const NPM_COMMAND = process.platform === "win32" ? "npm.cmd" : "npm";
 
 export const LandingGateInputSchema = z.object({
   brand: BrandJsonSchema,
@@ -142,9 +147,9 @@ export function createLandingGate(config: LandingEngineConfig) {
       const buildViolations: GateViolation[] = [];
       if (doBuild) {
         try {
-          // shell:true so `npm` resolves via the shell (npm.cmd on Windows) the same way
-          // the legacy gate.mjs's execSync did implicitly.
-          await execFileAsync("npm", ["run", "build"], { cwd: siteRoot, timeout: 300_000, shell: true });
+          // No shell — argv is passed straight to the resolved npm binary, so nothing in
+          // `siteRoot` or the build output can be interpreted as shell syntax.
+          await execFileAsync(NPM_COMMAND, ["run", "build"], { cwd: siteRoot, timeout: 300_000 });
           build = "pass";
         } catch (err) {
           build = "fail";

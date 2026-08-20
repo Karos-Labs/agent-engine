@@ -2,7 +2,7 @@ import { defineTool, success } from "@agent-engine/tool-common";
 import { DEFAULT_TRIAGE_CONFIG } from "./config.js";
 import { triage } from "./triage.js";
 import { TriageToolInputSchema, type TriageToolInput } from "./schemas.js";
-import type { TriageConfig, TriageResult } from "./types.js";
+import type { TriageResult } from "./types.js";
 
 const TOOL_VERSION = "1.0.0";
 
@@ -21,7 +21,12 @@ export function createReputationTriage() {
     version: TOOL_VERSION,
     inputSchema: TriageToolInputSchema,
     async execute({ payload, config }) {
-      const cfg = (config ?? DEFAULT_TRIAGE_CONFIG) as TriageConfig;
+      // No cast: TriageConfigSchema's platform_visibility now requires `default`
+      // (z.object({default:z.number()}).catchall(z.number())), matching TriageConfig's
+      // own `Record<string, number> & {default: number}` exactly — the bridge the old
+      // `as TriageConfig` cast was papering over is now actually checked by the compiler
+      // (a triage-config-hardening audit finding).
+      const cfg = config ?? DEFAULT_TRIAGE_CONFIG;
       return success<TriageResult>(triage(payload, cfg));
     },
   });

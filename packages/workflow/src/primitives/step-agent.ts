@@ -64,10 +64,25 @@ export async function runStepAgent<TOutput>(
       const inputTokensCached = result.steps.reduce((sum, step) => sum + step.inputTokens.cached, 0);
       const inputTokensUncached = result.steps.reduce((sum, step) => sum + step.inputTokens.uncached, 0);
       recordCostAndTokens(span, {
+        runId: runtime.runId,
+        clientId: runtime.clientSlug,
+        agentId: runtime.productId,
+        // A ReAct loop can in principle route different turns to different
+        // models (ModelRouter's choice) — the last turn's model is the most
+        // representative single value for one BigQuery row per agent run.
+        model: result.steps.at(-1)?.modelUsed ?? "unknown",
         costUsd: result.totalCostUsd,
         inputTokensCached,
         inputTokensUncached,
         outputTokens: result.totalTokens.output,
+        durationMs: completedAt - startedAt,
+        status: result.status,
+        // Discriminator columns (2026-08) — `runId` above is the WHOLE
+        // workflow run's id, shared by every step.agent() call inside it, so
+        // without `stepId` two rows from the same run can't be told apart.
+        jobId: runtime.runId,
+        stepId,
+        operation: "workflow_step_agent",
       });
       span.setAttribute("agent_status", result.status);
 

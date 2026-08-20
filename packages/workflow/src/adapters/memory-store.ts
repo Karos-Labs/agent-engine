@@ -1,4 +1,4 @@
-import type { DurableStepStore, GateRecord, RunRecord, SlotRecord, StepRecord } from "./types.js";
+import type { DurableStepStore, GateRecord, RunClaimResult, RunRecord, RunStatus, SlotRecord, StepRecord } from "./types.js";
 
 function scopedKey(runId: string, id: string): string {
   return `${runId}::${id}`;
@@ -42,12 +42,32 @@ export class MemoryDurableStepStore implements DurableStepStore {
     this.runs.set(runId, { ...existing, ...patch });
   }
 
+  // No `await` anywhere in this body — it runs to completion within one turn of the event
+  // loop, so two "concurrent" callers can never interleave between the status check and the
+  // write (see the interface doc comment).
+  async claimRun(runId: string, allowedFromStatuses: readonly RunStatus[], patch: Partial<Omit<RunRecord, "runId">>): Promise<RunClaimResult> {
+    const existing = this.runs.get(runId);
+    if (!existing) {
+      throw new Error(`MemoryDurableStepStore.claimRun: no run found for "${runId}"`);
+    }
+    if (!allowedFromStatuses.includes(existing.status)) {
+      return { claimed: false, run: existing };
+    }
+    const updated = { ...existing, ...patch };
+    this.runs.set(runId, updated);
+    return { claimed: true, run: updated };
+  }
+
   async getStep(runId: string, stepId: string): Promise<StepRecord | undefined> {
     return this.steps.get(scopedKey(runId, stepId));
   }
 
   async saveStep(runId: string, step: StepRecord): Promise<void> {
-    this.steps.set(scopedKey(runId, step.stepId), step);
+    // Matches FirestoreDurableStepStore's normalization (real Firestore rejects a literal
+    // `undefined` value) so a void step checkpoints identically — and resumes identically
+    // — regardless of which adapter is behind it (RFC-01 §8.4's "swap the adapter, not the
+    // workflow code" only holds if both adapters actually agree on this).
+    this.steps.set(scopedKey(runId, step.stepId), { ...step, output: step.output ?? null });
   }
 
   async listSteps(runId: string): Promise<StepRecord[]> {
@@ -66,7 +86,8 @@ export class MemoryDurableStepStore implements DurableStepStore {
   }
 
   async saveSlot(runId: string, slot: SlotRecord): Promise<void> {
-    this.slots.set(scopedKey(runId, slot.slotId), slot);
+    // Same output-normalization parity as saveStep.
+    this.slots.set(scopedKey(runId, slot.slotId), { ...slot, output: slot.output ?? null });
   }
 
   async listSlots(runId: string, fanoutId: string): Promise<SlotRecord[]> {

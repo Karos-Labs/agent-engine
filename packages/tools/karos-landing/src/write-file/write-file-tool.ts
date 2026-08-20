@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { z } from "zod";
-import { defineTool, success } from "@agent-engine/tool-common";
+import { defineTool, success, toolingError } from "@agent-engine/tool-common";
 import type { LandingEngineConfig } from "../config.js";
 import { resolveSandboxedWritePath, siteRootForClient } from "../sandbox/site-sandbox.js";
 
@@ -20,6 +20,30 @@ export interface WriteSiteFileResult {
 }
 
 /**
+ * Build/package configuration whose *content*, not just its location, is
+ * security-relevant: `next build` (`landing.gate`'s `doBuild`) executes
+ * `next.config.*` and any `package.json` script as real code at build time,
+ * so the sandbox's path-containment guarantee alone does not stop a
+ * model-authored file here from achieving code execution on the host. These
+ * files come from the trusted template kit only (`landing.copyTemplate`,
+ * which does not go through this tool) — MAKE-phase edits are limited to CSS
+ * tokens, fonts, the content file, and bespoke/carry-forward components
+ * (RFC-07 §4 phase 4), never build configuration.
+ */
+const PROTECTED_CONFIG_BASENAME_PATTERNS: readonly RegExp[] = [
+  /^next\.config\.(mjs|cjs|js|ts)$/i,
+  /^package(-lock)?\.json$/i,
+  /^tsconfig(\.[\w.-]+)?\.json$/i,
+  /^\.npmrc$/i,
+  /^\.env(\.[\w.-]+)?$/i,
+];
+
+function isProtectedConfigFile(relativePath: string): boolean {
+  const basename = path.basename(relativePath.replace(/\\/g, "/"));
+  return PROTECTED_CONFIG_BASENAME_PATTERNS.some((pattern) => pattern.test(basename));
+}
+
+/**
  * `landing.writeSiteFile` (RFC-07 §4 phase 4 / §7): the scoped file-write
  * tool phase 4 (MAKE) uses to re-skin tokens/fonts, write the content file,
  * and compose bespoke/carry-forward components. Bounded structurally to one
@@ -29,8 +53,13 @@ export interface WriteSiteFileResult {
  * throws `SiteSandboxViolation` (surfaced by `defineTool` as `tooling_error`,
  * never a silent no-op or a content judgment) on path traversal, an absolute
  * path, a symlink escape, or a target that lands inside the read-only
- * template root. Requires the site to already exist — call
- * `landing.copyTemplate` first.
+ * template root. Also refuses (`tooling_error`) any target whose *filename*
+ * is build/package configuration (`next.config.*`, `package(-lock).json`,
+ * `tsconfig*.json`, `.npmrc`, `.env*`) — those are never MAKE-phase edits,
+ * and `landing.gate`'s `doBuild` executes them as real code, so a
+ * model-authored one is a code-execution vector the path fence alone does
+ * not stop. Requires the site to already exist — call `landing.copyTemplate`
+ * first.
  */
 export function createWriteSiteFile(config: LandingEngineConfig) {
   return defineTool<WriteSiteFileInput, WriteSiteFileResult>({
@@ -38,6 +67,11 @@ export function createWriteSiteFile(config: LandingEngineConfig) {
     version: TOOL_VERSION,
     inputSchema: WriteSiteFileInputSchema,
     async execute({ relativePath, content }, { ctx }) {
+      if (isProtectedConfigFile(relativePath)) {
+        return toolingError(
+          `writing to "${relativePath}" is not permitted — build/package configuration is locked and may only come from the template kit`,
+        );
+      }
       const siteRoot = siteRootForClient(config, ctx.clientSlug);
       const target = await resolveSandboxedWritePath(siteRoot, config.templateRoot, relativePath);
       await fs.mkdir(path.dirname(target), { recursive: true });

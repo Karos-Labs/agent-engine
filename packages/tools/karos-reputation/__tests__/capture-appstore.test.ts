@@ -123,4 +123,20 @@ describe("captureAppstore (the one keyless leg — genuinely testable, no creden
     expect(outcome.reviews).toEqual([]);
     expect(outcome.listingMeta).toBeUndefined();
   });
+
+  it("reports UNAVAILABLE (never an uncaught throw) when the feed request itself fails on both attempts — a tooling-isolation audit finding", async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new Error("ECONNRESET"));
+    const outcome = await captureAppstore(baseReq, fetchImpl as unknown as typeof fetch, noDelay);
+    expect(outcome.status).toBe("UNAVAILABLE");
+    expect(outcome.reason).toContain("ECONNRESET");
+    expect(outcome.reviews).toHaveLength(1);
+    expect(outcome.reviews[0]).toMatchObject({ review_id: "appstore:zumo-ios:__unavailable__", capture_tier: "UNAVAILABLE" });
+  });
+
+  it("reports UNAVAILABLE (never an uncaught throw) when the feed returns a 200 with malformed JSON", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response("<html>not json</html>", { status: 200 }));
+    const outcome = await captureAppstore(baseReq, fetchImpl as unknown as typeof fetch, noDelay);
+    expect(outcome.status).toBe("UNAVAILABLE");
+    expect(outcome.reviews).toHaveLength(1);
+  });
 });

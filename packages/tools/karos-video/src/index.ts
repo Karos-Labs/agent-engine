@@ -47,7 +47,7 @@ export function createKarosVideoTools(options: CreateKarosVideoToolsOptions = {}
     "video.render": createRender(options),
     "video.selfEvalGate": createSelfEvalGate(options),
     "video.transcribe": createTranscribe({ ...(options.env !== undefined ? { env: options.env } : {}), ...options.transcribe }),
-    "video.writeJsonFile": createWriteJsonFile(),
-    "video.readJsonFile": createReadJsonFile(),
+    "video.writeJsonFile": createWriteJsonFile(options),
+    "video.readJsonFile": createReadJsonFile(options),
   };
 }

@@ -16,6 +16,17 @@ export interface KarosVideoToolOptions {
    * silent no-op) when neither this nor the env var is set.
    */
   engineDir?: string;
+  /**
+   * Absolute root under which `video.writeJsonFile`/`video.readJsonFile`
+   * confine every call to `<workRoot>/<clientSlug>/…` (a security-audit
+   * finding: these two tools otherwise accept an arbitrary path with no
+   * tenant scoping — see `../sandbox.js`). Defaults to
+   * `env.BRANDED_SHORTS_WORK_ROOT`. Left unconfigured, the two tools keep
+   * accepting any non-traversal, non-NUL path unscoped, matching this
+   * package's behavior before the sandbox existed — set this (or the env
+   * var) to turn tenant confinement on.
+   */
+  workRoot?: string;
   /** Defaults to `process.env` — injectable so a workflow or a test can supply credentials without mutating the real process environment. */
   env?: Readonly<Record<string, string | undefined>>;
 }
@@ -25,17 +36,20 @@ export interface KarosVideoRuntime {
   pythonBin: string;
   ffprobeBin: string;
   engineDir?: string;
+  workRoot?: string;
   env: Readonly<Record<string, string | undefined>>;
 }
 
 export function resolveRuntime(options: KarosVideoToolOptions): KarosVideoRuntime {
   const env = options.env ?? process.env;
   const engineDir = options.engineDir ?? env["BRANDED_SHORTS_ENGINE_DIR"];
+  const workRoot = options.workRoot ?? env["BRANDED_SHORTS_WORK_ROOT"];
   return {
     runner: options.runner ?? createDefaultProcessRunner(),
     pythonBin: options.pythonBin ?? env["KAROS_VIDEO_PYTHON_BIN"] ?? "python3",
     ffprobeBin: options.ffprobeBin ?? env["KAROS_VIDEO_FFPROBE_BIN"] ?? "ffprobe",
     ...(engineDir !== undefined ? { engineDir } : {}),
+    ...(workRoot !== undefined ? { workRoot } : {}),
     env,
   };
 }

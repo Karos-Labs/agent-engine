@@ -81,3 +81,43 @@ export class WorkflowBlockedIntake extends Error {
     this.name = "WorkflowBlockedIntake";
   }
 }
+
+/**
+ * Thrown by `WorkflowEngine.run()` itself (never by workflow code) when a
+ * resume attempt loses the optimistic-concurrency claim on an existing run —
+ * its current status wasn't one of the statuses a resume is valid from (most
+ * commonly: two near-simultaneous resumes of the same `awaiting_gate` run,
+ * or a resume attempted while the run is still actively `running`). Callers
+ * at the HTTP boundary should map this to `409 Conflict`, not `500` — this
+ * is a legitimate, expected race outcome, not an unexpected server error.
+ */
+export class WorkflowConcurrentRunError extends Error {
+  constructor(
+    public readonly runId: string,
+    public readonly actualStatus: string,
+    public readonly allowedFromStatuses: readonly string[],
+  ) {
+    super(
+      `run "${runId}" could not be claimed for this call: its current status is "${actualStatus}", ` +
+        `not one of [${allowedFromStatuses.join(", ")}] — another writer is already handling it`,
+    );
+    this.name = "WorkflowConcurrentRunError";
+  }
+}
+
+/**
+ * Thrown by `WorkflowEngine.resolveGate` when the target gate already
+ * carries a response — a human decision's audit trail must never be
+ * silently overwritten by a second resolve (a reliability audit finding).
+ * Callers at the HTTP boundary should map this to `409 Conflict`.
+ */
+export class GateAlreadyResolvedError extends Error {
+  constructor(
+    public readonly runId: string,
+    public readonly gateId: string,
+    public readonly existingDecision: string,
+  ) {
+    super(`gate "${gateId}" on run "${runId}" was already resolved (decision: "${existingDecision}") — a resolved gate cannot be resolved again`);
+    this.name = "GateAlreadyResolvedError";
+  }
+}

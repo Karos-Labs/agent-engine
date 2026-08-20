@@ -1,6 +1,7 @@
 import { SpanStatusCode, type Span } from "@opentelemetry/api";
 import { getTracer } from "./tracer.js";
 import { describeError } from "./errors.js";
+import { biTable } from "./bigquery-client.js";
 
 interface IdentityAttributes {
   runId: string;
@@ -21,12 +22,40 @@ export interface ToolCallSpanAttributes extends IdentityAttributes {
   toolVersion: string;
 }
 
-/** Token/cost attributes (RFC-01 §11) — recorded once the wrapped call has actually completed and the numbers are known. */
+/**
+ * Token/cost attributes (RFC-01 §11) — recorded once the wrapped call has
+ * actually completed and the numbers are known. Also the payload for one
+ * `agent_runs_bi` BigQuery row (Phase 3 of the BI telemetry pipeline) —
+ * `runId`/`clientId`/`agentId`/`model`/`durationMs`/`status` exist here
+ * specifically so `recordCostAndTokens` can stream-insert without a second
+ * call needing to re-supply identity attributes the span already received
+ * (span attributes aren't readable back through the OTel API).
+ */
 export interface CostAndTokenAttributes {
+  runId: string;
+  /** Maps to `agent_runs_bi.clientId` — same value as `IdentityAttributes.clientSlug`. */
+  clientId: string;
+  /** Maps to `agent_runs_bi.agentId` — same value as `IdentityAttributes.productId`. */
+  agentId: string;
+  model: string;
   costUsd: number;
   inputTokensCached: number;
   inputTokensUncached: number;
   outputTokens: number;
+  durationMs: number;
+  status: string;
+  /**
+   * Discriminator columns (2026-08). `runId` above is `WorkflowRuntime.runId`
+   * — the WHOLE workflow run's id, shared by every step inside it — so
+   * without these, two step rows from the same run are indistinguishable
+   * from each other, and from a portal-originated row that happens to reuse
+   * the value space differently. `jobId` restates `runId` under the name the
+   * portal's own rows use for "the overall run", `stepId` isolates this row
+   * to one step within it, and `operation` names what kind of step it was.
+   */
+  jobId?: string;
+  stepId?: string;
+  operation?: string;
 }
 
 function setIdentityAttributes(span: Span, attrs: IdentityAttributes): void {
@@ -38,12 +67,57 @@ function setIdentityAttributes(span: Span, attrs: IdentityAttributes): void {
   }
 }
 
-/** Sets the token/cost attributes on a span from inside a `withWorkflowStepSpan`/`withToolCallSpan` callback, once known. */
+/**
+ * Sets the token/cost attributes on a span from inside a
+ * `withWorkflowStepSpan`/`withToolCallSpan` callback, once known, and
+ * fire-and-forget stream-inserts the same data into BigQuery's
+ * `agent_runs_bi` table (Phase 3). No-ops when `GOOGLE_CLOUD_PROJECT` is
+ * unset — see `bigquery-client.ts`'s `biTable()`. Never throws: a failed
+ * insert is swallowed after a structured stderr line, since telemetry must
+ * never disrupt the run it's describing.
+ */
 export function recordCostAndTokens(span: Span, attrs: CostAndTokenAttributes): void {
   span.setAttribute("cost_usd", attrs.costUsd);
   span.setAttribute("input_tokens_cached", attrs.inputTokensCached);
   span.setAttribute("input_tokens_uncached", attrs.inputTokensUncached);
   span.setAttribute("output_tokens", attrs.outputTokens);
+  void insertAgentRunRow(attrs);
+}
+
+async function insertAgentRunRow(attrs: CostAndTokenAttributes): Promise<void> {
+  try {
+    const table = await biTable("agent_runs_bi");
+    if (!table) return; // BigQuery not configured — silent no-op, matches getTracer()'s contract
+    await table.insert(
+      [
+        {
+          runId: attrs.runId,
+          clientId: attrs.clientId,
+          agentId: attrs.agentId,
+          model: attrs.model,
+          inputTokens: attrs.inputTokensCached + attrs.inputTokensUncached,
+          outputTokens: attrs.outputTokens,
+          costUsd: attrs.costUsd,
+          durationMs: attrs.durationMs,
+          status: attrs.status,
+          errorDetails: null,
+          timestamp: new Date().toISOString(),
+          operation: attrs.operation ?? null,
+          jobId: attrs.jobId ?? null,
+          stepId: attrs.stepId ?? null,
+          // Every row this package writes is engine-originated — the
+          // portal's own inserts (src/lib/telemetry/bi-tracker.ts) stamp
+          // "portal" themselves.
+          source: "agent-engine",
+        },
+      ],
+      { ignoreUnknownValues: true, skipInvalidRows: false },
+    );
+  } catch (err) {
+    console.error(
+      JSON.stringify({ severity: "WARNING", message: "agent_runs_bi insert failed", error: describeError(err), runId: attrs.runId }),
+    );
+  }
 }
 
 function runInSpan<T>(name: string, setup: (span: Span) => void, fn: (span: Span) => Promise<T>): Promise<T> {
