@@ -1,6 +1,6 @@
-import { z } from "zod";
 import type OpenAI from "openai";
 import type { CompletionRequest, CompletionResult, ModelAdapter } from "./types.js";
+import { toRootObjectJsonSchema, unwrapRootPayload } from "./root-object-schema.js";
 import { withRetry, type RetryOptions } from "./retry.js";
 
 /**
@@ -11,13 +11,14 @@ import { withRetry, type RetryOptions } from "./retry.js";
  * `commodity` tiers — point `client.baseURL` at the gateway for either.
  *
  * Structured output uses `response_format: json_schema` (native OpenAI
- * Structured Outputs, which LiteLLM also proxies), converting the step's
- * `outputSchema` with zod v4's `z.toJSONSchema`. The API call itself is
- * wrapped in a bounded exponential-backoff retry (RetryOptions, default 3
- * attempts) for transient 429/5xx/network failures — `ModelRouter`'s own
- * fallback-model logic (for the `portable`/`commodity` tiers this adapter
- * serves) is a separate, higher-level concern; this only smooths over a
- * transient blip on the same endpoint.
+ * Structured Outputs, which LiteLLM also proxies). Structured Outputs
+ * requires the schema root to be an object, so the conversion goes through
+ * the same `toRootObjectJsonSchema` the Anthropic adapter uses — see that
+ * helper for why `BaseAgent`'s turn schema needs it. Unlike the Anthropic
+ * path, this one has NOT been exercised against a live endpoint (no agent in
+ * this system declares the `portable`/`commodity` tiers today, and no gateway
+ * was configured when it was written) — the shape is unit-tested, not
+ * gateway-verified.
  */
 export class OpenAICompatibleAdapter implements ModelAdapter {
   readonly providerId: string;
@@ -31,7 +32,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
   }
 
   async complete<TOutput>(req: CompletionRequest<TOutput>): Promise<CompletionResult<TOutput>> {
-    const jsonSchema = z.toJSONSchema(req.schema);
+    const { schema: jsonSchema, wrapped } = toRootObjectJsonSchema(req.schema);
 
     const response = await withRetry(
       () =>
@@ -56,7 +57,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       throw new Error(`OpenAICompatibleAdapter: model "${req.model}" returned no message content`);
     }
 
-    const output = req.schema.parse(JSON.parse(raw));
+    const output = req.schema.parse(unwrapRootPayload(JSON.parse(raw), wrapped));
     const usage = response.usage;
     const cached = usage?.prompt_tokens_details?.cached_tokens ?? 0;
 

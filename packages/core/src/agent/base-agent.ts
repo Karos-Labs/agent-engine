@@ -51,7 +51,7 @@ export abstract class BaseAgent<TOutput> {
     let systemPrompt: string | undefined;
     try {
       systemPrompt = await this.loadSystemPrompt(ctx);
-    } catch {
+    } catch (err) {
       // A PromptStore lookup failure is a tooling problem (a broken/misconfigured
       // skillRef), never a content judgment — same rule as every other failure
       // mode in this loop (RFC-01 §6).
@@ -63,6 +63,7 @@ export abstract class BaseAgent<TOutput> {
         durationMs: 0,
         costUsd: 0,
         status: "tooling_error",
+        error: `could not resolve skillRef "${this.config.skillRef}": ${describeError(err)}`,
       });
       return this.finish(steps, null, "tooling_error");
     }
@@ -115,7 +116,7 @@ export abstract class BaseAgent<TOutput> {
       {
         stepId: this.config.id,
         description: this.config.description,
-        allowedTools: this.config.allowedTools,
+        allowedTools: this.describeAllowedTools(),
         context: { runId: ctx.runId, clientSlug: ctx.clientSlug, productId: ctx.productId, slotId: ctx.slotId },
         input,
         transcript,
@@ -123,6 +124,37 @@ export abstract class BaseAgent<TOutput> {
       null,
       2,
     );
+  }
+
+  /**
+   * Each allowed tool as `{name, inputSchema}` rather than a bare name.
+   *
+   * `buildTurnSchema` constrains which tool the model may *name*, but nothing
+   * constrains the `args` it invents for that tool — `args` is `z.unknown()`
+   * by necessity, since one turn schema has to cover every tool. So a name
+   * alone still leaves the model guessing the argument shape, and real runs
+   * died on it: the model called `gate.numbersSourced` with
+   * `{claim, sourceText}` against a tool declaring `{text, sources[]}`.
+   * Advertising each tool's own `inputSchema` closes that gap, and because it
+   * *is* the tool's own schema it can never drift from what `runOneTurn`
+   * validates against.
+   *
+   * A tool whose schema can't be represented as JSON Schema degrades to the
+   * bare name instead of failing the step — a less informative prompt is not
+   * a broken run. Reads through `scopedTools()` so this can only ever
+   * advertise tools the loop can actually reach.
+   */
+  private describeAllowedTools(): Array<{ name: string; inputSchema?: unknown }> {
+    const scoped = this.scopedTools();
+    return this.config.allowedTools.map((name) => {
+      const tool = scoped[name];
+      if (!tool) return { name };
+      try {
+        return { name, inputSchema: z.toJSONSchema(tool.inputSchema) };
+      } catch {
+        return { name };
+      }
+    });
   }
 
   /**
@@ -177,7 +209,13 @@ export abstract class BaseAgent<TOutput> {
   ): Promise<TurnOutcome<TOutput>> {
     const turnSchema = this.buildTurnSchema();
     const prompt = this.buildTurnPrompt(ctx, input, transcript);
-    const opts: RouterCompleteOptions | undefined = systemPrompt !== undefined ? { system: systemPrompt } : undefined;
+    const opts: RouterCompleteOptions | undefined =
+      systemPrompt !== undefined || this.config.maxTokens !== undefined
+        ? {
+            ...(systemPrompt !== undefined ? { system: systemPrompt } : {}),
+            ...(this.config.maxTokens !== undefined ? { maxTokens: this.config.maxTokens } : {}),
+          }
+        : undefined;
 
     const startedAt = this.clock();
     let completion;
@@ -194,6 +232,7 @@ export abstract class BaseAgent<TOutput> {
           durationMs: this.clock() - startedAt,
           costUsd: 0,
           status: "tooling_error",
+          error: `model call failed: ${describeError(err)}`,
         },
       };
     }
@@ -264,14 +303,30 @@ export abstract class BaseAgent<TOutput> {
       };
     }
 
+    // Resolved against the step's own scoped registry, never the full one, so
+    // a tool outside `allowedTools` is unreachable even if something names it
+    // exactly. Reaching the `!tool` branch below therefore means a *declared*
+    // tool is missing from the runtime registry (a wiring gap), not that the
+    // model invented a name — `buildTurnSchema`'s enum already rules that out.
+    //
+    // Both that case and malformed `args` resolve as a normal observation the
+    // model can act on next turn, still bounded by `maxSteps`, rather than
+    // killing the step outright. Treating them as fatal made a single bad
+    // argument guess end an otherwise-healthy run — identical inputs would
+    // succeed or fail depending on how the model happened to shape one call.
+    // The tool is never executed in either branch; only the feedback changed.
     const tool = this.scopedTools()[turn.tool];
     if (!tool) {
+      const reason = `no tool registered as "${turn.tool}" — allowed tools for this step: ${this.config.allowedTools.join(", ") || "(none)"}`;
       return {
-        kind: "tooling_error",
+        kind: "tool_call",
+        toolName: turn.tool,
+        args: turn.args,
+        outcome: { status: "tooling_error", reason },
         telemetry: {
           stepIndex,
           ...(turn.thought !== undefined ? { thought: turn.thought } : {}),
-          toolCall: { name: turn.tool, args: turn.args, result: { error: `no tool registered as "${turn.tool}"` }, toolVersion: "unknown" },
+          toolCall: { name: turn.tool, args: turn.args, result: { error: reason }, toolVersion: "unknown" },
           modelUsed: completion.modelUsed,
           inputTokens: completion.inputTokens,
           outputTokens: completion.outputTokens,
@@ -284,12 +339,20 @@ export abstract class BaseAgent<TOutput> {
 
     const parsedArgs = tool.inputSchema.safeParse(turn.args);
     if (!parsedArgs.success) {
+      // The concrete validation issues, so the next turn can fix the exact
+      // field rather than guessing again at the same shape.
+      const reason = `arguments failed the tool's input schema: ${parsedArgs.error.issues
+        .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+        .join("; ")}`;
       return {
-        kind: "tooling_error",
+        kind: "tool_call",
+        toolName: tool.name,
+        args: turn.args,
+        outcome: { status: "tooling_error", reason },
         telemetry: {
           stepIndex,
           ...(turn.thought !== undefined ? { thought: turn.thought } : {}),
-          toolCall: { name: tool.name, args: turn.args, result: { error: "arguments failed the tool's input schema" }, toolVersion: tool.version },
+          toolCall: { name: tool.name, args: turn.args, result: { error: reason }, toolVersion: tool.version },
           modelUsed: completion.modelUsed,
           inputTokens: completion.inputTokens,
           outputTokens: completion.outputTokens,

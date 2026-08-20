@@ -322,3 +322,130 @@ describe("BaseAgent — final output validation", () => {
     expect(result.finalOutput).toBeNull();
   });
 });
+
+/**
+ * A hallucinated tool name and malformed arguments are model mistakes, not
+ * broken infrastructure. Before these were recoverable, a single bad guess
+ * ended the whole step — which made real runs non-deterministic: the same
+ * input succeeded or failed purely on how the model happened to shape one
+ * tool call. The tool must still never execute with arguments that failed
+ * its own schema.
+ */
+describe("BaseAgent — recoverable model mistakes", () => {
+  const strictTool = (name: string) =>
+    ({
+      name,
+      version: "1.0.0",
+      inputSchema: z.object({ text: z.string(), sources: z.array(z.string()) }),
+      execute: vi.fn(async () => ({ status: "success", result: { verdict: "pass" } }) as AgentToolOutcome<unknown>),
+    }) satisfies AgentTool;
+
+  it("feeds a schema violation back as an observation and lets the next turn succeed", async () => {
+    const gate = strictTool("gate.numbersSourced");
+    const router = fakeRouter([
+      // The exact mistake seen in a real run: the tool declares {text, sources[]}.
+      toolCallTurn("gate.numbersSourced", { claim: "40% boost", sourceText: "a study" }),
+      toolCallTurn("gate.numbersSourced", { text: "40% boost", sources: ["a study"] }),
+      finalTurn({ body: "drafted" }),
+    ]);
+    const runtime: BaseAgentRuntime = { router, tools: { "gate.numbersSourced": gate } };
+
+    const agent = new MockAgent(runtime, baseConfig({ allowedTools: ["gate.numbersSourced"] }));
+    const result = await agent.run(ctx, {});
+
+    expect(result.status).toBe("completed");
+    expect(result.finalOutput).toEqual({ body: "drafted" });
+    // Never executed with the invalid arguments — only with the corrected ones.
+    expect(gate.execute).toHaveBeenCalledTimes(1);
+    expect(gate.execute).toHaveBeenCalledWith({ text: "40% boost", sources: ["a study"] }, { ctx });
+  });
+
+  it("names the offending field in the observation, so the retry is informed", async () => {
+    const gate = strictTool("gate.numbersSourced");
+    const router = fakeRouter([toolCallTurn("gate.numbersSourced", { claim: "40%" }), finalTurn({ body: "drafted" })]);
+    const runtime: BaseAgentRuntime = { router, tools: { "gate.numbersSourced": gate } };
+
+    const agent = new MockAgent(runtime, baseConfig({ allowedTools: ["gate.numbersSourced"] }));
+    const result = await agent.run(ctx, {});
+
+    const failure = result.steps[0]?.toolCall?.result as { error: string };
+    expect(failure.error).toMatch(/text/);
+    expect(failure.error).toMatch(/sources/);
+    expect(result.steps[0]?.status).toBe("tooling_error");
+  });
+
+  it("rejects a tool outside allowedTools outright — an allowlist breach is not a mistake to coach", async () => {
+    const gate = strictTool("gate.numbersSourced");
+    const router = fakeRouter([toolCallTurn("gate.doesNotExist", {}), finalTurn({ body: "drafted" })]);
+    const runtime: BaseAgentRuntime = { router, tools: { "gate.numbersSourced": gate, "gate.doesNotExist": strictTool("gate.doesNotExist") } };
+
+    const agent = new MockAgent(runtime, baseConfig({ allowedTools: ["gate.numbersSourced"] }));
+    const result = await agent.run(ctx, {});
+
+    // Fatal on purpose, in the same class as a write-fence block: the model
+    // naming a tool this step never declared is a boundary breach, not a typo.
+    expect(result.status).toBe("tooling_error");
+    expect(result.steps).toHaveLength(1);
+    const failure = result.steps[0]?.toolCall?.result as { error: string };
+    expect(failure.error).toMatch(/allowedTools/);
+  });
+
+  it("recovers when a declared tool is missing from the runtime registry", async () => {
+    // Passes the allowlist (it IS declared) but has no implementation wired up —
+    // a wiring gap, which the model can route around by choosing another turn.
+    const router = fakeRouter([toolCallTurn("gate.declaredButUnwired", {}), finalTurn({ body: "drafted" })]);
+    const runtime: BaseAgentRuntime = { router, tools: {} };
+
+    const agent = new MockAgent(runtime, baseConfig({ allowedTools: ["gate.declaredButUnwired"] }));
+    const result = await agent.run(ctx, {});
+
+    expect(result.status).toBe("completed");
+    const failure = result.steps[0]?.toolCall?.result as { error: string };
+    expect(failure.error).toMatch(/no tool registered/);
+  });
+
+  it("still exhausts maxSteps rather than looping forever on a model that never corrects itself", async () => {
+    const gate = strictTool("gate.numbersSourced");
+    const router = fakeRouter(Array.from({ length: 3 }, () => toolCallTurn("gate.numbersSourced", { wrong: true })));
+    const runtime: BaseAgentRuntime = { router, tools: { "gate.numbersSourced": gate } };
+
+    const agent = new MockAgent(runtime, baseConfig({ allowedTools: ["gate.numbersSourced"], maxSteps: 3 }));
+    const result = await agent.run(ctx, {});
+
+    expect(result.status).toBe("budget_exceeded");
+    expect(result.steps).toHaveLength(3);
+    expect(gate.execute).not.toHaveBeenCalled();
+  });
+
+  it("keeps a write-fence block fatal — a tenant boundary is not a model typo to retry", async () => {
+    const ledger = fakeTool("ledger.write", async () => ({ status: "success", result: { ok: true } }));
+    const router = fakeRouter([toolCallTurn("ledger.write", { clientSlug: "someone-else" }), finalTurn({ body: "drafted" })]);
+    const runtime: BaseAgentRuntime = { router, tools: { "ledger.write": ledger } };
+
+    const agent = new MockAgent(runtime, baseConfig({ allowedTools: ["ledger.write"] }));
+    const result = await agent.run(ctx, {});
+
+    expect(result.status).toBe("tooling_error");
+    expect(ledger.execute).not.toHaveBeenCalled();
+  });
+});
+
+describe("BaseAgent — tool advertisement", () => {
+  it("sends each allowed tool's input schema, not just its name", async () => {
+    const gate: AgentTool = {
+      name: "gate.numbersSourced",
+      version: "1.0.0",
+      inputSchema: z.object({ text: z.string(), sources: z.array(z.string()) }),
+      execute: vi.fn(async () => ({ status: "success", result: {} }) as AgentToolOutcome<unknown>),
+    };
+    const router = fakeRouter([finalTurn({ body: "drafted" })]);
+    const runtime: BaseAgentRuntime = { router, tools: { "gate.numbersSourced": gate } };
+
+    await new MockAgent(runtime, baseConfig({ allowedTools: ["gate.numbersSourced"] })).run(ctx, {});
+
+    const prompt = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]![0] as string;
+    const advertised = JSON.parse(prompt).allowedTools as Array<{ name: string; inputSchema?: { properties?: Record<string, unknown> } }>;
+    expect(advertised[0]?.name).toBe("gate.numbersSourced");
+    expect(Object.keys(advertised[0]?.inputSchema?.properties ?? {})).toEqual(["text", "sources"]);
+  });
+});
