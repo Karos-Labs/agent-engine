@@ -1,4 +1,4 @@
-import { BaseAgent, type AgentStepConfig } from "@agent-engine/core";
+import { BaseAgent, resolveModelPolicy, type AgentStepConfig } from "@agent-engine/core";
 import { VisualQaOutputSchema, type VisualQaOutput } from "../workflow/types.js";
 
 /**
@@ -36,7 +36,7 @@ export class InstagramVisualQaAgent extends BaseAgent<VisualQaOutput> {
     allowedTools: [],
     outputSchema: VisualQaOutputSchema,
     // Pinned — matches every other agent in this package (RFC-02 §5).
-    modelPolicy: { policy: "pinned", model: "claude-sonnet-4-6" },
+    modelPolicy: resolveModelPolicy("instagram-visual-qa", { policy: "pinned", model: "claude-sonnet-4-6" }),
     skillRef: "instagram-visual-qa@1",
   };
 }

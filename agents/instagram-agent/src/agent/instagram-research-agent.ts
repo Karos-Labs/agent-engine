@@ -1,4 +1,4 @@
-import { BaseAgent, type AgentStepConfig } from "@agent-engine/core";
+import { BaseAgent, resolveModelPolicy, type AgentStepConfig } from "@agent-engine/core";
 import { ResearchOutputSchema, type ResearchOutput } from "../workflow/types.js";
 
 /**
@@ -30,7 +30,7 @@ export class InstagramResearchAgent extends BaseAgent<ResearchOutput> {
     // Pinned — same rationale as every other agent in this repo (RFC-02 §5):
     // even an extraction-flavored step never silently falls back to a
     // different model mid-run.
-    modelPolicy: { policy: "pinned", model: "claude-sonnet-4-6" },
+    modelPolicy: resolveModelPolicy("instagram-research", { policy: "pinned", model: "claude-sonnet-4-6" }),
     skillRef: "instagram-research@1",
   };
 }

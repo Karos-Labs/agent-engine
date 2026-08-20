@@ -9,3 +9,4 @@ coverage/
 # Local-only prompt root + seeded client workspace (npm run setup:local)
 .local/
 .karos-workspace/
+_to_delete/

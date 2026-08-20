@@ -1,4 +1,4 @@
-import { BaseAgent, GateVerdictSchema, type AgentStepConfig, type GateVerdict } from "@agent-engine/core";
+import { BaseAgent, resolveModelPolicy, GateVerdictSchema, type AgentStepConfig, type GateVerdict } from "@agent-engine/core";
 
 /**
  * Phase 5 GATE, Layer 3 (ENGINE-SPEC §8 / RFC-07 §7): the one judgment pass
@@ -26,7 +26,7 @@ export class LandingCraftVerdictAgent extends BaseAgent<GateVerdict> {
       "Judge the built landing page against, in order: the client's brand guidelines, the 9-site craft floor, the not-boring bar (>=1 real signature moment), and the first-pass bar. Return pass/fail with specific reasons.",
     allowedTools: [],
     outputSchema: GateVerdictSchema,
-    modelPolicy: { policy: "pinned", model: "claude-sonnet-4-6" },
+    modelPolicy: resolveModelPolicy("landing-craft-verdict", { policy: "pinned", model: "claude-sonnet-4-6" }),
     skillRef: "landing-craft-verdict@1",
   };
 }

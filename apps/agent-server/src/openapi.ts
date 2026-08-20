@@ -137,6 +137,30 @@ const startRunExamples: Record<string, { summary: string; value: Record<string, 
   },
 };
 
+/**
+ * Pub/Sub's OWN push-delivery envelope shape
+ * (https://cloud.google.com/pubsub/docs/push#receive_push) — NOT this
+ * system's `RunJobRequest` schema, which is nested one level down inside
+ * `message.data`, base64-encoded. Documented separately for exactly that
+ * reason: a caller reading this endpoint's schema should not expect
+ * `clientSlug`/`productId`/`runKind` at the top level.
+ */
+const pubSubPushEnvelopeSchema = {
+  type: "object",
+  required: ["message"],
+  properties: {
+    message: {
+      type: "object",
+      required: ["data"],
+      properties: {
+        data: { type: "string", format: "byte", description: "Base64-encoded JSON matching the run-job payload: {clientSlug, productId, runKind}." },
+        messageId: { type: "string", description: "Pub/Sub's own message id — stable across redeliveries of the same unacked message." },
+      },
+    },
+    subscription: { type: "string" },
+  },
+};
+
 export const openApiDocument: OpenApiDocument = {
   openapi: "3.0.3",
   info: {
@@ -149,6 +173,7 @@ export const openApiDocument: OpenApiDocument = {
   tags: [
     { name: "health", description: "Liveness/readiness" },
     { name: "runs", description: "Start, resume, and check the status of an agent run" },
+    { name: "queue", description: "Queue-triggered runs (Pub/Sub push delivery) — see README's \"Running jobs from a queue\" section" },
   ],
   paths: {
     "/healthz": {
@@ -263,6 +288,48 @@ export const openApiDocument: OpenApiDocument = {
         },
       },
     },
+    "/api/v1/queue/pubsub-push": {
+      post: {
+        tags: ["queue"],
+        summary: "Pub/Sub push-delivery endpoint — starts a run from a queued message",
+        description:
+          "Not called directly by a normal client — this is where a Pub/Sub push subscription delivers run-job messages " +
+          "({clientSlug, productId, runKind}, base64-encoded inside the envelope's message.data). Triggers the exact same " +
+          "run-starting logic as POST /api/v1/runs/start, with a runId derived deterministically from Pub/Sub's own " +
+          "message id so an at-least-once redelivery can never double-run a job. See README's \"Running jobs from a " +
+          "queue (Pub/Sub)\" section for the full setup (topic/subscription creation, push authentication, dead-lettering).",
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: { $ref: "#/components/schemas/PubSubPushEnvelope" } } },
+        },
+        parameters: [
+          {
+            name: "token",
+            in: "query",
+            required: false,
+            schema: { type: "string" },
+            description: "Shared-secret defense-in-depth, checked against PUBSUB_PUSH_TOKEN when that env var is configured. Independent of OIDC verification below.",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "The message was accepted (Pub/Sub will not redeliver it) — includes when the run was already mid-flight for this exact message id.",
+          },
+          "400": {
+            description: "Malformed push envelope, invalid base64/JSON, or a payload that doesn't match the run-job schema. Permanent — the subscription's own max-delivery-attempts + dead-letter-topic config decides how long this is retried before Pub/Sub gives up, not this endpoint.",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } },
+          },
+          "401": {
+            description: "Missing/wrong ?token=, missing Authorization bearer token, or OIDC identity-token verification failed.",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } },
+          },
+          "500": {
+            description: "The run failed unexpectedly (Pub/Sub will redeliver per the subscription's backoff policy), or PUBSUB_PUSH_AUDIENCE_URL is configured with no verifier wired up (a deployment misconfiguration).",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } },
+          },
+        },
+      },
+    },
   },
   components: {
     schemas: {
@@ -272,6 +339,7 @@ export const openApiDocument: OpenApiDocument = {
       DynamicAgentRunReport: dynamicAgentRunReportSchema,
       DynamicAgentRunStep: dynamicAgentRunStepSchema,
       ErrorResponse: errorResponseSchema,
+      PubSubPushEnvelope: pubSubPushEnvelopeSchema,
     },
   },
 };

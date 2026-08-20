@@ -1,4 +1,4 @@
-import { BaseAgent, type AgentStepConfig } from "@agent-engine/core";
+import { BaseAgent, resolveModelPolicy, type AgentStepConfig } from "@agent-engine/core";
 import { ImageVettingOutputSchema, type ImageVettingOutput } from "../workflow/types.js";
 
 /**
@@ -51,7 +51,7 @@ export class InstagramImageVettingAgent extends BaseAgent<ImageVettingOutput> {
     // in this codebase yet uses the "portable"/"commodity" tiers RFC-03 §4
     // suggested for this step, so this stays consistent with the other six
     // agents' established convention rather than introducing the first one.
-    modelPolicy: { policy: "pinned", model: "claude-sonnet-4-6" },
+    modelPolicy: resolveModelPolicy("instagram-image-vet", { policy: "pinned", model: "claude-sonnet-4-6" }),
     skillRef: "instagram-image-vet@1",
   };
 }

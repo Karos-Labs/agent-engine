@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { BaseAgent, type AgentStepConfig } from "@agent-engine/core";
+import { BaseAgent, resolveModelPolicy, type AgentStepConfig } from "@agent-engine/core";
 import { LINKEDIN_ARCHETYPES } from "../workflow/types.js";
 
 /**
@@ -52,7 +52,7 @@ export class LinkedInDraftAgent extends BaseAgent<LinkedInPostOutput> {
     outputSchema: LinkedInPostOutputSchema,
     // Pinned — RFC-02 §5: claude-sonnet-4-6 today, claude-sonnet-5 is an
     // equally acceptable pin once available; never a fallback for a pinned step.
-    modelPolicy: { policy: "pinned", model: "claude-sonnet-4-6" },
+    modelPolicy: resolveModelPolicy("linkedin-draft", { policy: "pinned", model: "claude-sonnet-4-6" }),
     skillRef: "linkedin-craft@2",
     selfCritique: { gateTool: "gate.lintPost", maxRevisions: 1, gateArgs: { platform: "linkedin" } },
   };

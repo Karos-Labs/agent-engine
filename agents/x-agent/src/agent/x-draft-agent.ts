@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { BaseAgent, type AgentStepConfig } from "@agent-engine/core";
+import { BaseAgent, resolveModelPolicy, type AgentStepConfig } from "@agent-engine/core";
 
 /**
  * The six content lanes (`references/lanes.md` in x-agent-v2): what this
@@ -89,7 +89,7 @@ export class XDraftAgent extends BaseAgent<XPostOutput> {
     outputSchema: XPostOutputSchema,
     // Pinned — RFC-02 §3: claude-sonnet-4-6 today, claude-sonnet-5 is an
     // equally acceptable pin once available; never a fallback for a pinned step.
-    modelPolicy: { policy: "pinned", model: "claude-sonnet-4-6" },
+    modelPolicy: resolveModelPolicy("x-draft", { policy: "pinned", model: "claude-sonnet-4-6" }),
     skillRef: "x-craft@2",
     selfCritique: {
       gateTool: "gate.lintPost",

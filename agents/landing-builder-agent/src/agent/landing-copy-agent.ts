@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { BaseAgent, type AgentStepConfig } from "@agent-engine/core";
+import { BaseAgent, resolveModelPolicy, type AgentStepConfig } from "@agent-engine/core";
 
 export const LandingCopyOutputSchema = z.object({
   /** `LandingContent.lang` (content-schema.ts) — e.g. `"en-US"`, from `brand.voice.lang`. */
@@ -29,7 +29,7 @@ export class LandingCopyAgent extends BaseAgent<LandingCopyOutput> {
     description: "Write on-brand landing-page copy for every section the intake facts support, obeying brandLaw and voice, never a stock template's copy.",
     allowedTools: [],
     outputSchema: LandingCopyOutputSchema,
-    modelPolicy: { policy: "pinned", model: "claude-sonnet-4-6" },
+    modelPolicy: resolveModelPolicy("landing-copy", { policy: "pinned", model: "claude-sonnet-4-6" }),
     skillRef: "landing-copy@1",
   };
 }

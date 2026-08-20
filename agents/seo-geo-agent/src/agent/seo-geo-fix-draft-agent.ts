@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { BaseAgent, type AgentStepConfig } from "@agent-engine/core";
+import { BaseAgent, resolveModelPolicy, type AgentStepConfig } from "@agent-engine/core";
 
 /** One fired recommendation's fix-relevant fields, exactly as the workflow hands them in (see `SeoGeoFixDraftAgent` input below) — never a fabricated projection. */
 export const SeoGeoFixDraftInputRecommendationSchema = z.object({
@@ -54,7 +54,7 @@ export class SeoGeoFixDraftAgent extends BaseAgent<SeoGeoFixDraftOutput> {
     allowedTools: [],
     outputSchema: SeoGeoFixDraftOutputSchema,
     // Pinned — same model pin as every other bounded craft step in this migration set (RFC-02 §5's convention).
-    modelPolicy: { policy: "pinned", model: "claude-sonnet-4-6" },
+    modelPolicy: resolveModelPolicy("seo-geo-fix-draft", { policy: "pinned", model: "claude-sonnet-4-6" }),
     skillRef: "seo-geo-fix-draft@1",
   };
 }

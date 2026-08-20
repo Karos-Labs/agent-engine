@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { BaseAgent, type AgentStepConfig } from "@agent-engine/core";
+import { BaseAgent, resolveModelPolicy, type AgentStepConfig } from "@agent-engine/core";
 
 export const LandingMakeOutputSchema = z.object({
   /** Relative-to-`OUTPUT_PATH/site` paths this step actually wrote via `landing.writeSiteFile`. */
@@ -32,7 +32,7 @@ export class LandingMakeAgent extends BaseAgent<LandingMakeOutput> {
     allowedTools: ["landing.writeSiteFile", "landing.readSiteFile"],
     outputSchema: LandingMakeOutputSchema,
     maxSteps: 24,
-    modelPolicy: { policy: "pinned", model: "claude-sonnet-4-6" },
+    modelPolicy: resolveModelPolicy("landing-make", { policy: "pinned", model: "claude-sonnet-4-6" }),
     skillRef: "landing-make@1",
   };
 }

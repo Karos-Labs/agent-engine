@@ -4,39 +4,52 @@ import { toRootObjectJsonSchema, unwrapRootPayload } from "./root-object-schema.
 import { withRetry, type RetryOptions } from "./retry.js";
 
 /**
+ * A client per canonical model id, mirroring `MessagesApiAdapter`'s
+ * `MessagesApiClientResolver` — needed by the `model-garden` vendor, whose
+ * Model-as-a-Service endpoint bakes a GCP region into the client's base URL
+ * (`vertex-model-garden-client.ts`), so a per-model region pin means a
+ * second client, not a second argument. The plain `openai-compatible`
+ * vendor (a single external gateway/API) just passes one static client.
+ */
+export type OpenAIClientResolver = (canonicalModelId: string) => OpenAI;
+
+/**
  * Adapter for any OpenAI-compatible chat-completions endpoint — the real
- * OpenAI API, or a self-hosted LiteLLM gateway fronting DeepSeek/Qwen/etc
- * (RFC-01 §3, §5.4). LiteLLM's whole point is exposing that same
- * OpenAI-shaped endpoint, so one adapter covers both the `portable` and
- * `commodity` tiers — point `client.baseURL` at the gateway for either.
+ * OpenAI API, a self-hosted LiteLLM gateway (`openai-compatible` vendor), or
+ * Agent Platform's own Model-as-a-Service endpoint for Model Garden partner
+ * models (`model-garden` vendor — RFC-01 §3, §5.4, and
+ * `vertex-model-garden-client.ts`). Every one of these speaks the identical
+ * Chat Completions wire shape, which is the entire reason one adapter class
+ * covers all three; what differs between them is only which client
+ * constructed it and how that client authenticates — a vendor concern
+ * decided in `create-model-router-from-env.ts`, never in here.
  *
  * Structured output uses `response_format: json_schema` (native OpenAI
- * Structured Outputs, which LiteLLM also proxies). Structured Outputs
- * requires the schema root to be an object, so the conversion goes through
- * the same `toRootObjectJsonSchema` the Anthropic adapter uses — see that
- * helper for why `BaseAgent`'s turn schema needs it. Unlike the Anthropic
- * path, this one has NOT been exercised against a live endpoint (no agent in
- * this system declares the `portable`/`commodity` tiers today, and no gateway
- * was configured when it was written) — the shape is unit-tested, not
- * gateway-verified.
+ * Structured Outputs, which both LiteLLM and Agent Platform's
+ * OpenAI-compatible endpoint also proxy). Structured Outputs requires the
+ * schema root to be an object, so the conversion goes through the same
+ * `toRootObjectJsonSchema` every adapter in this system uses — see that
+ * helper for why `BaseAgent`'s turn schema needs it.
  */
 export class OpenAICompatibleAdapter implements ModelAdapter {
   readonly providerId: string;
 
-  constructor(
-    private readonly client: OpenAI,
-    providerId = "openai",
-    private readonly retryOptions: RetryOptions = {},
-  ) {
+  private readonly resolveClient: OpenAIClientResolver;
+  private readonly retryOptions: RetryOptions;
+
+  constructor(client: OpenAI | OpenAIClientResolver, providerId = "openai", retryOptions: RetryOptions = {}) {
     this.providerId = providerId;
+    this.resolveClient = typeof client === "function" ? client : () => client;
+    this.retryOptions = retryOptions;
   }
 
   async complete<TOutput>(req: CompletionRequest<TOutput>): Promise<CompletionResult<TOutput>> {
     const { schema: jsonSchema, wrapped } = toRootObjectJsonSchema(req.schema);
+    const client = this.resolveClient(req.model);
 
     const response = await withRetry(
       () =>
-        this.client.chat.completions.create({
+        client.chat.completions.create({
           model: req.model,
           ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
           messages: [
@@ -54,7 +67,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
     const choice = response.choices[0];
     const raw = choice?.message.content;
     if (!raw) {
-      throw new Error(`OpenAICompatibleAdapter: model "${req.model}" returned no message content`);
+      throw new Error(`${this.providerId}: model "${req.model}" returned no message content`);
     }
 
     const output = req.schema.parse(unwrapRootPayload(JSON.parse(raw), wrapped));

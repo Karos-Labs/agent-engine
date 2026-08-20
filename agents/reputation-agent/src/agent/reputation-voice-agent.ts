@@ -1,4 +1,4 @@
-import { BaseAgent, type AgentStepConfig } from "@agent-engine/core";
+import { BaseAgent, resolveModelPolicy, type AgentStepConfig } from "@agent-engine/core";
 import { ReputationVoiceOutputSchema, type ReputationVoiceOutput } from "../workflow/types.js";
 
 /**
@@ -19,7 +19,7 @@ export class ReputationVoiceAgent extends BaseAgent<ReputationVoiceOutput> {
     description: "Batch voice-consistency pass over every surviving drafted reply: does each sound like this client, and does the batch avoid repeating a template shape across items.",
     allowedTools: [],
     outputSchema: ReputationVoiceOutputSchema,
-    modelPolicy: { policy: "pinned", model: "claude-sonnet-4-6" },
+    modelPolicy: resolveModelPolicy("reputation-voice", { policy: "pinned", model: "claude-sonnet-4-6" }),
     skillRef: "reputation-voice@1",
   };
 }

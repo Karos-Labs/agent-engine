@@ -1,4 +1,4 @@
-import { BaseAgent, type AgentStepConfig } from "@agent-engine/core";
+import { BaseAgent, resolveModelPolicy, type AgentStepConfig } from "@agent-engine/core";
 import { ReputationExtractionOutputSchema, type ReputationExtractionOutput } from "../workflow/types.js";
 
 /**
@@ -34,7 +34,7 @@ export class ReputationExtractionAgent extends BaseAgent<ReputationExtractionOut
     outputSchema: ReputationExtractionOutputSchema,
     // Commodity — cheap, cacheable, swappable (RFC-08 §2's three-tier model
     // policy table: "the extraction pass is squarely 'commodity' tier").
-    modelPolicy: { policy: "commodity", model: REPUTATION_CLASSIFIER_MODEL_ID },
+    modelPolicy: resolveModelPolicy("reputation-extraction", { policy: "commodity", model: REPUTATION_CLASSIFIER_MODEL_ID }),
     skillRef: "reputation-extraction@1",
   };
 }

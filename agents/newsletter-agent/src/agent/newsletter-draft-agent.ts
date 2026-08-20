@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { BaseAgent, type AgentStepConfig } from "@agent-engine/core";
+import { BaseAgent, resolveModelPolicy, type AgentStepConfig } from "@agent-engine/core";
 
 /** One scannable story within a newsletter edition — a heading, short body, and an optional link to the full story. */
 export const NewsletterSectionSchema = z.object({
@@ -84,7 +84,7 @@ export class NewsletterDraftAgent extends BaseAgent<NewsletterPostOutput> {
     outputSchema: NewsletterPostOutputSchema,
     // Pinned — RFC-02 §5: claude-sonnet-4-6 today, claude-sonnet-5 is an
     // equally acceptable pin once available; never a fallback for a pinned step.
-    modelPolicy: { policy: "pinned", model: "claude-sonnet-4-6" },
+    modelPolicy: resolveModelPolicy("newsletter-draft", { policy: "pinned", model: "claude-sonnet-4-6" }),
     skillRef: "newsletter-craft@1",
     selfCritique: { gateTool: "gate.lintPost", maxRevisions: 1, gateArgs: { platform: "newsletter" } },
   };

@@ -6,22 +6,35 @@
 #      run.googleapis.com, secretmanager.googleapis.com, firestore.googleapis.com,
 #      storage.googleapis.com, aiplatform.googleapis.com.
 #   2. Create the Artifact Registry Docker repository named by `_REPOSITORY`.
-#   3. Create a Secret Manager secret named by `_ANTHROPIC_SECRET_NAME` holding
-#      the Anthropic API key, and grant the Cloud Build service account
-#      `roles/secretmanager.secretAccessor` on it.
+#   3. Request access to the Claude models this engine uses in the Agent
+#      Platform (formerly Vertex AI) Model Garden for this project. Approval
+#      can take 24-48h. No Secret Manager secret is needed for model access:
+#      the engine authenticates to Agent Platform with the runtime service
+#      account's own Application Default Credentials, so NO model credential
+#      is ever passed to the container as an environment variable value
+#      (RFC-01 §16.3 — this is the rule that exists because
+#      `ANTHROPIC_API_KEY` was found in plaintext in `karoscmo-prep`'s Cloud
+#      Run audit logs).
 #   4. Create (or choose) the runtime Service Account named by
-#      `_SERVICE_ACCOUNT` and grant it `roles/aiplatform.user`,
+#      `_SERVICE_ACCOUNT` and grant it `roles/aiplatform.user` (model
+#      invocation — this is what replaces the API key),
 #      `roles/datastore.user`, and `roles/storage.objectAdmin` (scoped to the
 #      `_GCS_WORKSPACE_BUCKET` bucket) — see wiring/durable-store.ts,
 #      wiring/prompt-store.ts, and wiring/workspace-store.ts.
 #   5. Grant the Cloud Build service account `roles/run.admin` and
 #      `roles/iam.serviceAccountUser` (on `_SERVICE_ACCOUNT`) so step 5 below
 #      can actually deploy.
+#   6. OPTIONAL — only if this deployment runs jobs from a queue (README's
+#      "Running jobs from a queue (Pub/Sub)" section): enable
+#      pubsub.googleapis.com, create the topic/subscription, and grant the
+#      push subscription's own service account `roles/run.invoker` on
+#      `_SERVICE_NAME` — none of that is provisioned by this pipeline. Not
+#      required to deploy or run this service at all otherwise.
 #
 # The substitution defaults below are template placeholders, not real
 # values — a trigger (or `gcloud builds submit --substitutions=...`) must
-# supply real ones for `_SERVICE_ACCOUNT` and `_ANTHROPIC_SECRET_NAME` at
-# minimum before this pipeline can deploy anything.
+# supply a real one for `_SERVICE_ACCOUNT` at minimum before this pipeline can
+# deploy anything.
 
 steps:
   # 0. Install once — every later step shares this via Cloud Build's
@@ -96,13 +109,37 @@ steps:
       - --min-instances=${_MIN_INSTANCES}
       - --max-instances=${_MAX_INSTANCES}
       - --concurrency=${_CONCURRENCY}
-      - --set-env-vars=GOOGLE_CLOUD_PROJECT=${PROJECT_ID},VERTEX_AI_LOCATION=${_REGION},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET},PROMPT_STORE_DRIVER=${_PROMPT_STORE_DRIVER}
-      - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_SECRET_NAME}:latest
+      # No --set-secrets: the model route authenticates as the service
+      # account above, so this service deploys with zero credentials in its
+      # environment. GOOGLE_CLOUD_PROJECT doubles as the Agent Platform
+      # project for the model route (create-model-router-from-env.ts), and
+      # CLOUD_ML_REGION is set separately from _REGION because the Cloud Run
+      # region and the best model-serving endpoint are different choices —
+      # `global` has the widest Claude availability and the fewest 429s.
+      - --set-env-vars=GOOGLE_CLOUD_PROJECT=${PROJECT_ID},CLOUD_ML_REGION=${_CLOUD_ML_REGION},VERTEX_AI_LOCATION=${_REGION},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET},PROMPT_STORE_DRIVER=${_PROMPT_STORE_DRIVER}
+      # Pub/Sub (README's "Running jobs from a queue" section) is entirely
+      # optional and NOT wired into this pipeline's substitutions, because
+      # PUBSUB_PROJECT_ID already falls back to GOOGLE_CLOUD_PROJECT above —
+      # nothing extra is required just to make the queue vendor buildable.
+      # Two things ARE deployment-specific and deliberately left as manual
+      # follow-ups instead of substitutions here:
+      #   1. PUBSUB_PUSH_AUDIENCE_URL can only be set to this service's own
+      #      URL, which Cloud Run assigns at deploy time — chicken-and-egg.
+      #      Deploy once, then:
+      #        gcloud run services update ${_SERVICE_NAME} --region=${_REGION} \
+      #          --update-env-vars=PUBSUB_PUSH_AUDIENCE_URL=https://YOUR-SERVICE-URL/api/v1/queue/pubsub-push
+      #   2. PUBSUB_PUSH_TOKEN (optional shared-secret defense-in-depth
+      #      alongside OIDC verification) should come from Secret Manager, not
+      #      a plaintext env var, if used at all:
+      #        # --set-secrets=PUBSUB_PUSH_TOKEN=your-secret-name:latest
+      # Also grant the push subscription's own service account
+      # `roles/run.invoker` on `_SERVICE_NAME` — Pub/Sub push auth, not
+      # anything this deploy step itself grants.
     waitFor: ["docker-push-sha", "docker-push-latest"]
 
-# Template defaults — override every `_SERVICE_ACCOUNT`/`_ANTHROPIC_SECRET_NAME`
-# (and anything else that matters for your environment) via the Cloud Build
-# trigger's own substitution variables, not by editing this file per-environment.
+# Template defaults — override `_SERVICE_ACCOUNT` (and anything else that
+# matters for your environment) via the Cloud Build trigger's own substitution
+# variables, not by editing this file per-environment.
 substitutions:
   _REGION: us-central1
   _REPOSITORY: agent-engine-repo
@@ -110,7 +147,11 @@ substitutions:
   # No safe default — must be set by the trigger. A service account with zero
   # permissions is worse than a build failing loudly for forgetting to set this.
   _SERVICE_ACCOUNT: REPLACE_ME_SERVICE_ACCOUNT_EMAIL
-  _ANTHROPIC_SECRET_NAME: REPLACE_ME_SECRET_MANAGER_SECRET_ID
+  # Agent Platform endpoint for model calls — independent of _REGION (the
+  # Cloud Run region). Override to a specific region only if `global` doesn't
+  # serve a model this deployment needs; a per-model pin
+  # (VERTEX_REGION_CLAUDE_*) is usually the better fix.
+  _CLOUD_ML_REGION: global
   _FIRESTORE_DATABASE_ID: "(default)"
   # Required for real Cloud Run state persistence (RFC-01 §9.2) — see
   # apps/agent-server/src/wiring/workspace-store.ts. Left blank only works

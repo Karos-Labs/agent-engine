@@ -2,7 +2,7 @@
   "name": "agent-engine",
   "private": true,
   "version": "0.0.1",
-  "description": "Karos Labs autonomous agent runtime — BaseAgent, durable workflow orchestration, and the shared MCP tool layer. See docs/RFC-01-agent-engine-core.md.",
+  "description": "Karos Labs autonomous agent runtime \u2014 BaseAgent, durable workflow orchestration, and the shared MCP tool layer. See docs/RFC-01-agent-engine-core.md.",
   "engines": {
     "node": ">=22"
   },
@@ -21,9 +21,13 @@
     "setup:local": "tsx scripts/setup-local.ts",
     "dev:server": "tsx watch --env-file=.env apps/agent-server/src/server.ts",
     "start:server": "node --env-file=.env apps/agent-server/dist/server.js",
+    "dev:queue-consumer": "tsx watch --env-file=.env apps/agent-server/src/queue-consumer.ts",
+    "start:queue-consumer": "node --env-file=.env apps/agent-server/dist/queue-consumer.js",
     "demo:e2e": "tsx scripts/demo-e2e-run.ts",
     "demo:agents": "tsx scripts/demo-agents-run.ts",
-    "smoke": "tsx scripts/smoke-test-server.ts"
+    "demo:queue-publish": "tsx --env-file=.env scripts/queue-publish-demo.ts",
+    "smoke": "tsx scripts/smoke-test-server.ts",
+    "smoke:agent-platform": "tsx --env-file=.env scripts/smoke-agent-platform.ts"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
