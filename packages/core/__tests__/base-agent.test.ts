@@ -374,17 +374,34 @@ describe("BaseAgent — recoverable model mistakes", () => {
     expect(result.steps[0]?.status).toBe("tooling_error");
   });
 
-  it("recovers from a hallucinated tool name, telling the model which tools exist", async () => {
+  it("rejects a tool outside allowedTools outright — an allowlist breach is not a mistake to coach", async () => {
     const gate = strictTool("gate.numbersSourced");
     const router = fakeRouter([toolCallTurn("gate.doesNotExist", {}), finalTurn({ body: "drafted" })]);
-    const runtime: BaseAgentRuntime = { router, tools: { "gate.numbersSourced": gate } };
+    const runtime: BaseAgentRuntime = { router, tools: { "gate.numbersSourced": gate, "gate.doesNotExist": strictTool("gate.doesNotExist") } };
 
     const agent = new MockAgent(runtime, baseConfig({ allowedTools: ["gate.numbersSourced"] }));
     const result = await agent.run(ctx, {});
 
+    // Fatal on purpose, in the same class as a write-fence block: the model
+    // naming a tool this step never declared is a boundary breach, not a typo.
+    expect(result.status).toBe("tooling_error");
+    expect(result.steps).toHaveLength(1);
+    const failure = result.steps[0]?.toolCall?.result as { error: string };
+    expect(failure.error).toMatch(/allowedTools/);
+  });
+
+  it("recovers when a declared tool is missing from the runtime registry", async () => {
+    // Passes the allowlist (it IS declared) but has no implementation wired up —
+    // a wiring gap, which the model can route around by choosing another turn.
+    const router = fakeRouter([toolCallTurn("gate.declaredButUnwired", {}), finalTurn({ body: "drafted" })]);
+    const runtime: BaseAgentRuntime = { router, tools: {} };
+
+    const agent = new MockAgent(runtime, baseConfig({ allowedTools: ["gate.declaredButUnwired"] }));
+    const result = await agent.run(ctx, {});
+
     expect(result.status).toBe("completed");
     const failure = result.steps[0]?.toolCall?.result as { error: string };
-    expect(failure.error).toMatch(/gate\.numbersSourced/);
+    expect(failure.error).toMatch(/no tool registered/);
   });
 
   it("still exhausts maxSteps rather than looping forever on a model that never corrects itself", async () => {
