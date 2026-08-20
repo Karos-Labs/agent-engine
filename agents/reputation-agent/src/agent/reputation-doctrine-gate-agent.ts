@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { BaseAgent, type AgentStepConfig } from "@agent-engine/core";
+import { BaseAgent, resolveModelPolicy, type AgentStepConfig } from "@agent-engine/core";
 import { DOCTRINE_CONSTRAINTS, DoctrineVerdictSchema } from "@agent-engine/tool-karos-reputation";
 
 export const ReputationDoctrineGateAgentOutputSchema = z.object({
@@ -36,7 +36,7 @@ export class ReputationDoctrineGateAgent extends BaseAgent<ReputationDoctrineGat
       "Independently review one drafted reply against the four non-negotiable doctrine constraints, quoting exact evidence for each verdict. Never told who drafted the text.",
     allowedTools: [],
     outputSchema: ReputationDoctrineGateAgentOutputSchema,
-    modelPolicy: { policy: "pinned", model: "claude-sonnet-4-6" },
+    modelPolicy: resolveModelPolicy("reputation-doctrine-gate", { policy: "pinned", model: "claude-sonnet-4-6" }),
     skillRef: "reputation-doctrine-gate@1",
   };
 }

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { BaseAgent, type AgentStepConfig } from "@agent-engine/core";
+import { BaseAgent, resolveModelPolicy, type AgentStepConfig } from "@agent-engine/core";
 
 /**
  * A single long-form blog article (RFC-02 §5). `headersList` is the
@@ -56,7 +56,7 @@ export class BlogDraftAgent extends BaseAgent<BlogPostOutput> {
     outputSchema: BlogPostOutputSchema,
     // Pinned — RFC-02 §5: claude-sonnet-4-6 today, claude-sonnet-5 is an
     // equally acceptable pin once available; never a fallback for a pinned step.
-    modelPolicy: { policy: "pinned", model: "claude-sonnet-4-6" },
+    modelPolicy: resolveModelPolicy("blog-draft", { policy: "pinned", model: "claude-sonnet-4-6" }),
     skillRef: "blog-craft@1",
     selfCritique: { gateTool: "gate.lintPost", maxRevisions: 1, gateArgs: { platform: "blog" } },
   };

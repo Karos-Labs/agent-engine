@@ -1,4 +1,4 @@
-import { BaseAgent, type AgentStepConfig } from "@agent-engine/core";
+import { BaseAgent, resolveModelPolicy, type AgentStepConfig } from "@agent-engine/core";
 import { GraphicsPlanOutputSchema, type GraphicsPlanOutput } from "../workflow/types.js";
 
 /**
@@ -36,7 +36,7 @@ export class BrandedShortsGraphicsAgent extends BaseAgent<GraphicsPlanOutput> {
       "Plan which transcript beats get a motion-graphic overlay and which get a full-frame cutaway (a real-photo burst or a single plate), each justified against what the speaker is actually saying at that moment. Every overlay's `archetype` MUST be copied verbatim from the `archetypes` list given in the input — never invent, rename, or approximate one, even if it seems like a natural extension of the client's style.",
     allowedTools: [],
     outputSchema: GraphicsPlanOutputSchema,
-    modelPolicy: { policy: "pinned", model: "claude-sonnet-4-6" },
+    modelPolicy: resolveModelPolicy("branded-shorts-graphics", { policy: "pinned", model: "claude-sonnet-4-6" }),
     skillRef: "branded-shorts-graphics@1",
   };
 }

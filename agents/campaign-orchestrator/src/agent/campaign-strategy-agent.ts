@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { BaseAgent, type AgentStepConfig } from "@agent-engine/core";
+import { BaseAgent, resolveModelPolicy, type AgentStepConfig } from "@agent-engine/core";
 
 /** The five migrated channel agents (RFC-02 §5) a campaign can schedule a slot against. */
 export const CampaignChannelSchema = z.enum(["x", "linkedin", "reddit", "blog", "newsletter"]);
@@ -56,7 +56,7 @@ export class CampaignStrategyAgent extends BaseAgent<CampaignPlanOutput> {
     outputSchema: CampaignPlanOutputSchema,
     // Pinned — RFC-02 §4: claude-sonnet-4-6 today, claude-sonnet-5 is an
     // equally acceptable pin once available; never a fallback for a pinned step.
-    modelPolicy: { policy: "pinned", model: "claude-sonnet-4-6" },
+    modelPolicy: resolveModelPolicy("campaign-strategy", { policy: "pinned", model: "claude-sonnet-4-6" }),
     skillRef: "campaign-craft@1",
   };
 }

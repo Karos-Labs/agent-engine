@@ -1,4 +1,4 @@
-import { BaseAgent, type AgentStepConfig, type BaseAgentRuntime } from "@agent-engine/core";
+import { BaseAgent, resolveModelPolicy, type AgentStepConfig, type BaseAgentRuntime } from "@agent-engine/core";
 import { StyleExplorationOutputSchema, type StyleExplorationOutput } from "../workflow/types.js";
 
 /**
@@ -32,7 +32,7 @@ export class BrandedShortsStyleExplorationAgent extends BaseAgent<StyleExplorati
         "Propose exactly three candidate style directions (palette usage, caption treatment, graphics direction, endcard treatment) derived only from the client's own brand material — never an off-palette color, generic font, or invented device. Every literal hex code used must be declared in paletteTokensUsed.",
       allowedTools: [],
       outputSchema: StyleExplorationOutputSchema,
-      modelPolicy: { policy: "pinned", model: "claude-sonnet-4-6" },
+      modelPolicy: resolveModelPolicy("branded-shorts-style-exploration", { policy: "pinned", model: "claude-sonnet-4-6" }),
       skillRef: "branded-shorts-style-exploration@1",
       selfCritique: {
         gateTool: "gate.styleTokenFidelity",

@@ -4,6 +4,7 @@ import { createAllKarosTools } from "@agent-engine/tools";
 import { createApp } from "./app.js";
 import { createDurableStoreFromEnv } from "./wiring/durable-store.js";
 import { createServerPromptStore } from "./wiring/prompt-store.js";
+import { createQueuePushVerifier } from "./wiring/queue-push-auth.js";
 import { createServerWorkspaceStore } from "./wiring/workspace-store.js";
 
 /** Cloud Run injects `PORT`; 8080 is Cloud Run's own documented default for when it's unset locally. */
@@ -11,6 +12,16 @@ function resolvePort(): number {
   const raw = process.env.PORT;
   const parsed = raw ? Number(raw) : 8080;
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 8080;
+}
+
+/** Both unset (the default, safe for local dev): the push route accepts any request with a syntactically valid envelope — fine when nothing has configured Pub/Sub to push here yet. Set `PUBSUB_PUSH_AUDIENCE_URL` before pointing a real push subscription at this service (see README's Pub/Sub section). */
+function resolveQueuePushConfig(): { queuePushToken?: string; queuePushAudienceUrl?: string } {
+  const pushToken = process.env["PUBSUB_PUSH_TOKEN"];
+  const pushAudienceUrl = process.env["PUBSUB_PUSH_AUDIENCE_URL"];
+  return {
+    ...(pushToken ? { queuePushToken: pushToken } : {}),
+    ...(pushAudienceUrl ? { queuePushAudienceUrl: pushAudienceUrl } : {}),
+  };
 }
 
 async function main(): Promise<void> {
@@ -24,7 +35,12 @@ async function main(): Promise<void> {
   // Cloud Run deployment — see wiring/workspace-store.ts); file-backed otherwise.
   const tools = createAllKarosTools(createServerWorkspaceStore());
 
-  const app = createApp({ durableStore, runtimeDeps: { tools, promptStore, router } });
+  const app = createApp({
+    durableStore,
+    runtimeDeps: { tools, promptStore, router },
+    ...resolveQueuePushConfig(),
+    verifyPushIdToken: createQueuePushVerifier(),
+  });
 
   const port = resolvePort();
   const server = app.listen(port, () => {

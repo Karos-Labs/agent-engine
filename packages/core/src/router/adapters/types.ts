@@ -1,3 +1,4 @@
+import type { Message, MessageCreateParamsNonStreaming } from "@anthropic-ai/sdk/resources/messages";
 import type { ZodSchema } from "../../types/agent-step.js";
 
 export interface CompletionRequest<TOutput> {
@@ -23,4 +24,24 @@ export interface CompletionResult<TOutput> {
 export interface ModelAdapter {
   readonly providerId: string;
   complete<TOutput>(req: CompletionRequest<TOutput>): Promise<CompletionResult<TOutput>>;
+}
+
+/**
+ * The narrow slice of the Anthropic Messages API an adapter actually calls.
+ *
+ * Expressed as a local structural interface rather than as the concrete
+ * `Anthropic` class so that the *same* adapter code serves both routes to
+ * the same models: `Anthropic` (direct) and `AnthropicVertex` (Google
+ * Cloud's Agent Platform, formerly Vertex AI). `AnthropicVertex` is not
+ * assignable to `Anthropic` — it extends `BaseAnthropic` and deliberately
+ * omits the resources Agent Platform doesn't serve (`messages.batches`) —
+ * but both satisfy this.
+ *
+ * Same discipline as `agent/gcp-types.ts`'s `FirestoreLike`: depend on the
+ * narrowest shape the call site needs, never on a third-party class.
+ */
+export interface MessagesApiClient {
+  messages: {
+    create(body: MessageCreateParamsNonStreaming): Promise<Message>;
+  };
 }

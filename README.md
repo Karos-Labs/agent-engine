@@ -63,11 +63,11 @@ fails with `TS2307: Cannot find module`. **`apps/agent-server/Dockerfile`
 hardcodes the same order in its own `RUN` step — a new package has to be added
 to both.**
 
-### Checking it without an API key
+### Checking it without any credentials
 
 The fastest real verification. Every tool call, gate verdict, and checkpoint
-is genuine; only the model is scripted, so these need no key, no GCP, and no
-network:
+is genuine; only the model is scripted, so these need no GCP project, no API
+key, and no network:
 
 ```bash
 npm run demo:e2e      # all three layers in one run, incl. a human gate + resume from checkpoint
@@ -84,7 +84,8 @@ resolve the gate, to get a `completed` run).
 ### Running the HTTP server locally
 
 ```bash
-cp .env.example .env       # then put a real ANTHROPIC_API_KEY in it
+cp .env.example .env       # then set ANTHROPIC_VERTEX_PROJECT_ID in it
+gcloud auth application-default login
 npm run setup:local        # builds .local/prompts + seeds a demo tenant
 npm run dev:server         # tsx watch, or `npm run start:server` for the built output
 ```
@@ -113,10 +114,261 @@ curl -X POST localhost:8080/api/v1/runs/start -H "Content-Type: application/json
   -d '{"clientSlug":"acme","productId":"linkedin-agent","runKind":"recurring"}'
 ```
 
-Every `/runs/start` makes real, billable Anthropic calls. Valid `productId`s
+Every `/runs/start` makes real, billable model calls. Valid `productId`s
 are the six in `KNOWN_PRODUCT_IDS` (`apps/agent-server/src/wiring/workflows.ts`)
 — note that `instagram-agent`, `seo-geo-agent`, and `intel-report-agent` are
 built and tested but not yet dispatchable through the server.
+
+## How model calls reach Claude
+
+This section covers Claude's own *route* — which network path a Claude call
+takes. `ModelPolicy.vendor` (next section) is a separate axis: which
+*company's* model answers the call at all. Every agent in this system uses
+the `anthropic` vendor by default, so this section is still what governs
+every step until something opts into a different vendor.
+
+The `pinned` tier — the tier every agent in this system declares — routes
+through **Google Cloud's Agent Platform** (formerly Vertex AI) by default.
+`MODEL_PROVIDER=anthropic` switches to the direct Anthropic API instead.
+
+Both routes reach the *same* models. Nothing about an agent changes with the
+route: not its `modelPolicy`, not a prompt, not the alias table
+(`packages/core/src/router/aliases.ts`), not a pricing row, not the
+`DynamicAgentRunStep.model` the portal renders. That holds because **model ids
+stay in canonical Claude API form everywhere except inside the Agent Platform
+adapter**, which translates them at the boundary in both directions —
+`claude-haiku-4-5-20251001` on the way out becomes `claude-haiku-4-5@20251001`
+on the wire, and `response.model` is normalized back before it reaches
+telemetry (`router/adapters/agent-platform-model-ids.ts`).
+
+That inbound direction is not cosmetic. `computeStepCostUsd` looks the returned
+model name up in `MODEL_PRICING`, and a miss falls back to Sonnet's `$3/$15`
+*silently* — so an un-normalized Agent Platform run would bill Haiku and Opus
+work at Sonnet rates in every per-step cost report (RFC-01 §11).
+
+**Why this is the default, and not just the redundancy option RFC-01 §11
+described:** authentication moves from a long-lived API key to Application
+Default Credentials — the attached service account on Cloud Run, `gcloud`
+locally. No model credential is ever passed to a container as an environment
+variable value, which is exactly the rule RFC-01 §16.3 added after
+`ANTHROPIC_API_KEY` was found in plaintext in `karoscmo-prep`'s Cloud Run audit
+logs. The route change removes that class of exposure rather than mitigating
+it, and consolidates model billing onto the GCP project the rest of the stack
+already runs on.
+
+### Setup
+
+One-time, per GCP project:
+
+```bash
+gcloud config set project YOUR-PROJECT-ID
+gcloud services enable aiplatform.googleapis.com
+# then request access to the Claude models in Model Garden (can take 24-48h)
+gcloud auth application-default login          # local dev only
+```
+
+The runtime service account needs `roles/aiplatform.user`. `cloudbuild.yaml`
+already grants it and deploys with **no** `--set-secrets` for the model route.
+
+### Verifying it
+
+```bash
+npm run smoke:agent-platform                   # one real, ~$0.000x call
+npm run smoke:agent-platform claude-opus-4-8   # or check one specific model
+```
+
+This is the one script here that deliberately makes a billable call — it is the
+only way to distinguish "credentials resolve", "this model is enabled in this
+project", and "this model is served at this endpoint", which are three separate
+failure modes that all surface as one opaque error otherwise. It prints the
+project, region, wire model id, token split, and computed cost, and on failure
+prints `err.cause` (RFC-01 §16.4) plus the four likely causes in order.
+
+### Regions
+
+`CLOUD_ML_REGION` defaults to `global` — best availability, fewest 429s. The
+global endpoint does not serve every Claude model, which is the usual cause of
+a `404 model not found`; pin just that model rather than moving the whole
+deployment:
+
+```bash
+VERTEX_REGION_CLAUDE_HAIKU_4_5=us-east5
+```
+
+Region lives in the client's base URL rather than in the request, so a
+per-model pin constructs a second client — the adapter memoizes one per region.
+
+### Prompt caching
+
+The adapter places one cache breakpoint on the stable `tools` + `system` prefix
+of every step (the craft-policy skill body), which is where the 90% cache-read
+discount comes from. It applies on both routes. `DISABLE_PROMPT_CACHING=1`
+turns it off for debugging. Cache-*write* tokens are folded into
+`inputTokens.uncached` rather than tracked separately, which under-reports them
+by the cache-write premium; widening `TokenUsage` to a third field reaches
+every persisted `AgentStepTelemetry` record, so that is a deliberate deferral,
+not an oversight.
+
+## Choosing a model vendor for any step
+
+Every `ModelPolicy` (`packages/core/src/types/model-policy.ts`) carries two
+independent axes: `policy` (the `pinned`/`portable`/`commodity` tier, which
+governs fallback/retry semantics) and `vendor` (which company's model
+actually answers the call). They don't interact — switching vendor never
+changes a step's fallback behavior, and switching tier never changes which
+company runs the call. A `ModelPolicy` with no `vendor` set means `anthropic`,
+so every agent written before vendor selection existed keeps working
+unchanged.
+
+Four vendors exist today, each behind its own `ModelAdapter`
+(`packages/core/src/router/adapters/`):
+
+- **`anthropic`** — Claude, via the route described above. The router's only
+  required vendor.
+- **`gemini`** — Google's own models, via `@google/genai`. Agent Platform
+  (Vertex AI backend, ADC) by default, or the direct Gemini Developer API with
+  `GEMINI_API_KEY`.
+- **`model-garden`** — third-party/open Model Garden partner models (Llama,
+  Mistral, and similar) through Agent Platform's Model-as-a-Service
+  OpenAI-compatible endpoint, ADC-authenticated.
+- **`openai-compatible`** — the real OpenAI API, or a self-hosted gateway
+  (LiteLLM) fronting whatever it fronts.
+
+`gemini`, `model-garden`, and `openai-compatible` are each optional: the
+router builds one only when its own env vars (`.env.example`) are present. A
+step whose `modelPolicy.vendor` names an unconfigured vendor fails loudly and
+specifically at the point of use — `DefaultModelRouter` names the exact env
+vars that vendor needs — rather than at server startup, so a deployment that
+never touches non-Anthropic models needs none of this configured.
+
+**Switching a step's vendor without touching its code:** every step now
+resolves its `modelPolicy` through `resolveModelPolicy(stepId, defaultPolicy)`
+(`packages/core/src/router/step-model-policy.ts`), which checks
+`MODEL_STEP_<STEP_ID>_VENDOR` / `MODEL_STEP_<STEP_ID>_MODEL` before falling
+back to the code default. `<STEP_ID>` is the step's own `id`
+(`AgentStepConfig.id`), upper-cased with non-alphanumeric runs collapsed to
+one underscore — `blog-draft` → `BLOG_DRAFT`. Setting the vendor without also
+setting the model throws at startup, since a step's default model id is
+shaped for its default vendor and won't resolve against a different one:
+
+```bash
+MODEL_STEP_BLOG_DRAFT_VENDOR=gemini
+MODEL_STEP_BLOG_DRAFT_MODEL=gemini-2.5-pro
+```
+
+**Switching a step's vendor in code:** set `vendor` directly on its
+`modelPolicy` literal, e.g.
+`resolveModelPolicy("blog-draft", { policy: "pinned", model: "gemini-2.5-pro", vendor: "gemini" })`.
+
+A fallback model (`portable`/`commodity` tiers) always resolves against the
+*same* vendor as the primary model — swapping vendor and model together on a
+transient failure would silently change the structured-output mechanism,
+pricing, and failure mode all at once, which is the one thing a fallback path
+should never do.
+
+See `.env.example` for every vendor's exact env vars, including per-model
+region pins for `gemini` and `model-garden`.
+
+## Running jobs from a queue (Pub/Sub)
+
+`packages/queue` is a vendor-agnostic job-queue transport behind one
+`QueueAdapter` interface (`publish(topic, payload)` / `subscribe(subscription,
+handler)`), the same design this repo already uses for model vendors
+(`ModelAdapter`). Google Cloud Pub/Sub is the only implemented provider today
+(`QUEUE_PROVIDER=pubsub`, the default) — swapping providers later means
+writing one new adapter class and adding one branch to
+`createQueueFromEnv` (`packages/queue/src/create-queue-from-env.ts`); no
+publisher or consumer anywhere in this repo would need to change.
+
+The concept: a message published to a topic, shaped
+`{clientSlug, productId, runKind}`, triggers a run — the exact same
+"start a run" logic `POST /api/v1/runs/start` uses
+(`apps/agent-server/src/run-job.ts`'s `startRunJob`), not a second, parallel
+code path. Only *starting* a run is wired through the queue today; resuming a
+run paused at a human gate is not — that stays an explicit HTTP call
+(`POST /api/v1/runs/:runId/resume`), since a gate resolution is a deliberate
+human action, not something a queue naturally models.
+
+### Local testing
+
+No public URL needed — this uses Pub/Sub's *pull* delivery instead of push:
+
+```bash
+npm run dev:queue-consumer                          # starts the pull consumer
+npm run demo:queue-publish linkedin-agent acme       # publishes one run-job message
+```
+
+The consumer prints the run's outcome as soon as the message arrives. Both
+commands need only `PUBSUB_PROJECT_ID` (or `GOOGLE_CLOUD_PROJECT`) and ADC —
+`gcloud auth application-default login`, same as every other GCP-backed piece
+of this repo.
+
+### Production: push, not a persistent pull consumer
+
+`apps/agent-server` exposes `POST /api/v1/queue/pubsub-push`, and a Pub/Sub
+**push** subscription is the recommended way to feed it — not the pull
+consumer above kept running as a second always-on process. Push is what
+Cloud Run is actually built for: each message arrives as one authenticated
+HTTPS request, so the service scales the same way it already does for
+`/api/v1/runs/start` (including to zero), and Pub/Sub's own subscription
+config handles retry/backoff/redelivery natively. A persistent pull consumer,
+by contrast, needs a process kept alive between messages — on Cloud Run that
+means `--no-cpu-throttling` or `--min-instances=1`, plus reconnect handling
+for a streaming-pull connection that can drop — a whole class of operational
+concerns push sidesteps entirely. (The pull consumer script is still there
+for local testing, and as an option if a dedicated worker is ever preferred
+over push for some other reason.)
+
+One-time setup, per GCP project:
+
+```bash
+gcloud pubsub topics create agent-engine-run-jobs
+gcloud pubsub topics create agent-engine-run-jobs-dlq
+
+gcloud pubsub subscriptions create agent-engine-run-jobs-push \
+  --topic=agent-engine-run-jobs \
+  --push-endpoint=https://YOUR-SERVICE-URL/api/v1/queue/pubsub-push \
+  --push-auth-service-account=YOUR-PUSH-SA@YOUR-PROJECT.iam.gserviceaccount.com \
+  --dead-letter-topic=agent-engine-run-jobs-dlq \
+  --max-delivery-attempts=5
+```
+
+Grant the push service account permission to actually invoke this (private)
+Cloud Run service:
+
+```bash
+gcloud run services add-iam-policy-binding agent-engine-server \
+  --member="serviceAccount:YOUR-PUSH-SA@YOUR-PROJECT.iam.gserviceaccount.com" \
+  --role="roles/run.invoker"
+```
+
+Then close the one real chicken-and-egg: `PUBSUB_PUSH_AUDIENCE_URL` has to be
+the service's own URL, which Cloud Run only assigns at deploy time. Deploy
+once, note the URL, then set it:
+
+```bash
+gcloud run services update agent-engine-server \
+  --update-env-vars=PUBSUB_PUSH_AUDIENCE_URL=https://YOUR-SERVICE-URL/api/v1/queue/pubsub-push
+```
+
+Whoever publishes (karosCMO/Portal, or anything else) needs
+`roles/pubsub.publisher` on `agent-engine-run-jobs` — nothing on this
+service's own side changes for that.
+
+### Redelivery can't double-run a job
+
+Pub/Sub is at-least-once delivery: the same message can legitimately arrive
+twice. The push route (and the pull consumer) both derive the run's `runId`
+deterministically from Pub/Sub's own message id (`` `pubsub-${messageId}` ``)
+rather than generating a fresh one — a redelivery of the same unacked message
+reuses that same message id, so it always lands on the same `runId`. And
+`WorkflowEngine.run()` already treats re-invoking an existing `runId` as safe
+by construction (every step it already ran is checkpointed and short-circuits
+rather than re-executing) — so a redelivered message can reach this endpoint
+a second time without ever spending a second model call. No extra
+idempotency tracking was built for this; it falls entirely out of a
+deterministic id plus the durable-step-store guarantee RFC-01 §8.4a already
+relies on.
 
 ## Status of the source specs
 

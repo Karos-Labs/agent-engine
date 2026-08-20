@@ -1,0 +1,17 @@
+{
+  "name": "@agent-engine/queue",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Vendor-agnostic job-queue transport (publish/subscribe) behind one QueueAdapter interface — Google Cloud Pub/Sub today, swappable for another provider later without touching a caller.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "test": "npm run typecheck && vitest run"
+  },
+  "dependencies": {
+    "@google-cloud/pubsub": "^6.0.1"
+  }
+}

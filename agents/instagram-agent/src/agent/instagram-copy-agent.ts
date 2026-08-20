@@ -1,4 +1,4 @@
-import { BaseAgent, type AgentStepConfig } from "@agent-engine/core";
+import { BaseAgent, resolveModelPolicy, type AgentStepConfig } from "@agent-engine/core";
 import { InstagramCopyOutputSchema, type InstagramCopyOutput } from "../workflow/types.js";
 
 /**
@@ -30,7 +30,7 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyOutput> {
     outputSchema: InstagramCopyOutputSchema,
     // Pinned — RFC-02 §5's rationale applies identically here: drafting/
     // brand-voice judgment is never a fallback-eligible step.
-    modelPolicy: { policy: "pinned", model: "claude-sonnet-4-6" },
+    modelPolicy: resolveModelPolicy("instagram-copy", { policy: "pinned", model: "claude-sonnet-4-6" }),
     skillRef: "instagram-copy@1",
   };
 }

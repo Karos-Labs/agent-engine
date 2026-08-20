@@ -1,4 +1,4 @@
-import { BaseAgent, type AgentStepConfig } from "@agent-engine/core";
+import { BaseAgent, resolveModelPolicy, type AgentStepConfig } from "@agent-engine/core";
 import { IntelReportOutputSchema, type IntelReportOutput } from "@agent-engine/tool-karos-intel";
 
 /**
@@ -39,7 +39,7 @@ export class IntelReportDraftAgent extends BaseAgent<IntelReportOutput> {
     outputSchema: IntelReportOutputSchema,
     // Pinned — same rationale as every other draft agent's craft step (RFC-02
     // §5): drafting/analysis is never a fallback-eligible step.
-    modelPolicy: { policy: "pinned", model: "claude-sonnet-4-6" },
+    modelPolicy: resolveModelPolicy("intel-report-draft", { policy: "pinned", model: "claude-sonnet-4-6" }),
     // v2 (parity-audit remediation): restores the Brand Synchronization Protocol,
     // the Output Quality Rules (conservative scoring, anti-sycophancy client-rank
     // floor, Wide Scan minimum, pricing/regulatory high-risk-field guidance,

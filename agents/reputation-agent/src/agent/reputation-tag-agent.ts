@@ -1,4 +1,4 @@
-import { BaseAgent, type AgentStepConfig } from "@agent-engine/core";
+import { BaseAgent, resolveModelPolicy, type AgentStepConfig } from "@agent-engine/core";
 import { ReputationTagOutputSchema, type ReputationTagOutput } from "../workflow/types.js";
 
 /**
@@ -20,7 +20,7 @@ export class ReputationTagAgent extends BaseAgent<ReputationTagOutput> {
       "For each already-flagged review, assign exactly one department tag from the closed 7-value enum (Billing/Safety/Legal/Fraud/Discrimination/Press/Service), using the highest-consequence tie-break rule.",
     allowedTools: [],
     outputSchema: ReputationTagOutputSchema,
-    modelPolicy: { policy: "pinned", model: "claude-sonnet-4-6" },
+    modelPolicy: resolveModelPolicy("reputation-tag", { policy: "pinned", model: "claude-sonnet-4-6" }),
     skillRef: "reputation-tag@1",
   };
 }

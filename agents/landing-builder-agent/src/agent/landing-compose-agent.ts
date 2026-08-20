@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { BaseAgent, type AgentStepConfig } from "@agent-engine/core";
+import { BaseAgent, resolveModelPolicy, type AgentStepConfig } from "@agent-engine/core";
 import { LANDING_SECTION_TAXONOMY } from "@agent-engine/tool-karos-landing";
 
 export const LandingComposeOutputSchema = z.object({
@@ -22,7 +22,7 @@ export class LandingComposeAgent extends BaseAgent<LandingComposeOutput> {
     description: "Choose which taxonomy sections to include and in what order, from the sections the copy draft actually supplied content for, and place every carry-forward item into a section.",
     allowedTools: [],
     outputSchema: LandingComposeOutputSchema,
-    modelPolicy: { policy: "pinned", model: "claude-sonnet-4-6" },
+    modelPolicy: resolveModelPolicy("landing-compose", { policy: "pinned", model: "claude-sonnet-4-6" }),
     skillRef: "landing-compose@1",
   };
 }

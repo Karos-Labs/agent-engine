@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
-import { GateResponseSchema, RunKindSchema } from "@agent-engine/core";
+import { GateResponseSchema } from "@agent-engine/core";
 import { GateAlreadyResolvedError, WorkflowConcurrentRunError, WorkflowEngine, type DurableStepStore } from "@agent-engine/workflow";
 import { buildRunReport } from "../report.js";
-import { KNOWN_PRODUCT_IDS, buildWorkflowForProduct, isKnownProductId, type AgentRuntimeDeps, type ProductId } from "../wiring/workflows.js";
+import { RunJobRequestSchema, startRunJob } from "../run-job.js";
+import { buildWorkflowForProduct, isKnownProductId, type AgentRuntimeDeps, type ProductId } from "../wiring/workflows.js";
 
 export interface RunsRouterDeps {
   durableStore: DurableStepStore;
@@ -15,16 +16,15 @@ export interface RunsRouterDeps {
   now?: () => string;
 }
 
-// Charset-locked at the API boundary so a path-traversal-shaped slug
-// (`../../etc`, an embedded `/`, `\`, or NUL) never reaches a tool — the
-// per-tool `sanitizeSegment` calls throughout `packages/tools/*` are
-// defense-in-depth, not the only fence, once this holds at ingress.
-const CLIENT_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
-
-const StartRunRequestSchema = z.object({
-  clientSlug: z.string().min(1).regex(CLIENT_SLUG_PATTERN, "clientSlug must be lowercase alphanumeric segments separated by hyphens"),
-  productId: z.enum(KNOWN_PRODUCT_IDS),
-  runKind: RunKindSchema,
+/**
+ * `RunJobRequestSchema` (`../run-job.ts`) plus two Portal-only fields no
+ * other run-starting entry point (the Pub/Sub push route, the queue
+ * consumer) needs to know about — kept as an `.extend()` rather than a
+ * second hand-copied schema so `clientSlug`/`productId`/`runKind`
+ * validation can never drift between the HTTP route and the queue-triggered
+ * paths.
+ */
+const StartRunRequestSchema = RunJobRequestSchema.extend({
   /**
    * Accepted for forward compatibility with the Portal's own request shape,
    * but not currently consumed: none of the six workflow factories accept a
@@ -69,26 +69,26 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
     const { clientSlug, productId, runKind } = parsed.data;
 
     const runId = generateRunId();
-    const workflowFn = buildWorkflowForProduct(productId, deps.runtimeDeps);
+    // Shared with the Pub/Sub push route and the pull-based queue consumer
+    // (`run-job.ts`) — this is the one place "start a run" actually happens.
+    const outcome = await startRunJob({ clientSlug, productId, runKind }, runId, deps);
 
-    try {
-      const result = await engine.run(workflowFn, { runId, clientSlug, productId, runKind });
-      const report = await buildRunReport(deps.durableStore, runId, productId);
-      res.status(201).json({
-        runId,
-        status: result.status,
-        ...(result.status === "awaiting_gate" ? { pendingGateId: result.pendingGateId } : {}),
-        report,
-      });
-    } catch (err) {
-      if (err instanceof WorkflowConcurrentRunError) {
-        // Astronomically unlikely for a freshly generated runId, but a defensive backstop
-        // if the id generator is ever swapped for something less collision-proof.
-        res.status(409).json({ error: err.message });
-        return;
-      }
-      res.status(500).json({ error: "run failed unexpectedly", message: err instanceof Error ? err.message : String(err) });
+    if (outcome.outcome === "conflict") {
+      // Astronomically unlikely for a freshly generated runId, but a defensive backstop
+      // if the id generator is ever swapped for something less collision-proof.
+      res.status(409).json({ error: outcome.message });
+      return;
     }
+    if (outcome.outcome === "error") {
+      res.status(500).json({ error: "run failed unexpectedly", message: outcome.message });
+      return;
+    }
+    res.status(201).json({
+      runId: outcome.runId,
+      status: outcome.status,
+      ...(outcome.pendingGateId !== undefined ? { pendingGateId: outcome.pendingGateId } : {}),
+      report: outcome.report,
+    });
   });
 
   router.post("/api/v1/runs/:runId/resume", async (req, res) => {

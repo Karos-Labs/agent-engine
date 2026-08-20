@@ -3,27 +3,69 @@ import { z } from "zod";
 /**
  * The three-tier provider policy from RFC-01 §5.4.
  *
- * - `pinned`    — drafting, brand voice, the self-critique gate. Direct to
- *                 Anthropic, never routed through a gateway.
+ * - `pinned`    — drafting, brand voice, the self-critique gate. Never
+ *                 routed through a fallback — a pinned step's model is what
+ *                 it is, or the step fails loudly.
  * - `portable`  — summarization, extraction, ranking. Same `llm.complete`
  *                 call shape regardless of backing model.
  * - `commodity` — embeddings, classification, dedupe. Routed to whatever
  *                 passes evals and is cheapest that week.
+ *
+ * This axis is orthogonal to `vendor` below: it governs *retry/fallback
+ * semantics* (does this step ever swap models on failure?), not *which
+ * company's model answers the call*. A `pinned` step can run on Claude,
+ * Gemini, or a Model Garden partner model — "pinned" just means it never
+ * silently substitutes a different one.
  */
 export const ProviderPolicySchema = z.enum(["pinned", "portable", "commodity"]);
 export type ProviderPolicy = z.infer<typeof ProviderPolicySchema>;
 
 /**
+ * Which model vendor answers this step's calls — independent of the
+ * `pinned`/`portable`/`commodity` tier above, and independent of the
+ * *route* a vendor is reached by (e.g. Claude's own `MODEL_PROVIDER`
+ * env var, which picks Agent Platform vs the direct Anthropic API — a
+ * choice this field never makes; the vendor is fixed, the transport isn't).
+ *
+ * - `anthropic`        — Claude. Reached via Google Cloud's Agent Platform
+ *                        (default) or directly, per `MODEL_PROVIDER`
+ *                        (`create-model-router-from-env.ts`).
+ * - `gemini`           — Google's own Gemini models. Reached via Agent
+ *                        Platform/Vertex (ADC, default) or the direct
+ *                        Gemini Developer API (`GEMINI_API_KEY`), per
+ *                        `GEMINI_ROUTE`.
+ * - `model-garden`     — a third-party/open model served through Agent
+ *                        Platform's own Model-as-a-Service (MaaS)
+ *                        OpenAI-compatible endpoint (Llama, Mistral, and
+ *                        similar Model Garden partner models). Still Agent
+ *                        Platform, still ADC — just a different wire shape.
+ * - `openai-compatible` — anything reachable through an OpenAI-shaped
+ *                        chat-completions endpoint that ISN'T Agent
+ *                        Platform: the real OpenAI API, or a self-hosted
+ *                        gateway (LiteLLM) fronting whatever it fronts.
+ *
+ * Absent (`undefined`) means `anthropic` — every step written before this
+ * field existed keeps behaving exactly as it did.
+ */
+export const ModelVendorSchema = z.enum(["anthropic", "gemini", "model-garden", "openai-compatible"]);
+export type ModelVendor = z.infer<typeof ModelVendorSchema>;
+
+/**
  * `fallbackModel` is only meaningful for `portable`/`commodity` steps — a
  * `pinned` step never silently swaps models (RFC-01 §5.4), so a fallback
  * declared alongside `pinned` is rejected here rather than silently ignored.
+ * A fallback always resolves against the same `vendor` as the primary model
+ * — swapping vendor mid-step on a transient failure would mean a different
+ * structured-output mechanism, a different pricing row, and a different
+ * failure mode all changing at once, silently.
  */
 export const ModelPolicySchema = z
   .object({
     policy: ProviderPolicySchema,
-    /** e.g. "claude-opus-4-8", "claude-sonnet-4-6", "gpt-4o-mini". */
+    /** e.g. "claude-opus-4-8", "claude-sonnet-4-6", "gemini-2.5-pro", "meta/llama-3.1-70b-instruct-maas". */
     model: z.string().min(1),
     fallbackModel: z.string().min(1).optional(),
+    vendor: ModelVendorSchema.optional(),
   })
   .superRefine((val, ctx) => {
     if (val.policy === "pinned" && val.fallbackModel !== undefined) {
@@ -35,3 +77,8 @@ export const ModelPolicySchema = z
     }
   });
 export type ModelPolicy = z.infer<typeof ModelPolicySchema>;
+
+/** `policy.vendor` resolved to its concrete default — the single place "absent means anthropic" is decided. */
+export function resolveModelVendor(policy: Pick<ModelPolicy, "vendor">): ModelVendor {
+  return policy.vendor ?? "anthropic";
+}

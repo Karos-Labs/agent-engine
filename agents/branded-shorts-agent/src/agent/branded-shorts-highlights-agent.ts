@@ -1,4 +1,4 @@
-import { BaseAgent, type AgentStepConfig } from "@agent-engine/core";
+import { BaseAgent, resolveModelPolicy, type AgentStepConfig } from "@agent-engine/core";
 import { HighlightsOutputSchema, type HighlightsOutput } from "../workflow/types.js";
 
 /**
@@ -15,7 +15,7 @@ export class BrandedShortsHighlightsAgent extends BaseAgent<HighlightsOutput> {
       "Choose which transcript words get the emphasis-font treatment: roughly one decisive word every chunk or two, never a filler, never inventing a timestamp outside the given transcript.",
     allowedTools: [],
     outputSchema: HighlightsOutputSchema,
-    modelPolicy: { policy: "pinned", model: "claude-sonnet-4-6" },
+    modelPolicy: resolveModelPolicy("branded-shorts-highlights", { policy: "pinned", model: "claude-sonnet-4-6" }),
     skillRef: "branded-shorts-highlights@1",
   };
 }

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { BaseAgent, type AgentStepConfig } from "@agent-engine/core";
+import { BaseAgent, resolveModelPolicy, type AgentStepConfig } from "@agent-engine/core";
 
 /**
  * A single Reddit reply (Phase 2.5 Batch 2.1 domain-logic restoration).
@@ -77,7 +77,7 @@ export class RedditDraftAgent extends BaseAgent<RedditReplyOutput> {
     outputSchema: RedditReplyOutputSchema,
     // Pinned — RFC-02 §5: claude-sonnet-4-6 today, claude-sonnet-5 is an
     // equally acceptable pin once available; never a fallback for a pinned step.
-    modelPolicy: { policy: "pinned", model: "claude-sonnet-4-6" },
+    modelPolicy: resolveModelPolicy("reddit-draft", { policy: "pinned", model: "claude-sonnet-4-6" }),
     skillRef: "reddit-craft@2",
     selfCritique: {
       gateTool: "gate.lintPost",

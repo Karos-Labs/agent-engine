@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { BaseAgent, type AgentStepConfig } from "@agent-engine/core";
+import { BaseAgent, resolveModelPolicy, type AgentStepConfig } from "@agent-engine/core";
 
 export const SeoGeoNarrativeOutputSchema = z.object({
   summary: z.string().min(1),
@@ -27,7 +27,7 @@ export class SeoGeoNarrativeAgent extends BaseAgent<SeoGeoNarrativeOutput> {
     description: "Draft the SEO & GEO report's executive-summary paragraph from already-scored, already-typed data.",
     allowedTools: [],
     outputSchema: SeoGeoNarrativeOutputSchema,
-    modelPolicy: { policy: "pinned", model: "claude-sonnet-4-6" },
+    modelPolicy: resolveModelPolicy("seo-geo-narrative", { policy: "pinned", model: "claude-sonnet-4-6" }),
     skillRef: "seo-geo-narrative@1",
   };
 }

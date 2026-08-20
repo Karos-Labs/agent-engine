@@ -1,4 +1,4 @@
-import { BaseAgent, type AgentStepConfig } from "@agent-engine/core";
+import { BaseAgent, resolveModelPolicy, type AgentStepConfig } from "@agent-engine/core";
 import { ReputationDraftOutputSchema, type ReputationDraftOutput } from "../workflow/types.js";
 
 /**
@@ -23,7 +23,7 @@ export class ReputationDraftAgent extends BaseAgent<ReputationDraftOutput> {
     description: "Draft one public reply to one review, grounded only in the supplied facts, under the four non-negotiable doctrine constraints.",
     allowedTools: [],
     outputSchema: ReputationDraftOutputSchema,
-    modelPolicy: { policy: "pinned", model: "claude-sonnet-4-6" },
+    modelPolicy: resolveModelPolicy("reputation-draft", { policy: "pinned", model: "claude-sonnet-4-6" }),
     skillRef: "reputation-draft@1",
   };
 }
