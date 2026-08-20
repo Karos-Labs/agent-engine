@@ -21,6 +21,14 @@ export const AgentStepConfigSchema = z.object({
   outputSchema: z.custom<ZodType<unknown>>(isZodSchema, { message: "outputSchema must be a Zod schema" }),
   /** Bounds runaway loops and token spend. Default 8 (RFC-01 §5.3). */
   maxSteps: z.number().int().positive().default(8),
+  /**
+   * Output-token ceiling for one model turn. Long-form steps (a blog post, a
+   * newsletter edition, an intel report) need far more room than a short
+   * social post, and a turn that runs out of room is not a partial answer —
+   * the provider returns a truncated, unparseable structured output and the
+   * whole step fails. Omit to take the adapter's own default.
+   */
+  maxTokens: z.number().int().positive().optional(),
   modelPolicy: ModelPolicySchema,
   /** Craft-policy skill this step loads. */
   skillRef: z.string().min(1).optional(),
@@ -48,6 +56,8 @@ export interface AgentStepConfig<TOutput> {
   allowedTools: string[];
   outputSchema: ZodSchema<TOutput>;
   maxSteps?: number;
+  /** Output-token ceiling for one model turn; omit for the adapter default. See `AgentStepConfigSchema`. */
+  maxTokens?: number;
   modelPolicy: ModelPolicy;
   skillRef?: string;
   selfCritique?: {
@@ -90,6 +100,14 @@ export const AgentStepTelemetrySchema = z.object({
   durationMs: z.number().nonnegative(),
   costUsd: z.number().nonnegative(),
   status: StepStatusSchema,
+  /**
+   * Why a non-success turn failed, in plain text — the provider error, the
+   * schema violation, the missing prompt. Optional because a successful turn
+   * has nothing to explain. Without it a failed step reports only its status,
+   * which makes an auth failure, a malformed request, and a broken prompt
+   * store all look identical in a run report.
+   */
+  error: z.string().optional(),
 });
 export type AgentStepTelemetry = z.infer<typeof AgentStepTelemetrySchema>;
 

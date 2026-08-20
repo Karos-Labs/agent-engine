@@ -49,6 +49,13 @@ function usageFromAgentResult(result: AgentExecutionResult<unknown>): DynamicAge
   return { totalCostUsd: result.totalCostUsd, numTurns: result.steps.length, models };
 }
 
+/** `agent step resolved to "<status>"`, plus the last failing turn's own reason when it carried one. */
+function describeAgentFailure(result: AgentExecutionResult<unknown>): string {
+  const base = `agent step resolved to "${result.status}"`;
+  const reason = [...result.steps].reverse().find((step) => step.error !== undefined)?.error;
+  return reason === undefined ? base : `${base}: ${reason}`;
+}
+
 function serializeAgentRecord(
   descriptor: DynamicAgentStepDescriptor,
   durationMs: number,
@@ -67,7 +74,10 @@ function serializeAgentRecord(
     status: result.status === "completed" ? "done" : "failed",
     durationMs,
     ...(primaryModel !== undefined ? { model: primaryModel } : {}),
-    ...(result.status !== "completed" ? { error: `agent step resolved to "${result.status}"` } : {}),
+    // The status alone ("tooling_error") says nothing actionable, so the last
+    // failing turn's own reason — the provider error, the schema violation —
+    // is appended when there is one.
+    ...(result.status !== "completed" ? { error: describeAgentFailure(result) } : {}),
     usage,
     costUsd: result.totalCostUsd,
     tokensIn: { cached: inputTokensCached, uncached: inputTokensUncached },

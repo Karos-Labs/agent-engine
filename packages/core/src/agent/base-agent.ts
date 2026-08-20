@@ -51,7 +51,7 @@ export abstract class BaseAgent<TOutput> {
     let systemPrompt: string | undefined;
     try {
       systemPrompt = await this.loadSystemPrompt(ctx);
-    } catch {
+    } catch (err) {
       // A PromptStore lookup failure is a tooling problem (a broken/misconfigured
       // skillRef), never a content judgment — same rule as every other failure
       // mode in this loop (RFC-01 §6).
@@ -63,6 +63,7 @@ export abstract class BaseAgent<TOutput> {
         durationMs: 0,
         costUsd: 0,
         status: "tooling_error",
+        error: `could not resolve skillRef "${this.config.skillRef}": ${describeError(err)}`,
       });
       return this.finish(steps, null, "tooling_error");
     }
@@ -115,7 +116,7 @@ export abstract class BaseAgent<TOutput> {
       {
         stepId: this.config.id,
         description: this.config.description,
-        allowedTools: this.config.allowedTools,
+        allowedTools: this.describeAllowedTools(),
         context: { runId: ctx.runId, clientSlug: ctx.clientSlug, productId: ctx.productId, slotId: ctx.slotId },
         input,
         transcript,
@@ -123,6 +124,33 @@ export abstract class BaseAgent<TOutput> {
       null,
       2,
     );
+  }
+
+  /**
+   * Each allowed tool as `{name, inputSchema}` rather than a bare name.
+   *
+   * A name alone leaves the model guessing the argument shape, and a wrong
+   * guess is fatal: `runOneTurn` rejects args that fail the tool's own
+   * `inputSchema` as a `tooling_error`, which ends the whole step with no
+   * retry. Real runs died here — the model called `gate.numbersSourced` with
+   * `{claim, sourceText}` against a tool that declares `{text, sources[]}`.
+   * The schema is the tool's own, so this can never drift from what
+   * `runOneTurn` actually validates against.
+   *
+   * A tool that isn't in the registry, or whose schema can't be represented
+   * as JSON Schema, degrades to the bare name instead of failing the step —
+   * an unadvertised schema is a worse prompt, not a broken run.
+   */
+  private describeAllowedTools(): Array<{ name: string; inputSchema?: unknown }> {
+    return this.config.allowedTools.map((name) => {
+      const tool = this.runtime.tools[name];
+      if (!tool) return { name };
+      try {
+        return { name, inputSchema: z.toJSONSchema(tool.inputSchema) };
+      } catch {
+        return { name };
+      }
+    });
   }
 
   private buildTurnSchema(): ZodSchema<ReActTurn<TOutput>> {
@@ -145,7 +173,13 @@ export abstract class BaseAgent<TOutput> {
   ): Promise<TurnOutcome<TOutput>> {
     const turnSchema = this.buildTurnSchema();
     const prompt = this.buildTurnPrompt(ctx, input, transcript);
-    const opts: RouterCompleteOptions | undefined = systemPrompt !== undefined ? { system: systemPrompt } : undefined;
+    const opts: RouterCompleteOptions | undefined =
+      systemPrompt !== undefined || this.config.maxTokens !== undefined
+        ? {
+            ...(systemPrompt !== undefined ? { system: systemPrompt } : {}),
+            ...(this.config.maxTokens !== undefined ? { maxTokens: this.config.maxTokens } : {}),
+          }
+        : undefined;
 
     const startedAt = this.clock();
     let completion;
@@ -162,6 +196,7 @@ export abstract class BaseAgent<TOutput> {
           durationMs: this.clock() - startedAt,
           costUsd: 0,
           status: "tooling_error",
+          error: `model call failed: ${describeError(err)}`,
         },
       };
     }
@@ -206,14 +241,26 @@ export abstract class BaseAgent<TOutput> {
       };
     }
 
+    // A hallucinated tool name and malformed arguments are both *model*
+    // mistakes, not broken infrastructure — so they resolve as a normal
+    // observation the model sees and can correct on its next turn, still
+    // bounded by `maxSteps`. Treating them as fatal made a single bad guess
+    // kill an otherwise-healthy run, which is exactly what happened in
+    // practice: identical inputs would succeed or fail depending on how the
+    // model happened to shape one tool call. The tool is never executed in
+    // either branch — only the feedback path changed.
     const tool = this.runtime.tools[turn.tool];
     if (!tool) {
+      const reason = `no tool registered as "${turn.tool}" — allowed tools for this step: ${this.config.allowedTools.join(", ") || "(none)"}`;
       return {
-        kind: "tooling_error",
+        kind: "tool_call",
+        toolName: turn.tool,
+        args: turn.args,
+        outcome: { status: "tooling_error", reason },
         telemetry: {
           stepIndex,
           ...(turn.thought !== undefined ? { thought: turn.thought } : {}),
-          toolCall: { name: turn.tool, args: turn.args, result: { error: `no tool registered as "${turn.tool}"` }, toolVersion: "unknown" },
+          toolCall: { name: turn.tool, args: turn.args, result: { error: reason }, toolVersion: "unknown" },
           modelUsed: completion.modelUsed,
           inputTokens: completion.inputTokens,
           outputTokens: completion.outputTokens,
@@ -226,12 +273,20 @@ export abstract class BaseAgent<TOutput> {
 
     const parsedArgs = tool.inputSchema.safeParse(turn.args);
     if (!parsedArgs.success) {
+      // The concrete validation issues, so the next turn can fix the exact
+      // field rather than guessing again at the same shape.
+      const reason = `arguments failed the tool's input schema: ${parsedArgs.error.issues
+        .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+        .join("; ")}`;
       return {
-        kind: "tooling_error",
+        kind: "tool_call",
+        toolName: tool.name,
+        args: turn.args,
+        outcome: { status: "tooling_error", reason },
         telemetry: {
           stepIndex,
           ...(turn.thought !== undefined ? { thought: turn.thought } : {}),
-          toolCall: { name: tool.name, args: turn.args, result: { error: "arguments failed the tool's input schema" }, toolVersion: tool.version },
+          toolCall: { name: tool.name, args: turn.args, result: { error: reason }, toolVersion: tool.version },
           modelUsed: completion.modelUsed,
           inputTokens: completion.inputTokens,
           outputTokens: completion.outputTokens,
