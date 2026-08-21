@@ -14,5 +14,5 @@
     "rootDir": "."
   },
   "include": ["packages/**/*.ts", "evals/**/*.ts", "scripts/**/*.ts", "agents/**/*.ts", "apps/**/*.ts"],
-  "exclude": ["node_modules", "**/dist", "**/node_modules", "packages/tools/karos-landing/__tests__/fixtures/**"]
+  "exclude": ["node_modules", "**/dist", "**/node_modules", "packages/tools/karos-landing/__tests__/fixtures/**", "packages/tools/karos-landing/assets/template/**"]
 }
