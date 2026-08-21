@@ -1,0 +1,40 @@
+{
+  "_contract": "Karos landing-engine brand contract — NEUTRAL EXAMPLE for the canonical template. Matches the placeholder skin in src/app/globals.css + the example content in src/content/example.ts. Replaced wholesale per client; this exists so the template self-verifies against gate.mjs out of the box.",
+  "client": "example",
+  "company": "Northwind (example)",
+  "identity": {
+    "sector": "neutral SaaS placeholder",
+    "audience": "any team",
+    "positioning": "build it once, ship it everywhere",
+    "personality": "clean, confident, modern",
+    "mood": "neutral dark slate ground with one cool-blue accent"
+  },
+  "tokens": {
+    "colors": {
+      "ground": "#0E1116", "ground-2": "#171B22",
+      "fg": "#F5F6F8", "fg-2": "#A2AAB8",
+      "accent": "#5B8DEF", "accent-2": "#80A9F5",
+      "muted": "#2A313D", "edge": "#232A35"
+    },
+    "ratio": "70/22/8 (slate ground / off-white type / cool-blue accent)",
+    "ground": "neutral dark slate",
+    "ease": "cubic-bezier(0.16, 1, 0.3, 1)"
+  },
+  "fonts": {
+    "display": "Space Grotesk (display headlines + key figures) — Google Fonts",
+    "body": "Inter (body / UI) — Google Fonts",
+    "mono": "JetBrains Mono (stats, labels, eyebrows) — Google Fonts",
+    "rule": "max 2 type families in active use; mono for numbers/labels only"
+  },
+  "brandLaw": [
+    "This is the NEUTRAL template default, not a final client look. Per client, overwrite tokens + fonts + content wholesale.",
+    "Accent used sparingly (~8%): primary CTAs, key figures, active states. Ground stays the dominant field.",
+    "Clean, direct copy; avoid slop. AA contrast on every text surface. en-US."
+  ],
+  "voice": {
+    "lang": "en-US",
+    "lead": "what the product does + how fast you get value",
+    "demote": "jargon, hype, hidden-cost surprises",
+    "tone": "confident, plain, helpful"
+  }
+}

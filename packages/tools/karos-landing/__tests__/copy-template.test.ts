@@ -64,3 +64,37 @@ describe("landing.copyTemplate", () => {
     expect(await fs.access(path.join(siteRoot, "package.json"))).toBeUndefined();
   });
 });
+
+describe("landing.copyTemplate against the real shipped kit (agent-engine#3)", () => {
+  let tmpRoot: string;
+  let engineClientsRoot: string;
+  // The real production default this package now ships (outside __tests__, so
+  // it IS in the deployed image) — LANDING_ENGINE_TEMPLATE_ROOT points here in
+  // cloudbuild.yaml/cloudbuild.promote.yaml. Proves the actual asset tree, not
+  // a synthetic fixture, copies cleanly — the same gap #3's other half
+  // (read-bundle-tool.ts's GCS path) closed for brand.json/intake.md.
+  const REAL_TEMPLATE_ROOT = path.resolve(__dirname, "..", "assets", "template");
+
+  beforeEach(async () => {
+    tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "landing-copy-real-template-"));
+    engineClientsRoot = path.join(tmpRoot, "clients");
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpRoot, { recursive: true, force: true });
+  });
+
+  it("copies every file of the real shipped Next.js template kit", async () => {
+    const tool = createCopyTemplate({ templateRoot: REAL_TEMPLATE_ROOT, engineClientsRoot, bundlesRoot: path.join(tmpRoot, "bundles") });
+    const outcome = await tool.execute({ force: false }, { ctx: testCtx() });
+    expect(outcome.status).toBe("success");
+    if (outcome.status !== "success") throw new Error("unreachable");
+    expect(outcome.result.filesCopied).toBe(26);
+
+    const siteRoot = path.join(engineClientsRoot, "forge", "site");
+    expect(await fs.readFile(path.join(siteRoot, "package.json"), "utf8")).toContain("landing-template");
+    expect(await fs.readFile(path.join(siteRoot, "src", "app", "layout.tsx"), "utf8")).toContain("export default");
+    expect(await fs.readFile(path.join(siteRoot, "src", "components", "hero.tsx"), "utf8")).toContain("export");
+    expect(await fs.readFile(path.join(siteRoot, "src", "lib", "content-schema.ts"), "utf8")).toContain("export");
+  });
+});

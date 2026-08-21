@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+/* ============================================================
+   ENGINE TOKEN CONTRACT (semantic roles) — THE PRIMARY SKIN LEVER.
+
+   Components only ever use ROLE utilities: bg-ground, bg-ground-2,
+   text-fg, text-fg-2, text-accent, border-edge, bg-muted, etc.
+   They NEVER reference a brand color directly. To skin a new client,
+   change ONLY the :root VALUES below + the next/font/google imports in
+   layout.tsx. ~8 CSS vars + 3 font families = infinite looks, one kit.
+
+   DEFAULT SKIN: deliberately NEUTRAL (slate ground / off-white type /
+   cool-blue accent). This is a clean, on-brand-neutral PLACEHOLDER so the
+   template builds and looks intentional out of the box — it is NOT a final
+   client look. Per-client builds overwrite every value tagged below.
+
+   Keep the 70/22/8 discipline: ground dominates (~70%), type (~22%),
+   accent used sparingly (~8%, CTAs / key figures / active states only).
+   Maintain AA contrast on every text surface.
+   ============================================================ */
+
+:root {
+  /* TODO(per client): set to the client's brand.json tokens.colors */
+  --ground:   #0E1116; /* base background — ~70%               · TODO set per client */
+  --ground-2: #171B22; /* raised surfaces / panels / cards      · TODO set per client */
+  --fg:       #F5F6F8; /* primary type — ~22% (warm/cool off-white) · TODO set per client */
+  --fg-2:     #A2AAB8; /* muted secondary type                  · TODO set per client */
+  --accent:   #5B8DEF; /* accent — ~8% · CTAs, key figures, active states · TODO set per client */
+  --accent-2: #80A9F5; /* hover / lighter accent                · TODO set per client */
+  --muted:    #2A313D; /* secondary surfaces / ghost numerals   · TODO set per client */
+  --edge:     #232A35; /* hairlines / dividers / borders        · TODO set per client */
+
+  /* RGB triplets for glows (rgb(var(--accent-rgb) / 0.x)). Keep in sync with --accent / --fg above. */
+  --accent-rgb: 91 141 239; /* TODO set per client — must match --accent */
+  --fg-rgb:     245 246 248; /* TODO set per client — must match --fg */
+
+  /* Motion easing. Components read var(--ease) and the EASE constant in interactions.tsx. */
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@theme inline {
+  --color-ground: var(--ground);
+  --color-ground-2: var(--ground-2);
+  --color-fg: var(--fg);
+  --color-fg-2: var(--fg-2);
+  --color-accent: var(--accent);
+  --color-accent-2: var(--accent-2);
+  --color-muted: var(--muted);
+  --color-edge: var(--edge);
+
+  /* Font role tokens — wired from next/font/google variables in layout.tsx.
+     TODO(per client): swap the families in layout.tsx; these role names never change. */
+  --font-display: var(--font-display-family);
+  --font-sans: var(--font-sans-family);
+  --font-mono: var(--font-mono-family);
+}
+
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+body {
+  background: var(--ground);
+  color: var(--fg);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection { background: var(--accent); color: var(--ground); }
+
+.font-display { font-weight: 800; letter-spacing: -0.02em; }
