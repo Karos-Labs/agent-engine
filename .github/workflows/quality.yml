@@ -25,6 +25,18 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Every package's `types`/`main` points at its own dist/ (see each
+      # package.json) — a file that imports another workspace package BY
+      # NAME (scripts/*.ts, and anything depending on a package other than
+      # the lowest-layer @agent-engine/core) resolves that import through
+      # node_modules -> the target's package.json -> dist/*.d.ts. A truly
+      # fresh checkout has no dist/ anywhere yet, so typecheck/test would
+      # fail on "Cannot find module" before a single real bug is found —
+      # this build step is what a local dev's own already-built dist/ was
+      # silently standing in for.
+      - name: Build all workspace packages
+        run: npm run build
+
       - name: TypeScript type-check
         run: npm run typecheck
 
