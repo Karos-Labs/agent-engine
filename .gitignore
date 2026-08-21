@@ -10,3 +10,7 @@ coverage/
 .local/
 .karos-workspace/
 _to_delete/
+# agents/instagram-agent/__tests__/default-template-render.test.ts's scratch outDir —
+# has to live inside the repo root (assertInside requires a repo-relative outDir),
+# cleaned up in afterEach but ignored here as a backstop against a crashed run.
+.tmp-render-test-*/

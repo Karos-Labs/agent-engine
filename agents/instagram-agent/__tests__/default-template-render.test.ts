@@ -1,7 +1,6 @@
 import { describe, expect, it, afterEach } from "vitest";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import { createRenderCarousel } from "@agent-engine/tool-karos-publish";
 
 /**
@@ -15,6 +14,10 @@ import { createRenderCarousel } from "@agent-engine/tool-karos-publish";
  */
 describe("instagram-agent's default template renders via publish.renderCarousel", () => {
   const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
+  // `validateRenderInputs`'s `assertInside` requires outDir/image paths to be
+  // repo-relative (never an absolute/escaping path) — os.tmpdir() is outside
+  // the repo, so the scratch dir has to live INSIDE REPO_ROOT instead, same
+  // constraint every real caller (assembleSlidesData's own outDir) is under.
   let outDir: string;
 
   afterEach(async () => {
@@ -22,7 +25,7 @@ describe("instagram-agent's default template renders via publish.renderCarousel"
   });
 
   it("produces a real, non-empty PNG for a slide with no hero image", async () => {
-    outDir = await fs.mkdtemp(path.join(os.tmpdir(), "default-template-render-"));
+    outDir = await fs.mkdtemp(path.join(REPO_ROOT, ".tmp-render-test-"));
     const tool = createRenderCarousel();
     const outcome = await tool.execute(
       {
@@ -45,6 +48,7 @@ describe("instagram-agent's default template renders via publish.renderCarousel"
       { ctx: { runId: "r", clientSlug: "smoke-test", productId: "instagram-agent", runKind: "setup", metadata: {} } },
     );
 
+    if (outcome.status !== "success") console.error("render outcome:", JSON.stringify(outcome, null, 2));
     expect(outcome.status).toBe("success");
     if (outcome.status !== "success") throw new Error(JSON.stringify(outcome));
     expect(outcome.result.rendered).toHaveLength(1);
@@ -56,7 +60,7 @@ describe("instagram-agent's default template renders via publish.renderCarousel"
   }, 30_000);
 
   it("produces a real, non-empty PNG for a slide WITH a hero image", async () => {
-    outDir = await fs.mkdtemp(path.join(os.tmpdir(), "default-template-render-"));
+    outDir = await fs.mkdtemp(path.join(REPO_ROOT, ".tmp-render-test-"));
     // A minimal real 1x1 PNG, decodable by Chromium — not a fabricated/broken file.
     const pngBytes = Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
@@ -87,6 +91,7 @@ describe("instagram-agent's default template renders via publish.renderCarousel"
       { ctx: { runId: "r", clientSlug: "smoke-test", productId: "instagram-agent", runKind: "setup", metadata: {} } },
     );
 
+    if (outcome.status !== "success") console.error("render outcome:", JSON.stringify(outcome, null, 2));
     expect(outcome.status).toBe("success");
     if (outcome.status !== "success") throw new Error(JSON.stringify(outcome));
     const stat = await fs.stat(outcome.result.rendered[0]!.path);
