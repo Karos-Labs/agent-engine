@@ -1,5 +1,5 @@
 import type { AgentToolRegistry } from "@agent-engine/core";
-import type { GcsArtifactStoreLike } from "@agent-engine/tool-common";
+import type { GcsArtifactStoreLike, WorkspaceStoreLike } from "@agent-engine/tool-common";
 import type { LandingEngineConfig } from "./config.js";
 import { createReadBundle } from "./read-bundle/read-bundle-tool.js";
 import { createCopyTemplate } from "./copy-template/copy-template-tool.js";
@@ -46,10 +46,17 @@ export * from "./upload-site-bundle/upload-site-bundle-tool.js";
  * own doc comment for what it does and does not upload today. Omitted, this
  * package's behavior is exactly what it was before Task 1 (RFC-01's GCS
  * artifact store).
+ *
+ * `workspaceStore`, when supplied, makes `landing.readBundle` read a
+ * client's `brand.json`/`intake.md` from there instead of local disk
+ * (agent-engine#3's fix — see `read-bundle-tool.ts`'s own doc comment).
+ * `apps/agent-server`'s real wiring always supplies one; omitting it keeps
+ * this tool's original local-disk-only behavior, which is exactly what unit
+ * tests still exercise.
  */
-export function createKarosLandingTools(config: LandingEngineConfig, artifactStore?: GcsArtifactStoreLike): AgentToolRegistry {
+export function createKarosLandingTools(config: LandingEngineConfig, artifactStore?: GcsArtifactStoreLike, workspaceStore?: WorkspaceStoreLike): AgentToolRegistry {
   return {
-    "landing.readBundle": createReadBundle(config),
+    "landing.readBundle": createReadBundle(config, workspaceStore),
     "landing.copyTemplate": createCopyTemplate(config),
     "landing.writeSiteFile": createWriteSiteFile(config),
     "landing.readSiteFile": createReadSiteFile(config),

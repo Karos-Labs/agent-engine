@@ -1,0 +1,95 @@
+import { describe, expect, it, afterEach } from "vitest";
+import { promises as fs } from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
+import { createRenderCarousel } from "@agent-engine/tool-karos-publish";
+
+/**
+ * A real, un-mocked Chromium render of the actual production default
+ * template (agent-engine#4) — every other render-carousel test deliberately
+ * stays Chromium-free (`validateRenderInputs`'s own doc comment), so this is
+ * the one place "does the shipped template actually render" gets checked
+ * against real Playwright, not just schema validation. Requires
+ * `npx playwright install chromium` locally; CI's own image already has it
+ * (`apps/agent-server/Dockerfile`'s runtime stage).
+ */
+describe("instagram-agent's default template renders via publish.renderCarousel", () => {
+  const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
+  let outDir: string;
+
+  afterEach(async () => {
+    if (outDir) await fs.rm(outDir, { recursive: true, force: true });
+  });
+
+  it("produces a real, non-empty PNG for a slide with no hero image", async () => {
+    outDir = await fs.mkdtemp(path.join(os.tmpdir(), "default-template-render-"));
+    const tool = createRenderCarousel();
+    const outcome = await tool.execute(
+      {
+        client: "smoke-test",
+        postId: "no-image-post",
+        templateDir: "agents/instagram-agent/assets/templates/default",
+        outDir: path.relative(REPO_ROOT, outDir),
+        repoRoot: REPO_ROOT,
+        slides: [
+          {
+            n: 1,
+            template: "slide.html",
+            fields: { headline: "Most marketing calendars fail in month two", body: "Here's the pattern we keep seeing.", accentColor: "#C4552F" },
+            images: {},
+          },
+        ],
+        canvas: { w: 1080, h: 1440, scale: 2, slides_min: 1, slides_max: 8 },
+        readyFlag: "__CAROUSEL_READY__",
+      },
+      { ctx: { runId: "r", clientSlug: "smoke-test", productId: "instagram-agent", runKind: "setup", metadata: {} } },
+    );
+
+    expect(outcome.status).toBe("success");
+    if (outcome.status !== "success") throw new Error(JSON.stringify(outcome));
+    expect(outcome.result.rendered).toHaveLength(1);
+    const pngPath = outcome.result.rendered[0]!.path;
+    const stat = await fs.stat(pngPath);
+    expect(stat.size).toBeGreaterThan(1000); // a real screenshot, not an empty/broken file
+    const bytes = await fs.readFile(pngPath);
+    expect(bytes.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a"); // the PNG magic bytes
+  }, 30_000);
+
+  it("produces a real, non-empty PNG for a slide WITH a hero image", async () => {
+    outDir = await fs.mkdtemp(path.join(os.tmpdir(), "default-template-render-"));
+    // A minimal real 1x1 PNG, decodable by Chromium — not a fabricated/broken file.
+    const pngBytes = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "base64",
+    );
+    const imageAbsPath = path.join(outDir, "hero.png");
+    await fs.writeFile(imageAbsPath, pngBytes);
+
+    const tool = createRenderCarousel();
+    const outcome = await tool.execute(
+      {
+        client: "smoke-test",
+        postId: "with-image-post",
+        templateDir: "agents/instagram-agent/assets/templates/default",
+        outDir: path.relative(REPO_ROOT, outDir),
+        repoRoot: REPO_ROOT,
+        slides: [
+          {
+            n: 1,
+            template: "slide.html",
+            fields: { headline: "A real photo slide", body: "This one has a hero image.", accentColor: "#2F6FC4" },
+            images: { hero: path.relative(REPO_ROOT, imageAbsPath) },
+          },
+        ],
+        canvas: { w: 1080, h: 1440, scale: 2, slides_min: 1, slides_max: 8 },
+        readyFlag: "__CAROUSEL_READY__",
+      },
+      { ctx: { runId: "r", clientSlug: "smoke-test", productId: "instagram-agent", runKind: "setup", metadata: {} } },
+    );
+
+    expect(outcome.status).toBe("success");
+    if (outcome.status !== "success") throw new Error(JSON.stringify(outcome));
+    const stat = await fs.stat(outcome.result.rendered[0]!.path);
+    expect(stat.size).toBeGreaterThan(1000);
+  }, 30_000);
+});

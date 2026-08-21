@@ -27,6 +27,6 @@ export function createServerTools(workspaceStore: WorkspaceStoreLike, env: Recor
   return {
     ...createAllKarosTools(workspaceStore, mediaStore),
     ...createKarosVideoTools({ env, ...(mediaStore ? { mediaStore } : {}) }),
-    ...createKarosLandingTools(createLandingEngineConfigFromEnv({ env }), archiveStore),
+    ...createKarosLandingTools(createLandingEngineConfigFromEnv({ env }), archiveStore, workspaceStore),
   };
 }

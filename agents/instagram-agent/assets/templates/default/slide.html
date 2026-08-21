@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>instagram-agent default slide template</title>
+<!--
+  Production default for `instagram-agent`'s `publish.renderCarousel` step
+  (agent-engine#4). Not a test fixture — the only prior `slide.html` in the
+  repo lived under `agents/instagram-agent/__tests__/fixtures/templates/`,
+  which `.dockerignore` excludes from every deployed image, so no real client
+  run could ever reach a working render. This ships at a real, non-excluded
+  path instead.
+
+  The composition (photo layer + bottom scrim + kicker/headline/body copy
+  block + accent stat-band) and the design tokens below are adapted from
+  karos-agents' legacy `products/live/instagram-agent/assets/templates/
+  marketing-services/_ms-core.css` — the "hook" slide pattern specifically,
+  the one archetype whose shape (one photo, one scrim, one copy block) maps
+  directly onto this agent's actual per-slide contract (`{headline, body,
+  accentColor}` fields + an optional `hero` image — see
+  `workflow/slides-data.ts`'s `assembleSlidesData`). The legacy system's
+  richer per-slide-TYPE device library (charts, proportion grids, timelines,
+  archival plates — see that CSS file's own comment) assumes a fundamentally
+  different renderer (one HTML document driving ALL slides via an inline
+  JSON blob, screenshotting `#slide-N` elements) that `publish.renderCarousel`
+  does not implement; porting THAT architecture is future work, not this
+  fix's scope, which is "ship a real, working default template."
+
+  Fonts are the legacy palette's own choices (Fraunces/Inter/IBM Plex Mono).
+  `{{accentColor}}` is `instagramBrandTokens.accentColor` (falls back to the
+  legacy palette's own accent, #C4552F, when a client hasn't set one —
+  `assembleSlidesData`'s job, not this file's).
+-->
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600;1,400;1,500;1,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #17181C;
+    --fg: #F4F2EC;
+    --accent: {{accentColor}};
+    --accent-ink: #141414;
+    --f-display: 'Fraunces', Georgia, 'Times New Roman', serif;
+    --f-body: 'Inter', system-ui, -apple-system, sans-serif;
+    --f-mono: 'IBM Plex Mono', ui-monospace, monospace;
+    --mx: 64px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1080px; height: 1440px; }
+  body {
+    position: relative; overflow: hidden;
+    background: var(--bg); color: var(--fg);
+    font-family: var(--f-body);
+  }
+  .bg { position: absolute; inset: 0; z-index: 0; }
+  .bg img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  /* Bottom-anchored scrim (legacy `.scrim.tall`) — the copy block always sits on a
+     readable dark gradient whether or not a hero image loaded. */
+  .scrim {
+    position: absolute; inset: 0; z-index: 1; pointer-events: none;
+    background: linear-gradient(to top,
+      rgba(23,24,28,0.96) 0%, rgba(23,24,28,0.86) 22%,
+      rgba(23,24,28,0.52) 42%, rgba(23,24,28,0) 62%);
+  }
+  .copy { position: absolute; left: var(--mx); right: var(--mx); bottom: 96px; z-index: 4; }
+  .headline {
+    font-family: var(--f-display); font-weight: 600; font-size: 76px;
+    line-height: 1.3; letter-spacing: -0.012em; text-wrap: balance;
+  }
+  .body-text {
+    font-family: var(--f-body); font-weight: 400; font-size: 31px;
+    line-height: 1.55; color: rgba(244,242,236,0.92);
+    margin-top: 28px; max-width: 900px; text-wrap: pretty;
+  }
+  /* The orange square underline (legacy `.stat-band`) — one accent mark, rationed. */
+  .stat-band { width: 96px; height: 10px; background: var(--accent); margin-top: 30px; }
+</style>
+</head>
+<body>
+  <div class="bg">
+    <!-- No fallback image when {{image:hero}} is unset — the scrim's own dark gradient
+         already reads fine over the plain background, so a missing/broken photo is
+         quietly hidden rather than shown as a broken-image glyph. -->
+    <img src="{{image:hero}}" onerror="this.style.display='none'" />
+  </div>
+  <div class="scrim"></div>
+  <div class="copy">
+    <div class="headline">{{headline}}</div>
+    <div class="body-text">{{body}}</div>
+    <div class="stat-band"></div>
+  </div>
+  <script>
+    // The render tool's `readyFlagCheck` waits for exactly this (default
+    // `readyFlag`, publish.renderCarousel's own schema default) before it
+    // ever screenshots the page.
+    window.__CAROUSEL_READY__ = true;
+  </script>
+</body>
+</html>

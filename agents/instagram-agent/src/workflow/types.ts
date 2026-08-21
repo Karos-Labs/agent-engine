@@ -92,14 +92,13 @@ export type StyleConfig = z.infer<typeof StyleConfigSchema>;
  * `templateDir` input, which `assertInside` (RFC-03 §1 required-reading
  * item 2) refuses to accept as an absolute path.
  *
- * KNOWN GAP (karoslabs/agent-engine#4, found during the 2026-08-21 prep
- * live-verification pass): there is currently no real, production-shipped
- * template directory for a client's `templateDir` to validly point at — the
- * only `slide.html` in the repo lives under `agents/instagram-agent/
- * __tests__/fixtures/templates/`, which `.dockerignore` excludes from every
- * deployed image. A real run's step 08 render fails once it gets there
- * regardless of what a client's frozen config says, until a production
- * default template ships somewhere outside `__tests__`.
+ * RESOLVED (karoslabs/agent-engine#4): a real, non-`__tests__` default now
+ * ships at `agents/instagram-agent/assets/templates/default/slide.html`
+ * (`slideTemplate` still defaults to `"slide.html"`, matching it) — a new
+ * client's `templateDir` should point there unless/until it has its own.
+ * Adapted from karos-agents' legacy `marketing-services` CSS design tokens
+ * for visual parity — see that file's own doc comment for exactly what was
+ * and wasn't ported.
  */
 export const BrandTokensSchema = z.object({
   templateDir: z.string().min(1),

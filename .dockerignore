@@ -11,11 +11,11 @@ docs
 scripts
 !scripts/build-workspaces.mjs
 evals
-# KNOWN GAP (karoslabs/agent-engine#4): this also excludes the only slide.html
-# template in the repo (agents/instagram-agent/__tests__/fixtures/templates/),
-# so no deployed image ships a production instagram-agent render template —
-# every real client's instagramBrandTokens.templateDir needs somewhere real,
-# outside __tests__, to point at before this exclusion is fully safe.
+# This also excludes the __tests__-only slide.html fixture (agents/
+# instagram-agent/__tests__/fixtures/templates/) — safe now that a real
+# default template ships at agents/instagram-agent/assets/templates/default/
+# (karoslabs/agent-engine#4), which is NOT under __tests__ and so is NOT
+# excluded here.
 **/__tests__
 **/*.test.ts
 # Root-level docs only — NOT **/*.md, which would also exclude the agents'

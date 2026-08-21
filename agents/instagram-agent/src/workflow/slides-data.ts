@@ -114,13 +114,21 @@ export function assembleSlidesData(params: {
 }): RenderCarouselInput {
   const selectionByN = new Map(params.selections.map((s) => [s.n, s]));
 
+  // The default template (agents/instagram-agent/assets/templates/default/slide.html,
+  // agent-engine#4) reads this as a CSS custom property — falls back to that template's
+  // own legacy-palette accent (see its doc comment) when a client hasn't set one yet.
+  // `logoPath` isn't threaded through here: the default template has no wordmark
+  // slot (no client-name field exists anywhere in this agent's per-slide contract to
+  // put next to one), so wiring it through would have nothing real to attach to.
+  const accentColor = params.brandTokens.accentColor ?? "#C4552F";
+
   const slides: Slide[] = params.copy.slides.map((slide) => {
     const selection = selectionByN.get(slide.n);
     const imagePath = selection?.imagePath ?? undefined;
     return {
       n: slide.n,
       template: params.brandTokens.slideTemplate,
-      fields: { headline: slide.headline, body: slide.body },
+      fields: { headline: slide.headline, body: slide.body, accentColor },
       images: imagePath ? { hero: imagePath } : {},
     };
   });
