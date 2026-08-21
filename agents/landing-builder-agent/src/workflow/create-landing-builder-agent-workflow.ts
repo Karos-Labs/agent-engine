@@ -415,7 +415,42 @@ export function createLandingBuilderAgentWorkflow(options: CreateLandingBuilderA
       });
     }
 
-    // ── 09b: OUTPUT ──
+    // ── 09b: upload the reviewed site tree to GCS and persist a deliverable pointer —
+    // only when a bundle store is actually configured ("landing.uploadSiteBundle"
+    // registered means GCS_ARTIFACTS_BUCKET is set; see createKarosLandingTools). A
+    // no-op otherwise, so a deployment/test that hasn't configured GCS keeps behaving
+    // exactly as it did before this deliverable was wired in. Mirrors branded-shorts-
+    // agent's own "10a-upload-to-gcs" + "11-persist-deliverable" pair.
+    const uploaded = await wf.step.code("09b-upload-site-bundle", async () => {
+      const uploadTool = tools["landing.uploadSiteBundle"];
+      if (!uploadTool) return null;
+      const outcome = await uploadTool.execute({ clientSlug: wf.clientSlug, runId: wf.runId }, { ctx });
+      if (outcome.status !== "success") throw new WorkflowToolingFailure(`landing.uploadSiteBundle failed: ${outcome.status}`);
+      return outcome.result as { gcsPrefix: string; fileCount: number };
+    });
+
+    let deliverableId: string | undefined;
+    if (uploaded) {
+      deliverableId = await wf.step.code("09c-persist-deliverable", async () => {
+        const outcome = await tools["ledger.writeDeliverable"]!.execute(
+          {
+            runId: wf.runId,
+            kind: "landing-page-site",
+            deliverable: {
+              gcsPrefix: uploaded.gcsPrefix,
+              fileCount: uploaded.fileCount,
+              status: needsHuman ? "needs_human" : "ok",
+              gate: deterministicGate.verdict,
+            },
+          },
+          { ctx },
+        );
+        if (outcome.status !== "success") throw new WorkflowToolingFailure(`ledger.writeDeliverable failed: ${outcome.status}`);
+        return (outcome.result as { id: string }).id;
+      });
+    }
+
+    // ── 09d: OUTPUT ──
     return {
       status: needsHuman ? "needs_human" : "ok",
       client: wf.clientSlug,
@@ -425,6 +460,8 @@ export function createLandingBuilderAgentWorkflow(options: CreateLandingBuilderA
       assumptions,
       preview: `cd ${siteRootAbsolute || `clients/${wf.clientSlug}/site`} && npm install && npm run dev`,
       outOfScope,
+      ...(deliverableId !== undefined ? { deliverableId } : {}),
+      ...(uploaded ? { gcsPrefix: uploaded.gcsPrefix } : {}),
     };
   };
 }
