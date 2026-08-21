@@ -20,6 +20,7 @@
  * different code path.
  */
 import { createModelRouterFromEnv } from "@agent-engine/core";
+import { logError } from "@agent-engine/telemetry";
 import { RunJobRequestSchema, startRunJob } from "./run-job.js";
 import { createAgentDefinitionStoreFromEnv } from "./wiring/agent-definitions-store.js";
 import { createDurableStoreFromEnv } from "./wiring/durable-store.js";
@@ -58,7 +59,7 @@ async function main(): Promise<void> {
   const subscription = queue.subscribe(subscriptionName, async (message) => {
     const parsed = RunJobRequestSchema.safeParse(message.payload);
     if (!parsed.success) {
-      console.error(`queue-consumer: message ${message.id} failed run-job validation`, parsed.error.issues);
+      logError("queue-consumer: message failed run-job validation", undefined, { messageId: message.id, issues: parsed.error.issues });
       // Throwing here is what makes the adapter NACK — a permanently-invalid
       // message can't self-heal on retry, but the subscription's own
       // max-delivery-attempts + dead-letter-topic config (.env.example) is
@@ -76,6 +77,13 @@ async function main(): Promise<void> {
       // "not_found" (Task 2: productId named neither a fixed product nor a registered
       // dynamic agent) is just as permanent as a schema-validation failure above — same
       // NACK-and-let-the-subscription's-own-DLQ-policy-decide handling, not a special case.
+      logError("queue-consumer: run job failed to start", undefined, {
+        messageId: message.id,
+        outcome: outcome.outcome,
+        clientSlug: parsed.data.clientSlug,
+        productId: parsed.data.productId,
+        reason: outcome.message,
+      });
       throw new Error(outcome.message);
     }
     console.log(`queue-consumer: run "${outcome.runId}" -> ${outcome.outcome === "started" ? outcome.status : "already-running"}`);
@@ -88,7 +96,7 @@ async function main(): Promise<void> {
     console.log(`${signal} received — stopping the pull subscription`);
     subscription
       .stop()
-      .catch((err: unknown) => console.error("error while stopping the pull subscription", err))
+      .catch((err: unknown) => logError("queue-consumer: error while stopping the pull subscription", err))
       .finally(() => process.exit());
   }
   process.on("SIGTERM", () => shutdown("SIGTERM"));
@@ -96,6 +104,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error("fatal error during queue-consumer startup", err);
+  logError("queue-consumer: fatal error during startup", err);
   process.exit(1);
 });

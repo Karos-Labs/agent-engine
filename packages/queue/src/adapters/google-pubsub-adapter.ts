@@ -1,4 +1,5 @@
 import type { Message, PubSub } from "@google-cloud/pubsub";
+import { logError } from "@agent-engine/telemetry";
 import type { PublishResult, QueueAdapter, QueueMessage, QueueMessageHandler, QueueSubscription } from "../types.js";
 
 /** Same client-resolver-function convention `GeminiAdapter`/`OpenAICompatibleAdapter` use — lets a caller memoize one client (the common case) or hand back a per-call/test double, without this class caring which. */
@@ -57,7 +58,7 @@ export class GooglePubSubQueueAdapter implements QueueAdapter {
           // own max-delivery-attempts + dead-letter-topic config is what's
           // supposed to catch a permanently-bad message, not this adapter
           // deciding on its own that it's unrecoverable.
-          console.error(`google-pubsub: message ${message.id} on "${subscriptionName}" is not valid JSON — nacking`, err);
+          logError("google-pubsub: message is not valid JSON — nacking", err, { messageId: message.id, subscriptionName });
           message.nack();
           return;
         }
@@ -66,14 +67,18 @@ export class GooglePubSubQueueAdapter implements QueueAdapter {
           await handler(queueMessage);
           message.ack();
         } catch (err) {
-          console.error(`google-pubsub: handler failed for message ${message.id} on "${subscriptionName}" — nacking for redelivery`, err);
+          // The catch-all for any handler exception, including one the caller
+          // never explicitly logged itself — this IS the "unhandled exception"
+          // backstop a worker-failures log-based metric needs to see every
+          // nack-worthy failure, not just the ones a handler chose to log.
+          logError("google-pubsub: handler failed — nacking for redelivery", err, { messageId: message.id, subscriptionName });
           message.nack();
         }
       })();
     };
 
     const onError = (err: unknown): void => {
-      console.error(`google-pubsub: subscription "${subscriptionName}" reported a stream error`, err);
+      logError("google-pubsub: subscription reported a stream error", err, { subscriptionName });
     };
 
     subscription.on("message", onMessage);
