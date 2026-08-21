@@ -10,12 +10,21 @@
 #
 # One-time setup — grant production's Cloud Build service account read
 # access to prep's Artifact Registry repo, so the pull-from-prep step below
-# can reach it:
+# can reach it. BOTH of these may be needed: `gcloud builds describe
+# <buildId> --format='value(serviceAccount)'` on an actual run is what
+# settled it here — this project's builds run as the Compute Engine default
+# SA, not the legacy Cloud Build SA the first grant below assumes (a GCP
+# default that varies by project/API-enablement history; don't assume either
+# one without checking a real build's `serviceAccount` field first):
 #
 #   PROD_PROJECT_NUMBER=$(gcloud projects describe $PROD_PROJECT_ID --format='value(projectNumber)')
 #   gcloud artifacts repositories add-iam-policy-binding karos \
 #     --project=$PREP_PROJECT_ID --location=us-central1 \
 #     --member="serviceAccount:${PROD_PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
+#     --role="roles/artifactregistry.reader"
+#   gcloud artifacts repositories add-iam-policy-binding karos \
+#     --project=$PREP_PROJECT_ID --location=us-central1 \
+#     --member="serviceAccount:${PROD_PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
 #     --role="roles/artifactregistry.reader"
 #
 # The cloud-run-deploy steps' flags mirror cloudbuild.yaml's own deploy
