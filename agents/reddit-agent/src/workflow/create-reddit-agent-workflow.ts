@@ -2,6 +2,7 @@ import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelR
 import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure } from "@agent-engine/workflow";
 import { RedditDraftAgent } from "../agent/reddit-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
+import { renderRedditDraftsEnvelope } from "./render-drafts-envelope.js";
 import type {
   RedditAgentWorkflowResult,
   RedditCandidateSummary,
@@ -425,7 +426,21 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
 
     // ── 19-20: deliverable & manifest persistence ──
     const deliverableId = await wf.step.code("19-persist-deliverable", async (): Promise<string> => {
-      const outcome = await tools["ledger.writeDeliverable"]!.execute({ runId: wf.runId, kind: "reddit-reply", deliverable: draft }, { ctx });
+      // Additive: `draftsEnvelope` is the v2 JSON envelope karosCMO's
+      // `reddit-drafts.ts` reader now expects on `asset.content` — the rest
+      // of `draft` stays untouched for any consumer that wants raw fields.
+      const redditUsername = clientContext.profile["redditUsername"];
+      const draftsEnvelope = renderRedditDraftsEnvelope({
+        ...(typeof redditUsername === "string" ? { account: redditUsername } : {}),
+        targetThreadUrl: selectedThread.targetThreadUrl,
+        targetThreadTitle: selectedThread.targetThreadTitle,
+        targetSubreddit: selectedThread.targetSubreddit,
+        draft,
+      });
+      const outcome = await tools["ledger.writeDeliverable"]!.execute(
+        { runId: wf.runId, kind: "reddit-reply", deliverable: { ...draft, draftsEnvelope } },
+        { ctx },
+      );
       if (outcome.status !== "success") throw new WorkflowToolingFailure(`ledger.writeDeliverable failed: ${outcome.status}`);
       return (outcome.result as { id: string }).id;
     });

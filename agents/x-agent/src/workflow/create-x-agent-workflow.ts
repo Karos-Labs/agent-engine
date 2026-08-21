@@ -2,6 +2,7 @@ import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelR
 import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure } from "@agent-engine/workflow";
 import { XDraftAgent, type Lane } from "../agent/x-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
+import { renderXDraftsMarkdown } from "./render-drafts-markdown.js";
 import { countRecentEngagementPosts, ENGAGEMENT_DAILY_CAP, selectLane } from "./lane.js";
 import type {
   XAgentWorkflowResult,
@@ -324,7 +325,19 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
 
     // ── 18-19: deliverable & manifest persistence ──
     const deliverableId = await wf.step.code("18-persist-deliverable", async (): Promise<string> => {
-      const outcome = await tools["ledger.writeDeliverable"]!.execute({ runId: wf.runId, kind: "x-post", deliverable: draft }, { ctx });
+      // Additive: `draftsMarkdown` is the DRAFTS.md-shaped string karosCMO's
+      // `x-drafts.ts` parser needs on `asset.content` — the rest of `draft`
+      // stays untouched for any consumer that wants the raw structured fields.
+      const draftsMarkdown = renderXDraftsMarkdown({
+        targetHandle: intake.xHandle,
+        lane: laneSelection.lane,
+        angle: laneSelection.angle,
+        draft,
+      });
+      const outcome = await tools["ledger.writeDeliverable"]!.execute(
+        { runId: wf.runId, kind: "x-post", deliverable: { ...draft, draftsMarkdown } },
+        { ctx },
+      );
       if (outcome.status !== "success") throw new WorkflowToolingFailure(`ledger.writeDeliverable failed: ${outcome.status}`);
       return (outcome.result as { id: string }).id;
     });

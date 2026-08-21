@@ -2,6 +2,7 @@ import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelR
 import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure } from "@agent-engine/workflow";
 import { LinkedInDraftAgent } from "../agent/linkedin-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
+import { renderLinkedInDraftsMarkdown } from "./render-drafts-markdown.js";
 import {
   LINKEDIN_ARCHETYPES,
   type LinkedInAgentWorkflowResult,
@@ -449,7 +450,21 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
 
     // ── 16-17: deliverable & manifest persistence ──
     const deliverableId = await wf.step.code("16-persist-deliverable", async (): Promise<string> => {
-      const outcome = await tools["ledger.writeDeliverable"]!.execute({ runId: wf.runId, kind: "linkedin-post", deliverable: draft }, { ctx });
+      // Additive: `draftsMarkdown` is the "# LinkedIn drafts"-shaped string
+      // karosCMO's `li-drafts.ts` parser needs on `asset.content` — the rest
+      // of `draft` stays untouched for any consumer that wants raw fields.
+      const companyName = clientContext.profile["companyName"];
+      const draftsMarkdown = renderLinkedInDraftsMarkdown({
+        identity: clientContext.identity,
+        ...(typeof companyName === "string" ? { companyName } : {}),
+        archetype: draft.archetype,
+        topic: selected.topic,
+        draft,
+      });
+      const outcome = await tools["ledger.writeDeliverable"]!.execute(
+        { runId: wf.runId, kind: "linkedin-post", deliverable: { ...draft, draftsMarkdown } },
+        { ctx },
+      );
       if (outcome.status !== "success") throw new WorkflowToolingFailure(`ledger.writeDeliverable failed: ${outcome.status}`);
       return (outcome.result as { id: string }).id;
     });
