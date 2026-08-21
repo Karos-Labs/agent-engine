@@ -17,7 +17,8 @@ export interface RetryOptions {
   delay?: (ms: number) => Promise<void>;
 }
 
-function extractHttpStatus(err: unknown): number | undefined {
+/** Exported for `ResilientClaudeAdapter`, which classifies failover-worthiness (429/404) rather than same-transport retryability. */
+export function extractHttpStatus(err: unknown): number | undefined {
   if (typeof err !== "object" || err === null) return undefined;
   const record = err as { status?: unknown; statusCode?: unknown };
   const status = record.status ?? record.statusCode;

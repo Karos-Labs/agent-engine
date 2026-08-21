@@ -3,6 +3,7 @@ export * from "./root-object-schema.js";
 export * from "./retry.js";
 export * from "./messages-api-adapter.js";
 export * from "./anthropic-adapter.js";
+export * from "./resilient-claude-adapter.js";
 export * from "./agent-platform-model-ids.js";
 export * from "./agent-platform-adapter.js";
 export * from "./gemini-adapter.js";

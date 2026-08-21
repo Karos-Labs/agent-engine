@@ -8,6 +8,7 @@ import { regionEnvVarNamesFor } from "./adapters/agent-platform-model-ids.js";
 import { AnthropicAdapter } from "./adapters/anthropic-adapter.js";
 import { GeminiAdapter } from "./adapters/gemini-adapter.js";
 import { OpenAICompatibleAdapter } from "./adapters/openai-compatible-adapter.js";
+import { ResilientClaudeAdapter } from "./adapters/resilient-claude-adapter.js";
 import type { MessagesApiClient, ModelAdapter } from "./adapters/types.js";
 import { createVertexModelGardenFetch, vertexModelGardenBaseUrl } from "./adapters/vertex-model-garden-client.js";
 import { DefaultModelRouter, type ModelRouter, type ModelRouterAdapters } from "./model-router.js";
@@ -132,9 +133,42 @@ function createClaudeDirectAdapter(env: Record<string, string | undefined>): Mod
   return new AnthropicAdapter(new Anthropic({ apiKey }), {}, promptCaching);
 }
 
-/** The `anthropic` vendor adapter — always built, per {@link resolveClaudeRoute}. This is the router's one required vendor. */
+/**
+ * The `anthropic` vendor adapter — always built, per {@link resolveClaudeRoute}.
+ * This is the router's one required vendor.
+ *
+ * On the `agent-platform` route (the default), opportunistically wraps the
+ * Vertex adapter in a {@link ResilientClaudeAdapter} dual-layer fallback
+ * whenever the environment provides something to fall back TO:
+ * `ANTHROPIC_API_KEY` (direct Anthropic, same models, a different
+ * transport) and/or a configured Gemini vendor adapter (a different model
+ * family, the last resort). Neither is required — a deployment that sets
+ * neither gets exactly today's behavior, a bare Agent Platform adapter, not
+ * a wrapper that silently does nothing.
+ *
+ * The `anthropic` route (`MODEL_PROVIDER=anthropic`) is unwrapped: it's
+ * already the fallback target for the other route, so there's nothing left
+ * to fail over to for Claude specifically (Gemini could still apply, but a
+ * deployment that deliberately chose to skip Agent Platform entirely is
+ * choosing simplicity over resilience — wrap explicitly at the call site if
+ * that's ever wanted).
+ */
 function createAnthropicVendorAdapter(env: Record<string, string | undefined>): ModelAdapter {
-  return resolveClaudeRoute(env) === "agent-platform" ? createClaudeAgentPlatformAdapter(env) : createClaudeDirectAdapter(env);
+  if (resolveClaudeRoute(env) !== "agent-platform") {
+    return createClaudeDirectAdapter(env);
+  }
+
+  const primary = createClaudeAgentPlatformAdapter(env);
+  const secondary = readEnv(env, "ANTHROPIC_API_KEY") ? createClaudeDirectAdapter(env) : undefined;
+  const tertiary = createGeminiVendorAdapter(env);
+
+  if (!secondary && !tertiary) return primary;
+
+  return new ResilientClaudeAdapter({
+    primary,
+    ...(secondary ? { secondary } : {}),
+    ...(tertiary ? { tertiary, tertiaryModel: readEnv(env, "CLAUDE_FALLBACK_GEMINI_MODEL") ?? "gemini-1.5-flash" } : {}),
+  });
 }
 
 /**

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
   DefaultModelRouter,
+  ResilientClaudeAdapter,
   createModelRouterFromEnv,
   resolveGeminiRoute,
   resolvePinnedRouteProvider,
@@ -174,6 +175,40 @@ describe("createModelRouterFromEnv — gemini vendor adapter", () => {
     await expect(
       router.complete("draft this", OutputSchema, { policy: "pinned", model: "gemini-2.5-pro", vendor: "gemini" }),
     ).rejects.toThrow(/GEMINI_VERTEX_PROJECT_ID|GEMINI_API_KEY/);
+  });
+});
+
+describe("createModelRouterFromEnv — anthropic dual-layer fallback wiring", () => {
+  it("stays a bare adapter (no wrapper) when nothing configures a fallback target", () => {
+    // ANTHROPIC_VERTEX_PROJECT_ID, not GOOGLE_CLOUD_PROJECT: the latter would
+    // also satisfy Gemini's own agent-platform fallback (see the "falls back
+    // to GOOGLE_CLOUD_PROJECT" gemini test below) and defeat this case.
+    const router = createModelRouterFromEnv({ env: { ANTHROPIC_VERTEX_PROJECT_ID: "karos-labs-prep" } });
+    expect(adapterFor(router, "gemini")).toBeUndefined();
+    expect(adapterFor(router, "anthropic")).not.toBeInstanceOf(ResilientClaudeAdapter);
+  });
+
+  it("wraps in ResilientClaudeAdapter when ANTHROPIC_API_KEY is present on the agent-platform route", () => {
+    const router = createModelRouterFromEnv({
+      env: { ...anthropicBaseline, ANTHROPIC_API_KEY: "sk-ant-test-key" },
+    });
+    expect(adapterFor(router, "anthropic")).toBeInstanceOf(ResilientClaudeAdapter);
+  });
+
+  it("wraps in ResilientClaudeAdapter when a Gemini vendor adapter is configured, even with no ANTHROPIC_API_KEY", () => {
+    // anthropicBaseline's own GOOGLE_CLOUD_PROJECT is enough to build the
+    // Gemini agent-platform sub-route too (same fallback this repo's own
+    // Claude route already relies on).
+    const router = createModelRouterFromEnv({ env: anthropicBaseline });
+    expect(adapterFor(router, "gemini")).toBeDefined();
+    expect(adapterFor(router, "anthropic")).toBeInstanceOf(ResilientClaudeAdapter);
+  });
+
+  it("does NOT wrap on the direct anthropic route — that route already IS the fallback target", () => {
+    const router = createModelRouterFromEnv({
+      env: { MODEL_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "sk-ant-test-key" },
+    });
+    expect(adapterFor(router, "anthropic")).not.toBeInstanceOf(ResilientClaudeAdapter);
   });
 });
 

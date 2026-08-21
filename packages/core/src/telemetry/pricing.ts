@@ -31,6 +31,11 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   // (where a dateless id is itself a pinned snapshot, not a moving pointer).
   "claude-haiku-4-5": { inputPer1M: 0.8, outputPer1M: 4.0 },
   "claude-3-5-sonnet-20241022": { inputPer1M: 3.0, outputPer1M: 15.0 },
+  // v2 refresh (Oct 2024) — same published pricing as the original 3.5 Sonnet
+  // above, but a distinct model id, so `pricingForModel`'s undated-fallback
+  // (which only strips a trailing date) would never reach the row above.
+  "claude-3-5-sonnet-v2-20241022": { inputPer1M: 3.0, outputPer1M: 15.0 },
+  "claude-3-5-haiku-20241022": { inputPer1M: 0.8, outputPer1M: 4.0 },
   "claude-3-opus-20240229": { inputPer1M: 15.0, outputPer1M: 75.0 },
   "claude-3-haiku-20240307": { inputPer1M: 0.25, outputPer1M: 1.25 },
   "gpt-4o-mini": { inputPer1M: 0.15, outputPer1M: 0.6 },
