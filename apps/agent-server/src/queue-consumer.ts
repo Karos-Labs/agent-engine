@@ -20,19 +20,35 @@
  * different code path.
  */
 import { createModelRouterFromEnv } from "@agent-engine/core";
-import { createAllKarosTools } from "@agent-engine/tools";
 import { RunJobRequestSchema, startRunJob } from "./run-job.js";
+import { createAgentDefinitionStoreFromEnv } from "./wiring/agent-definitions-store.js";
 import { createDurableStoreFromEnv } from "./wiring/durable-store.js";
 import { createServerPromptStore } from "./wiring/prompt-store.js";
 import { createServerQueueAdapter, runJobsSubscriptionName } from "./wiring/queue.js";
+import { createServerTools } from "./wiring/tools.js";
 import { createServerWorkspaceStore } from "./wiring/workspace-store.js";
+import { createServer } from "node:http";
+import { resolveInstagramRepoRoot } from "./wiring/workflows.js";
 
 async function main(): Promise<void> {
+  // This is a queue consumer, not an HTTP server, but Cloud Run *services*
+  // (unlike Jobs) require the container to listen on $PORT to pass the
+  // startup/liveness probe — without this, `gcloud run deploy` times out
+  // waiting for a port that never opens. Mirrors karosCMO/agent-service's
+  // own worker-main.ts, which hits the exact same requirement.
+  const port = Number(process.env["PORT"] ?? 8080);
+  createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: true, role: "worker" }));
+  }).listen(port, () => console.log(`queue-consumer: health server listening on :${port}`));
+
   const durableStore = createDurableStoreFromEnv();
   const promptStore = createServerPromptStore();
   const router = createModelRouterFromEnv();
-  const tools = createAllKarosTools(createServerWorkspaceStore());
-  const runtimeDeps = { tools, promptStore, router };
+  const workspaceStore = createServerWorkspaceStore();
+  const tools = createServerTools(workspaceStore);
+  const runtimeDeps = { tools, promptStore, router, workspaceStore, repoRoot: resolveInstagramRepoRoot() };
+  const agentDefinitionStore = createAgentDefinitionStoreFromEnv();
 
   const queue = createServerQueueAdapter();
   const subscriptionName = runJobsSubscriptionName();
@@ -54,10 +70,13 @@ async function main(): Promise<void> {
     // a redelivery of the same unacked message reuses the same message id,
     // so this can never double-run a job.
     const runId = `pubsub-${message.id}`;
-    const outcome = await startRunJob(parsed.data, runId, { durableStore, runtimeDeps });
+    const outcome = await startRunJob(parsed.data, runId, { durableStore, runtimeDeps, agentDefinitionStore });
 
-    if (outcome.outcome === "error") {
-      throw new Error(outcome.message); // NACK -> Pub/Sub redelivers per the subscription's backoff policy.
+    if (outcome.outcome === "error" || outcome.outcome === "not_found") {
+      // "not_found" (Task 2: productId named neither a fixed product nor a registered
+      // dynamic agent) is just as permanent as a schema-validation failure above — same
+      // NACK-and-let-the-subscription's-own-DLQ-policy-decide handling, not a special case.
+      throw new Error(outcome.message);
     }
     console.log(`queue-consumer: run "${outcome.runId}" -> ${outcome.outcome === "started" ? outcome.status : "already-running"}`);
   });

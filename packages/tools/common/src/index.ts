@@ -5,3 +5,4 @@ export * from "./idempotency.js";
 export * from "./adapters/file-git/index.js";
 export * from "./adapters/gcs/index.js";
 export * from "./create-workspace-store-from-env.js";
+export * from "./create-artifact-store-from-env.js";

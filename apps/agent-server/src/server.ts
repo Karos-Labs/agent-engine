@@ -1,11 +1,13 @@
 import { createModelRouterFromEnv } from "@agent-engine/core";
 import { initTelemetry, shutdownTelemetry } from "@agent-engine/telemetry";
-import { createAllKarosTools } from "@agent-engine/tools";
 import { createApp } from "./app.js";
+import { createAgentDefinitionStoreFromEnv } from "./wiring/agent-definitions-store.js";
 import { createDurableStoreFromEnv } from "./wiring/durable-store.js";
 import { createServerPromptStore } from "./wiring/prompt-store.js";
 import { createQueuePushVerifier } from "./wiring/queue-push-auth.js";
+import { createServerTools } from "./wiring/tools.js";
 import { createServerWorkspaceStore } from "./wiring/workspace-store.js";
+import { resolveInstagramRepoRoot } from "./wiring/workflows.js";
 
 /** Cloud Run injects `PORT`; 8080 is Cloud Run's own documented default for when it's unset locally. */
 function resolvePort(): number {
@@ -32,12 +34,17 @@ async function main(): Promise<void> {
   const promptStore = createServerPromptStore();
   const router = createModelRouterFromEnv();
   // GCS-backed when GCS_WORKSPACE_BUCKET is set (required for a real, stateless
-  // Cloud Run deployment — see wiring/workspace-store.ts); file-backed otherwise.
-  const tools = createAllKarosTools(createServerWorkspaceStore());
+  // Cloud Run deployment — see wiring/workspace-store.ts); file-backed otherwise. Shared with
+  // reputation-agent's own claims/ledgers below, not just the tool registry, so both agree on
+  // where tenant state actually lives.
+  const workspaceStore = createServerWorkspaceStore();
+  const tools = createServerTools(workspaceStore);
+  const agentDefinitionStore = createAgentDefinitionStoreFromEnv();
 
   const app = createApp({
     durableStore,
-    runtimeDeps: { tools, promptStore, router },
+    runtimeDeps: { tools, promptStore, router, workspaceStore, repoRoot: resolveInstagramRepoRoot() },
+    agentDefinitionStore,
     ...resolveQueuePushConfig(),
     verifyPushIdToken: createQueuePushVerifier(),
   });

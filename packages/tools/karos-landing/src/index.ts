@@ -1,4 +1,5 @@
 import type { AgentToolRegistry } from "@agent-engine/core";
+import type { GcsArtifactStoreLike } from "@agent-engine/tool-common";
 import type { LandingEngineConfig } from "./config.js";
 import { createReadBundle } from "./read-bundle/read-bundle-tool.js";
 import { createCopyTemplate } from "./copy-template/copy-template-tool.js";
@@ -7,6 +8,7 @@ import { createReadSiteFile } from "./write-file/read-file-tool.js";
 import { createLandingGate } from "./gate/gate-tool.js";
 import { createRenderCheck } from "./render-check/render-check-tool.js";
 import { createUpdateBrandFeedback } from "./update-brand-feedback/update-brand-feedback-tool.js";
+import { createUploadSiteBundle } from "./upload-site-bundle/upload-site-bundle-tool.js";
 
 export * from "./config.js";
 export * from "./create-landing-engine-config-from-env.js";
@@ -22,6 +24,7 @@ export * from "./gate/carry-forward.js";
 export * from "./gate/gate-tool.js";
 export * from "./render-check/render-check-tool.js";
 export * from "./update-brand-feedback/update-brand-feedback-tool.js";
+export * from "./upload-site-bundle/upload-site-bundle-tool.js";
 
 /**
  * The Landing Builder (s6, RFC-07) tool registry. Every write-capable tool
@@ -37,7 +40,14 @@ export * from "./update-brand-feedback/update-brand-feedback-tool.js";
  * step rather than a tool, since it is a judgment call" — it lives in
  * `agents/landing-builder-agent` as a `BaseAgent` subclass instead.
  */
-export function createKarosLandingTools(config: LandingEngineConfig): AgentToolRegistry {
+/**
+ * `artifactStore`, when supplied (wire it via `GCS_ARTIFACTS_BUCKET` at your
+ * composition root), registers `landing.uploadSiteBundle` — see that tool's
+ * own doc comment for what it does and does not upload today. Omitted, this
+ * package's behavior is exactly what it was before Task 1 (RFC-01's GCS
+ * artifact store).
+ */
+export function createKarosLandingTools(config: LandingEngineConfig, artifactStore?: GcsArtifactStoreLike): AgentToolRegistry {
   return {
     "landing.readBundle": createReadBundle(config),
     "landing.copyTemplate": createCopyTemplate(config),
@@ -46,5 +56,6 @@ export function createKarosLandingTools(config: LandingEngineConfig): AgentToolR
     "landing.gate": createLandingGate(config),
     "landing.renderCheck": createRenderCheck(),
     "landing.updateBrandFeedback": createUpdateBrandFeedback(config),
+    ...(artifactStore ? { "landing.uploadSiteBundle": createUploadSiteBundle(config, artifactStore) } : {}),
   };
 }

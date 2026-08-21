@@ -1,6 +1,7 @@
 import { getFirestore } from "firebase-admin/firestore";
 import { FirestoreDurableStepStore, MemoryDurableStepStore, type DurableStepStore } from "@agent-engine/workflow";
 import { getSharedFirebaseApp } from "./firebase-app.js";
+import { createServerArchiveStore } from "./gcs-artifact-stores.js";
 
 function readEnv(env: Record<string, string | undefined>, ...names: string[]): string | undefined {
   for (const name of names) {
@@ -31,5 +32,8 @@ export function createDurableStoreFromEnv(env: Record<string, string | undefined
 
   const databaseId = readEnv(env, "FIRESTORE_DATABASE_ID") ?? "(default)";
   const db = getFirestore(getSharedFirebaseApp(project), databaseId);
-  return new FirestoreDurableStepStore(db, { databaseId });
+  // Task 2's dual-storage archive: undefined (GCS_ARTIFACTS_BUCKET unset) keeps every write
+  // going straight to Firestore, exactly as before Task 2.
+  const archiveStore = createServerArchiveStore(env);
+  return new FirestoreDurableStepStore(db, { databaseId, ...(archiveStore ? { archiveStore } : {}) });
 }

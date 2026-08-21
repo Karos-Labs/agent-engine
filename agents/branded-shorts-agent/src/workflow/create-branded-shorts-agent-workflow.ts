@@ -330,6 +330,19 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
       throw new WorkflowHeld(`delivery rejected: ${deliveryDecision.reason ?? "no reason given"}`);
     }
 
+    // ── 10a: upload the finished, already-gated MP4 to GCS — only when a media store is
+    // actually configured ("video.uploadDeliverable" registered means GCS_MEDIA_BUCKET is set;
+    // see createKarosVideoTools). A no-op otherwise, so every deployment/test that hasn't
+    // configured GCS keeps behaving exactly as it did before Task 1's GCS media store.
+    const uploaded = await wf.step.code("10a-upload-to-gcs", async () => {
+      const uploadTool = tools["video.uploadDeliverable"];
+      if (!uploadTool) return null;
+      const objectPath = `branded-shorts/${wf.clientSlug}/${wf.runId}/final.mp4`;
+      const outcome = await uploadTool.execute({ localPath: build!.outputPath, objectPath, contentType: "video/mp4" }, { ctx });
+      if (outcome.status !== "success") throw new WorkflowToolingFailure(`video.uploadDeliverable failed: ${outcome.status}`);
+      return outcome.result as { gcsUri: string; signedUrl?: string };
+    });
+
     // ── 11-13: persist deliverable, dashboard snapshot, commit + record ──
     const deliverableId = await wf.step.code("11-persist-deliverable", async () => {
       const outcome = await tools["ledger.writeDeliverable"]!.execute(
@@ -338,6 +351,7 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
           kind: "branded-shorts-video",
           deliverable: {
             outputPath: build!.outputPath,
+            ...(uploaded ? { gcsUri: uploaded.gcsUri, ...(uploaded.signedUrl ? { signedUrl: uploaded.signedUrl } : {}) } : {}),
             durationSeconds: build!.durationSeconds,
             overlays: build!.plan.overlays,
             cutaways: build!.plan.cutaways,

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
-import { GateResponseSchema } from "@agent-engine/core";
+import { GateResponseSchema, type AgentDefinitionStore } from "@agent-engine/core";
 import { GateAlreadyResolvedError, WorkflowConcurrentRunError, WorkflowEngine, type DurableStepStore } from "@agent-engine/workflow";
 import { buildRunReport } from "../report.js";
 import { RunJobRequestSchema, startRunJob } from "../run-job.js";
@@ -10,6 +10,8 @@ import { buildWorkflowForProduct, isKnownProductId, type AgentRuntimeDeps, type 
 export interface RunsRouterDeps {
   durableStore: DurableStepStore;
   runtimeDeps: AgentRuntimeDeps;
+  /** Looked up by `startRunJob` (via `resolveWorkflowFn`) when `/runs/start`'s `productId` isn't one of the 12 fixed products (Task 2's dynamic agents). Omit only if this deployment never dispatches one over HTTP. */
+  agentDefinitionStore?: AgentDefinitionStore;
   /** Injectable for deterministic tests; defaults to `crypto.randomUUID`. */
   generateRunId?: () => string;
   /** Injectable for deterministic tests; defaults to `() => new Date().toISOString()`. */
@@ -77,6 +79,12 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
       // Astronomically unlikely for a freshly generated runId, but a defensive backstop
       // if the id generator is ever swapped for something less collision-proof.
       res.status(409).json({ error: outcome.message });
+      return;
+    }
+    if (outcome.outcome === "not_found") {
+      // A client error — productId named neither a fixed product nor a registered dynamic
+      // agent (Task 2) — not a server-side failure, so 400, not 500.
+      res.status(400).json({ error: outcome.message });
       return;
     }
     if (outcome.outcome === "error") {
@@ -177,13 +185,11 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
       res.status(404).json({ error: `no run found for "${runId}"` });
       return;
     }
-    const productId = mapProductId(runRecord.productId);
-    if (!productId) {
-      res.status(500).json({ error: `run "${runId}" has an unrecognized productId "${runRecord.productId}"` });
-      return;
-    }
-
-    const report = await buildRunReport(deps.durableStore, runId, productId);
+    // Unlike /resume (which still only knows how to build/re-run a FIXED product's workflow
+    // — see below), status is read-only: buildRunReport already handles an arbitrary
+    // productId string (Task 2's dynamic agents included) via its own generic fallback, so
+    // this route never needs to reject one the way /resume's mapProductId gate still does.
+    const report = await buildRunReport(deps.durableStore, runId, runRecord.productId);
     res.status(200).json({
       runId,
       status: runRecord.status,

@@ -18,7 +18,7 @@ import type { RunsRouterDeps } from "./runs.js";
  */
 export type VerifyPushIdToken = (idToken: string, audience: string) => Promise<void>;
 
-export interface QueueRouterDeps extends Pick<RunsRouterDeps, "durableStore" | "runtimeDeps"> {
+export interface QueueRouterDeps extends Pick<RunsRouterDeps, "durableStore" | "runtimeDeps" | "agentDefinitionStore"> {
   /**
    * Shared-secret defense-in-depth, checked as `?token=` on the push URL
    * itself — independent of OIDC verification below, so a misconfigured or
@@ -132,12 +132,18 @@ export function createQueueRouter(deps: QueueRouterDeps): Router {
     // job. See `run-job.ts`.
     const runId = `pubsub-${messageId}`;
 
-    const outcome = await startRunJob(parsedPayload.data, runId, { durableStore: deps.durableStore, runtimeDeps: deps.runtimeDeps });
+    const outcome = await startRunJob(parsedPayload.data, runId, {
+      durableStore: deps.durableStore,
+      runtimeDeps: deps.runtimeDeps,
+      ...(deps.agentDefinitionStore ? { agentDefinitionStore: deps.agentDefinitionStore } : {}),
+    });
 
-    if (outcome.outcome === "error") {
+    if (outcome.outcome === "error" || outcome.outcome === "not_found") {
       // 5xx tells Pub/Sub to redeliver per the subscription's own backoff —
       // after maxDeliveryAttempts it lands on the configured dead-letter
-      // topic with zero extra code here.
+      // topic with zero extra code here. "not_found" (Task 2: an unknown
+      // productId) is just as permanent as any other resolution failure —
+      // same handling, not a special case.
       res.status(500).json({ error: "run failed unexpectedly", message: outcome.message });
       return;
     }

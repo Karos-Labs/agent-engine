@@ -134,8 +134,15 @@ const NEWSLETTER_AGENT_STEP_IDS = [
   "19-commit-and-record",
 ] as const;
 
+/** The five original channel agents, still on their own hand-authored fixed step shape below — every product wired in afterward uses `discoveredDescriptors` instead (see its own doc comment for why). */
+const ORIGINAL_CHANNEL_PRODUCT_IDS = ["x-agent", "linkedin-agent", "reddit-agent", "blog-agent", "newsletter-agent"] as const;
+type OriginalChannelProductId = (typeof ORIGINAL_CHANNEL_PRODUCT_IDS)[number];
+function isOriginalChannelProduct(productId: string): productId is OriginalChannelProductId {
+  return (ORIGINAL_CHANNEL_PRODUCT_IDS as readonly string[]).includes(productId);
+}
+
 /** Each channel's own draft step id — the one step a report should badge "ai" rather than "code". */
-const DRAFT_STEP_ID_BY_PRODUCT: Record<Exclude<ProductId, "campaign-orchestrator">, string> = {
+const DRAFT_STEP_ID_BY_PRODUCT: Record<OriginalChannelProductId, string> = {
   "x-agent": "10-draft-post",
   "linkedin-agent": "09-draft-post",
   "reddit-agent": "12-draft-reply",
@@ -156,13 +163,64 @@ const CHANNEL_DRAFT_STEP_SUFFIXES = Array.from(new Set(Object.values(DRAFT_STEP_
  * joins against `store.getGate()` for exactly these ids before serializing,
  * so a resolved gate reports its real status instead.
  */
-const GATE_STEP_ID_BY_PRODUCT: Record<Exclude<ProductId, "campaign-orchestrator">, string> = {
+const GATE_STEP_ID_BY_PRODUCT: Record<OriginalChannelProductId, string> = {
   "x-agent": "15-batch-review",
   "linkedin-agent": "15-batch-review",
   "reddit-agent": "18-batch-review",
   "blog-agent": "15-batch-review",
   "newsletter-agent": "16-batch-review",
 };
+
+/**
+ * Every gate id each newly-wired product (landing-builder/branded-shorts/
+ * reputation/seo-geo/intel-report) might raise — read straight from each
+ * workflow's own `wf.step.gate(...)` calls, not guessed. `seo-geo-agent` is
+ * the one product with two independent gates (a prompt-set review early,
+ * a conditional fix-generation review later) — `resolvedGateStepRecords`
+ * already accepts a list, not just one id, for exactly this case.
+ */
+const GATE_STEP_IDS_BY_NEW_PRODUCT: Record<Exclude<ProductId, OriginalChannelProductId | "campaign-orchestrator">, readonly string[]> = {
+  "instagram-agent": ["09a-batch-review"],
+  "landing-builder-agent": ["08-human-review"],
+  "branded-shorts-agent": ["10-delivery-review"],
+  "reputation-agent": ["10-reputation-approve-all"],
+  "seo-geo-agent": ["03-prompt-set-review", "12-fix-generation-review"],
+  "intel-report-agent": ["04-batch-review"],
+};
+
+/** Recovers a step id's intended ordering position from its own "NN-..." prefix — the convention every step id in this codebase already follows (`00-`, `01-`, `10a-`, ...). Ties (e.g. `"10-delivery-review"` vs `"10a-upload-to-gcs"`) fall back to a plain string compare. */
+function stepOrderKey(stepId: string): [number, string] {
+  const match = /^(\d+)/.exec(stepId);
+  return [match ? Number(match[1]) : Number.POSITIVE_INFINITY, stepId];
+}
+
+/**
+ * Builds a report descriptor list purely from what a run actually produced
+ * a record for, for the five newly-wired products — unlike the original
+ * five channels, these have retry loops (`branded-shorts-agent`'s
+ * `08a-plan-graphics-attempt-${n}`, `reputation-agent`'s
+ * `07-client-lock-cycle-${n}`) and mode-dependent branches
+ * (`landing-builder-agent`'s setup-vs-rebuild path diverges as early as step
+ * 02) with no single fixed step shape a hand-authored `..._STEP_IDS`
+ * constant (like the five above) could describe correctly. A descriptor for
+ * a step/gate id that never executes on a given run's actual path would
+ * otherwise misreport as `{status:"failed", error:"step did not run"}` even
+ * on a fully successful run (`serializeOneStep`'s "never reached" branch) —
+ * this sidesteps that class of false failure entirely by only ever
+ * describing steps and gates this run genuinely has a record for. `kind`
+ * (persisted on every real `StepRecord`, RFC-01 §4) drives the "ai"/"code"
+ * badge directly, rather than needing a hand-maintained "which id is the
+ * draft step" map.
+ */
+function discoveredDescriptors(records: readonly StepRecord[]): DynamicAgentStepDescriptor[] {
+  return [...records]
+    .sort((a, b) => {
+      const [aOrder, aId] = stepOrderKey(a.stepId);
+      const [bOrder, bId] = stepOrderKey(b.stepId);
+      return aOrder !== bOrder ? aOrder - bOrder : aId.localeCompare(bId);
+    })
+    .map((r) => ({ stepId: r.stepId, label: r.stepId, type: r.kind === "agent" ? "ai" : "code" }));
+}
 
 /** The orchestrator's own top-level gate id — see `GATE_STEP_ID_BY_PRODUCT`'s doc comment. Nested per-channel gates never apply here: `create-campaign-workflow.ts` fixes every channel slot's `autoApprove: true`, so each channel's own review step runs as an auto-approved `step.code`, not a real `step.gate` — it already appears correctly in `stepRecords`. */
 const CAMPAIGN_GATE_STEP_ID = "13-campaign-review";
@@ -213,7 +271,7 @@ const CAMPAIGN_ORCHESTRATOR_STEP_IDS = [
   "15-commit-and-record",
 ] as const;
 
-function channelAgentDescriptors(productId: Exclude<ProductId, "campaign-orchestrator">): DynamicAgentStepDescriptor[] {
+function channelAgentDescriptors(productId: OriginalChannelProductId): DynamicAgentStepDescriptor[] {
   const stepIds: readonly string[] =
     productId === "reddit-agent"
       ? REDDIT_AGENT_STEP_IDS
@@ -265,27 +323,34 @@ function campaignOrchestratorDescriptors(slotIds: readonly string[], stepRecords
 export async function buildRunReport(
   durableStore: DurableStepStore,
   runId: string,
-  productId: ProductId,
+  productId: string,
 ): Promise<DynamicAgentRunReport> {
   const stepRecords = await durableStore.listSteps(runId);
   const runRecord = await durableStore.getRun(runId);
 
   let descriptors: DynamicAgentStepDescriptor[];
   let slotRecords: Awaited<ReturnType<DurableStepStore["listSlots"]>> = [];
-  let gateIds: readonly string[];
+  let gateStepRecords: StepRecord[];
+
   if (productId === "campaign-orchestrator") {
     slotRecords = await durableStore.listSlots(runId, "channel-fanout");
+    gateStepRecords = await resolvedGateStepRecords(durableStore, runId, [CAMPAIGN_GATE_STEP_ID]);
     descriptors = campaignOrchestratorDescriptors(
       slotRecords.map((slot) => slot.slotId),
       stepRecords,
     );
-    gateIds = [CAMPAIGN_GATE_STEP_ID];
-  } else {
+  } else if (isOriginalChannelProduct(productId)) {
+    gateStepRecords = await resolvedGateStepRecords(durableStore, runId, [GATE_STEP_ID_BY_PRODUCT[productId]]);
     descriptors = channelAgentDescriptors(productId);
-    gateIds = [GATE_STEP_ID_BY_PRODUCT[productId]];
+  } else {
+    // Any other product id — one of the five newly-wired fixed agents, or (Task 2) a
+    // dynamic agent's own agentId, which has no entry here at all: dynamic agents built by
+    // `buildDynamicWorkflow` never call `wf.step.gate`, so "no configured gate ids" is the
+    // correct answer for one, not a lookup failure.
+    const gateIds = (GATE_STEP_IDS_BY_NEW_PRODUCT as Record<string, readonly string[] | undefined>)[productId] ?? [];
+    gateStepRecords = await resolvedGateStepRecords(durableStore, runId, gateIds);
+    descriptors = discoveredDescriptors([...stepRecords, ...gateStepRecords]);
   }
-
-  const gateStepRecords = await resolvedGateStepRecords(durableStore, runId, gateIds);
 
   return serializeToDynamicAgentRunReport({
     specId: `spec_${productId}`,

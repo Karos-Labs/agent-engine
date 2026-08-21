@@ -1,8 +1,22 @@
 import { describe, expect, it } from "vitest";
 import type { DurableStepStore, GateRecord, RunRecord, SlotRecord, StepRecord } from "../src/adapters/types.js";
 import { MemoryDurableStepStore } from "../src/adapters/memory-store.js";
-import { FirestoreDurableStepStore } from "../src/adapters/firestore/index.js";
+import { FirestoreDurableStepStore, type ArchiveStoreLike } from "../src/adapters/firestore/index.js";
 import { FakeFirestore } from "./fake-firestore.js";
+
+/** An in-memory `ArchiveStoreLike` double — records every upload so tests can assert on exactly what got archived. */
+function fakeArchiveStore(): { archiveStore: ArchiveStoreLike; uploads: Map<string, Buffer> } {
+  const uploads = new Map<string, Buffer>();
+  return {
+    uploads,
+    archiveStore: {
+      async upload(objectPath, data) {
+        uploads.set(objectPath, data);
+        return { gcsUri: `gs://karoscmo-prep-agent-artifacts/${objectPath}` };
+      },
+    },
+  };
+}
 
 const baseRun: RunRecord = {
   runId: "run_1",
@@ -202,5 +216,65 @@ describe("FirestoreDurableStepStore — named database (RFC-01 §16.6)", () => {
 
     expect(await defaultStore.getRun("run_1")).toEqual(baseRun);
     expect(await prepStore.getRun("run_1")).toBeUndefined();
+  });
+});
+
+describe("FirestoreDurableStepStore — Task 2 dual-storage archive (Firestore + GCS)", () => {
+  it("writes a step's output inline, unchanged, when it fits comfortably under the size limit", async () => {
+    const { archiveStore, uploads } = fakeArchiveStore();
+    const store = new FirestoreDurableStepStore(new FakeFirestore(), { archiveStore });
+
+    await store.saveStep("run_1", makeStep({ output: { small: "payload" } }));
+
+    expect(await store.getStep("run_1", "step_1")).toMatchObject({ output: { small: "payload" } });
+    expect(uploads.size).toBe(0);
+  });
+
+  it("archives an oversized step's output to GCS and leaves a {archived,gcsUri,sizeBytes} placeholder in Firestore", async () => {
+    const { archiveStore, uploads } = fakeArchiveStore();
+    const store = new FirestoreDurableStepStore(new FakeFirestore(), { archiveStore });
+
+    const hugeOutput = { transcript: "x".repeat(1_000_000) };
+    await store.saveStep("run_1", makeStep({ output: hugeOutput }));
+
+    const saved = await store.getStep("run_1", "step_1");
+    expect(saved?.output).toMatchObject({ archived: true, gcsUri: "gs://karoscmo-prep-agent-artifacts/runs/run_1/steps/step_1/output.json" });
+    expect((saved?.output as { sizeBytes: number }).sizeBytes).toBeGreaterThan(900_000);
+
+    expect(uploads.size).toBe(1);
+    const uploaded = uploads.get("runs/run_1/steps/step_1/output.json");
+    expect(uploaded && JSON.parse(uploaded.toString("utf8"))).toEqual(hugeOutput);
+  });
+
+  it("archives an oversized slot's output the same way, under its own runs/.../slots/... object path", async () => {
+    const { archiveStore, uploads } = fakeArchiveStore();
+    const store = new FirestoreDurableStepStore(new FakeFirestore(), { archiveStore });
+
+    const hugeOutput = { data: "y".repeat(1_000_000) };
+    await store.saveSlot("run_1", makeSlot({ output: hugeOutput }));
+
+    const saved = await store.getSlot("run_1", "fanout_1__slot_0");
+    expect(saved?.output).toMatchObject({ archived: true, gcsUri: "gs://karoscmo-prep-agent-artifacts/runs/run_1/slots/fanout_1__slot_0/output.json" });
+    expect(uploads.has("runs/run_1/slots/fanout_1__slot_0/output.json")).toBe(true);
+  });
+
+  it("without an archiveStore configured, an oversized output is still written inline (pre-Task-2 behavior, unchanged)", async () => {
+    const store = new FirestoreDurableStepStore(new FakeFirestore()); // no archiveStore
+
+    const hugeOutput = { transcript: "x".repeat(1_000_000) };
+    await store.saveStep("run_1", makeStep({ output: hugeOutput }));
+
+    expect(await store.getStep("run_1", "step_1")).toMatchObject({ output: hugeOutput });
+  });
+
+  it("never archives a gate, regardless of payload size — gates always stay in Firestore", async () => {
+    const { archiveStore, uploads } = fakeArchiveStore();
+    const store = new FirestoreDurableStepStore(new FakeFirestore(), { archiveStore });
+
+    const hugePayload = { batchId: "b1", blob: "z".repeat(1_000_000) };
+    await store.saveGate(makeGate({ payload: hugePayload }));
+
+    expect(await store.getGate("run_1__batch-review")).toMatchObject({ payload: hugePayload });
+    expect(uploads.size).toBe(0);
   });
 });

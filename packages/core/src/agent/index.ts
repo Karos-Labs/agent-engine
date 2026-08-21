@@ -10,3 +10,4 @@ export * from "./create-prompt-store-from-env.js";
 export * from "./errors.js";
 export * from "./base-agent.js";
 export * from "./mock-agent.js";
+export * from "./dynamic-agent.js";

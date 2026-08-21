@@ -1,20 +1,42 @@
 import type { AgentToolRegistry, ModelRouter, PromptStore } from "@agent-engine/core";
 import type { WorkflowContext } from "@agent-engine/workflow";
+import type { WorkspaceStoreLike } from "@agent-engine/tools";
 import { createXAgentWorkflow } from "@agent-engine/agent-x";
+import { createInstagramAgentWorkflow } from "@agent-engine/agent-instagram";
 import { createLinkedInAgentWorkflow } from "@agent-engine/agent-linkedin";
 import { createRedditAgentWorkflow } from "@agent-engine/agent-reddit";
 import { createBlogAgentWorkflow } from "@agent-engine/agent-blog";
 import { createNewsletterAgentWorkflow } from "@agent-engine/agent-newsletter";
 import { createCampaignWorkflow, type CampaignChannel } from "@agent-engine/campaign-orchestrator";
+import { createLandingBuilderAgentWorkflow } from "@agent-engine/agent-landing-builder";
+import { createBrandedShortsAgentWorkflow } from "@agent-engine/agent-branded-shorts";
+import { createReputationPulseWorkflow } from "@agent-engine/agent-reputation";
+import { createSeoGeoAgentWorkflow } from "@agent-engine/agent-seo-geo";
+import { createIntelReportAgentWorkflow } from "@agent-engine/agent-intel-report";
 
-/** Every product this server can dispatch a run to (RFC-02) — the five channel agents plus the campaign orchestrator. */
+/**
+ * Every product this server can dispatch a run to (RFC-02) — the five
+ * channel agents, the campaign orchestrator, and the five products wired in
+ * afterward: `landing-builder-agent`/`branded-shorts-agent` need
+ * `landing.*`/`video.*` tools merged into `AgentRuntimeDeps.tools` beyond
+ * `createAllKarosTools()`'s own bundle (see `./tools.js`'s
+ * `createServerTools` — the composition root that does that merge);
+ * `reputation-agent`/`seo-geo-agent`/`intel-report-agent` need nothing extra,
+ * every tool they call is already in `createAllKarosTools()`.
+ */
 export const KNOWN_PRODUCT_IDS = [
   "x-agent",
+  "instagram-agent",
   "linkedin-agent",
   "reddit-agent",
   "blog-agent",
   "newsletter-agent",
   "campaign-orchestrator",
+  "landing-builder-agent",
+  "branded-shorts-agent",
+  "reputation-agent",
+  "seo-geo-agent",
+  "intel-report-agent",
 ] as const;
 export type ProductId = (typeof KNOWN_PRODUCT_IDS)[number];
 
@@ -22,14 +44,51 @@ export function isKnownProductId(value: string): value is ProductId {
   return (KNOWN_PRODUCT_IDS as readonly string[]).includes(value);
 }
 
-/** The shared runtime every agent workflow factory needs — structurally identical across all six packages. */
+/** The shared runtime every agent workflow factory needs — structurally identical across all six original packages. */
 export interface AgentRuntimeDeps {
   tools: AgentToolRegistry;
   promptStore: PromptStore;
   router: ModelRouter;
+  /**
+   * `reputation-agent`'s pulse-number/review claims and its response/seen/
+   * crisis ledgers (RFC-08) need the same durable, GCS-backed
+   * `WorkspaceStoreLike` every other tenant-scoped write in this server
+   * uses — `createReputationPulseWorkflow` otherwise defaults to a local
+   * file-backed store, which is correct for a test/single-process run but
+   * would silently reset per Cloud Run instance in production (a stateless
+   * deployment can never guarantee the same instance handles a pulse's
+   * claim and its later resume). Optional here only because the other nine
+   * products don't need it — every real composition root should supply the
+   * same store instance it already built for `createAllKarosTools`.
+   */
+  workspaceStore?: WorkspaceStoreLike;
+  /**
+   * `instagram-agent`'s own required `repoRoot` (`publish.renderCarousel`'s
+   * `assertInside` bounds-check root — every `templateDir`/`outDir`/image
+   * path in a run's `slides-data.json` is resolved and confined to this
+   * directory). No safe default exists for "where this deployment's
+   * templates/images actually live on disk" — optional here only because
+   * every other product doesn't need it; `buildWorkflowForProduct` throws a
+   * clear, specific error if `instagram-agent` is dispatched without it.
+   */
+  repoRoot?: string;
 }
 
 export type WorkflowFn = (wf: WorkflowContext) => Promise<unknown>;
+
+/**
+ * `instagram-agent`'s `repoRoot`, env-configured the same way
+ * `createLandingEngineConfigFromEnv` resolves its own roots: falls back to
+ * a local, deliberately-useless default under the process cwd rather than
+ * throwing at startup, matching that function's own "harmless for any
+ * composition-root path that never actually dispatches this product"
+ * convention (`packages/tools/karos-landing/src/create-landing-engine-
+ * config-from-env.ts`).
+ */
+export function resolveInstagramRepoRoot(env: Record<string, string | undefined> = process.env): string {
+  const configured = env["INSTAGRAM_AGENT_REPO_ROOT"];
+  return configured && configured.length > 0 ? configured : "./.instagram-engine";
+}
 
 const ALL_CHANNELS: readonly CampaignChannel[] = ["x", "linkedin", "reddit", "blog", "newsletter"];
 
@@ -48,6 +107,13 @@ export function buildWorkflowForProduct(productId: ProductId, deps: AgentRuntime
   switch (productId) {
     case "x-agent":
       return createXAgentWorkflow(deps);
+    case "instagram-agent":
+      if (!deps.repoRoot) {
+        throw new Error(
+          'buildWorkflowForProduct: AgentRuntimeDeps.repoRoot is required to dispatch "instagram-agent" (set INSTAGRAM_AGENT_REPO_ROOT at your composition root — see wiring/tools.js)',
+        );
+      }
+      return createInstagramAgentWorkflow({ ...deps, repoRoot: deps.repoRoot });
     case "linkedin-agent":
       return createLinkedInAgentWorkflow(deps);
     case "reddit-agent":
@@ -64,5 +130,15 @@ export function buildWorkflowForProduct(productId: ProductId, deps: AgentRuntime
       const channelRouters = Object.fromEntries(ALL_CHANNELS.map((channel) => [channel, deps.router])) as Record<CampaignChannel, ModelRouter>;
       return createCampaignWorkflow({ ...deps, channelPromptStores, channelRouters });
     }
+    case "landing-builder-agent":
+      return createLandingBuilderAgentWorkflow(deps);
+    case "branded-shorts-agent":
+      return createBrandedShortsAgentWorkflow(deps);
+    case "reputation-agent":
+      return createReputationPulseWorkflow({ ...deps, ...(deps.workspaceStore ? { store: deps.workspaceStore } : {}) });
+    case "seo-geo-agent":
+      return createSeoGeoAgentWorkflow(deps);
+    case "intel-report-agent":
+      return createIntelReportAgentWorkflow(deps);
   }
 }

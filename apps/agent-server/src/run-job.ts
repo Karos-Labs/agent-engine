@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { RunKindSchema } from "@agent-engine/core";
+import { RunKindSchema, type AgentDefinitionStore } from "@agent-engine/core";
 import {
   WorkflowConcurrentRunError,
   WorkflowEngine,
@@ -8,7 +8,8 @@ import {
   type RunStatus,
 } from "@agent-engine/workflow";
 import { buildRunReport } from "./report.js";
-import { buildWorkflowForProduct, KNOWN_PRODUCT_IDS, type AgentRuntimeDeps } from "./wiring/workflows.js";
+import { resolveWorkflowFn, UnknownProductError } from "./wiring/dynamic-workflows.js";
+import type { AgentRuntimeDeps } from "./wiring/workflows.js";
 
 // Charset-locked at the boundary so a path-traversal-shaped slug (`../../etc`,
 // an embedded `/`, `\`, or NUL) never reaches a tool — same rule
@@ -23,10 +24,17 @@ const CLIENT_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
  * `queue-consumer.ts`. Defining it once here is what guarantees those three
  * entry points can never validate a run request differently from one
  * another.
+ *
+ * `productId` is validated only against the shared charset, not
+ * `KNOWN_PRODUCT_IDS`'s fixed enum (Task 2) — it may name either one of the
+ * 12 hand-written products, or a dynamic agent's own `agentId` registered
+ * via `POST /api/agents`. `resolveWorkflowFn` (called from `startRunJob`
+ * below) is what actually distinguishes the two and fails clearly if
+ * neither matches.
  */
 export const RunJobRequestSchema = z.object({
   clientSlug: z.string().min(1).regex(CLIENT_SLUG_PATTERN, "clientSlug must be lowercase alphanumeric segments separated by hyphens"),
-  productId: z.enum(KNOWN_PRODUCT_IDS),
+  productId: z.string().min(1).regex(CLIENT_SLUG_PATTERN, "productId must be lowercase alphanumeric segments separated by hyphens"),
   runKind: RunKindSchema,
 });
 export type RunJobRequest = z.infer<typeof RunJobRequestSchema>;
@@ -34,6 +42,8 @@ export type RunJobRequest = z.infer<typeof RunJobRequestSchema>;
 export interface StartRunJobDeps {
   durableStore: DurableStepStore;
   runtimeDeps: AgentRuntimeDeps;
+  /** Looked up when `productId` doesn't match one of the 12 hand-written products (Task 2). Omit only for a deployment that will never dispatch a dynamic agent — `resolveWorkflowFn` throws a clear error rather than silently no-op'ing if one is actually needed. */
+  agentDefinitionStore?: AgentDefinitionStore;
 }
 
 export type StartRunJobOutcome =
@@ -47,6 +57,12 @@ export type StartRunJobOutcome =
   | {
       /** `runId` was already mid-flight when this call landed — RFC-01 §8.4a's atomic claim, surfaced here rather than as a thrown error. */
       outcome: "conflict";
+      runId: string;
+      message: string;
+    }
+  | {
+      /** `productId` named neither a fixed product nor a registered dynamic agent (Task 2) — a client error (HTTP 400 at `/runs/start`), distinct from `"error"` below (an unexpected failure actually running a resolved workflow). */
+      outcome: "not_found";
       runId: string;
       message: string;
     }
@@ -67,7 +83,16 @@ export type StartRunJobOutcome =
  */
 export async function startRunJob(request: RunJobRequest, runId: string, deps: StartRunJobDeps): Promise<StartRunJobOutcome> {
   const engine = new WorkflowEngine(deps.durableStore);
-  const workflowFn = buildWorkflowForProduct(request.productId, deps.runtimeDeps);
+
+  let workflowFn;
+  try {
+    workflowFn = await resolveWorkflowFn(request.productId, deps.runtimeDeps, deps.agentDefinitionStore);
+  } catch (err) {
+    if (err instanceof UnknownProductError) {
+      return { outcome: "not_found", runId, message: err.message };
+    }
+    return { outcome: "error", runId, message: err instanceof Error ? err.message : String(err) };
+  }
 
   try {
     const result = await engine.run(workflowFn, {

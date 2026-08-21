@@ -1,5 +1,5 @@
 import type { AgentToolRegistry } from "@agent-engine/core";
-import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
+import type { WorkspaceStoreLike, GcsArtifactStoreLike } from "@agent-engine/tool-common";
 import { createKarosClientTools } from "@agent-engine/tool-karos-client";
 import { createKarosGatesTools } from "@agent-engine/tool-karos-gates";
 import { createKarosIntelTools } from "@agent-engine/tool-karos-intel";
@@ -64,15 +64,22 @@ export * from "@agent-engine/tool-karos-video";
  * "no such tool registered," not a registry entry that fails on every call.
  * `agents/landing-builder-agent` wires `createKarosLandingTools(config)` (or
  * `createLandingEngineConfigFromEnv()`) in explicitly, alongside this bundle.
+ *
+ * `mediaStore` (Task 1, RFC-01's GCS media store) is optional, mirroring
+ * `store`: wire it (via `GCS_MEDIA_BUCKET` at your composition root) to make
+ * `publish.renderCarousel` upload rendered PNGs to GCS instead of local
+ * scratch paths — omit it to keep that tool's exact prior local-disk
+ * behavior. `video.*`/`landing.*`'s own media/artifact stores are configured
+ * separately, alongside their own bundles, for the reason given above.
  */
-export function createAllKarosTools(store?: WorkspaceStoreLike): AgentToolRegistry {
+export function createAllKarosTools(store?: WorkspaceStoreLike, mediaStore?: GcsArtifactStoreLike): AgentToolRegistry {
   return {
     ...createKarosClientTools(store),
     ...createKarosGatesTools(),
     ...createKarosIntelTools(store),
     ...createKarosLedgerTools(store),
     ...createKarosMemoryTools(store),
-    ...createKarosPublishTools(store),
+    ...createKarosPublishTools(store, mediaStore),
     ...createKarosReputationTools(),
     ...createKarosResearchTools(store),
     ...createKarosSeoGeoTools(),

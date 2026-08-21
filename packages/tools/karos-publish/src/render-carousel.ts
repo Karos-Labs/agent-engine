@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { z } from "zod";
-import { defineTool, success, contentFail, toolingError } from "@agent-engine/tool-common";
+import { defineTool, success, contentFail, toolingError, type GcsArtifactStoreLike } from "@agent-engine/tool-common";
 
 const TOOL_VERSION = "1.0.0";
 
@@ -38,7 +38,13 @@ export const RenderCarouselInputSchema = z.object({
 export type RenderCarouselInput = z.infer<typeof RenderCarouselInputSchema>;
 
 export interface RenderCarouselResult {
-  rendered: Array<{ n: number; path: string }>;
+  rendered: Array<{
+    n: number;
+    /** A signed GCS URL when `mediaStore` is configured and signing succeeded, `gcsUri` when it didn't, or a local filesystem path when no `mediaStore` was supplied at all. */
+    path: string;
+    /** `gs://<bucket>/...` — always populated alongside `path` when `mediaStore` is configured, even if `path` itself holds a (possibly time-limited) signed URL, so a caller has a durable reference to fall back to. */
+    gcsUri?: string;
+  }>;
 }
 
 /**
@@ -160,7 +166,37 @@ function fontsReady(): Promise<unknown> {
   return document.fonts.ready;
 }
 
-export function createRenderCarousel() {
+/**
+ * Persists one rendered slide's PNG bytes: uploads to `mediaStore` when one
+ * is configured (the deliverable then carries a durable `gs://` reference —
+ * and a signed URL too, when the runtime can sign one — instead of a local
+ * scratch path that wouldn't survive past this process), or writes to
+ * `outPath` on local disk otherwise (unit tests and any environment with no
+ * `GCS_MEDIA_BUCKET` configured — Task 3's "mock/local fallbacks remain
+ * functional"). Split out from `execute` below so it's testable without a
+ * real Chromium page in front of it.
+ */
+export async function persistRenderedSlide(
+  buffer: Buffer,
+  outPath: string,
+  objectPath: string,
+  mediaStore: GcsArtifactStoreLike | undefined,
+): Promise<{ path: string; gcsUri?: string }> {
+  if (!mediaStore) {
+    await fs.mkdir(path.dirname(outPath), { recursive: true });
+    await fs.writeFile(outPath, buffer);
+    return { path: outPath };
+  }
+  const { gcsUri, signedUrl } = await mediaStore.upload(objectPath, buffer, { contentType: "image/png" });
+  return { path: signedUrl ?? gcsUri, gcsUri };
+}
+
+/**
+ * `mediaStore`, when supplied, routes every rendered PNG through GCS instead
+ * of `outDir` (Task 1: "store GCS URLs... instead of local scratch paths") —
+ * omit it (the default) to keep the exact prior local-disk behavior.
+ */
+export function createRenderCarousel(mediaStore?: GcsArtifactStoreLike) {
   return defineTool<RenderCarouselInput, RenderCarouselResult>({
     name: "publish.renderCarousel",
     version: TOOL_VERSION,
@@ -179,7 +215,6 @@ export function createRenderCarousel() {
         return toolingError(`playwright is not installed/available: ${err instanceof Error ? err.message : String(err)}`);
       }
 
-      await fs.mkdir(resolvedOutDir, { recursive: true });
       const browser = await chromium.launch();
       try {
         const page = await browser.newPage({
@@ -187,7 +222,7 @@ export function createRenderCarousel() {
           deviceScaleFactor: input.canvas.scale,
         });
 
-        const rendered: Array<{ n: number; path: string }> = [];
+        const rendered: RenderCarouselResult["rendered"] = [];
         for (const slide of input.slides) {
           const templatePath = assertInside(resolvedTemplateDir, slide.template, `slide ${slide.n} template`);
           const html = await fs.readFile(templatePath, "utf8");
@@ -205,9 +240,11 @@ export function createRenderCarousel() {
           await page.waitForFunction(readyFlagCheck, input.readyFlag);
           await page.evaluate(fontsReady);
 
+          const buffer = await page.screenshot();
           const outPath = path.join(resolvedOutDir, `slide-${slide.n}.png`);
-          await page.screenshot({ path: outPath });
-          rendered.push({ n: slide.n, path: outPath });
+          const objectPath = `instagram/${input.client}/${input.postId}/slide-${slide.n}.png`;
+          const persisted = await persistRenderedSlide(buffer, outPath, objectPath, mediaStore);
+          rendered.push({ n: slide.n, ...persisted });
         }
 
         return success<RenderCarouselResult>({ rendered });

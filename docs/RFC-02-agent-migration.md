@@ -170,6 +170,13 @@ Copy this table for each remaining agent before starting its migration:
 
 ## 5. Rollout order and rationale
 
+**Update (post RFC-09/10): the SEO & GEO recommendation actuator is not on this table, and should not wait for it.** This table is the rollout order for *migrating content-writing agents onto agent-engine* — a real but lower-urgency workstream, because every agent on it (X aside) currently has **zero pilot clients**; nobody is losing value while they wait their turn. SEO & GEO is different: it already serves real, paying clients (RFC-04's own definition of done cites two proven ones), its scoring/recommendation layer already ships in `karosCMO` today, and the one piece that is missing — an actuator that turns an approved recommendation into an actual improvement (RFC-09 §1's "Phase 7") — is a live, client-visible value gap *right now*, not a future migration nicety. Recommendation: treat RFC-09/10 as its own workstream, prioritized **above** this entire table, and sequence it in two tiers rather than by agent:
+
+- **Ship now, directly against the current karosCMO codebase — do not wait for the agent-engine core to exist.** The lowest-risk actuator path (`search.requestIndexing`, the `guided_manual` kit generator, and the scoped chat reusing the existing copilot infra) is plumbing-level work: no ReAct loop, no tool sandboxing, no BaseAgent needed. It can be built and shipped in days against the real repo, and it is the direct answer to "nothing is actually improving SEO/GEO yet."
+- **Deliberately wait for more mature tooling before this one:** `cms.applyFix` (writing directly to a client's live WordPress/Shopify/Webflow site) is, as RFC-09 §5 says, the highest-risk tool in this entire document set — it is the one place agent-engine's write-fencing and gate discipline earns its keep. Rushing this ahead of that maturity is exactly the near-miss the karos-agents reference doc's own Finding 1 already lived through once.
+
+The general lesson worth naming plainly: this whole document set (RFC-01 through RFC-10) is real, grounded specification work, but as of this note **none of it has shipped** — `agent-engine` is still scaffold-only. The next concrete action should be shipping RFC-09/10's low-risk slice, not writing an RFC-11.
+
 | Order | Agent | Why here |
 |---|---|---|
 | 1 | **X (e13)** | Pilot. Already v2, single research connector, documented run-protocol to translate from. Proves the three-layer shape before anything else depends on it. |

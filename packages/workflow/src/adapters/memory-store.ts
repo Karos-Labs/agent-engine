@@ -5,6 +5,23 @@ function scopedKey(runId: string, id: string): string {
 }
 
 /**
+ * Recursively replaces every literal `undefined` (nested inside an array or
+ * object, not just at the top level) with `null` — matches
+ * `FirestoreDurableStepStore`'s own `sanitizeForFirestore`, so a checkpointed
+ * step/slot/gate reads back identically regardless of which adapter is
+ * behind `DurableStepStore` (RFC-01 §8.4's "swap the adapter, not the
+ * workflow code" only holds if both adapters actually agree on this).
+ */
+function sanitizeUndefined<T>(value: T): T {
+  if (value === undefined) return null as T;
+  if (Array.isArray(value)) return value.map((item) => sanitizeUndefined(item)) as T;
+  if (value !== null && typeof value === "object" && !(value instanceof Date)) {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, val]) => [key, sanitizeUndefined(val)])) as T;
+  }
+  return value;
+}
+
+/**
  * In-memory `DurableStepStore` — fast, isolated, zero I/O, ideal for unit
  * tests (RFC-01 §8.4a's Firestore adapter is the production target; this is
  * the same "small internal interface, swap the adapter" principle applied to
@@ -63,11 +80,7 @@ export class MemoryDurableStepStore implements DurableStepStore {
   }
 
   async saveStep(runId: string, step: StepRecord): Promise<void> {
-    // Matches FirestoreDurableStepStore's normalization (real Firestore rejects a literal
-    // `undefined` value) so a void step checkpoints identically — and resumes identically
-    // — regardless of which adapter is behind it (RFC-01 §8.4's "swap the adapter, not the
-    // workflow code" only holds if both adapters actually agree on this).
-    this.steps.set(scopedKey(runId, step.stepId), { ...step, output: step.output ?? null });
+    this.steps.set(scopedKey(runId, step.stepId), sanitizeUndefined(step));
   }
 
   async listSteps(runId: string): Promise<StepRecord[]> {
@@ -86,8 +99,7 @@ export class MemoryDurableStepStore implements DurableStepStore {
   }
 
   async saveSlot(runId: string, slot: SlotRecord): Promise<void> {
-    // Same output-normalization parity as saveStep.
-    this.slots.set(scopedKey(runId, slot.slotId), { ...slot, output: slot.output ?? null });
+    this.slots.set(scopedKey(runId, slot.slotId), sanitizeUndefined(slot));
   }
 
   async listSlots(runId: string, fanoutId: string): Promise<SlotRecord[]> {
@@ -106,6 +118,6 @@ export class MemoryDurableStepStore implements DurableStepStore {
   }
 
   async saveGate(gate: GateRecord): Promise<void> {
-    this.gates.set(gate.gateId, gate);
+    this.gates.set(gate.gateId, sanitizeUndefined(gate));
   }
 }
