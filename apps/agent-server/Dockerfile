@@ -5,105 +5,100 @@
 #
 #   docker build -f apps/agent-server/Dockerfile -t agent-server .
 #
-# Not build-tested against a real Docker daemon in the environment this was
-# written in — review the two stages below before relying on it in CI.
+# Two stages:
+#   builder  installs every workspace's full deps (incl. devDependencies —
+#            tsc/vitest are devDependencies), compiles every package in
+#            dependency order, then prunes devDependencies back out of
+#            node_modules before the runtime stage copies it.
+#   runtime  node:22-slim (Debian bookworm, NOT alpine): `npx playwright
+#            install --with-deps` only ships an apt-based dependency
+#            installer for Debian/Ubuntu, and karos-landing's render-check
+#            gate + karos-publish's renderCarousel both launch a real
+#            Chromium (see their own "playwright": "1.53.0" dependency).
+#            Also installs the Python 3 + opencv-python-headless + ffmpeg
+#            runtime @agent-engine/tool-karos-video's adapters shell out to
+#            (BRANDED_SHORTS_ENGINE_DIR still has to point at a real engine
+#            checkout for those calls to do anything — unset, they degrade to
+#            a per-call tooling_error, never a crash; see wiring/tools.ts).
+#
+# Runs BOTH Cloud Run targets from the same image — the HTTP server
+# (default CMD, below) and the Pub/Sub pull consumer (deploy with
+# `--command=node --args=apps/agent-server/dist/queue-consumer.js` — see
+# ../../.github/workflows/deploy-prep.yml and cloudbuild.yaml's deploy-worker
+# step) — deliberately two Cloud Run services from one image, not one
+# process running both: a Pub/Sub subscribe() failure at startup must never
+# take the HTTP health check down with it, and vice versa. Mirrors
+# karosCMO/agent-service's own agent-service-api / agent-service-worker split.
 
 ########################################
-# Stage 1: install + build every workspace package this server depends on,
-# in explicit dependency order. `npm run build --workspaces` doesn't
-# guarantee topological order, so each package is built one at a time,
-# leaves first.
+# Stage 1: install + build every workspace package this server depends on.
 ########################################
-FROM node:22-alpine AS builder
+FROM node:22-slim AS builder
 WORKDIR /app
 
 COPY package.json package-lock.json tsconfig.json ./
+COPY scripts ./scripts
 COPY packages ./packages
 COPY agents ./agents
 COPY apps ./apps
 
+# Browsers aren't needed to compile TypeScript — skip playwright's postinstall
+# download here; the runtime stage below installs the exact matching
+# Chromium build against the pruned, production-only node_modules instead.
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 RUN npm ci
 
-RUN npm run build --workspace=@agent-engine/core \
- && npm run build --workspace=@agent-engine/telemetry \
- && npm run build --workspace=@agent-engine/tool-common \
- && npm run build --workspace=@agent-engine/tool-karos-client \
- && npm run build --workspace=@agent-engine/tool-karos-gates \
- && npm run build --workspace=@agent-engine/tool-karos-ledger \
- && npm run build --workspace=@agent-engine/tool-karos-memory \
- && npm run build --workspace=@agent-engine/tool-karos-publish \
- && npm run build --workspace=@agent-engine/tool-karos-research \
- && npm run build --workspace=@agent-engine/tool-karos-topics \
- && npm run build --workspace=@agent-engine/tools \
- && npm run build --workspace=@agent-engine/workflow \
- && npm run build --workspace=@agent-engine/agent-x \
- && npm run build --workspace=@agent-engine/agent-linkedin \
- && npm run build --workspace=@agent-engine/agent-reddit \
- && npm run build --workspace=@agent-engine/agent-blog \
- && npm run build --workspace=@agent-engine/agent-newsletter \
- && npm run build --workspace=@agent-engine/campaign-orchestrator \
- && npm run build --workspace=@agent-engine/agent-server
+# Topological build (scripts/build-workspaces.mjs) — see its own doc comment:
+# a hardcoded per-package build list (what this Dockerfile used to have)
+# goes stale the moment a package is added, which is exactly what happened
+# twice while this repo was being built out. `npm run build` now delegates to
+# that script for every workspace, agent-server included.
+RUN npm run build
+
+# Strip devDependencies (typescript, vitest, tsx, supertest, ...) out of
+# node_modules now that the build artifacts (dist/) they produced no longer
+# need them — the runtime stage copies this pruned tree, not a second
+# `npm ci --omit=dev` pass.
+RUN npm prune --omit=dev
 
 ########################################
-# Stage 2: the runtime image — node_modules (workspace symlinks + real
-# deps), each package's own dist/ + package.json, and the prompt markdown
-# files FilePromptStore reads from disk (PROMPT_STORE_DRIVER=file, or as a
-# Vertex/Firestore fallback store). No src/, no devDependencies-only tools,
-# no test files.
+# Stage 2: the runtime image.
 ########################################
-FROM node:22-alpine AS runtime
+FROM node:22-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
-COPY --from=builder /app/package.json /app/package-lock.json ./
+# opencv-python-headless has no GUI/X11 deps, unlike full opencv-python —
+# appropriate for a headless container. `--break-system-packages`: Debian
+# bookworm's PEP 668 guard against pip clobbering the system Python install
+# doesn't apply here — this container has no other Python consumer to
+# conflict with.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      python3 \
+      python3-pip \
+      ffmpeg \
+    && pip3 install --no-cache-dir --break-system-packages opencv-python-headless \
+    && rm -rf /var/lib/apt/lists/*
+
+# node_modules: pruned to production dependencies only (see builder stage).
 COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json /app/package-lock.json ./
 
-COPY --from=builder /app/packages/core/package.json ./packages/core/package.json
-COPY --from=builder /app/packages/core/dist ./packages/core/dist
-COPY --from=builder /app/packages/telemetry/package.json ./packages/telemetry/package.json
-COPY --from=builder /app/packages/telemetry/dist ./packages/telemetry/dist
-COPY --from=builder /app/packages/tools/common/package.json ./packages/tools/common/package.json
-COPY --from=builder /app/packages/tools/common/dist ./packages/tools/common/dist
-COPY --from=builder /app/packages/tools/karos-client/package.json ./packages/tools/karos-client/package.json
-COPY --from=builder /app/packages/tools/karos-client/dist ./packages/tools/karos-client/dist
-COPY --from=builder /app/packages/tools/karos-gates/package.json ./packages/tools/karos-gates/package.json
-COPY --from=builder /app/packages/tools/karos-gates/dist ./packages/tools/karos-gates/dist
-COPY --from=builder /app/packages/tools/karos-ledger/package.json ./packages/tools/karos-ledger/package.json
-COPY --from=builder /app/packages/tools/karos-ledger/dist ./packages/tools/karos-ledger/dist
-COPY --from=builder /app/packages/tools/karos-memory/package.json ./packages/tools/karos-memory/package.json
-COPY --from=builder /app/packages/tools/karos-memory/dist ./packages/tools/karos-memory/dist
-COPY --from=builder /app/packages/tools/karos-publish/package.json ./packages/tools/karos-publish/package.json
-COPY --from=builder /app/packages/tools/karos-publish/dist ./packages/tools/karos-publish/dist
-COPY --from=builder /app/packages/tools/karos-research/package.json ./packages/tools/karos-research/package.json
-COPY --from=builder /app/packages/tools/karos-research/dist ./packages/tools/karos-research/dist
-COPY --from=builder /app/packages/tools/karos-topics/package.json ./packages/tools/karos-topics/package.json
-COPY --from=builder /app/packages/tools/karos-topics/dist ./packages/tools/karos-topics/dist
-COPY --from=builder /app/packages/tools/package.json ./packages/tools/package.json
-COPY --from=builder /app/packages/tools/dist ./packages/tools/dist
-COPY --from=builder /app/packages/workflow/package.json ./packages/workflow/package.json
-COPY --from=builder /app/packages/workflow/dist ./packages/workflow/dist
-
-COPY --from=builder /app/agents/x-agent/package.json ./agents/x-agent/package.json
-COPY --from=builder /app/agents/x-agent/dist ./agents/x-agent/dist
-COPY --from=builder /app/agents/x-agent/prompts ./agents/x-agent/prompts
-COPY --from=builder /app/agents/linkedin-agent/package.json ./agents/linkedin-agent/package.json
-COPY --from=builder /app/agents/linkedin-agent/dist ./agents/linkedin-agent/dist
-COPY --from=builder /app/agents/linkedin-agent/prompts ./agents/linkedin-agent/prompts
-COPY --from=builder /app/agents/reddit-agent/package.json ./agents/reddit-agent/package.json
-COPY --from=builder /app/agents/reddit-agent/dist ./agents/reddit-agent/dist
-COPY --from=builder /app/agents/reddit-agent/prompts ./agents/reddit-agent/prompts
-COPY --from=builder /app/agents/blog-agent/package.json ./agents/blog-agent/package.json
-COPY --from=builder /app/agents/blog-agent/dist ./agents/blog-agent/dist
-COPY --from=builder /app/agents/blog-agent/prompts ./agents/blog-agent/prompts
-COPY --from=builder /app/agents/newsletter-agent/package.json ./agents/newsletter-agent/package.json
-COPY --from=builder /app/agents/newsletter-agent/dist ./agents/newsletter-agent/dist
-COPY --from=builder /app/agents/newsletter-agent/prompts ./agents/newsletter-agent/prompts
-COPY --from=builder /app/agents/campaign-orchestrator/package.json ./agents/campaign-orchestrator/package.json
-COPY --from=builder /app/agents/campaign-orchestrator/dist ./agents/campaign-orchestrator/dist
-COPY --from=builder /app/agents/campaign-orchestrator/prompts ./agents/campaign-orchestrator/prompts
-
+# Built workspace packages — whole packages/agents trees (dist/ + each
+# package's own package.json + prompts/, still alongside their now-unused
+# src/), not a hand-maintained per-package allowlist. The same staleness risk
+# build-workspaces.mjs's doc comment warns about for a hardcoded build order
+# applies just as much to a hardcoded COPY list: a new package silently
+# missing from it is a runtime MODULE_NOT_FOUND, not a build-time error.
+COPY --from=builder /app/packages ./packages
+COPY --from=builder /app/agents ./agents
 COPY --from=builder /app/apps/agent-server/package.json ./apps/agent-server/package.json
 COPY --from=builder /app/apps/agent-server/dist ./apps/agent-server/dist
+
+# Installed against the exact pinned "playwright": "1.53.0" version already
+# in node_modules — --with-deps additionally apt-get installs the OS-level
+# libs (fonts, libnss3, ...) a bare `playwright install` alone would skip.
+RUN npx playwright install --with-deps chromium
 
 # Cloud Run sets PORT itself; the server also defaults to 8080 if it's ever unset.
 ENV PORT=8080
@@ -114,6 +109,9 @@ EXPOSE 8080
 USER node
 
 # Exec form: node is PID 1 and receives SIGTERM directly, no shell in
-# between to swallow it — src/server.ts's graceful-drain handler depends on
-# actually receiving that signal.
+# between to swallow it — both src/server.ts's and src/queue-consumer.ts's
+# own graceful-shutdown handlers depend on actually receiving that signal.
+# Default target is the HTTP server; the worker deployment overrides args
+# (see cloudbuild.yaml) to run apps/agent-server/dist/queue-consumer.js
+# instead — same image, same node_modules, different entrypoint.
 CMD ["node", "apps/agent-server/dist/server.js"]

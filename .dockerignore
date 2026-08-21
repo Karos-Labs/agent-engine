@@ -5,7 +5,11 @@ node_modules
 .karos-workspace
 **/.karos-workspace
 docs
+# scripts/ is dev-only (demo/smoke-test entrypoints) EXCEPT
+# build-workspaces.mjs, which apps/agent-server/Dockerfile's builder stage
+# now runs (`npm run build`) — excluding the whole directory breaks that.
 scripts
+!scripts/build-workspaces.mjs
 evals
 **/__tests__
 **/*.test.ts

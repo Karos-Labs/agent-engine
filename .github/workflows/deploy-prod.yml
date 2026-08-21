@@ -1,0 +1,85 @@
+name: Deploy to Production
+
+# Manual only. Never triggered by a push or by prep succeeding — the only way
+# this runs is a human clicking "Run workflow" in the Actions tab (or
+# `gh workflow run deploy-prod.yml`). Leave the sha input blank to promote
+# whatever is currently on the tip of main/master; pass a specific sha to
+# promote an older, already-verified prep build instead.
+#
+# Does NOT rebuild from source: copies the exact image already built and
+# deployed to prep into production's own Artifact Registry, then deploys
+# that image. What was verified in prep is byte-for-byte what ships.
+#
+# The approval gate is the GitHub Environment named "production" below —
+# configure required reviewers on it in this repo's Settings > Environments
+# (a GitHub-side setting; not something a workflow file can create). Without
+# that configured, this workflow is still manual-only (workflow_dispatch),
+# just without a human-approval pause before the deploy job starts.
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Commit SHA to promote (leave blank for latest main/master)"
+        required: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  promote:
+    name: Promote prep image → production
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Resolve SHA
+        id: sha
+        run: |
+          SHA="${{ inputs.sha || github.sha }}"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Promoting SHA: $SHA"
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.sha.outputs.sha }}
+
+      - name: Validate required repo variables
+        run: |
+          missing=()
+          for v in PROD_PROJECT_ID PROD_SERVICE_ACCOUNT PROD_FIRESTORE_PROJECT_ID PROD_QUEUE_SUBSCRIPTION PROD_GCS_MEDIA_BUCKET PROD_GCS_ARTIFACTS_BUCKET PREP_PROJECT_ID; do
+            [ -n "${!v}" ] || missing+=("$v")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Missing required repo variable(s): ${missing[*]} — refusing to deploy to production with an incomplete config."
+            exit 1
+          fi
+        env:
+          PROD_PROJECT_ID: ${{ vars.PROD_PROJECT_ID }}
+          PROD_SERVICE_ACCOUNT: ${{ vars.PROD_SERVICE_ACCOUNT }}
+          PROD_FIRESTORE_PROJECT_ID: ${{ vars.PROD_FIRESTORE_PROJECT_ID }}
+          PROD_QUEUE_SUBSCRIPTION: ${{ vars.PROD_QUEUE_SUBSCRIPTION }}
+          PROD_GCS_MEDIA_BUCKET: ${{ vars.PROD_GCS_MEDIA_BUCKET }}
+          PROD_GCS_ARTIFACTS_BUCKET: ${{ vars.PROD_GCS_ARTIFACTS_BUCKET }}
+          PREP_PROJECT_ID: ${{ vars.PREP_PROJECT_ID }}
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set active project
+        run: gcloud config set project "${{ vars.PROD_PROJECT_ID }}"
+
+      - name: Copy image & deploy via Cloud Build
+        run: |
+          gcloud builds submit \
+            --project="${{ vars.PROD_PROJECT_ID }}" \
+            --config=cloudbuild.promote.yaml \
+            --no-source \
+            --substitutions=_REGION="${{ vars.PROD_REGION || 'us-central1' }}",_SERVICE_PREFIX="agent-engine-prod",_SERVICE_ACCOUNT="${{ vars.PROD_SERVICE_ACCOUNT }}",_PREP_PROJECT_ID="${{ vars.PREP_PROJECT_ID }}",_PREP_REGION="${{ vars.PREP_REGION || 'us-central1' }}",_SHA="${{ steps.sha.outputs.sha }}",_GOOGLE_CLOUD_PROJECT="${{ vars.PROD_FIRESTORE_PROJECT_ID }}",_FIRESTORE_DATABASE_ID="${{ vars.PROD_FIRESTORE_DATABASE_ID || '(default)' }}",_ANTHROPIC_VERTEX_PROJECT_ID="${{ vars.PROD_PROJECT_ID }}",_ANTHROPIC_API_KEY_SECRET="anthropic-api-key",_PUBSUB_PROJECT_ID="${{ vars.PROD_PROJECT_ID }}",_QUEUE_SUBSCRIPTION_RUN_JOBS="${{ vars.PROD_QUEUE_SUBSCRIPTION }}",_GCS_MEDIA_BUCKET="${{ vars.PROD_GCS_MEDIA_BUCKET }}",_GCS_ARTIFACTS_BUCKET="${{ vars.PROD_GCS_ARTIFACTS_BUCKET }}",_GCS_WORKSPACE_BUCKET="${{ vars.PROD_GCS_ARTIFACTS_BUCKET }}"

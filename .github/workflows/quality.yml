@@ -1,0 +1,32 @@
+name: Quality checks
+
+# Reusable workflow — the single source of truth for "does this commit pass
+# type-check/tests" across every workspace package. Called by deploy-prep.yml,
+# which gates the prep deploy on it (same pattern as karosCMO's own
+# quality.yml / deploy-prep.yml split).
+on:
+  workflow_call:
+
+jobs:
+  quality:
+    name: Type-check · Test (all workspaces)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript type-check
+        run: npm run typecheck
+
+      - name: Run test suite (all workspaces)
+        run: npm test

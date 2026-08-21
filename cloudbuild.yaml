@@ -1,170 +1,113 @@
-# Cloud Build pipeline for apps/agent-server (RFC-01 §7, §8; RFC-02).
+# Cloud Build for agent-engine's apps/agent-server. Builds ONE image and
+# deploys it to TWO Cloud Run services — agent-engine-<env> (HTTP, default
+# CMD) and agent-engine-<env>-worker (the Pub/Sub pull consumer, via a
+# --command/--args override) — same split as karosCMO/agent-service's own
+# agent-service-api / agent-service-worker (see agent-service/cloudbuild.yaml).
+# A subscribe() failure in the worker must never take the HTTP health check
+# down with it, and vice versa — one process doing both would risk exactly
+# that.
 #
-# Prerequisites (one-time, per GCP project) — see the Phase 4 setup guide
-# for the full explanation of each:
-#   1. Enable APIs: cloudbuild.googleapis.com, artifactregistry.googleapis.com,
-#      run.googleapis.com, secretmanager.googleapis.com, firestore.googleapis.com,
-#      storage.googleapis.com, aiplatform.googleapis.com.
-#   2. Create the Artifact Registry Docker repository named by `_REPOSITORY`.
-#   3. Request access to the Claude models this engine uses in the Agent
-#      Platform (formerly Vertex AI) Model Garden for this project. Approval
-#      can take 24-48h. No Secret Manager secret is needed for model access:
-#      the engine authenticates to Agent Platform with the runtime service
-#      account's own Application Default Credentials, so NO model credential
-#      is ever passed to the container as an environment variable value
-#      (RFC-01 §16.3 — this is the rule that exists because
-#      `ANTHROPIC_API_KEY` was found in plaintext in `karoscmo-prep`'s Cloud
-#      Run audit logs).
-#   4. Create (or choose) the runtime Service Account named by
-#      `_SERVICE_ACCOUNT` and grant it `roles/aiplatform.user` (model
-#      invocation — this is what replaces the API key),
-#      `roles/datastore.user`, and `roles/storage.objectAdmin` (scoped to the
-#      `_GCS_WORKSPACE_BUCKET` bucket) — see wiring/durable-store.ts,
-#      wiring/prompt-store.ts, and wiring/workspace-store.ts.
-#   5. Grant the Cloud Build service account `roles/run.admin` and
-#      `roles/iam.serviceAccountUser` (on `_SERVICE_ACCOUNT`) so step 5 below
-#      can actually deploy.
-#   6. OPTIONAL — only if this deployment runs jobs from a queue (README's
-#      "Running jobs from a queue (Pub/Sub)" section): enable
-#      pubsub.googleapis.com, create the topic/subscription, and grant the
-#      push subscription's own service account `roles/run.invoker` on
-#      `_SERVICE_NAME` — none of that is provisioned by this pipeline. Not
-#      required to deploy or run this service at all otherwise.
+# Substitutions:
+#   _REGION            e.g. us-central1
+#   _REPO              Artifact Registry repo (the existing "karos" repo,
+#                       already used by agent-service/karos-cmo — no new
+#                       repo needed)
+#   _SERVICE_PREFIX    "agent-engine-prep" or "agent-engine" (prod) — the two
+#                       Cloud Run service names are this plus "" / "-worker"
+#   _SERVICE_ACCOUNT   runtime SA email (agent-engine-sa@<project>.iam.gserviceaccount.com)
+#   _GOOGLE_CLOUD_PROJECT   Firestore project (karoscmo — Firestore is NOT
+#                       enabled in karoscmo-prep; see .env.example)
+#   _FIRESTORE_DATABASE_ID  named Firestore database ("prep" or "(default)")
+#   _ANTHROPIC_VERTEX_PROJECT_ID  GCP project whose Model Garden has Claude
+#                       enabled (karoscmo-prep)
+#   _PUBSUB_PROJECT_ID  GCP project holding the run-jobs topic/subscription
+#   _QUEUE_SUBSCRIPTION_RUN_JOBS  the PULL subscription name the worker binds to
+#   _GCS_MEDIA_BUCKET / _GCS_ARTIFACTS_BUCKET / _GCS_WORKSPACE_BUCKET  provisioned buckets
+#   _ANTHROPIC_API_KEY_SECRET  Secret Manager secret name (not value) backing
+#                       the dual-layer fallback router's direct-Anthropic hop
+#                       (ResilientClaudeAdapter) — the runtime SA needs
+#                       secretmanager.secretAccessor on this exact secret.
+#                       Blank skips --set-secrets entirely (no fallback wired).
 #
-# The substitution defaults below are template placeholders, not real
-# values — a trigger (or `gcloud builds submit --substitutions=...`) must
-# supply a real one for `_SERVICE_ACCOUNT` at minimum before this pipeline can
-# deploy anything.
+# One-time setup (run once per environment before the first build):
+#   gcloud iam service-accounts create agent-engine-sa --project=<project> \
+#     --display-name="Agent engine (api+worker)"
+#   # then grant it aiplatform.user + pubsub.subscriber (this project),
+#   # datastore.user (the Firestore project), storage.objectAdmin (both
+#   # buckets), secretmanager.secretAccessor (on _ANTHROPIC_API_KEY_SECRET if
+#   # used) — see DEPLOY_ENVIRONMENTS.md. Also grant the Cloud Build default
+#   # compute service account roles/iam.serviceAccountUser ON agent-engine-sa
+#   # itself, or the deploy steps below fail with a PERMISSION_DENIED actAs
+#   # error.
+substitutions:
+  _REGION: us-central1
+  _REPO: karos
+  _SERVICE_PREFIX: agent-engine-prep
+  _SERVICE_ACCOUNT: ""
+  _GOOGLE_CLOUD_PROJECT: ""
+  _FIRESTORE_DATABASE_ID: "(default)"
+  _ANTHROPIC_VERTEX_PROJECT_ID: ""
+  _ANTHROPIC_API_KEY_SECRET: ""
+  _PUBSUB_PROJECT_ID: ""
+  _QUEUE_SUBSCRIPTION_RUN_JOBS: ""
+  _GCS_MEDIA_BUCKET: ""
+  _GCS_ARTIFACTS_BUCKET: ""
+  _GCS_WORKSPACE_BUCKET: ""
 
 steps:
-  # 0. Install once — every later step shares this via Cloud Build's
-  #    persistent /workspace volume.
-  - id: install
-    name: node:22
-    entrypoint: npm
-    args: ["ci"]
-
-  # 1. Fast workspace-wide typecheck (RFC-01 §14) — fails before anything
-  #    slower (tests, docker build) runs against code that doesn't compile.
-  - id: typecheck
-    name: node:22
-    entrypoint: npx
-    args: ["tsc", "--noEmit"]
-    waitFor: ["install"]
-
-  # 2. Every workspace's own unit/integration suite. The root package.json's
-  #    own "test" script is a placeholder (see RFC-01 §14) — `--workspaces`
-  #    is the real "run everything" command this project's own verification
-  #    passes have used throughout; each package's own "test" script already
-  #    runs its own typecheck + vitest.
-  - id: test
-    name: node:22
-    entrypoint: npm
-    args: ["test", "--workspaces", "--if-present"]
-    waitFor: ["typecheck"]
-
-  # 3. Multi-stage build (see apps/agent-server/Dockerfile) — build context
-  #    is the repo root, since this is an npm-workspaces monorepo and the
-  #    image needs every workspace package the server depends on.
-  - id: docker-build
+  - id: build
     name: gcr.io/cloud-builders/docker
     args:
       - build
       - -f
       - apps/agent-server/Dockerfile
       - -t
-      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/agent-engine:$COMMIT_SHA"
-      - -t
-      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/agent-engine:latest"
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/agent-engine:$COMMIT_SHA
       - .
-    waitFor: ["test"]
 
-  # 4. Push both tags to Artifact Registry.
-  - id: docker-push-sha
+  - id: push
     name: gcr.io/cloud-builders/docker
-    args: ["push", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/agent-engine:$COMMIT_SHA"]
-    waitFor: ["docker-build"]
-  - id: docker-push-latest
-    name: gcr.io/cloud-builders/docker
-    args: ["push", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/agent-engine:latest"]
-    waitFor: ["docker-build"]
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/agent-engine:$COMMIT_SHA
 
-  # 5. Deploy the just-pushed image to Cloud Run. `--no-allow-unauthenticated`
-  #    is the safe default for a service karosCMO/Portal call server-to-server
-  #    — switch to `--allow-unauthenticated` explicitly if this service ever
-  #    needs to accept unauthenticated public traffic.
-  - id: deploy
-    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+  - id: deploy-http
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: gcloud
     args:
       - run
       - deploy
-      - "${_SERVICE_NAME}"
-      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/agent-engine:$COMMIT_SHA
+      - ${_SERVICE_PREFIX}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/agent-engine:$COMMIT_SHA
       - --region=${_REGION}
-      - --platform=managed
-      - --port=8080
-      - --service-account=${_SERVICE_ACCOUNT}
       - --no-allow-unauthenticated
-      - --min-instances=${_MIN_INSTANCES}
-      - --max-instances=${_MAX_INSTANCES}
-      - --concurrency=${_CONCURRENCY}
-      # No --set-secrets: the model route authenticates as the service
-      # account above, so this service deploys with zero credentials in its
-      # environment. GOOGLE_CLOUD_PROJECT doubles as the Agent Platform
-      # project for the model route (create-model-router-from-env.ts), and
-      # CLOUD_ML_REGION is set separately from _REGION because the Cloud Run
-      # region and the best model-serving endpoint are different choices —
-      # `global` has the widest Claude availability and the fewest 429s.
-      - --set-env-vars=GOOGLE_CLOUD_PROJECT=${PROJECT_ID},CLOUD_ML_REGION=${_CLOUD_ML_REGION},VERTEX_AI_LOCATION=${_REGION},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET},PROMPT_STORE_DRIVER=${_PROMPT_STORE_DRIVER}
-      # Pub/Sub (README's "Running jobs from a queue" section) is entirely
-      # optional and NOT wired into this pipeline's substitutions, because
-      # PUBSUB_PROJECT_ID already falls back to GOOGLE_CLOUD_PROJECT above —
-      # nothing extra is required just to make the queue vendor buildable.
-      # Two things ARE deployment-specific and deliberately left as manual
-      # follow-ups instead of substitutions here:
-      #   1. PUBSUB_PUSH_AUDIENCE_URL can only be set to this service's own
-      #      URL, which Cloud Run assigns at deploy time — chicken-and-egg.
-      #      Deploy once, then:
-      #        gcloud run services update ${_SERVICE_NAME} --region=${_REGION} \
-      #          --update-env-vars=PUBSUB_PUSH_AUDIENCE_URL=https://YOUR-SERVICE-URL/api/v1/queue/pubsub-push
-      #   2. PUBSUB_PUSH_TOKEN (optional shared-secret defense-in-depth
-      #      alongside OIDC verification) should come from Secret Manager, not
-      #      a plaintext env var, if used at all:
-      #        # --set-secrets=PUBSUB_PUSH_TOKEN=your-secret-name:latest
-      # Also grant the push subscription's own service account
-      # `roles/run.invoker` on `_SERVICE_NAME` — Pub/Sub push auth, not
-      # anything this deploy step itself grants.
-    waitFor: ["docker-push-sha", "docker-push-latest"]
+      - --service-account=${_SERVICE_ACCOUNT}
+      - --memory=2Gi
+      - --set-env-vars=GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},ANTHROPIC_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},CLOUD_ML_REGION=global,VERTEX_AI_LOCATION=${_REGION},GEMINI_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},PROMPT_STORE_DRIVER=firestore,QUEUE_PROVIDER=pubsub,PUBSUB_PROJECT_ID=${_PUBSUB_PROJECT_ID},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},GCS_ARTIFACTS_BUCKET=${_GCS_ARTIFACTS_BUCKET},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET}
+      - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest
 
-# Template defaults — override `_SERVICE_ACCOUNT` (and anything else that
-# matters for your environment) via the Cloud Build trigger's own substitution
-# variables, not by editing this file per-environment.
-substitutions:
-  _REGION: us-central1
-  _REPOSITORY: agent-engine-repo
-  _SERVICE_NAME: agent-engine-server
-  # No safe default — must be set by the trigger. A service account with zero
-  # permissions is worse than a build failing loudly for forgetting to set this.
-  _SERVICE_ACCOUNT: REPLACE_ME_SERVICE_ACCOUNT_EMAIL
-  # Agent Platform endpoint for model calls — independent of _REGION (the
-  # Cloud Run region). Override to a specific region only if `global` doesn't
-  # serve a model this deployment needs; a per-model pin
-  # (VERTEX_REGION_CLAUDE_*) is usually the better fix.
-  _CLOUD_ML_REGION: global
-  _FIRESTORE_DATABASE_ID: "(default)"
-  # Required for real Cloud Run state persistence (RFC-01 §9.2) — see
-  # apps/agent-server/src/wiring/workspace-store.ts. Left blank only works
-  # for a single-instance, non-resumable local/demo deployment.
-  _GCS_WORKSPACE_BUCKET: ""
-  _PROMPT_STORE_DRIVER: file
-  _MIN_INSTANCES: "0"
-  _MAX_INSTANCES: "5"
-  _CONCURRENCY: "10"
+  - id: deploy-worker
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE_PREFIX}-worker
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/agent-engine:$COMMIT_SHA
+      - --command=node
+      - --args=apps/agent-server/dist/queue-consumer.js
+      - --region=${_REGION}
+      - --no-allow-unauthenticated
+      - --service-account=${_SERVICE_ACCOUNT}
+      - --memory=2Gi
+      # A pull subscriber has no inbound HTTP traffic to wake it — it must
+      # never scale to zero or have its CPU throttled between messages, or
+      # it simply stops pulling. Same reasoning as agent-service-worker's
+      # own --min-instances=1 --no-cpu-throttling.
+      - --min-instances=1
+      - --no-cpu-throttling
+      - --set-env-vars=GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},ANTHROPIC_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},CLOUD_ML_REGION=global,VERTEX_AI_LOCATION=${_REGION},GEMINI_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},PROMPT_STORE_DRIVER=firestore,QUEUE_PROVIDER=pubsub,PUBSUB_PROJECT_ID=${_PUBSUB_PROJECT_ID},QUEUE_SUBSCRIPTION_RUN_JOBS=${_QUEUE_SUBSCRIPTION_RUN_JOBS},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},GCS_ARTIFACTS_BUCKET=${_GCS_ARTIFACTS_BUCKET},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET}
+      - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest
 
-# Required whenever a build specifies a non-default service account or
-# substitution-driven config like this one.
-options:
-  logging: CLOUD_LOGGING_ONLY
-
-timeout: 1800s
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/agent-engine:$COMMIT_SHA

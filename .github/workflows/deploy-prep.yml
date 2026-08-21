@@ -1,0 +1,83 @@
+name: Deploy to Prep
+
+# Automatic path: every push to main/master that passes quality checks is
+# built and deployed to prep's two Cloud Run services (agent-engine-prep,
+# agent-engine-prep-worker) in the karoscmo-prep GCP project. Production is
+# never touched here — promoting a verified prep build to production is the
+# separate, manual deploy-prod.yml. Also runnable on demand via
+# workflow_dispatch (e.g. to redeploy prep without a new commit).
+#
+# One-time setup (run once before the first deploy — see cloudbuild.yaml's
+# own header for the exact commands):
+#   1. gcloud iam service-accounts create agent-engine-sa --project=karoscmo-prep
+#   2. Grant it aiplatform.user + pubsub.subscriber on karoscmo-prep,
+#      datastore.user on karoscmo (the separate Firestore project — Firestore
+#      is not enabled in karoscmo-prep itself), storage.objectAdmin on both
+#      GCS buckets.
+#   3. Update the existing GitHub WIF provider's attributeCondition (or add a
+#      new provider) to also trust repo:karoslabs/agent-engine — today it
+#      trusts only karoslabs/karosCMO (see karosCMO's own deployer SA
+#      binding). This is an IAM trust-boundary change; do it deliberately,
+#      not as an automated side effect of a deploy.
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-prep
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write # Workload Identity Federation — no service-account key needed
+
+jobs:
+  quality:
+    uses: ./.github/workflows/quality.yml
+
+  deploy:
+    name: Build & deploy (prep)
+    needs: quality
+    runs-on: ubuntu-latest
+    environment: prep
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate required repo variables
+        run: |
+          missing=()
+          for v in PREP_PROJECT_ID PREP_SERVICE_ACCOUNT PREP_FIRESTORE_PROJECT_ID PREP_QUEUE_SUBSCRIPTION PREP_GCS_MEDIA_BUCKET PREP_GCS_ARTIFACTS_BUCKET; do
+            [ -n "${!v}" ] || missing+=("$v")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Missing required repo variable(s): ${missing[*]}"
+            exit 1
+          fi
+        env:
+          PREP_PROJECT_ID: ${{ vars.PREP_PROJECT_ID }}
+          PREP_SERVICE_ACCOUNT: ${{ vars.PREP_SERVICE_ACCOUNT }}
+          PREP_FIRESTORE_PROJECT_ID: ${{ vars.PREP_FIRESTORE_PROJECT_ID }}
+          PREP_QUEUE_SUBSCRIPTION: ${{ vars.PREP_QUEUE_SUBSCRIPTION }}
+          PREP_GCS_MEDIA_BUCKET: ${{ vars.PREP_GCS_MEDIA_BUCKET }}
+          PREP_GCS_ARTIFACTS_BUCKET: ${{ vars.PREP_GCS_ARTIFACTS_BUCKET }}
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set active project (fixes quota-project resolution for GCS uploads)
+        run: gcloud config set project "${{ vars.PREP_PROJECT_ID }}"
+
+      - name: Build & deploy via Cloud Build
+        run: |
+          gcloud builds submit \
+            --project="${{ vars.PREP_PROJECT_ID }}" \
+            --config=cloudbuild.yaml \
+            --substitutions=COMMIT_SHA="${{ github.sha }}",_REGION="${{ vars.PREP_REGION || 'us-central1' }}",_SERVICE_PREFIX="agent-engine-prep",_SERVICE_ACCOUNT="${{ vars.PREP_SERVICE_ACCOUNT }}",_GOOGLE_CLOUD_PROJECT="${{ vars.PREP_FIRESTORE_PROJECT_ID }}",_FIRESTORE_DATABASE_ID="${{ vars.PREP_FIRESTORE_DATABASE_ID || 'prep' }}",_ANTHROPIC_VERTEX_PROJECT_ID="${{ vars.PREP_PROJECT_ID }}",_ANTHROPIC_API_KEY_SECRET="anthropic-api-key",_PUBSUB_PROJECT_ID="${{ vars.PREP_PROJECT_ID }}",_QUEUE_SUBSCRIPTION_RUN_JOBS="${{ vars.PREP_QUEUE_SUBSCRIPTION }}",_GCS_MEDIA_BUCKET="${{ vars.PREP_GCS_MEDIA_BUCKET }}",_GCS_ARTIFACTS_BUCKET="${{ vars.PREP_GCS_ARTIFACTS_BUCKET }}",_GCS_WORKSPACE_BUCKET="${{ vars.PREP_GCS_ARTIFACTS_BUCKET }}"

@@ -1,0 +1,103 @@
+# Promote a prep-built agent-engine image to production. No rebuild from
+# source: copies the exact image already built + deployed to prep (tagged
+# with the git commit SHA) into production's own Artifact Registry, then
+# deploys that same image to both Cloud Run services (HTTP + worker).
+# Production always runs the identical bits verified in prep.
+#
+# Invoked by .github/workflows/deploy-prod.yml:
+#   gcloud builds submit --project=<PROD_PROJECT_ID> --config=cloudbuild.promote.yaml \
+#     --no-source --substitutions=_PREP_PROJECT_ID=...,_SHA=<commit-sha>,...
+#
+# One-time setup — grant production's Cloud Build service account read
+# access to prep's Artifact Registry repo, so the pull-from-prep step below
+# can reach it:
+#
+#   PROD_PROJECT_NUMBER=$(gcloud projects describe $PROD_PROJECT_ID --format='value(projectNumber)')
+#   gcloud artifacts repositories add-iam-policy-binding karos \
+#     --project=$PREP_PROJECT_ID --location=us-central1 \
+#     --member="serviceAccount:${PROD_PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
+#     --role="roles/artifactregistry.reader"
+#
+# The cloud-run-deploy steps' flags mirror cloudbuild.yaml's own deploy
+# steps — keep the two in sync.
+substitutions:
+  _REGION: us-central1
+  _REPO: karos
+  _SERVICE_PREFIX: agent-engine-prod
+  _SERVICE_ACCOUNT: ""
+  _PREP_PROJECT_ID: ""
+  _PREP_REGION: us-central1
+  _SHA: ""
+  _GOOGLE_CLOUD_PROJECT: ""
+  _FIRESTORE_DATABASE_ID: "(default)"
+  _ANTHROPIC_VERTEX_PROJECT_ID: ""
+  _ANTHROPIC_API_KEY_SECRET: ""
+  _PUBSUB_PROJECT_ID: ""
+  _QUEUE_SUBSCRIPTION_RUN_JOBS: ""
+  _GCS_MEDIA_BUCKET: ""
+  _GCS_ARTIFACTS_BUCKET: ""
+  _GCS_WORKSPACE_BUCKET: ""
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+steps:
+  - id: pull-from-prep
+    name: gcr.io/cloud-builders/docker
+    args:
+      - pull
+      - ${_PREP_REGION}-docker.pkg.dev/${_PREP_PROJECT_ID}/${_REPO}/agent-engine:${_SHA}
+
+  - id: tag-for-production
+    name: gcr.io/cloud-builders/docker
+    args:
+      - tag
+      - ${_PREP_REGION}-docker.pkg.dev/${_PREP_PROJECT_ID}/${_REPO}/agent-engine:${_SHA}
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/agent-engine:${_SHA}
+    waitFor: [pull-from-prep]
+
+  - id: push-to-production
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/agent-engine:${_SHA}
+    waitFor: [tag-for-production]
+
+  - id: deploy-http
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE_PREFIX}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/agent-engine:${_SHA}
+      - --region=${_REGION}
+      - --no-allow-unauthenticated
+      - --service-account=${_SERVICE_ACCOUNT}
+      - --memory=2Gi
+      - --set-env-vars=GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},ANTHROPIC_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},CLOUD_ML_REGION=global,VERTEX_AI_LOCATION=${_REGION},GEMINI_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},PROMPT_STORE_DRIVER=firestore,QUEUE_PROVIDER=pubsub,PUBSUB_PROJECT_ID=${_PUBSUB_PROJECT_ID},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},GCS_ARTIFACTS_BUCKET=${_GCS_ARTIFACTS_BUCKET},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET}
+      - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest
+    waitFor: [push-to-production]
+
+  - id: deploy-worker
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE_PREFIX}-worker
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/agent-engine:${_SHA}
+      - --command=node
+      - --args=apps/agent-server/dist/queue-consumer.js
+      - --region=${_REGION}
+      - --no-allow-unauthenticated
+      - --service-account=${_SERVICE_ACCOUNT}
+      - --memory=2Gi
+      - --min-instances=1
+      - --no-cpu-throttling
+      - --set-env-vars=GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},ANTHROPIC_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},CLOUD_ML_REGION=global,VERTEX_AI_LOCATION=${_REGION},GEMINI_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},PROMPT_STORE_DRIVER=firestore,QUEUE_PROVIDER=pubsub,PUBSUB_PROJECT_ID=${_PUBSUB_PROJECT_ID},QUEUE_SUBSCRIPTION_RUN_JOBS=${_QUEUE_SUBSCRIPTION_RUN_JOBS},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},GCS_ARTIFACTS_BUCKET=${_GCS_ARTIFACTS_BUCKET},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET}
+      - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest
+    waitFor: [push-to-production]
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/agent-engine:${_SHA}
