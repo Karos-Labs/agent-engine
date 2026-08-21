@@ -36,8 +36,15 @@ export interface DynamicAgentRunStep {
   stepId: string;
   type: "ai" | "code";
   label: string;
-  /** Binary by design (RFC-01 §7.2) — agent-engine's richer taxonomy (`content_fail`/`tooling_error`/`budget_exceeded`) collapses to `"failed"` here, with detail in `error`. */
-  status: "done" | "failed";
+  /**
+   * Binary-when-terminal by design (RFC-01 §7.2) — agent-engine's richer
+   * taxonomy (`content_fail`/`tooling_error`/`budget_exceeded`) collapses to
+   * `"failed"` here, with detail in `error`. `"running"` is additive
+   * (real-time progress reporting): a step whose checkpoint exists but hasn't
+   * reached a terminal state yet — the portal ignores it until its UI
+   * catches up, same precedent as `costUsd`/`tokensIn`/`tokensOut`.
+   */
+  status: "done" | "failed" | "running";
   durationMs: number;
   /** Concrete model this step ran on — staff-facing audit of per-step routing. */
   model?: string;

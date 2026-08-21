@@ -50,6 +50,16 @@ export const RunRecordSchema = z.object({
   pendingGateId: z.string().nullable().optional(),
   /** Explains a `held`/`blocked_intake` outcome — kept distinct from `failureReason` since neither is a failure (RFC-01 §16.2). */
   reason: z.string().nullable().optional(),
+  /**
+   * The step currently executing, for real-time progress reporting — set the
+   * moment a step's "running" checkpoint is written (`runStepCode`/
+   * `runStepAgent`, before the step's own function runs), left pointing at
+   * the last step once the run reaches a terminal status (harmless: a reader
+   * gates on `status` first, per `serializeToDynamicAgentRunReport`'s own
+   * `runIsInFlight` check). `undefined` on a run from before this field
+   * existed, or one with no steps recorded yet.
+   */
+  currentStepId: z.string().nullable().optional(),
 });
 export type RunRecord = z.infer<typeof RunRecordSchema>;
 
@@ -62,16 +72,28 @@ export type StepKind = z.infer<typeof StepKindSchema>;
  * the step itself run to completion), not the content-level verdict a
  * `step.agent` call's `output` (an `AgentExecutionResult`) may carry — Layer
  * 1 makes zero content judgments (RFC-01 §4), it only records what ran.
+ *
+ * `"running"` is a transient, real-time-progress-only state: `runStepCode`/
+ * `runStepAgent` write it (with only `stepId`/`kind`/`status`/`startedAt`
+ * populated) immediately before calling the step's own function, so a reader
+ * watching Firestore mid-run sees "step X is in flight" rather than nothing
+ * at all until it finishes. The later `"completed"`/`"failed"` write lands on
+ * the SAME document (`saveStep`'s `set(...,{merge:true})`), filling in
+ * `completedAt`/`costUsd`/`durationMs`/`output` — never a second document, so
+ * a resumed run's `getStep(...).status === "completed"` skip-check is
+ * unaffected. `output`/`costUsd`/`durationMs`/`completedAt` are `.optional()`
+ * for exactly this reason: a `"running"` record genuinely doesn't have them
+ * yet.
  */
 export const StepRecordSchema = z.object({
   stepId: z.string().min(1),
   kind: StepKindSchema,
-  status: z.enum(["completed", "failed"]),
-  output: z.unknown(),
-  costUsd: z.number().nonnegative(),
-  durationMs: z.number().nonnegative(),
+  status: z.enum(["running", "completed", "failed"]),
+  output: z.unknown().optional(),
+  costUsd: z.number().nonnegative().optional(),
+  durationMs: z.number().nonnegative().optional(),
   startedAt: z.number(),
-  completedAt: z.number(),
+  completedAt: z.number().optional(),
   error: z.string().optional(),
 });
 export type StepRecord = z.infer<typeof StepRecordSchema>;

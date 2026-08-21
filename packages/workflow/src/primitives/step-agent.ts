@@ -2,7 +2,7 @@ import type { AgentContext, AgentExecutionResult, BaseAgent } from "@agent-engin
 import { recordCostAndTokens, withWorkflowStepSpan } from "@agent-engine/telemetry";
 import type { StepRecord } from "../adapters/types.js";
 import type { WorkflowRuntime } from "./context.js";
-import { scopedStepId, sumRunCost } from "./context.js";
+import { markStepRunning, scopedStepId, sumRunCost } from "./context.js";
 import { WorkflowBudgetExceeded } from "./signals.js";
 
 /**
@@ -56,6 +56,7 @@ export async function runStepAgent<TOutput>(
     },
     async (span) => {
       const startedAt = runtime.now();
+      await markStepRunning(runtime, stepId, "agent", startedAt);
       const result = await agent.run(ctx, input);
       const completedAt = runtime.now();
 

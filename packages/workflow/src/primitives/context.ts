@@ -1,5 +1,5 @@
 import type { AgentExecutionResult, BaseAgent, Gate, RunKind } from "@agent-engine/core";
-import type { DurableStepStore, WorkflowBudget } from "../adapters/types.js";
+import type { DurableStepStore, StepKind, WorkflowBudget } from "../adapters/types.js";
 import { runStepCode } from "./step-code.js";
 import { runStepAgent } from "./step-agent.js";
 import { runStepGate } from "./step-gate.js";
@@ -54,10 +54,37 @@ export interface WorkflowContext {
   ): Promise<Array<SlotOutcome<TResult>>>;
 }
 
-/** Sums every checkpointed `step.agent` call's cost for a run — the single source of truth for budget enforcement, so a resumed run counts correctly. */
+/** Sums every checkpointed `step.agent` call's cost for a run — the single source of truth for budget enforcement, so a resumed run counts correctly. `?? 0`: a `"running"` step (real-time progress reporting) has no `costUsd` yet. */
 export async function sumRunCost(store: DurableStepStore, runId: string): Promise<number> {
   const steps = await store.listSteps(runId);
-  return steps.reduce((sum, step) => sum + step.costUsd, 0);
+  return steps.reduce((sum, step) => sum + (step.costUsd ?? 0), 0);
+}
+
+/**
+ * Real-time progress reporting: writes a transient `"running"` checkpoint
+ * for `stepId` and points the run's `currentStepId` at it, both BEFORE the
+ * step's own function runs — so a reader watching Firestore mid-run sees
+ * "step X is in flight" instead of nothing at all until it finishes. Called
+ * only after the resume skip-check (an already-`"completed"` step must never
+ * flip back to `"running"`).
+ *
+ * Awaited, not fire-and-forget: `saveStep`'s later terminal write lands on
+ * the SAME document via `set(...,{merge:true})`, so if this one were left to
+ * race in the background it could complete AFTER the terminal write and
+ * merge a stale `status:"running"` back over an already-`"completed"`/
+ * `"failed"` record. Errors are swallowed (logged, not thrown) — this is
+ * strictly a progress-reporting nicety, and must never abort the step it's
+ * only reporting progress for.
+ */
+export async function markStepRunning(runtime: WorkflowRuntime, stepId: string, kind: StepKind, startedAt: number): Promise<void> {
+  try {
+    await Promise.all([
+      runtime.store.saveStep(runtime.runId, { stepId, kind, status: "running", startedAt }),
+      runtime.store.updateRun(runtime.runId, { currentStepId: stepId }),
+    ]);
+  } catch (err) {
+    console.error(`markStepRunning: failed to write in-progress checkpoint for "${stepId}" (run "${runtime.runId}") — continuing without it`, err);
+  }
 }
 
 /**

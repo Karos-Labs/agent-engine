@@ -32,7 +32,7 @@ const FIRESTORE_INLINE_VALUE_LIMIT_BYTES = 900_000;
  * shape knowledge here) rather than trying to losslessly preserve a
  * Layer-2-specific summary shape at the persistence boundary.
  */
-async function archiveIfOversized<T extends { output: unknown }>(
+async function archiveIfOversized<T extends { output?: unknown }>(
   archiveStore: ArchiveStoreLike | undefined,
   objectPath: string,
   record: T,

@@ -100,17 +100,23 @@ function serializeOneStep(
       type: descriptor.type,
       label: descriptor.label,
       status: "failed",
-      durationMs: record.durationMs,
+      durationMs: record.durationMs ?? 0,
       error: record.error ?? "step failed",
     };
   }
 
+  if (record.status === "running") {
+    // In flight — the terminal saveStep write hasn't landed yet, so there's
+    // no output/cost/duration to report, only that it's actively running.
+    return { stepId: descriptor.stepId, type: descriptor.type, label: descriptor.label, status: "running", durationMs: 0 };
+  }
+
   if (isAgentExecutionResult(record.output)) {
-    return serializeAgentRecord(descriptor, record.durationMs, record.output);
+    return serializeAgentRecord(descriptor, record.durationMs ?? 0, record.output);
   }
 
   // A plain "code" step (or a fan-out slot whose inner logic wasn't an agent call) — no model/usage to report.
-  return { stepId: descriptor.stepId, type: descriptor.type, label: descriptor.label, status: "done", durationMs: record.durationMs };
+  return { stepId: descriptor.stepId, type: descriptor.type, label: descriptor.label, status: "done", durationMs: record.durationMs ?? 0 };
 }
 
 /**

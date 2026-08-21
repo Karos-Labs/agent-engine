@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { ModelRouter } from "@agent-engine/core";
 import type { WorkflowContext } from "../src/index.js";
 import {
   GateAlreadyResolvedError,
@@ -229,8 +230,86 @@ describe("5. step-level telemetry aggregates cleanly to the run summary", () => 
     expect(runRecord?.totalCostUsd).toBeCloseTo(expectedTotal, 6);
 
     const stepRecords = await store.listSteps("run_1");
-    const stepCostSum = stepRecords.reduce((sum, s) => sum + s.costUsd, 0);
+    const stepCostSum = stepRecords.reduce((sum, s) => sum + (s.costUsd ?? 0), 0);
     expect(stepCostSum).toBeCloseTo(expectedTotal, 6);
+  });
+});
+
+/** Waits a few microtask ticks — enough for `markStepRunning`'s own (real-I/O-free, `MemoryDurableStepStore`-backed) await chain to land, without waiting for `releaseSlowWork` to have been called. */
+async function letInFlightWritesLand(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+describe("6. real-time in-progress checkpoints", () => {
+  it("checkpoints a step.code call as 'running' before its own function resolves, and points the run's currentStepId at it", async () => {
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+
+    let releaseSlowWork!: () => void;
+    const slowWork = new Promise<void>((resolve) => {
+      releaseSlowWork = resolve;
+    });
+
+    const workflowFn = async (wf: WorkflowContext) =>
+      wf.step.code("slow-step", async () => {
+        await slowWork;
+        return "done";
+      });
+
+    const runPromise = engine.run(workflowFn, baseParams);
+    await letInFlightWritesLand();
+
+    const stepWhileRunning = await store.getStep("run_1", "slow-step");
+    expect(stepWhileRunning?.status).toBe("running");
+    expect(stepWhileRunning?.completedAt).toBeUndefined();
+
+    const runWhileRunning = await store.getRun("run_1");
+    expect(runWhileRunning?.currentStepId).toBe("slow-step");
+
+    releaseSlowWork();
+    const result = await runPromise;
+    expect(result.status).toBe("completed");
+
+    const stepAfterCompletion = await store.getStep("run_1", "slow-step");
+    expect(stepAfterCompletion?.status).toBe("completed");
+    expect(stepAfterCompletion?.completedAt).toBeDefined();
+  });
+
+  it("checkpoints a step.agent call as 'running' before the model call resolves", async () => {
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+
+    let resolveModelCall!: () => void;
+    const modelCallGate = new Promise<void>((resolve) => {
+      resolveModelCall = resolve;
+    });
+    const slowRouter: ModelRouter = {
+      complete: vi.fn(async () => {
+        await modelCallGate;
+        return { output: { type: "final", output: { body: "x" } }, modelUsed: "claude-sonnet-4-6", inputTokens: { cached: 0, uncached: 10 }, outputTokens: 5 };
+      }),
+      completeAlias: vi.fn(async () => {
+        throw new Error("not used in this test");
+      }),
+    } as unknown as ModelRouter;
+    const slowAgent = makeSimpleAgent(DraftOutputSchema, slowRouter);
+
+    const workflowFn = async (wf: WorkflowContext) => wf.step.agent("slow-draft", slowAgent, {});
+
+    const runPromise = engine.run(workflowFn, baseParams);
+    await letInFlightWritesLand();
+
+    const stepWhileRunning = await store.getStep("run_1", "slow-draft");
+    expect(stepWhileRunning?.status).toBe("running");
+
+    resolveModelCall();
+    const result = await runPromise;
+    expect(result.status).toBe("completed");
+
+    const stepAfterCompletion = await store.getStep("run_1", "slow-draft");
+    expect(stepAfterCompletion?.status).toBe("completed");
   });
 });
 

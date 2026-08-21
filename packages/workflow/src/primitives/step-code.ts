@@ -1,7 +1,7 @@
 import { describeError, withWorkflowStepSpan } from "@agent-engine/telemetry";
 import type { StepRecord } from "../adapters/types.js";
 import type { WorkflowRuntime } from "./context.js";
-import { scopedStepId } from "./context.js";
+import { markStepRunning, scopedStepId } from "./context.js";
 
 /**
  * `step.code(id, fn)` (RFC-01 §8.1/§8.2): a deterministic step, checkpointed
@@ -32,6 +32,7 @@ export async function runStepCode<T>(runtime: WorkflowRuntime, id: string, fn: (
     },
     async () => {
       const startedAt = runtime.now();
+      await markStepRunning(runtime, stepId, "code", startedAt);
       try {
         const output = await fn();
         const completedAt = runtime.now();
