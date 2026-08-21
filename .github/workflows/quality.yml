@@ -40,5 +40,15 @@ jobs:
       - name: TypeScript type-check
         run: npm run typecheck
 
+      # instagram-agent's default-template-render.test.ts launches a real,
+      # un-mocked Chromium against the actual production slide template
+      # (agent-engine#4) — every other render-carousel test deliberately
+      # stays Chromium-free, so this is the one place that needs a real
+      # browser. `--with-deps` also installs the OS-level libs (fonts,
+      # libnss3, ...) ubuntu-latest doesn't ship, matching the Dockerfile's
+      # own runtime-stage install.
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
       - name: Run test suite (all workspaces)
         run: npm test
