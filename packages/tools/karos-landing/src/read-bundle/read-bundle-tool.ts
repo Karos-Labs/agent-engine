@@ -58,6 +58,18 @@ async function listFilesRecursive(root: string, dir: string = root): Promise<str
  * path (same rule `siteRootForClient` already follows) — a run whose slug
  * contains `..`/`/`/`\`/NUL throws (surfaced by `defineTool` as
  * `tooling_error`) instead of resolving outside `bundlesRoot`.
+ *
+ * KNOWN GAP (found during the 2026-08-21 prep live-verification pass, see
+ * karoslabs/agent-engine#3): `bundlesRoot` is a LOCAL FILESYSTEM path
+ * (`LANDING_ENGINE_BUNDLES_ROOT`), read straight off whatever disk backs the
+ * running Cloud Run container. Every other agent's intake (`client.getConfig`/
+ * `getProfile`/`getBrand`) reads through `WorkspaceStoreLike`, which is GCS in
+ * a real deployment — this tool is the one exception, which means a client's
+ * bundle can only be seeded by baking it into the Docker image or exec-ing
+ * into the live container; there is no way to seed it remotely the way every
+ * other agent's client data can be. Migrating this to `WorkspaceStoreLike`
+ * (mirroring `client.getConfig`'s `readJson(clientSlug, segments)` pattern)
+ * would close that gap and let intake be seeded the same way for every agent.
  */
 export function createReadBundle(config: LandingEngineConfig) {
   return defineTool<ReadBundleInput, ReadBundleResult>({
