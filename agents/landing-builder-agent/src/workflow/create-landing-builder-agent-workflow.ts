@@ -268,6 +268,7 @@ export function createLandingBuilderAgentWorkflow(options: CreateLandingBuilderA
       await wf.step.code("04a-copy-template", async () => {
         const outcome = await tools["landing.copyTemplate"]!.execute({ force: false }, { ctx });
         if (outcome.status === "content_fail") throw new WorkflowToolingFailure(`landing.copyTemplate: ${outcome.reason}`);
+        if (outcome.status === "tooling_error") throw new WorkflowToolingFailure(`landing.copyTemplate: ${outcome.reason}`);
         if (outcome.status !== "success") throw new WorkflowToolingFailure(`landing.copyTemplate failed: ${outcome.status}`);
         return outcome.result;
       });
