@@ -110,10 +110,36 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       const profile = await tools["client.getProfile"]!.execute({}, { ctx });
       const brand = await tools["client.getBrand"]!.execute({}, { ctx });
       const voiceRules = await tools["client.getVoiceRules"]!.execute({}, { ctx });
+
+      // The account's own setup document. A brand page and a founder's seat
+      // share a voice and have opposite charters, so the intake is per account
+      // and must never be blended — which is why the document is named by
+      // `xStrategyKey` in the client's config rather than guessed from the
+      // handle. Falls back to the account-level document.
+      //
+      // `client.getStrategy` may be absent from a caller's registry entirely
+      // (the tool is new); that is the same as having no document, not a
+      // crash.
+      const getStrategy = tools["client.getStrategy"];
+      let strategy: string | null = null;
+      if (getStrategy) {
+        const attempts = intake.xStrategyKey
+          ? [{ agent: "x-agent", key: intake.xStrategyKey }, { agent: "x-agent" }]
+          : [{ agent: "x-agent" }];
+        for (const args of attempts) {
+          const outcome = await getStrategy.execute(args, { ctx });
+          if (outcome.status === "success") {
+            strategy = (outcome.result as { markdown: string }).markdown;
+            break;
+          }
+        }
+      }
+
       return {
         profile: profile.status === "success" ? (profile.result as Record<string, unknown>) : {},
         brand: brand.status === "success" ? (brand.result as Record<string, unknown>) : {},
         voiceRules: voiceRules.status === "success" ? (voiceRules.result as XClientContext["voiceRules"]) : {},
+        strategy,
       };
     });
 
@@ -228,6 +254,10 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       angle: laneSelection.angle,
       targetHandle: intake.xHandle,
       voiceRules: clientContext.voiceRules,
+      // Omitted rather than passed as null when absent: an explicit
+      // "accountCharter: null" in the payload invites the model to remark on
+      // its absence instead of simply working without one.
+      ...(clientContext.strategy ? { accountCharter: clientContext.strategy } : {}),
     });
 
     if (draftResult.status === "content_fail") {

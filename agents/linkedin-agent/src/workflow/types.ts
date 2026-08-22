@@ -66,6 +66,18 @@ export interface LinkedInClientContext {
   /** A run note / standing direction request naming the archetype directly (`lanes.md` §2's style-choice rule #1: "the customer's request wins"). Takes precedence over the rotation below, even over a repeat of the last post's archetype. */
   requestedArchetype?: LinkedInArchetype;
   identity: LinkedInIdentity;
+  /**
+   * The setup document for whoever this run posts as — the company page's
+   * standing direction, or that seat's own intake.
+   *
+   * Per identity, not per client, because that is what the document
+   * describes: the company page and each executive seat have their own
+   * charter, and merging them would let a seat post the company's material in
+   * the company's framing under a personal name.
+   *
+   * `null` when no document exists, which is an ordinary state.
+   */
+  strategy: string | null;
 }
 
 export interface LinkedInCandidateSummary {

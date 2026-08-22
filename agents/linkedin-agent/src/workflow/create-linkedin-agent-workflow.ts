@@ -157,6 +157,21 @@ const NUMERIC_INSIGHT_ARCHETYPE_ORDER: readonly LinkedInArchetype[] = [
  * run produces at most one deliverable. Step 15 is a mandatory human
  * `batch_review` gate (RFC-01 §8.3) unless `options.autoApprove` opts out.
  */
+/**
+ * "Daniel Herbert" -> "daniel-herbert", matching the lab repo's own
+ * `seat-intake/<name>.md` filenames, which is what the migrated documents are
+ * keyed by. Kept beside the caller rather than in a shared util because it
+ * encodes that one naming convention and nothing else depends on it.
+ */
+function slugifySeat(name: string): string {
+  return name
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflowOptions) {
   const tools: AgentToolRegistry = { ...options.tools, "render.preview": renderPreview };
 
@@ -229,6 +244,26 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
         };
       }
 
+      // The setup document for the identity this run posts as: the seat's own
+      // intake for an executive, the company page's standing direction
+      // otherwise. Keyed by identity rather than by client so a seat never
+      // inherits the company's charter — see LinkedInClientContext.strategy.
+      //
+      // The tool may be absent from a caller's registry entirely (it is new);
+      // that is the same as having no document, not a crash.
+      const getStrategy = tools["client.getStrategy"];
+      let strategy: string | null = null;
+      if (getStrategy) {
+        const key = identity.scope === "executive" ? slugifySeat(identity.executiveName) : undefined;
+        const outcome = await getStrategy.execute(
+          { agent: "linkedin-agent", ...(key ? { key } : {}) },
+          { ctx },
+        );
+        if (outcome.status === "success") {
+          strategy = (outcome.result as { markdown: string }).markdown;
+        }
+      }
+
       return {
         profile: profile.status === "success" ? (profile.result as Record<string, unknown>) : {},
         brand: brand.status === "success" ? (brand.result as Record<string, unknown>) : {},
@@ -236,6 +271,7 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
         ...(requestedTopic !== undefined ? { requestedTopic } : {}),
         ...(requestedArchetype !== undefined ? { requestedArchetype } : {}),
         identity,
+        strategy,
       };
     });
 
