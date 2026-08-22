@@ -56,7 +56,13 @@ describe("dynamic agent dispatch (Task 2)", () => {
 
     const steps = await env.durableStore.listSteps("run-dynamic-1");
     const stepIds = steps.map((s) => s.stepId).sort();
-    expect(stepIds).toEqual(["draft", "score"]);
+    // `guardrail-verify-load-topics` is appended to every dynamic run by the
+    // builder, not declared by any definition — that is the guardrail's whole
+    // design (see dynamic-guardrail.test.ts). It checkpoints even when the
+    // client forbids nothing, because "we checked and there was nothing to
+    // enforce" is the fact an auditor needs recorded; the verifier model call
+    // itself is skipped, so this costs one workspace read.
+    expect(stepIds).toEqual(["draft", "guardrail-verify-load-topics", "score"]);
 
     const draftStep = steps.find((s) => s.stepId === "draft");
     expect(draftStep?.kind).toBe("agent");

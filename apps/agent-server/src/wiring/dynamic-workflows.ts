@@ -1,5 +1,18 @@
 import type { AgentDefinitionStore, AgentToolRegistry, ModelPolicy, ModelRouter, PromptStore } from "@agent-engine/core";
-import { DynamicAgent, buildOutputSchema, type AgentDefinition } from "@agent-engine/core";
+import {
+  DynamicAgent,
+  GUARDRAIL_OUTPUT_FIELDS,
+  GUARDRAIL_STEP_ID,
+  GuardrailViolationError,
+  buildGuardrailInput,
+  buildGuardrailSystemPrompt,
+  buildOutputSchema,
+  readForbiddenTopics,
+  toVerdict,
+  type AgentDefinition,
+  type GuardrailOutput,
+  type GuardrailVerification,
+} from "@agent-engine/core";
 import { WorkflowContentFailure, WorkflowToolingFailure, type WorkflowContext } from "@agent-engine/workflow";
 import { buildWorkflowForProduct, isKnownProductId, type AgentRuntimeDeps, type WorkflowFn } from "./workflows.js";
 
@@ -57,8 +70,103 @@ export function buildDynamicWorkflow(definition: AgentDefinition, deps: { tools:
       input = execResult.finalOutput;
     }
 
+    // ── terminal: topic guardrail ──
+    //
+    // Appended here, never read from `definition.stages`. That is the whole
+    // point: a check an admin can delete from a spec with a bin icon is a
+    // convention, not a guarantee, so no Studio edit can reach it and no
+    // definition can opt out.
+    const verification = await verifyGuardrails(wf, deps, results);
+    if (verification) {
+      results[GUARDRAIL_STEP_ID] = verification;
+      if (verification.status === "violation") {
+        // Fails the run. The artifact pipeline is gated on a completed run, so
+        // a blocked one produces no client-visible asset, and the caller
+        // refunds it like any other failure. Deliberately not `held`, which
+        // means "nothing honestly cleared the gates" — a legitimate empty
+        // result a human might publish anyway. This output exists and must
+        // not ship.
+        throw new GuardrailViolationError(verification);
+      }
+    }
+
     return results;
   };
+}
+
+/** The deliverable the guardrail judges: the last stage's output, as text. */
+function deliverableText(results: Record<string, unknown>): string {
+  const values = Object.values(results);
+  const last = values[values.length - 1];
+  if (typeof last === "string") return last;
+  return JSON.stringify(last ?? {}, null, 2);
+}
+
+/**
+ * Runs the verifier, or returns `undefined` when there is nothing to verify.
+ *
+ * `undefined` means the client forbids no topics — a real and common state,
+ * not a misconfiguration. A `status: "error"` result is returned rather than
+ * thrown: a verifier that could not do its job must not block good output,
+ * but the failure is recorded so a human can see the check did not run.
+ */
+async function verifyGuardrails(
+  wf: WorkflowContext,
+  deps: { tools: AgentToolRegistry; promptStore: PromptStore; router: ModelRouter },
+  results: Record<string, unknown>,
+): Promise<GuardrailVerification | undefined> {
+  const ctx = {
+    runId: wf.runId,
+    clientSlug: wf.clientSlug,
+    productId: wf.productId,
+    runKind: wf.runKind,
+    metadata: {},
+  };
+
+  // From the client's own stored configuration, not the job payload: a
+  // payload-supplied topic list is one a caller can omit.
+  const configTool = deps.tools["client.getConfig"];
+  if (!configTool) return undefined;
+  const configOutcome = await wf.step.code(`${GUARDRAIL_STEP_ID}-load-topics`, async () =>
+    configTool.execute({}, { ctx }),
+  );
+  const forbiddenTopics =
+    configOutcome.status === "success" ? readForbiddenTopics(configOutcome.result) : [];
+  if (forbiddenTopics.length === 0) return undefined;
+
+  const verifier = new DynamicAgent(
+    { tools: deps.tools, router: deps.router, promptStore: deps.promptStore },
+    {
+      id: GUARDRAIL_STEP_ID,
+      description: "Check the finished draft against the topics this client does not engage with.",
+      // No tools: this is a judgment over text already in hand, and a verifier
+      // that can call tools is a verifier that can be steered.
+      allowedTools: [],
+      outputSchema: buildOutputSchema([...GUARDRAIL_OUTPUT_FIELDS]),
+      // "commodity" is this codebase's own tier for "embeddings,
+      // classification, dedupe" (model-policy.ts), which is exactly what
+      // checking a draft against a fixed list is. It also keeps the cost of
+      // having guardrails on at all close to nothing.
+      modelPolicy: { policy: "commodity", model: "claude-haiku-4-5-20251001" },
+      maxSteps: 1,
+    },
+    buildGuardrailSystemPrompt(forbiddenTopics),
+  );
+
+  const exec = await wf.step.agent(
+    GUARDRAIL_STEP_ID,
+    verifier,
+    buildGuardrailInput(deliverableText(results)),
+  );
+
+  if (exec.status !== "completed" || !exec.finalOutput) {
+    return {
+      status: "error",
+      violatedTopics: [],
+      error: `guardrail verification did not complete (${exec.status})`,
+    };
+  }
+  return toVerdict(exec.finalOutput as GuardrailOutput, forbiddenTopics);
 }
 
 /**
