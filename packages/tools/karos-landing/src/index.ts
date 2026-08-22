@@ -9,6 +9,8 @@ import { createLandingGate } from "./gate/gate-tool.js";
 import { createRenderCheck } from "./render-check/render-check-tool.js";
 import { createUpdateBrandFeedback } from "./update-brand-feedback/update-brand-feedback-tool.js";
 import { createUploadSiteBundle } from "./upload-site-bundle/upload-site-bundle-tool.js";
+import { createRestoreSiteBundle } from "./site-staging/restore-site-bundle-tool.js";
+import { createStageSiteBundle } from "./site-staging/stage-site-bundle-tool.js";
 
 export * from "./config.js";
 export * from "./create-landing-engine-config-from-env.js";
@@ -25,6 +27,9 @@ export * from "./gate/gate-tool.js";
 export * from "./render-check/render-check-tool.js";
 export * from "./update-brand-feedback/update-brand-feedback-tool.js";
 export * from "./upload-site-bundle/upload-site-bundle-tool.js";
+export * from "./site-staging/manifest.js";
+export * from "./site-staging/stage-site-bundle-tool.js";
+export * from "./site-staging/restore-site-bundle-tool.js";
 
 /**
  * The Landing Builder (s6, RFC-07) tool registry. Every write-capable tool
@@ -63,6 +68,15 @@ export function createKarosLandingTools(config: LandingEngineConfig, artifactSto
     "landing.gate": createLandingGate(config),
     "landing.renderCheck": createRenderCheck(),
     "landing.updateBrandFeedback": createUpdateBrandFeedback(config),
-    ...(artifactStore ? { "landing.uploadSiteBundle": createUploadSiteBundle(config, artifactStore) } : {}),
+    // All three need the artifact store, so they appear and disappear
+    // together: a deployment without GCS_ARTIFACTS_BUCKET keeps the exact
+    // pre-staging behaviour rather than half-enabling the gate-pause fix.
+    ...(artifactStore
+      ? {
+          "landing.uploadSiteBundle": createUploadSiteBundle(config, artifactStore),
+          "landing.stageSiteBundle": createStageSiteBundle(config, artifactStore),
+          "landing.restoreSiteBundle": createRestoreSiteBundle(config, artifactStore),
+        }
+      : {}),
   };
 }

@@ -372,6 +372,26 @@ export function createLandingBuilderAgentWorkflow(options: CreateLandingBuilderA
       }
     }
 
+    // ── 07b: stage the site tree to GCS before pausing ──
+    // The gate below can suspend this run for up to 24h, and the resume is
+    // served by a DIFFERENT Cloud Run service than the Pub/Sub worker that got
+    // us here — different container, empty /tmp. The engine replays completed
+    // steps from the durable store without re-executing them, so nothing
+    // downstream would ever recreate the tree. Observed in prep as
+    // `09b-upload-site-bundle` failing on run pubsub-21513920400985095.
+    // No-ops when no artifact store is configured, matching 09b's own rule.
+    await wf.step.code("07b-stage-site-bundle", async () => {
+      const stageTool = tools["landing.stageSiteBundle"];
+      if (!stageTool) return null;
+      const outcome = await stageTool.execute({ clientSlug: wf.clientSlug, runId: wf.runId }, { ctx });
+      if (outcome.status !== "success") {
+        throw new WorkflowToolingFailure(
+          `landing.stageSiteBundle failed: ${outcome.status}${"reason" in outcome ? ` — ${outcome.reason}` : ""}`,
+        );
+      }
+      return outcome.result;
+    });
+
     // ── 08: mandatory human review gate (AGENT-INVOCATION.md §5) — every result, regardless of
     // status, is held for human review during this rollout's first-cohort window. ──
     const reviewDecision: GateResponse = options.autoApprove
@@ -385,6 +405,23 @@ export function createLandingBuilderAgentWorkflow(options: CreateLandingBuilderA
     if (reviewDecision.decision !== "approve") {
       throw new WorkflowHeld(`landing craft review rejected: ${reviewDecision.reason ?? "no reason given"}`);
     }
+
+    // ── 08a: put the site tree back on this container ──
+    // The counterpart to 07b. A no-op when the tree is already here (the run
+    // never moved), so the single-container path is unchanged; a real download
+    // when the resume landed somewhere new. Everything after this point can go
+    // on assuming the same working directory the pre-gate steps had.
+    await wf.step.code("08a-restore-site-bundle", async () => {
+      const restoreTool = tools["landing.restoreSiteBundle"];
+      if (!restoreTool) return null;
+      const outcome = await restoreTool.execute({ clientSlug: wf.clientSlug, runId: wf.runId }, { ctx });
+      if (outcome.status !== "success") {
+        throw new WorkflowToolingFailure(
+          `landing.restoreSiteBundle failed: ${outcome.status}${"reason" in outcome ? ` — ${outcome.reason}` : ""}`,
+        );
+      }
+      return outcome.result;
+    });
 
     // ── 09a: persist the feedback round (FEEDBACK.md §5's append-only audit trail) — rebuild only,
     // and only once the round has actually cleared review, so a held/rejected round never advances
@@ -426,7 +463,14 @@ export function createLandingBuilderAgentWorkflow(options: CreateLandingBuilderA
       const uploadTool = tools["landing.uploadSiteBundle"];
       if (!uploadTool) return null;
       const outcome = await uploadTool.execute({ clientSlug: wf.clientSlug, runId: wf.runId }, { ctx });
-      if (outcome.status !== "success") throw new WorkflowToolingFailure(`landing.uploadSiteBundle failed: ${outcome.status}`);
+      if (outcome.status !== "success") {
+        // `outcome.reason` carries the actual cause (which path, which errno);
+        // reporting only `outcome.status` turned a real prep failure into the
+        // bare string "tooling_error" and cost a log dig to diagnose.
+        throw new WorkflowToolingFailure(
+          `landing.uploadSiteBundle failed: ${outcome.status}${"reason" in outcome ? ` — ${outcome.reason}` : ""}`,
+        );
+      }
       return outcome.result as { gcsPrefix: string; fileCount: number };
     });
 
