@@ -40,12 +40,16 @@ describe("Layer 3 tool registry — cross-cutting", () => {
   it("merges all ten servers' tools into one registry with no name collisions", () => {
     const expectedPrefixes = ["client.", "gate.", "intel.", "ledger.", "memory.", "publish.", "reputation.", "research.", "seoGeo.", "topics."];
     const names = Object.keys(tools);
-    // 7 client + 6 gates + 2 intel + 7 ledger + 5 memory + 4 publish + 3 reputation + 5 research + 2 seoGeo + 4 topics = 45
+    // 8 client + 6 gates + 2 intel + 7 ledger + 5 memory + 4 publish + 3 reputation + 5 research + 2 seoGeo + 4 topics = 46
+    // (client grew from 7 to 8: client.getStrategy reads a client's per-agent
+    // setup document — the filled-in account intake saying what an account is
+    // chartered to post and what it must never post — which nothing in the
+    // engine could read before. See packages/tools/karos-client/src/get-strategy.ts.)
     // (ledger grew from 5 to 7: P0 parity-audit Fix 3 added ledger.recordUsedImages/ledger.listUsedImages
     // for cross-post image-reuse prevention — see agents/instagram-agent/src/workflow/craft-hygiene.ts's
     // sibling, create-instagram-agent-workflow.ts. reputation.* is new: RFC-08's triage/capture/doctrineGate —
     // reputation.publish is deliberately absent, permanently gated inside agents/reputation-agent's own workflow.)
-    expect(names.length).toBe(45);
+    expect(names.length).toBe(46);
     for (const prefix of expectedPrefixes) {
       expect(names.some((n) => n.startsWith(prefix))).toBe(true);
     }
