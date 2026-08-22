@@ -1,6 +1,12 @@
 import type { AgentToolRegistry } from "@agent-engine/core";
 import type { WorkspaceStoreLike } from "@agent-engine/tools";
-import { createAllKarosTools, createKarosVideoTools, createKarosLandingTools, createLandingEngineConfigFromEnv } from "@agent-engine/tools";
+import {
+  createAllKarosTools,
+  createKarosVideoTools,
+  createKarosLandingTools,
+  createKarosMediaTools,
+  createLandingEngineConfigFromEnv,
+} from "@agent-engine/tools";
 import { createServerMediaStore, createServerArchiveStore } from "./gcs-artifact-stores.js";
 
 /**
@@ -15,6 +21,12 @@ import { createServerMediaStore, createServerArchiveStore } from "./gcs-artifact
  * own env vars (`BRANDED_SHORTS_ENGINE_DIR`, `LANDING_ENGINE_*_ROOT`) aren't
  * set, exactly like every other env-configured tool in this codebase.
  *
+ * `media.*` is merged in on the same terms: without `UNSPLASH_ACCESS_KEY` it
+ * reports `not_available` per call, so registering it unconditionally costs a
+ * deployment nothing. With the key set, it is what finally lets
+ * `instagram-agent` step 06 see real candidate images instead of the empty
+ * pool that held every run.
+ *
  * `mediaStore`/`archiveStore` (Task 1/Task 2, RFC-01's GCS media/artifact
  * store) are `undefined` unless `GCS_MEDIA_BUCKET`/`GCS_ARTIFACTS_BUCKET`
  * are set — every affected tool (`publish.renderCarousel`,
@@ -28,5 +40,6 @@ export function createServerTools(workspaceStore: WorkspaceStoreLike, env: Recor
     ...createAllKarosTools(workspaceStore, mediaStore),
     ...createKarosVideoTools({ env, ...(mediaStore ? { mediaStore } : {}) }),
     ...createKarosLandingTools(createLandingEngineConfigFromEnv({ env }), archiveStore, workspaceStore),
+    ...createKarosMediaTools({ env }),
   };
 }

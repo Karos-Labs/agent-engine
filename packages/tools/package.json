@@ -19,6 +19,7 @@
     "@agent-engine/tool-karos-intel": "^0.0.1",
     "@agent-engine/tool-karos-landing": "^0.0.1",
     "@agent-engine/tool-karos-ledger": "^0.0.1",
+    "@agent-engine/tool-karos-media": "^0.0.1",
     "@agent-engine/tool-karos-memory": "^0.0.1",
     "@agent-engine/tool-karos-publish": "^0.0.1",
     "@agent-engine/tool-karos-reputation": "^0.0.1",

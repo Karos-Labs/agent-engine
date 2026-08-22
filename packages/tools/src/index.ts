@@ -17,6 +17,7 @@ export * from "@agent-engine/tool-karos-gates";
 export * from "@agent-engine/tool-karos-intel";
 export * from "@agent-engine/tool-karos-landing";
 export * from "@agent-engine/tool-karos-ledger";
+export * from "@agent-engine/tool-karos-media";
 export * from "@agent-engine/tool-karos-memory";
 export * from "@agent-engine/tool-karos-publish";
 export * from "@agent-engine/tool-karos-reputation";
@@ -64,6 +65,17 @@ export * from "@agent-engine/tool-karos-video";
  * "no such tool registered," not a registry entry that fails on every call.
  * `agents/landing-builder-agent` wires `createKarosLandingTools(config)` (or
  * `createLandingEngineConfigFromEnv()`) in explicitly, alongside this bundle.
+ *
+ * `media.*` (`@agent-engine/tool-karos-media`) is exported here and excluded
+ * from `createAllKarosTools()` on the same principle: it reaches a third-party
+ * image library over the network on a credential
+ * (`UNSPLASH_ACCESS_KEY`), and a caller that has not made that decision should
+ * not silently acquire an egress capability by asking for "all karos tools."
+ * It differs from `video.*`/`landing.*` in one way worth knowing — an
+ * unconfigured deployment gets `not_available` rather than `tooling_error`,
+ * because "this deployment has not enabled image search" and "image search
+ * broke" want different responses. `apps/agent-server` wires it in explicitly
+ * alongside the other two.
  *
  * `mediaStore` (Task 1, RFC-01's GCS media store) is optional, mirroring
  * `store`: wire it (via `GCS_MEDIA_BUCKET` at your composition root) to make

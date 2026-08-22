@@ -72,12 +72,16 @@ export interface CreateInstagramAgentWorkflowOptions {
    */
   repoRoot: string;
   /**
-   * The candidate image pool step 06 vets against, per RFC-03 §1's note that
-   * Phase 1 has no real internet image-search tool yet — this stands in for
-   * that tool, supplied by the caller (or, in a later phase, by a real
-   * `media.findImage`-style tool's own candidate list). Defaults to empty,
-   * which deterministically holds every run at step 06 (an empty pool can
-   * never satisfy any slide's visual need) rather than crashing.
+   * A fixed candidate pool for step 06 to vet against.
+   *
+   * Optional, and normally omitted: step 05b now calls `media.findImages` to
+   * source candidates from each slide's own `visualNeed`. Supplying a pool
+   * here overrides that entirely, which is what tests and evals want (a fixed
+   * pool is the only way to make step 06 deterministic) and what a caller
+   * with curated client-owned assets wants.
+   *
+   * Defaults to empty, which no longer means "every run holds": empty is the
+   * signal to go and search.
    */
   imageCandidatePool?: ImageCandidate[];
 }
@@ -298,9 +302,60 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       }
       const copy = copyExec.finalOutput!;
 
+      // ── 05b: source real candidate images for THIS attempt's copy ──
+      //
+      // The pool used to be a static workflow option that
+      // `apps/agent-server` never supplied, so it was always `[]` and step 06
+      // held every production run. `media.findImages` searches on each
+      // slide's own `visualNeed`, which is why it belongs inside the retry
+      // loop rather than before it: a second attempt rewrites the copy, so
+      // the needs — and therefore the right candidates — change with it.
+      //
+      // An explicitly-supplied `options.imageCandidatePool` still wins. Tests
+      // and evals depend on a fixed pool for determinism, and a caller that
+      // has curated client-owned assets should not have them ignored in
+      // favour of stock.
+      //
+      // The tool being absent entirely is a supported state, not a bug:
+      // `createAllKarosTools()` deliberately excludes `media.*` (it is an
+      // egress capability on a credential), so a caller assembling its own
+      // registry legitimately has no such tool. That case leaves the pool
+      // empty and reaches step 06's hold — exactly the behaviour before this
+      // step existed. Asserting the tool here would instead crash those
+      // callers.
+      const findImages = tools["media.findImages"];
+      let attemptPool = imageCandidatePool;
+      if (attemptPool.length === 0 && findImages !== undefined) {
+        const sourced = await wf.step.code(`05b-source-images-attempt-${attempt}`, async () =>
+          findImages.execute(
+            {
+              repoRoot: options.repoRoot,
+              runId: wf.runId,
+              needs: copy.slides.map((s) => ({ n: s.n, query: s.visualNeed })),
+            },
+            { ctx },
+          ),
+        );
+
+        if (sourced.status === "success") {
+          attemptPool = (sourced.result as { candidates: ImageCandidate[] }).candidates;
+        } else if (sourced.status === "tooling_error") {
+          // A provider outage is not an editorial outcome. Failing loudly here
+          // keeps it out of the "no viable image" hold below, which a human
+          // reads as "the topic had no good picture" and would act on wrongly.
+          throw new WorkflowToolingFailure(
+            `media.findImages failed: ${sourced.status}${"reason" in sourced ? ` — ${sourced.reason}` : ""}`,
+          );
+        }
+        // `content_fail` (nothing sourced) and `not_available` (no backend
+        // configured) both leave the pool empty and fall through to step 06,
+        // which holds the post with its own recorded reason — the same
+        // honest outcome as before, now reached deliberately.
+      }
+
       const imageExec = await wf.step.agent(`06-vet-images-attempt-${attempt}`, imageAgent, {
         slides: copy.slides.map((s) => ({ n: s.n, visualNeed: s.visualNeed })),
-        candidatePool: imageCandidatePool,
+        candidatePool: attemptPool,
         usedImages,
       });
       if (imageExec.status === "tooling_error" || imageExec.status === "budget_exceeded") {
