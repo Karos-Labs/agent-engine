@@ -19,6 +19,7 @@ export interface WorkflowRuntime {
   productId: string;
   runKind: RunKind;
   slotId?: string;
+  input: Readonly<Record<string, unknown>>;
   store: DurableStepStore;
   budget?: WorkflowBudget;
   now(): number;
@@ -36,6 +37,21 @@ export interface WorkflowContext {
   productId: string;
   runKind: RunKind;
   slotId?: string;
+
+  /**
+   * What this particular run was asked to do -- the portal brief, a requested
+   * topic, a chosen lane.
+   *
+   * Distinct from `client.getConfig()`, which is the client's STANDING
+   * configuration. Both were previously read from the same place, which meant
+   * a per-run request had to be written into client-level config before
+   * dispatch: two runs for one client would then race, and the second would
+   * silently draft against the first's brief.
+   *
+   * Always present, `{}` when the caller sent nothing, so a workflow never has
+   * to guard for undefined before reading a key.
+   */
+  input: Readonly<Record<string, unknown>>;
 
   step: {
     /** A deterministic, checkpointed function call. Re-running an already-completed `id` returns the checkpointed output without calling `fn` again. */
@@ -105,6 +121,7 @@ export function buildWorkflowContext(runtime: WorkflowRuntime): WorkflowContext 
     clientSlug: runtime.clientSlug,
     productId: runtime.productId,
     runKind: runtime.runKind,
+    input: runtime.input,
     ...(runtime.slotId !== undefined ? { slotId: runtime.slotId } : {}),
     step: {
       code: (id, fn) => runStepCode(runtime, id, fn),

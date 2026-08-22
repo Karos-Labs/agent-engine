@@ -113,7 +113,17 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
       if (configOutcome.status !== "success") {
         throw new WorkflowBlockedIntake("client config is not available yet — cannot determine target subreddits");
       }
-      const config = configOutcome.result as {
+      // This run's own request layered over the client's standing config --
+      // "the customer's run request wins". Only run-scoped keys are overlaid:
+      // targetSubreddits is client configuration, and letting a job payload
+      // rewrite which subreddits an account posts into would be a tenancy hole,
+      // not a feature.
+      const runScoped: Record<string, unknown> = {};
+      for (const key of ["requestedTopic", "requestedSubreddit", "requestedThreadUrl", "requestedThreadTitle"] as const) {
+        const value = wf.input[key];
+        if (typeof value === "string" && value.trim().length > 0) runScoped[key] = value.trim();
+      }
+      const config = { ...(configOutcome.result as Record<string, unknown>), ...runScoped } as {
         targetSubreddits?: string[];
         requestedTopic?: string;
         requestedSubreddit?: string;

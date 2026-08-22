@@ -58,6 +58,12 @@ export interface RunWorkflowParams {
   productId: string;
   runKind: RunKind;
   budget?: WorkflowBudget;
+  /**
+   * This run's own request -- the portal brief, a requested topic. Stored on
+   * the run record so a resume after a gate reads the same brief the first
+   * half drafted against.
+   */
+  input?: Record<string, unknown>;
 }
 
 /**
@@ -103,6 +109,9 @@ export class WorkflowEngine {
     // audit finding: RFC-01 §8.1's "budget enforced before spend" was structurally present
     // but inert for any resumed run).
     const budget = params.budget ?? existingRun?.budget;
+    // Same reasoning as budget above: a resume carries no brief of its own, so
+    // the second half of a gated run would otherwise draft against nothing.
+    const input = params.input ?? existingRun?.input ?? {};
 
     if (!existingRun) {
       const newRun: RunRecord = {
@@ -114,6 +123,7 @@ export class WorkflowEngine {
         createdAt: this.now(),
         updatedAt: this.now(),
         ...(budget !== undefined ? { budget } : {}),
+        ...(Object.keys(input).length > 0 ? { input } : {}),
       };
       await this.store.createRunIfNotExists(newRun);
     } else {
@@ -133,6 +143,7 @@ export class WorkflowEngine {
       clientSlug: params.clientSlug,
       productId: params.productId,
       runKind: params.runKind,
+      input,
       store: this.store,
       now: this.now,
       ...(budget !== undefined ? { budget } : {}),

@@ -36,6 +36,22 @@ export const RunJobRequestSchema = z.object({
   clientSlug: z.string().min(1).regex(CLIENT_SLUG_PATTERN, "clientSlug must be lowercase alphanumeric segments separated by hyphens"),
   productId: z.string().min(1).regex(CLIENT_SLUG_PATTERN, "productId must be lowercase alphanumeric segments separated by hyphens"),
   runKind: RunKindSchema,
+  /**
+   * What THIS run was asked to do -- a portal brief, a requested topic, a
+   * chosen lane. Optional: a scheduled run has no request of its own.
+   *
+   * agent-middleware has been publishing this as `input` since it was built
+   * (see its `to_engine_message`, whose comment notes the engine would read it
+   * "once it knows how"). Zod stripped it, so a client's typed brief reached
+   * the broker and stopped there, and the agent picked its own topic instead
+   * of the one that was asked for -- wrong output rather than a failure, which
+   * is why it went unnoticed.
+   *
+   * Deliberately NOT merged into client config: that is the client's standing
+   * configuration, shared by every run, so two concurrent runs would race and
+   * the second would draft against the first's brief.
+   */
+  input: z.record(z.string(), z.unknown()).optional(),
 });
 export type RunJobRequest = z.infer<typeof RunJobRequestSchema>;
 
@@ -100,6 +116,7 @@ export async function startRunJob(request: RunJobRequest, runId: string, deps: S
       clientSlug: request.clientSlug,
       productId: request.productId,
       runKind: request.runKind,
+      ...(request.input !== undefined ? { input: request.input } : {}),
     });
     const report = await buildRunReport(deps.durableStore, runId, request.productId);
     return {

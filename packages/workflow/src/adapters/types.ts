@@ -36,6 +36,17 @@ export const RunRecordSchema = z.object({
   budget: WorkflowBudgetSchema.optional(),
   totalCostUsd: z.number().nonnegative().optional(),
   /**
+   * What the caller asked for on THIS run, as opposed to standing client
+   * configuration: a requested topic, a chosen lane, the brief a person
+   * typed into the portal.
+   *
+   * Persisted rather than kept in memory because a run that pauses at a
+   * human gate resumes in a different process -- and often a different
+   * container -- and the second half must draft against the same brief as
+   * the first. Reading it back off the record is the only way that holds.
+   */
+  input: z.record(z.string(), z.unknown()).optional(),
+  /**
    * `failureReason`/`pendingGateId`/`reason` are `.nullable()` as well as
    * `.optional()`: every terminal (or re-entrant) transition in
    * `WorkflowEngine.run()` explicitly writes `null` into whichever of these

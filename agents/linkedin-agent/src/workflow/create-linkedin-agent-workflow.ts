@@ -55,6 +55,29 @@ function extractArchetypeFromSummary(summary: string): LinkedInArchetype | undef
 }
 
 /** Reads the per-run identity/archetype overrides (if any) out of `client.getConfig`'s free-form result. */
+/**
+ * This run's own request layered over the client's standing configuration.
+ *
+ * `lanes.md`: "the customer's run request wins". Before the engine could
+ * carry a per-run input, the only way to express one was to write it into
+ * client config -- which every other run for that client then inherited.
+ *
+ * Only run-scoped keys are overlaid. Client identity (executives, handles) is
+ * not a per-run choice, and letting a job payload rewrite it would be a
+ * tenancy hole rather than a feature.
+ */
+const RUN_SCOPED_KEYS = ["requestedTopic", "requestedArchetype", "requestedIdentityScope", "requestedExecutiveName"] as const;
+
+function withRunInput(config: unknown, input: Readonly<Record<string, unknown>>): Record<string, unknown> {
+  const base = (config ?? {}) as Record<string, unknown>;
+  const overlay: Record<string, unknown> = {};
+  for (const key of RUN_SCOPED_KEYS) {
+    const value = input[key];
+    if (typeof value === "string" && value.trim().length > 0) overlay[key] = value.trim();
+  }
+  return { ...base, ...overlay };
+}
+
 function readRunConfig(config: unknown): {
   requestedIdentityScope?: LinkedInIdentityScope;
   requestedExecutiveName?: string;
@@ -192,7 +215,10 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
       // (legacy "two-paths" design) — options.identityScope is only the
       // fallback default when the client doesn't ask for one.
       const configOutcome = await tools["client.getConfig"]!.execute({}, { ctx });
-      const { requestedIdentityScope } = configOutcome.status === "success" ? readRunConfig(configOutcome.result) : {};
+      const { requestedIdentityScope } =
+        configOutcome.status === "success"
+          ? readRunConfig(withRunInput(configOutcome.result, wf.input))
+          : readRunConfig(withRunInput({}, wf.input));
       const identityScope: LinkedInIdentityScope = requestedIdentityScope ?? options.identityScope ?? "company";
       if (identityScope === "executive") {
         const executivesOutcome = await tools["client.getExecutives"]!.execute({}, { ctx });
@@ -216,9 +242,9 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
       // client.getConfig is optional here (unlike the intake check above) — a
       // client may simply not have requested a specific topic (or identity) for this run.
       const config = await tools["client.getConfig"]!.execute({}, { ctx });
-      const requestedTopic = config.status === "success" ? (config.result as { requestedTopic?: string }).requestedTopic : undefined;
-      const { requestedIdentityScope, requestedExecutiveName, requestedArchetype } =
-        config.status === "success" ? readRunConfig(config.result) : {};
+      const merged = withRunInput(config.status === "success" ? config.result : {}, wf.input);
+      const requestedTopic = (merged as { requestedTopic?: string }).requestedTopic;
+      const { requestedIdentityScope, requestedExecutiveName, requestedArchetype } = readRunConfig(merged);
       const identityScope: LinkedInIdentityScope = requestedIdentityScope ?? options.identityScope ?? "company";
 
       let identity: LinkedInIdentity = { scope: "company" };

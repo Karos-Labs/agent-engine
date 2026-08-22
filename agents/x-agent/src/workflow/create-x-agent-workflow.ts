@@ -102,7 +102,21 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       if (typeof config["xHandle"] !== "string" || config["xHandle"].length === 0) {
         throw new WorkflowBlockedIntake("client has not configured an X handle yet");
       }
-      return config as XIntakeConfig;
+      // This run's own request wins over the client's standing configuration.
+      // `lanes.md`'s rule is "the customer's run request wins", and until the
+      // engine could carry a per-run input the only way to express one was to
+      // write it into client config -- which every other run for that client
+      // would then pick up too.
+      //
+      // Only run-scoped keys are overlaid. xHandle and xStrategyKey are client
+      // identity, not a per-run choice, and letting a job payload rewrite which
+      // account a post is drafted for would be a tenancy hole.
+      const runScoped: Record<string, unknown> = {};
+      for (const key of ["requestedTopic", "requestedLane"] as const) {
+        const value = wf.input[key];
+        if (typeof value === "string" && value.trim().length > 0) runScoped[key] = value.trim();
+      }
+      return { ...config, ...runScoped } as XIntakeConfig;
     });
 
     // ── 01-03: context & shelf assembly (client.*, memory.read) ──
