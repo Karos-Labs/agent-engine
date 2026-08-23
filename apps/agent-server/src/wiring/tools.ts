@@ -4,6 +4,7 @@ import {
   createAllKarosTools,
   createKarosVideoTools,
   createKarosLandingTools,
+  createKarosIntakeTools,
   createKarosMediaTools,
   createLandingEngineConfigFromEnv,
 } from "@agent-engine/tools";
@@ -41,5 +42,10 @@ export function createServerTools(workspaceStore: WorkspaceStoreLike, env: Recor
     ...createKarosVideoTools({ env, ...(mediaStore ? { mediaStore } : {}) }),
     ...createKarosLandingTools(createLandingEngineConfigFromEnv({ env }), archiveStore, workspaceStore),
     ...createKarosMediaTools({ env }),
+    // The write side of a client's setup documents. Merged in for every
+    // product because the registry is shared, but only the setup workflows
+    // name it in a step -- a drafting agent that never calls it cannot
+    // rewrite the charter it is judged against.
+    ...createKarosIntakeTools(workspaceStore),
   };
 }

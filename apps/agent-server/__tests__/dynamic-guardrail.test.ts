@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { MemoryAgentDefinitionStore, type AgentDefinitionInput } from "@agent-engine/core";
+import { MemoryAgentDefinitionStore, type AgentDefinitionInput, type ModelRouter } from "@agent-engine/core";
 import { startRunJob } from "../src/run-job.js";
 import { setupTestEnvironment, smartFakeRouter, type TestEnvironment } from "./test-helpers.js";
 
@@ -157,5 +157,97 @@ describe("dynamic runner topic guardrails", () => {
 
     if (outcome.outcome !== "started") throw new Error("unreachable");
     expect(outcome.status).toBe("completed");
+  });
+});
+
+/**
+ * A router that records every prompt it is asked to complete.
+ *
+ * `smartFakeRouter` cannot observe what a stage was handed, and the thing
+ * worth checking is not that `wf.step.agent` was called with the right object
+ * but that the object reached the model.
+ */
+function capturingRouter(candidates: readonly unknown[]): { router: ModelRouter; prompts: string[] } {
+  const prompts: string[] = [];
+  const inner = smartFakeRouter(candidates);
+  const router: ModelRouter = {
+    async complete(prompt, schema, policy) {
+      prompts.push(typeof prompt === "string" ? prompt : JSON.stringify(prompt));
+      return inner.complete(prompt, schema, policy);
+    },
+    completeAlias: inner.completeAlias.bind(inner),
+  } as ModelRouter;
+  return { router, prompts };
+}
+
+describe("dynamic runner variable passing", () => {
+  let env2: TestEnvironment;
+  let store2: MemoryAgentDefinitionStore;
+
+  beforeEach(async () => {
+    env2 = await setupTestEnvironment();
+    store2 = new MemoryAgentDefinitionStore();
+  });
+
+  afterEach(async () => {
+    await env2.cleanup();
+  });
+
+  function twoStage(agentId: string): AgentDefinitionInput {
+    return {
+      agentId,
+      name: "Two Stage",
+      description: "Two sequential stages, used to check what each one is handed",
+      defaultModelPolicy: { policy: "pinned", model: "claude-sonnet-4-6" },
+      stages: [
+        {
+          id: "first",
+          description: "first",
+          allowedTools: [],
+          outputSchema: [{ name: "headline", type: "string", optional: false }],
+        },
+        {
+          id: "second",
+          description: "second",
+          allowedTools: [],
+          outputSchema: [{ name: "score", type: "number", optional: false }],
+        },
+      ],
+    };
+  }
+
+  it("hands the first stage what the person actually typed", async () => {
+    // It used to receive `{}`, so an agent with an input schema was answering
+    // a question it could not see.
+    await store2.upsert("var-pass", twoStage("var-pass"), { expectExisting: false });
+    const { router, prompts } = capturingRouter([{ headline: "h" }, { score: 1 }]);
+
+    await startRunJob(
+      { clientSlug: "acme", productId: "var-pass", runKind: "recurring", input: { topic: "cold brew" } },
+      "run-var-1",
+      { durableStore: env2.durableStore, runtimeDeps: { ...env2.runtimeDeps, router }, agentDefinitionStore: store2 },
+    );
+
+    // Asserted on the prompt, not on the call arguments: what matters is that
+    // the value reached the MODEL, and a step invoked with the right object
+    // that never serialised it would pass a weaker check.
+    expect(prompts[0]).toContain("cold brew");
+    expect(prompts[0]).toContain("previousOutput");
+  });
+
+  it("gives a later stage both the run input and the stage before it", async () => {
+    // Named fields rather than one merged object: a stage output key must not
+    // be able to shadow a form field of the same name.
+    await store2.upsert("var-pass", twoStage("var-pass"), { expectExisting: false });
+    const { router, prompts } = capturingRouter([{ headline: "Big News" }, { score: 9 }]);
+
+    await startRunJob(
+      { clientSlug: "acme", productId: "var-pass", runKind: "recurring", input: { topic: "cold brew" } },
+      "run-var-2",
+      { durableStore: env2.durableStore, runtimeDeps: { ...env2.runtimeDeps, router }, agentDefinitionStore: store2 },
+    );
+
+    expect(prompts[1]).toContain("cold brew");
+    expect(prompts[1]).toContain("Big News");
   });
 });

@@ -3,6 +3,7 @@ import type { WorkflowContext } from "@agent-engine/workflow";
 import type { WorkspaceStoreLike } from "@agent-engine/tools";
 import { createXAgentWorkflow } from "@agent-engine/agent-x";
 import { createInstagramAgentWorkflow } from "@agent-engine/agent-instagram";
+import { createLinkedInSetupWorkflow, createRedditSetupWorkflow } from "@agent-engine/agent-setup";
 import { createLinkedInAgentWorkflow } from "@agent-engine/agent-linkedin";
 import { createRedditAgentWorkflow } from "@agent-engine/agent-reddit";
 import { createBlogAgentWorkflow } from "@agent-engine/agent-blog";
@@ -37,6 +38,10 @@ export const KNOWN_PRODUCT_IDS = [
   "reputation-agent",
   "seo-geo-agent",
   "intel-report-agent",
+  // Onboarding, not drafting: these record a filled form as the charter the
+  // agents above later read. Same dispatch path, different job.
+  "linkedin-setup-agent",
+  "reddit-setup-agent",
 ] as const;
 export type ProductId = (typeof KNOWN_PRODUCT_IDS)[number];
 
@@ -116,6 +121,12 @@ export function buildWorkflowForProduct(productId: ProductId, deps: AgentRuntime
       return createInstagramAgentWorkflow({ ...deps, repoRoot: deps.repoRoot });
     case "linkedin-agent":
       return createLinkedInAgentWorkflow(deps);
+    // Setup agents take only the tool registry: they run no model, so a
+    // router and a prompt store would be dependencies they never touch.
+    case "linkedin-setup-agent":
+      return createLinkedInSetupWorkflow({ tools: deps.tools });
+    case "reddit-setup-agent":
+      return createRedditSetupWorkflow({ tools: deps.tools });
     case "reddit-agent":
       return createRedditAgentWorkflow(deps);
     case "blog-agent":

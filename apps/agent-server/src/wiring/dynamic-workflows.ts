@@ -25,9 +25,18 @@ import { buildWorkflowForProduct, isKnownProductId, type AgentRuntimeDeps, type 
  * to them from `WorkflowEngine.run()`'s point of view.
  *
  * Stages run strictly in array order (RFC "Task 2" / Studio's own
- * `dependsOn`-must-be-empty convention) — each stage's `finalOutput`
- * becomes the next stage's `input`, so a later stage can build on an
- * earlier one's structured result without a fan-out/DAG scheduler.
+ * `dependsOn`-must-be-empty convention).
+ *
+ * Each stage receives `{ runInput, previousOutput }`. Two named fields rather
+ * than one merged object, for two reasons: the first stage used to receive
+ * `{}`, so whatever a person typed into the run dialog never reached the agent
+ * at all — an agent with an input schema was answering a question it could not
+ * see; and merging the run's input into a later stage's input would let a
+ * stage output key silently shadow a form field of the same name.
+ *
+ * `previousOutput` is null for the first stage, which is the honest encoding
+ * of "nothing ran before this" — an empty object would be indistinguishable
+ * from a stage that returned nothing.
  *
  * A stage whose `AgentExecutionResult.status` isn't `"completed"` resolves
  * the whole run to `failed` (content_fail) or `degraded` (tooling_error/
@@ -39,7 +48,7 @@ import { buildWorkflowForProduct, isKnownProductId, type AgentRuntimeDeps, type 
 export function buildDynamicWorkflow(definition: AgentDefinition, deps: { tools: AgentToolRegistry; promptStore: PromptStore; router: ModelRouter }): WorkflowFn {
   return async (wf: WorkflowContext): Promise<Record<string, unknown>> => {
     const results: Record<string, unknown> = {};
-    let input: unknown = {};
+    let previousOutput: unknown = null;
 
     for (const stage of definition.stages) {
       const modelPolicy: ModelPolicy = stage.modelPolicy ?? definition.defaultModelPolicy;
@@ -57,7 +66,10 @@ export function buildDynamicWorkflow(definition: AgentDefinition, deps: { tools:
         stage.systemPrompt,
       );
 
-      const execResult = await wf.step.agent(stage.id, agent, input);
+      const execResult = await wf.step.agent(stage.id, agent, {
+        runInput: wf.input,
+        previousOutput,
+      });
 
       if (execResult.status === "content_fail") {
         throw new WorkflowContentFailure(`stage "${stage.id}" (${definition.agentId}) failed content validation`);
@@ -67,7 +79,7 @@ export function buildDynamicWorkflow(definition: AgentDefinition, deps: { tools:
       }
 
       results[stage.id] = execResult.finalOutput;
-      input = execResult.finalOutput;
+      previousOutput = execResult.finalOutput;
     }
 
     // ── terminal: topic guardrail ──

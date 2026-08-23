@@ -186,6 +186,12 @@ const GATE_STEP_IDS_BY_NEW_PRODUCT: Record<Exclude<ProductId, OriginalChannelPro
   "reputation-agent": ["10-reputation-approve-all"],
   "seo-geo-agent": ["03-prompt-set-review", "12-fix-generation-review"],
   "intel-report-agent": ["04-batch-review"],
+  // The setup agents raise no gate: they record a filled form and finish, so
+  // there is nothing for a human to approve mid-run. Empty rather than absent
+  // because this map is exhaustive over ProductId, and that exhaustiveness is
+  // what made the compiler ask about them at all.
+  "linkedin-setup-agent": [],
+  "reddit-setup-agent": [],
 };
 
 /** Recovers a step id's intended ordering position from its own "NN-..." prefix — the convention every step id in this codebase already follows (`00-`, `01-`, `10a-`, ...). Ties (e.g. `"10-delivery-review"` vs `"10a-upload-to-gcs"`) fall back to a plain string compare. */

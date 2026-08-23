@@ -14,6 +14,7 @@ import { createKarosTopicsTools } from "@agent-engine/tool-karos-topics";
 export * from "@agent-engine/tool-common";
 export * from "@agent-engine/tool-karos-client";
 export * from "@agent-engine/tool-karos-gates";
+export * from "@agent-engine/tool-karos-intake";
 export * from "@agent-engine/tool-karos-intel";
 export * from "@agent-engine/tool-karos-landing";
 export * from "@agent-engine/tool-karos-ledger";
