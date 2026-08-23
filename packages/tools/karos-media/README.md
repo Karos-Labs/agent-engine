@@ -100,6 +100,7 @@ real).
 
 | Value | Meaning | Sources |
 | --- | --- | --- |
+| `generated` | Created for this post — owned outright, nothing to credit, nothing watermarked | `media.generateImage` |
 | `blanket` | One library-wide licence covering commercial use | `unsplash`, `google_places` |
 | `attributable` | Real per-asset licence, credit required | `openverse`, `wikimedia` |
 | `unknown` | Provenance not established — the gate should be sceptical | `ddg_images`, all `apify_*` |
@@ -109,6 +110,46 @@ had them and because they genuinely find subjects no curated library carries.
 They are **not** a licence to publish: UGC copyright stays with the uploader,
 and step 06 should and will refuse most of them. They earn their place on a
 `named_venue` slide headed for human review, not on an unattended run.
+
+## Generation: `media.generateImage`
+
+Retrieval has a ceiling more providers cannot raise. prep run
+`pubsub-21535110633863323` hit it with four providers and 36 candidates: slide
+5 needed *"a timeline or roadmap with a clearly labeled 'research' first phase,
+shot from above"*. No stock or CC library holds that picture. Generation is the
+only source that answers a brief on demand.
+
+| | |
+| --- | --- |
+| Model | `gemini-2.5-flash-image` (override with `IMAGE_GEN_MODEL`) |
+| Project | `GEMINI_VERTEX_PROJECT_ID` → `GOOGLE_CLOUD_PROJECT` |
+| Region | `IMAGE_GEN_LOCATION` → `VERTEX_AI_LOCATION` → `us-central1` |
+| Licence | `licenseConfidence: "generated"` — ranks *above* `blanket` |
+
+No new credential: a deployment that already reaches Gemini on Vertex can
+generate.
+
+**It is a tool, not an `ImageSearchProvider`, and that is deliberate.** Every
+provider in a chain is queried for every need — that is what makes the pool
+diverse. Each generated image is billed, so generation belongs to the slides
+that actually came up empty, invoked by the workflow after the gate has spoken.
+In the chain it would generate six images a run and discard most of them.
+
+### Two things worth knowing
+
+**It is `generateContent`, not `generateImages`.** The SDK deprecates
+`generateImages`, and the `imagen-*` publisher models it targets return 404 for
+this project — verified by probe, not assumed. `gemini-2.5-flash-image` answers
+on both `global` and `us-central1`.
+
+**A refusal has no filter field.** The model declines with `finishReason: STOP`,
+no image part, and a *text* part explaining itself. That text is the only
+explanation available, so it is surfaced verbatim into `unmet` rather than
+flattened to "no image".
+
+The brief forbids text in the pixels. Generated lettering comes out malformed,
+and the carousel template renders the real headline and body as live text over
+the image — words in the picture would collide with copy already there.
 
 ## Failure semantics
 

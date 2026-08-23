@@ -21,7 +21,7 @@ export interface KarosMediaToolsOptions {
   /** Overrides the env-derived chain with a full routed source. */
   source?: ImageSource;
   fetchImpl?: typeof fetch;
-  /** Overrides the env-derived Imagen client. Tests pass a fake; `null` disables generation explicitly. */
+  /** Overrides the env-derived generation client. Tests pass a fake; `null` disables generation explicitly. */
   generationClient?: ImageGenerationClient | null;
 }
 
@@ -82,21 +82,21 @@ export function createKarosMediaTools(options: KarosMediaToolsOptions = {}): Age
       client:
         options.generationClient === null
           ? undefined
-          : (options.generationClient ?? createImagenClientFromEnv(options.env ?? process.env)),
-      ...(readImagenModel(options.env ?? process.env) ? { model: readImagenModel(options.env ?? process.env)! } : {}),
+          : (options.generationClient ?? createImageGenerationClientFromEnv(options.env ?? process.env)),
+      ...(readImageModel(options.env ?? process.env) ? { model: readImageModel(options.env ?? process.env)! } : {}),
     }),
   };
 }
 
-function readImagenModel(env: Record<string, string | undefined>): string | undefined {
-  const value = env["IMAGEN_MODEL"]?.trim();
+function readImageModel(env: Record<string, string | undefined>): string | undefined {
+  const value = env["IMAGE_GEN_MODEL"]?.trim();
   return value && value.length > 0 ? value : undefined;
 }
 
 /**
- * Builds a Vertex-backed Imagen client from the same project/location vars the
- * Gemini adapter reads, so enabling generation is not a separate credential —
- * a deployment that can already reach Gemini on Vertex can reach Imagen.
+ * Builds a Vertex-backed generation client from the same project/location vars
+ * the Gemini adapter reads, so enabling generation costs no new credential —
+ * a deployment that can already reach Gemini on Vertex can generate images.
  *
  * Returns undefined when no project is configured, which makes
  * `media.generateImage` report `not_available` rather than throw.
@@ -108,13 +108,13 @@ function readImagenModel(env: Record<string, string | undefined>): string | unde
  * try/catch. `packages/core` already imports the same SDK, so a static import
  * costs nothing.
  */
-function createImagenClientFromEnv(env: Record<string, string | undefined>): ImageGenerationClient | undefined {
+function createImageGenerationClientFromEnv(env: Record<string, string | undefined>): ImageGenerationClient | undefined {
   const project = env["GEMINI_VERTEX_PROJECT_ID"]?.trim() || env["GOOGLE_CLOUD_PROJECT"]?.trim();
   if (!project) return undefined;
-  // Imagen is not served in every region, and `CLOUD_ML_REGION` is "global"
-  // for the text models here — which Imagen rejects. So this reads
-  // VERTEX_AI_LOCATION and falls back to a region Imagen is actually served
-  // in, rather than inheriting a value that would 404.
-  const location = env["IMAGEN_LOCATION"]?.trim() || env["VERTEX_AI_LOCATION"]?.trim() || "us-central1";
+  // Deliberately NOT `CLOUD_ML_REGION`, which is "global" here: an image model
+  // needs a concrete region. `us-central1` and `global` were both verified to
+  // serve `gemini-2.5-flash-image` for this project; the explicit region is the
+  // safer default of the two.
+  const location = env["IMAGE_GEN_LOCATION"]?.trim() || env["VERTEX_AI_LOCATION"]?.trim() || "us-central1";
   return new GoogleGenAI({ vertexai: true, project, location }) as unknown as ImageGenerationClient;
 }
