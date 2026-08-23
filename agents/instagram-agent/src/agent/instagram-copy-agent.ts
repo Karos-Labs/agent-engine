@@ -31,6 +31,13 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyOutput> {
     // Pinned — RFC-02 §5's rationale applies identically here: drafting/
     // brand-voice judgment is never a fallback-eligible step.
     modelPolicy: resolveModelPolicy("instagram-copy", { policy: "pinned", model: "claude-sonnet-4-6" }),
-    skillRef: "instagram-copy@1",
+    // Pinned to "2": v1 stays frozen as the pre-photographability baseline,
+    // the same convention every other agent here follows. v2 adds the
+    // single-photographable-scene rules to §4 — prep run
+    // pubsub-21535110633863323 held on a slide needing "a timeline or roadmap
+    // with a clearly labeled 'research' first phase, shot from above", which
+    // v1 actively encouraged by asking for precision with no sense of what
+    // can be pictured.
+    skillRef: "instagram-copy@2",
   };
 }

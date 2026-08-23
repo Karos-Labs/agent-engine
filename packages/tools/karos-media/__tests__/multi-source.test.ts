@@ -64,10 +64,12 @@ describe("routing", () => {
     expect(ROUTE_CHAINS.named_venue[0]).toBe("apify_google_maps");
     expect(ROUTE_CHAINS.mood[0]).toBe("unsplash");
 
-    // On mood/default, ranking is by licence defensibility, so unknown-
-    // provenance web search comes dead last.
+    // Unknown-provenance web search is absent from mood/default entirely:
+    // this gate refuses unknown provenance, so on a generic need DDG could
+    // only ever cost tokens to be rejected (11 candidates, 0 selected on
+    // prep run pubsub-21535110633863323).
     for (const route of ["mood", "default"] as const) {
-      expect(ROUTE_CHAINS[route].at(-1)).toBe("ddg_images");
+      expect(ROUTE_CHAINS[route]).not.toContain("ddg_images");
     }
 
     // On named_venue it deliberately outranks the CC libraries: verification
@@ -80,12 +82,14 @@ describe("routing", () => {
 
   it("skips unconfigured providers, so a chain degrades to its keyless members", () => {
     const source = createImageSource(buildProviderRegistry({ env: {} }));
-    expect(source.chainFor("mood").map((p) => p.name)).toEqual(["openverse", "wikimedia", "ddg_images"]);
+    // ddg_images stays registered — named_venue uses it — but must NOT leak
+    // onto mood, which is what the unrouted-only append rule guarantees.
+    expect(source.chainFor("mood").map((p) => p.name)).toEqual(["openverse", "wikimedia"]);
   });
 
   it("puts Unsplash at the head of the mood chain once its key exists", () => {
     const source = createImageSource(buildProviderRegistry({ env: { UNSPLASH_ACCESS_KEY: "k" } }));
-    expect(source.chainFor("mood").map((p) => p.name)).toEqual(["unsplash", "openverse", "wikimedia", "ddg_images"]);
+    expect(source.chainFor("mood").map((p) => p.name)).toEqual(["unsplash", "openverse", "wikimedia"]);
   });
 
   it("never leaves an explicitly registered provider unreachable, even outside every built-in chain", () => {

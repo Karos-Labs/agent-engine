@@ -34,6 +34,12 @@
 
 /** How well a hit's licence can actually be justified to the rights gate. */
 export type LicenseConfidence =
+  /**
+   * Created for this post, so there is no third-party rights question at all:
+   * nobody else owns it, nobody needs crediting, nothing is watermarked.
+   * Ranks above `blanket` — `media.generateImage` only.
+   */
+  | "generated"
   /** A blanket library licence covering commercial use — Unsplash, Google Places. */
   | "blanket"
   /** A real per-asset licence, usually CC, usually needing attribution — Openverse, Wikimedia. */

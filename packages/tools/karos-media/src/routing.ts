@@ -53,8 +53,15 @@ export const ROUTE_CHAINS: Record<MediaRoute, readonly string[]> = {
     "openverse",
     "wikimedia",
   ],
-  mood: ["unsplash", "openverse", "wikimedia", "apify_pinterest", "ddg_images"],
-  default: ["unsplash", "openverse", "wikimedia", "ddg_images"],
+  // `ddg_images` is deliberately absent from both. Its hits are
+  // `licenseConfidence: "unknown"` by construction, and this gate refuses
+  // unknown provenance — so on a generic need it can only ever cost latency
+  // and vetting tokens to be rejected. prep run pubsub-21535110633863323
+  // measured it: 11 DDG candidates, 0 selected, ~27s and ~$0.04 spent
+  // proving it. It keeps its place on `named_venue`, where finding the
+  // *right specific place* is worth a candidate a human may have to clear.
+  mood: ["unsplash", "openverse", "wikimedia", "apify_pinterest"],
+  default: ["unsplash", "openverse", "wikimedia"],
 };
 
 export interface ProviderRegistryOptions {
@@ -128,17 +135,25 @@ export interface ImageSource {
   readonly available: string[];
 }
 
+/** Every provider named by any built-in route. A name outside this set is a caller's own registration. */
+const ROUTED_PROVIDER_NAMES = new Set(Object.values(ROUTE_CHAINS).flat());
+
 export function createImageSource(registry: Map<string, ImageSearchProvider>): ImageSource {
   return {
     chainFor(route: MediaRoute): ImageSearchProvider[] {
       const chain = ROUTE_CHAINS[route] ?? ROUTE_CHAINS.default;
       const ordered = chain.map((name) => registry.get(name)).filter((p): p is ImageSearchProvider => p !== undefined);
-      // A provider registered but absent from this route's chain is still a
-      // better answer than nothing — a caller-supplied custom provider, for
-      // instance, appears in no built-in chain. Append the remainder so an
-      // explicit registration is never silently unreachable.
-      for (const provider of registry.values()) {
-        if (!ordered.includes(provider)) ordered.push(provider);
+      // A provider the built-in routes never mention — a caller's own
+      // registration — is appended so an explicit registration is never
+      // silently unreachable.
+      //
+      // Scoped to *unrouted* names only, and that scoping is load-bearing: it
+      // used to append anything missing from this route, which meant a
+      // provider deliberately left off a chain got added back to the end of
+      // it anyway. Dropping `ddg_images` from `mood`/`default` would have been
+      // a no-op.
+      for (const [name, provider] of registry) {
+        if (!ROUTED_PROVIDER_NAMES.has(name) && !ordered.includes(provider)) ordered.push(provider);
       }
       return ordered;
     },

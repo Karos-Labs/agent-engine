@@ -458,12 +458,68 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // extends it to a selection that (despite the prompt's instruction)
       // duplicates a prior post's already-used image — both are
       // deterministically re-checked here, never trusted from the model alone.
-      const unfillable = vetting.selections.filter((s) => {
+      const isUnfillable = (s: ImageSelection): boolean => {
         if (s.imagePath === null) return true;
         if (!s.rightsUsable || !s.watermarkFree) return true;
         if (usedImagesSet.has(s.imagePath)) return true;
         return false;
-      });
+      };
+      let selections = vetting.selections;
+      let unfillable = selections.filter(isUnfillable);
+
+      // ── 06b/06c: generative rescue for the gaps retrieval could not fill ──
+      //
+      // Retrieval has a ceiling that more search backends cannot raise. prep
+      // run pubsub-21535110633863323 hit it exactly: four providers, 36
+      // candidates, and slide 5 still failed because it needed "a timeline or
+      // roadmap with a clearly labeled 'research' first phase, shot from
+      // above" — a picture no stock or CC library holds. Generation is the
+      // only source that answers a specific brief on demand, so the gaps get
+      // one bounded attempt at it before the post is held.
+      //
+      // Deliberately narrow: only the unfilled slides are generated (each
+      // image is billed), only the unfilled slides are re-vetted, and only
+      // once per copy attempt. The never-a-placeholder rule is untouched — a
+      // generated image still has to clear the same gate as a stock photo,
+      // and a run whose gaps survive generation still holds.
+      const generateImage = tools["media.generateImage"];
+      if (unfillable.length > 0 && generateImage !== undefined) {
+        const gaps = unfillable
+          .map((u) => ({ n: u.n, prompt: copy.slides.find((sl) => sl.n === u.n)?.visualNeed }))
+          .filter((g): g is { n: number; prompt: string } => g.prompt !== undefined);
+
+        const generated = await wf.step.code(`06b-generate-images-attempt-${attempt}`, async () =>
+          generateImage.execute({ repoRoot: options.repoRoot, runId: wf.runId, needs: gaps }, { ctx }),
+        );
+
+        if (generated.status === "success") {
+          const rescuePool = (generated.result as { candidates: ImageCandidate[] }).candidates;
+          // Re-vet only the gaps, against only the generated candidates, then
+          // splice the new verdicts over the old ones. Re-running the whole
+          // carousel would pay for five settled slides to be re-judged.
+          const revet = await wf.step.agent(`06c-vet-generated-attempt-${attempt}`, imageAgent, {
+            slides: gaps.map((g) => ({ n: g.n, visualNeed: g.prompt })),
+            candidatePool: rescuePool,
+            usedImages,
+          });
+          if (revet.status === "completed") {
+            const rescued = new Map(revet.finalOutput!.selections.map((sel) => [sel.n, sel]));
+            selections = selections.map((sel) => {
+              const replacement = rescued.get(sel.n);
+              // Only an actually-fillable replacement wins; a rescue that
+              // failed its own gate must not overwrite the original verdict
+              // with a second, equally unusable one.
+              return replacement && !isUnfillable(replacement) ? replacement : sel;
+            });
+            unfillable = selections.filter(isUnfillable);
+          }
+        }
+        // Every other outcome (`not_available` on an unconfigured deployment,
+        // `content_fail` when the model drew nothing usable, a safety refusal)
+        // leaves `unfillable` as it was and falls through to the hold below —
+        // the same honest outcome as before this rescue existed.
+      }
+
       if (unfillable.length > 0) {
         const detail = unfillable.map((s) => {
           if (s.imagePath === null) return `${s.n}: no candidate qualified`;
@@ -472,11 +528,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           return `${s.n}: already used in a prior post`;
         });
         throw new WorkflowHeld(
-          `no viable image found for slide(s) ${unfillable.map((s) => s.n).join(", ")} — holding the whole post rather than shipping a placeholder, a rights-encumbered/watermarked image, or a reused picture (${detail.join("; ")})`,
+          `no viable image found for slide(s) ${unfillable.map((s) => s.n).join(", ")} — holding the whole post rather than shipping a placeholder, a rights-encumbered/watermarked image, or a reused picture, and generation could not fill the gap either (${detail.join("; ")})`,
         );
       }
 
-      const selfCheck = checkSlidesData(copy, vetting.selections, research, frozen.styleConfig);
+      const selfCheck = checkSlidesData(copy, selections, research, frozen.styleConfig);
       const attemptChecked = await wf.step.code(`07-self-check-attempt-${attempt}`, () => selfCheck);
 
       if (!attemptChecked.ok) {
@@ -500,7 +556,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           repoRoot: options.repoRoot,
           brandTokens: frozen.brandTokens,
           copy,
-          selections: vetting.selections,
+          selections,
           canvas: frozen.styleConfig.canvas,
         }),
       );
@@ -550,7 +606,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       }
 
       finalCopy = copy;
-      finalSelections = vetting.selections;
+      finalSelections = selections;
       finalSlidesData = slidesDataAttempt;
       finalRendered = renderedAttempt;
       finalOutcomeOk = true;

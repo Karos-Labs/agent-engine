@@ -236,6 +236,172 @@ describe("05b-source-images", () => {
     expect(result.status).toBe("held");
   });
 
+  // ── generative rescue (steps 06b/06c) ──
+  //
+  // prep run pubsub-21535110633863323: four providers, 36 candidates, and
+  // slides 2 and 5 still unfillable because they needed pictures no library
+  // holds ("a timeline or roadmap with a clearly labeled 'research' first
+  // phase, shot from above"). Retrieval cannot fix that; generation can.
+
+  /** Vetting output where every slide but `gaps` is filled from the pool. */
+  function selectionsWithGaps(copy: ReturnType<typeof goodCopyOutput>, filledPath: string, gaps: number[]) {
+    return {
+      selections: copy.slides.map((s) =>
+        gaps.includes(s.n)
+          ? {
+              n: s.n,
+              imagePath: null,
+              reason: "no candidate matched this visual need",
+              license: "n/a — no candidate qualified",
+              rightsUsable: false,
+              watermarkFree: false,
+            }
+          : {
+              n: s.n,
+              imagePath: filledPath,
+              reason: "matches",
+              license: "Unsplash License",
+              rightsUsable: true,
+              watermarkFree: true,
+            },
+      ),
+    };
+  }
+
+  function stubGenerateImage(outcome: unknown, onCall?: (args: Record<string, unknown>) => void): AgentTool {
+    return {
+      name: "media.generateImage",
+      version: "1.0.0",
+      async execute(args: unknown) {
+        onCall?.(args as Record<string, unknown>);
+        return outcome;
+      },
+      inputSchema: { parse: (v: unknown) => v } as never,
+    } as unknown as AgentTool;
+  }
+
+  it("generates only the unfilled slides, and completes a post that would otherwise have held", async () => {
+    const copy = goodCopyOutput();
+    const pool = goodImageCandidatePool();
+    const filled = pool[0]!.path;
+    let generatedFor: unknown;
+
+    const tools = {
+      ...env.tools,
+      "media.findImages": stubFindImages({ status: "success", result: { provider: "unsplash", providersUsed: ["unsplash"], candidates: pool, unmet: [] } }),
+      "media.generateImage": stubGenerateImage(
+        { status: "success", result: { model: "imagen-4.0-generate-001", unmet: [], candidates: [{ path: pool[0]!.path, description: "AI-generated for slide 2", provider: "imagen", licenseConfidence: "generated" }] } },
+        (args) => {
+          generatedFor = args["needs"];
+        },
+      ),
+    };
+
+    const router = fakeRouterSequence([
+      finalTurn(goodResearchOutput()),
+      finalTurn(copy),
+      // First vetting pass: slide 2 has no match.
+      finalTurn(selectionsWithGaps(copy, filled, [2])),
+      // Rescue vetting pass: the generated image clears the gate.
+      finalTurn({
+        selections: [
+          { n: 2, imagePath: filled, reason: "the generated illustration matches the brief", license: "Generated image", rightsUsable: true, watermarkFree: true },
+        ],
+      }),
+    ]);
+
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(
+      createInstagramAgentWorkflow({ tools, promptStore: makePromptStore(), router, repoRoot: env.repoRoot, autoApprove: true }),
+      { ...params, runId: "instagram_run_rescue_ok" },
+    );
+
+    // Only the gap was generated — not the whole carousel.
+    expect(generatedFor).toEqual([{ n: 2, prompt: copy.slides.find((s) => s.n === 2)!.visualNeed }]);
+    expect(result.status).not.toBe("held");
+  });
+
+  it("still holds when generation cannot fill the gap either, and says so", async () => {
+    const copy = goodCopyOutput();
+    const pool = goodImageCandidatePool();
+
+    const tools = {
+      ...env.tools,
+      "media.findImages": stubFindImages({ status: "success", result: { provider: "unsplash", providersUsed: ["unsplash"], candidates: pool, unmet: [] } }),
+      "media.generateImage": stubGenerateImage({ status: "content_fail", reason: "filtered by the model's safety policy" }),
+    };
+
+    const router = fakeRouterSequence([
+      finalTurn(goodResearchOutput()),
+      finalTurn(copy),
+      finalTurn(selectionsWithGaps(copy, pool[0]!.path, [5])),
+    ]);
+
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(
+      createInstagramAgentWorkflow({ tools, promptStore: makePromptStore(), router, repoRoot: env.repoRoot, autoApprove: true }),
+      { ...params, runId: "instagram_run_rescue_exhausted" },
+    );
+
+    expect(result.status).toBe("held");
+    if (result.status !== "held") throw new Error("expected a held run");
+    // The never-a-placeholder rule is untouched; the reason now records that
+    // generation was tried too.
+    expect(result.reason).toContain("generation could not fill the gap");
+    expect(result.reason).toContain("5");
+  });
+
+  it("does not let a rescue image that fails its own gate overwrite the original verdict", async () => {
+    const copy = goodCopyOutput();
+    const pool = goodImageCandidatePool();
+
+    const tools = {
+      ...env.tools,
+      "media.findImages": stubFindImages({ status: "success", result: { provider: "unsplash", providersUsed: ["unsplash"], candidates: pool, unmet: [] } }),
+      "media.generateImage": stubGenerateImage({ status: "success", result: { model: "m", unmet: [], candidates: [{ path: pool[0]!.path, description: "gen", provider: "imagen", licenseConfidence: "generated" }] } }),
+    };
+
+    const router = fakeRouterSequence([
+      finalTurn(goodResearchOutput()),
+      finalTurn(copy),
+      finalTurn(selectionsWithGaps(copy, pool[0]!.path, [3])),
+      // The rescue produced something, but the gate refused it too.
+      finalTurn({
+        selections: [
+          { n: 3, imagePath: null, reason: "the generated image still does not match", license: "n/a", rightsUsable: false, watermarkFree: false },
+        ],
+      }),
+    ]);
+
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(
+      createInstagramAgentWorkflow({ tools, promptStore: makePromptStore(), router, repoRoot: env.repoRoot, autoApprove: true }),
+      { ...params, runId: "instagram_run_rescue_rejected" },
+    );
+
+    expect(result.status).toBe("held");
+  });
+
+  it("skips the rescue entirely when generation is not registered, holding exactly as before", async () => {
+    const copy = goodCopyOutput();
+    const pool = goodImageCandidatePool();
+
+    const tools = {
+      ...env.tools,
+      "media.findImages": stubFindImages({ status: "success", result: { provider: "unsplash", providersUsed: ["unsplash"], candidates: pool, unmet: [] } }),
+    };
+
+    const router = fakeRouterSequence([
+      finalTurn(goodResearchOutput()),
+      finalTurn(copy),
+      finalTurn(selectionsWithGaps(copy, pool[0]!.path, [4])),
+    ]);
+
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(
+      createInstagramAgentWorkflow({ tools, promptStore: makePromptStore(), router, repoRoot: env.repoRoot, autoApprove: true }),
+      { ...params, runId: "instagram_run_rescue_absent" },
+    );
+
+    expect(result.status).toBe("held");
+  });
+
   it("holds the post when the tool is not registered at all", async () => {
     // createAllKarosTools() deliberately excludes media.*, so a registry
     // without it is a supported configuration, not a misconfiguration.
