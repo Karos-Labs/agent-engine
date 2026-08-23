@@ -5,13 +5,19 @@ import { ctx } from "./test-helpers.js";
 const readFileImpl = async () => Buffer.from("fake video bytes");
 
 describe("video.transcribe", () => {
-  it("is a tooling_error with no ElevenLabs API key configured, and never calls fetch", async () => {
+  it("is not_available with no ElevenLabs API key configured, and never calls fetch", async () => {
+    // Was `tooling_error`, deliberately changed. "This deployment has never
+    // been given a key" and "ElevenLabs is broken" have different answers —
+    // one is an operator setting a value, the other is a retry — and reporting
+    // the first as the second made an unconfigured prep environment read as an
+    // outage. karos-media already drew this line; see transcribe-degradation
+    // for the full set.
     const fetchImpl = vi.fn();
     const tool = createTranscribe({ fetchImpl: fetchImpl as unknown as typeof fetch, env: {}, readFileImpl });
     const outcome = await tool.execute({ videoPath: "/clip.mov" }, { ctx });
 
     expect(fetchImpl).not.toHaveBeenCalled();
-    expect(outcome.status).toBe("tooling_error");
+    expect(outcome.status).toBe("not_available");
     expect((outcome as { reason: string }).reason).toContain("ELEVENLABS_API_KEY");
   });
 
