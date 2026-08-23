@@ -129,9 +129,27 @@ verdict on nothing, and paying a model to write it out is waste.
 
 Downloads land in `<repoRoot>/.media-cache/<runId>/`. Paths are bounds-checked
 against `repoRoot`, non-image content types are refused rather than saved with
-an image extension, and anything over 12 MB is dropped. Nothing prunes the
-cache yet — on Cloud Run that directory is the container's own ephemeral disk
-and disappears with the instance, but a long-lived host will want a sweep.
+an image extension, and anything over 12 MB is dropped.
+
+**`<repoRoot>/.media-cache` has to be writable, and on Cloud Run it is not by
+default.** The container filesystem is read-only apart from `/tmp`, so with
+`INSTAGRAM_AGENT_REPO_ROOT=/app` this fails with
+`EACCES: permission denied, mkdir '/app/.media-cache'` — which no deployment
+had ever seen, because the single-provider tool returned `not_available` on a
+missing key before it reached the filesystem. `cloudbuild.yaml` mounts an
+in-memory volume there (and at `instagram-output`, which `renderCarousel`
+writes) for exactly this reason.
+
+It cannot simply move to `/tmp`: `renderCarousel` enforces
+`assertInside(repoRoot)` on `templateDir`, `outDir` *and* every image path, and
+`templateDir` ships read-only inside the image. Decoupling the writable working
+root from the template root — the way `karos-landing` already separates
+`LANDING_ENGINE_ROOT` from `LANDING_ENGINE_TEMPLATE_ROOT` — is the better fix
+and is not done yet.
+
+An in-memory volume consumes the instance's memory allocation, so the size
+limits are real ceilings, not formalities. Nothing prunes the cache; it
+disappears with the instance, but a long-lived host will want a sweep.
 
 ## Adding a source
 

@@ -86,6 +86,20 @@ steps:
       - --memory=2Gi
       - --set-env-vars=GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},ANTHROPIC_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},CLOUD_ML_REGION=global,VERTEX_AI_LOCATION=${_REGION},GEMINI_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},PROMPT_STORE_DRIVER=firestore,QUEUE_PROVIDER=pubsub,PUBSUB_PROJECT_ID=${_PUBSUB_PROJECT_ID},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},GCS_ARTIFACTS_BUCKET=${_GCS_ARTIFACTS_BUCKET},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET},LANDING_ENGINE_TEMPLATE_ROOT=/app/packages/tools/karos-landing/assets/template,LANDING_ENGINE_ROOT=/tmp/landing-engine,INSTAGRAM_AGENT_REPO_ROOT=/app
       - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest
+      # instagram-agent writes under `repoRoot` (INSTAGRAM_AGENT_REPO_ROOT=/app):
+      # `.media-cache/<runId>/` from media.findImages, and
+      # `instagram-output/<client>/<postId>/` from publish.renderCarousel. The
+      # container filesystem is read-only, so both used to fail with EACCES —
+      # invisible until now only because the single-provider media tool returned
+      # `not_available` on a missing key before it ever touched the filesystem
+      # (prep run pubsub-21065943969253409 hit it the moment a key existed).
+      # These must stay under repoRoot rather than move to /tmp: renderCarousel
+      # enforces assertInside(repoRoot) on templateDir, outDir AND every image
+      # path, and templateDir ships read-only inside the image.
+      - --add-volume=name=mediacache,type=in-memory,size-limit=384Mi
+      - --add-volume-mount=volume=mediacache,mount-path=/app/.media-cache
+      - --add-volume=name=igoutput,type=in-memory,size-limit=256Mi
+      - --add-volume-mount=volume=igoutput,mount-path=/app/instagram-output
     waitFor: [push-to-production]
 
   - id: deploy-worker
@@ -106,6 +120,20 @@ steps:
       - --no-cpu-throttling
       - --set-env-vars=GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},ANTHROPIC_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},CLOUD_ML_REGION=global,VERTEX_AI_LOCATION=${_REGION},GEMINI_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},PROMPT_STORE_DRIVER=firestore,QUEUE_PROVIDER=pubsub,PUBSUB_PROJECT_ID=${_PUBSUB_PROJECT_ID},QUEUE_SUBSCRIPTION_RUN_JOBS=${_QUEUE_SUBSCRIPTION_RUN_JOBS},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},GCS_ARTIFACTS_BUCKET=${_GCS_ARTIFACTS_BUCKET},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET},LANDING_ENGINE_TEMPLATE_ROOT=/app/packages/tools/karos-landing/assets/template,LANDING_ENGINE_ROOT=/tmp/landing-engine,INSTAGRAM_AGENT_REPO_ROOT=/app
       - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest
+      # instagram-agent writes under `repoRoot` (INSTAGRAM_AGENT_REPO_ROOT=/app):
+      # `.media-cache/<runId>/` from media.findImages, and
+      # `instagram-output/<client>/<postId>/` from publish.renderCarousel. The
+      # container filesystem is read-only, so both used to fail with EACCES —
+      # invisible until now only because the single-provider media tool returned
+      # `not_available` on a missing key before it ever touched the filesystem
+      # (prep run pubsub-21065943969253409 hit it the moment a key existed).
+      # These must stay under repoRoot rather than move to /tmp: renderCarousel
+      # enforces assertInside(repoRoot) on templateDir, outDir AND every image
+      # path, and templateDir ships read-only inside the image.
+      - --add-volume=name=mediacache,type=in-memory,size-limit=384Mi
+      - --add-volume-mount=volume=mediacache,mount-path=/app/.media-cache
+      - --add-volume=name=igoutput,type=in-memory,size-limit=256Mi
+      - --add-volume-mount=volume=igoutput,mount-path=/app/instagram-output
     waitFor: [push-to-production]
 
 images:
