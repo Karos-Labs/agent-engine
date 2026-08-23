@@ -29,6 +29,19 @@ export const AgentStepConfigSchema = z.object({
    * whole step fails. Omit to take the adapter's own default.
    */
   maxTokens: z.number().int().positive().optional(),
+  /**
+   * How many times a turn may come back malformed — a missing `type`
+   * discriminator, a bare `output` object, a stringified payload — before the
+   * step gives up. Each such turn is re-prompted once with the validation
+   * error and its own offending payload attached, which is the one failure the
+   * model can actually fix when told; every retry still consumes a `maxSteps`
+   * turn, so this only ever tightens the existing bound. Default 1: real
+   * failures observed in production were single malformed turns in otherwise
+   * healthy runs, and a model looping on the same shape mistake is a config
+   * problem to surface, not to spend tokens on. 0 restores the old
+   * fail-on-first-malformed-turn behaviour.
+   */
+  maxMalformedTurns: z.number().int().nonnegative().default(1),
   modelPolicy: ModelPolicySchema,
   /** Craft-policy skill this step loads. */
   skillRef: z.string().min(1).optional(),
@@ -58,6 +71,8 @@ export interface AgentStepConfig<TOutput> {
   maxSteps?: number;
   /** Output-token ceiling for one model turn; omit for the adapter default. See `AgentStepConfigSchema`. */
   maxTokens?: number;
+  /** Bounded repair budget for malformed model turns. Default 1, `0` to fail on the first. See `AgentStepConfigSchema`. */
+  maxMalformedTurns?: number;
   modelPolicy: ModelPolicy;
   skillRef?: string;
   selfCritique?: {

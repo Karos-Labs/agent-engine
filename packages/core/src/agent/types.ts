@@ -16,7 +16,15 @@ export type TranscriptEntry =
   | { role: "tool_call"; tool: string; args: unknown }
   | { role: "observation"; tool: string; outcome: AgentToolOutcome<unknown> }
   | { role: "write_fence_block"; tool: string; reason: string }
-  | { role: "gate_feedback"; gateTool: string; reason: string; evidence: string[] };
+  | { role: "gate_feedback"; gateTool: string; reason: string; evidence: string[] }
+  /**
+   * The model's previous turn came back shaped wrong and was rejected before
+   * it could be acted on. Fed back so the repair turn can see the validation
+   * error and its own offending payload rather than re-guessing the envelope
+   * blind — `reason` carries the schema complaint, `rawPayload` the excerpt of
+   * what it actually sent.
+   */
+  | { role: "malformed_turn"; reason: string; rawPayload: string };
 
 /**
  * The platform-provided dependencies a `BaseAgent` step runs against.

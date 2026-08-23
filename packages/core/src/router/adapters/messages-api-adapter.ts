@@ -1,6 +1,7 @@
 import type { Message, MessageCreateParamsNonStreaming, Tool } from "@anthropic-ai/sdk/resources/messages";
 import type { CompletionRequest, CompletionResult, MessagesApiClient, ModelAdapter } from "./types.js";
-import { toRootObjectJsonSchema, unwrapRootPayload } from "./root-object-schema.js";
+import { toRootObjectJsonSchema } from "./root-object-schema.js";
+import { parseStructuredOutput } from "./structured-output.js";
 import { withRetry, type RetryOptions } from "./retry.js";
 
 const STRUCTURED_OUTPUT_TOOL_NAME = "emit_output";
@@ -66,7 +67,9 @@ export interface MessagesApiAdapterOptions {
  * or anyOf at the top level`. `BaseAgent` always hands down a discriminated
  * union (`tool_call` | `final`), so the conversion goes through
  * `toRootObjectJsonSchema`, which nests a non-object root under a single
- * property; `unwrapRootPayload` takes it back off before parsing.
+ * property; `parseStructuredOutput` takes it back off before validating, and
+ * turns any shape mismatch into a repairable `StructuredOutputValidationError`
+ * rather than a fatal one.
  *
  * The client is constructor-injected so this is testable without a network
  * call, without an API key, and without GCP credentials. The API call itself
@@ -120,7 +123,6 @@ export class MessagesApiAdapter implements ModelAdapter {
       throw new Error(`${this.providerId}: model "${req.model}" did not return a "${STRUCTURED_OUTPUT_TOOL_NAME}" tool_use block`);
     }
 
-    const output = req.schema.parse(unwrapRootPayload(toolUse.input, wrapped));
     const usage = response.usage;
 
     // `input_tokens` counts neither cache reads nor cache *writes*. Cache
@@ -132,8 +134,11 @@ export class MessagesApiAdapter implements ModelAdapter {
     // approximation is the deliberate trade until it's worth that migration.
     const cacheWriteTokens = usage.cache_creation_input_tokens ?? 0;
 
-    return {
-      output,
+    // Resolved before the payload is validated, not after, so a malformed turn
+    // still reports what it actually burned. Reading usage only on the success
+    // path is what made every schema failure record 0 tokens and $0 — the one
+    // number that would have shown these turns are neither free nor cheap.
+    const reportedUsage = {
       // Normalized back to canonical form — `computeStepCostUsd` looks this
       // up in `MODEL_PRICING`, and a provider-spelled miss falls back to
       // Sonnet's rate silently. See `./agent-platform-model-ids.ts`.
@@ -144,6 +149,14 @@ export class MessagesApiAdapter implements ModelAdapter {
       },
       outputTokens: usage.output_tokens,
     };
+
+    const output = parseStructuredOutput(req.schema, toolUse.input, wrapped, {
+      providerId: this.providerId,
+      model: req.model,
+      usage: reportedUsage,
+    });
+
+    return { output, ...reportedUsage };
   }
 
   /**

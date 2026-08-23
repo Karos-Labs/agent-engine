@@ -1,5 +1,6 @@
 export * from "./types.js";
 export * from "./root-object-schema.js";
+export * from "./structured-output.js";
 export * from "./retry.js";
 export * from "./messages-api-adapter.js";
 export * from "./anthropic-adapter.js";

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { FinishReason, BlockedReason, type GoogleGenAI } from "@google/genai";
 import { GeminiAdapter, GEMINI_DEFAULT_MAX_TOKENS } from "../src/router/adapters/gemini-adapter.js";
 import type { CompletionRequest } from "../src/router/adapters/types.js";
+import { StructuredOutputValidationError } from "../src/router/adapters/structured-output.js";
 
 // A discriminated union at the schema root, exactly the shape
 // `BaseAgent.buildTurnSchema()` produces — forces `toRootObjectJsonSchema` to
@@ -110,14 +111,28 @@ describe("GeminiAdapter", () => {
     await expect(adapter.complete(request())).rejects.toThrow(/google-gemini.*returned no text content.*finishReason: OTHER/s);
   });
 
-  it("throws a clear error when the model returns non-JSON text despite the JSON response mode", async () => {
+  // Non-JSON text is a malformed *turn*, not a dead provider — it surfaces as
+  // the typed error `BaseAgent` spends a repair turn on, and carries the
+  // offending text so the repair prompt can show the model what it sent.
+  it("raises a repairable StructuredOutputValidationError, carrying the payload, when the model returns non-JSON text despite the JSON response mode", async () => {
     const generateContent = vi.fn().mockResolvedValue({
       candidates: [{ finishReason: FinishReason.STOP }],
       text: "not actually json",
+      usageMetadata: { promptTokenCount: 90, candidatesTokenCount: 12 },
     });
     const adapter = new GeminiAdapter({ client: fakeClient(generateContent), retryOptions: { delay: () => Promise.resolve() } });
 
-    await expect(adapter.complete(request())).rejects.toThrow(/google-gemini.*returned non-JSON text/s);
+    const err = await adapter.complete(request()).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(StructuredOutputValidationError);
+    expect((err as Error).message).toMatch(/google-gemini.*malformed structured output.*not valid JSON/s);
+    expect((err as StructuredOutputValidationError).rawPayloadExcerpt).toBe("not actually json");
+    // Real spend, not the zeros a post-validation usage read would leave.
+    expect((err as StructuredOutputValidationError).usage).toEqual({
+      modelUsed: "gemini-2.5-pro",
+      inputTokens: { cached: 0, uncached: 90 },
+      outputTokens: 12,
+    });
   });
 
   it("accounts usage tokens, splitting cachedContentTokenCount out of the prompt total", async () => {

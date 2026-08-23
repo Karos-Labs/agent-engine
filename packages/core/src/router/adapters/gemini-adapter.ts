@@ -1,6 +1,7 @@
 import { FinishReason, type GoogleGenAI } from "@google/genai";
 import type { CompletionRequest, CompletionResult, ModelAdapter } from "./types.js";
-import { toRootObjectJsonSchema, unwrapRootPayload } from "./root-object-schema.js";
+import { toRootObjectJsonSchema } from "./root-object-schema.js";
+import { parseStructuredOutput, parseStructuredOutputText } from "./structured-output.js";
 import { withRetry, type RetryOptions } from "./retry.js";
 
 /**
@@ -109,23 +110,21 @@ export class GeminiAdapter implements ModelAdapter {
       );
     }
 
-    let parsedJson: unknown;
-    try {
-      parsedJson = JSON.parse(raw);
-    } catch {
-      throw new Error(`google-gemini: model "${req.model}" returned non-JSON text despite responseMimeType=application/json: ${raw.slice(0, 200)}`);
-    }
-
-    const output = req.schema.parse(unwrapRootPayload(parsedJson, wrapped));
     const usage = response.usageMetadata;
     const cached = usage?.cachedContentTokenCount ?? 0;
     const prompt_ = usage?.promptTokenCount ?? 0;
 
-    return {
-      output,
+    // Resolved before parsing so a malformed turn still reports its real spend
+    // rather than the zeros a post-validation read leaves behind.
+    const reportedUsage = {
       modelUsed: req.model,
       inputTokens: { cached, uncached: Math.max(prompt_ - cached, 0) },
       outputTokens: usage?.candidatesTokenCount ?? 0,
     };
+    const parseContext = { providerId: "google-gemini", model: req.model, usage: reportedUsage };
+
+    const output = parseStructuredOutput(req.schema, parseStructuredOutputText(raw, parseContext), wrapped, parseContext);
+
+    return { output, ...reportedUsage };
   }
 }

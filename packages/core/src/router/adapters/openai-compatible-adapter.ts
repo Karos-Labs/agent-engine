@@ -1,6 +1,7 @@
 import type OpenAI from "openai";
 import type { CompletionRequest, CompletionResult, ModelAdapter } from "./types.js";
-import { toRootObjectJsonSchema, unwrapRootPayload } from "./root-object-schema.js";
+import { toRootObjectJsonSchema } from "./root-object-schema.js";
+import { parseStructuredOutput, parseStructuredOutputText } from "./structured-output.js";
 import { withRetry, type RetryOptions } from "./retry.js";
 
 /**
@@ -70,12 +71,12 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       throw new Error(`${this.providerId}: model "${req.model}" returned no message content`);
     }
 
-    const output = req.schema.parse(unwrapRootPayload(JSON.parse(raw), wrapped));
     const usage = response.usage;
     const cached = usage?.prompt_tokens_details?.cached_tokens ?? 0;
 
-    return {
-      output,
+    // Resolved before parsing so a malformed turn still reports its real spend
+    // rather than the zeros a post-validation read leaves behind.
+    const reportedUsage = {
       modelUsed: response.model,
       inputTokens: {
         cached,
@@ -83,5 +84,10 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       },
       outputTokens: usage?.completion_tokens ?? 0,
     };
+    const parseContext = { providerId: this.providerId, model: req.model, usage: reportedUsage };
+
+    const output = parseStructuredOutput(req.schema, parseStructuredOutputText(raw, parseContext), wrapped, parseContext);
+
+    return { output, ...reportedUsage };
   }
 }

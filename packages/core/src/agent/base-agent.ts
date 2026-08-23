@@ -11,6 +11,13 @@ import type {
 import { GateVerdictSchema } from "../types/gate.js";
 import { computeStepCostUsd, summarizeStepTelemetry } from "../telemetry/pricing.js";
 import type { RouterCompleteOptions } from "../router/model-router.js";
+// Both are pure, I/O-free schema helpers, so reaching into `router/adapters`
+// from here doesn't give Layer 2 a second channel out (RFC-01 §4) — and
+// `toRootObjectJsonSchema` in particular has to be *the same* function the
+// adapters call, or the envelope described to the model could drift from the
+// one on the wire.
+import { toRootObjectJsonSchema } from "../router/adapters/root-object-schema.js";
+import { StructuredOutputValidationError } from "../router/adapters/structured-output.js";
 import type { AgentToolOutcome, AgentToolRegistry } from "./tool.js";
 import { enforceWriteFence } from "./write-fence.js";
 import { parseSkillRef } from "./prompt-store.js";
@@ -20,7 +27,18 @@ import type { BaseAgentRuntime, ReActTurn, TranscriptEntry } from "./types.js";
 type TurnOutcome<TOutput> =
   | { kind: "tool_call"; telemetry: AgentStepTelemetry; toolName: string; args: unknown; outcome: AgentToolOutcome<unknown> }
   | { kind: "final"; telemetry: AgentStepTelemetry; output: TOutput }
-  | { kind: "tooling_error"; telemetry: AgentStepTelemetry };
+  | { kind: "tooling_error"; telemetry: AgentStepTelemetry }
+  /** The model answered, but in a shape the turn schema rejects — recoverable by re-prompting, unlike every other failure here. */
+  | { kind: "malformed_turn"; telemetry: AgentStepTelemetry; reason: string; rawPayload: string };
+
+/** Step-scoped loop counters, shared by the draft phase and every revision so neither can reset the other's bound. */
+interface LoopState {
+  stepIndex: number;
+  malformedTurns: number;
+}
+
+/** How one pass of the ReAct loop ended. `budget_exceeded`/`tooling_error` map straight onto `AgentExecutionStatus`. */
+type LoopExit<TOutput> = { kind: "final"; output: TOutput } | { kind: "tooling_error" } | { kind: "budget_exceeded" };
 
 type GateCheckOutcome =
   | { kind: "pass"; telemetry: AgentStepTelemetry }
@@ -68,15 +86,65 @@ export abstract class BaseAgent<TOutput> {
       return this.finish(steps, null, "tooling_error");
     }
 
-    let stepIndex = 0;
+    // `stepIndex` and the malformed-turn budget are both step-scoped, not
+    // phase-scoped: the draft loop and any later revision loop share one
+    // `maxSteps` allowance and one repair allowance, so a revision can never
+    // reset either and run the step past its bound.
+    const loop: LoopState = { stepIndex: 0, malformedTurns: 0 };
 
-    while (stepIndex < maxSteps) {
-      const turn = await this.runOneTurn(ctx, input, transcript, systemPrompt, stepIndex);
+    const exit = await this.runReActLoop(ctx, input, transcript, systemPrompt, steps, loop, maxSteps);
+    if (exit.kind !== "final") {
+      return this.finish(steps, null, exit.kind);
+    }
+    return this.resolveFinalOutput(ctx, input, transcript, systemPrompt, steps, loop, maxSteps, exit.output);
+  }
+
+  /**
+   * The bounded ReAct loop itself (RFC-01 §5.3), shared by the draft phase and
+   * by every self-critique revision.
+   *
+   * Sharing it is the fix for a real failure, not tidiness: the revision phase
+   * used to call `runOneTurn` exactly once and treat anything but a `final` as
+   * a fatal `tooling_error`. A revising model that called a tool first — to
+   * re-check a length limit or re-run a gate against its new text, which is
+   * precisely what a careful reviser does — killed the run, and because the
+   * turn itself had succeeded, the step record showed four healthy turns and
+   * no error at all (prep run pubsub-20272673526122768, newsletter-agent
+   * 09-draft-post, whose turn 3 was a successful `render.preview`). Revision
+   * is the same Thought → Action → Observation problem as drafting; it gets
+   * the same loop, and stays bounded by the same shared `maxSteps`.
+   */
+  private async runReActLoop(
+    ctx: AgentContext,
+    input: unknown,
+    transcript: TranscriptEntry[],
+    systemPrompt: string | undefined,
+    steps: AgentStepTelemetry[],
+    loop: LoopState,
+    maxSteps: number,
+  ): Promise<LoopExit<TOutput>> {
+    const maxMalformedTurns = this.config.maxMalformedTurns ?? 1;
+
+    while (loop.stepIndex < maxSteps) {
+      const turn = await this.runOneTurn(ctx, input, transcript, systemPrompt, loop.stepIndex);
       steps.push(turn.telemetry);
-      stepIndex++;
+      loop.stepIndex++;
 
       if (turn.kind === "tooling_error") {
-        return this.finish(steps, null, "tooling_error");
+        return { kind: "tooling_error" };
+      }
+
+      // A rejected turn was never acted on, so nothing downstream saw it — the
+      // only state it leaves is the transcript note telling the model what it
+      // got wrong. Re-prompting is bounded twice over: by this budget and by
+      // `maxSteps`, which this turn has already consumed.
+      if (turn.kind === "malformed_turn") {
+        loop.malformedTurns++;
+        if (loop.malformedTurns > maxMalformedTurns) {
+          return { kind: "tooling_error" };
+        }
+        transcript.push({ role: "malformed_turn", reason: turn.reason, rawPayload: turn.rawPayload });
+        continue;
       }
 
       if (turn.kind === "tool_call") {
@@ -89,10 +157,10 @@ export abstract class BaseAgent<TOutput> {
       }
 
       // turn.kind === "final" — the output schema's terminal condition has been met.
-      return this.resolveFinalOutput(ctx, input, transcript, systemPrompt, steps, stepIndex, maxSteps, turn.output);
+      return { kind: "final", output: turn.output };
     }
 
-    return this.finish(steps, null, "budget_exceeded");
+    return { kind: "budget_exceeded" };
   }
 
   /**
@@ -116,6 +184,7 @@ export abstract class BaseAgent<TOutput> {
       {
         stepId: this.config.id,
         description: this.config.description,
+        responseContract: this.describeResponseContract(),
         allowedTools: this.describeAllowedTools(),
         context: { runId: ctx.runId, clientSlug: ctx.clientSlug, productId: ctx.productId, slotId: ctx.slotId },
         input,
@@ -124,6 +193,46 @@ export abstract class BaseAgent<TOutput> {
       null,
       2,
     );
+  }
+
+  /**
+   * States the ReAct envelope in the prompt instead of leaving the model to
+   * infer it from the tool's JSON Schema alone.
+   *
+   * The schema was previously the *only* statement of this contract, and real
+   * runs died on the two mistakes that invites: returning the bare `output`
+   * object with no `type` at all (rejected as `Invalid discriminator value.
+   * Expected 'tool_call' | 'final'`), and serializing the payload as a JSON
+   * string instead of an object. Both are shape mistakes a sentence prevents
+   * far more cheaply than a repair turn recovers from.
+   *
+   * `wrapped` is read from `toRootObjectJsonSchema` — the same pure function
+   * the adapters use — rather than assumed, so this can never describe an
+   * envelope different from the one actually on the wire. That is also why it
+   * is derived here and not hardcoded: a step with no `allowedTools` gets an
+   * object-rooted schema that is *not* wrapped, and telling it to nest under
+   * `turn` would manufacture the very failure this prevents.
+   */
+  private describeResponseContract(): Record<string, unknown> {
+    const hasTools = this.config.allowedTools.length > 0;
+    const wrapped = this.turnSchemaIsWrapped(hasTools);
+    const finalShape = '{"type":"final","thought":"<optional>","output":{…}}';
+    const toolShape = '{"type":"tool_call","thought":"<optional>","tool":"<one of allowedTools>","args":{…}}';
+
+    return {
+      shape: wrapped
+        ? 'Return {"turn": <turn-object>} — the turn object nested under a single "turn" property.'
+        : "Return the turn object itself, at the root.",
+      turnObject: hasTools ? `Exactly one of: ${toolShape} or ${finalShape}` : `Exactly: ${finalShape}`,
+      rules: [
+        '"type" is REQUIRED and must be the literal string ' +
+          (hasTools ? '"tool_call" or "final"' : '"final"') +
+          " — never omitted, never any other value.",
+        'Never return the "output" object on its own. A finished answer is always wrapped as ' + finalShape + ".",
+        "Return real JSON objects, never a JSON-encoded string in place of an object.",
+        ...(hasTools ? ['"tool" must be exactly one of the advertised allowedTools names.'] : []),
+      ],
+    };
   }
 
   /**
@@ -155,6 +264,29 @@ export abstract class BaseAgent<TOutput> {
         return { name };
       }
     });
+  }
+
+  /**
+   * Whether the turn schema will be nested under `turn` on the wire, asked of
+   * `toRootObjectJsonSchema` so the prompt can never describe an envelope
+   * different from the one the adapters actually send.
+   *
+   * The fallback matters: `z.toJSONSchema()` throws on a schema it can't
+   * represent (the reason `describeAllowedTools` guards it too), and unlike
+   * the adapter's identical call — which happens inside `runOneTurn`'s
+   * try/catch and so degrades to a `tooling_error` — this one runs while
+   * *building the prompt*, where a throw would escape `run()` entirely. A
+   * prompt-shaping helper must never be the thing that crashes a step, so an
+   * unrepresentable schema falls back to the rule `buildTurnSchema` already
+   * guarantees: tools present means a discriminated-union root (wrapped), no
+   * tools means a plain object root (not wrapped).
+   */
+  private turnSchemaIsWrapped(hasTools: boolean): boolean {
+    try {
+      return toRootObjectJsonSchema(this.buildTurnSchema()).wrapped;
+    } catch {
+      return hasTools;
+    }
   }
 
   /**
@@ -222,6 +354,33 @@ export abstract class BaseAgent<TOutput> {
     try {
       completion = await this.runtime.router.complete(prompt, turnSchema, this.config.modelPolicy, opts);
     } catch (err) {
+      const durationMs = this.clock() - startedAt;
+      // A malformed turn is the one model-call failure worth another turn, so
+      // it is classified apart from a dead provider / bad auth / exhausted
+      // output ceiling. Its usage is whatever the provider actually reported
+      // (the adapter reads it before validating), which is why this doesn't
+      // hardcode the zeros the generic path below still correctly uses — there
+      // is no usage to report when the call never produced a response.
+      if (err instanceof StructuredOutputValidationError) {
+        const reason = describeError(err);
+        return {
+          kind: "malformed_turn",
+          reason,
+          rawPayload: err.rawPayloadExcerpt,
+          telemetry: {
+            stepIndex,
+            modelUsed: err.usage?.modelUsed ?? this.config.modelPolicy.model,
+            inputTokens: err.usage?.inputTokens ?? { cached: 0, uncached: 0 },
+            outputTokens: err.usage?.outputTokens ?? 0,
+            durationMs,
+            costUsd: err.usage
+              ? computeStepCostUsd(err.usage.modelUsed, err.usage.inputTokens, err.usage.outputTokens)
+              : 0,
+            status: "tooling_error",
+            error: `malformed model turn: ${reason} — raw payload: ${err.rawPayloadExcerpt}`,
+          },
+        };
+      }
       return {
         kind: "tooling_error",
         telemetry: {
@@ -229,7 +388,7 @@ export abstract class BaseAgent<TOutput> {
           modelUsed: this.config.modelPolicy.model,
           inputTokens: { cached: 0, uncached: 0 },
           outputTokens: 0,
-          durationMs: this.clock() - startedAt,
+          durationMs,
           costUsd: 0,
           status: "tooling_error",
           error: `model call failed: ${describeError(err)}`,
@@ -384,7 +543,24 @@ export abstract class BaseAgent<TOutput> {
     return { kind: "tool_call", telemetry, toolName: tool.name, args: parsedArgs.data, outcome };
   }
 
-  private zeroCostTelemetry(stepIndex: number, toolName: string, toolVersion: string, result: unknown, status: StepStatus, durationMs: number): AgentStepTelemetry {
+  /**
+   * Telemetry for a turn that consumed no model tokens (a gate-tool call).
+   *
+   * `error` is set for every non-success status rather than left to the
+   * `toolCall.result` blob: a run report renders `error`, so a gate that
+   * errored used to show a bare `tooling_error` with its explanation buried
+   * one level down in an untyped payload — indistinguishable at a glance from
+   * a missing tool, a thrown tool, or a malformed verdict.
+   */
+  private zeroCostTelemetry(
+    stepIndex: number,
+    toolName: string,
+    toolVersion: string,
+    result: unknown,
+    status: StepStatus,
+    durationMs: number,
+    error?: string,
+  ): AgentStepTelemetry {
     return {
       stepIndex,
       toolCall: { name: toolName, args: undefined, result, toolVersion },
@@ -394,6 +570,7 @@ export abstract class BaseAgent<TOutput> {
       durationMs,
       costUsd: 0,
       status,
+      ...(error !== undefined ? { error } : {}),
     };
   }
 
@@ -411,7 +588,15 @@ export abstract class BaseAgent<TOutput> {
     if (!gateTool) {
       return {
         kind: "tooling_error",
-        telemetry: this.zeroCostTelemetry(stepIndex, gateToolName, "unknown", { error: `no gate tool registered as "${gateToolName}"` }, "tooling_error", this.clock() - startedAt),
+        telemetry: this.zeroCostTelemetry(
+          stepIndex,
+          gateToolName,
+          "unknown",
+          { error: `no gate tool registered as "${gateToolName}"` },
+          "tooling_error",
+          this.clock() - startedAt,
+          `self-critique gate "${gateToolName}" is not registered in this step's tool registry`,
+        ),
       };
     }
 
@@ -425,20 +610,51 @@ export abstract class BaseAgent<TOutput> {
     const durationMs = this.clock() - startedAt;
 
     if (outcome.status !== "success") {
-      return { kind: "tooling_error", telemetry: this.zeroCostTelemetry(stepIndex, gateTool.name, gateTool.version, outcome, "tooling_error", durationMs) };
+      return {
+        kind: "tooling_error",
+        telemetry: this.zeroCostTelemetry(
+          stepIndex,
+          gateTool.name,
+          gateTool.version,
+          outcome,
+          "tooling_error",
+          durationMs,
+          `self-critique gate "${gateTool.name}" did not return a verdict: ${outcome.status}${
+            "reason" in outcome && outcome.reason ? ` — ${outcome.reason}` : ""
+          }`,
+        ),
+      };
     }
 
     const verdictParse = GateVerdictSchema.safeParse(outcome.result);
     if (!verdictParse.success) {
       return {
         kind: "tooling_error",
-        telemetry: this.zeroCostTelemetry(stepIndex, gateTool.name, gateTool.version, { error: "gate tool returned a malformed GateVerdict" }, "tooling_error", durationMs),
+        telemetry: this.zeroCostTelemetry(
+          stepIndex,
+          gateTool.name,
+          gateTool.version,
+          { error: "gate tool returned a malformed GateVerdict" },
+          "tooling_error",
+          durationMs,
+          `self-critique gate "${gateTool.name}" returned a malformed GateVerdict`,
+        ),
       };
     }
 
     const verdict = verdictParse.data;
     // A tooling_error verdict is never recorded as a content verdict (RFC-01 §5.6) — same status either way.
-    const telemetry = this.zeroCostTelemetry(stepIndex, gateTool.name, gateTool.version, verdict, verdict.verdict === "pass" ? "success" : verdict.verdict, durationMs);
+    const telemetry = this.zeroCostTelemetry(
+      stepIndex,
+      gateTool.name,
+      gateTool.version,
+      verdict,
+      verdict.verdict === "pass" ? "success" : verdict.verdict,
+      durationMs,
+      verdict.verdict === "pass"
+        ? undefined
+        : `self-critique gate "${gateTool.name}" returned "${verdict.verdict}"${verdict.reason ? `: ${verdict.reason}` : ""}`,
+    );
 
     if (verdict.verdict === "pass") {
       return { kind: "pass", telemetry };
@@ -455,7 +671,7 @@ export abstract class BaseAgent<TOutput> {
     transcript: TranscriptEntry[],
     systemPrompt: string | undefined,
     steps: AgentStepTelemetry[],
-    stepIndexAfterDraft: number,
+    loop: LoopState,
     maxSteps: number,
     draft: TOutput,
   ): Promise<AgentExecutionResult<TOutput>> {
@@ -467,12 +683,11 @@ export abstract class BaseAgent<TOutput> {
     const maxRevisions = this.config.selfCritique.maxRevisions ?? 1;
     let attempt = 0;
     let currentDraft = draft;
-    let stepIndex = stepIndexAfterDraft;
 
     for (;;) {
-      const gateResult = await this.runGateCheck(ctx, gateToolName, currentDraft, stepIndex, this.config.selfCritique.gateArgs);
+      const gateResult = await this.runGateCheck(ctx, gateToolName, currentDraft, loop.stepIndex, this.config.selfCritique.gateArgs);
       steps.push(gateResult.telemetry);
-      stepIndex++;
+      loop.stepIndex++;
 
       if (gateResult.kind === "tooling_error") {
         // Never masked as a content failure; the unverified draft is preserved, not discarded.
@@ -487,23 +702,23 @@ export abstract class BaseAgent<TOutput> {
       if (attempt >= maxRevisions) {
         return this.finish(steps, null, "content_fail");
       }
-      if (stepIndex >= maxSteps) {
+      if (loop.stepIndex >= maxSteps) {
         return this.finish(steps, null, "budget_exceeded");
       }
 
       attempt++;
       transcript.push({ role: "gate_feedback", gateTool: gateToolName, reason: gateResult.reason, evidence: gateResult.evidence });
 
-      const revisionTurn = await this.runOneTurn(ctx, input, transcript, systemPrompt, stepIndex);
-      steps.push(revisionTurn.telemetry);
-      stepIndex++;
-
-      if (revisionTurn.kind !== "final") {
-        // A revision turn is expected to produce a revised terminal output directly (Phase 1 scope).
-        return this.finish(steps, null, "tooling_error");
+      // The reviser gets the full loop, not one all-or-nothing turn: it may
+      // call tools to check its own revision before committing to it, exactly
+      // as it could while drafting. Whatever it spends here comes out of the
+      // step's shared `maxSteps`.
+      const revision = await this.runReActLoop(ctx, input, transcript, systemPrompt, steps, loop, maxSteps);
+      if (revision.kind !== "final") {
+        return this.finish(steps, null, revision.kind);
       }
 
-      currentDraft = revisionTurn.output;
+      currentDraft = revision.output;
     }
   }
 
