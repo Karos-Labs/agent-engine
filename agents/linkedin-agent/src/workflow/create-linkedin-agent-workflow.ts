@@ -1,5 +1,6 @@
+import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure } from "@agent-engine/workflow";
+import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail} from "@agent-engine/workflow";
 import { LinkedInDraftAgent } from "../agent/linkedin-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
 import { renderLinkedInDraftsMarkdown } from "./render-drafts-markdown.js";
@@ -229,6 +230,9 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
         }
       }
       return {
+        // Same read that produced identityScope, so the terminal guardrail
+        // below costs no extra step.
+        forbiddenTopics: configOutcome.status === "success" ? readForbiddenTopics(configOutcome.result) : [],
         profile: profileOutcome.result as Record<string, unknown>,
         voiceRules: voiceRulesOutcome.result as Record<string, unknown>,
       };
@@ -494,6 +498,15 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
     });
 
     // ── 15: human batch-review gate — nothing ships without a real approval ──
+    // ── terminal topic guardrail ──
+    //
+    // Before the human gate: a reviewer should never be shown a draft that
+    // engages a subject this client said it does not touch. Not a repeat of
+    // gate.brandCompliance -- that matches forbiddenTerms as substrings and
+    // catches the word, while this judges the subject. Free for a client who
+    // forbids nothing: no list, no step, no model call.
+    await runTopicGuardrail(wf, { tools, promptStore: options.promptStore, router: options.router }, draft.text, intake.forbiddenTopics);
+
     const reviewDecision: GateResponse = options.autoApprove
       ? await wf.step.code("15-batch-review", () => ({
           decision: "approve" as const,

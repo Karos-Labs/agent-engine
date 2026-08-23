@@ -1,7 +1,8 @@
+import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentToolRegistry, GateResponse, ModelRouter, PromptStore } from "@agent-engine/core";
 import { createWorkspaceStore, type WorkspaceStoreLike } from "@agent-engine/tool-common";
 import type { Annotations, CaptureLegOutcome, DoctrineGateResult, Review, TriageResult } from "@agent-engine/tool-karos-reputation";
-import { type SlotOutcome, type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure } from "@agent-engine/workflow";
+import { type SlotOutcome, type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail } from "@agent-engine/workflow";
 import { ReputationDoctrineGateAgent } from "../agent/reputation-doctrine-gate-agent.js";
 import { ReputationDraftAgent } from "../agent/reputation-draft-agent.js";
 import { REPUTATION_CLASSIFIER_MODEL_ID, ReputationExtractionAgent } from "../agent/reputation-extraction-agent.js";
@@ -212,6 +213,7 @@ export function createReputationPulseWorkflow(options: CreateReputationPulseWork
       const voiceRules = voiceOutcome.status === "success" ? (voiceOutcome.result as Record<string, unknown>) : {};
 
       return {
+        forbiddenTopics: readForbiddenTopics(rawConfig),
         facts,
         brand,
         voiceRules,
@@ -639,6 +641,19 @@ export function createReputationPulseWorkflow(options: CreateReputationPulseWork
       throw new WorkflowBlockedIntake(`frozen autonomy value "${frozen.autonomy}" is not "approve-all" — this should be unreachable past step 02`);
     }
     const approvedList = Array.from(approvedDrafts.entries()).map(([reviewId, draftText]) => ({ reviewId, draftText }));
+    // ── terminal topic guardrail ──
+    //
+    // Every approved reply, judged as one body of text before a human is asked
+    // to release them. These are public replies on the client's own listings,
+    // which is exactly the voice forbiddenTopics is about. Not a repeat of the
+    // brand gate: that matches terms, this judges subjects.
+    await runTopicGuardrail(
+      wf,
+      { tools, promptStore: options.promptStore, router: options.router },
+      approvedList.map((d) => d.draftText).join("\n\n"),
+      frozen.forbiddenTopics,
+    );
+
     const approveAllDecision: GateResponse = options.autoApprove
       ? await wf.step.code("10-reputation-approve-all", () => ({ decision: "approve" as const, actor: "system", at: new Date().toISOString() }))
       : await wf.step.gate("10-reputation-approve-all", {

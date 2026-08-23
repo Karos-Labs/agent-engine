@@ -1,4 +1,6 @@
 export interface BlogIntakeConfig {
+  /** Subjects this client does not engage with, carried from the intake read so the terminal guardrail needs no second one. */
+  forbiddenTopics: string[];
   targetKeywords: string[];
   contentPillars: string[];
   requestedTopic?: string;

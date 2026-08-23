@@ -1,5 +1,6 @@
+import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure } from "@agent-engine/workflow";
+import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail} from "@agent-engine/workflow";
 import { BlogDraftAgent } from "../agent/blog-draft-agent.js";
 import { renderPreview, BLOG_MIN_WORD_COUNT, BLOG_MAX_WORD_COUNT, type RenderPreviewResult } from "../tools/render-preview.js";
 import { buildBlogJsonLd, type BlogJsonLd } from "../tools/json-ld.js";
@@ -122,6 +123,9 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
         throw new WorkflowBlockedIntake("client has not configured any content pillars yet");
       }
       return {
+        // Same read that produced the rest of this object, so the terminal
+        // guardrail below costs no extra step.
+        forbiddenTopics: readForbiddenTopics(configOutcome.result),
         targetKeywords: config.targetKeywords,
         contentPillars: config.contentPillars,
         ...(config.requestedTopic !== undefined ? { requestedTopic: config.requestedTopic } : {}),
@@ -325,6 +329,15 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
     });
 
     // ── 15: human batch-review gate — nothing ships without a real approval ──
+    // ── terminal topic guardrail ──
+    //
+    // Before the human gate: a reviewer should never be shown a draft that
+    // engages a subject this client said it does not touch. Not a repeat of
+    // gate.brandCompliance -- that matches forbiddenTerms as substrings and
+    // catches the word, while this judges the subject. Free for a client who
+    // forbids nothing: no list, no step, no model call.
+    await runTopicGuardrail(wf, { tools, promptStore: options.promptStore, router: options.router }, draft.text, intake.forbiddenTopics);
+
     const reviewDecision: GateResponse = options.autoApprove
       ? await wf.step.code("15-batch-review", () => ({
           decision: "approve" as const,

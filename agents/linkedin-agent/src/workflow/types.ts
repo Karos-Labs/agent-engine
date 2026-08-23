@@ -1,4 +1,6 @@
 export interface LinkedInIntakeConfig {
+  /** Subjects this client does not engage with, carried from the intake read so the terminal guardrail needs no second one. */
+  forbiddenTopics: string[];
   profile: Record<string, unknown>;
   voiceRules: Record<string, unknown>;
 }

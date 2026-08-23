@@ -38,6 +38,12 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyOutput> {
     // with a clearly labeled 'research' first phase, shot from above", which
     // v1 actively encouraged by asking for precision with no sense of what
     // can be pictured.
-    skillRef: "instagram-copy@2",
+    // Pinned to "3": v3 is v2 with every em dash removed. v1 and v2 both
+    // banned em dashes in the copy while using nine and eleven of them
+    // respectively, and the model imitates the register of its instructions:
+    // prep run pubsub-21066191524607951 failed the mechanical craft-hygiene
+    // gate on two of three attempts on exactly that character. v1 and v2 stay
+    // frozen.
+    skillRef: "instagram-copy@3",
   };
 }

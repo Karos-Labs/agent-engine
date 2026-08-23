@@ -1,7 +1,7 @@
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext } from "@agent-engine/workflow";
+import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext, runTopicGuardrail } from "@agent-engine/workflow";
 import { BrandProfileSchema, type BrandProfile, type TranscriptWord, type VideoTranscript } from "@agent-engine/tool-karos-video";
 import { BrandedShortsGraphicsAgent } from "../agent/branded-shorts-graphics-agent.js";
 import { BrandedShortsHighlightsAgent } from "../agent/branded-shorts-highlights-agent.js";
@@ -311,6 +311,18 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
     });
 
     // ── 10: human delivery gate — SKILL.md requires_approval: true ──
+    // -- terminal topic guardrail --
+    //
+    // The words that survive into the cut, plus the takeaway the client asked
+    // for. These are the client's OWN words from their own footage, which is
+    // exactly why the check is worth running: a subject they told us not to
+    // publish can still be something they said on camera.
+    await runTopicGuardrail(
+      wf,
+      { tools, promptStore: options.promptStore, router: options.router },
+      [kept.map((w) => w.text).join(" "), intake.takeaway].filter(Boolean).join("\n\n"),
+    );
+
     const deliveryDecision: GateResponse = options.autoApprove
       ? await wf.step.code("10-delivery-review", () => ({ decision: "approve" as const, actor: "system", at: new Date().toISOString() }))
       : await wf.step.gate("10-delivery-review", {

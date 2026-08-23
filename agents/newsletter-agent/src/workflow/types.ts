@@ -1,4 +1,6 @@
 export interface NewsletterIntakeConfig {
+  /** Subjects this client does not engage with, carried from the intake read so the terminal guardrail needs no second one. */
+  forbiddenTopics: string[];
   targetAudience: string;
   frequency: string;
   requestedTopic?: string;

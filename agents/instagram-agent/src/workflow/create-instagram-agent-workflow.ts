@@ -1,5 +1,6 @@
+import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentToolRegistry, GateResponse, ModelRouter, PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure } from "@agent-engine/workflow";
+import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail } from "@agent-engine/workflow";
 import type { RenderCarouselInput, RenderCarouselResult } from "@agent-engine/tool-karos-publish";
 import { InstagramCopyAgent } from "../agent/instagram-copy-agent.js";
 import { InstagramImageVettingAgent } from "../agent/instagram-image-vetting-agent.js";
@@ -189,7 +190,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         );
       }
 
-      return { styleConfig: styleConfigParse.data, brandTokens: brandTokensParse.data };
+      return {
+        forbiddenTopics: readForbiddenTopics(configOutcome.result),
+        styleConfig: styleConfigParse.data,
+        brandTokens: brandTokensParse.data,
+      };
     });
 
     // Render-type rules from the frozen config (Fix 2) — evaluated post-render
@@ -622,6 +627,18 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     const rendered = finalRendered;
 
     // ── 09a: human batch-review gate before the final delivery — nothing ships without a real approval ──
+    // -- terminal topic guardrail --
+    //
+    // The slide copy, judged before a human is asked to approve the carousel.
+    // Images are not checked here: this reads text, and what a picture is "of"
+    // is a different question with a different answer.
+    await runTopicGuardrail(
+      wf,
+      { tools, promptStore: options.promptStore, router: options.router },
+      slidesData.slides.map((slide) => Object.values(slide.fields ?? {}).join(" ")).join("\n\n"),
+      frozen.forbiddenTopics,
+    );
+
     const reviewDecision: GateResponse = options.autoApprove
       ? await wf.step.code("09a-batch-review", () => ({ decision: "approve" as const, actor: "system", at: new Date().toISOString() }))
       : await wf.step.gate("09a-batch-review", {

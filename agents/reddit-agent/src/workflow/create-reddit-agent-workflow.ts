@@ -1,5 +1,6 @@
+import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure } from "@agent-engine/workflow";
+import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail} from "@agent-engine/workflow";
 import { RedditDraftAgent } from "../agent/reddit-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
 import { renderRedditDraftsEnvelope } from "./render-drafts-envelope.js";
@@ -138,6 +139,9 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
         throw new WorkflowBlockedIntake("client brand guidelines have not been set up yet");
       }
       return {
+        // Same read that produced the rest of this object, so the terminal
+        // guardrail below costs no extra step.
+        forbiddenTopics: readForbiddenTopics(configOutcome.result),
         targetSubreddits: config.targetSubreddits,
         ...(config.requestedTopic !== undefined ? { requestedTopic: config.requestedTopic } : {}),
         ...(config.requestedSubreddit !== undefined ? { requestedSubreddit: config.requestedSubreddit } : {}),
@@ -411,6 +415,15 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
     });
 
     // ── 18: human batch-review gate — nothing ships without a real approval ──
+    // ── terminal topic guardrail ──
+    //
+    // Before the human gate: a reviewer should never be shown a draft that
+    // engages a subject this client said it does not touch. Not a repeat of
+    // gate.brandCompliance -- that matches forbiddenTerms as substrings and
+    // catches the word, while this judges the subject. Free for a client who
+    // forbids nothing: no list, no step, no model call.
+    await runTopicGuardrail(wf, { tools, promptStore: options.promptStore, router: options.router }, draft.text, intake.forbiddenTopics);
+
     const reviewDecision: GateResponse = options.autoApprove
       ? await wf.step.code("18-batch-review", () => ({
           decision: "approve" as const,

@@ -1,5 +1,6 @@
+import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure } from "@agent-engine/workflow";
+import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail} from "@agent-engine/workflow";
 import { NewsletterDraftAgent, type NewsletterPostOutput } from "../agent/newsletter-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
 import type {
@@ -139,6 +140,9 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
         throw new WorkflowBlockedIntake("client brand guidelines have not been set up yet");
       }
       return {
+        // Same read that produced the rest of this object, so the terminal
+        // guardrail below costs no extra step.
+        forbiddenTopics: readForbiddenTopics(configOutcome.result),
         targetAudience: config.targetAudience,
         frequency: config.frequency,
         ...(config.requestedTopic !== undefined ? { requestedTopic: config.requestedTopic } : {}),
@@ -351,6 +355,15 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
     });
 
     // ── 16: human batch-review gate — nothing ships without a real approval ──
+    // ── terminal topic guardrail ──
+    //
+    // Before the human gate: a reviewer should never be shown a draft that
+    // engages a subject this client said it does not touch. Not a repeat of
+    // gate.brandCompliance -- that matches forbiddenTerms as substrings and
+    // catches the word, while this judges the subject. Free for a client who
+    // forbids nothing: no list, no step, no model call.
+    await runTopicGuardrail(wf, { tools, promptStore: options.promptStore, router: options.router }, draft.text, intake.forbiddenTopics);
+
     const reviewDecision: GateResponse = options.autoApprove
       ? await wf.step.code("16-batch-review", () => ({
           decision: "approve" as const,

@@ -111,6 +111,8 @@ export type BrandTokens = z.infer<typeof BrandTokensSchema>;
 
 /** What step 02 hands forward to every later step. */
 export interface InstagramFrozenConfig {
+  /** Subjects this client does not engage with, frozen from the same read as the style config so the terminal guardrail needs no second one. */
+  forbiddenTopics: string[];
   styleConfig: StyleConfig;
   brandTokens: BrandTokens;
 }

@@ -26,6 +26,8 @@ export interface ReputationRunClaim {
 
 /** Step 02: everything about what the client IS, frozen for the lifetime of this pulse (run-protocol.md §6). */
 export interface ReputationFrozenInputs {
+  /** Subjects this client does not engage with, frozen from the same read as the rest so the terminal guardrail needs no second one. */
+  forbiddenTopics: string[];
   /** `01-facts.md`'s lines — the closed universe `facts_grounded` claims must trace to, and the only source a drafted reply may cite a fact from. */
   facts: string[];
   brand: Record<string, unknown>;

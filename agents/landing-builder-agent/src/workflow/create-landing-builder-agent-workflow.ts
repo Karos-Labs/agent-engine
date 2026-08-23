@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext } from "@agent-engine/workflow";
+import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext, runTopicGuardrail } from "@agent-engine/workflow";
 import type { BrandJson, CarryForwardItem, LandingGateVerdict, LandingSection, ReadBundleResult } from "@agent-engine/tool-karos-landing";
 import { carryForwardLabel, CarryForwardPlacementFileSchema } from "@agent-engine/tool-karos-landing";
 import { LandingCopyAgent, type LandingCopyOutput } from "../agent/landing-copy-agent.js";
@@ -394,6 +394,17 @@ export function createLandingBuilderAgentWorkflow(options: CreateLandingBuilderA
 
     // ── 08: mandatory human review gate (AGENT-INVOCATION.md §5) — every result, regardless of
     // status, is held for human review during this rollout's first-cohort window. ──
+    // -- terminal topic guardrail --
+    //
+    // The page copy, before a human is asked to approve it. A landing page is
+    // the most public thing this system produces, so a forbidden subject
+    // reaching one is the case the guardrail exists for.
+    await runTopicGuardrail(
+      wf,
+      { tools, promptStore: options.promptStore, router: options.router },
+      JSON.stringify(contentBySection),
+    );
+
     const reviewDecision: GateResponse = options.autoApprove
       ? await wf.step.code("08-human-review", () => ({ decision: "approve" as const, actor: "system", at: new Date().toISOString() }))
       : await wf.step.gate("08-human-review", {

@@ -16,8 +16,12 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     expect(await promptStore.getPrompt("instagram-research", "1")).toContain("Extract, don't invent");
     expect(await promptStore.getPrompt("instagram-copy", "1")).toContain("Six to eight slides, one idea each");
     // v2 keeps everything v1 said and adds the photographability rules.
-    expect(await promptStore.getPrompt("instagram-copy", "2")).toContain("Six to eight slides, one idea each");
     expect(await promptStore.getPrompt("instagram-copy", "2")).toContain("single photographable scene");
+    // v3 keeps all of that and, unlike v1/v2, obeys its own dash ban.
+    const v3 = await promptStore.getPrompt("instagram-copy", "3");
+    expect(v3).toContain("Six to eight slides, one idea each");
+    expect(v3).toContain("single photographable scene");
+    expect(v3).not.toMatch(/[—–]/);
     expect(await promptStore.getPrompt("instagram-image-vet", "1")).toContain("No viable candidate is a real, valid answer");
   });
 
@@ -47,10 +51,10 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     const copyRouter = fakeRouterSequence([finalTurn(goodCopyOutput())]);
     const copyAgent = new InstagramCopyAgent({ router: copyRouter, tools: {}, promptStore });
     await copyAgent.run(ctx, { topic: "x", facts: [], styleConfig: {}, brandTokens: {} });
-    // 2.md, not 1.md: the copy agent is pinned to `instagram-copy@2`, which
-    // adds §4's single-photographable-scene rules. v1 stays on disk as the
-    // frozen baseline and is still asserted above.
-    const expectedCopyPrompt = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "2.md"), "utf8");
+    // 3.md: the copy agent is pinned to `instagram-copy@3` (v2's
+    // photographability rules, with every em dash stripped so the prompt
+    // stops violating its own hygiene rule). v1 and v2 stay on disk frozen.
+    const expectedCopyPrompt = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "3.md"), "utf8");
     expect(copyRouter.complete).toHaveBeenCalledWith(expect.any(String), expect.anything(), expect.anything(), expect.objectContaining({ system: expectedCopyPrompt }));
 
     const vetRouter = fakeRouterSequence([finalTurn(goodImageVettingOutput())]);

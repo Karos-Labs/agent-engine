@@ -93,6 +93,17 @@ export async function runTopicGuardrail(
   } else {
     const configTool = deps.tools["client.getConfig"];
     if (!configTool) return undefined;
+    // Checkpointed, which costs a step in every run's trace even for the
+    // majority of clients who forbid nothing.
+    //
+    // The first version skipped the checkpoint to avoid exactly that, and
+    // blog-agent's resume-idempotency test caught why that was wrong: an
+    // uncheckpointed read runs AGAIN on resume, so a resumed run made one more
+    // `client.getConfig` call than the run it resumed. The step is the cheaper
+    // price — and a reader can see the guardrail was consulted even on the runs
+    // where it found nothing to check.
+    //
+    // A caller that already has the list passes it and pays neither.
     const outcome = await wf.step.code(`${GUARDRAIL_STEP_ID}-load-topics`, async () => configTool.execute({}, { ctx }));
     forbiddenTopics = outcome.status === "success" ? readForbiddenTopics(outcome.result) : [];
   }
