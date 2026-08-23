@@ -168,6 +168,74 @@ describe("05b-source-images", () => {
     expect(result.status).toBe("held");
   });
 
+  it("names the real sourcing cause in the hold reason, not just 'no candidate qualified'", async () => {
+    // prep run pubsub-21528976110173438 held all six slides reporting only
+    // "no candidate qualified" six times, which reads as an editorial verdict
+    // on the images. The actual cause was an unset key, and it was recorded
+    // one step upstream where nobody debugging the hold would look.
+    const copy = goodCopyOutput();
+    const tools = {
+      ...env.tools,
+      "media.findImages": stubFindImages({
+        status: "not_available",
+        reason: "media.findImages: no image-search backend configured — set UNSPLASH_ACCESS_KEY",
+      }),
+    };
+    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), finalTurn(copy)]);
+
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(
+      createInstagramAgentWorkflow({ tools, promptStore: makePromptStore(), router, repoRoot: env.repoRoot, autoApprove: true }),
+      { ...params, runId: "instagram_run_sourcing_reason" },
+    );
+
+    expect(result.status).toBe("held");
+    if (result.status !== "held") throw new Error("expected a held run");
+    expect(result.reason).toContain("UNSPLASH_ACCESS_KEY");
+    expect(result.reason).toContain("nothing could be vetted");
+  });
+
+  it("carries a content_fail chain report into the hold reason", async () => {
+    const copy = goodCopyOutput();
+    const tools = {
+      ...env.tools,
+      "media.findImages": stubFindImages({
+        status: "content_fail",
+        reason: "media.findImages: no candidate images could be sourced. Chain tried: openverse, wikimedia. slide 1 (openverse: no results; wikimedia: no results)",
+      }),
+    };
+    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), finalTurn(copy)]);
+
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(
+      createInstagramAgentWorkflow({ tools, promptStore: makePromptStore(), router, repoRoot: env.repoRoot, autoApprove: true }),
+      { ...params, runId: "instagram_run_sourcing_chain_reason" },
+    );
+
+    expect(result.status).toBe("held");
+    if (result.status !== "held") throw new Error("expected a held run");
+    expect(result.reason).toContain("openverse: no results");
+  });
+
+  it("does not spend a model call vetting an empty pool", async () => {
+    // The run above paid $0.02 and 16s for Sonnet to write six paragraphs
+    // each concluding that an empty list is empty. There is only one possible
+    // verdict on nothing.
+    const copy = goodCopyOutput();
+    const tools = {
+      ...env.tools,
+      "media.findImages": stubFindImages({ status: "content_fail", reason: "nothing found" }),
+    };
+    // Only two turns are supplied. A third call — the vetting agent — would
+    // exhaust the sequence and throw, so this passing proves it never ran.
+    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), finalTurn(copy)]);
+
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(
+      createInstagramAgentWorkflow({ tools, promptStore: makePromptStore(), router, repoRoot: env.repoRoot, autoApprove: true }),
+      { ...params, runId: "instagram_run_sourcing_no_vet_call" },
+    );
+
+    expect(result.status).toBe("held");
+  });
+
   it("holds the post when the tool is not registered at all", async () => {
     // createAllKarosTools() deliberately excludes media.*, so a registry
     // without it is a supported configuration, not a misconfiguration.

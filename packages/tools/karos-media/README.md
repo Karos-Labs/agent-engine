@@ -1,7 +1,7 @@
 # `@agent-engine/tool-karos-media`
 
-Real image sourcing — search a stock library, download the results, hand back
-repo-relative paths an agent can actually render.
+Real image sourcing — search a chain of stock, CC and venue libraries,
+download the results, hand back repo-relative paths an agent can render.
 
 ## Why it exists
 
@@ -9,7 +9,7 @@ repo-relative paths an agent can actually render.
 `visualNeed` and **holds the whole post** when nothing qualifies. The candidate
 pool was a workflow option (`imageCandidatePool`) that `apps/agent-server`
 never passed, so it defaulted to `[]`. An empty pool cannot satisfy any slide,
-so every production Instagram run held on "no viable image found."
+so every Instagram run held on "no viable image found".
 
 That failure is hard to spot because it reads like an editorial verdict rather
 than a wiring gap. `media.findImages` is the backend that option was always
@@ -17,38 +17,113 @@ waiting for.
 
 ## Configuration
 
-| Variable | Required | Notes |
+**Nothing is required.** Three providers need no credential, so every
+deployment has a working chain out of the box. Keys only ever *add* sources.
+
+| Variable | Adds | Notes |
 | --- | --- | --- |
-| `UNSPLASH_ACCESS_KEY` | yes | Unsplash API access key (the "Access Key", not the secret key). |
+| — | `openverse`, `wikimedia`, `ddg_images` | Always on. |
+| `UNSPLASH_ACCESS_KEY` | `unsplash` | The "Access Key", not the secret key. |
+| `GOOGLE_PLACES_KEY` | `google_places` | Places API enabled on the project. |
+| `APIFY_TOKEN` | `apify_google_maps`, `apify_instagram_location`, `apify_instagram`, `apify_pinterest` | One token, all four presets. Override an actor with `APIFY_ACTOR_<PRESET>`. |
 
-Without it the tool still registers, and every call returns `not_available`
-with that reason. It never throws at construction — an unconfigured deployment
-must not stop the server booting or make other products undispatchable, which
-is the same rule `video.*` and `landing.*` follow.
+### The single-provider era, and why it ended
 
-## Why Unsplash and not a general web image search
+This package originally shipped Unsplash alone, on the argument that step 06
+records a real `license` / `rightsUsable` / `watermarkFree` verdict and a
+general web search returns images of unknown provenance — so an honest vetting
+agent would refuse nearly all of them and every run would hold anyway, just
+with network calls in front of it.
 
-Step 06 records a real `license` / `rightsUsable` / `watermarkFree` verdict per
-selection and refuses to ship an image it cannot justify. A general web search
-(Google Custom Search, Bing) returns images of unknown provenance, so an honest
-vetting agent marks almost all of them `rightsUsable: false` — every run would
-still hold, just with network calls in front of it. The Unsplash License covers
-commercial use with no attribution required and the library is unwatermarked,
-which is what lets that gate actually pass.
+That argument is correct, and it is still why `ddg_images` sits last and
+labels itself `licenseConfidence: "unknown"`.
 
-Attribution is not required but is still carried in each candidate's
-description, so a client who wants to credit the photographer can.
+But it was over-applied: it justified *one* provider, when two of the excluded
+sources — Openverse and Wikimedia Commons — carry real per-asset licence
+metadata and need no key. The legacy `karos-agents` engine ran ten connectors
+behind a router with four keyless, and its own docs noted the keyless ones
+"are the working default today". Porting only Unsplash turned an optional
+"premium stock mood" source into a single point of failure, and prep proved it:
+run `pubsub-21528976110173438` held all six slides with
+`no image-search backend configured — set UNSPLASH_ACCESS_KEY`, a key that had
+been pending approval since June, while the legacy pipeline had been filling
+the same slides keylessly all along.
 
-Swapping backends means implementing `ImageSearchProvider` (`src/providers.ts`)
-and passing it to `createKarosMediaTools({ provider })`. The tool itself has no
-provider-specific knowledge.
+Licence rigour is kept. It is now enforced **per hit** (`licenseConfidence`)
+instead of per library.
+
+## Routing
+
+Each need declares what it needs a picture *of*; the route decides provider
+order (`ROUTE_CHAINS` in `src/routing.ts`). Unconfigured providers are skipped,
+which is what makes a chain degrade instead of break.
+
+| Route | Order | Ranked by |
+| --- | --- | --- |
+| `named_venue` | apify_google_maps → apify_instagram_location → google_places → ddg_images → openverse → wikimedia | **Verification.** A press photo of the right building beats a beautifully-licensed photo of the wrong one. |
+| `mood` | unsplash → openverse → wikimedia → apify_pinterest → ddg_images | **Licence defensibility.** blanket → attributable → unknown. |
+| `default` | unsplash → openverse → wikimedia → ddg_images | Same. Used when a caller names no route. |
+
+`route` is optional on every need and defaults to `default`, so existing
+callers — including `instagram-agent` step 05b, which passes only
+`{n, query}` — keep working untouched.
+
+The first provider to actually deliver wins the need; the chain is a
+preference order, not a pool to merge. Merging would let a low-confidence
+source dilute a high-confidence one for the same slide.
+
+### Licence confidence
+
+| Value | Meaning | Sources |
+| --- | --- | --- |
+| `blanket` | One library-wide licence covering commercial use | `unsplash`, `google_places` |
+| `attributable` | Real per-asset licence, credit required | `openverse`, `wikimedia` |
+| `unknown` | Provenance not established — the gate should be sceptical | `ddg_images`, all `apify_*` |
+
+The `apify_*` and `ddg_images` sources are wired in because the legacy system
+had them and because they genuinely find subjects no curated library carries.
+They are **not** a licence to publish: UGC copyright stays with the uploader,
+and step 06 should and will refuse most of them. They earn their place on a
+`named_venue` slide headed for human review, not on an unattended run.
+
+## Failure semantics
+
+The distinction the tool exists to protect:
+
+- **`content_fail`** — every provider answered honestly and had nothing. A real
+  editorial outcome. The reason names each provider and what it said, so a hold
+  is diagnosable rather than just "no candidate qualified".
+- **`tooling_error`** — a provider *broke* and no fallback covered the gap. The
+  question was never really asked. Because any unfilled slide holds the whole
+  post downstream, this is reported even when other slides were filled.
+- **`not_available`** — only when a caller supplies an explicitly empty source.
+  Unreachable from env config, by design.
+
+An outage a fallback recovers from is absorbed and correctly forgotten.
 
 ## What it deliberately does not do
 
 It does not decide which image suits which slide, and it does not judge
 usability. `InstagramImageVettingAgent` does both, and its verdict is recorded
-per selection. Ranking candidates here would move a gate that is meant to be an
-explicit, auditable decision into an opaque sort.
+per selection. Ranking candidates here would move a gate that is meant to be
+an explicit, auditable decision into an opaque sort.
+
+Step 06 is skipped entirely when the pool is empty — there is only one possible
+verdict on nothing, and paying a model to write it out is waste.
+
+## Quality gates
+
+`src/quality.ts` holds two provider-independent filters, ported from the legacy
+`sourcing.blocklists`:
+
+- **Watermark domains** — ~60 stock hosts whose previews are watermarked or
+  whose terms cannot support commercial use, dropped before download. Includes
+  `plus.unsplash.com`: Unsplash+ is the paid tier and *is* watermarked, which
+  the original single-provider implementation did not filter.
+- **Query broadening** — a slide's `visualNeed` is written for a human ("a
+  close-up of an unplugged ethernet or power cable on a desk") and matches
+  nothing verbatim on a strict library API. Strict providers walk full text →
+  3 salient words → 2, taking the first variant that hits.
 
 ## On-disk footprint
 
@@ -57,3 +132,10 @@ against `repoRoot`, non-image content types are refused rather than saved with
 an image extension, and anything over 12 MB is dropped. Nothing prunes the
 cache yet — on Cloud Run that directory is the container's own ephemeral disk
 and disappears with the instance, but a long-lived host will want a sweep.
+
+## Adding a source
+
+Implement `ImageSearchProvider` (`src/providers.ts`), register it in
+`buildProviderRegistry`, and name it in the routes it suits. A provider
+registered but absent from every built-in chain is still appended to each
+chain's tail, so an explicit registration is never silently unreachable.

@@ -1,21 +1,45 @@
 /**
  * The image-search backend seam.
  *
- * `media.findImages` knows nothing about any particular provider — it takes
- * one of these, asks for hits, and downloads them. Swapping Unsplash for
- * another library is a new implementation of this interface, not a change to
- * the tool.
+ * `media.findImages` knows nothing about any particular provider — it takes a
+ * chain of these, asks each for hits until one answers, and downloads the
+ * result. Adding a source is a new implementation of this interface, not a
+ * change to the tool.
  *
- * Why Unsplash is the default and not a general web image search: step 06 of
- * `instagram-agent` has to record a real `license` / `rightsUsable` /
- * `watermarkFree` verdict per image, and holds the entire post when it cannot
- * (`ImageSelectionSchema` in that agent's `workflow/types.ts`). A general web
- * search returns images of unknown provenance, so an honest vetting agent
- * would mark nearly all of them `rightsUsable: false` and every run would
- * hold — the current failure mode with extra network calls in front of it. A
- * library with one blanket commercial licence and no watermarks is what lets
- * that gate actually pass.
+ * ## Why a chain, and not Unsplash alone
+ *
+ * This package originally shipped one provider (Unsplash) on the argument
+ * that step 06 of `instagram-agent` records a real `license` /
+ * `rightsUsable` / `watermarkFree` verdict per image and holds the whole post
+ * when it cannot — so a general web search, returning images of unknown
+ * provenance, would just move the hold later. That argument is sound, and it
+ * is why `ddg_images` sits last in every chain and reports its provenance
+ * honestly as unknown.
+ *
+ * But it was over-applied. It was used to justify a *single* provider, when
+ * two of the sources it excluded — Openverse (CC-licensed Flickr/museum
+ * photography) and Wikimedia Commons — carry real, per-asset licence metadata
+ * and need no API key at all. The legacy engine ran ten connectors behind a
+ * router with four of them keyless, and documented that the keyless ones
+ * "are the working default today". Porting only Unsplash turned an optional
+ * "premium stock mood" source into a single point of failure: prep held every
+ * Instagram run because `UNSPLASH_ACCESS_KEY` was never provisioned, while
+ * the legacy pipeline had been resolving the same slides keylessly.
+ *
+ * So: licence rigour is kept, and enforced per hit rather than per library.
+ * `licenseConfidence` is what lets the chain rank a blanket-clean source
+ * above an attributable one above an unknown one, instead of collapsing the
+ * distinction into "Unsplash or nothing".
  */
+
+/** How well a hit's licence can actually be justified to the rights gate. */
+export type LicenseConfidence =
+  /** A blanket library licence covering commercial use — Unsplash, Google Places. */
+  | "blanket"
+  /** A real per-asset licence, usually CC, usually needing attribution — Openverse, Wikimedia. */
+  | "attributable"
+  /** User-generated or web-sourced. Provenance is not established; the gate should be sceptical. */
+  | "unknown";
 
 /** One provider result, before anything has been downloaded. */
 export interface ImageSearchHit {
@@ -29,6 +53,14 @@ export interface ImageSearchHit {
   readonly credit: string;
   /** Provider's own id, used to build a stable filename. */
   readonly id: string;
+  /**
+   * How defensible the licence is. Optional so a hand-written provider (and
+   * every existing test fake) stays valid; absent is read as `"unknown"`,
+   * which is the conservative default.
+   */
+  readonly licenseConfidence?: LicenseConfidence;
+  /** Landing page for the asset, when the provider exposes one. Attribution and audit. */
+  readonly pageUrl?: string;
 }
 
 export interface ImageSearchProvider {
@@ -40,112 +72,46 @@ export interface ImageSearchProvider {
 /** Thrown for a provider-side failure the tool should surface as `tooling_error`. */
 export class ImageProviderError extends Error {}
 
-const UNSPLASH_ENDPOINT = "https://api.unsplash.com/search/photos";
-
-/**
- * The Unsplash License covers commercial use without permission or
- * attribution, and Unsplash does not watermark. Recorded on every hit so the
- * vetting agent has a real basis for its verdict rather than a guess.
- *
- * Kept as one constant because it is the licence for the whole library — if a
- * provider is ever added whose terms vary per asset, that provider reports it
- * per hit and this stays local to Unsplash.
- */
-const UNSPLASH_LICENSE = "Unsplash License — free for commercial use, no attribution required";
-
-interface UnsplashPhoto {
-  id?: unknown;
-  description?: unknown;
-  alt_description?: unknown;
-  urls?: { regular?: unknown; small?: unknown; full?: unknown } | undefined;
-  user?: { name?: unknown } | undefined;
-}
-
-function asString(value: unknown): string | undefined {
+/** Narrows to a non-empty trimmed string, or undefined. Shared by every provider's response mapping. */
+export function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
 /**
- * `accessKey` is read at construction rather than per call so an unconfigured
- * deployment is detectable before a run starts — see `createKarosMediaTools`,
- * which returns a tool that reports `not_available` instead of constructing
- * this at all.
+ * Fetches JSON with a timeout, raising `ImageProviderError` on any transport,
+ * status, or parse failure.
+ *
+ * Every provider funnels through this so a chain sees one error type and can
+ * make one decision (demote to the next source) rather than pattern-matching
+ * each library's own failure shape.
  */
-export function createUnsplashProvider(options: {
-  accessKey: string;
-  /** Injected in tests. Defaults to the global fetch. */
-  fetchImpl?: typeof fetch;
-  /** Per-request timeout. Below the workflow's own step budget on purpose. */
-  timeoutMs?: number;
-}): ImageSearchProvider {
-  const fetchImpl = options.fetchImpl ?? fetch;
-  const timeoutMs = options.timeoutMs ?? 15_000;
+export async function fetchJson(
+  fetchImpl: typeof fetch,
+  url: URL | string,
+  options: { provider: string; query: string; headers?: Record<string, string>; timeoutMs?: number; init?: RequestInit } = {
+    provider: "provider",
+    query: "",
+  },
+): Promise<unknown> {
+  const { provider, query, headers, timeoutMs = 15_000, init } = options;
+  let response: Response;
+  try {
+    response = await fetchImpl(url, {
+      ...init,
+      headers: { ...(init?.headers as Record<string, string> | undefined), ...headers },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (error) {
+    throw new ImageProviderError(`${provider} search failed for "${query}": ${(error as Error).message}`);
+  }
 
-  return {
-    name: "unsplash",
-    async search(query: string, limit: number): Promise<ImageSearchHit[]> {
-      const url = new URL(UNSPLASH_ENDPOINT);
-      url.searchParams.set("query", query);
-      // Unsplash caps per_page at 30; asking for more is a 400, not a clamp.
-      url.searchParams.set("per_page", String(Math.min(Math.max(limit, 1), 30)));
-      // Landscape suits a carousel slide better than the mixed default, and
-      // narrowing here beats downloading portraits and discarding them.
-      url.searchParams.set("orientation", "landscape");
-      url.searchParams.set("content_filter", "high");
+  if (!response.ok) {
+    throw new ImageProviderError(`${provider} search for "${query}" returned ${response.status}`);
+  }
 
-      let response: Response;
-      try {
-        response = await fetchImpl(url, {
-          headers: {
-            Authorization: `Client-ID ${options.accessKey}`,
-            "Accept-Version": "v1",
-          },
-          signal: AbortSignal.timeout(timeoutMs),
-        });
-      } catch (error) {
-        throw new ImageProviderError(`unsplash search failed for "${query}": ${(error as Error).message}`);
-      }
-
-      if (!response.ok) {
-        // 403 from Unsplash is nearly always the hourly rate limit rather than
-        // a bad key, and the two need different fixes, so say which it is.
-        const hint = response.status === 403 ? " (rate limit or invalid access key)" : "";
-        throw new ImageProviderError(`unsplash search for "${query}" returned ${response.status}${hint}`);
-      }
-
-      let body: { results?: unknown };
-      try {
-        body = (await response.json()) as { results?: unknown };
-      } catch (error) {
-        throw new ImageProviderError(`unsplash returned a non-JSON body for "${query}": ${(error as Error).message}`);
-      }
-
-      const results = Array.isArray(body.results) ? body.results : [];
-      const hits: ImageSearchHit[] = [];
-
-      for (const raw of results.slice(0, limit)) {
-        const photo = raw as UnsplashPhoto;
-        const id = asString(photo.id);
-        const href = asString(photo.urls?.regular) ?? asString(photo.urls?.small) ?? asString(photo.urls?.full);
-        if (!id || !href) continue; // A malformed entry is skipped, not fatal.
-
-        const credit = asString(photo.user?.name) ?? "unknown";
-        // `description` is the photographer's caption and is usually null;
-        // `alt_description` is Unsplash's own and is usually present. Neither
-        // is guaranteed, and the vetting agent needs *something* to judge, so
-        // the query itself is the last resort.
-        const described = asString(photo.description) ?? asString(photo.alt_description) ?? `photo matching "${query}"`;
-
-        hits.push({
-          id,
-          url: href,
-          description: `${described} (photo by ${credit} on Unsplash)`,
-          license: UNSPLASH_LICENSE,
-          credit,
-        });
-      }
-
-      return hits;
-    },
-  };
+  try {
+    return await response.json();
+  } catch (error) {
+    throw new ImageProviderError(`${provider} returned a non-JSON body for "${query}": ${(error as Error).message}`);
+  }
 }

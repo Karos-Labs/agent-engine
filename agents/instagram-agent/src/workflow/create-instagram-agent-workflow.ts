@@ -384,6 +384,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // callers.
       const findImages = tools["media.findImages"];
       let attemptPool = imageCandidatePool;
+      // Why the pool is empty, in the sourcing layer's own words. Without it
+      // the hold below could only say "no candidate qualified", which reads as
+      // an editorial verdict on the topic and sent whoever debugged prep run
+      // pubsub-21528976110173438 looking for a licensing problem when the real
+      // cause was an unset UNSPLASH_ACCESS_KEY.
+      let sourcingReason: string | undefined;
       if (attemptPool.length === 0 && findImages !== undefined) {
         const sourced = await wf.step.code(`05b-source-images-attempt-${attempt}`, async () =>
           findImages.execute(
@@ -396,20 +402,36 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           ),
         );
 
+        // A provider outage is not an editorial outcome. Failing loudly here
+        // keeps it out of the "no viable image" hold below, which a human
+        // reads as "the topic had no good picture" and would act on wrongly.
+        if (sourced.status === "tooling_error") {
+          throw new WorkflowToolingFailure(`media.findImages failed: tooling_error — ${sourced.reason}`);
+        }
         if (sourced.status === "success") {
           attemptPool = (sourced.result as { candidates: ImageCandidate[] }).candidates;
-        } else if (sourced.status === "tooling_error") {
-          // A provider outage is not an editorial outcome. Failing loudly here
-          // keeps it out of the "no viable image" hold below, which a human
-          // reads as "the topic had no good picture" and would act on wrongly.
-          throw new WorkflowToolingFailure(
-            `media.findImages failed: ${sourced.status}${"reason" in sourced ? ` — ${sourced.reason}` : ""}`,
-          );
+        } else {
+          sourcingReason = sourced.reason;
         }
         // `content_fail` (nothing sourced) and `not_available` (no backend
         // configured) both leave the pool empty and fall through to step 06,
-        // which holds the post with its own recorded reason — the same
-        // honest outcome as before, now reached deliberately.
+        // which holds the post — but now carrying `sourcingReason` so the hold
+        // names the actual cause instead of only its own verdict.
+      }
+
+      // An empty pool has exactly one possible verdict, so asking a model for
+      // it buys nothing. The run that prompted this spent $0.02 and 16s having
+      // Sonnet write six paragraphs each concluding "the candidate pool is
+      // entirely empty" — real money, on every Instagram run, for an answer
+      // that is a property of the input. Holding straight from here also keeps
+      // the sourcing reason intact rather than laundering it through a model's
+      // restatement of it.
+      if (attemptPool.length === 0) {
+        const slideNumbers = copy.slides.map((s) => s.n);
+        throw new WorkflowHeld(
+          `no viable image found for slide(s) ${slideNumbers.join(", ")} — no candidate images were sourced at all, ` +
+            `so nothing could be vetted (${sourcingReason ?? "no image-sourcing tool is registered for this run"})`,
+        );
       }
 
       const imageExec = await wf.step.agent(`06-vet-images-attempt-${attempt}`, imageAgent, {

@@ -2,7 +2,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { createKarosMediaTools, createUnsplashProvider, ImageProviderError, type ImageSearchHit } from "../src/index.js";
+import {
+  buildProviderRegistry,
+  createKarosMediaTools,
+  createUnsplashProvider,
+  ImageProviderError,
+  type ImageSearchHit,
+} from "../src/index.js";
 
 const CTX = { runId: "run_1", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" } as never;
 
@@ -191,9 +197,11 @@ describe("media.findImages", () => {
 });
 
 describe("createKarosMediaTools without a key", () => {
-  it("registers the tool but reports not_available, rather than throwing at construction", async () => {
-    // Matches video.*/landing.*: an unconfigured capability must not stop the
-    // server from starting or make every other product undispatchable.
+  // The behaviour this asserts is the point of the multi-source port. It used
+  // to return `not_available` with no key, which is what held every prep
+  // Instagram run while UNSPLASH_ACCESS_KEY sat unprovisioned — even though
+  // three keyless providers were available in the legacy engine all along.
+  it("still has a working keyless chain, and never reports not_available", async () => {
     const tools = createKarosMediaTools({ env: {} });
     expect(tools["media.findImages"]).toBeDefined();
 
@@ -202,8 +210,31 @@ describe("createKarosMediaTools without a key", () => {
       { ctx: CTX },
     );
 
+    // Whatever the network did here, "this deployment has no backend" is no
+    // longer one of the possible answers.
+    expect(outcome.status).not.toBe("not_available");
+  });
+
+  it("builds the keyless providers with no env at all, and adds keyed ones only when their key is set", () => {
+    expect([...buildProviderRegistry({ env: {} }).keys()]).toEqual(["openverse", "wikimedia", "ddg_images"]);
+
+    const keyed = [...buildProviderRegistry({ env: { UNSPLASH_ACCESS_KEY: "k", GOOGLE_PLACES_KEY: "p" } }).keys()];
+    expect(keyed).toContain("unsplash");
+    expect(keyed).toContain("google_places");
+    // One token registers all four actor presets, exactly as legacy did.
+    const apify = [...buildProviderRegistry({ env: { APIFY_TOKEN: "t" } }).keys()];
+    expect(apify).toContain("apify_google_maps");
+    expect(apify).toContain("apify_pinterest");
+  });
+
+  it("reports not_available only for an explicitly empty source", async () => {
+    const tools = createKarosMediaTools({ source: { chainFor: () => [], available: [] } });
+    const outcome = await tools["media.findImages"]!.execute(
+      { repoRoot, runId: "run_1", needs: [{ n: 1, query: "x" }] },
+      { ctx: CTX },
+    );
+
     expect(outcome.status).toBe("not_available");
-    expect((outcome as { reason: string }).reason).toContain("UNSPLASH_ACCESS_KEY");
   });
 });
 
