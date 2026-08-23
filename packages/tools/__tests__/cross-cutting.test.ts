@@ -40,7 +40,7 @@ describe("Layer 3 tool registry — cross-cutting", () => {
   it("merges all ten servers' tools into one registry with no name collisions", () => {
     const expectedPrefixes = ["client.", "gate.", "intel.", "ledger.", "memory.", "publish.", "reputation.", "research.", "seoGeo.", "topics."];
     const names = Object.keys(tools);
-    // 8 client + 6 gates + 2 intel + 7 ledger + 5 memory + 4 publish + 3 reputation + 5 research + 2 seoGeo + 4 topics = 46
+    // 8 client + 6 gates + 2 intel + 9 ledger + 5 memory + 4 publish + 3 reputation + 5 research + 2 seoGeo + 4 topics = 48
     // (client grew from 7 to 8: client.getStrategy reads a client's per-agent
     // setup document — the filled-in account intake saying what an account is
     // chartered to post and what it must never post — which nothing in the
@@ -49,7 +49,11 @@ describe("Layer 3 tool registry — cross-cutting", () => {
     // for cross-post image-reuse prevention — see agents/instagram-agent/src/workflow/craft-hygiene.ts's
     // sibling, create-instagram-agent-workflow.ts. reputation.* is new: RFC-08's triage/capture/doctrineGate —
     // reputation.publish is deliberately absent, permanently gated inside agents/reputation-agent's own workflow.)
-    expect(names.length).toBe(46);
+    // (ledger grew from 7 to 9: ledger.recordOutputExcerpt/ledger.listOutputExcerpts
+    // back the dynamic runner's output de-duplication — a bounded per-client,
+    // per-agent excerpt log, kept separate from writeDeliverable's records
+    // because those nest by runId and cannot be enumerated for comparison.)
+    expect(names.length).toBe(48);
     for (const prefix of expectedPrefixes) {
       expect(names.some((n) => n.startsWith(prefix))).toBe(true);
     }

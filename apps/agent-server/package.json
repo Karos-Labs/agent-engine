@@ -2,7 +2,7 @@
   "name": "@agent-engine/agent-server",
   "private": true,
   "version": "0.0.1",
-  "description": "The Cloud Run HTTP entrypoint (RFC-01 §7, §8; RFC-02): receives run-execution requests from karosCMO/Portal, dispatches to the right agent workflow by productId, and returns run status / DynamicAgentRunReport.",
+  "description": "The Cloud Run HTTP entrypoint (RFC-01 \u00a77, \u00a78; RFC-02): receives run-execution requests from karosCMO/Portal, dispatches to the right agent workflow by productId, and returns run status / DynamicAgentRunReport.",
   "type": "module",
   "main": "dist/server.js",
   "scripts": {
@@ -29,6 +29,7 @@
     "@agent-engine/agent-x": "^0.0.1",
     "@agent-engine/campaign-orchestrator": "^0.0.1",
     "@agent-engine/core": "^0.0.1",
+    "@agent-engine/dynamic-sandbox": "^0.0.1",
     "@agent-engine/queue": "^0.0.1",
     "@agent-engine/telemetry": "^0.0.1",
     "@agent-engine/tool-common": "^0.0.1",

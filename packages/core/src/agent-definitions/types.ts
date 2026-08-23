@@ -47,15 +47,25 @@ export function buildOutputSchema(fields: readonly AgentDefinitionField[]): z.Zo
 }
 
 /**
- * One stage of a dynamic agent — one `BaseAgent` ReAct loop (RFC-01 §5.3),
- * executed via `wf.step.agent` inside the generated workflow
- * (`build-dynamic-workflow.ts`). Stages run strictly in array order, each
- * one's `finalOutput` becoming the next stage's `input` — the same
- * sequential-only model Studio's own `DynamicAgentStepDef` already commits
- * to today (its `dependsOn` field is reserved but rejected if non-empty).
+ * A stage of a dynamic agent, of either kind, is identified the same way — the
+ * id is namespaced into the run's checkpoint keys, so it uses the same charset
+ * every other id in this codebase does.
+ *
+ * Stages run strictly in array order, each one's output becoming the next
+ * one's `previousOutput` — the same sequential-only model Studio's own
+ * `DynamicAgentStepDef` commits to today (its `dependsOn` field is reserved
+ * but rejected if non-empty).
  */
-export const AgentDefinitionStageSchema = z.object({
-  id: z.string().min(1).regex(/^[a-z0-9][a-z0-9-]*$/, "stage id must be lowercase-and-hyphens"),
+const StageIdSchema = z.string().min(1).regex(/^[a-z0-9][a-z0-9-]*$/, "stage id must be lowercase-and-hyphens");
+
+/**
+ * An AI stage — one `BaseAgent` ReAct loop. The original and still the default:
+ * a stored stage with no `kind` parses as this one, so every definition written
+ * before code steps existed keeps working untouched.
+ */
+export const AgentDefinitionAiStageSchema = z.object({
+  kind: z.literal("ai").default("ai"),
+  id: StageIdSchema,
   description: z.string().min(1),
   /** This stage's own system prompt — stored inline, not resolved via `skillRef`/`PromptStore` (see `DynamicAgent`'s own doc comment for why). */
   systemPrompt: z.string().optional(),
@@ -66,7 +76,65 @@ export const AgentDefinitionStageSchema = z.object({
   modelPolicy: ModelPolicySchema.optional(),
   maxSteps: z.number().int().positive().optional(),
 });
+export type AgentDefinitionAiStage = z.infer<typeof AgentDefinitionAiStageSchema>;
+
+/** Upper bound on an authored script, mirroring Studio's own `MAX_CODE_CHARS`. */
+export const MAX_STAGE_CODE_CHARS = 20_000;
+
+/**
+ * A code stage — an admin-authored script, run out-of-process by
+ * `@agent-engine/dynamic-sandbox` rather than by a model.
+ *
+ * It exists because a deterministic transform between two AI stages should be
+ * deterministic. Reformatting a date, picking the top three of a list, or
+ * reshaping one stage's output into the next stage's input are all things a
+ * model does probabilistically and a five-line script does exactly, and paying
+ * a model to do them buys variance rather than judgment.
+ *
+ * The script is untrusted input. It arrives from a Firestore document an admin
+ * edited, so it is executed in a separate process behind a guard, never with
+ * `wf.step.code` — that primitive runs trusted, compiled, in-repo workflow code
+ * in this process, and handing an authored string to it would be handing it the
+ * server. The whole capability stays behind `DYNAMIC_CODE_STEPS_ENABLED`
+ * (default off) pending a security review of that sandbox; a definition
+ * containing a code stage is refused at dispatch while the flag is off, rather
+ * than silently skipping the stage and producing a deliverable that is missing
+ * a step nobody was told about.
+ *
+ * `outputSchema` is optional here and required on AI stages. The flat DSL
+ * describes named primitive fields, which is what a model can be asked to
+ * return; a transform legitimately returns nested data the DSL cannot express.
+ * Declared, it is enforced exactly as on an AI stage. Absent, the sandbox's
+ * JSON object is passed through as-is — the sandbox already guarantees it IS a
+ * JSON object, so the next stage still receives something well-formed.
+ */
+export const AgentDefinitionCodeStageSchema = z.object({
+  kind: z.literal("code"),
+  id: StageIdSchema,
+  description: z.string().min(1),
+  language: z.enum(["node", "python"]),
+  code: z.string().min(1).max(MAX_STAGE_CODE_CHARS),
+  /** Wall-clock budget for the script. The sandbox caps this at its own hard ceiling. */
+  timeoutMs: z.number().int().positive().optional(),
+  outputSchema: z.array(AgentDefinitionFieldSchema).optional(),
+});
+export type AgentDefinitionCodeStage = z.infer<typeof AgentDefinitionCodeStageSchema>;
+
+/**
+ * One stage, either kind.
+ *
+ * A plain union rather than `z.discriminatedUnion`, because the discriminator
+ * has a default: a stage stored before code steps existed carries no `kind` at
+ * all, and a discriminated union rejects it outright instead of reading it as
+ * the AI stage it is.
+ */
+export const AgentDefinitionStageSchema = z.union([AgentDefinitionAiStageSchema, AgentDefinitionCodeStageSchema]);
 export type AgentDefinitionStage = z.infer<typeof AgentDefinitionStageSchema>;
+
+/** Narrowing helper — the runner branches on this rather than re-testing the literal. */
+export function isCodeStage(stage: AgentDefinitionStage): stage is AgentDefinitionCodeStage {
+  return stage.kind === "code";
+}
 
 /**
  * A dynamic agent's full stored definition (Task 2) — `agentId` is also the
@@ -80,6 +148,16 @@ export const AgentDefinitionSchema = z.object({
   description: z.string().min(1),
   defaultModelPolicy: ModelPolicySchema,
   stages: z.array(AgentDefinitionStageSchema).min(1),
+  /**
+   * Opt in to scoring this agent's deliverable against its own recent output
+   * for the same client.
+   *
+   * Off by default, and only ever a flag: unlike the topic guardrail, which
+   * fails a run because publishing a forbidden topic is a breach, a repeated
+   * theme is a signal for a human to weigh. Some agents are supposed to
+   * revisit the same subject.
+   */
+  dedupeAgainstHistory: z.boolean().default(false),
   createdAt: z.number(),
   updatedAt: z.number(),
   /** Bumped by the store on every successful update — the one "version" concept this module has, matching `DynamicAgentSpec.version`'s own whole-spec-integer convention rather than a per-field history. */
