@@ -68,9 +68,33 @@ which is what makes a chain degrade instead of break.
 callers — including `instagram-agent` step 05b, which passes only
 `{n, query}` — keep working untouched.
 
-The first provider to actually deliver wins the need; the chain is a
-preference order, not a pool to merge. Merging would let a low-confidence
-source dilute a high-confidence one for the same slide.
+**Every provider in the chain is asked, and their results are merged.** The
+chain is a preference order for *ranking*, not a stop condition.
+
+It did stop at the first provider that returned bytes, on the theory that
+merging would let a low-confidence source dilute a high-confidence one. prep
+run `pubsub-20632239329452475` disproved that: Unsplash answers any generic
+query, so it filled all 18 slots and Openverse/Wikimedia were never consulted
+— then the gate rejected 5 of 6 slides for *subject mismatch*. It did not want
+a cleaner licence, it wanted a picture of the right thing, and the sources that
+might have had one were never asked. Dilution was never the risk either, since
+every candidate is vetted individually against its own recorded licence.
+
+Two knobs bound the merged pool, because it is not free — step 06 reads every
+candidate description in a single prompt, so its cost and latency scale with
+pool size:
+
+| Input | Default | Meaning |
+| --- | --- | --- |
+| `perNeed` | 3 | Requested from **each** provider |
+| `maxPerNeed` | 6 | Hard ceiling on the merged pool per need |
+
+Candidates are interleaved round-robin, so the ceiling buys one pick from every
+source before any source's second — breadth rather than one provider's top-N.
+Chain order breaks ties within a round, so the highest-confidence provider
+keeps precedence without taking everything. Identical image URLs from two
+providers are deduplicated (Openverse aggregates Wikimedia, so the overlap is
+real).
 
 ### Licence confidence
 

@@ -40,8 +40,25 @@ export const FindImagesInputSchema = z.object({
       }),
     )
     .min(1),
-  /** Candidates to fetch per need. More gives the vetting agent room to reject. */
+  /**
+   * Candidates to request from EACH provider in the need's chain.
+   *
+   * Was "per need" when only one provider was ever consulted. Every provider
+   * is now asked, so this is the per-source width and `maxPerNeed` is the
+   * total ceiling.
+   */
   perNeed: z.number().int().min(1).max(10).default(3),
+  /**
+   * Ceiling on the merged pool for one need, after every provider answered.
+   *
+   * The pool is not free: step 06 reads every candidate's description in one
+   * prompt, so its cost and latency scale with this number (18 candidates
+   * already cost ~63s and $0.02 on prep run pubsub-20632239329452475).
+   * Diversity, not volume, is what the gate was missing — so the cap stays
+   * low and `interleaveByProvider` spends it across sources rather than on
+   * one source's deep tail.
+   */
+  maxPerNeed: z.number().int().min(1).max(30).default(6),
   /** Namespaces the cache directory so two runs never collide on a filename. */
   runId: z.string().min(1),
 });
@@ -152,16 +169,34 @@ export function createFindImages(source: ImageSource | ImageSearchProvider, fetc
         let savedForNeed = 0;
         let sawProviderError = false;
 
+        // Ask EVERY provider, instead of stopping at the first that returns
+        // bytes.
+        //
+        // Stopping early looked like it respected the chain's licence
+        // ranking. What it actually did, on prep run
+        // pubsub-20632239329452475: Unsplash answers any generic query, so it
+        // filled all 18 slots and openverse/wikimedia were never consulted.
+        // The gate then rejected 5 of 6 slides for subject mismatch — it did
+        // not want a cleaner licence, it wanted a picture of the right thing,
+        // and the sources that might have held one were never asked.
+        //
+        // Merging cannot "dilute" the pool, which was the original argument
+        // for stopping: every candidate is vetted individually against its
+        // own recorded licence, so a low-confidence hit sitting beside a
+        // high-confidence one costs the gate nothing and can only widen the
+        // choice.
+        const perProviderHits: Array<{ provider: string; hits: ImageSearchHit[] }> = [];
+        const seenUrls = new Set<string>();
+
         for (const provider of chain) {
           let hits: ImageSearchHit[];
           try {
             hits = await provider.search(need.query, input.perNeed);
           } catch (error) {
             if (error instanceof ImageProviderError) {
-              // Demote, do not abort. A single provider outage used to fail
-              // the whole call; with a chain that would throw away every
-              // healthy source behind it. The failure is still reported —
-              // it just is not fatal while an alternative remains.
+              // Demote, do not abort. One provider's outage must not discard
+              // every healthy source alongside it. Still reported — just not
+              // fatal while an alternative remains.
               attempts.push(`${provider.name}: ${error.message}`);
               sawProviderError = true;
               continue;
@@ -169,38 +204,50 @@ export function createFindImages(source: ImageSource | ImageSearchProvider, fetc
             throw error;
           }
 
-          if (hits.length === 0) {
-            attempts.push(`${provider.name}: no results`);
+          // The same photo can surface from two providers — Openverse
+          // aggregates Wikimedia among others. Deduping on the byte URL keeps
+          // the interleave honest; otherwise one image quietly consumes two
+          // slots of a deliberately small budget.
+          const fresh = hits.filter((h) => !seenUrls.has(h.url));
+          for (const h of fresh) seenUrls.add(h.url);
+
+          if (fresh.length === 0) {
+            attempts.push(
+              `${provider.name}: ${hits.length === 0 ? "no results" : "only duplicates of earlier providers"}`,
+            );
             continue;
           }
+          perProviderHits.push({ provider: provider.name, hits: fresh });
+        }
 
-          for (const hit of hits) {
-            const saved = await downloadHit(fetchImpl, hit, absDir, relDir, need.n);
-            if (saved === undefined) continue;
-            candidates.push({
-              path: saved,
-              // The licence rides on the description because that is the only
-              // field that reaches the vetting agent, and it has to record a
-              // real `license` string per selection.
-              description: `slide ${need.n} candidate — ${hit.description} [licence: ${hit.license}]`,
-              provider: provider.name,
-              licenseConfidence: hit.licenseConfidence ?? "unknown",
-            });
-            savedForNeed += 1;
-          }
-
-          if (savedForNeed > 0) {
-            if (!providersUsed.includes(provider.name)) providersUsed.push(provider.name);
-            // First provider to actually deliver wins the need — the chain is
-            // a preference order, not a pool to merge. Merging would let a
-            // low-confidence source dilute a high-confidence one.
-            break;
-          }
-
-          attempts.push(`${provider.name}: all ${hits.length} result(s) failed to download`);
+        // Round-robin, so a `maxPerNeed` budget buys one pick from each source
+        // before any source's second. Chain order still decides who goes first
+        // within a round, so the highest-confidence provider keeps its
+        // precedence without taking everything.
+        for (const { provider, hit } of interleaveByProvider(perProviderHits)) {
+          if (savedForNeed >= input.maxPerNeed) break;
+          const saved = await downloadHit(fetchImpl, hit, absDir, relDir, need.n);
+          if (saved === undefined) continue;
+          candidates.push({
+            path: saved,
+            // The licence rides on the description because that is the only
+            // field that reaches the vetting agent, and it has to record a
+            // real `license` string per selection.
+            description: `slide ${need.n} candidate — ${hit.description} [licence: ${hit.license}]`,
+            provider,
+            licenseConfidence: hit.licenseConfidence ?? "unknown",
+          });
+          savedForNeed += 1;
+          if (!providersUsed.includes(provider)) providersUsed.push(provider);
         }
 
         if (savedForNeed === 0) {
+          const offered = perProviderHits.reduce((n, p) => n + p.hits.length, 0);
+          if (offered > 0) {
+            attempts.push(
+              `all ${offered} result(s) across ${perProviderHits.length} provider(s) failed to download`,
+            );
+          }
           unmet.push({ n: need.n, query: need.query, reason: attempts.join("; ") });
           if (sawProviderError) outages.push(`slide ${need.n}: ${attempts.join("; ")}`);
         }
@@ -237,6 +284,28 @@ export function createFindImages(source: ImageSource | ImageSearchProvider, fetc
       });
     },
   });
+}
+
+/**
+ * Flattens per-provider hit lists into one round-robin sequence: every
+ * provider's first hit in chain order, then every provider's second, and so
+ * on. A provider with a shorter list simply drops out of later rounds.
+ *
+ * This is what turns a small `maxPerNeed` budget into a diverse pool rather
+ * than the first provider's top-N.
+ */
+function interleaveByProvider(
+  groups: Array<{ provider: string; hits: ImageSearchHit[] }>,
+): Array<{ provider: string; hit: ImageSearchHit }> {
+  const out: Array<{ provider: string; hit: ImageSearchHit }> = [];
+  const deepest = groups.reduce((max, g) => Math.max(max, g.hits.length), 0);
+  for (let round = 0; round < deepest; round++) {
+    for (const group of groups) {
+      const hit = group.hits[round];
+      if (hit !== undefined) out.push({ provider: group.provider, hit });
+    }
+  }
+  return out;
 }
 
 /** Returns the repo-relative path written, or undefined when this hit could not be saved. */

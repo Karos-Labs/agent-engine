@@ -296,11 +296,15 @@ describe("chain fallback in media.findImages", () => {
     credit: "c",
   });
 
-  const run = (chain: ImageSearchProvider[], needs: Array<{ n: number; query: string }>) =>
+  const run = (
+    chain: ImageSearchProvider[],
+    needs: Array<{ n: number; query: string }>,
+    extra: Record<string, unknown> = {},
+  ) =>
     createKarosMediaTools({
       source: { chainFor: () => chain, available: chain.map((p) => p.name) },
       fetchImpl: jpeg,
-    })["media.findImages"]!.execute({ repoRoot, runId: "r1", needs }, { ctx: {} as never });
+    })["media.findImages"]!.execute({ repoRoot, runId: "r1", needs, ...extra }, { ctx: {} as never });
 
   const broken = (name: string): ImageSearchProvider => ({
     name,
@@ -321,7 +325,12 @@ describe("chain fallback in media.findImages", () => {
     expect(result.candidates[0]!.provider).toBe("healthy");
   });
 
-  it("stops at the first provider that delivers, rather than merging the whole chain", async () => {
+  // The reversal of the original "first provider wins" rule. prep run
+  // pubsub-20632239329452475 is the evidence: Unsplash answered every generic
+  // query, took all 18 slots, and openverse/wikimedia were never asked — then
+  // the gate rejected 5 of 6 slides for subject mismatch, which a different
+  // source might well have satisfied.
+  it("merges candidates from every provider instead of stopping at the first that delivers", async () => {
     let secondCalled = false;
     const first: ImageSearchProvider = { name: "first", search: async () => [hit("a")] };
     const second: ImageSearchProvider = {
@@ -334,8 +343,74 @@ describe("chain fallback in media.findImages", () => {
 
     const outcome = await run([first, second], [{ n: 1, query: "x" }]);
 
-    expect(secondCalled).toBe(false);
-    expect((outcome as { result: { candidates: unknown[] } }).result.candidates).toHaveLength(1);
+    expect(secondCalled).toBe(true);
+    const result = (outcome as { result: { candidates: Array<{ provider: string }>; providersUsed: string[] } }).result;
+    expect(result.candidates).toHaveLength(2);
+    expect(result.providersUsed).toEqual(["first", "second"]);
+  });
+
+  it("interleaves round-robin, so a small budget buys breadth rather than one provider's tail", async () => {
+    const deep: ImageSearchProvider = { name: "deep", search: async () => [hit("d1"), hit("d2"), hit("d3")] };
+    const shallow: ImageSearchProvider = { name: "shallow", search: async () => [hit("s1")] };
+
+    const outcome = await run([deep, shallow], [{ n: 1, query: "x" }], { maxPerNeed: 2 });
+
+    const providers = (outcome as { result: { candidates: Array<{ provider: string }> } }).result.candidates.map(
+      (c) => c.provider,
+    );
+    // Not ["deep","deep"] — the shallow provider gets its pick before the
+    // deep one gets a second.
+    expect(providers).toEqual(["deep", "shallow"]);
+  });
+
+  it("honours maxPerNeed as a hard ceiling on the merged pool", async () => {
+    const wide = (name: string): ImageSearchProvider => ({
+      name,
+      search: async () => [hit(`${name}1`), hit(`${name}2`), hit(`${name}3`)],
+    });
+
+    const outcome = await run([wide("a"), wide("b"), wide("c")], [{ n: 1, query: "x" }], { maxPerNeed: 4 });
+
+    expect((outcome as { result: { candidates: unknown[] } }).result.candidates).toHaveLength(4);
+  });
+
+  it("keeps chain order as the tie-break within each round", async () => {
+    const a: ImageSearchProvider = { name: "a", search: async () => [hit("a1"), hit("a2")] };
+    const b: ImageSearchProvider = { name: "b", search: async () => [hit("b1"), hit("b2")] };
+
+    const outcome = await run([a, b], [{ n: 1, query: "x" }], { maxPerNeed: 4 });
+
+    const providers = (outcome as { result: { candidates: Array<{ provider: string }> } }).result.candidates.map(
+      (c) => c.provider,
+    );
+    expect(providers).toEqual(["a", "b", "a", "b"]);
+  });
+
+  it("deduplicates the same image URL surfacing from two providers", async () => {
+    // Openverse aggregates Wikimedia, so this is a real overlap, not a
+    // hypothetical. One image must not consume two slots of the budget.
+    const shared = hit("same");
+    const p1: ImageSearchProvider = { name: "p1", search: async () => [shared] };
+    const p2: ImageSearchProvider = { name: "p2", search: async () => [shared, hit("unique")] };
+
+    const outcome = await run([p1, p2], [{ n: 1, query: "x" }]);
+
+    const result = (outcome as { result: { candidates: Array<{ provider: string }> } }).result;
+    expect(result.candidates).toHaveLength(2);
+    // The first provider to offer it keeps it.
+    expect(result.candidates.map((c) => c.provider).sort()).toEqual(["p1", "p2"]);
+  });
+
+  it("still fills a need from the survivors when one provider in the middle breaks", async () => {
+    const healthy: ImageSearchProvider = { name: "healthy", search: async () => [hit("h")] };
+
+    const outcome = await run([healthy, broken("mid"), { name: "last", search: async () => [hit("l")] }], [
+      { n: 1, query: "x" },
+    ]);
+
+    expect(outcome.status).toBe("success");
+    const result = (outcome as { result: { providersUsed: string[] } }).result;
+    expect(result.providersUsed).toEqual(["healthy", "last"]);
   });
 
   it("reports an unrecovered outage as tooling_error, naming every provider that failed", async () => {

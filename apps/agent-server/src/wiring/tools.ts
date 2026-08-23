@@ -22,11 +22,12 @@ import { createServerMediaStore, createServerArchiveStore } from "./gcs-artifact
  * own env vars (`BRANDED_SHORTS_ENGINE_DIR`, `LANDING_ENGINE_*_ROOT`) aren't
  * set, exactly like every other env-configured tool in this codebase.
  *
- * `media.*` is merged in on the same terms: without `UNSPLASH_ACCESS_KEY` it
- * reports `not_available` per call, so registering it unconditionally costs a
- * deployment nothing. With the key set, it is what finally lets
- * `instagram-agent` step 06 see real candidate images instead of the empty
- * pool that held every run.
+ * `media.*` is merged in on the same terms, though it no longer needs a
+ * credential at all: three of its providers (Openverse, Wikimedia, DuckDuckGo)
+ * are keyless, so every deployment gets a working image chain and keys only
+ * ever *add* sources. It used to report `not_available` without
+ * `UNSPLASH_ACCESS_KEY`, which is exactly what held every prep Instagram run
+ * while that key sat unprovisioned — see this package's README.
  *
  * `mediaStore`/`archiveStore` (Task 1/Task 2, RFC-01's GCS media/artifact
  * store) are `undefined` unless `GCS_MEDIA_BUCKET`/`GCS_ARTIFACTS_BUCKET`
