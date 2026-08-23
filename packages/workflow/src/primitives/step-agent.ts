@@ -42,6 +42,9 @@ export async function runStepAgent<TOutput>(
     productId: runtime.productId,
     runKind: runtime.runKind,
     ...(runtime.slotId !== undefined ? { slotId: runtime.slotId } : {}),
+    // Every agent step in the engine is constructed here, so this is the one
+    // place a per-run model choice has to be attached for all of them.
+    ...(runtime.stageModels !== undefined ? { stageModels: runtime.stageModels } : {}),
     metadata: {},
   };
 

@@ -64,6 +64,12 @@ export interface RunWorkflowParams {
    * half drafted against.
    */
   input?: Record<string, unknown>;
+  /**
+   * Per-stage model overrides for this run, keyed by step id — Studio's
+   * per-stage model selection. Reaches every agent step through
+   * `AgentContext.stageModels`.
+   */
+  stageModels?: Record<string, string>;
 }
 
 /**
@@ -144,6 +150,7 @@ export class WorkflowEngine {
       productId: params.productId,
       runKind: params.runKind,
       input,
+      ...(params.stageModels !== undefined ? { stageModels: params.stageModels } : {}),
       store: this.store,
       now: this.now,
       ...(budget !== undefined ? { budget } : {}),

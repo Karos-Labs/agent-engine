@@ -90,3 +90,38 @@ export function resolveModelPolicy(
     ...(vendor !== undefined ? { vendor } : {}),
   };
 }
+
+/**
+ * Applies a per-run, per-stage model override on top of an already-resolved
+ * policy.
+ *
+ * The env pair above is a DEPLOYMENT decision — "this installation routes the
+ * highlights step at Gemini" — and it is resolved once when an agent's config
+ * is built. This is a different question with a different owner: an admin in
+ * Agent Studio choosing which catalogued Vertex model one stage of one agent
+ * should use, delivered per run in `AgentContext.stageModels`.
+ *
+ * They compose in the order you would want if you had to explain it to
+ * someone: the compiled default is the floor, a deployment override replaces
+ * it, and a Studio choice for this specific run replaces that. The operator
+ * who set an env var did so about the whole installation; the admin who picked
+ * a model in Studio did so about this agent, and is the more specific
+ * statement.
+ *
+ * Only the model id moves. Vendor deliberately does not: the `models`
+ * collection that Studio picks from records which vendor serves each id, so
+ * changing the vendor here from a bare string would be re-deriving a fact the
+ * catalog already holds, and getting it wrong sends a model id to an API that
+ * has never heard of it. A model whose vendor differs from the step's default
+ * needs the env pair, which refuses that exact mismatch.
+ */
+export function applyStageModelOverride(
+  stepId: string,
+  policy: ModelPolicy,
+  stageModels: Readonly<Record<string, string>> | undefined,
+): ModelPolicy {
+  const override = stageModels?.[stepId];
+  if (!override) return policy;
+  if (override === policy.model) return policy;
+  return { ...policy, model: override };
+}

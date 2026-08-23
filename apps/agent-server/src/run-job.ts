@@ -52,6 +52,21 @@ export const RunJobRequestSchema = z.object({
    * the second would draft against the first's brief.
    */
   input: z.record(z.string(), z.unknown()).optional(),
+  /**
+   * Which catalogued model each AI stage should use for THIS run, keyed by the
+   * stage's own step id — Agent Studio's per-stage model selection.
+   *
+   * Separate from `input` on purpose. `input` is what the run was asked to do
+   * and belongs to the person who dispatched it; this is how the agent is
+   * configured to do it and belongs to whoever administers the agent. Folding
+   * them together would let a run brief re-point a stage's model, which is a
+   * spend and a quality decision, not a request.
+   *
+   * A key naming no stage is ignored rather than rejected: the map is authored
+   * against a stage list that changes when an agent is edited, and a stale
+   * entry should not fail a run that is otherwise fine.
+   */
+  stageModels: z.record(z.string(), z.string().min(1)).optional(),
 });
 export type RunJobRequest = z.infer<typeof RunJobRequestSchema>;
 
@@ -117,6 +132,7 @@ export async function startRunJob(request: RunJobRequest, runId: string, deps: S
       productId: request.productId,
       runKind: request.runKind,
       ...(request.input !== undefined ? { input: request.input } : {}),
+      ...(request.stageModels !== undefined ? { stageModels: request.stageModels } : {}),
     });
     const report = await buildRunReport(deps.durableStore, runId, request.productId);
     return {

@@ -20,6 +20,8 @@ export interface WorkflowRuntime {
   runKind: RunKind;
   slotId?: string;
   input: Readonly<Record<string, unknown>>;
+  /** Per-stage model overrides for this run, passed straight to each step's `AgentContext`. */
+  stageModels?: Readonly<Record<string, string>>;
   store: DurableStepStore;
   budget?: WorkflowBudget;
   now(): number;

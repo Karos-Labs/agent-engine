@@ -11,6 +11,8 @@ import type {
 import { GateVerdictSchema } from "../types/gate.js";
 import { computeStepCostUsd, summarizeStepTelemetry } from "../telemetry/pricing.js";
 import type { RouterCompleteOptions } from "../router/model-router.js";
+import { applyStageModelOverride } from "../router/step-model-policy.js";
+import type { ModelPolicy } from "../types/model-policy.js";
 // Both are pure, I/O-free schema helpers, so reaching into `router/adapters`
 // from here doesn't give Layer 2 a second channel out (RFC-01 §4) — and
 // `toRootObjectJsonSchema` in particular has to be *the same* function the
@@ -75,7 +77,7 @@ export abstract class BaseAgent<TOutput> {
       // mode in this loop (RFC-01 §6).
       steps.push({
         stepIndex: 0,
-        modelUsed: this.config.modelPolicy.model,
+        modelUsed: this.effectivePolicy(ctx).model,
         inputTokens: { cached: 0, uncached: 0 },
         outputTokens: 0,
         durationMs: 0,
@@ -328,6 +330,14 @@ export abstract class BaseAgent<TOutput> {
     return scoped;
   }
 
+  /**
+   * This step's model policy for THIS run: its compiled/env-resolved default
+   * with any Studio per-stage override applied on top.
+   */
+  protected effectivePolicy(ctx: AgentContext): ModelPolicy {
+    return applyStageModelOverride(this.config.id, this.config.modelPolicy, ctx.stageModels);
+  }
+
   private clock(): number {
     return this.runtime.now ? this.runtime.now() : Date.now();
   }
@@ -352,7 +362,11 @@ export abstract class BaseAgent<TOutput> {
     const startedAt = this.clock();
     let completion;
     try {
-      completion = await this.runtime.router.complete(prompt, turnSchema, this.config.modelPolicy, opts);
+      // The one place a per-run, per-stage model choice is applied. `ctx` is
+      // in hand here and nowhere earlier, which is why the override rides on
+      // the context rather than through every agent's constructor — one
+      // resolution point instead of fourteen that could each be missed.
+      completion = await this.runtime.router.complete(prompt, turnSchema, this.effectivePolicy(ctx), opts);
     } catch (err) {
       const durationMs = this.clock() - startedAt;
       // A malformed turn is the one model-call failure worth another turn, so
@@ -369,7 +383,7 @@ export abstract class BaseAgent<TOutput> {
           rawPayload: err.rawPayloadExcerpt,
           telemetry: {
             stepIndex,
-            modelUsed: err.usage?.modelUsed ?? this.config.modelPolicy.model,
+            modelUsed: err.usage?.modelUsed ?? this.effectivePolicy(ctx).model,
             inputTokens: err.usage?.inputTokens ?? { cached: 0, uncached: 0 },
             outputTokens: err.usage?.outputTokens ?? 0,
             durationMs,
@@ -385,7 +399,7 @@ export abstract class BaseAgent<TOutput> {
         kind: "tooling_error",
         telemetry: {
           stepIndex,
-          modelUsed: this.config.modelPolicy.model,
+          modelUsed: this.effectivePolicy(ctx).model,
           inputTokens: { cached: 0, uncached: 0 },
           outputTokens: 0,
           durationMs,
@@ -564,6 +578,11 @@ export abstract class BaseAgent<TOutput> {
     return {
       stepIndex,
       toolCall: { name: toolName, args: undefined, result, toolVersion },
+      // The step's configured model, not its effective one. This record is a
+      // TOOL call: no model ran, no tokens were spent, and the field is here
+      // only so a reader knows which step the call belongs to. Threading ctx
+      // in to resolve an override that had no bearing on what happened would
+      // be precision about nothing.
       modelUsed: this.config.modelPolicy.model,
       inputTokens: { cached: 0, uncached: 0 },
       outputTokens: 0,
