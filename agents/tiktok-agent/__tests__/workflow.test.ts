@@ -282,6 +282,55 @@ describe("tiktok-agent clip pipeline", () => {
     expect(h.calls).toContain("topics.release");
   });
 
+  it("takes the source episode from an attached media asset", async () => {
+    // What the portal's upload surface sends. gs:// rather than a local path,
+    // which is the whole reason mediaAssets exists alongside sourcePath.
+    const h = stubTools();
+    const workflow = createTikTokAgentWorkflow({
+      tools: h.tools,
+      promptStore: new FilePromptStore(PROMPTS_ROOT),
+      router: smartFakeRouter([GOOD_MOMENT, GOOD_COMMENTARY]),
+      autoApprove: true,
+    });
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflow, {
+      ...PARAMS,
+      runId: "run-tt-asset",
+      input: { mediaAssets: [{ uri: "gs://bucket/episode-12.mp4", role: "source" }] },
+    });
+
+    expect(result.status).toBe("completed");
+  }, 20_000);
+
+  it("blocks intake when a run attaches neither an asset nor a sourcePath", async () => {
+    const h = stubTools();
+    const workflow = createTikTokAgentWorkflow({
+      tools: h.tools,
+      promptStore: new FilePromptStore(PROMPTS_ROOT),
+      router: smartFakeRouter([GOOD_MOMENT, GOOD_COMMENTARY]),
+      autoApprove: true,
+    });
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflow, {
+      ...PARAMS,
+      runId: "run-tt-noasset",
+      input: { mediaAssets: [{ role: "source" }] },
+    });
+
+    // The malformed asset is dropped rather than crashing the run, and the
+    // run then blocks honestly on having no source at all.
+    expect(result.status).toBe("blocked_intake");
+  });
+
+  it("uses a typed custom prompt as the run's direction", async () => {
+    const h = stubTools();
+    const result = await run(h, "run-tt-prompt", { customPrompt: "the bit where she disagrees about pricing" });
+
+    expect(result.status).toBe("completed");
+    if (result.status !== "completed") throw new Error("unreachable");
+    expect((result.output as { topic: string }).topic).toBe("the bit where she disagrees about pricing");
+    // A typed direction means the catalog is not consulted at all.
+    expect(h.calls).not.toContain("topics.reserve");
+  }, 20_000);
+
   it("prefers an explicitly requested moment over the catalog", async () => {
     const h = stubTools();
     const result = await run(h, "run-tt-requested", { requestedTopic: "the bit about margin calls" });

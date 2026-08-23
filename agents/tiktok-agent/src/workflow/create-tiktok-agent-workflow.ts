@@ -14,6 +14,8 @@ import {
   type GuardrailOutput,
   type ModelRouter,
   type PromptStore,
+  readRichRunInput,
+  firstAsset,
 } from "@agent-engine/core";
 import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext } from "@agent-engine/workflow";
 import { TikTokCommentaryAgent } from "../agent/tiktok-commentary-agent.js";
@@ -130,11 +132,22 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
 
     // ── 01: FIND-source — reserve one moment from the catalog ──
     const intake: TikTokIntake = await wf.step.code("01-reserve-source", async (): Promise<TikTokIntake> => {
-      const requestedTopic = typeof runInput.requestedTopic === "string" ? runInput.requestedTopic.trim() : "";
-      const sourcePath = typeof runInput.sourcePath === "string" ? runInput.sourcePath.trim() : "";
+      const rich = readRichRunInput(runInput);
+      // The typed direction wins over the catalog for the same reason an
+      // explicit requestedTopic does: a person who wrote a sentence about what
+      // they want has more information than the catalog row does.
+      const requestedTopic =
+        rich.customPrompt ?? (typeof runInput.requestedTopic === "string" ? runInput.requestedTopic.trim() : "");
+
+      // `mediaAssets` is the portal's shape; `sourcePath` is what the video
+      // tools have always taken and what a hand-rolled dispatch still sends.
+      // Both are accepted, attachment first, so adding the upload surface did
+      // not invalidate any existing caller.
+      const attached = firstAsset(rich.mediaAssets, "source");
+      const sourcePath = attached?.uri ?? (typeof runInput.sourcePath === "string" ? runInput.sourcePath.trim() : "");
       if (!sourcePath) {
         throw new WorkflowBlockedIntake(
-          "no sourcePath on this run — the clip pipeline needs the media file for the episode it is clipping",
+          "this run attached no source media — the clip pipeline needs the episode it is cutting from, as a mediaAssets entry with role \"source\" or a sourcePath",
         );
       }
 
