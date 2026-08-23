@@ -266,4 +266,58 @@ describe("content gate failures (RFC-02 §3 steps 11-17)", () => {
     // Exactly at the limit passes both gate.lintPost and render.preview.
     expect(result.status).toBe("completed");
   });
+
+  it("a draft engaging a forbidden TOPIC fails the terminal guardrail, even with no banned term in it", async () => {
+    // The gap the guardrail exists for. gate.brandCompliance two steps earlier
+    // matches forbiddenTerms as substrings, so a draft that discusses the
+    // subject fluently without naming it clears that gate and must not clear
+    // this one. And it runs BEFORE the human review, so a reviewer is never
+    // shown something that should not exist.
+    await env.store.writeJson("acme", ["client", "config"], {
+      xHandle: "@acmehq",
+      forbiddenTopics: ["cryptocurrency"],
+    });
+
+    const promptStore = makePromptStore();
+    const router = fakeRouterSequence([
+      finalTurn(
+        goodPost({
+          text: "Digital assets on a distributed ledger are finally getting sane custody rules.",
+          mainPostText: "Digital assets on a distributed ledger are finally getting sane custody rules.",
+          hook: "Digital assets on a distributed ledger are finally getting sane custody rules.",
+        }),
+      ),
+      // The guardrail verifier's own turn.
+      finalTurn({ violatedTopics: ["cryptocurrency"] }),
+    ]);
+    const workflowFn = createXAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+    const durableStore = new MemoryDurableStepStore();
+
+    const result = await new WorkflowEngine(durableStore).run(workflowFn, {
+      ...baseParams,
+      runId: "x_run_topic_guardrail",
+    });
+
+    expect(result.status).not.toBe("completed");
+    const stepIds = (await durableStore.listSteps("x_run_topic_guardrail")).map((s) => s.stepId);
+    expect(stepIds).toContain("guardrail-verify");
+    // Nothing was persisted and no human was asked to look at it.
+    expect(stepIds).not.toContain("18-persist-deliverable");
+  });
+
+  it("costs nothing for a client that forbids no topics", async () => {
+    // Most clients. The guardrail must not add a step, a model call, or a
+    // config read to their runs -- x-agent already read the config at intake
+    // and passes what it found.
+    const promptStore = makePromptStore();
+    const router = fakeRouterSequence([finalTurn(goodPost())]);
+    const workflowFn = createXAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+    const durableStore = new MemoryDurableStepStore();
+
+    await new WorkflowEngine(durableStore).run(workflowFn, { ...baseParams, runId: "x_run_no_topics" });
+
+    const stepIds = (await durableStore.listSteps("x_run_no_topics")).map((s) => s.stepId);
+    expect(stepIds).not.toContain("guardrail-verify");
+    expect(stepIds).not.toContain("guardrail-verify-load-topics");
+  });
 });

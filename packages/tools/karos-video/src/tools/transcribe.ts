@@ -1,11 +1,18 @@
 import { z } from "zod";
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
-import { defineTool, success, toolingError } from "@agent-engine/tool-common";
+import { defineTool, notAvailable, success, toolingError } from "@agent-engine/tool-common";
 import { VideoTranscriptSchema, type VideoTranscript } from "../types.js";
 
 const TOOL_VERSION = "1.0.0";
 const ELEVENLABS_ENDPOINT = "https://api.elevenlabs.io/v1/speech-to-text";
+
+/**
+ * Upload plus transcription for a full episode is genuinely slow, so this is
+ * generous rather than tight — the point is that it is FINITE, not that it is
+ * short.
+ */
+const TRANSCRIBE_TIMEOUT_MS = 180_000;
 
 /**
  * Matches `capture-tool.ts`'s injectable-fetch pattern in `karos-reputation`.
@@ -24,6 +31,8 @@ export const TranscribeInputSchema = z.object({
 export type TranscribeInput = z.infer<typeof TranscribeInputSchema>;
 
 export interface CreateTranscribeOptions {
+  /** Overrides the request deadline. Exists so a test can bound it in milliseconds rather than minutes. */
+  timeoutMs?: number;
   fetchImpl?: TranscribeFetchImpl;
   env?: Readonly<Record<string, string | undefined>>;
   readFileImpl?: (path: string) => Promise<Buffer>;
@@ -54,11 +63,28 @@ interface ElevenLabsSpeechToTextResponse {
  * on `type == "word"`), so no extra mapping layer is needed. video-use's own
  * phrase-level packing/caching is NOT reproduced here — out of scope until
  * the vendoring decision lands.
+ *
+ * ## Failure classification
+ *
+ * An unconfigured deployment gets `not_available`, a broken one gets
+ * `tooling_error`, and the difference is who is supposed to act. "This
+ * deployment has not enabled transcription" is answered by an operator
+ * setting a key; "ElevenLabs returned a 502" is answered by retrying. This
+ * tool used to report the first as the second, so a run in an environment
+ * that had simply never been given a key read as a transcription outage —
+ * which is exactly what it looked like in prep. `karos-media` already drew
+ * this line for the same reason; this brings video into line with it.
+ *
+ * The request is bounded. Without a timeout a hung upload blocks the step
+ * until the container's own request deadline kills it, which loses the run
+ * mid-flight instead of degrading it — a slow vendor should cost one step,
+ * not the work that came before it.
  */
 export function createTranscribe(options: CreateTranscribeOptions = {}) {
   const fetchImpl = options.fetchImpl ?? fetch;
   const env = options.env ?? process.env;
   const readFileImpl = options.readFileImpl ?? ((path: string) => readFile(path));
+  const timeoutMs = options.timeoutMs ?? TRANSCRIBE_TIMEOUT_MS;
 
   return defineTool<TranscribeInput, VideoTranscript>({
     name: "video.transcribe",
@@ -67,7 +93,7 @@ export function createTranscribe(options: CreateTranscribeOptions = {}) {
     async execute({ videoPath, apiKey }) {
       const key = apiKey ?? env["ELEVENLABS_API_KEY"];
       if (!key) {
-        return toolingError("no ElevenLabs API key available — set ELEVENLABS_API_KEY (SKILL.md's credentials_required) or pass apiKey");
+        return notAvailable("this deployment has not enabled transcription — set ELEVENLABS_API_KEY (SKILL.md's credentials_required) or pass apiKey");
       }
 
       const bytes = await readFileImpl(videoPath);
@@ -78,11 +104,25 @@ export function createTranscribe(options: CreateTranscribeOptions = {}) {
       // constructor overload below copies into a plain `Uint8Array`/`ArrayBuffer`.
       form.append("file", new Blob([new Uint8Array(bytes)]), basename(videoPath));
 
-      const response = await fetchImpl(ELEVENLABS_ENDPOINT, {
-        method: "POST",
-        headers: { "xi-api-key": key },
-        body: form,
-      });
+      let response: Response;
+      try {
+        response = await fetchImpl(ELEVENLABS_ENDPOINT, {
+          method: "POST",
+          headers: { "xi-api-key": key },
+          body: form,
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+      } catch (err) {
+        // Named explicitly rather than left to defineTool's catch-all, because
+        // "we gave up waiting" and "the vendor refused us" want different
+        // responses from whoever reads the run.
+        const timedOut = err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
+        return toolingError(
+          timedOut
+            ? `ElevenLabs did not respond within ${timeoutMs / 1000}s`
+            : `ElevenLabs speech-to-text could not be reached: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
 
       if (!response.ok) {
         const body = await response.text().catch(() => "");

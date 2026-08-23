@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { describeFetchFailure, fetchWithDeadline } from "./http.js";
 import type { Review } from "../triage/types.js";
 import { unavailableLeg } from "./tombstone.js";
 import type { CaptureLegOutcome, ReputationFetchImpl, YelpLegRequest } from "./types.js";
@@ -39,7 +40,7 @@ export async function captureYelp(
 
   try {
     const url = `https://api.yelp.com/v3/businesses/${req.businessId}/reviews?limit=3&sort_by=newest`;
-    const response = await fetchImpl(url, { headers: { Authorization: `Bearer ${key}` } });
+    const response = await fetchWithDeadline(fetchImpl, url, { headers: { Authorization: `Bearer ${key}` } });
     if (!response.ok) {
       return dead(`Yelp Fusion returned HTTP ${response.status}`);
     }
@@ -65,6 +66,6 @@ export async function captureYelp(
 
     return { leg: "yelp", status: "ok", reviews: records };
   } catch (err) {
-    return dead(`Yelp Fusion request failed: ${err instanceof Error ? err.message : String(err)}`);
+    return dead(describeFetchFailure(err, "Yelp Fusion"));
   }
 }

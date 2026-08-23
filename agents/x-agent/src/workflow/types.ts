@@ -2,6 +2,12 @@
 export interface XIntakeConfig {
   xHandle: string;
   /**
+   * Subjects this account does not engage with, carried from the same config
+   * read that produced `xHandle` so the terminal guardrail does not have to
+   * read it a second time and add a step to every run's trace.
+   */
+  forbiddenTopics: string[];
+  /**
    * Which setup document under `strategy/x-agent/` this account posts from.
    *
    * Config rather than convention because nothing derives one from the other:

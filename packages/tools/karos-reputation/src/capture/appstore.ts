@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { fetchWithDeadline } from "./http.js";
 import type { Review } from "../triage/types.js";
 import { captureNowIso as nowIso, unavailableLeg } from "./tombstone.js";
 import type { AppstoreLegRequest, CaptureLegOutcome, ReputationFetchImpl } from "./types.js";
@@ -25,7 +26,7 @@ interface LookupResult {
 /** The second keyless Apple endpoint: official rating + rating count for the storefront — tells "genuinely no reviews" apart from "the RSS feed is flaking" (ADAPTERS.md's documented 2026-07-31 finding). */
 async function appstoreLookup(appId: string, country: string, fetchImpl: ReputationFetchImpl): Promise<LookupResult | null> {
   try {
-    const response = await fetchImpl(`https://itunes.apple.com/lookup?id=${appId}&country=${country}`);
+    const response = await fetchWithDeadline(fetchImpl, `https://itunes.apple.com/lookup?id=${appId}&country=${country}`);
     if (!response.ok) return null;
     const data = (await response.json()) as { resultCount?: number; results?: Array<{ averageUserRating?: number; userRatingCount?: number }> };
     if (!data.resultCount) return { listed: false };
@@ -40,7 +41,7 @@ async function appstorePages(req: AppstoreLegRequest, fetchImpl: ReputationFetch
   const records: Review[] = [];
   for (let page = 1; page <= req.maxPages; page++) {
     const url = `https://itunes.apple.com/${req.country}/rss/customerreviews/page=${page}/id=${req.appId}/sortby=mostrecent/json`;
-    const response = await fetchImpl(url);
+    const response = await fetchWithDeadline(fetchImpl, url);
     if (!response.ok) break;
     const raw = await response.text();
     const rawSha256 = sha256Hex(raw);

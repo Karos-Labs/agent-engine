@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { describeFetchFailure, fetchWithDeadline } from "./http.js";
 import type { Review } from "../triage/types.js";
 import { unavailableLeg } from "./tombstone.js";
 import type { CaptureLegOutcome, ReputationFetchImpl, GbpLegRequest } from "./types.js";
@@ -47,7 +48,7 @@ export async function captureGbp(
       url.searchParams.set("pageSize", "50");
       if (pageToken) url.searchParams.set("pageToken", pageToken);
 
-      const response = await fetchImpl(url.toString(), { headers: { Authorization: `Bearer ${token}` } });
+      const response = await fetchWithDeadline(fetchImpl, url.toString(), { headers: { Authorization: `Bearer ${token}` } });
       if (!response.ok) {
         return dead(`GBP API returned HTTP ${response.status}`);
       }
@@ -77,7 +78,7 @@ export async function captureGbp(
       pageToken = data.nextPageToken;
     } while (pageToken);
   } catch (err) {
-    return dead(`GBP API request failed: ${err instanceof Error ? err.message : String(err)}`);
+    return dead(describeFetchFailure(err, "the GBP API"));
   }
 
   return { leg: "gbp", status: "ok", reviews: records };

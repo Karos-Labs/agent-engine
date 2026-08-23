@@ -17,7 +17,7 @@ import {
   readRichRunInput,
   firstAsset,
 } from "@agent-engine/core";
-import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext } from "@agent-engine/workflow";
+import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, type WorkflowContext } from "@agent-engine/workflow";
 import { TikTokCommentaryAgent } from "../agent/tiktok-commentary-agent.js";
 import { TikTokMomentAgent } from "../agent/tiktok-moment-agent.js";
 import { boundsFromTranscript, sentenceBoundedWords, type TranscriptWordLike } from "./clip-bounds.js";
@@ -338,38 +338,19 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
     // promise about what their account will not talk about, and a clip of
     // someone ELSE saying it is still their account saying it. Runs before the
     // human gate so a reviewer is never shown something that should not exist.
-    await wf.step.code("10-topic-guardrail", async () => {
-      const forbidden = readForbiddenTopics(await callTool(tools, "client.getConfig", {}, ctx));
-      if (forbidden.length === 0) return { status: "skipped" as const };
+    await runTopicGuardrail(
+      wf,
+      { tools, promptStore: options.promptStore, router: options.router },
+      `${commentary.caption}
 
-      const verifier = new DynamicAgent(
-        { tools, router: options.router, promptStore: options.promptStore },
-        {
-          id: GUARDRAIL_STEP_ID,
-          description: "Check the finished clip's commentary against the topics this client does not engage with.",
-          allowedTools: [],
-          outputSchema: buildOutputSchema([...GUARDRAIL_OUTPUT_FIELDS]),
-          modelPolicy: { policy: "commodity", model: "claude-haiku-4-5-20251001" },
-          maxSteps: 1,
-        },
-        buildGuardrailSystemPrompt(forbidden),
-      );
-      const exec = await wf.step.agent(
-        GUARDRAIL_STEP_ID,
-        verifier,
-        buildGuardrailInput(`${commentary.caption}\n\n${commentary.about}\n\n${bounds.text}`),
-      );
-      if (exec.status !== "completed" || !exec.finalOutput) {
-        // A verifier that could not do its job must not block good output, but
-        // the failure is recorded so a human can see the check did not run.
-        return { status: "error" as const, error: `guardrail verification did not complete (${exec.status})` };
-      }
-      const verdict = toVerdict(exec.finalOutput as GuardrailOutput, forbidden);
-      if (verdict.status === "violation") {
-        await releaseReservation();
-        throw new GuardrailViolationError(verdict);
-      }
-      return verdict;
+${commentary.about}
+
+${bounds.text}`,
+    ).catch(async (err) => {
+      // A violation is the one thing that stops the run here, and the moment
+      // goes back so a rejected clip does not burn it.
+      await releaseReservation();
+      throw err;
     });
 
     // ── 11: human approval ──

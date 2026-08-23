@@ -1,5 +1,5 @@
-import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure } from "@agent-engine/workflow";
+import { readForbiddenTopics, type AgentContext, type AgentToolRegistry, type GateResponse, type GateVerdict, type ModelRouter, type PromptStore } from "@agent-engine/core";
+import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail } from "@agent-engine/workflow";
 import { XDraftAgent, type Lane } from "../agent/x-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
 import { renderXDraftsMarkdown } from "./render-drafts-markdown.js";
@@ -116,7 +116,9 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
         const value = wf.input[key];
         if (typeof value === "string" && value.trim().length > 0) runScoped[key] = value.trim();
       }
-      return { ...config, ...runScoped } as XIntakeConfig;
+      // forbiddenTopics comes out of the SAME read, so the terminal guardrail
+      // below needs no second one.
+      return { ...config, ...runScoped, forbiddenTopics: readForbiddenTopics(config) } as XIntakeConfig;
     });
 
     // ── 01-03: context & shelf assembly (client.*, memory.read) ──
@@ -334,6 +336,24 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       }
       return preview;
     });
+
+    // ── 14b: terminal topic guardrail ──
+    //
+    // Before the human gate, deliberately: a reviewer should never be shown a
+    // draft that engages a subject this client said it does not touch. It is
+    // NOT what gate.brandCompliance already did two steps up — that matches
+    // forbiddenTerms as substrings and catches the word, while this judges the
+    // subject, so a post that discusses a forbidden topic fluently without
+    // naming it passes the first and fails this.
+    //
+    // Appended by this workflow rather than read from any editable list, and
+    // free for a client who forbids no topics: no list, no model call.
+    await runTopicGuardrail(
+      wf,
+      { tools, promptStore: options.promptStore, router: options.router },
+      draft.text,
+      intake.forbiddenTopics,
+    );
 
     // ── 15: human batch-review gate — nothing ships without a real approval ──
     const reviewDecision: GateResponse = options.autoApprove
