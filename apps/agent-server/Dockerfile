@@ -98,7 +98,24 @@ COPY --from=builder /app/apps/agent-server/dist ./apps/agent-server/dist
 # Installed against the exact pinned "playwright": "1.53.0" version already
 # in node_modules — --with-deps additionally apt-get installs the OS-level
 # libs (fonts, libnss3, ...) a bare `playwright install` alone would skip.
-RUN npx playwright install --with-deps chromium
+#
+# PLAYWRIGHT_BROWSERS_PATH is the load-bearing line, not a tidiness choice.
+# This RUN executes as root, so Playwright's default location is
+# $HOME/.cache/ms-playwright = /root/.cache/ms-playwright. `USER node` below
+# switches to uid 1000, whose HOME is /home/node — so at runtime Playwright
+# looked in /home/node/.cache/ms-playwright and found nothing, and every
+# render died with "Executable doesn't exist at
+# /home/node/.cache/ms-playwright/chromium_headless_shell-1178/...". The
+# browser was always installed; it was installed somewhere the runtime user
+# never looks. Pinning both stages to one absolute, world-readable path is
+# what makes the install and the lookup agree.
+#
+# This went unnoticed because no run had ever reached the render step: every
+# Instagram run held at step 06 on "no viable image found" long before
+# publish.renderCarousel was called (prep run pubsub-21077114299433051 is the
+# first to get past it, and it failed here).
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN npx playwright install --with-deps chromium && chmod -R a+rX /ms-playwright
 
 # Cloud Run sets PORT itself; the server also defaults to 8080 if it's ever unset.
 ENV PORT=8080
