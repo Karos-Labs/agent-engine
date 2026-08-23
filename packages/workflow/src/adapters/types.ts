@@ -74,7 +74,20 @@ export const RunRecordSchema = z.object({
 });
 export type RunRecord = z.infer<typeof RunRecordSchema>;
 
-export const StepKindSchema = z.enum(["code", "agent"]);
+/**
+ * What kind of step produced a checkpoint. `"gate"` is a human/policy approval
+ * (`step.gate`), and it was added because gates used to produce NO checkpoint at
+ * all: `runStepGate` registered its `agentEngineGates/{gateId}` record and threw
+ * `AwaitingGateSignal`, so every reader built on the `steps` subcollection
+ * skipped straight over it. On a real x-agent run that meant the step sequence
+ * read 14 → 16, with the human review step — the one step a person actually
+ * participates in — invisible, and `apps/agent-server`'s report builder carrying
+ * a `resolvedGateStepRecords` join to synthesize the row back after the fact.
+ *
+ * A gate's checkpoint is `"running"` from registration until a response is
+ * recorded, which is genuinely how long the step takes: the wait is the step.
+ */
+export const StepKindSchema = z.enum(["code", "agent", "gate"]);
 export type StepKind = z.infer<typeof StepKindSchema>;
 
 /**

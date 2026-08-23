@@ -238,14 +238,39 @@ const CAMPAIGN_GATE_STEP_ID = "13-campaign-review";
  * step rather than "never reached". A gate that's still pending (part of an
  * `awaiting_gate` run) is deliberately left alone — "not yet reached" is the
  * correct read for that case, and it isn't the bug this join exists to fix.
+ *
+ * NOW A BACKFILL FOR HISTORICAL RUNS ONLY. `runStepGate` writes its own
+ * `kind: "gate"` checkpoint at both ends of the wait, which is where this
+ * information belongs and where every other reader of the `steps` subcollection
+ * can see it — so for any run executed since that change this join finds a real
+ * record already present and adds nothing. `alreadyRecorded` is what makes that
+ * safe rather than duplicative: `discoveredDescriptors` maps records to
+ * descriptors one-for-one, so a synthesized twin of a real record would render
+ * the same review step as two rows.
+ *
+ * Kept rather than deleted because runs predating the checkpoint still have no
+ * gate step at all, and their reports should not regress. It can go once no
+ * such run is worth reporting on.
  */
-async function resolvedGateStepRecords(durableStore: DurableStepStore, runId: string, gateIds: readonly string[]): Promise<StepRecord[]> {
+async function resolvedGateStepRecords(
+  durableStore: DurableStepStore,
+  runId: string,
+  gateIds: readonly string[],
+  alreadyRecorded: ReadonlySet<string>,
+): Promise<StepRecord[]> {
   const records: StepRecord[] = [];
   for (const gateId of gateIds) {
+    if (alreadyRecorded.has(gateId)) continue;
     const gate = await durableStore.getGate(qualifyGateId(runId, gateId));
     if (!gate?.response) continue;
     records.push({
       stepId: gateId,
+      // `"code"`, not `"gate"`, and deliberately so: this record is a
+      // reconstruction for a run whose engine never wrote one, and it carries
+      // none of a real gate checkpoint's timing (`startedAt`/`completedAt` are 0
+      // because nothing recorded them). Labelling it `"gate"` would claim a
+      // fidelity it does not have. A run with a genuine gate step never reaches
+      // this branch.
       kind: "code",
       status: "completed",
       output: { decision: gate.response.decision, actor: gate.response.actor, ...(gate.response.reason !== undefined ? { reason: gate.response.reason } : {}) },
@@ -333,6 +358,10 @@ export async function buildRunReport(
 ): Promise<DynamicAgentRunReport> {
   const stepRecords = await durableStore.listSteps(runId);
   const runRecord = await durableStore.getRun(runId);
+  // Every step this run genuinely checkpointed — the guard that keeps
+  // `resolvedGateStepRecords` from synthesizing a twin of a gate step the engine
+  // now records for itself. See that function's own doc comment.
+  const recordedStepIds = new Set(stepRecords.map((r) => r.stepId));
 
   let descriptors: DynamicAgentStepDescriptor[];
   let slotRecords: Awaited<ReturnType<DurableStepStore["listSlots"]>> = [];
@@ -340,13 +369,13 @@ export async function buildRunReport(
 
   if (productId === "campaign-orchestrator") {
     slotRecords = await durableStore.listSlots(runId, "channel-fanout");
-    gateStepRecords = await resolvedGateStepRecords(durableStore, runId, [CAMPAIGN_GATE_STEP_ID]);
+    gateStepRecords = await resolvedGateStepRecords(durableStore, runId, [CAMPAIGN_GATE_STEP_ID], recordedStepIds);
     descriptors = campaignOrchestratorDescriptors(
       slotRecords.map((slot) => slot.slotId),
       stepRecords,
     );
   } else if (isOriginalChannelProduct(productId)) {
-    gateStepRecords = await resolvedGateStepRecords(durableStore, runId, [GATE_STEP_ID_BY_PRODUCT[productId]]);
+    gateStepRecords = await resolvedGateStepRecords(durableStore, runId, [GATE_STEP_ID_BY_PRODUCT[productId]], recordedStepIds);
     descriptors = channelAgentDescriptors(productId);
   } else {
     // Any other product id — one of the five newly-wired fixed agents, or (Task 2) a
@@ -354,7 +383,7 @@ export async function buildRunReport(
     // `buildDynamicWorkflow` never call `wf.step.gate`, so "no configured gate ids" is the
     // correct answer for one, not a lookup failure.
     const gateIds = (GATE_STEP_IDS_BY_NEW_PRODUCT as Record<string, readonly string[] | undefined>)[productId] ?? [];
-    gateStepRecords = await resolvedGateStepRecords(durableStore, runId, gateIds);
+    gateStepRecords = await resolvedGateStepRecords(durableStore, runId, gateIds, recordedStepIds);
     descriptors = discoveredDescriptors([...stepRecords, ...gateStepRecords]);
   }
 

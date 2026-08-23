@@ -221,10 +221,36 @@ describe("Pub/Sub message consumption -> workflow dispatch -> Firestore write cy
     const steps = await durableStore.listSteps(runId);
     expect(steps.length).toBeGreaterThan(0);
     for (const step of steps) {
-      expect(step.output).not.toBeUndefined(); // normalized to null, never left as `undefined`
       expect(typeof step.stepId).toBe("string");
       expect(step.status).toBeDefined();
+      // The invariant this actually guards is `sanitizeUndefined`: real
+      // Firestore's `set()` throws on a literal `undefined` ANYWHERE in the
+      // document, so a void step callback's `output: undefined` must be
+      // normalized to null before the write.
+      //
+      // ASKED PER STATUS, because "absent" and "undefined-valued" are two
+      // different things and only one of them is the hazard. This used to read
+      // `expect(step.output).not.toBeUndefined()` over every step, which
+      // conflated them — fine while every step doc at rest had had a terminal
+      // write, and wrong the moment a step could legitimately still be
+      // "running" when the run reaches a resting state. `step.gate` is exactly
+      // that step: it checkpoints as `kind: "gate", status: "running"` and stays
+      // there for as long as the human takes, and `StepRecordSchema` says in as
+      // many words that such a record "genuinely doesn't have them yet".
+      if (step.status === "running") {
+        expect("output" in step, `${step.stepId}: a running checkpoint must omit output, not carry an undefined one`).toBe(false);
+      } else {
+        expect(step.output, `${step.stepId}: a terminal checkpoint's output must be normalized, never undefined`).not.toBeUndefined();
+      }
     }
+
+    // The gate is a step now, not a hole in the sequence. Before it checkpointed
+    // itself, the `steps` subcollection had no row for the one step a human
+    // participates in — an x-agent run's sequence read 14 -> 16.
+    const gateSteps = steps.filter((s) => s.kind === "gate");
+    expect(gateSteps).toHaveLength(1);
+    expect(gateSteps[0]!.status).toBe("running");
+    expect(runData?.currentStepId).toBe(gateSteps[0]!.stepId);
 
     // The run stopped at a real gate -- confirm it actually landed in agentEngineGates,
     // not just as an in-memory field on the run record.

@@ -157,10 +157,21 @@ describe("end-to-end: the 22-step Reddit agent reply-only workflow", () => {
     const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
     expect(deliverables.map((d) => d.id)).toEqual(["reddit-reply"]);
 
+    // THE GATE IS A STEP RECORD TOO, now that `wf.step.gate` checkpoints
+    // itself (`kind: "gate"`) — so the full id list appears here, gate
+    // included, and this suite's own "N-step workflow" name is finally
+    // literally true. This assertion used to filter "18-batch-review" OUT,
+    // under a comment explaining that a gate never reaches `listSteps()`;
+    // that absence is exactly what made a real run's step sequence read
+    // straight past its human review step in the portal.
     const stepRecords = await durableStore.listSteps(params.runId);
-    const nonGateStepIds = ALL_22_STEP_IDS.filter((id) => id !== "18-batch-review");
-    expect(stepRecords.map((s) => s.stepId).sort()).toEqual([...nonGateStepIds].sort());
+    expect(stepRecords.map((s) => s.stepId).sort()).toEqual([...ALL_22_STEP_IDS].sort());
     expect(stepRecords.every((s) => s.status === "completed")).toBe(true);
+    // And the checkpoint carries the DECISION, which is the only place the
+    // run records that a human approved this and who they were.
+    const gateStep = stepRecords.find((s) => s.kind === "gate");
+    expect(gateStep?.stepId).toBe("18-batch-review");
+    expect(gateStep?.output).toMatchObject({ decision: "approve", actor: "jane@karoslabs.com" });
   });
 
   it("rejects the batch review with a reason -> held, and the deliverable never ships", async () => {

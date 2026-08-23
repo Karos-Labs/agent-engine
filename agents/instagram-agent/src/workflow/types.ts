@@ -132,9 +132,24 @@ export interface InstagramRunClaim {
 // Step 03 — claim topic
 // ─────────────────────────────────────────────────────────────────────────
 
+/** Where step 03's subject came from — decides whether there is a dedup reservation to commit at step 09. */
+export type InstagramTopicSource = "reserved" | "requested" | "research";
+
 export interface InstagramTopicClaim {
-  reservationKey: string;
+  /**
+   * OPTIONAL, because only a `"reserved"` claim has one.
+   *
+   * It used to be required, which encoded the assumption that the topics
+   * catalog is the sole possible origin of a subject — and that assumption is
+   * exactly what made a client with no seeded catalog unable to run this agent
+   * at all: `topics.reserve` reported a floor breach, step 03 threw
+   * `WorkflowHeld`, and the run ended having produced nothing. `topics.commit`
+   * at step 09 is now conditional on this field, matching what `x-agent` has
+   * always done with its own `XTopicReservation.reservationKey`.
+   */
+  reservationKey?: string;
   topic: string;
+  source: InstagramTopicSource;
 }
 
 // ─────────────────────────────────────────────────────────────────────────

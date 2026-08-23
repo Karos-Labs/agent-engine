@@ -60,6 +60,12 @@ describe("end-to-end: the Intel Report agent workflow (RFC-05 §3)", () => {
     const executedIds = stepRecords.map((s) => s.stepId).sort();
     expect(executedIds).toEqual([...ALL_STEP_IDS].sort());
     expect(stepRecords.every((s) => s.status === "completed")).toBe(true);
+    // NO `kind: "gate"` step on this path, and that is correct rather than a
+    // gap: `autoApprove` makes the review a `wf.step.code` that synthesizes a
+    // system approval (see each workflow's own `options.autoApprove` branch), so
+    // there is no real gate to checkpoint. The gate-pause-and-resume test below
+    // is where a genuine `"gate"` record is asserted.
+    expect(stepRecords.some((s) => s.kind === "gate")).toBe(false);
 
     // The deliverable and the intel report both really landed on the file-backed WorkspaceStore.
     const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
@@ -99,9 +105,20 @@ describe("end-to-end: the Intel Report agent workflow (RFC-05 §3)", () => {
     expect(second.status).toBe("completed");
     expect(router.complete).toHaveBeenCalledTimes(1);
 
+    // THE GATE IS A STEP RECORD TOO, now that `wf.step.gate` checkpoints
+    // itself (`kind: "gate"`) — so the full id list appears here, gate
+    // included, and this suite's own "N-step workflow" name is finally
+    // literally true. This assertion used to filter "04-batch-review" OUT,
+    // under a comment explaining that a gate never reaches `listSteps()`;
+    // that absence is exactly what made a real run's step sequence read
+    // straight past its human review step in the portal.
     const stepRecords = await durableStore.listSteps(params.runId);
-    const nonGateStepIds = ALL_STEP_IDS.filter((id) => id !== "04-batch-review");
-    expect(stepRecords.map((s) => s.stepId).sort()).toEqual([...nonGateStepIds].sort());
+    expect(stepRecords.map((s) => s.stepId).sort()).toEqual([...ALL_STEP_IDS].sort());
+    // And the checkpoint carries the DECISION, which is the only place the
+    // run records that a human approved this and who they were.
+    const gateStep = stepRecords.find((s) => s.kind === "gate");
+    expect(gateStep?.stepId).toBe("04-batch-review");
+    expect(gateStep?.output).toMatchObject({ decision: "approve", actor: "jane@karoslabs.com" });
   });
 
   it("rejects the batch review with a reason -> held, and nothing is persisted", async () => {

@@ -197,32 +197,91 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // evaluates `check: "copy"` rules).
     const renderRules = frozen.styleConfig.rules.filter((r) => r.check === "render");
 
-    // ── 03: claim the topic — topics.reserve is the ONLY dedup gate ──
+    // ── 03: claim the subject — the catalog first, then the same fallbacks every other channel already has ──
     const topicClaim = await wf.step.code("03-claim-topic", async (): Promise<InstagramTopicClaim> => {
       const reservationKey = `${wf.runId}__topic`;
       const lane = runClaim.requestedLane ?? DEFAULT_CAROUSEL_LANE;
       const outcome = await tools["topics.reserve"]!.execute({ reservationKey, count: 1, excludeTopics: [], lane }, { ctx });
       if (outcome.status === "success") {
         const result = outcome.result as { reservationKey: string; topics: string[] };
-        return { reservationKey: result.reservationKey, topic: result.topics[0]! };
+        return { reservationKey: result.reservationKey, topic: result.topics[0]!, source: "reserved" };
       }
-      if (outcome.status === "content_fail") {
-        // The topics catalog is "the only dedup gate" (RFC-03 §2.3) — a floor
-        // breach here (fewer unused rows available than requested, OR
-        // reserving would drop the lane below the floor of 5 — Fix 1) is a
-        // real, expected content outcome, never a crash. Fabricating a topic
-        // ourselves would require the same real "invent + append" judgment
-        // `research.pull` deliberately stands in for rather than fakes
-        // (`packages/tools/karos-research/src/pull.ts`) — out of scope for
-        // this deterministic code step — so a genuine breach holds the whole
-        // post rather than silently proceeding without ever having claimed
-        // the sole dedup lock. `topics.reserve` itself already tried a
-        // proactive top-up before reporting this breach (see its own doc
-        // comment) — this is the honest "it still couldn't be satisfied"
-        // outcome, not a step this workflow skipped.
-        throw new WorkflowHeld(`topics catalog floor breached — topics.reserve could not claim a topic for this run: ${outcome.reason}`);
+      if (outcome.status !== "content_fail") {
+        throw new WorkflowToolingFailure(`topics.reserve failed: ${outcome.status}`);
       }
-      throw new WorkflowToolingFailure(`topics.reserve failed: ${outcome.status}`);
+
+      /*
+       * A FLOOR BREACH IS NO LONGER THE END OF THE RUN.
+       *
+       * The old code threw `WorkflowHeld` here, and its reasoning was sound in
+       * isolation: the catalog is "the only dedup gate" (RFC-03 §2.3), so
+       * proceeding without a claim means proceeding without the dedup lock, and
+       * inventing a topic in a deterministic code step would be fabrication.
+       * What that reasoning missed is that THIS AGENT WAS THE ONLY ONE THAT DID
+       * IT. Every other caller of `topics.reserve` in this repo — x-agent,
+       * linkedin-agent, blog-agent, newsletter-agent, reddit-agent,
+       * campaign-orchestrator — treats a `content_fail` as "the catalog can't
+       * help this run" and falls through to a research-derived candidate
+       * (x-agent's step 06/07 is the closest analogue and the model followed
+       * here). And it is also the only caller that passes `lane`, so it is the
+       * only one whose reserve can breach on a lane mismatch rather than on an
+       * empty catalog.
+       *
+       * The consequence in production was total, not marginal: nothing in this
+       * repo ever seeds a topics catalog with real rows (`topics.topUp` is
+       * called by exactly one caller — `topics.reserve`'s own proactive top-up,
+       * with an empty array, a documented no-op), so a client whose catalog was
+       * never seeded out of band could not run this agent AT ALL. Every run
+       * died at step 03. That is not a guardrail declining a post; that is an
+       * agent that cannot start.
+       *
+       * The dedup honesty is preserved rather than dropped: a fallback claim
+       * carries no `reservationKey`, `source` records where the subject really
+       * came from, and step 09's `topics.commit` is skipped for it — so the
+       * catalog is never told a topic was consumed that it never issued. What a
+       * fallback run gives up is dedup PROTECTION, which is the correct trade
+       * against not running: a possibly-repeated post is reviewable by the human
+       * gate at step 09; a run that never happened is not.
+       *
+       * WHY THE RESERVATION IS STILL TRIED FIRST, unlike x-agent (whose
+       * explicit `requestedTopic` outranks a reserved one): the happy path must
+       * not change. A client with a healthy catalog keeps getting a real dedup
+       * lock on every run, exactly as before — `requestedSubject` only decides
+       * things when the catalog could not. Making it outrank the catalog would
+       * silently drop the dedup lock for every run of every client who has ever
+       * set that field, which is a different change with different consequences.
+       */
+
+      // 1. What the client actually asked for. Read into `InstagramRunClaim` at
+      //    step 01 since that step was written and, until now, never once read —
+      //    a client could set `requestedSubject` and have it silently ignored.
+      if (runClaim.requestedSubject) {
+        return { topic: runClaim.requestedSubject, source: "requested" };
+      }
+
+      // 2. A research-derived subject, built the same way x-agent's step 04/05
+      //    builds its own fallback candidate: from the client's own declared
+      //    industry, labelled for what it is. Phase 1's `research.pull` has no
+      //    real search backend (see karos-research/src/pull.ts), so the honest
+      //    candidate is the QUERY, never a fabricated finding — the research
+      //    agent at step 04b still does the real sourcing work on top of it.
+      const profileOutcome = await tools["client.getProfile"]!.execute({}, { ctx });
+      const industry =
+        profileOutcome.status === "success" && typeof (profileOutcome.result as Record<string, unknown>)["industry"] === "string"
+          ? ((profileOutcome.result as Record<string, unknown>)["industry"] as string)
+          : undefined;
+      if (industry) {
+        return { topic: `${industry} trends this week`, source: "research" };
+      }
+
+      // 3. Genuinely nothing to post about: no catalog row, no requested
+      //    subject, and no declared industry to derive one from. NOW a hold is
+      //    the honest answer, and its message says which three things were
+      //    missing rather than blaming the catalog alone.
+      throw new WorkflowHeld(
+        `no subject available for this run — the topics catalog could not serve lane "${lane}" (${outcome.reason}), ` +
+          `no requestedSubject was set, and the client profile declares no industry to derive one from`,
+      );
     });
 
     // ── 04: research the subject — verbatim raw payload capture, then judgment ──
@@ -557,9 +616,19 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // Re-confirm the step-03 topic claim survived a concurrent run before
       // finishing (RFC-03 §3 step 09's note) — commits the sole dedup claim
       // for good, only once delivery is otherwise complete.
-      const commitOutcome = await tools["topics.commit"]!.execute({ reservationKey: topicClaim.reservationKey }, { ctx });
-      if (commitOutcome.status !== "success") {
-        throw new WorkflowToolingFailure(`topics.commit failed to confirm the step-03 topic claim: ${commitOutcome.status}`);
+      //
+      // CONDITIONAL, because step 03 can now reach a subject without reserving
+      // one (a requested subject, or a research-derived fallback, when the
+      // catalog could not serve this lane — see that step's own note). There is
+      // no reservation to confirm in those cases, and calling `topics.commit`
+      // with no key would either fail or, worse, claim the catalog issued
+      // something it never did. Same guard x-agent's step 20 already applies to
+      // its own reservation.
+      if (topicClaim.source === "reserved" && topicClaim.reservationKey) {
+        const commitOutcome = await tools["topics.commit"]!.execute({ reservationKey: topicClaim.reservationKey }, { ctx });
+        if (commitOutcome.status !== "success") {
+          throw new WorkflowToolingFailure(`topics.commit failed to confirm the step-03 topic claim: ${commitOutcome.status}`);
+        }
       }
 
       return id;

@@ -205,6 +205,169 @@ describe("4. gates pause the run and resume completes it", () => {
   });
 });
 
+describe("4b. a gate checkpoints itself, in both states", () => {
+  /**
+   * THE REGRESSION THIS PINS. `runStepGate` used to register its gate record
+   * and throw, writing no step checkpoint at all — so the `steps` subcollection
+   * had no row for the one step a HUMAN participates in, and every reader built
+   * on it skipped over the gate entirely. On a real x-agent run the step
+   * sequence read 14 → 16, with `15-batch-review` nowhere to be found, and
+   * `apps/agent-server`'s report builder carried a `resolvedGateStepRecords`
+   * join to reconstruct the row downstream after the fact.
+   */
+  const gateWorkflow = async (wf: WorkflowContext) => {
+    await wf.step.code("01-prep", () => "ok");
+    const response = await wf.step.gate("02-batch-review", {
+      kind: "batch_review",
+      payload: { batchId: "b1" },
+      requiredRole: "account_manager",
+      timeout: { duration: "24h", onTimeout: "hold" },
+    });
+    return { decision: response.decision };
+  };
+
+  it("appears in the step sequence as a running 'gate' step while it waits", async () => {
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+
+    await engine.run(gateWorkflow, baseParams);
+
+    const steps = await store.listSteps("run_1");
+    expect(steps.map((s) => s.stepId).sort()).toEqual(["01-prep", "02-batch-review"]);
+    const gateStep = steps.find((s) => s.stepId === "02-batch-review")!;
+    expect(gateStep.kind).toBe("gate");
+    // "running" for as long as the human takes: the wait IS the step.
+    expect(gateStep.status).toBe("running");
+    expect(gateStep.completedAt).toBeUndefined();
+  });
+
+  it("points the run's currentStepId at the gate, so a live reader sees what it is waiting on", async () => {
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+
+    await engine.run(gateWorkflow, baseParams);
+
+    expect((await store.getRun("run_1"))?.currentStepId).toBe("02-batch-review");
+  });
+
+  it("completes the same checkpoint with the decision and the actor once resolved", async () => {
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+
+    await engine.run(gateWorkflow, baseParams);
+    await engine.resolveGate("run_1", "02-batch-review", {
+      decision: "approve",
+      actor: "jane@karoslabs.com",
+      at: "2026-08-15T00:00:00Z",
+    });
+    const resumed = await engine.run(gateWorkflow, baseParams);
+    expect(resumed.status).toBe("completed");
+
+    const steps = await store.listSteps("run_1");
+    // ONE record, not a second document — the terminal write lands on the same
+    // checkpoint the "running" write created.
+    expect(steps.filter((s) => s.stepId === "02-batch-review")).toHaveLength(1);
+    const gateStep = steps.find((s) => s.stepId === "02-batch-review")!;
+    expect(gateStep.status).toBe("completed");
+    expect(gateStep.kind).toBe("gate");
+    expect(gateStep.output).toMatchObject({ decision: "approve", actor: "jane@karoslabs.com", at: "2026-08-15T00:00:00Z" });
+    expect(gateStep.costUsd).toBe(0);
+  });
+
+  it("records a rejection with its mandatory reason, not just the decision", async () => {
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+
+    await engine.run(gateWorkflow, baseParams);
+    await engine.resolveGate("run_1", "02-batch-review", {
+      decision: "reject",
+      actor: "jane@karoslabs.com",
+      reason: "the hook repeats last week's post",
+      at: "2026-08-15T00:00:00Z",
+    });
+    // The workflow itself throws WorkflowHeld on a rejection; what matters here
+    // is that the checkpoint recorded WHY before that happened.
+    await engine.run(gateWorkflow, baseParams).catch(() => undefined);
+
+    const gateStep = (await store.listSteps("run_1")).find((s) => s.stepId === "02-batch-review")!;
+    expect(gateStep.output).toMatchObject({ decision: "reject", reason: "the hook repeats last week's post" });
+  });
+
+  it("measures the human wait, not the length of the final replay", async () => {
+    // `startedAt` is preserved across replays on purpose. Stamping now() on every
+    // re-entry would report a 24-hour review as however long the last resume took.
+    let clock = 1_000;
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store, () => clock);
+
+    await engine.run(gateWorkflow, baseParams);
+    const startedAt = (await store.listSteps("run_1")).find((s) => s.stepId === "02-batch-review")!.startedAt;
+
+    clock = 90_000_000; // the resume happens much later
+    await engine.resolveGate("run_1", "02-batch-review", {
+      decision: "approve",
+      actor: "jane@karoslabs.com",
+      at: "2026-08-15T00:00:00Z",
+    });
+    await engine.run(gateWorkflow, baseParams);
+
+    const gateStep = (await store.listSteps("run_1")).find((s) => s.stepId === "02-batch-review")!;
+    expect(gateStep.startedAt).toBe(startedAt);
+    expect(gateStep.durationMs).toBeGreaterThan(0);
+  });
+
+  it("does not double-count the gate in a run's cost, and leaves resume semantics alone", async () => {
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+    const prep = vi.fn(() => "ok");
+
+    const workflowFn = async (wf: WorkflowContext) => {
+      await wf.step.code("01-prep", prep);
+      await wf.step.gate("02-batch-review", {
+        kind: "batch_review",
+        payload: {},
+        requiredRole: "account_manager",
+        timeout: { duration: "24h", onTimeout: "hold" },
+      });
+      return "done";
+    };
+
+    await engine.run(workflowFn, baseParams);
+    await engine.resolveGate("run_1", "02-batch-review", { decision: "approve", actor: "a", at: "2026-08-15T00:00:00Z" });
+    await engine.run(workflowFn, baseParams);
+    // Replayed twice more: the gate's completed checkpoint must not be rewritten
+    // into something else, and the code step must not re-execute.
+    await engine.run(workflowFn, baseParams);
+
+    expect(prep).toHaveBeenCalledTimes(1);
+    const steps = await store.listSteps("run_1");
+    expect(steps.every((s) => s.status === "completed")).toBe(true);
+    expect(steps.reduce((sum, s) => sum + (s.costUsd ?? 0), 0)).toBe(0);
+  });
+
+  it("gives two fan-out slots gating the same local id their own checkpoints", async () => {
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+
+    await engine.run(
+      async (wf: WorkflowContext) =>
+        wf.fanout("drafts", ["a", "b"], async (item, slotCtx) => {
+          await slotCtx.step.gate("needs-approval", {
+            kind: "publish_approve",
+            payload: { item },
+            requiredRole: "account_manager",
+            timeout: { duration: "24h", onTimeout: "hold" },
+          });
+          return { item };
+        }),
+      baseParams,
+    );
+
+    const gateStepIds = (await store.listSteps("run_1")).filter((s) => s.kind === "gate").map((s) => s.stepId).sort();
+    expect(gateStepIds).toEqual(["drafts__slot_0::needs-approval", "drafts__slot_1::needs-approval"]);
+  });
+});
+
 describe("5. step-level telemetry aggregates cleanly to the run summary", () => {
   it("sums every step.agent call's cost into the run's totalCostUsd", async () => {
     const store = new MemoryDurableStepStore();
