@@ -11,6 +11,7 @@ import { createNewsletterAgentWorkflow } from "@agent-engine/agent-newsletter";
 import { createCampaignWorkflow, type CampaignChannel } from "@agent-engine/campaign-orchestrator";
 import { createLandingBuilderAgentWorkflow } from "@agent-engine/agent-landing-builder";
 import { createBrandedShortsAgentWorkflow } from "@agent-engine/agent-branded-shorts";
+import { createTikTokAgentWorkflow } from "@agent-engine/agent-tiktok";
 import { createReputationPulseWorkflow } from "@agent-engine/agent-reputation";
 import { createSeoGeoAgentWorkflow } from "@agent-engine/agent-seo-geo";
 import { createIntelReportAgentWorkflow } from "@agent-engine/agent-intel-report";
@@ -42,6 +43,11 @@ export const KNOWN_PRODUCT_IDS = [
   // agents above later read. Same dispatch path, different job.
   "linkedin-setup-agent",
   "reddit-setup-agent",
+  // The podcast/commentary clip system, migrated from karos-tiktok-agent. Its
+  // own product, not a branded-shorts variant: branded-shorts turns ONE
+  // talking-head video into one short, this finds a moment inside someone
+  // else's long-form episode and puts the client's commentary on it.
+  "tiktok-agent",
 ] as const;
 export type ProductId = (typeof KNOWN_PRODUCT_IDS)[number];
 
@@ -145,6 +151,8 @@ export function buildWorkflowForProduct(productId: ProductId, deps: AgentRuntime
       return createLandingBuilderAgentWorkflow(deps);
     case "branded-shorts-agent":
       return createBrandedShortsAgentWorkflow(deps);
+    case "tiktok-agent":
+      return createTikTokAgentWorkflow(deps);
     case "reputation-agent":
       return createReputationPulseWorkflow({ ...deps, ...(deps.workspaceStore ? { store: deps.workspaceStore } : {}) });
     case "seo-geo-agent":

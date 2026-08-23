@@ -186,6 +186,7 @@ const GATE_STEP_IDS_BY_NEW_PRODUCT: Record<Exclude<ProductId, OriginalChannelPro
   "reputation-agent": ["10-reputation-approve-all"],
   "seo-geo-agent": ["03-prompt-set-review", "12-fix-generation-review"],
   "intel-report-agent": ["04-batch-review"],
+  "tiktok-agent": ["11-clip-review"],
   // The setup agents raise no gate: they record a filled form and finish, so
   // there is nothing for a human to approve mid-run. Empty rather than absent
   // because this map is exhaustive over ProductId, and that exhaustiveness is

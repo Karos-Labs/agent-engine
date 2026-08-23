@@ -1,0 +1,22 @@
+{
+  "name": "@agent-engine/agent-tiktok",
+  "private": true,
+  "version": "0.0.1",
+  "description": "The TikTok agent — the podcast/commentary clip system: reserve a source moment, transcribe it, pick the single best moment, cut on sentence boundaries, write the commentary layer, clear the blocking QA and compliance gates, and queue one clip for human approval.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "test": "npm run typecheck && vitest run"
+  },
+  "dependencies": {
+    "@agent-engine/core": "^0.0.1",
+    "@agent-engine/tool-common": "^0.0.1",
+    "@agent-engine/tool-karos-video": "^0.0.1",
+    "@agent-engine/tools": "^0.0.1",
+    "@agent-engine/workflow": "^0.0.1",
+    "zod": "^4.4.3"
+  }
+}
