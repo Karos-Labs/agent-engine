@@ -32,7 +32,7 @@ function codeOnlyAgent(code: string, extra: Record<string, unknown> = {}): Agent
         ...extra,
       },
     ],
-  } as AgentDefinitionInput;
+  };
 }
 
 /** Reads stdin as JSON and prints whatever `fn` returns. */
@@ -146,11 +146,19 @@ describe("dynamic runner code stages", () => {
   it("feeds a code stage's output into the next stage", async () => {
     process.env.DYNAMIC_CODE_STEPS_ENABLED = "true";
 
-    const definition = {
-      ...codeOnlyAgent(nodeScript("() => ({ count: 2 })")),
+    const definition: AgentDefinitionInput = {
       agentId: "chained",
+      name: "Chained",
+      description: "Two transforms in a row",
+      defaultModelPolicy: { policy: "pinned", model: "claude-sonnet-4-6" },
       stages: [
-        ...codeOnlyAgent(nodeScript("() => ({ count: 2 })")).stages,
+        {
+          kind: "code",
+          id: "transform",
+          description: "produce a count",
+          language: "node",
+          code: nodeScript("() => ({ count: 2 })"),
+        },
         {
           kind: "code",
           id: "double",
@@ -159,7 +167,7 @@ describe("dynamic runner code stages", () => {
           code: nodeScript("(ctx) => ({ doubled: ctx.previousOutput.count * 2 })"),
         },
       ],
-    } as AgentDefinitionInput;
+    };
 
     const outcome = await run(definition, "run-code-chain");
 

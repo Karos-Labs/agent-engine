@@ -1,5 +1,5 @@
 import type { FirestoreLike } from "../agent/gcp-types.js";
-import type { AgentDefinition, AgentDefinitionInput } from "./types.js";
+import { AgentDefinitionInputSchema, type AgentDefinition, type AgentDefinitionInput } from "./types.js";
 
 export type AgentDefinitionUpsertResult =
   | { outcome: "created" | "updated"; definition: AgentDefinition }
@@ -27,8 +27,14 @@ export interface AgentDefinitionStore {
 }
 
 function nextDefinition(agentId: string, input: AgentDefinitionInput, existing: AgentDefinition | undefined, now: number): AgentDefinition {
+  // Parsed rather than spread as-is: `AgentDefinitionInput` is the authoring
+  // shape, where every defaulted field may be absent. This is the one place
+  // those defaults are applied, so a definition in the store is always the
+  // full shape no matter which caller wrote it — and a malformed one is
+  // rejected here instead of being discovered at dispatch time.
+  const parsed = AgentDefinitionInputSchema.parse(input);
   return {
-    ...input,
+    ...parsed,
     agentId,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,

@@ -167,4 +167,19 @@ export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>;
 
 /** What a caller supplies to create/update a definition — the store stamps `createdAt`/`updatedAt`/`version`. */
 export const AgentDefinitionInputSchema = AgentDefinitionSchema.omit({ createdAt: true, updatedAt: true, version: true });
-export type AgentDefinitionInput = z.infer<typeof AgentDefinitionInputSchema>;
+
+/**
+ * The AUTHORING shape — `z.input`, not `z.infer`.
+ *
+ * Every defaulted field is optional here and required in `AgentDefinition`,
+ * which is the difference between what a caller writes and what the store
+ * holds. A stage may omit `kind` (it means "ai"), a definition may omit
+ * `dedupeAgainstHistory`, a field may omit `optional`. With `z.infer` all
+ * three would be mandatory at the keyboard, which defeats the point of giving
+ * them defaults — and would have made every definition written before code
+ * steps existed fail to compile, even though it parses unchanged.
+ *
+ * The store applies the defaults by parsing, so what lands in Firestore is
+ * always the full shape.
+ */
+export type AgentDefinitionInput = z.input<typeof AgentDefinitionInputSchema>;

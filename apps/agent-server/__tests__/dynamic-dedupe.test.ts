@@ -34,7 +34,7 @@ function agent(agentId: string, dedupe: boolean): AgentDefinitionInput {
         outputSchema: [{ name: "text", type: "string", optional: false }],
       },
     ],
-  } as AgentDefinitionInput;
+  };
 }
 
 describe("dynamic runner output de-duplication", () => {
