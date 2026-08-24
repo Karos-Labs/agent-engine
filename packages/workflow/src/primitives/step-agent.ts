@@ -3,7 +3,46 @@ import { recordCostAndTokens, withWorkflowStepSpan } from "@agent-engine/telemet
 import type { StepRecord } from "../adapters/types.js";
 import type { WorkflowRuntime } from "./context.js";
 import { markStepRunning, scopedStepId, sumRunCost } from "./context.js";
-import { WorkflowBudgetExceeded } from "./signals.js";
+import { WorkflowBudgetExceeded, WorkflowStepTimeout } from "./signals.js";
+
+/**
+ * The bound on a single `step.agent` call absent an explicit
+ * `WorkflowRuntime.agentStepTimeoutMs`.
+ *
+ * Sized off real vetting-step durations, not guessed: the largest observed
+ * candidate-pool vet in prep (`06-vet-images-attempt-1`,
+ * pubsub-21543794087429035) took ~182s. 10 minutes is generous headroom
+ * above that while still bounding a genuinely wedged call to something far
+ * short of "forever".
+ */
+export const DEFAULT_AGENT_STEP_TIMEOUT_MS = 10 * 60_000;
+
+/**
+ * Races `run` against a timer, rejecting with `WorkflowStepTimeout` if the
+ * timer wins.
+ *
+ * This does not cancel `run` — there is no cooperative cancellation path
+ * through a `BaseAgent`'s ReAct loop and the tool calls inside it — so a
+ * call that eventually settles after the timeout fires still runs to
+ * completion in the background, its result simply never observed. What this
+ * buys is a bounded wait: the *step* (and therefore the run) gives up and
+ * reports a tooling failure instead of sitting at `"running"` indefinitely.
+ */
+function withStepTimeout<T>(run: Promise<T>, stepId: string, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new WorkflowStepTimeout(stepId, timeoutMs)), timeoutMs);
+    run.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
 
 /**
  * `step.agent(id, agent, input)` (RFC-01 §8.1/§8.2): invokes a `BaseAgent`,
@@ -12,6 +51,11 @@ import { WorkflowBudgetExceeded } from "./signals.js";
  * agent's *content* verdict (`completed`/`content_fail`/`tooling_error`/
  * `budget_exceeded`) lives inside the checkpointed `output`, for the
  * workflow author to inspect. Layer 1 never inspects it itself (RFC-01 §4).
+ *
+ * `agent.run()` is raced against `DEFAULT_AGENT_STEP_TIMEOUT_MS` (override via
+ * `WorkflowRuntime.agentStepTimeoutMs`) — a call that never settles throws
+ * `WorkflowStepTimeout` instead of leaving this step, and the whole run, at
+ * `"running"` forever.
  *
  * Inside a `fanout` slot, `id` is namespaced by the slot (RFC-01 §5.5's
  * per-slot isolation) — sibling slots calling `step.agent("draft", ...)`
@@ -60,7 +104,8 @@ export async function runStepAgent<TOutput>(
     async (span) => {
       const startedAt = runtime.now();
       await markStepRunning(runtime, stepId, "agent", startedAt);
-      const result = await agent.run(ctx, input);
+      const timeoutMs = runtime.agentStepTimeoutMs ?? DEFAULT_AGENT_STEP_TIMEOUT_MS;
+      const result = await withStepTimeout(agent.run(ctx, input), stepId, timeoutMs);
       const completedAt = runtime.now();
 
       // AgentExecutionResult.totalTokens.input is already the cached+uncached sum

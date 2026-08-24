@@ -251,6 +251,6 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
     const ids = stepRecords.map((s) => s.stepId);
     expect(ids).toContain("13-verify-no-placeholder");
     expect(ids).toContain("14-verify-no-leak");
-    expect(ids).not.toContain("15-batch-review");
+    expect(ids).not.toContain("15-batch-review-r0");
   });
 });

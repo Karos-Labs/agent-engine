@@ -476,6 +476,62 @@ describe("6. real-time in-progress checkpoints", () => {
   });
 });
 
+describe("6b. step.agent timeout (a reliability audit finding)", () => {
+  // prep run pubsub-21543515035218714 wedged at "06c-vet-scrape-attempt-2" in
+  // "running" state for hours: nothing ever threw, so the run itself never
+  // left "running" either, and RESUMABLE_FROM_STATUSES deliberately excludes
+  // "running" — nobody could even resume it. A bounded timeout turns that
+  // into a `degraded` run, which IS resumable.
+  it("resolves the run to 'degraded' instead of hanging forever when the model call never settles", async () => {
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+
+    const neverSettles: ModelRouter = {
+      complete: vi.fn(() => new Promise(() => {})), // deliberately never resolves or rejects
+      completeAlias: vi.fn(async () => {
+        throw new Error("not used in this test");
+      }),
+    } as unknown as ModelRouter;
+    const wedgedAgent = makeSimpleAgent(DraftOutputSchema, neverSettles);
+
+    const workflowFn = async (wf: WorkflowContext) => wf.step.agent("vet", wedgedAgent, {});
+
+    const result = await engine.run(workflowFn, { ...baseParams, agentStepTimeoutMs: 25 });
+
+    expect(result.status).toBe("degraded");
+    expect(result.status === "degraded" ? result.failureReason : "").toContain('step "vet" did not complete within 25ms');
+
+    const stepRecord = await store.getStep("run_1", "vet");
+    // Left at "running" — the timeout never cancels the underlying call, it
+    // just stops waiting on it. Resume tolerates this (see next test).
+    expect(stepRecord?.status).toBe("running");
+  });
+
+  it("lets a resume re-attempt a step left at 'running' by a prior timeout, rather than treating it as already done", async () => {
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+
+    const neverSettles: ModelRouter = {
+      complete: vi.fn(() => new Promise(() => {})),
+      completeAlias: vi.fn(async () => {
+        throw new Error("not used in this test");
+      }),
+    } as unknown as ModelRouter;
+    const wedgedAgent = makeSimpleAgent(DraftOutputSchema, neverSettles);
+    const workflowFn = async (wf: WorkflowContext) => wf.step.agent("vet", wedgedAgent, {});
+
+    const first = await engine.run(workflowFn, { ...baseParams, agentStepTimeoutMs: 25 });
+    expect(first.status).toBe("degraded");
+
+    const healthyAgent = makeSimpleAgent(DraftOutputSchema, fakeRouterAlwaysFinal({ body: "recovered" }));
+    const resumedWorkflowFn = async (wf: WorkflowContext) => wf.step.agent("vet", healthyAgent, {});
+    const second = await engine.run(resumedWorkflowFn, baseParams);
+
+    expect(second.status).toBe("completed");
+    expect(second.status === "completed" ? second.output.finalOutput : null).toEqual({ body: "recovered" });
+  });
+});
+
 describe("run-level outcome classification (RFC-01 §6)", () => {
   it("resolves to 'failed' when the run's own budget ceiling is exceeded before a step runs", async () => {
     const store = new MemoryDurableStepStore();

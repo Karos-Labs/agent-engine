@@ -21,6 +21,13 @@
  * `plus.unsplash.com` is on it deliberately: Unsplash+ is the paid tier and
  * its previews *are* watermarked, so it must be filtered even though plain
  * `unsplash.com` is our cleanest source.
+ *
+ * `pixabay.com` was removed from this list (2026-08): it was blocking
+ * `createPixabayProvider`'s own `cdn.pixabay.com` results the moment that
+ * provider was added. The entry dates from when this engine had no
+ * authenticated Pixabay integration at all, so the only way to reach Pixabay
+ * was scraping its public preview page — genuinely watermarked. The
+ * authenticated API's `largeImageURL`/`webformatURL` are not.
  */
 export const WATERMARK_DOMAINS: readonly string[] = [
   "focusedcollection.com",
@@ -58,7 +65,6 @@ export const WATERMARK_DOMAINS: readonly string[] = [
   "img.freepik.com",
   "rawpixel.com",
   "vecteezy.com",
-  "pixabay.com",
   "pikist.com",
   "needpix.com",
   "publicdomainpictures.net",

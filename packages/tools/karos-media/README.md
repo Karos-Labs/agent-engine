@@ -3,6 +3,24 @@
 Real image sourcing — search a chain of stock, CC and venue libraries,
 download the results, hand back repo-relative paths an agent can render.
 
+## The four tiers
+
+A visual need is resolved by trying these in order, falling through to the
+next only for whatever the current one left unfilled:
+
+| Tier | Tool | Source | Licence |
+| --- | --- | --- | --- |
+| 0 | `media.ingestAssets` | The client's own attachment on this run | `client-supplied` — strongest possible basis |
+| 1 | `media.findImages` | Stock/CC libraries (Unsplash, Openverse, Wikimedia, DDG, …) | `blanket` / `attributable` / `unknown` per hit |
+| 2 | `media.scrapeImages` | The open social web (ScrappyCoco), for a photo of the actual subject | `unknown` — UGC, refused by most vetting |
+| 3 | `image.generate` | Vertex AI (`gemini-2.5-flash-image`) | `generated` — no third-party rights |
+
+Nothing here decides *which* candidate fits a slide or whether one is
+"unmet" — every tool just answers honestly for the needs it's given. The
+calling workflow is what re-vets after each tier and only asks the next one
+about the needs still open; see `instagram-agent`'s step 05b/06/06b/06c/06d/06e
+for the reference implementation and "Adopting this in another agent" below.
+
 ## Why it exists
 
 `instagram-agent` step 06 vets candidate images against each slide's
@@ -24,8 +42,12 @@ deployment has a working chain out of the box. Keys only ever *add* sources.
 | --- | --- | --- |
 | — | `openverse`, `wikimedia`, `ddg_images` | Always on. |
 | `UNSPLASH_ACCESS_KEY` | `unsplash` | The "Access Key", not the secret key. |
+| `PEXELS_API_KEY` | `pexels` | Free to register; no unauthenticated endpoint exists, so this is a key like Unsplash's, not a scrape. |
+| `PIXABAY_API_KEY` | `pixabay` | Same — free key, no public unauthenticated search. |
 | `GOOGLE_PLACES_KEY` | `google_places` | Places API enabled on the project. |
-| `APIFY_TOKEN` | `apify_google_maps`, `apify_instagram_location`, `apify_instagram`, `apify_pinterest` | One token, all four presets. Override an actor with `APIFY_ACTOR_<PRESET>`. |
+| `APIFY_TOKEN` | `apify_google_maps`, `apify_instagram_location`, `apify_instagram`, `apify_pinterest` | One token, all four presets. Override an actor with `APIFY_ACTOR_<PRESET>`. Unset in prep today — the Apify presets simply don't register and every chain that names them degrades to its next entry. |
+| `SCRAPPYCOCO_API_KEY` | `media.scrapeImages` (tier 2) | See "Scraping" below. Shared with `research.pull` via `@agent-engine/tool-karos-scraper` — one key, every scrape-backed capability. |
+| `GEMINI_VERTEX_PROJECT_ID` (or `GOOGLE_CLOUD_PROJECT`) | `image.generate` (tier 3) | See "Generation" below. |
 
 ### The single-provider era, and why it ended
 
@@ -60,9 +82,9 @@ which is what makes a chain degrade instead of break.
 
 | Route | Order | Ranked by |
 | --- | --- | --- |
-| `named_venue` | apify_google_maps → apify_instagram_location → google_places → ddg_images → openverse → wikimedia | **Verification.** A press photo of the right building beats a beautifully-licensed photo of the wrong one. |
-| `mood` | unsplash → openverse → wikimedia → apify_pinterest → ddg_images | **Licence defensibility.** blanket → attributable → unknown. |
-| `default` | unsplash → openverse → wikimedia → ddg_images | Same. Used when a caller names no route. |
+| `named_venue` | apify_google_maps → apify_instagram_location → google_places → ddg_images → openverse → wikimedia | **Verification.** A press photo of the right building beats a beautifully-licensed photo of the wrong one. Generic stock (Unsplash/Pexels/Pixabay) is absent here on purpose — none of them can verify a specific real place. |
+| `mood` | unsplash → pexels → pixabay → openverse → wikimedia → apify_pinterest → ddg_images | **Licence defensibility.** blanket → attributable → unknown. |
+| `default` | unsplash → pexels → pixabay → openverse → wikimedia → ddg_images | Same. Used when a caller names no route. |
 
 `route` is optional on every need and defaults to `default`, so existing
 callers — including `instagram-agent` step 05b, which passes only
@@ -101,7 +123,7 @@ real).
 | Value | Meaning | Sources |
 | --- | --- | --- |
 | `generated` | Created for this post — owned outright, nothing to credit, nothing watermarked | `media.generateImage` |
-| `blanket` | One library-wide licence covering commercial use | `unsplash`, `google_places` |
+| `blanket` | One library-wide licence covering commercial use | `unsplash`, `pexels`, `pixabay`, `google_places` |
 | `attributable` | Real per-asset licence, credit required | `openverse`, `wikimedia` |
 | `unknown` | Provenance not established — the gate should be sceptical | `ddg_images`, all `apify_*` |
 
@@ -110,6 +132,24 @@ had them and because they genuinely find subjects no curated library carries.
 They are **not** a licence to publish: UGC copyright stays with the uploader,
 and step 06 should and will refuse most of them. They earn their place on a
 `named_venue` slide headed for human review, not on an unattended run.
+
+## Scraping: `media.scrapeImages`
+
+Tier 1 holds generic scenes, not a photo of the *actual* named thing — that
+only lives on the open social web. `media.scrapeImages` searches Instagram
+and TikTok (`ScrapyCoco`, behind the same `ScraperProvider` seam
+`research.pull` uses) and downloads whatever it finds through the identical
+`downloadImage` guarantees as every other tier.
+
+Every candidate here is `licenseConfidence: "unknown"` — a scraped post's
+copyright stays with whoever posted it, and the description says so bluntly
+on purpose, so a vetting step reads it correctly rather than guessing. This
+tier earns its place as reference material and for human-reviewed picks; it
+is not what makes an unattended run complete. Tier 3 is.
+
+Unconfigured (no `SCRAPPYCOCO_API_KEY`), it reports `not_available`, exactly
+like `image.generate` does with no Vertex project — never a construction-time
+throw, so a workflow can check for the tool rather than for the env var.
 
 ## Generation: `media.generateImage`
 
@@ -150,6 +190,17 @@ flattened to "no image".
 The brief forbids text in the pixels. Generated lettering comes out malformed,
 and the carousel template renders the real headline and body as live text over
 the image — words in the picture would collide with copy already there.
+
+**A `RESOURCE_EXHAUSTED`/`UNAVAILABLE` failure retries with backoff, not once.**
+prep runs `pubsub-21533408759483219` and `pubsub-21543794087429035` both held
+on the same shape: Vertex's per-minute burst quota trips after a handful of
+back-to-back generations in one step, and every following call 429s. Before
+this, that single retryable blip was treated exactly like a real refusal —
+one `unmet` entry, no second attempt, and the *last-resort* fallback tier gave
+up on a condition that clears itself in seconds. It now retries up to 3 times
+with exponential backoff (`retry.maxAttempts` / `retry.baseDelayMs` on
+`createGenerateImage`) before it counts as genuinely unmet — a real refusal
+or malformed request still fails on the first try, with no added latency.
 
 ## Failure semantics
 
@@ -215,6 +266,40 @@ and is not done yet.
 An in-memory volume consumes the instance's memory allocation, so the size
 limits are real ceilings, not formalities. Nothing prunes the cache; it
 disappears with the instance, but a long-lived host will want a sweep.
+
+## Adopting this in another agent
+
+All four tools are already merged into every deployment's tool registry
+(`apps/agent-server/src/wiring/tools.ts`), unconditionally — a `blog-agent` or
+`linkedin-agent` workflow can call `media.findImages` today without any wiring
+change. What's missing for every agent except `instagram-agent` is the
+**workflow-level choreography**: no agent yet calls the tools in tier order
+with a vetting step deciding what's still unmet between each one, so today
+only `instagram-agent` actually produces a real image.
+
+To add the chain to another agent's workflow, mirror
+`create-instagram-agent-workflow.ts`'s steps `05z`/`05b`/`06`/`06b`/`06c`/`06d`/`06e`:
+
+1. Tier 0 — call `media.ingestAssets` once for whatever the client attached,
+   keyed to a slot/need index.
+2. Tier 1 — call `media.findImages` for every need not filled by tier 0.
+3. Vet (agent step, product-specific) — decide which tier-1 candidates
+   actually satisfy each need's brief and rights bar. This step is
+   deliberately not in this package: what counts as a match and what rights
+   bar applies differs by product (a blog hero image's criteria are not a
+   carousel slide's), and folding it in here would turn an explicit, auditable
+   verdict into an opaque ranking.
+4. Tier 2 — call `media.scrapeImages` only for needs the vet step left open.
+   Vet again.
+5. Tier 3 — call `image.generate` only for needs still open after tier 2. Vet
+   again; this is the tier that can answer any brief, so a hold past this
+   point is a real editorial outcome, not a sourcing gap.
+
+Each tool already tells you, per need, whether it was filled and why not
+(`unmet`) — the new workflow code is the loop that feeds one tier's leftover
+needs into the next, plus the product's own vetting prompt. Nothing about the
+provider chain, licence handling, retries, or the on-disk cache needs to be
+reimplemented per agent.
 
 ## Adding a source
 

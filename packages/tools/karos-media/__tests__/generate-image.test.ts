@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { createKarosMediaTools, type ImageGenerationClient } from "../src/index.js";
+import { createKarosMediaTools, createGenerateImage, type ImageGenerationClient } from "../src/index.js";
 
 /**
  * `image.generate` — the fallback for a visual need no library holds.
@@ -223,6 +223,65 @@ describe("image.generate", () => {
     expect((outcome as { reason: string }).reason).toContain("the model declined");
     expect((outcome as { reason: string }).reason).toContain("named living politician");
     expect((outcome as { reason: string }).reason).toContain("slide 3");
+  });
+
+  // prep runs pubsub-21533408759483219 and pubsub-21543794087429035 both held
+  // on exactly this: Vertex's burst quota trips after a few generations and
+  // every following call 429s with RESOURCE_EXHAUSTED — a condition that
+  // clears itself in seconds, not a real answer about the request.
+  it("retries a RESOURCE_EXHAUSTED generation failure and succeeds once quota frees up", async () => {
+    let calls = 0;
+    const client = fakeClient(() => {
+      calls += 1;
+      if (calls < 3) {
+        throw new Error('{"error":{"code":429,"message":"Resource exhausted. Please try again later.","status":"RESOURCE_EXHAUSTED"}}');
+      }
+      return imageResponse();
+    });
+    const sleeps: number[] = [];
+
+    const tool = createGenerateImage({ client, retry: { sleepImpl: async (ms) => { sleeps.push(ms); } } });
+    const outcome = await tool.execute({ repoRoot, runId: "run_1", needs: [{ n: 1, prompt: "a quiet desk at dawn" }] }, { ctx: CTX });
+
+    expect(outcome.status).toBe("success");
+    expect(calls).toBe(3);
+    // Exponential: second attempt waits 1x the base delay, third waits 2x.
+    expect(sleeps).toEqual([2000, 4000]);
+    const result = (outcome as { result: { candidates: unknown[] } }).result;
+    expect(result.candidates).toHaveLength(1);
+  });
+
+  it("gives up on RESOURCE_EXHAUSTED after exhausting retries and reports the need unmet", async () => {
+    const client = fakeClient(() => {
+      throw new Error('{"error":{"code":429,"message":"Resource exhausted.","status":"RESOURCE_EXHAUSTED"}}');
+    });
+    const sleeps: number[] = [];
+
+    const tool = createGenerateImage({
+      client,
+      retry: { maxAttempts: 2, sleepImpl: async (ms) => { sleeps.push(ms); } },
+    });
+    const outcome = await tool.execute({ repoRoot, runId: "run_1", needs: [{ n: 5, prompt: "x" }] }, { ctx: CTX });
+
+    expect(outcome.status).toBe("content_fail");
+    expect((outcome as { reason: string }).reason).toContain("RESOURCE_EXHAUSTED");
+    // One retry only, per maxAttempts: 2 — one wait, not the unbounded default.
+    expect(sleeps).toEqual([2000]);
+  });
+
+  it("does not retry a non-quota failure, so an unrelated error still fails on the first try", async () => {
+    let calls = 0;
+    const client = fakeClient(() => {
+      calls += 1;
+      throw new Error("quota exhausted");
+    });
+    const sleeps: number[] = [];
+
+    const tool = createGenerateImage({ client, retry: { sleepImpl: async (ms) => { sleeps.push(ms); } } });
+    await tool.execute({ repoRoot, runId: "run_1", needs: [{ n: 1, prompt: "x" }] }, { ctx: CTX });
+
+    expect(calls).toBe(1);
+    expect(sleeps).toEqual([]);
   });
 
   it("reports not_available with no backend configured, and never invents a client", async () => {

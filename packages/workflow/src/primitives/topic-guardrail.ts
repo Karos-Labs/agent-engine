@@ -75,7 +75,21 @@ export async function runTopicGuardrail(
    * the trace showing only steps that did something.
    */
   preloadedForbiddenTopics?: readonly string[],
+  /**
+   * Appended to this guardrail's checkpointed step ids.
+   *
+   * Needed by any workflow that can produce a SECOND deliverable in the same
+   * run — a revision round driven by `runReviewCycle`. Without it the fixed
+   * step id short-circuits on the first pass's checkpoint and the revised
+   * copy is never actually verified, which is the worst possible way for a
+   * guardrail to fail: silently, while still reporting a pass.
+   *
+   * Omitted (the default) keeps the original ids verbatim, so a run with no
+   * revisions has a byte-identical trace.
+   */
+  stepIdSuffix?: string,
 ): Promise<GuardrailVerification | undefined> {
+  const suffix = stepIdSuffix ?? "";
   const ctx: AgentContext = {
     runId: wf.runId,
     clientSlug: wf.clientSlug,
@@ -104,7 +118,7 @@ export async function runTopicGuardrail(
     // where it found nothing to check.
     //
     // A caller that already has the list passes it and pays neither.
-    const outcome = await wf.step.code(`${GUARDRAIL_STEP_ID}-load-topics`, async () => configTool.execute({}, { ctx }));
+    const outcome = await wf.step.code(`${GUARDRAIL_STEP_ID}-load-topics${suffix}`, async () => configTool.execute({}, { ctx }));
     forbiddenTopics = outcome.status === "success" ? readForbiddenTopics(outcome.result) : [];
   }
   if (forbiddenTopics.length === 0) return undefined;
@@ -127,7 +141,7 @@ export async function runTopicGuardrail(
     buildGuardrailSystemPrompt([...forbiddenTopics]),
   );
 
-  const exec = await wf.step.agent(GUARDRAIL_STEP_ID, verifier, buildGuardrailInput(deliverableText));
+  const exec = await wf.step.agent(`${GUARDRAIL_STEP_ID}${suffix}`, verifier, buildGuardrailInput(deliverableText));
   if (exec.status !== "completed" || !exec.finalOutput) {
     return { status: "error", violatedTopics: [], error: `guardrail verification did not complete (${exec.status})` };
   }

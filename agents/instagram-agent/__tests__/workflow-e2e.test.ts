@@ -29,17 +29,30 @@ const HAPPY_PATH_STEP_IDS = [
   "03-claim-topic",
   "04a-research-pull",
   "04b-research-extract-facts",
+  // Resolves the run's template directory and which archetype files are in
+  // it: materialized from the registry when one is configured, otherwise the
+  // client's own templateDir probed for the bundled files. Either way a slide
+  // routed to a file that is not there degrades instead of failing the run.
+  "04c-resolve-templates",
+  // The read side of the feedback flywheel: what this client asked for on
+  // previous runs, injected into the drafting prompt.
+  "04d-read-past-feedback",
   "05a-list-used-images",
   // Tier 0: the client's own uploads, resolved before any sourcing tier.
   "05z-attach-user-media",
   "05-write-copy-attempt-1",
   "06-vet-images-attempt-1",
+  // Zero-held guarantee: confirms every selected image is still on disk, so a
+  // file lost since vetting degrades that slide instead of failing the render.
+  "06f-verify-images-on-disk-attempt-1",
   "07-self-check-attempt-1",
   "07b-craft-hygiene-attempt-1",
   "07c-emit-slides-data-attempt-1",
   "08-render-carousel-attempt-1",
   "08b-visual-qa-attempt-1",
-  "09a-batch-review",
+  // Revision-scoped: `-r0` is the first review round. A `revise` decision
+  // registers `-r1` after re-drafting.
+  "09a-batch-review-r0",
   "09b-deliver-and-log",
 ];
 
@@ -143,7 +156,7 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     const deliverablesBeforeApproval = await env.store.listJson("acme", ["ledger", "deliverables", "instagram_run_gate", "_"]);
     expect(deliverablesBeforeApproval).toHaveLength(0);
 
-    await engine.resolveGate("instagram_run_gate", "09a-batch-review", {
+    await engine.resolveGate("instagram_run_gate", "09a-batch-review-r0", {
       decision: "approve",
       actor: "jane@karoslabs.com",
       at: new Date().toISOString(),
@@ -173,7 +186,7 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     const runId = "instagram_run_gate_reject";
 
     await engine.run(workflowFn, { ...params, runId });
-    await engine.resolveGate(runId, "09a-batch-review", {
+    await engine.resolveGate(runId, "09a-batch-review-r0", {
       decision: "reject",
       actor: "jane@karoslabs.com",
       reason: "not on brand this week",
@@ -183,7 +196,9 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     const result = await engine.run(workflowFn, { ...params, runId });
     expect(result.status).toBe("held");
     if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/batch rejected/i);
+    // `runReviewCycle` is generic across agents, so the wording is
+    // "review rejected" rather than anything carousel-specific.
+    expect(result.reason).toMatch(/review rejected/i);
 
     const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", runId, "_"]);
     expect(deliverables).toHaveLength(0);

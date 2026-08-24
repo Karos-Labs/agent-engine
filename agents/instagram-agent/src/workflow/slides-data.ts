@@ -1,5 +1,202 @@
 import type { RenderCarouselInput, Slide } from "@agent-engine/tool-karos-publish";
-import type { BrandTokens, ImageSelection, InstagramCopyOutput, ResearchOutput, SlidesDataSelfCheck, StyleConfig } from "./types.js";
+import type {
+  BrandTokens,
+  ImageSelection,
+  InstagramCopyOutput,
+  InstagramSlideCopy,
+  InstagramSlideLayout,
+  ResearchOutput,
+  SlidesDataSelfCheck,
+  StyleConfig,
+} from "./types.js";
+
+/**
+ * Which template file each archetype renders through.
+ *
+ * `photo` and `text_only` both resolve to the client's own configured
+ * `slideTemplate` — that file renders correctly with or without a hero image
+ * (see its doc comment), and it is the guaranteed-delivery floor, so it stays
+ * exactly where it was. The five ported archetypes have their own files in the
+ * same `templateDir`, so a client with a bespoke `templateDir` needs the whole
+ * set present to use them; `LAYOUT_TEMPLATE_FILES` is the list to copy.
+ */
+const LAYOUT_TEMPLATE_FILES: Record<Exclude<InstagramSlideLayout, "photo" | "text_only">, string> = {
+  stat_callout: "stat-callout.html",
+  quote_card: "quote-card.html",
+  comparison_card: "comparison-card.html",
+  list_takeaway: "list-takeaway.html",
+  headline_focus: "headline-focus.html",
+};
+
+function templateForLayout(layout: InstagramSlideLayout, clientTemplate: string): string {
+  if (layout === "photo" || layout === "text_only") return clientTemplate;
+  return LAYOUT_TEMPLATE_FILES[layout];
+}
+
+/** The five archetype template filenames, for a caller checking which of them a `templateDir` actually holds. */
+export const ARCHETYPE_TEMPLATE_FILES: readonly string[] = Object.values(LAYOUT_TEMPLATE_FILES);
+
+/**
+ * Escapes a value for interpolation into a `{{html:...}}` fragment.
+ *
+ * Mirrors `escapeHtmlText` in `karos-publish` rather than importing it, so
+ * this file's own fragment builders cannot silently lose escaping if that
+ * export moves. The `{{html:}}` substitution form is deliberately NOT escaped
+ * by the renderer — that is the whole point of it — which makes escaping here
+ * the only thing standing between model-authored takeaway text and live markup
+ * in a rendered slide.
+ */
+function esc(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+/**
+ * Builds `list_takeaway`'s rows as one markup fragment.
+ *
+ * `publish.renderCarousel` substitutes flat strings and has no loop
+ * construct, so a variable number of rows has to be assembled by the caller.
+ * The row shape matches `list-takeaway.html`'s CSS exactly (`.me-row` >
+ * `.diamond` + div > `.me-title` + `.me-note`), and the separator rules come
+ * from `border-top` with `:first-child` zeroed, so nothing conditional is
+ * needed per row.
+ */
+export function buildListRows(items: readonly { title: string; note?: string | undefined }[]): string {
+  return items
+    .map(
+      (item) =>
+        `<div class="me-row"><span class="diamond"></span><div>` +
+        `<div class="me-title">${esc(item.title)}</div>` +
+        `<div class="me-note">${item.note ? esc(item.note) : ""}</div>` +
+        `</div></div>`,
+    )
+    .join("");
+}
+
+/**
+ * The archetype this slide can actually be rendered as, which is not always
+ * the one it asked for.
+ *
+ * The copy model picks `layout` and fills the matching content block, and
+ * those are two independent chances to be inconsistent — it can name
+ * `stat_callout` and then omit `stat`. Rendering that as requested produces a
+ * slide with an empty 300px figure, which is worse than any honest
+ * alternative, so a request whose content is missing falls back to
+ * `text_only`: the one archetype whose inputs (`headline`, `body`) every
+ * slide is schema-guaranteed to have.
+ *
+ * Returning the reason alongside it, rather than logging and discarding it,
+ * is what lets the workflow checkpoint WHY a slide it asked to be a quote card
+ * came out as plain type — otherwise that difference is invisible in the trace
+ * and reads as the model never having chosen an archetype at all.
+ */
+export function resolveLayout(
+  slide: InstagramSlideCopy,
+  /**
+   * Which template files the run's `templateDir` actually contains. Omit to
+   * skip the check entirely (every caller that only cares about content
+   * completeness, and every test that is not about a bespoke templateDir).
+   *
+   * This exists because a client configured before the archetype set shipped
+   * has a `templateDir` holding only its own `slide.html`. Routing a slide to
+   * `stat-callout.html` there is a `tooling_error` from the renderer ("a
+   * missing template is a tooling failure, not a content one") that fails the
+   * WHOLE run — so the archetypes would have turned every such client's next
+   * carousel into an outage the first time the model picked one. Degrading to
+   * the client's own template instead keeps the run shipping, which is the
+   * same guaranteed-delivery rule the rest of this pipeline follows.
+   */
+  availableTemplates?: ReadonlySet<string>,
+): { layout: InstagramSlideLayout; downgradedFrom?: string } {
+  const missing = (what: string) => ({ layout: "text_only" as const, downgradedFrom: `${slide.layout} (no ${what} supplied)` });
+
+  // Checked before content, because an absent template makes the content
+  // question moot: it cannot render as that archetype either way.
+  if (slide.layout !== "photo" && slide.layout !== "text_only" && availableTemplates !== undefined) {
+    const file = LAYOUT_TEMPLATE_FILES[slide.layout];
+    if (!availableTemplates.has(file)) {
+      return { layout: "text_only", downgradedFrom: `${slide.layout} (this client's templateDir has no ${file})` };
+    }
+  }
+
+  switch (slide.layout) {
+    case "stat_callout":
+      return slide.stat ? { layout: slide.layout } : missing("stat");
+    case "quote_card":
+      return slide.quote ? { layout: slide.layout } : missing("quote");
+    case "comparison_card":
+      return slide.comparison ? { layout: slide.layout } : missing("comparison");
+    case "list_takeaway":
+      return slide.items && slide.items.length >= 2 ? { layout: slide.layout } : missing("items");
+    case "photo":
+    case "text_only":
+    case "headline_focus":
+      // These three need nothing beyond `headline`/`body`, which the schema
+      // already requires on every slide.
+      return { layout: slide.layout };
+  }
+}
+
+/**
+ * The `fields`/`htmlFragments` pair one archetype needs.
+ *
+ * Every archetype gets `accentColor` and `kicker`; the rest is per-archetype.
+ * A template asking for a slot this returns nothing for renders it as empty
+ * (`fillTemplate` strips unfilled slots), which is why the optional lines —
+ * a stat's source, a headline's kicker — need no conditional here.
+ */
+function contentFor(
+  layout: InstagramSlideLayout,
+  slide: InstagramSlideCopy,
+  accentColor: string,
+): { fields: Record<string, string>; htmlFragments: Record<string, string> } {
+  const base: Record<string, string> = { accentColor, ...(slide.kicker ? { kicker: slide.kicker } : {}) };
+
+  switch (layout) {
+    case "stat_callout":
+      return {
+        fields: {
+          ...base,
+          figure: slide.stat!.figure,
+          subLabel: slide.stat!.subLabel,
+          body: slide.body,
+          sourceLine: slide.stat!.source,
+        },
+        htmlFragments: {},
+      };
+    case "quote_card":
+      return {
+        fields: { ...base, quoteText: slide.quote!.text, attribution: slide.quote!.attribution },
+        htmlFragments: {},
+      };
+    case "comparison_card":
+      return {
+        fields: {
+          ...base,
+          headline: slide.headline,
+          body: slide.body,
+          leftLabel: slide.comparison!.leftLabel,
+          leftBody: slide.comparison!.leftBody,
+          rightLabel: slide.comparison!.rightLabel,
+          rightBody: slide.comparison!.rightBody,
+        },
+        htmlFragments: {},
+      };
+    case "list_takeaway":
+      return {
+        fields: { ...base, headline: slide.headline },
+        htmlFragments: { itemRows: buildListRows(slide.items!) },
+      };
+    case "photo":
+    case "text_only":
+    case "headline_focus":
+      return { fields: { ...base, headline: slide.headline, body: slide.body }, htmlFragments: {} };
+  }
+}
 
 /**
  * RFC-03 §3 step 07's self-check, run before `slides-data.json` is ever
@@ -111,6 +308,17 @@ export function assembleSlidesData(params: {
   copy: InstagramCopyOutput;
   selections: ImageSelection[];
   canvas: StyleConfig["canvas"];
+  /** Template filenames present in the effective template directory. See `resolveLayout`'s own note. */
+  availableTemplates?: ReadonlySet<string>;
+  /**
+   * Overrides `brandTokens.templateDir` for this run.
+   *
+   * Set when the template registry materialized its winning templates into a
+   * per-run directory (Approach (a)) — the renderer takes ONE `templateDir`,
+   * so the materialized directory has to be the one it reads, with the
+   * client's own base template copied in alongside.
+   */
+  templateDirOverride?: string | undefined;
 }): RenderCarouselInput {
   const selectionByN = new Map(params.selections.map((s) => [s.n, s]));
 
@@ -124,19 +332,27 @@ export function assembleSlidesData(params: {
 
   const slides: Slide[] = params.copy.slides.map((slide) => {
     const selection = selectionByN.get(slide.n);
-    const imagePath = selection?.imagePath ?? undefined;
+    const { layout } = resolveLayout(slide, params.availableTemplates);
+    const { fields, htmlFragments } = contentFor(layout, slide, accentColor);
+    // Only `photo` consumes a hero image. Every other archetype is typographic
+    // by design, so attaching one would either be ignored by its template or —
+    // worse, for a template that did grow a background slot later — quietly
+    // reintroduce the "every slide needs a picture" coupling this set exists
+    // to break.
+    const imagePath = layout === "photo" ? (selection?.imagePath ?? undefined) : undefined;
     return {
       n: slide.n,
-      template: params.brandTokens.slideTemplate,
-      fields: { headline: slide.headline, body: slide.body, accentColor },
+      template: templateForLayout(layout, params.brandTokens.slideTemplate),
+      fields,
       images: imagePath ? { hero: imagePath } : {},
+      htmlFragments,
     };
   });
 
   return {
     client: params.clientSlug,
     postId: params.postId,
-    templateDir: params.brandTokens.templateDir,
+    templateDir: params.templateDirOverride ?? params.brandTokens.templateDir,
     outDir: `instagram-output/${params.clientSlug}/${params.postId}`,
     repoRoot: params.repoRoot,
     slides,

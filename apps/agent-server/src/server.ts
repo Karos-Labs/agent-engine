@@ -6,6 +6,7 @@ import { createDurableStoreFromEnv } from "./wiring/durable-store.js";
 import { createServerPromptStore } from "./wiring/prompt-store.js";
 import { createQueuePushVerifier } from "./wiring/queue-push-auth.js";
 import { createServerTools } from "./wiring/tools.js";
+import { createServerTemplateStore } from "./wiring/template-store.js";
 import { createServerWorkspaceStore } from "./wiring/workspace-store.js";
 import { resolveInstagramRepoRoot } from "./wiring/workflows.js";
 
@@ -43,7 +44,7 @@ async function main(): Promise<void> {
 
   const app = createApp({
     durableStore,
-    runtimeDeps: { tools, promptStore, router, workspaceStore, repoRoot: resolveInstagramRepoRoot() },
+    runtimeDeps: { tools, promptStore, router, workspaceStore, repoRoot: resolveInstagramRepoRoot(), templateStore: createServerTemplateStore() },
     agentDefinitionStore,
     ...resolveQueuePushConfig(),
     verifyPushIdToken: createQueuePushVerifier(),

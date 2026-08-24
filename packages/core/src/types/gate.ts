@@ -99,15 +99,74 @@ export const GateTimeoutSchema = z.object({
 export type GateTimeout = z.infer<typeof GateTimeoutSchema>;
 
 /**
- * A reason is mandatory on rejection — this is what feeds the learning loop
- * (RFC-01 §8.3) — so it is enforced here rather than left to callers to
- * remember.
+ * A reviewer's note on one slide's template, for the design-feedback loop.
+ *
+ * Separate from the gate's own `feedback` because it is about the LAYOUT, not
+ * the copy, and it routes somewhere different: `feedback` steers the next
+ * draft, this steers the template library
+ * (`@agent-engine/tool-karos-templates`' `promoteTemplate`/`reviewTemplate`).
+ * A reviewer who likes the words and dislikes the card needs to be able to
+ * say exactly that.
+ */
+export const TemplateFeedbackSchema = z.object({
+  /** Which slide the reviewer was looking at. */
+  slide: z.number().int().positive(),
+  /** The registry row that rendered it, so feedback lands on the right template. */
+  templateId: z.string().min(1),
+  verdict: z.enum(["approved", "revise"]),
+  note: z.string().min(1),
+  /**
+   * Promote this template into the permanent library on approval.
+   *
+   * Explicit rather than implied by `verdict: "approved"`: liking one render
+   * is not the same as wanting every client's future runs to use it, and only
+   * a person can tell those apart.
+   */
+  promote: z.boolean().default(false),
+});
+export type TemplateFeedback = z.infer<typeof TemplateFeedbackSchema>;
+
+/**
+ * A human's verdict on a gate.
+ *
+ * ## Three decisions, not two
+ *
+ * `revise` was added (2026-08) because `reject` conflated two different
+ * intentions. "This is wrong, stop" and "this is close, change X and try
+ * again" both had to be spelled `reject`, which held the run and threw away
+ * everything it had done — so the only way to act on feedback was to dispatch
+ * a fresh run that had no idea what the feedback was.
+ *
+ * - `approve` ships it. `feedback` is optional and, when given, is guidance
+ *   for future runs rather than a change request for this one.
+ * - `revise` re-enters the drafting loop with `feedback` injected, reusing
+ *   everything already checkpointed (research, the topic claim) and
+ *   re-running only the drafting steps. `feedback` is MANDATORY: a revision
+ *   request with nothing to act on is just a slower rejection.
+ * - `reject` holds the run. `reason` is MANDATORY.
+ *
+ * An agent that does not implement revision treats `revise` as non-approve
+ * and holds, which is the safe default — every existing agent tests
+ * `decision !== "approve"`, so adding this value cannot silently change any
+ * of their behaviour.
+ *
+ * Every field here is persisted to client memory by the reviewing workflow,
+ * whatever the decision, so the NEXT run can read what a person asked for
+ * last time. That is the half of the loop that makes it a loop.
  */
 export const GateResponseSchema = z
   .object({
-    decision: z.enum(["approve", "reject"]),
+    decision: z.enum(["approve", "revise", "reject"]),
     actor: z.string().min(1),
     reason: z.string().min(1).optional(),
+    /**
+     * Free-text guidance. Required on `revise`, optional (and welcome) on
+     * `approve` — an approving reviewer with a preference worth remembering
+     * should have somewhere to put it.
+     */
+    feedback: z.string().min(1).optional(),
+    /** Per-slide notes on the templates that rendered this output. */
+    templateFeedback: z.array(TemplateFeedbackSchema).optional(),
     /** ISO 8601 timestamp. */
     at: z.string().min(1),
   })
@@ -117,6 +176,13 @@ export const GateResponseSchema = z
         code: "custom",
         message: "reason is mandatory when decision is 'reject' (RFC-01 §8.3)",
         path: ["reason"],
+      });
+    }
+    if (val.decision === "revise" && !val.feedback) {
+      ctx.addIssue({
+        code: "custom",
+        message: "feedback is mandatory when decision is 'revise' — a revision request with nothing to act on is just a slower rejection",
+        path: ["feedback"],
       });
     }
   });
