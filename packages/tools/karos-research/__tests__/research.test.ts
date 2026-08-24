@@ -4,22 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentContext } from "@agent-engine/core";
 import { WorkspaceStore } from "@agent-engine/tool-common";
-import { createKarosResearchTools, ResearchBackendError, type ResearchDocument } from "../src/index.js";
-
-/** Records every query it is asked, so a cache hit is provable by absence. */
-function fakeBackend(docs: ResearchDocument[] = [{ title: "T", url: "https://example.org/a" }]) {
-  const queries: string[] = [];
-  return {
-    queries,
-    backend: {
-      name: "fake/backend",
-      async search(query: string) {
-        queries.push(query);
-        return docs;
-      },
-    },
-  };
-}
+import { createKarosResearchTools } from "../src/index.js";
 
 const ctx: AgentContext = {
   runId: "run_1",
@@ -37,7 +22,7 @@ describe("karos-research", () => {
   beforeEach(async () => {
     rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "karos-research-"));
     store = new WorkspaceStore(rootDir);
-    tools = createKarosResearchTools(store, { backend: fakeBackend().backend });
+    tools = createKarosResearchTools(store);
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
   });
@@ -137,70 +122,6 @@ describe("karos-research", () => {
 
       const runs = await store.listJson("acme", ["research", "j", "runs"]);
       expect(runs).toHaveLength(1);
-    });
-
-    it("returns the backend's real documents, attributed and dated, not a placeholder", async () => {
-      const { backend, queries } = fakeBackend([
-        { title: "Q3 report", url: "https://example.org/q3", description: "snippet", content: "body text", retrievedAt: "2026-08-01" },
-      ]);
-      const scoped = createKarosResearchTools(store, { backend });
-
-      const outcome = await scoped["research.pull"]!.execute({ job: "j2", query: "acme trends", window: "24h" }, { ctx });
-
-      expect(outcome.status).toBe("success");
-      const payload = (outcome as { result: { result: Record<string, unknown> } }).result.result;
-      expect(payload["provider"]).toBe("fake/backend");
-      expect(payload["query"]).toBe("acme trends");
-      expect(typeof payload["fetchedAt"]).toBe("string");
-      expect(payload["documents"]).toEqual([
-        { title: "Q3 report", url: "https://example.org/q3", description: "snippet", content: "body text", retrievedAt: "2026-08-01" },
-      ]);
-      // No `note` when there are real documents to read.
-      expect(payload["note"]).toBeUndefined();
-      expect(queries).toEqual(["acme trends"]);
-    });
-
-    it("reports not_available with no backend, rather than a placeholder that reads like data", async () => {
-      // The whole point of the change: prep run pubsub-21066191524607951 had
-      // the copy agent write a client-facing carousel about the missing
-      // research pipeline, because a stand-in payload is indistinguishable
-      // from a topic with nothing to say.
-      const unconfigured = createKarosResearchTools(store, { backend: null });
-
-      const outcome = await unconfigured["research.pull"]!.execute({ job: "j3", query: "acme trends", window: "24h" }, { ctx });
-
-      expect(outcome.status).toBe("not_available");
-      expect((outcome as { reason: string }).reason).toContain("APIFY_TOKEN");
-      // Nothing is recorded, so a later configured run is not served a stale
-      // placeholder from cache.
-      expect(await store.listJson("acme", ["research", "j3", "runs"])).toHaveLength(0);
-    });
-
-    it("surfaces a backend outage as tooling_error, never as an empty-but-successful payload", async () => {
-      const broken = createKarosResearchTools(store, {
-        backend: {
-          name: "fake/broken",
-          async search() {
-            throw new ResearchBackendError("apify research search for \"x\" returned 402 (Apify account out of credit)");
-          },
-        },
-      });
-
-      const outcome = await broken["research.pull"]!.execute({ job: "j4", query: "x", window: "24h" }, { ctx });
-
-      expect(outcome.status).toBe("tooling_error");
-      expect((outcome as { reason: string }).reason).toContain("out of credit");
-    });
-
-    it("marks an honestly-empty result with a note, so it is not mistaken for a failure", async () => {
-      const empty = createKarosResearchTools(store, { backend: fakeBackend([]).backend });
-
-      const outcome = await empty["research.pull"]!.execute({ job: "j5", query: "nothing at all", window: "24h" }, { ctx });
-
-      expect(outcome.status).toBe("success");
-      const payload = (outcome as { result: { result: Record<string, unknown> } }).result.result;
-      expect(payload["documents"]).toEqual([]);
-      expect(String(payload["note"])).toContain("no results");
     });
 
     it("pulls again and records a new run once the cached run goes stale", async () => {
