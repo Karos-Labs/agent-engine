@@ -17,5 +17,9 @@
     "@agent-engine/tool-karos-intake": "^0.0.1",
     "@agent-engine/workflow": "^0.0.1",
     "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@agent-engine/tool-karos-client": "^0.0.1",
+    "@agent-engine/tool-karos-intake": "^0.0.1"
   }
 }

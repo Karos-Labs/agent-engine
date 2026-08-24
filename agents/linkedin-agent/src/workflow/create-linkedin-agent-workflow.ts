@@ -1,5 +1,6 @@
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
+import { runLinkedInChannelSetup, type ChannelSetupOutcome } from "@agent-engine/agent-setup";
 import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField } from "@agent-engine/workflow";
 import { LinkedInDraftAgent } from "../agent/linkedin-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
@@ -208,6 +209,31 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
     // information about this run than a catalog row does. Style-only notes
     // are deliberately NOT promoted to topics -- see readRunDirection.
     const runDirection = readRunDirection(wf.input);
+
+    /*
+     * ── 00-channel-setup: a pre-flight this agent runs for itself ──
+     *
+     * `linkedin-setup-agent` used to be a separate product in the catalog, and
+     * the sequencing was left to whoever ran it: notice this client has no
+     * charter, find the setup card, run it, come back. Nothing enforced that
+     * order and nothing announced it, so a run against an unconfigured client
+     * simply drafted with `strategy: null` — a post in nobody's voice, with no
+     * "never post about X" list, and no error anywhere.
+     *
+     * Now the run checks first. A client with a charter pays one read and
+     * nothing else; a run carrying a filled form records it here and drafts
+     * against it immediately.
+     *
+     * NOT blocking when neither exists. This agent has always been able to
+     * draft without a charter — `01-load-client-context` treats a missing one
+     * as `strategy: null` — and turning that into a refusal would take away a
+     * capability while claiming to add one. The step records which of the three
+     * paths it took, so "drafted without a charter" is visible in the trace
+     * rather than inferred from its absence.
+     */
+    const channelSetup: ChannelSetupOutcome = await wf.step.code("00-channel-setup", () =>
+      runLinkedInChannelSetup({ tools, ctx, runId: wf.runId, clientSlug: wf.clientSlug, input: wf.input ?? {} }),
+    );
 
     // ── 00: intake check — blocked_intake if foundation data is missing ──
     const intake = await wf.step.code("00-intake-check", async (): Promise<LinkedInIntakeConfig> => {
@@ -590,6 +616,12 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
       );
     });
 
-    return { topic: selected.topic, archetype: draft.archetype, targetAudience: draft.targetAudience, deliverableId };
+    return {
+      topic: selected.topic,
+      archetype: draft.archetype,
+      targetAudience: draft.targetAudience,
+      deliverableId,
+      channelSetup: channelSetup.status,
+    };
   };
 }

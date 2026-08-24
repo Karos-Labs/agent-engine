@@ -27,7 +27,7 @@ describe("00-intake-check: missing target subreddits or brand guidelines blocks 
 
     const stepRecords = await durableStore.listSteps(params.runId);
     const executedIds = stepRecords.map((s) => s.stepId);
-    expect(executedIds).toEqual(["00-intake-check"]);
+    expect(executedIds).toEqual(["00-channel-setup", "00-intake-check"]);
   });
 
   it("resolves to status: blocked_intake when the client has no brand guidelines set up", async () => {

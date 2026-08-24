@@ -31,12 +31,18 @@ const AGENTS_ROOT = path.join(HERE, "..", "..", "..", "agents");
 /**
  * Agents with no model step at all, so a free-text sentence has nowhere to go.
  *
- * The setup agents parse a filled intake form and persist it as the charter the
- * drafting agents later read — `wf.step.code` end to end. karosCMO hides the
- * direction field for exactly these two, and the two lists have to agree:
- * offering a field no workflow reads is the defect this file is about.
+ * Empty since the setup agents stopped being products. `linkedin-setup-agent`
+ * and `reddit-setup-agent` were the only two entries: they parsed a filled
+ * intake form and persisted it as the charter the drafting agents later read,
+ * `wf.step.code` end to end. That work now runs as a `00-channel-setup`
+ * pre-flight inside `linkedin-agent`/`reddit-agent`, both of which draft and so
+ * both of which must honour a typed direction.
+ *
+ * Kept rather than deleted because the exemption MECHANISM is what this file
+ * needs: the next agent that genuinely has no model step should be named here
+ * with its reason, not quietly dropped from the sweep.
  */
-const NO_MODEL_STEP = new Set(["linkedin-setup-agent", "reddit-setup-agent"]);
+const NO_MODEL_STEP = new Set<string>([]);
 
 /** Every `.ts` file under a directory, recursively, excluding build output. */
 function sourceFiles(dir: string): string[] {
@@ -53,19 +59,16 @@ function sourceFiles(dir: string): string[] {
 /**
  * The package directory backing a product id.
  *
- * Derived rather than mapped: `linkedin-setup-agent` lives in `setup-agents`
- * alongside its reddit sibling, and every other product is its own directory of
- * the same name. A hardcoded table would need editing for each new agent, which
- * is the maintenance this test is trying not to add.
+ * Derived rather than mapped, so a new agent joins the sweep by existing rather
+ * than by someone remembering to add a table row. Every product is its own
+ * directory of the same name; a product id with no directory is a real mismatch
+ * between `KNOWN_PRODUCT_IDS` and the tree, and failing loudly here is better
+ * than silently scanning some other package's source.
  */
 function packageDirFor(productId: string): string {
-  const own = path.join(AGENTS_ROOT, productId);
-  try {
-    if (statSync(own).isDirectory()) return path.join(own, "src");
-  } catch {
-    // Falls through to the shared setup package below.
-  }
-  return path.join(AGENTS_ROOT, "setup-agents", "src");
+  const dir = path.join(AGENTS_ROOT, productId, "src");
+  statSync(dir);
+  return dir;
 }
 
 const DRAFTING_PRODUCTS = KNOWN_PRODUCT_IDS.filter((id) => !NO_MODEL_STEP.has(id));
@@ -91,6 +94,8 @@ describe("run direction reaches every agent that drafts anything", () => {
   });
 
   it("exempts only agents that genuinely have no model step", () => {
+    // Vacuous today, and deliberately kept: it is the check that would fire on
+    // the first exemption somebody adds without one being warranted.
     for (const productId of NO_MODEL_STEP) {
       const files = sourceFiles(packageDirFor(productId));
       const combined = files.map((f) => readFileSync(f, "utf8")).join("\n");

@@ -11,6 +11,7 @@ import { fakeRouterSequence, finalTurn, makePromptStore, setupTestEnvironment, t
 const params = { runId: "linkedin_run_1", clientSlug: "acme", productId: "linkedin-agent", runKind: "recurring" as const };
 
 const ALL_19_STEP_IDS = [
+  "00-channel-setup",
   "00-intake-check",
   "01-load-client-context",
   "02-load-memory-shelf",
@@ -53,7 +54,7 @@ function goodDraftRouter() {
   return fakeRouterSequence([finalTurn(goodDraft())]);
 }
 
-describe("end-to-end: the 19-step LinkedIn agent workflow", () => {
+describe("end-to-end: the 20-step LinkedIn agent workflow", () => {
   let env: TestEnvironment;
 
   beforeEach(async () => {
@@ -64,7 +65,7 @@ describe("end-to-end: the 19-step LinkedIn agent workflow", () => {
     await env.cleanup();
   });
 
-  it("executes all 19 steps and resolves to completed / domainOutcome: delivered (auto-approved gate)", async () => {
+  it("executes all 20 steps and resolves to completed / domainOutcome: delivered (auto-approved gate)", async () => {
     const promptStore = makePromptStore();
     const router = goodDraftRouter();
     const workflowFn = createLinkedInAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });

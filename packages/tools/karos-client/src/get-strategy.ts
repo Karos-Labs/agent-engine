@@ -35,6 +35,21 @@ export interface StrategyDocument {
   agent: string;
   key: string | null;
   markdown: string;
+  /**
+   * The same charter as machine-readable fields, when whatever wrote it had
+   * them.
+   *
+   * `markdown` is what reaches a model, and for a long time it was the only
+   * thing stored — which is fine for a prompt and useless to a code step. The
+   * reddit channel setup records a list of subreddits that `00-intake-check`
+   * has to compare against, and re-parsing prose to recover a list somebody
+   * already had as an array is the kind of round trip that works until a
+   * heading is reworded.
+   *
+   * Optional and untyped here on purpose: each agent knows the shape of its own
+   * charter, and this package is a read-only view that should not have to.
+   */
+  data?: Record<string, unknown>;
   /** Free-form provenance the migration records (source path, commit, date). */
   source?: Record<string, unknown>;
 }
@@ -63,10 +78,11 @@ export function createGetStrategy(store: WorkspaceStoreLike) {
     inputSchema: GetStrategyInputSchema,
     async execute({ agent, key }, { ctx }) {
       const segments = key ? [SEGMENT, agent, key] : [SEGMENT, agent];
-      const doc = await store.readJson<{ markdown?: unknown; source?: Record<string, unknown> }>(
-        ctx.clientSlug,
-        segments,
-      );
+      const doc = await store.readJson<{
+        markdown?: unknown;
+        data?: Record<string, unknown>;
+        source?: Record<string, unknown>;
+      }>(ctx.clientSlug, segments);
 
       if (!doc) {
         return notAvailable<StrategyDocument>(
@@ -85,6 +101,7 @@ export function createGetStrategy(store: WorkspaceStoreLike) {
         agent,
         key: key ?? null,
         markdown: doc.markdown,
+        ...(doc.data ? { data: doc.data } : {}),
         ...(doc.source ? { source: doc.source } : {}),
       });
     },

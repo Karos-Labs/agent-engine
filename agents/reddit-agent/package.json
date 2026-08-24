@@ -12,6 +12,7 @@
     "test": "npm run typecheck && vitest run"
   },
   "dependencies": {
+    "@agent-engine/agent-setup": "^0.0.1",
     "@agent-engine/core": "^0.0.1",
     "@agent-engine/tool-common": "^0.0.1",
     "@agent-engine/tool-karos-gates": "^0.0.1",

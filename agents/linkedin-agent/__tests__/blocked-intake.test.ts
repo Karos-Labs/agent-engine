@@ -27,7 +27,10 @@ describe("00-intake-check: missing foundation data blocks the run (RFC-02 §5)",
 
     const stepRecords = await durableStore.listSteps(params.runId);
     const executedIds = stepRecords.map((s) => s.stepId);
-    expect(executedIds).toEqual(["00-intake-check"]);
+    // The pre-flight runs first and is not a gate: it records that this
+    // client has no charter, then intake blocks on the missing foundation
+    // data it was always going to block on.
+    expect(executedIds).toEqual(["00-channel-setup", "00-intake-check"]);
   });
 
   it("resolves to status: blocked_intake when the client profile itself has never been set up", async () => {

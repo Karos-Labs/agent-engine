@@ -120,4 +120,13 @@ export interface LinkedInAgentWorkflowResult {
   archetype: LinkedInArchetype;
   targetAudience: string;
   deliverableId: string;
+  /**
+   * What the inline channel-setup pre-flight decided (step `00a`).
+   *
+   * On the result rather than only in the step trace because it changes how the
+   * post should be read: `not-supplied` means this client has no LinkedIn
+   * charter and the draft is in the house voice rather than a chartered one,
+   * which a reviewer approving it deserves to know without opening the run.
+   */
+  channelSetup: "already-configured" | "recorded" | "not-supplied";
 }

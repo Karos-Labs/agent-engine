@@ -19,6 +19,7 @@ import {
 const params = { runId: "reddit_run_1", clientSlug: "acme", productId: "reddit-agent", runKind: "recurring" as const };
 
 const ALL_22_STEP_IDS = [
+  "00-channel-setup",
   "00-intake-check",
   "01-load-client-context",
   "02-load-memory-shelf",
@@ -62,7 +63,7 @@ function goodDraftRouter() {
   return fakeRouterSequence([finalTurn(goodDraft())]);
 }
 
-describe("end-to-end: the 22-step Reddit agent reply-only workflow", () => {
+describe("end-to-end: the 23-step Reddit agent reply-only workflow", () => {
   let env: TestEnvironment;
 
   beforeEach(async () => {
@@ -73,7 +74,7 @@ describe("end-to-end: the 22-step Reddit agent reply-only workflow", () => {
     await env.cleanup();
   });
 
-  it("executes all 22 steps and resolves to completed / domainOutcome: delivered (auto-approved gate)", async () => {
+  it("executes all 23 steps and resolves to completed / domainOutcome: delivered (auto-approved gate)", async () => {
     const promptStore = makePromptStore();
     const router = goodDraftRouter();
     const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });

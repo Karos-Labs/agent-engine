@@ -128,7 +128,7 @@ describe("identityScope: executive vs. company (legacy 'two-paths' posting ident
     expect(router.complete).not.toHaveBeenCalled();
 
     const stepRecords = await durableStore.listSteps("linkedin_run_exec_missing");
-    expect(stepRecords.map((s) => s.stepId)).toEqual(["00-intake-check"]);
+    expect(stepRecords.map((s) => s.stepId)).toEqual(["00-channel-setup", "00-intake-check"]);
   });
 
   it("identityScope: 'executive' with an existing-but-empty executive list also resolves to blocked_intake", async () => {
@@ -187,7 +187,7 @@ describe("identityScope: executive vs. company (legacy 'two-paths' posting ident
     expect(draftInput.identity).toEqual({ scope: "company" });
 
     const stepRecords = await durableStore.listSteps("linkedin_run_company_default");
-    expect(stepRecords).toHaveLength(19);
+    expect(stepRecords).toHaveLength(20);
   });
 
   it("threads an executive's full dossier (careerHistory, corePillars, offLimitsTopics, voiceTone) into the draft agent's input, not just name+title", async () => {

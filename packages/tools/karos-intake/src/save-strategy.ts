@@ -32,6 +32,18 @@ export const SaveStrategyInputSchema = z.object({
     .optional(),
   /** The document itself, as markdown. */
   markdown: z.string().min(1),
+  /**
+   * The same charter as machine-readable fields, for the parts of it a code
+   * step has to act on rather than read.
+   *
+   * A subreddit allowlist is the case that forced it: `reddit-agent`'s intake
+   * check compares against that list, and recovering an array from the prose
+   * that was rendered from it is a round trip that survives exactly until
+   * someone rewords a heading. `markdown` stays the document — this is a
+   * second view of it, never a replacement, which is why both are written
+   * together and neither is derived at read time.
+   */
+  data: z.record(z.string(), z.unknown()).optional(),
   /** Where it came from — a form submission, a lab-repo path, a human. */
   source: z.record(z.string(), z.unknown()).optional(),
 });
@@ -55,7 +67,7 @@ export function createSaveStrategy(store: WorkspaceStoreLike) {
     name: "intake.saveStrategy",
     version: TOOL_VERSION,
     inputSchema: SaveStrategyInputSchema,
-    async execute({ agent, key, markdown, source }, { ctx }) {
+    async execute({ agent, key, markdown, data, source }, { ctx }) {
       const body = markdown.trim();
       if (body.length === 0) {
         // An empty charter is worse than no charter: it reads as configured
@@ -68,6 +80,7 @@ export function createSaveStrategy(store: WorkspaceStoreLike) {
       const segments = key ? [SEGMENT, agent, key] : [SEGMENT, agent];
       const { created } = await store.writeJson(ctx.clientSlug, segments, {
         markdown: body,
+        ...(data ? { data } : {}),
         // Provenance travels with the document, matching what the lab-repo
         // migration records, so a reader can tell a form submission from an
         // imported file months later.

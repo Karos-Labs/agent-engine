@@ -1,5 +1,6 @@
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
+import { runRedditChannelSetup, type RedditChannelSetupOutcome } from "@agent-engine/agent-setup";
 import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField } from "@agent-engine/workflow";
 import { RedditDraftAgent } from "../agent/reddit-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
@@ -115,6 +116,28 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
     // are deliberately NOT promoted to topics -- see readRunDirection.
     const runDirection = readRunDirection(wf.input);
 
+    /*
+     * ── 00-channel-setup: a pre-flight this agent runs for itself ──
+     *
+     * `reddit-setup-agent` used to be a separate product, and inlining it fixed
+     * a gap that was worse than the sequencing: THE DRAFTING AGENT NEVER READ
+     * WHAT SETUP WROTE. Setup stored `strategy/reddit-agent/config`; the intake
+     * check below has only ever read `client.getConfig`. So a client could run
+     * setup, see it succeed, and still have every Reddit run block on "has not
+     * configured any target subreddits yet".
+     *
+     * The allowlist now travels as data on the charter rather than only as
+     * prose inside it, and the intake check below falls back to it. Setup is
+     * still not a substitute for client config — config wins when both exist —
+     * but a recorded charter is no longer a document nothing consults.
+     *
+     * Draft-only is unaffected. This records where a human may later post from
+     * their own account; it grants no posting capability, and none exists.
+     */
+    const channelSetup: RedditChannelSetupOutcome = await wf.step.code("00-channel-setup", () =>
+      runRedditChannelSetup({ tools, ctx, runId: wf.runId, clientSlug: wf.clientSlug, input: wf.input ?? {} }),
+    );
+
     // ── 00: intake check — blocked_intake if target subreddits or brand guidelines are missing ──
     const intake = await wf.step.code("00-intake-check", async (): Promise<RedditIntakeConfig> => {
       const configOutcome = await tools["client.getConfig"]!.execute({}, { ctx });
@@ -138,8 +161,18 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
         requestedThreadUrl?: string;
         requestedThreadTitle?: string;
       };
-      if (!config.targetSubreddits || config.targetSubreddits.length === 0) {
-        throw new WorkflowBlockedIntake("client has not configured any target subreddits yet");
+      // Client config first, the recorded charter second. Config is the
+      // standing tenant configuration and outranks a form; the charter is what
+      // makes an onboarded-but-not-yet-configured client able to run at all.
+      const targetSubreddits =
+        config.targetSubreddits && config.targetSubreddits.length > 0
+          ? config.targetSubreddits
+          : channelSetup.targetSubreddits;
+      if (targetSubreddits.length === 0) {
+        throw new WorkflowBlockedIntake(
+          "client has not configured any target subreddits yet, and no Reddit charter is on file — " +
+            `${channelSetup.note}`,
+        );
       }
       const brandOutcome = await tools["client.getBrand"]!.execute({}, { ctx });
       if (brandOutcome.status !== "success") {
@@ -149,7 +182,10 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
         // Same read that produced the rest of this object, so the terminal
         // guardrail below costs no extra step.
         forbiddenTopics: readForbiddenTopics(configOutcome.result),
-        targetSubreddits: config.targetSubreddits,
+        // The resolved list, not `config.targetSubreddits`: it may have come
+        // from the charter rather than from client config, and the difference
+        // stops mattering past this point.
+        targetSubreddits,
         ...(config.requestedTopic !== undefined ? { requestedTopic: config.requestedTopic } : {}),
         ...(config.requestedSubreddit !== undefined ? { requestedSubreddit: config.requestedSubreddit } : {}),
         ...(config.requestedThreadUrl !== undefined ? { requestedThreadUrl: config.requestedThreadUrl } : {}),
