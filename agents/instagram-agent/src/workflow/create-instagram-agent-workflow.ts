@@ -392,7 +392,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     const usedImages = (usedImagesOutcome.result as { imagePaths: string[] }).imagePaths;
     const usedImagesSet = new Set(usedImages);
 
-    // ── Tier 0: media the person attached to this run ──
+    // ── Tier 0: media the client attached to this run ──
     //
     // Above every sourcing tier, and the reasoning is not subtle: a client who
     // uploaded a photograph has told us exactly what they want on the slide.
@@ -400,36 +400,65 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // model to "choose" between a client's own asset and a stock photo would
     // be inviting it to overrule them.
     //
-    // These candidates are marked `licenseConfidence: "client-supplied"` and
-    // described as the client's own upload, so the rights gate can clear them
-    // on the one basis that actually applies: the client owns it. Without that
-    // the gate would treat an upload with no provenance line as unknown
-    // provenance and refuse it, which is exactly backwards.
+    // The attachment is INGESTED, not passed through. `assertInside` in
+    // karos-publish refuses URL-shaped strings outright, so a `gs://` path in
+    // the candidate pool would clear the rights gate, reach step 08 and die
+    // there — after the run had already paid for copy, vetting and every other
+    // tier. `media.ingestAssets` downloads it into the same
+    // `.media-cache/<runId>/` every other tier writes to, through the same
+    // downloader, so one set of content-type and size guarantees covers all of
+    // them.
     //
-    // Assignment is by slide order, not by guesswork. The first attachment goes
-    // to slide 1, the second to slide 2, and so on -- a deterministic rule
-    // someone can predict from the upload order, rather than a model deciding
-    // which of their photos "fits" where.
-    const tier0Pool = await wf.step.code("05z-attach-user-media", () => {
-      const assets = runDirection.mediaAssets.filter((a) => a.role === "source" || a.role === "reference");
+    // Slides are assigned by upload order: the first attachment to slide 1, the
+    // second to slide 2. A rule someone can predict from the order they
+    // uploaded in, rather than a model deciding which of their photos "fits".
+    const tier0Pool = await wf.step.code("05z-attach-user-media", async () => {
+      const usable = runDirection.mediaAssets.filter((a) => a.role === "source" || a.role === "reference");
+      const ingest = tools["media.ingestAssets"];
+      if (usable.length === 0 || ingest === undefined) {
+        return { candidates: [] as ImageCandidate[], slots: [] as number[], attached: usable.length, note: usable.length === 0 ? "no attachments on this run" : "media.ingestAssets is not registered" };
+      }
+
+      const outcome = await ingest.execute(
+        {
+          repoRoot: options.repoRoot,
+          runId: wf.runId,
+          assets: usable.map((asset, index) => ({
+            uri: asset.uri,
+            ...(asset.label ? { label: asset.label } : {}),
+            slot: index + 1,
+          })),
+        },
+        { ctx },
+      );
+
+      if (outcome.status !== "success") {
+        // A failed ingest must not fail the run: the tiers below can still
+        // fill every slide, and a client whose upload could not be read is
+        // better served by a complete post plus a recorded reason than by no
+        // post at all.
+        return {
+          candidates: [] as ImageCandidate[],
+          slots: [] as number[],
+          attached: usable.length,
+          note: `attachments could not be ingested (${outcome.status}${"reason" in outcome ? `: ${outcome.reason}` : ""})`,
+        };
+      }
+
+      const result = outcome.result as { candidates: ImageCandidate[]; unmet: Array<{ slot: number; reason: string }> };
       return {
-        candidates: assets.map((asset, index) => ({
-          path: asset.uri,
-          description:
-            `slide ${index + 1} candidate -- CLIENT-SUPPLIED asset uploaded with this run` +
-            `${asset.label ? ` ("${asset.label}")` : ""}. The client owns this image and attached it deliberately; ` +
-            `treat it as rights-cleared and watermark-free unless the picture itself shows otherwise. ` +
-            `[licence: client-supplied -- owned by the client, uploaded for this post]`,
-          provider: "client-upload",
-          licenseConfidence: "client-supplied",
-          slot: index + 1,
-        })),
-        attached: assets.length,
+        candidates: result.candidates,
+        // Only the slides an asset actually landed on. An attachment that
+        // failed to ingest must not reserve a slide the harvesters would then
+        // skip, which would leave it empty for the rest of the run.
+        slots: result.candidates.map((_, index) => index + 1),
+        attached: usable.length,
+        ...(result.unmet.length > 0 ? { note: result.unmet.map((u) => `slide ${u.slot}: ${u.reason}`).join("; ") } : {}),
       };
     });
 
     /** Slides already carrying a client upload, so no tier below wastes a call on them. */
-    const tier0Slots = new Set(tier0Pool.candidates.map((c) => c.slot));
+    const tier0Slots = new Set(tier0Pool.slots);
 
     // ── 05-08b: write copy -> vet images -> emit + self-check + craft-hygiene
     //           -> render -> post-render visual QA, all sharing ONE retry
@@ -498,7 +527,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       let attemptPool =
         imageCandidatePool.length > 0
           ? imageCandidatePool
-          : (tier0Pool.candidates as unknown as ImageCandidate[]);
+          : tier0Pool.candidates;
       // Why the pool is empty, in the sourcing layer's own words. Without it
       // the hold below could only say "no candidate qualified", which reads as
       // an editorial verdict on the topic and sent whoever debugged prep run

@@ -22,6 +22,37 @@ import {
 
 const params = { runId: "ig_tier0", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
+/**
+ * A stand-in for `media.ingestAssets`, which the workflow now calls rather than
+ * passing attachment URIs straight through. It returns repo-relative paths
+ * because that is the contract the renderer enforces: `assertInside` refuses
+ * URL-shaped strings, so a gs:// path in the pool would die at step 08.
+ */
+function stubIngestAssets(onCall?: (args: Record<string, unknown>) => void, failing = false): AgentTool {
+  return {
+    name: "media.ingestAssets",
+    version: "1.0.0",
+    inputSchema: { parse: (v: unknown) => v } as never,
+    async execute(args: unknown) {
+      onCall?.(args as Record<string, unknown>);
+      if (failing) return { status: "content_fail", reason: "the object is empty" };
+      const assets = (args as { assets: Array<{ uri: string; label?: string; slot: number }> }).assets;
+      return {
+        status: "success",
+        result: {
+          candidates: assets.map((a) => ({
+            path: `.media-cache/run/n${a.slot}-client.png`,
+            description: `slide ${a.slot} candidate -- CLIENT-SUPPLIED asset uploaded with this run${a.label ? ` ("${a.label}")` : ""}. rights-cleared. [licence: client-supplied]`,
+            provider: "client-upload",
+            licenseConfidence: "client-supplied",
+          })),
+          unmet: [],
+        },
+      };
+    },
+  } as unknown as AgentTool;
+}
+
 /** Records the needs each tier was asked to fill, so "did not waste a call" is provable. */
 function recordingFindImages(seen: { needs?: Array<{ n: number }> }): AgentTool {
   return {
@@ -60,7 +91,8 @@ describe("instagram Tier 0: client-supplied media", () => {
     return { steps, copy };
   }
 
-  it("turns each attachment into a candidate marked client-supplied, assigned by upload order", async () => {
+  it("turns each attachment into an ingested, repo-relative candidate marked client-supplied", async () => {
+    let ingested: Record<string, unknown> | undefined;
     const { steps } = await run(
       {
         mediaAssets: [
@@ -68,20 +100,24 @@ describe("instagram Tier 0: client-supplied media", () => {
           { uri: "gs://bucket/second.jpg", role: "source" },
         ],
       },
-      {},
+      { "media.ingestAssets": stubIngestAssets((a) => { ingested = a; }) },
     );
 
     const tier0 = steps.find((s) => s.stepId === "05z-attach-user-media");
-    const result = tier0?.output as { candidates: Array<{ path: string; slot: number; licenseConfidence: string; description: string }>; attached: number };
+    const result = tier0?.output as { candidates: Array<{ path: string; licenseConfidence: string; description: string }>; slots: number[]; attached: number };
 
     expect(result.attached).toBe(2);
     // Deterministic slide assignment: first upload to slide 1, second to slide 2.
     // A rule someone can predict, rather than a model deciding which of their
     // photos "fits" where.
-    expect(result.candidates.map((c) => [c.slot, c.path])).toEqual([
+    expect((ingested?.["assets"] as Array<{ uri: string; slot: number }>).map((a) => [a.slot, a.uri])).toEqual([
       [1, "gs://bucket/hero.jpg"],
       [2, "gs://bucket/second.jpg"],
     ]);
+    expect(result.slots).toEqual([1, 2]);
+    // Repo-relative, because assertInside refuses URL-shaped strings and a
+    // gs:// path would otherwise die at the render step.
+    expect(result.candidates.every((c) => c.path.startsWith(".media-cache/"))).toBe(true);
     // Without a distinct licence tier the gate would treat an upload as
     // unknown provenance and refuse the one asset the client actually owns.
     expect(result.candidates[0]!.licenseConfidence).toBe("client-supplied");
@@ -94,7 +130,7 @@ describe("instagram Tier 0: client-supplied media", () => {
     const seen: { needs?: Array<{ n: number }> } = {};
     await run(
       { mediaAssets: [{ uri: "gs://bucket/a.jpg" }, { uri: "gs://bucket/b.jpg" }] },
-      { "media.findImages": recordingFindImages(seen) },
+      { "media.findImages": recordingFindImages(seen), "media.ingestAssets": stubIngestAssets() },
     );
 
     // Slides 1 and 2 are covered; paying a harvester for a candidate that must
@@ -112,13 +148,29 @@ describe("instagram Tier 0: client-supplied media", () => {
   });
 
   it("ignores an attachment whose role is not a usable image slot", async () => {
-    const { steps } = await run(
+    let ingested: Record<string, unknown> | undefined;
+    await run(
       { mediaAssets: [{ uri: "gs://bucket/logo.png", role: "logo" }, { uri: "gs://bucket/ok.jpg", role: "source" }] },
-      {},
+      { "media.ingestAssets": stubIngestAssets((a) => { ingested = a; }) },
     );
-    const result = (steps.find((s) => s.stepId === "05z-attach-user-media")?.output as { candidates: Array<{ path: string }> });
-    // A logo is brand furniture the template places, not a slide photograph.
-    expect(result.candidates.map((c) => c.path)).toEqual(["gs://bucket/ok.jpg"]);
+    // A logo is brand furniture the template places, not a slide photograph, so
+    // it never reaches the ingester at all.
+    expect((ingested?.["assets"] as Array<{ uri: string }>).map((a) => a.uri)).toEqual(["gs://bucket/ok.jpg"]);
+  });
+
+  it("does not reserve slides when the ingest failed, so the harvesters still cover them", async () => {
+    const seen: { needs?: Array<{ n: number }> } = {};
+    const { steps } = await run(
+      { mediaAssets: [{ uri: "gs://bucket/broken.jpg" }] },
+      { "media.findImages": recordingFindImages(seen), "media.ingestAssets": stubIngestAssets(undefined, true) },
+    );
+
+    const result = steps.find((s) => s.stepId === "05z-attach-user-media")?.output as { slots: number[]; note?: string };
+    // An attachment that failed to ingest must not hold a slide the harvesters
+    // would then skip, which would leave it empty for the rest of the run.
+    expect(result.slots).toEqual([]);
+    expect(String(result.note)).toContain("could not be ingested");
+    expect(seen.needs?.map((n) => n.n)).toContain(1);
   });
 
   it("records zero attachments rather than skipping the step, so a run says it looked", async () => {

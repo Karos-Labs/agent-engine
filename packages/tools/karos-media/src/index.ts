@@ -5,6 +5,7 @@ import { z } from "zod";
 import { createFindImages, FindImagesInputSchema } from "./find-images.js";
 import { createGenerateImage, type ImageGenerationClient } from "./generate-image.js";
 import { createScrapeImages } from "./scrape-images.js";
+import { createIngestAssets, type ObjectReader } from "./ingest-assets.js";
 import { createScraperProvider, type ScraperProvider } from "@agent-engine/tool-karos-scraper";
 import type { ImageSearchProvider } from "./providers.js";
 import { buildProviderRegistry, createImageSource, singleProviderSource, type ImageSource } from "./routing.js";
@@ -14,6 +15,7 @@ export * from "./providers/index.js";
 export * from "./find-images.js";
 export * from "./generate-image.js";
 export * from "./scrape-images.js";
+export * from "./ingest-assets.js";
 export * from "./routing.js";
 export * from "./quality.js";
 
@@ -28,6 +30,8 @@ export interface KarosMediaToolsOptions {
   generationClient?: ImageGenerationClient | null;
   /** Overrides the env-derived scraper backing the scrape tier. `null` disables it explicitly. */
   scraper?: ScraperProvider | null;
+  /** Reads `gs://` attachments for Tier 0. Without it a gs:// upload is reported unmet rather than skipped. */
+  objectReader?: ObjectReader | undefined;
 }
 
 /**
@@ -85,6 +89,11 @@ export function createKarosMediaTools(options: KarosMediaToolsOptions = {}): Age
   });
 
   return {
+    // ── Tier 0: media the client attached to this run ──
+    "media.ingestAssets": createIngestAssets({
+      ...(options.objectReader ? { reader: options.objectReader } : {}),
+      ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    }),
     // ── Tier 1: stock and CC harvesters ──
     "media.findImages": createFindImages(source, options.fetchImpl ?? fetch),
     // ── Tier 2: the open social web, for a photo of the actual subject ──
