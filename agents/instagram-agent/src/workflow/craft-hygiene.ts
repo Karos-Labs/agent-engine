@@ -13,16 +13,38 @@ import type { InstagramCopyOutput, SlidesDataSelfCheck } from "./types.js";
  */
 
 /**
- * A short allowlist of common acronyms that are legitimately ALL-CAPS in
- * sentence case ("Our AI tool saved 4 hours a week" is fine; "AMAZING
- * RESULTS" is not). Deliberately short — this is a heuristic, not a
- * dictionary, and false negatives here (a real acronym not on the list
- * getting flagged) are an accepted, documented limitation.
+ * Acronyms that are legitimately ALL-CAPS in sentence case ("Our AI tool saved
+ * 4 hours a week" is fine; "AMAZING RESULTS" is not).
+ *
+ * It was described as "deliberately short", with a missing acronym written off
+ * as an accepted limitation. A live prep run priced that limitation: two
+ * perfectly good drafts were rejected over "DTC", the run burned its whole
+ * retry budget re-drafting and re-sourcing images, and it held having produced
+ * nothing — about $0.69 and eleven minutes for a word every marketing agency
+ * uses daily.
+ *
+ * So the marketing vocabulary this agent actually writes in is covered. The
+ * list stays a heuristic rather than a dictionary — what it cannot afford is to
+ * be missing the terms these agents emit constantly, because each miss is a
+ * whole failed run rather than one flagged word.
+ *
+ * ONLY PURE-LETTER ENTRIES BELONG HERE. `checkSentenceCase` tokenises with
+ * `[A-Za-z][A-Za-z'-]*`, so digits and slashes never reach this set: "GA4"
+ * arrives as "GA", "A/B" as two single letters, and anything of length 1 is
+ * skipped before the lookup. The pre-existing `B2B`/`B2C`/`Q1`-`Q4` entries are
+ * unreachable for that reason and left only to avoid churn — do not add more in
+ * that shape, they read as protection that is not there. Mixed-case terms
+ * ("SaaS") never trip the check either, since it tests `w === w.toUpperCase()`.
  */
 const ACRONYM_ALLOWLIST = new Set([
-  "AI", "API", "CEO", "CFO", "CTO", "COO", "VP", "HR", "PR", "IT", "ID",
-  "ROI", "FAQ", "DIY", "PDF", "URL", "SEO", "SEO", "B2B", "B2C",
+  // Roles and general business
+  "AI", "API", "CEO", "CFO", "CTO", "COO", "CMO", "VP", "HR", "PR", "IT", "ID",
   "US", "USA", "UK", "EU", "TV", "OK", "Q1", "Q2", "Q3", "Q4",
+  "FAQ", "DIY", "PDF", "URL", "B2B", "B2C", "DTC", "SMB",
+  // Marketing measurement — the vocabulary these agents write in every run
+  "ROI", "ROAS", "CPA", "CPC", "CPM", "CTR", "CAC", "LTV", "AOV", "KPI",
+  "MQL", "SQL", "CRM", "CMS", "CDP", "DSP", "SEM", "SEO", "GEO", "UGC",
+  "PPC", "SERP", "GA", "UTM", "NPS", "MRR", "ARR", "GMV",
 ]);
 
 /** Short function words excluded from the Title-Case heuristic below — capitalizing them mid-sentence isn't evidence of Title Case. */

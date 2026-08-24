@@ -38,6 +38,27 @@ describe("Fix 3: unconditional mechanical craft-hygiene gate (em dash / exclamat
       expect(checkSentenceCase("Teams that automated their weekly reporting saved time.").ok).toBe(true);
     });
 
+    /**
+     * The allowlist has to cover the vocabulary these agents actually write in.
+     * A live prep run rejected two good drafts over "DTC" and held having
+     * produced nothing — each miss costs a whole run, not one flagged word.
+     */
+    it.each(["DTC", "ROAS", "CPA", "CTR", "CAC", "LTV", "UGC", "CRM", "KPI", "CMO"])(
+      "accepts %s, which a marketing agent writes constantly",
+      (acronym) => {
+        expect(checkSentenceCase(`Our ${acronym} improved every quarter.`).ok).toBe(true);
+      },
+    );
+
+    it("passes a term with digits because the tokeniser never yields one whole", () => {
+      // Not a claim that "GA4" is allowlisted — it cannot be. The word regex
+      // yields "GA", so the allowlist entry has to be "GA", and an entry
+      // spelled "GA4" would be unreachable protection. Pinned so the next
+      // person editing that list sees which shape actually works.
+      expect(checkSentenceCase("Our GA4 property tracks it.").ok).toBe(true);
+      expect(checkSentenceCase("Our A/B test won.").ok).toBe(true);
+    });
+
     it("flags an ALL-CAPS word outside the acronym allowlist", () => {
       const result = checkSentenceCase("This is AMAZING news for the team.");
       expect(result.ok).toBe(false);
