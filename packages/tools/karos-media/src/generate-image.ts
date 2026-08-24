@@ -61,8 +61,34 @@ export const GenerateImageInputSchema = z.object({
   perNeed: z.number().int().min(1).max(3).default(1),
   /** Passed through as `imageConfig.aspectRatio`; verified accepted by the model. */
   aspectRatio: z.enum(["1:1", "3:4", "4:3", "9:16", "16:9"]).default("4:3"),
+  /**
+   * Photographic direction for the brief, derived by the caller from the
+   * client's own brand tokens and canvas.
+   *
+   * Every field is optional and every field is only ever passed through, never
+   * invented here. A caller with nothing to say supplies nothing and the brief
+   * falls back to neutral direction — which is what it always did.
+   */
+  art: z
+    .object({
+      /** e.g. "editorial", "documentary", "minimal product photography". */
+      aesthetic: z.string().min(1).optional(),
+      /** e.g. "soft diffused daylight", "hard directional studio light". */
+      lighting: z.string().min(1).optional(),
+      /** Named or hex colours the frame should sit in. */
+      palette: z.array(z.string().min(1)).max(6).optional(),
+      /** The client's single accent colour, when they have one. */
+      accentColor: z.string().min(1).optional(),
+      /** e.g. "calm and considered", "urgent". */
+      mood: z.string().min(1).optional(),
+      /** Extra client-specific direction, appended verbatim. */
+      notes: z.string().min(1).optional(),
+    })
+    .optional(),
 });
 export type GenerateImageInput = z.input<typeof GenerateImageInputSchema>;
+/** The post-parse shape, so `buildBrief` can name the art block without restating it. */
+type GenerateImageInputParsed = z.output<typeof GenerateImageInputSchema>;
 
 export interface GenerateImageResult {
   candidates: FindImagesCandidate[];
@@ -173,7 +199,7 @@ export function createGenerateImage(options: {
           try {
             response = await client.models.generateContent({
               model,
-              contents: buildBrief(need.prompt),
+              contents: buildBrief(need.prompt, input.art),
               config: {
                 // Both modalities: the model narrates its refusal as text when
                 // it declines, and that text is the only explanation on offer.
@@ -250,18 +276,48 @@ export function createGenerateImage(options: {
 }
 
 /**
- * Wraps the slide's `visualNeed` in the framing the rest of this package
- * assumes: a photographic still, no text baked into the pixels.
+ * Composes the generation brief: the slide's own `visualNeed`, then the
+ * client's art direction, then the constraints this pipeline always imposes.
  *
- * The no-text instruction matters twice over. Generated lettering comes out
- * malformed, and the carousel template renders the real headline and body as
- * live text over the image — so any words in the picture itself would collide
- * with copy that is already there.
+ * ## Why the direction is worth the tokens
+ *
+ * A flat "photographic image of X" gets a generic stock-looking frame, which
+ * is the same failure mode that made retrieval insufficient in the first
+ * place. Lighting, aesthetic and palette are what make a generated slide look
+ * like it belongs to this client rather than to nobody. The values come from
+ * the caller's brand tokens and canvas — this function invents none of them,
+ * and a caller with nothing to say still gets a working neutral brief.
+ *
+ * ## The constraints are not negotiable
+ *
+ * No text in the pixels, twice over: generated lettering comes out malformed,
+ * and the carousel template renders the real headline and body as live text
+ * over this image, so words in the frame would collide with copy already
+ * there. No logos or watermarks for the same reason the rights gate exists.
  */
-function buildBrief(visualNeed: string): string {
-  return (
-    `Create a photographic image for a social media carousel slide: ${visualNeed}\n\n` +
-    "Style: realistic photography, natural lighting, clean composition, no text, no words, " +
-    "no lettering, no logos, no watermarks, no borders or frames."
+function buildBrief(visualNeed: string, art?: GenerateImageInputParsed["art"]): string {
+  const lines = [`Create a photographic image for a social media carousel slide: ${visualNeed}`];
+
+  const direction: string[] = [];
+  if (art?.aesthetic) direction.push(`Aesthetic: ${art.aesthetic}.`);
+  if (art?.lighting) direction.push(`Lighting: ${art.lighting}.`);
+  if (art?.palette && art.palette.length > 0) direction.push(`Colour palette: ${art.palette.join(", ")}.`);
+  if (art?.accentColor) direction.push(`Carry the brand accent colour ${art.accentColor} somewhere in the frame, as an object or surface rather than an overlay.`);
+  if (art?.mood) direction.push(`Mood: ${art.mood}.`);
+  if (art?.notes) direction.push(art.notes);
+
+  if (direction.length > 0) {
+    lines.push("", "Art direction:", ...direction.map((d) => `- ${d}`));
+  } else {
+    // The prior behaviour, kept verbatim for a caller supplying no direction.
+    lines.push("", "Style: realistic photography, natural lighting, clean composition.");
+  }
+
+  lines.push(
+    "",
+    "Constraints: no text, no words, no lettering, no numbers rendered in the image, " +
+      "no logos, no watermarks, no borders or frames, no collage or split panels.",
   );
+
+  return lines.join("\n");
 }

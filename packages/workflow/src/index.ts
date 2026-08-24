@@ -4,3 +4,4 @@ export * from "./engine/index.js";
 export * from "./serializers/index.js";
 export * from "./primitives/topic-guardrail.js";
 export * from "./primitives/auto-setup.js";
+export * from "./primitives/research-candidate.js";

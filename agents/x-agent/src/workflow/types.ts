@@ -44,31 +44,12 @@ export interface XClientContext {
   strategy: string | null;
 }
 
-/** One live source out of a `research.pull` payload. Mirrors karos-research's `ResearchDocument`. */
-export interface XResearchDocument {
-  title: string;
-  url: string;
-  content?: string;
-  publishedAt?: string;
-  author?: string;
-}
-
 /**
- * What step 04 keeps from `research.pull`.
- *
- * `result` is the payload itself, not just its identity. Step 04 previously
- * returned only `{runId, query, fromCache}`, which meant step 05 had nothing
- * to extract from even after the search became real.
+ * `XResearchPull`/`XResearchDocument` lived here briefly and were replaced by
+ * `ResearchPullResult` in @agent-engine/workflow, which every publishing agent
+ * now shares. Two definitions of the same payload is how the five copies of
+ * the old extraction step drifted in the first place.
  */
-export interface XResearchPull {
-  runId: string;
-  query: string;
-  fromCache: boolean;
-  result?: {
-    provider?: string;
-    documents?: XResearchDocument[];
-  };
-}
 
 export interface XCandidateSummary {
   /** A real source's headline when the search returned one; the query itself only when it returned nothing. */

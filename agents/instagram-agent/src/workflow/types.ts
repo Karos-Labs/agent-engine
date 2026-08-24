@@ -106,6 +106,21 @@ export const BrandTokensSchema = z.object({
   slideTemplate: z.string().min(1).default("slide.html"),
   accentColor: z.string().min(1).optional(),
   logoPath: z.string().min(1).optional(),
+  /**
+   * Optional photographic direction, used only by the generative tier
+   * (`image.generate`) when retrieval could not fill a slide.
+   *
+   * All optional, so no existing client config breaks by their absence, and a
+   * client without them gets the same neutral brief as before. They exist
+   * because a flat "photographic image of X" returns a generic stock-looking
+   * frame — the same weakness that made retrieval insufficient — and lighting,
+   * aesthetic and palette are what make a generated slide look like it belongs
+   * to this client rather than to nobody.
+   */
+  aesthetic: z.string().min(1).optional(),
+  lighting: z.string().min(1).optional(),
+  palette: z.array(z.string().min(1)).max(6).optional(),
+  visualMood: z.string().min(1).optional(),
 });
 export type BrandTokens = z.infer<typeof BrandTokensSchema>;
 

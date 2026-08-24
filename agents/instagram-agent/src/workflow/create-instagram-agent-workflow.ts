@@ -10,6 +10,7 @@ import { assembleSlidesData, checkSlidesData } from "./slides-data.js";
 import { checkCraftHygiene } from "./craft-hygiene.js";
 import {
   BrandTokensSchema,
+  type BrandTokens,
   ResearchOutputSchema,
   StyleConfigSchema,
   type ImageCandidate,
@@ -584,7 +585,16 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         {
           id: "generate",
           tool: tools["image.generate"],
-          buildArgs: (gaps) => ({ repoRoot: options.repoRoot, runId: wf.runId, needs: gaps }),
+          buildArgs: (gaps) => ({
+            repoRoot: options.repoRoot,
+            runId: wf.runId,
+            needs: gaps,
+            // The real canvas, not a hardcoded default: a generated slide that
+            // renders at a different ratio to the template gets cropped, and a
+            // crop is exactly how a carefully-composed frame loses its subject.
+            aspectRatio: aspectRatioForCanvas(frozen.styleConfig.canvas),
+            art: artDirectionFor(frozen.brandTokens),
+          }),
         },
       ];
 
@@ -858,4 +868,48 @@ function industryForSetup(outcome: { status: string; result?: unknown }): string
   if (outcome.status !== "success") return undefined;
   const industry = (outcome.result as Record<string, unknown> | undefined)?.["industry"];
   return typeof industry === "string" && industry.trim().length > 0 ? industry.trim() : undefined;
+}
+
+/**
+ * The closest aspect ratio the image model accepts to the client's actual
+ * canvas.
+ *
+ * The generator only takes a fixed set of ratios, so this picks the nearest by
+ * numeric distance rather than guessing a default. Getting it wrong is not
+ * cosmetic: the template renders the image into a fixed frame, so a mismatched
+ * generation is cropped, and a crop takes the subject out of a frame that was
+ * composed around it.
+ */
+function aspectRatioForCanvas(canvas: { w: number; h: number }): "1:1" | "3:4" | "4:3" | "9:16" | "16:9" {
+  const supported: Array<{ id: "1:1" | "3:4" | "4:3" | "9:16" | "16:9"; value: number }> = [
+    { id: "1:1", value: 1 },
+    { id: "3:4", value: 3 / 4 },
+    { id: "4:3", value: 4 / 3 },
+    { id: "9:16", value: 9 / 16 },
+    { id: "16:9", value: 16 / 9 },
+  ];
+  const target = canvas.h > 0 ? canvas.w / canvas.h : 1;
+  return supported.reduce((best, option) =>
+    Math.abs(option.value - target) < Math.abs(best.value - target) ? option : best,
+  ).id;
+}
+
+/**
+ * Art direction assembled from the client's own brand tokens, or undefined
+ * when they have declared none.
+ *
+ * Undefined rather than a set of tasteful defaults, deliberately: invented
+ * direction would make every client's generated slides look like whatever this
+ * function happened to prefer, which is worse than the neutral brief the
+ * generator already falls back to. Only what the client actually declared.
+ */
+function artDirectionFor(tokens: BrandTokens): Record<string, unknown> | undefined {
+  const art = {
+    ...(tokens.aesthetic ? { aesthetic: tokens.aesthetic } : {}),
+    ...(tokens.lighting ? { lighting: tokens.lighting } : {}),
+    ...(tokens.palette && tokens.palette.length > 0 ? { palette: tokens.palette } : {}),
+    ...(tokens.accentColor ? { accentColor: tokens.accentColor } : {}),
+    ...(tokens.visualMood ? { mood: tokens.visualMood } : {}),
+  };
+  return Object.keys(art).length > 0 ? art : undefined;
 }

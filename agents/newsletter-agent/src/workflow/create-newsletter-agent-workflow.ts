@@ -1,6 +1,6 @@
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail} from "@agent-engine/workflow";
+import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult } from "@agent-engine/workflow";
 import { NewsletterDraftAgent, type NewsletterPostOutput } from "../agent/newsletter-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
 import type {
@@ -179,24 +179,34 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
       const query = `${industry} industry and company update digest`;
       // Newsletter editions curate a window of updates — 14 days covers a
       // typical weekly-or-slower cadence without missing recent items.
-      const outcome = await tools["research.pull"]!.execute({ job: "newsletter-digest-research", query, window: "14d" }, { ctx });
+      const outcome = await tools["research.pull"]!.execute(
+        {
+          job: "newsletter-digest-research",
+          query,
+          window: "14d",
+          // Anti-repetition context: this agent's own prior deliverables, so
+          // the extraction below can steer off a subject already covered.
+          historyAgentId: "newsletter-agent",
+        },
+        { ctx },
+      );
       if (outcome.status !== "success") {
         throw new WorkflowToolingFailure(`research.pull failed: ${outcome.status}`);
       }
-      return outcome.result as { runId: string; query: string; fromCache: boolean };
+      // The payload is kept, not discarded. Step 05 reads the real documents
+      // out of it; before this it saw only `runId`/`query` and had nothing to
+      // extract from even once the search became real.
+      return outcome.result as ResearchPullResult;
     });
 
-    const candidateSummary = await wf.step.code("05-extract-candidate-summary", (): NewsletterCandidateSummary => {
-      // Phase 1's research.pull is a stand-in with no real external search backend yet
-      // (see packages/tools/karos-research/src/pull.ts) — so there is no real numeric
-      // insight to extract. This derives a low-confidence, clearly-labeled fallback
-      // candidate from the query itself, never a fabricated statistic.
-      return {
-        candidateTopic: research.query,
-        hasNumericInsight: false,
-        sourceLabel: `research run ${research.runId}`,
-      };
-    });
+    const candidateSummary = await wf.step.code("05-extract-candidate-summary", (): NewsletterCandidateSummary =>
+      // Shared with every other publishing agent (`extractResearchCandidate`).
+      // This step used to return the QUERY as the topic, on the grounds that
+      // research.pull was a stand-in with nothing to extract -- accurate when
+      // written, false since the scraper landed, and the same stale comment
+      // was sitting in five agents at once. One implementation now.
+      extractResearchCandidate(research, { avoidTopics: pastEditionHistory }),
+    );
 
     // ── 06-08: edition theme, main story, and secondary section curation ──
     const reservation = await wf.step.code("06-reserve-topics", async (): Promise<NewsletterTopicReservation> => {

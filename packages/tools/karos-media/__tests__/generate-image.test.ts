@@ -102,6 +102,78 @@ describe("image.generate", () => {
     expect(seen!.contents).toContain("no text");
   });
 
+  it("builds a rich brief from the client's art direction rather than a flat query", async () => {
+    let seen: { contents: string } | undefined;
+    const client = fakeClient((req) => {
+      seen = req;
+      return imageResponse();
+    });
+
+    await tool(client).execute(
+      {
+        repoRoot,
+        runId: "run_1",
+        needs: [{ n: 1, prompt: "a quiet desk at dawn" }],
+        art: {
+          aesthetic: "editorial documentary",
+          lighting: "soft diffused daylight",
+          palette: ["warm charcoal", "paper white"],
+          accentColor: "#ff6b2c",
+          mood: "calm and considered",
+          notes: "shoot slightly from above",
+        },
+      },
+      { ctx: CTX },
+    );
+
+    const brief = seen!.contents;
+    expect(brief).toContain("a quiet desk at dawn");
+    expect(brief).toContain("Aesthetic: editorial documentary");
+    expect(brief).toContain("Lighting: soft diffused daylight");
+    expect(brief).toContain("warm charcoal, paper white");
+    // The accent has to appear as a thing in the frame, not as an overlay the
+    // template would then draw its own text on top of.
+    expect(brief).toContain("#ff6b2c");
+    expect(brief).toContain("as an object or surface rather than an overlay");
+    expect(brief).toContain("calm and considered");
+    expect(brief).toContain("shoot slightly from above");
+    // Constraints survive the richer brief.
+    expect(brief).toContain("no text");
+    expect(brief).toContain("no logos");
+  });
+
+  it("falls back to the neutral brief when the client declared no direction", async () => {
+    let seen: { contents: string } | undefined;
+    const client = fakeClient((req) => {
+      seen = req;
+      return imageResponse();
+    });
+
+    await tool(client).execute({ repoRoot, runId: "run_1", needs: [{ n: 1, prompt: "x" }] }, { ctx: CTX });
+
+    // Invented direction would make every client's slides look like whatever
+    // this package happened to prefer, so absence stays absence.
+    expect(seen!.contents).toContain("Style: realistic photography");
+    expect(seen!.contents).not.toContain("Art direction:");
+  });
+
+  it("omits an art field the client left unset instead of writing an empty line", async () => {
+    let seen: { contents: string } | undefined;
+    const client = fakeClient((req) => {
+      seen = req;
+      return imageResponse();
+    });
+
+    await tool(client).execute(
+      { repoRoot, runId: "run_1", needs: [{ n: 1, prompt: "x" }], art: { lighting: "hard studio light" } },
+      { ctx: CTX },
+    );
+
+    expect(seen!.contents).toContain("Lighting: hard studio light");
+    expect(seen!.contents).not.toContain("Aesthetic:");
+    expect(seen!.contents).not.toContain("Colour palette:");
+  });
+
   it("honours IMAGE_GEN_MODEL when set", async () => {
     let seen: { model: string } | undefined;
     const client = fakeClient((req) => {
