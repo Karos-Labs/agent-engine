@@ -44,10 +44,37 @@ export interface XClientContext {
   strategy: string | null;
 }
 
+/** One live source out of a `research.pull` payload. Mirrors karos-research's `ResearchDocument`. */
+export interface XResearchDocument {
+  title: string;
+  url: string;
+  content?: string;
+  publishedAt?: string;
+  author?: string;
+}
+
+/**
+ * What step 04 keeps from `research.pull`.
+ *
+ * `result` is the payload itself, not just its identity. Step 04 previously
+ * returned only `{runId, query, fromCache}`, which meant step 05 had nothing
+ * to extract from even after the search became real.
+ */
+export interface XResearchPull {
+  runId: string;
+  query: string;
+  fromCache: boolean;
+  result?: {
+    provider?: string;
+    documents?: XResearchDocument[];
+  };
+}
+
 export interface XCandidateSummary {
-  /** A candidate topic derived from the (Phase 1 stand-in) research payload — see step 05's own comment. */
+  /** A real source's headline when the search returned one; the query itself only when it returned nothing. */
   candidateTopic?: string;
   hasNumericInsight: boolean;
+  /** The source URL a downstream claim can be traced to, or a labelled run id when there was no source. */
   sourceLabel: string;
 }
 

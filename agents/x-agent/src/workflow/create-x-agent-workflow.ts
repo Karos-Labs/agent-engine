@@ -5,6 +5,7 @@ import { renderPreview, type RenderPreviewResult } from "../tools/render-preview
 import { renderXDraftsMarkdown } from "./render-drafts-markdown.js";
 import { countRecentEngagementPosts, ENGAGEMENT_DAILY_CAP, selectLane } from "./lane.js";
 import type {
+  XResearchPull,
   XAgentWorkflowResult,
   XCandidateSummary,
   XClientContext,
@@ -177,22 +178,71 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
     const research = await wf.step.code("04-research-pull", async () => {
       const industry = (clientContext.profile["industry"] as string | undefined) ?? "this industry";
       const query = `${industry} trends this week`;
-      const outcome = await tools["research.pull"]!.execute({ job: "x-news-scan", query, window: "24h" }, { ctx });
+      const outcome = await tools["research.pull"]!.execute(
+        {
+          job: "x-news-scan",
+          query,
+          window: "24h",
+          // Anti-repetition context: this agent's own prior posts, so the
+          // extraction below can steer off a subject already covered.
+          historyAgentId: "x-agent",
+        },
+        { ctx },
+      );
       if (outcome.status !== "success") {
         throw new WorkflowToolingFailure(`research.pull failed: ${outcome.status}`);
       }
-      return outcome.result as { runId: string; query: string; fromCache: boolean };
+      // The payload is kept, not discarded. Step 05 below reads the real
+      // documents out of it; before this it saw only `runId`/`query` and had
+      // nothing to extract from even once the search became real.
+      return outcome.result as XResearchPull;
     });
 
     const candidateSummary = await wf.step.code("05-extract-candidate-summary", (): XCandidateSummary => {
-      // Phase 1's research.pull is a stand-in with no real external search backend yet
-      // (see packages/tools/karos-research/src/pull.ts) — so there is no real numeric
-      // insight to extract. This derives a low-confidence, clearly-labeled fallback
-      // candidate from the query itself, never a fabricated statistic.
+      /*
+       * This step used to return the QUERY as the candidate topic, on the
+       * grounds that "Phase 1's research.pull is a stand-in with no real
+       * external search backend yet ... so there is no real numeric insight to
+       * extract". That was accurate when it was written and stopped being
+       * accurate the moment research.pull grew a real scraper.
+       *
+       * The cost of leaving it was measured, not hypothetical: prep run
+       * pubsub-20272693789971486 fetched four real, current sources (a
+       * confirmed August spam update, ChatGPT ads launching across 31 European
+       * countries, SE Ranking's AI Overviews findings), spent 5.9 billed
+       * seconds doing it, then drafted "Most AI marketing output passes the
+       * readability check and fails the buyer test" — a generic observation
+       * that mentions none of it. The engine was paying for research and
+       * throwing it away.
+       *
+       * So the real documents are read here. Still no fabrication: the topic is
+       * a source's own headline, `hasNumericInsight` is decided by looking for
+       * digits in that source's text, and `sourceLabel` cites the URL the
+       * claim can be traced to rather than an opaque run id.
+       */
+      const documents = research.result?.documents ?? [];
+
+      // Prefer a source whose text actually carries numbers: the draft gates
+      // downstream (`gate.numbersSourced`) reward a sourced figure, and a
+      // headline with nothing behind it cannot support one.
+      const withNumbers = documents.find((d) => /\d/.test(d.content ?? ""));
+      const chosen = withNumbers ?? documents[0];
+
+      if (chosen === undefined) {
+        // An honestly empty search. Fall back to the query exactly as before,
+        // clearly labelled, rather than inventing a subject.
+        return {
+          candidateTopic: research.query,
+          hasNumericInsight: false,
+          sourceLabel: `research run ${research.runId} (no external sources returned)`,
+        };
+      }
+
       return {
-        candidateTopic: research.query,
-        hasNumericInsight: false,
-        sourceLabel: `research run ${research.runId}`,
+        candidateTopic: chosen.title,
+        hasNumericInsight: /\d/.test(chosen.content ?? ""),
+        // The URL, so a downstream claim cites something a reader can open.
+        sourceLabel: chosen.url,
       };
     });
 
