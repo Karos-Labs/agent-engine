@@ -270,6 +270,34 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     const topicClaim = await wf.step.code("03-claim-topic", async (): Promise<InstagramTopicClaim> => {
       const reservationKey = `${wf.runId}__topic`;
       const lane = runClaim.requestedLane ?? DEFAULT_CAROUSEL_LANE;
+
+      /*
+       * A SUBJECT SOMEONE TYPED FOR THIS RUN OUTRANKS THE CATALOG.
+       *
+       * This is the one thing that goes above the reservation, and a live prep
+       * run is what showed why it has to. The direction reached the copy step
+       * (`runDirectionField` at step 05) but not this one, so the catalog picked
+       * the subject, step 04 researched THAT subject, and the writer was handed
+       * a direction it could not honour alongside facts about something else.
+       * It wrote about the facts, correctly, and the person got a carousel on a
+       * topic they had not asked for — with no error anywhere.
+       *
+       * The rule below is the same one blog-agent and x-agent already apply, and
+       * the reasoning the surrounding comment gives for keeping the RESERVATION
+       * first does not reach it. That reasoning is about `requestedSubject`, a
+       * STANDING config field: making it outrank the catalog would silently drop
+       * the dedup lock on every run of every client who ever set it. A typed
+       * direction is per-run and per-person — it cannot silently affect a run
+       * nobody typed at.
+       *
+       * Dedup honesty is preserved exactly as the fallback path preserves it: no
+       * `reservationKey`, so step 09 skips `topics.commit` and the catalog is
+       * never told it issued a topic it did not.
+       */
+      if (runDirection.topicOverride) {
+        return { topic: runDirection.topicOverride, source: "requested" };
+      }
+
       const outcome = await tools["topics.reserve"]!.execute({ reservationKey, count: 1, excludeTopics: [], lane }, { ctx });
       if (outcome.status === "success") {
         const result = outcome.result as { reservationKey: string; topics: string[] };
