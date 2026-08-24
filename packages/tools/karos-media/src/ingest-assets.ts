@@ -16,6 +16,15 @@ export const IngestAssetsInputSchema = z.object({
   repoRoot: z.string().min(1),
   /** Namespaces the cache directory, exactly as the other media tools do. */
   runId: z.string().min(1),
+  /**
+   * What kind of media is being ingested.
+   *
+   * Not cosmetic: the two kinds need different content-type tables and wildly
+   * different size ceilings — a slide photograph over 12 MB is a mistake, and a
+   * podcast episode under 12 MB barely exists. Defaulting to `"image"` keeps
+   * every existing caller unchanged.
+   */
+  kind: z.enum(["image", "video"]).default("image"),
   /** The assets a person attached to this run, in upload order. */
   assets: z
     .array(
@@ -53,7 +62,79 @@ function parseGsUri(uri: string): { bucket: string; objectPath: string } | undef
   return match ? { bucket: match[1]!, objectPath: match[2]! } : undefined;
 }
 
-const MIME_EXTENSION: Record<string, string> = { ".jpg": ".jpg", ".jpeg": ".jpg", ".png": ".png", ".webp": ".webp" };
+const MIME_EXTENSION: Record<"image" | "video", Record<string, string>> = {
+  image: { ".jpg": ".jpg", ".jpeg": ".jpg", ".png": ".png", ".webp": ".webp" },
+  video: { ".mp4": ".mp4", ".mov": ".mov", ".m4v": ".mp4", ".webm": ".webm" },
+};
+
+/** Fallback extension when the object name carries none we recognise. */
+const DEFAULT_EXTENSION: Record<"image" | "video", string> = { image: ".png", video: ".mp4" };
+
+/** Content types accepted from an `https://` video attachment, and their extensions. */
+const VIDEO_EXTENSION_BY_TYPE: Record<string, string> = {
+  "video/mp4": ".mp4",
+  "video/quicktime": ".mov",
+  "video/webm": ".webm",
+};
+
+/**
+ * Half a gigabyte, against 12 MB for an image.
+ *
+ * A source video here is a whole podcast episode the clip pipeline cuts from,
+ * so the image ceiling would refuse every real one. It is still a ceiling: an
+ * unbounded read is how one job payload exhausts the container's /tmp.
+ */
+const MAX_VIDEO_BYTES = 512 * 1024 * 1024;
+
+/**
+ * The video counterpart of `downloadImage`.
+ *
+ * Deliberately a second function rather than a parameterised one: it shares the
+ * shape of the checks (type refused rather than guessed, ceiling enforced on
+ * both the claim and the bytes) but none of the values, and threading two
+ * tables plus two ceilings through one function would leave every caller
+ * reading which branch it was in.
+ */
+async function downloadVideo(
+  fetchImpl: typeof fetch,
+  url: string,
+  absDir: string,
+  relDir: string,
+  stem: string,
+): Promise<string | undefined> {
+  let response: Response;
+  try {
+    // Longer than the image timeout for the same reason as the ceiling: this is
+    // an episode, and 20s would refuse healthy transfers.
+    response = await fetchImpl(url, { signal: AbortSignal.timeout(180_000) });
+  } catch {
+    return undefined;
+  }
+  if (!response.ok) return undefined;
+
+  const contentType = (response.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+  const extension = VIDEO_EXTENSION_BY_TYPE[contentType];
+  if (extension === undefined) return undefined;
+
+  const declared = Number(response.headers.get("content-length") ?? "0");
+  if (Number.isFinite(declared) && declared > MAX_VIDEO_BYTES) return undefined;
+
+  let bytes: Buffer;
+  try {
+    bytes = Buffer.from(await response.arrayBuffer());
+  } catch {
+    return undefined;
+  }
+  if (bytes.byteLength === 0 || bytes.byteLength > MAX_VIDEO_BYTES) return undefined;
+
+  const relative = `${relDir}/${stem}${extension}`;
+  try {
+    await fs.writeFile(path.join(absDir, `${stem}${extension}`), bytes);
+  } catch {
+    return undefined;
+  }
+  return relative;
+}
 
 /**
  * `media.ingestAssets` — Tier 0's downloader.
@@ -107,10 +188,16 @@ export function createIngestAssets(options: { reader?: ObjectReader | undefined;
         const describe = (relative: string): FindImagesCandidate => ({
           path: relative,
           description:
-            `slide ${asset.slot} candidate — CLIENT-SUPPLIED asset uploaded with this run` +
-            `${asset.label ? ` ("${asset.label}")` : ""}. The client owns this image and attached it deliberately, so it is ` +
-            `rights-cleared and unwatermarked unless the picture itself shows otherwise. ` +
-            `[licence: ${CLIENT_LICENCE}]`,
+            input.kind === "video"
+              ? // No "slide" wording: a video attachment is the footage a clip
+                // pipeline cuts from, not a candidate competing for a slot, and
+                // the only reader of this line is a human looking at the trace.
+                `CLIENT-SUPPLIED source video uploaded with this run${asset.label ? ` ("${asset.label}")` : ""}. ` +
+                `[licence: ${CLIENT_LICENCE}]`
+              : `slide ${asset.slot} candidate — CLIENT-SUPPLIED asset uploaded with this run` +
+                `${asset.label ? ` ("${asset.label}")` : ""}. The client owns this image and attached it deliberately, so it is ` +
+                `rights-cleared and unwatermarked unless the picture itself shows otherwise. ` +
+                `[licence: ${CLIENT_LICENCE}]`,
           provider: "client-upload",
           licenseConfidence: "client-supplied",
         });
@@ -125,7 +212,7 @@ export function createIngestAssets(options: { reader?: ObjectReader | undefined;
             });
             continue;
           }
-          const extension = MIME_EXTENSION[path.extname(gs.objectPath).toLowerCase()] ?? ".png";
+          const extension = MIME_EXTENSION[input.kind][path.extname(gs.objectPath).toLowerCase()] ?? DEFAULT_EXTENSION[input.kind];
           const stem = `n${asset.slot}-client${input.assets.indexOf(asset)}`;
           const relative = `${relDir}/${stem}${extension}`;
           try {
@@ -144,11 +231,14 @@ export function createIngestAssets(options: { reader?: ObjectReader | undefined;
         }
 
         if (/^https?:\/\//i.test(asset.uri)) {
-          // Same downloader as every other tier, so the content-type and size
-          // guarantees cannot drift between them.
-          const saved = await downloadImage(fetchImpl, { id: `client-${asset.slot}-${asset.uri}`, url: asset.uri }, absDir, relDir, asset.slot);
+          const saved =
+            input.kind === "video"
+              ? await downloadVideo(fetchImpl, asset.uri, absDir, relDir, `n${asset.slot}-client-source`)
+              : // Same downloader as every other image tier, so the content-type
+                // and size guarantees cannot drift between them.
+                await downloadImage(fetchImpl, { id: `client-${asset.slot}-${asset.uri}`, url: asset.uri }, absDir, relDir, asset.slot);
           if (saved === undefined) {
-            unmet.push({ slot: asset.slot, uri: asset.uri, reason: "the URL did not return a usable image" });
+            unmet.push({ slot: asset.slot, uri: asset.uri, reason: `the URL did not return a usable ${input.kind}` });
             continue;
           }
           candidates.push(describe(saved));

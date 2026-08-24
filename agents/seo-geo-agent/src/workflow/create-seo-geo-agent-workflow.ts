@@ -1,5 +1,5 @@
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { type SlotOutcome, type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure } from "@agent-engine/workflow";
+import { readRunDirection, runDirectionField, type SlotOutcome, type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure } from "@agent-engine/workflow";
 import {
   GEO_READINESS_BUCKETS,
   GEO_SCORE_MODEL,
@@ -167,6 +167,14 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
 
   return async function seoGeoAgentWorkflow(wf: WorkflowContext): Promise<SeoGeoAgentWorkflowResult> {
     const ctx = toAgentContext(wf);
+
+    // The run-scoped instruction someone typed in the portal, resolved once.
+    //
+    // Only the two prose steps read it, and `topicOverride` is deliberately
+    // unused here: this agent's subject is the client's own site, measured by
+    // which recommendations actually fired, and letting a sentence redirect
+    // that would produce an audit of something nobody measured.
+    const runDirection = readRunDirection(wf.input);
 
     // ── 00: intake check — blocked_intake if foundation data is missing ──
     const intake = await wf.step.code("00-intake-check", async (): Promise<SeoGeoIntakeConfig> => {
@@ -493,6 +501,7 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
     if (topAgentDirect.length > 0) {
       const fixAgent = new SeoGeoFixDraftAgent({ router: options.router, tools, promptStore: options.promptStore });
       const fixResult = await wf.step.agent("13-draft-fixes", fixAgent, {
+        ...runDirectionField(runDirection),
         firedRecommendations: topAgentDirect.map((r) => ({
           recId: r.recId,
           recommendation: r.recommendation,
@@ -514,6 +523,7 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
     // ── 14: narrative drafting — the report's one prose step (RFC-04 §2 Phase 8) ──
     const narrativeAgent = new SeoGeoNarrativeAgent({ router: options.router, tools, promptStore: options.promptStore });
     const narrativeResult = await wf.step.agent("14-draft-narrative", narrativeAgent, {
+      ...runDirectionField(runDirection),
       seoScore: scoring.seoScore.score,
       seoDataCoveragePct: Math.round(scoring.seoScore.dataCoveragePct),
       geoReadinessScore: scoring.geoReadiness.score,

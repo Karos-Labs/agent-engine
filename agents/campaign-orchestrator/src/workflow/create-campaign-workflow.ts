@@ -1,5 +1,5 @@
 import type { AgentContext, AgentToolRegistry, ModelRouter, PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure } from "@agent-engine/workflow";
+import { readRunDirection, runDirectionField, type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure } from "@agent-engine/workflow";
 import { createXAgentWorkflow } from "@agent-engine/agent-x";
 import { createLinkedInAgentWorkflow } from "@agent-engine/agent-linkedin";
 import { createRedditAgentWorkflow } from "@agent-engine/agent-reddit";
@@ -103,6 +103,12 @@ export function createCampaignWorkflow(options: CreateCampaignWorkflowOptions) {
   return async function campaignWorkflow(wf: WorkflowContext): Promise<CampaignAgentWorkflowResult> {
     const ctx = toAgentContext(wf);
 
+    // The run-scoped instruction someone typed in the portal, resolved once.
+    // Same contract as every other agent: a typed sentence outranks the
+    // agent's own subject selection, and style-only notes are deliberately not
+    // promoted to subjects (see readRunDirection).
+    const runDirection = readRunDirection(wf.input);
+
     // ── 00: intake & brief check — blocked_intake if campaign goals or brand baseline are missing ──
     const intake = await wf.step.code("00-intake-check", async (): Promise<CampaignIntakeConfig> => {
       const configOutcome = await options.tools["client.getConfig"]!.execute({}, { ctx });
@@ -188,9 +194,16 @@ export function createCampaignWorkflow(options: CreateCampaignWorkflowOptions) {
     });
 
     const strategyAgent = new CampaignStrategyAgent({ router: options.router, tools: options.tools, promptStore: options.promptStore });
+    // A typed direction that names a subject becomes this campaign's theme,
+    // outranking the client's standing `requestedTheme` in config for the same
+    // reason it outranks a topic catalog elsewhere: it was written for this run,
+    // and the config value was written once for all of them.
+    const requestedTheme = runDirection.topicOverride ?? intake.requestedTheme;
+
     const strategyResult = await wf.step.agent("07-generate-strategy-plan", strategyAgent, {
+      ...runDirectionField(runDirection),
       goals: intake.goals,
-      ...(intake.requestedTheme !== undefined ? { requestedTheme: intake.requestedTheme } : {}),
+      ...(requestedTheme !== undefined ? { requestedTheme } : {}),
       profile: clientContext.profile,
       brand: clientContext.brand,
       voiceRules: clientContext.voiceRules,

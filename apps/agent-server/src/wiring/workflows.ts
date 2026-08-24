@@ -81,6 +81,12 @@ export interface AgentRuntimeDeps {
    * templates/images actually live on disk" — optional here only because
    * every other product doesn't need it; `buildWorkflowForProduct` throws a
    * clear, specific error if `instagram-agent` is dispatched without it.
+   *
+   * `tiktok-agent` uses the same root, but only when a run ATTACHES its source
+   * video: the attachment is a `gs://` object and has to be downloaded
+   * somewhere bounded before `video.transcribe` can read it. A tiktok run that
+   * passes `sourcePath` needs nothing from here, which is why that agent takes
+   * it as optional and refuses only the attachment case.
    */
   repoRoot?: string;
 }

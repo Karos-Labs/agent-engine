@@ -1,3 +1,4 @@
+import path from "node:path";
 import {
   GUARDRAIL_OUTPUT_FIELDS,
   GUARDRAIL_STEP_ID,
@@ -45,6 +46,15 @@ export interface CreateTikTokAgentWorkflowOptions {
    * here for the operator", so a real run genuinely parks at `awaiting_gate`.
    */
   autoApprove?: boolean;
+  /**
+   * Bounds root for ingesting an attached source video.
+   *
+   * Optional, unlike instagram's: a run that supplies `sourcePath` needs
+   * nothing from here, and that is how every dispatch worked before the portal
+   * grew an upload surface. Without it an ATTACHED video is refused with a
+   * reason, never read from an unbounded location.
+   */
+  repoRoot?: string;
 }
 
 function toAgentContext(wf: WorkflowContext): AgentContext {
@@ -109,6 +119,54 @@ async function runGate(tools: AgentToolRegistry, name: string, args: unknown, ct
  * fails releases its reservation, so a moment is never burned by a run that
  * shipped nothing.
  */
+/**
+ * Downloads an attached source video and returns an absolute path to it.
+ *
+ * Absolute, not repo-relative: the video tools resolve a path against the
+ * process cwd, which is the server's, not the agent workspace's. Every other
+ * consumer of `media.ingestAssets` renders inside the repo and wants the
+ * relative form, so the join happens here rather than in the tool.
+ *
+ * A failure here is `WorkflowBlockedIntake`, not a tooling error: the run was
+ * given footage it cannot read, which is a fact about the input.
+ */
+async function ingestSourceVideo(
+  attached: { uri: string; label?: string | undefined },
+  options: CreateTikTokAgentWorkflowOptions,
+  tools: AgentToolRegistry,
+  runId: string,
+  ctx: AgentContext,
+): Promise<string> {
+  const ingest = tools["media.ingestAssets"];
+  if (options.repoRoot === undefined || ingest === undefined) {
+    throw new WorkflowBlockedIntake(
+      "this run attached a source video, but this deployment cannot ingest one " +
+        `(${options.repoRoot === undefined ? "no repoRoot configured" : "media.ingestAssets is not registered"}) — ` +
+        "dispatch with a sourcePath the video tools can read instead",
+    );
+  }
+
+  const outcome = await ingest.execute(
+    {
+      repoRoot: options.repoRoot,
+      runId,
+      kind: "video",
+      assets: [{ uri: attached.uri, ...(attached.label ? { label: attached.label } : {}), slot: 1 }],
+    },
+    { ctx },
+  );
+  if (outcome.status !== "success") {
+    throw new WorkflowBlockedIntake(
+      `the attached source video could not be ingested (${outcome.status}${"reason" in outcome ? `: ${outcome.reason}` : ""})`,
+    );
+  }
+  const first = (outcome.result as { candidates: Array<{ path: string }> }).candidates[0];
+  if (first === undefined) {
+    throw new WorkflowBlockedIntake("the attached source video could not be ingested — no file was written");
+  }
+  return path.resolve(options.repoRoot, first.path);
+}
+
 export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOptions) {
   const tools = options.tools;
 
@@ -143,8 +201,17 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       // tools have always taken and what a hand-rolled dispatch still sends.
       // Both are accepted, attachment first, so adding the upload surface did
       // not invalidate any existing caller.
+      //
+      // The attachment is INGESTED rather than passed through. Its `uri` is a
+      // `gs://` object, and `video.transcribe` does a plain `readFile` on
+      // whatever it is handed — so forwarding the URI would fail with ENOENT
+      // several steps in, blaming the transcriber for the caller's format.
       const attached = firstAsset(rich.mediaAssets, "source");
-      const sourcePath = attached?.uri ?? (typeof runInput.sourcePath === "string" ? runInput.sourcePath.trim() : "");
+      const sourcePath = attached
+        ? await ingestSourceVideo(attached, options, tools, wf.runId, ctx)
+        : typeof runInput.sourcePath === "string"
+          ? runInput.sourcePath.trim()
+          : "";
       if (!sourcePath) {
         throw new WorkflowBlockedIntake(
           "this run attached no source media — the clip pipeline needs the episode it is cutting from, as a mediaAssets entry with role \"source\" or a sourcePath",

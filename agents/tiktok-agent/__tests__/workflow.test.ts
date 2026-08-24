@@ -282,9 +282,67 @@ describe("tiktok-agent clip pipeline", () => {
     expect(h.calls).toContain("topics.release");
   });
 
-  it("takes the source episode from an attached media asset", async () => {
-    // What the portal's upload surface sends. gs:// rather than a local path,
-    // which is the whole reason mediaAssets exists alongside sourcePath.
+  it("ingests an attached episode and transcribes the ingested file, not its URI", async () => {
+    // What the portal's upload surface sends: a gs:// object, not a local path.
+    //
+    // The URI must NOT reach the video tools. `video.transcribe` does a plain
+    // readFile on whatever it is handed, so forwarding the URI fails with
+    // ENOENT three steps later and blames the transcriber for the caller's
+    // format. This asserts the substitution actually happened.
+    const h = stubTools();
+    const transcribedPaths: string[] = [];
+    const tools = {
+      ...(h.tools as unknown as Record<string, unknown>),
+      "media.ingestAssets": {
+        name: "media.ingestAssets",
+        version: "1.0.0",
+        inputSchema: { safeParse: (v: unknown) => ({ success: true as const, data: v }) },
+        async execute(args: unknown) {
+          const input = args as { kind?: string; assets: Array<{ uri: string; slot: number }> };
+          // The clip pipeline needs the video tables and the video ceiling; the
+          // image ones would refuse a real episode twice over.
+          expect(input.kind).toBe("video");
+          expect(input.assets).toEqual([{ uri: "gs://bucket/episode-12.mp4", slot: 1 }]);
+          return { status: "success" as const, result: { candidates: [{ path: ".media-cache/run-tt-asset/n1-client0.mp4" }], unmet: [] } };
+        },
+      },
+      "video.transcribe": {
+        name: "video.transcribe",
+        version: "1.0.0",
+        inputSchema: { safeParse: (v: unknown) => ({ success: true as const, data: v }) },
+        async execute(args: unknown) {
+          transcribedPaths.push((args as { videoPath: string }).videoPath);
+          return { status: "success" as const, result: { words: transcriptWords() } };
+        },
+      },
+    };
+
+    const workflow = createTikTokAgentWorkflow({
+      tools: tools as unknown as AgentToolRegistry,
+      promptStore: new FilePromptStore(PROMPTS_ROOT),
+      router: smartFakeRouter([GOOD_MOMENT, GOOD_COMMENTARY]),
+      autoApprove: true,
+      repoRoot: "/srv/workspace",
+    });
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflow, {
+      ...PARAMS,
+      runId: "run-tt-asset",
+      input: { mediaAssets: [{ uri: "gs://bucket/episode-12.mp4", role: "source" }] },
+    });
+
+    expect(result.status).toBe("completed");
+    // Absolute, because the video tools resolve against the process cwd rather
+    // than the agent workspace — the ingester returns the repo-relative form
+    // every renderer wants, and the join happens in the workflow.
+    expect(transcribedPaths[0]).not.toContain("gs://");
+    expect(transcribedPaths[0]).toMatch(/n1-client0\.mp4$/);
+    expect(transcribedPaths[0]!.startsWith("/srv/workspace") || /^[A-Za-z]:/.test(transcribedPaths[0]!)).toBe(true);
+  }, 20_000);
+
+  it("blocks an attached episode this deployment cannot ingest, instead of failing at the transcriber", async () => {
+    // No repoRoot and no ingester: the previous behaviour handed the gs:// URI
+    // to `video.transcribe` and got an ENOENT several steps in. Refusing at
+    // intake says what is actually wrong, and says it before spending anything.
     const h = stubTools();
     const workflow = createTikTokAgentWorkflow({
       tools: h.tools,
@@ -294,10 +352,19 @@ describe("tiktok-agent clip pipeline", () => {
     });
     const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflow, {
       ...PARAMS,
-      runId: "run-tt-asset",
+      runId: "run-tt-no-ingest",
       input: { mediaAssets: [{ uri: "gs://bucket/episode-12.mp4", role: "source" }] },
     });
 
+    expect(result.status).toBe("blocked_intake");
+    expect(h.calls).not.toContain("video.transcribe");
+  });
+
+  it("still takes a plain sourcePath, which needs no ingest at all", async () => {
+    // The path every hand-rolled and scheduled dispatch uses. Adding the upload
+    // surface must not have made repoRoot a requirement for it.
+    const h = stubTools();
+    const result = await run(h, "run-tt-plain-path");
     expect(result.status).toBe("completed");
   }, 20_000);
 

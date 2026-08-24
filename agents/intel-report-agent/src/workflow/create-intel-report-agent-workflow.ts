@@ -1,5 +1,5 @@
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure } from "@agent-engine/workflow";
+import { readRunDirection, runDirectionField, type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure } from "@agent-engine/workflow";
 import type { ClientBrand, ClientProfile, Competitor } from "@agent-engine/tools";
 import type { IntelReportOutput } from "@agent-engine/tool-karos-intel";
 import { IntelReportDraftAgent } from "../agent/intel-report-draft-agent.js";
@@ -89,6 +89,12 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
   return async function intelReportAgentWorkflow(wf: WorkflowContext): Promise<IntelReportAgentWorkflowResult> {
     const ctx = toAgentContext(wf);
 
+    // The run-scoped instruction someone typed in the portal, resolved once.
+    // Same contract as every other agent: a typed sentence outranks the
+    // agent's own subject selection, and style-only notes are deliberately not
+    // promoted to subjects (see readRunDirection).
+    const runDirection = readRunDirection(wf.input);
+
     // ── 00: load client context — blocked_intake if the profile itself was never set up ──
     const clientContext = await wf.step.code("00-load-client-context", async (): Promise<IntelReportClientContext> => {
       const profileOutcome = await tools["client.getProfile"]!.execute({}, { ctx });
@@ -104,19 +110,25 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
       };
     });
 
-    // ── 01: competitive research pull — a plain research.pull call is sufficient here.
-    // Phase 1's research.pull (packages/tools/karos-research/src/pull.ts) has no real
-    // external search backend wired up yet; it's a cached, deterministic stand-in. This
-    // step does not attempt to compensate for that with any extra logic of its own — the
-    // evidence base for the report's competitor rows and numeric claims is only as rich as
-    // whatever research.pull actually returns, same caveat every other agent in this repo
-    // that calls research.pull already lives with (see e.g. linkedin-agent step 04-05). ──
+    // ── 01: competitive research pull ──
+    //
+    // `research.pull` is backed by a real scraper now, not the cached
+    // deterministic stand-in this comment used to describe, so the evidence
+    // base is as good as what the query asks for. That is why a typed direction
+    // is folded into the QUERY and not only into the drafting step: someone who
+    // wrote "focus on their pricing page changes" has named what to go and look
+    // at, and a direction that only reached the writer would have it reason
+    // about evidence nobody fetched. ──
     const research = await wf.step.code("01-research-pull", async (): Promise<IntelReportResearch> => {
       const industry = (clientContext.profile["industry"] as string | undefined) ?? "this industry";
       const competitorNames = clientContext.competitors.map((c) => c.name).join(", ");
-      const query = competitorNames
+      const base = competitorNames
         ? `${industry} competitive landscape vs. ${competitorNames}`
         : `${industry} competitive landscape`;
+      // Appended, never substituted: the competitor names are what makes this a
+      // competitive scan at all, and a direction that replaced them would
+      // quietly turn the report into something else.
+      const query = runDirection.direction ? `${base} — focus: ${runDirection.direction}` : base;
       const outcome = await tools["research.pull"]!.execute({ job: "intel-competitive-scan", query, window: "30d" }, { ctx });
       if (outcome.status !== "success") {
         throw new WorkflowToolingFailure(`research.pull failed: ${outcome.status}`);
@@ -128,6 +140,7 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
     // ── 02: generate the report — one bounded BaseAgent, structured output straight in ──
     const draftAgent = new IntelReportDraftAgent({ router: options.router, tools, promptStore: options.promptStore });
     const draftResult = await wf.step.agent("02-generate-report", draftAgent, {
+      ...runDirectionField(runDirection),
       profile: clientContext.profile,
       brand: clientContext.brand,
       competitors: clientContext.competitors,

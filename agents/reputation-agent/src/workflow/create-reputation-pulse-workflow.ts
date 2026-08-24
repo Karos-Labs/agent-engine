@@ -2,7 +2,7 @@ import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentToolRegistry, GateResponse, ModelRouter, PromptStore } from "@agent-engine/core";
 import { createWorkspaceStore, type WorkspaceStoreLike } from "@agent-engine/tool-common";
 import type { Annotations, CaptureLegOutcome, DoctrineGateResult, Review, TriageResult } from "@agent-engine/tool-karos-reputation";
-import { type SlotOutcome, type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail } from "@agent-engine/workflow";
+import { readRunDirection, runDirectionField, type SlotOutcome, type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail } from "@agent-engine/workflow";
 import { ReputationDoctrineGateAgent } from "../agent/reputation-doctrine-gate-agent.js";
 import { ReputationDraftAgent } from "../agent/reputation-draft-agent.js";
 import { REPUTATION_CLASSIFIER_MODEL_ID, ReputationExtractionAgent } from "../agent/reputation-extraction-agent.js";
@@ -165,6 +165,13 @@ export function createReputationPulseWorkflow(options: CreateReputationPulseWork
 
   return async function reputationPulseWorkflow(wf: WorkflowContext): Promise<ReputationPulseWorkflowResult> {
     const ctx = toAgentContext(wf);
+
+    // The run-scoped instruction someone typed in the portal, resolved once.
+    //
+    // Distinct from the client's standing `reputationSteer` in config, and both
+    // are legitimate: the steer says what always matters to this client, the
+    // direction says what matters about today's pulse.
+    const runDirection = readRunDirection(wf.input);
 
     // ── 01: open the pulse — claim the pulse number, read the client's one-off steer ──
     const runClaim = await wf.step.code("01-open-pulse", async (): Promise<ReputationRunClaim> => {
@@ -477,6 +484,7 @@ export function createReputationPulseWorkflow(options: CreateReputationPulseWork
       if (lockResult.survivors.length > 0) {
         const voiceAgent = new ReputationVoiceAgent({ router: options.router, tools, promptStore: options.promptStore });
         const voiceExec = await wf.step.agent(`08a-voice-batch-cycle-${cycle}`, voiceAgent, {
+          ...runDirectionField(runDirection),
           brandVoice: frozen.voiceRules,
           drafts: lockResult.survivors.map((s) => ({ reviewId: s.reviewId, draftText: s.draftText })),
         });

@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext, runTopicGuardrail } from "@agent-engine/workflow";
+import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext, runTopicGuardrail, readRunDirection, runDirectionField } from "@agent-engine/workflow";
 import type { BrandJson, CarryForwardItem, LandingGateVerdict, LandingSection, ReadBundleResult } from "@agent-engine/tool-karos-landing";
 import { carryForwardLabel, CarryForwardPlacementFileSchema } from "@agent-engine/tool-karos-landing";
 import { LandingCopyAgent, type LandingCopyOutput } from "../agent/landing-copy-agent.js";
@@ -109,6 +109,14 @@ export function createLandingBuilderAgentWorkflow(options: CreateLandingBuilderA
   return async function landingBuilderAgentWorkflow(wf: WorkflowContext): Promise<LandingBuilderWorkflowResult> {
     const ctx = toAgentContext(wf);
     const isRebuild = wf.runKind === "recurring";
+
+    // The run-scoped instruction someone typed in the portal, resolved once.
+    //
+    // Reaches the copy and compose steps, not the structural ones. A rebuild's
+    // shape is decided by the feedback round's own delta, which is checked
+    // against what was frozen — a free-text sentence must not be able to move a
+    // section the keeps-snapshot says nobody touched.
+    const runDirection = readRunDirection(wf.input);
     const assumptions: string[] = [];
 
     // ── 00: INTAKE — read the assembled input bundle; blocked_intake if it isn't ready ──
@@ -140,7 +148,7 @@ export function createLandingBuilderAgentWorkflow(options: CreateLandingBuilderA
     if (!isRebuild) {
       // ── 02: COPY (fresh build) ──
       const copyAgent = new LandingCopyAgent({ router: options.router, tools, promptStore: options.promptStore });
-      const copyResult = await wf.step.agent("02-copy", copyAgent, { brand, intakeMarkdown: intake.intakeMarkdown });
+      const copyResult = await wf.step.agent("02-copy", copyAgent, { ...runDirectionField(runDirection), brand, intakeMarkdown: intake.intakeMarkdown });
       if (copyResult.status !== "completed") throw new WorkflowToolingFailure(`landing-copy step resolved to "${copyResult.status}"`);
       const copyOutput = copyResult.finalOutput as LandingCopyOutput;
       assumptions.push(...copyOutput.assumptions);
@@ -148,6 +156,7 @@ export function createLandingBuilderAgentWorkflow(options: CreateLandingBuilderA
       // ── 03: COMPOSE (fresh build) ──
       const composeAgent = new LandingComposeAgent({ router: options.router, tools, promptStore: options.promptStore });
       const composeResult = await wf.step.agent("03-compose", composeAgent, {
+      ...runDirectionField(runDirection),
         availableSections: Object.keys(copyOutput.sections),
         carryForward: brand.carryForward,
       });
@@ -203,6 +212,7 @@ export function createLandingBuilderAgentWorkflow(options: CreateLandingBuilderA
       if (touched.size > 0) {
         const copyAgent = new LandingCopyAgent({ router: options.router, tools, promptStore: options.promptStore });
         const copyResult = await wf.step.agent("02-copy-rebuild", copyAgent, {
+      ...runDirectionField(runDirection),
           brand,
           intakeMarkdown: intake.intakeMarkdown,
           feedbackDelta: {

@@ -1,7 +1,7 @@
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext, runTopicGuardrail } from "@agent-engine/workflow";
+import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext, runTopicGuardrail, readRunDirection, runDirectionField } from "@agent-engine/workflow";
 import { BrandProfileSchema, type BrandProfile, type TranscriptWord, type VideoTranscript } from "@agent-engine/tool-karos-video";
 import { BrandedShortsGraphicsAgent } from "../agent/branded-shorts-graphics-agent.js";
 import { BrandedShortsHighlightsAgent } from "../agent/branded-shorts-highlights-agent.js";
@@ -79,6 +79,16 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
 
   return async function brandedShortsAgentWorkflow(wf: WorkflowContext): Promise<BrandedShortsWorkflowResult> {
     const ctx = toAgentContext(wf);
+
+    // The run-scoped instruction someone typed in the portal, resolved once.
+    //
+    // It reaches the two editorial steps — which moments to highlight, and what
+    // the graphics say. It does NOT reach the cut planner: those bounds come
+    // from the transcript deterministically, which is what makes a cut
+    // reviewable, and `mediaAssets` is unread here because this agent takes its
+    // footage from the per-upload `brandedShortsIntake`, not from a run
+    // attachment.
+    const runDirection = readRunDirection(wf.input);
 
     // ── 00: brand resolve — refuse to run without a locked style + brand profile on file ──
     const brandResolve = await wf.step.code("00-brand-resolve", async () => {
@@ -176,7 +186,7 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
     // ── 06: highlights — the first bounded judgment island ──
     const kept = keptWords(transcript.words, cutPlan.segments);
     const highlightsAgent = new BrandedShortsHighlightsAgent({ router: options.router, tools, promptStore: options.promptStore });
-    const highlightsResult = await wf.step.agent("06-highlights", highlightsAgent, { words: kept, corrections: intake.names, takeaway: intake.takeaway });
+    const highlightsResult = await wf.step.agent("06-highlights", highlightsAgent, { ...runDirectionField(runDirection), words: kept, corrections: intake.names, takeaway: intake.takeaway });
     if (highlightsResult.status === "content_fail") {
       throw new WorkflowHeld(`highlights did not clear its own output validation: ${highlightsResult.status}`);
     }
@@ -207,6 +217,7 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
     for (let attempt = 1; attempt <= MAX_GRAPHICS_ATTEMPTS; attempt++) {
       graphicsAttemptsUsed = attempt;
       const planResult = await wf.step.agent(`08a-plan-graphics-attempt-${attempt}`, graphicsAgent, {
+        ...runDirectionField(runDirection),
         words: kept,
         graphicsLanguage: brandResolve.graphicsLanguage,
         archetypes: brandResolve.approvedArchetypes,
