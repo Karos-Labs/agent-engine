@@ -22,6 +22,8 @@ import {
 const params = { runId: "instagram_run_1", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
 const HAPPY_PATH_STEP_IDS = [
+  // Inline onboarding, ahead of the run proper.
+  "00-auto-setup",
   "01-open-run",
   "02-freeze-style-config",
   "03-claim-topic",

@@ -5,6 +5,7 @@ import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import { FilePromptStore, type CompletionResult, type ModelRouter } from "@agent-engine/core";
 import { createAllKarosTools, WorkspaceStore } from "@agent-engine/tools";
+import { createOfflineScraper } from "@agent-engine/tool-karos-scraper";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const PROMPTS_ROOT = path.join(HERE, "..", "prompts");
@@ -93,7 +94,13 @@ export async function setupTestEnvironment(opts: { withProfile?: boolean; withBr
   const withCompetitors = opts.withCompetitors ?? true;
   const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "seo-geo-agent-test-"));
   const store = new WorkspaceStore(rootDir);
-  const tools = createAllKarosTools(store);
+  // `createOfflineScraper()` is passed EXPLICITLY, because `research.pull` now
+  // reports `not_available` without a real scraper rather than returning a
+  // placeholder payload. That is deliberate (see karos-research/src/pull.ts): a
+  // placeholder is what let every content agent draft from nothing for months.
+  // Tests still need deterministic offline data, so they opt in here; nothing in
+  // `apps/` does.
+  const tools = createAllKarosTools(store, undefined, { scraper: createOfflineScraper() });
 
   if (withProfile) {
     await store.writeJson("acme", ["client", "profile"], { name: "Acme Corp", industry: "B2B SaaS", website: "https://acme.example" });

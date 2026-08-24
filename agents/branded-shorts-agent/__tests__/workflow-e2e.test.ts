@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createKarosVideoTools, type ProcessResult } from "@agent-engine/tool-karos-video";
 import { createAllKarosTools } from "@agent-engine/tools";
+import { createOfflineScraper } from "@agent-engine/tool-karos-scraper";
 import { createBrandedShortsAgentWorkflow } from "../src/workflow/create-branded-shorts-agent-workflow.js";
 import {
   fakeElevenLabsFetch,
@@ -140,7 +141,13 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
       return happyPathResponses(finalMp4Path)[script]!;
     };
     const videoTools = createKarosVideoTools({ runner, engineDir: "/engine", transcribe: { fetchImpl: fakeElevenLabsFetch(), env: { ELEVENLABS_API_KEY: "test-key" } } });
-    const tools = { ...createAllKarosTools(env.store), ...videoTools };
+    // `createOfflineScraper()` is passed EXPLICITLY, because `research.pull` now
+    // reports `not_available` without a real scraper rather than returning a
+    // placeholder payload. That is deliberate (see karos-research/src/pull.ts): a
+    // placeholder is what let every content agent draft from nothing for months.
+    // Tests still need deterministic offline data, so they opt in here; nothing in
+    // `apps/` does.
+    const tools = { ...createAllKarosTools(env.store, undefined, { scraper: createOfflineScraper() }), ...videoTools };
 
     const promptStore = makePromptStore();
     const router = smartFakeRouter([goodHighlights(), { overlays: [{ archetype: "Growth Chart", start: 1.0, end: 3.0, illustrates: "revenue tripled" }], cutaways: [] }]);
@@ -253,7 +260,7 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
       return happyPathResponses(finalMp4Path)[script]!;
     };
     const videoTools = createKarosVideoTools({ runner, engineDir: "/engine", transcribe: { fetchImpl: fakeElevenLabsFetch(), env: { ELEVENLABS_API_KEY: "test-key" } } });
-    const tools = { ...createAllKarosTools(env.store), ...videoTools };
+    const tools = { ...createAllKarosTools(env.store, undefined, { scraper: createOfflineScraper() }), ...videoTools };
 
     const promptStore = makePromptStore();
     const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan()]);

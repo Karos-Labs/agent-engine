@@ -8,6 +8,7 @@ import { createKarosMemoryTools } from "@agent-engine/tool-karos-memory";
 import { createKarosPublishTools } from "@agent-engine/tool-karos-publish";
 import { createKarosReputationTools } from "@agent-engine/tool-karos-reputation";
 import { createKarosResearchTools } from "@agent-engine/tool-karos-research";
+import type { ScraperProvider } from "@agent-engine/tool-karos-scraper";
 import { createKarosSeoGeoTools } from "@agent-engine/tool-karos-seo-geo";
 import { createKarosTopicsTools } from "@agent-engine/tool-karos-topics";
 
@@ -85,7 +86,23 @@ export * from "@agent-engine/tool-karos-video";
  * behavior. `video.*`/`landing.*`'s own media/artifact stores are configured
  * separately, alongside their own bundles, for the reason given above.
  */
-export function createAllKarosTools(store?: WorkspaceStoreLike, mediaStore?: GcsArtifactStoreLike): AgentToolRegistry {
+export interface AllKarosToolsOptions {
+  env?: Record<string, string | undefined>;
+  /**
+   * The scraper backing `research.pull`. Omitted means "derive from env", and
+   * an env with no `SCRAPPYCOCO_API_KEY` leaves `research.pull` reporting
+   * `not_available` — deliberately, since a placeholder payload is what let
+   * every content agent draft from nothing. Tests pass
+   * `createOfflineScraper()` explicitly.
+   */
+  scraper?: ScraperProvider | null;
+}
+
+export function createAllKarosTools(
+  store?: WorkspaceStoreLike,
+  mediaStore?: GcsArtifactStoreLike,
+  options: AllKarosToolsOptions = {},
+): AgentToolRegistry {
   return {
     ...createKarosClientTools(store),
     ...createKarosGatesTools(),
@@ -94,7 +111,10 @@ export function createAllKarosTools(store?: WorkspaceStoreLike, mediaStore?: Gcs
     ...createKarosMemoryTools(store),
     ...createKarosPublishTools(store, mediaStore),
     ...createKarosReputationTools(),
-    ...createKarosResearchTools(store),
+    ...createKarosResearchTools(store, {
+      ...(options.env ? { env: options.env } : {}),
+      ...(options.scraper !== undefined ? { scraper: options.scraper } : {}),
+    }),
     ...createKarosSeoGeoTools(),
     ...createKarosTopicsTools(store),
   };

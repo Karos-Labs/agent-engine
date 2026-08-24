@@ -5,6 +5,7 @@ import * as path from "node:path";
 import request from "supertest";
 import type { Application } from "express";
 import { createAllKarosTools, WorkspaceStore } from "@agent-engine/tools";
+import { createOfflineScraper } from "@agent-engine/tool-karos-scraper";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createApp } from "../src/app.js";
 import { setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
@@ -94,7 +95,11 @@ describe("POST /api/v1/runs/start", () => {
     // client.config — this test needs a tenant with genuinely no config doc at all.
     const bareRootDir = await fs.mkdtemp(path.join(os.tmpdir(), "agent-server-bare-test-"));
     const bareStore = new WorkspaceStore(bareRootDir);
-    const bareTools = createAllKarosTools(bareStore);
+    // `createOfflineScraper()` passed explicitly: `research.pull` reports
+    // not_available without a real scraper rather than returning a placeholder
+    // (see karos-research/src/pull.ts). Tests still need deterministic offline
+    // data, so they opt in; nothing in `apps/src` does.
+    const bareTools = createAllKarosTools(bareStore, undefined, { scraper: createOfflineScraper() });
     await bareStore.writeJson("bare-client", ["client", "profile"], { name: "Bare Co", industry: "Unknown" });
     // Deliberately no ["client", "config"] doc written for "bare-client".
 

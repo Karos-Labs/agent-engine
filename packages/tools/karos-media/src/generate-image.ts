@@ -102,7 +102,7 @@ function describeGenerated(prompt: string): string {
 }
 
 /**
- * `media.generateImage` — the fallback for a visual need no library holds.
+ * `image.generate` — the fallback for a visual need no library holds.
  *
  * ## Why this exists
  *
@@ -132,7 +132,7 @@ export function createGenerateImage(options: {
   const model = options.model ?? DEFAULT_IMAGE_MODEL;
 
   return defineTool<GenerateImageInput, GenerateImageResult>({
-    name: "media.generateImage",
+    name: "image.generate",
     version: TOOL_VERSION,
     inputSchema: GenerateImageInputSchema,
     async execute(rawInput) {
@@ -140,7 +140,7 @@ export function createGenerateImage(options: {
 
       if (options.client === undefined) {
         return notAvailable(
-          "media.generateImage: no image-generation backend configured — set GEMINI_VERTEX_PROJECT_ID (or GOOGLE_CLOUD_PROJECT) " +
+          "image.generate: no image-generation backend configured — set GEMINI_VERTEX_PROJECT_ID (or GOOGLE_CLOUD_PROJECT) " +
             "so Vertex can be reached (see packages/tools/karos-media/README.md)",
         );
       }
@@ -152,13 +152,13 @@ export function createGenerateImage(options: {
       // Same bounds check as `media.findImages`: a runId carrying "../" is the
       // case that matters, and it is caught before anything is written.
       if (absDir !== rootResolved && !absDir.startsWith(rootResolved + path.sep)) {
-        return toolingError(`media.generateImage: resolved cache dir escaped repoRoot (runId="${input.runId}")`);
+        return toolingError(`image.generate: resolved cache dir escaped repoRoot (runId="${input.runId}")`);
       }
 
       try {
         await fs.mkdir(absDir, { recursive: true });
       } catch (error) {
-        return toolingError(`media.generateImage: could not create ${relDir}: ${(error as Error).message}`);
+        return toolingError(`image.generate: could not create ${relDir}: ${(error as Error).message}`);
       }
 
       const candidates: FindImagesCandidate[] = [];
@@ -238,7 +238,7 @@ export function createGenerateImage(options: {
 
       if (candidates.length === 0) {
         return contentFail(
-          `media.generateImage: produced nothing for ${input.needs.length} need(s) — ${unmet
+          `image.generate: produced nothing for ${input.needs.length} need(s) — ${unmet
             .map((u) => `slide ${u.n} (${u.reason})`)
             .join("; ")}`,
         );

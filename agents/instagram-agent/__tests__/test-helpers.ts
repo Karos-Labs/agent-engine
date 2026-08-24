@@ -7,6 +7,7 @@ import * as os from "node:os";
 import type { AgentToolRegistry } from "@agent-engine/core";
 import { FilePromptStore, type AgentContext, type CompletionResult, type ModelRouter } from "@agent-engine/core";
 import { createAllKarosTools, WorkspaceStore } from "@agent-engine/tools";
+import { createOfflineScraper } from "@agent-engine/tool-karos-scraper";
 import { validateRenderInputs, type RenderCarouselInput, type RenderCarouselResult } from "@agent-engine/tool-karos-publish";
 import type { BrandTokens, ImageCandidate, ImageVettingOutput, InstagramCopyOutput, ResearchFact, ResearchOutput, StyleConfig, VisualQaOutput } from "../src/workflow/types.js";
 import { DEFAULT_CAROUSEL_LANE } from "../src/workflow/create-instagram-agent-workflow.js";
@@ -253,7 +254,13 @@ export async function setupTestEnvironment(
   await fs.cp(FIXTURES_ROOT, path.join(repoRoot, "fixtures"), { recursive: true });
 
   const store = new WorkspaceStore(rootDir);
-  const tools = createAllKarosTools(store);
+  // `createOfflineScraper()` is passed EXPLICITLY, because `research.pull` now
+  // reports `not_available` without a real scraper rather than returning a
+  // placeholder payload. That is deliberate (see karos-research/src/pull.ts): a
+  // placeholder is what let every content agent draft from nothing for months.
+  // Tests still need deterministic offline data, so they opt in here; nothing in
+  // `apps/` does.
+  const tools = createAllKarosTools(store, undefined, { scraper: createOfflineScraper() });
 
   if (withConfig) {
     await store.writeJson("acme", ["client", "config"], {

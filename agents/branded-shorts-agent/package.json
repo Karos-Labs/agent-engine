@@ -2,7 +2,7 @@
   "name": "@agent-engine/agent-branded-shorts",
   "private": true,
   "version": "0.0.1",
-  "description": "The Branded Shorts agent (RFC-06 migration) — a deterministic video-rendering pipeline (brand resolve, transcribe, edit/cut, highlights, color, graphics & cutaways, build, self-eval QA gate) with two bounded islands of model judgment, plus the one-time per-client Style Exploration onboarding workflow.",
+  "description": "The Branded Shorts agent (RFC-06 migration) \u2014 a deterministic video-rendering pipeline (brand resolve, transcribe, edit/cut, highlights, color, graphics & cutaways, build, self-eval QA gate) with two bounded islands of model judgment, plus the one-time per-client Style Exploration onboarding workflow.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -14,6 +14,7 @@
   "dependencies": {
     "@agent-engine/core": "^0.0.1",
     "@agent-engine/tool-common": "^0.0.1",
+    "@agent-engine/tool-karos-scraper": "^0.0.1",
     "@agent-engine/tool-karos-video": "^0.0.1",
     "@agent-engine/tools": "^0.0.1",
     "@agent-engine/workflow": "^0.0.1",

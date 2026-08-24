@@ -35,6 +35,7 @@
     "@agent-engine/telemetry": "^0.0.1",
     "@agent-engine/tool-common": "^0.0.1",
     "@agent-engine/tool-karos-intake": "^0.0.1",
+    "@agent-engine/tool-karos-scraper": "^0.0.1",
     "@agent-engine/tools": "^0.0.1",
     "@agent-engine/workflow": "^0.0.1",
     "@google-cloud/storage": "^7.18.0",

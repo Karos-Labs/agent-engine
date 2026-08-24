@@ -1,8 +1,8 @@
 {
-  "name": "@agent-engine/tool-karos-media",
+  "name": "@agent-engine/tool-karos-scraper",
   "private": true,
   "version": "0.0.1",
-  "description": "Real image sourcing (search + download) for agents that need pictures.",
+  "description": "Generic web-scraping seam (ScraperProvider) plus the ScrappyCoco implementation.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -14,8 +14,6 @@
   "dependencies": {
     "@agent-engine/core": "^0.0.1",
     "@agent-engine/tool-common": "^0.0.1",
-    "@agent-engine/tool-karos-scraper": "^0.0.1",
-    "@google/genai": "^2.18.0",
     "zod": "^4.4.3"
   }
 }

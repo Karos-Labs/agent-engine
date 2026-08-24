@@ -39,7 +39,11 @@ export function createServerTools(workspaceStore: WorkspaceStoreLike, env: Recor
   const mediaStore = createServerMediaStore(env);
   const archiveStore = createServerArchiveStore(env);
   return {
-    ...createAllKarosTools(workspaceStore, mediaStore),
+    // `env` threaded so `research.pull` builds its real ScrappyCoco scraper
+    // from SCRAPPYCOCO_API_KEY. Without it the bundle would read process.env
+    // anyway, but passing it keeps this composition root the single place a
+    // deployment's configuration enters the tool graph.
+    ...createAllKarosTools(workspaceStore, mediaStore, { env }),
     ...createKarosVideoTools({ env, ...(mediaStore ? { mediaStore } : {}) }),
     ...createKarosLandingTools(createLandingEngineConfigFromEnv({ env }), archiveStore, workspaceStore),
     ...createKarosMediaTools({ env }),

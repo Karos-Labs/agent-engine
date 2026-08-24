@@ -4,6 +4,7 @@ import * as path from "node:path";
 import type { AgentContext, ModelRouter } from "@agent-engine/core";
 import { InMemoryPromptStore } from "@agent-engine/core";
 import { createAllKarosTools, WorkspaceStore } from "@agent-engine/tools";
+import { createOfflineScraper } from "@agent-engine/tool-karos-scraper";
 import { MemoryDurableStepStore } from "@agent-engine/workflow";
 import type { AgentRuntimeDeps } from "../src/wiring/workflows.js";
 
@@ -208,7 +209,11 @@ const BASE_CTX_FIELDS = { productId: "agent-server-test", runKind: "recurring" a
 export async function setupTestEnvironment(clientSlug = "acme"): Promise<TestEnvironment> {
   const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "agent-server-test-"));
   const store = new WorkspaceStore(rootDir);
-  const tools = createAllKarosTools(store);
+  // `createOfflineScraper()` passed explicitly: `research.pull` reports
+  // not_available without a real scraper rather than returning a placeholder
+  // (see karos-research/src/pull.ts). Tests still need deterministic offline
+  // data, so they opt in; nothing in `apps/src` does.
+  const tools = createAllKarosTools(store, undefined, { scraper: createOfflineScraper() });
 
   const seedCtx: AgentContext = { runId: "seed", clientSlug, ...BASE_CTX_FIELDS, metadata: {} };
   await store.writeJson(clientSlug, ["client", "profile"], { name: "Acme Corp", industry: "B2B SaaS" });

@@ -1,3 +1,4 @@
+import { createOfflineScraper } from "@agent-engine/tool-karos-scraper";
 import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import type { AgentTool } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
@@ -270,7 +271,7 @@ describe("05b-source-images", () => {
 
   function stubGenerateImage(outcome: unknown, onCall?: (args: Record<string, unknown>) => void): AgentTool {
     return {
-      name: "media.generateImage",
+      name: "image.generate",
       version: "1.0.0",
       async execute(args: unknown) {
         onCall?.(args as Record<string, unknown>);
@@ -289,7 +290,7 @@ describe("05b-source-images", () => {
     const tools = {
       ...env.tools,
       "media.findImages": stubFindImages({ status: "success", result: { provider: "unsplash", providersUsed: ["unsplash"], candidates: pool, unmet: [] } }),
-      "media.generateImage": stubGenerateImage(
+      "image.generate": stubGenerateImage(
         { status: "success", result: { model: "imagen-4.0-generate-001", unmet: [], candidates: [{ path: pool[0]!.path, description: "AI-generated for slide 2", provider: "imagen", licenseConfidence: "generated" }] } },
         (args) => {
           generatedFor = args["needs"];
@@ -327,7 +328,7 @@ describe("05b-source-images", () => {
     const tools = {
       ...env.tools,
       "media.findImages": stubFindImages({ status: "success", result: { provider: "unsplash", providersUsed: ["unsplash"], candidates: pool, unmet: [] } }),
-      "media.generateImage": stubGenerateImage({ status: "content_fail", reason: "filtered by the model's safety policy" }),
+      "image.generate": stubGenerateImage({ status: "content_fail", reason: "filtered by the model's safety policy" }),
     };
 
     const router = fakeRouterSequence([
@@ -345,7 +346,8 @@ describe("05b-source-images", () => {
     if (result.status !== "held") throw new Error("expected a held run");
     // The never-a-placeholder rule is untouched; the reason now records that
     // generation was tried too.
-    expect(result.reason).toContain("generation could not fill the gap");
+    // The message now names both rescue tiers, because both were tried.
+    expect(result.reason).toContain("neither the social-scrape tier nor generation could fill the gap");
     expect(result.reason).toContain("5");
   });
 
@@ -356,7 +358,7 @@ describe("05b-source-images", () => {
     const tools = {
       ...env.tools,
       "media.findImages": stubFindImages({ status: "success", result: { provider: "unsplash", providersUsed: ["unsplash"], candidates: pool, unmet: [] } }),
-      "media.generateImage": stubGenerateImage({ status: "success", result: { model: "m", unmet: [], candidates: [{ path: pool[0]!.path, description: "gen", provider: "imagen", licenseConfidence: "generated" }] } }),
+      "image.generate": stubGenerateImage({ status: "success", result: { model: "m", unmet: [], candidates: [{ path: pool[0]!.path, description: "gen", provider: "imagen", licenseConfidence: "generated" }] } }),
     };
 
     const router = fakeRouterSequence([
@@ -403,7 +405,13 @@ describe("05b-source-images", () => {
   });
 
   it("holds the post when the tool is not registered at all", async () => {
-    // createAllKarosTools() deliberately excludes media.*, so a registry
+    // `createOfflineScraper()` is passed EXPLICITLY, because `research.pull` now
+    // reports `not_available` without a real scraper rather than returning a
+    // placeholder payload. That is deliberate (see karos-research/src/pull.ts): a
+    // placeholder is what let every content agent draft from nothing for months.
+    // Tests still need deterministic offline data, so they opt in here; nothing in
+    // `apps/` does.
+    // createAllKarosTools(undefined, undefined, { scraper: createOfflineScraper() }) deliberately excludes media.*, so a registry
     // without it is a supported configuration, not a misconfiguration.
     const copy = goodCopyOutput();
     const vetting = {

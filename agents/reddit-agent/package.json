@@ -2,7 +2,7 @@
   "name": "@agent-engine/agent-reddit",
   "private": true,
   "version": "0.0.1",
-  "description": "The Reddit agent — the RFC-02 §5 migration: one BaseAgent (RedditDraftAgent) plus its Layer 1 workflow, built entirely on Phase 1's core/tools/workflow packages, following the same recipe as the X and LinkedIn agents.",
+  "description": "The Reddit agent \u2014 the RFC-02 \u00a75 migration: one BaseAgent (RedditDraftAgent) plus its Layer 1 workflow, built entirely on Phase 1's core/tools/workflow packages, following the same recipe as the X and LinkedIn agents.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -15,6 +15,7 @@
     "@agent-engine/core": "^0.0.1",
     "@agent-engine/tool-common": "^0.0.1",
     "@agent-engine/tool-karos-gates": "^0.0.1",
+    "@agent-engine/tool-karos-scraper": "^0.0.1",
     "@agent-engine/tools": "^0.0.1",
     "@agent-engine/workflow": "^0.0.1",
     "zod": "^4.4.3"

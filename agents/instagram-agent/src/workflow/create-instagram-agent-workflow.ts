@@ -1,6 +1,6 @@
 import { readForbiddenTopics } from "@agent-engine/core";
-import type { AgentContext, AgentToolRegistry, GateResponse, ModelRouter, PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail } from "@agent-engine/workflow";
+import type { AgentContext, AgentTool, AgentToolRegistry, GateResponse, ModelRouter, PromptStore } from "@agent-engine/core";
+import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runTopicGuardrail } from "@agent-engine/workflow";
 import type { RenderCarouselInput, RenderCarouselResult } from "@agent-engine/tool-karos-publish";
 import { InstagramCopyAgent } from "../agent/instagram-copy-agent.js";
 import { InstagramImageVettingAgent } from "../agent/instagram-image-vetting-agent.js";
@@ -138,6 +138,65 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
 
   return async function instagramAgentWorkflow(wf: WorkflowContext): Promise<InstagramAgentWorkflowResult> {
     const ctx = toAgentContext(wf);
+
+    // ── 00-auto-setup: onboard this client inline, rather than requiring
+    // somebody to have dispatched a separate setup agent first ──
+    //
+    // Step 03 below survives an unseeded catalog by falling back, which fixed
+    // the outage where "every run died at step 03" — but a client whose catalog
+    // is never seeded then runs in fallback FOREVER, and so runs forever
+    // without the dedup lock the catalog exists to provide. This seeds it from
+    // the titles of documents `research.pull` actually retrieved, so step 03
+    // can reserve properly from the next run onward.
+    //
+    // Genuinely first, and it reads its own `client.getConfig`/`getProfile`
+    // rather than borrowing step 01's `runClaim`. That costs one extra store
+    // read and buys a step whose name does not lie: a step called `00-` that
+    // executed third would misdescribe every run record it appears in.
+    //
+    // Never fails the run. Every problem (no scraper, an outage, no usable
+    // titles, no declared industry) degrades to a recorded note, and step 03's
+    // fallback carries the run exactly as it did before this step existed.
+    // Not bound to a local: nothing downstream branches on the outcome (step
+    // 03 re-reads the catalog either way), and `wf.step.code` already persists
+    // the returned notes into the run record, which is where someone
+    // debugging "why is this client still in fallback" will look.
+    await wf.step.code("00-auto-setup", async () => {
+      const [configOutcome, profileOutcome] = await Promise.all([
+        tools["client.getConfig"]!.execute({}, { ctx }),
+        tools["client.getProfile"]!.execute({}, { ctx }),
+      ]);
+
+      // Seeded topics must land in the lane step 03 will reserve from, or the
+      // reserve breaches on a lane mismatch and the seeding was wasted.
+      const runConfig = configOutcome.status === "success" ? (configOutcome.result as Record<string, unknown>) : {};
+      const lane = typeof runConfig["requestedLane"] === "string" ? (runConfig["requestedLane"] as string) : DEFAULT_CAROUSEL_LANE;
+
+      // Gated on a declared industry, and that gate is load-bearing rather
+      // than defensive. Seeding needs a query; without an industry the only
+      // available query is generic, and generic research would seed topics
+      // with no relationship to this client. Step 03 would then reserve one
+      // and draft from it in good faith, so an off-brand catalog is worse than
+      // an empty one. A client with no profile is left to hold, honestly.
+      const industry = industryForSetup(profileOutcome);
+      if (industry === undefined) {
+        return {
+          ran: false,
+          catalogSizeBefore: 0,
+          catalogSizeAfter: 0,
+          topicsAdded: 0,
+          notes: ["client has no declared industry, so there is no honest query to seed topics from"],
+        };
+      }
+
+      return runAutoSetup({
+        tools,
+        ctx,
+        lane,
+        researchJob: "instagram-topic-seed",
+        researchQuery: `${industry} content topics and trends`,
+      });
+    });
 
     // ── 01: open the run / claim the post number ──
     const runClaim = await wf.step.code("01-open-run", async (): Promise<InstagramRunClaim> => {
@@ -463,6 +522,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // extends it to a selection that (despite the prompt's instruction)
       // duplicates a prior post's already-used image — both are
       // deterministically re-checked here, never trusted from the model alone.
+      /** One slide still missing a picture, with the brief the next tier should answer. */
+      type ImageGap = { n: number; prompt: string };
+
       const isUnfillable = (s: ImageSelection): boolean => {
         if (s.imagePath === null) return true;
         if (!s.rightsUsable || !s.watermarkFree) return true;
@@ -487,42 +549,86 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // once per copy attempt. The never-a-placeholder rule is untouched — a
       // generated image still has to clear the same gate as a stock photo,
       // and a run whose gaps survive generation still holds.
-      const generateImage = tools["media.generateImage"];
-      if (unfillable.length > 0 && generateImage !== undefined) {
-        const gaps = unfillable
-          .map((u) => ({ n: u.n, prompt: copy.slides.find((sl) => sl.n === u.n)?.visualNeed }))
-          .filter((g): g is { n: number; prompt: string } => g.prompt !== undefined);
+      // ── The tiered rescue: scrape, then generate ──
+      //
+      // Tier 1 (05b, `media.findImages`) has already merged every stock and CC
+      // harvester. What is left unfilled is a need those libraries do not hold,
+      // and the two remaining tiers answer different halves of that:
+      //
+      //   Tier 2 `media.scrapeImages` — a photograph of the ACTUAL subject,
+      //     which exists on the open social web and nowhere else. Every
+      //     candidate is `licenseConfidence: "unknown"` (UGC copyright stays
+      //     with the poster), so the rights gate will refuse most of them. This
+      //     tier widens the choice; it does not guarantee an outcome.
+      //   Tier 3 `image.generate` — Vertex draws the brief. Owned outright,
+      //     nothing to credit, nothing watermarked, so it is the ONLY tier that
+      //     can actually finish a slide unattended.
+      //
+      // Ordered scrape-then-generate on purpose: a real photograph beats a
+      // synthesised one when the gate will accept it, and generation costs a
+      // billed call per image, so it runs on what survives tier 2.
+      //
+      // Each tier re-vets only the slides still missing, against only its own
+      // new candidates. Re-judging settled slides would pay for verdicts that
+      // are not going to change.
+      const rescueTiers: Array<{ id: string; tool: AgentTool | undefined; buildArgs: (gaps: ImageGap[]) => unknown }> = [
+        {
+          id: "scrape",
+          tool: tools["media.scrapeImages"],
+          buildArgs: (gaps) => ({
+            repoRoot: options.repoRoot,
+            runId: wf.runId,
+            needs: gaps.map((g) => ({ n: g.n, query: g.prompt })),
+          }),
+        },
+        {
+          id: "generate",
+          tool: tools["image.generate"],
+          buildArgs: (gaps) => ({ repoRoot: options.repoRoot, runId: wf.runId, needs: gaps }),
+        },
+      ];
 
-        const generated = await wf.step.code(`06b-generate-images-attempt-${attempt}`, async () =>
-          generateImage.execute({ repoRoot: options.repoRoot, runId: wf.runId, needs: gaps }, { ctx }),
+      let tierIndex = 0;
+      for (const tier of rescueTiers) {
+        tierIndex += 1;
+        if (unfillable.length === 0 || tier.tool === undefined) continue;
+
+        const gaps: ImageGap[] = unfillable
+          .map((u) => ({ n: u.n, prompt: copy.slides.find((sl) => sl.n === u.n)?.visualNeed }))
+          .filter((g): g is ImageGap => g.prompt !== undefined);
+        if (gaps.length === 0) continue;
+
+        const sourced = await wf.step.code(`06${"bd"[tierIndex - 1]}-${tier.id}-images-attempt-${attempt}`, async () =>
+          tier.tool!.execute(tier.buildArgs(gaps), { ctx }),
         );
 
-        if (generated.status === "success") {
-          const rescuePool = (generated.result as { candidates: ImageCandidate[] }).candidates;
-          // Re-vet only the gaps, against only the generated candidates, then
-          // splice the new verdicts over the old ones. Re-running the whole
-          // carousel would pay for five settled slides to be re-judged.
-          const revet = await wf.step.agent(`06c-vet-generated-attempt-${attempt}`, imageAgent, {
-            slides: gaps.map((g) => ({ n: g.n, visualNeed: g.prompt })),
-            candidatePool: rescuePool,
-            usedImages,
-          });
-          if (revet.status === "completed") {
-            const rescued = new Map(revet.finalOutput!.selections.map((sel) => [sel.n, sel]));
-            selections = selections.map((sel) => {
-              const replacement = rescued.get(sel.n);
-              // Only an actually-fillable replacement wins; a rescue that
-              // failed its own gate must not overwrite the original verdict
-              // with a second, equally unusable one.
-              return replacement && !isUnfillable(replacement) ? replacement : sel;
-            });
-            unfillable = selections.filter(isUnfillable);
-          }
+        if (sourced.status !== "success") {
+          // `not_available` on an unconfigured deployment, `content_fail` when
+          // the tier honestly found nothing, `tooling_error` on an outage: all
+          // three leave `unfillable` as it was and let the next tier try. Only
+          // an exhausted cascade holds the post.
+          continue;
         }
-        // Every other outcome (`not_available` on an unconfigured deployment,
-        // `content_fail` when the model drew nothing usable, a safety refusal)
-        // leaves `unfillable` as it was and falls through to the hold below —
-        // the same honest outcome as before this rescue existed.
+
+        const tierPool = (sourced.result as { candidates: ImageCandidate[] }).candidates;
+        if (tierPool.length === 0) continue;
+
+        const revet = await wf.step.agent(`06${"ce"[tierIndex - 1]}-vet-${tier.id}-attempt-${attempt}`, imageAgent, {
+          slides: gaps.map((g) => ({ n: g.n, visualNeed: g.prompt })),
+          candidatePool: tierPool,
+          usedImages,
+        });
+        if (revet.status !== "completed") continue;
+
+        const rescued = new Map(revet.finalOutput!.selections.map((sel) => [sel.n, sel]));
+        selections = selections.map((sel) => {
+          const replacement = rescued.get(sel.n);
+          // Only an actually-fillable replacement wins. A rescue that failed
+          // its own gate must not overwrite the original verdict with a
+          // second, equally unusable one.
+          return replacement && !isUnfillable(replacement) ? replacement : sel;
+        });
+        unfillable = selections.filter(isUnfillable);
       }
 
       if (unfillable.length > 0) {
@@ -533,7 +639,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           return `${s.n}: already used in a prior post`;
         });
         throw new WorkflowHeld(
-          `no viable image found for slide(s) ${unfillable.map((s) => s.n).join(", ")} — holding the whole post rather than shipping a placeholder, a rights-encumbered/watermarked image, or a reused picture, and generation could not fill the gap either (${detail.join("; ")})`,
+          `no viable image found for slide(s) ${unfillable.map((s) => s.n).join(", ")} — holding the whole post rather than shipping a placeholder, a rights-encumbered/watermarked image, or a reused picture, and neither the social-scrape tier nor generation could fill the gap (${detail.join("; ")})`,
         );
       }
 
@@ -737,4 +843,19 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       deliverableId,
     };
   };
+}
+
+/**
+ * The client's declared industry, or undefined when they have none.
+ *
+ * Reads the same field step 03's fallback reads. Deliberately NOT defaulted to
+ * a neutral stand-in: a stand-in would let auto-setup seed the catalog from
+ * generic research for a client whose profile is empty, and step 03 would then
+ * reserve one of those off-brand topics and draft from it in good faith.
+ * Undefined is what makes the caller skip seeding instead.
+ */
+function industryForSetup(outcome: { status: string; result?: unknown }): string | undefined {
+  if (outcome.status !== "success") return undefined;
+  const industry = (outcome.result as Record<string, unknown> | undefined)?.["industry"];
+  return typeof industry === "string" && industry.trim().length > 0 ? industry.trim() : undefined;
 }

@@ -5,6 +5,7 @@ import * as path from "node:path";
 import type { AgentContext } from "@agent-engine/core";
 import { WorkspaceStore } from "@agent-engine/tool-common";
 import { createAllKarosTools } from "../src/index.js";
+import { createOfflineScraper } from "@agent-engine/tool-karos-scraper";
 
 /**
  * These tests exercise the NINE karos-* servers through the one merged
@@ -30,7 +31,11 @@ describe("Layer 3 tool registry — cross-cutting", () => {
   beforeEach(async () => {
     rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "karos-tools-cross-"));
     store = new WorkspaceStore(rootDir);
-    tools = createAllKarosTools(store);
+    // `createOfflineScraper()` passed explicitly: `research.pull` reports
+    // not_available without a real scraper rather than returning a placeholder
+    // (see karos-research/src/pull.ts). Tests still need deterministic offline
+    // data, so they opt in; nothing in `apps/src` does.
+    tools = createAllKarosTools(store, undefined, { scraper: createOfflineScraper() });
   });
 
   afterEach(async () => {

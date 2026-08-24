@@ -29,8 +29,28 @@ export interface OutputHistoryEntry {
 }
 
 /** Where one agent's excerpt log lives for a tenant. */
-function segments(agentId: string): string[] {
+export function outputHistorySegments(agentId: string): string[] {
   return ["ledger", "output-history", agentId];
+}
+
+/** Local alias, so the rest of this file reads as it did before the export. */
+const segments = outputHistorySegments;
+
+/**
+ * Reads one agent's excerpt log directly, for callers that need the history
+ * without going through the tool boundary.
+ *
+ * Exported so `research.pull` can fold anti-repetition context into its
+ * payload without recomputing this path. Two definitions of where history
+ * lives is one definition too many: the copy that drifts is the one that
+ * silently reads nothing and reports no prior posts.
+ */
+export async function readOutputHistory(
+  store: WorkspaceStoreLike,
+  clientSlug: string,
+  agentId: string,
+): Promise<OutputHistoryEntry[]> {
+  return (await store.readJson<OutputHistoryEntry[]>(clientSlug, segments(agentId))) ?? [];
 }
 
 export const RecordOutputExcerptInputSchema = z.object({

@@ -202,7 +202,14 @@ describe("createKarosMediaTools without a key", () => {
   // Instagram run while UNSPLASH_ACCESS_KEY sat unprovisioned — even though
   // three keyless providers were available in the legacy engine all along.
   it("still has a working keyless chain, and never reports not_available", async () => {
-    const tools = createKarosMediaTools({ env: {} });
+    // A stub transport, deliberately: this assertion is about the registry
+    // having a backend without a key, not about the open internet. It used to
+    // call openverse/wikimedia/ddg for real and timed out at 5s the moment the
+    // network was slow, which made a behavioural guarantee look like a flake.
+    const emptyJson = (async () =>
+      new Response(JSON.stringify({ results: [] }), { status: 200, headers: { "content-type": "application/json" } })) as unknown as typeof fetch;
+
+    const tools = createKarosMediaTools({ env: {}, fetchImpl: emptyJson });
     expect(tools["media.findImages"]).toBeDefined();
 
     const outcome = await tools["media.findImages"]!.execute(
@@ -210,9 +217,10 @@ describe("createKarosMediaTools without a key", () => {
       { ctx: CTX },
     );
 
-    // Whatever the network did here, "this deployment has no backend" is no
-    // longer one of the possible answers.
+    // The providers honestly found nothing, which is content. "This deployment
+    // has no backend" is no longer one of the possible answers.
     expect(outcome.status).not.toBe("not_available");
+    expect(outcome.status).toBe("content_fail");
   });
 
   it("builds the keyless providers with no env at all, and adds keyed ones only when their key is set", () => {

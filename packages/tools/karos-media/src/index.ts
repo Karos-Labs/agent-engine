@@ -4,6 +4,8 @@ import { defineTool, notAvailable } from "@agent-engine/tool-common";
 import { z } from "zod";
 import { createFindImages, FindImagesInputSchema } from "./find-images.js";
 import { createGenerateImage, type ImageGenerationClient } from "./generate-image.js";
+import { createScrapeImages } from "./scrape-images.js";
+import { createScraperProvider, type ScraperProvider } from "@agent-engine/tool-karos-scraper";
 import type { ImageSearchProvider } from "./providers.js";
 import { buildProviderRegistry, createImageSource, singleProviderSource, type ImageSource } from "./routing.js";
 
@@ -11,6 +13,7 @@ export * from "./providers.js";
 export * from "./providers/index.js";
 export * from "./find-images.js";
 export * from "./generate-image.js";
+export * from "./scrape-images.js";
 export * from "./routing.js";
 export * from "./quality.js";
 
@@ -23,6 +26,8 @@ export interface KarosMediaToolsOptions {
   fetchImpl?: typeof fetch;
   /** Overrides the env-derived generation client. Tests pass a fake; `null` disables generation explicitly. */
   generationClient?: ImageGenerationClient | null;
+  /** Overrides the env-derived scraper backing the scrape tier. `null` disables it explicitly. */
+  scraper?: ScraperProvider | null;
 }
 
 /**
@@ -73,12 +78,26 @@ export function createKarosMediaTools(options: KarosMediaToolsOptions = {}): Age
     };
   }
 
+  const scraper = createScraperProvider({
+    ...(options.env ? { env: options.env } : {}),
+    ...(options.scraper !== undefined ? { provider: options.scraper } : {}),
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+  });
+
   return {
+    // ── Tier 1: stock and CC harvesters ──
     "media.findImages": createFindImages(source, options.fetchImpl ?? fetch),
+    // ── Tier 2: the open social web, for a photo of the actual subject ──
+    "media.scrapeImages": createScrapeImages({
+      ...(scraper ? { scraper } : {}),
+      ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    }),
     // Registered whether or not a backend exists — an unconfigured deployment
     // gets a tool that reports `not_available` per call, never a missing key
     // in the registry. The workflow checks for the tool, not for the config.
-    "media.generateImage": createGenerateImage({
+    // ── Tier 3: generation. The only tier that can answer any brief, and
+    // therefore the only one that can actually guarantee a filled slide.
+    "image.generate": createGenerateImage({
       client:
         options.generationClient === null
           ? undefined
@@ -99,7 +118,7 @@ function readImageModel(env: Record<string, string | undefined>): string | undef
  * a deployment that can already reach Gemini on Vertex can generate images.
  *
  * Returns undefined when no project is configured, which makes
- * `media.generateImage` report `not_available` rather than throw.
+ * `image.generate` report `not_available` rather than throw.
  *
  * `@google/genai` is imported statically. A `require()` here would be
  * tempting, to keep the SDK off the module-load path for deployments that

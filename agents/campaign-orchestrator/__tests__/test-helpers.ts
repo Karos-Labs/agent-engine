@@ -5,6 +5,7 @@ import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import { FilePromptStore, type AgentContext, type CompletionResult, type ModelRouter } from "@agent-engine/core";
 import { createAllKarosTools, WorkspaceStore } from "@agent-engine/tools";
+import { createOfflineScraper } from "@agent-engine/tool-karos-scraper";
 import type { CampaignChannel } from "../src/agent/campaign-strategy-agent.js";
 import type { ChannelRuntimeOptions } from "../src/workflow/create-campaign-workflow.js";
 
@@ -198,7 +199,13 @@ export async function setupTestEnvironment(
   const withBrand = opts.withBrand ?? true;
   const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "campaign-orchestrator-test-"));
   const store = new WorkspaceStore(rootDir);
-  const tools = createAllKarosTools(store);
+  // `createOfflineScraper()` is passed EXPLICITLY, because `research.pull` now
+  // reports `not_available` without a real scraper rather than returning a
+  // placeholder payload. That is deliberate (see karos-research/src/pull.ts): a
+  // placeholder is what let every content agent draft from nothing for months.
+  // Tests still need deterministic offline data, so they opt in here; nothing in
+  // `apps/` does.
+  const tools = createAllKarosTools(store, undefined, { scraper: createOfflineScraper() });
 
   const seedCtx: AgentContext = { runId: "seed", clientSlug, productId: "campaign-orchestrator", runKind: "recurring", metadata: {} };
   await store.writeJson(clientSlug, ["client", "profile"], { name: "Acme Corp", industry: "B2B SaaS" });

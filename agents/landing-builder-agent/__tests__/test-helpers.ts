@@ -5,6 +5,7 @@ import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import { FilePromptStore, type CompletionResult, type ModelRouter } from "@agent-engine/core";
 import { createAllKarosTools, WorkspaceStore } from "@agent-engine/tools";
+import { createOfflineScraper } from "@agent-engine/tool-karos-scraper";
 import { createKarosLandingTools, type LandingEngineConfig } from "@agent-engine/tool-karos-landing";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -152,7 +153,13 @@ export interface TestEnvironment {
   cleanup: () => Promise<void>;
 }
 
-/** Sets up the real FORGE fixture as `templateRoot` (read-only) + an isolated bundle for one client, and merges karos-landing's tools into the full Layer 3 registry — the same pattern `agents/branded-shorts-agent` uses for `createKarosVideoTools()` (both are excluded from `createAllKarosTools()`'s own default bundle). */
+// `createOfflineScraper()` is passed EXPLICITLY, because `research.pull` now
+// reports `not_available` without a real scraper rather than returning a
+// placeholder payload. That is deliberate (see karos-research/src/pull.ts): a
+// placeholder is what let every content agent draft from nothing for months.
+// Tests still need deterministic offline data, so they opt in here; nothing in
+// `apps/` does.
+/** Sets up the real FORGE fixture as `templateRoot` (read-only) + an isolated bundle for one client, and merges karos-landing's tools into the full Layer 3 registry — the same pattern `agents/branded-shorts-agent` uses for `createKarosVideoTools()` (both are excluded from `createAllKarosTools(undefined, undefined, { scraper: createOfflineScraper() })`'s own default bundle). */
 export async function setupTestEnvironment(clientSlug: string): Promise<TestEnvironment> {
   const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "landing-builder-agent-test-"));
   const engineClientsRoot = path.join(tmpRoot, "clients");
@@ -165,7 +172,7 @@ export async function setupTestEnvironment(clientSlug: string): Promise<TestEnvi
 
   const landingConfig: LandingEngineConfig = { templateRoot: REAL_FORGE_FIXTURE_SITE, engineClientsRoot, bundlesRoot };
   const store = new WorkspaceStore(workspaceRoot);
-  const tools = { ...createAllKarosTools(store), ...createKarosLandingTools(landingConfig) };
+  const tools = { ...createAllKarosTools(store, undefined, { scraper: createOfflineScraper() }), ...createKarosLandingTools(landingConfig) };
 
   return { tmpRoot, landingConfig, tools, cleanup: () => fs.rm(tmpRoot, { recursive: true, force: true }) };
 }

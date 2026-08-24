@@ -37,7 +37,7 @@ export type LicenseConfidence =
   /**
    * Created for this post, so there is no third-party rights question at all:
    * nobody else owns it, nobody needs crediting, nothing is watermarked.
-   * Ranks above `blanket` — `media.generateImage` only.
+   * Ranks above `blanket` — `image.generate` only.
    */
   | "generated"
   /** A blanket library licence covering commercial use — Unsplash, Google Places. */

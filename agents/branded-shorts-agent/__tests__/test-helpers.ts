@@ -6,6 +6,7 @@ import * as os from "node:os";
 import type { AgentToolRegistry, CompletionResult, ModelRouter } from "@agent-engine/core";
 import { FilePromptStore } from "@agent-engine/core";
 import { createAllKarosTools, WorkspaceStore } from "@agent-engine/tools";
+import { createOfflineScraper } from "@agent-engine/tool-karos-scraper";
 import { createKarosVideoTools, type ProcessResult, type ProcessRunner } from "@agent-engine/tool-karos-video";
 import type { StyleCandidate } from "../src/workflow/types.js";
 
@@ -210,7 +211,13 @@ export async function setupTestEnvironment(opts: SetupOptions = {}): Promise<Tes
     transcribe: { fetchImpl: fakeElevenLabsFetch(), env: { ELEVENLABS_API_KEY: "test-key" } },
   });
 
-  const tools: AgentToolRegistry = { ...createAllKarosTools(store), ...videoTools };
+  // `createOfflineScraper()` is passed EXPLICITLY, because `research.pull` now
+  // reports `not_available` without a real scraper rather than returning a
+  // placeholder payload. That is deliberate (see karos-research/src/pull.ts): a
+  // placeholder is what let every content agent draft from nothing for months.
+  // Tests still need deterministic offline data, so they opt in here; nothing in
+  // `apps/` does.
+  const tools: AgentToolRegistry = { ...createAllKarosTools(store, undefined, { scraper: createOfflineScraper() }), ...videoTools };
 
   return {
     rootDir,

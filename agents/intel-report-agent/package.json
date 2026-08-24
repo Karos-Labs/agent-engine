@@ -2,7 +2,7 @@
   "name": "@agent-engine/agent-intel-report",
   "private": true,
   "version": "0.0.1",
-  "description": "The Intel Report agent (RFC-05) — one BaseAgent (IntelReportDraftAgent) plus its Layer 1 workflow, built entirely on Phase 1's core/tools/workflow packages, following the same recipe as the LinkedIn agent. Deliberately decoupled from the SEO/GEO workflow (RFC-05 §2) — this package never imports or triggers it.",
+  "description": "The Intel Report agent (RFC-05) \u2014 one BaseAgent (IntelReportDraftAgent) plus its Layer 1 workflow, built entirely on Phase 1's core/tools/workflow packages, following the same recipe as the LinkedIn agent. Deliberately decoupled from the SEO/GEO workflow (RFC-05 \u00a72) \u2014 this package never imports or triggers it.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -16,6 +16,7 @@
     "@agent-engine/tool-common": "^0.0.1",
     "@agent-engine/tool-karos-gates": "^0.0.1",
     "@agent-engine/tool-karos-intel": "^0.0.1",
+    "@agent-engine/tool-karos-scraper": "^0.0.1",
     "@agent-engine/tools": "^0.0.1",
     "@agent-engine/workflow": "^0.0.1",
     "zod": "^4.4.3"

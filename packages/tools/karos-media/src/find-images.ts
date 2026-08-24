@@ -308,7 +308,19 @@ function interleaveByProvider(
   return out;
 }
 
-/** Returns the repo-relative path written, or undefined when this hit could not be saved. */
+/**
+ * Returns the repo-relative path written, or undefined when this hit could not
+ * be saved.
+ *
+ * Exported as `downloadImage` for `media.scrapeImages`, which needs the exact
+ * same guarantees: content-type refused rather than guessed, size ceiling
+ * enforced twice (declared and actual), filename derived from a hash so a
+ * provider's id format cannot escape the directory. A second download path
+ * with its own subtly different checks is precisely the kind of duplication
+ * that ends with an HTML error page saved as .jpg.
+ */
+export { downloadHit as downloadImage };
+
 async function downloadHit(
   fetchImpl: typeof fetch,
   hit: { id: string; url: string },

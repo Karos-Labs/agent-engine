@@ -28,7 +28,9 @@ describe("02-freeze-style-config: parse-check-or-HALT (RFC-03 §3 step 02)", () 
     expect(router.complete).not.toHaveBeenCalled();
 
     const stepRecords = await durableStore.listSteps(params.runId);
-    expect(stepRecords.map((s) => s.stepId)).toEqual(["01-open-run", "02-freeze-style-config"]);
+    // 00-auto-setup runs first and records why it did nothing (no industry to
+    // seed from), then intake blocks exactly as before.
+    expect(stepRecords.map((s) => s.stepId)).toEqual(["00-auto-setup", "01-open-run", "02-freeze-style-config"]);
   });
 
   it("blocks intake when instagramStyleConfig fails to parse (missing required field) -- never guesses a default", async () => {
