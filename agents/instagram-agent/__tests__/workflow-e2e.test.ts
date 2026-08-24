@@ -30,6 +30,8 @@ const HAPPY_PATH_STEP_IDS = [
   "04a-research-pull",
   "04b-research-extract-facts",
   "05a-list-used-images",
+  // Tier 0: the client's own uploads, resolved before any sourcing tier.
+  "05z-attach-user-media",
   "05-write-copy-attempt-1",
   "06-vet-images-attempt-1",
   "07-self-check-attempt-1",

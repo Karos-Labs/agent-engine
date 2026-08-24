@@ -5,3 +5,4 @@ export * from "./serializers/index.js";
 export * from "./primitives/topic-guardrail.js";
 export * from "./primitives/auto-setup.js";
 export * from "./primitives/research-candidate.js";
+export * from "./primitives/run-direction.js";

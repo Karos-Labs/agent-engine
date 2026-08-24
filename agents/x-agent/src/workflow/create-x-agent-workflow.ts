@@ -1,5 +1,5 @@
 import { readForbiddenTopics, type AgentContext, type AgentToolRegistry, type GateResponse, type GateVerdict, type ModelRouter, type PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult } from "@agent-engine/workflow";
+import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField } from "@agent-engine/workflow";
 import { XDraftAgent, type Lane } from "../agent/x-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
 import { renderXDraftsMarkdown } from "./render-drafts-markdown.js";
@@ -91,6 +91,13 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
 
   return async function xAgentWorkflow(wf: WorkflowContext): Promise<XAgentWorkflowResult> {
     const ctx = toAgentContext(wf);
+
+    // The run-scoped instruction someone typed in the portal, resolved once.
+    // A typed sentence outranks the topic catalog for the same reason an
+    // explicit requestedTopic does: a person who wrote it has more
+    // information about this run than a catalog row does. Style-only notes
+    // are deliberately NOT promoted to topics -- see readRunDirection.
+    const runDirection = readRunDirection(wf.input);
 
     // ── 00: intake check — blocked_intake if foundation data is missing ──
     const intake = await wf.step.code("00-intake-check", async (): Promise<XIntakeConfig> => {
@@ -224,6 +231,12 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
     const selected = await wf.step.code("07-select-candidate", (): XSelectedCandidate => {
       // Single post selection precedence (RFC-02 §3): an explicit client request wins,
       // then a reserved catalog topic, then the research-derived fallback.
+      // Highest precedence, above an explicit requestedTopic's own branch
+      // below only when that is absent: a typed instruction is this run's
+      // most specific statement of intent.
+      if (runDirection.topicOverride) {
+        return { topic: runDirection.topicOverride, source: "requested" };
+      }
       if (intake.requestedTopic) {
         return { topic: intake.requestedTopic, source: "requested" };
       }
@@ -273,6 +286,7 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
     // ── 10-14: draft execution via XDraftAgent, with machine/claim/compliance/link gates ──
     const draftAgent = new XDraftAgent({ router: options.router, tools, promptStore: options.promptStore });
     const draftResult = await wf.step.agent("10-draft-post", draftAgent, {
+      ...runDirectionField(runDirection),
       topic: selected.topic,
       source: selected.source,
       lane: laneSelection.lane,

@@ -35,6 +35,14 @@
 /** How well a hit's licence can actually be justified to the rights gate. */
 export type LicenseConfidence =
   /**
+   * The client uploaded it themselves for this run. The strongest basis there
+   * is — they own it, and they chose it — so it ranks above `generated`.
+   * Without a distinct value an upload would arrive at the rights gate with no
+   * provenance line and be refused as unknown provenance, which is exactly
+   * backwards for the one asset the client actually owns.
+   */
+  | "client-supplied"
+  /**
    * Created for this post, so there is no third-party rights question at all:
    * nobody else owns it, nobody needs crediting, nothing is watermarked.
    * Ranks above `blanket` — `image.generate` only.

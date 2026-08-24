@@ -1,6 +1,6 @@
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult } from "@agent-engine/workflow";
+import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField } from "@agent-engine/workflow";
 import { LinkedInDraftAgent } from "../agent/linkedin-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
 import { renderLinkedInDraftsMarkdown } from "./render-drafts-markdown.js";
@@ -202,6 +202,13 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
   return async function linkedInAgentWorkflow(wf: WorkflowContext): Promise<LinkedInAgentWorkflowResult> {
     const ctx = toAgentContext(wf);
 
+    // The run-scoped instruction someone typed in the portal, resolved once.
+    // A typed sentence outranks the topic catalog for the same reason an
+    // explicit requestedTopic does: a person who wrote it has more
+    // information about this run than a catalog row does. Style-only notes
+    // are deliberately NOT promoted to topics -- see readRunDirection.
+    const runDirection = readRunDirection(wf.input);
+
     // ── 00: intake check — blocked_intake if foundation data is missing ──
     const intake = await wf.step.code("00-intake-check", async (): Promise<LinkedInIntakeConfig> => {
       const profileOutcome = await tools["client.getProfile"]!.execute({}, { ctx });
@@ -387,6 +394,12 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
       // Single post selection precedence (RFC-02 §5, "same recipe" as X §3): an
       // explicit client request wins, then a reserved catalog topic, then the
       // research-derived fallback.
+      // Highest precedence, above an explicit requestedTopic's own branch
+      // below only when that is absent: a typed instruction is this run's
+      // most specific statement of intent.
+      if (runDirection.topicOverride) {
+        return { topic: runDirection.topicOverride, source: "requested" };
+      }
       if (clientContext.requestedTopic) {
         return { topic: clientContext.requestedTopic, source: "requested" };
       }
@@ -443,6 +456,7 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
     // ── 09-14: draft execution via LinkedInDraftAgent, with machine/claim/compliance/hygiene gates ──
     const draftAgent = new LinkedInDraftAgent({ router: options.router, tools, promptStore: options.promptStore });
     const draftResult = await wf.step.agent("09-draft-post", draftAgent, {
+      ...runDirectionField(runDirection),
       topic: selected.topic,
       source: selected.source,
       archetype: archetypeSelection.archetype,

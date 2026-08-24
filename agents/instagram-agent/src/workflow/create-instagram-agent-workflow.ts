@@ -1,6 +1,6 @@
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentTool, AgentToolRegistry, GateResponse, ModelRouter, PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runTopicGuardrail } from "@agent-engine/workflow";
+import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runTopicGuardrail, readRunDirection, runDirectionField } from "@agent-engine/workflow";
 import type { RenderCarouselInput, RenderCarouselResult } from "@agent-engine/tool-karos-publish";
 import { InstagramCopyAgent } from "../agent/instagram-copy-agent.js";
 import { InstagramImageVettingAgent } from "../agent/instagram-image-vetting-agent.js";
@@ -139,6 +139,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
 
   return async function instagramAgentWorkflow(wf: WorkflowContext): Promise<InstagramAgentWorkflowResult> {
     const ctx = toAgentContext(wf);
+
+    // The run-scoped instruction and any media the person attached. Read once:
+    // the direction steers copy, and the attachments become Tier 0 below.
+    const runDirection = readRunDirection(wf.input);
 
     // ── 00-auto-setup: onboard this client inline, rather than requiring
     // somebody to have dispatched a separate setup agent first ──
@@ -388,6 +392,45 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     const usedImages = (usedImagesOutcome.result as { imagePaths: string[] }).imagePaths;
     const usedImagesSet = new Set(usedImages);
 
+    // ── Tier 0: media the person attached to this run ──
+    //
+    // Above every sourcing tier, and the reasoning is not subtle: a client who
+    // uploaded a photograph has told us exactly what they want on the slide.
+    // No harvester, scrape or generation outranks that, and asking a vetting
+    // model to "choose" between a client's own asset and a stock photo would
+    // be inviting it to overrule them.
+    //
+    // These candidates are marked `licenseConfidence: "client-supplied"` and
+    // described as the client's own upload, so the rights gate can clear them
+    // on the one basis that actually applies: the client owns it. Without that
+    // the gate would treat an upload with no provenance line as unknown
+    // provenance and refuse it, which is exactly backwards.
+    //
+    // Assignment is by slide order, not by guesswork. The first attachment goes
+    // to slide 1, the second to slide 2, and so on -- a deterministic rule
+    // someone can predict from the upload order, rather than a model deciding
+    // which of their photos "fits" where.
+    const tier0Pool = await wf.step.code("05z-attach-user-media", () => {
+      const assets = runDirection.mediaAssets.filter((a) => a.role === "source" || a.role === "reference");
+      return {
+        candidates: assets.map((asset, index) => ({
+          path: asset.uri,
+          description:
+            `slide ${index + 1} candidate -- CLIENT-SUPPLIED asset uploaded with this run` +
+            `${asset.label ? ` ("${asset.label}")` : ""}. The client owns this image and attached it deliberately; ` +
+            `treat it as rights-cleared and watermark-free unless the picture itself shows otherwise. ` +
+            `[licence: client-supplied -- owned by the client, uploaded for this post]`,
+          provider: "client-upload",
+          licenseConfidence: "client-supplied",
+          slot: index + 1,
+        })),
+        attached: assets.length,
+      };
+    });
+
+    /** Slides already carrying a client upload, so no tier below wastes a call on them. */
+    const tier0Slots = new Set(tier0Pool.candidates.map((c) => c.slot));
+
     // ── 05-08b: write copy -> vet images -> emit + self-check + craft-hygiene
     //           -> render -> post-render visual QA, all sharing ONE retry
     //           budget capped at two returns to step 05 (RFC-03 §3 step 07,
@@ -405,6 +448,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
 
     for (let attempt = 1; attempt <= MAX_SELF_CHECK_ATTEMPTS; attempt++) {
       const copyExec = await wf.step.agent(`05-write-copy-attempt-${attempt}`, copyAgent, {
+        ...runDirectionField(runDirection),
         topic: topicClaim.topic,
         facts: research.facts,
         styleConfig: {
@@ -448,20 +492,39 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // step existed. Asserting the tool here would instead crash those
       // callers.
       const findImages = tools["media.findImages"];
-      let attemptPool = imageCandidatePool;
+      // Tier 0 first: an explicitly-supplied `imageCandidatePool` still wins
+      // (evals depend on a fixed pool), then the client's own uploads, then
+      // whatever the harvesters find.
+      let attemptPool =
+        imageCandidatePool.length > 0
+          ? imageCandidatePool
+          : (tier0Pool.candidates as unknown as ImageCandidate[]);
       // Why the pool is empty, in the sourcing layer's own words. Without it
       // the hold below could only say "no candidate qualified", which reads as
       // an editorial verdict on the topic and sent whoever debugged prep run
       // pubsub-21528976110173438 looking for a licensing problem when the real
       // cause was an unset UNSPLASH_ACCESS_KEY.
       let sourcingReason: string | undefined;
-      if (attemptPool.length === 0 && findImages !== undefined) {
+      // Gated on there being SLIDES LEFT TO FILL, not on the pool being empty.
+      // The pool-empty form predated Tier 0 and broke the moment it landed: two
+      // client uploads on an eight-slide carousel made the pool non-empty, which
+      // skipped Tier 1 entirely and left the other six slides with no
+      // harvester candidates at all. Tier 0 partially filling a carousel must
+      // narrow the harvesters' work, never cancel it.
+      //
+      // An explicitly-supplied `imageCandidatePool` still suppresses sourcing,
+      // which is what evals depend on.
+      const slidesNeedingSource = copy.slides.filter((s) => !tier0Slots.has(s.n));
+      if (imageCandidatePool.length === 0 && slidesNeedingSource.length > 0 && findImages !== undefined) {
         const sourced = await wf.step.code(`05b-source-images-attempt-${attempt}`, async () =>
           findImages.execute(
             {
               repoRoot: options.repoRoot,
               runId: wf.runId,
-              needs: copy.slides.map((s) => ({ n: s.n, query: s.visualNeed })),
+              // Only the slides Tier 0 did not already fill. Searching for a
+            // slide that already has the client's own photo on it would be
+            // paying a harvester to produce a candidate that must lose.
+            needs: slidesNeedingSource.map((s) => ({ n: s.n, query: s.visualNeed })),
             },
             { ctx },
           ),
@@ -474,7 +537,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           throw new WorkflowToolingFailure(`media.findImages failed: tooling_error — ${sourced.reason}`);
         }
         if (sourced.status === "success") {
-          attemptPool = (sourced.result as { candidates: ImageCandidate[] }).candidates;
+          // Appended, not assigned: replacing the pool here would silently
+          // discard the client's own uploads the moment a harvester returned
+          // anything, which is the one outcome Tier 0 exists to prevent.
+          attemptPool = [...attemptPool, ...(sourced.result as { candidates: ImageCandidate[] }).candidates];
         } else {
           sourcingReason = sourced.reason;
         }

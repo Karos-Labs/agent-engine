@@ -1,6 +1,6 @@
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult } from "@agent-engine/workflow";
+import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField } from "@agent-engine/workflow";
 import { RedditDraftAgent } from "../agent/reddit-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
 import { renderRedditDraftsEnvelope } from "./render-drafts-envelope.js";
@@ -107,6 +107,13 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
 
   return async function redditAgentWorkflow(wf: WorkflowContext): Promise<RedditAgentWorkflowResult> {
     const ctx = toAgentContext(wf);
+
+    // The run-scoped instruction someone typed in the portal, resolved once.
+    // A typed sentence outranks the topic catalog for the same reason an
+    // explicit requestedTopic does: a person who wrote it has more
+    // information about this run than a catalog row does. Style-only notes
+    // are deliberately NOT promoted to topics -- see readRunDirection.
+    const runDirection = readRunDirection(wf.input);
 
     // ── 00: intake check — blocked_intake if target subreddits or brand guidelines are missing ──
     const intake = await wf.step.code("00-intake-check", async (): Promise<RedditIntakeConfig> => {
@@ -230,6 +237,12 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
       // pool", subreddit-sourcing.md §3): an explicit client request wins, then a
       // reserved catalog pattern, then the research-derived fallback. This is context
       // for the draft's angle, not the target thread — that's step 08, entirely separate.
+      // Highest precedence, above an explicit requestedTopic's own branch
+      // below only when that is absent: a typed instruction is this run's
+      // most specific statement of intent.
+      if (runDirection.topicOverride) {
+        return { topic: runDirection.topicOverride, source: "requested" };
+      }
       if (intake.requestedTopic) {
         return { topic: intake.requestedTopic, source: "requested" };
       }
@@ -340,6 +353,7 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
     // ── 12-17: draft execution via RedditDraftAgent, with the full gate stack ──
     const draftAgent = new RedditDraftAgent({ router: options.router, tools, promptStore: options.promptStore });
     const draftResult = await wf.step.agent("12-draft-reply", draftAgent, {
+      ...runDirectionField(runDirection),
       topic: selected.topic,
       source: selected.source,
       angle,

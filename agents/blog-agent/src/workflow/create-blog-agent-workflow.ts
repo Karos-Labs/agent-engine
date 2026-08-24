@@ -1,6 +1,6 @@
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult } from "@agent-engine/workflow";
+import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField } from "@agent-engine/workflow";
 import { BlogDraftAgent } from "../agent/blog-draft-agent.js";
 import { renderPreview, BLOG_MIN_WORD_COUNT, BLOG_MAX_WORD_COUNT, type RenderPreviewResult } from "../tools/render-preview.js";
 import { buildBlogJsonLd, type BlogJsonLd } from "../tools/json-ld.js";
@@ -99,6 +99,13 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
 
   return async function blogAgentWorkflow(wf: WorkflowContext): Promise<BlogAgentWorkflowResult> {
     const ctx = toAgentContext(wf);
+
+    // The run-scoped instruction someone typed in the portal, resolved once.
+    // A typed sentence outranks the topic catalog for the same reason an
+    // explicit requestedTopic does: a person who wrote it has more
+    // information about this run than a catalog row does. Style-only notes
+    // are deliberately NOT promoted to topics -- see readRunDirection.
+    const runDirection = readRunDirection(wf.input);
 
     // ── 00: intake check — blocked_intake if voice rules, target keywords, or content pillars are missing ──
     const intake = await wf.step.code("00-intake-check", async (): Promise<BlogIntakeConfig> => {
@@ -215,7 +222,14 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
       // research-derived fallback.
       let topic: string;
       let source: BlogSelectedCandidate["source"];
-      if (intake.requestedTopic) {
+      // Highest precedence: a typed instruction is this run's most specific
+      // statement of intent. Assigned rather than returned early, because this
+      // step still has to resolve targetKeyword and contentPillar below —
+      // returning here would drop both.
+      if (runDirection.topicOverride) {
+        topic = runDirection.topicOverride;
+        source = "requested";
+      } else if (intake.requestedTopic) {
         topic = intake.requestedTopic;
         source = "requested";
       } else if (reservation.topics.length > 0) {
@@ -248,6 +262,7 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
     // ── 09-12: draft execution via BlogDraftAgent, with machine/claim/compliance gates ──
     const draftAgent = new BlogDraftAgent({ router: options.router, tools, promptStore: options.promptStore });
     const draftResult = await wf.step.agent("09-draft-post", draftAgent, {
+      ...runDirectionField(runDirection),
       topic: selected.topic,
       source: selected.source,
       angle,

@@ -1,6 +1,6 @@
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult } from "@agent-engine/workflow";
+import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField } from "@agent-engine/workflow";
 import { NewsletterDraftAgent, type NewsletterPostOutput } from "../agent/newsletter-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
 import type {
@@ -122,6 +122,13 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
   return async function newsletterAgentWorkflow(wf: WorkflowContext): Promise<NewsletterAgentWorkflowResult> {
     const ctx = toAgentContext(wf);
 
+    // The run-scoped instruction someone typed in the portal, resolved once.
+    // A typed sentence outranks the topic catalog for the same reason an
+    // explicit requestedTopic does: a person who wrote it has more
+    // information about this run than a catalog row does. Style-only notes
+    // are deliberately NOT promoted to topics -- see readRunDirection.
+    const runDirection = readRunDirection(wf.input);
+
     // ── 00: intake check — blocked_intake if target audience, frequency, or brand guidelines are missing ──
     const intake = await wf.step.code("00-intake-check", async (): Promise<NewsletterIntakeConfig> => {
       const configOutcome = await tools["client.getConfig"]!.execute({}, { ctx });
@@ -235,7 +242,13 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
       let mainStory: string;
       let source: NewsletterSelectedCandidates["source"];
       let secondaryTopics: string[];
-      if (intake.requestedTopic) {
+      if (runDirection.topicOverride) {
+        // Highest precedence: a typed instruction is this run's most specific
+        // statement of intent, above the catalog and above standing config.
+        mainStory = runDirection.topicOverride;
+        source = "requested";
+        secondaryTopics = reservation.topics.slice(0, 2);
+      } else if (intake.requestedTopic) {
         mainStory = intake.requestedTopic;
         source = "requested";
         secondaryTopics = reservation.topics.slice(0, 2);
@@ -261,6 +274,7 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
     // ── 09-12: draft execution via NewsletterDraftAgent, with machine/claim/compliance gates ──
     const draftAgent = new NewsletterDraftAgent({ router: options.router, tools, promptStore: options.promptStore });
     const draftResult = await wf.step.agent("09-draft-post", draftAgent, {
+      ...runDirectionField(runDirection),
       mainStory: selected.mainStory,
       secondaryTopics: selected.secondaryTopics,
       source: selected.source,
