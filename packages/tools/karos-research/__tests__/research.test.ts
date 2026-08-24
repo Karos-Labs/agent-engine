@@ -159,6 +159,50 @@ describe("karos-research", () => {
       expect(runs).toHaveLength(1);
     });
 
+    /**
+     * THE CACHE IS KEYED ON THE QUESTION, NOT JUST THE JOB.
+     *
+     * It was keyed on `(clientSlug, job)` alone, and a live prep run showed the
+     * cost. `instagram-agent` always passes `job: "instagram-carousel-research"`
+     * with a 24h window, so its second run that day was handed the FIRST run's
+     * research — about a different subject entirely — and drafted from it. The
+     * trace even echoed the other run's query back, and nothing errored.
+     *
+     * The reuse this cache exists for is unaffected: the same question inside
+     * the window still costs one pull, which the test above pins.
+     */
+    it("pulls again for a different subject inside the same window", async () => {
+      const first = await tools["research.pull"]!.execute({ job: "j", query: "acme trends", window: "24h" }, { ctx });
+      vi.setSystemTime(new Date("2026-01-01T01:00:00Z")); // +1h, well inside the window
+      const second = await tools["research.pull"]!.execute(
+        { job: "j", query: "a completely different subject", window: "24h" },
+        { ctx },
+      );
+
+      const secondResult = (second as { result: { runId: string; query: string; fromCache: boolean } }).result;
+      expect(secondResult.fromCache).toBe(false);
+      expect(secondResult.runId).not.toBe((first as { result: { runId: string } }).result.runId);
+      // The returned query is the one that was ASKED. Returning the cached
+      // run's query is how the original defect announced itself in the trace.
+      expect(secondResult.query).toBe("a completely different subject");
+
+      // Both runs recorded, so a later run of either subject can still reuse.
+      const runs = await store.listJson("acme", ["research", "j", "runs"]);
+      expect(runs).toHaveLength(2);
+    });
+
+    it("still reuses a cached subject that differs only in case or spacing", async () => {
+      // Same question, typed differently. Refetching here would spend a scrape
+      // to answer something already answered.
+      const first = await tools["research.pull"]!.execute({ job: "j", query: "Acme Trends", window: "24h" }, { ctx });
+      vi.setSystemTime(new Date("2026-01-01T01:00:00Z"));
+      const second = await tools["research.pull"]!.execute({ job: "j", query: "  acme   trends ", window: "24h" }, { ctx });
+
+      const secondResult = (second as { result: { runId: string; fromCache: boolean } }).result;
+      expect(secondResult.fromCache).toBe(true);
+      expect(secondResult.runId).toBe((first as { result: { runId: string } }).result.runId);
+    });
+
     it("maps the scraper's records into citable documents, not a placeholder", async () => {
       const { scraper, queries } = fakeScraper([
         {

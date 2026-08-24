@@ -4,7 +4,7 @@ import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, parseDurationMs, success, toolingError, notAvailable } from "@agent-engine/tool-common";
 import { readOutputHistory } from "@agent-engine/tool-karos-ledger";
 import { ScraperError, type ScrapedRecord, type ScraperProvider, type SocialPlatform } from "@agent-engine/tool-karos-scraper";
-import { latestRun, runSegments, type RunRecord } from "./runs.js";
+import { latestRunForQuery, runSegments, type RunRecord } from "./runs.js";
 import {
   DEFAULT_CONTENT_CHARS,
   HISTORY_EXCERPT_CHARS,
@@ -105,7 +105,10 @@ export function createPull(store: WorkspaceStoreLike, scraper?: ScraperProvider)
       const input = PullInputSchema.parse(rawInput);
       const { job, query, window, maxResults } = input;
       const windowMs = parseDurationMs(window);
-      const cached = await latestRun(store, ctx.clientSlug, job);
+      // Keyed on the QUESTION, not just the job. Keyed on the job alone, a
+      // second instagram run the same day reused the first one's research
+      // whatever its own subject was — see `latestRunForQuery`.
+      const cached = await latestRunForQuery(store, ctx.clientSlug, job, query);
 
       if (cached) {
         const ageMs = Date.now() - cached.at;
