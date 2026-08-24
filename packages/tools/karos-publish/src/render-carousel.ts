@@ -10,13 +10,6 @@ export const SlideSchema = z.object({
   template: z.string().min(1),
   fields: z.record(z.string(), z.string()).default({}),
   images: z.record(z.string(), z.string()).default({}),
-  /**
-   * Pre-assembled markup for `{{html:key}}` slots — a list archetype's rows,
-   * a comparison's columns. Distinct from `fields` because `fields` is escaped
-   * and this is not: only the calling agent's own fragment builder writes
-   * here, never a model directly. See `fillTemplate`.
-   */
-  htmlFragments: z.record(z.string(), z.string()).default({}),
 });
 export type Slide = z.infer<typeof SlideSchema>;
 
@@ -82,70 +75,14 @@ async function fileExists(p: string): Promise<boolean> {
   }
 }
 
-/**
- * Escapes a field value for insertion as HTML text content.
- *
- * `fields` carries MODEL-AUTHORED copy — a headline, a pull-quote, a
- * takeaway. Substituting that raw (which this did until 2026-08) means a
- * headline containing `&` or `<` either breaks the markup or injects into it:
- * "Q4 & Q1" silently renders as an entity-less parse error, and anything
- * angle-bracketed becomes live DOM in a page this renderer then screenshots.
- * Neither is hypothetical once a slide's copy is generated rather than
- * hand-written, and the archetype library multiplies the number of fields
- * this applies to.
- *
- * A template that genuinely needs markup in a slot asks for it explicitly via
- * `{{html:key}}` — see `fillTemplate`.
- */
-export function escapeHtmlText(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-/**
- * Three substitution forms, deliberately distinct:
- *
- * - `{{key}}`      — escaped text. The default, and what every model-authored
- *                    field uses.
- * - `{{html:key}}` — raw markup, for a fragment THIS CODEBASE assembled
- *                    (a list's rows, a comparison's two columns). The caller
- *                    is responsible for having escaped the text inside it;
- *                    `buildFragment` in the instagram-agent's `slides-data.ts`
- *                    is the only producer today, and it escapes per value.
- * - `{{image:key}}`— a `file://` URL for a bounds-checked local image path.
- *
- * Splitting escaped from raw is what lets the archetype templates hold real
- * structure (rows, columns) without making every copy field an injection
- * point.
- */
-function fillTemplate(
-  html: string,
-  fields: Record<string, string>,
-  imagePaths: Record<string, string>,
-  htmlFragments: Record<string, string> = {},
-): string {
+function fillTemplate(html: string, fields: Record<string, string>, imagePaths: Record<string, string>): string {
   let filled = html;
-  // Fragments first: a fragment may itself contain `{{key}}` slots that the
-  // escaped pass below should then fill (a row template reusing `accentColor`).
-  for (const [key, fragment] of Object.entries(htmlFragments)) {
-    filled = filled.replaceAll(`{{html:${key}}}`, fragment);
-  }
   for (const [key, value] of Object.entries(fields)) {
-    filled = filled.replaceAll(`{{${key}}}`, escapeHtmlText(value));
+    filled = filled.replaceAll(`{{${key}}}`, value);
   }
   for (const [key, absolutePath] of Object.entries(imagePaths)) {
     filled = filled.replaceAll(`{{image:${key}}}`, `file://${absolutePath.replace(/\\/g, "/")}`);
   }
-  // Any `{{...}}` slot the caller supplied nothing for is emptied rather than
-  // left in the pixels. One archetype template legitimately has optional
-  // slots (a stat's source line, a headline's kicker), and a literal
-  // "{{sourceLine}}" screenshotted onto a client's carousel is the worst of
-  // the available outcomes.
-  filled = filled.replace(/\{\{(?:html:|image:)?[A-Za-z0-9_]+\}\}/g, "");
   return filled;
 }
 
@@ -295,7 +232,7 @@ export function createRenderCarousel(mediaStore?: GcsArtifactStoreLike) {
             resolvedImages[key] = assertInside(input.repoRoot, imageRel, `slide ${slide.n} image "${key}"`);
           }
 
-          const filled = fillTemplate(html, slide.fields, resolvedImages, slide.htmlFragments);
+          const filled = fillTemplate(html, slide.fields, resolvedImages);
 
           /*
            * THE PAGE IS NAVIGATED TO, NOT SET.
