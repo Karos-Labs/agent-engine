@@ -255,6 +255,11 @@ export function createRenderCarousel(mediaStore?: GcsArtifactStoreLike) {
            * screenshot, so a run leaves the same artifacts it always did.
            */
           const pagePath = path.join(resolvedOutDir, `slide-${slide.n}.html`);
+          // The directory is created here, not left to the PNG write further
+          // down: that mkdir used to be the first thing to touch `outDir`, so
+          // writing the page before it turned a not-yet-existing output
+          // directory into a tooling error and a degraded run.
+          await fs.mkdir(resolvedOutDir, { recursive: true });
           await fs.writeFile(pagePath, filled, "utf8");
           try {
             await page.goto(`file://${pagePath.replace(/\\/g, "/")}`, { waitUntil: "load" });
