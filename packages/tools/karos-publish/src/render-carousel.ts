@@ -10,6 +10,13 @@ export const SlideSchema = z.object({
   template: z.string().min(1),
   fields: z.record(z.string(), z.string()).default({}),
   images: z.record(z.string(), z.string()).default({}),
+  /**
+   * Pre-assembled markup for `{{html:key}}` slots — a list archetype's rows,
+   * a comparison's columns. Distinct from `fields` because `fields` is escaped
+   * and this is not: only the calling agent's own fragment builder writes
+   * here, never a model directly. See `fillTemplate`.
+   */
+  htmlFragments: z.record(z.string(), z.string()).default({}),
 });
 export type Slide = z.infer<typeof SlideSchema>;
 
@@ -75,14 +82,70 @@ async function fileExists(p: string): Promise<boolean> {
   }
 }
 
-function fillTemplate(html: string, fields: Record<string, string>, imagePaths: Record<string, string>): string {
+/**
+ * Escapes a field value for insertion as HTML text content.
+ *
+ * `fields` carries MODEL-AUTHORED copy — a headline, a pull-quote, a
+ * takeaway. Substituting that raw (which this did until 2026-08) means a
+ * headline containing `&` or `<` either breaks the markup or injects into it:
+ * "Q4 & Q1" silently renders as an entity-less parse error, and anything
+ * angle-bracketed becomes live DOM in a page this renderer then screenshots.
+ * Neither is hypothetical once a slide's copy is generated rather than
+ * hand-written, and the archetype library multiplies the number of fields
+ * this applies to.
+ *
+ * A template that genuinely needs markup in a slot asks for it explicitly via
+ * `{{html:key}}` — see `fillTemplate`.
+ */
+export function escapeHtmlText(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+/**
+ * Three substitution forms, deliberately distinct:
+ *
+ * - `{{key}}`      — escaped text. The default, and what every model-authored
+ *                    field uses.
+ * - `{{html:key}}` — raw markup, for a fragment THIS CODEBASE assembled
+ *                    (a list's rows, a comparison's two columns). The caller
+ *                    is responsible for having escaped the text inside it;
+ *                    `buildFragment` in the instagram-agent's `slides-data.ts`
+ *                    is the only producer today, and it escapes per value.
+ * - `{{image:key}}`— a `file://` URL for a bounds-checked local image path.
+ *
+ * Splitting escaped from raw is what lets the archetype templates hold real
+ * structure (rows, columns) without making every copy field an injection
+ * point.
+ */
+function fillTemplate(
+  html: string,
+  fields: Record<string, string>,
+  imagePaths: Record<string, string>,
+  htmlFragments: Record<string, string> = {},
+): string {
   let filled = html;
+  // Fragments first: a fragment may itself contain `{{key}}` slots that the
+  // escaped pass below should then fill (a row template reusing `accentColor`).
+  for (const [key, fragment] of Object.entries(htmlFragments)) {
+    filled = filled.replaceAll(`{{html:${key}}}`, fragment);
+  }
   for (const [key, value] of Object.entries(fields)) {
-    filled = filled.replaceAll(`{{${key}}}`, value);
+    filled = filled.replaceAll(`{{${key}}}`, escapeHtmlText(value));
   }
   for (const [key, absolutePath] of Object.entries(imagePaths)) {
     filled = filled.replaceAll(`{{image:${key}}}`, `file://${absolutePath.replace(/\\/g, "/")}`);
   }
+  // Any `{{...}}` slot the caller supplied nothing for is emptied rather than
+  // left in the pixels. One archetype template legitimately has optional
+  // slots (a stat's source line, a headline's kicker), and a literal
+  // "{{sourceLine}}" screenshotted onto a client's carousel is the worst of
+  // the available outcomes.
+  filled = filled.replace(/\{\{(?:html:|image:)?[A-Za-z0-9_]+\}\}/g, "");
   return filled;
 }
 
@@ -232,8 +295,38 @@ export function createRenderCarousel(mediaStore?: GcsArtifactStoreLike) {
             resolvedImages[key] = assertInside(input.repoRoot, imageRel, `slide ${slide.n} image "${key}"`);
           }
 
-          const filled = fillTemplate(html, slide.fields, resolvedImages);
-          await page.setContent(filled, { waitUntil: "load" });
+          const filled = fillTemplate(html, slide.fields, resolvedImages, slide.htmlFragments);
+
+          /*
+           * THE PAGE IS NAVIGATED TO, NOT SET.
+           *
+           * `page.setContent(filled)` leaves the document's URL as
+           * `about:blank`, and Chromium refuses to load `file://`
+           * sub-resources from a document that is not itself `file://`. Every
+           * hero image was therefore blocked — and the template's
+           * `onerror="this.style.display='none'"` hid the broken image exactly
+           * as designed for a genuinely missing photo, so the failure had no
+           * symptom at all: the render succeeded, the QA gate passed, the slide
+           * came out looking like a deliberate text-only design, and a live
+           * prep run's carousel had all eight slides flat despite Tier 0, the
+           * harvesters and generation all having supplied vetted images.
+           *
+           * Writing the filled HTML beside the PNG and navigating to it gives
+           * the document a `file://` origin, which is allowed to load `file://`
+           * images. It lands in `resolvedOutDir` — already bounds-checked and
+           * already where this step writes — and is removed after the
+           * screenshot, so a run leaves the same artifacts it always did.
+           */
+          const pagePath = path.join(resolvedOutDir, `slide-${slide.n}.html`);
+          await fs.writeFile(pagePath, filled, "utf8");
+          try {
+            await page.goto(`file://${pagePath.replace(/\\/g, "/")}`, { waitUntil: "load" });
+          } finally {
+            // Removed even if navigation threw: the catch below turns that into
+            // a tooling error, and leaving half-written pages behind would make
+            // the next run's output directory ambiguous.
+            await fs.rm(pagePath, { force: true });
+          }
           // These callbacks run inside the browser page (serialized by Playwright), not in this
           // Node process — this file's tsconfig has no DOM lib, so `window`/`document` are typed `any`
           // via the ambient declarations below rather than pulling in a full DOM lib for one call site.

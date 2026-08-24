@@ -59,6 +59,70 @@ describe("instagram-agent's default template renders via publish.renderCarousel"
     expect(bytes.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a"); // the PNG magic bytes
   }, 30_000);
 
+  /**
+   * THE HERO IMAGE IS ACTUALLY IN THE PIXELS.
+   *
+   * The test below this one has always passed while every carousel rendered
+   * flat. It asserts the PNG is large and well-formed, which a text-only slide
+   * also is — so it could not see that Chromium was refusing to load the
+   * `file://` hero from an `about:blank` document (`page.setContent`), and that
+   * the template's `onerror` was hiding the result exactly as designed for a
+   * genuinely missing photo. Render succeeded, QA passed, and a live prep run
+   * shipped eight flat slides with vetted images sitting unused on disk.
+   *
+   * Rendering the SAME slide with and without the hero and requiring the bytes
+   * to DIFFER catches it without decoding a PNG: if the image is blocked, both
+   * renders draw identical text on an identical background and come out
+   * byte-identical. A pixel decoder would be more direct and much heavier for
+   * the one bit of information that matters.
+   */
+  it("renders differently with a hero image than without one", async () => {
+    outDir = await fs.mkdtemp(path.join(REPO_ROOT, ".tmp-render-test-"));
+    // Solid magenta, 8x8. `object-fit: cover` blows it up to the full canvas,
+    // so a loaded hero changes almost every pixel above the scrim.
+    const magenta = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFElEQVR4nGP8z/CfARtgwio6aCUAkYsCDoRKzmMAAAAASUVORK5CYII=",
+      "base64",
+    );
+    const imageAbsPath = path.join(outDir, "hero.png");
+    await fs.writeFile(imageAbsPath, magenta);
+
+    const tool = createRenderCarousel();
+    const ctx = { ctx: { runId: "r", clientSlug: "smoke-test", productId: "instagram-agent", runKind: "setup" as const, metadata: {} } };
+    const base = {
+      client: "smoke-test",
+      templateDir: "agents/instagram-agent/assets/templates/default",
+      outDir: path.relative(REPO_ROOT, outDir),
+      repoRoot: REPO_ROOT,
+      canvas: { w: 1080, h: 1440, scale: 2, slides_min: 1, slides_max: 8 },
+      readyFlag: "__CAROUSEL_READY__",
+      fields: { headline: "Identical copy on both", body: "Only the hero differs.", accentColor: "#2F6FC4" },
+    };
+
+    async function render(postId: string, images: Record<string, string>): Promise<Buffer> {
+      const outcome = await tool.execute(
+        {
+          ...base,
+          postId,
+          slides: [{ n: 1, template: "slide.html", fields: base.fields, images }],
+        },
+        ctx,
+      );
+      if (outcome.status !== "success") throw new Error(JSON.stringify(outcome));
+      return fs.readFile(outcome.result.rendered[0]!.path);
+    }
+
+    const withHero = await render("with-hero", { hero: path.relative(REPO_ROOT, imageAbsPath) });
+    const withoutHero = await render("without-hero", {});
+
+    expect(withHero.equals(withoutHero)).toBe(false);
+    // And the hero render is the bigger one: a full-bleed photograph compresses
+    // to more bytes than a flat background. Not a strict law of PNG, but with a
+    // solid colour against solid colour it is a real signal, and it fails in the
+    // right direction if the two ever drift apart for some other reason.
+    expect(withHero.byteLength).toBeGreaterThan(withoutHero.byteLength);
+  }, 60_000);
+
   it("produces a real, non-empty PNG for a slide WITH a hero image", async () => {
     outDir = await fs.mkdtemp(path.join(REPO_ROOT, ".tmp-render-test-"));
     // A minimal real 1x1 PNG, decodable by Chromium — not a fabricated/broken file.
