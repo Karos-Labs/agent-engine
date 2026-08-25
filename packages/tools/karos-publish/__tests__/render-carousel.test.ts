@@ -68,19 +68,19 @@ describe("validateRenderInputs (the three-way tooling/content/ok classification)
   });
 
   it("classifies a missing template file as TOOLING, not content", async () => {
-    const input = baseInput({ slides: [{ n: 1, template: "does-not-exist.html", fields: {}, images: {} }] });
+    const input = baseInput({ slides: [{ n: 1, template: "does-not-exist.html", fields: {}, images: {}, htmlFragments: {} }] });
     const result = await validateRenderInputs(input);
     expect(result).toMatchObject({ ok: false, kind: "tooling" });
   });
 
   it("classifies a missing image file as CONTENT, not tooling — a real content problem, not a renderer bug", async () => {
-    const input = baseInput({ slides: [{ n: 1, template: "slide.html", fields: {}, images: { hero: "images/missing.png" } }] });
+    const input = baseInput({ slides: [{ n: 1, template: "slide.html", fields: {}, images: { hero: "images/missing.png" }, htmlFragments: {} }] });
     const result = await validateRenderInputs(input);
     expect(result).toMatchObject({ ok: false, kind: "content" });
   });
 
   it("classifies an absolute image path as TOOLING, distinct from a merely-missing file", async () => {
-    const input = baseInput({ slides: [{ n: 1, template: "slide.html", fields: {}, images: { hero: "/etc/passwd" } }] });
+    const input = baseInput({ slides: [{ n: 1, template: "slide.html", fields: {}, images: { hero: "/etc/passwd" }, htmlFragments: {} }] });
     const result = await validateRenderInputs(input);
     expect(result).toMatchObject({ ok: false, kind: "tooling" });
   });
