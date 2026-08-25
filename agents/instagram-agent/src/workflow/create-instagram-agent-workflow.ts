@@ -785,7 +785,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     }
 
     /** Never prose — excluded from anything a human or the topic guardrail reads as text. */
-    const NON_PROSE_FIELD_KEYS = new Set(["accentColor"]);
+    const NON_PROSE_FIELD_KEYS = new Set(["accentColor", "dir"]);
 
     /**
      * Every slide's prose field values, joined — everything ON the carousel

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" dir="{{dir}}">
 <head>
 <meta charset="utf-8" />
 <title>instagram-agent quote_card slide template</title>
@@ -45,8 +45,9 @@
   html, body { width: 1080px; height: 1440px; }
   body { position: relative; overflow: hidden; background: var(--bg); color: var(--fg); font-family: var(--f-body); }
 
+  /* `inset-inline-end`, not `right` — see `stat-callout.html`'s note. */
   .eyebrow {
-    position: absolute; top: 56px; right: var(--mx); z-index: 4;
+    position: absolute; top: 56px; inset-inline-end: var(--mx); z-index: 4;
     font-family: var(--f-mono); font-weight: 500; font-size: 19px;
     letter-spacing: 0.2em; text-transform: uppercase; color: var(--accent);
   }

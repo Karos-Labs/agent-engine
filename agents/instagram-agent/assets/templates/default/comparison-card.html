@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" dir="{{dir}}">
 <head>
 <meta charset="utf-8" />
 <title>instagram-agent comparison_card slide template</title>
@@ -62,8 +62,9 @@
     padding: 0 var(--mx);
   }
 
+  /* `inset-inline-end`, not `right` — see `stat-callout.html`'s note. */
   .eyebrow {
-    position: absolute; top: 56px; right: var(--mx); z-index: 4;
+    position: absolute; top: 56px; inset-inline-end: var(--mx); z-index: 4;
     font-family: var(--f-mono); font-weight: 500; font-size: 19px;
     letter-spacing: 0.2em; text-transform: uppercase; color: var(--accent);
   }
@@ -84,10 +85,17 @@
     border: 1px solid var(--line); border-radius: 6px;
     background: var(--card); padding: 44px 40px;
   }
-  /* The "after" / recommended side. `.ab.win`'s treatment, scaled up to a card. */
+  /* The "after" / recommended side. `.ab.win`'s treatment, scaled up to a card.
+     It is always the SECOND `.cmp-row` child in markup order, never pinned to
+     a physical side: `flex-direction: row` lays its children out along the
+     inline-end direction, so `dir="{{dir}}"` alone moves it to the visually
+     opposite corner for RTL without any flex/order override here. The
+     marker's own corner uses `inset-inline-end` for the same reason — "the
+     outward corner, away from the other card" is a directional description,
+     not a physical `right`. */
   .cmp-col.win { border-color: var(--accent); position: relative; }
   .cmp-col.win::after {
-    content: ""; position: absolute; top: -7px; right: -7px;
+    content: ""; position: absolute; top: -7px; inset-inline-end: -7px;
     width: 14px; height: 14px; background: var(--accent); transform: rotate(45deg);
   }
   .cmp-label {

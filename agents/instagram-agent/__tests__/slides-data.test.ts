@@ -110,6 +110,82 @@ describe("assembleSlidesData: per-slide layout routing", () => {
     expect(data.slides[0]!.fields["headline"]).toBe("headline 1");
     expect(data.slides[1]!.fields["headline"]).toBe("headline 2");
   });
+
+  it("marks every slide's fields dir: 'rtl' for a Hebrew carousel, regardless of each slide's archetype", () => {
+    // Prep job 9qkTWlg7e9ZLiVIZUok4: a Hebrew brand-voice client whose
+    // carousel rendered left-to-right because no template ever knew the
+    // post's language. One shared direction is computed from the whole
+    // carousel's own text (`detectDirection`), then threaded onto every
+    // slide's `fields`, across every archetype branch of `contentFor`.
+    const hebrewCopy = {
+      caption: "מדריך שיווק קצר לכל מי שרוצה לצמוח ברשתות החברתיות בעולם",
+      slides: [
+        {
+          n: 1,
+          headline: "כותרת ראשית בעברית",
+          body: "גוף הטקסט של השקופית הראשונה, כתוב לחלוטין בעברית.",
+          visualNeed: "need 1",
+          sourceRef: "claim 1",
+          layout: "photo" as const,
+        },
+        {
+          n: 2,
+          headline: "עדיין לא רלוונטי",
+          body: "עדיין לא רלוונטי",
+          visualNeed: "need 2",
+          sourceRef: "claim 2",
+          layout: "quote_card" as const,
+          quote: { text: "אנחנו רואים את זה כל הזמן.", attribution: "מנכ״ל, 2026" },
+        },
+        {
+          n: 3,
+          headline: "עדיין לא רלוונטי",
+          body: "עדיין לא רלוונטי",
+          visualNeed: "need 3",
+          sourceRef: "claim 3",
+          layout: "stat_callout" as const,
+          stat: { figure: "73%", subLabel: "תת כותרת", source: "מקור" },
+        },
+      ],
+    };
+
+    const data = assembleSlidesData({
+      clientSlug: "acme",
+      postId: "post_1",
+      repoRoot: "/repo",
+      brandTokens: { templateDir: "fixtures/templates", slideTemplate: "slide.html" },
+      copy: hebrewCopy,
+      selections: [
+        { n: 1, imagePath: "photos/n1.jpg", reason: "matches", license: "CC0", rightsUsable: true, watermarkFree: true },
+        { n: 2, imagePath: null, reason: "n/a", license: "n/a", rightsUsable: false, watermarkFree: false },
+        { n: 3, imagePath: null, reason: "n/a", license: "n/a", rightsUsable: false, watermarkFree: false },
+      ],
+      canvas: CANVAS,
+    });
+
+    for (const slide of data.slides) {
+      expect(slide.fields["dir"]).toBe("rtl");
+    }
+  });
+
+  it("marks every slide's fields dir: 'ltr' for an English carousel", () => {
+    const copy = copyWith([{ n: 1, layout: "photo" }]);
+    const selections: ImageSelection[] = [
+      { n: 1, imagePath: "photos/n1.jpg", reason: "matches", license: "CC0", rightsUsable: true, watermarkFree: true },
+    ];
+
+    const data = assembleSlidesData({
+      clientSlug: "acme",
+      postId: "post_1",
+      repoRoot: "/repo",
+      brandTokens: { templateDir: "fixtures/templates", slideTemplate: "slide.html" },
+      copy,
+      selections,
+      canvas: CANVAS,
+    });
+
+    expect(data.slides[0]!.fields["dir"]).toBe("ltr");
+  });
 });
 
 /** The ported legacy archetype set: selection, per-archetype fields, and graceful degradation. */

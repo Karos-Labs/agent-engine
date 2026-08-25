@@ -37,6 +37,52 @@ function templateForLayout(layout: InstagramSlideLayout, clientTemplate: string)
 export const ARCHETYPE_TEMPLATE_FILES: readonly string[] = Object.values(LAYOUT_TEMPLATE_FILES);
 
 /**
+ * Hebrew, Arabic, and their presentation-form/extended Unicode blocks — the
+ * RTL scripts a client's copy has actually shown up in (prep job
+ * `9qkTWlg7e9ZLiVIZUok4`: a Hebrew brand-voice client whose carousel rendered
+ * left-to-right). Every template is LTR by default and `{{dir}}` only ever
+ * adds `dir="rtl"`, never overrides to `dir="ltr"` explicitly, so detection
+ * only has to answer "is this RTL", not classify every script by name.
+ */
+const RTL_SCRIPT = /[\p{Script=Hebrew}\p{Script=Arabic}]/gu;
+const LATIN_LETTER = /[A-Za-z]/g;
+
+/**
+ * The carousel's language is whatever the copy model actually wrote, not a
+ * client-config field nobody threads through here — the same reasoning
+ * `buildClientVoiceContext`'s "write entirely in that language" prompt rule
+ * rests on. Counting characters rather than testing "contains any RTL
+ * character at all" avoids a false positive from one Hebrew brand name or
+ * hashtag sitting inside an otherwise-English post.
+ */
+function detectDirection(text: string): "rtl" | "ltr" {
+  const rtl = text.match(RTL_SCRIPT)?.length ?? 0;
+  const latin = text.match(LATIN_LETTER)?.length ?? 0;
+  return rtl > latin ? "rtl" : "ltr";
+}
+
+/** Every user-visible string a slide can carry, across every archetype — the corpus `detectDirection` reads. */
+function collectSlideText(slide: InstagramSlideCopy): string {
+  return [
+    slide.headline,
+    slide.body,
+    slide.kicker,
+    slide.quote?.text,
+    slide.quote?.attribution,
+    slide.stat?.figure,
+    slide.stat?.subLabel,
+    slide.stat?.source,
+    slide.comparison?.leftLabel,
+    slide.comparison?.leftBody,
+    slide.comparison?.rightLabel,
+    slide.comparison?.rightBody,
+    ...(slide.items?.flatMap((item) => [item.title, item.note]) ?? []),
+  ]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+}
+
+/**
  * Escapes a value for interpolation into a `{{html:...}}` fragment.
  *
  * Mirrors `escapeHtmlText` in `karos-publish` rather than importing it, so
@@ -164,17 +210,19 @@ export function resolveLayout(
 /**
  * The `fields`/`htmlFragments` pair one archetype needs.
  *
- * Every archetype gets `accentColor` and `kicker`; the rest is per-archetype.
- * A template asking for a slot this returns nothing for renders it as empty
- * (`fillTemplate` strips unfilled slots), which is why the optional lines —
- * a stat's source, a headline's kicker — need no conditional here.
+ * Every archetype gets `accentColor`, `dir`, and `kicker`; the rest is
+ * per-archetype. A template asking for a slot this returns nothing for
+ * renders it as empty (`fillTemplate` strips unfilled slots), which is why
+ * the optional lines — a stat's source, a headline's kicker — need no
+ * conditional here.
  */
 function contentFor(
   layout: InstagramSlideLayout,
   slide: InstagramSlideCopy,
   accentColor: string,
+  dir: "rtl" | "ltr",
 ): { fields: Record<string, string>; htmlFragments: Record<string, string> } {
-  const base: Record<string, string> = { accentColor, ...(slide.kicker ? { kicker: slide.kicker } : {}) };
+  const base: Record<string, string> = { accentColor, dir, ...(slide.kicker ? { kicker: slide.kicker } : {}) };
 
   switch (layout) {
     case "stat_callout":
@@ -350,6 +398,14 @@ export function assembleSlidesData(params: {
   // put next to one), so wiring it through would have nothing real to attach to.
   const accentColor = params.brandTokens.accentColor ?? "#C4552F";
 
+  // One direction for the whole carousel, not per slide — a post is written
+  // in one language, and a stat figure or kicker (short, often just digits or
+  // a brand name) is too thin a sample on its own to call reliably. See
+  // `detectDirection`'s own doc comment for why this reads the copy itself
+  // rather than a client-config field (prep job hcf9ymPGJC7mDS5pcEQ4: a
+  // Hebrew-brand-voice client's carousel that rendered left-to-right).
+  const direction = detectDirection([params.copy.caption, ...params.copy.slides.map(collectSlideText)].join(" "));
+
   // Tracks which structured archetypes an earlier slide already claimed, in
   // carousel order, so a repeat degrades to `text_only` instead of shipping
   // two slides in the same fixed layout — see `resolveLayout`'s own doc
@@ -359,7 +415,7 @@ export function assembleSlidesData(params: {
     const selection = selectionByN.get(slide.n);
     const { layout } = resolveLayout(slide, params.availableTemplates, usedLayouts);
     if (layout !== "photo" && layout !== "text_only") usedLayouts.add(layout);
-    const { fields, htmlFragments } = contentFor(layout, slide, accentColor);
+    const { fields, htmlFragments } = contentFor(layout, slide, accentColor, direction);
     // Only `photo` consumes a hero image. Every other archetype is typographic
     // by design, so attaching one would either be ignored by its template or —
     // worse, for a template that did grow a background slot later — quietly

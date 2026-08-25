@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" dir="{{dir}}">
 <head>
 <meta charset="utf-8" />
 <title>instagram-agent stat_callout slide template</title>
@@ -65,8 +65,12 @@
     padding: 0 var(--mx);
   }
 
+  /* `inset-inline-end`, not `right` — this corner is defined relative to
+     reading direction (the far corner from where the eye starts), so it has
+     to flip along with `dir="{{dir}}"` rather than stay pinned to the right
+     for a client whose posts are RTL. */
   .eyebrow {
-    position: absolute; top: 56px; right: var(--mx); z-index: 4;
+    position: absolute; top: 56px; inset-inline-end: var(--mx); z-index: 4;
     font-family: var(--f-mono); font-weight: 500; font-size: 19px;
     letter-spacing: 0.2em; text-transform: uppercase; color: var(--accent);
   }
