@@ -313,6 +313,19 @@ export type InstagramSlideCopy = z.infer<typeof InstagramSlideCopySchema>;
 /** `InstagramCopyAgent`'s output — six to eight slides (RFC-03 §3 step 05), enforced directly in the schema. */
 export const InstagramCopyOutputSchema = z.object({
   slides: z.array(InstagramSlideCopySchema).min(6).max(8),
+  /**
+   * The post's own caption — the text Instagram shows below the carousel,
+   * separate from anything baked into the slide images themselves.
+   *
+   * Every slide always had `headline`/`body`, and until 2026-08 that was
+   * mistaken for "the post has text": a reviewer approving in the portal saw
+   * either nothing (the gate payload carried no caption at all) or a raw dump
+   * of every slide's field values including `accentColor`'s hex code — never
+   * a real caption a human wrote to accompany the images. Required, because
+   * an Instagram carousel with no caption is exactly the defect this field
+   * exists to close.
+   */
+  caption: z.string().min(1),
 });
 export type InstagramCopyOutput = z.infer<typeof InstagramCopyOutputSchema>;
 

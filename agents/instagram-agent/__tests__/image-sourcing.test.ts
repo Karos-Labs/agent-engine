@@ -545,6 +545,7 @@ describe("archetype-aware sourcing", () => {
     const base = goodCopyOutput();
     // Slides 2 and 4 become typographic; the rest stay photo.
     const copy = {
+      ...base,
       slides: base.slides.map((s) =>
         s.n === 2
           ? { ...s, layout: "stat_callout" as const, stat: { figure: "73%", subLabel: "of teams", source: "Acme, 2026" } }

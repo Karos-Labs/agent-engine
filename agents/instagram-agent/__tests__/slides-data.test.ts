@@ -24,6 +24,7 @@ const CANVAS = { w: 1080, h: 1440, scale: 2, slides_min: 6, slides_max: 8 };
 
 function copyWith(overrides: Partial<InstagramCopyOutput["slides"][number]>[]): InstagramCopyOutput {
   return {
+    caption: "A short caption for the fixture carousel.",
     slides: overrides.map((o, i) => ({
       n: i + 1,
       headline: `headline ${i + 1}`,
@@ -221,6 +222,34 @@ describe("archetype layouts (legacy port)", () => {
     expect(resolveLayout(s).layout).toBe("text_only");
   });
 
+  // A real prep run (2VFCw79Wu8xfJOKXC7zP) shipped two `stat_callout`s and two
+  // `comparison_card`s in one 8-slide carousel — each structured archetype has
+  // one fixed visual template, so a repeat reads as the same slide shown
+  // twice, not two designed slides. A prompt rule alone ("aim for a mix")
+  // already asked for this and did not hold, so it degrades mechanically now.
+  it("downgrades the SECOND slide to claim a structured archetype, keeping the first", () => {
+    const first = slide({ n: 1, layout: "stat_callout", stat: { figure: "73%", subLabel: "of teams", source: "Acme, 2026" } });
+    const second = slide({ n: 2, layout: "stat_callout", stat: { figure: "4.2x", subLabel: "faster", source: "Acme, 2026" } });
+    const data = assemble({ slides: [first, second] } as InstagramCopyOutput);
+    expect(data.slides[0]!.template).toBe("stat-callout.html");
+    expect(data.slides[1]!.template).toBe("slide.html");
+    expect(data.slides[1]!.fields).toMatchObject({ headline: "A headline", body: "Some body copy." });
+  });
+
+  it("does not cross-penalize different structured archetypes, only a repeat of the same one", () => {
+    const stat = slide({ n: 1, layout: "stat_callout", stat: { figure: "73%", subLabel: "of teams", source: "Acme, 2026" } });
+    const quote = slide({ n: 2, layout: "quote_card", quote: { text: "Ship it.", attribution: "A lead, 2026" } });
+    const data = assemble({ slides: [stat, quote] } as InstagramCopyOutput);
+    expect(data.slides[0]!.template).toBe("stat-callout.html");
+    expect(data.slides[1]!.template).toBe("quote-card.html");
+  });
+
+  it("never penalizes repeated photo or text_only slides — those are the normal carousel rhythm", () => {
+    const photos = [slide({ n: 1, layout: "photo" }), slide({ n: 2, layout: "photo" }), slide({ n: 3, layout: "text_only" }), slide({ n: 4, layout: "text_only" })];
+    const data = assemble({ slides: photos } as InstagramCopyOutput);
+    expect(data.slides.map((s) => s.template)).toEqual(["slide.html", "slide.html", "slide.html", "slide.html"]);
+  });
+
   it("attaches a hero image only to a photo slide, never to a typographic archetype", () => {
     const selections: ImageSelection[] = [
       { n: 1, imagePath: "photos/n1.jpg", reason: "matches", license: "CC0", rightsUsable: true, watermarkFree: true },
@@ -344,6 +373,7 @@ describe("template registry integration (Approach a)", () => {
 
     const base = goodCopyOutput();
     const copy = {
+      ...base,
       slides: base.slides.map((s) =>
         s.n === 2 ? { ...s, layout: "quote_card" as const, quote: { text: "Ship it.", attribution: "A lead, 2026" } } : s,
       ),

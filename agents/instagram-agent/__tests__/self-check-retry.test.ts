@@ -23,6 +23,7 @@ const params = { runId: "instagram_run_selfcheck", clientSlug: "acme", productId
 function copyOutputWithBannedWord(): InstagramCopyOutput {
   const copy = goodCopyOutput();
   return {
+    ...copy,
     slides: copy.slides.map((s, i) => (i === 0 ? { ...s, body: `${s.body} This is guaranteed to help your team.` } : s)),
   };
 }

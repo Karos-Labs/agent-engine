@@ -61,6 +61,16 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyOutput> {
     // list is NOT a photo, and writing it as a photo brief is what sent prep
     // run pubsub-21545408480430711's four data slides through retrieval,
     // scrape and into generation. v4 stays frozen.
-    skillRef: "instagram-copy@5",
+    // Pinned to "6": v6 adds a required `caption` (the post's own text below
+    // the carousel, distinct from any slide's baked-in headline/body) — until
+    // it, the schema had no such field at all, so a reviewer approving a post
+    // saw either nothing or a raw join of every slide's field values including
+    // `accentColor`'s hex code (prep run 2VFCw79Wu8xfJOKXC7zP). v6 also
+    // upgrades the archetype-variety guidance from a soft "aim for a mix" to
+    // an explicit one-per-carousel rule for the five structured archetypes,
+    // matched by a mechanical downgrade in `resolveLayout` — the same run
+    // shipped two `stat_callout`s and two `comparison_card`s in one post. v5
+    // stays frozen.
+    skillRef: "instagram-copy@6",
   };
 }

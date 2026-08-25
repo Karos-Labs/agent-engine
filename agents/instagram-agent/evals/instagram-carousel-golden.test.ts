@@ -28,6 +28,7 @@ describe("Instagram agent golden runs — deterministic assertions (RFC-01 §12)
     const regressed = {
       ...goldenRun,
       endorsedCopy: {
+        ...goldenRun.endorsedCopy,
         slides: goldenRun.endorsedCopy.slides.map((s, i) => (i === 0 ? { ...s, sourceRef: "a claim that was never in the research facts" } : s)),
       },
     };
@@ -42,6 +43,7 @@ describe("Instagram agent golden runs — deterministic assertions (RFC-01 §12)
     const regressed = {
       ...goldenRun,
       endorsedCopy: {
+        ...goldenRun.endorsedCopy,
         slides: goldenRun.endorsedCopy.slides.map((s, i) => (i === 0 ? { ...s, body: `${s.body} This is guaranteed to work.` } : s)),
       },
     };

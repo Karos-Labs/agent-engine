@@ -111,6 +111,22 @@ export function resolveLayout(
    * same guaranteed-delivery rule the rest of this pipeline follows.
    */
   availableTemplates?: ReadonlySet<string>,
+  /**
+   * Which structured archetypes an earlier slide in THIS carousel already
+   * used. `stat_callout`/`quote_card`/`comparison_card`/`list_takeaway`/
+   * `headline_focus` each has one fixed visual template — a second slide in
+   * the same carousel choosing one reads as the same slide shown twice, not
+   * two designed slides (a real prep run shipped two `stat_callout`s and two
+   * `comparison_card`s in one 8-slide post). `photo`/`text_only` are
+   * exempt: several photo slides, or several quiet typographic ones, are
+   * the normal, expected case, not a repeated design.
+   *
+   * A prompt rule alone ("aim for a mix") already asked for this and did not
+   * hold, so this degrades the REPEAT rather than holding or re-drafting —
+   * the same "downgrade, never hold" rule `06f`/`07a` already apply to a
+   * missing image, applied here to a repeated layout instead.
+   */
+  usedLayouts?: ReadonlySet<InstagramSlideLayout>,
 ): { layout: InstagramSlideLayout; downgradedFrom?: string } {
   const missing = (what: string) => ({ layout: "text_only" as const, downgradedFrom: `${slide.layout} (no ${what} supplied)` });
 
@@ -121,6 +137,10 @@ export function resolveLayout(
     if (!availableTemplates.has(file)) {
       return { layout: "text_only", downgradedFrom: `${slide.layout} (this client's templateDir has no ${file})` };
     }
+  }
+
+  if (slide.layout !== "photo" && slide.layout !== "text_only" && usedLayouts?.has(slide.layout)) {
+    return { layout: "text_only", downgradedFrom: `${slide.layout} (already used earlier in this carousel)` };
   }
 
   switch (slide.layout) {
@@ -330,9 +350,15 @@ export function assembleSlidesData(params: {
   // put next to one), so wiring it through would have nothing real to attach to.
   const accentColor = params.brandTokens.accentColor ?? "#C4552F";
 
+  // Tracks which structured archetypes an earlier slide already claimed, in
+  // carousel order, so a repeat degrades to `text_only` instead of shipping
+  // two slides in the same fixed layout — see `resolveLayout`'s own doc
+  // comment on `usedLayouts`.
+  const usedLayouts = new Set<InstagramSlideLayout>();
   const slides: Slide[] = params.copy.slides.map((slide) => {
     const selection = selectionByN.get(slide.n);
-    const { layout } = resolveLayout(slide, params.availableTemplates);
+    const { layout } = resolveLayout(slide, params.availableTemplates, usedLayouts);
+    if (layout !== "photo" && layout !== "text_only") usedLayouts.add(layout);
     const { fields, htmlFragments } = contentFor(layout, slide, accentColor);
     // Only `photo` consumes a hero image. Every other archetype is typographic
     // by design, so attaching one would either be ignored by its template or —

@@ -52,7 +52,7 @@ describe("revision loop", () => {
 
   it("re-drafts with the reviewer's feedback injected, then delivers on approval", async () => {
     const first = goodCopyOutput();
-    const revised = { slides: first.slides.map((s) => ({ ...s, headline: `${s.headline} (revised)` })) };
+    const revised = { ...first, slides: first.slides.map((s) => ({ ...s, headline: `${s.headline} (revised)` })) };
 
     // Two full drafting passes queued: the original and the revision.
     const router = fakeRouterSequence([finalTurn(goodResearchOutput()), ...draftTurns(first), ...draftTurns(revised)]);
@@ -240,6 +240,7 @@ describe("revision loop", () => {
 
     const first = goodCopyOutput();
     const copy = {
+      ...first,
       slides: first.slides.map((s) =>
         s.n === 2 ? { ...s, layout: "quote_card" as const, quote: { text: "Ship it.", attribution: "A lead" } } : s,
       ),

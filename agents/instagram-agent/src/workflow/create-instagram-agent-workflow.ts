@@ -709,14 +709,25 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       rendered: RenderCarouselResult;
     }
 
+    /** Never prose — excluded from anything a human or the topic guardrail reads as text. */
+    const NON_PROSE_FIELD_KEYS = new Set(["accentColor"]);
+
     /**
-     * Every slide's field values, joined into one block a human can actually
-     * read — "the text of the post" for a reviewer, and the exact input the
-     * topic guardrail judges. One definition so both call sites see the same
-     * string rather than quietly drifting apart over time.
+     * Every slide's prose field values, joined — everything ON the carousel
+     * images, for the topic guardrail's coverage (it must see the whole post,
+     * not only the caption below). `accentColor` is a hex string, never prose;
+     * excluding it is what stopped it leaking into a reviewer's "preview" back
+     * when this was the only text a reviewer saw at all.
      */
     const slidesTextFor = (draft: DraftResult): string =>
-      draft.slidesData.slides.map((slide) => Object.values(slide.fields ?? {}).join(" ")).join("\n\n");
+      draft.slidesData.slides
+        .map((slide) =>
+          Object.entries(slide.fields ?? {})
+            .filter(([key]) => !NON_PROSE_FIELD_KEYS.has(key))
+            .map(([, value]) => value)
+            .join(" "),
+        )
+        .join("\n\n");
 
     /**
      * One full drafting pass: copy, images, self-checks, render, visual QA.
@@ -1318,11 +1329,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         const draft = await draftOnce(revision, notes);
         // The terminal topic guardrail runs on the copy that is about to be
         // shown to a human, so a revision's new copy is checked too rather
-        // than only the first draft's.
+        // than only the first draft's. Checks the caption AND every slide's
+        // own text, since a forbidden subject could surface in either.
         await runTopicGuardrail(
           wf,
           { tools, promptStore: options.promptStore, router: options.router },
-          slidesTextFor(draft),
+          `${draft.copy.caption}\n\n${slidesTextFor(draft)}`,
           frozen.forbiddenTopics,
           revision === 0 ? undefined : `-r${revision}`,
         );
@@ -1337,12 +1349,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           slideCount: draft.slidesData.slides.length,
           renderedCount: draft.rendered.rendered.length,
           revision,
-          // The actual thing being approved. Every other channel's gate
-          // payload has carried its drafted text as `preview` since the
-          // review panel existed — a carousel never did, so a reviewer saw a
-          // step count and nothing else. Byte-identical to what the topic
-          // guardrail above just cleared (same helper, same input).
-          preview: slidesTextFor(draft),
+          // The actual caption a reviewer approves alongside the images —
+          // every other channel's gate payload has carried its drafted text
+          // as `preview` since the review panel existed; a carousel's own
+          // `preview` used to be a raw join of every slide's field values
+          // (including `accentColor`'s hex code) because no real caption
+          // existed yet to show instead.
+          preview: draft.copy.caption,
           // The rendered PNGs, in slide order — `path` is a signed https URL
           // when the runtime could sign one (`GcsArtifactStore.upload`'s own
           // fallback rule), a bare `gs://` URI otherwise, which the review
@@ -1373,6 +1386,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
 
     const slidesData = review.output.slidesData;
     const rendered = review.output.rendered;
+    const caption = review.output.copy.caption;
 
     // ── 09b: deliver + log — the count invariant is real and checked, not just documented ──
     const deliverableId = await wf.step.code("09b-deliver-and-log", async () => {
@@ -1393,6 +1407,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           deliverable: {
             postId: runClaim.postId,
             topic: topicClaim.topic,
+            caption,
             slides: slidesData.slides,
             rendered: rendered.rendered,
           },

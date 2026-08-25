@@ -28,6 +28,7 @@ function testTools(env: TestEnvironment): AgentToolRegistry {
 function copyWith(overrideBody: string, slideIndex = 0): InstagramCopyOutput {
   const copy = goodCopyOutput();
   return {
+    ...copy,
     slides: copy.slides.map((s, i) => (i === slideIndex ? { ...s, body: overrideBody } : s)),
   };
 }
