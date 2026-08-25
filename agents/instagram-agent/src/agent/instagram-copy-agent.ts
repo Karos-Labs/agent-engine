@@ -71,6 +71,14 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyOutput> {
     // matched by a mechanical downgrade in `resolveLayout` — the same run
     // shipped two `stat_callout`s and two `comparison_card`s in one post. v5
     // stays frozen.
-    skillRef: "instagram-copy@6",
+    // Pinned to "7": v7 adds §1, a check for the client's own stated
+    // language before anything else is written. Nothing before it ever read
+    // the client's profile/voice-rules for a language requirement at all —
+    // the workflow itself never even called those tools — so an outlet that
+    // states its own language in plain prose (Geektime: "Israel's largest
+    // Hebrew-language technology... site") got a fluent, well-sourced,
+    // entirely English carousel with every other check passing (prep job
+    // hcf9ymPGJC7mDS5pcEQ4). v6 stays frozen.
+    skillRef: "instagram-copy@7",
   };
 }

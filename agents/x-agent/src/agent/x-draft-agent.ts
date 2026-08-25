@@ -90,7 +90,15 @@ export class XDraftAgent extends BaseAgent<XPostOutput> {
     // Pinned — RFC-02 §3: claude-sonnet-4-6 today, claude-sonnet-5 is an
     // equally acceptable pin once available; never a fallback for a pinned step.
     modelPolicy: resolveModelPolicy("x-draft", { policy: "pinned", model: "claude-sonnet-4-6" }),
-    skillRef: "x-craft@2",
+    // Pinned to "3": v3 adds a language check to §3 (Voice) against
+    // `clientVoiceContext` (the client's own profile description +
+    // voice-rules guidelines) — nothing before it ever forwarded `profile`
+    // to this prompt at all, so an outlet that states its own language in
+    // plain prose (Geektime: "Israel's largest Hebrew-language technology...
+    // site") got a fluent English post regardless of channel (prep job
+    // hcf9ymPGJC7mDS5pcEQ4, traced on instagram-agent but structural across
+    // every channel). v2 stays frozen.
+    skillRef: "x-craft@3",
     selfCritique: {
       gateTool: "gate.lintPost",
       maxRevisions: 1,

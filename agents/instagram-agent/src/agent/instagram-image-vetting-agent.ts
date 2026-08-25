@@ -52,6 +52,17 @@ export class InstagramImageVettingAgent extends BaseAgent<ImageVettingOutput> {
     // suggested for this step, so this stays consistent with the other six
     // agents' established convention rather than introducing the first one.
     modelPolicy: resolveModelPolicy("instagram-image-vet", { policy: "pinned", model: "claude-sonnet-4-6" }),
-    skillRef: "instagram-image-vet@1",
+    // Pinned to "2": v1 judged every clause of `visualNeed` as an equal hard
+    // gate, so a candidate genuinely on-subject was rejected outright over a
+    // single decorative mismatch (shot outdoors instead of the requested
+    // "warm indoor light"; smiling instead of "concerned") — retrieval had
+    // already found reasonable candidates, and v1's literalism threw them
+    // away (prep run pubsub-21548537245422013, job 2VFCw79Wu8xfJOKXC7zP:
+    // both of that carousel's photo slides rejected every candidate and fell
+    // through to generation). v2 adds a CENTRAL-vs-DECORATIVE judgment call:
+    // reject on a subject mismatch or a real contradiction of the slide's
+    // claim, not on an atmosphere/expression/framing detail that doesn't
+    // change what the slide is actually saying. v1 stays frozen.
+    skillRef: "instagram-image-vet@2",
   };
 }

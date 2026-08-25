@@ -57,7 +57,17 @@ export class BlogDraftAgent extends BaseAgent<BlogPostOutput> {
     // Pinned — RFC-02 §5: claude-sonnet-4-6 today, claude-sonnet-5 is an
     // equally acceptable pin once available; never a fallback for a pinned step.
     modelPolicy: resolveModelPolicy("blog-draft", { policy: "pinned", model: "claude-sonnet-4-6" }),
-    skillRef: "blog-craft@1",
+    // Pinned to "2": v2 adds a language check to §2 (Voice) against
+    // `clientVoiceContext` (the client's own profile description +
+    // voice-rules guidelines) — nothing before it ever forwarded `profile`
+    // to this prompt at all, so an outlet that states its own language in
+    // plain prose (Geektime: "Israel's largest Hebrew-language technology...
+    // site") got a fluent English article regardless of channel (prep job
+    // hcf9ymPGJC7mDS5pcEQ4, traced on instagram-agent but structural across
+    // every channel). Cut from 1.md, not from latest.md — latest.md carries
+    // a separate, still-uncommitted GEO/FAQ section this change does not
+    // touch and must not overwrite. v1 stays frozen.
+    skillRef: "blog-craft@2",
     selfCritique: { gateTool: "gate.lintPost", maxRevisions: 1, gateArgs: { platform: "blog" } },
   };
 }

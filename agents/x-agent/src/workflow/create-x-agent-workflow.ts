@@ -1,5 +1,5 @@
 import { readForbiddenTopics, type AgentContext, type AgentToolRegistry, type GateResponse, type GateVerdict, type ModelRouter, type PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField } from "@agent-engine/workflow";
+import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField, buildClientVoiceContext } from "@agent-engine/workflow";
 import { XDraftAgent, type Lane } from "../agent/x-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
 import { renderXDraftsMarkdown } from "./render-drafts-markdown.js";
@@ -310,6 +310,7 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       const rev = (id: string) => (revision === 0 ? id : `${id}-r${revision}`);
       const directive = revisionDirective(notes);
 
+    const clientVoiceContext = buildClientVoiceContext(clientContext.profile, clientContext.voiceRules);
     const draftResult = await wf.step.agent(rev("10-draft-post"), draftAgent, {
       ...runDirectionField(runDirection),
       topic: selected.topic,
@@ -318,6 +319,10 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       angle: laneSelection.angle,
       targetHandle: intake.xHandle,
       voiceRules: clientContext.voiceRules,
+      // The client's own profile description + voice-rules guidelines,
+      // verbatim — this is where a language requirement like Geektime's
+      // "Hebrew-language technology site" actually lives.
+      ...(clientVoiceContext !== undefined ? { clientVoiceContext } : {}),
       // Omitted rather than passed as null when absent: an explicit
       // "accountCharter: null" in the payload invites the model to remark on
       // its absence instead of simply working without one.

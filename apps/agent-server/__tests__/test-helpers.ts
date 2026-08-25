@@ -187,18 +187,25 @@ export function goodCampaignPlan() {
 /** All six agents' craft prompts, seeded with short placeholder content — this is a server-wiring test, not a prompt-resolution test, so the real markdown files' exact text doesn't matter, only that every promptId the six workflows resolve is registered. */
 export function makeSharedPromptStore(): InMemoryPromptStore {
   const store = new InMemoryPromptStore();
-  // x-craft, linkedin-craft, and reddit-craft were bumped to @2 in Phase 2.5
-  // (lane restoration / archetype restoration / reply-only model) -- both
-  // versions are registered so this wiring test doesn't care which one a
-  // given agent's pinned skillRef resolves.
+  // Every numbered version any agent here has ever pinned to is registered,
+  // so this wiring test doesn't care which one a given agent's pinned
+  // skillRef resolves -- x-craft/linkedin-craft/reddit-craft bumped to @2 in
+  // Phase 2.5 (lane restoration / archetype restoration / reply-only model),
+  // then all five bumped again (x/linkedin/reddit to @3, blog/newsletter to
+  // @2) for the client-language check added against `clientVoiceContext`.
   store.setPrompt("x-craft", "1", "X craft guidance.");
   store.setPrompt("x-craft", "2", "X craft guidance.");
+  store.setPrompt("x-craft", "3", "X craft guidance.");
   store.setPrompt("linkedin-craft", "1", "LinkedIn craft guidance.");
   store.setPrompt("linkedin-craft", "2", "LinkedIn craft guidance.");
+  store.setPrompt("linkedin-craft", "3", "LinkedIn craft guidance.");
   store.setPrompt("reddit-craft", "1", "Reddit craft guidance.");
   store.setPrompt("reddit-craft", "2", "Reddit craft guidance.");
+  store.setPrompt("reddit-craft", "3", "Reddit craft guidance.");
   store.setPrompt("blog-craft", "1", "Blog craft guidance.");
+  store.setPrompt("blog-craft", "2", "Blog craft guidance.");
   store.setPrompt("newsletter-craft", "1", "Newsletter craft guidance.");
+  store.setPrompt("newsletter-craft", "2", "Newsletter craft guidance.");
   store.setPrompt("campaign-craft", "1", "Campaign strategy guidance.");
   return store;
 }

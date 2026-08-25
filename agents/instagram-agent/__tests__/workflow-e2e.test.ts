@@ -26,6 +26,10 @@ const HAPPY_PATH_STEP_IDS = [
   "00-auto-setup",
   "01-open-run",
   "02-freeze-style-config",
+  // The client's own profile description + voice-rules guidelines,
+  // best-effort — this is where a language requirement like Geektime's
+  // "Hebrew-language technology site" actually lives.
+  "02b-load-client-voice-context",
   "03-claim-topic",
   "04a-research-pull",
   "04b-research-extract-facts",
@@ -132,6 +136,76 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
       expect(stat.isFile()).toBe(true);
       expect(stat.size).toBeGreaterThan(0);
     }
+  }, 60000);
+
+  // Regression test for prep job hcf9ymPGJC7mDS5pcEQ4 (client Geektime,
+  // "Israel's largest Hebrew-language technology... site"): the workflow
+  // never called client.getProfile/getVoiceRules at all, so no language
+  // signal from either ever reached the copy-writing prompt and the post
+  // shipped in English regardless of what the client's own profile said.
+  it("reads the client's profile description and voice-rules guidelines, and forwards them to the copy step", async () => {
+    await env.store.writeJson("acme", ["client", "profile"], {
+      name: "Acme",
+      description: "Acme covers enterprise software for a Spanish-speaking audience and publishes exclusively in Spanish.",
+    });
+    await env.store.writeJson("acme", ["client", "voice-rules"], {
+      guidelines: "Direct, no corporate jargon.",
+    });
+
+    const promptStore = makePromptStore();
+    const router = happyRouter();
+    const workflowFn = createInstagramAgentWorkflow({
+      tools: testTools(env),
+      promptStore,
+      router,
+      repoRoot: env.repoRoot,
+      imageCandidatePool: goodImageCandidatePool(),
+      autoApprove: true,
+    });
+
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+    const result = await engine.run(workflowFn, params);
+    expect(result.status).toBe("completed");
+
+    const stepRecords = await durableStore.listSteps(params.runId);
+    const voiceContextStep = stepRecords.find((s) => s.stepId === "02b-load-client-voice-context");
+    expect(voiceContextStep?.output).toContain("publishes exclusively in Spanish");
+    expect(voiceContextStep?.output).toContain("Direct, no corporate jargon.");
+
+    // The copy-writing model call actually received it, not just the step
+    // that read it — a plumbing gap between the two would look identical
+    // from the step record alone.
+    const copyCallArgs = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[1]!;
+    const serializedInput = JSON.stringify(copyCallArgs);
+    expect(serializedInput).toContain("publishes exclusively in Spanish");
+  }, 60000);
+
+  it("completes normally when the client has no profile or voice rules set up yet — best-effort, never blocking", async () => {
+    // Neither client/profile nor client/voice-rules exists in this env
+    // (setupTestEnvironment's withConfig only seeds instagramStyleConfig/
+    // instagramBrandTokens) — the step must degrade to no context, not fail.
+    const promptStore = makePromptStore();
+    const router = happyRouter();
+    const workflowFn = createInstagramAgentWorkflow({
+      tools: testTools(env),
+      promptStore,
+      router,
+      repoRoot: env.repoRoot,
+      imageCandidatePool: goodImageCandidatePool(),
+      autoApprove: true,
+    });
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+    const result = await engine.run(workflowFn, params);
+    expect(result.status).toBe("completed");
+
+    const stepRecords = await durableStore.listSteps(params.runId);
+    const voiceContextStep = stepRecords.find((s) => s.stepId === "02b-load-client-voice-context");
+    expect(voiceContextStep?.status).toBe("completed");
+    // `undefined` round-trips through the durable step store as `null` — the
+    // step ran and found nothing, which is the correct, non-blocking outcome.
+    expect(voiceContextStep?.output ?? undefined).toBeUndefined();
   }, 60000);
 
   it("pauses at the human batch-review gate by default, then resumes to completed on approval", async () => {

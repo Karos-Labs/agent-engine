@@ -76,6 +76,27 @@ jobs:
       - name: Set active project
         run: gcloud config set project "${{ vars.PROD_PROJECT_ID }}"
 
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Same reasoning as deploy-prep.yml's identical step: publish BEFORE
+      # promoting the image, so a skillRef the production prompt store can't
+      # resolve fails this step instead of shipping to production traffic.
+      # Prep already verified these files render correctly; this only
+      # publishes them into production's OWN Firestore database, which prep
+      # never touches.
+      - name: Publish agent prompts to Firestore
+        run: npx tsx scripts/publish-prompts.ts
+        env:
+          GOOGLE_CLOUD_PROJECT: ${{ vars.PROD_FIRESTORE_PROJECT_ID }}
+          FIRESTORE_DATABASE_ID: ${{ vars.PROD_FIRESTORE_DATABASE_ID || '(default)' }}
+
       - name: Copy image & deploy via Cloud Build
         run: |
           gcloud builds submit \

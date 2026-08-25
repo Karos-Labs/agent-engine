@@ -78,7 +78,13 @@ export class RedditDraftAgent extends BaseAgent<RedditReplyOutput> {
     // Pinned — RFC-02 §5: claude-sonnet-4-6 today, claude-sonnet-5 is an
     // equally acceptable pin once available; never a fallback for a pinned step.
     modelPolicy: resolveModelPolicy("reddit-draft", { policy: "pinned", model: "claude-sonnet-4-6" }),
-    skillRef: "reddit-craft@2",
+    // Pinned to "3": v3 adds a language check to §2 (Community authenticity)
+    // against `clientVoiceContext` (the client's own profile description +
+    // voice-rules guidelines), deferring to the target thread's own language
+    // when that gives a stronger signal — nothing before it ever forwarded
+    // `profile` to this prompt at all (prep job hcf9ymPGJC7mDS5pcEQ4, traced
+    // on instagram-agent but structural across every channel). v2 stays frozen.
+    skillRef: "reddit-craft@3",
     selfCritique: {
       gateTool: "gate.lintPost",
       maxRevisions: 1,

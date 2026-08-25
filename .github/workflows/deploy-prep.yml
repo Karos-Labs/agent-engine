@@ -75,6 +75,32 @@ jobs:
       - name: Set active project (fixes quota-project resolution for GCS uploads)
         run: gcloud config set project "${{ vars.PREP_PROJECT_ID }}"
 
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Runs BEFORE the deploy, not after: `create-*-workflow.ts` files pin a
+      # `skillRef` in the same commit that adds the numbered prompt file, and
+      # a `FirestorePromptStore` lookup that finds nothing fails every run of
+      # that agent outright (`could not resolve skillRef "X@N"` — this exact
+      # class of outage has shipped twice, both times because publishing was
+      # a manual step nobody remembered after bumping a pin). Publishing
+      # first means a broken pin fails HERE, before the new revision ever
+      # takes traffic, instead of shipping code the old prompt set can't
+      # serve. scripts/publish-prompts.ts discovers every promptId under
+      # every agent generically and verifies every skillRef pin in source
+      # resolves — not a per-agent list to keep in sync by hand.
+      - name: Publish agent prompts to Firestore
+        run: npx tsx scripts/publish-prompts.ts
+        env:
+          GOOGLE_CLOUD_PROJECT: ${{ vars.PREP_FIRESTORE_PROJECT_ID }}
+          FIRESTORE_DATABASE_ID: ${{ vars.PREP_FIRESTORE_DATABASE_ID || 'prep' }}
+
       - name: Build & deploy via Cloud Build
         run: |
           gcloud builds submit \

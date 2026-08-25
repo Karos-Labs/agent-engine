@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentTool, AgentToolRegistry, GateResponse, ModelRouter, PromptStore, TemplateFeedback } from "@agent-engine/core";
-import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField } from "@agent-engine/workflow";
+import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField, buildClientVoiceContext } from "@agent-engine/workflow";
 import type { RenderCarouselInput, RenderCarouselResult } from "@agent-engine/tool-karos-publish";
 import { InstagramCopyAgent } from "../agent/instagram-copy-agent.js";
 import { InstagramImageVettingAgent } from "../agent/instagram-image-vetting-agent.js";
@@ -387,6 +387,31 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       };
     });
 
+    // ── 02b: the client's own voice/profile context — best-effort, never blocking ──
+    //
+    // Everything else this workflow reads (`instagramStyleConfig`,
+    // `instagramBrandTokens`) is colors, canvas and compliance words. None of
+    // it carries what a client's brand voice actually SAYS — including, for a
+    // client like Geektime (Israel's largest HEBREW-language tech site), the
+    // language the post has to be written in. That sentence lives in
+    // `client.getProfile`'s `description` and `client.getVoiceRules`'s
+    // `guidelines`, neither of which this workflow ever called before, so a
+    // carousel drafted in fluent English for a Hebrew-only outlet passed every
+    // check that existed and shipped anyway (prep job hcf9ymPGJC7mDS5pcEQ4).
+    //
+    // Best-effort and non-blocking on purpose: a client with no profile/voice
+    // rules set up yet should still get a carousel, in English, same as
+    // before this step existed — this step only ever ADDS context, it never
+    // gates on finding any.
+    const clientVoiceContext = await wf.step.code("02b-load-client-voice-context", async () => {
+      const profileOutcome = await tools["client.getProfile"]?.execute({}, { ctx });
+      const voiceOutcome = await tools["client.getVoiceRules"]?.execute({}, { ctx });
+      return buildClientVoiceContext(
+        profileOutcome?.status === "success" ? (profileOutcome.result as Record<string, unknown>) : undefined,
+        voiceOutcome?.status === "success" ? (voiceOutcome.result as Record<string, unknown>) : undefined,
+      );
+    });
+
     // Render-type rules from the frozen config (Fix 2) — evaluated post-render
     // by step 08b, never by step 07's checkSlidesData (which only ever
     // evaluates `check: "copy"` rules).
@@ -769,6 +794,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           compliance: frozen.styleConfig.compliance,
         },
         brandTokens: frozen.brandTokens,
+        // The client's own profile description + voice-rules guidelines,
+        // verbatim — this is where a language requirement like Geektime's
+        // "Hebrew-language technology site" actually lives. See step 02b.
+        ...(clientVoiceContext !== undefined ? { clientVoiceContext } : {}),
         // Two distinct kinds of steer, kept apart on purpose: `pastFeedback` is
         // what this client has said across previous RUNS (durable memory), and
         // `revisionRequest` is what a reviewer asked for about THIS run's draft

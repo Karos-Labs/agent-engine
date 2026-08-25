@@ -51,17 +51,17 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     const copyRouter = fakeRouterSequence([finalTurn(goodCopyOutput())]);
     const copyAgent = new InstagramCopyAgent({ router: copyRouter, tools: {}, promptStore });
     await copyAgent.run(ctx, { topic: "x", facts: [], styleConfig: {}, brandTokens: {} });
-    // 6.md: the copy agent is pinned to `instagram-copy@6` (v5's constraint
-    // budget and archetype routing table, plus a required `caption` and a
-    // one-per-carousel ceiling on the five structured archetypes). v1 to v5
-    // stay on disk frozen.
-    const expectedCopyPrompt = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "6.md"), "utf8");
+    // 7.md: the copy agent is pinned to `instagram-copy@7` (v6's caption and
+    // archetype-diversity rules, plus a language check against the client's
+    // own profile/voice-rules context before anything else is written). v1
+    // to v6 stay on disk frozen.
+    const expectedCopyPrompt = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "7.md"), "utf8");
     expect(copyRouter.complete).toHaveBeenCalledWith(expect.any(String), expect.anything(), expect.anything(), expect.objectContaining({ system: expectedCopyPrompt }));
 
     const vetRouter = fakeRouterSequence([finalTurn(goodImageVettingOutput())]);
     const vetAgent = new InstagramImageVettingAgent({ router: vetRouter, tools: {}, promptStore });
     await vetAgent.run(ctx, { slides: [], candidatePool: [] });
-    const expectedVetPrompt = readFileSync(path.join(PROMPTS_ROOT, "instagram-image-vet", "1.md"), "utf8");
+    const expectedVetPrompt = readFileSync(path.join(PROMPTS_ROOT, "instagram-image-vet", "2.md"), "utf8");
     expect(vetRouter.complete).toHaveBeenCalledWith(expect.any(String), expect.anything(), expect.anything(), expect.objectContaining({ system: expectedVetPrompt }));
   });
 

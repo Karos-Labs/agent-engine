@@ -47,10 +47,10 @@ describe("PromptStore resolution (RFC-01 §16.1)", () => {
 
     await agent.run(ctx, {});
 
-    // Phase 2.5 fix-batch: skillRef is now pinned to "linkedin-craft@2" (the
-    // archetype-restoration prompt) -- "1.md" is kept on disk only as the
-    // frozen pre-restoration baseline, never resolved by this agent again.
-    const expectedPrompt = readFileSync(path.join(PROMPTS_ROOT, "linkedin-craft", "2.md"), "utf8");
+    // Pinned to "linkedin-craft@3" (adds a language check against
+    // clientVoiceContext) -- "1.md"/"2.md" stay on disk as frozen baselines,
+    // never resolved by this agent again.
+    const expectedPrompt = readFileSync(path.join(PROMPTS_ROOT, "linkedin-craft", "3.md"), "utf8");
     expect(router.complete).toHaveBeenCalledWith(
       expect.any(String),
       expect.anything(),
@@ -87,7 +87,7 @@ describe("zero hardcoded prompts (RFC-01 §16.1)", () => {
     return files;
   }
 
-  // Distinctive phrases from prompts/linkedin-craft/2.md (the live pinned
+  // Distinctive phrases from prompts/linkedin-craft/3.md (the live pinned
   // version — see prompt-resolution tests above) — if any of these appear in
   // TypeScript source, the craft content has been duplicated as a literal
   // instead of living only in the markdown file resolved via PromptStore.
@@ -99,7 +99,7 @@ describe("zero hardcoded prompts (RFC-01 §16.1)", () => {
   ];
 
   it("sanity check: the markers really do appear in the prompt file (so the negative check below is meaningful)", () => {
-    const promptContent = readFileSync(path.join(PROMPTS_ROOT, "linkedin-craft", "2.md"), "utf8");
+    const promptContent = readFileSync(path.join(PROMPTS_ROOT, "linkedin-craft", "3.md"), "utf8");
     for (const marker of CRAFT_CONTENT_MARKERS) {
       expect(promptContent.includes(marker), `expected "${marker}" to actually be in linkedin-craft/1.md`).toBe(true);
     }
@@ -119,6 +119,6 @@ describe("zero hardcoded prompts (RFC-01 §16.1)", () => {
 
   it("LinkedInDraftAgent's config carries a skillRef, not an inline system prompt field", () => {
     const configSource = readFileSync(path.join(SRC_ROOT, "agent", "linkedin-draft-agent.ts"), "utf8");
-    expect(configSource).toMatch(/skillRef:\s*"linkedin-craft@2"/);
+    expect(configSource).toMatch(/skillRef:\s*"linkedin-craft@3"/);
   });
 });

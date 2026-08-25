@@ -53,7 +53,15 @@ export class LinkedInDraftAgent extends BaseAgent<LinkedInPostOutput> {
     // Pinned — RFC-02 §5: claude-sonnet-4-6 today, claude-sonnet-5 is an
     // equally acceptable pin once available; never a fallback for a pinned step.
     modelPolicy: resolveModelPolicy("linkedin-draft", { policy: "pinned", model: "claude-sonnet-4-6" }),
-    skillRef: "linkedin-craft@2",
+    // Pinned to "3": v3 adds a language check to §2 (Voice) against
+    // `clientVoiceContext` (the client's own profile description +
+    // voice-rules guidelines) — nothing before it ever forwarded `profile`
+    // to this prompt at all, so an outlet that states its own language in
+    // plain prose (Geektime: "Israel's largest Hebrew-language technology...
+    // site") got a fluent English post regardless of channel (prep job
+    // hcf9ymPGJC7mDS5pcEQ4, traced on instagram-agent but structural across
+    // every channel). v2 stays frozen.
+    skillRef: "linkedin-craft@3",
     selfCritique: { gateTool: "gate.lintPost", maxRevisions: 1, gateArgs: { platform: "linkedin" } },
   };
 }

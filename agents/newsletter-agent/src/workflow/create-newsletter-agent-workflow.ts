@@ -1,6 +1,6 @@
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField, type RevisionNote, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle} from "@agent-engine/workflow";
+import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField, type RevisionNote, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, buildClientVoiceContext} from "@agent-engine/workflow";
 import { NewsletterDraftAgent, type NewsletterPostOutput } from "../agent/newsletter-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
 import type {
@@ -295,6 +295,7 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
       const rev = (id: string) => (revision === 0 ? id : `${id}-r${revision}`);
       const directive = revisionDirective(notes);
 
+    const clientVoiceContext = buildClientVoiceContext(clientContext.profile, clientContext.voiceRules);
     const draftResult = await wf.step.agent(rev("09-draft-post"), draftAgent, {
       ...runDirectionField(runDirection),
       mainStory: selected.mainStory,
@@ -304,6 +305,10 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
       targetAudience: intake.targetAudience,
       frequency: intake.frequency,
       voiceRules: clientContext.voiceRules,
+      // The client's own profile description + voice-rules guidelines,
+      // verbatim — this is where a language requirement like Geektime's
+      // "Hebrew-language technology site" actually lives.
+      ...(clientVoiceContext !== undefined ? { clientVoiceContext } : {}),
       // Two distinct steers, kept apart on purpose: `pastFeedback` is what
       // this client has said across previous RUNS, `revisionRequest` is what
       // a reviewer asked about THIS draft minutes ago.

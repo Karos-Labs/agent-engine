@@ -123,6 +123,72 @@ function resolveLatestVersion(prompt: PromptToPublish): string {
   return synthesized;
 }
 
+/**
+ * Retries a flaky Firestore write. The known failure here isn't Firestore
+ * being down — it's this repo's pinned `google-auth-library` intermittently
+ * throwing `Premature close` fetching an OAuth2 token, on a machine where
+ * `gcloud` itself and a newer `google-auth-library` (a sibling repo's, e.g.)
+ * authenticate fine every time (see this file's own "KNOWN FLAKE" note
+ * above). A short retry costs nothing on the common case and turns the
+ * uncommon one into a non-event instead of a failed publish.
+ */
+async function withRetry<T>(label: string, attempt: () => Promise<T>, attempts = 4): Promise<T> {
+  let lastError: unknown;
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      return await attempt();
+    } catch (err) {
+      lastError = err;
+      if (i < attempts) {
+        console.warn(`  ${DIM}⚠ ${label}: attempt ${i}/${attempts} failed (${err instanceof Error ? err.message : String(err)}), retrying...${RESET}`);
+        await new Promise((r) => setTimeout(r, 500 * i));
+      }
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * Every `skillRef: "promptId@version"` pin actually present in agent source
+ * — a plain string scan, not a TS import, so this script has no compile-time
+ * dependency on any agent package. This is the check that would have caught
+ * both real incidents this guarded against before a deploy ever went out:
+ * code pinned to a version that was never published, twice, because
+ * publishing was a manual step nobody remembered to run after bumping a
+ * skillRef. Scanning what's ACTUALLY pinned in code — rather than only
+ * publishing whatever happens to be numbered on disk — is what makes this
+ * check general over every promptId that exists now or is added later,
+ * not a list of known names to keep in sync by hand.
+ */
+async function findPinnedSkillRefs(): Promise<Array<{ promptId: string; version: string; file: string }>> {
+  const agentsDir = path.join(REPO_ROOT, "agents");
+  const pins: Array<{ promptId: string; version: string; file: string }> = [];
+  const pattern = /skillRef:\s*["']([a-zA-Z0-9_-]+)@(\d+)["']/g;
+
+  async function scanDir(dir: string): Promise<void> {
+    let entries: import("fs").Dirent[];
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.name === "node_modules" || entry.name === "dist") continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await scanDir(full);
+      } else if (entry.name.endsWith(".ts")) {
+        const content = await fs.readFile(full, "utf8");
+        for (const match of content.matchAll(pattern)) {
+          pins.push({ promptId: match[1]!, version: match[2]!, file: path.relative(REPO_ROOT, full) });
+        }
+      }
+    }
+  }
+  await scanDir(agentsDir);
+  return pins;
+}
+
 async function main(): Promise<void> {
   const project = process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GCLOUD_PROJECT;
   if (!project) throw new Error("publish-prompts: GOOGLE_CLOUD_PROJECT (or GCLOUD_PROJECT) must be set");
@@ -137,9 +203,11 @@ async function main(): Promise<void> {
   let versionDocsWritten = 0;
   for (const prompt of prompts) {
     const latestVersion = resolveLatestVersion(prompt);
-    await db.collection("prompts").doc(prompt.promptId).set({ latestVersion });
+    await withRetry(`prompts/${prompt.promptId}`, () => db.collection("prompts").doc(prompt.promptId).set({ latestVersion }));
     for (const [version, content] of prompt.versions) {
-      await db.collection("promptVersions").doc(`${prompt.promptId}@${version}`).set({ content });
+      await withRetry(`promptVersions/${prompt.promptId}@${version}`, () =>
+        db.collection("promptVersions").doc(`${prompt.promptId}@${version}`).set({ content }),
+      );
       versionDocsWritten++;
     }
     ok(`published "${prompt.promptId}" (latest: ${latestVersion}, ${prompt.versions.size} version(s)) → database "${databaseId}"`);
@@ -147,6 +215,24 @@ async function main(): Promise<void> {
 
   console.log();
   console.log(`${DIM}  ${prompts.length} prompts, ${versionDocsWritten} version docs written to project "${project}" database "${databaseId}".${RESET}`);
+
+  // Fail loudly, after publishing, if any pin in code would not resolve.
+  // Every version discoverPrompts() found on disk was just published above,
+  // so this passes for a normal bump and only trips when a skillRef points
+  // at a version whose file was never created at all — the one remaining
+  // way this class of outage could still happen.
+  console.log();
+  const pins = await findPinnedSkillRefs();
+  const versionsByPromptId = new Map(prompts.map((p) => [p.promptId, p.versions]));
+  const unresolved = pins.filter((pin) => !versionsByPromptId.get(pin.promptId)?.has(pin.version));
+  if (unresolved.length > 0) {
+    console.error("ERROR: the following skillRef pins will not resolve — the numbered .md file was never created:");
+    for (const pin of unresolved) {
+      console.error(`  ${pin.file}: "${pin.promptId}@${pin.version}"`);
+    }
+    throw new Error(`${unresolved.length} unpublishable skillRef pin(s) — see above`);
+  }
+  ok(`verified ${pins.length} skillRef pin(s) across agent source all resolve to a published version`);
 }
 
 main().catch((err) => {

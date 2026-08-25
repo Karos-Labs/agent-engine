@@ -37,7 +37,13 @@ describe("03-claim-topic: the topics catalog is the only dedup gate (RFC-03 §2.
     const stepRecords = await durableStore.listSteps(params.runId);
     // 00-auto-setup runs first; with no declared industry it seeds nothing, so
     // the breach below is reached exactly as it was before that step existed.
-    expect(stepRecords.map((s) => s.stepId)).toEqual(["00-auto-setup", "01-open-run", "02-freeze-style-config", "03-claim-topic"]);
+    expect(stepRecords.map((s) => s.stepId)).toEqual([
+      "00-auto-setup",
+      "01-open-run",
+      "02-freeze-style-config",
+      "02b-load-client-voice-context",
+      "03-claim-topic",
+    ]);
 
     // Nothing was ever reserved/committed -- the catalog stays exactly as empty as it started.
     const catalog = await env.store.readJson<unknown[]>("acme", ["topics", "catalog"]);
