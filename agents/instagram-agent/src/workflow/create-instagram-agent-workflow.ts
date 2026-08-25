@@ -694,6 +694,56 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     /** Where the renderer reads templates from: the materialized run dir, or the client's own. */
     const effectiveTemplateDir = templateResolution.templateDir;
 
+    /**
+     * Rewrites the materialized template files if they're not actually on
+     * THIS instance's disk — deliberately NOT a `wf.step.code`, so it runs
+     * fresh every single render attempt rather than once per run.
+     *
+     * `04c-resolve-templates` above IS checkpointed, and that is exactly the
+     * bug this closes: Approach (a) materializes template rows into
+     * `.template-cache/<runId>/`, a directory on local, per-instance disk —
+     * but a run that pauses at the human review gate and comes back as a
+     * `revise` can resume on a DIFFERENT Cloud Run instance, one whose disk
+     * never had that directory written to it at all. The checkpointed step
+     * still returns the same `templateDir`/`files` (that part is genuinely
+     * safe to cache — it's a deterministic registry read), so nothing
+     * notices anything is wrong until the renderer looks for a real file
+     * that was never actually written HERE and reports it as a tooling
+     * failure (prep job 9qkTWlg7e9ZLiVIZUok4, on exactly this path, on a
+     * `-r1` revision attempt after round 0's own render had already
+     * succeeded). Re-materializing is a few KB of writes plus one registry
+     * read — cheap next to a failed run — and a no-op when the files are
+     * already there, which is the common case on an instance that never
+     * recycled.
+     */
+    const ensureTemplatesOnDisk = async (): Promise<void> => {
+      if (options.templateStore === undefined || templateResolution.files.length === 0) return;
+      const absDir = path.resolve(options.repoRoot, effectiveTemplateDir);
+      const allPresent = await Promise.all(
+        templateResolution.files.map((file) =>
+          fs
+            .access(path.join(absDir, file))
+            .then(() => true)
+            .catch(() => false),
+        ),
+      );
+      if (allPresent.every(Boolean)) return;
+      try {
+        await materializeTemplates({
+          store: options.templateStore,
+          repoRoot: options.repoRoot,
+          runId: wf.runId,
+          clientSlug: wf.clientSlug,
+          clientTemplateDir: frozen.brandTokens.templateDir,
+          clientTemplateFile: frozen.brandTokens.slideTemplate,
+        });
+      } catch (error) {
+        // Same fallback rule as 04c-resolve-templates itself: a registry
+        // outage here degrades layout variety, it does not fail the run.
+        console.error("ensureTemplatesOnDisk: re-materialization failed, render will fall back to the client's own template", error);
+      }
+    };
+
     // ── 05-08b: write copy -> vet images -> emit + self-check + craft-hygiene
     //           -> render -> post-render visual QA, all sharing ONE retry
     //           budget capped at two returns to step 05 (RFC-03 §3 step 07,
@@ -1235,6 +1285,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       );
 
       // ── 08: render via the shared, already-tested publish.renderCarousel tool ──
+      await ensureTemplatesOnDisk();
       const renderOutcome = await wf.step.code(rev(`08-render-carousel-attempt-${attempt}`), async () => tools["publish.renderCarousel"]!.execute(slidesDataAttempt, { ctx }));
 
       // ── The last image-caused hold, now a degrade ──
@@ -1272,6 +1323,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         );
         copy = strippedCopy;
         selections = strippedSelections;
+        await ensureTemplatesOnDisk();
         renderResolved = await wf.step.code(rev(`08-render-carousel-typographic-attempt-${attempt}`), async () =>
           tools["publish.renderCarousel"]!.execute(slidesDataResolved, { ctx }),
         );

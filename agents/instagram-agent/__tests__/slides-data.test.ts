@@ -485,4 +485,64 @@ describe("template registry integration (Approach a)", () => {
     // Fell back to the on-disk path, so rendering never depended on the store.
     expect(resolved?.templateDir).toBe("fixtures/templates");
   }, 30000);
+
+  it("re-materializes templates that vanished from disk before a revision's render, instead of failing the run", async () => {
+    // Prep job 9qkTWlg7e9ZLiVIZUok4: round 0 rendered fine, the reviewer sent
+    // it back for a revision, and the `-r1` render failed with "template ...
+    // not found" — because `04c-resolve-templates` is checkpointed and kept
+    // returning the same templateDir/files on resume, but the directory it
+    // named was never written to THIS instance's disk. Simulated here by
+    // deleting the materialized directory between the two `engine.run` calls,
+    // standing in for a resume that lands on a fresh Cloud Run instance.
+    const store = new MemoryTemplateStore([]);
+    const first = goodCopyOutput();
+    const router = fakeRouterSequence([
+      finalTurn(goodResearchOutput()),
+      finalTurn(first),
+      finalTurn(goodImageVettingOutput()),
+      finalTurn(goodVisualQaOutput()),
+      finalTurn(first),
+      finalTurn(goodImageVettingOutput()),
+      finalTurn(goodVisualQaOutput()),
+    ]);
+
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+    const runId = "instance_recycle_run";
+    const workflowFn = createInstagramAgentWorkflow({
+      tools: { ...env.tools, "publish.renderCarousel": fakeRenderCarousel(env.tools["publish.renderCarousel"]!) },
+      promptStore: makePromptStore(),
+      router,
+      repoRoot: env.repoRoot,
+      imageCandidatePool: goodImageCandidatePool(),
+      templateStore: store,
+    });
+
+    const r0 = await engine.run(workflowFn, { runId, clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" });
+    expect(r0.status).toBe("awaiting_gate");
+
+    const resolved = (await durableStore.listSteps(runId)).find((s) => s.stepId === "04c-resolve-templates")?.output as
+      | { templateDir: string; files: string[] }
+      | undefined;
+    // Confirms round 0 really did materialize something onto disk, so wiping
+    // it below is actually exercising the re-materialization path and not a
+    // no-op.
+    expect(resolved?.files.length).toBeGreaterThan(0);
+    await fsp.rm(pathMod.join(env.repoRoot, resolved!.templateDir), { recursive: true, force: true });
+
+    await engine.resolveGate(runId, "09a-batch-review-r0", {
+      decision: "revise",
+      actor: "jane@karoslabs.com",
+      feedback: "Tighten the hooks.",
+      at: new Date().toISOString(),
+    });
+
+    // Without `ensureTemplatesOnDisk`, this resume fails the render with a
+    // tooling error ("template ... not found"), exactly as the real job did.
+    const r1 = await engine.run(workflowFn, { runId, clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" });
+    expect(r1.status).toBe("awaiting_gate");
+
+    const rewritten = await fsp.readFile(pathMod.join(env.repoRoot, resolved!.templateDir, resolved!.files[0]!), "utf8");
+    expect(rewritten.length).toBeGreaterThan(0);
+  }, 60000);
 });
