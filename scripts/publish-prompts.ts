@@ -165,6 +165,11 @@ async function findPinnedSkillRefs(): Promise<Array<{ promptId: string; version:
   const pins: Array<{ promptId: string; version: string; file: string }> = [];
   const pattern = /skillRef:\s*["']([a-zA-Z0-9_-]+)@(\d+)["']/g;
 
+  // Only `src/` — a real pin that governs a real deploy only ever lives in
+  // an agent's own BaseAgent config. `__tests__`/`evals` deliberately pin
+  // nonsense skillRefs like "does-not-exist@99" to exercise the "agent
+  // fails gracefully on an unresolvable skillRef" path, and that string
+  // must never gate a deploy the way a real pin should.
   async function scanDir(dir: string): Promise<void> {
     let entries: import("fs").Dirent[];
     try {
@@ -173,7 +178,7 @@ async function findPinnedSkillRefs(): Promise<Array<{ promptId: string; version:
       return;
     }
     for (const entry of entries) {
-      if (entry.name === "node_modules" || entry.name === "dist") continue;
+      if (entry.name === "node_modules" || entry.name === "dist" || entry.name === "__tests__" || entry.name === "evals") continue;
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
         await scanDir(full);
