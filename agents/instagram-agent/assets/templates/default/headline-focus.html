@@ -52,7 +52,7 @@
   .kicker {
     font-family: var(--f-mono); font-weight: 500; font-size: 22px;
     letter-spacing: 0.22em; text-transform: uppercase;
-    color: rgba(244,242,236,0.78); margin-bottom: 28px;
+    color: color-mix(in srgb, var(--fg) 78%, transparent); margin-bottom: 28px;
   }
   .kicker:empty { display: none; }
 
@@ -67,7 +67,7 @@
 
   .body-text {
     font-family: var(--f-body); font-weight: 400; font-size: 31px; line-height: 1.55;
-    color: rgba(244,242,236,0.92); margin-top: 30px; max-width: 900px; text-wrap: pretty;
+    color: color-mix(in srgb, var(--fg) 92%, transparent); margin-top: 30px; max-width: 900px; text-wrap: pretty;
   }
   .body-text:empty { display: none; }
 </style>

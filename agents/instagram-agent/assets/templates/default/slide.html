@@ -60,8 +60,8 @@
   .scrim {
     position: absolute; inset: 0; z-index: 1; pointer-events: none;
     background: linear-gradient(to top,
-      rgba(23,24,28,0.96) 0%, rgba(23,24,28,0.86) 22%,
-      rgba(23,24,28,0.52) 42%, rgba(23,24,28,0) 62%);
+      color-mix(in srgb, var(--bg) 96%, transparent) 0%, color-mix(in srgb, var(--bg) 86%, transparent) 22%,
+      color-mix(in srgb, var(--bg) 52%, transparent) 42%, color-mix(in srgb, var(--bg) 0%, transparent) 62%);
   }
   .copy { position: absolute; left: var(--mx); right: var(--mx); bottom: 96px; z-index: 4; }
   .headline {
@@ -70,7 +70,7 @@
   }
   .body-text {
     font-family: var(--f-body); font-weight: 400; font-size: 31px;
-    line-height: 1.55; color: rgba(244,242,236,0.92);
+    line-height: 1.55; color: color-mix(in srgb, var(--fg) 92%, transparent);
     margin-top: 28px; max-width: 900px; text-wrap: pretty;
   }
   /* The orange square underline (legacy `.stat-band`) — one accent mark, rationed. */

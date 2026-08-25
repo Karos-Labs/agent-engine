@@ -12,6 +12,29 @@ import { createRenderCarousel } from "@agent-engine/tool-karos-publish";
  * `npx playwright install chromium` locally; CI's own image already has it
  * (`apps/agent-server/Dockerfile`'s runtime stage).
  */
+/**
+ * Chromium-free pin for the Brand Kit's Commit A1: the production templates
+ * are fully token-driven — no color is hardcoded off `--bg`/`--fg` as an
+ * `rgba()` literal, because a literal is exactly what stops a light-ground
+ * brand (a cream Pitch-style client) from re-theming a scrim or a text
+ * opacity when the brand token sheet overrides the vars.
+ */
+describe("default templates are token-driven, not literal-colored", () => {
+  const TEMPLATE_DIR = path.resolve(__dirname, "..", "assets", "templates", "default");
+
+  it("no template carries a hardcoded bg/fg-derived rgba literal", async () => {
+    const files = (await fs.readdir(TEMPLATE_DIR)).filter((f) => f.endsWith(".html"));
+    expect(files.length).toBeGreaterThanOrEqual(6);
+    for (const file of files) {
+      const html = await fs.readFile(path.join(TEMPLATE_DIR, file), "utf8");
+      // Only the STYLE half matters — a doc comment describing the legacy
+      // system may legitimately quote an old literal.
+      const styles = [...html.matchAll(/<style>[\s\S]*?<\/style>/g)].map((m) => m[0]).join("\n");
+      expect(styles, `${file} styles a color off a literal instead of var(--bg)/var(--fg)`).not.toMatch(/rgba\(\s*23\s*,\s*24\s*,\s*28|rgba\(\s*244\s*,\s*242\s*,\s*236/);
+    }
+  });
+});
+
 describe("instagram-agent's default template renders via publish.renderCarousel", () => {
   const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
   // `validateRenderInputs`'s `assertInside` requires outDir/image paths to be

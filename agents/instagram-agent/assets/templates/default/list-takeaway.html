@@ -42,7 +42,7 @@
     --bg: #17181C;
     --fg: #F4F2EC;
     --accent: {{accentColor}};
-    --line: rgba(244,242,236,0.14);
+    --line: color-mix(in srgb, var(--fg) 14%, transparent);
     --f-display: 'Fraunces', Georgia, 'Times New Roman', serif;
     --f-body: 'Inter', system-ui, -apple-system, sans-serif;
     --f-mono: 'IBM Plex Mono', ui-monospace, monospace;
@@ -92,7 +92,7 @@
   }
   .me-note {
     font-family: var(--f-body); font-weight: 400; font-size: 27px; line-height: 1.5;
-    color: rgba(244,242,236,0.75); margin-top: 12px; max-width: 820px; text-wrap: pretty;
+    color: color-mix(in srgb, var(--fg) 75%, transparent); margin-top: 12px; max-width: 820px; text-wrap: pretty;
   }
   .me-note:empty { display: none; }
 </style>
