@@ -1,5 +1,5 @@
 import { describe, expect, it, afterEach, beforeEach } from "vitest";
-import type { AgentContext } from "@agent-engine/core";
+import type { AgentContext, AgentToolRegistry } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import {
@@ -10,10 +10,17 @@ import {
   goodImageCandidatePool,
   goodResearchOutput,
   goodStyleConfig,
+  goodVisualQaOutput,
+  fakeRenderCarousel,
   makePromptStore,
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
+
+/** Chromium-free render stand-in; the tool-level validation it wraps is the real one. */
+function testTools(env: TestEnvironment): AgentToolRegistry {
+  return { ...env.tools, "publish.renderCarousel": fakeRenderCarousel(env.tools["publish.renderCarousel"]!) };
+}
 
 const params = { runId: "instagram_run_render", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
@@ -28,7 +35,11 @@ describe("08-render-carousel: the three-way outcome mapping, never confused (RFC
     await env.cleanup();
   });
 
-  it("maps a real CONTENT failure (an image file missing on disk at render time) to WorkflowHeld, through the actual publish.renderCarousel tool", async () => {
+  // Zero-held guarantee: an image file that vanished between vetting and
+  // render used to be the last image-caused `WorkflowHeld` in the pipeline.
+  // It is now caught by step 06f's on-disk pre-flight and degraded to a
+  // typographic slide, so the post still ships.
+  it("degrades a slide whose image file is missing on disk and still DELIVERS, rather than holding", async () => {
     const promptStore = makePromptStore();
     const copy = goodCopyOutput();
     // Every slide vets to a path that resolves under repoRoot but does not
@@ -44,9 +55,14 @@ describe("08-render-carousel: the three-way outcome mapping, never confused (RFC
         watermarkFree: true,
       })),
     };
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), finalTurn(copy), finalTurn(vetting)]);
+    const router = fakeRouterSequence([
+      finalTurn(goodResearchOutput()),
+      finalTurn(copy),
+      finalTurn(vetting),
+      finalTurn(goodVisualQaOutput()),
+    ]);
     const workflowFn = createInstagramAgentWorkflow({
-      tools: env.tools,
+      tools: testTools(env),
       promptStore,
       router,
       repoRoot: env.repoRoot,
@@ -58,13 +74,24 @@ describe("08-render-carousel: the three-way outcome mapping, never confused (RFC
     const engine = new WorkflowEngine(durableStore);
     const result = await engine.run(workflowFn, params);
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/render step reported a content failure/i);
+    expect(result.status).toBe("completed");
 
-    const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
-    expect(stepIds).toContain("08-render-carousel-attempt-1");
-    expect(stepIds).not.toContain("09b-deliver-and-log");
+    const steps = await durableStore.listSteps(params.runId);
+    // The pre-flight is what caught it, upstream of the renderer.
+    const gone = steps.find((s) => s.stepId === "06f-verify-images-on-disk-attempt-1")?.output as number[] | undefined;
+    expect(gone).toEqual(copy.slides.map((s) => s.n));
+    // And it flowed into the ordinary downgrade path, not a bespoke one.
+    const downgrade = steps.find((s) => s.stepId === "07a-downgrade-unfillable-slides-attempt-1")?.output as
+      | { downgraded: number[]; reason: string }
+      | undefined;
+    expect(downgrade?.downgraded).toEqual(copy.slides.map((s) => s.n));
+    expect(downgrade?.reason).toMatch(/no longer on disk/i);
+    // Delivered, with no image attached to any slide.
+    expect(steps.map((s) => s.stepId)).toContain("09b-deliver-and-log");
+    const slidesData = steps.find((s) => s.stepId === "07c-emit-slides-data-attempt-1")?.output as
+      | { slides: Array<{ images: Record<string, string> }> }
+      | undefined;
+    expect(slidesData?.slides.every((s) => Object.keys(s.images).length === 0)).toBe(true);
   }, 30000);
 
   it("maps a real TOOLING failure (a missing slide template file) to WorkflowToolingFailure, through the actual publish.renderCarousel tool", async () => {

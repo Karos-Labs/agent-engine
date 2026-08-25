@@ -45,7 +45,7 @@ describe("Layer 3 tool registry — cross-cutting", () => {
   it("merges all ten servers' tools into one registry with no name collisions", () => {
     const expectedPrefixes = ["client.", "gate.", "intel.", "ledger.", "memory.", "publish.", "reputation.", "research.", "seoGeo.", "topics."];
     const names = Object.keys(tools);
-    // 8 client + 6 gates + 2 intel + 9 ledger + 5 memory + 4 publish + 3 reputation + 5 research + 2 seoGeo + 4 topics = 48
+    // 8 client + 6 gates + 2 intel + 9 ledger + 7 memory + 4 publish + 3 reputation + 5 research + 2 seoGeo + 4 topics = 50
     // (client grew from 7 to 8: client.getStrategy reads a client's per-agent
     // setup document — the filled-in account intake saying what an account is
     // chartered to post and what it must never post — which nothing in the
@@ -58,7 +58,11 @@ describe("Layer 3 tool registry — cross-cutting", () => {
     // back the dynamic runner's output de-duplication — a bounded per-client,
     // per-agent excerpt log, kept separate from writeDeliverable's records
     // because those nest by runId and cannot be enumerated for comparison.)
-    expect(names.length).toBe(48);
+    // (memory grew from 5 to 7: memory.appendFeedback/memory.readFeedback back
+    // the universal review cycle's feedback flywheel — every approve/revise/
+    // reject decision persists here, and the next drafting prompt reads it
+    // back. See packages/workflow/src/primitives/review-cycle.ts.)
+    expect(names.length).toBe(50);
     for (const prefix of expectedPrefixes) {
       expect(names.some((n) => n.startsWith(prefix))).toBe(true);
     }

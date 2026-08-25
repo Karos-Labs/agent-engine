@@ -34,21 +34,21 @@ describe("POST /api/v1/runs/start", () => {
     // X's own workflow grew to 21 steps in Phase 2.5 Batch 2.3 (lane selection,
     // engagement-cap check, and link-placement verification) -- its batch-review
     // gate now lands at step 15, not 13.
-    expect(startRes.body.pendingGateId).toContain("15-batch-review");
+    expect(startRes.body.pendingGateId).toContain("15-batch-review-r0");
     const { runId } = startRes.body;
 
     const resumeRes = await request(app)
       .post(`/api/v1/runs/${runId}/resume`)
-      .send({ gateId: "15-batch-review", resolution: { decision: "approve", actor: "jane@karoslabs.com" } });
+      .send({ gateId: "15-batch-review-r0", resolution: { decision: "approve", actor: "jane@karoslabs.com" } });
 
     expect(resumeRes.status).toBe(200);
     expect(resumeRes.body.status).toBe("completed");
     expect(resumeRes.body.report.domainOutcome).toBe("delivered");
-    expect(resumeRes.body.report.steps).toHaveLength(21);
+    expect(resumeRes.body.report.steps).toHaveLength(22);
     // Phase 2.5 fix-batch regression check: a genuinely completed/delivered
     // run's own review-gate step must report as done/approved, never as
     // "failed: step did not run" (the report-serializer gate-status bug).
-    const gateStep = resumeRes.body.report.steps.find((s: { stepId: string }) => s.stepId === "15-batch-review");
+    const gateStep = resumeRes.body.report.steps.find((s: { stepId: string }) => s.stepId === "15-batch-review-r0");
     expect(gateStep?.status).toBe("done");
     expect(gateStep?.error).toBeUndefined();
   });
@@ -144,7 +144,7 @@ describe("GET /api/v1/runs/:runId/status", () => {
     // workflow by two steps for the newly-wired noPlaceholder/leakCheck gates).
     const resumeRes = await request(app)
       .post(`/api/v1/runs/${runId}/resume`)
-      .send({ gateId: "15-batch-review", resolution: { decision: "approve", actor: "jane@karoslabs.com" } });
+      .send({ gateId: "15-batch-review-r0", resolution: { decision: "approve", actor: "jane@karoslabs.com" } });
     expect(resumeRes.body.status).toBe("completed");
 
     const statusAfterResumeRes = await request(app).get(`/api/v1/runs/${runId}/status`);
@@ -154,7 +154,7 @@ describe("GET /api/v1/runs/:runId/status", () => {
 
     // Phase 2.5 fix-batch regression check: fetched independently via GET
     // /status (not just the resume response), the gate step must still report done.
-    const gateStep = statusAfterResumeRes.body.report.steps.find((s: { stepId: string }) => s.stepId === "15-batch-review");
+    const gateStep = statusAfterResumeRes.body.report.steps.find((s: { stepId: string }) => s.stepId === "15-batch-review-r0");
     expect(gateStep?.status).toBe("done");
     expect(gateStep?.error).toBeUndefined();
   });
@@ -264,7 +264,7 @@ describe("POST /api/v1/runs/:runId/resume — concurrency and gate-lifecycle gua
 
     const firstResume = await request(app)
       .post(`/api/v1/runs/${runId}/resume`)
-      .send({ gateId: "15-batch-review", resolution: { decision: "approve", actor: "jane@karoslabs.com" } });
+      .send({ gateId: "15-batch-review-r0", resolution: { decision: "approve", actor: "jane@karoslabs.com" } });
     expect(firstResume.status).toBe(200);
     expect(firstResume.body.status).toBe("completed");
 
@@ -272,7 +272,7 @@ describe("POST /api/v1/runs/:runId/resume — concurrency and gate-lifecycle gua
     // in-flight-gate resume, and must not be reported as an unexpected 500.
     const secondResume = await request(app)
       .post(`/api/v1/runs/${runId}/resume`)
-      .send({ gateId: "15-batch-review", resolution: { decision: "approve", actor: "jane@karoslabs.com" } });
+      .send({ gateId: "15-batch-review-r0", resolution: { decision: "approve", actor: "jane@karoslabs.com" } });
     expect(secondResume.status).toBe(409);
     expect(secondResume.body.error).toMatch(/not awaiting a gate/i);
   });
@@ -288,11 +288,11 @@ describe("POST /api/v1/runs/:runId/resume — concurrency and gate-lifecycle gua
     // WorkflowEngine.run() flips that), so this HTTP request's own pre-check passes, and
     // it reaches engine.resolveGate() to find the gate itself already answered.
     const rivalEngine = new WorkflowEngine(env.durableStore);
-    await rivalEngine.resolveGate(runId, "15-batch-review", { decision: "approve", actor: "mallory@example.com", at: "2026-08-15T00:00:00Z" });
+    await rivalEngine.resolveGate(runId, "15-batch-review-r0", { decision: "approve", actor: "mallory@example.com", at: "2026-08-15T00:00:00Z" });
 
     const res = await request(app)
       .post(`/api/v1/runs/${runId}/resume`)
-      .send({ gateId: "15-batch-review", resolution: { decision: "approve", actor: "jane@karoslabs.com" } });
+      .send({ gateId: "15-batch-review-r0", resolution: { decision: "approve", actor: "jane@karoslabs.com" } });
     expect(res.status).toBe(409);
     expect(res.body.error).toMatch(/already resolved/i);
   });

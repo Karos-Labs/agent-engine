@@ -1,5 +1,5 @@
 import { readForbiddenTopics, type AgentContext, type AgentToolRegistry, type GateResponse, type GateVerdict, type ModelRouter, type PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField } from "@agent-engine/workflow";
+import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField } from "@agent-engine/workflow";
 import { XDraftAgent, type Lane } from "../agent/x-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
 import { renderXDraftsMarkdown } from "./render-drafts-markdown.js";
@@ -283,9 +283,34 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       return { lane: laneSelection.lane, held: false, engagementCountInWindow: countInWindow };
     });
 
+    // ── 04e: what this client asked for on PREVIOUS runs ──
+    //
+    // The read side of the feedback flywheel. Without it every run starts from
+    // zero and the same correction gets made every week. Bounded and
+    // best-effort: it lands in a drafting prompt, and a memory read failing
+    // must not stop a run that can draft perfectly well without it.
+    const pastFeedback = await readPastFeedback(wf, tools, ctx, "04e-read-past-feedback");
+
     // ── 10-14: draft execution via XDraftAgent, with machine/claim/compliance/link gates ──
     const draftAgent = new XDraftAgent({ router: options.router, tools, promptStore: options.promptStore });
-    const draftResult = await wf.step.agent("10-draft-post", draftAgent, {
+
+    /**
+     * One full drafting pass: draft, then every deterministic content gate,
+     * then the terminal topic guardrail.
+     *
+     * Called once per REVISION round by `runReviewCycle`. `revision` is folded
+     * into every checkpointed step id inside it (via `rev`), so a second round
+     * genuinely re-drafts instead of short-circuiting on the first round's
+     * checkpoints — while everything OUTSIDE it (intake, research, the topic
+     * reservation) keeps its id and is reused. That reuse is why the revision
+     * is in-run rather than a fresh run.
+     */
+    const draftOnce = async (revision: number, notes: readonly RevisionNote[]) => {
+      /** Revision 0 keeps the ORIGINAL ids, so a first-pass trace is unchanged. */
+      const rev = (id: string) => (revision === 0 ? id : `${id}-r${revision}`);
+      const directive = revisionDirective(notes);
+
+    const draftResult = await wf.step.agent(rev("10-draft-post"), draftAgent, {
       ...runDirectionField(runDirection),
       topic: selected.topic,
       source: selected.source,
@@ -297,6 +322,11 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       // "accountCharter: null" in the payload invites the model to remark on
       // its absence instead of simply working without one.
       ...(clientContext.strategy ? { accountCharter: clientContext.strategy } : {}),
+      // Two distinct steers, kept apart: `pastFeedback` is what this client
+      // has said across previous RUNS, `revisionRequest` is what a reviewer
+      // asked about THIS draft minutes ago.
+      ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
+      ...(directive !== undefined ? { revisionRequest: directive } : {}),
     });
 
     if (draftResult.status === "content_fail") {
@@ -320,7 +350,7 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
     // downstream) now sees.
     const draft = { ...draftResult.finalOutput!, mainPostText: draftResult.finalOutput!.text };
 
-    await wf.step.code("11-verify-numbers-sourced", async () => {
+    await wf.step.code(rev("11-verify-numbers-sourced"), async () => {
       const sources = candidateSummary.hasNumericInsight ? [candidateSummary.sourceLabel] : [];
       const verdict = await runGate(tools, "gate.numbersSourced", { text: draft.text, sources }, ctx);
       if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.numbersSourced: ${verdict.reason}`);
@@ -328,7 +358,7 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       return verdict;
     });
 
-    await wf.step.code("12-verify-brand-compliance", async () => {
+    await wf.step.code(rev("12-verify-brand-compliance"), async () => {
       const forbiddenTerms = clientContext.brand["forbiddenTerms"] as string[] | undefined;
       const verdict = await runGate(tools, "gate.brandCompliance", { text: draft.text, forbiddenTerms: forbiddenTerms ?? [] }, ctx);
       if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.brandCompliance: ${verdict.reason}`);
@@ -341,7 +371,7 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
     // that means the model put the link in the wrong place. No check runs
     // when `firstReplyUrl` is unset (x-craft.md's own launch-post exception,
     // "the link IS the news", is a judgment call left to the drafting model).
-    await wf.step.code("13-verify-link-placement", () => {
+    await wf.step.code(rev("13-verify-link-placement"), () => {
       if (draft.firstReplyUrl && BARE_URL_PATTERN.test(draft.mainPostText)) {
         throw new WorkflowHeld(
           "mainPostText contains a bare link even though firstReplyUrl is set — links must go in the first reply, never the main post body (x-craft.md §5)",
@@ -350,7 +380,7 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       return { checked: true };
     });
 
-    await wf.step.code("14-render-preview-check", async () => {
+    await wf.step.code(rev("14-render-preview-check"), async () => {
       const outcome = await tools["render.preview"]!.execute({ text: draft.text }, { ctx });
       if (outcome.status !== "success") throw new WorkflowToolingFailure(`render.preview failed: ${outcome.status}`);
       const preview = outcome.result as RenderPreviewResult;
@@ -376,24 +406,41 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       { tools, promptStore: options.promptStore, router: options.router },
       draft.text,
       intake.forbiddenTopics,
+      revision === 0 ? undefined : `-r${revision}`,
     );
 
-    // ── 15: human batch-review gate — nothing ships without a real approval ──
-    const reviewDecision: GateResponse = options.autoApprove
-      ? await wf.step.code("15-batch-review", () => ({
-          decision: "approve" as const,
-          actor: "system",
-          at: new Date().toISOString(),
-        }))
-      : await wf.step.gate("15-batch-review", {
-          kind: "batch_review",
-          payload: { runId: wf.runId, topic: selected.topic, lane: laneSelection.lane, angle: laneSelection.angle, preview: draft.text },
-          requiredRole: "account_manager",
-          timeout: { duration: "24h", onTimeout: "hold" },
-        });
-    if (reviewDecision.decision !== "approve") {
-      throw new WorkflowHeld(`batch rejected: ${reviewDecision.reason ?? "no reason given"}`);
-    }
+      return draft;
+    };
+
+    // ── 15: the universal approve / revise / reject cycle ──
+    //
+    // `revise` re-drafts with the reviewer's feedback injected, reusing
+    // everything already checkpointed, instead of holding the run and forcing
+    // somebody to dispatch a fresh one that knows nothing about the feedback.
+    // Every decision, approvals included, is written to client memory.
+    const review = await runReviewCycle(wf, {
+      gateId: "15-batch-review",
+      maxRevisions: MAX_REVISION_ROUNDS,
+      ...(options.autoApprove ? { autoApprove: true } : {}),
+      attempt: draftOnce,
+      buildGate: (draft, revision) => ({
+        kind: "batch_review",
+        payload: {
+          runId: wf.runId,
+          topic: selected.topic,
+          lane: laneSelection.lane,
+          angle: laneSelection.angle,
+          preview: draft.text,
+          revision,
+        },
+        requiredRole: "account_manager",
+        timeout: { duration: "24h", onTimeout: "hold" },
+      }),
+      onDecision: async ({ revision, response }) => {
+        await persistReviewFeedbackToMemory(wf, tools, ctx, revision, response);
+      },
+    });
+    const draft = review.output;
 
     // ── 16-17: previously-dead gates, wired in right before persistence ──
     await wf.step.code("16-verify-no-placeholder", async () => {
@@ -449,7 +496,7 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
         { ctx },
       );
       await tools["ledger.feedbackAppend"]!.execute(
-        { runId: wf.runId, feedbackId: `${wf.runId}__review`, decision: reviewDecision.decision, actor: reviewDecision.actor },
+        { runId: wf.runId, feedbackId: `${wf.runId}__review`, decision: review.response.decision, actor: review.response.actor },
         { ctx },
       );
     });

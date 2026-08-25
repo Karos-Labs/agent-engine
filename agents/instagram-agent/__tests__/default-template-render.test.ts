@@ -40,6 +40,7 @@ describe("instagram-agent's default template renders via publish.renderCarousel"
             template: "slide.html",
             fields: { headline: "Most marketing calendars fail in month two", body: "Here's the pattern we keep seeing.", accentColor: "#C4552F" },
             images: {},
+            htmlFragments: {},
           },
         ],
         canvas: { w: 1080, h: 1440, scale: 2, slides_min: 1, slides_max: 8 },
@@ -104,7 +105,7 @@ describe("instagram-agent's default template renders via publish.renderCarousel"
         {
           ...base,
           postId,
-          slides: [{ n: 1, template: "slide.html", fields: base.fields, images }],
+          slides: [{ n: 1, template: "slide.html", fields: base.fields, images, htmlFragments: {} }],
         },
         ctx,
       );
@@ -147,6 +148,7 @@ describe("instagram-agent's default template renders via publish.renderCarousel"
             template: "slide.html",
             fields: { headline: "A real photo slide", body: "This one has a hero image.", accentColor: "#2F6FC4" },
             images: { hero: path.relative(REPO_ROOT, imageAbsPath) },
+            htmlFragments: {},
           },
         ],
         canvas: { w: 1080, h: 1440, scale: 2, slides_min: 1, slides_max: 8 },

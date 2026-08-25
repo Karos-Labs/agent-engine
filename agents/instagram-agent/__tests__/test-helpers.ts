@@ -197,6 +197,7 @@ export function goodCopyOutput(): InstagramCopyOutput {
       body: fact.claim,
       visualNeed: GOOD_VISUAL_NEEDS[i]!,
       sourceRef: fact.claim,
+      layout: "photo" as const,
     })),
   };
 }

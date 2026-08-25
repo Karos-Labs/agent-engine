@@ -16,12 +16,26 @@ import type { ProductId } from "./wiring/workflows.js";
  * a human-facing report should badge as a model call; everything else is
  * mechanical `step.code`.
  */
+// 2026-08: every channel below gained a `04e-read-past-feedback` step (the
+// read side of the feedback flywheel, injected into the drafting prompt) and
+// its human batch-review gate is now revision-scoped by `runReviewCycle`
+// (`${gateId}-r${revision}` — "-r0" for the first round, "-r1"/"-r2" if a
+// `revise` verdict sends it back). `GATE_STEP_ID_BY_PRODUCT` below carries the
+// "-r0" form: for any run new enough to have one of these lists, its gate
+// step is already a real `StepRecord` under that id (`resolvedGateStepRecords`
+// is a no-op for it), so what matters here is that a MATCHING descriptor
+// exists for the serializer to join against. A later revision round
+// (`-r1`, `-r2`) has no descriptor at all and is a known, accepted gap on this
+// fixed-list path — see this file's own note (line ~137) that these five are
+// the last holdouts still on a hand-authored shape rather than
+// `discoveredDescriptors`.
 const X_AGENT_STEP_IDS = [
   "00-intake-check",
   "01-load-client-context",
   "02-load-memory-shelf",
   "03-load-recent-decisions",
   "04-research-pull",
+  "04e-read-past-feedback",
   "05-extract-candidate-summary",
   "06-reserve-topic",
   "07-select-candidate",
@@ -32,7 +46,7 @@ const X_AGENT_STEP_IDS = [
   "12-verify-brand-compliance",
   "13-verify-link-placement",
   "14-render-preview-check",
-  "15-batch-review",
+  "15-batch-review-r0",
   "16-verify-no-placeholder",
   "17-verify-no-leak",
   "18-persist-deliverable",
@@ -40,12 +54,17 @@ const X_AGENT_STEP_IDS = [
   "20-commit-and-record",
 ] as const;
 
+// `00-channel-setup` (2026-08): the pre-flight linkedin-agent now runs for
+// itself in place of the old standalone `linkedin-setup-agent` product — see
+// `agents/setup-agents/src/workflow/channel-setup.ts`.
 const LINKEDIN_AGENT_STEP_IDS = [
+  "00-channel-setup",
   "00-intake-check",
   "01-load-client-context",
   "02-load-memory-shelf",
   "03-load-recent-decisions",
   "04-research-pull",
+  "04e-read-past-feedback",
   "05-extract-candidate-summary",
   "06-reserve-topic",
   "07-select-candidate",
@@ -56,19 +75,26 @@ const LINKEDIN_AGENT_STEP_IDS = [
   "12-render-preview-check",
   "13-verify-no-placeholder",
   "14-verify-no-leak",
-  "15-batch-review",
+  "15-batch-review-r0",
   "16-persist-deliverable",
   "17-persist-manifest",
   "18-commit-and-record",
 ] as const;
 
-/** Reddit's own shape — the longest of the five: a pre-draft thread-selection/eligibility run (steps 08-11) precedes drafting a reply, never an original post (Phase 2.5 Batch 2.1's reply-only restoration). */
+/**
+ * Reddit's own shape — the longest of the five: a pre-draft thread-selection/eligibility run (steps 08-11) precedes drafting a reply, never an original post (Phase 2.5 Batch 2.1's reply-only restoration).
+ *
+ * `00-channel-setup` (2026-08): the pre-flight reddit-agent now runs for
+ * itself in place of the old standalone `reddit-setup-agent` product.
+ */
 const REDDIT_AGENT_STEP_IDS = [
+  "00-channel-setup",
   "00-intake-check",
   "01-load-client-context",
   "02-load-memory-shelf",
   "03-load-recent-decisions",
   "04-research-pull",
+  "04e-read-past-feedback",
   "05-extract-candidate-summary",
   "06-reserve-topic",
   "07-select-candidate",
@@ -82,7 +108,7 @@ const REDDIT_AGENT_STEP_IDS = [
   "15-verify-no-placeholder",
   "16-verify-leak-check",
   "17-render-preview-check",
-  "18-batch-review",
+  "18-batch-review-r0",
   "19-persist-deliverable",
   "20-persist-manifest",
   "21-commit-and-record",
@@ -94,6 +120,7 @@ const BLOG_AGENT_STEP_IDS = [
   "02-load-memory-shelf",
   "03-load-recent-decisions",
   "04-research-pull",
+  "04e-read-past-feedback",
   "05-extract-candidate-summary",
   "06-reserve-topic",
   "07-select-candidate",
@@ -104,7 +131,7 @@ const BLOG_AGENT_STEP_IDS = [
   "12-render-preview-check",
   "13-verify-no-placeholder",
   "14-verify-no-leak",
-  "15-batch-review",
+  "15-batch-review-r0",
   "16-persist-deliverable",
   "17-persist-manifest",
   "18-commit-and-record",
@@ -117,6 +144,7 @@ const NEWSLETTER_AGENT_STEP_IDS = [
   "02-load-memory-shelf",
   "03-load-recent-decisions",
   "04-research-pull",
+  "04e-read-past-feedback",
   "05-extract-candidate-summary",
   "06-reserve-topics",
   "07-select-candidates",
@@ -128,7 +156,7 @@ const NEWSLETTER_AGENT_STEP_IDS = [
   "13-verify-no-placeholder",
   "14-verify-no-leak",
   "15-render-preview-check",
-  "16-batch-review",
+  "16-batch-review-r0",
   "17-persist-deliverable",
   "18-persist-manifest",
   "19-commit-and-record",
@@ -164,11 +192,11 @@ const CHANNEL_DRAFT_STEP_SUFFIXES = Array.from(new Set(Object.values(DRAFT_STEP_
  * so a resolved gate reports its real status instead.
  */
 const GATE_STEP_ID_BY_PRODUCT: Record<OriginalChannelProductId, string> = {
-  "x-agent": "15-batch-review",
-  "linkedin-agent": "15-batch-review",
-  "reddit-agent": "18-batch-review",
-  "blog-agent": "15-batch-review",
-  "newsletter-agent": "16-batch-review",
+  "x-agent": "15-batch-review-r0",
+  "linkedin-agent": "15-batch-review-r0",
+  "reddit-agent": "18-batch-review-r0",
+  "blog-agent": "15-batch-review-r0",
+  "newsletter-agent": "16-batch-review-r0",
 };
 
 /**

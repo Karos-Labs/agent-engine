@@ -1,0 +1,255 @@
+import type { AgentContext, AgentToolRegistry, GateResponse, TemplateFeedback } from "@agent-engine/core";
+import type { GateDefinition, WorkflowContext } from "./context.js";
+import { WorkflowHeld } from "./signals.js";
+
+/**
+ * One accumulated revision request, in the order a person made them.
+ *
+ * Carried into the next attempt so the drafting step can act on all of them
+ * rather than only the most recent — a reviewer who asked for a shorter hook
+ * on round one and a different closer on round two expects both, and
+ * forgetting the first is how a revision loop feels broken.
+ */
+export interface RevisionNote {
+  revision: number;
+  actor: string;
+  at: string;
+  feedback: string;
+}
+
+export interface ReviewCycleResult<T> {
+  output: T;
+  /** Which revision was approved. 0 means it was approved first time. */
+  revision: number;
+  /** Every revision request that shaped it, oldest first. */
+  notes: RevisionNote[];
+  response: GateResponse;
+}
+
+export interface ReviewCycleOptions<T> {
+  /**
+   * Base gate id. Each round registers `${gateId}-r${revision}` — one gate
+   * record per round, because a gate record holds exactly one response and a
+   * second round needs somewhere to put a second one.
+   */
+  gateId: string;
+  /**
+   * Rounds of revision allowed after the first attempt. 2 means: draft, then
+   * up to two revises, then the third `revise` is treated as a hold.
+   *
+   * Bounded on purpose. An unbounded revision loop is an unbounded spend: a
+   * reviewer who keeps clicking revise would keep re-running paid drafting
+   * steps forever, and there is no point at which the run would notice.
+   */
+  maxRevisions: number;
+  /**
+   * Produces the thing being reviewed.
+   *
+   * `revision` MUST be folded into every checkpointed step id inside this
+   * callback (`05-write-copy-r1-attempt-1`), or the second round short-circuits
+   * on the first round's checkpoints and returns the identical output — the
+   * loop would spin without ever changing anything. Anything deliberately
+   * NOT re-run on a revision (research, a topic claim) simply keeps its id
+   * and short-circuits, which is how a revision reuses expensive work.
+   */
+  attempt: (revision: number, notes: readonly RevisionNote[]) => Promise<T>;
+  /** The gate to register for this round, given what `attempt` produced. */
+  buildGate: (output: T, revision: number) => GateDefinition;
+  /**
+   * Skips the gate and synthesizes an approval. The same `autoApprove` escape
+   * hatch every agent here already has, for tests and evals.
+   */
+  autoApprove?: boolean;
+  /**
+   * Called once per decision, whatever it was, before the cycle acts on it.
+   *
+   * This is where feedback reaches durable memory. Deliberately a callback
+   * rather than a store dependency: this package is Layer 1 and owns no
+   * tools, so the agent supplies the write. Failures inside it are the
+   * agent's problem to swallow — this primitive does not catch, because
+   * silently losing a reviewer's note is worse than a loud failure.
+   */
+  onDecision?: (decision: {
+    revision: number;
+    response: GateResponse;
+    /** Template notes, already split out for the caller's convenience. */
+    templateFeedback: readonly TemplateFeedback[];
+  }) => Promise<void>;
+}
+
+/**
+ * The universal approve / revise / reject cycle.
+ *
+ * Generic across agents by construction: it knows nothing about carousels,
+ * posts or templates — only that something is produced, a human judges it,
+ * and a `revise` verdict re-produces it with the feedback in hand.
+ *
+ * ## Why the revision is in-run rather than a fresh run
+ *
+ * A new run would be simpler, and it is what the portal's existing retry does.
+ * It also throws away the run's research, its reserved topic and its cost
+ * accounting, and it starts from a blank slate that has to be re-told what the
+ * feedback was. Because every step here is checkpointed by id, an in-run
+ * revision gets the reuse for free: steps outside `attempt` short-circuit on
+ * their existing checkpoints, and only the revision-scoped drafting steps
+ * actually re-execute.
+ *
+ * ## What it does NOT do
+ *
+ * It does not judge the output, and it does not decide what "revise" means for
+ * a given product — the agent's own `attempt` callback does both. Layer 1
+ * makes no content judgments (RFC-01 §4), and that holds here.
+ */
+export async function runReviewCycle<T>(wf: WorkflowContext, options: ReviewCycleOptions<T>): Promise<ReviewCycleResult<T>> {
+  const notes: RevisionNote[] = [];
+
+  for (let revision = 0; revision <= options.maxRevisions; revision++) {
+    const output = await options.attempt(revision, notes);
+
+    const response: GateResponse = options.autoApprove
+      ? await wf.step.code(`${options.gateId}-r${revision}`, () => ({
+          decision: "approve" as const,
+          actor: "system",
+          at: new Date().toISOString(),
+        }))
+      : await wf.step.gate(`${options.gateId}-r${revision}`, options.buildGate(output, revision));
+
+    const templateFeedback = response.templateFeedback ?? [];
+    if (options.onDecision) {
+      await options.onDecision({ revision, response, templateFeedback });
+    }
+
+    if (response.decision === "approve") {
+      return { output, revision, notes, response };
+    }
+
+    if (response.decision === "revise") {
+      // `feedback` is schema-mandatory on `revise`, so the `?? ""` is only a
+      // type narrowing — an empty note would be a schema violation upstream.
+      notes.push({ revision, actor: response.actor, at: response.at, feedback: response.feedback ?? "" });
+      if (revision === options.maxRevisions) {
+        throw new WorkflowHeld(
+          `review requested another revision after ${options.maxRevisions} round(s), which is this gate's ceiling — ` +
+            `holding rather than re-drafting indefinitely. Requests so far: ${notes.map((n) => `r${n.revision}: ${n.feedback}`).join(" | ")}`,
+        );
+      }
+      continue;
+    }
+
+    // `reject`: a human said no. Never converted into a delivery.
+    throw new WorkflowHeld(`review rejected: ${response.reason ?? "no reason given"}`);
+  }
+
+  // Unreachable: the loop either returns, continues, or throws.
+  throw new WorkflowHeld("review cycle ended without a decision");
+}
+
+/**
+ * Rounds of revision a reviewer may request before the run holds instead.
+ *
+ * Two, plus the original draft. It has to be bounded: every round re-runs the
+ * paid drafting steps, and a reviewer who keeps clicking "revise" would
+ * otherwise keep spending with nothing in the system noticing. Shared across
+ * agents so the ceiling is one number rather than five that can drift.
+ */
+export const MAX_REVISION_ROUNDS = 2;
+
+/**
+ * Writes one review decision to durable client memory.
+ *
+ * Takes the tool registry as a parameter rather than importing anything: this
+ * package is Layer 1 and owns no tools, exactly as `runTopicGuardrail` takes
+ * its own `deps.tools`. Agents that also route TEMPLATE feedback somewhere
+ * (instagram) wrap this and add their own handling on top.
+ *
+ * Written for EVERY decision including approvals, deliberately: an approving
+ * reviewer who says "the shorter hooks are working" is teaching the system
+ * something, and a store that only remembers complaints learns a distorted
+ * version of what a client wants.
+ *
+ * Idempotent by construction — `feedbackId` is `${runId}-r${revision}`, so a
+ * replayed run appends one row rather than one per replay.
+ *
+ * Failures are swallowed and logged, narrowly: losing a note is bad, but
+ * failing an already-APPROVED run because a memory write timed out would
+ * discard a finished deliverable the client is waiting for. The gate record
+ * still holds the decision verbatim, so nothing is unrecoverable.
+ */
+export async function persistReviewFeedbackToMemory(
+  wf: WorkflowContext,
+  tools: AgentToolRegistry,
+  ctx: AgentContext,
+  revision: number,
+  response: GateResponse,
+): Promise<void> {
+  const note = response.feedback ?? response.reason;
+  const append = tools["memory.appendFeedback"];
+  if (note === undefined || append === undefined) return;
+  try {
+    await wf.step.code(`review-feedback-r${revision}`, async () =>
+      append.execute(
+        {
+          feedbackId: `${wf.runId}-r${revision}`,
+          productId: wf.productId,
+          decision: response.decision,
+          actor: response.actor,
+          note,
+          revision,
+          runId: wf.runId,
+        },
+        { ctx },
+      ),
+    );
+  } catch (error) {
+    console.error(`persistReviewFeedbackToMemory: could not record review feedback for run ${wf.runId}`, error);
+  }
+}
+
+/**
+ * Reads what this client asked for on previous runs, for injection into a
+ * drafting prompt.
+ *
+ * Bounded and best-effort for the same two reasons everywhere it is used: an
+ * unbounded history would push the actual brief out of the context window,
+ * and a memory read failing must not stop a run that can draft without it.
+ */
+export async function readPastFeedback(
+  wf: WorkflowContext,
+  tools: AgentToolRegistry,
+  ctx: AgentContext,
+  stepId = "read-past-feedback",
+): Promise<string[]> {
+  return wf.step.code(stepId, async () => {
+    const read = tools["memory.readFeedback"];
+    if (!read) return [] as string[];
+    try {
+      const outcome = await read.execute({ productId: wf.productId, limit: 10 }, { ctx });
+      if (outcome.status !== "success") return [] as string[];
+      return (outcome.result as { entries: Array<{ decision: string; note: string }> }).entries.map(
+        (e) => `(${e.decision}) ${e.note}`,
+      );
+    } catch (error) {
+      console.error(`${stepId}: could not read client feedback history, drafting without it`, error);
+      return [] as string[];
+    }
+  });
+}
+
+/**
+ * Formats accumulated revision requests for injection into a drafting agent's
+ * input.
+ *
+ * Numbered and oldest-first, because a model given an unordered blob of
+ * feedback tends to act on whichever it read last. Returns undefined for an
+ * empty list so a caller can spread it conditionally and a first draft's
+ * prompt is byte-identical to what it was before revisions existed.
+ */
+export function revisionDirective(notes: readonly RevisionNote[]): string | undefined {
+  if (notes.length === 0) return undefined;
+  const lines = notes.map((n, i) => `${i + 1}. (round ${n.revision + 1}, ${n.actor}) ${n.feedback}`);
+  return [
+    "A reviewer has asked for changes to your previous draft. Address EVERY point below, not only the most recent one:",
+    ...lines,
+    "Keep everything they did not ask you to change.",
+  ].join("\n");
+}

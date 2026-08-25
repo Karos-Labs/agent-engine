@@ -25,6 +25,9 @@ const ALL_22_STEP_IDS = [
   "02-load-memory-shelf",
   "03-load-recent-decisions",
   "04-research-pull",
+  // The read side of the feedback flywheel: what this client asked for on
+  // previous runs, injected into the drafting prompt.
+  "04e-read-past-feedback",
   "05-extract-candidate-summary",
   "06-reserve-topic",
   "07-select-candidate",
@@ -38,7 +41,9 @@ const ALL_22_STEP_IDS = [
   "15-verify-no-placeholder",
   "16-verify-leak-check",
   "17-render-preview-check",
-  "18-batch-review",
+  // Revision-scoped: `-r0` is the first review round. A `revise` decision
+  // registers `-r1` after re-drafting.
+  "18-batch-review-r0",
   "19-persist-deliverable",
   "20-persist-manifest",
   "21-commit-and-record",
@@ -140,12 +145,12 @@ describe("end-to-end: the 23-step Reddit agent reply-only workflow", () => {
     const first = await engine.run(workflowFn, params);
     expect(first.status).toBe("awaiting_gate");
     if (first.status !== "awaiting_gate") throw new Error("unreachable");
-    expect(first.pendingGateId).toContain("18-batch-review");
+    expect(first.pendingGateId).toContain("18-batch-review-r0");
 
     const deliverablesBeforeApproval = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
     expect(deliverablesBeforeApproval).toHaveLength(0);
 
-    await engine.resolveGate(params.runId, "18-batch-review", {
+    await engine.resolveGate(params.runId, "18-batch-review-r0", {
       decision: "approve",
       actor: "jane@karoslabs.com",
       at: new Date(2026, 7, 16).toISOString(),
@@ -171,7 +176,7 @@ describe("end-to-end: the 23-step Reddit agent reply-only workflow", () => {
     // And the checkpoint carries the DECISION, which is the only place the
     // run records that a human approved this and who they were.
     const gateStep = stepRecords.find((s) => s.kind === "gate");
-    expect(gateStep?.stepId).toBe("18-batch-review");
+    expect(gateStep?.stepId).toBe("18-batch-review-r0");
     expect(gateStep?.output).toMatchObject({ decision: "approve", actor: "jane@karoslabs.com" });
   });
 
@@ -184,7 +189,7 @@ describe("end-to-end: the 23-step Reddit agent reply-only workflow", () => {
     const engine = new WorkflowEngine(durableStore);
 
     await engine.run(workflowFn, params);
-    await engine.resolveGate(params.runId, "18-batch-review", {
+    await engine.resolveGate(params.runId, "18-batch-review-r0", {
       decision: "reject",
       actor: "jane@karoslabs.com",
       reason: "not on brand this week",
@@ -194,7 +199,9 @@ describe("end-to-end: the 23-step Reddit agent reply-only workflow", () => {
     const result = await engine.run(workflowFn, params);
     expect(result.status).toBe("held");
     if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/batch rejected/i);
+    // `runReviewCycle` is generic across agents, so the wording is
+    // "review rejected" rather than anything channel-specific.
+    expect(result.reason).toMatch(/review rejected/i);
 
     const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
     expect(deliverables).toHaveLength(0);

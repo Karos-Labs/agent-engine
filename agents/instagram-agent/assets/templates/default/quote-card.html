@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>instagram-agent quote_card slide template</title>
+<!--
+  `quote_card` — a pull-quote and its attribution.
+
+  Ported from the `.quote-block` device shared by karos-agents' legacy
+  `marketer-legend.html` and `campaign-story.html` (defined in
+  `marketing-services/_ms-core.css` / `_cf-devices.css`).
+
+  The giant accent quotation mark IS the design, and the one non-obvious value
+  makes it work: `line-height: 0.55` on a 200px glyph. That pulls the mark's
+  own leading in so it tucks tight above the first line of the quote instead
+  of floating half a line-height away from it. Changing it to a normal
+  line-height breaks the lockup.
+
+  The mark is a literal character in the markup rather than a CSS
+  `::before { content: "\201C" }`, also as legacy had it — a real text node
+  inherits the italic display face and its own optical sizing, which a
+  generated-content glyph does not reliably do across font loads.
+
+  See `stat-callout.html`'s header for why the token block is duplicated per
+  archetype file rather than shared.
+-->
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600;1,400;1,500;1,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #17181C;
+    --fg: #F4F2EC;
+    --accent: {{accentColor}};
+    --f-display: 'Fraunces', Georgia, 'Times New Roman', serif;
+    --f-body: 'Inter', system-ui, -apple-system, sans-serif;
+    --f-mono: 'IBM Plex Mono', ui-monospace, monospace;
+    /* Quote slides get wider gutters than the rest of the set — both legacy
+       generations did this, and it is what keeps a 70px italic measure from
+       running the full plate width. */
+    --mx: 80px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1080px; height: 1440px; }
+  body { position: relative; overflow: hidden; background: var(--bg); color: var(--fg); font-family: var(--f-body); }
+
+  .eyebrow {
+    position: absolute; top: 56px; right: var(--mx); z-index: 4;
+    font-family: var(--f-mono); font-weight: 500; font-size: 19px;
+    letter-spacing: 0.2em; text-transform: uppercase; color: var(--accent);
+  }
+
+  .quote-block { position: absolute; left: var(--mx); right: var(--mx); bottom: 130px; z-index: 4; }
+
+  .quote-mark {
+    font-family: var(--f-display); font-style: italic; font-weight: 400;
+    font-size: 200px; line-height: 0.55; color: var(--accent); margin-bottom: 10px;
+  }
+  .quote-text {
+    font-family: var(--f-display); font-style: italic; font-weight: 500;
+    font-size: 70px; line-height: 1.26; letter-spacing: -0.008em; text-wrap: balance;
+  }
+  .quote-text.small { font-size: 56px; line-height: 1.24; }
+  .quote-text.tiny { font-size: 46px; line-height: 1.28; }
+  .quote-attr {
+    margin-top: 36px; font-family: var(--f-body); font-size: 21px; font-weight: 500;
+    letter-spacing: 0.01em; color: rgba(244,242,236,0.7);
+  }
+</style>
+</head>
+<body>
+  <div class="eyebrow">{{kicker}}</div>
+  <div class="quote-block">
+    <div class="quote-mark">&ldquo;</div>
+    <div class="quote-text" id="quote">{{quoteText}}</div>
+    <div class="quote-attr">{{attribution}}</div>
+  </div>
+  <script>
+    // Legacy `CF.lengthClass` breakpoints, adapted to this measure: a quote
+    // over ~110 characters cannot hold 70px inside the plate without pushing
+    // the attribution off the bottom.
+    (function () {
+      var q = document.getElementById("quote");
+      var len = (q.textContent || "").trim().length;
+      if (len > 190) q.className = "quote-text tiny";
+      else if (len > 110) q.className = "quote-text small";
+      window.__CAROUSEL_READY__ = true;
+    })();
+  </script>
+</body>
+</html>

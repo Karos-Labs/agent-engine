@@ -1,6 +1,6 @@
-import { asString, type ImageSearchHit, type ImageSearchProvider } from "../providers.js";
+import { asString, searchWithBroadening, type ImageSearchHit, type ImageSearchProvider } from "../providers.js";
 import { ImageProviderError } from "../providers.js";
-import { isBlockedImageUrl } from "../quality.js";
+import { broadeningVariants, isBlockedImageUrl } from "../quality.js";
 
 const UNSPLASH_ENDPOINT = "https://api.unsplash.com/search/photos";
 
@@ -48,6 +48,16 @@ export function createUnsplashProvider(options: {
   return {
     name: "unsplash",
     async search(query: string, limit: number): Promise<ImageSearchHit[]> {
+      // Broadened, like every other provider in the chain. A large keyword
+      // index does not return nothing for a 20-word scene description — it
+      // returns near-arbitrary matches the rights/subject gate then pays to
+      // reject. See `searchWithBroadening`'s own note for the prep run that
+      // measured it.
+      return searchWithBroadening(query, broadeningVariants(query), (variant) => searchOnce(variant, limit));
+    },
+  };
+
+  async function searchOnce(query: string, limit: number): Promise<ImageSearchHit[]> {
       const url = new URL(UNSPLASH_ENDPOINT);
       url.searchParams.set("query", query);
       // Unsplash caps per_page at 30; asking for more is a 400, not a clamp.
@@ -115,7 +125,6 @@ export function createUnsplashProvider(options: {
         if (hits.length >= limit) break;
       }
 
-      return hits;
-    },
-  };
+    return hits;
+  }
 }

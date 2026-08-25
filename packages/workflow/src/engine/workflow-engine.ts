@@ -58,6 +58,8 @@ export interface RunWorkflowParams {
   productId: string;
   runKind: RunKind;
   budget?: WorkflowBudget;
+  /** Overrides `DEFAULT_AGENT_STEP_TIMEOUT_MS` for every `step.agent` call in this run. */
+  agentStepTimeoutMs?: number;
   /**
    * This run's own request -- the portal brief, a requested topic. Stored on
    * the run record so a resume after a gate reads the same brief the first
@@ -154,6 +156,7 @@ export class WorkflowEngine {
       store: this.store,
       now: this.now,
       ...(budget !== undefined ? { budget } : {}),
+      ...(params.agentStepTimeoutMs !== undefined ? { agentStepTimeoutMs: params.agentStepTimeoutMs } : {}),
     };
     const wf = buildWorkflowContext(runtime);
 

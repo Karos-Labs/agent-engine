@@ -45,9 +45,29 @@ const StartRunRequestSchema = RunJobRequestSchema.extend({
 const ResumeRunRequestSchema = z.object({
   gateId: z.string().min(1),
   resolution: z.object({
-    decision: z.enum(["approve", "reject"]),
+    /**
+     * `revise` re-enters the drafting loop with `feedback` injected instead of
+     * holding the run (see `GateResponseSchema`'s own note). Widened here in
+     * lockstep with that schema; an agent that does not implement revision
+     * treats it as non-approve and holds, which is the safe default.
+     */
+    decision: z.enum(["approve", "revise", "reject"]),
     actor: z.string().min(1),
     notes: z.string().optional(),
+    /** Change request on `revise`, optional guidance on `approve`. */
+    feedback: z.string().optional(),
+    /** Per-slide notes on the templates that rendered this output. */
+    templateFeedback: z
+      .array(
+        z.object({
+          slide: z.number().int().positive(),
+          templateId: z.string().min(1),
+          verdict: z.enum(["approved", "revise"]),
+          note: z.string().min(1),
+          promote: z.boolean().optional(),
+        }),
+      )
+      .optional(),
   }),
 });
 
@@ -133,6 +153,16 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
       decision: resolution.decision,
       actor: resolution.actor,
       ...(resolution.notes !== undefined ? { reason: resolution.notes } : {}),
+      // `notes` doubles as `feedback` when the caller sent no explicit
+      // `feedback`, so a client that only knows about `notes` can still drive
+      // a `revise` (whose schema REQUIRES feedback) rather than getting a 400
+      // it has no way to interpret.
+      ...(resolution.feedback !== undefined
+        ? { feedback: resolution.feedback }
+        : resolution.notes !== undefined
+          ? { feedback: resolution.notes }
+          : {}),
+      ...(resolution.templateFeedback !== undefined ? { templateFeedback: resolution.templateFeedback } : {}),
       at: now(),
     });
     if (!responseParsed.success) {

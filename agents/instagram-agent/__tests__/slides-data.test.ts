@@ -1,0 +1,458 @@
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import fsp from "node:fs/promises";
+import pathMod from "node:path";
+import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
+import { MemoryTemplateStore, TemplateDefinitionSchema } from "@agent-engine/tool-karos-templates";
+import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
+import {
+  fakeRenderCarousel,
+  fakeRouterSequence,
+  finalTurn,
+  goodCopyOutput,
+  goodImageCandidatePool,
+  goodImageVettingOutput,
+  goodResearchOutput,
+  goodVisualQaOutput,
+  makePromptStore,
+  setupTestEnvironment,
+  type TestEnvironment,
+} from "./test-helpers.js";
+import { assembleSlidesData, buildListRows, resolveLayout } from "../src/workflow/slides-data.js";
+import { InstagramSlideCopySchema, type InstagramCopyOutput, type ImageSelection } from "../src/workflow/types.js";
+
+const CANVAS = { w: 1080, h: 1440, scale: 2, slides_min: 6, slides_max: 8 };
+
+function copyWith(overrides: Partial<InstagramCopyOutput["slides"][number]>[]): InstagramCopyOutput {
+  return {
+    slides: overrides.map((o, i) => ({
+      n: i + 1,
+      headline: `headline ${i + 1}`,
+      body: `body ${i + 1}`,
+      visualNeed: `need ${i + 1}`,
+      sourceRef: `claim ${i + 1}`,
+      layout: "photo" as const,
+      ...o,
+    })),
+  };
+}
+
+/** `assembleSlidesData`'s per-slide template selection and image wiring — the "layout selector" this ask asked to verify. */
+describe("assembleSlidesData: per-slide layout routing", () => {
+  it("routes a 'photo' slide through the client's configured template and attaches its vetted image", () => {
+    const copy = copyWith([{ n: 1, layout: "photo" }]);
+    const selections: ImageSelection[] = [
+      { n: 1, imagePath: "photos/n1.jpg", reason: "matches", license: "CC0", rightsUsable: true, watermarkFree: true },
+    ];
+
+    const data = assembleSlidesData({
+      clientSlug: "acme",
+      postId: "post_1",
+      repoRoot: "/repo",
+      brandTokens: { templateDir: "fixtures/templates", slideTemplate: "slide.html" },
+      copy,
+      selections,
+      canvas: CANVAS,
+    });
+
+    expect(data.slides[0]).toMatchObject({
+      template: "slide.html",
+      images: { hero: "photos/n1.jpg" },
+    });
+  });
+
+  it("routes a 'text_only' slide through the SAME client template but with no image attached, even if a stale imagePath is present", () => {
+    const copy = copyWith([{ n: 1, layout: "text_only" }]);
+    // A downgraded slide's selection is always nulled out by the workflow
+    // before this runs — this proves the render layer's own contract holds
+    // even if a caller somehow passed a leftover path through: "text_only"
+    // never carries a photo, regardless of what the selection says.
+    const selections: ImageSelection[] = [
+      { n: 1, imagePath: null, reason: "no candidate qualified", license: "n/a", rightsUsable: false, watermarkFree: false },
+    ];
+
+    const data = assembleSlidesData({
+      clientSlug: "acme",
+      postId: "post_1",
+      repoRoot: "/repo",
+      brandTokens: { templateDir: "fixtures/templates", slideTemplate: "slide.html" },
+      copy,
+      selections,
+      canvas: CANVAS,
+    });
+
+    expect(data.slides[0]).toMatchObject({
+      template: "slide.html",
+      images: {},
+    });
+  });
+
+  it("keeps headline/body/accentColor identical across layouts -- layout only ever changes the template/image wiring, never the copy", () => {
+    const copy = copyWith([{ n: 1, layout: "photo" }, { n: 2, layout: "text_only" }]);
+    const selections: ImageSelection[] = [
+      { n: 1, imagePath: "photos/n1.jpg", reason: "matches", license: "CC0", rightsUsable: true, watermarkFree: true },
+      { n: 2, imagePath: null, reason: "no candidate qualified", license: "n/a", rightsUsable: false, watermarkFree: false },
+    ];
+
+    const data = assembleSlidesData({
+      clientSlug: "acme",
+      postId: "post_1",
+      repoRoot: "/repo",
+      brandTokens: { templateDir: "fixtures/templates", slideTemplate: "slide.html", accentColor: "#123456" },
+      copy,
+      selections,
+      canvas: CANVAS,
+    });
+
+    for (const slide of data.slides) {
+      expect(slide.fields["accentColor"]).toBe("#123456");
+    }
+    expect(data.slides[0]!.fields["headline"]).toBe("headline 1");
+    expect(data.slides[1]!.fields["headline"]).toBe("headline 2");
+  });
+});
+
+/** The ported legacy archetype set: selection, per-archetype fields, and graceful degradation. */
+describe("archetype layouts (legacy port)", () => {
+  const slide = (over: Record<string, unknown>) =>
+    InstagramSlideCopySchema.parse({
+      n: 1,
+      headline: "A headline",
+      body: "Some body copy.",
+      visualNeed: "a need",
+      sourceRef: "a claim",
+      ...over,
+    });
+
+  function assemble(copy: InstagramCopyOutput, selections: ImageSelection[] = []) {
+    return assembleSlidesData({
+      clientSlug: "acme",
+      postId: "post_1",
+      repoRoot: "/repo",
+      brandTokens: { templateDir: "fixtures/templates", slideTemplate: "slide.html", accentColor: "#C4552F" },
+      copy,
+      selections,
+      canvas: CANVAS,
+    });
+  }
+
+  it("routes each archetype to its own template file", () => {
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ layout: "photo" }, "slide.html"],
+      [{ layout: "text_only" }, "slide.html"],
+      [{ layout: "headline_focus" }, "headline-focus.html"],
+      [{ layout: "stat_callout", stat: { figure: "73%", subLabel: "of teams", source: "Acme, 2026" } }, "stat-callout.html"],
+      [{ layout: "quote_card", quote: { text: "A thing was said.", attribution: "Someone, 2026" } }, "quote-card.html"],
+      [
+        { layout: "comparison_card", comparison: { leftLabel: "Before", leftBody: "b", rightLabel: "After", rightBody: "a" } },
+        "comparison-card.html",
+      ],
+      [{ layout: "list_takeaway", items: [{ title: "One" }, { title: "Two" }] }, "list-takeaway.html"],
+    ];
+    for (const [over, expected] of cases) {
+      const data = assemble({ slides: [slide(over)] } as InstagramCopyOutput);
+      expect(data.slides[0]!.template, JSON.stringify(over)).toBe(expected);
+    }
+  });
+
+  it("gives stat_callout its figure, sub-label and mandatory source line", () => {
+    const data = assemble({
+      slides: [slide({ layout: "stat_callout", stat: { figure: "4.2x", subLabel: "faster onboarding", source: "Acme, 2026" } })],
+    } as InstagramCopyOutput);
+    expect(data.slides[0]!.fields).toMatchObject({
+      figure: "4.2x",
+      subLabel: "faster onboarding",
+      sourceLine: "Acme, 2026",
+      accentColor: "#C4552F",
+    });
+  });
+
+  it("gives quote_card the quote and attribution, and no headline slot it would not use", () => {
+    const data = assemble({
+      slides: [slide({ layout: "quote_card", quote: { text: "Ship it.", attribution: "A lead, 2026" } })],
+    } as InstagramCopyOutput);
+    expect(data.slides[0]!.fields).toMatchObject({ quoteText: "Ship it.", attribution: "A lead, 2026" });
+    expect(data.slides[0]!.fields["headline"]).toBeUndefined();
+  });
+
+  it("builds list_takeaway's rows as an html fragment, since the renderer has no loop construct", () => {
+    const data = assemble({
+      slides: [slide({ layout: "list_takeaway", items: [{ title: "First", note: "why" }, { title: "Second" }] })],
+    } as InstagramCopyOutput);
+    const rows = data.slides[0]!.htmlFragments["itemRows"]!;
+    expect(rows).toContain('<div class="me-title">First</div>');
+    expect(rows).toContain('<div class="me-note">why</div>');
+    // The second row has no note, so its note div is present but empty --
+    // `.me-note:empty { display: none }` collapses it in the template.
+    expect(rows).toContain('<div class="me-title">Second</div>');
+    expect(rows.match(/me-row/g)).toHaveLength(2);
+  });
+
+  // `{{html:...}}` is substituted UNESCAPED by design, so this escaping is the
+  // only thing between model-authored takeaway text and live markup.
+  it("escapes model text inside the list fragment", () => {
+    const rows = buildListRows([{ title: '<script>alert("x")</script>', note: "a & b" }]);
+    expect(rows).not.toContain("<script>");
+    expect(rows).toContain("&lt;script&gt;");
+    expect(rows).toContain("a &amp; b");
+  });
+
+  // The model picks `layout` and fills the content block separately, so those
+  // are two chances to disagree. A mismatch must not render an empty 300px
+  // figure, and must not fail the whole draft either.
+  it("degrades an archetype whose required content the model omitted, rather than rendering it empty", () => {
+    for (const layout of ["stat_callout", "quote_card", "comparison_card", "list_takeaway"] as const) {
+      const s = slide({ layout });
+      expect(resolveLayout(s).layout, layout).toBe("text_only");
+      expect(resolveLayout(s).downgradedFrom, layout).toContain(layout);
+
+      const data = assemble({ slides: [s] } as InstagramCopyOutput);
+      // Falls back to the client's own template on headline/body, which every
+      // slide is schema-guaranteed to have.
+      expect(data.slides[0]!.template).toBe("slide.html");
+      expect(data.slides[0]!.fields).toMatchObject({ headline: "A headline", body: "Some body copy." });
+    }
+  });
+
+  it("degrades a list_takeaway that arrived with only one item, since the layout needs at least two rows", () => {
+    // `.min(2)` on the schema rejects a 1-item array outright, so the workflow
+    // sees this shape only when the model omitted `items` entirely or the array
+    // was built downstream -- resolveLayout is the backstop either way.
+    const s = { ...slide({ layout: "list_takeaway" }), items: [{ title: "Only one" }] };
+    expect(resolveLayout(s).layout).toBe("text_only");
+  });
+
+  it("attaches a hero image only to a photo slide, never to a typographic archetype", () => {
+    const selections: ImageSelection[] = [
+      { n: 1, imagePath: "photos/n1.jpg", reason: "matches", license: "CC0", rightsUsable: true, watermarkFree: true },
+    ];
+    const photo = assemble({ slides: [slide({ layout: "photo" })] } as InstagramCopyOutput, selections);
+    expect(photo.slides[0]!.images).toEqual({ hero: "photos/n1.jpg" });
+
+    // A vetted image existing does not make a quote card into a photo slide.
+    const quote = assemble(
+      { slides: [slide({ layout: "quote_card", quote: { text: "q", attribution: "a" } })] } as InstagramCopyOutput,
+      selections,
+    );
+    expect(quote.slides[0]!.images).toEqual({});
+  });
+
+  it("passes an optional kicker through, and omits the slot entirely when unset", () => {
+    const withKicker = assemble({ slides: [slide({ layout: "headline_focus", kicker: "the shift" })] } as InstagramCopyOutput);
+    expect(withKicker.slides[0]!.fields["kicker"]).toBe("the shift");
+    const without = assemble({ slides: [slide({ layout: "headline_focus" })] } as InstagramCopyOutput);
+    expect(without.slides[0]!.fields["kicker"]).toBeUndefined();
+  });
+
+  it("defaults to photo for a slide that names no layout at all, so pre-archetype callers are unchanged", () => {
+    const data = assemble({ slides: [slide({})] } as InstagramCopyOutput);
+    expect(data.slides[0]!.template).toBe("slide.html");
+  });
+});
+
+/**
+ * A client configured before the archetype set shipped has a `templateDir`
+ * holding only its own `slide.html`. The renderer treats a missing template as
+ * a `tooling_error` that fails the WHOLE run, so without this the archetypes
+ * would have turned every such client's next carousel into an outage the first
+ * time the model picked one.
+ */
+describe("archetype templates missing from a client's templateDir", () => {
+  const statSlide = InstagramSlideCopySchema.parse({
+    n: 1,
+    headline: "A headline",
+    body: "Some body copy.",
+    visualNeed: "a need",
+    sourceRef: "a claim",
+    layout: "stat_callout",
+    stat: { figure: "73%", subLabel: "of teams", source: "Acme, 2026" },
+  });
+
+  it("degrades to the client's own template, naming the missing file, rather than routing to one that is not there", () => {
+    const onlySlideHtml = new Set<string>(); // the client's dir has no archetype files
+    const resolved = resolveLayout(statSlide, onlySlideHtml);
+    expect(resolved.layout).toBe("text_only");
+    expect(resolved.downgradedFrom).toContain("stat-callout.html");
+
+    const data = assembleSlidesData({
+      clientSlug: "acme",
+      postId: "post_1",
+      repoRoot: "/repo",
+      brandTokens: { templateDir: "legacy/templates", slideTemplate: "slide.html" },
+      copy: { slides: [statSlide] } as InstagramCopyOutput,
+      selections: [],
+      canvas: CANVAS,
+      availableTemplates: onlySlideHtml,
+    });
+    expect(data.slides[0]!.template).toBe("slide.html");
+    // Crucially it also renders the FALLBACK's fields, not the stat archetype's
+    // -- otherwise slide.html would get `figure`/`subLabel` slots it has no
+    // markup for and render an empty plate.
+    expect(data.slides[0]!.fields).toMatchObject({ headline: "A headline", body: "Some body copy." });
+    expect(data.slides[0]!.fields["figure"]).toBeUndefined();
+  });
+
+  it("uses the archetype when the client's dir does have the file", () => {
+    const withStat = new Set(["stat-callout.html"]);
+    expect(resolveLayout(statSlide, withStat).layout).toBe("stat_callout");
+    const data = assembleSlidesData({
+      clientSlug: "acme",
+      postId: "post_1",
+      repoRoot: "/repo",
+      brandTokens: { templateDir: "t", slideTemplate: "slide.html" },
+      copy: { slides: [statSlide] } as InstagramCopyOutput,
+      selections: [],
+      canvas: CANVAS,
+      availableTemplates: withStat,
+    });
+    expect(data.slides[0]!.template).toBe("stat-callout.html");
+    expect(data.slides[0]!.fields["figure"]).toBe("73%");
+  });
+
+  it("skips the availability check entirely when no set is supplied, so existing callers are unchanged", () => {
+    expect(resolveLayout(statSlide).layout).toBe("stat_callout");
+  });
+});
+
+/**
+ * Approach (a) end to end: a template that exists only in the registry (not
+ * on the client's disk) reaches the renderer, because step 04c materializes
+ * it into the run's own directory and points `templateDir` there.
+ */
+describe("template registry integration (Approach a)", () => {
+  let env: TestEnvironment;
+  beforeEach(async () => {
+    env = await setupTestEnvironment();
+  });
+  afterEach(async () => {
+    await env.cleanup();
+  });
+
+  it("renders a registry-only template by materializing it into the run directory", async () => {
+    // A curated quote-card that lives ONLY in the store, outscoring anything
+    // bundled, with markup recognisable in the output.
+    const store = new MemoryTemplateStore([
+      TemplateDefinitionSchema.parse({
+        id: "curated:quote",
+        archetypeId: "quote_card",
+        name: "Curated quote card",
+        layoutType: "typographic",
+        htmlTemplate: "<html><head></head><body><div id='marker'>REGISTRY-QUOTE</div>{{quoteText}}{{attribution}}</body></html>",
+        source: "curated",
+        qualityScore: 99,
+      }),
+    ]);
+
+    const base = goodCopyOutput();
+    const copy = {
+      slides: base.slides.map((s) =>
+        s.n === 2 ? { ...s, layout: "quote_card" as const, quote: { text: "Ship it.", attribution: "A lead, 2026" } } : s,
+      ),
+    };
+    const pool = goodImageCandidatePool();
+    const photoNs = base.slides.filter((s) => s.n !== 2).map((s) => s.n);
+    const router = fakeRouterSequence([
+      finalTurn(goodResearchOutput()),
+      finalTurn(copy),
+      finalTurn({
+        selections: photoNs.map((n) => ({
+          n,
+          imagePath: pool[0]!.path,
+          reason: "matches",
+          license: "CC0, test fixture",
+          rightsUsable: true,
+          watermarkFree: true,
+        })),
+      }),
+      finalTurn(goodVisualQaOutput()),
+    ]);
+
+    const durableStore = new MemoryDurableStepStore();
+    const result = await new WorkflowEngine(durableStore).run(
+      createInstagramAgentWorkflow({
+        tools: { ...env.tools, "publish.renderCarousel": fakeRenderCarousel(env.tools["publish.renderCarousel"]!) },
+        promptStore: makePromptStore(),
+        router,
+        repoRoot: env.repoRoot,
+        // A non-empty pool so the vetting step actually runs; without it an
+        // empty pool skips step 06 and the queued vetting turn would be
+        // consumed by the visual-QA step instead.
+        imageCandidatePool: pool,
+        autoApprove: true,
+        templateStore: store,
+      }),
+      { runId: "registry_run", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" },
+    );
+
+    expect(result.status).toBe("completed");
+    const steps = await durableStore.listSteps("registry_run");
+
+    // 04c materialized into the run's own directory, and recorded which row won.
+    const resolved = steps.find((s) => s.stepId === "04c-resolve-templates")?.output as
+      | { templateDir: string; files: string[]; chosen: Array<{ archetypeId: string; templateId: string }> }
+      | undefined;
+    expect(resolved?.templateDir).toBe(".template-cache/registry_run");
+    expect(resolved?.chosen.find((c) => c.archetypeId === "quote_card")?.templateId).toBe("curated:quote");
+
+    // The renderer was pointed at the materialized directory, not the client's.
+    const slidesData = steps.find((s) => s.stepId === "07c-emit-slides-data-attempt-1")?.output as
+      | { templateDir: string; slides: Array<{ n: number; template: string }> }
+      | undefined;
+    expect(slidesData?.templateDir).toBe(".template-cache/registry_run");
+    expect(slidesData?.slides.find((s) => s.n === 2)?.template).toBe("quote-card.html");
+
+    // And the file on disk is the REGISTRY's markup, not anything bundled.
+    const written = await fsp.readFile(
+      pathMod.join(env.repoRoot, ".template-cache", "registry_run", "quote-card.html"),
+      "utf8",
+    );
+    expect(written).toContain("REGISTRY-QUOTE");
+
+    // The client's own base template was copied in alongside, so one
+    // templateDir serves the photo slides too.
+    const baseTpl = await fsp.readFile(
+      pathMod.join(env.repoRoot, ".template-cache", "registry_run", "slide.html"),
+      "utf8",
+    );
+    expect(baseTpl.length).toBeGreaterThan(0);
+  }, 30000);
+
+  it("falls back to the client's templateDir when the registry throws, rather than failing the run", async () => {
+    const brokenStore = {
+      name: "broken",
+      async list(): Promise<never> {
+        throw new Error("firestore unreachable");
+      },
+      async get() {
+        return undefined;
+      },
+      async save() {},
+      async recordFeedback() {},
+    };
+
+    const router = fakeRouterSequence([
+      finalTurn(goodResearchOutput()),
+      finalTurn(goodCopyOutput()),
+      finalTurn(goodImageVettingOutput()),
+      finalTurn(goodVisualQaOutput()),
+    ]);
+    const durableStore = new MemoryDurableStepStore();
+    const result = await new WorkflowEngine(durableStore).run(
+      createInstagramAgentWorkflow({
+        tools: { ...env.tools, "publish.renderCarousel": fakeRenderCarousel(env.tools["publish.renderCarousel"]!) },
+        promptStore: makePromptStore(),
+        router,
+        repoRoot: env.repoRoot,
+        imageCandidatePool: goodImageCandidatePool(),
+        autoApprove: true,
+        templateStore: brokenStore,
+      }),
+      { runId: "registry_broken", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" },
+    );
+
+    expect(result.status).toBe("completed");
+    const resolved = (await durableStore.listSteps("registry_broken")).find((s) => s.stepId === "04c-resolve-templates")
+      ?.output as { templateDir: string } | undefined;
+    // Fell back to the on-disk path, so rendering never depended on the store.
+    expect(resolved?.templateDir).toBe("fixtures/templates");
+  }, 30000);
+});

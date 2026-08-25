@@ -2,6 +2,7 @@ import type { AgentToolRegistry, ModelRouter, PromptStore } from "@agent-engine/
 import type { WorkflowContext } from "@agent-engine/workflow";
 import type { WorkspaceStoreLike } from "@agent-engine/tools";
 import { createXAgentWorkflow } from "@agent-engine/agent-x";
+import type { TemplateStore } from "@agent-engine/tool-karos-templates";
 import { createInstagramAgentWorkflow } from "@agent-engine/agent-instagram";
 import { createLinkedInAgentWorkflow } from "@agent-engine/agent-linkedin";
 import { createRedditAgentWorkflow } from "@agent-engine/agent-reddit";
@@ -84,6 +85,15 @@ export interface AgentRuntimeDeps {
    * it as optional and refuses only the attachment case.
    */
   repoRoot?: string;
+  /**
+   * The slide-template registry (`@agent-engine/tool-karos-templates`).
+   *
+   * Only `instagram-agent` reads it today. Optional because the registry must
+   * never be able to take slide rendering down: without one, that agent reads
+   * archetype templates straight off disk exactly as it did before the
+   * registry existed.
+   */
+  templateStore?: TemplateStore;
 }
 
 export type WorkflowFn = (wf: WorkflowContext) => Promise<unknown>;
@@ -125,7 +135,11 @@ export function buildWorkflowForProduct(productId: ProductId, deps: AgentRuntime
           'buildWorkflowForProduct: AgentRuntimeDeps.repoRoot is required to dispatch "instagram-agent" (set INSTAGRAM_AGENT_REPO_ROOT at your composition root — see wiring/tools.js)',
         );
       }
-      return createInstagramAgentWorkflow({ ...deps, repoRoot: deps.repoRoot });
+      return createInstagramAgentWorkflow({
+        ...deps,
+        repoRoot: deps.repoRoot,
+        ...(deps.templateStore ? { templateStore: deps.templateStore } : {}),
+      });
     case "linkedin-agent":
       return createLinkedInAgentWorkflow(deps);
     case "reddit-agent":

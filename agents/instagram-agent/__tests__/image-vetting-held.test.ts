@@ -1,12 +1,15 @@
 import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
+import type { AgentToolRegistry } from "@agent-engine/core";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import {
+  fakeRenderCarousel,
   fakeRouterSequence,
   finalTurn,
   goodCopyOutput,
   goodImageCandidatePool,
   goodResearchOutput,
+  goodVisualQaOutput,
   makePromptStore,
   setupTestEnvironment,
   type TestEnvironment,
@@ -14,7 +17,12 @@ import {
 
 const params = { runId: "instagram_run_novimg", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
-describe("06-vet-images: no viable image holds the WHOLE post (preserved legacy-defect fix, RFC-03 §1/§3)", () => {
+/** Chromium-free `publish.renderCarousel` stand-in -- same rationale as `workflow-e2e.test.ts`. Needed now that an unfillable slide reaches rendering instead of holding before it. */
+function testTools(env: TestEnvironment): AgentToolRegistry {
+  return { ...env.tools, "publish.renderCarousel": fakeRenderCarousel(env.tools["publish.renderCarousel"]!) };
+}
+
+describe("06-vet-images: no viable image ships text-only rather than holding (guaranteed delivery, 2026-08)", () => {
   let env: TestEnvironment;
 
   beforeEach(async () => {
@@ -25,7 +33,7 @@ describe("06-vet-images: no viable image holds the WHOLE post (preserved legacy-
     await env.cleanup();
   });
 
-  it("holds the whole post when exactly one slide has no viable candidate -- never a placeholder, never a silently-dropped slide", async () => {
+  it("downgrades exactly one unfillable slide to text-only and still delivers -- never a placeholder, never a silently-dropped slide", async () => {
     const promptStore = makePromptStore();
     const copy = goodCopyOutput();
     const vetting = {
@@ -38,9 +46,14 @@ describe("06-vet-images: no viable image holds the WHOLE post (preserved legacy-
         watermarkFree: s.n !== 3,
       })),
     };
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), finalTurn(copy), finalTurn(vetting)]);
+    const router = fakeRouterSequence([
+      finalTurn(goodResearchOutput()),
+      finalTurn(copy),
+      finalTurn(vetting),
+      finalTurn(goodVisualQaOutput()),
+    ]);
     const workflowFn = createInstagramAgentWorkflow({
-      tools: env.tools,
+      tools: testTools(env),
       promptStore,
       router,
       repoRoot: env.repoRoot,
@@ -52,42 +65,36 @@ describe("06-vet-images: no viable image holds the WHOLE post (preserved legacy-
     const engine = new WorkflowEngine(durableStore);
     const result = await engine.run(workflowFn, params);
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/no viable image found for slide\(s\) 3/i);
-    expect(result.reason).toMatch(/holding the whole post/i);
+    expect(result.status).toBe("completed");
 
-    // The hold fires immediately after image vetting -- self-check, slides-data
-    // assembly, and rendering never even ran; nothing was rendered, nothing
-    // was delivered, and the "unfillable" slide was never quietly excluded
-    // from the run's own accounting.
+    // The downgrade is checkpointed and named, the run proceeds through
+    // self-check and rendering, and a deliverable is actually produced --
+    // none of which happened under the old "hold the whole post" behavior.
     const stepRecords = await durableStore.listSteps(params.runId);
     const stepIds = stepRecords.map((s) => s.stepId);
     expect(stepIds).toContain("06-vet-images-attempt-1");
-    expect(stepIds).not.toContain("07-self-check-attempt-1");
-    expect(stepIds).not.toContain("08-render-carousel");
-    expect(stepIds).not.toContain("09b-deliver-and-log");
+    const downgradeStep = stepRecords.find((s) => s.stepId === "07a-downgrade-unfillable-slides-attempt-1");
+    expect((downgradeStep?.output as { downgraded: number[] } | undefined)?.downgraded).toEqual([3]);
+    expect(stepIds).toContain("07-self-check-attempt-1");
+    expect(stepIds).toContain("08-render-carousel-attempt-1");
 
     const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
-    expect(deliverables).toHaveLength(0);
+    expect(deliverables).toHaveLength(1);
   });
 
-  it("holds the whole post when every slide is unfillable (an empty/irrelevant candidate pool)", async () => {
+  it("downgrades every slide to text-only and still delivers when the whole pool is empty/irrelevant", async () => {
     const promptStore = makePromptStore();
     const copy = goodCopyOutput();
-    const vetting = {
-      selections: copy.slides.map((s) => ({
-        n: s.n,
-        imagePath: null,
-        reason: "the supplied pool has no candidates at all for this run",
-        license: "n/a — no candidate qualified",
-        rightsUsable: false,
-        watermarkFree: false,
-      })),
-    };
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), finalTurn(copy), finalTurn(vetting)]);
+    // No "vetting" turn queued: an empty pool skips step 06's model call
+    // entirely (see the workflow's own comment on why), straight to research
+    // -> copy -> visual QA.
+    const router = fakeRouterSequence([
+      finalTurn(goodResearchOutput()),
+      finalTurn(copy),
+      finalTurn(goodVisualQaOutput()),
+    ]);
     const workflowFn = createInstagramAgentWorkflow({
-      tools: env.tools,
+      tools: testTools(env),
       promptStore,
       router,
       repoRoot: env.repoRoot,
@@ -99,8 +106,9 @@ describe("06-vet-images: no viable image holds the WHOLE post (preserved legacy-
     const engine = new WorkflowEngine(durableStore);
     const result = await engine.run(workflowFn, { ...params, runId: "instagram_run_novimg_all" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/no viable image found for slide\(s\) 1, 2, 3, 4, 5, 6/);
+    expect(result.status).toBe("completed");
+    const stepRecords = await durableStore.listSteps("instagram_run_novimg_all");
+    const downgradeStep = stepRecords.find((s) => s.stepId === "07a-downgrade-unfillable-slides-attempt-1");
+    expect((downgradeStep?.output as { downgraded: number[] } | undefined)?.downgraded).toEqual([1, 2, 3, 4, 5, 6]);
   });
 });

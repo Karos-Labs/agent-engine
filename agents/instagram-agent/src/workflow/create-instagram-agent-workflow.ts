@@ -1,12 +1,15 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import { readForbiddenTopics } from "@agent-engine/core";
-import type { AgentContext, AgentTool, AgentToolRegistry, GateResponse, ModelRouter, PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runTopicGuardrail, readRunDirection, runDirectionField } from "@agent-engine/workflow";
+import type { AgentContext, AgentTool, AgentToolRegistry, GateResponse, ModelRouter, PromptStore, TemplateFeedback } from "@agent-engine/core";
+import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField } from "@agent-engine/workflow";
 import type { RenderCarouselInput, RenderCarouselResult } from "@agent-engine/tool-karos-publish";
 import { InstagramCopyAgent } from "../agent/instagram-copy-agent.js";
 import { InstagramImageVettingAgent } from "../agent/instagram-image-vetting-agent.js";
 import { InstagramResearchAgent } from "../agent/instagram-research-agent.js";
 import { InstagramVisualQaAgent } from "../agent/instagram-visual-qa-agent.js";
-import { assembleSlidesData, checkSlidesData } from "./slides-data.js";
+import { materializeTemplates, reviewTemplate, templateFileName, type TemplateStore } from "@agent-engine/tool-karos-templates";
+import { ARCHETYPE_TEMPLATE_FILES, assembleSlidesData, checkSlidesData, resolveLayout } from "./slides-data.js";
 import { checkCraftHygiene } from "./craft-hygiene.js";
 import {
   BrandTokensSchema,
@@ -19,6 +22,7 @@ import {
   type InstagramCopyOutput,
   type InstagramFrozenConfig,
   type InstagramRunClaim,
+  type InstagramSlideLayout,
   type InstagramTopicClaim,
   type ResearchOutput,
 } from "./types.js";
@@ -33,6 +37,90 @@ import {
  * getting their own separate retry mechanism.
  */
 const MAX_SELF_CHECK_ATTEMPTS = 3;
+
+/**
+ * Revision rounds a reviewer may request before the run holds instead.
+ *
+ * Two, plus the original draft, so a person gets a real back-and-forth
+ * without the loop becoming unbounded. It has to be bounded: every round
+ * re-runs the paid drafting steps (copy, vetting, generation, render), and a
+ * reviewer who keeps clicking "revise" would otherwise keep spending with
+ * nothing in the system noticing.
+ */
+const MAX_REVISION_ROUNDS = 2;
+
+/**
+ * Writes one review decision to durable client memory, and routes any
+ * per-slide template notes to the template registry.
+ *
+ * Two destinations because they are two different lessons. The reviewer's
+ * words about the POST go to `memory.appendFeedback`, which the next run reads
+ * back as standing guidance. Their words about a TEMPLATE go to the registry,
+ * where they move that template's `qualityScore` and therefore which layout
+ * later runs across every client actually get.
+ *
+ * Idempotent by construction: `feedbackId` is `${runId}-r${revision}`, so a
+ * replayed run appends one row rather than one per replay.
+ *
+ * Failures are swallowed and logged, deliberately and narrowly: losing a note
+ * is bad, but failing an already-APPROVED run because a memory write timed out
+ * would throw away a finished carousel the client is waiting for. The gate
+ * record itself still holds the decision verbatim, so nothing is
+ * unrecoverable.
+ */
+async function persistReviewFeedback(
+  wf: WorkflowContext,
+  tools: AgentToolRegistry,
+  ctx: AgentContext,
+  input: {
+    revision: number;
+    response: GateResponse;
+    templateFeedback: readonly TemplateFeedback[];
+    templateStore?: TemplateStore | undefined;
+  },
+): Promise<void> {
+  const note = input.response.feedback ?? input.response.reason;
+  const append = tools["memory.appendFeedback"];
+  if (note !== undefined && append !== undefined) {
+    try {
+      await wf.step.code(`09a-record-feedback-r${input.revision}`, async () =>
+        append.execute(
+          {
+            feedbackId: `${wf.runId}-r${input.revision}`,
+            productId: wf.productId,
+            decision: input.response.decision,
+            actor: input.response.actor,
+            note,
+            revision: input.revision,
+            runId: wf.runId,
+          },
+          { ctx },
+        ),
+      );
+    } catch (error) {
+      console.error(`persistReviewFeedback: could not record review feedback for run ${wf.runId}`, error);
+    }
+  }
+
+  if (input.templateFeedback.length === 0 || input.templateStore === undefined) return;
+  for (const entry of input.templateFeedback) {
+    try {
+      await wf.step.code(`09a-template-feedback-r${input.revision}-s${entry.slide}`, async () => {
+        await reviewTemplate({
+          store: input.templateStore!,
+          templateId: entry.templateId,
+          actor: input.response.actor,
+          verdict: entry.verdict,
+          note: entry.note,
+          now: Date.now(),
+        });
+        return { templateId: entry.templateId, verdict: entry.verdict, promoted: entry.promote };
+      });
+    } catch (error) {
+      console.error(`persistReviewFeedback: could not record template feedback for "${entry.templateId}"`, error);
+    }
+  }
+}
 
 /**
  * P0 parity-audit Fix 1: carousel-agent-v2 SKILL.md step 01's "absent or
@@ -86,6 +174,21 @@ export interface CreateInstagramAgentWorkflowOptions {
    * signal to go and search.
    */
   imageCandidatePool?: ImageCandidate[];
+  /**
+   * The slide-template registry (`@agent-engine/tool-karos-templates`).
+   *
+   * Omit and the run reads archetype templates straight off disk from the
+   * client's own `templateDir`, exactly as it did before the registry
+   * existed. Supply one and step 04c MATERIALIZES the registry's winning
+   * template per archetype into this run's own directory and renders from
+   * there (Approach (a)) — which is what lets a template live in Firestore,
+   * and what the promotion path writes into.
+   *
+   * Optional rather than required on purpose: the registry must never be
+   * able to take slide rendering down, and a caller that has not wired one
+   * should get the previous behaviour rather than a broken run.
+   */
+  templateStore?: TemplateStore | undefined;
 }
 
 function toAgentContext(wf: WorkflowContext): AgentContext {
@@ -130,8 +233,31 @@ function toAgentContext(wf: WorkflowContext): AgentContext {
  *   gate (em dash/exclamation/sentence-case), plus cross-post image-reuse
  *   prevention wired into step 06 and step 09b.
  * - **Fix 4** — step 06's image selections now carry a real rights/licence/
- *   watermark verdict, and a failing one holds the whole post exactly like
- *   "no viable image."
+ *   watermark verdict, and a failing one is never shipped.
+ *
+ * ## The zero-held guarantee (2026-08)
+ *
+ * A carousel never fails to ship BECAUSE OF A PICTURE. Every tier can be down
+ * at once (every stock/CC provider, the social scrape, the generative rescue)
+ * and the run still delivers, degrading the affected slides to typographic
+ * archetypes. Four mechanisms carry it:
+ *
+ * 1. An empty candidate pool skips the vetting model call and falls straight
+ *    to the rescue tiers, rather than holding on a verdict about nothing.
+ * 2. A sourcing `tooling_error` (a provider outage) is RECORDED, not thrown.
+ *    It used to fail the whole run, so one library returning 503 discarded
+ *    copy that was already written.
+ * 3. Step 06f re-verifies every selected image is still on disk, so a media
+ *    cache lost to an instance recycle degrades the slide instead of failing
+ *    the render.
+ * 4. A render `content_fail` strips every image and re-renders once, fully
+ *    typographic, before reporting anything.
+ *
+ * Four holds remain, and none is a picture problem: no subject available at
+ * all, research producing no schema-valid facts, the copy/compliance
+ * self-checks never passing inside the retry budget, and a human rejecting
+ * the batch review. Each is asserted in `__tests__/zero-held-guarantee.test.ts`
+ * so the boundary is pinned rather than assumed.
  */
 export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkflowOptions) {
   const tools = options.tools;
@@ -488,6 +614,61 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     /** Slides already carrying a client upload, so no tier below wastes a call on them. */
     const tier0Slots = new Set(tier0Pool.slots);
 
+    // ── 04c: resolve which archetype templates this run can actually render ──
+    //
+    // Two paths, one output. With a registry configured, its winning template
+    // per archetype is MATERIALIZED into this run's own directory and the
+    // renderer points there (Approach (a)); without one, the client's own
+    // `templateDir` is probed for the bundled archetype files. Either way the
+    // result is a `templateDir` plus the set of filenames present in it, and
+    // everything downstream reads only those two facts.
+    //
+    // Why materialize rather than let the renderer take template bodies:
+    // `publish.renderCarousel` resolves `templateDir` through `assertInside`,
+    // which refuses absolute paths, URL-shaped strings, and anything escaping
+    // the repo root. That guard is why a bad path there is a tooling failure
+    // rather than a silent render of the wrong thing, and it works precisely
+    // because the renderer only ever deals in repo-relative files. Writing
+    // files keeps one code path with one set of guarantees.
+    //
+    // Failure yields an EMPTY set rather than a throw, on either path: the
+    // conservative reading is "assume no archetype template is available",
+    // which costs layout variety and nothing else, because every archetype
+    // degrades to the client's own base template.
+    const templateResolution = await wf.step.code("04c-resolve-templates", async () => {
+      if (options.templateStore !== undefined) {
+        try {
+          const materialized = await materializeTemplates({
+            store: options.templateStore,
+            repoRoot: options.repoRoot,
+            runId: wf.runId,
+            clientSlug: wf.clientSlug,
+            clientTemplateDir: frozen.brandTokens.templateDir,
+            clientTemplateFile: frozen.brandTokens.slideTemplate,
+          });
+          return {
+            templateDir: materialized.templateDir,
+            files: Object.values(materialized.files),
+            chosen: materialized.chosen,
+          };
+        } catch (error) {
+          // A registry outage falls back to the on-disk path below rather
+          // than failing the run — the whole point of the bundled floor.
+          console.error("04c-resolve-templates: registry materialization failed, falling back to the client's templateDir", error);
+        }
+      }
+      const dir = path.resolve(options.repoRoot, frozen.brandTokens.templateDir);
+      try {
+        const present = (await fs.readdir(dir)).filter((f) => ARCHETYPE_TEMPLATE_FILES.includes(f));
+        return { templateDir: frozen.brandTokens.templateDir, files: present, chosen: [] };
+      } catch {
+        return { templateDir: frozen.brandTokens.templateDir, files: [], chosen: [] };
+      }
+    });
+    const availableTemplates = new Set(templateResolution.files);
+    /** Where the renderer reads templates from: the materialized run dir, or the client's own. */
+    const effectiveTemplateDir = templateResolution.templateDir;
+
     // ── 05-08b: write copy -> vet images -> emit + self-check + craft-hygiene
     //           -> render -> post-render visual QA, all sharing ONE retry
     //           budget capped at two returns to step 05 (RFC-03 §3 step 07,
@@ -496,15 +677,68 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     const imageAgent = new InstagramImageVettingAgent({ router: options.router, tools, promptStore: options.promptStore });
     const qaAgent = new InstagramVisualQaAgent({ router: options.router, tools, promptStore: options.promptStore });
 
-    let finalCopy: InstagramCopyOutput | undefined;
-    let finalSelections: ImageSelection[] | undefined;
-    let finalSlidesData: RenderCarouselInput | undefined;
-    let finalRendered: RenderCarouselResult | undefined;
-    let finalOutcomeOk = false;
-    let lastSelfCheckReason = "no attempt completed";
+    // ── 04d: what this client has asked for on PREVIOUS runs ──
+    //
+    // The read side of the feedback flywheel. Without it every run starts from
+    // zero and the same correction gets made every week — a reviewer who said
+    // "stop opening with a statistic" three runs ago has to say it again.
+    //
+    // Bounded to ten entries and best-effort: this lands in a drafting prompt,
+    // so an unbounded history would push the actual brief out of the context
+    // window, and a memory read failing must not stop a run that can draft
+    // perfectly well without it.
+    const pastFeedback = await wf.step.code("04d-read-past-feedback", async () => {
+      const read = tools["memory.readFeedback"];
+      if (!read) return [] as string[];
+      try {
+        const outcome = await read.execute({ productId: wf.productId, limit: 10 }, { ctx });
+        if (outcome.status !== "success") return [] as string[];
+        const entries = (outcome.result as { entries: Array<{ decision: string; note: string; at: number }> }).entries;
+        return entries.map((e) => `(${e.decision}) ${e.note}`);
+      } catch (error) {
+        console.error("04d-read-past-feedback: could not read client feedback history, drafting without it", error);
+        return [] as string[];
+      }
+    });
+
+    /** What one drafting pass produces, once its own self-checks have passed. */
+    interface DraftResult {
+      copy: InstagramCopyOutput;
+      selections: ImageSelection[];
+      slidesData: RenderCarouselInput;
+      rendered: RenderCarouselResult;
+    }
+
+    /**
+     * One full drafting pass: copy, images, self-checks, render, visual QA.
+     *
+     * Called once per REVISION round by `runReviewCycle`. `revision` is folded
+     * into every checkpointed step id inside it (via `rev` below) so a second
+     * round genuinely re-executes rather than short-circuiting on the first
+     * round's checkpoints — while everything OUTSIDE this function (auto-setup,
+     * the topic claim, research, the template resolution) keeps its id and is
+     * therefore reused for free. That reuse is the whole reason the revision is
+     * in-run rather than a fresh run.
+     */
+    const draftOnce = async (revision: number, notes: readonly RevisionNote[]): Promise<DraftResult> => {
+      /**
+       * Revision-scoped step id. Revision 0 keeps the ORIGINAL ids verbatim, so
+       * a first-time run's trace is byte-identical to what it was before
+       * revisions existed and every existing step-id assertion still holds.
+       */
+      const rev = (id: string) => (revision === 0 ? id : `${id}-r${revision}`);
+      /** The reviewer's accumulated change requests, as a directive for the copy agent. */
+      const directive = revisionDirective(notes);
+
+      let finalCopy: InstagramCopyOutput | undefined;
+      let finalSelections: ImageSelection[] | undefined;
+      let finalSlidesData: RenderCarouselInput | undefined;
+      let finalRendered: RenderCarouselResult | undefined;
+      let finalOutcomeOk = false;
+      let lastSelfCheckReason = "no attempt completed";
 
     for (let attempt = 1; attempt <= MAX_SELF_CHECK_ATTEMPTS; attempt++) {
-      const copyExec = await wf.step.agent(`05-write-copy-attempt-${attempt}`, copyAgent, {
+      const copyExec = await wf.step.agent(rev(`05-write-copy-attempt-${attempt}`), copyAgent, {
         ...runDirectionField(runDirection),
         topic: topicClaim.topic,
         facts: research.facts,
@@ -515,6 +749,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           compliance: frozen.styleConfig.compliance,
         },
         brandTokens: frozen.brandTokens,
+        // Two distinct kinds of steer, kept apart on purpose: `pastFeedback` is
+        // what this client has said across previous RUNS (durable memory), and
+        // `revisionRequest` is what a reviewer asked for about THIS run's draft
+        // minutes ago. Collapsing them would let a months-old preference argue
+        // with an instruction someone just gave.
+        ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
+        ...(directive !== undefined ? { revisionRequest: directive } : {}),
       });
       if (copyExec.status === "tooling_error" || copyExec.status === "budget_exceeded") {
         throw new WorkflowToolingFailure(`copy step resolved to "${copyExec.status}" on attempt ${attempt}/${MAX_SELF_CHECK_ATTEMPTS}`);
@@ -525,7 +766,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         lastSelfCheckReason = `copy draft failed its own output validation on attempt ${attempt}`;
         continue;
       }
-      const copy = copyExec.finalOutput!;
+      // `let`, not `const`: reassigned once below if a slide survives every
+      // image-sourcing tier with nothing usable, to record its downgrade to
+      // the "text_only" archetype (never mutated for any other reason).
+      let copy = copyExec.finalOutput!;
 
       // ── 05b: source real candidate images for THIS attempt's copy ──
       //
@@ -571,9 +815,25 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       //
       // An explicitly-supplied `imageCandidatePool` still suppresses sourcing,
       // which is what evals depend on.
-      const slidesNeedingSource = copy.slides.filter((s) => !tier0Slots.has(s.n));
+      // ── Only PHOTO slides want a picture ──
+      //
+      // The archetype set (`InstagramSlideLayoutSchema`) means a slide can be
+      // deliberately typographic: a `stat_callout` sets one number large, a
+      // `quote_card` sets a pull-quote. Those render no image at all
+      // (`assembleSlidesData` attaches `images.hero` only for `photo`), so
+      // sourcing and vetting one for them is paid work whose output is
+      // discarded — a real cost, since Tier 1 downloads bytes per candidate
+      // and the vetting agent reads every candidate's description in one
+      // prompt.
+      //
+      // `resolveLayout` rather than `s.layout`, because a slide whose chosen
+      // archetype is missing its content block degrades to `text_only`, which
+      // also needs no photo. Asking the resolved layout keeps this decision
+      // consistent with what `assembleSlidesData` will actually render.
+      const photoSlideNs = new Set(copy.slides.filter((s) => resolveLayout(s, availableTemplates).layout === "photo").map((s) => s.n));
+      const slidesNeedingSource = copy.slides.filter((s) => photoSlideNs.has(s.n) && !tier0Slots.has(s.n));
       if (imageCandidatePool.length === 0 && slidesNeedingSource.length > 0 && findImages !== undefined) {
-        const sourced = await wf.step.code(`05b-source-images-attempt-${attempt}`, async () =>
+        const sourced = await wf.step.code(rev(`05b-source-images-attempt-${attempt}`), async () =>
           findImages.execute(
             {
               repoRoot: options.repoRoot,
@@ -587,76 +847,131 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           ),
         );
 
-        // A provider outage is not an editorial outcome. Failing loudly here
-        // keeps it out of the "no viable image" hold below, which a human
-        // reads as "the topic had no good picture" and would act on wrongly.
-        if (sourced.status === "tooling_error") {
-          throw new WorkflowToolingFailure(`media.findImages failed: tooling_error — ${sourced.reason}`);
-        }
         if (sourced.status === "success") {
           // Appended, not assigned: replacing the pool here would silently
           // discard the client's own uploads the moment a harvester returned
           // anything, which is the one outcome Tier 0 exists to prevent.
           attemptPool = [...attemptPool, ...(sourced.result as { candidates: ImageCandidate[] }).candidates];
         } else {
-          sourcingReason = sourced.reason;
+          // EVERY non-success is recorded and survived, including
+          // `tooling_error`.
+          //
+          // A provider outage used to throw `WorkflowToolingFailure` here, on
+          // the reasoning that an outage is an operator problem and must not
+          // be misreported as "the topic had no good picture". That reasoning
+          // is still right, and it is still honoured — the outage's own words
+          // ride along in `sourcingReason` into the downgrade record, so
+          // whoever reads the trace sees a 503 and not an editorial verdict.
+          //
+          // What was wrong was the CONSEQUENCE: throwing meant one stock
+          // library returning 503 failed the entire run, discarding copy that
+          // was already written and slides that could have shipped as type.
+          // Reporting the cause and shipping is strictly better than
+          // reporting the cause and shipping nothing.
+          sourcingReason = `${sourced.status}: ${sourced.reason}`;
         }
-        // `content_fail` (nothing sourced) and `not_available` (no backend
-        // configured) both leave the pool empty and fall through to step 06,
-        // which holds the post — but now carrying `sourcingReason` so the hold
-        // names the actual cause instead of only its own verdict.
+        // Every outcome now leaves the pool as-is and falls through. An empty
+        // pool means the slides degrade to typographic layouts and the post
+        // still ships, carrying `sourcingReason` so the reason names the real
+        // cause rather than only the gate's own verdict.
       }
 
-      // An empty pool has exactly one possible verdict, so asking a model for
-      // it buys nothing. The run that prompted this spent $0.02 and 16s having
-      // Sonnet write six paragraphs each concluding "the candidate pool is
-      // entirely empty" — real money, on every Instagram run, for an answer
-      // that is a property of the input. Holding straight from here also keeps
-      // the sourcing reason intact rather than laundering it through a model's
-      // restatement of it.
-      if (attemptPool.length === 0) {
-        const slideNumbers = copy.slides.map((s) => s.n);
-        throw new WorkflowHeld(
-          `no viable image found for slide(s) ${slideNumbers.join(", ")} — no candidate images were sourced at all, ` +
-            `so nothing could be vetted (${sourcingReason ?? "no image-sourcing tool is registered for this run"})`,
-        );
-      }
-
-      const imageExec = await wf.step.agent(`06-vet-images-attempt-${attempt}`, imageAgent, {
-        slides: copy.slides.map((s) => ({ n: s.n, visualNeed: s.visualNeed })),
-        candidatePool: attemptPool,
-        usedImages,
-      });
-      if (imageExec.status === "tooling_error" || imageExec.status === "budget_exceeded") {
-        throw new WorkflowToolingFailure(`image vetting step resolved to "${imageExec.status}" on attempt ${attempt}/${MAX_SELF_CHECK_ATTEMPTS}`);
-      }
-      if (imageExec.status !== "completed") {
-        lastSelfCheckReason = `image vetting failed its own output validation on attempt ${attempt}`;
-        continue;
-      }
-      const vetting = imageExec.finalOutput!;
-
-      // The preserved legacy-defect fix (RFC-03 §1/§3 step 06): ANY
-      // unfillable slide holds the WHOLE post immediately — never a
-      // placeholder, never a silently-dropped slide — and this is NOT
-      // subject to the self-check retry budget above: retrying won't change
-      // what's in a fixed candidate pool, so looping here would only waste
-      // model calls before reaching the same honest outcome. Fix 4 extends
-      // "unfillable" to a selection that fails rights/watermark, and Fix 3
-      // extends it to a selection that (despite the prompt's instruction)
-      // duplicates a prior post's already-used image — both are
-      // deterministically re-checked here, never trusted from the model alone.
       /** One slide still missing a picture, with the brief the next tier should answer. */
       type ImageGap = { n: number; prompt: string };
 
+      /**
+       * A selection for a slide that never wanted a photograph.
+       *
+       * `checkSlidesData` requires exactly one selection per slide, and the
+       * rescue/downgrade logic below reads `rightsUsable`/`watermarkFree` —
+       * so a typographic archetype needs a real entry rather than a gap.
+       * `rightsUsable: true` is correct and not a fudge: there is no
+       * third-party image here to have rights over.
+       */
+      const typographicSelection = (s: { n: number; layout: InstagramSlideLayout }): ImageSelection => ({
+        n: s.n,
+        imagePath: null,
+        reason: `layout "${s.layout}" is typographic and renders no photograph, so no image was sourced or vetted for it`,
+        license: "n/a — typographic layout, no image used",
+        rightsUsable: true,
+        watermarkFree: true,
+      });
+
+      /**
+       * Whether a slide that WANTED a photo did not honestly get a usable one.
+       *
+       * Scoped to photo slides by the callers below: a `null` `imagePath` on a
+       * `quote_card` is the correct, intended state, and treating it as
+       * unfillable would downgrade every typographic archetype straight back
+       * to `text_only` — silently undoing the whole archetype set.
+       */
       const isUnfillable = (s: ImageSelection): boolean => {
+        if (!photoSlideNs.has(s.n)) return false;
         if (s.imagePath === null) return true;
         if (!s.rightsUsable || !s.watermarkFree) return true;
         if (usedImagesSet.has(s.imagePath)) return true;
         return false;
       };
-      let selections = vetting.selections;
-      let unfillable = selections.filter(isUnfillable);
+
+      let selections: ImageSelection[];
+      let unfillable: ImageSelection[];
+
+      if (attemptPool.length === 0) {
+        // An empty pool has exactly one possible vetting verdict, so asking a
+        // model for it buys nothing — the run that prompted this comment
+        // spent $0.02 and 16s having Sonnet write six paragraphs each
+        // concluding "the candidate pool is entirely empty". Skipping step
+        // 06 entirely (rather than holding straight from here, the original
+        // fix) still gives the rescue tiers below their real chance: `image.
+        // generate` answers a slide's `visualNeed` directly and never
+        // consulted this pool anyway, so a dead retrieval tier must not cost
+        // it its turn.
+        selections = copy.slides.map((s) =>
+          photoSlideNs.has(s.n)
+            ? {
+                n: s.n,
+                imagePath: null,
+                reason: sourcingReason ?? "no candidate images were sourced at all, so nothing could be vetted",
+                license: "n/a — no candidate qualified",
+                rightsUsable: false,
+                watermarkFree: false,
+              }
+            : typographicSelection({ n: s.n, layout: resolveLayout(s, availableTemplates).layout }),
+        );
+        unfillable = selections.filter(isUnfillable);
+      } else {
+        const imageExec = await wf.step.agent(rev(`06-vet-images-attempt-${attempt}`), imageAgent, {
+          // Only the photo slides are put in front of the gate. A typographic
+          // archetype has nothing for it to judge, and including it would ask
+          // the model to match a picture to a slide that renders none.
+          slides: copy.slides.filter((s) => photoSlideNs.has(s.n)).map((s) => ({ n: s.n, visualNeed: s.visualNeed })),
+          candidatePool: attemptPool,
+          usedImages,
+        });
+        if (imageExec.status === "tooling_error" || imageExec.status === "budget_exceeded") {
+          throw new WorkflowToolingFailure(`image vetting step resolved to "${imageExec.status}" on attempt ${attempt}/${MAX_SELF_CHECK_ATTEMPTS}`);
+        }
+        if (imageExec.status !== "completed") {
+          lastSelfCheckReason = `image vetting failed its own output validation on attempt ${attempt}`;
+          continue;
+        }
+        const vetting = imageExec.finalOutput!;
+
+        // Fix 4 extends "unfillable" to a selection that fails
+        // rights/watermark, and Fix 3 extends it to a selection that
+        // (despite the prompt's instruction) duplicates a prior post's
+        // already-used image — both are deterministically re-checked here,
+        // never trusted from the model alone.
+        // The gate only saw the photo slides, so its selections cover only
+        // those. Every typographic slide gets its own entry appended, in the
+        // copy's slide order, so `checkSlidesData`'s one-selection-per-slide
+        // requirement still holds.
+        const vetted = new Map(vetting.selections.map((sel) => [sel.n, sel]));
+        selections = copy.slides.map(
+          (s) => vetted.get(s.n) ?? typographicSelection({ n: s.n, layout: resolveLayout(s, availableTemplates).layout }),
+        );
+        unfillable = selections.filter(isUnfillable);
+      }
 
       // ── 06b/06c: generative rescue for the gaps retrieval could not fill ──
       //
@@ -731,7 +1046,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           .filter((g): g is ImageGap => g.prompt !== undefined);
         if (gaps.length === 0) continue;
 
-        const sourced = await wf.step.code(`06${"bd"[tierIndex - 1]}-${tier.id}-images-attempt-${attempt}`, async () =>
+        const sourced = await wf.step.code(rev(`06${"bd"[tierIndex - 1]}-${tier.id}-images-attempt-${attempt}`), async () =>
           tier.tool!.execute(tier.buildArgs(gaps), { ctx }),
         );
 
@@ -746,7 +1061,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         const tierPool = (sourced.result as { candidates: ImageCandidate[] }).candidates;
         if (tierPool.length === 0) continue;
 
-        const revet = await wf.step.agent(`06${"ce"[tierIndex - 1]}-vet-${tier.id}-attempt-${attempt}`, imageAgent, {
+        const revet = await wf.step.agent(rev(`06${"ce"[tierIndex - 1]}-vet-${tier.id}-attempt-${attempt}`), imageAgent, {
           slides: gaps.map((g) => ({ n: g.n, visualNeed: g.prompt })),
           candidatePool: tierPool,
           usedImages,
@@ -764,20 +1079,83 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         unfillable = selections.filter(isUnfillable);
       }
 
+      // ── Pre-flight: does every selected image still EXIST on disk? ──
+      //
+      // `publish.renderCarousel` reports a missing image file as
+      // `content_fail`, which used to hold the whole post at step 08 — after
+      // copy, vetting, every rescue tier and the self-checks had all been
+      // paid for. That is the one image-caused hold that survived the
+      // guaranteed-delivery work, and it is reachable for real: the media
+      // cache lives on an in-memory volume (see karos-media's README), so a
+      // Cloud Run instance recycling between vetting and render genuinely
+      // loses the bytes.
+      //
+      // Checked here instead, where a missing file is just another reason the
+      // slide has no usable picture, so it flows into the SAME downgrade path
+      // as every other sourcing failure rather than needing its own outcome.
+      const missingOnDisk = await wf.step.code(rev(`06f-verify-images-on-disk-attempt-${attempt}`), async () => {
+        const gone: number[] = [];
+        for (const sel of selections) {
+          if (sel.imagePath === null) continue;
+          try {
+            await fs.access(path.resolve(options.repoRoot, sel.imagePath));
+          } catch {
+            gone.push(sel.n);
+          }
+        }
+        return gone;
+      });
+      if (missingOnDisk.length > 0) {
+        const goneSet = new Set(missingOnDisk);
+        selections = selections.map((sel) =>
+          goneSet.has(sel.n)
+            ? { ...sel, imagePath: null, reason: `${sel.reason} (the file was no longer on disk at render time)` }
+            : sel,
+        );
+        unfillable = selections.filter(isUnfillable);
+      }
+
+      // Guaranteed delivery (2026-08): a slide that survives every tier —
+      // retrieval, social scrape, generation — with nothing usable no longer
+      // holds the whole post. The never-a-placeholder guarantee is
+      // unchanged: nothing rights-encumbered, watermarked, or reused ever
+      // ships. What changes is the alternative to holding — the slide ships
+      // on the "text_only" archetype (`InstagramSlideLayoutSchema`) instead,
+      // which `assembleSlidesData`/the render template already support
+      // (headline/body/accent-band on the template's own dark background,
+      // no photo). A run only holds now for a genuine copy/rights/compliance
+      // self-check failure (below), never solely because a picture could not
+      // be found — see prep runs pubsub-21533408759483219 and
+      // pubsub-21543794087429035, both of which held on exactly this with a
+      // real Vertex quota blip as the actual cause, not an editorial "no
+      // picture exists" verdict.
       if (unfillable.length > 0) {
+        // `s.reason` carries the real diagnostic (an unset key, a provider's
+        // own "no results" chain, the vetting model's own explanation) —
+        // the category label alone ("no candidate qualified") is exactly
+        // the generic-editorial-verdict framing prep run
+        // pubsub-21528976110173438 got burned by, with the actual cause
+        // (an unset UNSPLASH_ACCESS_KEY) sitting one step upstream of it.
         const detail = unfillable.map((s) => {
-          if (s.imagePath === null) return `${s.n}: no candidate qualified`;
-          if (!s.rightsUsable) return `${s.n}: not rights-usable`;
-          if (!s.watermarkFree) return `${s.n}: not watermark-free`;
+          if (s.imagePath === null) return `${s.n}: ${s.reason}`;
+          if (!s.rightsUsable) return `${s.n}: not rights-usable (${s.reason})`;
+          if (!s.watermarkFree) return `${s.n}: not watermark-free (${s.reason})`;
           return `${s.n}: already used in a prior post`;
         });
-        throw new WorkflowHeld(
-          `no viable image found for slide(s) ${unfillable.map((s) => s.n).join(", ")} — holding the whole post rather than shipping a placeholder, a rights-encumbered/watermarked image, or a reused picture, and neither the social-scrape tier nor generation could fill the gap (${detail.join("; ")})`,
-        );
+        const downgradedNs = new Set(unfillable.map((s) => s.n));
+        await wf.step.code(rev(`07a-downgrade-unfillable-slides-attempt-${attempt}`), () => ({
+          downgraded: [...downgradedNs],
+          reason: `slide(s) ${[...downgradedNs].join(", ")} shipping text-only — no viable image survived retrieval, social-scrape, and generation (${detail.join("; ")})`,
+        }));
+        // Never a rights-encumbered/watermarked/reused image, regardless of
+        // which of those disqualified the candidate — the slide gets NO
+        // photo, not a demoted one.
+        selections = selections.map((sel) => (downgradedNs.has(sel.n) ? { ...sel, imagePath: null } : sel));
+        copy = { ...copy, slides: copy.slides.map((s) => (downgradedNs.has(s.n) ? { ...s, layout: "text_only" } : s)) };
       }
 
       const selfCheck = checkSlidesData(copy, selections, research, frozen.styleConfig);
-      const attemptChecked = await wf.step.code(`07-self-check-attempt-${attempt}`, () => selfCheck);
+      const attemptChecked = await wf.step.code(rev(`07-self-check-attempt-${attempt}`), () => selfCheck);
 
       if (!attemptChecked.ok) {
         lastSelfCheckReason = attemptChecked.reason;
@@ -787,13 +1165,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // Fix 3: the unconditional, mechanical craft-hygiene gate (em dash/
       // exclamation/sentence-case) — never client-config-driven, runs on
       // every attempt regardless of what the client's own style rules say.
-      const craftHygiene = await wf.step.code(`07b-craft-hygiene-attempt-${attempt}`, () => checkCraftHygiene(tools, ctx, copy));
+      const craftHygiene = await wf.step.code(rev(`07b-craft-hygiene-attempt-${attempt}`), () => checkCraftHygiene(tools, ctx, copy));
       if (!craftHygiene.ok) {
         lastSelfCheckReason = craftHygiene.reason;
         continue;
       }
 
-      const slidesDataAttempt = await wf.step.code(`07c-emit-slides-data-attempt-${attempt}`, () =>
+      const slidesDataAttempt = await wf.step.code(rev(`07c-emit-slides-data-attempt-${attempt}`), () =>
         assembleSlidesData({
           clientSlug: wf.clientSlug,
           postId: runClaim.postId,
@@ -802,28 +1180,73 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           copy,
           selections,
           canvas: frozen.styleConfig.canvas,
+          availableTemplates,
+          templateDirOverride: effectiveTemplateDir,
         }),
       );
 
       // ── 08: render via the shared, already-tested publish.renderCarousel tool ──
-      const renderOutcome = await wf.step.code(`08-render-carousel-attempt-${attempt}`, async () => tools["publish.renderCarousel"]!.execute(slidesDataAttempt, { ctx }));
+      const renderOutcome = await wf.step.code(rev(`08-render-carousel-attempt-${attempt}`), async () => tools["publish.renderCarousel"]!.execute(slidesDataAttempt, { ctx }));
 
-      if (renderOutcome.status === "content_fail") {
-        // A real content problem (e.g. an image file that went missing between
-        // step 06 and step 08) — never confused with a tooling break (RFC-03
-        // §1 required-reading item 2's exact three-way distinction). This is
-        // NOT retried by this loop (matching carousel-agent-v2 SKILL.md step
-        // 08's own "exit code 1 -> RETURN: 07", a different remedy than the
-        // visual-QA "exit code ok but pixels are bad -> RETURN: 05" case
-        // below) — a missing file on disk won't fix itself by rewriting copy.
-        throw new WorkflowHeld(`render step reported a content failure: ${renderOutcome.reason}`);
-      }
-      if (renderOutcome.status !== "success") {
-        throw new WorkflowToolingFailure(
-          `render step reported a tooling failure: ${renderOutcome.status === "tooling_error" ? renderOutcome.reason : renderOutcome.status}`,
+      // ── The last image-caused hold, now a degrade ──
+      //
+      // `content_fail` from the renderer means an image path did not resolve.
+      // The pre-flight check above should have caught every case of that, so
+      // reaching here means something raced it (the volume recycled between
+      // the check and the screenshot). Holding was the old answer; the
+      // guarantee now is that a picture problem never costs the post, so this
+      // strips EVERY image and renders the carousel fully typographic instead.
+      //
+      // Bounded to one extra attempt on purpose: with no images left there is
+      // no image left to fail on, so a second `content_fail` is not a picture
+      // problem at all and is reported as the tooling break it actually is.
+      let renderResolved = renderOutcome;
+      let slidesDataResolved = slidesDataAttempt;
+      if (renderResolved.status === "content_fail") {
+        const strippedCopy: InstagramCopyOutput = {
+          ...copy,
+          slides: copy.slides.map((s) => (s.layout === "photo" ? { ...s, layout: "text_only" as const } : s)),
+        };
+        const strippedSelections = selections.map((sel) => ({ ...sel, imagePath: null }));
+        slidesDataResolved = await wf.step.code(rev(`08a-render-fallback-typographic-attempt-${attempt}`), () =>
+          assembleSlidesData({
+            clientSlug: wf.clientSlug,
+            postId: runClaim.postId,
+            repoRoot: options.repoRoot,
+            brandTokens: frozen.brandTokens,
+            copy: strippedCopy,
+            selections: strippedSelections,
+            canvas: frozen.styleConfig.canvas,
+            availableTemplates,
+            templateDirOverride: effectiveTemplateDir,
+          }),
+        );
+        copy = strippedCopy;
+        selections = strippedSelections;
+        renderResolved = await wf.step.code(rev(`08-render-carousel-typographic-attempt-${attempt}`), async () =>
+          tools["publish.renderCarousel"]!.execute(slidesDataResolved, { ctx }),
         );
       }
-      const renderedAttempt = renderOutcome.result as RenderCarouselResult;
+
+      if (renderResolved.status !== "success") {
+        // Either a genuine tooling break, or a `content_fail` that survived
+        // having every image removed — which is no longer a picture problem.
+        // Both are `degraded`, never `held`: nothing here is an editorial
+        // verdict a human should act on.
+        // `status` is read before the `in` check below narrows the union, which
+        // would otherwise leave the else branch typed `never`.
+        const status: string = renderResolved.status;
+        const detail = "reason" in renderResolved ? renderResolved.reason : status;
+        throw new WorkflowToolingFailure(
+          status === "content_fail"
+            ? // Every image was already stripped before this second attempt, so
+              // a surviving content failure is not a picture problem.
+              `render step still reported a content failure after every image was removed, so it is not an image problem: ${detail}`
+            : `render step reported a tooling failure: ${detail}`,
+        );
+      }
+      const renderedAttempt = renderResolved.result as RenderCarouselResult;
+      const slidesDataForQa = slidesDataResolved;
 
       // ── 08b: post-render visual QA (Fix 2) — a text-proxy stand-in for real
       //         pixel inspection (see InstagramVisualQaAgent's own doc
@@ -831,8 +1254,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       //         step 07/07b above, matching carousel-agent-v2 SKILL.md step
       //         08's "a fail here is RETURN: 05, because it is the copy or
       //         the layout, not the code." ──
-      const qaExec = await wf.step.agent(`08b-visual-qa-attempt-${attempt}`, qaAgent, {
-        slides: slidesDataAttempt.slides.map((s) => ({ n: s.n, fields: s.fields, images: s.images })),
+      const qaExec = await wf.step.agent(rev(`08b-visual-qa-attempt-${attempt}`), qaAgent, {
+        slides: slidesDataForQa.slides.map((s) => ({ n: s.n, fields: s.fields, images: s.images })),
         renderRules: renderRules.map((r) => ({ id: r.id, description: r.description })),
       });
       if (qaExec.status === "tooling_error" || qaExec.status === "budget_exceeded") {
@@ -851,50 +1274,84 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
 
       finalCopy = copy;
       finalSelections = selections;
-      finalSlidesData = slidesDataAttempt;
+      finalSlidesData = slidesDataForQa;
       finalRendered = renderedAttempt;
       finalOutcomeOk = true;
       break;
     }
 
-    if (!finalOutcomeOk || !finalCopy || !finalSelections || !finalSlidesData || !finalRendered) {
-      throw new WorkflowHeld(
-        `step 07's self-check never passed after ${MAX_SELF_CHECK_ATTEMPTS} attempt(s) (initial + ${MAX_SELF_CHECK_ATTEMPTS - 1} return(s) to step 05) — last reason: ${lastSelfCheckReason}`,
-      );
-    }
-    const slidesData = finalSlidesData;
-    const rendered = finalRendered;
+      if (!finalOutcomeOk || !finalCopy || !finalSelections || !finalSlidesData || !finalRendered) {
+        throw new WorkflowHeld(
+          `step 07's self-check never passed after ${MAX_SELF_CHECK_ATTEMPTS} attempt(s) (initial + ${MAX_SELF_CHECK_ATTEMPTS - 1} return(s) to step 05) — last reason: ${lastSelfCheckReason}`,
+        );
+      }
+      return { copy: finalCopy, selections: finalSelections, slidesData: finalSlidesData, rendered: finalRendered };
+    };
 
-    // ── 09a: human batch-review gate before the final delivery — nothing ships without a real approval ──
-    // -- terminal topic guardrail --
+    // ── 09a: the universal approve / revise / reject cycle ──
     //
-    // The slide copy, judged before a human is asked to approve the carousel.
-    // Images are not checked here: this reads text, and what a picture is "of"
-    // is a different question with a different answer.
-    await runTopicGuardrail(
-      wf,
-      { tools, promptStore: options.promptStore, router: options.router },
-      slidesData.slides.map((slide) => Object.values(slide.fields ?? {}).join(" ")).join("\n\n"),
-      frozen.forbiddenTopics,
-    );
+    // `revise` is what makes this a loop rather than a verdict: the reviewer's
+    // feedback is injected into a fresh drafting pass (revision-scoped step
+    // ids, everything upstream reused from its checkpoints) instead of the run
+    // being held and somebody having to dispatch a new one that knows nothing
+    // about what was asked for.
+    //
+    // Every decision, including approvals, is written to client memory by
+    // `onDecision` before the cycle acts on it — an approving reviewer saying
+    // "the shorter hooks are working" is teaching the system something, and a
+    // store that only remembers complaints learns a distorted version of what
+    // a client wants.
+    const review = await runReviewCycle<DraftResult>(wf, {
+      gateId: "09a-batch-review",
+      maxRevisions: MAX_REVISION_ROUNDS,
+      ...(options.autoApprove ? { autoApprove: true } : {}),
+      attempt: async (revision, notes) => {
+        const draft = await draftOnce(revision, notes);
+        // The terminal topic guardrail runs on the copy that is about to be
+        // shown to a human, so a revision's new copy is checked too rather
+        // than only the first draft's.
+        await runTopicGuardrail(
+          wf,
+          { tools, promptStore: options.promptStore, router: options.router },
+          draft.slidesData.slides.map((slide) => Object.values(slide.fields ?? {}).join(" ")).join("\n\n"),
+          frozen.forbiddenTopics,
+          revision === 0 ? undefined : `-r${revision}`,
+        );
+        return draft;
+      },
+      buildGate: (draft, revision) => ({
+        kind: "batch_review",
+        payload: {
+          runId: wf.runId,
+          postId: runClaim.postId,
+          topic: topicClaim.topic,
+          slideCount: draft.slidesData.slides.length,
+          renderedCount: draft.rendered.rendered.length,
+          revision,
+          // Which template rendered each slide, and whether it is one a person
+          // has never signed off on. This is what lets the review surface say
+          // "new custom template used on slide 4" and attach design feedback to
+          // the right registry row rather than to the post as a whole.
+          slideTemplates: draft.slidesData.slides.map((slide) => {
+            const chosen = templateResolution.chosen.find((c) => templateFileName(c.archetypeId) === slide.template);
+            return {
+              n: slide.n,
+              template: slide.template,
+              ...(chosen ? { templateId: chosen.templateId, templateSource: chosen.source } : {}),
+              isExperimental: chosen?.source === "ai_generated",
+            };
+          }),
+        },
+        requiredRole: "account_manager",
+        timeout: { duration: "24h", onTimeout: "hold" },
+      }),
+      onDecision: async ({ revision, response, templateFeedback }) => {
+        await persistReviewFeedback(wf, tools, ctx, { revision, response, templateFeedback, templateStore: options.templateStore });
+      },
+    });
 
-    const reviewDecision: GateResponse = options.autoApprove
-      ? await wf.step.code("09a-batch-review", () => ({ decision: "approve" as const, actor: "system", at: new Date().toISOString() }))
-      : await wf.step.gate("09a-batch-review", {
-          kind: "batch_review",
-          payload: {
-            runId: wf.runId,
-            postId: runClaim.postId,
-            topic: topicClaim.topic,
-            slideCount: slidesData.slides.length,
-            renderedCount: rendered.rendered.length,
-          },
-          requiredRole: "account_manager",
-          timeout: { duration: "24h", onTimeout: "hold" },
-        });
-    if (reviewDecision.decision !== "approve") {
-      throw new WorkflowHeld(`batch rejected: ${reviewDecision.reason ?? "no reason given"}`);
-    }
+    const slidesData = review.output.slidesData;
+    const rendered = review.output.rendered;
 
     // ── 09b: deliver + log — the count invariant is real and checked, not just documented ──
     const deliverableId = await wf.step.code("09b-deliver-and-log", async () => {
@@ -929,7 +1386,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // Fix 3: this post's shipped images are now "used" for every future
       // run's cross-post reuse check (step 06 above) — recorded only now,
       // once delivery is otherwise real, never speculatively before that.
-      const shippedImagePaths = finalSelections!.map((s) => s.imagePath).filter((p): p is string => p !== null);
+      const shippedImagePaths = review.output.selections.map((s) => s.imagePath).filter((p): p is string => p !== null);
       if (shippedImagePaths.length > 0) {
         const recordOutcome = await tools["ledger.recordUsedImages"]!.execute({ imagePaths: shippedImagePaths }, { ctx });
         if (recordOutcome.status !== "success") {

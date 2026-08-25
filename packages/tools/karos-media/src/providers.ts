@@ -92,6 +92,55 @@ export function asString(value: unknown): string | undefined {
 }
 
 /**
+ * Runs one provider's search down the broadening ladder, stopping at the first
+ * variant that returns anything.
+ *
+ * ## Why every provider needs this, not just the strict ones
+ *
+ * `broadeningVariants` was applied only to Openverse and Wikimedia, on the
+ * reasoning that they "match strictly" while a big stock API handles a long
+ * query fine. prep run pubsub-21545408480430711 disproved that decisively.
+ * Its slides carried needs like "a bar chart printed on paper lying flat on a
+ * desk, a person's hand pointing at the page, no legible axis labels", and
+ * Unsplash answered them with "Xin Jin Ping Mei (2013)", "a street kiosk in
+ * Sweden" and "(King) George of the Jungle". A large keyword index does not
+ * return NOTHING for a 20-word query — it returns near-arbitrary matches,
+ * which is worse, because the vetting gate then spends real tokens rejecting
+ * them one by one and the slide falls through to generation anyway. Across
+ * three attempts that run filled 12 of 24 slides from the generative tier
+ * while retrieval had supplied 37 to 47 candidates it could not use.
+ *
+ * Broadening turns the brittlest input (a human-written scene description)
+ * into the shape these APIs actually rank well: two or three salient nouns.
+ *
+ * A variant that throws is treated as "no results" and the ladder continues,
+ * so one bad request cannot cost the remaining, broader attempts. The final
+ * error is re-thrown only if EVERY variant failed, which is what preserves
+ * the outage-versus-empty distinction the chain depends on.
+ */
+export async function searchWithBroadening(
+  query: string,
+  variants: readonly string[],
+  attempt: (variant: string) => Promise<ImageSearchHit[]>,
+): Promise<ImageSearchHit[]> {
+  let lastError: unknown;
+  let sawError = false;
+  for (const variant of variants) {
+    try {
+      const hits = await attempt(variant);
+      if (hits.length > 0) return hits;
+    } catch (error) {
+      sawError = true;
+      lastError = error;
+    }
+  }
+  // Every variant errored: this is an outage, not an honestly-empty answer,
+  // and the chain has to be able to tell those apart.
+  if (sawError && lastError !== undefined) throw lastError;
+  return [];
+}
+
+/**
  * Fetches JSON with a timeout, raising `ImageProviderError` on any transport,
  * status, or parse failure.
  *

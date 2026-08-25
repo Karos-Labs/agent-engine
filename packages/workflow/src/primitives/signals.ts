@@ -106,6 +106,36 @@ export class WorkflowConcurrentRunError extends Error {
 }
 
 /**
+ * Thrown by `runStepAgent` itself when `agent.run()` does not settle within
+ * `WorkflowRuntime.agentStepTimeoutMs` (default `DEFAULT_AGENT_STEP_TIMEOUT_MS`).
+ *
+ * Before this existed, a slow or wedged model call left the step's
+ * checkpoint at `"running"` forever and, because nothing ever threw, the
+ * *run* itself never left `"running"` either — `RESUMABLE_FROM_STATUSES`
+ * deliberately excludes `"running"` (it can't tell a genuine hang from a
+ * concurrent call), so nothing could even resume it. prep run
+ * `pubsub-21543515035218714` sat wedged in exactly this state at
+ * `06c-vet-scrape-attempt-2` for hours.
+ *
+ * Uncaught here on purpose: it reaches `WorkflowEngine.run()`'s generic
+ * catch-all exactly like any other tooling failure and resolves the run to
+ * `degraded` — which *is* resumable, so a retry can actually happen instead
+ * of requiring someone to notice and hand-fix the Firestore doc. The
+ * agent call itself is not cancelled (there is no cooperative cancellation
+ * path through a ReAct loop's tool calls), so this bounds how long a run can
+ * be wedged rather than freeing whatever resource the hung call was using.
+ */
+export class WorkflowStepTimeout extends Error {
+  constructor(
+    public readonly stepId: string,
+    public readonly timeoutMs: number,
+  ) {
+    super(`step "${stepId}" did not complete within ${timeoutMs}ms — treating it as a tooling failure rather than waiting indefinitely`);
+    this.name = "WorkflowStepTimeout";
+  }
+}
+
+/**
  * Thrown by `WorkflowEngine.resolveGate` when the target gate already
  * carries a response — a human decision's audit trail must never be
  * silently overwritten by a second resolve (a reliability audit finding).

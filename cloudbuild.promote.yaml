@@ -45,6 +45,14 @@ substitutions:
   # UNSPLASH_ACCESS_KEY (deliberately prep-only, since karoscmo has no such
   # secret), this one exists in both projects, so wiring it here cannot break a
   # manual promote.
+  #
+  # PEXELS_API_KEY / PIXABAY_API_KEY follow UNSPLASH_ACCESS_KEY, not this one:
+  # they are wired in `cloudbuild.yaml` (prep) only, because the secrets do not
+  # exist in karoscmo and `--set-secrets` naming a missing secret fails the
+  # deploy outright. Their absence costs production two of six image providers
+  # and nothing else — the keyless ones (openverse, wikimedia, ddg_images) and
+  # the generative tier are unaffected, and the zero-held guarantee holds
+  # regardless. Create the secrets in karoscmo and add them here to close it.
   _SCRAPPYCOCO_API_KEY_SECRET: scrappycoco-api-key
   _PUBSUB_PROJECT_ID: ""
   _QUEUE_SUBSCRIPTION_RUN_JOBS: ""
@@ -105,6 +113,12 @@ steps:
       - --add-volume-mount=volume=mediacache,mount-path=/app/.media-cache
       - --add-volume=name=igoutput,type=in-memory,size-limit=256Mi
       - --add-volume-mount=volume=igoutput,mount-path=/app/instagram-output
+      # `.template-cache/<runId>/` from karos-templates' materializeTemplates,
+      # same reasoning as the two above: the registry writes each run's chosen
+      # archetype templates to disk so renderCarousel reads them as
+      # repo-relative FILES (Approach (a)).
+      - --add-volume=name=templatecache,type=in-memory,size-limit=64Mi
+      - --add-volume-mount=volume=templatecache,mount-path=/app/.template-cache
     waitFor: [push-to-production]
 
   - id: deploy-worker
@@ -139,6 +153,12 @@ steps:
       - --add-volume-mount=volume=mediacache,mount-path=/app/.media-cache
       - --add-volume=name=igoutput,type=in-memory,size-limit=256Mi
       - --add-volume-mount=volume=igoutput,mount-path=/app/instagram-output
+      # `.template-cache/<runId>/` from karos-templates' materializeTemplates,
+      # same reasoning as the two above: the registry writes each run's chosen
+      # archetype templates to disk so renderCarousel reads them as
+      # repo-relative FILES (Approach (a)).
+      - --add-volume=name=templatecache,type=in-memory,size-limit=64Mi
+      - --add-volume-mount=volume=templatecache,mount-path=/app/.template-cache
     waitFor: [push-to-production]
 
 images:

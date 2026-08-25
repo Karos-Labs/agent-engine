@@ -3,6 +3,8 @@ import { createApifyProvider, APIFY_PRESETS, type ApifyPresetName } from "./prov
 import { createDdgImagesProvider } from "./providers/ddg-images.js";
 import { createGooglePlacesProvider } from "./providers/google-places.js";
 import { createOpenverseProvider } from "./providers/openverse.js";
+import { createPexelsProvider } from "./providers/pexels.js";
+import { createPixabayProvider } from "./providers/pixabay.js";
 import { createUnsplashProvider } from "./providers/unsplash.js";
 import { createWikimediaProvider } from "./providers/wikimedia.js";
 
@@ -53,15 +55,30 @@ export const ROUTE_CHAINS: Record<MediaRoute, readonly string[]> = {
     "openverse",
     "wikimedia",
   ],
-  // `ddg_images` is deliberately absent from both. Its hits are
-  // `licenseConfidence: "unknown"` by construction, and this gate refuses
-  // unknown provenance — so on a generic need it can only ever cost latency
-  // and vetting tokens to be rejected. prep run pubsub-21535110633863323
-  // measured it: 11 DDG candidates, 0 selected, ~27s and ~$0.04 spent
-  // proving it. It keeps its place on `named_venue`, where finding the
-  // *right specific place* is worth a candidate a human may have to clear.
-  mood: ["unsplash", "openverse", "wikimedia", "apify_pinterest"],
-  default: ["unsplash", "openverse", "wikimedia"],
+  // `pexels`/`pixabay` sit beside `unsplash`: same `blanket` licence tier
+  // (free commercial use, no attribution), distinct catalogues, so a need
+  // that comes up short on one routinely hits on another before the pool
+  // ever falls through to the attribution-bearing CC sources.
+  //
+  // `ddg_images` is now LAST on every route rather than absent from these two.
+  //
+  // It was excluded on measured evidence: its hits are
+  // `licenseConfidence: "unknown"` by construction, the rights gate refuses
+  // unknown provenance, and prep run pubsub-21535110633863323 produced 11 DDG
+  // candidates, selected 0, and spent ~27s and ~$0.04 proving it. That
+  // evidence still stands and is why it sits last, after every source whose
+  // licence the gate can actually clear.
+  //
+  // Two things changed to make including it worth the cost anyway. Providers
+  // are now queried CONCURRENTLY, so a slow last-place source adds no serial
+  // latency to the pool. And `ddg_images` now walks the broadening ladder like
+  // everything else, where before it sent the raw twenty-word `visualNeed` —
+  // which is a large part of why its hit quality measured so badly. Its
+  // candidates still lose to any `blanket`/`attributable` source in the
+  // interleave, so it only ever contributes where better sources came up
+  // short, which is exactly the case it exists for.
+  mood: ["unsplash", "pexels", "pixabay", "openverse", "wikimedia", "apify_pinterest", "ddg_images"],
+  default: ["unsplash", "pexels", "pixabay", "openverse", "wikimedia", "ddg_images"],
 };
 
 export interface ProviderRegistryOptions {
@@ -92,6 +109,16 @@ export function buildProviderRegistry(options: ProviderRegistryOptions = {}): Ma
   const unsplashKey = env.UNSPLASH_ACCESS_KEY?.trim();
   if (unsplashKey) {
     registry.set("unsplash", createUnsplashProvider({ accessKey: unsplashKey, ...shared }));
+  }
+
+  const pexelsKey = env.PEXELS_API_KEY?.trim();
+  if (pexelsKey) {
+    registry.set("pexels", createPexelsProvider({ apiKey: pexelsKey, ...shared }));
+  }
+
+  const pixabayKey = env.PIXABAY_API_KEY?.trim();
+  if (pixabayKey) {
+    registry.set("pixabay", createPixabayProvider({ apiKey: pixabayKey, ...shared }));
   }
 
   const placesKey = env.GOOGLE_PLACES_KEY?.trim();

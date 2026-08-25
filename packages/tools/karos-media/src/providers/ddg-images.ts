@@ -1,5 +1,5 @@
-import { asString, type ImageSearchHit, type ImageSearchProvider } from "../providers.js";
-import { isBlockedImageUrl } from "../quality.js";
+import { asString, searchWithBroadening, type ImageSearchHit, type ImageSearchProvider } from "../providers.js";
+import { broadeningVariants, isBlockedImageUrl } from "../quality.js";
 
 const DDG_HTML = "https://duckduckgo.com/";
 const DDG_JSON = "https://duckduckgo.com/i.js";
@@ -71,6 +71,14 @@ export function createDdgImagesProvider(options: { fetchImpl?: typeof fetch; tim
   return {
     name: "ddg_images",
     async search(query: string, limit: number): Promise<ImageSearchHit[]> {
+      // Broadened like the rest of the chain. Web image search degrades the
+      // same way a stock API does on a long scene description: plenty of
+      // near-arbitrary results rather than an honest zero.
+      return searchWithBroadening(query, broadeningVariants(query), (variant) => searchOnce(variant, limit));
+    },
+  };
+
+  async function searchOnce(query: string, limit: number): Promise<ImageSearchHit[]> {
       const vqd = await resolveVqd(query);
       if (vqd === undefined) return [];
 
@@ -118,7 +126,6 @@ export function createDdgImagesProvider(options: { fetchImpl?: typeof fetch; tim
         if (hits.length >= limit) break;
       }
 
-      return hits;
-    },
-  };
+    return hits;
+  }
 }

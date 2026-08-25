@@ -27,6 +27,7 @@ import { createDurableStoreFromEnv } from "./wiring/durable-store.js";
 import { createServerPromptStore } from "./wiring/prompt-store.js";
 import { createServerQueueAdapter, runJobsSubscriptionName } from "./wiring/queue.js";
 import { createServerTools } from "./wiring/tools.js";
+import { createServerTemplateStore } from "./wiring/template-store.js";
 import { createServerWorkspaceStore } from "./wiring/workspace-store.js";
 import { createServer } from "node:http";
 import { resolveInstagramRepoRoot } from "./wiring/workflows.js";
@@ -48,7 +49,7 @@ async function main(): Promise<void> {
   const router = createModelRouterFromEnv();
   const workspaceStore = createServerWorkspaceStore();
   const tools = createServerTools(workspaceStore);
-  const runtimeDeps = { tools, promptStore, router, workspaceStore, repoRoot: resolveInstagramRepoRoot() };
+  const runtimeDeps = { tools, promptStore, router, workspaceStore, repoRoot: resolveInstagramRepoRoot(), templateStore: createServerTemplateStore() };
   const agentDefinitionStore = createAgentDefinitionStoreFromEnv();
 
   const queue = createServerQueueAdapter();

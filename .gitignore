@@ -14,3 +14,14 @@ _to_delete/
 # has to live inside the repo root (assertInside requires a repo-relative outDir),
 # cleaned up in afterEach but ignored here as a backstop against a crashed run.
 .tmp-render-test-*/
+# Per-run scratch that MUST live under repoRoot, because publish.renderCarousel's
+# assertInside only accepts repo-relative paths. Both are written by a real run
+# (not only by tests), and in local development repoRoot IS this repo, so without
+# these a `npm run dev:server` run leaves downloaded images and materialized
+# templates as untracked files.
+#   .media-cache    — packages/tools/karos-media's downloads (MEDIA_CACHE_PREFIX)
+#   .template-cache — karos-templates' materialized per-run templates
+.media-cache/
+.template-cache/
+# publish.renderCarousel's rendered PNG output, same reasoning.
+instagram-output/

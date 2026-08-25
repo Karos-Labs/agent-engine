@@ -188,11 +188,35 @@ export function createFindImages(source: ImageSource | ImageSearchProvider, fetc
         const perProviderHits: Array<{ provider: string; hits: ImageSearchHit[] }> = [];
         const seenUrls = new Set<string>();
 
-        for (const provider of chain) {
-          let hits: ImageSearchHit[];
-          try {
-            hits = await provider.search(need.query, input.perNeed);
-          } catch (error) {
+        // ── Every provider in the chain, CONCURRENTLY ──
+        //
+        // All of them are asked for every need — the chain is a ranking
+        // order, never a stop condition (see the note above). What changed
+        // (2026-08) is that they are now asked at the same time instead of
+        // one after another.
+        //
+        // The saving is real and it compounds: six providers at roughly one
+        // to three seconds each, per need, on a six-to-eight slide carousel,
+        // is a minute or more of pure serial waiting per attempt — and the
+        // drafting loop can run three attempts. Nothing about the merged pool
+        // changes, because the fan-in below still walks `chain` IN ORDER.
+        //
+        // `allSettled`, not `all`: one provider rejecting must not discard
+        // every healthy result alongside it, which is the same demote-don't-
+        // abort rule the sequential version had.
+        const settled = await Promise.allSettled(chain.map((provider) => provider.search(need.query, input.perNeed)));
+
+        // Fan-in IN CHAIN ORDER, which is what keeps this identical to the
+        // sequential behaviour rather than merely similar: dedup precedence
+        // ("the earlier, higher-confidence provider keeps a shared URL") and
+        // the interleave's within-round ordering both depend on it, and
+        // `Promise.allSettled` preserves input order regardless of which
+        // request actually finished first.
+        for (const [index, provider] of chain.entries()) {
+          const result = settled[index]!;
+
+          if (result.status === "rejected") {
+            const error = result.reason;
             if (error instanceof ImageProviderError) {
               // Demote, do not abort. One provider's outage must not discard
               // every healthy source alongside it. Still reported — just not
@@ -201,9 +225,12 @@ export function createFindImages(source: ImageSource | ImageSearchProvider, fetc
               sawProviderError = true;
               continue;
             }
+            // A non-provider error is a real bug, not a source being down, so
+            // it still propagates exactly as it did when awaited inline.
             throw error;
           }
 
+          const hits = result.value;
           // The same photo can surface from two providers — Openverse
           // aggregates Wikimedia among others. Deduping on the byte URL keeps
           // the interleave honest; otherwise one image quietly consumes two

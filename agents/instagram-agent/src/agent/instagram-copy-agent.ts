@@ -44,6 +44,23 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyOutput> {
     // prep run pubsub-21066191524607951 failed the mechanical craft-hygiene
     // gate on two of three attempts on exactly that character. v1 and v2 stay
     // frozen.
-    skillRef: "instagram-copy@3",
+    // Pinned to "4": v4 is v3 plus §5, the layout-archetype menu. Until it,
+    // `layout` existed in the schema but nothing ever asked the model to
+    // choose one, so every slide defaulted to `photo` and the five ported
+    // archetypes were reachable only as a fallback — a carousel could not
+    // deliberately set a number large or a quote as a quote. v4 also states
+    // the two rules that keep the choice honest: fill the block you named,
+    // and never invent a statistic or a quote to justify an archetype. v3
+    // stays frozen as the pre-archetype baseline.
+    // Pinned to "5": v5 is v4 plus the two rules that stop retrieval failing
+    // for reasons the copy step controls. §4 gains a hard constraint budget
+    // (one subject, one setting, at most one more constraint, ~12 words),
+    // because a long scene description does not return nothing from a keyword
+    // index, it returns near-arbitrary matches the gate then pays to reject.
+    // §5 gains an explicit routing table: a number, a chart, a comparison or a
+    // list is NOT a photo, and writing it as a photo brief is what sent prep
+    // run pubsub-21545408480430711's four data slides through retrieval,
+    // scrape and into generation. v4 stays frozen.
+    skillRef: "instagram-copy@5",
   };
 }

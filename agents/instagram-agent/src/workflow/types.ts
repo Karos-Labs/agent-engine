@@ -206,12 +206,107 @@ export type ResearchOutput = z.infer<typeof ResearchOutputSchema>;
  * 04's `facts[].claim` values verbatim, which is exactly what step 07's
  * self-check verifies ("every claim traces to a source").
  */
+/**
+ * Which archetype `assembleSlidesData` renders this slide as.
+ *
+ * Ported from the legacy `karos-agents` archetype set (2026-08) — see
+ * `assets/templates/default/` for one HTML template per value, and
+ * `references/legacy-archetype-port.md` for what was and wasn't carried over
+ * from the legacy design system.
+ *
+ * Not every slide wants a photograph, which is the whole point: a bare
+ * percentage reads better as 300px type on a solid ground than as a caption
+ * over a stock desk, and a direct quote wants quotation styling rather than a
+ * scrim. Before this set existed every slide demanded a photo, so a carousel
+ * had one visual rhythm and every slide competed for the same stock imagery.
+ *
+ * Two values are special:
+ *
+ * - `"photo"` is the default, so any caller predating this field is unchanged.
+ * - `"text_only"` is the guaranteed-delivery floor: the workflow reassigns a
+ *   slide here when every image tier and the rights gate leave it with no
+ *   usable picture (see `ImageSelectionSchema`). It is also what any other
+ *   archetype degrades to if its own required content fields are missing —
+ *   a deliberate archetype, never a placeholder.
+ */
+export const InstagramSlideLayoutSchema = z.enum([
+  "photo",
+  "text_only",
+  "stat_callout",
+  "quote_card",
+  "comparison_card",
+  "list_takeaway",
+  "headline_focus",
+]);
+export type InstagramSlideLayout = z.infer<typeof InstagramSlideLayoutSchema>;
+
+/**
+ * `stat_callout`'s content. `figure` carries its own unit or symbol ("73%",
+ * "4.2x", "$1.8B") exactly as the legacy contract did — a separate unit field
+ * invites "4.2" + "x" being typeset apart, and the figure's own string length
+ * is what picks its type size.
+ *
+ * `source` is required, not optional: the legacy system's rule was "every
+ * figure names its source on the slide", and a big unattributed number is
+ * precisely the shape of a claim a reader should distrust.
+ */
+export const SlideStatSchema = z.object({
+  figure: z.string().min(1).max(12),
+  subLabel: z.string().min(1),
+  source: z.string().min(1),
+});
+
+/** `quote_card`'s content — the pull-quote and who said it. */
+export const SlideQuoteSchema = z.object({
+  text: z.string().min(1),
+  attribution: z.string().min(1),
+});
+
+/** `comparison_card`'s content — two sides, each a short label plus a line of detail. */
+export const SlideComparisonSchema = z.object({
+  leftLabel: z.string().min(1),
+  leftBody: z.string().min(1),
+  rightLabel: z.string().min(1),
+  rightBody: z.string().min(1),
+});
+
+/**
+ * `list_takeaway`'s content. Two to four rows: the legacy `meaning` layout
+ * pins its rows at a fixed offset in a 1440px column with 46px padding each,
+ * so five would overflow the canvas rather than shrink to fit.
+ */
+export const SlideListSchema = z
+  .array(z.object({ title: z.string().min(1), note: z.string().min(1).optional() }))
+  .min(2)
+  .max(4);
+
 export const InstagramSlideCopySchema = z.object({
   n: z.number().int().positive(),
   headline: z.string().min(1),
   body: z.string().min(1),
   visualNeed: z.string().min(1),
   sourceRef: z.string().min(1),
+  layout: InstagramSlideLayoutSchema.default("photo"),
+  /**
+   * The archetype-specific content, all optional.
+   *
+   * Optional rather than a discriminated union on `layout`, deliberately: the
+   * model picks the layout AND fills the matching block, and those are two
+   * chances to be inconsistent. A union turns any mismatch into a whole-output
+   * schema rejection, which costs the entire draft (and, at the retry cap, the
+   * run). Keeping them optional means a `stat_callout` that arrives without a
+   * `stat` degrades to `text_only` on its own headline and body — which every
+   * slide always has — and the carousel still ships.
+   *
+   * `assembleSlidesData` is where that degradation is decided; nothing here
+   * assumes the model got it right.
+   */
+  stat: SlideStatSchema.optional(),
+  quote: SlideQuoteSchema.optional(),
+  comparison: SlideComparisonSchema.optional(),
+  items: SlideListSchema.optional(),
+  /** A short mono eyebrow above a `headline_focus` statement. Optional on every archetype. */
+  kicker: z.string().min(1).max(48).optional(),
 });
 export type InstagramSlideCopy = z.infer<typeof InstagramSlideCopySchema>;
 
@@ -240,10 +335,22 @@ export type ImageCandidate = z.infer<typeof ImageCandidateSchema>;
 
 /**
  * One slide's vetting verdict. `imagePath: null` means "no candidate in the
- * pool honestly satisfies this slide's need" — the legacy-defect fix RFC-03
- * §1 requires preserved exactly: a `null` here must hold the *whole* post
- * (`WorkflowHeld`), never ship with a placeholder or silently drop the slide.
+ * pool honestly satisfies this slide's need".
  *
+ * Until 2026-08 a `null` here always held the *whole* post (RFC-03 §1's
+ * legacy-defect fix, preserved exactly: never ship a placeholder, a
+ * rights-encumbered image, or a reused one). That guarantee is unchanged —
+ * this schema still refuses every one of those. What changed is what happens
+ * *instead* of holding: after every image-sourcing tier (retrieval, scrape,
+ * generation) has genuinely been tried and a slide still has no usable
+ * picture, the workflow now reassigns that slide's `layout` to `"text_only"`
+ * (`InstagramSlideLayoutSchema`) and ships it without a photo — a real,
+ * designed archetype the render template already supports, not a
+ * placeholder standing in for a missing one. A run only holds now if the
+ * copy/rights/compliance self-checks themselves fail, never solely because a
+ * picture could not be found.
+ *
+
  * `license`/`rightsUsable`/`watermarkFree` (P0 parity-audit Fix 4) restore
  * carousel-agent-v2 SKILL.md step 06's real vetting requirement — "Is it
  * rights-usable, watermark-free, and of the right era? Record per image: the

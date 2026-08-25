@@ -228,3 +228,61 @@ describe("Fix 3: unconditional mechanical craft-hygiene gate (em dash / exclamat
     }, 60000);
   });
 });
+
+/**
+ * The sentence-case check used to be fail-dangerous: any ALL-CAPS token
+ * outside a hand-maintained acronym allowlist failed the gate, which routes
+ * into the step-07 retry loop, so the model re-drafted, wrote the same
+ * correct acronym again, and the run exhausted its budget and held.
+ *
+ * Prep run pubsub-21545408480430711 spent 18 minutes and three full drafting
+ * passes doing that over "GDPR". An earlier run did it over "DTC".
+ */
+describe("checkSentenceCase: acronyms must not cost a run", () => {
+  it("accepts a real acronym that nobody thought to list", () => {
+    // The point is NOT that these specific words are now listed — it is that
+    // an unlisted one no longer fails. `ZKPROOF` is deliberately not in any
+    // allowlist.
+    for (const text of [
+      "Our GDPR review found three gaps.",
+      "The CCPA deadline moved again.",
+      "We shipped ZKPROOF support this week.",
+      "Their SOC 2 audit is done.",
+    ]) {
+      const result = checkSentenceCase(text);
+      expect(result.ok, `${text} -> ${result.ok ? "" : result.reason}`).toBe(true);
+    }
+  });
+
+  it("still catches genuine emphasis shouting", () => {
+    for (const text of ["STOP scrolling and read this.", "This is FREE for a limited time.", "You MUST see these numbers."]) {
+      const result = checkSentenceCase(text);
+      expect(result.ok, text).toBe(false);
+      if (!result.ok) expect(result.reason).toMatch(/emphasis/i);
+    }
+  });
+
+  it("catches consecutive caps words, which is what shouting actually looks like", () => {
+    const result = checkSentenceCase("We got AMAZING RESULTS from one change.");
+    // "AMAZING" is on the denylist, so it flags on emphasis first — either
+    // reason is a correct rejection.
+    expect(result.ok).toBe(false);
+
+    // Two unlisted words adjacent: no denylist entry involved, so this proves
+    // the adjacency rule independently.
+    const adjacency = checkSentenceCase("The verdict was ZKPROOF BROKEN according to the audit.");
+    expect(adjacency.ok).toBe(false);
+    if (!adjacency.ok) expect(adjacency.reason).toMatch(/consecutive/i);
+  });
+
+  it("does not flag two acronyms sitting next to each other, since that is terminology not shouting", () => {
+    expect(checkSentenceCase("Our GDPR CCPA obligations overlap.").ok).toBe(true);
+    expect(checkSentenceCase("We track ROI and CAC weekly.").ok).toBe(true);
+  });
+
+  it("leaves the Title Case heuristic untouched", () => {
+    const result = checkSentenceCase("Five Ways To Grow Your Team This Quarter");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/title case/i);
+  });
+});

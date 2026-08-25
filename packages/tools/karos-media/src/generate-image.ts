@@ -100,6 +100,39 @@ export interface GenerateImageResult {
 /** The default. Verified reachable in prep; every `imagen-*` id 404s there. */
 export const DEFAULT_IMAGE_MODEL = "gemini-2.5-flash-image";
 
+/**
+ * Whether a `generateContent` failure is quota/availability noise rather than
+ * a real answer about the request.
+ *
+ * prep runs pubsub-21533408759483219 and pubsub-21543794087429035 both held
+ * on this exact shape: three or so generations succeed back-to-back, then
+ * Vertex's per-minute burst limit trips and every following call in the same
+ * step 429s with `RESOURCE_EXHAUSTED`. Before this, that error was
+ * indistinguishable from "the model refuses this prompt" — one `unmet` entry,
+ * zero retries, and the *only* fallback tier this package has left gave up on
+ * a condition that clears itself in seconds. `503`/`UNAVAILABLE` is the same
+ * shape for a different transient cause and gets the same treatment.
+ *
+ * Matched on the error's own message text: the SDK surfaces Vertex's raw
+ * `{"error":{"code":429,...,"status":"RESOURCE_EXHAUSTED"}}` body as
+ * `Error#message` rather than a typed field, so the code/status strings are
+ * the only reliable signal available here.
+ */
+function isRetryableGenerationError(message: string): boolean {
+  return /"code"\s*:\s*429|RESOURCE_EXHAUSTED|"code"\s*:\s*503|\bUNAVAILABLE\b/.test(message);
+}
+
+export interface GenerateImageRetryOptions {
+  /** Attempts per generation call, including the first. */
+  maxAttempts?: number;
+  /** Base delay for exponential backoff; attempt N waits `baseDelayMs * 2^(N-1)`. */
+  baseDelayMs?: number;
+  /** Overridable so tests don't pay real wall-clock delay. */
+  sleepImpl?: (ms: number) => Promise<void>;
+}
+
+const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
 const MIME_EXTENSION: Record<string, string> = {
   "image/png": ".png",
   "image/jpeg": ".jpg",
@@ -154,8 +187,35 @@ export function createGenerateImage(options: {
   client?: ImageGenerationClient | undefined;
   /** Overridable because model availability varies by project and region. */
   model?: string;
+  /** Backoff applied to a `RESOURCE_EXHAUSTED`/`UNAVAILABLE` generateContent failure. */
+  retry?: GenerateImageRetryOptions;
 }) {
   const model = options.model ?? DEFAULT_IMAGE_MODEL;
+  const maxAttempts = Math.max(1, options.retry?.maxAttempts ?? 3);
+  const baseDelayMs = options.retry?.baseDelayMs ?? 2_000;
+  const sleep = options.retry?.sleepImpl ?? defaultSleep;
+
+  /**
+   * Retries only the transient shape (`isRetryableGenerationError`) — a real
+   * refusal or a malformed request fails on the first try exactly as before,
+   * with no added latency.
+   */
+  async function generateWithBackoff(
+    request: Parameters<ImageGenerationClient["models"]["generateContent"]>[0],
+  ): Promise<Awaited<ReturnType<ImageGenerationClient["models"]["generateContent"]>>> {
+    const client = options.client!;
+    let lastError: Error;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await client.models.generateContent(request);
+      } catch (error) {
+        lastError = error as Error;
+        if (attempt >= maxAttempts || !isRetryableGenerationError(lastError.message)) throw lastError;
+        await sleep(baseDelayMs * 2 ** (attempt - 1));
+      }
+    }
+    throw lastError!;
+  }
 
   return defineTool<GenerateImageInput, GenerateImageResult>({
     name: "image.generate",
@@ -170,7 +230,6 @@ export function createGenerateImage(options: {
             "so Vertex can be reached (see packages/tools/karos-media/README.md)",
         );
       }
-      const client = options.client;
 
       const relDir = `${MEDIA_CACHE_PREFIX}/${input.runId}`;
       const absDir = path.resolve(input.repoRoot, relDir);
@@ -197,7 +256,7 @@ export function createGenerateImage(options: {
         for (let attempt = 0; attempt < input.perNeed; attempt++) {
           let response: Awaited<ReturnType<ImageGenerationClient["models"]["generateContent"]>>;
           try {
-            response = await client.models.generateContent({
+            response = await generateWithBackoff({
               model,
               contents: buildBrief(need.prompt, input.art),
               config: {

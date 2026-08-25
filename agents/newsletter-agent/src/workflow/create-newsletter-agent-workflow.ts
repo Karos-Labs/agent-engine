@@ -1,6 +1,6 @@
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField } from "@agent-engine/workflow";
+import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField, type RevisionNote, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle} from "@agent-engine/workflow";
 import { NewsletterDraftAgent, type NewsletterPostOutput } from "../agent/newsletter-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
 import type {
@@ -270,10 +270,32 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
     const theme = await wf.step.code("08-determine-edition-theme", (): string => {
       return candidateSummary.hasNumericInsight ? "data-point" : "curated-digest";
     });
+    // ── The read side of the feedback flywheel: what this client asked
+    //    for on previous runs, injected into the drafting prompt. Bounded
+    //    and best-effort — a memory read failing must not stop a run that
+    //    can draft perfectly well without it.
+    const pastFeedback = await readPastFeedback(wf, tools, ctx, "04e-read-past-feedback");
+
 
     // ── 09-12: draft execution via NewsletterDraftAgent, with machine/claim/compliance gates ──
     const draftAgent = new NewsletterDraftAgent({ router: options.router, tools, promptStore: options.promptStore });
-    const draftResult = await wf.step.agent("09-draft-post", draftAgent, {
+    /**
+     * One full drafting pass: draft, every deterministic content gate, then
+     * the terminal topic guardrail.
+     *
+     * Called once per REVISION round by `runReviewCycle`. `revision` is
+     * folded into every checkpointed step id inside it (via `rev`), so a
+     * second round genuinely re-drafts instead of short-circuiting on the
+     * first round's checkpoints — while everything OUTSIDE it (intake,
+     * research, the topic reservation) keeps its id and is reused. That
+     * reuse is why the revision is in-run rather than a fresh run.
+     */
+    const draftOnce = async (revision: number, notes: readonly RevisionNote[]) => {
+      /** Revision 0 keeps the ORIGINAL ids, so a first-pass trace is unchanged. */
+      const rev = (id: string) => (revision === 0 ? id : `${id}-r${revision}`);
+      const directive = revisionDirective(notes);
+
+    const draftResult = await wf.step.agent(rev("09-draft-post"), draftAgent, {
       ...runDirectionField(runDirection),
       mainStory: selected.mainStory,
       secondaryTopics: selected.secondaryTopics,
@@ -282,6 +304,11 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
       targetAudience: intake.targetAudience,
       frequency: intake.frequency,
       voiceRules: clientContext.voiceRules,
+      // Two distinct steers, kept apart on purpose: `pastFeedback` is what
+      // this client has said across previous RUNS, `revisionRequest` is what
+      // a reviewer asked about THIS draft minutes ago.
+      ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
+      ...(directive !== undefined ? { revisionRequest: directive } : {}),
     });
 
     if (draftResult.status === "content_fail") {
@@ -298,7 +325,7 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
     // requiredDisclaimer is deliberately omitted here: the footer that satisfies
     // it hasn't been injected yet, and its presence is verified structurally at
     // step 12 instead, not by re-running this hype-scanning gate against it.
-    await wf.step.code("10-verify-brand-compliance", async () => {
+    await wf.step.code(rev("10-verify-brand-compliance"), async () => {
       const forbiddenTerms = clientContext.brand["forbiddenTerms"] as string[] | undefined;
       const verdict = await runGate(tools, "gate.brandCompliance", { text: authoredDraft.text, forbiddenTerms: forbiddenTerms ?? [] }, ctx);
       if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.brandCompliance: ${verdict.reason}`);
@@ -315,7 +342,7 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
     // boundary.
     const draft = composeCompliantDraft(authoredDraft, clientContext.brand);
 
-    await wf.step.code("11-verify-numbers-sourced", async () => {
+    await wf.step.code(rev("11-verify-numbers-sourced"), async () => {
       const sources = candidateSummary.hasNumericInsight ? [candidateSummary.sourceLabel] : [];
       const verdict = await runGate(tools, "gate.numbersSourced", { text: draft.text, sources }, ctx);
       if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.numbersSourced: ${verdict.reason}`);
@@ -328,7 +355,7 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
     // text. A failure here means composeCompliantDraft was bypassed or broken —
     // an internal bug, never a content problem — so it's a tooling failure, not
     // a held run.
-    await wf.step.code("12-verify-compliance-footer", (): void => {
+    await wf.step.code(rev("12-verify-compliance-footer"), (): void => {
       const requiredDisclaimer = clientContext.brand["requiredDisclaimer"] as string | undefined;
       const companyAddress = clientContext.brand["companyAddress"] as string | undefined;
       const unsubscribeUrl = clientContext.brand["unsubscribeUrl"] as string | undefined;
@@ -346,21 +373,21 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
     // The shipped artifact's final gate pair — an unresolved placeholder or a
     // leaked credential/internal term must hold the run before it ever reaches
     // persistence, matching legacy's hard, unconditional delivery gates.
-    await wf.step.code("13-verify-no-placeholder", async () => {
+    await wf.step.code(rev("13-verify-no-placeholder"), async () => {
       const verdict = await runGate(tools, "gate.noPlaceholder", { text: draft.text }, ctx);
       if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.noPlaceholder: ${verdict.reason}`);
       if (verdict.verdict === "content_fail") throw new WorkflowHeld(`unresolved placeholder: ${verdict.reason}`);
       return verdict;
     });
 
-    await wf.step.code("14-verify-no-leak", async () => {
+    await wf.step.code(rev("14-verify-no-leak"), async () => {
       const verdict = await runGate(tools, "gate.leakCheck", { text: draft.text }, ctx);
       if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.leakCheck: ${verdict.reason}`);
       if (verdict.verdict === "content_fail") throw new WorkflowHeld(`leak check failed: ${verdict.reason}`);
       return verdict;
     });
 
-    await wf.step.code("15-render-preview-check", async () => {
+    await wf.step.code(rev("15-render-preview-check"), async () => {
       const outcome = await tools["render.preview"]!.execute(
         { subjectLine: draft.subjectLine, previewText: draft.previewText, text: draft.text },
         { ctx },
@@ -386,23 +413,33 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
     // gate.brandCompliance -- that matches forbiddenTerms as substrings and
     // catches the word, while this judges the subject. Free for a client who
     // forbids nothing: no list, no step, no model call.
-    await runTopicGuardrail(wf, { tools, promptStore: options.promptStore, router: options.router }, draft.text, intake.forbiddenTopics);
+    await runTopicGuardrail(wf, { tools, promptStore: options.promptStore, router: options.router }, draft.text, intake.forbiddenTopics, revision === 0 ? undefined : `-r${revision}`);
 
-    const reviewDecision: GateResponse = options.autoApprove
-      ? await wf.step.code("16-batch-review", () => ({
-          decision: "approve" as const,
-          actor: "system",
-          at: new Date().toISOString(),
-        }))
-      : await wf.step.gate("16-batch-review", {
-          kind: "batch_review",
-          payload: { runId: wf.runId, mainStory: selected.mainStory, theme, preview: draft.text },
-          requiredRole: "account_manager",
-          timeout: { duration: "24h", onTimeout: "hold" },
-        });
-    if (reviewDecision.decision !== "approve") {
-      throw new WorkflowHeld(`batch rejected: ${reviewDecision.reason ?? "no reason given"}`);
-    }
+      return draft;
+    };
+
+    // ── The universal approve / revise / reject cycle ──
+    //
+    // `revise` re-drafts with the reviewer's feedback injected, reusing
+    // everything already checkpointed, instead of holding the run and
+    // forcing somebody to dispatch a fresh one that knows nothing about the
+    // feedback. Every decision, approvals included, reaches client memory.
+    const review = await runReviewCycle(wf, {
+      gateId: "16-batch-review",
+      maxRevisions: MAX_REVISION_ROUNDS,
+      ...(options.autoApprove ? { autoApprove: true } : {}),
+      attempt: draftOnce,
+      buildGate: (draft, revision) => ({
+        kind: "batch_review",
+        payload: { runId: wf.runId, mainStory: selected.mainStory, theme, preview: draft.text, revision },
+        requiredRole: "account_manager",
+        timeout: { duration: "24h", onTimeout: "hold" },
+      }),
+      onDecision: async ({ revision, response }) => {
+        await persistReviewFeedbackToMemory(wf, tools, ctx, revision, response);
+      },
+    });
+    const draft = review.output;
 
     // ── 17-18: deliverable & manifest persistence ──
     const deliverableId = await wf.step.code("17-persist-deliverable", async (): Promise<string> => {
@@ -440,7 +477,7 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
         { ctx },
       );
       await tools["ledger.feedbackAppend"]!.execute(
-        { runId: wf.runId, feedbackId: `${wf.runId}__review`, decision: reviewDecision.decision, actor: reviewDecision.actor },
+        { runId: wf.runId, feedbackId: `${wf.runId}__review`, decision: review.response.decision, actor: review.response.actor },
         { ctx },
       );
     });

@@ -24,6 +24,8 @@ export interface WorkflowRuntime {
   stageModels?: Readonly<Record<string, string>>;
   store: DurableStepStore;
   budget?: WorkflowBudget;
+  /** Overrides `DEFAULT_AGENT_STEP_TIMEOUT_MS` for every `step.agent` call in this run. */
+  agentStepTimeoutMs?: number;
   now(): number;
 }
 
