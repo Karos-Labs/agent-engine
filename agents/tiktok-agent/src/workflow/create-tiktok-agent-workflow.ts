@@ -18,7 +18,7 @@ import {
   readRichRunInput,
   firstAsset,
 } from "@agent-engine/core";
-import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, type WorkflowContext } from "@agent-engine/workflow";
+import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, readOutputHistoryForDedup, dedupeDirective, readClientIntelContext, type WorkflowContext } from "@agent-engine/workflow";
 import { TikTokCommentaryAgent } from "../agent/tiktok-commentary-agent.js";
 import { TikTokMomentAgent } from "../agent/tiktok-moment-agent.js";
 import { boundsFromTranscript, sentenceBoundedWords, type TranscriptWordLike } from "./clip-bounds.js";
@@ -319,6 +319,13 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       return verdict;
     });
 
+    // The anti-repetition read (the excerpt window step 13 writes back into)
+    // and the client intel report, distilled — the same two reads every text
+    // channel agent now does before drafting.
+    const outputHistory = await readOutputHistoryForDedup(wf, tools, ctx, "tiktok-agent", "read-output-history");
+    const recentPostsDirective = dedupeDirective(outputHistory);
+    const clientIntelContext = await readClientIntelContext(wf, tools, ctx, "read-intel-context");
+
     // ── 06: COMPOSE — the commentary layer (judgment) ──
     const commentary: Commentary = await wf.step.code("06-commentary", async () => {
       const agent = new TikTokCommentaryAgent({ router: options.router, tools, promptStore: options.promptStore });
@@ -327,6 +334,8 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         hookLine: moment.hookLine,
         hookType: moment.hookType,
         clipText: bounds.text,
+        ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
+        ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
       });
       if (exec.status === "content_fail") {
         await releaseReservation();
@@ -471,6 +480,14 @@ ${bounds.text}`,
     await wf.step.code("13-commit-and-record", async () => {
       if (intake.reservationKey) {
         await callTool(tools, "topics.commit", { reservationKey: intake.reservationKey }, ctx);
+      }
+      // The write half of the anti-repetition loop — best-effort, on delivery only.
+      try {
+        await tools["ledger.recordOutputExcerpt"]?.execute({ agentId: "tiktok-agent", runId: wf.runId, excerpt: `${commentary.caption}
+
+${commentary.about}` }, { ctx });
+      } catch (error) {
+        console.error("13-commit-and-record: could not record the output excerpt for future dedup", error);
       }
       const memory = tools["memory.appendDecision"];
       if (memory) {

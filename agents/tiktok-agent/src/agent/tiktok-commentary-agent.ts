@@ -25,6 +25,11 @@ export class TikTokCommentaryAgent extends BaseAgent<Commentary> {
     allowedTools: ["client.getVoiceRules", "client.getBrand", "client.getStrategy"],
     outputSchema: CommentarySchema,
     modelPolicy: resolveModelPolicy("tiktok-commentary", { policy: "pinned", model: "claude-sonnet-4-6" }),
-    skillRef: "tiktok-commentary@1",
+    // Pinned to "2": v2 adds the client-knowledge-and-recent-posts section
+    // — clientIntelContext (the client's intel report, distilled) is read as
+    // authoritative, and recentPosts (the shipped-output dedup window the
+    // workflow now writes back into on delivery) is a hard do-not-repeat
+    // constraint. v1 stays frozen.
+    skillRef: "tiktok-commentary@2",
   };
 }
