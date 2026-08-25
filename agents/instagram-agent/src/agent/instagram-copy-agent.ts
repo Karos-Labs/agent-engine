@@ -79,6 +79,14 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyOutput> {
     // Hebrew-language technology... site") got a fluent, well-sourced,
     // entirely English carousel with every other check passing (prep job
     // hcf9ymPGJC7mDS5pcEQ4). v6 stays frozen.
-    skillRef: "instagram-copy@7",
+    // Pinned to "8": v8 adds `layout: "custom"` — the rare escape hatch to
+    // author a brand-new typographic archetype (`customArchetype`'s
+    // `bodyHtml`/`css`/`slots`/`fields`) when none of the six standard ones
+    // fit. Machine-validated (`assertSafeMarkup` in
+    // `@agent-engine/tool-karos-templates`) before it is ever rendered, and
+    // only enrolled into the shared template registry on an explicit
+    // reviewer approval (`promoteTemplate`) — never from this step alone.
+    // v7 stays frozen.
+    skillRef: "instagram-copy@8",
   };
 }

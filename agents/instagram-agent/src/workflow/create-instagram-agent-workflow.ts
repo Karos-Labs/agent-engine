@@ -8,7 +8,18 @@ import { InstagramCopyAgent } from "../agent/instagram-copy-agent.js";
 import { InstagramImageVettingAgent } from "../agent/instagram-image-vetting-agent.js";
 import { InstagramResearchAgent } from "../agent/instagram-research-agent.js";
 import { InstagramVisualQaAgent } from "../agent/instagram-visual-qa-agent.js";
-import { materializeTemplates, reviewTemplate, templateFileName, type TemplateStore } from "@agent-engine/tool-karos-templates";
+import {
+  assertSafeMarkup,
+  buildCustomArchetypeDocument,
+  composeDocument,
+  LEGACY_ARCHETYPE_IDS,
+  materializeTemplates,
+  promoteTemplate,
+  reviewTemplate,
+  TemplateDefinitionSchema,
+  templateFileName,
+  type TemplateStore,
+} from "@agent-engine/tool-karos-templates";
 import { ARCHETYPE_TEMPLATE_FILES, assembleSlidesData, checkSlidesData, resolveLayout } from "./slides-data.js";
 import { checkCraftHygiene } from "./craft-hygiene.js";
 import {
@@ -25,6 +36,7 @@ import {
   type InstagramSlideLayout,
   type InstagramTopicClaim,
   type ResearchOutput,
+  type SlideCustomArchetype,
 } from "./types.js";
 
 /**
@@ -68,6 +80,71 @@ const MAX_REVISION_ROUNDS = 2;
  * record itself still holds the decision verbatim, so nothing is
  * unrecoverable.
  */
+/**
+ * The stable id a `custom` archetype uses everywhere it's referenced before
+ * it is ever promoted: the gate payload's synthetic `chosen` entry, the
+ * reviewer's own `templateFeedback.templateId`, and (if promoted)
+ * `promoteTemplate`'s own `id`. One id, minted at drafting time, so nothing
+ * downstream needs a separate lookup to connect the three.
+ */
+export function customArchetypeTemplateId(clientSlug: string, archetypeId: string): string {
+  return `${clientSlug}:${archetypeId}`;
+}
+
+/**
+ * Validates every `layout: "custom"` slide's markup for THIS attempt and
+ * returns the ones that passed — `resolveLayout` downgrades anything
+ * missing, unvalidated, or a repeat within the carousel to `text_only`, so a
+ * rejected or hallucinated custom archetype degrades exactly like a
+ * `stat_callout` missing its `stat` does, never holding the run.
+ *
+ * Deliberately pure and re-derived every attempt from the checkpointed
+ * `copy` — never itself checkpointed, for the same reason
+ * `ensureTemplatesOnDisk` isn't: a validation result is only as good as the
+ * file it describes actually being on THIS instance's disk, and re-deriving
+ * both from the same checkpointed source on every attempt is what keeps
+ * them from drifting apart across a resume on a different Cloud Run
+ * instance.
+ */
+export function validateCustomArchetypes(copy: InstagramCopyOutput): SlideCustomArchetype[] {
+  const validated: SlideCustomArchetype[] = [];
+  for (const slide of copy.slides) {
+    if (slide.layout !== "custom" || !slide.customArchetype) continue;
+    const archetype = slide.customArchetype;
+    // Belt-and-suspenders beyond the schema's own `custom_` regex: this
+    // archetype's file lands in the SAME per-run directory the five real
+    // structured archetypes' files do, and a collision would silently
+    // overwrite one of them mid-run.
+    if (LEGACY_ARCHETYPE_IDS.has(archetype.archetypeId)) {
+      console.error(
+        `validateCustomArchetypes: archetypeId "${archetype.archetypeId}" collides with a real archetype id — refusing rather than risking an overwrite`,
+      );
+      continue;
+    }
+    const safety = assertSafeMarkup(archetype.bodyHtml, archetype.css, archetype.slots);
+    if (!safety.ok) {
+      console.error(`validateCustomArchetypes: "${archetype.archetypeId}" failed its markup safety check: ${safety.reason}`);
+      continue;
+    }
+    validated.push(archetype);
+  }
+  return validated;
+}
+
+/** Builds the full, self-contained document `composeDocument`/the renderer expect, from a validated custom archetype. */
+export function composeCustomArchetypeDocument(archetype: SlideCustomArchetype): string {
+  const definition = TemplateDefinitionSchema.parse({
+    id: customArchetypeTemplateId("preview", archetype.archetypeId),
+    archetypeId: archetype.archetypeId,
+    name: archetype.name,
+    layoutType: "typographic" as const,
+    htmlTemplate: buildCustomArchetypeDocument(archetype.bodyHtml),
+    cssStyles: archetype.css,
+    source: "ai_generated" as const,
+  });
+  return composeDocument(definition);
+}
+
 async function persistReviewFeedback(
   wf: WorkflowContext,
   tools: AgentToolRegistry,
@@ -77,6 +154,15 @@ async function persistReviewFeedback(
     response: GateResponse;
     templateFeedback: readonly TemplateFeedback[];
     templateStore?: TemplateStore | undefined;
+    /**
+     * Every `custom` archetype THIS run drafted (across every revision so
+     * far), keyed by the same `customArchetypeTemplateId` scheme the gate
+     * payload used. `persistReviewFeedback` is a module-level function with
+     * no closure access to a draft's `copy` — this is how it learns a
+     * `templateFeedback.templateId` names a run-generated design rather than
+     * an already-registered row.
+     */
+    customArchetypesByTemplateId?: ReadonlyMap<string, SlideCustomArchetype> | undefined;
   },
 ): Promise<void> {
   const note = input.response.feedback ?? input.response.reason;
@@ -106,8 +192,39 @@ async function persistReviewFeedback(
   for (const entry of input.templateFeedback) {
     try {
       await wf.step.code(`09a-template-feedback-r${input.revision}-s${entry.slide}`, async () => {
+        const store = input.templateStore!;
+        // A `promote: true` on a run-generated custom archetype's FIRST
+        // approval enrolls it into the registry — `promoteTemplate`'s own
+        // seeded feedback entry already records this approval, so it is
+        // called INSTEAD of `reviewTemplate`, never alongside it (stacking
+        // `QUALITY_DELTA.approved` on top in the same turn would double-count
+        // one human action as two). `store.get` first, rather than assuming
+        // "not yet promoted": a reviewer who promotes the SAME archetypeId
+        // again in a later revision round of this same run must land on the
+        // ordinary review path instead — `promoteTemplate` has no
+        // existence check of its own and would otherwise blind-overwrite the
+        // row, resetting its quality score back to 40.
+        const customArchetype = input.customArchetypesByTemplateId?.get(entry.templateId);
+        if (entry.promote && customArchetype !== undefined && (await store.get(entry.templateId)) === undefined) {
+          await promoteTemplate({
+            store,
+            archetypeId: customArchetype.archetypeId,
+            name: customArchetype.name,
+            htmlTemplate: buildCustomArchetypeDocument(customArchetype.bodyHtml),
+            cssStyles: customArchetype.css,
+            layoutType: "typographic",
+            source: "ai_generated",
+            clientSlug: wf.clientSlug,
+            actor: input.response.actor,
+            note: entry.note,
+            now: Date.now(),
+            id: entry.templateId,
+          });
+          return { templateId: entry.templateId, verdict: entry.verdict, promoted: true };
+        }
+
         await reviewTemplate({
-          store: input.templateStore!,
+          store,
           templateId: entry.templateId,
           actor: input.response.actor,
           verdict: entry.verdict,
@@ -716,31 +833,57 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
      * already there, which is the common case on an instance that never
      * recycled.
      */
-    const ensureTemplatesOnDisk = async (): Promise<void> => {
-      if (options.templateStore === undefined || templateResolution.files.length === 0) return;
-      const absDir = path.resolve(options.repoRoot, effectiveTemplateDir);
-      const allPresent = await Promise.all(
-        templateResolution.files.map((file) =>
-          fs
-            .access(path.join(absDir, file))
-            .then(() => true)
-            .catch(() => false),
-        ),
-      );
-      if (allPresent.every(Boolean)) return;
-      try {
-        await materializeTemplates({
-          store: options.templateStore,
-          repoRoot: options.repoRoot,
-          runId: wf.runId,
-          clientSlug: wf.clientSlug,
-          clientTemplateDir: frozen.brandTokens.templateDir,
-          clientTemplateFile: frozen.brandTokens.slideTemplate,
-        });
-      } catch (error) {
-        // Same fallback rule as 04c-resolve-templates itself: a registry
-        // outage here degrades layout variety, it does not fail the run.
-        console.error("ensureTemplatesOnDisk: re-materialization failed, render will fall back to the client's own template", error);
+    const ensureTemplatesOnDisk = async (validatedCustomArchetypes: readonly SlideCustomArchetype[] = []): Promise<void> => {
+      if (options.templateStore !== undefined && templateResolution.files.length > 0) {
+        const absDir = path.resolve(options.repoRoot, effectiveTemplateDir);
+        const allPresent = await Promise.all(
+          templateResolution.files.map((file) =>
+            fs
+              .access(path.join(absDir, file))
+              .then(() => true)
+              .catch(() => false),
+          ),
+        );
+        if (!allPresent.every(Boolean)) {
+          try {
+            await materializeTemplates({
+              store: options.templateStore,
+              repoRoot: options.repoRoot,
+              runId: wf.runId,
+              clientSlug: wf.clientSlug,
+              clientTemplateDir: frozen.brandTokens.templateDir,
+              clientTemplateFile: frozen.brandTokens.slideTemplate,
+            });
+          } catch (error) {
+            // Same fallback rule as 04c-resolve-templates itself: a registry
+            // outage here degrades layout variety, it does not fail the run.
+            console.error("ensureTemplatesOnDisk: re-materialization failed, render will fall back to the client's own template", error);
+          }
+        }
+      }
+
+      // A validated `custom` archetype is never part of the registry fetch
+      // above — it is THIS run's own, not-yet-promoted proposal, re-derived
+      // straight from the checkpointed `copy` rather than fetched from
+      // anywhere, and written unconditionally (never just "if missing"):
+      // it's a pure, local, no-I/O-dependency rebuild, so re-writing it is
+      // cheaper than checking first and there's no correctness reason to
+      // skip it.
+      if (validatedCustomArchetypes.length > 0) {
+        const absDir = path.resolve(options.repoRoot, effectiveTemplateDir);
+        for (const archetype of validatedCustomArchetypes) {
+          try {
+            await fs.writeFile(path.join(absDir, templateFileName(archetype.archetypeId)), composeCustomArchetypeDocument(archetype), "utf8");
+          } catch (error) {
+            // Same "degrade, never fail the run" rule as everywhere else in
+            // this function — a write failure here just means the slide
+            // renders with a "template not found" tooling error further
+            // downstream is impossible to avoid, but SHOULD not happen: disk
+            // writes to a bounds-checked, already-existing directory fail
+            // only on a genuine I/O problem, not a content one.
+            console.error(`ensureTemplatesOnDisk: could not write custom archetype "${archetype.archetypeId}" to disk`, error);
+          }
+        }
       }
     };
 
@@ -1270,6 +1413,15 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         continue;
       }
 
+      // A `custom` archetype's markup is validated fresh every attempt, from
+      // this attempt's own `copy` — never checkpointed on its own (see
+      // `validateCustomArchetypes`'s doc comment). `resolveLayout` (inside
+      // `assembleSlidesData`) downgrades anything that didn't pass to
+      // `text_only`, and `ensureTemplatesOnDisk` below writes exactly the
+      // slides that did.
+      const validatedCustomArchetypes = validateCustomArchetypes(copy);
+      const validatedCustomArchetypeIds = new Set(validatedCustomArchetypes.map((a) => a.archetypeId));
+
       const slidesDataAttempt = await wf.step.code(rev(`07c-emit-slides-data-attempt-${attempt}`), () =>
         assembleSlidesData({
           clientSlug: wf.clientSlug,
@@ -1281,11 +1433,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           canvas: frozen.styleConfig.canvas,
           availableTemplates,
           templateDirOverride: effectiveTemplateDir,
+          validatedCustomArchetypeIds,
         }),
       );
 
       // ── 08: render via the shared, already-tested publish.renderCarousel tool ──
-      await ensureTemplatesOnDisk();
+      await ensureTemplatesOnDisk(validatedCustomArchetypes);
       const renderOutcome = await wf.step.code(rev(`08-render-carousel-attempt-${attempt}`), async () => tools["publish.renderCarousel"]!.execute(slidesDataAttempt, { ctx }));
 
       // ── The last image-caused hold, now a degrade ──
@@ -1319,11 +1472,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             canvas: frozen.styleConfig.canvas,
             availableTemplates,
             templateDirOverride: effectiveTemplateDir,
+            validatedCustomArchetypeIds,
           }),
         );
         copy = strippedCopy;
         selections = strippedSelections;
-        await ensureTemplatesOnDisk();
+        await ensureTemplatesOnDisk(validatedCustomArchetypes);
         renderResolved = await wf.step.code(rev(`08-render-carousel-typographic-attempt-${attempt}`), async () =>
           tools["publish.renderCarousel"]!.execute(slidesDataResolved, { ctx }),
         );
@@ -1402,6 +1556,16 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // "the shorter hooks are working" is teaching the system something, and a
     // store that only remembers complaints learns a distorted version of what
     // a client wants.
+    // `runReviewCycle`'s `onDecision` receives the gate response but not the
+    // draft that earned it (see `packages/workflow/src/primitives/
+    // review-cycle.ts` — deliberately, Layer 1 knows nothing about carousels
+    // or templates). Captured here, in `attempt`, right before each round's
+    // draft is returned — safe because the cycle is a strict, single-
+    // threaded loop (attempt -> buildGate -> gate -> onDecision, one round
+    // fully resolves before the next begins), so `onDecision` always reads
+    // the draft the reviewer was actually looking at.
+    let latestDraftForReview: DraftResult | undefined;
+
     const review = await runReviewCycle<DraftResult>(wf, {
       gateId: "09a-batch-review",
       maxRevisions: MAX_REVISION_ROUNDS,
@@ -1419,6 +1583,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           frozen.forbiddenTopics,
           revision === 0 ? undefined : `-r${revision}`,
         );
+        latestDraftForReview = draft;
         return draft;
       },
       buildGate: (draft, revision) => ({
@@ -1447,21 +1612,54 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // has never signed off on. This is what lets the review surface say
           // "new custom template used on slide 4" and attach design feedback to
           // the right registry row rather than to the post as a whole.
-          slideTemplates: draft.slidesData.slides.map((slide) => {
-            const chosen = templateResolution.chosen.find((c) => templateFileName(c.archetypeId) === slide.template);
-            return {
-              n: slide.n,
-              template: slide.template,
-              ...(chosen ? { templateId: chosen.templateId, templateSource: chosen.source } : {}),
-              isExperimental: chosen?.source === "ai_generated",
-            };
-          }),
+          //
+          // A `custom` archetype this round drafted has no row in
+          // `templateResolution.chosen` at all (that list is fixed at step
+          // 04c, before this round's copy even exists) — a synthetic entry
+          // is added here so it's found by the exact same lookup below, with
+          // no change to the lookup itself. Its `templateId` is the same
+          // `customArchetypeTemplateId` scheme `onDecision`/`promoteTemplate`
+          // use, so a reviewer's `promote: true` on it connects straight
+          // through with no separate lookup needed.
+          slideTemplates: (() => {
+            const chosenForGate = [
+              ...templateResolution.chosen,
+              ...draft.copy.slides
+                .filter((s) => s.layout === "custom" && s.customArchetype)
+                .map((s) => ({
+                  archetypeId: s.customArchetype!.archetypeId,
+                  templateId: customArchetypeTemplateId(wf.clientSlug, s.customArchetype!.archetypeId),
+                  source: "ai_generated" as const,
+                  qualityScore: 0,
+                })),
+            ];
+            return draft.slidesData.slides.map((slide) => {
+              const chosen = chosenForGate.find((c) => templateFileName(c.archetypeId) === slide.template);
+              return {
+                n: slide.n,
+                template: slide.template,
+                ...(chosen ? { templateId: chosen.templateId, templateSource: chosen.source } : {}),
+                isExperimental: chosen?.source === "ai_generated",
+              };
+            });
+          })(),
         },
         requiredRole: "account_manager",
         timeout: { duration: "24h", onTimeout: "hold" },
       }),
       onDecision: async ({ revision, response, templateFeedback }) => {
-        await persistReviewFeedback(wf, tools, ctx, { revision, response, templateFeedback, templateStore: options.templateStore });
+        const customArchetypesByTemplateId = new Map(
+          (latestDraftForReview?.copy.slides ?? [])
+            .filter((s) => s.layout === "custom" && s.customArchetype)
+            .map((s) => [customArchetypeTemplateId(wf.clientSlug, s.customArchetype!.archetypeId), s.customArchetype!] as const),
+        );
+        await persistReviewFeedback(wf, tools, ctx, {
+          revision,
+          response,
+          templateFeedback,
+          templateStore: options.templateStore,
+          customArchetypesByTemplateId,
+        });
       },
     });
 

@@ -206,6 +206,35 @@ describe("materializeTemplates: Approach (a)", () => {
     expect(materialized).toBe(original);
   });
 
+  it("picks up a template promoted after this run, with no archetypeIds filter and no code change", async () => {
+    // Requirement: "04c-resolve-templates" (which calls materializeTemplates
+    // with no archetypeIds filter, same as here) considers newly promoted
+    // templates for FUTURE runs. Nothing about materializeTemplates/
+    // resolveBest is archetype-aware — this proves a run-generated custom
+    // archetype, once promoted into the SAME store, is fetched, ranked, and
+    // written out by a later, independent materializeTemplates call, exactly
+    // like any bundled or curated row already is.
+    const store = createCompositeTemplateStore([createBundledTemplateStore({ templateDir: bundledDir }), new MemoryTemplateStore()]);
+    await promoteTemplate({
+      store,
+      archetypeId: "custom_diagonal_stat",
+      name: "Diagonal stat callout",
+      htmlTemplate: "<html><head></head><body>{{headline}}</body></html>",
+      layoutType: "typographic",
+      source: "ai_generated",
+      clientSlug: "acme",
+      actor: "jane@karoslabs.com",
+      note: "promoted from a live run",
+      now: 1_700_000_000_000,
+    });
+
+    const later = await materializeTemplates({ store, repoRoot, runId: "run_later", clientSlug: "acme" });
+    expect(later.files["custom_diagonal_stat"]).toBe("custom-diagonal-stat.html");
+    expect(later.chosen.find((c) => c.archetypeId === "custom_diagonal_stat")).toMatchObject({ source: "ai_generated" });
+    const written = await fs.readFile(path.join(repoRoot, later.templateDir, later.files["custom_diagonal_stat"]!), "utf8");
+    expect(written).toContain("{{headline}}");
+  });
+
   it("composes separate cssStyles into the document head, after the template's own style block", () => {
     const composed = composeDocument(
       def({

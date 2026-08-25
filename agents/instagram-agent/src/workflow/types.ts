@@ -237,6 +237,7 @@ export const InstagramSlideLayoutSchema = z.enum([
   "comparison_card",
   "list_takeaway",
   "headline_focus",
+  "custom",
 ]);
 export type InstagramSlideLayout = z.infer<typeof InstagramSlideLayoutSchema>;
 
@@ -280,6 +281,41 @@ export const SlideListSchema = z
   .min(2)
   .max(4);
 
+/**
+ * `custom`'s content — a model-authored typographic archetype for the rare
+ * case none of the six standard ones fit. Not a full HTML document:
+ * `bodyHtml` is a markup FRAGMENT (goes inside the shared shell's `<body>`,
+ * built by `buildCustomArchetypeDocument`) and `css` is rules only (spliced
+ * in separately, by `composeDocument`, the same way any registry template's
+ * `cssStyles` already is) — never a `<script>`/`<style>` tag of its own.
+ *
+ * `archetypeId` must start with `custom_`: its file lands in the same
+ * per-run directory the five real structured archetypes' files do, and this
+ * prefix is what keeps it from ever colliding with one of them (checked
+ * again, at runtime, in `create-instagram-agent-workflow.ts` — a schema
+ * regex is one edit away from being loosened later).
+ *
+ * `slots`/`fields` follow the renderer's own escaped-substitution
+ * convention: every `{{key}}` `bodyHtml` uses must be a declared slot (or
+ * the always-available `kicker`/`dir`), and every value in `fields` is
+ * substituted as escaped text — there is no raw/`{{html:...}}` form for
+ * model-authored content, deliberately, since that split is what keeps a
+ * copy field from being an injection point (see `assertSafeMarkup`).
+ */
+export const SlideCustomArchetypeSchema = z.object({
+  archetypeId: z
+    .string()
+    .regex(/^custom_[a-z0-9_]{3,40}$/, "must start with 'custom_' and contain only lowercase letters, digits, and underscores"),
+  name: z.string().min(1).max(60),
+  /** One sentence: why none of the six standard archetypes fit this slide. */
+  rationale: z.string().min(1).max(300),
+  bodyHtml: z.string().min(1).max(4000),
+  css: z.string().max(4000).default(""),
+  slots: z.array(z.string().regex(/^[A-Za-z0-9_]+$/)).min(1).max(8),
+  fields: z.record(z.string(), z.string().max(2000)),
+});
+export type SlideCustomArchetype = z.infer<typeof SlideCustomArchetypeSchema>;
+
 export const InstagramSlideCopySchema = z.object({
   n: z.number().int().positive(),
   headline: z.string().min(1),
@@ -305,6 +341,7 @@ export const InstagramSlideCopySchema = z.object({
   quote: SlideQuoteSchema.optional(),
   comparison: SlideComparisonSchema.optional(),
   items: SlideListSchema.optional(),
+  customArchetype: SlideCustomArchetypeSchema.optional(),
   /** A short mono eyebrow above a `headline_focus` statement. Optional on every archetype. */
   kicker: z.string().min(1).max(48).optional(),
 });

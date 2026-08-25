@@ -1,4 +1,5 @@
 import type { RenderCarouselInput, Slide } from "@agent-engine/tool-karos-publish";
+import { templateFileName } from "@agent-engine/tool-karos-templates";
 import type {
   BrandTokens,
   ImageSelection,
@@ -20,7 +21,7 @@ import type {
  * same `templateDir`, so a client with a bespoke `templateDir` needs the whole
  * set present to use them; `LAYOUT_TEMPLATE_FILES` is the list to copy.
  */
-const LAYOUT_TEMPLATE_FILES: Record<Exclude<InstagramSlideLayout, "photo" | "text_only">, string> = {
+const LAYOUT_TEMPLATE_FILES: Record<Exclude<InstagramSlideLayout, "photo" | "text_only" | "custom">, string> = {
   stat_callout: "stat-callout.html",
   quote_card: "quote-card.html",
   comparison_card: "comparison-card.html",
@@ -28,8 +29,9 @@ const LAYOUT_TEMPLATE_FILES: Record<Exclude<InstagramSlideLayout, "photo" | "tex
   headline_focus: "headline-focus.html",
 };
 
-function templateForLayout(layout: InstagramSlideLayout, clientTemplate: string): string {
+function templateForLayout(layout: InstagramSlideLayout, slide: InstagramSlideCopy, clientTemplate: string): string {
   if (layout === "photo" || layout === "text_only") return clientTemplate;
+  if (layout === "custom") return templateFileName(slide.customArchetype!.archetypeId);
   return LAYOUT_TEMPLATE_FILES[layout];
 }
 
@@ -77,6 +79,7 @@ function collectSlideText(slide: InstagramSlideCopy): string {
     slide.comparison?.rightLabel,
     slide.comparison?.rightBody,
     ...(slide.items?.flatMap((item) => [item.title, item.note]) ?? []),
+    ...(slide.customArchetype ? Object.values(slide.customArchetype.fields) : []),
   ]
     .filter((value): value is string => typeof value === "string")
     .join(" ");
@@ -171,10 +174,38 @@ export function resolveLayout(
    * hold, so this degrades the REPEAT rather than holding or re-drafting —
    * the same "downgrade, never hold" rule `06f`/`07a` already apply to a
    * missing image, applied here to a repeated layout instead.
+   *
+   * Keyed by string rather than `InstagramSlideLayout`, because two DIFFERENT
+   * `custom` archetypes in one carousel are two different designs (not a
+   * repeat) — the key for a custom slide is its own `archetypeId`, not the
+   * literal `"custom"`.
    */
-  usedLayouts?: ReadonlySet<InstagramSlideLayout>,
+  usedLayouts?: ReadonlySet<string>,
+  /**
+   * Which `custom` archetypeIds passed `assertSafeMarkup` (and the
+   * collision check against the five real archetype ids) THIS attempt.
+   * Unlike the five structured archetypes, a custom archetype's
+   * availability is never about the client's own `templateDir` — it is
+   * whatever the model just authored, re-validated fresh every attempt (see
+   * `create-instagram-agent-workflow.ts`'s `ensureTemplatesOnDisk`) — so it
+   * gets its own, separate presence check rather than reusing
+   * `availableTemplates`.
+   */
+  validatedCustomArchetypeIds?: ReadonlySet<string>,
 ): { layout: InstagramSlideLayout; downgradedFrom?: string } {
   const missing = (what: string) => ({ layout: "text_only" as const, downgradedFrom: `${slide.layout} (no ${what} supplied)` });
+
+  if (slide.layout === "custom") {
+    const archetype = slide.customArchetype;
+    if (!archetype) return missing("customArchetype");
+    if (!validatedCustomArchetypeIds?.has(archetype.archetypeId)) {
+      return { layout: "text_only", downgradedFrom: `custom (${archetype.archetypeId} failed its markup safety check)` };
+    }
+    if (usedLayouts?.has(archetype.archetypeId)) {
+      return { layout: "text_only", downgradedFrom: `custom (${archetype.archetypeId} already used earlier in this carousel)` };
+    }
+    return { layout: "custom" };
+  }
 
   // Checked before content, because an absent template makes the content
   // question moot: it cannot render as that archetype either way.
@@ -259,6 +290,12 @@ function contentFor(
         fields: { ...base, headline: slide.headline },
         htmlFragments: { itemRows: buildListRows(slide.items!) },
       };
+    case "custom":
+      // Model-authored slot values are substituted through the SAME escaped
+      // `{{key}}` path as every other archetype's fields — no raw/`html:`
+      // form exists for this content (see `SlideCustomArchetypeSchema`'s own
+      // doc comment).
+      return { fields: { ...base, ...slide.customArchetype!.fields }, htmlFragments: {} };
     case "photo":
     case "text_only":
     case "headline_focus":
@@ -387,6 +424,8 @@ export function assembleSlidesData(params: {
    * client's own base template copied in alongside.
    */
   templateDirOverride?: string | undefined;
+  /** Which `custom` archetypeIds passed their safety check THIS attempt. See `resolveLayout`'s own note. */
+  validatedCustomArchetypeIds?: ReadonlySet<string>;
 }): RenderCarouselInput {
   const selectionByN = new Map(params.selections.map((s) => [s.n, s]));
 
@@ -410,11 +449,12 @@ export function assembleSlidesData(params: {
   // carousel order, so a repeat degrades to `text_only` instead of shipping
   // two slides in the same fixed layout — see `resolveLayout`'s own doc
   // comment on `usedLayouts`.
-  const usedLayouts = new Set<InstagramSlideLayout>();
+  const usedLayouts = new Set<string>();
   const slides: Slide[] = params.copy.slides.map((slide) => {
     const selection = selectionByN.get(slide.n);
-    const { layout } = resolveLayout(slide, params.availableTemplates, usedLayouts);
-    if (layout !== "photo" && layout !== "text_only") usedLayouts.add(layout);
+    const { layout } = resolveLayout(slide, params.availableTemplates, usedLayouts, params.validatedCustomArchetypeIds);
+    if (layout === "custom") usedLayouts.add(slide.customArchetype!.archetypeId);
+    else if (layout !== "photo" && layout !== "text_only") usedLayouts.add(layout);
     const { fields, htmlFragments } = contentFor(layout, slide, accentColor, direction);
     // Only `photo` consumes a hero image. Every other archetype is typographic
     // by design, so attaching one would either be ignored by its template or —
@@ -424,7 +464,7 @@ export function assembleSlidesData(params: {
     const imagePath = layout === "photo" ? (selection?.imagePath ?? undefined) : undefined;
     return {
       n: slide.n,
-      template: templateForLayout(layout, params.brandTokens.slideTemplate),
+      template: templateForLayout(layout, slide, params.brandTokens.slideTemplate),
       fields,
       images: imagePath ? { hero: imagePath } : {},
       htmlFragments,

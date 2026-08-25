@@ -164,7 +164,11 @@ export function checkSentenceCase(text: string): { ok: true } | { ok: false; rea
  */
 export async function checkCraftHygiene(tools: AgentToolRegistry, ctx: AgentContext, copy: InstagramCopyOutput): Promise<SlidesDataSelfCheck> {
   for (const slide of copy.slides) {
-    const text = `${slide.headline} ${slide.body}`;
+    // A custom archetype's own slot values are real on-image text too — this
+    // gate is "unconditional... outranks client rules" (see the module doc
+    // comment), and that has to hold for every archetype, not just the six
+    // whose text happens to live in `headline`/`body`.
+    const text = [slide.headline, slide.body, ...(slide.customArchetype ? Object.values(slide.customArchetype.fields) : [])].join(" ");
 
     const lintTool = tools["gate.lintPost"];
     if (!lintTool) {

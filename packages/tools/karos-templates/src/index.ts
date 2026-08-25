@@ -10,6 +10,7 @@ export * from "./firestore-store.js";
 export * from "./composite-store.js";
 export * from "./materialize.js";
 export * from "./promote.js";
+export * from "./safety.js";
 
 export interface TemplateStoreFactoryOptions {
   /** Directory holding the bundled archetype HTML files. The read-only floor. */
