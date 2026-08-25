@@ -49,8 +49,19 @@
     --f-body: 'Inter', system-ui, -apple-system, sans-serif;
     --f-mono: 'IBM Plex Mono', ui-monospace, monospace;
     --mx: 64px;
+    --ts: 1;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  /* Reviewer typography controls (Phase 2): a discrete type-scale multiplier
+     and logical text alignment, applied per slide via body classes. Classes,
+     never a {{fontScale}} CSS var: a stripped placeholder degrades to a
+     harmless "ts-" class token, whereas an EMPTY-but-defined custom property
+     substitutes as empty (not the var() fallback) and would invalidate every
+     font-size on an older checkpointed slides-data re-rendered post-deploy. */
+  body.ts-s { --ts: 0.85; }
+  body.ts-l { --ts: 1.18; }
+  body.ta-center { text-align: center; }
+  body.ta-end { text-align: end; }
   html, body { width: 1080px; height: 1440px; }
   body {
     position: relative; overflow: hidden; background: var(--bg); color: var(--fg);
@@ -64,16 +75,16 @@
 
   .eyebrow {
     position: absolute; top: 56px; right: var(--mx); z-index: 4;
-    font-family: var(--f-mono); font-weight: 500; font-size: 19px;
+    font-family: var(--f-mono); font-weight: 500; font-size: calc(19px * var(--ts, 1));
     letter-spacing: 0.2em; text-transform: uppercase; color: var(--accent);
   }
 
   .cmp-head {
     z-index: 3;
-    font-family: var(--f-display); font-weight: 600; font-size: 66px;
+    font-family: var(--f-display); font-weight: 600; font-size: calc(66px * var(--ts, 1));
     line-height: 1.3; letter-spacing: -0.012em; text-wrap: balance;
   }
-  .cmp-head.small { font-size: 52px; }
+  .cmp-head.small { font-size: calc(52px * var(--ts, 1)); }
 
   .cmp-row {
     margin-top: 72px; z-index: 3;
@@ -91,13 +102,13 @@
     width: 14px; height: 14px; background: var(--accent); transform: rotate(45deg);
   }
   .cmp-label {
-    font-family: var(--f-display); font-weight: 600; font-size: 44px;
+    font-family: var(--f-display); font-weight: 600; font-size: calc(44px * var(--ts, 1));
     line-height: 1.2; letter-spacing: -0.01em; text-wrap: balance;
   }
   .cmp-rule { width: 56px; height: 4px; background: var(--line); margin: 24px 0; }
   .cmp-col.win .cmp-rule { background: var(--accent); }
   .cmp-body {
-    font-family: var(--f-body); font-weight: 400; font-size: 27px; line-height: 1.5;
+    font-family: var(--f-body); font-weight: 400; font-size: calc(27px * var(--ts, 1)); line-height: 1.5;
     color: rgba(244,242,236,0.78); text-wrap: pretty;
   }
 
@@ -110,13 +121,13 @@
     transform: rotate(45deg); flex-shrink: 0; margin-top: 14px;
   }
   .cmp-foot-text {
-    font-family: var(--f-body); font-weight: 400; font-size: 27px; line-height: 1.5;
+    font-family: var(--f-body); font-weight: 400; font-size: calc(27px * var(--ts, 1)); line-height: 1.5;
     color: rgba(244,242,236,0.78); text-wrap: pretty;
   }
   .cmp-foot:has(.cmp-foot-text:empty) { display: none; }
 </style>
 </head>
-<body>
+<body class="ts-{{fontScale}} ta-{{textAlign}}">
   <div class="brand-badge">{{seriesBadge}}</div>
   <div class="brand-handle">{{brandHandle}}</div>
   <div class="eyebrow">{{kicker}}</div>

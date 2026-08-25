@@ -247,6 +247,12 @@ export function resolveLayout(
  * the optional lines — a stat's source, a headline's kicker — need no
  * conditional here.
  */
+/** The reviewer's discrete per-slide typography controls — see `SlideEditSchema` in packages/core. */
+export interface SlideStyleOverride {
+  fontScale?: "s" | "m" | "l" | undefined;
+  textAlign?: "start" | "center" | "end" | undefined;
+}
+
 function contentFor(
   layout: InstagramSlideLayout,
   slide: InstagramSlideCopy,
@@ -254,10 +260,14 @@ function contentFor(
   dir: "rtl" | "ltr",
   /** Standing brand furniture — the SAME on every slide of the carousel, unlike the model-authored per-slide `kicker`. */
   brand?: { handle?: string | undefined; seriesBadge?: string | undefined },
+  /** Reviewer typography for THIS slide. Defaults always emitted — a stripped `{{fontScale}}` class token is harmless, but emitting the default keeps every rendered document explicit. */
+  style?: SlideStyleOverride,
 ): { fields: Record<string, string>; htmlFragments: Record<string, string> } {
   const base: Record<string, string> = {
     accentColor,
     dir,
+    fontScale: style?.fontScale ?? "m",
+    textAlign: style?.textAlign ?? "start",
     ...(slide.kicker ? { kicker: slide.kicker } : {}),
     ...(brand?.handle !== undefined ? { brandHandle: brand.handle } : {}),
     ...(brand?.seriesBadge !== undefined ? { seriesBadge: brand.seriesBadge } : {}),
@@ -444,6 +454,8 @@ export function assembleSlidesData(params: {
   brandAccentFallback?: string | undefined;
   /** The client's normalized `@handle` watermark, from the frozen brand kit. Rendered by the templates' `.brand-handle` component; absent means the slot strips clean. */
   brandHandle?: string | undefined;
+  /** Reviewer typography per slide number (Phase 2 in-place edits). Absent slides keep the defaults. */
+  slideStyleOverrides?: ReadonlyMap<number, SlideStyleOverride>;
 }): RenderCarouselInput {
   const selectionByN = new Map(params.selections.map((s) => [s.n, s]));
 
@@ -473,10 +485,17 @@ export function assembleSlidesData(params: {
     const { layout } = resolveLayout(slide, params.availableTemplates, usedLayouts, params.validatedCustomArchetypeIds);
     if (layout === "custom") usedLayouts.add(slide.customArchetype!.archetypeId);
     else if (layout !== "photo" && layout !== "text_only") usedLayouts.add(layout);
-    const { fields, htmlFragments } = contentFor(layout, slide, accentColor, direction, {
-      handle: params.brandHandle,
-      seriesBadge: params.brandTokens.seriesBadge,
-    });
+    const { fields, htmlFragments } = contentFor(
+      layout,
+      slide,
+      accentColor,
+      direction,
+      {
+        handle: params.brandHandle,
+        seriesBadge: params.brandTokens.seriesBadge,
+      },
+      params.slideStyleOverrides?.get(slide.n),
+    );
     // Only `photo` consumes a hero image. Every other archetype is typographic
     // by design, so attaching one would either be ignored by its template or —
     // worse, for a template that did grow a background slot later — quietly

@@ -33,6 +33,15 @@ describe("default templates are token-driven, not literal-colored", () => {
       expect(styles, `${file} styles a color off a literal instead of var(--bg)/var(--fg)`).not.toMatch(/rgba\(\s*23\s*,\s*24\s*,\s*28|rgba\(\s*244\s*,\s*242\s*,\s*236/);
     }
   });
+
+  it("no template carries a bare font-size literal — every size scales off var(--ts) for the reviewer's typography controls", async () => {
+    const files = (await fs.readdir(TEMPLATE_DIR)).filter((f) => f.endsWith(".html"));
+    for (const file of files) {
+      const html = await fs.readFile(path.join(TEMPLATE_DIR, file), "utf8");
+      const styles = [...html.matchAll(/<style>[\s\S]*?<\/style>/g)].map((m) => m[0]).join("\n");
+      expect(styles, `${file} sizes type off a bare px literal instead of calc(...* var(--ts, 1))`).not.toMatch(/font-size:\s*\d+px/);
+    }
+  });
 });
 
 describe("instagram-agent's default template renders via publish.renderCarousel", () => {

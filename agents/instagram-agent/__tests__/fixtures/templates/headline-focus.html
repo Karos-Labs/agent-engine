@@ -42,37 +42,48 @@
     --f-body: 'Inter', system-ui, -apple-system, sans-serif;
     --f-mono: 'IBM Plex Mono', ui-monospace, monospace;
     --mx: 64px;
+    --ts: 1;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  /* Reviewer typography controls (Phase 2): a discrete type-scale multiplier
+     and logical text alignment, applied per slide via body classes. Classes,
+     never a {{fontScale}} CSS var: a stripped placeholder degrades to a
+     harmless "ts-" class token, whereas an EMPTY-but-defined custom property
+     substitutes as empty (not the var() fallback) and would invalidate every
+     font-size on an older checkpointed slides-data re-rendered post-deploy. */
+  body.ts-s { --ts: 0.85; }
+  body.ts-l { --ts: 1.18; }
+  body.ta-center { text-align: center; }
+  body.ta-end { text-align: end; }
   html, body { width: 1080px; height: 1440px; }
   body { position: relative; overflow: hidden; background: var(--bg); color: var(--fg); font-family: var(--f-body); }
 
   .copy { position: absolute; left: var(--mx); right: var(--mx); bottom: 130px; z-index: 4; }
 
   .kicker {
-    font-family: var(--f-mono); font-weight: 500; font-size: 22px;
+    font-family: var(--f-mono); font-weight: 500; font-size: calc(22px * var(--ts, 1));
     letter-spacing: 0.22em; text-transform: uppercase;
     color: rgba(244,242,236,0.78); margin-bottom: 28px;
   }
   .kicker:empty { display: none; }
 
   .hf-headline {
-    font-family: var(--f-display); font-weight: 600; font-size: 118px;
+    font-family: var(--f-display); font-weight: 600; font-size: calc(118px * var(--ts, 1));
     line-height: 1.02; letter-spacing: -0.02em; text-wrap: balance;
   }
-  .hf-headline.small { font-size: 92px; line-height: 1.05; }
-  .hf-headline.tiny { font-size: 74px; line-height: 1.1; }
+  .hf-headline.small { font-size: calc(92px * var(--ts, 1)); line-height: 1.05; }
+  .hf-headline.tiny { font-size: calc(74px * var(--ts, 1)); line-height: 1.1; }
 
   .stat-band { width: 132px; height: 12px; background: var(--accent); margin-top: 34px; }
 
   .body-text {
-    font-family: var(--f-body); font-weight: 400; font-size: 31px; line-height: 1.55;
+    font-family: var(--f-body); font-weight: 400; font-size: calc(31px * var(--ts, 1)); line-height: 1.55;
     color: rgba(244,242,236,0.92); margin-top: 30px; max-width: 900px; text-wrap: pretty;
   }
   .body-text:empty { display: none; }
 </style>
 </head>
-<body>
+<body class="ts-{{fontScale}} ta-{{textAlign}}">
   <div class="brand-badge">{{seriesBadge}}</div>
   <div class="brand-handle">{{brandHandle}}</div>
   <div class="copy">

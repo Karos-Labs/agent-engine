@@ -68,6 +68,22 @@ const ResumeRunRequestSchema = z.object({
         }),
       )
       .optional(),
+    /** In-place edits the reviewer made before approving — applied verbatim by the workflow (see `ReviewEditsSchema`). */
+    edits: z
+      .object({
+        caption: z.string().min(1).max(2200).optional(),
+        slides: z
+          .array(
+            z.object({
+              n: z.number().int().positive(),
+              fields: z.record(z.string(), z.string().max(2000)).optional(),
+              fontScale: z.enum(["s", "m", "l"]).optional(),
+              textAlign: z.enum(["start", "center", "end"]).optional(),
+            }),
+          )
+          .optional(),
+      })
+      .optional(),
   }),
 });
 
@@ -163,6 +179,9 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
           ? { feedback: resolution.notes }
           : {}),
       ...(resolution.templateFeedback !== undefined ? { templateFeedback: resolution.templateFeedback } : {}),
+      // This re-map is an ALLOWLIST: a field accepted by ResumeRunRequestSchema
+      // but not spread here is silently dropped before the engine ever sees it.
+      ...(resolution.edits !== undefined ? { edits: resolution.edits } : {}),
       at: now(),
     });
     if (!responseParsed.success) {

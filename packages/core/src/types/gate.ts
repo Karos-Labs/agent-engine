@@ -108,6 +108,35 @@ export type GateTimeout = z.infer<typeof GateTimeoutSchema>;
  * A reviewer who likes the words and dislikes the card needs to be able to
  * say exactly that.
  */
+/**
+ * A reviewer's in-place edit of one slide, applied VERBATIM by the workflow
+ * on approve — no model pass, no redraft. `fields` patches the slide's own
+ * prose slots (headline, body, quoteText, …); the workflow only applies keys
+ * the slide already has and that are not layout metadata, so a stray key is
+ * dropped, never an error. `fontScale`/`textAlign` are the discrete
+ * typography controls the templates implement as body classes.
+ */
+export const SlideEditSchema = z.object({
+  n: z.number().int().positive(),
+  fields: z.record(z.string(), z.string().max(2000)).optional(),
+  fontScale: z.enum(["s", "m", "l"]).optional(),
+  textAlign: z.enum(["start", "center", "end"]).optional(),
+});
+export type SlideEdit = z.infer<typeof SlideEditSchema>;
+
+/**
+ * Everything a reviewer hand-changed before approving. Distinct from
+ * `feedback` (words ABOUT the post, steering future drafts) — these are
+ * changes TO the post, shipped as written. The reviewing workflow also
+ * synthesizes the deltas into feedback, so future drafts calibrate toward
+ * what the reviewer keeps fixing by hand.
+ */
+export const ReviewEditsSchema = z.object({
+  caption: z.string().min(1).max(2200).optional(),
+  slides: z.array(SlideEditSchema).optional(),
+});
+export type ReviewEdits = z.infer<typeof ReviewEditsSchema>;
+
 export const TemplateFeedbackSchema = z.object({
   /** Which slide the reviewer was looking at. */
   slide: z.number().int().positive(),
@@ -167,6 +196,8 @@ export const GateResponseSchema = z
     feedback: z.string().min(1).optional(),
     /** Per-slide notes on the templates that rendered this output. */
     templateFeedback: z.array(TemplateFeedbackSchema).optional(),
+    /** In-place edits the reviewer made before approving — applied verbatim by the workflow. Meaningful on `approve` only (a redraft supersedes hand edits). */
+    edits: ReviewEditsSchema.optional(),
     /** ISO 8601 timestamp. */
     at: z.string().min(1),
   })

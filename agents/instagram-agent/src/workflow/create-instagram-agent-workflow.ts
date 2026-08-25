@@ -1138,7 +1138,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     }
 
     /** Never prose — excluded from anything a human or the topic guardrail reads as text. */
-    const NON_PROSE_FIELD_KEYS = new Set(["accentColor", "dir", "brandHandle", "seriesBadge"]);
+    const NON_PROSE_FIELD_KEYS = new Set(["accentColor", "dir", "brandHandle", "seriesBadge", "fontScale", "textAlign"]);
 
     /**
      * Every slide's prose field values, joined — everything ON the carousel
@@ -1847,6 +1847,19 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // (including `accentColor`'s hex code) because no real caption
           // existed yet to show instead.
           preview: draft.copy.caption,
+          // The editable projection (Phase 2 in-place review editing): the
+          // caption plus each slide's PROSE fields — never the layout
+          // metadata in NON_PROSE_FIELD_KEYS — so the reviewer can edit the
+          // actual text behind the pixels instead of describing a change and
+          // paying for a redraft.
+          copy: {
+            caption: draft.copy.caption,
+            slides: draft.slidesData.slides.map((slide) => ({
+              n: slide.n,
+              template: slide.template,
+              fields: Object.fromEntries(Object.entries(slide.fields ?? {}).filter(([key]) => !NON_PROSE_FIELD_KEYS.has(key))),
+            })),
+          },
           // The rendered PNGs, in slide order — `path` is a signed https URL
           // when the runtime could sign one (`GcsArtifactStore.upload`'s own
           // fallback rule), a bare `gs://` URI otherwise, which the review
@@ -1908,9 +1921,142 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       },
     });
 
-    const slidesData = review.output.slidesData;
-    const rendered = review.output.rendered;
-    const caption = review.output.copy.caption;
+    // ── 09c/09d: apply the reviewer's in-place edits (Phase 2) ──
+    //
+    // The reviewer IS the gate: their edits ship verbatim — no model pass, no
+    // topic-guardrail re-run on human-authored text. Validation is structural
+    // only (an edit may touch a prose field the slide actually has, never the
+    // NON_PROSE layout metadata), and the whole path exists only when edits
+    // were actually sent — a plain approve's trace is byte-identical to
+    // before this feature.
+    let slidesData = review.output.slidesData;
+    let rendered = review.output.rendered;
+    let caption = review.output.copy.caption;
+
+    const reviewEdits = review.response.edits;
+    const hasReviewEdits =
+      reviewEdits !== undefined && (reviewEdits.caption !== undefined || (reviewEdits.slides?.length ?? 0) > 0);
+    if (hasReviewEdits) {
+      const applied = await wf.step.code("09c-apply-review-edits", () => {
+        const summary: string[] = [];
+        const editsBySlide = new Map((reviewEdits.slides ?? []).map((e) => [e.n, e]));
+        const slides = review.output.slidesData.slides.map((slide) => {
+          const edit = editsBySlide.get(slide.n);
+          if (edit === undefined) return slide;
+          const fields = { ...slide.fields };
+          for (const [key, value] of Object.entries(edit.fields ?? {})) {
+            // Only a prose field the slide already HAS is editable — an
+            // unknown key or layout metadata is dropped with a note in the
+            // step output, never an error: a stray key must not cost an
+            // approved post.
+            if (!(key in fields) || NON_PROSE_FIELD_KEYS.has(key)) {
+              summary.push(`slide ${slide.n} ${key}: ignored (not an editable field)`);
+              continue;
+            }
+            if (fields[key] !== value) {
+              summary.push(`slide ${slide.n} ${key}: "${fields[key]}" -> "${value}"`);
+              fields[key] = value;
+            }
+          }
+          if (edit.fontScale !== undefined && fields["fontScale"] !== edit.fontScale) {
+            summary.push(`slide ${slide.n} font size -> ${edit.fontScale}`);
+            fields["fontScale"] = edit.fontScale;
+          }
+          if (edit.textAlign !== undefined && fields["textAlign"] !== edit.textAlign) {
+            summary.push(`slide ${slide.n} alignment -> ${edit.textAlign}`);
+            fields["textAlign"] = edit.textAlign;
+          }
+          return { ...slide, fields };
+        });
+        let editedCaption = review.output.copy.caption;
+        if (reviewEdits.caption !== undefined && reviewEdits.caption !== editedCaption) {
+          summary.push(`caption: "${editedCaption}" -> "${reviewEdits.caption}"`);
+          editedCaption = reviewEdits.caption;
+        }
+        return {
+          slidesData: { ...review.output.slidesData, slides },
+          caption: editedCaption,
+          summary,
+        };
+      });
+
+      // Text edits change pixels, so the carousel re-renders through the
+      // exact same path as the original. Image files may have vanished since
+      // the pre-gate render (instance recycle): the 06f rule applies — a
+      // missing picture strips to a typographic slide, it never holds.
+      const editedInput: RenderCarouselInput = {
+        ...applied.slidesData,
+        slides: await Promise.all(
+          applied.slidesData.slides.map(async (slide) => {
+            const images: Record<string, string> = {};
+            for (const [key, rel] of Object.entries(slide.images ?? {})) {
+              const onDisk = await fs
+                .access(path.resolve(options.repoRoot, rel))
+                .then(() => true)
+                .catch(() => false);
+              if (onDisk) images[key] = rel;
+            }
+            return { ...slide, images };
+          }),
+        ),
+      };
+      await ensureTemplatesOnDisk(validateCustomArchetypes(review.output.copy));
+      const editedRender = await wf.step.code("09d-render-edited-carousel", async () =>
+        tools["publish.renderCarousel"]!.execute(editedInput, { ctx }),
+      );
+
+      const renderOk = editedRender.status === "success";
+      if (renderOk) {
+        slidesData = editedInput;
+        rendered = (editedRender as { result: RenderCarouselResult }).result;
+        caption = applied.caption;
+      } else {
+        // Pixels and text must never disagree: if the edited render failed,
+        // the ORIGINAL approved render ships with its ORIGINAL slide text,
+        // and only the caption edit (post text, not pixels) still applies.
+        caption = reviewEdits.caption ?? caption;
+        await wf.step.code("09d2-record-edits-not-applied", async () =>
+          tools["ledger.appendEvent"]?.execute(
+            {
+              runId: wf.runId,
+              eventId: `${wf.runId}__review-edits-not-applied`,
+              level: "warn",
+              message: `reviewer slide edits could not be applied (re-render: ${editedRender.status}); delivered the originally approved render, caption edit ${reviewEdits.caption !== undefined ? "applied" : "n/a"}`,
+            },
+            { ctx },
+          ),
+        );
+      }
+
+      // The preference half of the loop: the deltas become durable feedback,
+      // so future drafts calibrate toward what the reviewer keeps fixing by
+      // hand. A separate feedbackId from the decision's own note — both can
+      // exist for one review.
+      if (applied.summary.length > 0) {
+        await wf.step.code("09e-record-edit-feedback", async () => {
+          const note =
+            `Reviewer edited before approving${renderOk ? "" : " (edits could not be applied to this post's pixels; treat as preference)"}: ` +
+            applied.summary.slice(0, 12).join("; ").slice(0, 1800);
+          try {
+            await tools["memory.appendFeedback"]?.execute(
+              {
+                feedbackId: `${wf.runId}-r${review.revision}-edits`,
+                productId: wf.productId,
+                decision: "approve",
+                actor: review.response.actor,
+                note,
+                revision: review.revision,
+                runId: wf.runId,
+              },
+              { ctx },
+            );
+          } catch (error) {
+            console.error("09e-record-edit-feedback: could not record the reviewer's edit deltas", error);
+          }
+          return { note };
+        });
+      }
+    }
 
     // ── 09b: deliver + log — the count invariant is real and checked, not just documented ──
     const deliverableId = await wf.step.code("09b-deliver-and-log", async () => {
@@ -1963,7 +2109,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // failing an otherwise-delivered post over it would cost the post.
       try {
         await tools["ledger.recordOutputExcerpt"]?.execute(
-          { agentId: "instagram-agent", runId: wf.runId, excerpt: `${caption}\n\n${slidesTextFor(review.output)}` },
+          // `slidesData` (not review.output) so the dedup window records what
+          // ACTUALLY shipped — including any reviewer in-place edits.
+          { agentId: "instagram-agent", runId: wf.runId, excerpt: `${caption}\n\n${slidesTextFor({ ...review.output, slidesData })}` },
           { ctx },
         );
       } catch (error) {

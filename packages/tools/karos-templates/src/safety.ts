@@ -148,13 +148,18 @@ export function buildCustomArchetypeDocument(bodyHtml: string): string {
     --f-body: 'Inter', system-ui, -apple-system, sans-serif;
     --f-mono: 'IBM Plex Mono', ui-monospace, monospace;
     --mx: 64px;
+    --ts: 1;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { width: 1080px; height: 1440px; }
   body { position: relative; overflow: hidden; background: var(--bg); color: var(--fg); font-family: var(--f-body); }
+  body.ts-s { --ts: 0.85; }
+  body.ts-l { --ts: 1.18; }
+  body.ta-center { text-align: center; }
+  body.ta-end { text-align: end; }
 </style>
 </head>
-<body>
+<body class="ts-{{fontScale}} ta-{{textAlign}}">
 <div class="brand-badge">{{seriesBadge}}</div>
 <div class="brand-handle">{{brandHandle}}</div>
 ${bodyHtml}

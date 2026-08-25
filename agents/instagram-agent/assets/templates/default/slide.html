@@ -45,8 +45,19 @@
     --f-body: 'Inter', system-ui, -apple-system, sans-serif;
     --f-mono: 'IBM Plex Mono', ui-monospace, monospace;
     --mx: 64px;
+    --ts: 1;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  /* Reviewer typography controls (Phase 2): a discrete type-scale multiplier
+     and logical text alignment, applied per slide via body classes. Classes,
+     never a {{fontScale}} CSS var: a stripped placeholder degrades to a
+     harmless "ts-" class token, whereas an EMPTY-but-defined custom property
+     substitutes as empty (not the var() fallback) and would invalidate every
+     font-size on an older checkpointed slides-data re-rendered post-deploy. */
+  body.ts-s { --ts: 0.85; }
+  body.ts-l { --ts: 1.18; }
+  body.ta-center { text-align: center; }
+  body.ta-end { text-align: end; }
   html, body { width: 1080px; height: 1440px; }
   body {
     position: relative; overflow: hidden;
@@ -65,11 +76,11 @@
   }
   .copy { position: absolute; left: var(--mx); right: var(--mx); bottom: 96px; z-index: 4; }
   .headline {
-    font-family: var(--f-display); font-weight: 600; font-size: 76px;
+    font-family: var(--f-display); font-weight: 600; font-size: calc(76px * var(--ts, 1));
     line-height: 1.3; letter-spacing: -0.012em; text-wrap: balance;
   }
   .body-text {
-    font-family: var(--f-body); font-weight: 400; font-size: 31px;
+    font-family: var(--f-body); font-weight: 400; font-size: calc(31px * var(--ts, 1));
     line-height: 1.55; color: color-mix(in srgb, var(--fg) 92%, transparent);
     margin-top: 28px; max-width: 900px; text-wrap: pretty;
   }
@@ -77,7 +88,7 @@
   .stat-band { width: 96px; height: 10px; background: var(--accent); margin-top: 30px; }
 </style>
 </head>
-<body>
+<body class="ts-{{fontScale}} ta-{{textAlign}}">
   <div class="brand-badge">{{seriesBadge}}</div>
   <div class="brand-handle">{{brandHandle}}</div>
   <div class="bg">
