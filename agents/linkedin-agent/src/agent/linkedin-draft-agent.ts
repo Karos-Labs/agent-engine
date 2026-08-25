@@ -61,7 +61,12 @@ export class LinkedInDraftAgent extends BaseAgent<LinkedInPostOutput> {
     // site") got a fluent English post regardless of channel (prep job
     // hcf9ymPGJC7mDS5pcEQ4, traced on instagram-agent but structural across
     // every channel). v2 stays frozen.
-    skillRef: "linkedin-craft@3",
+    // Pinned to "4": v4 adds the client-knowledge-and-recent-posts section
+    // — clientIntelContext (the client's own intel report, distilled) is read
+    // as authoritative before external facts, and recentPosts (the shipped-
+    // output dedup window this agent now writes back into on delivery) is a
+    // hard do-not-repeat constraint. v3 stays frozen.
+    skillRef: "linkedin-craft@4",
     selfCritique: { gateTool: "gate.lintPost", maxRevisions: 1, gateArgs: { platform: "linkedin" } },
   };
 }

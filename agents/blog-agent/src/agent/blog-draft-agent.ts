@@ -67,7 +67,12 @@ export class BlogDraftAgent extends BaseAgent<BlogPostOutput> {
     // every channel). Cut from 1.md, not from latest.md — latest.md carries
     // a separate, still-uncommitted GEO/FAQ section this change does not
     // touch and must not overwrite. v1 stays frozen.
-    skillRef: "blog-craft@2",
+    // Pinned to "3": v3 adds the client-knowledge-and-recent-posts section
+    // — clientIntelContext (the client's own intel report, distilled) is read
+    // as authoritative before external facts, and recentPosts (the shipped-
+    // output dedup window this agent now writes back into on delivery) is a
+    // hard do-not-repeat constraint. v2 stays frozen.
+    skillRef: "blog-craft@3",
     selfCritique: { gateTool: "gate.lintPost", maxRevisions: 1, gateArgs: { platform: "blog" } },
   };
 }

@@ -84,7 +84,12 @@ export class RedditDraftAgent extends BaseAgent<RedditReplyOutput> {
     // when that gives a stronger signal — nothing before it ever forwarded
     // `profile` to this prompt at all (prep job hcf9ymPGJC7mDS5pcEQ4, traced
     // on instagram-agent but structural across every channel). v2 stays frozen.
-    skillRef: "reddit-craft@3",
+    // Pinned to "4": v4 adds the client-knowledge-and-recent-posts section
+    // — clientIntelContext (the client's own intel report, distilled) is read
+    // as authoritative before external facts, and recentPosts (the shipped-
+    // output dedup window this agent now writes back into on delivery) is a
+    // hard do-not-repeat constraint. v3 stays frozen.
+    skillRef: "reddit-craft@4",
     selfCritique: {
       gateTool: "gate.lintPost",
       maxRevisions: 1,

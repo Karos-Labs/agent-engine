@@ -7,3 +7,4 @@ export * from "./primitives/auto-setup.js";
 export * from "./primitives/research-candidate.js";
 export * from "./primitives/run-direction.js";
 export * from "./primitives/client-voice-context.js";
+export * from "./primitives/history-dedup.js";

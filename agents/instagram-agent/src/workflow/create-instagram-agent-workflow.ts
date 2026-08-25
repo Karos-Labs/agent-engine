@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentTool, AgentToolRegistry, GateResponse, ModelRouter, PromptStore, TemplateFeedback } from "@agent-engine/core";
-import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField, buildClientVoiceContext } from "@agent-engine/workflow";
+import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext } from "@agent-engine/workflow";
 import type { RenderCarouselInput, RenderCarouselResult } from "@agent-engine/tool-karos-publish";
 import { InstagramCopyAgent } from "../agent/instagram-copy-agent.js";
 import { InstagramImageVettingAgent } from "../agent/instagram-image-vetting-agent.js";
@@ -742,7 +742,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // ── 04: research the subject — verbatim raw payload capture, then judgment ──
     const researchPull = await wf.step.code("04a-research-pull", async () => {
       const outcome = await tools["research.pull"]!.execute(
-        { job: "instagram-carousel-research", query: topicClaim.topic, window: "24h" },
+        // `historyAgentId` joins this agent to the same anti-repetition
+        // history feed every OTHER channel already requested — instagram was
+        // the one caller that omitted it entirely.
+        { job: "instagram-carousel-research", query: topicClaim.topic, window: "24h", historyAgentId: "instagram-agent" },
         { ctx },
       );
       if (outcome.status !== "success") {
@@ -1109,6 +1112,23 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       }
     });
 
+    // ── 04e: what this agent already SHIPPED for this client ──
+    //
+    // The anti-repetition read: the rolling excerpt window this run's own
+    // deliver step (09b) writes back into. Read once, used twice — as a hard
+    // do-not-repeat directive in the copy prompt, and as the corpus the
+    // post-draft similarity check (07d) scores against.
+    const outputHistory = await readOutputHistoryForDedup(wf, tools, ctx, "instagram-agent", "04e-read-output-history");
+    const recentPostsDirective = dedupeDirective(outputHistory);
+
+    // ── 04f: the client's own intel report, as authoritative drafting context ──
+    //
+    // `intel.getReport` has been registered in every agent's registry since
+    // the intel agent shipped, with zero channel-agent callers — a client
+    // could pay for a full intel report (voice rows, positioning, whitespace
+    // opportunities) and have their caption writer never see a word of it.
+    const clientIntelContext = await readClientIntelContext(wf, tools, ctx, "04f-read-intel-context");
+
     /** What one drafting pass produces, once its own self-checks have passed. */
     interface DraftResult {
       copy: InstagramCopyOutput;
@@ -1164,6 +1184,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       let finalRendered: RenderCarouselResult | undefined;
       let finalOutcomeOk = false;
       let lastSelfCheckReason = "no attempt completed";
+      /** Set by a failed 07d similarity check, so the NEXT attempt's prompt names exactly which published post to move away from. */
+      let dedupeRetrySteer: string | undefined;
 
     for (let attempt = 1; attempt <= MAX_SELF_CHECK_ATTEMPTS; attempt++) {
       const copyExec = await wf.step.agent(rev(`05-write-copy-attempt-${attempt}`), copyAgent, {
@@ -1181,6 +1203,15 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // verbatim — this is where a language requirement like Geektime's
         // "Hebrew-language technology site" actually lives. See step 02b.
         ...(clientVoiceContext !== undefined ? { clientVoiceContext } : {}),
+        // The client's intel report, distilled to what steers copy (voice
+        // rows, positioning, whitespace opportunities) — authoritative
+        // client knowledge, read BEFORE external facts. See step 04f.
+        ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
+        // What this agent already shipped for this client — hard
+        // do-not-repeat constraints, distinct from `pastFeedback` (what a
+        // person SAID) the same way decisions are distinct from feedback.
+        ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
+        ...(dedupeRetrySteer !== undefined ? { dedupeAvoid: dedupeRetrySteer } : {}),
         // Two distinct kinds of steer, kept apart on purpose: `pastFeedback` is
         // what this client has said across previous RUNS (durable memory), and
         // `revisionRequest` is what a reviewer asked for about THIS run's draft
@@ -1603,6 +1634,26 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         continue;
       }
 
+      // ── 07d: is this draft a repeat of something this client already published? ──
+      //
+      // Deterministic trigram-Jaccard scoring against the same excerpt
+      // window step 04e read (`evaluateDedupe`'s calibrated 0.4 threshold —
+      // the same scorer dynamic agents already run). A `similar` verdict
+      // burns one of the SAME shared retry budget every other self-check
+      // uses, with the offending post quoted into the redraft prompt; on the
+      // final attempt the draft ships FLAGGED (the verdict is in this step's
+      // checkpointed output for the trace and the human gate), never held —
+      // two posts a fortnight apart about the same launch may be exactly
+      // right, and a fixed threshold is not entitled to overrule the person
+      // reviewing at 09a.
+      const draftText = `${copy.caption}\n\n${copy.slides.map((s) => `${s.headline} ${s.body}`).join("\n")}`;
+      const dedupeVerdict = await checkOutputDedupe(wf, rev(`07d-dedupe-check-attempt-${attempt}`), draftText, outputHistory);
+      if (dedupeVerdict.status === "similar" && attempt < MAX_SELF_CHECK_ATTEMPTS) {
+        dedupeRetrySteer = dedupeRetryDirective(dedupeVerdict, outputHistory);
+        lastSelfCheckReason = `draft is ${Math.round(dedupeVerdict.maxSimilarity * 100)}% similar to an already-published post (run ${dedupeVerdict.mostSimilarRunId ?? "unknown"})`;
+        continue;
+      }
+
       // A `custom` archetype's markup is validated fresh every attempt, from
       // this attempt's own `copy` — never checkpointed on its own (see
       // `validateCustomArchetypes`'s doc comment). `resolveLayout` (inside
@@ -1901,6 +1952,22 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         if (recordOutcome.status !== "success") {
           throw new WorkflowToolingFailure(`ledger.recordUsedImages failed: ${recordOutcome.status}`);
         }
+      }
+
+      // The write half of the anti-repetition loop step 04e reads: the
+      // shipped post's text joins this agent's rolling excerpt window, so
+      // the NEXT run's research history, do-not-repeat directive, and 07d
+      // similarity check all see it. Only on delivery (a post that never
+      // shipped was never published — same rule as recordUsedImages above),
+      // and best-effort: losing an excerpt costs future dedup signal, but
+      // failing an otherwise-delivered post over it would cost the post.
+      try {
+        await tools["ledger.recordOutputExcerpt"]?.execute(
+          { agentId: "instagram-agent", runId: wf.runId, excerpt: `${caption}\n\n${slidesTextFor(review.output)}` },
+          { ctx },
+        );
+      } catch (error) {
+        console.error("09b-deliver-and-log: could not record the output excerpt for future dedup", error);
       }
 
       await tools["ledger.appendEvent"]!.execute(

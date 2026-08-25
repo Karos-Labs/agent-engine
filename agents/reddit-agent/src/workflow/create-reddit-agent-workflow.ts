@@ -1,7 +1,7 @@
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
 import { runRedditChannelSetup, type RedditChannelSetupOutcome } from "@agent-engine/agent-setup";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField, type RevisionNote, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, buildClientVoiceContext} from "@agent-engine/workflow";
+import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField, type RevisionNote, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, readClientIntelContext} from "@agent-engine/workflow";
 import { RedditDraftAgent } from "../agent/reddit-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
 import { renderRedditDraftsEnvelope } from "./render-drafts-envelope.js";
@@ -390,6 +390,18 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
     //    and best-effort — a memory read failing must not stop a run that
     //    can draft perfectly well without it.
     const pastFeedback = await readPastFeedback(wf, tools, ctx, "04e-read-past-feedback");
+    // The anti-repetition read: what this agent already SHIPPED for this
+    // client (the excerpt window the commit step below writes back into),
+    // formatted as a hard do-not-repeat directive for the draft. Distinct
+    // from pastFeedback (what a person SAID about past drafts) the same way
+    // decisions are distinct from feedback.
+    const outputHistory = await readOutputHistoryForDedup(wf, tools, ctx, "reddit-agent", "read-output-history");
+    const recentPostsDirective = dedupeDirective(outputHistory);
+    // The client intel report, distilled to what steers copy (voice rows,
+    // positioning, whitespace opportunities) — intel.getReport has been in
+    // every agent registry since the intel agent shipped, with zero
+    // channel-agent callers until now.
+    const clientIntelContext = await readClientIntelContext(wf, tools, ctx, "read-intel-context");
 
 
     // ── 12-17: draft execution via RedditDraftAgent, with the full gate stack ──
@@ -424,6 +436,8 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
       // verbatim — this is where a language requirement like Geektime's
       // "Hebrew-language technology site" actually lives.
       ...(clientVoiceContext !== undefined ? { clientVoiceContext } : {}),
+      ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
+      ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
       // Two distinct steers, kept apart on purpose: `pastFeedback` is what
       // this client has said across previous RUNS, `revisionRequest` is what
       // a reviewer asked about THIS draft minutes ago.
@@ -583,6 +597,16 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
       }
       // The target thread URL is recorded verbatim in this summary — step 09's
       // dedup check on a future run reads it back with a plain substring search.
+      // The write half of the anti-repetition loop: the shipped post joins
+      // this agent's rolling excerpt window, read back by research.pull's
+      // history feed and the drafting directive on every future run.
+      // Best-effort: losing an excerpt costs future dedup signal, never the
+      // delivered post.
+      try {
+        await tools["ledger.recordOutputExcerpt"]?.execute({ agentId: "reddit-agent", runId: wf.runId, excerpt: draft.text }, { ctx });
+      } catch (error) {
+        console.error("commit-and-record: could not record the output excerpt for future dedup", error);
+      }
       await tools["memory.appendDecision"]!.execute(
         {
           decisionId: `${wf.runId}__decision`,

@@ -212,8 +212,20 @@ describe("custom archetypes: authoring, safety, and promotion", () => {
 
     // A SECOND run whose reviewer promotes the SAME archetypeId again must
     // take the review path, not re-promote — otherwise a same-id double
-    // promotion would silently reset the score back to 40.
-    const router2 = fakeRouterSequence([finalTurn(goodResearchOutput()), ...draftTurns(copy)]);
+    // promotion would silently reset the score back to 40. Its COPY is
+    // deliberately different text: run 1's delivery entered the shipped-
+    // output dedup window, and a second run re-shipping identical copy is
+    // exactly what the 07d similarity check exists to redraft.
+    const differentCopy: InstagramCopyOutput = {
+      ...copy,
+      caption: "An entirely new look at how support teams handle triage under pressure this winter season.",
+      slides: copy.slides.map((s, i) => ({
+        ...s,
+        headline: `A different angle ${i + 1}`,
+        body: `Fresh sentence number ${i + 1} covering another aspect of the team's workflow changes without echoing earlier phrasing.`,
+      })),
+    };
+    const router2 = fakeRouterSequence([finalTurn(goodResearchOutput()), ...draftTurns(differentCopy)]);
     const workflowFn2 = createInstagramAgentWorkflow({
       tools: { ...env.tools, "publish.renderCarousel": fakeRenderCarousel(env.tools["publish.renderCarousel"]!) },
       promptStore: makePromptStore(),

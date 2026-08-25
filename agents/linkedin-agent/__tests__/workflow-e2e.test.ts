@@ -20,6 +20,10 @@ const ALL_19_STEP_IDS = [
   // The read side of the feedback flywheel: what this client asked for on
   // previous runs, injected into the drafting prompt.
   "04e-read-past-feedback",
+  // The shipped-output window (dedup) and the client intel report, read
+  // once each — see history-dedup.ts in packages/workflow.
+  "read-output-history",
+  "read-intel-context",
   "05-extract-candidate-summary",
   "06-reserve-topic",
   "07-select-candidate",

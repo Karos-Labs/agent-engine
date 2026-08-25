@@ -95,7 +95,12 @@ export class NewsletterDraftAgent extends BaseAgent<NewsletterPostOutput> {
     // every channel). Cut from 1.md, not from latest.md — latest.md carries
     // a separate, still-uncommitted signoff/compliance-footer change this
     // change does not touch and must not overwrite. v1 stays frozen.
-    skillRef: "newsletter-craft@2",
+    // Pinned to "3": v3 adds the client-knowledge-and-recent-posts section
+    // — clientIntelContext (the client's own intel report, distilled) is read
+    // as authoritative before external facts, and recentPosts (the shipped-
+    // output dedup window this agent now writes back into on delivery) is a
+    // hard do-not-repeat constraint. v2 stays frozen.
+    skillRef: "newsletter-craft@3",
     selfCritique: { gateTool: "gate.lintPost", maxRevisions: 1, gateArgs: { platform: "newsletter" } },
   };
 }

@@ -44,6 +44,11 @@ const HAPPY_PATH_STEP_IDS = [
   // The read side of the feedback flywheel: what this client asked for on
   // previous runs, injected into the drafting prompt.
   "04d-read-past-feedback",
+  // The anti-repetition read: what this agent already shipped for this
+  // client (the same excerpt window 09b writes back into).
+  "04e-read-output-history",
+  // The client's intel report, distilled into drafting context.
+  "04f-read-intel-context",
   "05a-list-used-images",
   // Tier 0: the client's own uploads, resolved before any sourcing tier.
   "05z-attach-user-media",
@@ -54,6 +59,9 @@ const HAPPY_PATH_STEP_IDS = [
   "06f-verify-images-on-disk-attempt-1",
   "07-self-check-attempt-1",
   "07b-craft-hygiene-attempt-1",
+  // Deterministic similarity check against the shipped-output window —
+  // flags and steers a redraft, never holds.
+  "07d-dedupe-check-attempt-1",
   "07c-emit-slides-data-attempt-1",
   "08-render-carousel-attempt-1",
   "08b-visual-qa-attempt-1",

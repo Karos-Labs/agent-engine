@@ -196,16 +196,21 @@ export function makeSharedPromptStore(): InMemoryPromptStore {
   store.setPrompt("x-craft", "1", "X craft guidance.");
   store.setPrompt("x-craft", "2", "X craft guidance.");
   store.setPrompt("x-craft", "3", "X craft guidance.");
+  store.setPrompt("x-craft", "4", "X craft guidance.");
   store.setPrompt("linkedin-craft", "1", "LinkedIn craft guidance.");
   store.setPrompt("linkedin-craft", "2", "LinkedIn craft guidance.");
   store.setPrompt("linkedin-craft", "3", "LinkedIn craft guidance.");
+  store.setPrompt("linkedin-craft", "4", "LinkedIn craft guidance.");
   store.setPrompt("reddit-craft", "1", "Reddit craft guidance.");
   store.setPrompt("reddit-craft", "2", "Reddit craft guidance.");
   store.setPrompt("reddit-craft", "3", "Reddit craft guidance.");
+  store.setPrompt("reddit-craft", "4", "Reddit craft guidance.");
   store.setPrompt("blog-craft", "1", "Blog craft guidance.");
   store.setPrompt("blog-craft", "2", "Blog craft guidance.");
+  store.setPrompt("blog-craft", "3", "Blog craft guidance.");
   store.setPrompt("newsletter-craft", "1", "Newsletter craft guidance.");
   store.setPrompt("newsletter-craft", "2", "Newsletter craft guidance.");
+  store.setPrompt("newsletter-craft", "3", "Newsletter craft guidance.");
   store.setPrompt("campaign-craft", "1", "Campaign strategy guidance.");
   return store;
 }

@@ -51,10 +51,11 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     const copyRouter = fakeRouterSequence([finalTurn(goodCopyOutput())]);
     const copyAgent = new InstagramCopyAgent({ router: copyRouter, tools: {}, promptStore });
     await copyAgent.run(ctx, { topic: "x", facts: [], styleConfig: {}, brandTokens: {} });
-    // 8.md: the copy agent is pinned to `instagram-copy@8` (v7's language
-    // check, plus the rare `layout: "custom"` escape hatch for a slide none
-    // of the six standard archetypes fit). v1 to v7 stay on disk frozen.
-    const expectedCopyPrompt = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "8.md"), "utf8");
+    // 9.md: the copy agent is pinned to `instagram-copy@9` (v8's custom
+    // archetype escape hatch, plus the client-knowledge-and-recent-posts
+    // section: intel context + do-not-repeat constraints). v1 to v8 stay on
+    // disk frozen.
+    const expectedCopyPrompt = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "9.md"), "utf8");
     expect(copyRouter.complete).toHaveBeenCalledWith(expect.any(String), expect.anything(), expect.anything(), expect.objectContaining({ system: expectedCopyPrompt }));
 
     const vetRouter = fakeRouterSequence([finalTurn(goodImageVettingOutput())]);

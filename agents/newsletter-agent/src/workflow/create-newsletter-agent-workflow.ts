@@ -1,6 +1,6 @@
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField, type RevisionNote, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, buildClientVoiceContext} from "@agent-engine/workflow";
+import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField, type RevisionNote, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, readClientIntelContext} from "@agent-engine/workflow";
 import { NewsletterDraftAgent, type NewsletterPostOutput } from "../agent/newsletter-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
 import type {
@@ -275,6 +275,18 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
     //    and best-effort — a memory read failing must not stop a run that
     //    can draft perfectly well without it.
     const pastFeedback = await readPastFeedback(wf, tools, ctx, "04e-read-past-feedback");
+    // The anti-repetition read: what this agent already SHIPPED for this
+    // client (the excerpt window the commit step below writes back into),
+    // formatted as a hard do-not-repeat directive for the draft. Distinct
+    // from pastFeedback (what a person SAID about past drafts) the same way
+    // decisions are distinct from feedback.
+    const outputHistory = await readOutputHistoryForDedup(wf, tools, ctx, "newsletter-agent", "read-output-history");
+    const recentPostsDirective = dedupeDirective(outputHistory);
+    // The client intel report, distilled to what steers copy (voice rows,
+    // positioning, whitespace opportunities) — intel.getReport has been in
+    // every agent registry since the intel agent shipped, with zero
+    // channel-agent callers until now.
+    const clientIntelContext = await readClientIntelContext(wf, tools, ctx, "read-intel-context");
 
 
     // ── 09-12: draft execution via NewsletterDraftAgent, with machine/claim/compliance gates ──
@@ -309,6 +321,8 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
       // verbatim — this is where a language requirement like Geektime's
       // "Hebrew-language technology site" actually lives.
       ...(clientVoiceContext !== undefined ? { clientVoiceContext } : {}),
+      ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
+      ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
       // Two distinct steers, kept apart on purpose: `pastFeedback` is what
       // this client has said across previous RUNS, `revisionRequest` is what
       // a reviewer asked about THIS draft minutes ago.
@@ -473,6 +487,17 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
     await wf.step.code("19-commit-and-record", async () => {
       if (selected.source === "reserved" && reservation.reservationKey) {
         await tools["topics.commit"]!.execute({ reservationKey: reservation.reservationKey }, { ctx });
+      }
+      // The write half of the anti-repetition loop: the shipped post joins
+      // this agent's rolling excerpt window, read back by research.pull's
+      // history feed and the drafting directive on every future run.
+      // Best-effort: losing an excerpt costs future dedup signal, never the
+      // delivered post.
+      try {
+        await tools["ledger.recordOutputExcerpt"]?.execute({ agentId: "newsletter-agent", runId: wf.runId, excerpt: `${draft.subjectLine}
+${draft.text}` }, { ctx });
+      } catch (error) {
+        console.error("commit-and-record: could not record the output excerpt for future dedup", error);
       }
       await tools["memory.appendDecision"]!.execute(
         {

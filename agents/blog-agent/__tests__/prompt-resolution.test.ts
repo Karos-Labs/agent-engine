@@ -47,7 +47,7 @@ describe("PromptStore resolution (RFC-01 §16.1)", () => {
 
     await agent.run(ctx, {});
 
-    const expectedPrompt = readFileSync(path.join(PROMPTS_ROOT, "blog-craft", "2.md"), "utf8");
+    const expectedPrompt = readFileSync(path.join(PROMPTS_ROOT, "blog-craft", "3.md"), "utf8");
     expect(router.complete).toHaveBeenCalledWith(
       expect.any(String),
       expect.anything(),
@@ -84,7 +84,7 @@ describe("zero hardcoded prompts (RFC-01 §16.1)", () => {
     return files;
   }
 
-  // Distinctive phrases from prompts/blog-craft/2.md — if any of these appear
+  // Distinctive phrases from prompts/blog-craft/3.md — if any of these appear
   // in TypeScript source, the craft content has been duplicated as a literal
   // instead of living only in the markdown file resolved via PromptStore.
   const CRAFT_CONTENT_MARKERS = [
@@ -95,9 +95,9 @@ describe("zero hardcoded prompts (RFC-01 §16.1)", () => {
   ];
 
   it("sanity check: the markers really do appear in the prompt file (so the negative check below is meaningful)", () => {
-    const promptContent = readFileSync(path.join(PROMPTS_ROOT, "blog-craft", "2.md"), "utf8");
+    const promptContent = readFileSync(path.join(PROMPTS_ROOT, "blog-craft", "3.md"), "utf8");
     for (const marker of CRAFT_CONTENT_MARKERS) {
-      expect(promptContent.includes(marker), `expected "${marker}" to actually be in blog-craft/2.md`).toBe(true);
+      expect(promptContent.includes(marker), `expected "${marker}" to actually be in blog-craft/3.md`).toBe(true);
     }
   });
 
@@ -115,6 +115,6 @@ describe("zero hardcoded prompts (RFC-01 §16.1)", () => {
 
   it("BlogDraftAgent's config carries a skillRef, not an inline system prompt field", () => {
     const configSource = readFileSync(path.join(SRC_ROOT, "agent", "blog-draft-agent.ts"), "utf8");
-    expect(configSource).toMatch(/skillRef:\s*"blog-craft@2"/);
+    expect(configSource).toMatch(/skillRef:\s*"blog-craft@3"/);
   });
 });

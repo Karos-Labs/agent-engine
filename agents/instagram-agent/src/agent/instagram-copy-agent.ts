@@ -87,6 +87,11 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyOutput> {
     // only enrolled into the shared template registry on an explicit
     // reviewer approval (`promoteTemplate`) — never from this step alone.
     // v7 stays frozen.
-    skillRef: "instagram-copy@8",
+    // Pinned to "9": v9 adds the client-knowledge-and-recent-posts section
+    // — clientIntelContext (the client's own intel report, distilled) is read
+    // as authoritative before external facts, and recentPosts (the shipped-
+    // output dedup window this agent now writes back into on delivery) is a
+    // hard do-not-repeat constraint. v8 stays frozen.
+    skillRef: "instagram-copy@9",
   };
 }
