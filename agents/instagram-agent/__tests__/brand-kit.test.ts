@@ -7,6 +7,7 @@ import {
   fakeRenderCarousel,
   fakeRouterSequence,
   finalTurn,
+  goodBrandTokens,
   goodCopyOutput,
   goodImageCandidatePool,
   goodImageVettingOutput,
@@ -16,6 +17,20 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
+
+/** A 1x1 PNG's bytes, enough for a fake logo download. */
+const TINY_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
+
+function fakeLogoFetch(behavior: "ok" | "fail"): typeof fetch {
+  return (async () => {
+    if (behavior === "fail") throw new Error("logo host unreachable");
+    return {
+      ok: true,
+      headers: { get: (name: string) => (name === "content-type" ? "image/png" : null) },
+      arrayBuffer: async () => TINY_PNG.buffer.slice(TINY_PNG.byteOffset, TINY_PNG.byteOffset + TINY_PNG.byteLength),
+    };
+  }) as unknown as typeof fetch;
+}
 
 const base = { clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
@@ -142,4 +157,83 @@ describe("brand kit: the client's brand reaches the rendered templates", () => {
     const rewritten = await fsp.readFile(pathMod.join(env.repoRoot, ".template-cache", runId, "slide.html"), "utf8");
     expect(rewritten).toContain("--bg: #272A35;");
   }, 60000);
+
+  it("embeds the logo as a data URI and threads the handle onto every slide", async () => {
+    await env.store.writeJson("acme", ["client", "brand"], { ...GEEKTIME_BRAND, logoUrl: "https://logos.example/geektime.png" });
+
+    const durableStore = new MemoryDurableStepStore();
+    const result = await new WorkflowEngine(durableStore).run(
+      createInstagramAgentWorkflow({
+        tools: { ...env.tools, "publish.renderCarousel": fakeRenderCarousel(env.tools["publish.renderCarousel"]!) },
+        promptStore: makePromptStore(),
+        router: happyRouter(),
+        repoRoot: env.repoRoot,
+        imageCandidatePool: goodImageCandidatePool(),
+        autoApprove: true,
+        fetchImpl: fakeLogoFetch("ok"),
+      }),
+      { runId: "branded_logo", ...base },
+    );
+    expect(result.status).toBe("completed");
+
+    const composed = await fsp.readFile(pathMod.join(env.repoRoot, ".template-cache", "branded_logo", "slide.html"), "utf8");
+    // The logo is EMBEDDED, never a slide.images path — a path whose file
+    // vanished on a recycled instance is a run-holding content_fail, and
+    // brand furniture must never be able to hold a run.
+    expect(composed).toContain('class="brand-logo" src="data:image/png;base64,');
+    expect(composed).toContain(".brand-logo {");
+
+    const slidesData = (await durableStore.listSteps("branded_logo")).find((s) => s.stepId === "07c-emit-slides-data-attempt-1")?.output as
+      | { slides: Array<{ n: number; fields: Record<string, string>; images: Record<string, string> }> }
+      | undefined;
+    for (const slide of slidesData?.slides ?? []) {
+      expect(slide.fields["brandHandle"]).toBe("@geektimecoil");
+      // No images.logo entry, on any slide, ever.
+      expect(slide.images["logo"]).toBeUndefined();
+    }
+  }, 30000);
+
+  it("a failed logo download degrades to no logo — never a hold, and the rest of the brand still applies", async () => {
+    await env.store.writeJson("acme", ["client", "brand"], { ...GEEKTIME_BRAND, logoUrl: "https://logos.example/geektime.png" });
+
+    const durableStore = new MemoryDurableStepStore();
+    const result = await new WorkflowEngine(durableStore).run(
+      createInstagramAgentWorkflow({
+        tools: { ...env.tools, "publish.renderCarousel": fakeRenderCarousel(env.tools["publish.renderCarousel"]!) },
+        promptStore: makePromptStore(),
+        router: happyRouter(),
+        repoRoot: env.repoRoot,
+        imageCandidatePool: goodImageCandidatePool(),
+        autoApprove: true,
+        fetchImpl: fakeLogoFetch("fail"),
+      }),
+      { runId: "branded_logo_down", ...base },
+    );
+    expect(result.status).toBe("completed");
+
+    const composed = await fsp.readFile(pathMod.join(env.repoRoot, ".template-cache", "branded_logo_down", "slide.html"), "utf8");
+    expect(composed).not.toContain("brand-logo");
+    expect(composed).toContain("--bg: #272A35;");
+  }, 30000);
+
+  it("a standing seriesBadge from brandTokens lands on every slide's fields", async () => {
+    await env.cleanup();
+    env = await setupTestEnvironment({ brandTokens: goodBrandTokens({ seriesBadge: "PITCH SCHOOL | LESSON 15" }) });
+    await env.store.writeJson("acme", ["client", "brand"], GEEKTIME_BRAND);
+
+    const durableStore = new MemoryDurableStepStore();
+    const result = await new WorkflowEngine(durableStore).run(workflowFor(happyRouter()), { runId: "badged_run", ...base });
+    expect(result.status).toBe("completed");
+
+    const slidesData = (await durableStore.listSteps("badged_run")).find((s) => s.stepId === "07c-emit-slides-data-attempt-1")?.output as
+      | { slides: Array<{ fields: Record<string, string> }> }
+      | undefined;
+    for (const slide of slidesData?.slides ?? []) {
+      expect(slide.fields["seriesBadge"]).toBe("PITCH SCHOOL | LESSON 15");
+    }
+    // And the template has a styled home for it.
+    const composed = await fsp.readFile(pathMod.join(env.repoRoot, ".template-cache", "badged_run", "slide.html"), "utf8");
+    expect(composed).toContain('class="brand-badge"');
+    expect(composed).toContain(".brand-badge {");
+  }, 30000);
 });

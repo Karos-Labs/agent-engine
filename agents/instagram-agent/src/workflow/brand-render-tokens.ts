@@ -351,6 +351,26 @@ export function buildBrandHeadHtml(tokens: BrandRenderTokens, options: { logoDat
 
   const css: string[] = [];
   if (varLines.length > 0) css.push(`:root {\n${varLines.join("\n")}\n}`);
+  // Standing brand furniture: the `@handle` watermark (bottom, start side —
+  // the legacy logo corner's opposite) and the series badge (top, start
+  // side). An EMPTY slot must vanish completely — a `pill` variant painting
+  // an accent-filled background behind zero characters would otherwise ship
+  // an empty pill on every slide of a client with no badge.
+  css.push(".eyebrow:empty, .kicker:empty, .brand-badge:empty, .brand-handle:empty { display: none; }");
+  css.push(
+    [
+      ".brand-handle {",
+      "  position: absolute; bottom: 44px; inset-inline-start: 44px; z-index: 6;",
+      "  font-family: var(--f-mono); font-size: 19px; letter-spacing: 0.08em;",
+      "  color: color-mix(in srgb, var(--fg) 55%, transparent);",
+      "}",
+      ".brand-badge {",
+      "  position: absolute; top: 56px; inset-inline-start: var(--mx, 64px); z-index: 6;",
+      "  font-family: var(--f-mono); font-weight: 600; font-size: 19px;",
+      "  letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent);",
+      "}",
+    ].join("\n"),
+  );
   const variant = BADGE_VARIANT_CSS[tokens.badgeStyle];
   if (variant.length > 0) css.push(variant);
   if (options.logoDataUri !== undefined) {
@@ -360,6 +380,9 @@ export function buildBrandHeadHtml(tokens: BrandRenderTokens, options: { logoDat
         "  position: absolute; top: 44px; inset-inline-start: 44px; z-index: 6;",
         "  width: 150px; height: auto; display: block;",
         "}",
+        // The badge shares the logo's corner; with a logo present it slides
+        // past the 150px mark plus a margin instead of painting over it.
+        ".brand-badge { inset-inline-start: 220px; top: 62px; }",
       ].join("\n"),
     );
   }

@@ -18,6 +18,7 @@ export * from "./scrape-images.js";
 export * from "./ingest-assets.js";
 export * from "./routing.js";
 export * from "./quality.js";
+export * from "./brand-logo.js";
 
 export interface KarosMediaToolsOptions {
   env?: Record<string, string | undefined>;

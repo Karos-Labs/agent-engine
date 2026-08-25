@@ -155,6 +155,8 @@ export function buildCustomArchetypeDocument(bodyHtml: string): string {
 </style>
 </head>
 <body>
+<div class="brand-badge">{{seriesBadge}}</div>
+<div class="brand-handle">{{brandHandle}}</div>
 ${bodyHtml}
 <script>
   window.__CAROUSEL_READY__ = true;

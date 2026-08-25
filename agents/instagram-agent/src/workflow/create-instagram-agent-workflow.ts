@@ -21,7 +21,8 @@ import {
   templateFileName,
   type TemplateStore,
 } from "@agent-engine/tool-karos-templates";
-import { buildBrandHeadHtml, deriveBrandRenderTokens } from "./brand-render-tokens.js";
+import { brandLogoDataUri, downloadBrandLogo } from "@agent-engine/tool-karos-media";
+import { buildBrandHeadHtml, buildBrandLogoBodyHtml, deriveBrandRenderTokens } from "./brand-render-tokens.js";
 import { ARCHETYPE_TEMPLATE_FILES, assembleSlidesData, checkSlidesData, resolveLayout } from "./slides-data.js";
 import { checkCraftHygiene } from "./craft-hygiene.js";
 import {
@@ -133,8 +134,8 @@ export function validateCustomArchetypes(copy: InstagramCopyOutput): SlideCustom
   return validated;
 }
 
-/** Builds the full, self-contained document `composeDocument`/the renderer expect, from a validated custom archetype — branded like every other template when the run has a brand head fragment. */
-export function composeCustomArchetypeDocument(archetype: SlideCustomArchetype, brandHeadHtml?: string): string {
+/** Builds the full, self-contained document `composeDocument`/the renderer expect, from a validated custom archetype — branded like every other template when the run has brand fragments. */
+export function composeCustomArchetypeDocument(archetype: SlideCustomArchetype, brandHeadHtml?: string, brandBodyHtml?: string): string {
   const definition = TemplateDefinitionSchema.parse({
     id: customArchetypeTemplateId("preview", archetype.archetypeId),
     archetypeId: archetype.archetypeId,
@@ -144,7 +145,7 @@ export function composeCustomArchetypeDocument(archetype: SlideCustomArchetype, 
     cssStyles: archetype.css,
     source: "ai_generated" as const,
   });
-  return composeDocument(definition, brandHeadHtml);
+  return composeDocument(definition, brandHeadHtml, brandBodyHtml);
 }
 
 async function persistReviewFeedback(
@@ -308,6 +309,12 @@ export interface CreateInstagramAgentWorkflowOptions {
    * should get the previous behaviour rather than a broken run.
    */
   templateStore?: TemplateStore | undefined;
+  /**
+   * The fetch used for the brand-logo download. Defaults to the global
+   * fetch; tests inject a fake so a logo "download" is deterministic and
+   * offline, the same reason the render tool takes a fake in tests.
+   */
+  fetchImpl?: typeof fetch;
 }
 
 function toAgentContext(wf: WorkflowContext): AgentContext {
@@ -560,13 +567,57 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           deriveBrandRenderTokens(brandOutcome?.status === "success" ? brandOutcome.result : undefined, frozen.brandTokens) ?? null
         );
       })) ?? undefined;
+    const brandFetch = options.fetchImpl ?? fetch;
+    let cachedLogoDataUri: string | undefined;
     /**
-     * The head fragment (font links + token sheet + badge variant) spliced
-     * into every rendered document. Rebuilt from the checkpointed `brandKit`
-     * on every replay — pure string work, no I/O, so it cannot drift from
-     * what the reviewer approved.
+     * The brand logo, as a data URI. Embedded rather than referenced —
+     * a `slide.images` path whose file vanished on a recycled instance is a
+     * run-holding `content_fail`, and brand furniture must never be able to
+     * hold a run. Memoized in-process, cached on the run's own disk for a
+     * same-instance restart, re-fetched fresh after a recycle; a fetch
+     * FAILURE is never memoized, so the next attempt tries again and a
+     * transient outage costs one attempt's logo, not the run's.
      */
-    const brandHeadHtml = brandKit !== undefined ? buildBrandHeadHtml(brandKit) : undefined;
+    const ensureBrandLogoDataUri = async (): Promise<string | undefined> => {
+      if (brandKit?.logoUrl === undefined) return undefined;
+      if (cachedLogoDataUri !== undefined) return cachedLogoDataUri;
+      const cacheDir = path.resolve(options.repoRoot, ".media-cache", wf.runId, "brand");
+      const cacheFile = path.join(cacheDir, "logo.datauri");
+      const rootResolved = path.resolve(options.repoRoot);
+      if (!cacheDir.startsWith(rootResolved + path.sep)) return undefined;
+      try {
+        cachedLogoDataUri = await fs.readFile(cacheFile, "utf8");
+        return cachedLogoDataUri;
+      } catch {
+        // Not cached on this instance yet — fetch below.
+      }
+      const download = await downloadBrandLogo(brandFetch, brandKit.logoUrl);
+      if (download === undefined) return undefined;
+      cachedLogoDataUri = brandLogoDataUri(download);
+      try {
+        await fs.mkdir(cacheDir, { recursive: true });
+        await fs.writeFile(cacheFile, cachedLogoDataUri, "utf8");
+      } catch {
+        // A cache write failure costs a refetch, nothing else.
+      }
+      return cachedLogoDataUri;
+    };
+
+    /**
+     * The fragments (head: font links + token sheet + badge variant; body:
+     * the logo `<img>`) spliced into every rendered document. Re-derived
+     * from the checkpointed `brandKit` on every call — the string work is
+     * pure, and the one piece of I/O (the logo fetch) degrades to "no logo
+     * this attempt" rather than ever failing a compose.
+     */
+    const brandFragments = async (): Promise<{ head?: string; body?: string }> => {
+      if (brandKit === undefined) return {};
+      const logoDataUri = await ensureBrandLogoDataUri();
+      return {
+        head: buildBrandHeadHtml(brandKit, logoDataUri !== undefined ? { logoDataUri } : {}),
+        ...(logoDataUri !== undefined ? { body: buildBrandLogoBodyHtml(logoDataUri) } : {}),
+      };
+    };
 
     // Render-type rules from the frozen config (Fix 2) — evaluated post-render
     // by step 08b, never by step 07's checkSlidesData (which only ever
@@ -834,11 +885,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         throw new Error(`materializeBrandedClientDir: resolved dir escaped repoRoot (runId="${wf.runId}")`);
       }
       await fs.mkdir(absDir, { recursive: true });
+      const fragments = await brandFragments();
       const srcDir = path.resolve(options.repoRoot, frozen.brandTokens.templateDir);
       const htmlFiles = (await fs.readdir(srcDir)).filter((f) => f.endsWith(".html"));
       for (const file of htmlFiles) {
         const html = await fs.readFile(path.join(srcDir, file), "utf8");
-        await fs.writeFile(path.join(absDir, file), composeRawDocument(html, brandHeadHtml), "utf8");
+        await fs.writeFile(path.join(absDir, file), composeRawDocument(html, fragments.head, fragments.body), "utf8");
       }
       return { templateDir: relDir, files: htmlFiles.filter((f) => ARCHETYPE_TEMPLATE_FILES.includes(f)) };
     };
@@ -873,6 +925,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     const templateResolution = await wf.step.code("04c-resolve-templates", async () => {
       if (options.templateStore !== undefined) {
         try {
+          const fragments = await brandFragments();
           const materialized = await materializeTemplates({
             store: options.templateStore,
             repoRoot: options.repoRoot,
@@ -880,7 +933,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             clientSlug: wf.clientSlug,
             clientTemplateDir: frozen.brandTokens.templateDir,
             clientTemplateFile: frozen.brandTokens.slideTemplate,
-            ...(brandHeadHtml !== undefined ? { brandHeadHtml } : {}),
+            ...(fragments.head !== undefined ? { brandHeadHtml: fragments.head } : {}),
+            ...(fragments.body !== undefined ? { brandBodyHtml: fragments.body } : {}),
           });
           const files = Object.values(materialized.files);
           return {
@@ -898,7 +952,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // No registry, but a brand kit: the client's read-only templateDir is
       // copied into the run's own directory with the brand spliced in, so a
       // brandless deployment still gets branded slides.
-      if (brandHeadHtml !== undefined) {
+      if (brandKit !== undefined) {
         try {
           const branded = await materializeBrandedClientDir();
           return {
@@ -969,6 +1023,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         if (!allPresent.every(Boolean)) {
           try {
             if (options.templateStore !== undefined) {
+              const fragments = await brandFragments();
               await materializeTemplates({
                 store: options.templateStore,
                 repoRoot: options.repoRoot,
@@ -976,7 +1031,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                 clientSlug: wf.clientSlug,
                 clientTemplateDir: frozen.brandTokens.templateDir,
                 clientTemplateFile: frozen.brandTokens.slideTemplate,
-                ...(brandHeadHtml !== undefined ? { brandHeadHtml } : {}),
+                ...(fragments.head !== undefined ? { brandHeadHtml: fragments.head } : {}),
+                ...(fragments.body !== undefined ? { brandBodyHtml: fragments.body } : {}),
               });
             } else {
               // The branded no-store copy: pure local disk work, no registry
@@ -1000,9 +1056,14 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // skip it.
       if (validatedCustomArchetypes.length > 0) {
         const absDir = path.resolve(options.repoRoot, effectiveTemplateDir);
+        const fragments = await brandFragments();
         for (const archetype of validatedCustomArchetypes) {
           try {
-            await fs.writeFile(path.join(absDir, templateFileName(archetype.archetypeId)), composeCustomArchetypeDocument(archetype, brandHeadHtml), "utf8");
+            await fs.writeFile(
+              path.join(absDir, templateFileName(archetype.archetypeId)),
+              composeCustomArchetypeDocument(archetype, fragments.head, fragments.body),
+              "utf8",
+            );
           } catch (error) {
             // Same "degrade, never fail the run" rule as everywhere else in
             // this function — a write failure here just means the slide
@@ -1057,7 +1118,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     }
 
     /** Never prose — excluded from anything a human or the topic guardrail reads as text. */
-    const NON_PROSE_FIELD_KEYS = new Set(["accentColor", "dir"]);
+    const NON_PROSE_FIELD_KEYS = new Set(["accentColor", "dir", "brandHandle", "seriesBadge"]);
 
     /**
      * Every slide's prose field values, joined — everything ON the carousel
@@ -1564,6 +1625,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           templateDirOverride: effectiveTemplateDir,
           validatedCustomArchetypeIds,
           ...(brandKit?.brandAccent !== undefined ? { brandAccentFallback: brandKit.brandAccent } : {}),
+          ...(brandKit?.handle !== undefined ? { brandHandle: brandKit.handle } : {}),
         }),
       );
 
@@ -1604,6 +1666,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             templateDirOverride: effectiveTemplateDir,
             validatedCustomArchetypeIds,
             ...(brandKit?.brandAccent !== undefined ? { brandAccentFallback: brandKit.brandAccent } : {}),
+          ...(brandKit?.handle !== undefined ? { brandHandle: brandKit.handle } : {}),
           }),
         );
         copy = strippedCopy;

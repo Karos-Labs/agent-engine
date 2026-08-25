@@ -67,6 +67,8 @@ export async function materializeTemplates(options: {
    * template alike, so one templateDir renders one brand throughout.
    */
   brandHeadHtml?: string;
+  /** The client's brand body fragment (the logo `<img>`), spliced before `</body>` in every written document. */
+  brandBodyHtml?: string;
 }): Promise<MaterializeResult> {
   const relDir = `${TEMPLATE_CACHE_PREFIX}/${options.runId}`;
   const absDir = path.resolve(options.repoRoot, relDir);
@@ -93,7 +95,7 @@ export async function materializeTemplates(options: {
     // the registry, so the `photo` archetype is skipped here.
     if (archetypeId === "photo") continue;
     const file = templateFileName(archetypeId);
-    await fs.writeFile(path.join(absDir, file), composeDocument(definition, options.brandHeadHtml), "utf8");
+    await fs.writeFile(path.join(absDir, file), composeDocument(definition, options.brandHeadHtml, options.brandBodyHtml), "utf8");
     files[archetypeId] = file;
     if (definition.layoutType === "typographic") typographicArchetypes.push(archetypeId);
     chosen.push({ archetypeId, templateId: definition.id, source: definition.source, qualityScore: definition.qualityScore });
@@ -108,7 +110,7 @@ export async function materializeTemplates(options: {
     const from = path.resolve(options.repoRoot, options.clientTemplateDir, options.clientTemplateFile);
     try {
       const html = await fs.readFile(from, "utf8");
-      await fs.writeFile(path.join(absDir, options.clientTemplateFile), composeRawDocument(html, options.brandHeadHtml), "utf8");
+      await fs.writeFile(path.join(absDir, options.clientTemplateFile), composeRawDocument(html, options.brandHeadHtml, options.brandBodyHtml), "utf8");
       files["photo"] = options.clientTemplateFile;
     } catch {
       // Absent is survivable and the caller finds out by `files` lacking a
@@ -138,28 +140,44 @@ export async function materializeTemplates(options: {
  * already inside its file) and no brand fragment is returned untouched, so
  * materializing the bundled set is byte-identical to reading it from disk.
  */
-export function composeDocument(definition: TemplateDefinition, brandHeadHtml?: string): string {
+export function composeDocument(definition: TemplateDefinition, brandHeadHtml?: string, brandBodyHtml?: string): string {
   const fragments: string[] = [];
   if (definition.cssStyles.trim().length > 0) fragments.push(`<style>\n${definition.cssStyles}\n</style>`);
   if (brandHeadHtml !== undefined && brandHeadHtml.trim().length > 0) fragments.push(brandHeadHtml);
-  if (fragments.length === 0) return definition.htmlTemplate;
-  const injected = fragments.join("\n");
-  if (definition.htmlTemplate.includes("</head>")) {
-    return definition.htmlTemplate.replace("</head>", `${injected}\n</head>`);
+  if (fragments.length === 0 && (brandBodyHtml === undefined || brandBodyHtml.trim().length === 0)) return definition.htmlTemplate;
+  let html = definition.htmlTemplate;
+  if (fragments.length > 0) {
+    const injected = fragments.join("\n");
+    if (html.includes("</head>")) {
+      html = html.replace("</head>", `${injected}\n</head>`);
+    } else {
+      // No <head> to target: prepending still gets the rules into the
+      // document, which beats dropping them on the floor for a hand-authored
+      // fragment.
+      html = `${injected}\n${html}`;
+    }
   }
-  // No <head> to target: prepending still gets the rules into the document,
-  // which beats dropping them on the floor for a hand-authored fragment.
-  return `${injected}\n${definition.htmlTemplate}`;
+  return spliceBody(html, brandBodyHtml);
 }
 
 /**
- * Splices a brand head fragment into an already-complete document string —
- * the same `</head>` rule `composeDocument` applies, for callers that hold a
- * raw file's text rather than a `TemplateDefinition` (the client's own base
- * template, a bespoke templateDir's files).
+ * Splices a brand head fragment (and optionally a body fragment — the brand
+ * logo `<img>`) into an already-complete document string — the same rules
+ * `composeDocument` applies, for callers that hold a raw file's text rather
+ * than a `TemplateDefinition` (the client's own base template, a bespoke
+ * templateDir's files).
  */
-export function composeRawDocument(html: string, brandHeadHtml?: string): string {
-  if (brandHeadHtml === undefined || brandHeadHtml.trim().length === 0) return html;
-  if (html.includes("</head>")) return html.replace("</head>", `${brandHeadHtml}\n</head>`);
-  return `${brandHeadHtml}\n${html}`;
+export function composeRawDocument(html: string, brandHeadHtml?: string, brandBodyHtml?: string): string {
+  let out = html;
+  if (brandHeadHtml !== undefined && brandHeadHtml.trim().length > 0) {
+    out = out.includes("</head>") ? out.replace("</head>", `${brandHeadHtml}\n</head>`) : `${brandHeadHtml}\n${out}`;
+  }
+  return spliceBody(out, brandBodyHtml);
+}
+
+/** Body fragments land just before `</body>` (appended when a fragment has no `</body>` to target), so brand furniture paints above the template's own layers. */
+function spliceBody(html: string, brandBodyHtml?: string): string {
+  if (brandBodyHtml === undefined || brandBodyHtml.trim().length === 0) return html;
+  if (html.includes("</body>")) return html.replace("</body>", `${brandBodyHtml}\n</body>`);
+  return `${html}\n${brandBodyHtml}`;
 }
