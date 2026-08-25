@@ -153,6 +153,18 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     if (first.status !== "awaiting_gate") throw new Error("unreachable");
     expect(first.pendingGateId).toContain("09a-batch-review");
 
+    // Regression test for a real prep run (rWb2EutSDjHzkPnsoeEY) where a
+    // reviewer approved a carousel they could not see: the gate payload
+    // carried template metadata but never the drafted text or the rendered
+    // images. `preview` and `images` are what the review panel actually reads.
+    const pendingGate = await durableStore.getGate(first.pendingGateId);
+    const payload = pendingGate?.payload as { preview?: string; images?: Array<{ n: number; url?: string }> } | undefined;
+    expect(typeof payload?.preview).toBe("string");
+    expect(payload?.preview!.length).toBeGreaterThan(0);
+    expect(payload?.images).toBeDefined();
+    expect(payload!.images!.length).toBeGreaterThan(0);
+    expect(payload!.images![0]).toHaveProperty("url");
+
     const deliverablesBeforeApproval = await env.store.listJson("acme", ["ledger", "deliverables", "instagram_run_gate", "_"]);
     expect(deliverablesBeforeApproval).toHaveLength(0);
 

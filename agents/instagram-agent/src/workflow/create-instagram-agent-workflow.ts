@@ -710,6 +710,15 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     }
 
     /**
+     * Every slide's field values, joined into one block a human can actually
+     * read — "the text of the post" for a reviewer, and the exact input the
+     * topic guardrail judges. One definition so both call sites see the same
+     * string rather than quietly drifting apart over time.
+     */
+    const slidesTextFor = (draft: DraftResult): string =>
+      draft.slidesData.slides.map((slide) => Object.values(slide.fields ?? {}).join(" ")).join("\n\n");
+
+    /**
      * One full drafting pass: copy, images, self-checks, render, visual QA.
      *
      * Called once per REVISION round by `runReviewCycle`. `revision` is folded
@@ -1313,7 +1322,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         await runTopicGuardrail(
           wf,
           { tools, promptStore: options.promptStore, router: options.router },
-          draft.slidesData.slides.map((slide) => Object.values(slide.fields ?? {}).join(" ")).join("\n\n"),
+          slidesTextFor(draft),
           frozen.forbiddenTopics,
           revision === 0 ? undefined : `-r${revision}`,
         );
@@ -1328,6 +1337,18 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           slideCount: draft.slidesData.slides.length,
           renderedCount: draft.rendered.rendered.length,
           revision,
+          // The actual thing being approved. Every other channel's gate
+          // payload has carried its drafted text as `preview` since the
+          // review panel existed — a carousel never did, so a reviewer saw a
+          // step count and nothing else. Byte-identical to what the topic
+          // guardrail above just cleared (same helper, same input).
+          preview: slidesTextFor(draft),
+          // The rendered PNGs, in slide order — `path` is a signed https URL
+          // when the runtime could sign one (`GcsArtifactStore.upload`'s own
+          // fallback rule), a bare `gs://` URI otherwise, which the review
+          // panel can't load but which the payload should still carry rather
+          // than silently omit.
+          images: draft.rendered.rendered.map((r) => ({ n: r.n, url: r.path })),
           // Which template rendered each slide, and whether it is one a person
           // has never signed off on. This is what lets the review surface say
           // "new custom template used on slide 4" and attach design feedback to
