@@ -426,6 +426,14 @@ export function assembleSlidesData(params: {
   templateDirOverride?: string | undefined;
   /** Which `custom` archetypeIds passed their safety check THIS attempt. See `resolveLayout`'s own note. */
   validatedCustomArchetypeIds?: ReadonlySet<string>;
+  /**
+   * The brand.json accent, used only when `brandTokens.accentColor` is
+   * unset. The accent has exactly ONE channel — this per-slide field — and
+   * the brand token sheet deliberately never emits `--accent` (see
+   * `buildBrandHeadHtml`), so precedence stays legible:
+   * config accentColor > brand.json accent > the legacy default.
+   */
+  brandAccentFallback?: string | undefined;
 }): RenderCarouselInput {
   const selectionByN = new Map(params.selections.map((s) => [s.n, s]));
 
@@ -435,7 +443,7 @@ export function assembleSlidesData(params: {
   // `logoPath` isn't threaded through here: the default template has no wordmark
   // slot (no client-name field exists anywhere in this agent's per-slide contract to
   // put next to one), so wiring it through would have nothing real to attach to.
-  const accentColor = params.brandTokens.accentColor ?? "#C4552F";
+  const accentColor = params.brandTokens.accentColor ?? params.brandAccentFallback ?? "#C4552F";
 
   // One direction for the whole carousel, not per slide — a post is written
   // in one language, and a stat figure or kicker (short, often just digits or

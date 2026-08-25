@@ -61,6 +61,12 @@ export async function materializeTemplates(options: {
    */
   clientTemplateDir?: string;
   clientTemplateFile?: string;
+  /**
+   * The client's brand-kit head fragment (token sheet + font links), spliced
+   * into EVERY written document — registry rows and the copied client base
+   * template alike, so one templateDir renders one brand throughout.
+   */
+  brandHeadHtml?: string;
 }): Promise<MaterializeResult> {
   const relDir = `${TEMPLATE_CACHE_PREFIX}/${options.runId}`;
   const absDir = path.resolve(options.repoRoot, relDir);
@@ -87,18 +93,22 @@ export async function materializeTemplates(options: {
     // the registry, so the `photo` archetype is skipped here.
     if (archetypeId === "photo") continue;
     const file = templateFileName(archetypeId);
-    await fs.writeFile(path.join(absDir, file), composeDocument(definition), "utf8");
+    await fs.writeFile(path.join(absDir, file), composeDocument(definition, options.brandHeadHtml), "utf8");
     files[archetypeId] = file;
     if (definition.layoutType === "typographic") typographicArchetypes.push(archetypeId);
     chosen.push({ archetypeId, templateId: definition.id, source: definition.source, qualityScore: definition.qualityScore });
   }
 
   // The client's base template, carried across so one `templateDir` holds
-  // everything the renderer will be asked for.
+  // everything the renderer will be asked for. Read-compose-write rather
+  // than a raw copy, so the brand head reaches the photo slide too — a raw
+  // copy here was exactly how a branded carousel's photo slides would have
+  // stayed on the generic dark tokens while every archetype re-themed.
   if (options.clientTemplateDir && options.clientTemplateFile) {
     const from = path.resolve(options.repoRoot, options.clientTemplateDir, options.clientTemplateFile);
     try {
-      await fs.copyFile(from, path.join(absDir, options.clientTemplateFile));
+      const html = await fs.readFile(from, "utf8");
+      await fs.writeFile(path.join(absDir, options.clientTemplateFile), composeRawDocument(html, options.brandHeadHtml), "utf8");
       files["photo"] = options.clientTemplateFile;
     } catch {
       // Absent is survivable and the caller finds out by `files` lacking a
@@ -111,24 +121,45 @@ export async function materializeTemplates(options: {
 }
 
 /**
- * Folds `cssStyles` into the template's own document.
+ * Folds `cssStyles` into the template's own document, then the client's
+ * brand head fragment after THAT.
  *
  * Injected immediately before `</head>` so registry CSS lands after whatever
  * the template's own `<style>` block declared, and therefore wins on
  * specificity ties — which is what makes a shared token sheet able to
  * override a template's built-in defaults rather than being silently ignored.
+ * `brandHeadHtml` (the client's brand-kit token sheet plus its font links —
+ * built by code from sanitized brand values, never raw client text) is
+ * spliced LAST for the same reason one level up: the client's brand beats
+ * the template row's own styling on ties, which is the whole point of a
+ * brand kit.
  *
  * A definition whose `cssStyles` is empty (every bundled row, whose CSS is
- * already inside its file) is returned untouched, so materializing the
- * bundled set is byte-identical to reading it from disk.
+ * already inside its file) and no brand fragment is returned untouched, so
+ * materializing the bundled set is byte-identical to reading it from disk.
  */
-export function composeDocument(definition: TemplateDefinition): string {
-  if (definition.cssStyles.trim().length === 0) return definition.htmlTemplate;
-  const style = `<style>\n${definition.cssStyles}\n</style>`;
+export function composeDocument(definition: TemplateDefinition, brandHeadHtml?: string): string {
+  const fragments: string[] = [];
+  if (definition.cssStyles.trim().length > 0) fragments.push(`<style>\n${definition.cssStyles}\n</style>`);
+  if (brandHeadHtml !== undefined && brandHeadHtml.trim().length > 0) fragments.push(brandHeadHtml);
+  if (fragments.length === 0) return definition.htmlTemplate;
+  const injected = fragments.join("\n");
   if (definition.htmlTemplate.includes("</head>")) {
-    return definition.htmlTemplate.replace("</head>", `${style}\n</head>`);
+    return definition.htmlTemplate.replace("</head>", `${injected}\n</head>`);
   }
   // No <head> to target: prepending still gets the rules into the document,
   // which beats dropping them on the floor for a hand-authored fragment.
-  return `${style}\n${definition.htmlTemplate}`;
+  return `${injected}\n${definition.htmlTemplate}`;
+}
+
+/**
+ * Splices a brand head fragment into an already-complete document string —
+ * the same `</head>` rule `composeDocument` applies, for callers that hold a
+ * raw file's text rather than a `TemplateDefinition` (the client's own base
+ * template, a bespoke templateDir's files).
+ */
+export function composeRawDocument(html: string, brandHeadHtml?: string): string {
+  if (brandHeadHtml === undefined || brandHeadHtml.trim().length === 0) return html;
+  if (html.includes("</head>")) return html.replace("</head>", `${brandHeadHtml}\n</head>`);
+  return `${brandHeadHtml}\n${html}`;
 }

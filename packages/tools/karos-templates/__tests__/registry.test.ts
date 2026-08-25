@@ -249,6 +249,47 @@ describe("materializeTemplates: Approach (a)", () => {
     expect(composed.indexOf(".a{color:blue}")).toBeGreaterThan(composed.indexOf(".a{color:red}"));
     expect(composed).toContain("</head>");
   });
+
+  it("splices the brand head fragment LAST, so the client's brand beats both the template and the registry row", () => {
+    const composed = composeDocument(
+      def({
+        id: "c",
+        archetypeId: "x",
+        htmlTemplate: "<html><head><style>.a{color:red}</style></head><body></body></html>",
+        cssStyles: ".a{color:blue}",
+      }),
+      `<style>:root{--bg:#F5F0E4}</style>`,
+    );
+    expect(composed.indexOf("--bg:#F5F0E4")).toBeGreaterThan(composed.indexOf(".a{color:blue}"));
+    // And with no brand fragment (or an empty one), output is byte-identical
+    // to what it always was — a brandless deployment changes nothing.
+    const row = def({ id: "c", archetypeId: "x", htmlTemplate: "<html><head></head><body></body></html>" });
+    expect(composeDocument(row, undefined)).toBe(composeDocument(row));
+    expect(composeDocument(row, "")).toBe(composeDocument(row));
+  });
+
+  it("materializes the brand head into every written file, INCLUDING the copied client base template", async () => {
+    const store = createTemplateStore({ bundledTemplateDir: bundledDir });
+    const brandHeadHtml = `<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk&display=swap" rel="stylesheet">\n<style>:root{--bg:#272A35;--fg:#F4F2EC}</style>`;
+    const result = await materializeTemplates({
+      store,
+      repoRoot,
+      runId: "run_branded",
+      clientSlug: "acme",
+      clientTemplateDir: "bundled",
+      clientTemplateFile: "slide.html",
+      brandHeadHtml,
+    });
+
+    const archetype = await fs.readFile(path.join(repoRoot, result.templateDir, result.files["stat_callout"]!), "utf8");
+    expect(archetype).toContain("--bg:#272A35");
+    // The base template used to be a raw fs.copyFile — a branded carousel's
+    // photo slides would have stayed on the generic tokens while every
+    // archetype re-themed.
+    const base = await fs.readFile(path.join(repoRoot, result.templateDir, result.files["photo"]!), "utf8");
+    expect(base).toContain("--bg:#272A35");
+    expect(base).toContain("family=Space+Grotesk");
+  });
 });
 
 describe("firestore store", () => {

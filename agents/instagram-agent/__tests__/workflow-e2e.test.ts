@@ -30,6 +30,9 @@ const HAPPY_PATH_STEP_IDS = [
   // best-effort — this is where a language requirement like Geektime's
   // "Hebrew-language technology site" actually lives.
   "02b-load-client-voice-context",
+  // The client's Brand Kit (client/brand.json), best-effort — frozen once so
+  // a portal edit mid-run can't change the tokens between attempts.
+  "02c-load-brand-kit",
   "03-claim-topic",
   "04a-research-pull",
   "04b-research-extract-facts",

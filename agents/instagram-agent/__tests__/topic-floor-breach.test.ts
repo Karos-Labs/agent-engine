@@ -42,6 +42,7 @@ describe("03-claim-topic: the topics catalog is the only dedup gate (RFC-03 §2.
       "01-open-run",
       "02-freeze-style-config",
       "02b-load-client-voice-context",
+      "02c-load-brand-kit",
       "03-claim-topic",
     ]);
 

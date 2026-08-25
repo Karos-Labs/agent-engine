@@ -121,6 +121,32 @@ export const BrandTokensSchema = z.object({
   lighting: z.string().min(1).optional(),
   palette: z.array(z.string().min(1)).max(6).optional(),
   visualMood: z.string().min(1).optional(),
+  /**
+   * Explicit render-token overrides — the hand-authored escape hatch that
+   * beats every derivation in `brand-render-tokens.ts`. Role names mirror
+   * karos-landing's `BrandColorRolesSchema` (the in-repo precedent for
+   * "colors are roles, not a palette list"). Everything optional: most
+   * clients get their tokens DERIVED from `client/brand.json` (which the
+   * portal already edits), and a required field here would hard-block every
+   * existing client at step 02's refuse-to-guess parse.
+   */
+  renderTokens: z
+    .object({
+      ground: z.string().min(1).optional(),
+      surface: z.string().min(1).optional(),
+      fg: z.string().min(1).optional(),
+      fg2: z.string().min(1).optional(),
+      line: z.string().min(1).optional(),
+      accentInk: z.string().min(1).optional(),
+      fontDisplay: z.string().min(1).optional(),
+      fontBody: z.string().min(1).optional(),
+      fontMono: z.string().min(1).optional(),
+      /** Badge/eyebrow treatment; unset means derived from brand data. See `BadgeStyle`. */
+      badgeStyle: z.enum(["pill", "brackets", "underline", "plain"]).optional(),
+    })
+    .optional(),
+  /** A standing series badge ("PITCH SCHOOL | LESSON 15") rendered on every slide when set. */
+  seriesBadge: z.string().min(1).max(48).optional(),
 });
 export type BrandTokens = z.infer<typeof BrandTokensSchema>;
 
