@@ -8,6 +8,7 @@ import { createDocsRouter } from "./routes/docs.js";
 import { createHealthRouter } from "./routes/health.js";
 import { createQueueRouter, type VerifyPushIdToken } from "./routes/queue.js";
 import { createRunsRouter, type RunsRouterDeps } from "./routes/runs.js";
+import { createServiceIdentityMiddleware, type ServiceIdentityConfig } from "./auth/service-identity.js";
 
 export interface CreateAppDeps extends RunsRouterDeps {
   durableStore: DurableStepStore;
@@ -15,6 +16,13 @@ export interface CreateAppDeps extends RunsRouterDeps {
   queuePushToken?: string;
   queuePushAudienceUrl?: string;
   verifyPushIdToken?: VerifyPushIdToken;
+  /**
+   * Service-to-service authentication (AU1). Omitted means disabled — the
+   * local-development and test default, and the behaviour every caller of this
+   * function had before authentication existed. `server.ts` supplies the real,
+   * env-built config.
+   */
+  auth?: ServiceIdentityConfig;
 }
 
 /**
@@ -35,11 +43,21 @@ export function createApp(deps: CreateAppDeps): Application {
 
   const app = express();
   app.use(express.json());
+
+  // Mount order is load-bearing (AU1). Two routes sit deliberately BEFORE the
+  // authentication middleware:
+  //
+  //  * `/healthz` — a liveness probe carries no credentials, and a health
+  //    endpoint that can 401 reports the wrong thing when auth is the very
+  //    thing misconfigured.
+  //  * the Pub/Sub push route — it authenticates against a DIFFERENT audience
+  //    (its own endpoint URL, which is what Pub/Sub mints push tokens for) via
+  //    its own verifier, so a valid push token would fail the service-wide
+  //    audience check. Its auth is configured separately; see `routes/queue.ts`.
+  //
+  // Express falls through to the next `use` when a router matches no path, so
+  // mounting these first exempts exactly those paths and nothing else.
   app.use(createHealthRouter());
-  app.use(createDocsRouter());
-  app.use(createRunsRouter(runsDeps));
-  app.use(createAgentsRouter({ agentDefinitionStore }));
-  app.use(createDeliverablesRouter({ durableStore: deps.durableStore, workspaceStore: deps.runtimeDeps.workspaceStore ?? createWorkspaceStore() }));
   app.use(
     createQueueRouter({
       durableStore: deps.durableStore,
@@ -50,5 +68,15 @@ export function createApp(deps: CreateAppDeps): Application {
       ...(deps.verifyPushIdToken !== undefined ? { verifyPushIdToken: deps.verifyPushIdToken } : {}),
     }),
   );
+
+  if (deps.auth) {
+    app.use(createServiceIdentityMiddleware(deps.auth));
+  }
+
+  // Everything below is authenticated whenever `deps.auth.enabled` is set.
+  app.use(createDocsRouter());
+  app.use(createRunsRouter(runsDeps));
+  app.use(createAgentsRouter({ agentDefinitionStore }));
+  app.use(createDeliverablesRouter({ durableStore: deps.durableStore, workspaceStore: deps.runtimeDeps.workspaceStore ?? createWorkspaceStore() }));
   return app;
 }
