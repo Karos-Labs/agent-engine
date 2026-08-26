@@ -6,8 +6,13 @@ Egress-bound, cached, freshness-enforced external research pulls (RFC-01 §9.2).
 
 | Variable | Required | Notes |
 | --- | --- | --- |
-| `APIFY_TOKEN` | for `research.pull` | Backs external search. Without it `research.pull` reports `not_available`. |
-| `APIFY_RESEARCH_ACTOR` | no | Override the actor, default `apify~rag-web-browser`. |
+| `SCRAPPYCOCO_API_KEY` | for `research.pull` | Backs external search, via the `ScraperProvider` seam. Without it `research.pull` reports `not_available` and names this variable. |
+| `SCRAPPYCOCO_BASE_URL` | no | Override the provider endpoint. |
+
+`research.pull` does not know which vendor answers it. It calls
+`createScraperProvider()` (`@agent-engine/tool-karos-scraper`), which is the one
+place a scraping vendor is named — swapping vendors is a change there and
+nowhere else.
 
 ## `research.pull`
 
@@ -17,7 +22,7 @@ it. The payload shape (`ResearchPayload`) is:
 
 ```jsonc
 {
-  "provider": "apify/apify/rag-web-browser",
+  "provider": "scrappycoco",   // ScraperProvider.name — whichever vendor is configured
   "query": "how AI marketing teams evaluate new tooling",
   "fetchedAt": "2026-08-23T21:04:11.000Z",
   "documents": [
@@ -32,13 +37,14 @@ must attach a **source and a date** to every claim it emits
 source, `retrievedAt`/`fetchedAt` the date, `content` the substance a claim is
 drawn from.
 
-### Why the RAG Web Browser and not a SERP scraper
+### Why search-and-open, not snippets
 
-`apify/google-search-scraper` returns titles, URLs and snippets. A snippet
-cannot reliably support either a sourced claim or a date, so the extraction
-agent would either emit weak claims or none. `apify/rag-web-browser` searches
-*and* opens the top results, returning each page as markdown, which is what
-fact extraction actually needs.
+A SERP-style result — title, URL, snippet — cannot reliably support either a
+sourced claim or a date, so the extraction agent would emit weak claims or
+none. The capability this tool needs both searches *and* opens the top results,
+returning each page's text, which is what fact extraction actually consumes.
+That requirement is expressed as `ScraperProvider.searchKeyword` returning
+`ScrapedRecord.text`, so it survives a change of vendor.
 
 Page content is truncated per document (`DEFAULT_CONTENT_CHARS`, 4000). This
 payload is injected whole into the extraction agent's prompt, so its size is a

@@ -76,7 +76,9 @@ describe("quality gates", () => {
 
 describe("routing", () => {
   it("prefers geo-verified sources for a named venue and licence-clean ones for mood", () => {
-    expect(ROUTE_CHAINS.named_venue[0]).toBe("apify_google_maps");
+    // AU51: google_places now leads named_venue — the vendor-backed UGC
+    // sources that used to precede it were removed with the vendor.
+    expect(ROUTE_CHAINS.named_venue[0]).toBe("google_places");
     expect(ROUTE_CHAINS.mood[0]).toBe("unsplash");
 
     // Unknown-provenance web search is now on every route but always LAST,

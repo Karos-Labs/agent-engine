@@ -229,10 +229,6 @@ describe("createKarosMediaTools without a key", () => {
     const keyed = [...buildProviderRegistry({ env: { UNSPLASH_ACCESS_KEY: "k", GOOGLE_PLACES_KEY: "p" } }).keys()];
     expect(keyed).toContain("unsplash");
     expect(keyed).toContain("google_places");
-    // One token registers all four actor presets, exactly as legacy did.
-    const apify = [...buildProviderRegistry({ env: { APIFY_TOKEN: "t" } }).keys()];
-    expect(apify).toContain("apify_google_maps");
-    expect(apify).toContain("apify_pinterest");
   });
 
   it("reports not_available only for an explicitly empty source", async () => {
