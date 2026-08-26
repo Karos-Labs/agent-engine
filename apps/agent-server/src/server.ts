@@ -8,6 +8,7 @@ import { createQueuePushVerifier } from "./wiring/queue-push-auth.js";
 import { createServerTools } from "./wiring/tools.js";
 import { createServiceIdentityConfigFromEnv } from "./wiring/auth.js";
 import { createServerTemplateStore } from "./wiring/template-store.js";
+import { assertFirestoreDatabaseIdOrExit } from "./wiring/firestore-database-id.js";
 import { createServerWorkspaceStore } from "./wiring/workspace-store.js";
 import { resolveInstagramRepoRoot } from "./wiring/workflows.js";
 
@@ -29,6 +30,11 @@ function resolveQueuePushConfig(): { queuePushToken?: string; queuePushAudienceU
 }
 
 async function main(): Promise<void> {
+  // AU60: refuse to start on an unrecognised FIRESTORE_DATABASE_ID. Absent or
+  // empty silently resolves to "(default)" — production client data — in all
+  // five Firestore clients, so this runs before any store is constructed.
+  assertFirestoreDatabaseIdOrExit();
+
   // No-ops without GOOGLE_CLOUD_PROJECT — see packages/telemetry/src/tracer.ts.
   await initTelemetry();
 

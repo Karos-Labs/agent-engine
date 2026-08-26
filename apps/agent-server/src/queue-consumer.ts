@@ -28,11 +28,17 @@ import { createServerPromptStore } from "./wiring/prompt-store.js";
 import { createServerQueueAdapter, runJobsSubscriptionName } from "./wiring/queue.js";
 import { createServerTools } from "./wiring/tools.js";
 import { createServerTemplateStore } from "./wiring/template-store.js";
+import { assertFirestoreDatabaseIdOrExit } from "./wiring/firestore-database-id.js";
 import { createServerWorkspaceStore } from "./wiring/workspace-store.js";
 import { createServer } from "node:http";
 import { resolveInstagramRepoRoot } from "./wiring/workflows.js";
 
 async function main(): Promise<void> {
+  // AU60: refuse to start on an unrecognised FIRESTORE_DATABASE_ID. Absent or
+  // empty silently resolves to "(default)" — production client data — in all
+  // five Firestore clients, so this runs before any store is constructed.
+  assertFirestoreDatabaseIdOrExit();
+
   // This is a queue consumer, not an HTTP server, but Cloud Run *services*
   // (unlike Jobs) require the container to listen on $PORT to pass the
   // startup/liveness probe — without this, `gcloud run deploy` times out

@@ -421,6 +421,9 @@ export abstract class BaseAgent<TOutput> {
           stepIndex,
           ...(turn.thought !== undefined ? { thought: turn.thought } : {}),
           modelUsed: completion.modelUsed,
+          ...(completion.provenance && completion.provenance.hop !== "primary"
+            ? { servedBy: { hop: completion.provenance.hop, adapter: completion.provenance.servedBy, failedOver: [...completion.provenance.failedOver] } }
+            : {}),
           inputTokens: completion.inputTokens,
           outputTokens: completion.outputTokens,
           durationMs,
@@ -448,6 +451,9 @@ export abstract class BaseAgent<TOutput> {
             toolVersion: "allowlist",
           },
           modelUsed: completion.modelUsed,
+          ...(completion.provenance && completion.provenance.hop !== "primary"
+            ? { servedBy: { hop: completion.provenance.hop, adapter: completion.provenance.servedBy, failedOver: [...completion.provenance.failedOver] } }
+            : {}),
           inputTokens: completion.inputTokens,
           outputTokens: completion.outputTokens,
           durationMs,
@@ -467,6 +473,9 @@ export abstract class BaseAgent<TOutput> {
           ...(turn.thought !== undefined ? { thought: turn.thought } : {}),
           toolCall: { name: turn.tool, args: turn.args, result: { blocked: true, reason: fence.reason }, toolVersion: "write-fence" },
           modelUsed: completion.modelUsed,
+          ...(completion.provenance && completion.provenance.hop !== "primary"
+            ? { servedBy: { hop: completion.provenance.hop, adapter: completion.provenance.servedBy, failedOver: [...completion.provenance.failedOver] } }
+            : {}),
           inputTokens: completion.inputTokens,
           outputTokens: completion.outputTokens,
           durationMs,
@@ -501,6 +510,9 @@ export abstract class BaseAgent<TOutput> {
           ...(turn.thought !== undefined ? { thought: turn.thought } : {}),
           toolCall: { name: turn.tool, args: turn.args, result: { error: reason }, toolVersion: "unknown" },
           modelUsed: completion.modelUsed,
+          ...(completion.provenance && completion.provenance.hop !== "primary"
+            ? { servedBy: { hop: completion.provenance.hop, adapter: completion.provenance.servedBy, failedOver: [...completion.provenance.failedOver] } }
+            : {}),
           inputTokens: completion.inputTokens,
           outputTokens: completion.outputTokens,
           durationMs,
@@ -527,6 +539,9 @@ export abstract class BaseAgent<TOutput> {
           ...(turn.thought !== undefined ? { thought: turn.thought } : {}),
           toolCall: { name: tool.name, args: turn.args, result: { error: reason }, toolVersion: tool.version },
           modelUsed: completion.modelUsed,
+          ...(completion.provenance && completion.provenance.hop !== "primary"
+            ? { servedBy: { hop: completion.provenance.hop, adapter: completion.provenance.servedBy, failedOver: [...completion.provenance.failedOver] } }
+            : {}),
           inputTokens: completion.inputTokens,
           outputTokens: completion.outputTokens,
           durationMs,
