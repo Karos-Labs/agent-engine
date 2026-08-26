@@ -5,11 +5,19 @@ node_modules
 .karos-workspace
 **/.karos-workspace
 docs
-# scripts/ is dev-only (demo/smoke-test entrypoints) EXCEPT
-# build-workspaces.mjs, which apps/agent-server/Dockerfile's builder stage
-# now runs (`npm run build`) — excluding the whole directory breaks that.
+# scripts/ is dev-only (demo/smoke-test entrypoints) EXCEPT the build graph,
+# which apps/agent-server/Dockerfile's builder stage runs (`npm run build`) —
+# excluding it breaks the image build.
+#
+# EVERY module build-workspaces.mjs imports must be carved out here too. AU54
+# split the discovery/topo-sort logic into workspace-graph.mjs and did not add
+# the second line, so the builder failed with ERR_MODULE_NOT_FOUND on a file
+# that exists in the repo and passes every local check — the build context is
+# the one place a split file can go missing. `dockerignore-build-graph.test.ts`
+# now derives this list from the actual imports rather than trusting it.
 scripts
 !scripts/build-workspaces.mjs
+!scripts/workspace-graph.mjs
 evals
 # This also excludes the __tests__-only slide.html fixture (agents/
 # instagram-agent/__tests__/fixtures/templates/) — safe now that a real
