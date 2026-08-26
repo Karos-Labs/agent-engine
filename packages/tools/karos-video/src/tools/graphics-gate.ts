@@ -1,8 +1,8 @@
 import { z } from "zod";
 import type { GateVerdict } from "@agent-engine/core";
-import { defineTool, success } from "@agent-engine/tool-common";
+import { defineTool, toolingError } from "@agent-engine/tool-common";
 import { resolveEngineScript, resolveRuntime, type KarosVideoToolOptions } from "../config.js";
-import { toGateVerdictFromPrefixedLines } from "../gate-helpers.js";
+import { gateOutcome, toGateVerdictFromPrefixedLines } from "../gate-helpers.js";
 
 const TOOL_VERSION = "1.0.0";
 const SCRIPT_NAME = "graphic_qa.py";
@@ -35,11 +35,11 @@ export function createGraphicsGate(options: KarosVideoToolOptions = {}) {
     async execute({ profilePath, videoPath, jobPath }) {
       const script = resolveEngineScript(runtime, SCRIPT_NAME);
       if (!script.ok) {
-        return success<GateVerdict>({ verdict: "tooling_error", reason: script.reason, toolVersion: TOOL_VERSION });
+        return toolingError(script.reason);
       }
       const args = [script.path, "--profile", profilePath, "--video", videoPath, "--job", jobPath];
       const result = await runtime.runner(runtime.pythonBin, args);
-      return success(toGateVerdictFromPrefixedLines(result, SCRIPT_NAME, TOOL_VERSION));
+      return gateOutcome(toGateVerdictFromPrefixedLines(result, SCRIPT_NAME, TOOL_VERSION));
     },
   });
 }

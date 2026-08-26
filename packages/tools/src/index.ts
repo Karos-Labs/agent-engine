@@ -37,8 +37,11 @@ export * from "@agent-engine/tool-karos-video";
  *
  * `store` is optional and shared across every storage-backed server (all but
  * `karos-gates` and `karos-seo-geo`, which are both stateless/pure) — omit
- * it to fall back to each server's own default (`createWorkspaceStore()`,
- * env-configured), or pass one explicitly (e.g. pointed at a temp directory)
+ * it to fall back to each server's own default (`createWorkspaceStore()` —
+ * the LOCAL file+git store, not env-aware; a deployed composition root must
+ * pass the env-selected store from `createWorkspaceStoreFromEnv`, as
+ * `apps/agent-server/src/wiring/workspace-store.ts` does), or pass one
+ * explicitly (e.g. pointed at a temp directory)
  * so every server reads and writes the same isolated workspace, which is
  * exactly what tests need.
  *

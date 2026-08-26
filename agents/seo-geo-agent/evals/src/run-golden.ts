@@ -7,6 +7,7 @@ import {
   makePromptStore,
   setupTestEnvironment,
   smartFakeRouter,
+  withMeasuredCapture,
 } from "../../__tests__/test-helpers.js";
 
 export interface SeoGeoGoldenRunOutcome {
@@ -21,12 +22,20 @@ export interface SeoGeoGoldenRunOutcome {
  * "golden run" this package's eval suite asserts against (see `types.ts`'s
  * header comment for why this is a structural, not numeric-reproduction,
  * golden run).
+ *
+ * Visibility capture is faked to MEASURED (`withMeasuredCapture`) because the
+ * real `research.captureVisibility` has no capture adapter and returns
+ * `UNAVAILABLE` for every cell, which the workflow now correctly refuses to
+ * score or deliver a report from (AU26 / SCRUM-292). A golden run that held at
+ * step 08a would assert nothing about the seven phases after it. The technical
+ * measurements are deliberately left unavailable, so this stays a structural
+ * golden run — the SEO/GEO readiness scores are still honestly 0.
  */
 export async function runSeoGeoGoldenRun(): Promise<SeoGeoGoldenRunOutcome> {
   const env = await setupTestEnvironment();
   const promptStore = makePromptStore();
   const router = smartFakeRouter([goodFixDrafts(), goodNarrative()]);
-  const workflowFn = createSeoGeoAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+  const workflowFn = createSeoGeoAgentWorkflow({ tools: withMeasuredCapture(env.tools), promptStore, router, autoApprove: true });
 
   const durableStore = new MemoryDurableStepStore();
   const engine = new WorkflowEngine(durableStore);

@@ -1,7 +1,7 @@
 import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createSeoGeoAgentWorkflow } from "../src/workflow/create-seo-geo-agent-workflow.js";
-import { goodFixDrafts, goodNarrative, makePromptStore, setupTestEnvironment, smartFakeRouter, type TestEnvironment } from "./test-helpers.js";
+import { goodFixDrafts, goodNarrative, makePromptStore, setupTestEnvironment, smartFakeRouter, withMeasuredCapture, type TestEnvironment } from "./test-helpers.js";
 
 const baseParams = { clientSlug: "acme", productId: "seo-geo-agent", runKind: "recurring" as const };
 
@@ -24,7 +24,7 @@ describe("12-fix-generation-review gate (RFC-04 §2 Phase 7 — \"nothing ships 
   it("pauses before any fix drafts are generated, then resumes to completed on approval", async () => {
     const promptStore = makePromptStore();
     const router = smartFakeRouter([goodFixDrafts(), goodNarrative()]);
-    const workflowFn = createSeoGeoAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createSeoGeoAgentWorkflow({ tools: withMeasuredCapture(env.tools), promptStore, router });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
     const runId = "seo_geo_run_fixgate_approve";
@@ -52,7 +52,7 @@ describe("12-fix-generation-review gate (RFC-04 §2 Phase 7 — \"nothing ships 
   it("rejecting the gate holds the run before any fix is drafted, and the deliverable never ships", async () => {
     const promptStore = makePromptStore();
     const router = smartFakeRouter([goodFixDrafts(), goodNarrative()]);
-    const workflowFn = createSeoGeoAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createSeoGeoAgentWorkflow({ tools: withMeasuredCapture(env.tools), promptStore, router });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
     const runId = "seo_geo_run_fixgate_reject";

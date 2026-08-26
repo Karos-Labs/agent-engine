@@ -2,7 +2,7 @@ import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createSeoGeoAgentWorkflow } from "../src/workflow/create-seo-geo-agent-workflow.js";
 import type { SeoGeoReport } from "../src/workflow/types.js";
-import { goodFixDrafts, goodNarrative, makePromptStore, setupTestEnvironment, smartFakeRouter, type TestEnvironment } from "./test-helpers.js";
+import { goodFixDrafts, goodNarrative, makePromptStore, setupTestEnvironment, smartFakeRouter, withMeasuredCapture, type TestEnvironment } from "./test-helpers.js";
 
 const params = { runId: "seo_geo_run_gated", clientSlug: "acme", productId: "seo-geo-agent", runKind: "recurring" as const };
 
@@ -22,7 +22,7 @@ describe("RFC-04 §4 gated decisions are surfaced, never silently resolved", () 
     env = await setupTestEnvironment();
     const promptStore = makePromptStore();
     const router = smartFakeRouter([goodFixDrafts(), goodNarrative()]);
-    const workflowFn = createSeoGeoAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+    const workflowFn = createSeoGeoAgentWorkflow({ tools: withMeasuredCapture(env.tools), promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
     const result = await engine.run(workflowFn, params);

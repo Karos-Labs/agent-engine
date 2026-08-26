@@ -18,7 +18,7 @@ function goodPost(overrides: Record<string, unknown> = {}) {
   };
 }
 
-describe("content gate failures (RFC-02 §3 steps 11-17)", () => {
+describe("content gate failures (RFC-02 §3 steps 11-14d)", () => {
   let env: TestEnvironment;
 
   beforeEach(async () => {
@@ -135,7 +135,7 @@ describe("content gate failures (RFC-02 §3 steps 11-17)", () => {
     expect(stepRecords.map((s) => s.stepId)).toContain("13-verify-link-placement");
   });
 
-  it("a planted placeholder marker fails gate.noPlaceholder at step 16 -> held", async () => {
+  it("a planted placeholder marker fails gate.noPlaceholder at step 14c, BEFORE the human gate -> held", async () => {
     const promptStore = makePromptStore();
     const router = fakeRouterSequence([
       finalTurn(
@@ -158,11 +158,15 @@ describe("content gate failures (RFC-02 §3 steps 11-17)", () => {
 
     const stepRecords = await durableStore.listSteps("x_run_gate_placeholder");
     const ids = stepRecords.map((s) => s.stepId);
-    expect(ids).toContain("16-verify-no-placeholder");
-    expect(ids).not.toContain("17-verify-no-leak");
+    expect(ids).toContain("14c-verify-no-placeholder");
+    expect(ids).not.toContain("14d-verify-no-leak");
+    // AU13: the finding must surface BEFORE the human gate. Reaching
+    // `15-batch-review-r0` would mean a reviewer approved a draft that was
+    // then killed with no revision path — the exact bug this ordering fixes.
+    expect(ids).not.toContain("15-batch-review-r0");
   });
 
-  it("a planted credential-shaped leak fails gate.leakCheck at step 17 -> held", async () => {
+  it("a planted credential-shaped leak fails gate.leakCheck at step 14d, BEFORE the human gate -> held", async () => {
     const promptStore = makePromptStore();
     const router = fakeRouterSequence([
       finalTurn(
@@ -185,8 +189,10 @@ describe("content gate failures (RFC-02 §3 steps 11-17)", () => {
 
     const stepRecords = await durableStore.listSteps("x_run_gate_leak");
     const ids = stepRecords.map((s) => s.stepId);
-    expect(ids).toContain("17-verify-no-leak");
+    expect(ids).toContain("14d-verify-no-leak");
     expect(ids).not.toContain("18-persist-deliverable");
+    // AU13: same invariant — caught inside the revision loop, never after approval.
+    expect(ids).not.toContain("15-batch-review-r0");
   });
 
   it("an over-limit first draft triggers a single self-critique revision, then completes", async () => {

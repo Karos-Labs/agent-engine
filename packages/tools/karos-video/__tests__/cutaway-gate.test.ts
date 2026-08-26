@@ -45,7 +45,10 @@ describe("video.cutawayGate", () => {
     const outcome = await tool.execute({ jobPath: "j.json", transcriptPath: "t.json", allowCount: false }, { ctx });
 
     expect(calls).toHaveLength(0);
-    if (outcome.status !== "success") throw new Error("unreachable");
-    expect(outcome.result.verdict).toBe("tooling_error");
+    // AU8: a broken engine/ffprobe run is a tooling_error OUTCOME, never a
+    // successful call carrying a tooling_error verdict.
+    expect(outcome.status).toBe("tooling_error");
+    if (outcome.status === "success") throw new Error("unreachable");
+    expect(outcome.reason).toBeTruthy();
   });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createSeoGeoAgentWorkflow } from "../src/workflow/create-seo-geo-agent-workflow.js";
-import { goodFixDrafts, goodNarrative, makePromptStore, setupTestEnvironment, smartFakeRouter, type TestEnvironment } from "./test-helpers.js";
+import { goodFixDrafts, goodNarrative, makePromptStore, setupTestEnvironment, smartFakeRouter, withMeasuredCapture, type TestEnvironment } from "./test-helpers.js";
 
 const params = { runId: "seo_geo_run_e2e", clientSlug: "acme", productId: "seo-geo-agent", runKind: "recurring" as const };
 
@@ -41,7 +41,11 @@ describe("end-to-end: the 9-phase SEO & GEO agent workflow (RFC-04)", () => {
   it("executes every phase and resolves to completed with both human gates auto-approved", async () => {
     const promptStore = makePromptStore();
     const router = smartFakeRouter([goodFixDrafts(), goodNarrative()]);
-    const workflowFn = createSeoGeoAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+    // Measured capture is required to reach "every phase" at all: with the real
+    // stub every cell is UNAVAILABLE and the run correctly holds at 08a (AU26).
+    // The technical measurements are still all-unavailable, which is why the
+    // SEO/GEO readiness scores below remain 0 — only visibility is measured here.
+    const workflowFn = createSeoGeoAgentWorkflow({ tools: withMeasuredCapture(env.tools), promptStore, router, autoApprove: true });
 
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);

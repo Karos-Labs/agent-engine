@@ -88,6 +88,55 @@ export interface TestEnvironment {
   cleanup: () => Promise<void>;
 }
 
+/**
+ * Replaces `research.captureVisibility` with one that returns a genuinely
+ * MEASURED cell (AU26 / SCRUM-292).
+ *
+ * The real tool has no capture adapter wired and returns a schema-valid
+ * `UNAVAILABLE` cell for every input, which the workflow now refuses to score
+ * or deliver a report from. Any test that wants to exercise the phases PAST
+ * capture — scoring, recommendations, fix drafting, narrative, persistence —
+ * therefore has to supply measured data, the same way every other test here
+ * supplies a fake model rather than calling a real one.
+ *
+ * The cell is deliberately minimal but internally consistent: the brand is
+ * named and cited first, with one citation whose domain matches the client's
+ * own, so the visibility metrics have something coherent to compute over.
+ */
+export function withMeasuredCapture(tools: ReturnType<typeof createAllKarosTools>): ReturnType<typeof createAllKarosTools> {
+  const real = tools["research.captureVisibility"]!;
+  return {
+    ...tools,
+    "research.captureVisibility": {
+      ...real,
+      execute: async (args: unknown) => {
+        const { promptId, engine } = args as { promptId: string; engine: string };
+        return {
+          status: "success" as const,
+          result: {
+            runId: `measured-${promptId}-${engine}`,
+            fromCache: false,
+            ageMs: 0,
+            cell: {
+              promptId,
+              engine,
+              captureTier: "MEASURED",
+              brandMentioned: true,
+              brandFirstMentionCharOffset: 12,
+              brandCited: true,
+              brandFirstCitationOrdinal: 1,
+              competitorsNamed: [],
+              citations: [{ domain: "acme.example", ordinal: 1 }],
+              mentionCounts: { "Acme Corp": 1 },
+              sentimentPerMention: [{ mentionIndex: 0, label: "pos" as const }],
+            },
+          },
+        };
+      },
+    },
+  } as ReturnType<typeof createAllKarosTools>;
+}
+
 export async function setupTestEnvironment(opts: { withProfile?: boolean; withBrand?: boolean; withCompetitors?: boolean } = {}): Promise<TestEnvironment> {
   const withProfile = opts.withProfile ?? true;
   const withBrand = opts.withBrand ?? true;

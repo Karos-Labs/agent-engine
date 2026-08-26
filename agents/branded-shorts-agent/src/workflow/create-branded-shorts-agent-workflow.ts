@@ -55,7 +55,12 @@ async function runGateTool(tools: AgentToolRegistry, toolName: string, args: unk
   }
   const outcome = await tool.execute(args, { ctx });
   if (outcome.status !== "success") {
-    throw new WorkflowToolingFailure(`"${toolName}" call failed: ${outcome.status}`);
+    // `reason` carries the actual diagnosis — the Python traceback tail, the
+    // missing engine script, the ffprobe stderr. AU8 moved these from a
+    // `verdict` field inside a success payload to a real `tooling_error`
+    // outcome, so this is now the path a broken gate takes; dropping `reason`
+    // here would trade the old wrong-status bug for a no-detail one.
+    throw new WorkflowToolingFailure(`"${toolName}" call failed: ${outcome.status}: ${outcome.reason}`);
   }
   return outcome.result as GateVerdict;
 }

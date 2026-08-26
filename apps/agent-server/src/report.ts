@@ -46,9 +46,12 @@ const X_AGENT_STEP_IDS = [
   "12-verify-brand-compliance",
   "13-verify-link-placement",
   "14-render-preview-check",
+  // AU13: these run INSIDE the revision loop, before the gate — matching every
+  // sibling channel agent. They used to run after `15-batch-review`, which made
+  // a post-approval leak unrevisable.
+  "14c-verify-no-placeholder",
+  "14d-verify-no-leak",
   "15-batch-review-r0",
-  "16-verify-no-placeholder",
-  "17-verify-no-leak",
   "18-persist-deliverable",
   "19-persist-manifest",
   "20-commit-and-record",

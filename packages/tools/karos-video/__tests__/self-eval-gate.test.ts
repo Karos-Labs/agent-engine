@@ -69,8 +69,11 @@ describe("video.selfEvalGate", () => {
     const tool = createSelfEvalGate({ runner });
     const outcome = await tool.execute({ videoPath: "/missing.mp4", renderWarnings: [] }, { ctx });
 
-    if (outcome.status !== "success") throw new Error("unreachable");
-    expect(outcome.result.verdict).toBe("tooling_error");
+    // AU8: a broken engine/ffprobe run is a tooling_error OUTCOME, never a
+    // successful call carrying a tooling_error verdict.
+    expect(outcome.status).toBe("tooling_error");
+    if (outcome.status === "success") throw new Error("unreachable");
+    expect(outcome.reason).toBeTruthy();
   });
 
   it("is a tooling_error on unparseable ffprobe output, never silently passed", async () => {
@@ -78,8 +81,11 @@ describe("video.selfEvalGate", () => {
     const tool = createSelfEvalGate({ runner });
     const outcome = await tool.execute({ videoPath: "/edit/final.mp4", renderWarnings: [] }, { ctx });
 
-    if (outcome.status !== "success") throw new Error("unreachable");
-    expect(outcome.result.verdict).toBe("tooling_error");
+    // AU8: a broken engine/ffprobe run is a tooling_error OUTCOME, never a
+    // successful call carrying a tooling_error verdict.
+    expect(outcome.status).toBe("tooling_error");
+    if (outcome.status === "success") throw new Error("unreachable");
+    expect(outcome.reason).toBeTruthy();
   });
 
   it("folds carried-forward render warnings (e.g. caption density) into evidence on a pass, without failing over them", async () => {
