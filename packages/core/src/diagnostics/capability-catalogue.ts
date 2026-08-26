@@ -120,9 +120,19 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
     requires: [{ name: "GOOGLE_PLACES_KEY", kind: "required" }],
     whenAbsent:
       "The named_venue route has no place-verified source and falls through to generic image search (DuckDuckGo, Openverse, Wikimedia). A slide asking for a specific venue gets a photo that merely looks plausible, which the rights gate should and usually will refuse.",
-    // No rationale on purpose: this one is genuinely undecided. GOOGLE_PLACES_KEY
-    // is documented in .env.example but wired in NEITHER cloudbuild file, so the
-    // capability has never been active in any deployed environment (AU51).
+    // DECIDED 2026-08 (AU56 / SCRUM-355): option A — issue the key. This row
+    // carried no rationale for exactly one working day, which is what it is
+    // for: GOOGLE_PLACES_KEY was documented in .env.example and wired in
+    // NEITHER cloudbuild, so the route had been falling through both of its
+    // intended tiers to generic image search in every environment since it was
+    // written, and nothing said so.
+    //
+    // prep now has the key via Secret Manager (`google-places-key`). PROD DOES
+    // NOT — its key has not been created yet, so a prod report still shows this
+    // DISABLED. That is correct and intended, and the rationale here is what
+    // keeps it EXPECTED rather than a fresh question.
+    rationale:
+      "AU56 decided to issue the key. prep is wired (Secret Manager: google-places-key); prod's key is not created yet, so prod remains DISABLED until it is.",
   },
   {
     id: "image-generation",
@@ -250,6 +260,8 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
       { name: "GEMINI_API_KEY", kind: "enhances" },
       { name: "MODEL_GARDEN_PROJECT_ID", kind: "enhances" },
       { name: "OPENAI_COMPATIBLE_BASE_URL", kind: "enhances" },
+      { name: "OPENAI_COMPATIBLE_API_KEY", kind: "enhances" },
+      { name: "OPENAI_API_KEY", kind: "enhances" },
     ],
     whenAbsent:
       "Those vendors are not built. A step whose modelPolicy names one fails loudly at the point of use naming the exact missing variable — which is correct, and is why this is not a silent degradation.",
@@ -287,6 +299,16 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
       "Every route is reachable by anything that can invoke the Cloud Run service, with no application-layer identity check. Tenancy below the API stays structural, but the API itself performs no authorisation.",
     rationale:
       "AUTH_ENABLED ships false on purpose (AU1 / SCRUM-287). Enabling it is SCRUM-331, blocked on SCRUM-330 (the portal's fail-open token fetch). AUTH_AUDIENCE is already wired so the flag can be flipped in one change.",
+    security: true,
+  },
+  {
+    id: "local-dev-auth-bypass",
+    title: "Local development sign-in — a static token standing in for a Google identity",
+    owner: "apps/agent-server (auth/service-identity.ts)",
+    requires: [{ name: "AUTH_DEV_TOKEN", kind: "enhances" }],
+    whenAbsent:
+      "curl and a local portal cannot authenticate against a locally-enabled auth setup; they must mint a real Google identity token instead. Absent is the SAFE state, and this row exists so that its PRESENCE is visible: a stray value on a deployment that reads as production is refused outright by isProduction, but the report should still show it rather than leave it unaccounted for.",
+    rationale: "Unset everywhere, which is correct. It is refused outright when FIRESTORE_DATABASE_ID is not 'prep', so it cannot become a production bypass.",
     security: true,
   },
   {
