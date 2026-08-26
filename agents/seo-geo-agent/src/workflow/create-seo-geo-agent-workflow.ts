@@ -374,8 +374,44 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
         responseSetHash: sha256Hex(sorted),
         attemptedCount: captureSlots.length,
         capturedCount: cells.length,
+        // Same "usable cell" test as `denominatorFor`'s N_e branch
+        // (karos-seo-geo/src/visibility-metrics.ts) — one definition, so the
+        // hold below and the scorer can never disagree about what counts.
+        measuredCount: cells.filter((c) => c.captureTier !== "UNAVAILABLE").length,
       };
     });
+
+    // ── 08a: refuse to score, narrate, or deliver a report built on nothing ──
+    //
+    // Thrown here at workflow level rather than inside step 08, matching the
+    // gate-rejection holds above: `step.code` records `status: "failed"` for
+    // ANY throw including this signal (packages/workflow/src/primitives/step-code.ts),
+    // and step 08 did not fail — it correctly assembled an empty response set.
+    //
+    // The test is `measuredCount`, NOT `capturedCount`. Every capture slot
+    // completes successfully today: `research.captureVisibility` has no real
+    // capture adapter wired and returns a schema-valid
+    // `captureTier: "UNAVAILABLE"` cell for every (prompt, engine) pair
+    // (packages/tools/karos-research/src/capture-visibility.ts). So
+    // `capturedCount` equals the full prompt×engine matrix on a run that
+    // measured nothing whatsoever, and a `capturedCount === 0` guard would be
+    // dead code that reads like a safety valve.
+    //
+    // Downstream is honest in isolation — `grade_data_only_rule` scores an
+    // unavailable input 0 and excludes it from `dataCoveragePct`, so the
+    // numbers themselves aren't fabricated — but nothing stopped the run
+    // persisting and delivering a client-facing report whose every input was
+    // absent. Holding is the correct terminal state: it is recoverable, it
+    // spends no further model budget on fix-drafting and narrative, and it
+    // surfaces the disconnected fuel line instead of formatting it.
+    //
+    // This is a stopgap for the missing capture layer, not a fix for it.
+    if (visibilityCapture.measuredCount === 0) {
+      throw new WorkflowHeld(
+        `AI-visibility capture measured nothing: ${visibilityCapture.capturedCount} of ${visibilityCapture.attemptedCount} cells captured, all "UNAVAILABLE". ` +
+          `Refusing to score or deliver a report with no measured data behind it.`,
+      );
+    }
 
     // ── 09: deterministic scoring (RFC-04 §2 Phase 4) — the N vs N_e dual-freeze (§4) ──
     const scoring = await wf.step.code("09-compute-scores", async (): Promise<SeoGeoScoringResult> => {

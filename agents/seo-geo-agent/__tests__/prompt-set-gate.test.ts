@@ -1,7 +1,7 @@
 import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createSeoGeoAgentWorkflow } from "../src/workflow/create-seo-geo-agent-workflow.js";
-import { goodFixDrafts, goodNarrative, makePromptStore, setupTestEnvironment, smartFakeRouter, type TestEnvironment } from "./test-helpers.js";
+import { goodFixDrafts, goodNarrative, makePromptStore, setupTestEnvironment, smartFakeRouter, withMeasuredCapture, type TestEnvironment } from "./test-helpers.js";
 
 const baseParams = { clientSlug: "acme", productId: "seo-geo-agent", runKind: "recurring" as const };
 
@@ -62,7 +62,7 @@ describe("03-prompt-set-review gate (RFC-04 §2 Phase 1)", () => {
   it("approving the gate resumes the run through capture and scoring", async () => {
     const promptStore = makePromptStore();
     const router = smartFakeRouter([goodFixDrafts(), goodNarrative()]);
-    const workflowFn = createSeoGeoAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createSeoGeoAgentWorkflow({ tools: withMeasuredCapture(env.tools), promptStore, router });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
     const runId = "seo_geo_run_promptgate_approve";
@@ -87,7 +87,7 @@ describe("03-prompt-set-review gate (RFC-04 §2 Phase 1)", () => {
   it("options.autoApprove skips the gate entirely and records a synthetic system approval", async () => {
     const promptStore = makePromptStore();
     const router = smartFakeRouter([goodFixDrafts(), goodNarrative()]);
-    const workflowFn = createSeoGeoAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+    const workflowFn = createSeoGeoAgentWorkflow({ tools: withMeasuredCapture(env.tools), promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
@@ -105,7 +105,7 @@ describe("03-prompt-set-review gate (RFC-04 §2 Phase 1)", () => {
 
     // Baseline run.
     const router1 = smartFakeRouter([goodFixDrafts(), goodNarrative()]);
-    const workflow1 = createSeoGeoAgentWorkflow({ tools: env.tools, promptStore, router: router1, autoApprove: true });
+    const workflow1 = createSeoGeoAgentWorkflow({ tools: withMeasuredCapture(env.tools), promptStore, router: router1, autoApprove: true });
     const durableStore1 = new MemoryDurableStepStore();
     const engine1 = new WorkflowEngine(durableStore1);
     const firstRunId = "seo_geo_run_reuse_baseline";
@@ -124,7 +124,7 @@ describe("03-prompt-set-review gate (RFC-04 §2 Phase 1)", () => {
     // Recurring run — a fresh MemoryDurableStepStore (a different run), same
     // WorkspaceStore/tools, so `memory.read`'s beliefs carry the frozen set forward.
     const router2 = smartFakeRouter([goodFixDrafts(), goodNarrative()]);
-    const workflow2 = createSeoGeoAgentWorkflow({ tools: env.tools, promptStore, router: router2, autoApprove: true });
+    const workflow2 = createSeoGeoAgentWorkflow({ tools: withMeasuredCapture(env.tools), promptStore, router: router2, autoApprove: true });
     const durableStore2 = new MemoryDurableStepStore();
     const engine2 = new WorkflowEngine(durableStore2);
     const secondRunId = "seo_geo_run_reuse_recurring";

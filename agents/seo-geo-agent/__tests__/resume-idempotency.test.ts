@@ -2,7 +2,7 @@ import { describe, expect, it, vi, afterEach, beforeEach } from "vitest";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import type { AgentToolRegistry } from "@agent-engine/core";
 import { createSeoGeoAgentWorkflow } from "../src/workflow/create-seo-geo-agent-workflow.js";
-import { goodFixDrafts, goodNarrative, makePromptStore, setupTestEnvironment, smartFakeRouter, type TestEnvironment } from "./test-helpers.js";
+import { goodFixDrafts, goodNarrative, makePromptStore, setupTestEnvironment, smartFakeRouter, withMeasuredCapture, type TestEnvironment } from "./test-helpers.js";
 
 const params = { runId: "seo_geo_run_resume", clientSlug: "acme", productId: "seo-geo-agent", runKind: "recurring" as const };
 
@@ -35,7 +35,7 @@ describe("checkpoint resume idempotency (RFC-01 §8.1) — steps and fan-out slo
   it("re-running engine.run() with the same runId does not re-invoke any already-completed step or slot", async () => {
     const promptStore = makePromptStore();
     const router = smartFakeRouter([goodFixDrafts(), goodNarrative()]);
-    const { spied, callCounts } = spyOnAllTools(env.tools);
+    const { spied, callCounts } = spyOnAllTools(withMeasuredCapture(env.tools));
     const workflowFn = createSeoGeoAgentWorkflow({ tools: spied, promptStore, router, autoApprove: true });
 
     const durableStore = new MemoryDurableStepStore();
@@ -63,7 +63,7 @@ describe("checkpoint resume idempotency (RFC-01 §8.1) — steps and fan-out slo
   it("resumes correctly after a mid-run crash: earlier steps aren't redone, the run still reaches completed", async () => {
     const promptStore = makePromptStore();
     const router = smartFakeRouter([goodFixDrafts(), goodNarrative()]);
-    const { spied, callCounts } = spyOnAllTools(env.tools);
+    const { spied, callCounts } = spyOnAllTools(withMeasuredCapture(env.tools));
 
     // A wrapper that throws once, right after the deliverable is persisted,
     // simulating a crash partway through Phase 8's final persistence steps.

@@ -69,7 +69,28 @@ export interface SeoGeoVisibilityCapture {
   cells: SeoGeoCaptureCell[];
   responseSetHash: string;
   attemptedCount: number;
+  /**
+   * Cells whose capture slot COMPLETED — i.e. the tool call did not throw.
+   * This counts tooling success, NOT data availability: a cell that came back
+   * `captureTier: "UNAVAILABLE"` is still "captured" by this measure, because
+   * the capture itself worked and honestly reported having nothing. Do not
+   * use this to decide whether a run has enough data to score — see
+   * `measuredCount`.
+   */
   capturedCount: number;
+  /**
+   * Cells carrying data a grade may actually be computed from —
+   * `captureTier !== "UNAVAILABLE"`, the same test `denominatorFor` in
+   * `karos-seo-geo/src/visibility-metrics.ts` uses for `N_e`, so the two can
+   * never disagree about what "usable" means.
+   *
+   * This is the number that answers "did this run measure anything at all".
+   * `capturedCount` cannot: `research.captureVisibility` currently has no real
+   * capture adapter and returns a successful, schema-valid `UNAVAILABLE` cell
+   * for every input, so `capturedCount` equals the full prompt×engine matrix
+   * on a run that measured precisely nothing.
+   */
+  measuredCount: number;
 }
 
 /** Phase 4's output, doubled for the N/N_e dual-freeze (RFC-04 §4's "BLOCKING scoring-model decision for Daniel"). */
