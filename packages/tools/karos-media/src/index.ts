@@ -4,6 +4,8 @@ import { defineTool, notAvailable } from "@agent-engine/tool-common";
 import { z } from "zod";
 import { createFindImages, FindImagesInputSchema } from "./find-images.js";
 import { createGenerateImage, type ImageGenerationClient } from "./generate-image.js";
+import { createGenerateVideo, type VideoGenerationClient } from "./generate-video.js";
+import { createHarvestVideo, type VideoHarvestProvider } from "./harvest-video.js";
 import { createScrapeImages } from "./scrape-images.js";
 import { createIngestAssets, type ObjectReader } from "./ingest-assets.js";
 import { createScraperProvider, type ScraperProvider } from "@agent-engine/tool-karos-scraper";
@@ -19,6 +21,8 @@ export * from "./ingest-assets.js";
 export * from "./routing.js";
 export * from "./quality.js";
 export * from "./brand-logo.js";
+export * from "./generate-video.js";
+export * from "./harvest-video.js";
 
 export interface KarosMediaToolsOptions {
   env?: Record<string, string | undefined>;
@@ -29,6 +33,10 @@ export interface KarosMediaToolsOptions {
   fetchImpl?: typeof fetch;
   /** Overrides the env-derived generation client. Tests pass a fake; `null` disables generation explicitly. */
   generationClient?: ImageGenerationClient | null;
+  /** A video-harvest backend (Tier 2b). None exists in-repo yet; tests inject one. */
+  videoHarvestProvider?: VideoHarvestProvider | undefined;
+  /** Overrides the env-derived VIDEO generation client (`video.generateClip`). Tests pass a fake; `null` disables it explicitly. */
+  videoGenerationClient?: VideoGenerationClient | null;
   /** Overrides the env-derived scraper backing the scrape tier. `null` disables it explicitly. */
   scraper?: ScraperProvider | null;
   /** Reads `gs://` attachments for Tier 0. Without it a gs:// upload is reported unmet rather than skipped. */
@@ -114,7 +122,30 @@ export function createKarosMediaTools(options: KarosMediaToolsOptions = {}): Age
           : (options.generationClient ?? createImageGenerationClientFromEnv(options.env ?? process.env)),
       ...(readImageModel(options.env ?? process.env) ? { model: readImageModel(options.env ?? process.env)! } : {}),
     }),
+    // ── Video Tier 2b: contextual web harvest. A seam awaiting a real
+    // backend; not_available until one is wired, so the cascade skips it.
+    "media.harvestVideo": createHarvestVideo({
+      ...(options.videoHarvestProvider !== undefined ? { provider: options.videoHarvestProvider } : {}),
+      ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    }),
+    // ── Video Tier 3: Veo generation, the clip cascade's last resort. Same
+    // registered-always / not_available-when-unconfigured contract as
+    // image.generate, on the same Vertex credential.
+    "video.generateClip": createGenerateVideo({
+      client:
+        options.videoGenerationClient === null
+          ? undefined
+          : (options.videoGenerationClient ??
+            (createImageGenerationClientFromEnv(options.env ?? process.env) as unknown as VideoGenerationClient | undefined)),
+      ...(readVideoModel(options.env ?? process.env) ? { model: readVideoModel(options.env ?? process.env)! } : {}),
+      ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    }),
   };
+}
+
+function readVideoModel(env: Record<string, string | undefined>): string | undefined {
+  const value = env["VIDEO_GEN_MODEL"]?.trim();
+  return value && value.length > 0 ? value : undefined;
 }
 
 function readImageModel(env: Record<string, string | undefined>): string | undefined {

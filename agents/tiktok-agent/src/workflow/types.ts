@@ -24,6 +24,12 @@ export const CLIP_DURATION_MAX_SECONDS = 120;
  * back to "any podcast" would be clipping strangers' content on their behalf.
  */
 export const TikTokClipConfigSchema = z.object({
+  /**
+   * The verified inventory the client may draw on. Entries that are
+   * `gs://`/`https://` URIs are OWNED FOOTAGE the sourcing cascade's Tier 2a
+   * can ingest directly (a podcast episode, a keynote recording); plain-name
+   * entries remain editorial identifiers of shows the client may clip.
+   */
   sourcePool: z.array(z.string().min(1)).min(1),
   /** Where the client's own long-form media lives, when they have footage of their own. */
   ownedFootageRoot: z.string().min(1).optional(),
@@ -31,8 +37,13 @@ export const TikTokClipConfigSchema = z.object({
   guestWatchlist: z.array(z.string().min(1)).default([]),
   /** Subjects this client will not clip, on top of the global topic guardrail. */
   narrowing: z.array(z.string().min(1)).default([]),
+  /** A standing series header ("PITCH SCHOOL | LESSON 15" style) rendered in the branded frame's top bar. */
+  seriesHeader: z.string().min(1).max(60).optional(),
 });
 export type TikTokClipConfig = z.infer<typeof TikTokClipConfigSchema>;
+
+/** Which sourcing tier actually produced this run's footage — recorded on the intake, the deliverable, and the hold reason when every tier came up dry. */
+export type ClipSourceTier = "user-asset" | "owned-footage" | "web-harvest" | "generated";
 
 /** What the run resolved before any model was asked anything. */
 export interface TikTokIntake {
@@ -43,6 +54,8 @@ export interface TikTokIntake {
   reservationKey?: string;
   /** The media file to clip. */
   sourcePath: string;
+  /** Which tier the footage came from. A `generated` source has no transcript — the spoken-moment steps are skipped for it. */
+  sourceTier: ClipSourceTier;
 }
 
 /**

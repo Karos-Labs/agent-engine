@@ -1,18 +1,30 @@
 import { describe, expect, it } from "vitest";
 import { fileURLToPath } from "node:url";
 import * as path from "node:path";
+import * as os from "node:os";
+import { promises as fs } from "node:fs";
+import type { ZodType } from "zod";
 import { FilePromptStore, type AgentToolRegistry, type CompletionResult, type ModelRouter } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
+import {
+  BrandFrameInputSchema,
+  CutClipInputSchema,
+  SelfEvalGateInputSchema,
+  TranscribeInputSchema,
+  UploadDeliverableInputSchema,
+} from "@agent-engine/tool-karos-video";
+import { GenerateVideoInputSchema, HarvestVideoInputSchema } from "@agent-engine/tool-karos-media";
 import { createTikTokAgentWorkflow } from "../src/workflow/create-tiktok-agent-workflow.js";
 
 /**
  * The clip pipeline end to end, against stubbed tools.
  *
- * The video tools are stubbed rather than real because the real ones shell out
- * to a Python engine and ffmpeg; what is worth testing here is the workflow's
- * own decisions — which failures are `held` versus `blocked_intake` versus
- * `tooling_error`, whether a reservation survives a failed run, and whether a
- * gate can be reached without the one before it passing.
+ * Every video/media stub validates its arguments against the REAL tool's
+ * input schema — never a permissive fake. The previous generation of this
+ * suite used schema-less stubs, and that is exactly how three calls with the
+ * wrong argument shapes (`video.render {sourcePath, cuts…}` against the real
+ * `{profilePath, jobPath}`) sat green in CI while never once succeeding in
+ * production. A contract drift now fails here, loudly, before it ships.
  */
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -68,28 +80,40 @@ interface StubOptions {
   failingGate?: string;
   reserveFails?: boolean;
   forbiddenTopics?: string[];
+  /** Register `media.harvestVideo` answering success (Tier 2b serves). */
+  harvestServes?: boolean;
+  /** Register `video.generateClip` answering success (Tier 3 serves). */
+  generateServes?: boolean;
+  /** Register `video.uploadDeliverable` (a media store is configured). */
+  withUpload?: boolean;
 }
 
 /** Records every tool call so a test can assert what did and did not happen. */
 interface Harness {
   tools: AgentToolRegistry;
   calls: string[];
+  /** Every `ledger.writeDeliverable` payload, for asserting what shipped. */
+  deliverables: Array<Record<string, unknown>>;
 }
 
 function stubTools(opts: StubOptions = {}): Harness {
   const calls: string[] = [];
+  const deliverables: Array<Record<string, unknown>> = [];
   const ok = (result: unknown) => ({ status: "success" as const, result });
   const pass = (name: string) =>
     opts.failingGate === name
       ? { verdict: "content_fail" as const, reason: `${name} said no` }
       : { verdict: "pass" as const, reason: "" };
 
-  const tool = (name: string, run: (args: never) => unknown) => ({
+  const tool = (name: string, run: (args: never) => unknown, schema?: ZodType) => ({
     name,
     version: "1.0.0",
-    inputSchema: { safeParse: (v: unknown) => ({ success: true as const, data: v }) },
+    inputSchema: schema ?? { safeParse: (v: unknown) => ({ success: true as const, data: v }) },
     async execute(args: never) {
       calls.push(name);
+      // The fakeRenderCarousel discipline: a real tool validates its input at
+      // execute, so the fake must too — a ZodError here IS the test failing.
+      if (schema) schema.parse(args);
       return run(args);
     },
   });
@@ -102,7 +126,7 @@ function stubTools(opts: StubOptions = {}): Harness {
   const tools: Record<string, unknown> = {
     "client.getConfig": tool("client.getConfig", () => ok(config)),
     "client.getVoiceRules": tool("client.getVoiceRules", () => ok({ tone: "direct" })),
-    "client.getBrand": tool("client.getBrand", () => ok({ forbiddenTerms: [] })),
+    "client.getBrand": tool("client.getBrand", () => ok({ forbiddenTerms: [], colors: { neutralDark: "#101418", neutralLight: "#F2F0EA" }, handle: "acmeco" })),
     "client.getStrategy": tool("client.getStrategy", () => ok({ markdown: "" })),
     "topics.reserve": tool("topics.reserve", () =>
       opts.reserveFails
@@ -111,27 +135,61 @@ function stubTools(opts: StubOptions = {}): Harness {
     ),
     "topics.commit": tool("topics.commit", () => ok({ committed: true })),
     "topics.release": tool("topics.release", () => ok({ released: true })),
-    "video.transcribe": tool("video.transcribe", () => ok({ words: opts.transcriptWords ?? transcriptWords() })),
-    "video.cutGate": tool("video.cutGate", () => ok(pass("video.cutGate"))),
-    "video.render": tool("video.render", () => ok({ outputPath: "/tmp/clip.mp4" })),
-    "video.selfEvalGate": tool("video.selfEvalGate", () => ok(pass("video.selfEvalGate"))),
-    "video.brandGate": tool("video.brandGate", () => ok(pass("video.brandGate"))),
+    "video.transcribe": tool("video.transcribe", () => ok({ words: opts.transcriptWords ?? transcriptWords() }), TranscribeInputSchema),
+    "video.cutClip": tool("video.cutClip", (args) => ok({ outputPath: (args as { outputPath: string }).outputPath, durationSeconds: 40 }), CutClipInputSchema),
+    "video.brandFrame": tool(
+      "video.brandFrame",
+      (args) => ok({ outputPath: (args as { outputPath: string }).outputPath, durationSeconds: 40, applied: ["bars"] }),
+      BrandFrameInputSchema,
+    ),
+    "video.selfEvalGate": tool("video.selfEvalGate", () => ok(pass("video.selfEvalGate")), SelfEvalGateInputSchema),
     "gate.lintPost": tool("gate.lintPost", () => ok(pass("gate.lintPost"))),
     "gate.brandCompliance": tool("gate.brandCompliance", () => ok(pass("gate.brandCompliance"))),
     "gate.noPlaceholder": tool("gate.noPlaceholder", () => ok(pass("gate.noPlaceholder"))),
     "gate.leakCheck": tool("gate.leakCheck", () => ok(pass("gate.leakCheck"))),
-    "ledger.writeDeliverable": tool("ledger.writeDeliverable", () => ok({ id: "deliv-1", created: true })),
+    "ledger.writeDeliverable": tool("ledger.writeDeliverable", (args) => {
+      deliverables.push((args as { deliverable: Record<string, unknown> }).deliverable);
+      return ok({ id: "deliv-1", created: true });
+    }),
     "memory.appendDecision": tool("memory.appendDecision", () => ok({ id: "dec-1" })),
   };
-  return { tools: tools as unknown as AgentToolRegistry, calls };
+  if (opts.harvestServes !== undefined) {
+    tools["media.harvestVideo"] = tool(
+      "media.harvestVideo",
+      () =>
+        opts.harvestServes
+          ? ok({ path: ".media-cache/run/harvested-clip.mp4", sourceUrl: "https://example.com/talk" })
+          : { status: "content_fail" as const, reason: "nothing usable found" },
+      HarvestVideoInputSchema,
+    );
+  }
+  if (opts.generateServes !== undefined) {
+    tools["video.generateClip"] = tool(
+      "video.generateClip",
+      () =>
+        opts.generateServes
+          ? ok({ path: ".media-cache/run/generated-clip.mp4", model: "veo-2.0-generate-001" })
+          : { status: "not_available" as const, reason: "no Vertex project configured" },
+      GenerateVideoInputSchema,
+    );
+  }
+  if (opts.withUpload) {
+    tools["video.uploadDeliverable"] = tool(
+      "video.uploadDeliverable",
+      (args) => ok({ gcsUri: `gs://media/${(args as { objectPath: string }).objectPath}`, signedUrl: "https://signed.example/clip.mp4" }),
+      UploadDeliverableInputSchema,
+    );
+  }
+  return { tools: tools as unknown as AgentToolRegistry, calls, deliverables };
 }
 
-async function run(harness: Harness, runId: string, input: Record<string, unknown> = {}, candidates: unknown[] = [GOOD_MOMENT, GOOD_COMMENTARY]) {
+async function run(harness: Harness, runId: string, input: Record<string, unknown> = {}, candidates: unknown[] = [GOOD_MOMENT, GOOD_COMMENTARY], repoRoot?: string) {
   const workflow = createTikTokAgentWorkflow({
     tools: harness.tools,
     promptStore: new FilePromptStore(PROMPTS_ROOT),
     router: smartFakeRouter(candidates),
     autoApprove: true,
+    ...(repoRoot !== undefined ? { repoRoot } : {}),
   });
   return new WorkflowEngine(new MemoryDurableStepStore()).run(workflow, {
     ...PARAMS,
@@ -141,8 +199,8 @@ async function run(harness: Harness, runId: string, input: Record<string, unknow
 }
 
 describe("tiktok-agent clip pipeline", () => {
-  it("produces one credited, gated clip on the happy path", async () => {
-    const h = stubTools();
+  it("produces one credited, gated, branded clip on the happy path", async () => {
+    const h = stubTools({ withUpload: true });
     const result = await run(h, "run-tt-happy");
 
     expect(result.status).toBe("completed");
@@ -152,9 +210,31 @@ describe("tiktok-agent clip pipeline", () => {
     expect(output.lane).toBe("commentary-clip");
     expect(output.durationSeconds).toBeGreaterThanOrEqual(20);
 
+    // The real render path ran: cut, branded frame, blocking QA, upload.
+    expect(h.calls).toContain("video.cutClip");
+    expect(h.calls).toContain("video.brandFrame");
+    expect(h.calls).toContain("video.selfEvalGate");
+    expect(h.calls).toContain("video.uploadDeliverable");
+
+    // The deliverable carries what the portal materializer needs.
+    expect(h.deliverables[0]).toMatchObject({
+      sourceTier: "user-asset",
+      signedUrl: "https://signed.example/clip.mp4",
+      gcsUri: "gs://media/tiktok/acme/run-tt-happy/clip.mp4",
+      durationSeconds: 40,
+    });
+
     // The reservation is burned only because a clip actually shipped.
     expect(h.calls).toContain("topics.commit");
     expect(h.calls).not.toContain("topics.release");
+  });
+
+  it("still completes without an upload tool — no media store configured is not a failure", async () => {
+    const h = stubTools();
+    const result = await run(h, "run-tt-no-store");
+    expect(result.status).toBe("completed");
+    expect(h.deliverables[0]).not.toHaveProperty("signedUrl");
+    expect(h.deliverables[0]).toMatchObject({ sourceTier: "user-asset" });
   });
 
   it("blocks intake when the client has no clip config, rather than clipping anything it likes", async () => {
@@ -163,24 +243,7 @@ describe("tiktok-agent clip pipeline", () => {
     const result = await run(h, "run-tt-noconfig");
 
     expect(result.status).toBe("blocked_intake");
-    expect(h.calls).not.toContain("video.render");
-  });
-
-  it("blocks intake when the run carries no source media", async () => {
-    const h = stubTools();
-    const workflow = createTikTokAgentWorkflow({
-      tools: h.tools,
-      promptStore: new FilePromptStore(PROMPTS_ROOT),
-      router: smartFakeRouter([GOOD_MOMENT, GOOD_COMMENTARY]),
-      autoApprove: true,
-    });
-    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflow, {
-      ...PARAMS,
-      runId: "run-tt-nosource",
-      input: {},
-    });
-
-    expect(result.status).toBe("blocked_intake");
+    expect(h.calls).not.toContain("video.cutClip");
   });
 
   it("holds rather than lowering the bar when the catalog has no candidate", async () => {
@@ -190,7 +253,7 @@ describe("tiktok-agent clip pipeline", () => {
     const result = await run(h, "run-tt-nocandidate");
 
     expect(result.status).toBe("held");
-    expect(h.calls).not.toContain("video.render");
+    expect(h.calls).not.toContain("video.cutClip");
   });
 
   it("holds on a silent source instead of guessing a moment out of a blank timeline", async () => {
@@ -208,7 +271,7 @@ describe("tiktok-agent clip pipeline", () => {
 
     expect(result.status).toBe("held");
     expect(h.calls).toContain("topics.release");
-    expect(h.calls).not.toContain("video.render");
+    expect(h.calls).not.toContain("video.cutClip");
   });
 
   it("refuses a caption that does not name the source, even though a gate did not object", async () => {
@@ -221,7 +284,7 @@ describe("tiktok-agent clip pipeline", () => {
     ]);
 
     expect(result.status).toBe("held");
-    expect(h.calls).not.toContain("video.render");
+    expect(h.calls).not.toContain("video.cutClip");
     expect(h.calls).toContain("topics.release");
   });
 
@@ -237,12 +300,12 @@ describe("tiktok-agent clip pipeline", () => {
     expect(result.status).toBe("held");
     expect(h.calls).toContain("topics.release");
     // Compliance runs before the render: a clip that cannot ship is never made.
-    expect(h.calls).not.toContain("video.render");
+    expect(h.calls).not.toContain("video.cutClip");
   });
 
-  it.each([["video.selfEvalGate"], ["video.brandGate"]])("holds when the blocking QA gate %s fails", async (gate) => {
-    const h = stubTools({ failingGate: gate });
-    const result = await run(h, `run-tt-${gate.replace(".", "-")}`);
+  it("holds when the blocking QA gate video.selfEvalGate fails", async () => {
+    const h = stubTools({ failingGate: "video.selfEvalGate" });
+    const result = await run(h, "run-tt-video-selfEvalGate");
 
     expect(result.status).toBe("held");
     expect(h.calls).toContain("topics.release");
@@ -252,7 +315,7 @@ describe("tiktok-agent clip pipeline", () => {
   it("never persists a deliverable for a run that did not clear every gate", async () => {
     // Swept across every gate rather than asserted once: the property is that
     // no single failing gate has a path to the ledger.
-    for (const gate of ["video.cutGate", "gate.lintPost", "gate.leakCheck", "video.selfEvalGate", "video.brandGate"]) {
+    for (const gate of ["gate.lintPost", "gate.leakCheck", "video.selfEvalGate"]) {
       const h = stubTools({ failingGate: gate });
       const result = await run(h, `run-tt-sweep-${gate.replace(".", "-")}`);
       expect(result.status, gate).toBe("held");
@@ -309,9 +372,9 @@ describe("tiktok-agent clip pipeline", () => {
       "video.transcribe": {
         name: "video.transcribe",
         version: "1.0.0",
-        inputSchema: { safeParse: (v: unknown) => ({ success: true as const, data: v }) },
+        inputSchema: TranscribeInputSchema,
         async execute(args: unknown) {
-          transcribedPaths.push((args as { videoPath: string }).videoPath);
+          transcribedPaths.push(TranscribeInputSchema.parse(args).videoPath);
           return { status: "success" as const, result: { words: transcriptWords() } };
         },
       },
@@ -368,25 +431,6 @@ describe("tiktok-agent clip pipeline", () => {
     expect(result.status).toBe("completed");
   }, 20_000);
 
-  it("blocks intake when a run attaches neither an asset nor a sourcePath", async () => {
-    const h = stubTools();
-    const workflow = createTikTokAgentWorkflow({
-      tools: h.tools,
-      promptStore: new FilePromptStore(PROMPTS_ROOT),
-      router: smartFakeRouter([GOOD_MOMENT, GOOD_COMMENTARY]),
-      autoApprove: true,
-    });
-    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflow, {
-      ...PARAMS,
-      runId: "run-tt-noasset",
-      input: { mediaAssets: [{ role: "source" }] },
-    });
-
-    // The malformed asset is dropped rather than crashing the run, and the
-    // run then blocks honestly on having no source at all.
-    expect(result.status).toBe("blocked_intake");
-  });
-
   it("uses a typed custom prompt as the run's direction", async () => {
     const h = stubTools();
     const result = await run(h, "run-tt-prompt", { customPrompt: "the bit where she disagrees about pricing" });
@@ -408,5 +452,133 @@ describe("tiktok-agent clip pipeline", () => {
     // Nothing was reserved, so there is nothing to commit or release.
     expect(h.calls).not.toContain("topics.reserve");
     expect(h.calls).not.toContain("topics.commit");
+  });
+});
+
+describe("tiered source cascade", () => {
+  const REPO_ROOT = os.tmpdir();
+
+  it("Tier 2a: with no attached asset, ingests the first owned-footage URI from the sourcePool", async () => {
+    const h = stubTools({
+      config: { tiktokClips: { sourcePool: ["The Show", "https://cdn.acme.co/keynote-2026.mp4"], guestWatchlist: [], narrowing: [] } },
+    });
+    const ingested: string[] = [];
+    (h.tools as unknown as Record<string, unknown>)["media.ingestAssets"] = {
+      name: "media.ingestAssets",
+      version: "1.0.0",
+      inputSchema: { safeParse: (v: unknown) => ({ success: true as const, data: v }) },
+      async execute(args: unknown) {
+        ingested.push((args as { assets: Array<{ uri: string }> }).assets[0]!.uri);
+        return { status: "success" as const, result: { candidates: [{ path: ".media-cache/run-tt-pool/n1-client0.mp4" }], unmet: [] } };
+      },
+    };
+    const result = await run(h, "run-tt-pool", { sourcePath: undefined }, [GOOD_MOMENT, GOOD_COMMENTARY], REPO_ROOT);
+
+    expect(result.status).toBe("completed");
+    expect(ingested).toEqual(["https://cdn.acme.co/keynote-2026.mp4"]);
+    expect(h.deliverables[0]).toMatchObject({ sourceTier: "owned-footage" });
+  }, 20_000);
+
+  it("Tier 2b: falls through to a web harvest when the pool holds no footage URIs", async () => {
+    const h = stubTools({ harvestServes: true });
+    const result = await run(h, "run-tt-harvest", { sourcePath: undefined }, [GOOD_MOMENT, GOOD_COMMENTARY], REPO_ROOT);
+
+    expect(result.status).toBe("completed");
+    expect(h.calls).toContain("media.harvestVideo");
+    expect(h.deliverables[0]).toMatchObject({ sourceTier: "web-harvest" });
+  }, 20_000);
+
+  it("Tier 3: a generated plate skips transcription and the cut entirely — the commentary carries the message", async () => {
+    const h = stubTools({ harvestServes: false, generateServes: true });
+    const result = await run(h, "run-tt-generated", { sourcePath: undefined }, [GOOD_COMMENTARY], REPO_ROOT);
+
+    expect(result.status).toBe("completed");
+    // No speech: nothing to transcribe, no moment agent, no cut. The plate IS
+    // the clip, and it still goes through the branded frame and the QA gate.
+    expect(h.calls).not.toContain("video.transcribe");
+    expect(h.calls).not.toContain("video.cutClip");
+    expect(h.calls).toContain("video.brandFrame");
+    expect(h.calls).toContain("video.selfEvalGate");
+    expect(h.deliverables[0]).toMatchObject({ sourceTier: "generated" });
+  }, 20_000);
+
+  it("holds honestly when every tier is dry, naming each tier's outcome, and releases the moment", async () => {
+    const h = stubTools({ harvestServes: false, generateServes: false });
+    const result = await run(h, "run-tt-dry", { sourcePath: undefined }, [GOOD_MOMENT, GOOD_COMMENTARY], REPO_ROOT);
+
+    expect(result.status).toBe("held");
+    if (result.status !== "held") throw new Error("unreachable");
+    for (const tier of ["user-asset", "owned-footage", "web-harvest", "generated"]) {
+      expect(result.reason).toContain(tier);
+    }
+    // The moment goes back — a dry cascade must not burn it.
+    expect(h.calls).toContain("topics.release");
+  });
+
+  it("holds with every tier named even when the video tiers are not wired at all", async () => {
+    // No repoRoot, no harvest/generate tools: the pre-cascade deployment shape.
+    const h = stubTools();
+    const result = await run(h, "run-tt-unwired", { sourcePath: undefined });
+
+    expect(result.status).toBe("held");
+    if (result.status !== "held") throw new Error("unreachable");
+    expect(result.reason).toContain("web-harvest: not wired");
+    expect(result.reason).toContain("generated: not wired");
+  });
+});
+
+describe("branded frame inputs", () => {
+  it("feeds the client's brand into video.brandFrame and burns captions from the clip's own words", async () => {
+    const h = stubTools();
+    let frameArgs: Record<string, unknown> | undefined;
+    const original = (h.tools as unknown as Record<string, { execute: (a: never, c: never) => unknown }>)["video.brandFrame"]!;
+    (h.tools as unknown as Record<string, unknown>)["video.brandFrame"] = {
+      ...original,
+      async execute(args: never, callCtx: never) {
+        frameArgs = BrandFrameInputSchema.parse(args) as unknown as Record<string, unknown>;
+        return original.execute(args, callCtx);
+      },
+    };
+    const result = await run(h, "run-tt-brand");
+
+    expect(result.status).toBe("completed");
+    expect(frameArgs).toBeDefined();
+    const brand = frameArgs!["brand"] as Record<string, unknown>;
+    expect(brand["ground"]).toBe("#101418");
+    expect(brand["fg"]).toBe("#F2F0EA");
+    expect(brand["handle"]).toBe("@acmeco");
+    // 40 words in the clip window → an SRT was written and passed.
+    expect(typeof frameArgs!["srtPath"]).toBe("string");
+    const srt = await fs.readFile(frameArgs!["srtPath"] as string, "utf8");
+    expect(srt).toContain("word10.");
+    expect(srt).toContain(" --> ");
+  });
+
+  it("falls back to the default grounds when the client has no brand colors — furniture never holds a run", async () => {
+    const h = stubTools();
+    (h.tools as unknown as Record<string, unknown>)["client.getBrand"] = {
+      name: "client.getBrand",
+      version: "1.0.0",
+      inputSchema: { safeParse: (v: unknown) => ({ success: true as const, data: v }) },
+      async execute() {
+        return { status: "not_available" as const, reason: "no brand.json yet" };
+      },
+    };
+    let frameArgs: Record<string, unknown> | undefined;
+    const original = (h.tools as unknown as Record<string, { execute: (a: never, c: never) => unknown }>)["video.brandFrame"]!;
+    (h.tools as unknown as Record<string, unknown>)["video.brandFrame"] = {
+      ...original,
+      async execute(args: never, callCtx: never) {
+        frameArgs = BrandFrameInputSchema.parse(args) as unknown as Record<string, unknown>;
+        return original.execute(args, callCtx);
+      },
+    };
+    const result = await run(h, "run-tt-nobrand");
+
+    expect(result.status).toBe("completed");
+    const brand = frameArgs!["brand"] as Record<string, unknown>;
+    expect(brand["ground"]).toBe("#17181C");
+    expect(brand["fg"]).toBe("#F4F2EC");
+    expect(brand["handle"]).toBeUndefined();
   });
 });

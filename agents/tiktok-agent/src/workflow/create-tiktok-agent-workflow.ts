@@ -1,4 +1,8 @@
+import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { buildSrt } from "@agent-engine/tool-karos-video";
+import { downloadBrandLogo } from "@agent-engine/tool-karos-media";
 import {
   GUARDRAIL_OUTPUT_FIELDS,
   GUARDRAIL_STEP_ID,
@@ -55,6 +59,18 @@ export interface CreateTikTokAgentWorkflowOptions {
    * reason, never read from an unbounded location.
    */
   repoRoot?: string;
+  /** Injectable for tests; the brand-logo download uses it. */
+  fetchImpl?: typeof fetch;
+}
+
+/** The brand furniture the framed clip carries — every field beyond the two grounds optional, skipped when absent. */
+interface VideoBrand {
+  ground: string;
+  fg: string;
+  accent?: string;
+  handle?: string;
+  seriesHeader?: string;
+  logoUrl?: string;
 }
 
 function toAgentContext(wf: WorkflowContext): AgentContext {
@@ -188,42 +204,16 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       return parsed.data;
     });
 
-    // ── 01: FIND-source — reserve one moment from the catalog ──
-    const intake: TikTokIntake = await wf.step.code("01-reserve-source", async (): Promise<TikTokIntake> => {
+    // ── 01: claim the topic — the source cascade below needs it (a web
+    //        harvest searches by it, a generated plate is briefed by it) ──
+    const claim = await wf.step.code("01-claim-topic", async (): Promise<{ topic: string; reservationKey?: string }> => {
       const rich = readRichRunInput(runInput);
       // The typed direction wins over the catalog for the same reason an
       // explicit requestedTopic does: a person who wrote a sentence about what
       // they want has more information than the catalog row does.
       const requestedTopic =
         rich.customPrompt ?? (typeof runInput.requestedTopic === "string" ? runInput.requestedTopic.trim() : "");
-
-      // `mediaAssets` is the portal's shape; `sourcePath` is what the video
-      // tools have always taken and what a hand-rolled dispatch still sends.
-      // Both are accepted, attachment first, so adding the upload surface did
-      // not invalidate any existing caller.
-      //
-      // The attachment is INGESTED rather than passed through. Its `uri` is a
-      // `gs://` object, and `video.transcribe` does a plain `readFile` on
-      // whatever it is handed — so forwarding the URI would fail with ENOENT
-      // several steps in, blaming the transcriber for the caller's format.
-      const attached = firstAsset(rich.mediaAssets, "source");
-      const sourcePath = attached
-        ? await ingestSourceVideo(attached, options, tools, wf.runId, ctx)
-        : typeof runInput.sourcePath === "string"
-          ? runInput.sourcePath.trim()
-          : "";
-      if (!sourcePath) {
-        throw new WorkflowBlockedIntake(
-          "this run attached no source media — the clip pipeline needs the episode it is cutting from, as a mediaAssets entry with role \"source\" or a sourcePath",
-        );
-      }
-
-      // An explicit request wins, exactly as it does for every other channel:
-      // someone asking for a specific moment has more information than the
-      // catalog does.
-      if (requestedTopic) {
-        return { config, topic: requestedTopic, sourcePath };
-      }
+      if (requestedTopic) return { topic: requestedTopic };
 
       const tool = tools["topics.reserve"];
       if (!tool) throw new WorkflowToolingFailure(`no tool registered as "topics.reserve"`);
@@ -240,7 +230,80 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       const result = outcome.result as { reservationKey: string; topics: string[] };
       const topic = result.topics[0];
       if (!topic) throw new WorkflowHeld(`topics.reserve returned no ${CLIP_LANE} candidate`);
-      return { config, topic, reservationKey: result.reservationKey, sourcePath };
+      return { topic, reservationKey: result.reservationKey };
+    });
+
+    // ── 01b: FIND-source — the tiered cascade. Zero-held BETWEEN tiers: a
+    //         tier that cannot serve skips to the next with its reason kept,
+    //         and only a fully dry cascade holds, naming every tier's outcome. ──
+    const intake: TikTokIntake = await wf.step.code("01b-resolve-source", async (): Promise<TikTokIntake> => {
+      const rich = readRichRunInput(runInput);
+      const tierOutcomes: string[] = [];
+
+      // Tier 1 — footage attached to THIS run (or a hand-dispatched
+      // sourcePath). The attachment is INGESTED rather than passed through:
+      // its `uri` is a `gs://` object and `video.transcribe` does a plain
+      // readFile on whatever it is handed.
+      const attached = firstAsset(rich.mediaAssets, "source");
+      if (attached) {
+        const sourcePath = await ingestSourceVideo(attached, options, tools, wf.runId, ctx);
+        return { config, ...claim, sourcePath, sourceTier: "user-asset" };
+      }
+      if (typeof runInput.sourcePath === "string" && runInput.sourcePath.trim().length > 0) {
+        return { config, ...claim, sourcePath: runInput.sourcePath.trim(), sourceTier: "user-asset" };
+      }
+      tierOutcomes.push("user-asset: no media attached to this run");
+
+      // Tier 2a — the client's own footage library: sourcePool entries that
+      // are URIs (a podcast episode, a keynote recording in their bucket).
+      // The highest-context harvest there is — it's literally their footage.
+      const ownedUris = config.sourcePool.filter((entry) => /^(gs|https):\/\//i.test(entry));
+      if (ownedUris.length > 0) {
+        try {
+          const sourcePath = await ingestSourceVideo({ uri: ownedUris[0]!, label: "owned footage" }, options, tools, wf.runId, ctx);
+          return { config, ...claim, sourcePath, sourceTier: "owned-footage" };
+        } catch (error) {
+          tierOutcomes.push(`owned-footage: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      } else {
+        tierOutcomes.push("owned-footage: sourcePool holds no gs://https:// footage URIs");
+      }
+
+      // Tier 2b — contextual web harvest by topic. `not_available` until a
+      // provider is wired; either way the cascade continues.
+      const harvest = tools["media.harvestVideo"];
+      if (harvest !== undefined && options.repoRoot !== undefined) {
+        const outcome = await harvest.execute({ repoRoot: options.repoRoot, runId: wf.runId, query: claim.topic }, { ctx });
+        if (outcome.status === "success") {
+          const result = outcome.result as { path: string };
+          return { config, ...claim, sourcePath: path.resolve(options.repoRoot, result.path), sourceTier: "web-harvest" };
+        }
+        tierOutcomes.push(`web-harvest: ${outcome.status}${"reason" in outcome ? ` (${outcome.reason})` : ""}`);
+      } else {
+        tierOutcomes.push("web-harvest: not wired in this deployment");
+      }
+
+      // Tier 3 — a generated B-roll plate. The last resort, and the only tier
+      // that can answer any topic on demand. A generated source has no
+      // transcript, so the spoken-moment steps are skipped downstream.
+      const generate = tools["video.generateClip"];
+      if (generate !== undefined && options.repoRoot !== undefined) {
+        const outcome = await generate.execute({ repoRoot: options.repoRoot, runId: wf.runId, brief: claim.topic }, { ctx });
+        if (outcome.status === "success") {
+          const result = outcome.result as { path: string };
+          return { config, ...claim, sourcePath: path.resolve(options.repoRoot, result.path), sourceTier: "generated" };
+        }
+        tierOutcomes.push(`generated: ${outcome.status}${"reason" in outcome ? ` (${outcome.reason})` : ""}`);
+      } else {
+        tierOutcomes.push("generated: not wired in this deployment");
+      }
+
+      // Every tier dry. A video post has no typographic fallback — this hold
+      // is honest, and its reason names exactly what each tier said.
+      if (claim.reservationKey) {
+        await tools["topics.release"]?.execute({ reservationKey: claim.reservationKey }, { ctx }).catch(() => undefined);
+      }
+      throw new WorkflowHeld(`no source footage from any tier — ${tierOutcomes.join("; ")}`);
     });
 
     /** Hands a reservation back so a failed run does not burn the moment. */
@@ -251,73 +314,90 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       await tool.execute({ reservationKey: intake.reservationKey }, { ctx }).catch(() => undefined);
     };
 
-    // ── 02: transcript ──
-    const words: TranscriptWordLike[] = await wf.step.code("02-transcribe", async () => {
-      const result = (await callTool(tools, "video.transcribe", { videoPath: intake.sourcePath }, ctx)) as {
-        words?: TranscriptWordLike[];
-      };
-      const spoken = (result.words ?? []).filter((w) => typeof w.text === "string" && w.text.trim().length > 0);
-      if (spoken.length === 0) {
-        await releaseReservation();
-        // Non-verbal source. The legacy loop falls back to a retention heatmap
-        // here; this engine has no heatmap tool, so the honest outcome is to
-        // stop rather than to guess a moment out of a silent timeline.
-        throw new WorkflowHeld("the source has no spoken words to clip, and this deployment has no retention-heatmap fallback");
-      }
-      return spoken;
-    });
+    /** The cut plan every downstream step works from — real transcript-derived bounds for spoken footage, or the whole plate for a generated one. */
+    interface ClipPlan {
+      startSeconds: number;
+      endSeconds: number;
+      words: TranscriptWordLike[];
+      text: string;
+      /** Whether a cut is needed at all — a generated plate is already the clip. */
+      needsCut: boolean;
+    }
 
-    // ── 03: PICK-moment (judgment) ──
-    const moment: MomentSelection = await wf.step.code("03-select-moment", async () => {
-      const agent = new TikTokMomentAgent({ router: options.router, tools, promptStore: options.promptStore });
-      const exec = await wf.step.agent("03a-moment", agent, {
-        topic: intake.topic,
-        transcript: sentenceBoundedWords(words),
-        durationMin: CLIP_DURATION_MIN_SECONDS,
-        durationMax: CLIP_DURATION_MAX_SECONDS,
+    let moment: MomentSelection;
+    let bounds: ClipPlan;
+
+    if (intake.sourceTier === "generated") {
+      // A generated B-roll plate has no speech: there is no transcript to
+      // mine, no moment to pick, no cut to make. The commentary layer carries
+      // the whole message, over branded footage.
+      moment = await wf.step.code("03-select-moment", () => ({
+        startSeconds: 0,
+        endSeconds: CLIP_DURATION_MIN_SECONDS,
+        hookLine: intake.topic,
+        hookType: "sharp-one-liner" as const,
+        rationale: "generated B-roll plate — the commentary layer carries the message; no transcript exists to pick a moment from",
+      }));
+      bounds = { startSeconds: 0, endSeconds: 0, words: [], text: "", needsCut: false };
+    } else {
+      // ── 02: transcript ──
+      const words: TranscriptWordLike[] = await wf.step.code("02-transcribe", async () => {
+        const result = (await callTool(tools, "video.transcribe", { videoPath: intake.sourcePath }, ctx)) as {
+          words?: TranscriptWordLike[];
+        };
+        const spoken = (result.words ?? []).filter((w) => typeof w.text === "string" && w.text.trim().length > 0);
+        if (spoken.length === 0) {
+          await releaseReservation();
+          // Non-verbal source. The legacy loop falls back to a retention heatmap
+          // here; this engine has no heatmap tool, so the honest outcome is to
+          // stop rather than to guess a moment out of a silent timeline.
+          throw new WorkflowHeld("the source has no spoken words to clip, and this deployment has no retention-heatmap fallback");
+        }
+        return spoken;
       });
-      if (exec.status === "content_fail") {
-        await releaseReservation();
-        throw new WorkflowHeld("moment selection did not clear its own output validation");
-      }
-      if (exec.status !== "completed") {
-        await releaseReservation();
-        throw new WorkflowToolingFailure(`moment selection resolved to "${exec.status}"`);
-      }
-      return MomentSelectionSchema.parse(exec.finalOutput);
-    });
 
-    // ── 04: CUT — snap to real transcript boundaries and validate ──
-    const bounds = await wf.step.code("04-cut-bounds", async () => {
-      // The model's timestamps are a proposal. This is where they become real:
-      // snapped to actual word boundaries in the transcript, then checked
-      // against the length rule. A model asked for a timestamp will return one
-      // whether or not the transcript supports it.
-      const result = boundsFromTranscript(words, moment.startSeconds, moment.endSeconds, {
-        minSeconds: CLIP_DURATION_MIN_SECONDS,
-        maxSeconds: CLIP_DURATION_MAX_SECONDS,
+      // ── 03: PICK-moment (judgment) ──
+      moment = await wf.step.code("03-select-moment", async () => {
+        const agent = new TikTokMomentAgent({ router: options.router, tools, promptStore: options.promptStore });
+        const exec = await wf.step.agent("03a-moment", agent, {
+          topic: intake.topic,
+          transcript: sentenceBoundedWords(words),
+          durationMin: CLIP_DURATION_MIN_SECONDS,
+          durationMax: CLIP_DURATION_MAX_SECONDS,
+        });
+        if (exec.status === "content_fail") {
+          await releaseReservation();
+          throw new WorkflowHeld("moment selection did not clear its own output validation");
+        }
+        if (exec.status !== "completed") {
+          await releaseReservation();
+          throw new WorkflowToolingFailure(`moment selection resolved to "${exec.status}"`);
+        }
+        return MomentSelectionSchema.parse(exec.finalOutput);
       });
-      if (!result.ok) {
-        await releaseReservation();
-        throw new WorkflowHeld(`selected moment is not clippable: ${result.reason}`);
-      }
-      return result;
-    });
 
-    await wf.step.code("05-cut-gate", async () => {
-      const verdict = await runGate(
-        tools,
-        "video.cutGate",
-        { cuts: [{ start: bounds.startSeconds, end: bounds.endSeconds }], sourcePath: intake.sourcePath },
-        ctx,
-      );
-      if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`video.cutGate: ${verdict.reason}`);
-      if (verdict.verdict === "content_fail") {
-        await releaseReservation();
-        throw new WorkflowHeld(`cut rejected by video.cutGate: ${verdict.reason}`);
-      }
-      return verdict;
-    });
+      // ── 04: CUT — snap to real transcript boundaries and validate. This is
+      //        the whole cut gate now: the old `video.cutGate` call shelled
+      //        into the unvendored Python engine with the wrong argument shape
+      //        and had never once succeeded in production — the deterministic
+      //        TS bounds check below is the check that actually ran and held. ──
+      const cut = await wf.step.code("04-cut-bounds", async () => {
+        // The model's timestamps are a proposal. This is where they become real:
+        // snapped to actual word boundaries in the transcript, then checked
+        // against the length rule. A model asked for a timestamp will return one
+        // whether or not the transcript supports it.
+        const result = boundsFromTranscript(words, moment.startSeconds, moment.endSeconds, {
+          minSeconds: CLIP_DURATION_MIN_SECONDS,
+          maxSeconds: CLIP_DURATION_MAX_SECONDS,
+        });
+        if (!result.ok) {
+          await releaseReservation();
+          throw new WorkflowHeld(`selected moment is not clippable: ${result.reason}`);
+        }
+        return result;
+      });
+      bounds = { startSeconds: cut.startSeconds, endSeconds: cut.endSeconds, words: cut.words, text: cut.text, needsCut: true };
+    }
 
     // The anti-repetition read (the excerpt window step 13 writes back into)
     // and the client intel report, distilled — the same two reads every text
@@ -377,34 +457,138 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       }
     });
 
-    // ── 08: render + blocking QA ──
-    const renderedPath: string = await wf.step.code("08-render", async () => {
-      const result = (await callTool(
-        tools,
-        "video.render",
-        {
-          sourcePath: intake.sourcePath,
-          cuts: [{ start: bounds.startSeconds, end: bounds.endSeconds }],
-          subtitles: bounds.words,
-          caption: commentary.caption,
-        },
-        ctx,
-      )) as { outputPath?: string };
-      if (!result.outputPath) throw new WorkflowToolingFailure("video.render returned no outputPath");
-      return result.outputPath;
+    // ── 07b: the client's brand, for the framed clip. Best-effort, never
+    //         blocking — brand furniture must never be able to hold a run,
+    //         the same rule the slide pipeline's brand kit follows. ──
+    const workDir = path.join(os.tmpdir(), "tiktok-agent", wf.runId);
+    const videoBrand = await wf.step.code("07b-load-video-brand", async (): Promise<VideoBrand> => {
+      const HEX6 = /^#[0-9a-fA-F]{6}$/;
+      const asHex = (v: unknown): string | undefined => (typeof v === "string" && HEX6.test(v.trim()) ? v.trim() : undefined);
+      const brandOutcome = await tools["client.getBrand"]?.execute({}, { ctx });
+      const brand = (brandOutcome?.status === "success" ? brandOutcome.result : {}) as Record<string, unknown>;
+      const colors = (brand["colors"] ?? {}) as Record<string, unknown>;
+      const rawHandle = typeof brand["handle"] === "string" ? brand["handle"].trim() : "";
+      const logoUrl = typeof brand["logoUrl"] === "string" && /^https:\/\//i.test(brand["logoUrl"]) ? brand["logoUrl"] : undefined;
+      return {
+        ground: asHex(colors["neutralDark"]) ?? "#17181C",
+        fg: asHex(colors["neutralLight"]) ?? "#F4F2EC",
+        ...(asHex(brand["accent"]) ?? asHex(colors["primaryAccent"])
+          ? { accent: (asHex(brand["accent"]) ?? asHex(colors["primaryAccent"]))! }
+          : {}),
+        ...(rawHandle.length > 0 && /^@?[A-Za-z0-9._]{1,40}$/.test(rawHandle) ? { handle: `@${rawHandle.replace(/^@+/, "")}` } : {}),
+        ...(config.seriesHeader !== undefined ? { seriesHeader: config.seriesHeader } : {}),
+        ...(logoUrl !== undefined ? { logoUrl } : {}),
+      };
     });
 
-    await wf.step.code("09-qa-gate", async () => {
-      // Blocking, all of it. The legacy rule: "Any failure aborts THIS
-      // candidate (never ship degraded)."
-      for (const gate of ["video.selfEvalGate", "video.brandGate"] as const) {
-        const verdict = await runGate(tools, gate, { videoPath: renderedPath }, ctx);
-        if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`${gate}: ${verdict.reason}`);
-        if (verdict.verdict === "content_fail") {
-          await releaseReservation();
-          throw new WorkflowHeld(`${gate} failed: ${verdict.reason}`);
+    // ── 08: render — cut, caption, branded frame, all pure ffmpeg. The old
+    //        `video.render` call shelled into the unvendored Python engine
+    //        with the wrong argument shape; this path depends on nothing but
+    //        the ffmpeg already in the server image. ──
+    const rendered = await wf.step.code("08-render", async (): Promise<{ outputPath: string; durationSeconds: number | null }> => {
+      await fs.mkdir(workDir, { recursive: true });
+
+      // Cut the moment out of the source (a generated plate is already the clip).
+      let clipPath = intake.sourcePath;
+      if (bounds.needsCut) {
+        const cutOutcome = await tools["video.cutClip"]?.execute(
+          {
+            sourcePath: intake.sourcePath,
+            startSeconds: bounds.startSeconds,
+            endSeconds: bounds.endSeconds,
+            outputPath: path.join(workDir, "clip-cut.mp4"),
+          },
+          { ctx },
+        );
+        if (cutOutcome === undefined || cutOutcome.status !== "success") {
+          throw new WorkflowToolingFailure(
+            `video.cutClip failed: ${cutOutcome === undefined ? "tool not registered" : `${cutOutcome.status}${"reason" in cutOutcome ? ` (${cutOutcome.reason})` : ""}`}`,
+          );
+        }
+        clipPath = (cutOutcome.result as { outputPath: string }).outputPath;
+      }
+
+      // Burned captions, from the moment's own word timings — clip-relative.
+      let srtPath: string | undefined;
+      if (bounds.words.length > 0) {
+        const srt = buildSrt(
+          bounds.words.map((w) => ({ word: w.text, start: w.start, end: w.end })),
+          bounds.startSeconds,
+        );
+        srtPath = path.join(workDir, "captions.srt");
+        await fs.writeFile(srtPath, srt, "utf8");
+      }
+
+      // The logo, downloaded fresh for this render (any failure = no logo,
+      // never a hold).
+      let logoPath: string | undefined;
+      if (videoBrand.logoUrl !== undefined) {
+        const download = await downloadBrandLogo(options.fetchImpl ?? fetch, videoBrand.logoUrl);
+        // SVG can't overlay in ffmpeg without a rasterizer — raster formats only here.
+        if (download !== undefined && download.mime !== "image/svg+xml") {
+          logoPath = path.join(workDir, download.mime === "image/png" ? "logo.png" : "logo.jpg");
+          await fs.writeFile(logoPath, download.bytes);
         }
       }
+
+      const frameOutcome = await tools["video.brandFrame"]?.execute(
+        {
+          videoPath: clipPath,
+          outputPath: path.join(workDir, "clip-framed.mp4"),
+          brand: {
+            ground: videoBrand.ground,
+            fg: videoBrand.fg,
+            ...(videoBrand.accent !== undefined ? { accent: videoBrand.accent } : {}),
+            ...(videoBrand.handle !== undefined ? { handle: videoBrand.handle } : {}),
+            ...(videoBrand.seriesHeader !== undefined ? { seriesHeader: videoBrand.seriesHeader } : {}),
+            ...(logoPath !== undefined ? { logoPath } : {}),
+          },
+          ...(srtPath !== undefined ? { srtPath } : {}),
+        },
+        { ctx },
+      );
+      if (frameOutcome === undefined || frameOutcome.status !== "success") {
+        throw new WorkflowToolingFailure(
+          `video.brandFrame failed: ${frameOutcome === undefined ? "tool not registered" : `${frameOutcome.status}${"reason" in frameOutcome ? ` (${frameOutcome.reason})` : ""}`}`,
+        );
+      }
+      const framed = frameOutcome.result as { outputPath: string; durationSeconds: number | null };
+      return { outputPath: framed.outputPath, durationSeconds: framed.durationSeconds ?? null };
+    });
+    const renderedPath = rendered.outputPath;
+    // The framed file's probed length is the truth; the transcript-derived
+    // window is the fallback (a generated plate's window is zero-width).
+    const durationSeconds = rendered.durationSeconds ?? bounds.endSeconds - bounds.startSeconds;
+
+    await wf.step.code("09-qa-gate", async () => {
+      // Blocking. The legacy rule: "Any failure aborts THIS candidate (never
+      // ship degraded)." `video.brandGate` was dropped from this list — its
+      // real contract takes PNG stills for the Python engine, not an MP4, and
+      // the branded frame is now composited deterministically upstream.
+      const verdict = await runGate(tools, "video.selfEvalGate", { videoPath: renderedPath }, ctx);
+      if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`video.selfEvalGate: ${verdict.reason}`);
+      if (verdict.verdict === "content_fail") {
+        await releaseReservation();
+        throw new WorkflowHeld(`video.selfEvalGate failed: ${verdict.reason}`);
+      }
+    });
+
+    // ── 10a: upload BEFORE the human gate, so the reviewer can actually
+    //         watch what they're approving (a bare container path is not a
+    //         reviewable clip). Registered only when a media store is
+    //         configured; absent, the gate carries the local path as before. ──
+    const uploaded = await wf.step.code("10a-upload-clip", async () => {
+      const uploadTool = tools["video.uploadDeliverable"];
+      if (!uploadTool) return null;
+      const outcome = await uploadTool.execute(
+        { localPath: renderedPath, objectPath: `tiktok/${wf.clientSlug}/${wf.runId}/clip.mp4`, contentType: "video/mp4" },
+        { ctx },
+      );
+      if (outcome.status !== "success") {
+        console.error(`10a-upload-clip: upload failed (${outcome.status}) — the gate and deliverable carry the local path only`);
+        return null;
+      }
+      return outcome.result as { gcsUri: string; signedUrl?: string };
     });
 
     // ── 10: terminal topic guardrail ──
@@ -440,7 +624,11 @@ ${bounds.text}`,
             lane: CLIP_LANE,
             preview: commentary.caption,
             clipPath: renderedPath,
-            durationSeconds: bounds.endSeconds - bounds.startSeconds,
+            durationSeconds,
+            sourceTier: intake.sourceTier,
+            // The reviewer's actual preview — a signed URL they can watch.
+            ...(uploaded?.signedUrl !== undefined ? { videoUrl: uploaded.signedUrl } : {}),
+            ...(uploaded !== null ? { gcsUri: uploaded.gcsUri } : {}),
           },
           requiredRole: "account_manager",
           timeout: { duration: "24h", onTimeout: "hold" },
@@ -469,6 +657,10 @@ ${bounds.text}`,
             hookType: moment.hookType,
             startSeconds: bounds.startSeconds,
             endSeconds: bounds.endSeconds,
+            durationSeconds,
+            sourceTier: intake.sourceTier,
+            ...(uploaded?.signedUrl !== undefined ? { signedUrl: uploaded.signedUrl } : {}),
+            ...(uploaded !== null ? { gcsUri: uploaded.gcsUri } : {}),
           },
         },
         ctx,
@@ -504,7 +696,7 @@ ${commentary.about}` }, { ctx });
       moment,
       commentary,
       deliverableId,
-      durationSeconds: bounds.endSeconds - bounds.startSeconds,
+      durationSeconds,
     };
   };
 }
