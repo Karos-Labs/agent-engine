@@ -52,13 +52,25 @@ describe("AU55: the capability report", () => {
     }
   });
 
-  it("reports prod's real, undecided gap: venue photography has no key in any environment", () => {
+  it("still reports venue photography DISABLED in prod, where the key does not exist yet", () => {
+    // AU56 decided to issue the key (option A) and wired PREP. Prod's key has
+    // not been created, so prod must still show the capability off — a
+    // decision about prep is not a decision about prod, and the report has to
+    // keep saying so until prod is actually wired.
     const report = buildCapabilityReport(PROD_ENV);
     const venue = report.capabilities.find((c) => c.id === "venue-photography");
     expect(venue?.status).toBe("DISABLED");
-    expect(venue?.decision, "nobody has recorded a decision about this one").toBe("UNEXPLAINED");
     expect(venue?.missing).toContain("GOOGLE_PLACES_KEY");
-    expect(report.summary.unexplained).toBeGreaterThan(0);
+    // EXPECTED now, because a written decision exists — this row is where the
+    // AU56 finding came from, and it sat UNEXPLAINED until that decision.
+    expect(venue?.decision).toBe("EXPECTED");
+  });
+
+  it("reports venue photography ACTIVE once the key is present, as prep now is", () => {
+    const report = buildCapabilityReport({ ...PROD_ENV, GOOGLE_PLACES_KEY: "places-key" });
+    const venue = report.capabilities.find((c) => c.id === "venue-photography");
+    expect(venue?.status).toBe("ACTIVE");
+    expect(venue?.missing).toEqual([]);
   });
 
   it("does not report an explicitly-disabled capability as ACTIVE", () => {

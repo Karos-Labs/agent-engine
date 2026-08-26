@@ -249,6 +249,22 @@ const documentedButUnread = [...inv.documented].filter((n) => !inv.readByCode.ha
 // AU55 exists to make trustworthy.
 const catalogueOrphans = catalogueVariables().filter((n) => !inv.readByCode.has(n));
 
+/**
+ * The reverse direction, and the one that closes AU55's real gap (AU56).
+ *
+ * The capability report is only as complete as the hand-written catalogue, so
+ * left alone it surfaces exactly the keys somebody remembered to register — and
+ * a new credential added without a catalogue row would degrade a capability as
+ * silently as before, with a report that now falsely implies coverage.
+ *
+ * Credential-shaped names are the class that matters: those are what switch a
+ * capability off when absent. A tuning knob like IMAGE_GEN_MODEL changes how a
+ * capability behaves, not whether it exists, so it is not required here.
+ */
+const CREDENTIAL_SHAPED = /_(KEY|TOKEN|SECRET)$/;
+const inCatalogue = new Set(catalogueVariables());
+const credentialsWithoutCapability = appConfigRead.filter((n) => CREDENTIAL_SHAPED.test(n) && !inCatalogue.has(n)).sort();
+
 // THE REGRESSION TEST: the eleven indirect reads must never appear as dead.
 const falsePositivesReported = KNOWN_FALSE_POSITIVES.filter((n) => wiredButUnread.includes(n));
 
@@ -259,7 +275,7 @@ if (JSON_OUT) {
         readByCode: appConfigRead,
         wiredByService: Object.fromEntries([...inv.wiredByService].map(([k, v]) => [k, [...v].sort()])),
         documented: [...inv.documented].sort(),
-        deltas: { readButUndocumented, wiredButUnread, documentedButUnread, catalogueOrphans },
+        deltas: { readButUndocumented, wiredButUnread, documentedButUnread, catalogueOrphans, credentialsWithoutCapability },
       },
       null,
       2,
@@ -295,6 +311,10 @@ if (JSON_OUT) {
   for (const n of catalogueOrphans) console.log(`  ${n} (named by AU55's catalogue but read nowhere)`);
   if (catalogueOrphans.length === 0) console.log("  (none)");
 
+  console.log(`\n--- CREDENTIALS WITH NO CAPABILITY ROW (${credentialsWithoutCapability.length}) — hard failure ---`);
+  for (const n of credentialsWithoutCapability) console.log(`  ${n} (read by code, absent from the AU55 catalogue)`);
+  if (credentialsWithoutCapability.length === 0) console.log("  (none)");
+
   console.log(`\n--- SELF-TEST: the eleven known indirect reads ---`);
   console.log(
     falsePositivesReported.length === 0
@@ -319,6 +339,11 @@ if (CHECK) {
   }
   if (catalogueOrphans.length > 0) {
     console.error(`\nconfig-inventory: capability catalogue names variable(s) nothing reads: ${catalogueOrphans.join(", ")}`);
+    failed = true;
+  }
+  if (credentialsWithoutCapability.length > 0) {
+    console.error(`\nconfig-inventory: credential(s) read by code with no capability-catalogue row: ${credentialsWithoutCapability.join(", ")}`);
+    console.error("Without a row, an absent key degrades a capability and the report says nothing — the exact failure AU55 exists to end.");
     failed = true;
   }
   process.exit(failed ? 1 : 0);

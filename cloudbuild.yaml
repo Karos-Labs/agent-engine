@@ -65,6 +65,13 @@ substitutions:
   _UNSPLASH_ACCESS_KEY_SECRET: unsplash-access-key
   _PEXELS_API_KEY_SECRET: pexels-api-key
   _PIXABAY_API_KEY_SECRET: pixabay-api-key
+  # Google Places: the ONLY place-verified source on the named_venue route
+  # (AU56 / SCRUM-355). Absent, that route has no source that can confirm a
+  # photo is of the right building and falls through to generic image
+  # search — which it had been doing in every environment since it was
+  # written, because this key was documented in .env.example and wired
+  # nowhere. prod is deliberately NOT wired yet: its key does not exist.
+  _GOOGLE_PLACES_KEY_SECRET: google-places-key
   # The scraper backend research.pull and the visual pipeline's scrape tier
   # actually run on (karos-scraper/src/index.ts's createScraperProvider) —
   # the one generic, swappable ScraperProvider implementation, chosen so the
@@ -170,7 +177,7 @@ steps:
       - --service-account=${_SERVICE_ACCOUNT}
       - --memory=2Gi
       - --set-env-vars=GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},BQ_PROJECT_ID=${_BQ_PROJECT_ID},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},ANTHROPIC_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},CLOUD_ML_REGION=global,VERTEX_AI_LOCATION=${_REGION},GEMINI_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},PROMPT_STORE_DRIVER=firestore,QUEUE_PROVIDER=pubsub,PUBSUB_PROJECT_ID=${_PUBSUB_PROJECT_ID},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},GCS_ARTIFACTS_BUCKET=${_GCS_ARTIFACTS_BUCKET},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET},LANDING_ENGINE_TEMPLATE_ROOT=/app/packages/tools/karos-landing/assets/template,LANDING_ENGINE_ROOT=/tmp/landing-engine,INSTAGRAM_AGENT_REPO_ROOT=/app,PUBSUB_PUSH_AUDIENCE_URL=${_PUBSUB_PUSH_AUDIENCE_URL},AUTH_ENABLED=false,AUTH_AUDIENCE=${_AUTH_AUDIENCE},AUTH_ALLOWED_SERVICE_ACCOUNTS=${_AUTH_ALLOWED_SERVICE_ACCOUNTS}
-      - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest,UNSPLASH_ACCESS_KEY=${_UNSPLASH_ACCESS_KEY_SECRET}:latest,PEXELS_API_KEY=${_PEXELS_API_KEY_SECRET}:latest,PIXABAY_API_KEY=${_PIXABAY_API_KEY_SECRET}:latest,SCRAPPYCOCO_API_KEY=${_SCRAPPYCOCO_API_KEY_SECRET}:latest
+      - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest,UNSPLASH_ACCESS_KEY=${_UNSPLASH_ACCESS_KEY_SECRET}:latest,PEXELS_API_KEY=${_PEXELS_API_KEY_SECRET}:latest,PIXABAY_API_KEY=${_PIXABAY_API_KEY_SECRET}:latest,GOOGLE_PLACES_KEY=${_GOOGLE_PLACES_KEY_SECRET}:latest,SCRAPPYCOCO_API_KEY=${_SCRAPPYCOCO_API_KEY_SECRET}:latest
       # instagram-agent writes under `repoRoot` (INSTAGRAM_AGENT_REPO_ROOT=/app):
       # `.media-cache/<runId>/` from media.findImages, and
       # `instagram-output/<client>/<postId>/` from publish.renderCarousel. The
@@ -215,7 +222,7 @@ steps:
       - --min-instances=1
       - --no-cpu-throttling
       - --set-env-vars=GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},BQ_PROJECT_ID=${_BQ_PROJECT_ID},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},ANTHROPIC_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},CLOUD_ML_REGION=global,VERTEX_AI_LOCATION=${_REGION},GEMINI_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},PROMPT_STORE_DRIVER=firestore,QUEUE_PROVIDER=pubsub,PUBSUB_PROJECT_ID=${_PUBSUB_PROJECT_ID},QUEUE_SUBSCRIPTION_RUN_JOBS=${_QUEUE_SUBSCRIPTION_RUN_JOBS},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},GCS_ARTIFACTS_BUCKET=${_GCS_ARTIFACTS_BUCKET},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET},LANDING_ENGINE_TEMPLATE_ROOT=/app/packages/tools/karos-landing/assets/template,LANDING_ENGINE_ROOT=/tmp/landing-engine,INSTAGRAM_AGENT_REPO_ROOT=/app
-      - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest,UNSPLASH_ACCESS_KEY=${_UNSPLASH_ACCESS_KEY_SECRET}:latest,PEXELS_API_KEY=${_PEXELS_API_KEY_SECRET}:latest,PIXABAY_API_KEY=${_PIXABAY_API_KEY_SECRET}:latest,SCRAPPYCOCO_API_KEY=${_SCRAPPYCOCO_API_KEY_SECRET}:latest
+      - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest,UNSPLASH_ACCESS_KEY=${_UNSPLASH_ACCESS_KEY_SECRET}:latest,PEXELS_API_KEY=${_PEXELS_API_KEY_SECRET}:latest,PIXABAY_API_KEY=${_PIXABAY_API_KEY_SECRET}:latest,GOOGLE_PLACES_KEY=${_GOOGLE_PLACES_KEY_SECRET}:latest,SCRAPPYCOCO_API_KEY=${_SCRAPPYCOCO_API_KEY_SECRET}:latest
       # instagram-agent writes under `repoRoot` (INSTAGRAM_AGENT_REPO_ROOT=/app):
       # `.media-cache/<runId>/` from media.findImages, and
       # `instagram-output/<client>/<postId>/` from publish.renderCarousel. The
