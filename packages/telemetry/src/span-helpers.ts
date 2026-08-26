@@ -1,4 +1,4 @@
-import { SpanStatusCode, type Span } from "@opentelemetry/api";
+import { SpanStatusCode, trace, type Span } from "@opentelemetry/api";
 import { getTracer } from "./tracer.js";
 import { describeError } from "./errors.js";
 import { biTable } from "./bigquery-client.js";
@@ -162,4 +162,24 @@ export function withToolCallSpan<T>(attrs: ToolCallSpanAttributes, fn: (span: Sp
     },
     fn,
   );
+}
+
+/**
+ * Attaches an event to whatever span is currently active, if any (AU61 /
+ * SCRUM-360).
+ *
+ * Exists so callers that need to annotate a trace do not have to take an
+ * `@opentelemetry/api` dependency of their own — `packages/core` records model
+ * failovers through this rather than importing the OTel API directly.
+ *
+ * Best-effort by construction: outside a workflow step there is no active
+ * span, and instrumentation must never turn the thing it is observing into a
+ * failure.
+ */
+export function addSpanEvent(name: string, attributes?: Record<string, string | number | boolean>): void {
+  try {
+    trace.getActiveSpan()?.addEvent(name, attributes);
+  } catch {
+    /* a span that cannot be annotated is not a reason to fail the call */
+  }
 }

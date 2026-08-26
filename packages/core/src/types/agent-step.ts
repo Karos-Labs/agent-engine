@@ -123,6 +123,25 @@ export const AgentStepTelemetrySchema = z.object({
    * store all look identical in a run report.
    */
   error: z.string().optional(),
+  /**
+   * Which hop of the Claude fallback chain served this turn (AU61 /
+   * SCRUM-360). Absent means "served directly, no chain involved" — the
+   * overwhelmingly common case, and the reason this is optional rather than
+   * defaulted.
+   *
+   * `modelUsed` cannot answer this on its own: the primary and secondary hops
+   * return the SAME model id on different transports, so without this a
+   * deliverable produced after a failover is indistinguishable from one
+   * produced normally. Same principle as the SEO/GEO capture tiers, applied
+   * to model provenance.
+   */
+  servedBy: z
+    .object({
+      hop: z.enum(["primary", "secondary", "tertiary"]),
+      adapter: z.string().min(1),
+      failedOver: z.array(z.object({ from: z.string(), errorClass: z.string(), status: z.number().int().optional() })),
+    })
+    .optional(),
 });
 export type AgentStepTelemetry = z.infer<typeof AgentStepTelemetrySchema>;
 
