@@ -1,5 +1,31 @@
-import type { GateVerdict } from "@agent-engine/core";
+import type { AgentToolOutcome, GateVerdict } from "@agent-engine/core";
+import { success, toolingError } from "@agent-engine/tool-common";
 import type { ProcessResult } from "./process/runner.js";
+
+/**
+ * Returns a gate's `GateVerdict` at the correct OUTCOME layer (AU8 / SCRUM-289,
+ * RFC-01 §6).
+ *
+ * `toGateVerdictFromBullets`/`toGateVerdictFromPrefixedLines` can legitimately
+ * produce `verdict: "tooling_error"` — a Python script that crashed without a
+ * parseable report is not a content judgment. But every one of these tools used
+ * to hand that straight to `success(...)`, producing
+ * `{status: "success", result: {verdict: "tooling_error"}}`: a broken engine
+ * script read as a SUCCESSFUL tool call at the `AgentToolOutcome` layer, which
+ * inverts the four-outcome contract the whole tool layer depends on. Anything
+ * inspecting `outcome.status` — the ReAct loop, telemetry's `outcome_status`
+ * span attribute, any generic caller — saw success.
+ *
+ * Passing every verdict through here keeps the two layers agreeing: a content
+ * verdict travels as `success`, a broken run travels as `tooling_error` with
+ * the reason intact.
+ */
+export function gateOutcome(verdict: GateVerdict): AgentToolOutcome<GateVerdict> {
+  if (verdict.verdict === "tooling_error") {
+    return toolingError(verdict.reason ?? "gate reported a tooling error without a reason");
+  }
+  return success(verdict);
+}
 
 function nonEmptyLines(stdout: string): string[] {
   return stdout

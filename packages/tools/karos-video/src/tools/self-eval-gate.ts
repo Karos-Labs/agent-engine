@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { GateVerdict } from "@agent-engine/core";
-import { defineTool, success } from "@agent-engine/tool-common";
+import { defineTool, success, toolingError } from "@agent-engine/tool-common";
 import { resolveRuntime, type KarosVideoToolOptions } from "../config.js";
 
 const TOOL_VERSION = "1.0.0";
@@ -71,31 +71,19 @@ export function createSelfEvalGate(options: KarosVideoToolOptions = {}) {
       const result = await runtime.runner(runtime.ffprobeBin, args);
       if (result.exitCode !== 0) {
         const tail = (result.stderr || result.stdout || "").trim().slice(-2000);
-        return success<GateVerdict>({
-          verdict: "tooling_error",
-          reason: `ffprobe exited ${result.exitCode} while reading "${videoPath}"${tail ? `: ${tail}` : ""}`,
-          toolVersion: TOOL_VERSION,
-        });
+        return toolingError(`ffprobe exited ${result.exitCode} while reading "${videoPath}"${tail ? `: ${tail}` : ""}`);
       }
 
       let parsed: { streams?: FfprobeStream[] };
       try {
         parsed = JSON.parse(result.stdout);
       } catch {
-        return success<GateVerdict>({
-          verdict: "tooling_error",
-          reason: `ffprobe produced non-JSON output for "${videoPath}": ${result.stdout.trim().slice(-500)}`,
-          toolVersion: TOOL_VERSION,
-        });
+        return toolingError(`ffprobe produced non-JSON output for "${videoPath}": ${result.stdout.trim().slice(-500)}`);
       }
 
       const stream = parsed.streams?.[0];
       if (!stream) {
-        return success<GateVerdict>({
-          verdict: "tooling_error",
-          reason: `ffprobe reported no video stream for "${videoPath}"`,
-          toolVersion: TOOL_VERSION,
-        });
+        return toolingError(`ffprobe reported no video stream for "${videoPath}"`);
       }
 
       const mismatches: string[] = [];

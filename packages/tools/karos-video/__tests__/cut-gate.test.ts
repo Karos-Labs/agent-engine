@@ -7,10 +7,11 @@ describe("video.cutGate", () => {
     const { runner } = fakeRunner({ stdout: "", stderr: "", exitCode: 0 });
     const tool = createCutGate({ runner, env: {} });
     const outcome = await tool.execute({ jobPath: "job.json", transcriptPath: "t.json", verbose: false }, { ctx });
-    expect(outcome.status).toBe("success");
-    if (outcome.status !== "success") throw new Error("unreachable");
-    expect(outcome.result.verdict).toBe("tooling_error");
-    expect((outcome.result as { reason: string }).reason).toContain("BRANDED_SHORTS_ENGINE_DIR");
+    // AU8: a broken engine/ffprobe run is a tooling_error OUTCOME, never a
+    // successful call carrying a tooling_error verdict.
+    expect(outcome.status).toBe("tooling_error");
+    if (outcome.status === "success") throw new Error("unreachable");
+    expect(outcome.reason).toContain("BRANDED_SHORTS_ENGINE_DIR");
   });
 
   it("builds the exact cut_check.py CLI contract and maps exit 0 to pass", async () => {
@@ -56,8 +57,10 @@ describe("video.cutGate", () => {
     const tool = createCutGate({ runner, engineDir: "/engine" });
     const outcome = await tool.execute({ jobPath: "job.json", transcriptPath: "t.json", verbose: false }, { ctx });
 
-    if (outcome.status !== "success") throw new Error("unreachable");
-    expect(outcome.result.verdict).toBe("tooling_error");
-    expect((outcome.result as { reason: string }).reason).toContain("KeyError");
+    // AU8: a broken engine/ffprobe run is a tooling_error OUTCOME, never a
+    // successful call carrying a tooling_error verdict.
+    expect(outcome.status).toBe("tooling_error");
+    if (outcome.status === "success") throw new Error("unreachable");
+    expect(outcome.reason).toContain("KeyError");
   });
 });
