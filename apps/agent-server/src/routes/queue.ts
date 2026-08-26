@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { describeError, logWarning } from "@agent-engine/telemetry";
 import { RunJobRequestSchema, startRunJob } from "../run-job.js";
 import type { RunsRouterDeps } from "./runs.js";
 
@@ -86,7 +87,10 @@ export function createQueueRouter(deps: QueueRouterDeps): Router {
       try {
         await deps.verifyPushIdToken(bearer, deps.pushAudienceUrl);
       } catch (err) {
-        res.status(401).json({ error: "push token verification failed", message: err instanceof Error ? err.message : String(err) });
+        // The reason stays server-side: telling an unauthenticated caller which
+        // part of their token failed verification is free reconnaissance.
+        logWarning(`rejected a Pub/Sub push identity token: ${describeError(err)}`);
+        res.status(401).json({ error: "push token verification failed" });
         return;
       }
     }

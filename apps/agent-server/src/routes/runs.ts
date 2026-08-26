@@ -6,6 +6,7 @@ import { GateAlreadyResolvedError, WorkflowConcurrentRunError, WorkflowEngine, t
 import { buildRunReport } from "../report.js";
 import { RunJobRequestSchema, startRunJob } from "../run-job.js";
 import { buildWorkflowForProduct, isKnownProductId, type AgentRuntimeDeps, type ProductId } from "../wiring/workflows.js";
+import { respondInternalError, respondWithLoggedDetail } from "./error-response.js";
 
 export interface RunsRouterDeps {
   durableStore: DurableStepStore;
@@ -124,7 +125,7 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
       return;
     }
     if (outcome.outcome === "error") {
-      res.status(500).json({ error: "run failed unexpectedly", message: outcome.message });
+      respondInternalError(res, `run ${runId} failed unexpectedly: ${outcome.message}`, undefined);
       return;
     }
     res.status(201).json({
@@ -196,7 +197,7 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
         res.status(409).json({ error: err.message });
         return;
       }
-      res.status(404).json({ error: err instanceof Error ? err.message : String(err) });
+      respondWithLoggedDetail(res, 404, "gate not found", `resolveGate failed for run ${runId} gate ${gateId}`, err);
       return;
     }
 
@@ -223,7 +224,7 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
         res.status(409).json({ error: err.message });
         return;
       }
-      res.status(500).json({ error: "resume failed unexpectedly", message: err instanceof Error ? err.message : String(err) });
+      respondInternalError(res, `resume failed unexpectedly for run ${runId}`, err);
     }
   });
 

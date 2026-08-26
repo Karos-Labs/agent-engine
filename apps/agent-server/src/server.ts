@@ -6,6 +6,7 @@ import { createDurableStoreFromEnv } from "./wiring/durable-store.js";
 import { createServerPromptStore } from "./wiring/prompt-store.js";
 import { createQueuePushVerifier } from "./wiring/queue-push-auth.js";
 import { createServerTools } from "./wiring/tools.js";
+import { createServiceIdentityConfigFromEnv } from "./wiring/auth.js";
 import { createServerTemplateStore } from "./wiring/template-store.js";
 import { createServerWorkspaceStore } from "./wiring/workspace-store.js";
 import { resolveInstagramRepoRoot } from "./wiring/workflows.js";
@@ -48,6 +49,7 @@ async function main(): Promise<void> {
     agentDefinitionStore,
     ...resolveQueuePushConfig(),
     verifyPushIdToken: createQueuePushVerifier(),
+    auth: createServiceIdentityConfigFromEnv(),
   });
 
   const port = resolvePort();
