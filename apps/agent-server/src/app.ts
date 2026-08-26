@@ -4,6 +4,7 @@ import { createWorkspaceStore } from "@agent-engine/tools";
 import type { DurableStepStore } from "@agent-engine/workflow";
 import { createAgentsRouter } from "./routes/agents.js";
 import { createDeliverablesRouter } from "./routes/deliverables.js";
+import { createDiagnosticsRouter } from "./routes/diagnostics.js";
 import { createDocsRouter } from "./routes/docs.js";
 import { createHealthRouter } from "./routes/health.js";
 import { createQueueRouter, type VerifyPushIdToken } from "./routes/queue.js";
@@ -75,6 +76,7 @@ export function createApp(deps: CreateAppDeps): Application {
 
   // Everything below is authenticated whenever `deps.auth.enabled` is set.
   app.use(createDocsRouter());
+  app.use(createDiagnosticsRouter());
   app.use(createRunsRouter(runsDeps));
   app.use(createAgentsRouter({ agentDefinitionStore }));
   app.use(createDeliverablesRouter({ durableStore: deps.durableStore, workspaceStore: deps.runtimeDeps.workspaceStore ?? createWorkspaceStore() }));

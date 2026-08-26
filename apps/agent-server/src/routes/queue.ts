@@ -69,6 +69,18 @@ export function createQueueRouter(deps: QueueRouterDeps): Router {
       res.status(401).json({ error: "invalid or missing push token" });
       return;
     }
+    if (deps.pushToken === undefined) {
+      // AU55: a missing key that disables a CHECK is a hole, not a degradation.
+      // This guard used to skip itself in silence, which is indistinguishable
+      // at the call site from having passed. It stays non-fatal — OIDC below
+      // fails closed and is the primary protection Google documents for this
+      // endpoint — but it is now audible, in the same shape as the
+      // misconfiguration guard a few lines down.
+      logWarning(
+        "PUBSUB_PUSH_TOKEN is not configured — the push shared-secret check is SKIPPED. " +
+          "This endpoint starts billable runs; it is protected only by Cloud Run IAM and, when PUBSUB_PUSH_AUDIENCE_URL is set, OIDC verification.",
+      );
+    }
 
     if (deps.pushAudienceUrl !== undefined) {
       const authHeader = req.header("authorization");
