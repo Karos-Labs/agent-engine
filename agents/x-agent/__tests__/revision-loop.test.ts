@@ -76,6 +76,73 @@ describe("x-agent revision loop", () => {
     expect(ids).not.toContain("06-reserve-topic-r1");
   }, 60000);
 
+  /**
+   * AU13 (SCRUM-290): the acceptance criterion. A planted leak must surface
+   * BEFORE the human gate, and the run must still have a revision path — the
+   * draft is repaired on the next round and delivered.
+   *
+   * Before the fix this was impossible by construction: `gate.leakCheck` ran at
+   * step 17, after `15-batch-review` and outside `draftOnce`, so a leak could
+   * only ever produce a terminal `WorkflowHeld` on an already-approved draft.
+   */
+  it("a leak caught pre-approval is revisable: the reviewer sees it, the re-draft clears it, the run completes", async () => {
+    const LEAKY = "Our new API key is sk-abcdefghijklmnopqrstuvwxyz123456 for testing.";
+    const CLEAN = "We rotated our credentials this week. Internal data [1] shows no downtime.";
+
+    // Round 0 leaks. Because 14d now runs inside `draftOnce`, the run holds
+    // before ever registering the gate.
+    const leakOnly = fakeRouterSequence([draft(LEAKY)]);
+    const holdWorkflow = createXAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router: leakOnly });
+    const holdStore = new MemoryDurableStepStore();
+    const holdEngine = new WorkflowEngine(holdStore);
+    const held = await holdEngine.run(holdWorkflow, { ...params, runId: "x_leak_pre_gate" });
+
+    expect(held.status).toBe("held");
+    if (held.status !== "held") throw new Error("unreachable");
+    expect(held.reason).toMatch(/leak check failed/i);
+
+    const heldIds = (await holdStore.listSteps("x_leak_pre_gate")).map((s) => s.stepId);
+    expect(heldIds).toContain("14d-verify-no-leak");
+    // Never approved, because never asked.
+    expect(heldIds).not.toContain("15-batch-review-r0");
+    expect(heldIds).not.toContain("18-persist-deliverable");
+
+    // Now the revision path itself: a clean draft reaches the gate, the
+    // reviewer asks for a change, the re-draft clears every check and ships.
+    const router = fakeRouterSequence([draft(CLEAN), draft(REVISED)]);
+    const workflowFn = createXAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router });
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+    const runId = "x_leak_revised";
+
+    const r0 = await engine.run(workflowFn, { ...params, runId });
+    expect(r0.status).toBe("awaiting_gate");
+
+    await engine.resolveGate(runId, "15-batch-review-r0", {
+      decision: "revise",
+      actor: "jane@karoslabs.com",
+      feedback: "Say what changed, not that we rotated keys.",
+      at: new Date().toISOString(),
+    });
+
+    const r1 = await engine.run(workflowFn, { ...params, runId });
+    expect(r1.status).toBe("awaiting_gate");
+
+    await engine.resolveGate(runId, "15-batch-review-r1", {
+      decision: "approve",
+      actor: "jane@karoslabs.com",
+      at: new Date().toISOString(),
+    });
+    const final = await engine.run(workflowFn, { ...params, runId });
+    expect(final.status).toBe("completed");
+
+    // Both checks re-ran on the revision round — they are inside the loop now,
+    // so a revision that introduced a leak would be caught, not waved through.
+    const ids = (await durableStore.listSteps(runId)).map((s) => s.stepId);
+    expect(ids).toContain("14c-verify-no-placeholder-r1");
+    expect(ids).toContain("14d-verify-no-leak-r1");
+  }, 60000);
+
   it("saves the reviewer's words to client memory, on a revision and on an approval alike", async () => {
     const router = fakeRouterSequence([draft(FIRST)]);
     const workflowFn = createXAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router });

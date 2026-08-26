@@ -33,11 +33,13 @@ const ALL_21_STEP_IDS = [
   "12-verify-brand-compliance",
   "13-verify-link-placement",
   "14-render-preview-check",
+  // AU13: inside the revision loop, before the gate — a leak or placeholder
+  // must be revisable, not a post-approval dead end.
+  "14c-verify-no-placeholder",
+  "14d-verify-no-leak",
   // Revision-scoped: `-r0` is the first review round. A `revise` decision
   // registers `-r1` after re-drafting.
   "15-batch-review-r0",
-  "16-verify-no-placeholder",
-  "17-verify-no-leak",
   "18-persist-deliverable",
   "19-persist-manifest",
   "20-commit-and-record",

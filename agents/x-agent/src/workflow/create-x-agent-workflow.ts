@@ -409,6 +409,32 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       return preview;
     });
 
+    // ── 14c-14d: placeholder and leak checks ──
+    //
+    // Inside `draftOnce`, before the human gate, matching every sibling channel
+    // agent (linkedin 13/14, blog 13/14, newsletter 13/14, reddit 15/16).
+    //
+    // These used to run as steps 16/17, AFTER `15-batch-review` and outside the
+    // revision loop. That put a reviewer's approved draft one step away from a
+    // `WorkflowHeld` with no revision path: a leak found post-approval could
+    // not be revised, only abandoned, and the reviewer never saw the finding
+    // that killed it. Running them here means a placeholder or credential leak
+    // surfaces as a revision the reviewer can act on, exactly like every other
+    // content check in this loop.
+    await wf.step.code(rev("14c-verify-no-placeholder"), async () => {
+      const verdict = await runGate(tools, "gate.noPlaceholder", { text: draft.text }, ctx);
+      if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.noPlaceholder: ${verdict.reason}`);
+      if (verdict.verdict === "content_fail") throw new WorkflowHeld(`unresolved placeholder: ${verdict.reason}`);
+      return verdict;
+    });
+
+    await wf.step.code(rev("14d-verify-no-leak"), async () => {
+      const verdict = await runGate(tools, "gate.leakCheck", { text: draft.text }, ctx);
+      if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.leakCheck: ${verdict.reason}`);
+      if (verdict.verdict === "content_fail") throw new WorkflowHeld(`leak check failed: ${verdict.reason}`);
+      return verdict;
+    });
+
     // ── 14b: terminal topic guardrail ──
     //
     // Before the human gate, deliberately: a reviewer should never be shown a
@@ -460,21 +486,6 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       },
     });
     const draft = review.output;
-
-    // ── 16-17: previously-dead gates, wired in right before persistence ──
-    await wf.step.code("16-verify-no-placeholder", async () => {
-      const verdict = await runGate(tools, "gate.noPlaceholder", { text: draft.text }, ctx);
-      if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.noPlaceholder: ${verdict.reason}`);
-      if (verdict.verdict === "content_fail") throw new WorkflowHeld(`unresolved placeholder: ${verdict.reason}`);
-      return verdict;
-    });
-
-    await wf.step.code("17-verify-no-leak", async () => {
-      const verdict = await runGate(tools, "gate.leakCheck", { text: draft.text }, ctx);
-      if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.leakCheck: ${verdict.reason}`);
-      if (verdict.verdict === "content_fail") throw new WorkflowHeld(`leak check failed: ${verdict.reason}`);
-      return verdict;
-    });
 
     // ── 18-19: deliverable & manifest persistence ──
     const deliverableId = await wf.step.code("18-persist-deliverable", async (): Promise<string> => {
