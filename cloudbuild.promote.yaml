@@ -64,13 +64,26 @@ substitutions:
   # differing only in pointing at production's own URL. Only wired into
   # deploy-http below: deploy-worker (queue-consumer.js) never mounts the
   # push route at all.
-  _PUBSUB_PUSH_AUDIENCE_URL: "https://agent-engine-prod-zc6vfwnzsq-ew.a.run.app"
+  _PUBSUB_PUSH_AUDIENCE_URL: "https://agent-engine-prod-zc6vfwnzsq-ew.a.run.app/api/v1/queue/pubsub-push"
   # Service-identity authentication plumbing (AU1 / SCRUM-287, folded in per
   # AU2 / SCRUM-288) — see cloudbuild.yaml's own comment for the full
   # reasoning. AUTH_ENABLED stays hardcoded false in --set-env-vars below,
   # never a substitution — flipping it is SCRUM-331, blocked on SCRUM-330
   # (the portal's fail-open metadata fetch).
   _AUTH_AUDIENCE: "https://agent-engine-prod-zc6vfwnzsq-ew.a.run.app"
+  # Who may call this service once AUTH_ENABLED is flipped. Established by
+  # reading the LIVE runtime identity of every Cloud Run service in this
+  # project, not inferred: `karos-cmo` (the portal) is the only caller, and
+  # agent-middleware does not call agent-engine at all (the dependency runs
+  # the other way -- agent-engine reads its prompt store).
+  #
+  # This is staged NOW, while the flag is off, because an EMPTY list means
+  # "any identity Google vouches for for this audience"
+  # (auth/service-identity.ts:77-82) -- and since AUTH_AUDIENCE is this
+  # service's own URL, that is exactly the set Cloud Run IAM already
+  # admitted. Flipping the flag without this would produce enforcement in
+  # the logs and none in fact, which is worse than auth being off.
+  _AUTH_ALLOWED_SERVICE_ACCOUNTS: "firebase-adminsdk-fbsvc@karoscmo.iam.gserviceaccount.com"
 
 options:
   logging: CLOUD_LOGGING_ONLY
@@ -109,7 +122,7 @@ steps:
       - --no-allow-unauthenticated
       - --service-account=${_SERVICE_ACCOUNT}
       - --memory=2Gi
-      - --set-env-vars=GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},ANTHROPIC_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},CLOUD_ML_REGION=global,VERTEX_AI_LOCATION=${_REGION},GEMINI_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},PROMPT_STORE_DRIVER=firestore,QUEUE_PROVIDER=pubsub,PUBSUB_PROJECT_ID=${_PUBSUB_PROJECT_ID},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},GCS_ARTIFACTS_BUCKET=${_GCS_ARTIFACTS_BUCKET},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET},LANDING_ENGINE_TEMPLATE_ROOT=/app/packages/tools/karos-landing/assets/template,LANDING_ENGINE_ROOT=/tmp/landing-engine,INSTAGRAM_AGENT_REPO_ROOT=/app,PUBSUB_PUSH_AUDIENCE_URL=${_PUBSUB_PUSH_AUDIENCE_URL},AUTH_ENABLED=false,AUTH_AUDIENCE=${_AUTH_AUDIENCE}
+      - --set-env-vars=GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},ANTHROPIC_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},CLOUD_ML_REGION=global,VERTEX_AI_LOCATION=${_REGION},GEMINI_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},PROMPT_STORE_DRIVER=firestore,QUEUE_PROVIDER=pubsub,PUBSUB_PROJECT_ID=${_PUBSUB_PROJECT_ID},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},GCS_ARTIFACTS_BUCKET=${_GCS_ARTIFACTS_BUCKET},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET},LANDING_ENGINE_TEMPLATE_ROOT=/app/packages/tools/karos-landing/assets/template,LANDING_ENGINE_ROOT=/tmp/landing-engine,INSTAGRAM_AGENT_REPO_ROOT=/app,PUBSUB_PUSH_AUDIENCE_URL=${_PUBSUB_PUSH_AUDIENCE_URL},AUTH_ENABLED=false,AUTH_AUDIENCE=${_AUTH_AUDIENCE},AUTH_ALLOWED_SERVICE_ACCOUNTS=${_AUTH_ALLOWED_SERVICE_ACCOUNTS}
       - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest,SCRAPPYCOCO_API_KEY=${_SCRAPPYCOCO_API_KEY_SECRET}:latest
       # instagram-agent writes under `repoRoot` (INSTAGRAM_AGENT_REPO_ROOT=/app):
       # `.media-cache/<runId>/` from media.findImages, and
