@@ -7,6 +7,7 @@ import { createCutGate } from "./tools/cut-gate.js";
 import { createCutawayGate } from "./tools/cutaway-gate.js";
 import { createGraphicsGate } from "./tools/graphics-gate.js";
 import { createRender } from "./tools/render.js";
+import { createCutClip, createBrandFrame } from "./tools/clip-compose.js";
 import { createReadJsonFile } from "./tools/read-json-file.js";
 import { createSelfEvalGate } from "./tools/self-eval-gate.js";
 import { createTranscribe, type CreateTranscribeOptions } from "./tools/transcribe.js";
@@ -25,6 +26,7 @@ export * from "./tools/cutaway-gate.js";
 export * from "./tools/graphics-gate.js";
 export * from "./tools/read-json-file.js";
 export * from "./tools/render.js";
+export * from "./tools/clip-compose.js";
 export * from "./tools/self-eval-gate.js";
 export * from "./tools/transcribe.js";
 export * from "./tools/upload-deliverable.js";
@@ -57,6 +59,8 @@ export function createKarosVideoTools(options: CreateKarosVideoToolsOptions = {}
     "video.cutawayGate": createCutawayGate(options),
     "video.colorGrade": createColorGrade(),
     "video.render": createRender(options),
+    "video.cutClip": createCutClip(options),
+    "video.brandFrame": createBrandFrame(options),
     "video.selfEvalGate": createSelfEvalGate(options),
     "video.transcribe": createTranscribe({ ...(options.env !== undefined ? { env: options.env } : {}), ...options.transcribe }),
     "video.writeJsonFile": createWriteJsonFile(options),

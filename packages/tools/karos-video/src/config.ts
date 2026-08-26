@@ -8,6 +8,8 @@ export interface KarosVideoToolOptions {
   pythonBin?: string;
   /** Defaults to `env.KAROS_VIDEO_FFPROBE_BIN` or `"ffprobe"` (`video.selfEvalGate` only). */
   ffprobeBin?: string;
+  /** Defaults to `env.KAROS_VIDEO_FFMPEG_BIN` or `"ffmpeg"` (`video.cutClip`/`video.brandFrame`). */
+  ffmpegBin?: string;
   /**
    * A checkout of the branded-shorts product's `assets/engine/` directory.
    * RFC-06 §3/§8: this is a real vendoring decision this repo has not yet
@@ -35,6 +37,7 @@ export interface KarosVideoRuntime {
   runner: ProcessRunner;
   pythonBin: string;
   ffprobeBin: string;
+  ffmpegBin: string;
   engineDir?: string;
   workRoot?: string;
   env: Readonly<Record<string, string | undefined>>;
@@ -48,6 +51,7 @@ export function resolveRuntime(options: KarosVideoToolOptions): KarosVideoRuntim
     runner: options.runner ?? createDefaultProcessRunner(),
     pythonBin: options.pythonBin ?? env["KAROS_VIDEO_PYTHON_BIN"] ?? "python3",
     ffprobeBin: options.ffprobeBin ?? env["KAROS_VIDEO_FFPROBE_BIN"] ?? "ffprobe",
+    ffmpegBin: options.ffmpegBin ?? env["KAROS_VIDEO_FFMPEG_BIN"] ?? "ffmpeg",
     ...(engineDir !== undefined ? { engineDir } : {}),
     ...(workRoot !== undefined ? { workRoot } : {}),
     env,
