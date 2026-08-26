@@ -16,7 +16,10 @@
   "scripts": {
     "build": "node scripts/build-workspaces.mjs",
     "typecheck": "tsc --noEmit",
+    "pretest": "node scripts/check-dist-freshness.mjs",
     "test": "npm run test --workspaces --if-present",
+    "build:stale": "node scripts/check-dist-freshness.mjs",
+    "check:stale": "node scripts/check-dist-freshness.mjs --check",
     "verify": "npm run typecheck && npm test",
     "setup:local": "tsx scripts/setup-local.ts",
     "dev:server": "tsx watch --env-file=.env apps/agent-server/src/server.ts",

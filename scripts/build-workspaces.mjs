@@ -9,6 +9,10 @@
  * hardcoded list silently goes stale the moment a package is added, which is
  * exactly what happened twice while this repo was being built out.
  *
+ * Workspace discovery and the topological sort live in
+ * `./workspace-graph.mjs`, shared with `check-dist-freshness.mjs` so the two
+ * can never disagree about which packages exist.
+ *
  * Plain `.mjs` with no dependencies so it runs before anything is compiled,
  * including inside the Docker builder stage.
  *
@@ -16,75 +20,7 @@
  *   node scripts/build-workspaces.mjs --list    # print the order, build nothing
  */
 import { execSync } from "node:child_process";
-import { readFileSync, readdirSync, existsSync } from "node:fs";
-import * as path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const SCOPE = "@agent-engine/";
-
-function readJson(file) {
-  return JSON.parse(readFileSync(file, "utf8"));
-}
-
-/** Expands the root package.json's workspace globs. Only the trailing-`/*` and literal-path forms this repo uses are supported. */
-function workspaceDirs() {
-  const { workspaces } = readJson(path.join(REPO_ROOT, "package.json"));
-  const dirs = [];
-
-  for (const pattern of workspaces ?? []) {
-    if (!pattern.endsWith("/*")) {
-      dirs.push(path.join(REPO_ROOT, pattern));
-      continue;
-    }
-    const parent = path.join(REPO_ROOT, pattern.slice(0, -2));
-    if (!existsSync(parent)) continue;
-    for (const entry of readdirSync(parent, { withFileTypes: true })) {
-      if (entry.isDirectory()) dirs.push(path.join(parent, entry.name));
-    }
-  }
-
-  return dirs.filter((dir) => existsSync(path.join(dir, "package.json")));
-}
-
-/** name -> { deps: internal dependency names, buildable: has its own build script }. */
-function loadGraph() {
-  const graph = new Map();
-
-  for (const dir of workspaceDirs()) {
-    const pkg = readJson(path.join(dir, "package.json"));
-    if (!pkg.name) continue;
-    graph.set(pkg.name, {
-      deps: Object.keys({ ...pkg.dependencies, ...pkg.devDependencies }).filter((d) => d.startsWith(SCOPE)),
-      buildable: Boolean(pkg.scripts?.build),
-    });
-  }
-
-  return graph;
-}
-
-/** Depth-first topological sort. Throws on a dependency cycle rather than emitting an order that cannot work. */
-function topoSort(graph) {
-  const ordered = [];
-  const state = new Map(); // name -> "visiting" | "done"
-
-  function visit(name, trail) {
-    if (state.get(name) === "done") return;
-    if (state.get(name) === "visiting") {
-      throw new Error(`build-workspaces: dependency cycle detected — ${[...trail, name].join(" -> ")}`);
-    }
-    // A dependency outside the workspace set (a published package) is not ours to build.
-    if (!graph.has(name)) return;
-
-    state.set(name, "visiting");
-    for (const dep of graph.get(name).deps) visit(dep, [...trail, name]);
-    state.set(name, "done");
-    ordered.push(name);
-  }
-
-  for (const name of [...graph.keys()].sort()) visit(name, []);
-  return ordered;
-}
+import { REPO_ROOT, loadGraph, topoSort } from "./workspace-graph.mjs";
 
 const graph = loadGraph();
 const order = topoSort(graph).filter((name) => graph.get(name).buildable);
