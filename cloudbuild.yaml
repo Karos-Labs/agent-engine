@@ -65,23 +65,75 @@ substitutions:
   _UNSPLASH_ACCESS_KEY_SECRET: unsplash-access-key
   _PEXELS_API_KEY_SECRET: pexels-api-key
   _PIXABAY_API_KEY_SECRET: pixabay-api-key
-  # Backs research.pull's external search (Apify RAG Web Browser). Without it
-  # research.pull reports not_available and every content agent holds rather
-  # than drafting from a placeholder, so this is effectively required for prep
-  # to produce content at all. Same must-exist caveat as the Unsplash secret:
-  # a blank value renders an invalid "APIFY_TOKEN=:latest". prod goes through
-  # cloudbuild.promote.yaml, which wires this separately.
+  # CORRECTED 2026-08 (AU2): this comment previously claimed Apify backs
+  # research.pull's external search and is "effectively required to produce
+  # content at all" — that was already stale when written. research.pull's
+  # scraper backend is createScraperProvider (karos-scraper/src/index.ts),
+  # which reads ONLY SCRAPPYCOCO_API_KEY below and has no Apify branch at
+  # all. Apify backs exactly one thing: karos-media's routing.ts, as one of
+  # several image-search providers (alongside Unsplash/Pexels/Pixabay and the
+  # keyless Openverse/Wikimedia/DuckDuckGo) for a handful of query moods
+  # (apify_google_maps, apify_instagram_location, apify_pinterest). Its
+  # absence costs prep some image-search coverage, never content production.
+  # Deliberate: the scraper stays on ScrappyCoco as the one generic,
+  # swappable ScraperProvider implementation rather than adding a second
+  # scraping backend to that abstraction. Same must-exist caveat as the
+  # Unsplash secret: a blank value renders an invalid "APIFY_TOKEN=:latest".
+  # prod runs without this secret entirely (see cloudbuild.promote.yaml) —
+  # also deliberate, same reasoning.
   _APIFY_TOKEN_SECRET: apify-token
-  # Backs the generic ScraperProvider: research.pull's live sources and the
-  # visual pipeline's scrape tier. Without it research.pull reports
-  # not_available and every content agent holds rather than drafting from a
-  # placeholder, so this is effectively required for prep to produce content.
+  # The scraper backend research.pull and the visual pipeline's scrape tier
+  # actually run on (karos-scraper/src/index.ts's createScraperProvider) —
+  # the one generic, swappable ScraperProvider implementation, chosen so the
+  # scraping vendor can change without touching any tool's own code. Without
+  # it research.pull reports not_available and every content agent holds
+  # rather than drafting from a placeholder, so THIS is what's effectively
+  # required for prep to produce content at all — not Apify (see above).
   _SCRAPPYCOCO_API_KEY_SECRET: scrappycoco-api-key
   _PUBSUB_PROJECT_ID: ""
   _QUEUE_SUBSCRIPTION_RUN_JOBS: ""
   _GCS_MEDIA_BUCKET: ""
   _GCS_ARTIFACTS_BUCKET: ""
   _GCS_WORKSPACE_BUCKET: ""
+  # Push-route authentication (AU2 / SCRUM-288). Verified: routes/queue.ts's
+  # OIDC check only activates when PUBSUB_PUSH_AUDIENCE_URL is set — until
+  # now, blank in every environment, so the push route accepted any
+  # syntactically valid envelope with no auth at all. This turns it on using
+  # this service's OWN, stable HTTP-service URL as the required `aud` claim
+  # (Google's own recommended mechanism for a Pub/Sub push subscription:
+  # https://cloud.google.com/pubsub/docs/authenticate-push-subscriptions).
+  # Cloud Run service URLs are deterministic from service-name+region+project
+  # and stable across deploys/revisions, so hardcoding is safe — not a value
+  # that needs to survive a rebuild. Sourced from karosCMO's own
+  # AGENT_ENGINE_AUDIENCE (its copy of this exact URL, confirmed identical:
+  # the portal calls this same service). Only applies to deploy-http below —
+  # deploy-worker (queue-consumer.js) never mounts this route at all; it
+  # pull-subscribes directly and has no Express app.
+  #
+  # PUBSUB_PUSH_TOKEN (the shared-secret layer, independent of and
+  # additional to OIDC) is deliberately left unwired here: it needs a new
+  # Secret Manager secret plus an accessor grant for agent-engine-sa, both
+  # infrastructure mutations out of scope for this file-only change. OIDC
+  # verification above is Google's primary recommended protection for this
+  # endpoint and does not depend on this token.
+  _PUBSUB_PUSH_AUDIENCE_URL: "https://agent-engine-prep-v6nerot2ba-uc.a.run.app"
+  # Service-identity authentication plumbing (AU1 / SCRUM-287, config folded
+  # in here per AU2 / SCRUM-288). AUTH_AUDIENCE resolves to the exact same
+  # URL as _PUBSUB_PUSH_AUDIENCE_URL above (this service's own address) —
+  # kept as a separate substitution rather than reused because the two guard
+  # different things in code (apps/agent-server/src/auth/service-identity.ts
+  # vs the Pub/Sub-specific check in routes/queue.ts) and could legitimately
+  # diverge later (e.g. a dedicated auth-only hostname).
+  #
+  # AUTH_ENABLED IS HARDCODED false BELOW, IN THE --set-env-vars LIST, NOT
+  # HERE — deliberately not a substitution at all, so a substitution typo or
+  # omission can never silently enable enforcement. This wires AUTH_AUDIENCE
+  # so the flag CAN be flipped in a future, separate change (SCRUM-331) —
+  # flipping it is explicitly blocked on the portal's fail-open metadata
+  # fetch (SCRUM-330): enabling before that lands turns a silent metadata
+  # blip into an intermittent portal 401. Do not flip this substitution's
+  # sibling AUTH_ENABLED=false without that ticket closing first.
+  _AUTH_AUDIENCE: "https://agent-engine-prep-v6nerot2ba-uc.a.run.app"
 
 steps:
   - id: build
@@ -112,7 +164,7 @@ steps:
       - --no-allow-unauthenticated
       - --service-account=${_SERVICE_ACCOUNT}
       - --memory=2Gi
-      - --set-env-vars=GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},BQ_PROJECT_ID=${_BQ_PROJECT_ID},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},ANTHROPIC_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},CLOUD_ML_REGION=global,VERTEX_AI_LOCATION=${_REGION},GEMINI_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},PROMPT_STORE_DRIVER=firestore,QUEUE_PROVIDER=pubsub,PUBSUB_PROJECT_ID=${_PUBSUB_PROJECT_ID},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},GCS_ARTIFACTS_BUCKET=${_GCS_ARTIFACTS_BUCKET},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET},LANDING_ENGINE_TEMPLATE_ROOT=/app/packages/tools/karos-landing/assets/template,LANDING_ENGINE_ROOT=/tmp/landing-engine,INSTAGRAM_AGENT_REPO_ROOT=/app
+      - --set-env-vars=GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},BQ_PROJECT_ID=${_BQ_PROJECT_ID},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},ANTHROPIC_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},CLOUD_ML_REGION=global,VERTEX_AI_LOCATION=${_REGION},GEMINI_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},PROMPT_STORE_DRIVER=firestore,QUEUE_PROVIDER=pubsub,PUBSUB_PROJECT_ID=${_PUBSUB_PROJECT_ID},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},GCS_ARTIFACTS_BUCKET=${_GCS_ARTIFACTS_BUCKET},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET},LANDING_ENGINE_TEMPLATE_ROOT=/app/packages/tools/karos-landing/assets/template,LANDING_ENGINE_ROOT=/tmp/landing-engine,INSTAGRAM_AGENT_REPO_ROOT=/app,PUBSUB_PUSH_AUDIENCE_URL=${_PUBSUB_PUSH_AUDIENCE_URL},AUTH_ENABLED=false,AUTH_AUDIENCE=${_AUTH_AUDIENCE}
       - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest,UNSPLASH_ACCESS_KEY=${_UNSPLASH_ACCESS_KEY_SECRET}:latest,PEXELS_API_KEY=${_PEXELS_API_KEY_SECRET}:latest,PIXABAY_API_KEY=${_PIXABAY_API_KEY_SECRET}:latest,APIFY_TOKEN=${_APIFY_TOKEN_SECRET}:latest,SCRAPPYCOCO_API_KEY=${_SCRAPPYCOCO_API_KEY_SECRET}:latest
       # instagram-agent writes under `repoRoot` (INSTAGRAM_AGENT_REPO_ROOT=/app):
       # `.media-cache/<runId>/` from media.findImages, and

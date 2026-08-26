@@ -53,12 +53,40 @@ substitutions:
   # and nothing else — the keyless ones (openverse, wikimedia, ddg_images) and
   # the generative tier are unaffected, and the zero-held guarantee holds
   # regardless. Create the secrets in karoscmo and add them here to close it.
+  #
+  # APIFY_TOKEN is ALSO deliberately absent from production, but for a
+  # different reason than the three above (AU2, 2026-08): the secret DOES
+  # exist in karoscmo ("apify-token"), but this is not a missing-secret gap —
+  # it's a product decision. Content generation runs on ScrappyCoco as the
+  # one generic, swappable ScraperProvider implementation
+  # (karos-scraper/src/index.ts's createScraperProvider reads ONLY
+  # SCRAPPYCOCO_API_KEY, no Apify branch exists there at all); Apify backs
+  # only karos-media's image-search routing, one provider among several,
+  # nearly all keyless. Wiring it here would ALSO require granting
+  # agent-engine-sa@karoscmo roles/secretmanager.secretAccessor on
+  # "apify-token" first (confirmed absent, unlike scrappycoco-api-key's
+  # binding below) — that is an IAM change, deliberately not made alongside
+  # this file-only change. See cloudbuild.yaml's _APIFY_TOKEN_SECRET comment
+  # for the full reasoning; this note exists so the gap reads as a decision,
+  # not an oversight.
   _SCRAPPYCOCO_API_KEY_SECRET: scrappycoco-api-key
   _PUBSUB_PROJECT_ID: ""
   _QUEUE_SUBSCRIPTION_RUN_JOBS: ""
   _GCS_MEDIA_BUCKET: ""
   _GCS_ARTIFACTS_BUCKET: ""
   _GCS_WORKSPACE_BUCKET: ""
+  # Push-route authentication (AU2 / SCRUM-288) — see cloudbuild.yaml's own
+  # comment on this same substitution for the full reasoning; identical here,
+  # differing only in pointing at production's own URL. Only wired into
+  # deploy-http below: deploy-worker (queue-consumer.js) never mounts the
+  # push route at all.
+  _PUBSUB_PUSH_AUDIENCE_URL: "https://agent-engine-prod-zc6vfwnzsq-ew.a.run.app"
+  # Service-identity authentication plumbing (AU1 / SCRUM-287, folded in per
+  # AU2 / SCRUM-288) — see cloudbuild.yaml's own comment for the full
+  # reasoning. AUTH_ENABLED stays hardcoded false in --set-env-vars below,
+  # never a substitution — flipping it is SCRUM-331, blocked on SCRUM-330
+  # (the portal's fail-open metadata fetch).
+  _AUTH_AUDIENCE: "https://agent-engine-prod-zc6vfwnzsq-ew.a.run.app"
 
 options:
   logging: CLOUD_LOGGING_ONLY
@@ -97,7 +125,7 @@ steps:
       - --no-allow-unauthenticated
       - --service-account=${_SERVICE_ACCOUNT}
       - --memory=2Gi
-      - --set-env-vars=GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},ANTHROPIC_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},CLOUD_ML_REGION=global,VERTEX_AI_LOCATION=${_REGION},GEMINI_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},PROMPT_STORE_DRIVER=firestore,QUEUE_PROVIDER=pubsub,PUBSUB_PROJECT_ID=${_PUBSUB_PROJECT_ID},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},GCS_ARTIFACTS_BUCKET=${_GCS_ARTIFACTS_BUCKET},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET},LANDING_ENGINE_TEMPLATE_ROOT=/app/packages/tools/karos-landing/assets/template,LANDING_ENGINE_ROOT=/tmp/landing-engine,INSTAGRAM_AGENT_REPO_ROOT=/app
+      - --set-env-vars=GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},ANTHROPIC_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},CLOUD_ML_REGION=global,VERTEX_AI_LOCATION=${_REGION},GEMINI_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},PROMPT_STORE_DRIVER=firestore,QUEUE_PROVIDER=pubsub,PUBSUB_PROJECT_ID=${_PUBSUB_PROJECT_ID},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},GCS_ARTIFACTS_BUCKET=${_GCS_ARTIFACTS_BUCKET},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET},LANDING_ENGINE_TEMPLATE_ROOT=/app/packages/tools/karos-landing/assets/template,LANDING_ENGINE_ROOT=/tmp/landing-engine,INSTAGRAM_AGENT_REPO_ROOT=/app,PUBSUB_PUSH_AUDIENCE_URL=${_PUBSUB_PUSH_AUDIENCE_URL},AUTH_ENABLED=false,AUTH_AUDIENCE=${_AUTH_AUDIENCE}
       - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest,SCRAPPYCOCO_API_KEY=${_SCRAPPYCOCO_API_KEY_SECRET}:latest
       # instagram-agent writes under `repoRoot` (INSTAGRAM_AGENT_REPO_ROOT=/app):
       # `.media-cache/<runId>/` from media.findImages, and
