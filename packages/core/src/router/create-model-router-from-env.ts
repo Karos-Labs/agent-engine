@@ -290,7 +290,18 @@ function createModelGardenVendorAdapter(env: Record<string, string | undefined>)
 function createOpenAICompatibleVendorAdapter(env: Record<string, string | undefined>): ModelAdapter | undefined {
   const baseURL = readEnv(env, "OPENAI_COMPATIBLE_BASE_URL");
   if (!baseURL) return undefined;
-  const apiKey = readEnv(env, "OPENAI_COMPATIBLE_API_KEY", "OPENAI_API_KEY") ?? "unused";
+
+  // AU59: decline to register rather than build a client with a placeholder.
+  // `?? "unused"` produced an adapter that looked configured at wiring time and
+  // failed at CALL time — mid-run, inside a step, as a tooling_error naming an
+  // auth failure rather than a missing variable. Every other adapter here
+  // declines when its credential is absent; this one pretended.
+  //
+  // A gateway that genuinely needs no key (a local LiteLLM) can say so
+  // explicitly with OPENAI_COMPATIBLE_API_KEY=unused — the difference being
+  // that it is then somebody's decision rather than a default nobody chose.
+  const apiKey = readEnv(env, "OPENAI_COMPATIBLE_API_KEY", "OPENAI_API_KEY");
+  if (!apiKey) return undefined;
   return new OpenAICompatibleAdapter(new OpenAI({ apiKey, baseURL }), "openai-compatible");
 }
 
