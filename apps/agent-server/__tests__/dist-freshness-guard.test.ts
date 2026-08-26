@@ -47,6 +47,17 @@ describe("AU54: the stale-dist guard stays wired", () => {
     expect(listed.indexOf("@agent-engine/core")).toBeLessThan(listed.indexOf("@agent-engine/agent-server"));
   });
 
+  it("also refuses compiled output whose source is gone (AU57)", () => {
+    // `tsc` never deletes outputs, so a deleted source leaves its .js/.d.ts
+    // behind forever — `karos-research/dist/backends.js` outlived its source
+    // by weeks. Deleting a file changes no other file's mtime, so the
+    // staleness check alone cannot see this: a tree can be perfectly fresh and
+    // still carry code with no source. Hence a second, independent scan.
+    const script = readFileSync(path.join(repoRoot, "scripts", "check-dist-freshness.mjs"), "utf8");
+    expect(script, "the guard must scan for orphaned outputs, not only stale ones").toContain("orphanedOutputs");
+    expect(script).toContain("rmSync");
+  });
+
   it("reports a clean tree as fresh", () => {
     // The suite only reaches this point via `npm test`, whose pretest hook has
     // already rebuilt anything stale — so a non-zero exit here means the check
