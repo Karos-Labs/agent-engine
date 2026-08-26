@@ -16,6 +16,8 @@
   "scripts": {
     "build": "node scripts/build-workspaces.mjs",
     "typecheck": "tsc --noEmit",
+    "config:inventory": "tsx scripts/config-inventory.ts",
+    "check:config": "tsx scripts/config-inventory.ts --check",
     "pretest": "node scripts/check-dist-freshness.mjs",
     "test": "npm run test --workspaces --if-present",
     "build:stale": "node scripts/check-dist-freshness.mjs",
