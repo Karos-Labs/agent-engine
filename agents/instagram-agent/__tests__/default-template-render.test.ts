@@ -2,6 +2,7 @@ import { describe, expect, it, afterEach } from "vitest";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { createRenderCarousel } from "@agent-engine/tool-karos-publish";
+import { isChromiumInstalled } from "./test-helpers.js";
 
 /**
  * A real, un-mocked Chromium render of the actual production default
@@ -44,7 +45,11 @@ describe("default templates are token-driven, not literal-colored", () => {
   });
 });
 
-describe("instagram-agent's default template renders via publish.renderCarousel", () => {
+// AU57: this launches a real Chromium. Its sibling in workflow-e2e.test.ts
+// already guards with the same check; without it this file HARD-FAILS on any
+// machine without the browser installed rather than skipping, which reads as
+// a broken build instead of an absent optional dependency.
+describe.skipIf(!isChromiumInstalled())("instagram-agent's default template renders via publish.renderCarousel", () => {
   const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
   // `validateRenderInputs`'s `assertInside` requires outDir/image paths to be
   // repo-relative (never an absolute/escaping path) — os.tmpdir() is outside

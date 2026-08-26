@@ -44,7 +44,7 @@
  * package directly still bypasses it.
  */
 import { execSync } from "node:child_process";
-import { readdirSync, existsSync, statSync } from "node:fs";
+import { readdirSync, existsSync, statSync, rmSync } from "node:fs";
 import * as path from "node:path";
 import { REPO_ROOT, loadGraph, buildOrder } from "./workspace-graph.mjs";
 
@@ -71,8 +71,49 @@ function newestMtime(dir) {
   return newest;
 }
 
+/**
+ * Compiled files with no corresponding source (AU57 / SCRUM-356).
+ *
+ * `tsc` never deletes outputs, so removing a source file leaves its `.js` and
+ * `.d.ts` behind forever. `karos-research/dist/backends.js` was found this way
+ * — the pre-migration research backend, still present as compiled output long
+ * after its source was deleted.
+ *
+ * SCOPE, established rather than assumed: this is a LOCAL working-tree problem
+ * only. `.dockerignore` excludes `**\/dist` from the build context and the
+ * Dockerfile's builder stage compiles from source inside the container, so an
+ * orphan cannot reach the image. CI checks out fresh and caches npm only, so
+ * it cannot occur there either. What it does do is mislead a developer and
+ * their local test run, in the same silent way a stale dist does.
+ */
+function orphanedOutputs(dir) {
+  const srcDir = path.join(dir, "src");
+  const distDir = path.join(dir, "dist");
+  if (!existsSync(srcDir) || !existsSync(distDir)) return [];
+
+  const orphans = [];
+  const stack = [distDir];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name !== "node_modules") stack.push(full);
+        continue;
+      }
+      const rel = path.relative(distDir, full);
+      const base = rel.replace(/\.(d\.ts\.map|js\.map|d\.ts|js)$/, "");
+      if (base === rel) continue; // not a compiled artefact
+      // A .ts source, or a .tsx/.json the compiler may have emitted from.
+      if (!existsSync(path.join(srcDir, `${base}.ts`))) orphans.push(rel.replace(/\\/g, "/"));
+    }
+  }
+  return orphans;
+}
+
 const graph = loadGraph();
 const stale = [];
+const orphaned = [];
 
 for (const name of buildOrder(graph)) {
   const { dir } = graph.get(name);
@@ -89,6 +130,33 @@ for (const name of buildOrder(graph)) {
   // the one where cross-package imports fail outright rather than subtly.
   if (distNewest === 0 || srcNewest > distNewest) {
     stale.push({ name, dir, reason: distNewest === 0 ? "no dist/ — never built" : "src/ is newer than dist/" });
+  }
+
+  const orphans = orphanedOutputs(dir);
+  if (orphans.length > 0) orphaned.push({ name, dir, files: orphans });
+}
+
+// Orphans are removed even when nothing is stale: deleting a source file
+// changes no other file's mtime, so a tree can be perfectly fresh and still
+// carry compiled code that no longer has a source.
+if (orphaned.length > 0) {
+  const total = orphaned.reduce((n, p) => n + p.files.length, 0);
+  if (CHECK_ONLY) {
+    console.error(`\ncompiled output with no source in ${orphaned.length} package(s) — ${total} file(s):\n`);
+    for (const { name, files } of orphaned) {
+      console.error(`  ${name}`);
+      for (const f of files) console.error(`      dist/${f}`);
+    }
+    console.error(`\ntsc never deletes outputs. fix: npm run build:stale\n`);
+    process.exit(1);
+  }
+  console.log(`removing ${total} orphaned output file(s) — compiled code whose source is gone:`);
+  for (const { name, dir, files } of orphaned) {
+    console.log(`  ${name}`);
+    for (const f of files) {
+      console.log(`      dist/${f}`);
+      rmSync(path.join(dir, "dist", f), { force: true });
+    }
   }
 }
 
