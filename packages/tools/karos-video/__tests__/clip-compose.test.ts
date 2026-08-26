@@ -121,11 +121,11 @@ describe("video.brandFrame", () => {
     const calls: Array<{ bin: string; args: string[] }> = [];
     const tool = createBrandFrame({ runner: fakeRunner(calls), env: {} });
     const outcome = await tool.execute(
-      {
+      BrandFrameInputSchema.parse({
         videoPath: "clip.mp4",
         outputPath: "framed.mp4",
         brand: { ground: "#17181C", fg: "#F4F2EC", logoPath: "definitely/not/a/real/logo.png" },
-      },
+      }),
       { ctx },
     );
     expect(outcome.status).toBe("success");
@@ -140,7 +140,11 @@ describe("video.brandFrame", () => {
   it("reports which elements composited", async () => {
     const tool = createBrandFrame({ runner: fakeRunner([]), env: {} });
     const outcome = await tool.execute(
-      { videoPath: "clip.mp4", outputPath: "framed.mp4", brand: { ground: "#17181C", fg: "#F4F2EC", accent: "#A5E82B", seriesHeader: "X", handle: "@x" } },
+      BrandFrameInputSchema.parse({
+        videoPath: "clip.mp4",
+        outputPath: "framed.mp4",
+        brand: { ground: "#17181C", fg: "#F4F2EC", accent: "#A5E82B", seriesHeader: "X", handle: "@x" },
+      }),
       { ctx },
     );
     const result = (outcome as { result: { applied: string[] } }).result;
