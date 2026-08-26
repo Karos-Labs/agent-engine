@@ -45,7 +45,11 @@ describe("Layer 3 tool registry — cross-cutting", () => {
   it("merges all ten servers' tools into one registry with no name collisions", () => {
     const expectedPrefixes = ["client.", "gate.", "intel.", "ledger.", "memory.", "publish.", "reputation.", "research.", "seoGeo.", "topics."];
     const names = Object.keys(tools);
-    // 8 client + 6 gates + 2 intel + 9 ledger + 7 memory + 4 publish + 3 reputation + 5 research + 2 seoGeo + 4 topics = 50
+    // 9 client + 6 gates + 2 intel + 9 ledger + 7 memory + 4 publish + 3 reputation + 5 research + 2 seoGeo + 4 topics = 51
+    // (client grew from 8 to 9: client.getKnowledge reads the knowledge base the
+    // portal's sync mirrors into the workspace — onboarding context docs, recent
+    // meeting summaries, the reference-asset index. See
+    // packages/tools/karos-client/src/get-knowledge.ts.)
     // (client grew from 7 to 8: client.getStrategy reads a client's per-agent
     // setup document — the filled-in account intake saying what an account is
     // chartered to post and what it must never post — which nothing in the
@@ -62,7 +66,7 @@ describe("Layer 3 tool registry — cross-cutting", () => {
     // the universal review cycle's feedback flywheel — every approve/revise/
     // reject decision persists here, and the next drafting prompt reads it
     // back. See packages/workflow/src/primitives/review-cycle.ts.)
-    expect(names.length).toBe(50);
+    expect(names.length).toBe(51);
     for (const prefix of expectedPrefixes) {
       expect(names.some((n) => n.startsWith(prefix))).toBe(true);
     }
