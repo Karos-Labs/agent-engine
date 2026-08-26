@@ -45,7 +45,6 @@ deployment has a working chain out of the box. Keys only ever *add* sources.
 | `PEXELS_API_KEY` | `pexels` | Free to register; no unauthenticated endpoint exists, so this is a key like Unsplash's, not a scrape. |
 | `PIXABAY_API_KEY` | `pixabay` | Same — free key, no public unauthenticated search. |
 | `GOOGLE_PLACES_KEY` | `google_places` | Places API enabled on the project. |
-| `APIFY_TOKEN` | `apify_google_maps`, `apify_instagram_location`, `apify_instagram`, `apify_pinterest` | One token, all four presets. Override an actor with `APIFY_ACTOR_<PRESET>`. Unset in prep today — the Apify presets simply don't register and every chain that names them degrades to its next entry. |
 | `SCRAPPYCOCO_API_KEY` | `media.scrapeImages` (tier 2) | See "Scraping" below. Shared with `research.pull` via `@agent-engine/tool-karos-scraper` — one key, every scrape-backed capability. |
 | `GEMINI_VERTEX_PROJECT_ID` (or `GOOGLE_CLOUD_PROJECT`) | `image.generate` (tier 3) | See "Generation" below. |
 
@@ -82,8 +81,8 @@ which is what makes a chain degrade instead of break.
 
 | Route | Order | Ranked by |
 | --- | --- | --- |
-| `named_venue` | apify_google_maps → apify_instagram_location → google_places → ddg_images → openverse → wikimedia | **Verification.** A press photo of the right building beats a beautifully-licensed photo of the wrong one. Generic stock (Unsplash/Pexels/Pixabay) is absent here on purpose — none of them can verify a specific real place. |
-| `mood` | unsplash → pexels → pixabay → openverse → wikimedia → apify_pinterest → ddg_images | **Licence defensibility.** blanket → attributable → unknown. |
+| `named_venue` | google_places → ddg_images → openverse → wikimedia | **Verification.** A press photo of the right building beats a beautifully-licensed photo of the wrong one. Generic stock (Unsplash/Pexels/Pixabay) is absent here on purpose — none of them can verify a specific real place. |
+| `mood` | unsplash → pexels → pixabay → openverse → wikimedia → ddg_images | **Licence defensibility.** blanket → attributable → unknown. |
 | `default` | unsplash → pexels → pixabay → openverse → wikimedia → ddg_images | Same. Used when a caller names no route. |
 
 `route` is optional on every need and defaults to `default`, so existing
@@ -125,13 +124,22 @@ real).
 | `generated` | Created for this post — owned outright, nothing to credit, nothing watermarked | `media.generateImage` |
 | `blanket` | One library-wide licence covering commercial use | `unsplash`, `pexels`, `pixabay`, `google_places` |
 | `attributable` | Real per-asset licence, credit required | `openverse`, `wikimedia` |
-| `unknown` | Provenance not established — the gate should be sceptical | `ddg_images`, all `apify_*` |
+| `unknown` | Provenance not established — the gate should be sceptical | `ddg_images` |
 
-The `apify_*` and `ddg_images` sources are wired in because the legacy system
-had them and because they genuinely find subjects no curated library carries.
-They are **not** a licence to publish: UGC copyright stays with the uploader,
-and step 06 should and will refuse most of them. They earn their place on a
-`named_venue` slide headed for human review, not on an unattended run.
+`ddg_images` is wired in because it genuinely finds subjects no curated library
+carries. It is **not** a licence to publish: provenance is unestablished, and
+step 06 should and will refuse most of its results. It earns its place on a
+slide headed for human review, not on an unattended run.
+
+**AU51 removed the vendor-backed UGC sources** (Google Maps venue photos,
+Instagram by place and by hashtag, Pinterest). Scraping is a swappable
+capability behind `ScraperProvider` and nothing above that seam names a vendor;
+those presets were the last violation of that rule. The seam models
+`searchSocial` for x/instagram/reddit/tiktok but has no place-tagged or
+Pinterest capability, so `named_venue` now leads with `google_places` — and
+falls through to generic image search wherever `GOOGLE_PLACES_KEY` is unset,
+which is currently every deployed environment. Restoring venue photography is
+tracked as a capability request against the seam, not as a vendor re-add.
 
 ## Scraping: `media.scrapeImages`
 

@@ -13,7 +13,7 @@ describe("captureManualExport (ADAPTERS.md: \"always the floor\" — a client wi
         {
           review_id: "trustpilot:biz-1:rev-1",
           platform: "trustpilot",
-          source: "apify_scrape" as never, // a caller claiming a different source is overridden
+          source: "third_party_scrape" as never, // a caller claiming a different source is overridden
           created_at: "2026-07-01T00:00:00Z",
         },
       ],

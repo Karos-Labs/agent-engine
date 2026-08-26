@@ -11,10 +11,9 @@ const TOOL_VERSION = "1.0.0";
  * from the open web (a podcast soundbite, a keynote clip) found by topic.
  *
  * The PROVIDER is a seam, not an implementation: no video-capable search
- * backend exists in this deployment yet (the Apify presets are image-only
- * and unregistered; the scraper's `ScrapedRecord` carries no video field),
- * and guessing an unverified actor's output shape would fail inside a run
- * instead of here. Until a provider is wired, every call reports
+ * backend exists in this deployment yet (`ScraperProvider` models no video
+ * capability and `ScrapedRecord` carries no video field), and guessing an
+ * unverified backend's output shape would fail inside a run instead of here. Until a provider is wired, every call reports
  * `not_available` and the cascade moves to Tier 3 — which is exactly what
  * "zero-held between tiers" means.
  *
@@ -48,7 +47,7 @@ export interface HarvestVideoResult {
   title?: string;
 }
 
-/** The seam a real backend (an Apify video actor, a feed resolver) implements. */
+/** The seam a real backend (a video search capability on `ScraperProvider`, a feed resolver) implements. */
 export interface VideoHarvestProvider {
   /** Finds one downloadable candidate for the query, or null when nothing usable exists. */
   findVideo(query: string): Promise<{ mediaUrl: string; sourceUrl: string; title?: string } | null>;

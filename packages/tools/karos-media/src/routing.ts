@@ -1,5 +1,4 @@
 import type { ImageSearchProvider } from "./providers.js";
-import { createApifyProvider, APIFY_PRESETS, type ApifyPresetName } from "./providers/apify.js";
 import { createDdgImagesProvider } from "./providers/ddg-images.js";
 import { createGooglePlacesProvider } from "./providers/google-places.js";
 import { createOpenverseProvider } from "./providers/openverse.js";
@@ -40,16 +39,19 @@ export const MEDIA_ROUTES: readonly MediaRoute[] = ["named_venue", "mood", "defa
  * leads it when not — the same practical outcome as legacy, for a reason that
  * survives a key being added or removed.
  *
- * `named_venue` keeps legacy's ordering, because there verification beats
- * licence: a correctly-identified venue photo needing credit is more useful
- * than a beautifully-licensed photo of the wrong place. The UGC sources at
- * the top of that chain are `unknown`-confidence on purpose and step 06 will
- * refuse most of them — see the note in `providers/apify.ts`.
+ * `named_venue` still puts verification before licence: a correctly-identified
+ * venue photo needing credit is more useful than a beautifully-licensed photo
+ * of the wrong place. `google_places` therefore leads it.
+ *
+ * The UGC sources that used to lead this chain (Google Maps venue photos and
+ * Instagram-by-place) came from a third-party scraping vendor and were removed
+ * with it (AU51): scraping is a swappable capability behind `ScraperProvider`,
+ * and nothing above that seam names a vendor. The seam does not model place-tagged retrieval today,
+ * so venue photography now depends on `google_places` — and falls through to
+ * generic image search when its key is absent.
  */
 export const ROUTE_CHAINS: Record<MediaRoute, readonly string[]> = {
   named_venue: [
-    "apify_google_maps",
-    "apify_instagram_location",
     "google_places",
     "ddg_images",
     "openverse",
@@ -77,7 +79,7 @@ export const ROUTE_CHAINS: Record<MediaRoute, readonly string[]> = {
   // candidates still lose to any `blanket`/`attributable` source in the
   // interleave, so it only ever contributes where better sources came up
   // short, which is exactly the case it exists for.
-  mood: ["unsplash", "pexels", "pixabay", "openverse", "wikimedia", "apify_pinterest", "ddg_images"],
+  mood: ["unsplash", "pexels", "pixabay", "openverse", "wikimedia", "ddg_images"],
   default: ["unsplash", "pexels", "pixabay", "openverse", "wikimedia", "ddg_images"],
 };
 
@@ -126,23 +128,6 @@ export function buildProviderRegistry(options: ProviderRegistryOptions = {}): Ma
     registry.set("google_places", createGooglePlacesProvider({ apiKey: placesKey, ...shared }));
   }
 
-  const apifyToken = env.APIFY_TOKEN?.trim();
-  if (apifyToken) {
-    for (const preset of Object.keys(APIFY_PRESETS) as ApifyPresetName[]) {
-      registry.set(
-        preset,
-        createApifyProvider({
-          token: apifyToken,
-          preset,
-          // Per-preset actor override, e.g. APIFY_ACTOR_APIFY_GOOGLE_MAPS.
-          ...(env[`APIFY_ACTOR_${preset.toUpperCase()}`]?.trim()
-            ? { actor: env[`APIFY_ACTOR_${preset.toUpperCase()}`]!.trim() }
-            : {}),
-          ...shared,
-        }),
-      );
-    }
-  }
 
   return registry;
 }
