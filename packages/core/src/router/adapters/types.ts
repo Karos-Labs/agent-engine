@@ -9,11 +9,34 @@ export interface CompletionRequest<TOutput> {
   maxTokens?: number;
 }
 
+/**
+ * Which hop of a fallback chain actually served a completion (AU61 /
+ * SCRUM-360).
+ *
+ * `modelUsed` alone cannot answer this: the primary and secondary Claude hops
+ * return the SAME model id on different transports, so a deliverable produced
+ * after a failover is indistinguishable from one produced normally. Nobody
+ * holding a client report can currently tell which route generated it.
+ */
+export interface ModelProvenance {
+  /** `primary` when nothing failed over — the overwhelmingly common case. */
+  readonly hop: "primary" | "secondary" | "tertiary";
+  /** The adapter that answered, e.g. `agent-platform`, `anthropic`, `gemini`. */
+  readonly servedBy: string;
+  /** Each hop that failed before this one, in order, with why. */
+  readonly failedOver: readonly { readonly from: string; readonly errorClass: string; readonly status?: number }[];
+}
+
 export interface CompletionResult<TOutput> {
   output: TOutput;
   modelUsed: string;
   inputTokens: { cached: number; uncached: number };
   outputTokens: number;
+  /**
+   * Optional so every adapter that never falls over is unchanged. Set by
+   * `ResilientClaudeAdapter`; absent means "served directly, no chain".
+   */
+  provenance?: ModelProvenance;
 }
 
 /**

@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { logWarning } from "@agent-engine/telemetry";
 import { defineTool, success, contentFail, toolingError, notAvailable } from "@agent-engine/tool-common";
 import { MEDIA_CACHE_PREFIX, type FindImagesCandidate } from "./find-images.js";
 
@@ -210,7 +211,32 @@ export function createGenerateImage(options: {
         return await client.models.generateContent(request);
       } catch (error) {
         lastError = error as Error;
-        if (attempt >= maxAttempts || !isRetryableGenerationError(lastError.message)) throw lastError;
+        const retryable = isRetryableGenerationError(lastError.message);
+
+        // AU61: this loop used to retry and rethrow in silence. Every one of
+        // the 10 Vertex 429s observed in prep over 29 days came from HERE, and
+        // none of them produced an application-side signal — they were visible
+        // only because Vertex happens to meter Gemini, which it does NOT do for
+        // Claude. Exhausting the backoff is the interesting event: it means the
+        // capacity problem outlived the retry and a slide is about to go
+        // unfilled.
+        if (attempt >= maxAttempts || !retryable) {
+          if (retryable) {
+            logWarning(`image.generate exhausted ${maxAttempts} attempts and gave up`, {
+              event: "image.generate.retry_exhausted",
+              attempts: maxAttempts,
+              errorClass: "rate_limited_or_unavailable",
+            });
+          }
+          throw lastError;
+        }
+
+        logWarning(`image.generate retrying after a transient failure (attempt ${attempt}/${maxAttempts})`, {
+          event: "image.generate.retry",
+          attempt,
+          maxAttempts,
+          errorClass: "rate_limited_or_unavailable",
+        });
         await sleep(baseDelayMs * 2 ** (attempt - 1));
       }
     }

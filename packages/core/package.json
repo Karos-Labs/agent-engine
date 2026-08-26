@@ -12,6 +12,7 @@
     "test": "npm run typecheck && vitest run"
   },
   "dependencies": {
+    "@agent-engine/telemetry": "*",
     "@anthropic-ai/sdk": "^0.117.1",
     "@anthropic-ai/vertex-sdk": "^0.19.5",
     "@google/genai": "^2.18.0",
