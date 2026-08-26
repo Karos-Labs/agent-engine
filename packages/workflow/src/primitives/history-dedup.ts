@@ -127,11 +127,56 @@ export function buildClientIntelContext(report: unknown): string | undefined {
   return parts.length > 0 ? parts.join("\n\n") : undefined;
 }
 
+/** How much of each synced context doc reaches the drafting prompt. The sync already caps a doc at 6k; this is the tighter per-prompt slice. */
+const KNOWLEDGE_DOC_SLICE_CHARS = 1200;
+/** How many docs, at most — the knowledge layer augments the brief, it must never displace it. */
+const KNOWLEDGE_DOC_LIMIT = 6;
+const KNOWLEDGE_MEETING_LIMIT = 5;
+const KNOWLEDGE_MEETING_SUMMARY_CHARS = 300;
+
 /**
- * Reads the client's intel report (best-effort, checkpointed) and distills
- * it. `intel.getReport` is registered in every agent's registry and returns
- * `not_available` cleanly when no report exists — this helper just finally
- * gives it a channel-agent caller.
+ * Distills the synced client knowledge base (`client.getKnowledge` — the
+ * portal's onboarding docs, recent meeting summaries) into a bounded
+ * drafting-context string, the sibling of `buildClientIntelContext` above.
+ * The asset index is deliberately NOT distilled here: a caption writer needs
+ * facts and tone, not a file listing. Returns undefined when nothing usable
+ * exists, so clients whose sync has never run see zero prompt change.
+ */
+export function buildClientKnowledgeContext(knowledge: unknown): string | undefined {
+  if (typeof knowledge !== "object" || knowledge === null) return undefined;
+  const k = knowledge as Record<string, unknown>;
+  const parts: string[] = [];
+
+  const docs = Array.isArray(k["contextDocs"]) ? (k["contextDocs"] as Array<Record<string, unknown>>) : [];
+  const docBlocks = docs
+    .filter((d) => typeof d["docType"] === "string" && typeof d["content"] === "string" && (d["content"] as string).trim().length > 0)
+    .slice(0, KNOWLEDGE_DOC_LIMIT)
+    .map((d) => `### ${d["docType"] as string}\n${(d["content"] as string).trim().slice(0, KNOWLEDGE_DOC_SLICE_CHARS)}`);
+  if (docBlocks.length > 0) {
+    parts.push(`Client knowledge base (authoritative — ground claims, tone and terminology in this before any external source):\n\n${docBlocks.join("\n\n")}`);
+  }
+
+  const meetings = Array.isArray(k["transcripts"]) ? (k["transcripts"] as Array<Record<string, unknown>>) : [];
+  const meetingLines = meetings
+    .filter((m) => typeof m["title"] === "string")
+    .slice(0, KNOWLEDGE_MEETING_LIMIT)
+    .map((m) => {
+      const summary = typeof m["summary"] === "string" && m["summary"].trim().length > 0 ? ` — ${m["summary"].trim().slice(0, KNOWLEDGE_MEETING_SUMMARY_CHARS)}` : "";
+      return `- ${(m["title"] as string).trim()}${summary}`;
+    });
+  if (meetingLines.length > 0) parts.push(`Recent client meetings:\n${meetingLines.join("\n")}`);
+
+  return parts.length > 0 ? parts.join("\n\n") : undefined;
+}
+
+/**
+ * Reads the client's intel report AND synced knowledge base (each
+ * best-effort), distilled into one bounded string, checkpointed under the
+ * SAME step id and `string|null` shape this helper always had — which is the
+ * point: every agent already threading `clientIntelContext` into its
+ * drafting input picks the knowledge layer up with zero further changes.
+ * `intel.getReport`/`client.getKnowledge` are registered in every agent's
+ * registry and return `not_available` cleanly when nothing exists.
  */
 export async function readClientIntelContext(
   wf: WorkflowContext,
@@ -141,19 +186,30 @@ export async function readClientIntelContext(
 ): Promise<string | undefined> {
   return (
     (await wf.step.code(stepId, async () => {
-      const get = tools["intel.getReport"];
-      if (!get) return null;
+      const parts: string[] = [];
       try {
-        const outcome = await get.execute({}, { ctx });
-        if (outcome.status !== "success") return null;
-        const report = (outcome.result as { report?: unknown }).report;
-        // JSON round-trip note: `null`, never `undefined`, crosses the
-        // checkpoint — same rule 02c-load-brand-kit documents.
-        return buildClientIntelContext(report) ?? null;
+        const get = tools["intel.getReport"];
+        const outcome = get ? await get.execute({}, { ctx }) : undefined;
+        if (outcome?.status === "success") {
+          const distilled = buildClientIntelContext((outcome.result as { report?: unknown }).report);
+          if (distilled !== undefined) parts.push(distilled);
+        }
       } catch (error) {
         console.error(`${stepId}: could not read the intel report, drafting without it`, error);
-        return null;
       }
+      try {
+        const get = tools["client.getKnowledge"];
+        const outcome = get ? await get.execute({}, { ctx }) : undefined;
+        if (outcome?.status === "success") {
+          const distilled = buildClientKnowledgeContext(outcome.result);
+          if (distilled !== undefined) parts.push(distilled);
+        }
+      } catch (error) {
+        console.error(`${stepId}: could not read the client knowledge base, drafting without it`, error);
+      }
+      // JSON round-trip note: `null`, never `undefined`, crosses the
+      // checkpoint — same rule 02c-load-brand-kit documents.
+      return parts.length > 0 ? parts.join("\n\n") : null;
     })) ?? undefined
   );
 }

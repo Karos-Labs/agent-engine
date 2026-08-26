@@ -192,6 +192,47 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     expect(serializedInput).toContain("publishes exclusively in Spanish");
   }, 60000);
 
+  it("grounds the drafting prompt in the synced client knowledge base, through the SAME intel-context channel", async () => {
+    // The portal's knowledge sync mirrors onboarding docs and meeting
+    // summaries into knowledge/*.json (flat by contract — see
+    // client.getKnowledge's own doc comment). readClientIntelContext folds
+    // them into the clientIntelContext string every wired agent already
+    // threads, so this asserts the WHOLE path: bucket doc → tool → distill →
+    // the copy model's actual prompt.
+    await env.store.writeJson("acme", ["knowledge", "context-docs"], {
+      syncedAt: 5,
+      docs: [{ docType: "brand-voice", tier: "client", version: 2, content: "Confident, never boastful — the engineer's translator." }],
+    });
+    await env.store.writeJson("acme", ["knowledge", "transcripts"], {
+      syncedAt: 5,
+      transcripts: [{ title: "Q4 kickoff", summary: "Lead with the compliance story." }],
+    });
+
+    const promptStore = makePromptStore();
+    const router = happyRouter();
+    const workflowFn = createInstagramAgentWorkflow({
+      tools: testTools(env),
+      promptStore,
+      router,
+      repoRoot: env.repoRoot,
+      imageCandidatePool: goodImageCandidatePool(),
+      autoApprove: true,
+    });
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+    const result = await engine.run(workflowFn, params);
+    expect(result.status).toBe("completed");
+
+    const stepRecords = await durableStore.listSteps(params.runId);
+    const intelStep = stepRecords.find((s) => s.stepId === "04f-read-intel-context");
+    expect(intelStep?.output).toContain("Confident, never boastful");
+    expect(intelStep?.output).toContain("Q4 kickoff — Lead with the compliance story.");
+
+    // And the copy-writing model call actually received it.
+    const copyCallArgs = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[1]!;
+    expect(JSON.stringify(copyCallArgs)).toContain("Confident, never boastful");
+  }, 60000);
+
   it("completes normally when the client has no profile or voice rules set up yet — best-effort, never blocking", async () => {
     // Neither client/profile nor client/voice-rules exists in this env
     // (setupTestEnvironment's withConfig only seeds instagramStyleConfig/

@@ -197,6 +197,36 @@ describe("karos-client", () => {
     });
   });
 
+  describe("client.getKnowledge", () => {
+    it("returns not_available when the portal's knowledge sync has never run for this client", async () => {
+      const outcome = await tools["client.getKnowledge"]!.execute({}, { ctx });
+      expect(outcome.status).toBe("not_available");
+    });
+
+    it("reads the three flat knowledge docs, each independently optional", async () => {
+      // Only the context docs exist — the transcript and asset mirrors haven't
+      // run yet. A partial sync must read as a partial knowledge base, never
+      // as not_available and never as a throw.
+      await store.writeJson("acme", ["knowledge", "context-docs"], {
+        syncedAt: 5,
+        docs: [{ docType: "brand-voice", tier: "client", version: 2, content: "Confident, never boastful." }],
+      });
+
+      const outcome = await tools["client.getKnowledge"]!.execute({}, { ctx });
+      expect(outcome.status).toBe("success");
+      const result = (outcome as { result: { contextDocs: unknown[]; transcripts: unknown[]; assets: unknown[] } }).result;
+      expect(result.contextDocs).toEqual([{ docType: "brand-voice", tier: "client", version: 2, content: "Confident, never boastful." }]);
+      expect(result.transcripts).toEqual([]);
+      expect(result.assets).toEqual([]);
+    });
+
+    it("is tenant-scoped like every other read here", async () => {
+      await store.writeJson("acme", ["knowledge", "context-docs"], { syncedAt: 5, docs: [{ docType: "icp", tier: "client", version: 1, content: "x" }] });
+      const outcome = await tools["client.getKnowledge"]!.execute({}, { ctx: { ...ctx, clientSlug: "globex" } });
+      expect(outcome.status).toBe("not_available");
+    });
+  });
+
   describe("client.getConfig", () => {
     it("returns not_available when nothing has been set up yet", async () => {
       const outcome = await tools["client.getConfig"]!.execute({}, { ctx });
