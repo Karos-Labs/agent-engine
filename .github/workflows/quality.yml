@@ -40,6 +40,15 @@ jobs:
       - name: TypeScript type-check
         run: npm run typecheck
 
+      # AU49: fails when a variable the code reads is missing from
+      # .env.example, and when the AU55 capability catalogue names a variable
+      # nothing reads. Wired-but-unread only WARNS — variables are read through
+      # *FromEnv factories and string arguments, so absence of evidence is not
+      # evidence of absence, and no variable is ever deleted on this script's
+      # say-so.
+      - name: Configuration inventory
+        run: npm run check:config
+
       # instagram-agent's default-template-render.test.ts launches a real,
       # un-mocked Chromium against the actual production slide template
       # (agent-engine#4) — every other render-carousel test deliberately

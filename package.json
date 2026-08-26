@@ -16,6 +16,8 @@
   "scripts": {
     "build": "node scripts/build-workspaces.mjs",
     "typecheck": "tsc --noEmit",
+    "config:inventory": "tsx scripts/config-inventory.ts",
+    "check:config": "tsx scripts/config-inventory.ts --check",
     "test": "npm run test --workspaces --if-present",
     "verify": "npm run typecheck && npm test",
     "setup:local": "tsx scripts/setup-local.ts",
