@@ -116,6 +116,41 @@ describe("resolveBest: which template wins an archetype", () => {
   });
 });
 
+describe("curated client sets: what scripts/seed-client-templates.ts writes", () => {
+  // The exact row shape the seeder publishes: source "curated", client-scoped,
+  // EXPLICIT score above the legacy floor (70). The score is the load-bearing
+  // part — resolveBest compares score FIRST and client scope only tie-breaks.
+  const curated = (score: number) =>
+    def({
+      id: "curated__acme__stat_callout",
+      archetypeId: "stat_callout",
+      qualityScore: score,
+      clientSlug: "acme",
+      htmlTemplate: "<html><head></head><body>ACME CURATED {{figure}}</body></html>",
+    });
+
+  it("a curated row at the seeder's default 75 WINS materialization for its client over the bundled floor", async () => {
+    const remote = new MemoryTemplateStore([{ ...curated(75), source: "curated" }]);
+    const composite = createCompositeTemplateStore([createBundledTemplateStore({ templateDir: bundledDir }), remote]);
+    const best = resolveBest(await composite.list({ clientSlug: "acme" }));
+    expect(best.get("stat_callout")!.id).toBe("curated__acme__stat_callout");
+  });
+
+  it("stays invisible to every other client — their runs keep the bundled floor", async () => {
+    const remote = new MemoryTemplateStore([{ ...curated(75), source: "curated" }]);
+    const composite = createCompositeTemplateStore([createBundledTemplateStore({ templateDir: bundledDir }), remote]);
+    const best = resolveBest(await composite.list({ clientSlug: "globex" }));
+    expect(best.get("stat_callout")!.id).toBe("bundled:stat_callout");
+  });
+
+  it("NEGATIVE: seeded at the curated source default (60) it silently loses to the bundled 70 — the mistake the explicit score exists to prevent", async () => {
+    const remote = new MemoryTemplateStore([{ ...curated(60), source: "curated" }]);
+    const composite = createCompositeTemplateStore([createBundledTemplateStore({ templateDir: bundledDir }), remote]);
+    const best = resolveBest(await composite.list({ clientSlug: "acme" }));
+    expect(best.get("stat_callout")!.id).toBe("bundled:stat_callout");
+  });
+});
+
 describe("composite store: a remote layer can never take rendering down", () => {
   it("absorbs a failing layer and still returns the bundled floor", async () => {
     const exploding = {
