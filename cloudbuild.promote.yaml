@@ -53,22 +53,6 @@ substitutions:
   # and nothing else — the keyless ones (openverse, wikimedia, ddg_images) and
   # the generative tier are unaffected, and the zero-held guarantee holds
   # regardless. Create the secrets in karoscmo and add them here to close it.
-  #
-  # APIFY_TOKEN is ALSO deliberately absent from production, but for a
-  # different reason than the three above (AU2, 2026-08): the secret DOES
-  # exist in karoscmo ("apify-token"), but this is not a missing-secret gap —
-  # it's a product decision. Content generation runs on ScrappyCoco as the
-  # one generic, swappable ScraperProvider implementation
-  # (karos-scraper/src/index.ts's createScraperProvider reads ONLY
-  # SCRAPPYCOCO_API_KEY, no Apify branch exists there at all); Apify backs
-  # only karos-media's image-search routing, one provider among several,
-  # nearly all keyless. Wiring it here would ALSO require granting
-  # agent-engine-sa@karoscmo roles/secretmanager.secretAccessor on
-  # "apify-token" first (confirmed absent, unlike scrappycoco-api-key's
-  # binding below) — that is an IAM change, deliberately not made alongside
-  # this file-only change. See cloudbuild.yaml's _APIFY_TOKEN_SECRET comment
-  # for the full reasoning; this note exists so the gap reads as a decision,
-  # not an oversight.
   _SCRAPPYCOCO_API_KEY_SECRET: scrappycoco-api-key
   _PUBSUB_PROJECT_ID: ""
   _QUEUE_SUBSCRIPTION_RUN_JOBS: ""

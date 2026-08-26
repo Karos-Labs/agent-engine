@@ -65,30 +65,13 @@ substitutions:
   _UNSPLASH_ACCESS_KEY_SECRET: unsplash-access-key
   _PEXELS_API_KEY_SECRET: pexels-api-key
   _PIXABAY_API_KEY_SECRET: pixabay-api-key
-  # CORRECTED 2026-08 (AU2): this comment previously claimed Apify backs
-  # research.pull's external search and is "effectively required to produce
-  # content at all" — that was already stale when written. research.pull's
-  # scraper backend is createScraperProvider (karos-scraper/src/index.ts),
-  # which reads ONLY SCRAPPYCOCO_API_KEY below and has no Apify branch at
-  # all. Apify backs exactly one thing: karos-media's routing.ts, as one of
-  # several image-search providers (alongside Unsplash/Pexels/Pixabay and the
-  # keyless Openverse/Wikimedia/DuckDuckGo) for a handful of query moods
-  # (apify_google_maps, apify_instagram_location, apify_pinterest). Its
-  # absence costs prep some image-search coverage, never content production.
-  # Deliberate: the scraper stays on ScrappyCoco as the one generic,
-  # swappable ScraperProvider implementation rather than adding a second
-  # scraping backend to that abstraction. Same must-exist caveat as the
-  # Unsplash secret: a blank value renders an invalid "APIFY_TOKEN=:latest".
-  # prod runs without this secret entirely (see cloudbuild.promote.yaml) —
-  # also deliberate, same reasoning.
-  _APIFY_TOKEN_SECRET: apify-token
   # The scraper backend research.pull and the visual pipeline's scrape tier
   # actually run on (karos-scraper/src/index.ts's createScraperProvider) —
   # the one generic, swappable ScraperProvider implementation, chosen so the
   # scraping vendor can change without touching any tool's own code. Without
   # it research.pull reports not_available and every content agent holds
   # rather than drafting from a placeholder, so THIS is what's effectively
-  # required for prep to produce content at all — not Apify (see above).
+  # required for prep to produce content at all.
   _SCRAPPYCOCO_API_KEY_SECRET: scrappycoco-api-key
   _PUBSUB_PROJECT_ID: ""
   _QUEUE_SUBSCRIPTION_RUN_JOBS: ""
@@ -165,7 +148,7 @@ steps:
       - --service-account=${_SERVICE_ACCOUNT}
       - --memory=2Gi
       - --set-env-vars=GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},BQ_PROJECT_ID=${_BQ_PROJECT_ID},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},ANTHROPIC_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},CLOUD_ML_REGION=global,VERTEX_AI_LOCATION=${_REGION},GEMINI_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},PROMPT_STORE_DRIVER=firestore,QUEUE_PROVIDER=pubsub,PUBSUB_PROJECT_ID=${_PUBSUB_PROJECT_ID},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},GCS_ARTIFACTS_BUCKET=${_GCS_ARTIFACTS_BUCKET},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET},LANDING_ENGINE_TEMPLATE_ROOT=/app/packages/tools/karos-landing/assets/template,LANDING_ENGINE_ROOT=/tmp/landing-engine,INSTAGRAM_AGENT_REPO_ROOT=/app,PUBSUB_PUSH_AUDIENCE_URL=${_PUBSUB_PUSH_AUDIENCE_URL},AUTH_ENABLED=false,AUTH_AUDIENCE=${_AUTH_AUDIENCE}
-      - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest,UNSPLASH_ACCESS_KEY=${_UNSPLASH_ACCESS_KEY_SECRET}:latest,PEXELS_API_KEY=${_PEXELS_API_KEY_SECRET}:latest,PIXABAY_API_KEY=${_PIXABAY_API_KEY_SECRET}:latest,APIFY_TOKEN=${_APIFY_TOKEN_SECRET}:latest,SCRAPPYCOCO_API_KEY=${_SCRAPPYCOCO_API_KEY_SECRET}:latest
+      - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest,UNSPLASH_ACCESS_KEY=${_UNSPLASH_ACCESS_KEY_SECRET}:latest,PEXELS_API_KEY=${_PEXELS_API_KEY_SECRET}:latest,PIXABAY_API_KEY=${_PIXABAY_API_KEY_SECRET}:latest,SCRAPPYCOCO_API_KEY=${_SCRAPPYCOCO_API_KEY_SECRET}:latest
       # instagram-agent writes under `repoRoot` (INSTAGRAM_AGENT_REPO_ROOT=/app):
       # `.media-cache/<runId>/` from media.findImages, and
       # `instagram-output/<client>/<postId>/` from publish.renderCarousel. The
@@ -210,7 +193,7 @@ steps:
       - --min-instances=1
       - --no-cpu-throttling
       - --set-env-vars=GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},BQ_PROJECT_ID=${_BQ_PROJECT_ID},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},ANTHROPIC_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},CLOUD_ML_REGION=global,VERTEX_AI_LOCATION=${_REGION},GEMINI_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},PROMPT_STORE_DRIVER=firestore,QUEUE_PROVIDER=pubsub,PUBSUB_PROJECT_ID=${_PUBSUB_PROJECT_ID},QUEUE_SUBSCRIPTION_RUN_JOBS=${_QUEUE_SUBSCRIPTION_RUN_JOBS},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},GCS_ARTIFACTS_BUCKET=${_GCS_ARTIFACTS_BUCKET},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET},LANDING_ENGINE_TEMPLATE_ROOT=/app/packages/tools/karos-landing/assets/template,LANDING_ENGINE_ROOT=/tmp/landing-engine,INSTAGRAM_AGENT_REPO_ROOT=/app
-      - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest,UNSPLASH_ACCESS_KEY=${_UNSPLASH_ACCESS_KEY_SECRET}:latest,PEXELS_API_KEY=${_PEXELS_API_KEY_SECRET}:latest,PIXABAY_API_KEY=${_PIXABAY_API_KEY_SECRET}:latest,APIFY_TOKEN=${_APIFY_TOKEN_SECRET}:latest,SCRAPPYCOCO_API_KEY=${_SCRAPPYCOCO_API_KEY_SECRET}:latest
+      - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest,UNSPLASH_ACCESS_KEY=${_UNSPLASH_ACCESS_KEY_SECRET}:latest,PEXELS_API_KEY=${_PEXELS_API_KEY_SECRET}:latest,PIXABAY_API_KEY=${_PIXABAY_API_KEY_SECRET}:latest,SCRAPPYCOCO_API_KEY=${_SCRAPPYCOCO_API_KEY_SECRET}:latest
       # instagram-agent writes under `repoRoot` (INSTAGRAM_AGENT_REPO_ROOT=/app):
       # `.media-cache/<runId>/` from media.findImages, and
       # `instagram-output/<client>/<postId>/` from publish.renderCarousel. The
