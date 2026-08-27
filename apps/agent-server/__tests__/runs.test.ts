@@ -46,6 +46,23 @@ describe("POST /api/v1/runs/start", () => {
     await env.cleanup();
   });
 
+  /**
+   * These three drive WHOLE agent workflows over HTTP — model calls, tool calls,
+   * gates, checkpoints, a resume — against vitest's 5s default timeout. They
+   * passed for as long as the machine was quiet and flaked the moment the full
+   * sweep ran alongside anything else, which is the worst possible failure shape:
+   * green in isolation, red under load, and the red arrives as
+   * `ENOTEMPTY: rmdir clients/acme/topics` from afterEach racing a workflow that
+   * was aborted mid-write, which points at cleanup rather than at the timeout
+   * that caused it.
+   *
+   * AU66 tipped them over by adding a /status round-trip per product to
+   * `startAndRead`. The tests were always near the edge; that made it visible.
+   *
+   * An explicit timeout rather than a global one: these are legitimately
+   * long-running and should say so at the call site, while a genuinely hung
+   * 5s unit test elsewhere still fails fast.
+   */
   it("runs the X agent end to end: pauses for human batch review, then resumes to a delivered report", async () => {
     const { startRes, body: started } = await startAndRead(app, { clientSlug: "acme", productId: "x-agent", runKind: "recurring", inputParams: {} });
 
@@ -72,7 +89,7 @@ describe("POST /api/v1/runs/start", () => {
     const gateStep = resumeRes.body.report.steps.find((s: { stepId: string }) => s.stepId === "15-batch-review-r0");
     expect(gateStep?.status).toBe("done");
     expect(gateStep?.error).toBeUndefined();
-  });
+  }, 60_000);
 
   it("runs each of the five channel agents end to end: pauses for human batch review, then resumes to delivered", async () => {
     for (const productId of ["linkedin-agent", "reddit-agent", "blog-agent", "newsletter-agent"] as const) {
@@ -98,7 +115,7 @@ describe("POST /api/v1/runs/start", () => {
       expect(gateStep?.status, `${productId}'s ${gateId} step should report done`).toBe("done");
       expect(gateStep?.error, `${productId}'s ${gateId} step should have no error`).toBeUndefined();
     }
-  });
+  }, 60_000);
 
   it("rejects a request missing required fields", async () => {
     const res = await request(app).post("/api/v1/runs/start").send({ clientSlug: "acme" });
@@ -238,7 +255,7 @@ describe("POST /api/v1/runs/:runId/resume — campaign orchestrator gate", () =>
     const gateStep = resumeRes.body.report.steps.find((s: { stepId: string }) => s.stepId === "13-campaign-review");
     expect(gateStep?.status).toBe("done");
     expect(gateStep?.error).toBeUndefined();
-  });
+  }, 60_000);
 
   it("rejects a reject-decision resume with no notes (reason is mandatory on reject, RFC-01 §8.3)", async () => {
     const startRes = await request(app)
