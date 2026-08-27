@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
-  AnthropicAdapter,
+  MessagesApiAdapter,
   OpenAICompatibleAdapter,
   toRootObjectJsonSchema,
   unwrapRootPayload,
   WRAPPED_ROOT_PROPERTY,
 } from "../src/router/adapters/index.js";
+import type { RetryOptions } from "../src/router/adapters/retry.js";
+import type { MessagesApiClient } from "../src/router/adapters/types.js";
 
 /**
  * The exact schema `BaseAgent.buildTurnSchema()` produces for every real
@@ -74,7 +76,19 @@ describe("toRootObjectJsonSchema", () => {
   });
 });
 
-describe("AnthropicAdapter", () => {
+/**
+ * SCRUM-358 deleted `AnthropicAdapter` along with the direct-Anthropic route.
+ * The behaviour these tests cover was never Anthropic-specific — it lives in
+ * `MessagesApiAdapter`, the shared base the Vertex route still extends — so
+ * the coverage is kept and repointed at the base class directly rather than
+ * deleted with the subclass. `modelIds` defaults to the identity codec, which
+ * is exactly what the deleted subclass pinned.
+ */
+function messagesApiAdapter(client: unknown, retryOptions: RetryOptions = {}, promptCaching = true): MessagesApiAdapter {
+  return new MessagesApiAdapter({ providerId: "anthropic", client: client as MessagesApiClient, retryOptions, promptCaching });
+}
+
+describe("MessagesApiAdapter (the shared Messages-API mechanics)", () => {
   function fakeClient(capture: { request?: Record<string, never> }) {
     return {
       messages: {
@@ -99,7 +113,7 @@ describe("AnthropicAdapter", () => {
   it("sends an object-rooted input_schema for BaseAgent's union turn schema", async () => {
     const capture: { request?: Record<string, never> } = {};
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const adapter = new AnthropicAdapter(fakeClient(capture) as any);
+    const adapter = messagesApiAdapter(fakeClient(capture) as any);
 
     await adapter.complete({ prompt: "draft it", schema: turnSchema(), model: "claude-sonnet-4-6" });
 
@@ -111,7 +125,7 @@ describe("AnthropicAdapter", () => {
   it("unwraps the model's payload before parsing, returning the real turn", async () => {
     const capture: { request?: Record<string, never> } = {};
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const adapter = new AnthropicAdapter(fakeClient(capture) as any);
+    const adapter = messagesApiAdapter(fakeClient(capture) as any);
 
     const result = await adapter.complete({ prompt: "draft it", schema: turnSchema(), model: "claude-sonnet-4-6" });
 
@@ -134,7 +148,7 @@ describe("AnthropicAdapter", () => {
       },
     };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const adapter = new AnthropicAdapter(client as any);
+    const adapter = messagesApiAdapter(client as any);
 
     await expect(adapter.complete({ prompt: "write a blog post", schema: turnSchema(), model: "claude-sonnet-4-6" })).rejects.toThrow(
       /output limit|maxTokens/i,
@@ -144,7 +158,7 @@ describe("AnthropicAdapter", () => {
   it("honours a step's explicit maxTokens over the default", async () => {
     const capture: { request?: Record<string, never> } = {};
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const adapter = new AnthropicAdapter(fakeClient(capture) as any);
+    const adapter = messagesApiAdapter(fakeClient(capture) as any);
 
     await adapter.complete({ prompt: "draft it", schema: turnSchema(), model: "claude-sonnet-4-6", maxTokens: 32000 });
 
