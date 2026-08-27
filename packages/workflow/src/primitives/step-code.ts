@@ -1,3 +1,4 @@
+import { computeToolCostUsd, extractToolUsage } from "@agent-engine/core";
 import { describeError, withWorkflowStepSpan } from "@agent-engine/telemetry";
 import type { StepRecord } from "../adapters/types.js";
 import type { WorkflowRuntime } from "./context.js";
@@ -36,12 +37,23 @@ export async function runStepCode<T>(runtime: WorkflowRuntime, id: string, fn: (
       try {
         const output = await fn();
         const completedAt = runtime.now();
+        // SCRUM-361. This used to be the literal constant 0, and that was the
+        // whole of the ~14% understatement a measured Instagram run carried:
+        // `06d-generate-images` calls `image.generate`, a TOOL, and every tool
+        // call recorded $0.000000 by construction. Not a lookup that missed —
+        // there was no cost path from a tool at all.
+        //
+        // Shape-driven rather than opt-in, deliberately: see `extractToolUsage`.
+        // A step whose body is ordinary computation still records 0, which is
+        // now a measurement rather than an assumption.
+        const unitUsage = extractToolUsage(output);
         const record: StepRecord = {
           stepId,
           kind: "code",
           status: "completed",
           output,
-          costUsd: 0,
+          costUsd: computeToolCostUsd(unitUsage),
+          ...(unitUsage.length > 0 ? { unitUsage: unitUsage.map((u) => ({ ...u })) } : {}),
           durationMs: completedAt - startedAt,
           startedAt,
           completedAt,
@@ -55,6 +67,9 @@ export async function runStepCode<T>(runtime: WorkflowRuntime, id: string, fn: (
           kind: "code",
           status: "failed",
           output: null,
+          // A thrown step produced no outcome to read units from. Distinct from
+          // a `content_fail`/`not_available` outcome, which returns normally
+          // above and correctly carries no `usage` either.
           costUsd: 0,
           durationMs: completedAt - startedAt,
           startedAt,

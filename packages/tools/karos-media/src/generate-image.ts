@@ -355,7 +355,15 @@ export function createGenerateImage(options: {
         );
       }
 
-      return success<GenerateImageResult>({ candidates, unmet, model });
+      // SCRUM-361: `candidates.length` is what was actually PRODUCED, not what
+      // was asked for — attempts the model declined return no image part and
+      // are not billed the image charge. Their text prompt still costs input
+      // tokens, which this does not capture: the residual is a known
+      // under-report, bounded by the declined-attempt count, and named here
+      // rather than left for someone to rediscover from a bill.
+      return success<GenerateImageResult>({ candidates, unmet, model }, [
+        { model, unit: "image", quantity: candidates.length },
+      ]);
     },
   });
 }

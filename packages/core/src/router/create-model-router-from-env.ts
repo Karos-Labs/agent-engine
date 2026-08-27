@@ -167,7 +167,16 @@ function createAnthropicVendorAdapter(env: Record<string, string | undefined>): 
   return new ResilientClaudeAdapter({
     primary,
     ...(secondary ? { secondary } : {}),
-    ...(tertiary ? { tertiary, tertiaryModel: readEnv(env, "CLAUDE_FALLBACK_GEMINI_MODEL") ?? "gemini-1.5-flash" } : {}),
+    // SCRUM-361: was "gemini-1.5-flash", which had NO row in MODEL_PRICING and
+    // so billed at DEFAULT_MODEL_PRICING — Sonnet's $3/$15 — for a model
+    // costing a fraction of that. Roughly a 40x OVERSTATEMENT: the mirror of
+    // the Opus understatement the same default causes, and equally invisible,
+    // because both produce plausible numbers. `check-model-pricing` found it.
+    //
+    // Changed rather than priced: 1.5 is a legacy generation, and after
+    // SCRUM-358 this is the ONLY fallback left, so it is more likely to fire
+    // than it was, not less. gemini-2.5-flash is current and already priced.
+    ...(tertiary ? { tertiary, tertiaryModel: readEnv(env, "CLAUDE_FALLBACK_GEMINI_MODEL") ?? "gemini-2.5-flash" } : {}),
   });
 }
 

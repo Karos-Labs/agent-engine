@@ -115,6 +115,23 @@ export const StepRecordSchema = z.object({
   status: z.enum(["running", "completed", "failed"]),
   output: z.unknown().optional(),
   costUsd: z.number().nonnegative().optional(),
+  /**
+   * The non-token units this step consumed, and the SKU that priced them
+   * (SCRUM-361). Present only on steps that consumed any — which today means
+   * generative media.
+   *
+   * Persisted alongside `costUsd` rather than discarded after multiplication,
+   * because a cost with no derivation cannot be checked. That is not
+   * hypothetical here: the run that exposed this gap could be reconciled
+   * against Vertex's publisher metrics ONLY because those metrics existed
+   * outside our telemetry. Anthropic-on-Vertex emits none, and both our own
+   * sinks collapse what they store — Firestore keeps `costUsd` and no token
+   * counts at all, and BigQuery merges cached and uncached input into one
+   * column. Storing the units is what stops this number joining them.
+   */
+  unitUsage: z
+    .array(z.object({ model: z.string().min(1), unit: z.string().min(1), quantity: z.number().nonnegative() }))
+    .optional(),
   durationMs: z.number().nonnegative().optional(),
   startedAt: z.number(),
   completedAt: z.number().optional(),
