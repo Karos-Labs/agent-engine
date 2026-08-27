@@ -41,6 +41,8 @@ export interface CostAndTokenAttributes {
   costUsd: number;
   inputTokensCached: number;
   inputTokensUncached: number;
+  /** Cache WRITES, billed at 1.25x base input (SCRUM-361b). Optional so callers that predate the third tier compile unchanged. */
+  inputTokensCacheWrite?: number;
   outputTokens: number;
   durationMs: number;
   status: string;
@@ -80,6 +82,7 @@ export function recordCostAndTokens(span: Span, attrs: CostAndTokenAttributes): 
   span.setAttribute("cost_usd", attrs.costUsd);
   span.setAttribute("input_tokens_cached", attrs.inputTokensCached);
   span.setAttribute("input_tokens_uncached", attrs.inputTokensUncached);
+  span.setAttribute("input_tokens_cache_write", attrs.inputTokensCacheWrite ?? 0);
   span.setAttribute("output_tokens", attrs.outputTokens);
   void insertAgentRunRow(attrs);
 }
@@ -95,7 +98,19 @@ async function insertAgentRunRow(attrs: CostAndTokenAttributes): Promise<void> {
           clientId: attrs.clientId,
           agentId: attrs.agentId,
           model: attrs.model,
-          inputTokens: attrs.inputTokensCached + attrs.inputTokensUncached,
+          // Kept, and kept meaning what it always meant: TOTAL input tokens.
+          // Every dashboard and query written against this column stays
+          // correct, which is why the tier columns are added BESIDE it rather
+          // than by redefining it.
+          inputTokens: attrs.inputTokensCached + attrs.inputTokensUncached + (attrs.inputTokensCacheWrite ?? 0),
+          // The three tiers carry three different prices (0.1x / 1x / 1.25x),
+          // so the sum above cannot be decomposed after the fact. Not
+          // hypothetical: the cache-write mispricing could not be sized from
+          // our own telemetry precisely because every sink stored a merged
+          // number, and had to be bounded from above instead.
+          inputTokensCached: attrs.inputTokensCached,
+          inputTokensUncached: attrs.inputTokensUncached,
+          inputTokensCacheWrite: attrs.inputTokensCacheWrite ?? 0,
           outputTokens: attrs.outputTokens,
           costUsd: attrs.costUsd,
           durationMs: attrs.durationMs,
@@ -111,6 +126,23 @@ async function insertAgentRunRow(attrs: CostAndTokenAttributes): Promise<void> {
           source: "agent-engine",
         },
       ],
+      // `ignoreUnknownValues: true` is why the SCHEMA must be widened before
+      // this code is. It does not merely tolerate drift — it makes drift
+      // INVISIBLE: a field this row writes that the table lacks is dropped
+      // silently, the insert reports success, and nothing says anything went
+      // missing.
+      //
+      // Not a theoretical risk. `operation`, `jobId`, `stepId` and `source`
+      // were added to this row in 2026-08, specifically so two step rows from
+      // one run could be told apart, and NONE OF THE FOUR EXISTED IN THE
+      // TABLE. Every one had been discarded on every insert since, in silence.
+      // They were added to both projects' schemas alongside the tier columns,
+      // and they start landing without any change to this file.
+      //
+      // Kept rather than removed, deliberately: turning it off would make a
+      // future mismatch throw into the catch below, which logs a warning and
+      // swallows it — trading silent column loss for silent ROW loss, which is
+      // worse. The real guard is ordering: schema first, then code.
       { ignoreUnknownValues: true, skipInvalidRows: false },
     );
   } catch (err) {
