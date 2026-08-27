@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import request from "supertest";
-import { buildCapabilityReport, describeRunCapabilities, CAPABILITY_CATALOGUE } from "@agent-engine/core";
+import { buildCapabilityReport, describeRunCapabilities, CAPABILITY_CATALOGUE, PRODUCT_CAPABILITIES } from "@agent-engine/core";
+import { KNOWN_PRODUCT_IDS } from "../src/wiring/workflows.js";
 import { createApp } from "../src/app.js";
 import { setupTestEnvironment } from "./test-helpers.js";
 
@@ -121,5 +122,156 @@ describe("AU55: the capability report", () => {
     } finally {
       await env.cleanup();
     }
+  });
+});
+
+/**
+ * AU65 (SCRUM-363): the report rolled up to the altitude decisions are made at.
+ *
+ * The failure this closes was not a wrong row. It was four correct rows that
+ * never added up, on the page, to "the whole video line is dead".
+ */
+describe("AU65: the report answers at product level", () => {
+  const productsOf = (env: Record<string, string>) => new Map(buildCapabilityReport(env).products.map((p) => [p.productId, p]));
+
+  it("covers every dispatchable product, in both directions", () => {
+    // The blind spot this file closes is a product nobody mapped, so the
+    // mapping itself has to be the thing that fails — not a reader noticing.
+    const mapped = new Set(PRODUCT_CAPABILITIES.map((p) => p.productId));
+    const dispatchable = new Set<string>(KNOWN_PRODUCT_IDS);
+    expect([...dispatchable].filter((id) => !mapped.has(id)), "dispatchable but unmapped").toEqual([]);
+    expect([...mapped].filter((id) => !dispatchable.has(id)), "mapped but not dispatchable").toEqual([]);
+  });
+
+  it("gives every capability a product names a shortfall phrase, so no headline says '<id> unavailable'", () => {
+    const named = new Set(PRODUCT_CAPABILITIES.flatMap((p) => [...p.requires, ...p.enhances]));
+    for (const capability of CAPABILITY_CATALOGUE) {
+      if (!named.has(capability.id)) continue;
+      const phrase = capability.pendingBuild?.summary ?? capability.shortfall;
+      expect(phrase, `${capability.id} is named by a product and must say what it LACKS`).toBeDefined();
+      expect(phrase!.length).toBeLessThan(45);
+    }
+  });
+
+  it("says the sentence, in one line, for the case that prompted this", () => {
+    const shorts = productsOf(PROD_ENV).get("branded-shorts-agent")!;
+    expect(shorts.status).toBe("UNRUNNABLE");
+    expect(shorts.headline).toContain("render engine pending development");
+    expect(shorts.headline).toContain("SCRUM-362");
+  });
+
+  it("keeps the per-key detail underneath rather than replacing it", () => {
+    // The rows are correct. They are just not the level anyone decides at.
+    const shorts = productsOf(PROD_ENV).get("branded-shorts-agent")!;
+    expect(shorts.capabilities.map((c) => c.id)).toContain("video-engine");
+    expect(shorts.capabilities.map((c) => c.id)).toContain("video-transcription");
+    expect(shorts.blockedBy).toContain("video-engine");
+  });
+
+  it("distinguishes 'nobody can configure this' from 'somebody must issue a key'", () => {
+    // The distinction that decides WHO acts. Sending someone to buy an
+    // ElevenLabs key to fix branded-shorts would be wasted money and a wasted
+    // week, which is exactly what the old report invited.
+    const products = productsOf(PROD_ENV);
+    expect(products.get("branded-shorts-agent")!.blockedReason).toBe("PENDING_DEVELOPMENT");
+    expect(products.get("landing-builder-agent")!.blockedReason ?? "NOT_BLOCKED").not.toBe("PENDING_DEVELOPMENT");
+  });
+
+  it("stays PENDING_DEVELOPMENT even when a key is ALSO missing", () => {
+    // branded-shorts is blocked by BOTH an unbuilt engine and an absent
+    // transcription key. Reporting NOT_CONFIGURED would send someone to issue
+    // a key that changes nothing — the exact confusion 2c exists to prevent.
+    const shorts = productsOf(PROD_ENV).get("branded-shorts-agent")!;
+    expect(shorts.blockedBy).toEqual(expect.arrayContaining(["video-engine", "video-transcription"]));
+    expect(shorts.blockedReason).toBe("PENDING_DEVELOPMENT");
+    expect(shorts.headline, "the headline must not mention the key, which is not the blocker that matters").not.toContain(
+      "transcription",
+    );
+  });
+
+  it("REFUSES to call branded-shorts runnable even with every key it names present", () => {
+    // The load-bearing assertion, and the one PENDING_BUILD exists for. Under
+    // the old three-status model this env produced ACTIVE rows and a runnable
+    // product, because status only ever described configuration.
+    const products = productsOf({ ...PROD_ENV, ELEVENLABS_API_KEY: "el-x", BRANDED_SHORTS_ENGINE_DIR: "/opt/engine" });
+    expect(products.get("branded-shorts-agent")!.status).toBe("UNRUNNABLE");
+    expect(products.get("branded-shorts-agent")!.blockedReason).toBe("PENDING_DEVELOPMENT");
+  });
+
+  it("reports a product RUNNABLE when everything it requires is satisfied", () => {
+    // Guards the other direction: a rollup that called everything UNRUNNABLE
+    // would pass every assertion above and be worthless.
+    expect(productsOf(PROD_ENV).get("linkedin-agent")!.status).not.toBe("UNRUNNABLE");
+  });
+
+  it("does not let a video gap degrade a product that has nothing to do with video", () => {
+    const blog = productsOf(PROD_ENV).get("blog-agent")!;
+    expect(blog.blockedBy).not.toContain("video-engine");
+    expect(blog.degradedBy).not.toContain("video-engine");
+  });
+
+  it("keeps ENGINE-WIDE gaps out of product headlines", () => {
+    // The first cut of capability-products.ts put cost-accounting and tracing
+    // on every product. Twelve of thirteen headlines came out identical —
+    // "DEGRADED — cost-accounting unavailable" — burying the two products that
+    // were genuinely dead. A rollup that says the same thing about everything
+    // is the failure this layer exists to fix, inverted.
+    //
+    // Asserted against an environment where those capabilities are ACTUALLY
+    // degraded, not against PROD_ENV. A first attempt at this test used
+    // PROD_ENV and passed even with the regression reintroduced, because
+    // cost-accounting happens to be satisfied there — a guard that cannot fail
+    // on the thing it exists for.
+    const noObservability = { ...PROD_ENV, GOOGLE_CLOUD_PROJECT: "", BQ_PROJECT_ID: "", BQ_DATASET_ID: "" };
+    const report = buildCapabilityReport(noObservability);
+    expect(report.capabilities.find((c) => c.id === "cost-accounting")?.status, "the premise: this env must actually degrade it").not.toBe(
+      "ACTIVE",
+    );
+
+    for (const product of report.products) {
+      expect(product.degradedBy, `${product.productId} must not be degraded by engine-wide observability`).not.toContain("cost-accounting");
+      expect(product.degradedBy).not.toContain("tracing");
+    }
+  });
+
+  it("never emits the '<id> unavailable' fallback phrase in a headline", () => {
+    for (const product of buildCapabilityReport(PROD_ENV).products) {
+      expect(product.headline, `${product.productId} fell back to an id`).not.toMatch(/[a-z-]+ unavailable/);
+    }
+  });
+
+  it("sorts what a person can fix above what is already on a board", () => {
+    const products = buildCapabilityReport({ ...PROD_ENV, PROMPT_STORE_DRIVER: "" }).products;
+    const notConfigured = products.findIndex((p) => p.blockedReason === "NOT_CONFIGURED");
+    const pending = products.findIndex((p) => p.blockedReason === "PENDING_DEVELOPMENT");
+    expect(notConfigured).toBeGreaterThanOrEqual(0);
+    expect(pending).toBeGreaterThanOrEqual(0);
+    expect(notConfigured, "a missing key outranks scheduled work — one of them can be fixed today").toBeLessThan(pending);
+  });
+});
+
+describe("AU65: UNEXPLAINED keeps meaning exactly one thing", () => {
+  it("never contains a row that is merely unbuilt", () => {
+    // If scheduled work leaks into this list it reads as an oversight, and the
+    // one list that is supposed to mean "a question nobody has been asked"
+    // stops meaning anything.
+    for (const row of buildCapabilityReport(PROD_ENV).capabilities) {
+      if (row.status !== "PENDING_BUILD") continue;
+      expect(row.decision, `${row.id} is scheduled work, not an unanswered question`).toBe("EXPECTED");
+    }
+  });
+
+  it("requires a ticket before anything may claim PENDING_BUILD", () => {
+    // The side door. Without this, "not built yet" becomes a way to launder an
+    // undecided row into EXPECTED without recording a decision anywhere.
+    for (const capability of CAPABILITY_CATALOGUE) {
+      if (!capability.pendingBuild) continue;
+      expect(capability.pendingBuild.ticket, `${capability.id} must name the ticket that scheduled it`).toMatch(/^SCRUM-\d+$/);
+    }
+  });
+
+  it("says outright that wiring transcription alone fixes nothing", () => {
+    const transcription = CAPABILITY_CATALOGUE.find((c) => c.id === "video-transcription")!;
+    expect(transcription.whenAbsent).toMatch(/renderer that does not exist|Fixing this is not fixing video/i);
   });
 });

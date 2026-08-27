@@ -302,15 +302,6 @@ export const openApiDocument: OpenApiDocument = {
           required: true,
           content: { "application/json": { schema: { $ref: "#/components/schemas/PubSubPushEnvelope" } } },
         },
-        parameters: [
-          {
-            name: "token",
-            in: "query",
-            required: false,
-            schema: { type: "string" },
-            description: "Shared-secret defense-in-depth, checked against PUBSUB_PUSH_TOKEN when that env var is configured. Independent of OIDC verification below.",
-          },
-        ],
         responses: {
           "200": {
             description: "The message was accepted (Pub/Sub will not redeliver it) — includes when the run was already mid-flight for this exact message id.",
@@ -320,7 +311,7 @@ export const openApiDocument: OpenApiDocument = {
             content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } },
           },
           "401": {
-            description: "Missing/wrong ?token=, missing Authorization bearer token, or OIDC identity-token verification failed.",
+            description: "Missing Authorization bearer token, or OIDC identity-token verification failed.",
             content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } },
           },
           "500": {
