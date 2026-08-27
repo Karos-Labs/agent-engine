@@ -75,6 +75,19 @@ async function recordResolvedGateStep(runtime: WorkflowRuntime, stepId: string, 
     const record: StepRecord = {
       stepId,
       kind: "gate",
+      // AU67 checked this primitive as a PRODUCER, not only as a resume
+      // consumer, and it is structurally incapable of the step.code defect:
+      // the output below is a CLOSED SHAPE THIS FUNCTION CONSTRUCTS ITSELF
+      // from a `GateResponse`, never a value returned from a tool. There is no
+      // `status` field arriving from elsewhere that could disagree with this
+      // one.
+      //
+      // `completed` on a REJECTED gate is correct and deliberate, not the same
+      // bug in disguise. It means the gate was RESOLVED. A rejection is a human
+      // decision, carried in `output.decision` and surfaced at run level as
+      // `held` with a reason — recording it as a step failure would say the
+      // step malfunctioned when it did exactly its job, which is to capture a
+      // "no".
       status: "completed",
       // The decision IS this step's output — the same shape `apps/agent-server`'s
       // report builder used to synthesize for a resolved gate, now recorded at

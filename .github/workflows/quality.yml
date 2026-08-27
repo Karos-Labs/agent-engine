@@ -49,6 +49,18 @@ jobs:
       - name: Configuration inventory
         run: npm run check:config
 
+      # SCRUM-361c / AU68: every field the telemetry insert writes must exist as
+      # a column. `ignoreUnknownValues: true` drops a missing one SILENTLY while
+      # the insert still reports success — that is how `operation`, `jobId`,
+      # `stepId` and `source` were discarded on every insert for months after
+      # being added deliberately. Both runtime options are silent (turning the
+      # flag off trades column loss for ROW loss, since the insert's catch logs
+      # and swallows), so the field list is checked statically instead, where it
+      # is a static fact. Advisory without a GCP credential, and it says so
+      # rather than passing quietly.
+      - name: BigQuery insert/schema agreement
+        run: npm run check:bq-schema
+
       # instagram-agent's default-template-render.test.ts launches a real,
       # un-mocked Chromium against the actual production slide template
       # (agent-engine#4) — every other render-carousel test deliberately
