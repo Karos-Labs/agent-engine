@@ -2,17 +2,34 @@ import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { GateResponseSchema, type AgentDefinitionStore } from "@agent-engine/core";
+import { describeError } from "@agent-engine/telemetry";
 import { GateAlreadyResolvedError, WorkflowConcurrentRunError, WorkflowEngine, type DurableStepStore } from "@agent-engine/workflow";
 import { buildRunReport } from "../report.js";
-import { RunJobRequestSchema, startRunJob } from "../run-job.js";
+import { RunJobRequestSchema, type RunJobRequest } from "../run-job.js";
 import { buildWorkflowForProduct, isKnownProductId, type AgentRuntimeDeps, type ProductId } from "../wiring/workflows.js";
 import { respondInternalError, respondWithLoggedDetail } from "./error-response.js";
+
+/** Hands a run-job off to the queue. Returns the id the consumer will derive from the published message. */
+export type EnqueueRunJob = (request: RunJobRequest) => Promise<{ runId: string }>;
 
 export interface RunsRouterDeps {
   durableStore: DurableStepStore;
   runtimeDeps: AgentRuntimeDeps;
   /** Looked up by `startRunJob` (via `resolveWorkflowFn`) when `/runs/start`'s `productId` isn't one of the 12 fixed products (Task 2's dynamic agents). Omit only if this deployment never dispatches one over HTTP. */
   agentDefinitionStore?: AgentDefinitionStore;
+  /**
+   * Publishes a run-job message and returns the id the consumer will derive
+   * from it (AU66 / SCRUM-364). Injected rather than constructed here, like
+   * every other real-client dependency in this codebase.
+   *
+   * The injection is what lets `scripts/smoke-test-server.ts` keep working
+   * without GCP AND without this route staying synchronous for its benefit:
+   * the smoke test does not actually need the ROUTE to execute a run, it needs
+   * a run to happen on a machine with no Pub/Sub. So it supplies an
+   * in-process implementation of enqueueing, and the route's own contract —
+   * "hand this off and return" — is identical in both.
+   */
+  enqueueRunJob?: EnqueueRunJob;
   /** Injectable for deterministic tests; defaults to `crypto.randomUUID`. */
   generateRunId?: () => string;
   /** Injectable for deterministic tests; defaults to `() => new Date().toISOString()`. */
@@ -99,6 +116,41 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
   const now = deps.now ?? (() => new Date().toISOString());
   const engine = new WorkflowEngine(deps.durableStore);
 
+  /**
+   * `POST /api/v1/runs/start` — ENQUEUES a run and returns immediately
+   * (AU66 / SCRUM-364). It no longer executes anything.
+   *
+   * ## What this route used to be
+   *
+   * It ran the entire workflow inside one HTTP request. That is fine for a
+   * 5-second run and catastrophic for a 17-minute one, because Cloud Run's
+   * request timeout is 300s and this service does not set
+   * `--no-cpu-throttling`: once the request is severed the container's CPU is
+   * throttled, network-bound work carries on, and CPU-bound work dies.
+   *
+   * Reproduced, twice, on prep. Both runs 504'd at ~300s, both continued in the
+   * background, and both died at `08-render-carousel` with
+   * `browserType.launch: Timeout 180000ms exceeded` — Chromium launching ~9
+   * minutes after the request that was supposedly driving it had ended. Cost:
+   * $0.333 for the second one, and a diagnosis that initially blamed the wrong
+   * layer.
+   *
+   * ## Why enqueue rather than the alternatives
+   *
+   * Nothing in production used this route: karosCMO publishes to Pub/Sub, and
+   * the only run-jobs subscription is a PULL one consumed by
+   * `agent-engine-prep-worker`, which has `--no-cpu-throttling` and
+   * `min-instances=1` and completed 12 of 12 instagram renders. So this was
+   * never a broken production path — it was a TRAP that anyone testing fell
+   * into.
+   *
+   * Deleting it would remove a documented API. `--no-cpu-throttling` would make
+   * the symptom vanish while leaving a whole workflow inside one request and
+   * billing idle CPU — it hides the problem. Enqueueing collapses the system to
+   * ONE EXECUTION PATH, which is the property actually worth having, and closes
+   * the "inline whole-run execution in the HTTP request" item that has been
+   * open across two audits.
+   */
   router.post("/api/v1/runs/start", async (req, res) => {
     const parsed = StartRunRequestSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -107,33 +159,45 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
     }
     const { clientSlug, productId, runKind } = parsed.data;
 
-    const runId = generateRunId();
-    // Shared with the Pub/Sub push route and the pull-based queue consumer
-    // (`run-job.ts`) — this is the one place "start a run" actually happens.
-    const outcome = await startRunJob({ clientSlug, productId, runKind }, runId, deps);
+    // Validated BEFORE publishing, and kept synchronous on purpose. Resolving a
+    // productId is a name lookup and, for a dynamic agent, one store read — it
+    // does not execute anything, so enqueueing is no reason to stop doing it.
+    // Without this an unknown productId returns 202 and fails minutes later in
+    // a worker, which is a strictly worse answer to a strictly client error.
+    if (!isKnownProductId(productId)) {
+      const spec = await deps.agentDefinitionStore?.get(productId);
+      if (!spec) {
+        res.status(400).json({
+          error: `productId "${productId}" is neither a known fixed product nor a registered dynamic agent`,
+        });
+        return;
+      }
+    }
 
-    if (outcome.outcome === "conflict") {
-      // Astronomically unlikely for a freshly generated runId, but a defensive backstop
-      // if the id generator is ever swapped for something less collision-proof.
-      res.status(409).json({ error: outcome.message });
+    if (!deps.enqueueRunJob) {
+      // Deliberately NOT a synchronous fallback. Executing here when the queue
+      // is unconfigured would reinstate the exact trap this ticket removes, and
+      // it would do it on precisely the machines least able to notice.
+      respondInternalError(
+        res,
+        "runs/start cannot enqueue: no queue is configured for this deployment. Set PUBSUB_PROJECT_ID (or GOOGLE_CLOUD_PROJECT) and QUEUE_TOPIC_RUN_JOBS. " +
+          "This route no longer executes runs itself — see AU66 / SCRUM-364.",
+        undefined,
+      );
       return;
     }
-    if (outcome.outcome === "not_found") {
-      // A client error — productId named neither a fixed product nor a registered dynamic
-      // agent (Task 2) — not a server-side failure, so 400, not 500.
-      res.status(400).json({ error: outcome.message });
-      return;
+
+    try {
+      const { runId } = await deps.enqueueRunJob({ clientSlug, productId, runKind });
+      // 202, not 201: nothing has been created yet beyond a queued message.
+      // The run record appears when the worker claims it. `runId` is the id the
+      // consumer WILL derive from this message, so a caller can poll
+      // `/runs/:runId/status` immediately — it 404s until the worker starts,
+      // which is the honest answer to "is it running yet".
+      res.status(202).json({ runId, status: "queued" });
+    } catch (err) {
+      respondInternalError(res, `runs/start could not enqueue the run: ${describeError(err)}`, undefined);
     }
-    if (outcome.outcome === "error") {
-      respondInternalError(res, `run ${runId} failed unexpectedly: ${outcome.message}`, undefined);
-      return;
-    }
-    res.status(201).json({
-      runId: outcome.runId,
-      status: outcome.status,
-      ...(outcome.pendingGateId !== undefined ? { pendingGateId: outcome.pendingGateId } : {}),
-      report: outcome.report,
-    });
   });
 
   router.post("/api/v1/runs/:runId/resume", async (req, res) => {

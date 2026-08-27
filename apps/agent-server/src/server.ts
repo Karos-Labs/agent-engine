@@ -6,6 +6,7 @@ import { createDurableStoreFromEnv } from "./wiring/durable-store.js";
 import { createServerPromptStore } from "./wiring/prompt-store.js";
 import { createQueuePushVerifier } from "./wiring/queue-push-auth.js";
 import { createServerTools } from "./wiring/tools.js";
+import { createRunJobPublisher } from "./wiring/enqueue-run-job.js";
 import { createServiceIdentityConfigFromEnv } from "./wiring/auth.js";
 import { createServerTemplateStore } from "./wiring/template-store.js";
 import { assertFirestoreDatabaseIdOrExit } from "./wiring/firestore-database-id.js";
@@ -49,6 +50,13 @@ async function main(): Promise<void> {
     durableStore,
     runtimeDeps: { tools, promptStore, router, workspaceStore, repoRoot: resolveInstagramRepoRoot(), templateStore: createServerTemplateStore() },
     agentDefinitionStore,
+    // AU66: `/runs/start` enqueues rather than executing. `undefined` here means
+    // no queue is configurable (local dev), and the route says so specifically
+    // rather than falling back to running the job in the request.
+    ...(() => {
+      const enqueueRunJob = createRunJobPublisher();
+      return enqueueRunJob ? { enqueueRunJob } : {};
+    })(),
     ...resolveQueuePushConfig(),
     verifyPushIdToken: createQueuePushVerifier(),
     auth: createServiceIdentityConfigFromEnv(),

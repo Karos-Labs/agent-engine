@@ -7,6 +7,8 @@ import { createAllKarosTools, WorkspaceStore } from "@agent-engine/tools";
 import { createOfflineScraper } from "@agent-engine/tool-karos-scraper";
 import { MemoryDurableStepStore } from "@agent-engine/workflow";
 import type { AgentRuntimeDeps } from "../src/wiring/workflows.js";
+import { randomUUID } from "node:crypto";
+import { startRunJob, type RunJobRequest } from "../src/run-job.js";
 
 export interface TestEnvironment {
   rootDir: string;
@@ -281,5 +283,25 @@ export async function setupTestEnvironment(clientSlug = "acme"): Promise<TestEnv
     durableStore,
     runtimeDeps: { tools, promptStore, router },
     cleanup: () => fs.rm(rootDir, { recursive: true, force: true }),
+  };
+}
+
+/**
+ * An `enqueueRunJob` that runs the job in-process (AU66 / SCRUM-364).
+ *
+ * `/runs/start` enqueues now; it does not execute. These tests are about the
+ * ROUTE and the workflows behind it, not about Pub/Sub, and they run on
+ * machines with no GCP — so they supply their own meaning for "enqueue",
+ * exactly as `scripts/smoke-test-server.ts` does.
+ *
+ * The point worth keeping: the route's contract is identical either way. It
+ * hands the job off and returns 202. Nothing here re-synchronises the route,
+ * which is what would have quietly preserved the trap for everyone else.
+ */
+export function inProcessEnqueue(env: TestEnvironment): (request: RunJobRequest) => Promise<{ runId: string }> {
+  return async (request) => {
+    const runId = `test-${randomUUID()}`;
+    await startRunJob(request, runId, { durableStore: env.durableStore, runtimeDeps: env.runtimeDeps });
+    return { runId };
   };
 }
