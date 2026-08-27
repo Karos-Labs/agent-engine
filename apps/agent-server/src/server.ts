@@ -19,14 +19,10 @@ function resolvePort(): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 8080;
 }
 
-/** Both unset (the default, safe for local dev): the push route accepts any request with a syntactically valid envelope — fine when nothing has configured Pub/Sub to push here yet. Set `PUBSUB_PUSH_AUDIENCE_URL` before pointing a real push subscription at this service (see README's Pub/Sub section). */
-function resolveQueuePushConfig(): { queuePushToken?: string; queuePushAudienceUrl?: string } {
-  const pushToken = process.env["PUBSUB_PUSH_TOKEN"];
+/** Unset (the default, safe for local dev): the push route accepts any request with a syntactically valid envelope — fine when nothing has configured Pub/Sub to push here yet. Set `PUBSUB_PUSH_AUDIENCE_URL` before pointing a real push subscription at this service (see README's Pub/Sub section). */
+function resolveQueuePushConfig(): { queuePushAudienceUrl?: string } {
   const pushAudienceUrl = process.env["PUBSUB_PUSH_AUDIENCE_URL"];
-  return {
-    ...(pushToken ? { queuePushToken: pushToken } : {}),
-    ...(pushAudienceUrl ? { queuePushAudienceUrl: pushAudienceUrl } : {}),
-  };
+  return pushAudienceUrl ? { queuePushAudienceUrl: pushAudienceUrl } : {};
 }
 
 async function main(): Promise<void> {

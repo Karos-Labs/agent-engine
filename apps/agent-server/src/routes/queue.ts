@@ -21,15 +21,6 @@ export type VerifyPushIdToken = (idToken: string, audience: string) => Promise<v
 
 export interface QueueRouterDeps extends Pick<RunsRouterDeps, "durableStore" | "runtimeDeps" | "agentDefinitionStore"> {
   /**
-   * Shared-secret defense-in-depth, checked as `?token=` on the push URL
-   * itself — independent of OIDC verification below, so a misconfigured or
-   * cloned subscription still can't reach this endpoint even if OIDC
-   * verification were somehow bypassed. Omit to disable this check (e.g.
-   * for local testing against the pull-based `queue-consumer.ts` instead,
-   * which never uses this route at all).
-   */
-  pushToken?: string;
-  /**
    * The exact HTTPS URL Pub/Sub is configured to push to
    * (`https://<service-url>/api/v1/queue/pubsub-push`) — required as the
    * expected `audience` for OIDC verification. Omit only to skip OIDC
@@ -65,23 +56,6 @@ export function createQueueRouter(deps: QueueRouterDeps): Router {
   const router = Router();
 
   router.post("/api/v1/queue/pubsub-push", async (req, res) => {
-    if (deps.pushToken !== undefined && req.query["token"] !== deps.pushToken) {
-      res.status(401).json({ error: "invalid or missing push token" });
-      return;
-    }
-    if (deps.pushToken === undefined) {
-      // AU55: a missing key that disables a CHECK is a hole, not a degradation.
-      // This guard used to skip itself in silence, which is indistinguishable
-      // at the call site from having passed. It stays non-fatal — OIDC below
-      // fails closed and is the primary protection Google documents for this
-      // endpoint — but it is now audible, in the same shape as the
-      // misconfiguration guard a few lines down.
-      logWarning(
-        "PUBSUB_PUSH_TOKEN is not configured — the push shared-secret check is SKIPPED. " +
-          "This endpoint starts billable runs; it is protected only by Cloud Run IAM and, when PUBSUB_PUSH_AUDIENCE_URL is set, OIDC verification.",
-      );
-    }
-
     if (deps.pushAudienceUrl !== undefined) {
       const authHeader = req.header("authorization");
       const bearer = authHeader?.match(/^Bearer (.+)$/)?.[1];

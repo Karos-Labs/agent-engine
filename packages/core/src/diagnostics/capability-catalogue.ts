@@ -11,7 +11,8 @@
  *   - `APIFY_TOKEN` absent in prod: venue photography silently degraded to
  *     generic image search for months.
  *   - Unsplash/Pexels/Pixabay absent in prod: three of six image providers.
- *   - `PUBSUB_PUSH_TOKEN` absent: a SECURITY CHECK that skips itself.
+ *   - `PUBSUB_PUSH_TOKEN` absent: a SECURITY CHECK that skipped itself. Deleted
+ *     outright in SCRUM-333 rather than wired — see below.
  *   - karosCMO's `SEGMIND_API_KEY`: the inverse — a secret shipped to
  *     production for code that exists nowhere in the repo.
  *
@@ -44,7 +45,22 @@ export type CapabilityStatus =
   /** Running, but with fewer sources/options than its full configuration. */
   | "DEGRADED"
   /** Switched off entirely — the capability cannot run at all. */
-  | "DISABLED";
+  | "DISABLED"
+  /**
+   * Decided, not yet built (AU65 / SCRUM-363).
+   *
+   * The three statuses above all describe CONFIGURATION: something is present,
+   * partly present, or absent, and issuing a key changes the answer. This one
+   * does not. The thing the variable would configure DOES NOT EXIST YET —
+   * separately scheduled work with a ticket. Issuing the key would change
+   * nothing.
+   *
+   * Without this value such a row had nowhere to live. It landed as DISABLED
+   * with no rationale, i.e. UNEXPLAINED, i.e. indistinguishable from an
+   * oversight — which quietly devalues the one list that is supposed to mean
+   * exactly one thing.
+   */
+  | "PENDING_BUILD";
 
 /** Whether someone decided this, or whether it is a question nobody has been asked. */
 export type CapabilityDecision = "EXPECTED" | "UNEXPLAINED";
@@ -79,6 +95,30 @@ export interface CapabilityDefinition {
    * holes, not degradations, and are reported separately and first.
    */
   readonly security?: boolean;
+  /**
+   * Present when the thing this capability configures is scheduled work that
+   * has not been built (AU65 / SCRUM-363). Forces `PENDING_BUILD` regardless of
+   * the environment, because issuing the key would not help.
+   *
+   * The ticket is what makes the row EXPECTED rather than UNEXPLAINED. It is
+   * required, not optional: "not built yet" without a ticket is exactly the
+   * unrecorded decision `rationale` exists to catch, and letting it in through
+   * a side door would defeat the point.
+   */
+  readonly pendingBuild?: {
+    /** The ticket that scheduled it. */
+    readonly ticket: string;
+    /** At most a handful of words, for the product headline: "render engine pending development". */
+    readonly summary: string;
+  };
+  /**
+   * A short phrase naming what is MISSING, for the one-line product headline
+   * ("no transcription key", "render engine pending development"). Required on
+   * any capability some product lists in `requires` — a test enforces that —
+   * because `title` describes what the capability IS, and a headline needs what
+   * it LACKS.
+   */
+  readonly shortfall?: string;
 }
 
 /**
@@ -98,6 +138,7 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
     whenAbsent:
       "research.pull reports not_available and content agents HOLD rather than drafting. This is the one absence that stops work outright, deliberately: a placeholder payload is what let every content agent draft from nothing for months.",
     rationale: "packages/tools/karos-research/README.md — the stand-in was replaced by not_available on purpose.",
+    shortfall: "no research source",
   },
   {
     id: "image-search-curated",
@@ -112,6 +153,7 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
       "Those providers do not register. Image sourcing still works from the keyless ones (Openverse, Wikimedia, DuckDuckGo) plus generation, but with a smaller pool and weaker licence tiers — keyless sources are 'attributable' or 'unknown' provenance, never 'blanket'.",
     rationale:
       "cloudbuild.promote.yaml records these as deliberately prep-only: the secrets do not exist in the prod project and --set-secrets naming a missing secret fails the deploy.",
+    shortfall: "no curated stock photography",
   },
   {
     id: "venue-photography",
@@ -133,6 +175,7 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
     // keeps it EXPECTED rather than a fresh question.
     rationale:
       "AU56 decided to issue the key. prep is wired (Secret Manager: google-places-key); prod's key is not created yet, so prod remains DISABLED until it is.",
+    shortfall: "no venue photography",
   },
   {
     id: "image-generation",
@@ -144,6 +187,7 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
     ],
     whenAbsent: "The generative tier is unavailable; sourcing must find something in a library or the slide goes unfilled.",
     rationale: "Satisfied by GOOGLE_CLOUD_PROJECT, which every deployed environment sets.",
+    shortfall: "no image generation",
   },
 
   // ── Video ────────────────────────────────────────────────────────────────
@@ -152,7 +196,10 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
     title: "Video transcription — turning a source video into the transcript every clip decision is made from",
     owner: "packages/tools/karos-video (video.transcribe)",
     requires: [{ name: "ELEVENLABS_API_KEY", kind: "required" }],
-    whenAbsent: "video.transcribe reports not_available, so branded-shorts and tiktok runs cannot plan a cut at all.",
+    whenAbsent:
+      "video.transcribe reports not_available, so branded-shorts and tiktok runs cannot plan a cut at all. WIRING THIS ALONE PRODUCES NOTHING: the transcript feeds a renderer that does not exist yet (video-engine, SCRUM-362), so a run with a transcription key and no engine gets further before failing and ships exactly as much video as it does today — none. Fixing this is not fixing video.",
+    shortfall: "no transcription key",
+    rationale: "Decided: the key is to be placed in Secret Manager, then wired (SCRUM-361 round). Absent today because the secret does not exist in either project yet — verified, not assumed.",
   },
   {
     id: "video-engine",
@@ -160,7 +207,12 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
     owner: "packages/tools/karos-video",
     requires: [{ name: "BRANDED_SHORTS_ENGINE_DIR", kind: "required" }],
     whenAbsent:
-      "Every video.* gate returns tooling_error naming the missing engine checkout, and a branded-shorts run fails rather than shipping unchecked footage (AU8 made this a real tooling_error outcome rather than a success carrying an error verdict).",
+      "Every video.* gate returns tooling_error naming the missing engine checkout, and a branded-shorts or tiktok run fails rather than shipping unchecked footage (AU8 made this a real tooling_error outcome rather than a success carrying an error verdict). Pointing the variable at a directory would not change this: there is no engine to point it at.",
+    shortfall: "render engine pending development",
+    pendingBuild: {
+      ticket: "SCRUM-362",
+      summary: "render engine pending development",
+    },
   },
 
   // ── Reputation ───────────────────────────────────────────────────────────
@@ -171,6 +223,7 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
     requires: [{ name: "GOOGLE_BUSINESS_TOKEN", kind: "required" }],
     whenAbsent:
       "No credentialed review source at all. The GBP leg writes an UNAVAILABLE tombstone instead of reviews, and the pulse runs on only the uncredentialed legs (App Store RSS, and whatever the client exports by hand) — so a client with no App Store presence gets a pulse with no reviews in it. The tombstone keeps that visible rather than letting it read as 'no reviews this month'.",
+    shortfall: "no credentialed review source",
   },
 
   // ── Landing builder ──────────────────────────────────────────────────────
@@ -184,6 +237,7 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
     ],
     whenAbsent: "Every landing.* tool returns tooling_error, so landing-builder runs cannot start.",
     rationale: "Both are set in cloudbuild.yaml and cloudbuild.promote.yaml for deploy-http and deploy-worker.",
+    shortfall: "no landing template kit",
   },
 
   // ── Persistence ──────────────────────────────────────────────────────────
@@ -195,6 +249,7 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
     whenAbsent:
       "Falls back to LOCAL DISK, silently and without erroring. On Cloud Run that means each instance reads an empty workspace: every client tool returns 'not set up yet' for a fully onboarded client, and anything written vanishes on instance recycle. This is the single most dangerous absence in this table because nothing about it looks like a failure (T-P0b / SCRUM-263).",
     rationale: "Wired in both cloudbuild files for both services, and pinned by apps/agent-server/__tests__/workspace-store-wiring.test.ts.",
+    shortfall: "no durable workspace",
   },
   {
     id: "media-artifact-storage",
@@ -207,6 +262,7 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
     whenAbsent:
       "Renders stay on the container's ephemeral disk and are lost on recycle; oversized step output stays inline in Firestore instead of being archived.",
     rationale: "Both wired in cloudbuild for both services.",
+    shortfall: "no media storage",
   },
   {
     id: "prompt-store",
@@ -216,6 +272,7 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
     whenAbsent:
       "Defaults to an EMPTY in-memory store. The server boots clean and then every skillRef resolution fails at run time, so 100% of agent steps degrade with no startup error. Fail-quiet in exactly the way this catalogue exists to surface.",
     rationale: "Set to 'firestore' in both cloudbuild files for both services.",
+    shortfall: "no prompt store",
   },
 
   // ── Observability ────────────────────────────────────────────────────────
@@ -266,15 +323,6 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
   },
 
   // ── Security: absences that remove a CHECK, not a feature ────────────────
-  {
-    id: "push-shared-secret",
-    title: "Pub/Sub push shared-secret check — the second layer in front of the run-starting endpoint",
-    owner: "apps/agent-server (routes/queue.ts)",
-    requires: [{ name: "PUBSUB_PUSH_TOKEN", kind: "required" }],
-    whenAbsent:
-      "The ?token= check SKIPS ITSELF. Not a smaller feature — one fewer barrier in front of an endpoint that starts billable runs. Safe only while the OIDC layer beside it is configured and fails closed.",
-    security: true,
-  },
   {
     id: "push-oidc",
     title: "Pub/Sub push identity verification",
