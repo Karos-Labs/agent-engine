@@ -169,7 +169,7 @@ function createAnthropicVendorAdapter(env: Record<string, string | undefined>): 
     ...(secondary ? { secondary } : {}),
     // NOT reverted with the rest of SCRUM-358: this default was "gemini-1.5-flash",
     // which had no MODEL_PRICING row and billed at Sonnet's $3/$15 for a model
-    // costing a fraction of that (~40x overstatement). SCRUM-361's
+    // costing a fraction of that (~40x overstatement). the per-unit cost work — shipped without a Jira ticket's
     // check-model-pricing found it, and that fix is orthogonal to whether the
     // direct-Anthropic hop exists.
     ...(tertiary ? { tertiary, tertiaryModel: readEnv(env, "CLAUDE_FALLBACK_GEMINI_MODEL") ?? "gemini-2.5-flash" } : {}),

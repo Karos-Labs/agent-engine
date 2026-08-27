@@ -100,7 +100,7 @@ function lookupModelPricing(modelName: string): ModelPricing | undefined {
 
   // Model Garden ids carry a publisher prefix in some call paths and not
   // others (`meta/llama-3.3-70b-instruct-maas` vs `llama-3.3-70b-instruct-maas`),
-  // and this table is keyed without it. Found by SCRUM-361's selection-time
+  // and this table is keyed without it. Found by the per-unit cost work — shipped without a Jira ticket's selection-time
   // guard, which refused an existing test's `meta/llama-...` override: every
   // Model Garden row in this table was unreachable from a prefixed id, so a
   // model we had deliberately priced would still have billed at Sonnet's rate.
@@ -109,7 +109,7 @@ function lookupModelPricing(modelName: string): ModelPricing | undefined {
 }
 
 /**
- * The default, made audible (SCRUM-361).
+ * The default, made audible (the per-unit cost work — shipped without a Jira ticket).
  *
  * This deliberately does NOT throw, and the reason is the one thing about this
  * function worth knowing. `pricingForModel` runs AFTER the model call, from
@@ -138,7 +138,7 @@ function unpricedFallback(modelName: string): ModelPricing {
 }
 
 /**
- * Refuses a model that has no price, at SELECTION time (SCRUM-361).
+ * Refuses a model that has no price, at SELECTION time (the per-unit cost work — shipped without a Jira ticket).
  *
  * This is the backstop, not the mechanism. `scripts/check-model-pricing.ts` is
  * the mechanism: 27 declarations, all static string literals, all checkable
@@ -176,7 +176,7 @@ export function computeStepCostUsd(modelName: string, inputTokens: TokenUsage, o
 // ── The per-unit dimension ────────────────────────────────────────────────
 //
 // Everything above prices TOKENS. Generative media is not billed in tokens, it
-// is billed per image and per second, and until SCRUM-361 this file had no way
+// is billed per image and per second, and until the per-unit cost work — shipped without a Jira ticket this file had no way
 // to express that — which is half of why a measured Instagram run understated
 // itself by ~14%. The other half was that tools had no way to report units at
 // all (`AgentToolOutcome.usage`, added in the same change).
@@ -213,7 +213,7 @@ export interface UnitPricing {
  * call time, the same principle AU59 applied to the OpenAI-compatible adapter.
  */
 export const UNIT_PRICING: Record<string, UnitPricing> = {
-  // Verified two ways for the run measured in SCRUM-361: Vertex's own
+  // Verified two ways for the run measured in the per-unit cost work — shipped without a Jira ticket: Vertex's own
   // publisher metric reported 2 `gemini-2.5-flash-image` invocations in that
   // run's window (both response_code=200), and Google's published rate is
   // 1290 output tokens per image at $30/1M.

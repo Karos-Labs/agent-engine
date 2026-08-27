@@ -74,3 +74,26 @@ describe("AU60: FIRESTORE_DATABASE_ID must name a database that exists", () => {
     }
   });
 });
+
+/**
+ * AU66 (SCRUM-364): the topic `/runs/start` publishes to must be wired in the
+ * deploy config, not left to a code default.
+ *
+ * Same shape as the `_FIRESTORE_DATABASE_ID` assertion above, and found the
+ * same way — by checking deploy config against code rather than trusting it.
+ * `runJobsTopicName()` falls back to `agent-engine-run-jobs`, which exists in
+ * NEITHER project, so an unset variable makes every enqueue 500. That went
+ * unnoticed because until AU66 nothing in the server published: only the
+ * worker consumed, and its `_QUEUE_SUBSCRIPTION_RUN_JOBS` was wired.
+ */
+describe("AU66: both deploy configs wire the run-jobs topic", () => {
+  it.each(["cloudbuild.yaml", "cloudbuild.promote.yaml"])("%s sets _QUEUE_TOPIC_RUN_JOBS and passes it through", (file) => {
+    const yaml = readFileSync(path.join(repoRoot, file), "utf8");
+    const value = /_QUEUE_TOPIC_RUN_JOBS:\s*"?([^"\n]+)"?/.exec(yaml)?.[1]?.trim();
+    expect(value, `${file} must define _QUEUE_TOPIC_RUN_JOBS`).toBeTruthy();
+    // A substitution nothing references is the same defect one step later.
+    expect(yaml, `${file} must pass it into --set-env-vars`).toContain("QUEUE_TOPIC_RUN_JOBS=${_QUEUE_TOPIC_RUN_JOBS}");
+    // The real topics are karos-agent-runs-<env>; the code default is not.
+    expect(value, `${file}'s topic must not be the code fallback`).not.toBe("agent-engine-run-jobs");
+  });
+});

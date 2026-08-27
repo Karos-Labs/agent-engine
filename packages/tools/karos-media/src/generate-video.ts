@@ -184,7 +184,7 @@ export function createGenerateVideo(options: GenerateVideoOptions = {}) {
         await fs.writeFile(outFile, Buffer.from(await response.arrayBuffer()));
       }
 
-      // SCRUM-361: video is billed PER SECOND, and this is the case the
+      // the per-unit cost work — shipped without a Jira ticket: video is billed PER SECOND, and this is the case the
       // per-unit dimension was designed around rather than retrofitted to.
       //
       // `model` has no UNIT_PRICING row today and that is deliberate, not an

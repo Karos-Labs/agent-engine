@@ -1,5 +1,5 @@
 /**
- * Every model id this codebase names must have a price (SCRUM-361 / AU66).
+ * Every model id this codebase names must have a price (SCRUM-364 / AU66).
  *
  * ## Why a CI check rather than a runtime throw
  *
@@ -60,7 +60,7 @@ const NOT_MODEL_IDS = new Set<string>([
  * Ids that are named in executable code, have no price, and are NOT a build
  * failure — each because a decision is pending, with a ticket.
  *
- * Same discipline as `CapabilityDefinition.pendingBuild.ticket` (AU65): an
+ * Same discipline as `CapabilityDefinition.pendingBuild.ticket` (the capability-by-product work): an
  * exception without a named owner is how a check quietly becomes decorative.
  * Entries here are printed loudly on every run. A model id NOT on this list
  * still fails the build, which is the mechanism.

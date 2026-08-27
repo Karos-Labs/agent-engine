@@ -47,7 +47,7 @@ export type CapabilityStatus =
   /** Switched off entirely — the capability cannot run at all. */
   | "DISABLED"
   /**
-   * Decided, not yet built (AU65 / SCRUM-363).
+   * Decided, not yet built (the capability-by-product work — shipped without a Jira ticket).
    *
    * The three statuses above all describe CONFIGURATION: something is present,
    * partly present, or absent, and issuing a key changes the answer. This one
@@ -97,7 +97,7 @@ export interface CapabilityDefinition {
   readonly security?: boolean;
   /**
    * Present when the thing this capability configures is scheduled work that
-   * has not been built (AU65 / SCRUM-363). Forces `PENDING_BUILD` regardless of
+   * has not been built (the capability-by-product work — shipped without a Jira ticket). Forces `PENDING_BUILD` regardless of
    * the environment, because issuing the key would not help.
    *
    * The ticket is what makes the row EXPECTED rather than UNEXPLAINED. It is
@@ -199,7 +199,7 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
     whenAbsent:
       "video.transcribe reports not_available, so branded-shorts and tiktok runs cannot plan a cut at all. WIRING THIS ALONE PRODUCES NOTHING: the transcript feeds a renderer that does not exist yet (video-engine, SCRUM-362), so a run with a transcription key and no engine gets further before failing and ships exactly as much video as it does today — none. Fixing this is not fixing video.",
     shortfall: "no transcription key",
-    rationale: "Decided: the key is to be placed in Secret Manager, then wired (SCRUM-361 round). Absent today because the secret does not exist in either project yet — verified, not assumed.",
+    rationale: "Decided: the key is to be placed in Secret Manager, then wired (the per-unit cost work — shipped without a Jira ticket round). Absent today because the secret does not exist in either project yet — verified, not assumed.",
   },
   {
     id: "video-engine",

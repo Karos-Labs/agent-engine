@@ -86,7 +86,7 @@ export function resolveModelPolicy(
   }
 
   const model = modelOverride ?? defaultPolicy.model;
-  // SCRUM-361. An env-supplied model id is the one thing CI's
+  // the per-unit cost work — shipped without a Jira ticket. An env-supplied model id is the one thing CI's
   // `check-model-pricing` cannot see — it scans static source, and this value
   // arrives from the environment. Refused here, at deployment wiring, rather
   // than after the first billed call.

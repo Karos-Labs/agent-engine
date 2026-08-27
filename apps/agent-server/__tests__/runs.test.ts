@@ -8,7 +8,30 @@ import { createAllKarosTools, WorkspaceStore } from "@agent-engine/tools";
 import { createOfflineScraper } from "@agent-engine/tool-karos-scraper";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createApp } from "../src/app.js";
-import { setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import { setupTestEnvironment, type TestEnvironment, inProcessEnqueue } from "./test-helpers.js";
+import { startRunJob } from "../src/run-job.js";
+
+/**
+ * Starts a run through the route and returns the state it reached (AU66 /
+ * SCRUM-364).
+ *
+ * `/runs/start` enqueues and returns 202 now, so everything these tests used to
+ * assert on the START response — status, pendingGateId, report — lives on
+ * `/status`. That split is the point of the change and not an inconvenience to
+ * paper over: the route's job is the handoff, and a run's state is a separate
+ * question with a separate answer.
+ *
+ * The 202 itself is asserted here rather than in each caller, so a route that
+ * silently went back to executing would fail every one of them at once.
+ */
+async function startAndRead(app: Application, body: Record<string, unknown>) {
+  const startRes = await request(app).post("/api/v1/runs/start").send(body);
+  if (startRes.status !== 202) return { startRes, body: startRes.body };
+  expect(startRes.body.status, "the route hands off; it must not report a run's state").toBe("queued");
+  const statusRes = await request(app).get(`/api/v1/runs/${startRes.body.runId}/status`);
+  return { startRes, body: { ...statusRes.body, runId: startRes.body.runId } };
+}
+
 
 describe("POST /api/v1/runs/start", () => {
   let env: TestEnvironment;
@@ -16,7 +39,7 @@ describe("POST /api/v1/runs/start", () => {
 
   beforeEach(async () => {
     env = await setupTestEnvironment();
-    app = createApp({ durableStore: env.durableStore, runtimeDeps: env.runtimeDeps });
+    app = createApp({ durableStore: env.durableStore, runtimeDeps: env.runtimeDeps, enqueueRunJob: inProcessEnqueue(env) });
   });
 
   afterEach(async () => {
@@ -24,18 +47,16 @@ describe("POST /api/v1/runs/start", () => {
   });
 
   it("runs the X agent end to end: pauses for human batch review, then resumes to a delivered report", async () => {
-    const startRes = await request(app)
-      .post("/api/v1/runs/start")
-      .send({ clientSlug: "acme", productId: "x-agent", runKind: "recurring", inputParams: {} });
+    const { startRes, body: started } = await startAndRead(app, { clientSlug: "acme", productId: "x-agent", runKind: "recurring", inputParams: {} });
 
-    expect(startRes.status).toBe(201);
-    expect(typeof startRes.body.runId).toBe("string");
-    expect(startRes.body.status).toBe("awaiting_gate");
+    expect(startRes.status).toBe(202);
+    expect(typeof started.runId).toBe("string");
+    expect(started.status).toBe("awaiting_gate");
     // X's own workflow grew to 21 steps in Phase 2.5 Batch 2.3 (lane selection,
     // engagement-cap check, and link-placement verification) -- its batch-review
     // gate now lands at step 15, not 13.
-    expect(startRes.body.pendingGateId).toContain("15-batch-review-r0");
-    const { runId } = startRes.body;
+    expect(started.pendingGateId).toContain("15-batch-review-r0");
+    const { runId } = started;
 
     const resumeRes = await request(app)
       .post(`/api/v1/runs/${runId}/resume`)
@@ -55,14 +76,14 @@ describe("POST /api/v1/runs/start", () => {
 
   it("runs each of the five channel agents end to end: pauses for human batch review, then resumes to delivered", async () => {
     for (const productId of ["linkedin-agent", "reddit-agent", "blog-agent", "newsletter-agent"] as const) {
-      const startRes = await request(app).post("/api/v1/runs/start").send({ clientSlug: "acme", productId, runKind: "recurring" });
-      expect(startRes.status, `${productId} should return 201`).toBe(201);
-      expect(startRes.body.status, `${productId} should pause for review`).toBe("awaiting_gate");
-      const { runId } = startRes.body;
+      const { startRes, body: started } = await startAndRead(app, { clientSlug: "acme", productId, runKind: "recurring" });
+      expect(startRes.status, `${productId} should return 202`).toBe(202);
+      expect(started.status, `${productId} should pause for review`).toBe("awaiting_gate");
+      const { runId } = started;
       // Reddit's own gate lands one step later ("14-batch-review") than the other
       // four channels' shared "13-batch-review" — its own pre-draft subreddit-
       // eligibility check (step 09) shifts everything after it by one.
-      const gateId: string = startRes.body.pendingGateId.slice(`${runId}__`.length);
+      const gateId: string = started.pendingGateId.slice(`${runId}__`.length);
 
       const resumeRes = await request(app)
         .post(`/api/v1/runs/${runId}/resume`)
@@ -103,14 +124,24 @@ describe("POST /api/v1/runs/start", () => {
     await bareStore.writeJson("bare-client", ["client", "profile"], { name: "Bare Co", industry: "Unknown" });
     // Deliberately no ["client", "config"] doc written for "bare-client".
 
+    const bareDurableStore = new MemoryDurableStepStore();
+    const bareRuntimeDeps = { tools: bareTools, promptStore: env.runtimeDeps.promptStore, router: env.runtimeDeps.router };
     const bareApp = createApp({
-      durableStore: new MemoryDurableStepStore(),
-      runtimeDeps: { tools: bareTools, promptStore: env.runtimeDeps.promptStore, router: env.runtimeDeps.router },
+      durableStore: bareDurableStore,
+      runtimeDeps: bareRuntimeDeps,
+      enqueueRunJob: async (request) => {
+        const runId = `bare-${Math.random().toString(36).slice(2)}`;
+        await startRunJob(request, runId, { durableStore: bareDurableStore, runtimeDeps: bareRuntimeDeps });
+        return { runId };
+      },
     });
     try {
-      const res = await request(bareApp).post("/api/v1/runs/start").send({ clientSlug: "bare-client", productId: "x-agent", runKind: "recurring" });
-      expect(res.status).toBe(201);
-      expect(res.body.status).toBe("blocked_intake");
+      const { startRes, body: started } = await startAndRead(bareApp, { clientSlug: "bare-client", productId: "x-agent", runKind: "recurring" });
+      expect(startRes.status).toBe(202);
+      // The intake block is a property of the RUN, not of the handoff — the
+      // route cannot know it without executing, which is exactly what it no
+      // longer does. So it surfaces where a run's state belongs: /status.
+      expect(started.status).toBe("blocked_intake");
     } finally {
       await fs.rm(bareRootDir, { recursive: true, force: true });
     }
@@ -123,7 +154,7 @@ describe("GET /api/v1/runs/:runId/status", () => {
 
   beforeEach(async () => {
     env = await setupTestEnvironment();
-    app = createApp({ durableStore: env.durableStore, runtimeDeps: env.runtimeDeps });
+    app = createApp({ durableStore: env.durableStore, runtimeDeps: env.runtimeDeps, enqueueRunJob: inProcessEnqueue(env) });
   });
 
   afterEach(async () => {
@@ -131,14 +162,18 @@ describe("GET /api/v1/runs/:runId/status", () => {
   });
 
   it("returns the same status/report for a run that was already started", async () => {
-    const startRes = await request(app).post("/api/v1/runs/start").send({ clientSlug: "acme", productId: "blog-agent", runKind: "recurring" });
-    const { runId } = startRes.body;
-    expect(startRes.body.status).toBe("awaiting_gate");
+    const { startRes, body: started } = await startAndRead(app, { clientSlug: "acme", productId: "blog-agent", runKind: "recurring" });
+    const { runId } = started;
+    expect(startRes.status).toBe(202);
+    expect(started.status).toBe("awaiting_gate");
 
+    // Re-reading /status must give the same answer. That is the real property
+    // here now: /runs/start no longer reports a run's state at all, so /status
+    // is the ONLY source for it and has to be stable.
     const statusRes = await request(app).get(`/api/v1/runs/${runId}/status`);
     expect(statusRes.status).toBe(200);
     expect(statusRes.body.status).toBe("awaiting_gate");
-    expect(statusRes.body.pendingGateId).toBe(startRes.body.pendingGateId);
+    expect(statusRes.body.pendingGateId).toBe(started.pendingGateId);
 
     // Blog's own batch-review gate lands at step 15 (Phase 2.5 Batch 2.4 grew its
     // workflow by two steps for the newly-wired noPlaceholder/leakCheck gates).
@@ -171,7 +206,7 @@ describe("POST /api/v1/runs/:runId/resume — campaign orchestrator gate", () =>
 
   beforeEach(async () => {
     env = await setupTestEnvironment();
-    app = createApp({ durableStore: env.durableStore, runtimeDeps: env.runtimeDeps });
+    app = createApp({ durableStore: env.durableStore, runtimeDeps: env.runtimeDeps, enqueueRunJob: inProcessEnqueue(env) });
   });
 
   afterEach(async () => {
@@ -179,14 +214,12 @@ describe("POST /api/v1/runs/:runId/resume — campaign orchestrator gate", () =>
   });
 
   it("pauses at the campaign review gate, then resumes to completed on approval", async () => {
-    const startRes = await request(app)
-      .post("/api/v1/runs/start")
-      .send({ clientSlug: "acme", productId: "campaign-orchestrator", runKind: "recurring" });
+    const { startRes, body: started } = await startAndRead(app, { clientSlug: "acme", productId: "campaign-orchestrator", runKind: "recurring" });
 
-    expect(startRes.status).toBe(201);
-    expect(startRes.body.status).toBe("awaiting_gate");
-    expect(startRes.body.pendingGateId).toContain("13-campaign-review");
-    const { runId } = startRes.body;
+    expect(startRes.status).toBe(202);
+    expect(started.status).toBe("awaiting_gate");
+    expect(started.pendingGateId).toContain("13-campaign-review");
+    const { runId } = started;
 
     const resumeRes = await request(app)
       .post(`/api/v1/runs/${runId}/resume`)
@@ -249,7 +282,7 @@ describe("POST /api/v1/runs/:runId/resume — concurrency and gate-lifecycle gua
 
   beforeEach(async () => {
     env = await setupTestEnvironment();
-    app = createApp({ durableStore: env.durableStore, runtimeDeps: env.runtimeDeps });
+    app = createApp({ durableStore: env.durableStore, runtimeDeps: env.runtimeDeps, enqueueRunJob: inProcessEnqueue(env) });
   });
 
   afterEach(async () => {

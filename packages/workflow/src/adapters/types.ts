@@ -159,7 +159,7 @@ export const StepRecordSchema = z.object({
   costUsd: z.number().nonnegative().optional(),
   /**
    * The non-token units this step consumed, and the SKU that priced them
-   * (SCRUM-361). Present only on steps that consumed any — which today means
+   * (the per-unit cost work — shipped without a Jira ticket). Present only on steps that consumed any — which today means
    * generative media.
    *
    * Persisted alongside `costUsd` rather than discarded after multiplication,

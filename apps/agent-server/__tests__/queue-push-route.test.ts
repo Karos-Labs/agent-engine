@@ -4,7 +4,7 @@ import type { Application } from "express";
 import type { ModelRouter } from "@agent-engine/core";
 import type { VerifyPushIdToken } from "../src/routes/queue.js";
 import { createApp } from "../src/app.js";
-import { setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import { setupTestEnvironment, type TestEnvironment, inProcessEnqueue } from "./test-helpers.js";
 
 const PUSH_PATH = "/api/v1/queue/pubsub-push";
 
@@ -46,7 +46,7 @@ describe("POST /api/v1/queue/pubsub-push", () => {
     let app: Application;
 
     beforeEach(() => {
-      app = createApp({ durableStore: env.durableStore, runtimeDeps: env.runtimeDeps });
+      app = createApp({ durableStore: env.durableStore, runtimeDeps: env.runtimeDeps, enqueueRunJob: inProcessEnqueue(env) });
     });
 
     it("triggers a real run and returns 200 with the run's status", async () => {

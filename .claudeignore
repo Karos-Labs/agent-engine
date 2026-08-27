@@ -1,0 +1,21 @@
+# Directories and files the agent should never read or search.
+# Mirrors .gitignore's generated/vendored set — searching them is the single
+# biggest source of slow rounds (a repo-wide grep timed out at 120s on
+# node_modules alone).
+node_modules/
+dist/
+build/
+.next/
+coverage/
+.turbo/
+.cache/
+*.log
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+.venv/
+__pycache__/
+.playwright/
+playwright-report/
+test-results/
+*.tsbuildinfo
