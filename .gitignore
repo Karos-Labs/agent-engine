@@ -27,8 +27,14 @@ _to_delete/
 instagram-output/
 
 # Generated/vendored — mirrored into .claudeignore so the agent skips them too.
+#
+# LOCKFILES ARE DELIBERATELY NOT HERE. package-lock.json is tracked and the
+# Docker build COPYs it; adding it to this file broke the prep build within
+# minutes, because with no .gcloudignore present `gcloud builds submit` derives
+# the upload filter FROM .gitignore. So this file silently doubles as the build
+# context definition. `.gcloudignore` now states that context explicitly, which
+# is what decouples the two — but a lockfile still belongs in version control
+# regardless.
 .next/
 .turbo/
 .cache/
-package-lock.json
-pnpm-lock.yaml
