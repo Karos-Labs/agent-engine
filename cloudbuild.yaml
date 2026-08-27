@@ -108,13 +108,6 @@ substitutions:
   # Only applies to deploy-http below —
   # deploy-worker (queue-consumer.js) never mounts this route at all; it
   # pull-subscribes directly and has no Express app.
-  #
-  # PUBSUB_PUSH_TOKEN (the shared-secret layer, independent of and
-  # additional to OIDC) is deliberately left unwired here: it needs a new
-  # Secret Manager secret plus an accessor grant for agent-engine-sa, both
-  # infrastructure mutations out of scope for this file-only change. OIDC
-  # verification above is Google's primary recommended protection for this
-  # endpoint and does not depend on this token.
   _PUBSUB_PUSH_AUDIENCE_URL: "https://agent-engine-prep-v6nerot2ba-uc.a.run.app/api/v1/queue/pubsub-push"
   # Service-identity authentication plumbing (AU1 / SCRUM-287, config folded
   # in here per AU2 / SCRUM-288). AUTH_AUDIENCE resolves to the exact same
