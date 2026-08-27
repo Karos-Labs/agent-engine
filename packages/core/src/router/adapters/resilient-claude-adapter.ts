@@ -84,35 +84,42 @@ function recordFailover(details: { from: string; to: string; model: string; toMo
 }
 
 export interface ResilientClaudeAdapterOptions {
-  /** Vertex AI Model Garden / Agent Platform — the default ADC-only route. */
+  /** Vertex AI Model Garden / Agent Platform — the ADC-only route, and since SCRUM-358 the only route to Claude. */
   primary: ModelAdapter;
-  /** Direct Anthropic API (`ANTHROPIC_API_KEY`) — tried on a 429/404 from `primary`. Same model id, different transport. */
-  secondary?: ModelAdapter;
   /**
-   * Vertex AI Gemini — the last-resort fallback once BOTH Claude routes are
-   * exhausted. A genuinely different model family, unlike the primary/
-   * secondary hop above: `tertiaryModel` is sent instead of `req.model`
-   * (asking Gemini to serve a Claude model id would just be a third,
-   * differently-shaped failure).
+   * Vertex AI Gemini — the last-resort fallback once the Claude route is
+   * exhausted. A genuinely different model family, so `tertiaryModel` is sent
+   * instead of `req.model` (asking Gemini to serve a Claude model id would
+   * just be a second, differently-shaped failure).
+   *
+   * Still called `tertiary`, deliberately, after SCRUM-358 removed the
+   * direct-Anthropic hop that used to sit between it and `primary`. The name
+   * is the PERSISTED hop vocabulary (`AgentStepTelemetrySchema.servedBy.hop`
+   * in `types/agent-step.ts`), not a count of the hops that happen to exist
+   * this month. Renumbering it to `secondary` would silently change what
+   * every already-stored step record means, and would make a Gemini-served
+   * deliverable from last week incomparable with one from today.
    */
   tertiary?: ModelAdapter;
   tertiaryModel?: string;
 }
 
 /**
- * Wraps the `anthropic` vendor's own adapter(s) with a dual-layer transport
- * fallback: Vertex AI Model Garden primary, direct Anthropic API on a
- * 429/404, Vertex AI Gemini as an absolute last resort. Lives entirely
- * inside the single `anthropic` `ModelAdapter` slot `create-model-router-
- * from-env.ts` builds — `ModelPolicy`, `DefaultModelRouter`, and every
- * step's own `vendor`/`model` selection are unaware this exists.
+ * Wraps the `anthropic` vendor's adapter with a single last-resort fallback:
+ * Vertex AI Model Garden primary, Vertex AI Gemini on a 429/404. Lives
+ * entirely inside the single `anthropic` `ModelAdapter` slot
+ * `create-model-router-from-env.ts` builds — `ModelPolicy`,
+ * `DefaultModelRouter`, and every step's own `vendor`/`model` selection are
+ * unaware this exists.
  *
- * This does not weaken RFC-01 §5.4's "a pinned step never silently swaps
- * models" guarantee: the primary->secondary hop is the SAME model id on a
- * different transport (Vertex is explicitly "a second route to the same
- * pinned models", not a fourth tier — see `ClaudeRoute`'s own doc comment).
- * Only the secondary->tertiary hop changes model identity, and only after
- * every same-model option has already failed.
+ * SCRUM-358 (Vertex-only, part 2) removed the middle hop, the direct
+ * Anthropic API. What is left is honest about its cost: the ONE remaining
+ * fallback CHANGES MODEL IDENTITY. Before, a 429 on Vertex was absorbed by
+ * the same model on another transport and RFC-01 §5.4's "a pinned step never
+ * silently swaps models" held for the first hop. It no longer does — a
+ * failover now means a different model family produced the deliverable, which
+ * is exactly why `provenance` (AU61 / SCRUM-360) is not optional decoration
+ * here but the only way to know what you are holding.
  */
 export class ResilientClaudeAdapter implements ModelAdapter {
   readonly providerId = "anthropic-resilient";
@@ -120,34 +127,24 @@ export class ResilientClaudeAdapter implements ModelAdapter {
   constructor(private readonly options: ResilientClaudeAdapterOptions) {}
 
   async complete<TOutput>(req: CompletionRequest<TOutput>): Promise<CompletionResult<TOutput>> {
-    const failedOver: { from: string; errorClass: string; status?: number }[] = [];
-
     try {
       const result = await this.options.primary.complete(req);
       return { ...result, provenance: { hop: "primary", servedBy: this.options.primary.providerId, failedOver: [] } };
     } catch (primaryErr) {
-      if (!this.options.secondary || !isFailoverWorthy(primaryErr)) throw primaryErr;
-      failedOver.push(describeHop(this.options.primary.providerId, primaryErr));
-      recordFailover({ from: this.options.primary.providerId, to: this.options.secondary.providerId, model: req.model, err: primaryErr });
+      if (!this.options.tertiary || !isFailoverWorthy(primaryErr)) throw primaryErr;
 
-      try {
-        const result = await this.options.secondary.complete(req);
-        return { ...result, provenance: { hop: "secondary", servedBy: this.options.secondary.providerId, failedOver } };
-      } catch (secondaryErr) {
-        if (!this.options.tertiary || !isFailoverWorthy(secondaryErr)) throw secondaryErr;
-        failedOver.push(describeHop(this.options.secondary.providerId, secondaryErr));
-        const tertiaryModel = this.options.tertiaryModel ?? req.model;
-        recordFailover({
-          from: this.options.secondary.providerId,
-          to: this.options.tertiary.providerId,
-          model: req.model,
-          toModel: tertiaryModel,
-          err: secondaryErr,
-        });
+      const failedOver = [describeHop(this.options.primary.providerId, primaryErr)];
+      const tertiaryModel = this.options.tertiaryModel ?? req.model;
+      recordFailover({
+        from: this.options.primary.providerId,
+        to: this.options.tertiary.providerId,
+        model: req.model,
+        toModel: tertiaryModel,
+        err: primaryErr,
+      });
 
-        const result = await this.options.tertiary.complete({ ...req, model: tertiaryModel });
-        return { ...result, provenance: { hop: "tertiary", servedBy: this.options.tertiary.providerId, failedOver } };
-      }
+      const result = await this.options.tertiary.complete({ ...req, model: tertiaryModel });
+      return { ...result, provenance: { hop: "tertiary", servedBy: this.options.tertiary.providerId, failedOver } };
     }
   }
 }

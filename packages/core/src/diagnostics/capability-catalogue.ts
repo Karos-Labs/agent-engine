@@ -299,14 +299,6 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
 
   // ── Model routing ────────────────────────────────────────────────────────
   {
-    id: "model-fallback-anthropic",
-    title: "Direct-Anthropic fallback when the Vertex route is rate-limited or a model is unavailable there",
-    owner: "packages/core (ResilientClaudeAdapter)",
-    requires: [{ name: "ANTHROPIC_API_KEY", kind: "required" }],
-    whenAbsent: "A 429 or 404 on the Vertex route has one fewer hop before it reaches the Gemini last resort.",
-    rationale: "Wired from Secret Manager in both cloudbuild files.",
-  },
-  {
     id: "model-vendor-alternatives",
     title: "Non-Anthropic model vendors (Gemini direct, Model Garden, OpenAI-compatible)",
     owner: "packages/core (createModelRouterFromEnv)",
