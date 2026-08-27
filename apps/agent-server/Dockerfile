@@ -84,17 +84,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json /app/package-lock.json ./
 
-# Built workspace packages — whole packages/agents trees (dist/ + each
-# package's own package.json + prompts/, still alongside their now-unused
-# src/), not a hand-maintained per-package allowlist. The same staleness risk
-# build-workspaces.mjs's doc comment warns about for a hardcoded build order
-# applies just as much to a hardcoded COPY list: a new package silently
-# missing from it is a runtime MODULE_NOT_FOUND, not a build-time error.
-COPY --from=builder /app/packages ./packages
-COPY --from=builder /app/agents ./agents
-COPY --from=builder /app/apps/agent-server/package.json ./apps/agent-server/package.json
-COPY --from=builder /app/apps/agent-server/dist ./apps/agent-server/dist
-
 # Installed against the exact pinned "playwright": "1.53.0" version already
 # in node_modules — --with-deps additionally apt-get installs the OS-level
 # libs (fonts, libnss3, ...) a bare `playwright install` alone would skip.
@@ -116,6 +105,30 @@ COPY --from=builder /app/apps/agent-server/dist ./apps/agent-server/dist
 # first to get past it, and it failed here).
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN npx playwright install --with-deps chromium && chmod -R a+rX /ms-playwright
+
+# ── Source AFTER the browser install, deliberately ──────────────────────────
+#
+# This ordering is a build-time cost decision, not a style one. `npx playwright
+# install --with-deps` is the single most expensive layer in this image (it
+# apt-gets a font/lib set and downloads a browser), and it depends only on
+# node_modules — the pinned playwright version lives there. Placed after the
+# source COPYs, as it was, ANY source change invalidated it and every build
+# paid for the browser again.
+#
+# Moving it above them means it now re-runs only when package-lock.json moves,
+# which is what it actually depends on. Measured effect is in the PR that made
+# the change; the reasoning is here because the next person to add a COPY will
+# be tempted to put it above this line.
+# Built workspace packages — whole packages/agents trees (dist/ + each
+# package's own package.json + prompts/, still alongside their now-unused
+# src/), not a hand-maintained per-package allowlist. The same staleness risk
+# build-workspaces.mjs's doc comment warns about for a hardcoded build order
+# applies just as much to a hardcoded COPY list: a new package silently
+# missing from it is a runtime MODULE_NOT_FOUND, not a build-time error.
+COPY --from=builder /app/packages ./packages
+COPY --from=builder /app/agents ./agents
+COPY --from=builder /app/apps/agent-server/package.json ./apps/agent-server/package.json
+COPY --from=builder /app/apps/agent-server/dist ./apps/agent-server/dist
 
 # Cloud Run sets PORT itself; the server also defaults to 8080 if it's ever unset.
 ENV PORT=8080

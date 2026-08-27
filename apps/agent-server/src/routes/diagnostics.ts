@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { buildCapabilityReport } from "@agent-engine/core";
+import { telemetrySinkHealth } from "@agent-engine/telemetry";
 
 /**
  * `GET /api/v1/diagnostics/capabilities` (AU55 / SCRUM-354, the capability-by-product work — shipped without a Jira ticket).
@@ -38,7 +39,16 @@ export function createDiagnosticsRouter(env: Record<string, string | undefined> 
   const router = Router();
 
   router.get("/api/v1/diagnostics/capabilities", (_req, res) => {
-    res.status(200).json(buildCapabilityReport(env));
+    // AU72 / SCRUM-372: the capability report answers "what is switched off",
+    // and a telemetry sink that is denied at every write is switched off in
+    // every sense that matters — it just isn't switched off by a MISSING
+    // VARIABLE, so the catalogue could never see it. Production wrote zero
+    // rows for its entire life and every deploy reported success.
+    //
+    // `telemetrySink` is runtime health rather than configuration, so it sits
+    // beside the catalogue rather than inside it: a row in `capabilities`
+    // would have to claim an env var decides it, and none does.
+    res.status(200).json({ ...buildCapabilityReport(env), telemetrySink: telemetrySinkHealth() });
   });
 
   return router;

@@ -1,0 +1,31 @@
+# What `gcloud builds submit` uploads as the Cloud Build source context.
+#
+# This file exists because of a real break. Without it, gcloud DERIVES the
+# upload filter from .gitignore — so .gitignore silently becomes a fifth
+# definition of "what the build sees", alongside source, dist/, .dockerignore
+# and the image. Adding package-lock.json to .gitignore for unrelated reasons
+# removed it from the build context and the image build died on
+# `COPY failed: stat package-lock.json: file does not exist`.
+#
+# Stating the context explicitly means .gitignore can never change what ships
+# again. Keep this narrow: .dockerignore does the fine-grained filtering once
+# the context arrives.
+.git/
+.gitignore
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+coverage/
+**/coverage/
+.turbo/
+.cache/
+.next/
+*.log
+.venv/
+__pycache__/
+playwright-report/
+test-results/
+.local/
+instagram-output/
+.media-cache/

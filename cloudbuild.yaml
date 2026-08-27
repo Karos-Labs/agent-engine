@@ -147,14 +147,42 @@ substitutions:
   _AUTH_ALLOWED_SERVICE_ACCOUNTS: "680337539054-compute@developer.gserviceaccount.com"
 
 steps:
+  # Layer cache. Each build starts on a fresh worker with an empty local
+  # daemon, so without this every layer is rebuilt from scratch every time —
+  # measured at ~7 min for build+deploy. `|| exit 0` because the very first
+  # build (and any build after the tag is deleted) has nothing to pull, and a
+  # missing cache must not fail the build.
+  - id: pull-cache
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - docker pull ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/agent-engine:cache || exit 0
+
   - id: build
     name: gcr.io/cloud-builders/docker
     args:
       - build
       - -f
       - apps/agent-server/Dockerfile
+      # `--cache-from` reuses layers from the pulled image. It pairs with the
+      # Dockerfile's runtime-stage ordering, where the expensive
+      # `playwright install` layer was moved ABOVE the source COPYs so it
+      # depends only on node_modules — together they mean a source-only change
+      # reuses the browser layer instead of re-downloading it.
+      - --cache-from
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/agent-engine:cache
+      # Records inline cache metadata in the pushed image so the NEXT build's
+      # --cache-from can actually match layers. Without it the pull succeeds
+      # and matches nothing.
+      - --build-arg
+      - BUILDKIT_INLINE_CACHE=1
       - -t
       - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/agent-engine:$COMMIT_SHA
+      # A moving tag, separate from the immutable SHA tag the deploy and the
+      # promote both pin. Nothing is ever DEPLOYED from `:cache`.
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/agent-engine:cache
       - .
 
   - id: push
@@ -162,6 +190,12 @@ steps:
     args:
       - push
       - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/agent-engine:$COMMIT_SHA
+
+  - id: push-cache
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/agent-engine:cache
 
   - id: deploy-http
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim

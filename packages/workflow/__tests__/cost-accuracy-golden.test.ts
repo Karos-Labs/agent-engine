@@ -147,3 +147,42 @@ describe("cost accuracy: a step's recorded cost is derivable from what it stored
     expect(computeToolCostUsd(recovered)).toBeCloseTo(0.078, 6);
   });
 });
+
+/**
+ * AU72 / SCRUM-372: a telemetry writer that hides its own failure.
+ *
+ * Production wrote ZERO rows for its entire life. `agent-engine-sa@karoscmo`
+ * had no grant on `karoscmo:bi_telemetry`, every insert was denied, and the
+ * catch logged at WARNING and continued — so every deploy reported success
+ * while the capability was dead. Prep had the grant and 329 rows, which is
+ * exactly why nobody noticed: the sink anyone checked was the one that worked.
+ *
+ * The missing role was the symptom. These pin the fix to the silence.
+ */
+describe("AU72: the telemetry sink cannot fail quietly", () => {
+  const source = readFileSync(path.join(repoRoot, "packages", "telemetry", "src", "span-helpers.ts"), "utf8");
+
+  it("logs a denied insert at ERROR, not WARNING", () => {
+    const insertCatch = source.slice(source.indexOf("agent_runs_bi insert failed") - 900, source.indexOf("agent_runs_bi insert failed") + 200);
+    expect(insertCatch, "a permission denial is not a warning").toContain('severity: "ERROR"');
+    expect(insertCatch).not.toContain('severity: "WARNING"');
+  });
+
+  it("emits a stable event string a log-based metric can alert on", () => {
+    // Same mechanism AU61 used for model.failover, for the same reason: a rate
+    // over time is the only way to notice a failure that never throws.
+    expect(source).toContain('event: "telemetry.insert_failed"');
+  });
+
+  it("exposes sink health, so a dead writer is visible without grepping logs", () => {
+    expect(source).toContain("export function telemetrySinkHealth()");
+    const route = readFileSync(path.join(repoRoot, "apps", "agent-server", "src", "routes", "diagnostics.ts"), "utf8");
+    expect(route, "the diagnostics endpoint is where a human looks for what is switched off").toContain("telemetrySink: telemetrySinkHealth()");
+  });
+
+  it("does not count an unconfigured sink as a failed one", () => {
+    // The three states — writing, never configured, denied — looked identical
+    // from outside. Conflating the last two would put two of them back.
+    expect(source).toMatch(/if \(!table\) return;\s*\n\s*sinkHealth\.attempted \+= 1;/);
+  });
+});
