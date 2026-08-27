@@ -96,37 +96,37 @@ describe("per-stage model selection", () => {
 
   it("sends the overridden model for the named stage, and only that stage", async () => {
     // The whole point of PER-stage: overriding one must not move the others.
-    const { seen } = await run("run-sm-one", { polish: "gemini-3-pro" });
+    const { seen } = await run("run-sm-one", { polish: "gemini-2.5-pro" });
 
     expect(seen).toHaveLength(2);
     expect(seen[0]?.model, "draft keeps its default").toBe("claude-sonnet-4-6");
-    expect(seen[1]?.model, "polish takes the override").toBe("gemini-3-pro");
+    expect(seen[1]?.model, "polish takes the override").toBe("gemini-2.5-pro");
   });
 
   it("can point every stage at a different model in one run", async () => {
-    const { seen } = await run("run-sm-both", { draft: "claude-haiku-4-5-20251001", polish: "gemini-3-pro" });
+    const { seen } = await run("run-sm-both", { draft: "claude-haiku-4-5-20251001", polish: "gemini-2.5-pro" });
 
-    expect(seen.map((s) => s.model)).toEqual(["claude-haiku-4-5-20251001", "gemini-3-pro"]);
+    expect(seen.map((s) => s.model)).toEqual(["claude-haiku-4-5-20251001", "gemini-2.5-pro"]);
   });
 
   it("reports the model that actually ran, not the compiled default", async () => {
     // A run whose telemetry names the default while billing for the override
     // is worse than no override at all: the cost record and the audit trail
     // both become wrong, and nothing surfaces it.
-    const { outcome } = await run("run-sm-report", { draft: "gemini-3-pro" });
+    const { outcome } = await run("run-sm-report", { draft: "gemini-2.5-pro" });
 
     if (outcome.outcome !== "started") throw new Error("unreachable");
     const steps = await env.durableStore.listSteps("run-sm-report");
     const draft = steps.find((s) => s.stepId === "draft");
     const telemetry = (draft?.output as { steps?: Array<{ modelUsed: string }> })?.steps ?? [];
     expect(telemetry.length).toBeGreaterThan(0);
-    expect(telemetry.every((t) => t.modelUsed === "gemini-3-pro")).toBe(true);
+    expect(telemetry.every((t) => t.modelUsed === "gemini-2.5-pro")).toBe(true);
   });
 
   it("ignores a key that names no stage rather than failing the run", async () => {
     // The map is authored against a stage list that changes when an agent is
     // edited. A stale key should not take down a run that is otherwise fine.
-    const { outcome, seen } = await run("run-sm-stale", { "stage-that-was-deleted": "gemini-3-pro" });
+    const { outcome, seen } = await run("run-sm-stale", { "stage-that-was-deleted": "gemini-2.5-pro" });
 
     expect(outcome.outcome).toBe("started");
     if (outcome.outcome !== "started") throw new Error("unreachable");
@@ -138,7 +138,7 @@ describe("per-stage model selection", () => {
     // `policy` drives fallback and cost tiering. Swapping the model id is a
     // different decision from re-tiering the step, and the models catalog is
     // what knows which vendor serves an id.
-    const { seen } = await run("run-sm-tier", { draft: "gemini-3-pro" });
+    const { seen } = await run("run-sm-tier", { draft: "gemini-2.5-pro" });
 
     expect(seen[0]?.policy).toBe("pinned");
   });

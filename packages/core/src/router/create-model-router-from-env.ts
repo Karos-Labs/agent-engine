@@ -160,7 +160,7 @@ function createAnthropicVendorAdapter(env: Record<string, string | undefined>): 
   return new ResilientClaudeAdapter({
     primary,
     tertiary,
-    tertiaryModel: readEnv(env, "CLAUDE_FALLBACK_GEMINI_MODEL") ?? "gemini-1.5-flash",
+    tertiaryModel: readEnv(env, "CLAUDE_FALLBACK_GEMINI_MODEL") ?? "gemini-2.5-flash",
   });
 }
 

@@ -49,6 +49,18 @@ jobs:
       - name: Configuration inventory
         run: npm run check:config
 
+      # SCRUM-361: every model id named in executable source must have a price
+      # row. All 27 declarations are static string literals, so this is
+      # answerable before a deploy rather than after a billed run — and it has
+      # to be, because DEFAULT_MODEL_PRICING is Sonnet's own rate, so an
+      # unpriced id produces a PLAUSIBLE wrong number in both directions (Opus
+      # understates 5x; the gemini-1.5-flash failover target this check found
+      # overstated ~40x). Ids arriving at run time via MODEL_STEP_<ID>_MODEL or
+      # a per-run stageModels override are outside what any static check can
+      # see; those are refused by assertModelPriced at model selection.
+      - name: Model pricing coverage
+        run: npm run check:pricing
+
       # instagram-agent's default-template-render.test.ts launches a real,
       # un-mocked Chromium against the actual production slide template
       # (agent-engine#4) — every other render-carousel test deliberately
