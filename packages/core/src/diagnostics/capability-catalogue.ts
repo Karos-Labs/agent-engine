@@ -11,7 +11,8 @@
  *   - `APIFY_TOKEN` absent in prod: venue photography silently degraded to
  *     generic image search for months.
  *   - Unsplash/Pexels/Pixabay absent in prod: three of six image providers.
- *   - `PUBSUB_PUSH_TOKEN` absent: a SECURITY CHECK that skips itself.
+ *   - `PUBSUB_PUSH_TOKEN` absent: a SECURITY CHECK that skipped itself. Deleted
+ *     outright in SCRUM-333 rather than wired — see below.
  *   - karosCMO's `SEGMIND_API_KEY`: the inverse — a secret shipped to
  *     production for code that exists nowhere in the repo.
  *
@@ -325,15 +326,6 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
   },
 
   // ── Security: absences that remove a CHECK, not a feature ────────────────
-  {
-    id: "push-shared-secret",
-    title: "Pub/Sub push shared-secret check — the second layer in front of the run-starting endpoint",
-    owner: "apps/agent-server (routes/queue.ts)",
-    requires: [{ name: "PUBSUB_PUSH_TOKEN", kind: "required" }],
-    whenAbsent:
-      "The ?token= check SKIPS ITSELF. Not a smaller feature — one fewer barrier in front of an endpoint that starts billable runs. Safe only while the OIDC layer beside it is configured and fails closed.",
-    security: true,
-  },
   {
     id: "push-oidc",
     title: "Pub/Sub push identity verification",
