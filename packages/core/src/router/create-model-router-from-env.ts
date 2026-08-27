@@ -1,9 +1,11 @@
+import Anthropic from "@anthropic-ai/sdk";
 import { AnthropicVertex } from "@anthropic-ai/vertex-sdk";
 import { GoogleGenAI } from "@google/genai";
 import { GoogleAuth } from "google-auth-library";
 import OpenAI from "openai";
 import { AgentPlatformAdapter } from "./adapters/agent-platform-adapter.js";
 import { regionEnvVarNamesFor } from "./adapters/agent-platform-model-ids.js";
+import { AnthropicAdapter } from "./adapters/anthropic-adapter.js";
 import { GeminiAdapter } from "./adapters/gemini-adapter.js";
 import { OpenAICompatibleAdapter } from "./adapters/openai-compatible-adapter.js";
 import { ResilientClaudeAdapter } from "./adapters/resilient-claude-adapter.js";
@@ -17,22 +19,16 @@ export interface CreateModelRouterFromEnvOptions {
 }
 
 /**
- * Which network path Claude calls take. Since SCRUM-358 there is exactly one:
- * Google Cloud's Agent Platform (formerly Vertex AI). The direct Anthropic
- * API route was removed.
- *
- * The type stays a union of one rather than collapsing to nothing, and
- * `resolveClaudeRoute` stays a function rather than a constant, because the
- * job that is left is REFUSAL: `MODEL_PROVIDER=anthropic` is set on real
- * machines and in real shell histories, and it must fail with a sentence
- * that says the route was removed — not resolve quietly to Vertex, and not
- * read as a typo.
- *
- * Still a transport choice *within* the `anthropic` vendor; it has nothing to
- * do with `ModelPolicy.vendor`, which picks the vendor itself. Naming keeps
- * the pre-existing `MODEL_PROVIDER` env var, since it already shipped.
+ * Which network path Claude calls take — Google Cloud's Agent Platform
+ * (formerly Vertex AI) or the direct Anthropic API. This is a transport
+ * choice *within* the `anthropic` vendor (RFC-01 §5.4: "Vertex is not a
+ * fourth tier — it's a second route to the same pinned models"); it has
+ * nothing to do with `ModelPolicy.vendor`, which picks the vendor itself.
+ * Naming keeps the pre-existing `MODEL_PROVIDER` env var, since it already
+ * shipped, but the type/function names below say "route" to keep this
+ * concept visibly distinct from vendor selection.
  */
-export type ClaudeRoute = "agent-platform";
+export type ClaudeRoute = "agent-platform" | "anthropic";
 
 /** Agent Platform's best-availability endpoint for Claude and Gemini alike; overridden per model where the global endpoint doesn't serve one. */
 const DEFAULT_AGENT_PLATFORM_REGION = "global";
@@ -66,20 +62,11 @@ function readRegion(env: Record<string, string | undefined>, ...names: string[])
 export function resolveClaudeRoute(env: Record<string, string | undefined>): ClaudeRoute {
   const raw = readEnv(env, "MODEL_PROVIDER")?.toLowerCase();
   if (raw === undefined) return "agent-platform";
+  if (raw === "anthropic") return "anthropic";
   if (raw === "agent-platform" || raw === "vertex") return "agent-platform";
-  if (raw === "anthropic") {
-    // SCRUM-358 part 2. Named separately from the generic error below so the
-    // message says WHAT HAPPENED rather than "unknown value": this route
-    // existed, was configured this way in real environments, and was removed
-    // on purpose. Refusing loudly is the point — silently resolving it to
-    // "agent-platform" would let a deployment that asked for the direct API
-    // believe it got one.
-    throw new Error(
-      'createModelRouterFromEnv: MODEL_PROVIDER="anthropic" was REMOVED in SCRUM-358 — models are served through Vertex only. ' +
-        "Unset MODEL_PROVIDER (or set it to agent-platform/vertex) and configure ANTHROPIC_VERTEX_PROJECT_ID instead.",
-    );
-  }
-  throw new Error(`createModelRouterFromEnv: MODEL_PROVIDER="${raw}" is not a known route — use "agent-platform" (default, Google Cloud's Agent Platform) or "vertex"`);
+  throw new Error(
+    `createModelRouterFromEnv: MODEL_PROVIDER="${raw}" is not a known route — use "agent-platform" (default, Google Cloud's Agent Platform) or "anthropic" (direct)`,
+  );
 }
 
 /** @deprecated kept as an alias of {@link resolveClaudeRoute} — the old name predates `ModelPolicy.vendor` and reads as if it resolved vendor selection generally. It never did; it only ever picked Claude's own transport. */
@@ -134,33 +121,58 @@ function createClaudeAgentPlatformAdapter(env: Record<string, string | undefined
   return new AgentPlatformAdapter({ clientForRegion, defaultRegion, regionForModel, promptCaching });
 }
 
+function createClaudeDirectAdapter(env: Record<string, string | undefined>): ModelAdapter {
+  const apiKey = readEnv(env, "ANTHROPIC_API_KEY");
+  if (!apiKey) {
+    throw new Error(
+      "createModelRouterFromEnv: ANTHROPIC_API_KEY is required when MODEL_PROVIDER=anthropic — " +
+        "unset MODEL_PROVIDER to use the default Agent Platform route (Application Default Credentials, no key)",
+    );
+  }
+  const promptCaching = readEnv(env, "DISABLE_PROMPT_CACHING") === undefined;
+  return new AnthropicAdapter(new Anthropic({ apiKey }), {}, promptCaching);
+}
+
 /**
- * The `anthropic` vendor adapter — always built. This is the router's one
- * required vendor, and since SCRUM-358 it has exactly one transport: Vertex.
+ * The `anthropic` vendor adapter — always built, per {@link resolveClaudeRoute}.
+ * This is the router's one required vendor.
  *
- * Wraps the Vertex adapter in a {@link ResilientClaudeAdapter} only when a
- * Gemini vendor adapter is configured to fall back TO. A deployment with no
- * Gemini configured gets a bare Agent Platform adapter, not a wrapper that
- * silently does nothing.
+ * On the `agent-platform` route (the default), opportunistically wraps the
+ * Vertex adapter in a {@link ResilientClaudeAdapter} dual-layer fallback
+ * whenever the environment provides something to fall back TO:
+ * `ANTHROPIC_API_KEY` (direct Anthropic, same models, a different
+ * transport) and/or a configured Gemini vendor adapter (a different model
+ * family, the last resort). Neither is required — a deployment that sets
+ * neither gets exactly today's behavior, a bare Agent Platform adapter, not
+ * a wrapper that silently does nothing.
  *
- * Note what this costs, because it is no longer free: the ONLY fallback left
- * changes model family. Before SCRUM-358 a 429 on Vertex was absorbed by the
- * same Claude model over the direct API, and the deliverable was unchanged.
- * Now a 429 either fails, or is served by Gemini. `provenance` is what makes
- * the difference legible after the fact.
+ * The `anthropic` route (`MODEL_PROVIDER=anthropic`) is unwrapped: it's
+ * already the fallback target for the other route, so there's nothing left
+ * to fail over to for Claude specifically (Gemini could still apply, but a
+ * deployment that deliberately chose to skip Agent Platform entirely is
+ * choosing simplicity over resilience — wrap explicitly at the call site if
+ * that's ever wanted).
  */
 function createAnthropicVendorAdapter(env: Record<string, string | undefined>): ModelAdapter {
-  // Throws on MODEL_PROVIDER=anthropic. Called for its refusal, not its value.
-  resolveClaudeRoute(env);
+  if (resolveClaudeRoute(env) !== "agent-platform") {
+    return createClaudeDirectAdapter(env);
+  }
 
   const primary = createClaudeAgentPlatformAdapter(env);
+  const secondary = readEnv(env, "ANTHROPIC_API_KEY") ? createClaudeDirectAdapter(env) : undefined;
   const tertiary = createGeminiVendorAdapter(env);
-  if (!tertiary) return primary;
+
+  if (!secondary && !tertiary) return primary;
 
   return new ResilientClaudeAdapter({
     primary,
-    tertiary,
-    tertiaryModel: readEnv(env, "CLAUDE_FALLBACK_GEMINI_MODEL") ?? "gemini-2.5-flash",
+    ...(secondary ? { secondary } : {}),
+    // NOT reverted with the rest of SCRUM-358: this default was "gemini-1.5-flash",
+    // which had no MODEL_PRICING row and billed at Sonnet's $3/$15 for a model
+    // costing a fraction of that (~40x overstatement). SCRUM-361's
+    // check-model-pricing found it, and that fix is orthogonal to whether the
+    // direct-Anthropic hop exists.
+    ...(tertiary ? { tertiary, tertiaryModel: readEnv(env, "CLAUDE_FALLBACK_GEMINI_MODEL") ?? "gemini-2.5-flash" } : {}),
   });
 }
 

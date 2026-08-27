@@ -308,14 +308,14 @@ describe("hard requirement: writes confined to the scratch dir", () => {
 
 describe("hard requirement: the step never inherits the runner's secrets", () => {
   it("gives the child none of this process's environment beyond PATH/LANG and its own scratch pointers", async () => {
-    const prior = process.env.SCRAPPYCOCO_API_KEY;
-    process.env.SCRAPPYCOCO_API_KEY = "sc-must-not-leak";
+    const prior = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = "sk-must-not-leak";
     process.env.SOME_SECRET_FOR_TEST = "must-not-leak";
     try {
       const result = await runCodeStep({
         language: "node",
         code: `console.log(JSON.stringify({
-                 key: process.env.SCRAPPYCOCO_API_KEY ?? null,
+                 key: process.env.ANTHROPIC_API_KEY ?? null,
                  other: process.env.SOME_SECRET_FOR_TEST ?? null,
                  proxy: process.env.HTTPS_PROXY ?? null,
                  scratch: typeof process.env.KAROS_SANDBOX_SCRATCH === "string",
@@ -325,8 +325,8 @@ describe("hard requirement: the step never inherits the runner's secrets", () =>
       expect(result.ok).toBe(true);
       expect(result.output).toEqual({ key: null, other: null, proxy: null, scratch: true });
     } finally {
-      if (prior === undefined) delete process.env.SCRAPPYCOCO_API_KEY;
-      else process.env.SCRAPPYCOCO_API_KEY = prior;
+      if (prior === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = prior;
       delete process.env.SOME_SECRET_FOR_TEST;
     }
   });

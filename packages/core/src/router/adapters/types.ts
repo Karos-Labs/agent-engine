@@ -13,22 +13,14 @@ export interface CompletionRequest<TOutput> {
  * Which hop of a fallback chain actually served a completion (AU61 /
  * SCRUM-360).
  *
- * `modelUsed` alone was never enough. Before SCRUM-358 that was because the
- * primary and secondary Claude hops returned the SAME model id on different
- * transports. Now it is the opposite problem and a worse one: the only
- * remaining fallback serves a DIFFERENT model family, so `modelUsed` changes
- * under you with nothing to say why.
- *
- * `"secondary"` is absent here on purpose. Nothing can produce it any more —
- * SCRUM-358 deleted the direct-Anthropic hop — so the PRODUCER type refuses
- * to name it. The persisted READER type
- * (`AgentStepTelemetrySchema.servedBy.hop`) still accepts all three, because
- * step records written before that deletion exist and must stay readable.
- * Narrow what you write, keep wide what you read.
+ * `modelUsed` alone cannot answer this: the primary and secondary Claude hops
+ * return the SAME model id on different transports, so a deliverable produced
+ * after a failover is indistinguishable from one produced normally. Nobody
+ * holding a client report can currently tell which route generated it.
  */
 export interface ModelProvenance {
   /** `primary` when nothing failed over — the overwhelmingly common case. */
-  readonly hop: "primary" | "tertiary";
+  readonly hop: "primary" | "secondary" | "tertiary";
   /** The adapter that answered, e.g. `agent-platform`, `anthropic`, `gemini`. */
   readonly servedBy: string;
   /** Each hop that failed before this one, in order, with why. */

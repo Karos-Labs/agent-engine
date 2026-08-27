@@ -129,17 +129,11 @@ export const AgentStepTelemetrySchema = z.object({
    * overwhelmingly common case, and the reason this is optional rather than
    * defaulted.
    *
-   * `modelUsed` cannot answer this on its own. Before SCRUM-358 that was
-   * because the primary and secondary hops returned the SAME model id on
-   * different transports; now it is because the one remaining fallback serves
-   * a DIFFERENT model family. Same principle as the SEO/GEO capture tiers,
-   * applied to model provenance.
-   *
-   * `"secondary"` stays in this enum although nothing can write it any more:
-   * SCRUM-358 deleted the direct-Anthropic hop, but step records written
-   * before that exist and must stay parseable. This is the READER; the
-   * producer type (`ModelProvenance` in `router/adapters/types.ts`) is
-   * narrowed to what can actually happen today.
+   * `modelUsed` cannot answer this on its own: the primary and secondary hops
+   * return the SAME model id on different transports, so without this a
+   * deliverable produced after a failover is indistinguishable from one
+   * produced normally. Same principle as the SEO/GEO capture tiers, applied
+   * to model provenance.
    */
   servedBy: z
     .object({
