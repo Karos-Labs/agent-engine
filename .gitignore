@@ -25,3 +25,10 @@ _to_delete/
 .template-cache/
 # publish.renderCarousel's rendered PNG output, same reasoning.
 instagram-output/
+
+# Generated/vendored — mirrored into .claudeignore so the agent skips them too.
+.next/
+.turbo/
+.cache/
+package-lock.json
+pnpm-lock.yaml
