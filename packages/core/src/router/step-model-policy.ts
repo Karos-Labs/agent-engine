@@ -1,5 +1,6 @@
 import type { ModelPolicy, ModelVendor } from "../types/model-policy.js";
 import { ModelVendorSchema } from "../types/model-policy.js";
+import { assertModelPriced } from "../telemetry/pricing.js";
 
 export interface ResolveModelPolicyOptions {
   /** Defaults to `process.env`. Override for tests. */
@@ -84,9 +85,16 @@ export function resolveModelPolicy(
     }
   }
 
+  const model = modelOverride ?? defaultPolicy.model;
+  // SCRUM-361. An env-supplied model id is the one thing CI's
+  // `check-model-pricing` cannot see — it scans static source, and this value
+  // arrives from the environment. Refused here, at deployment wiring, rather
+  // than after the first billed call.
+  assertModelPriced(model, `resolveModelPolicy("${stepId}")`);
+
   return {
     ...defaultPolicy,
-    model: modelOverride ?? defaultPolicy.model,
+    model,
     ...(vendor !== undefined ? { vendor } : {}),
   };
 }
@@ -123,5 +131,9 @@ export function applyStageModelOverride(
   const override = stageModels?.[stepId];
   if (!override) return policy;
   if (override === policy.model) return policy;
+  // The other run-time path CI cannot see: an admin picking a model per run in
+  // the Studio. Same refusal, same reason — before the run starts, not after
+  // it has produced a cost figure nobody can trust.
+  assertModelPriced(override, `applyStageModelOverride("${stepId}")`);
   return { ...policy, model: override };
 }

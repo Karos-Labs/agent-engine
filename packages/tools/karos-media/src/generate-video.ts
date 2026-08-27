@@ -184,7 +184,19 @@ export function createGenerateVideo(options: GenerateVideoOptions = {}) {
         await fs.writeFile(outFile, Buffer.from(await response.arrayBuffer()));
       }
 
-      return success<GenerateVideoResult>({ path: `${relDir}/generated-clip.mp4`, model });
+      // SCRUM-361: video is billed PER SECOND, and this is the case the
+      // per-unit dimension was designed around rather than retrofitted to.
+      //
+      // `model` has no UNIT_PRICING row today and that is deliberate, not an
+      // oversight: no per-second rate for this exact id could be verified
+      // against a page actually read. So this records the seconds and costs
+      // them at $0, loudly — the units are persisted, so the run becomes
+      // reconcilable the moment a rate exists. Reporting nothing at all would
+      // be the old behaviour, and the old behaviour is what made a $0.00 step
+      // indistinguishable from a free one.
+      return success<GenerateVideoResult>({ path: `${relDir}/generated-clip.mp4`, model }, [
+        { model, unit: "second", quantity: input.durationSeconds },
+      ]);
     },
   });
 }

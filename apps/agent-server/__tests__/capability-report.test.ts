@@ -27,7 +27,6 @@ const PROD_ENV: Record<string, string> = {
   PUBSUB_PUSH_AUDIENCE_URL: "https://agent-engine-prod.example.run.app",
   AUTH_ENABLED: "false",
   AUTH_AUDIENCE: "https://agent-engine-prod.example.run.app",
-  ANTHROPIC_API_KEY: "sk-x",
   SCRAPPYCOCO_API_KEY: "sc-x",
 };
 

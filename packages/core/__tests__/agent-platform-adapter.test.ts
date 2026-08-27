@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
   AgentPlatformAdapter,
-  AnthropicAdapter,
+  MessagesApiAdapter,
   computeStepCostUsd,
   pricingForModel,
   regionEnvVarNamesFor,
@@ -10,6 +10,7 @@ import {
   toCanonicalModelId,
 } from "../src/index.js";
 import type { CompletionRequest, MessagesApiClient } from "../src/router/adapters/types.js";
+import type { RetryOptions } from "../src/router/adapters/retry.js";
 
 const OutputSchema = z.object({ body: z.string() });
 type Output = z.infer<typeof OutputSchema>;
@@ -145,12 +146,24 @@ describe("AgentPlatformAdapter", () => {
   });
 });
 
+/**
+ * SCRUM-358 deleted `AnthropicAdapter` along with the direct-Anthropic route.
+ * The behaviour these tests cover was never Anthropic-specific — it lives in
+ * `MessagesApiAdapter`, the shared base the Vertex route still extends — so
+ * the coverage is kept and repointed at the base class directly rather than
+ * deleted with the subclass. `modelIds` defaults to the identity codec, which
+ * is exactly what the deleted subclass pinned.
+ */
+function messagesApiAdapter(client: unknown, retryOptions: RetryOptions = {}, promptCaching = true): MessagesApiAdapter {
+  return new MessagesApiAdapter({ providerId: "anthropic", client: client as MessagesApiClient, retryOptions, promptCaching });
+}
+
 describe("prompt caching", () => {
   const create = () => vi.fn().mockResolvedValue(response("claude-sonnet-4-6"));
 
   it("puts one cache breakpoint on the system prompt, covering the whole stable tools+system prefix", async () => {
     const c = create();
-    const a = new AnthropicAdapter(clientCapturing(c));
+    const a = messagesApiAdapter(clientCapturing(c));
 
     await a.complete(request({ model: "claude-sonnet-4-6", system: "the craft policy for this step" }));
 
@@ -165,7 +178,7 @@ describe("prompt caching", () => {
 
   it("falls back to caching the tool definition when a step has no system prompt", async () => {
     const c = create();
-    const a = new AnthropicAdapter(clientCapturing(c));
+    const a = messagesApiAdapter(clientCapturing(c));
 
     await a.complete(request({ model: "claude-sonnet-4-6" }));
 
@@ -176,7 +189,7 @@ describe("prompt caching", () => {
 
   it("sends no cache_control at all when caching is disabled", async () => {
     const c = create();
-    const a = new AnthropicAdapter(clientCapturing(c), {}, false);
+    const a = messagesApiAdapter(clientCapturing(c), {}, false);
 
     await a.complete(request({ model: "claude-sonnet-4-6", system: "the craft policy for this step" }));
 
@@ -189,7 +202,7 @@ describe("prompt caching", () => {
     const c = vi
       .fn()
       .mockResolvedValue(response("claude-sonnet-4-6", { input_tokens: 10, cache_creation_input_tokens: 4_000, cache_read_input_tokens: 0 }));
-    const a = new AnthropicAdapter(clientCapturing(c));
+    const a = messagesApiAdapter(clientCapturing(c));
 
     const result = await a.complete(request({ model: "claude-sonnet-4-6", system: "x" }));
 
@@ -200,7 +213,7 @@ describe("prompt caching", () => {
 
   it("keeps reporting cache reads separately, so the 90% read discount still lands", async () => {
     const c = vi.fn().mockResolvedValue(response("claude-sonnet-4-6", { input_tokens: 50, cache_read_input_tokens: 4_000 }));
-    const a = new AnthropicAdapter(clientCapturing(c));
+    const a = messagesApiAdapter(clientCapturing(c));
 
     const result = await a.complete(request({ model: "claude-sonnet-4-6", system: "x" }));
 
