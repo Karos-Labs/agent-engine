@@ -16,12 +16,6 @@ import type { CompletionRequest, CompletionResult, ModelAdapter } from "../src/r
  * publisher metrics at all (verified across model_invocation_count,
  * token_count and consumed_throughput — the only model present is
  * gemini-2.5-flash-image), so these emissions are the ONLY possible signal.
- *
- * SCRUM-358 raised the stakes rather than lowering them. With the
- * direct-Anthropic hop deleted there is exactly one fallback left and it
- * serves a DIFFERENT MODEL FAMILY, so every firing of it changes what the
- * client receives. A silent failover used to mean "same model, other wire";
- * it now means "Gemini wrote this".
  */
 
 function failing(providerId: string, status: number): ModelAdapter {
@@ -64,21 +58,17 @@ describe("AU61: every failover is audible and attributable", () => {
       .filter((line: string) => line.includes("model.failover"))
       .map((line: string) => JSON.parse(line) as Record<string, unknown>);
 
-  const chain = (primary: ModelAdapter) => new ResilientClaudeAdapter({ primary, tertiary: serving("gemini"), tertiaryModel: "gemini-1.5-flash" });
-
-  it("logs a structured, classifiable event when the Vertex route is rate limited", async () => {
-    await chain(failing("agent-platform", 429)).complete(req);
+  it("logs a structured, classifiable event when the primary is rate limited", async () => {
+    const adapter = new ResilientClaudeAdapter({ primary: failing("agent-platform", 429), secondary: serving("anthropic") });
+    await adapter.complete(req);
 
     const [log] = emitted();
     expect(log, "a failover must not be silent").toBeDefined();
     expect(log).toMatchObject({
       event: "model.failover", // stable — a log-based metric counts this
       from: "agent-platform",
-      to: "gemini",
+      to: "anthropic",
       model: "claude-sonnet-4-6",
-      // The model actually served. Since SCRUM-358 this is ALWAYS a different
-      // family from `model`, which is the whole reason the field is here.
-      toModel: "gemini-1.5-flash",
       errorClass: "rate_limited",
       status: 429,
       severity: "WARNING",
@@ -86,32 +76,47 @@ describe("AU61: every failover is audible and attributable", () => {
   });
 
   it("distinguishes a 404 from a 429 — different problems, different fixes", async () => {
-    await chain(failing("agent-platform", 404)).complete(req);
+    const adapter = new ResilientClaudeAdapter({ primary: failing("agent-platform", 404), secondary: serving("anthropic") });
+    await adapter.complete(req);
     expect(emitted()[0]).toMatchObject({ errorClass: "not_served", status: 404 });
   });
 
-  it("records provenance so a deliverable's model family is knowable afterwards", async () => {
-    const result = await chain(failing("agent-platform", 429)).complete(req);
+  it("records provenance so a deliverable's route is knowable afterwards", async () => {
+    // The point: primary and secondary return the SAME model id, so modelUsed
+    // alone cannot tell anyone which route produced what they are holding.
+    const adapter = new ResilientClaudeAdapter({ primary: failing("agent-platform", 429), secondary: serving("anthropic") });
+    const result = await adapter.complete(req);
 
     expect(result.provenance).toEqual({
-      hop: "tertiary",
-      servedBy: "gemini",
+      hop: "secondary",
+      servedBy: "anthropic",
       failedOver: [{ from: "agent-platform", errorClass: "rate_limited", status: 429 }],
     });
-    expect(result.modelUsed).toBe("gemini-1.5-flash");
   });
 
-  it("emits exactly one event for the one hop that remains", async () => {
-    // Before SCRUM-358 this chain was three deep and emitted two events. It is
-    // now two deep and emits one. Asserted rather than assumed, because a
-    // log-based metric counting `model.failover` would silently halve its
-    // reading if this were wrong.
-    await chain(failing("agent-platform", 404)).complete(req);
-    expect(emitted()).toHaveLength(1);
+  it("emits one event per hop, and records the model change on the last one", async () => {
+    const adapter = new ResilientClaudeAdapter({
+      primary: failing("agent-platform", 404),
+      secondary: failing("anthropic", 429),
+      tertiary: serving("gemini"),
+      tertiaryModel: "gemini-1.5-flash",
+    });
+    const result = await adapter.complete(req);
+
+    const logs = emitted();
+    expect(logs).toHaveLength(2);
+    expect(logs[1]).toMatchObject({ from: "anthropic", to: "gemini", toModel: "gemini-1.5-flash" });
+
+    // A genuinely different model family answered — the one hop that changes
+    // model identity, and the one most worth being able to see after the fact.
+    expect(result.modelUsed).toBe("gemini-1.5-flash");
+    expect(result.provenance?.hop).toBe("tertiary");
+    expect(result.provenance?.failedOver).toHaveLength(2);
   });
 
   it("stays SILENT when nothing fails — the common case must not become noise", async () => {
-    const result = await chain(serving("agent-platform")).complete(req);
+    const adapter = new ResilientClaudeAdapter({ primary: serving("agent-platform"), secondary: serving("anthropic") });
+    const result = await adapter.complete(req);
 
     expect(emitted()).toHaveLength(0);
     expect(result.provenance).toEqual({ hop: "primary", servedBy: "agent-platform", failedOver: [] });
@@ -119,9 +124,9 @@ describe("AU61: every failover is audible and attributable", () => {
 
   it("does not reroute — or log — an error that is not a routing problem", async () => {
     // A 500 is a real failure, not a transport problem. Silently serving it
-    // from another model family would hide a genuine fault behind a plausible
-    // deliverable.
-    await expect(chain(failing("agent-platform", 500)).complete(req)).rejects.toThrow(/500/);
+    // from another vendor would hide a genuine fault.
+    const adapter = new ResilientClaudeAdapter({ primary: failing("agent-platform", 500), secondary: serving("anthropic") });
+    await expect(adapter.complete(req)).rejects.toThrow(/500/);
     expect(emitted()).toHaveLength(0);
   });
 });

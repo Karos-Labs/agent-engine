@@ -35,16 +35,6 @@ describe("AU59: the router serves models through Vertex only", () => {
     expect(resolveClaudeRoute({ MODEL_PROVIDER: "vertex" })).toBe("agent-platform");
   });
 
-  it("part 2: the direct route is GONE, and says so rather than resolving to Vertex", () => {
-    // Part 1 asserted that a key could not SUBSTITUTE for a Vertex project.
-    // This is the other half, and the half part 1 explicitly could not make:
-    // asking for the direct route by name now fails. Resolving it silently to
-    // agent-platform would be the worst outcome — a deployment that chose the
-    // direct API would run on Vertex believing otherwise.
-    expect(() => resolveClaudeRoute({ MODEL_PROVIDER: "anthropic" })).toThrow(/REMOVED in SCRUM-358/);
-    expect(() => resolveClaudeRoute({ ...VERTEX_ENV, MODEL_PROVIDER: "anthropic" })).toThrow(/REMOVED in SCRUM-358/);
-  });
-
   it("builds a working router from Vertex configuration alone — no API key anywhere", () => {
     const router = createModelRouterFromEnv({ env: VERTEX_ENV });
     expect(router).toBeDefined();
