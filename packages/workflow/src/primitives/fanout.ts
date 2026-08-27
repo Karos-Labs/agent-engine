@@ -3,6 +3,7 @@ import type { SlotRecord } from "../adapters/types.js";
 import type { SlotOutcome, WorkflowContext, WorkflowRuntime } from "./context.js";
 import { buildWorkflowContext } from "./context.js";
 import { AwaitingGateSignal, WorkflowBlockedIntake, WorkflowBudgetExceeded, WorkflowHeld } from "./signals.js";
+import { isCheckpointedStepStatus } from "../adapters/types.js";
 
 const RUN_LEVEL_SIGNALS = [AwaitingGateSignal, WorkflowBudgetExceeded, WorkflowHeld, WorkflowBlockedIntake] as const;
 
@@ -37,7 +38,7 @@ export async function runFanout<TItem, TResult>(
     items.map(async (item, index): Promise<SlotOutcome<TResult>> => {
       const slotId = `${id}__slot_${index}`;
       const existing = await runtime.store.getSlot(runtime.runId, slotId);
-      if (existing && existing.status === "completed") {
+      if (existing && isCheckpointedStepStatus(existing.status)) {
         return { slotId, status: "completed", output: existing.output as TResult };
       }
 
@@ -48,6 +49,22 @@ export async function runFanout<TItem, TResult>(
       try {
         const output = await fn(item, slotCtx, index);
         const completedAt = runtime.now();
+        // AU67 / SCRUM-366, checked as a PRODUCER: unlike `step.gate`, this one
+        // is NOT structurally safe. `fn` is arbitrary caller code exactly like
+        // `step.code`'s body, so a slot body that returned a tool outcome
+        // directly would record `completed` for a `tooling_error` — the same
+        // defect, in the same shape, one primitive over.
+        //
+        // It misreports nothing TODAY, and that is a property of the call
+        // sites rather than of this function: campaign-orchestrator's slots run
+        // whole channel workflows, whose inner steps record correctly on their
+        // own. Saying "fanout is fine" would be true and would stop being true
+        // the first time someone fans out over a tool call.
+        //
+        // Not fixed here because it is not a one-line change: `SlotRecord.status`
+        // is `completed | failed` only, widening it touches persisted slot
+        // records, and `report.ts` reads `listSlots` — the same enumeration
+        // AU67 did for steps has to be done for slots first. SCRUM-366.
         const record: SlotRecord = {
           slotId,
           fanoutId: id,

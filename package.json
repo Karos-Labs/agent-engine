@@ -2,7 +2,7 @@
   "name": "agent-engine",
   "private": true,
   "version": "0.0.1",
-  "description": "Karos Labs autonomous agent runtime \u2014 BaseAgent, durable workflow orchestration, and the shared MCP tool layer. See docs/RFC-01-agent-engine-core.md.",
+  "description": "Karos Labs autonomous agent runtime — BaseAgent, durable workflow orchestration, and the shared MCP tool layer. See docs/RFC-01-agent-engine-core.md.",
   "engines": {
     "node": ">=22"
   },
@@ -18,7 +18,9 @@
     "typecheck": "tsc --noEmit",
     "config:inventory": "tsx scripts/config-inventory.ts",
     "check:config": "tsx scripts/config-inventory.ts --check",
-    "pretest": "node scripts/check-dist-freshness.mjs",
+    "check:pricing": "tsx scripts/check-model-pricing.ts",
+    "check:bq-schema": "tsx scripts/check-bq-insert-schema.ts",
+    "pretest": "node scripts/check-dist-freshness.mjs && npm run check:pricing",
     "test": "npm run test --workspaces --if-present",
     "build:stale": "node scripts/check-dist-freshness.mjs",
     "check:stale": "node scripts/check-dist-freshness.mjs --check",

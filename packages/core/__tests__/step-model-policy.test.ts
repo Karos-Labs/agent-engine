@@ -64,10 +64,10 @@ describe("resolveModelPolicy", () => {
     const resolved = resolveModelPolicy("reputation-extraction", defaultPolicy, {
       env: {
         MODEL_STEP_REPUTATION_EXTRACTION_VENDOR: "model-garden",
-        MODEL_STEP_REPUTATION_EXTRACTION_MODEL: "meta/llama-3.1-70b-instruct-maas",
+        MODEL_STEP_REPUTATION_EXTRACTION_MODEL: "meta/llama-3.3-70b-instruct-maas",
       },
     });
-    expect(resolved).toEqual({ policy: "pinned", model: "meta/llama-3.1-70b-instruct-maas", vendor: "model-garden" });
+    expect(resolved).toEqual({ policy: "pinned", model: "meta/llama-3.3-70b-instruct-maas", vendor: "model-garden" });
   });
 
   it("collapses non-alphanumeric runs in the step id into a single underscore, and trims leading/trailing ones", () => {
