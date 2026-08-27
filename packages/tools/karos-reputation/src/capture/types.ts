@@ -35,12 +35,6 @@ export const GbpLegRequestSchema = LegRequestBaseSchema.extend({
 });
 export type GbpLegRequest = z.infer<typeof GbpLegRequestSchema>;
 
-export const YelpLegRequestSchema = LegRequestBaseSchema.extend({
-  leg: z.literal("yelp"),
-  businessId: z.string().min(1),
-});
-export type YelpLegRequest = z.infer<typeof YelpLegRequestSchema>;
-
 export const AppstoreLegRequestSchema = LegRequestBaseSchema.extend({
   leg: z.literal("appstore"),
   appId: z.string().min(1),
@@ -58,7 +52,6 @@ export type ManualExportLegRequest = z.infer<typeof ManualExportLegRequestSchema
 
 export const CaptureLegRequestSchema = z.discriminatedUnion("leg", [
   GbpLegRequestSchema,
-  YelpLegRequestSchema,
   AppstoreLegRequestSchema,
   ManualExportLegRequestSchema,
 ]);
