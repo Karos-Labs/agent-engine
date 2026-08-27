@@ -1,5 +1,5 @@
 /**
- * Which capabilities each product depends on (AU65 / SCRUM-363).
+ * Which capabilities each product depends on (the capability-by-product work — shipped without a Jira ticket).
  *
  * ## Why this exists
  *

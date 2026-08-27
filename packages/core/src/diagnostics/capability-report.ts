@@ -52,14 +52,14 @@ export interface CapabilityReport {
   };
   readonly capabilities: readonly CapabilityRow[];
   /**
-   * The same rows, rolled up to the altitude decisions are made at (AU65).
+   * The same rows, rolled up to the altitude decisions are made at (the capability-by-product work).
    * Sorted worst-first, so the one line anyone needs is the first line.
    */
   readonly products: readonly ProductRow[];
 }
 
 /**
- * Whether a product can produce its deliverable in THIS environment (AU65).
+ * Whether a product can produce its deliverable in THIS environment (the capability-by-product work).
  *
  * Deliberately three values, not four. `PENDING_BUILD` is a capability-level
  * distinction — it tells you no key will fix it — but at product level the

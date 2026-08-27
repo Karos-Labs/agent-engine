@@ -77,7 +77,7 @@ export async function runStepCode<T>(runtime: WorkflowRuntime, id: string, fn: (
       try {
         const output = await fn();
         const completedAt = runtime.now();
-        // SCRUM-361. This used to be the literal constant 0, and that was the
+        // the per-unit cost work — shipped without a Jira ticket. This used to be the literal constant 0, and that was the
         // whole of the ~14% understatement a measured Instagram run carried:
         // `06d-generate-images` calls `image.generate`, a TOOL, and every tool
         // call recorded $0.000000 by construction. Not a lookup that missed —

@@ -2,11 +2,11 @@ import { Router } from "express";
 import { buildCapabilityReport } from "@agent-engine/core";
 
 /**
- * `GET /api/v1/diagnostics/capabilities` (AU55 / SCRUM-354, AU65 / SCRUM-363).
+ * `GET /api/v1/diagnostics/capabilities` (AU55 / SCRUM-354, the capability-by-product work — shipped without a Jira ticket).
  *
  * Two levels, and the second one is the one to read first.
  *
- * `products` (AU65) answers the question anyone actually has: can this agent
+ * `products` (the capability-by-product work) answers the question anyone actually has: can this agent
  * produce its deliverable here, and if not, is that something to configure or
  * something to build. One line per product —
  * `branded-shorts-agent: UNRUNNABLE — render engine pending development

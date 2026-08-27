@@ -3,7 +3,7 @@ import type { AgentContext } from "../types/agent-context.js";
 
 /**
  * One billable thing a tool consumed that is NOT measured in tokens
- * (SCRUM-361 / AU66).
+ * (SCRUM-364 / AU66).
  *
  * ## Why this exists
  *
@@ -43,7 +43,7 @@ export interface ToolUnitUsage {
  * a content judgment; `not_available` means the requested data legitimately
  * doesn't exist yet.
  *
- * `usage` (SCRUM-361) rides on `success` only. A tool that failed produced no
+ * `usage` (the per-unit cost work — shipped without a Jira ticket) rides on `success` only. A tool that failed produced no
  * billable units by definition of the outcomes above — `content_fail` and
  * `not_available` never reach a metered API, and `tooling_error` means the
  * call did not complete. A partial success that DID consume units reports

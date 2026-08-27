@@ -11,7 +11,7 @@ import {
 import type { AgentToolOutcome } from "../src/agent/tool.js";
 
 /**
- * SCRUM-361 / AU66: tools can report what they consumed, and it can be priced.
+ * SCRUM-364 / AU66: tools can report what they consumed, and it can be priced.
  *
  * A measured Instagram run reported $0.565829. Two `gemini-2.5-flash-image`
  * invocations in its window were confirmed against Vertex's own publisher

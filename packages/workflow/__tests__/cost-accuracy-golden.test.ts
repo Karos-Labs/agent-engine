@@ -7,7 +7,7 @@ import { computeStepCostUsd, computeToolCostUsd, extractToolUsage } from "@agent
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
 /**
- * The recurring cost-accuracy check (SCRUM-361 / AU66 task 4).
+ * The recurring cost-accuracy check (SCRUM-364 / AU66 task 4).
  *
  * ## What this exists to catch
  *

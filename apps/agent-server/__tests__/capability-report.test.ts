@@ -126,12 +126,12 @@ describe("AU55: the capability report", () => {
 });
 
 /**
- * AU65 (SCRUM-363): the report rolled up to the altitude decisions are made at.
+ * the capability-by-product work (SCRUM-363): the report rolled up to the altitude decisions are made at.
  *
  * The failure this closes was not a wrong row. It was four correct rows that
  * never added up, on the page, to "the whole video line is dead".
  */
-describe("AU65: the report answers at product level", () => {
+describe("the capability-by-product work: the report answers at product level", () => {
   const productsOf = (env: Record<string, string>) => new Map(buildCapabilityReport(env).products.map((p) => [p.productId, p]));
 
   it("covers every dispatchable product, in both directions", () => {
@@ -250,7 +250,7 @@ describe("AU65: the report answers at product level", () => {
   });
 });
 
-describe("AU65: UNEXPLAINED keeps meaning exactly one thing", () => {
+describe("the capability-by-product work: UNEXPLAINED keeps meaning exactly one thing", () => {
   it("never contains a row that is merely unbuilt", () => {
     // If scheduled work leaks into this list it reads as an oversight, and the
     // one list that is supposed to mean "a question nobody has been asked"

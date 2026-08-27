@@ -5,7 +5,7 @@ import type { AgentToolOutcome, ToolUnitUsage } from "@agent-engine/core";
  * result is one of these four shapes, everywhere, so a caller never has to
  * guess which field means what.
  *
- * `usage` (SCRUM-361) reports non-token units this call consumed — images
+ * `usage` (the per-unit cost work — shipped without a Jira ticket) reports non-token units this call consumed — images
  * generated, seconds rendered — priced by `UNIT_PRICING` rather than here. A
  * tool that computes its own dollars is a tool that goes quietly wrong the day
  * a rate moves. Omit it for the overwhelming majority of tools, which consume

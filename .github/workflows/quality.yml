@@ -49,7 +49,7 @@ jobs:
       - name: Configuration inventory
         run: npm run check:config
 
-      # SCRUM-361: every model id named in executable source must have a price
+      # the per-unit cost work — shipped without a Jira ticket: every model id named in executable source must have a price
       # row. All 27 declarations are static string literals, so this is
       # answerable before a deploy rather than after a billed run — and it has
       # to be, because DEFAULT_MODEL_PRICING is Sonnet's own rate, so an
@@ -61,7 +61,7 @@ jobs:
       - name: Model pricing coverage
         run: npm run check:pricing
 
-      # SCRUM-361c / AU68: every field the telemetry insert writes must exist as
+      # AU68 — shipped without a Jira ticket: every field the telemetry insert writes must exist as
       # a column. `ignoreUnknownValues: true` drops a missing one SILENTLY while
       # the insert still reports success — that is how `operation`, `jobId`,
       # `stepId` and `source` were discarded on every insert for months after

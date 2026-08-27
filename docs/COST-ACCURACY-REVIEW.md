@@ -1,6 +1,6 @@
 # Cost accuracy: the recurring review
 
-**Owner:** Tomer · **Cadence:** monthly, and before any change to how a model or media unit is billed · **Ticket:** SCRUM-361
+**Owner:** Tomer · **Cadence:** monthly, and before any change to how a model or media unit is billed · **Ticket:** the per-unit cost work — shipped without a Jira ticket
 
 ## Why this exists
 

@@ -1,6 +1,6 @@
 /**
  * Every field the telemetry insert writes must exist as a column
- * (SCRUM-361c / AU68).
+ * (AU68 — shipped without a Jira ticket).
  *
  * ## Why this is a check and not a comment
  *

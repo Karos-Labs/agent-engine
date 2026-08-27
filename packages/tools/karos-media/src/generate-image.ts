@@ -355,7 +355,7 @@ export function createGenerateImage(options: {
         );
       }
 
-      // SCRUM-361: `candidates.length` is what was actually PRODUCED, not what
+      // the per-unit cost work — shipped without a Jira ticket: `candidates.length` is what was actually PRODUCED, not what
       // was asked for — attempts the model declined return no image part and
       // are not billed the image charge. Their text prompt still costs input
       // tokens, which this does not capture: the residual is a known

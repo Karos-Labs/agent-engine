@@ -23,7 +23,7 @@ status vocabulary from the old behaviour.
 | Ticket | Observation to harvest |
 |---|---|
 | SCRUM-360 [AU61] | `jsonPayload.event="model.failover"` in `karoscmo` during the run window — count, from/to, errorClass |
-| SCRUM-361 [AU62] | Vertex publisher metrics for the window vs our own telemetry: confirm Claude is invisible to GCP but visible to us |
+| the per-unit cost work — shipped without a Jira ticket [AU62] | Vertex publisher metrics for the window vs our own telemetry: confirm Claude is invisible to GCP but visible to us |
 | SCRUM-365 [AU67] | Step records where `status` is `content_fail` / `not_available` / `tooling_error` rather than `completed` — the vocabulary only reachable via a real tool failure |
 | SCRUM-355 [AU56] | The media step's recorded outcome and reason, showing the absent-key degradation as a first-class result |
 | SCRUM-356 [AU57] | Not runtime — build-time. Excluded deliberately; no run can verify it |
