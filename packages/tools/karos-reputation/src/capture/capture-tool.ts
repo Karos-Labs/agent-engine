@@ -1,6 +1,5 @@
 import { defineTool, success } from "@agent-engine/tool-common";
 import { captureGbp } from "./gbp.js";
-import { captureYelp } from "./yelp.js";
 import { captureAppstore } from "./appstore.js";
 import { captureManualExport } from "./manual-export.js";
 import { unavailableLeg } from "./tombstone.js";
@@ -18,7 +17,7 @@ const TOOL_VERSION = "1.0.0";
 export interface CreateReputationCaptureOptions {
   /** Defaults to `process.env` — injectable so a workflow (or a test) can supply credentials without mutating the real process environment. */
   env?: Readonly<Record<string, string | undefined>>;
-  /** Defaults to the global `fetch` — injectable so tests supply canned responses instead of hitting real endpoints (RFC-08 task spec: "App Store should be genuinely testable; mock GBP OAuth / Yelp Fusion key contracts"). */
+  /** Defaults to the global `fetch` — injectable so tests supply canned responses instead of hitting real endpoints (RFC-08 task spec: "App Store should be genuinely testable; mock GBP OAuth key contracts"). */
   fetchImpl?: ReputationFetchImpl;
 }
 
@@ -31,7 +30,6 @@ export interface CreateReputationCaptureOptions {
  */
 const LEG_TOMBSTONE_META: Record<CaptureLegRequest["leg"], { platform: string; source: string }> = {
   gbp: { platform: "google", source: "gbp_api" },
-  yelp: { platform: "yelp", source: "yelp_fusion" },
   appstore: { platform: "appstore", source: "appstore_rss" },
   manual_export: { platform: "manual_export", source: "manual_export" },
 };
@@ -68,9 +66,6 @@ export function createReputationCapture(options: CreateReputationCaptureOptions 
           switch (leg.leg) {
             case "gbp":
               outcomes.push(await captureGbp(leg, env, fetchImpl));
-              break;
-            case "yelp":
-              outcomes.push(await captureYelp(leg, env, fetchImpl));
               break;
             case "appstore":
               outcomes.push(await captureAppstore(leg, fetchImpl));

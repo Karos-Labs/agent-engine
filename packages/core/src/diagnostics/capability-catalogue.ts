@@ -166,14 +166,11 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
   // ── Reputation ───────────────────────────────────────────────────────────
   {
     id: "reputation-capture",
-    title: "Review capture from Google Business Profile and Yelp",
+    title: "Review capture from Google Business Profile — the credentialed review source",
     owner: "packages/tools/karos-reputation (reputation.capture)",
-    requires: [
-      { name: "GOOGLE_BUSINESS_TOKEN", kind: "enhances" },
-      { name: "YELP_API_KEY", kind: "enhances" },
-    ],
+    requires: [{ name: "GOOGLE_BUSINESS_TOKEN", kind: "required" }],
     whenAbsent:
-      "Those legs write an UNAVAILABLE tombstone instead of reviews. The pulse still runs on whatever legs are configured, and the tombstone keeps the gap visible rather than reading as 'no reviews this month'.",
+      "No credentialed review source at all. The GBP leg writes an UNAVAILABLE tombstone instead of reviews, and the pulse runs on only the uncredentialed legs (App Store RSS, and whatever the client exports by hand) — so a client with no App Store presence gets a pulse with no reviews in it. The tombstone keeps that visible rather than letting it read as 'no reviews this month'.",
   },
 
   // ── Landing builder ──────────────────────────────────────────────────────
