@@ -2,6 +2,7 @@ import type { GateRecord, StepRecord } from "../adapters/types.js";
 import type { GateDefinition, GateResponse, WorkflowRuntime } from "./context.js";
 import { markStepRunning, scopedStepId } from "./context.js";
 import { AwaitingGateSignal } from "./signals.js";
+import { isCheckpointedStepStatus } from "../adapters/types.js";
 
 /** Namespaces a workflow-author-supplied local gate id into the store's globally-unique `agentEngineGates/{gateId}` key. */
 export function qualifyGateId(runId: string, id: string): string {
@@ -68,7 +69,7 @@ function gateCompletedAt(runtime: WorkflowRuntime, response: GateResponse, start
 async function recordResolvedGateStep(runtime: WorkflowRuntime, stepId: string, response: GateResponse): Promise<void> {
   try {
     const existing = await runtime.store.getStep(runtime.runId, stepId);
-    if (existing?.status === "completed") return;
+    if (existing && isCheckpointedStepStatus(existing.status)) return;
     const startedAt = existing?.startedAt ?? runtime.now();
     const completedAt = gateCompletedAt(runtime, response, startedAt);
     const record: StepRecord = {

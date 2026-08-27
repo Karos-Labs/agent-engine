@@ -1,5 +1,5 @@
 import { describeError, withWorkflowStepSpan } from "@agent-engine/telemetry";
-import type { StepRecord } from "../adapters/types.js";
+import { isCheckpointedStepStatus, type StepRecord, type StepRecordStatus } from "../adapters/types.js";
 import type { WorkflowRuntime } from "./context.js";
 import { markStepRunning, scopedStepId } from "./context.js";
 
@@ -14,10 +14,50 @@ import { markStepRunning, scopedStepId } from "./context.js";
  * per-slot isolation) — sibling slots calling `step.code("prep", ...)` each
  * get their own checkpoint, never one overwriting the other.
  */
+/**
+ * Translates a tool's four-outcome result (RFC-01 §6) into the step status that
+ * describes it (AU67 / SCRUM-365).
+ *
+ * This is the missing translation. Tools report failure as a RETURNED VALUE;
+ * this recorder only ever listened for exceptions. A correctly-reported failure
+ * therefore arrived as a successful return and was written down as `completed`.
+ *
+ * Shape-driven, like the rest of this file's inspection of `output`, and for
+ * the same reason: an opt-in would only catch the call sites someone
+ * remembered, leaving the default wrong — which is the failure being fixed. A
+ * body returning something that is not a tool outcome (most of them) is
+ * `completed`, and that is now a measurement rather than an assumption.
+ *
+ * Deliberately NOT collapsed to `failed`: `not_available` is a designed,
+ * expected state and `content_fail` is a real content judgment a revision loop
+ * asks for. Flattening them into "failed" would be the same conflation this
+ * function exists to remove, one level up.
+ */
+function statusFromOutcome(output: unknown): StepRecordStatus {
+  if (typeof output !== "object" || output === null) return "completed";
+  const status = (output as { status?: unknown }).status;
+  if (status === "content_fail" || status === "not_available" || status === "tooling_error") return status;
+  return "completed";
+}
+
+/**
+ * The tool's own `reason`, promoted onto the step record.
+ *
+ * Without it a non-success step records a status and nothing else, so the run
+ * report can say THAT a step failed but not why. Same argument as
+ * `AgentStepTelemetry.error`, which exists for exactly this.
+ */
+function describeOutcomeReason(output: unknown): { error?: string } {
+  if (typeof output !== "object" || output === null) return {};
+  const { status, reason } = output as { status?: unknown; reason?: unknown };
+  if (status === "success" || typeof reason !== "string") return {};
+  return { error: reason };
+}
+
 export async function runStepCode<T>(runtime: WorkflowRuntime, id: string, fn: () => T | Promise<T>): Promise<T> {
   const stepId = scopedStepId(runtime, id);
   const existing = await runtime.store.getStep(runtime.runId, stepId);
-  if (existing && existing.status === "completed") {
+  if (existing && isCheckpointedStepStatus(existing.status)) {
     return existing.output as T;
   }
 
@@ -39,12 +79,16 @@ export async function runStepCode<T>(runtime: WorkflowRuntime, id: string, fn: (
         const record: StepRecord = {
           stepId,
           kind: "code",
-          status: "completed",
+          // AU67: the step now says what its tool actually reported. It still
+          // RAN, so it stays checkpointed and resume is unchanged — see
+          // `isCheckpointedStepStatus`.
+          status: statusFromOutcome(output),
           output,
           costUsd: 0,
           durationMs: completedAt - startedAt,
           startedAt,
           completedAt,
+          ...describeOutcomeReason(output),
         };
         await runtime.store.saveStep(runtime.runId, record);
         return output;

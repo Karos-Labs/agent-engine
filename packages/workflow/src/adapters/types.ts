@@ -112,7 +112,49 @@ export type StepKind = z.infer<typeof StepKindSchema>;
 export const StepRecordSchema = z.object({
   stepId: z.string().min(1),
   kind: StepKindSchema,
-  status: z.enum(["running", "completed", "failed"]),
+  /**
+   * What this step's execution resolved to (AU67 / SCRUM-365).
+   *
+   * ## The bug this replaces
+   *
+   * Two correct designs produced a wrong result. RFC-01 §6 says a tool reports
+   * failure as an OUTCOME — a returned value. `runStepCode` listened for
+   * EXCEPTIONS. Nothing translated between them, so a correctly-reported
+   * failure arrived at the recorder as a successful return and was persisted as
+   * `completed`.
+   *
+   * AU8 did not cause this; AU8 REVEALED it. Before AU8 the outcome was wrong
+   * (`karos-video`'s gates smuggled `verdict: "tooling_error"` inside
+   * `status: "success"`) and the step said completed. After AU8 the outcome was
+   * right and the step STILL said completed — which is how it became visible
+   * that only one layer had ever implemented the contract.
+   *
+   * Observed live: prep run `2303f93f-0d11-4805-b0e8-ab661442712f` recorded
+   * `08-render-carousel-attempt-1` as `completed` at $0.000000 while
+   * `publish.renderCarousel` had reported a `tooling_error` and the RUN was
+   * `degraded`.
+   *
+   * ## Why not just "failed"
+   *
+   * `failed` is too blunt, and collapsing into it would be the same conflation
+   * one level up. `not_available` is a legitimate, DESIGNED state — a
+   * capability deliberately absent — while `tooling_error` is a fault, and
+   * `content_fail` is a real judgment about content that a revision loop
+   * expects to see. The capture-tier vocabulary (MEASURED / ESTIMATED /
+   * UNAVAILABLE) is the prior art: reuse the distinction, do not flatten it.
+   *
+   * `failed` is kept, narrowed to what it always actually meant here: the body
+   * THREW, so there is no outcome at all and no output to replay.
+   *
+   * ## Resume is unaffected — deliberately
+   *
+   * Four sites skip a step on resume, and they now ask
+   * {@link isCheckpointedStepStatus} rather than `=== "completed"`. Every value
+   * except `running` and `failed` carries an `output` and is replayable, which
+   * is exactly the set that was replayable before. Nothing re-runs that did not
+   * re-run yesterday.
+   */
+  status: z.enum(["running", "completed", "content_fail", "not_available", "tooling_error", "failed"]),
   output: z.unknown().optional(),
   costUsd: z.number().nonnegative().optional(),
   durationMs: z.number().nonnegative().optional(),
@@ -121,6 +163,26 @@ export const StepRecordSchema = z.object({
   error: z.string().optional(),
 });
 export type StepRecord = z.infer<typeof StepRecordSchema>;
+export type StepRecordStatus = StepRecord["status"];
+
+/**
+ * Whether a step's recorded status means "this ran to a terminal outcome and
+ * its output is replayable" — the question the four resume sites are actually
+ * asking (AU67 / SCRUM-365).
+ *
+ * They used to ask `status === "completed"`, which happened to be the same set
+ * because a tool failure was MISRECORDED as completed. Widening the vocabulary
+ * without this predicate would have silently changed resume semantics: every
+ * step whose tool returned `tooling_error`/`content_fail`/`not_available` would
+ * start re-running on resume, re-spending money and repeating side effects that
+ * had already happened.
+ *
+ * `running` is in flight and has no output. `failed` means the body THREW, so
+ * there is nothing to replay. Everything else carries an outcome.
+ */
+export function isCheckpointedStepStatus(status: StepRecordStatus): boolean {
+  return status !== "running" && status !== "failed";
+}
 
 /** One fan-out slot's checkpoint — `agentEngineRuns/{runId}/slots/{slotId}` (RFC-01 §8.4a). */
 export const SlotRecordSchema = z.object({
