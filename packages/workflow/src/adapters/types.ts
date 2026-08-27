@@ -158,6 +158,31 @@ export const StepRecordSchema = z.object({
   output: z.unknown().optional(),
   costUsd: z.number().nonnegative().optional(),
   /**
+   * The three-way input-token split behind `costUsd`, plus the output count
+   * (SCRUM-361b). Present on `agent` steps; absent on `code`/`gate` steps,
+   * which burn no tokens.
+   *
+   * This exists because of what its absence cost. Cache writes were billed at
+   * 1x instead of 1.25x, and the size of that error could not be recovered
+   * from our own telemetry AT ALL: Firestore stored `costUsd` and no token
+   * counts, BigQuery merged cached and uncached into one column, and the
+   * adapter merged writes into uncached before either of them saw it. Three
+   * collapses stacked, so THE ERROR ERASED ITS OWN EVIDENCE and could only be
+   * bounded from above.
+   *
+   * Fixing the arithmetic without recording the split would leave the next
+   * drift exactly as unmeasurable. Same reasoning as `unitUsage` below: a cost
+   * with no derivation cannot be checked.
+   */
+  tokenUsage: z
+    .object({
+      cached: z.number().int().nonnegative(),
+      uncached: z.number().int().nonnegative(),
+      cacheWrite: z.number().int().nonnegative(),
+      output: z.number().int().nonnegative(),
+    })
+    .optional(),
+  /**
    * The non-token units this step consumed, and the SKU that priced them
    * (SCRUM-361). Present only on steps that consumed any — which today means
    * generative media.

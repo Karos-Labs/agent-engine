@@ -208,7 +208,13 @@ describe("prompt caching", () => {
 
     // `input_tokens` excludes both cache reads and cache writes; reading it
     // alone would report 10 input tokens for a 4,010-token billed request.
-    expect(result.inputTokens).toEqual({ cached: 0, uncached: 4_010 });
+    //
+    // SCRUM-361b changed what "counting" means here. Writes used to be FOLDED
+    // into `uncached` and billed at 1x; they cost 1.25x, so this assertion
+    // previously encoded a deliberate 25% under-report. They now have their own
+    // tier, and the difference is real money: 4,000 write tokens at Sonnet's
+    // $3/1M cost $0.012 at 1x and $0.015 at 1.25x.
+    expect(result.inputTokens).toEqual({ cached: 0, uncached: 10, cacheWrite: 4_000 });
   });
 
   it("keeps reporting cache reads separately, so the 90% read discount still lands", async () => {
@@ -217,6 +223,6 @@ describe("prompt caching", () => {
 
     const result = await a.complete(request({ model: "claude-sonnet-4-6", system: "x" }));
 
-    expect(result.inputTokens).toEqual({ cached: 4_000, uncached: 50 });
+    expect(result.inputTokens).toEqual({ cached: 4_000, uncached: 50, cacheWrite: 0 });
   });
 });

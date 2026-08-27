@@ -25,7 +25,13 @@ const dynamicAgentRunStepSchema = {
     costUsd: { type: "number" },
     tokensIn: {
       type: "object",
-      properties: { cached: { type: "number" }, uncached: { type: "number" } },
+      description:
+        "Input tokens split by billing tier — the three carry three different prices (reads 0.1x, ordinary 1x, cache writes 1.25x), so the sum cannot be decomposed afterwards (SCRUM-361b).",
+      properties: {
+        cached: { type: "number", description: "Cache reads, billed at 0.1x base input." },
+        uncached: { type: "number", description: "Ordinary input, billed at 1x." },
+        cacheWrite: { type: "number", description: "Cache writes, billed at 1.25x base input. Absent on reports produced before SCRUM-361b." },
+      },
     },
     tokensOut: { type: "number" },
   },

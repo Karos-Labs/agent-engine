@@ -109,10 +109,13 @@ export async function runStepAgent<TOutput>(
       const result = await withStepTimeout(agent.run(ctx, input), stepId, timeoutMs);
       const completedAt = runtime.now();
 
-      // AgentExecutionResult.totalTokens.input is already the cached+uncached sum
-      // (RFC-01 §5.1) — recover the split from the per-turn telemetry for the span.
+      // AgentExecutionResult.totalTokens.input is already the summed input
+      // (RFC-01 §5.1) — recover the THREE-WAY split from the per-turn
+      // telemetry, since the tiers carry three different prices (0.1x / 1x /
+      // 1.25x) and a sum cannot be decomposed afterwards.
       const inputTokensCached = result.steps.reduce((sum, step) => sum + step.inputTokens.cached, 0);
       const inputTokensUncached = result.steps.reduce((sum, step) => sum + step.inputTokens.uncached, 0);
+      const inputTokensCacheWrite = result.steps.reduce((sum, step) => sum + (step.inputTokens.cacheWrite ?? 0), 0);
       recordCostAndTokens(span, {
         runId: runtime.runId,
         clientId: runtime.clientSlug,
@@ -124,6 +127,7 @@ export async function runStepAgent<TOutput>(
         costUsd: result.totalCostUsd,
         inputTokensCached,
         inputTokensUncached,
+        inputTokensCacheWrite,
         outputTokens: result.totalTokens.output,
         durationMs: completedAt - startedAt,
         status: result.status,
@@ -142,6 +146,15 @@ export async function runStepAgent<TOutput>(
         status: "completed",
         output: result,
         costUsd: result.totalCostUsd,
+        // SCRUM-361b: RECORDED, not merely applied. Without this, Firestore
+        // held a cost with no derivation, and the next pricing drift would be
+        // as unmeasurable as the cache-write one was.
+        tokenUsage: {
+          cached: inputTokensCached,
+          uncached: inputTokensUncached,
+          cacheWrite: inputTokensCacheWrite,
+          output: result.totalTokens.output,
+        },
         durationMs: completedAt - startedAt,
         startedAt,
         completedAt,
