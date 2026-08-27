@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import request from "supertest";
 import { createApp } from "../src/app.js";
-import { setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import { setupTestEnvironment, type TestEnvironment, inProcessEnqueue } from "./test-helpers.js";
 
 describe("GET /openapi.json", () => {
   it("returns a valid-looking OpenAPI 3.0 document covering every route", async () => {
     const env: TestEnvironment = await setupTestEnvironment();
     try {
-      const app = createApp({ durableStore: env.durableStore, runtimeDeps: env.runtimeDeps });
+      const app = createApp({ durableStore: env.durableStore, runtimeDeps: env.runtimeDeps, enqueueRunJob: inProcessEnqueue(env) });
       const res = await request(app).get("/openapi.json");
 
       expect(res.status).toBe(200);
@@ -30,7 +30,7 @@ describe("GET /docs", () => {
   it("serves the Swagger UI page", async () => {
     const env: TestEnvironment = await setupTestEnvironment();
     try {
-      const app = createApp({ durableStore: env.durableStore, runtimeDeps: env.runtimeDeps });
+      const app = createApp({ durableStore: env.durableStore, runtimeDeps: env.runtimeDeps, enqueueRunJob: inProcessEnqueue(env) });
       const res = await request(app).get("/docs/");
 
       expect(res.status).toBe(200);
@@ -44,7 +44,7 @@ describe("GET /docs", () => {
   it("redirects the no-trailing-slash path to /docs/", async () => {
     const env: TestEnvironment = await setupTestEnvironment();
     try {
-      const app = createApp({ durableStore: env.durableStore, runtimeDeps: env.runtimeDeps });
+      const app = createApp({ durableStore: env.durableStore, runtimeDeps: env.runtimeDeps, enqueueRunJob: inProcessEnqueue(env) });
       const res = await request(app).get("/docs");
 
       expect(res.status).toBe(301);

@@ -201,9 +201,11 @@ export const openApiDocument: OpenApiDocument = {
     "/api/v1/runs/start": {
       post: {
         tags: ["runs"],
-        summary: "Start a new agent run",
+        summary: "Enqueue a new agent run",
         description:
-          "Dispatches to the workflow for the given productId and runs it synchronously until it either completes or pauses at a human gate (e.g. the campaign orchestrator's campaign-review gate).",
+          "Publishes a run-job to the same Pub/Sub topic karosCMO publishes to and returns immediately. It does NOT execute the run — a worker consuming that topic does (AU66 / SCRUM-364). " +
+          "Poll GET /api/v1/runs/{runId}/status for the run's real state; that 404s until a worker claims the message, which is the honest answer to 'has it started'. " +
+          "Until SCRUM-364 this ran the whole workflow inside the request, which on a 300s Cloud Run service with CPU throttling killed CPU-bound steps minutes after the request had been severed.",
         requestBody: {
           required: true,
           content: {
@@ -214,20 +216,18 @@ export const openApiDocument: OpenApiDocument = {
           },
         },
         responses: {
-          "201": {
-            description: "The run was created and executed (possibly pausing at a gate).",
+          "202": {
+            description:
+              "The run-job was published. Nothing has been created yet beyond the queued message — the run record appears when a worker claims it. `runId` is the id the consumer WILL derive from this message.",
             content: { "application/json": { schema: { $ref: "#/components/schemas/RunResponse" } } },
           },
           "400": {
             description: "Invalid request body (bad shape, or an unrecognized productId).",
             content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } },
           },
-          "409": {
-            description: "An optimistic-concurrency claim on this runId was lost to a concurrent request — practically unreachable for a freshly generated runId.",
-            content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } },
-          },
           "500": {
-            description: "The run failed unexpectedly.",
+            description:
+              "The run-job could not be published, or no queue is configured for this deployment. This route no longer executes runs, so a run's own failure never surfaces here — poll GET /api/v1/runs/{runId}/status for that.",
             content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } },
           },
         },
