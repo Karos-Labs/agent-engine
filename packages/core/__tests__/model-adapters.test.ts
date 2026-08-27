@@ -116,7 +116,7 @@ describe("AnthropicAdapter", () => {
     const result = await adapter.complete({ prompt: "draft it", schema: turnSchema(), model: "claude-sonnet-4-6" });
 
     expect(result.output).toEqual({ type: "final", output: { text: "drafted", hook: "drafted" } });
-    expect(result.inputTokens).toEqual({ cached: 20, uncached: 120 });
+    expect(result.inputTokens).toEqual({ cached: 20, uncached: 120, cacheWrite: 0 });
     expect(result.outputTokens).toBe(30);
   });
 

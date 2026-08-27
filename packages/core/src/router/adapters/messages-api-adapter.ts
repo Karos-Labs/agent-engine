@@ -125,13 +125,18 @@ export class MessagesApiAdapter implements ModelAdapter {
 
     const usage = response.usage;
 
-    // `input_tokens` counts neither cache reads nor cache *writes*. Cache
-    // writes are real, billed input tokens (at a premium over the base rate),
-    // so folding them into `uncached` under-reports their cost slightly —
-    // dropping them, which is what happens if you read `input_tokens` alone,
-    // under-reports it by 100%. `TokenUsage` has two fields, not three, and
-    // widening it reaches every persisted `AgentStepTelemetry` record; the
-    // approximation is the deliberate trade until it's worth that migration.
+    // `input_tokens` counts neither cache reads nor cache *writes*, so reading
+    // it alone drops writes entirely — a 100% under-report of real, billed
+    // tokens.
+    //
+    // SCRUM-361b: writes now get their OWN tier rather than being folded into
+    // `uncached`. Folding was a deliberate 25% approximation taken because
+    // `TokenUsage` had two fields and widening it reached every persisted
+    // record. What that trade did not account for is that it also erased the
+    // evidence: with the split gone before anything stored it, the size of the
+    // approximation could not be recovered from our own telemetry — only
+    // bounded from above. `cacheWrite` is defaulted, so old records still
+    // parse, and the migration turned out to cost nothing.
     const cacheWriteTokens = usage.cache_creation_input_tokens ?? 0;
 
     // Resolved before the payload is validated, not after, so a malformed turn
@@ -145,7 +150,8 @@ export class MessagesApiAdapter implements ModelAdapter {
       modelUsed: this.modelIds.toCanonical(response.model),
       inputTokens: {
         cached: usage.cache_read_input_tokens ?? 0,
-        uncached: usage.input_tokens + cacheWriteTokens,
+        uncached: usage.input_tokens,
+        cacheWrite: cacheWriteTokens,
       },
       outputTokens: usage.output_tokens,
     };

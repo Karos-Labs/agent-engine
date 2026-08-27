@@ -28,7 +28,8 @@ export function excerptRawPayload(raw: unknown, limit: number = RAW_PAYLOAD_EXCE
 /** The provider-reported usage of the turn that produced an unparseable payload. */
 export interface StructuredOutputUsage {
   modelUsed: string;
-  inputTokens: TokenUsage;
+  /** `cacheWrite` optional: providers with no cache-write concept (Gemini, OpenAI-compatible) never report one. */
+  inputTokens: { cached: number; uncached: number; cacheWrite?: number };
   outputTokens: number;
 }
 

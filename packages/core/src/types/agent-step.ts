@@ -83,8 +83,26 @@ export interface AgentStepConfig<TOutput> {
 }
 
 export const TokenUsageSchema = z.object({
+  /** Cache READS — billed at 0.1x base input. */
   cached: z.number().int().nonnegative(),
+  /** Ordinary input — billed at 1x. */
   uncached: z.number().int().nonnegative(),
+  /**
+   * Cache WRITES — billed at 1.25x base input for the 5-minute TTL this
+   * codebase uses (`cache_control: { type: "ephemeral" }`).
+   *
+   * Defaulted rather than required, deliberately: every step record persisted
+   * before SCRUM-361b has two fields, not three, and must keep parsing.
+   * Narrow what you write, keep wide what you read — the same rule
+   * `ModelProvenance.hop` follows.
+   *
+   * Until this existed, cache writes were FOLDED INTO `uncached` and billed at
+   * 1x. That understated every cached run slightly, and — the part worth
+   * noticing — the error erased its own evidence: no sink stored the split, so
+   * the size of the error could not be recovered from our own telemetry. It
+   * had to be bounded from above instead.
+   */
+  cacheWrite: z.number().int().nonnegative().default(0),
 });
 export type TokenUsage = z.infer<typeof TokenUsageSchema>;
 

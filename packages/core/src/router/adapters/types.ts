@@ -30,7 +30,12 @@ export interface ModelProvenance {
 export interface CompletionResult<TOutput> {
   output: TOutput;
   modelUsed: string;
-  inputTokens: { cached: number; uncached: number };
+  /**
+   * Three tiers, three prices (SCRUM-361b): reads at 0.1x, ordinary input at
+   * 1x, writes at 1.25x. `cacheWrite` is optional so adapters for providers
+   * with no cache-write concept (Gemini, OpenAI-compatible) stay unchanged.
+   */
+  inputTokens: { cached: number; uncached: number; cacheWrite?: number };
   outputTokens: number;
   /**
    * Optional so every adapter that never falls over is unchanged. Set by

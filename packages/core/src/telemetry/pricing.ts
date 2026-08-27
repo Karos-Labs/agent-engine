@@ -7,6 +7,8 @@ export interface ModelPricing {
   outputPer1M: number;
   /** Defaults to `inputPer1M * CACHE_READ_DISCOUNT` when absent. */
   cachedInputPer1M?: number;
+  /** Defaults to `inputPer1M * CACHE_WRITE_PREMIUM` when absent. */
+  cacheWritePer1M?: number;
 }
 
 /**
@@ -16,6 +18,27 @@ export interface ModelPricing {
  * that support prompt caching follow the same order-of-magnitude discount.
  */
 export const CACHE_READ_DISCOUNT = 0.1;
+
+/**
+ * Cache WRITES cost 25% MORE than base input, not less (SCRUM-361b).
+ *
+ * Source: docs.anthropic.com/en/docs/build-with-claude/prompt-caching — 5-minute
+ * cache writes are 1.25x base input, 1-hour writes are 2x, cache reads 0.1x.
+ * This codebase writes 5-minute entries (`cache_control: { type: "ephemeral" }`
+ * in `messages-api-adapter.ts`), so 1.25 is the applicable multiplier. IF THAT
+ * EVER CHANGES TO THE 1-HOUR TTL, THIS CONSTANT MUST CHANGE WITH IT — the two
+ * are set in different files and nothing couples them.
+ *
+ * Before this existed, `cache_creation_input_tokens` was folded into `uncached`
+ * and billed at 1x. The interesting part is not the 25%: it is that THE ERROR
+ * ERASED ITS OWN EVIDENCE. Firestore stored `costUsd` and no token counts;
+ * BigQuery merged cached and uncached into a single column; and the adapter
+ * merged writes into uncached before either of them saw it. Three collapses
+ * stacked, so the error could not be sized from our own telemetry at all — only
+ * bounded from above. That is why the fix RECORDS the split rather than merely
+ * applying it.
+ */
+export const CACHE_WRITE_PREMIUM = 1.25;
 
 /**
  * USD per 1M tokens, cross-referenced against
@@ -162,12 +185,26 @@ function roundCostUsd(raw: number): number {
   return Math.round(raw * 1_000_000) / 1_000_000;
 }
 
-/** Computes one step's cost from its cached/uncached input split and output tokens. */
-export function computeStepCostUsd(modelName: string, inputTokens: TokenUsage, outputTokens: number): number {
+/**
+ * Computes one step's cost from its three-way input split and output tokens.
+ *
+ * `cacheWrite` is optional on the way in so a record persisted before
+ * SCRUM-361b — which has no such field — still costs correctly rather than
+ * throwing. It just costs the way it always did.
+ */
+export function computeStepCostUsd(
+  modelName: string,
+  inputTokens: TokenUsage | { cached: number; uncached: number; cacheWrite?: number },
+  outputTokens: number,
+): number {
   const pricing = pricingForModel(modelName);
   const cachedRate = pricing.cachedInputPer1M ?? pricing.inputPer1M * CACHE_READ_DISCOUNT;
+  const writeRate = pricing.cacheWritePer1M ?? pricing.inputPer1M * CACHE_WRITE_PREMIUM;
   const raw =
-    (inputTokens.uncached * pricing.inputPer1M + inputTokens.cached * cachedRate + outputTokens * pricing.outputPer1M) /
+    (inputTokens.uncached * pricing.inputPer1M +
+      inputTokens.cached * cachedRate +
+      (inputTokens.cacheWrite ?? 0) * writeRate +
+      outputTokens * pricing.outputPer1M) /
     1_000_000;
   return roundCostUsd(raw);
 }

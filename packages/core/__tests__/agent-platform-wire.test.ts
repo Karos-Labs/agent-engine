@@ -114,7 +114,11 @@ describe("Agent Platform wire contract (real AnthropicVertex, faked fetch)", () 
 
     expect(result.output).toEqual({ body: "hi" });
     expect(result.modelUsed).toBe("claude-haiku-4-5-20251001");
-    expect(result.inputTokens).toEqual({ cached: 0, uncached: 912 });
+    // The real wire fixture carries 12 plain input tokens and a 900-token cache
+    // WRITE. Before SCRUM-361b this read `uncached: 912` — the two were summed
+    // and billed at one rate. The split is the whole point of the fix, and this
+    // is the test that shows it against a genuine Agent Platform response.
+    expect(result.inputTokens).toEqual({ cached: 0, uncached: 12, cacheWrite: 900 });
     expect(result.outputTokens).toBe(3);
   });
 

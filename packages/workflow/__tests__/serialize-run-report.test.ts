@@ -37,7 +37,7 @@ function makeAgentResult(overrides: Partial<AgentExecutionResult<unknown>> = {})
       {
         stepIndex: 0,
         modelUsed: "claude-sonnet-4-6",
-        inputTokens: { cached: 100, uncached: 50 },
+        inputTokens: { cached: 100, uncached: 50, cacheWrite: 0 },
         outputTokens: 30,
         durationMs: 500,
         costUsd: 0.001,
@@ -110,7 +110,7 @@ describe("serializeToDynamicAgentRunReport", () => {
     expect(step.status).toBe("done");
     expect(step.model).toBe("claude-sonnet-4-6");
     expect(step.costUsd).toBeCloseTo(0.001, 6);
-    expect(step.tokensIn).toEqual({ cached: 100, uncached: 50 });
+    expect(step.tokensIn).toEqual({ cached: 100, uncached: 50, cacheWrite: 0 });
     expect(step.tokensOut).toBe(30);
     expect(step.usage).toEqual({
       totalCostUsd: 0.001,

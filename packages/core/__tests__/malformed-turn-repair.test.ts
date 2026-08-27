@@ -34,7 +34,7 @@ const ctx: AgentContext = {
   metadata: {},
 };
 
-const USAGE = { modelUsed: "claude-sonnet-4-6", inputTokens: { cached: 100, uncached: 900 }, outputTokens: 250 };
+const USAGE = { modelUsed: "claude-sonnet-4-6", inputTokens: { cached: 100, uncached: 900, cacheWrite: 0 }, outputTokens: 250 };
 
 function malformedTurn(rawPayload: unknown = { turn: { body: "no envelope" } }, usage: typeof USAGE | null = USAGE) {
   return () => {
@@ -50,7 +50,7 @@ function finalTurn(output: unknown): () => CompletionResult<unknown> {
   return () => ({
     output: { type: "final", output },
     modelUsed: "claude-sonnet-4-6",
-    inputTokens: { cached: 0, uncached: 100 },
+    inputTokens: { cached: 0, uncached: 100, cacheWrite: 0 },
     outputTokens: 20,
   });
 }
@@ -131,7 +131,7 @@ describe("BaseAgent — malformed turn repair", () => {
 
     const failed = result.steps[0]!;
     expect(failed.modelUsed).toBe("claude-sonnet-4-6");
-    expect(failed.inputTokens).toEqual({ cached: 100, uncached: 900 });
+    expect(failed.inputTokens).toEqual({ cached: 100, uncached: 900, cacheWrite: 0 });
     expect(failed.outputTokens).toBe(250);
     expect(failed.costUsd).toBeGreaterThan(0);
     expect(result.totalCostUsd).toBeGreaterThan(0);
@@ -145,7 +145,7 @@ describe("BaseAgent — malformed turn repair", () => {
 
     expect(result.status).toBe("completed");
     expect(result.steps[0]!.costUsd).toBe(0);
-    expect(result.steps[0]!.inputTokens).toEqual({ cached: 0, uncached: 0 });
+    expect(result.steps[0]!.inputTokens).toEqual({ cached: 0, uncached: 0, cacheWrite: 0 });
   });
 
   it("gives up as a tooling_error once the repair budget is spent", async () => {
@@ -163,7 +163,7 @@ describe("BaseAgent — malformed turn repair", () => {
   it("counts malformed turns across the whole step, not per consecutive run", async () => {
     const { router } = fakeRouter([
       malformedTurn(),
-      () => ({ output: { type: "tool_call", tool: "render.preview", args: {} }, modelUsed: "claude-sonnet-4-6", inputTokens: { cached: 0, uncached: 10 }, outputTokens: 5 }),
+      () => ({ output: { type: "tool_call", tool: "render.preview", args: {} }, modelUsed: "claude-sonnet-4-6", inputTokens: { cached: 0, uncached: 10, cacheWrite: 0 }, outputTokens: 5 }),
       malformedTurn(),
       finalTurn({ body: "never reached" }),
     ]);

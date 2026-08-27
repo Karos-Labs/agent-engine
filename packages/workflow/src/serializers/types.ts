@@ -54,7 +54,7 @@ export interface DynamicAgentRunStep {
   usage?: DynamicAgentRunStepUsage;
   /** Additive (RFC-01 §7.2) — the portal can ignore until its UI catches up. */
   costUsd?: number;
-  tokensIn?: { cached: number; uncached: number };
+  tokensIn?: { cached: number; uncached: number; cacheWrite: number };
   tokensOut?: number;
 }
 

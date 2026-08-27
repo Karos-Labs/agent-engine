@@ -78,7 +78,7 @@ export abstract class BaseAgent<TOutput> {
       steps.push({
         stepIndex: 0,
         modelUsed: this.effectivePolicy(ctx).model,
-        inputTokens: { cached: 0, uncached: 0 },
+        inputTokens: { cached: 0, uncached: 0, cacheWrite: 0 },
         outputTokens: 0,
         durationMs: 0,
         costUsd: 0,
@@ -384,7 +384,7 @@ export abstract class BaseAgent<TOutput> {
           telemetry: {
             stepIndex,
             modelUsed: err.usage?.modelUsed ?? this.effectivePolicy(ctx).model,
-            inputTokens: err.usage?.inputTokens ?? { cached: 0, uncached: 0 },
+            inputTokens: { cached: 0, uncached: 0, cacheWrite: 0, ...err.usage?.inputTokens },
             outputTokens: err.usage?.outputTokens ?? 0,
             durationMs,
             costUsd: err.usage
@@ -400,7 +400,7 @@ export abstract class BaseAgent<TOutput> {
         telemetry: {
           stepIndex,
           modelUsed: this.effectivePolicy(ctx).model,
-          inputTokens: { cached: 0, uncached: 0 },
+          inputTokens: { cached: 0, uncached: 0, cacheWrite: 0 },
           outputTokens: 0,
           durationMs,
           costUsd: 0,
@@ -424,7 +424,7 @@ export abstract class BaseAgent<TOutput> {
           ...(completion.provenance && completion.provenance.hop !== "primary"
             ? { servedBy: { hop: completion.provenance.hop, adapter: completion.provenance.servedBy, failedOver: [...completion.provenance.failedOver] } }
             : {}),
-          inputTokens: completion.inputTokens,
+          inputTokens: { cacheWrite: 0, ...completion.inputTokens },
           outputTokens: completion.outputTokens,
           durationMs,
           costUsd,
@@ -454,7 +454,7 @@ export abstract class BaseAgent<TOutput> {
           ...(completion.provenance && completion.provenance.hop !== "primary"
             ? { servedBy: { hop: completion.provenance.hop, adapter: completion.provenance.servedBy, failedOver: [...completion.provenance.failedOver] } }
             : {}),
-          inputTokens: completion.inputTokens,
+          inputTokens: { cacheWrite: 0, ...completion.inputTokens },
           outputTokens: completion.outputTokens,
           durationMs,
           costUsd,
@@ -476,7 +476,7 @@ export abstract class BaseAgent<TOutput> {
           ...(completion.provenance && completion.provenance.hop !== "primary"
             ? { servedBy: { hop: completion.provenance.hop, adapter: completion.provenance.servedBy, failedOver: [...completion.provenance.failedOver] } }
             : {}),
-          inputTokens: completion.inputTokens,
+          inputTokens: { cacheWrite: 0, ...completion.inputTokens },
           outputTokens: completion.outputTokens,
           durationMs,
           costUsd,
@@ -513,7 +513,7 @@ export abstract class BaseAgent<TOutput> {
           ...(completion.provenance && completion.provenance.hop !== "primary"
             ? { servedBy: { hop: completion.provenance.hop, adapter: completion.provenance.servedBy, failedOver: [...completion.provenance.failedOver] } }
             : {}),
-          inputTokens: completion.inputTokens,
+          inputTokens: { cacheWrite: 0, ...completion.inputTokens },
           outputTokens: completion.outputTokens,
           durationMs,
           costUsd,
@@ -542,7 +542,7 @@ export abstract class BaseAgent<TOutput> {
           ...(completion.provenance && completion.provenance.hop !== "primary"
             ? { servedBy: { hop: completion.provenance.hop, adapter: completion.provenance.servedBy, failedOver: [...completion.provenance.failedOver] } }
             : {}),
-          inputTokens: completion.inputTokens,
+          inputTokens: { cacheWrite: 0, ...completion.inputTokens },
           outputTokens: completion.outputTokens,
           durationMs,
           costUsd,
@@ -558,7 +558,7 @@ export abstract class BaseAgent<TOutput> {
       ...(turn.thought !== undefined ? { thought: turn.thought } : {}),
       toolCall: { name: tool.name, args: parsedArgs.data, result: outcome, toolVersion: tool.version },
       modelUsed: completion.modelUsed,
-      inputTokens: completion.inputTokens,
+      inputTokens: { cacheWrite: 0, ...completion.inputTokens },
       outputTokens: completion.outputTokens,
       durationMs,
       costUsd,
@@ -599,7 +599,7 @@ export abstract class BaseAgent<TOutput> {
       // in to resolve an override that had no bearing on what happened would
       // be precision about nothing.
       modelUsed: this.config.modelPolicy.model,
-      inputTokens: { cached: 0, uncached: 0 },
+      inputTokens: { cached: 0, uncached: 0, cacheWrite: 0 },
       outputTokens: 0,
       durationMs,
       costUsd: 0,

@@ -65,6 +65,11 @@ function serializeAgentRecord(
   const primaryModel = result.steps[0]?.modelUsed;
   const inputTokensCached = result.steps.reduce((sum, s) => sum + s.inputTokens.cached, 0);
   const inputTokensUncached = result.steps.reduce((sum, s) => sum + s.inputTokens.uncached, 0);
+  // SCRUM-361b: the portal's report gets the third tier too. Collapsing it back
+  // into `uncached` here would recreate, one layer up, exactly the merge the
+  // adapter fix removed — and the portal is where a human actually reads a
+  // cost, so it is the last place that should hide how one was reached.
+  const inputTokensCacheWrite = result.steps.reduce((sum, s) => sum + (s.inputTokens.cacheWrite ?? 0), 0);
 
   return {
     stepId: descriptor.stepId,
@@ -80,7 +85,7 @@ function serializeAgentRecord(
     ...(result.status !== "completed" ? { error: describeAgentFailure(result) } : {}),
     usage,
     costUsd: result.totalCostUsd,
-    tokensIn: { cached: inputTokensCached, uncached: inputTokensUncached },
+    tokensIn: { cached: inputTokensCached, uncached: inputTokensUncached, cacheWrite: inputTokensCacheWrite },
     tokensOut: result.totalTokens.output,
   };
 }
