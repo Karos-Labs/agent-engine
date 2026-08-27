@@ -56,6 +56,21 @@ export interface CostAndTokenAttributes {
   jobId?: string;
   stepId?: string;
   operation?: string;
+  /**
+   * Which hop of the fallback chain served this step, and the adapter that
+   * answered (SCRUM-360 / SCRUM-361 item 3).
+   *
+   * This is a PRECONDITION on the billing reconciliation, not a nicety. A
+   * Claude call served by the fallback is billed by ANTHROPIC, not by Google —
+   * so a query comparing `agent_runs_bi` costs against a Vertex bill, with no
+   * way to exclude fallback-served rows, reports a delta that means nothing.
+   * In the two production runs measured on 2026-08-27, 11 model calls went
+   * that way.
+   *
+   * Absent when no chain was involved, which is the common case.
+   */
+  servedByHop?: string;
+  servingAdapter?: string;
 }
 
 function setIdentityAttributes(span: Span, attrs: IdentityAttributes): void {
@@ -107,6 +122,8 @@ async function insertAgentRunRow(attrs: CostAndTokenAttributes): Promise<void> {
           errorDetails: null,
           timestamp: new Date().toISOString(),
           operation: attrs.operation ?? null,
+          servedByHop: attrs.servedByHop ?? null,
+          servingAdapter: attrs.servingAdapter ?? null,
           jobId: attrs.jobId ?? null,
           stepId: attrs.stepId ?? null,
           // Every row this package writes is engine-originated — the

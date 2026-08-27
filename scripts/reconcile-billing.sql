@@ -77,13 +77,20 @@ WITH billed AS (
 -- agent-platform-model-ids.ts normalises the `@`-dated Vertex spelling back to
 -- the hyphenated canonical form before telemetry sees it.
 --
--- One known exclusion: rows served by the FALLBACK adapter are still
--- `claude-*` and still billed — but by Anthropic directly, not by Google. In
--- the two production runs measured on 2026-08-27, 11 of the model calls went
--- that way. So `computed_cost` here OVERSTATES what Google should bill, and
--- the delta must be read with that in mind. Splitting it needs `servedBy.hop`,
--- which lives in the Firestore step record and not in this table — recorded as
--- a limitation rather than papered over.
+-- FALLBACK ROWS ARE EXCLUDED, and this is load-bearing. A Claude call served
+-- by the fallback is still `claude-*` and still costs money — but it is billed
+-- by ANTHROPIC, not by Google, so including it would inflate the engine side
+-- against a Google bill that never saw it. In the two production runs measured
+-- on 2026-08-27, 11 model calls went that way.
+--
+-- `servedByHop` / `servingAdapter` were added to this table for exactly this
+-- (SCRUM-360 → SCRUM-361 item 3). Rows written before they existed have NULL,
+-- which the filter below treats as Vertex-served — correct for historical rows,
+-- since the columns postdate them and the fallback share was not separable then
+-- either. Restrict the window to after they were populated for a clean delta.
+--
+-- The excluded spend is not lost: it is the second bill, quantified in the
+-- companion query at the bottom of this file.
 computed AS (
   SELECT
     DATE(timestamp)   AS day,
@@ -95,6 +102,8 @@ computed AS (
   WHERE timestamp >= TIMESTAMP('2026-08-01')
     AND timestamp <  TIMESTAMP('2026-09-01')
     AND LOWER(model) LIKE 'claude%'
+    -- Vertex-billed only. NULL = pre-column row, treated as primary.
+    AND (servedByHop IS NULL OR servedByHop = 'primary')
   GROUP BY day
 )
 
@@ -131,3 +140,22 @@ ORDER BY day;
 --   pubsub-21091608153312771   $0.128309   (linkedin,  2026-08-27, and this
 --                                           one's BigQuery row sum matches the
 --                                           run record to the cent)
+
+-- ============================================================================
+-- COMPANION: THE SECOND BILL (SCRUM-361 task 5)
+-- ============================================================================
+-- Claude spend that went to the DIRECT-ANTHROPIC hop. This is billed on an
+-- Anthropic invoice against ANTHROPIC_API_KEY, not by Google, and nothing on
+-- the board currently reconciles it. Run it alongside the query above; the two
+-- should sum to total Claude spend.
+--
+-- SELECT
+--   DATE(timestamp)      AS day,
+--   servingAdapter,
+--   COUNT(*)             AS calls,
+--   ROUND(SUM(costUsd), 6) AS anthropic_billed_estimate
+-- FROM `PROJECT.bi_telemetry.agent_runs_bi`
+-- WHERE LOWER(model) LIKE 'claude%'
+--   AND servedByHop IS NOT NULL AND servedByHop != 'primary'
+-- GROUP BY day, servingAdapter
+-- ORDER BY day;
