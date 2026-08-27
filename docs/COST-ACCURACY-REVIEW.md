@@ -129,3 +129,50 @@ If it becomes a monthly ritual that always says "matched", it has stopped being
 a measurement. Two things keep it honest: step 3 leaves the repo and can
 contradict us, and step 5 makes a silent review indistinguishable from an absent
 one — which it should be.
+
+## Observability that exists outside this repo
+
+Created by hand, so recorded here — none of it is in version control, and the
+next person to look will otherwise assume it does not exist.
+
+### `model_failover` log-based metric (SCRUM-360 acceptance 2)
+
+Created in **both** `karoscmo` and `karoscmo-prep`:
+
+```bash
+gcloud logging metrics create model_failover   --description="ResilientClaudeAdapter failover events"   --log-filter='jsonPayload.event="model.failover"'
+```
+
+It counts the stable `event` string rather than message text, so it survives a
+wording change. This is the only rate signal for the Claude path — see below.
+
+### Claude on Vertex is unmetered by Google (SCRUM-361)
+
+`@anthropic-ai/vertex-sdk/client.js:194` issues `rawPredict` /
+`streamRawPredict`, not the standard publisher `predict` path. The
+`publisher/online_serving/*` metric series are populated from the standard path
+only, so **Claude does not appear in them at all** — confirmed against a
+production window where our own rows prove the calls happened.
+
+Quota metrics are equally blind: `serviceruntime.googleapis.com/quota/exceeded`
+returned zero series over 7 days while `model.failover` logged 11 real 429s.
+
+Practical consequence: `agent_runs_bi` and the failover metric are not the best
+signals for the Claude path, they are the ONLY ones. Treat them as primary
+instruments.
+
+### The telemetry sink can now be checked without grepping logs
+
+`GET /api/v1/diagnostics/capabilities` returns a `telemetrySink` block
+(`attempted` / `succeeded` / `failed` / `lastError`). Production wrote **zero**
+rows for its entire life before SCRUM-372, because the runtime SA had no grant
+on the dataset and every denial was swallowed. If `failed` is climbing and
+`succeeded` is zero, that is the same failure recurring.
+
+### Billing reconciliation is still blocked
+
+`billing_export` exists as a dataset with **no tables** in both projects, and
+the two bill to different accounts (`01CD98-A99719-71B855`,
+`01DD27-5303C6-631391`). Until the Cloud Billing BigQuery export is enabled in
+the Console — it cannot be enabled by API — step 3 of the review above cannot
+run, and every engine cost figure remains unreconciled against reality.
