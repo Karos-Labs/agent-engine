@@ -94,7 +94,16 @@ function serializeOneStep(
     return { stepId: descriptor.stepId, type: descriptor.type, label: descriptor.label, status: "failed", durationMs: 0, error: "step did not run" };
   }
 
-  if (record.status === "failed") {
+  // AU67: `tooling_error` joins `failed` here. Both are FAULTS — one thrown,
+  // one correctly reported as an outcome — and until SCRUM-365 the second was
+  // recorded as `completed` and rendered as `done`, which is how a run could
+  // show a green render step it had never produced.
+  //
+  // `content_fail` and `not_available` deliberately do NOT join them. A
+  // revision loop ASKS for content_fail and retries; marking every one a failed
+  // step would make healthy loops read as broken, which is the same conflation
+  // in the opposite direction.
+  if (record.status === "failed" || record.status === "tooling_error") {
     return {
       stepId: descriptor.stepId,
       type: descriptor.type,
@@ -173,7 +182,17 @@ export function serializeToDynamicAgentRunReport(params: SerializeToDynamicAgent
     return acc;
   }, []);
 
-  const failedIndex = steps.findIndex((step) => step.status === "failed");
+  // AU67: a run that COMPLETED has no failed step, by definition — whatever
+  // failed was recovered. This guard is a no-op against pre-SCRUM-365 data
+  // (only a thrown step could be `failed`, and a throw aborted the run) and
+  // becomes load-bearing now that a recovered `tooling_error` attempt can sit
+  // inside a successful run.
+  //
+  // It matters because of what `failedStepId` DRIVES: the portal renders every
+  // step after it as "skipped" and shows a partial-output banner
+  // (`dynamic-agent-step-progress.tsx`). Setting it on a run that finished
+  // would mislabel the rest of a healthy run.
+  const failedIndex = params.runRecord?.status === "completed" ? -1 : steps.findIndex((step) => step.status === "failed");
 
   return {
     specId: params.specId,

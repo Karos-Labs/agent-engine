@@ -14,7 +14,6 @@ import { createServiceIdentityMiddleware, type ServiceIdentityConfig } from "./a
 export interface CreateAppDeps extends RunsRouterDeps {
   durableStore: DurableStepStore;
   /** See `routes/queue.ts`'s `QueueRouterDeps` — all optional, so an app built with none of this still boots (the push route just 500s if ever hit, same as any other unconfigured-dependency mistake). */
-  queuePushToken?: string;
   queuePushAudienceUrl?: string;
   verifyPushIdToken?: VerifyPushIdToken;
   /**
@@ -64,7 +63,6 @@ export function createApp(deps: CreateAppDeps): Application {
       durableStore: deps.durableStore,
       runtimeDeps: deps.runtimeDeps,
       agentDefinitionStore,
-      ...(deps.queuePushToken !== undefined ? { pushToken: deps.queuePushToken } : {}),
       ...(deps.queuePushAudienceUrl !== undefined ? { pushAudienceUrl: deps.queuePushAudienceUrl } : {}),
       ...(deps.verifyPushIdToken !== undefined ? { verifyPushIdToken: deps.verifyPushIdToken } : {}),
     }),

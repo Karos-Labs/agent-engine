@@ -26,8 +26,14 @@ describe("createModelRouterFromEnv", () => {
       expect(resolvePinnedRouteProvider({ MODEL_PROVIDER: "VERTEX" })).toBe("agent-platform");
     });
 
-    it("selects the direct Anthropic route on MODEL_PROVIDER=anthropic", () => {
-      expect(resolvePinnedRouteProvider({ MODEL_PROVIDER: "anthropic" })).toBe("anthropic");
+    it("REFUSES MODEL_PROVIDER=anthropic, naming the removal rather than reading as a typo", () => {
+      // SCRUM-358 part 2. This value is set on real machines and in real shell
+      // histories. Resolving it quietly to the Vertex route would let a
+      // deployment that asked for the direct API believe it got one, so the
+      // error has to say the route was REMOVED — which is also why it is not
+      // folded into the unknown-value branch below.
+      expect(() => resolvePinnedRouteProvider({ MODEL_PROVIDER: "anthropic" })).toThrow(/REMOVED in SCRUM-358/);
+      expect(() => resolvePinnedRouteProvider({ MODEL_PROVIDER: "anthropic" })).toThrow(/Vertex only/);
     });
 
     it("rejects an unknown MODEL_PROVIDER instead of silently falling back to a route nobody asked for", () => {
@@ -75,19 +81,18 @@ describe("createModelRouterFromEnv", () => {
     });
   });
 
-  describe("direct Anthropic route (MODEL_PROVIDER=anthropic)", () => {
-    it("constructs when ANTHROPIC_API_KEY is present", () => {
-      const router = createModelRouterFromEnv({
-        env: { MODEL_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "sk-ant-test-key" },
-      });
-      expect(router).toBeInstanceOf(DefaultModelRouter);
+  describe("the deleted direct-Anthropic route (SCRUM-358)", () => {
+    it("refuses to build a router, WITH a key present — a valid key must not resurrect the route", () => {
+      // The direction that matters. Refusing when the key is missing proves
+      // nothing; anyone would. This proves that holding a working
+      // ANTHROPIC_API_KEY is no longer sufficient to reach Anthropic directly.
+      expect(() =>
+        createModelRouterFromEnv({ env: { MODEL_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "sk-ant-test-key" } }),
+      ).toThrow(/REMOVED in SCRUM-358/);
     });
 
-    it("throws a clear error, naming the default route, when ANTHROPIC_API_KEY is missing", () => {
-      expect(() => createModelRouterFromEnv({ env: { MODEL_PROVIDER: "anthropic" } })).toThrow(
-        /ANTHROPIC_API_KEY is required/,
-      );
-      expect(() => createModelRouterFromEnv({ env: { MODEL_PROVIDER: "anthropic" } })).toThrow(/Agent Platform/);
+    it("refuses with no key too, for the same reason and with the same message", () => {
+      expect(() => createModelRouterFromEnv({ env: { MODEL_PROVIDER: "anthropic" } })).toThrow(/REMOVED in SCRUM-358/);
     });
   });
 
@@ -162,12 +167,12 @@ describe("createModelRouterFromEnv — gemini vendor adapter", () => {
   });
 
   it("router still builds fine with no gemini configuration at all, but a gemini-vendor call fails loudly and specifically", async () => {
-    // No GEMINI_VERTEX_PROJECT_ID/GEMINI_API_KEY, and the agent-platform
-    // sub-route's own GOOGLE_CLOUD_PROJECT fallback is deliberately absent
-    // here too by using MODEL_PROVIDER=anthropic for the required Anthropic
-    // adapter instead, so nothing at all configures Gemini.
+    // No GEMINI_VERTEX_PROJECT_ID and no GEMINI_API_KEY. Claude's own Vertex
+    // project is named explicitly rather than via GOOGLE_CLOUD_PROJECT, whose
+    // fallback would configure the Gemini sub-route as a side effect and
+    // defeat the point of the test.
     const router = createModelRouterFromEnv({
-      env: { MODEL_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "sk-ant-test-key" },
+      env: { ANTHROPIC_VERTEX_PROJECT_ID: "karos-labs-prep" },
     });
     expect(router).toBeInstanceOf(DefaultModelRouter);
     expect(adapterFor(router, "gemini")).toBeUndefined();
@@ -188,14 +193,15 @@ describe("createModelRouterFromEnv — anthropic dual-layer fallback wiring", ()
     expect(adapterFor(router, "anthropic")).not.toBeInstanceOf(ResilientClaudeAdapter);
   });
 
-  it("wraps in ResilientClaudeAdapter when ANTHROPIC_API_KEY is present on the agent-platform route", () => {
-    const router = createModelRouterFromEnv({
-      env: { ...anthropicBaseline, ANTHROPIC_API_KEY: "sk-ant-test-key" },
-    });
-    expect(adapterFor(router, "anthropic")).toBeInstanceOf(ResilientClaudeAdapter);
+  it("does NOT wrap merely because an ANTHROPIC_API_KEY is lying around — the key buys nothing now", () => {
+    // Before SCRUM-358 this exact env produced a ResilientClaudeAdapter whose
+    // second hop was the direct API. A leftover key in someone's shell must
+    // not quietly change the routing shape any more.
+    const router = createModelRouterFromEnv({ env: { ANTHROPIC_VERTEX_PROJECT_ID: "karos-labs-prep", ANTHROPIC_API_KEY: "sk-ant-test-key" } });
+    expect(adapterFor(router, "anthropic")).not.toBeInstanceOf(ResilientClaudeAdapter);
   });
 
-  it("wraps in ResilientClaudeAdapter when a Gemini vendor adapter is configured, even with no ANTHROPIC_API_KEY", () => {
+  it("wraps in ResilientClaudeAdapter when a Gemini vendor adapter is configured — the only thing left to fall back to", () => {
     // anthropicBaseline's own GOOGLE_CLOUD_PROJECT is enough to build the
     // Gemini agent-platform sub-route too (same fallback this repo's own
     // Claude route already relies on).
@@ -204,10 +210,8 @@ describe("createModelRouterFromEnv — anthropic dual-layer fallback wiring", ()
     expect(adapterFor(router, "anthropic")).toBeInstanceOf(ResilientClaudeAdapter);
   });
 
-  it("does NOT wrap on the direct anthropic route — that route already IS the fallback target", () => {
-    const router = createModelRouterFromEnv({
-      env: { MODEL_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "sk-ant-test-key" },
-    });
+  it("leaves a bare Agent Platform adapter when nothing configures Gemini — not a wrapper that does nothing", () => {
+    const router = createModelRouterFromEnv({ env: { ANTHROPIC_VERTEX_PROJECT_ID: "karos-labs-prep" } });
     expect(adapterFor(router, "anthropic")).not.toBeInstanceOf(ResilientClaudeAdapter);
   });
 });

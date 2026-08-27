@@ -4,6 +4,7 @@ import type { StepRecord } from "../adapters/types.js";
 import type { WorkflowRuntime } from "./context.js";
 import { markStepRunning, scopedStepId, sumRunCost } from "./context.js";
 import { WorkflowBudgetExceeded, WorkflowStepTimeout } from "./signals.js";
+import { isCheckpointedStepStatus } from "../adapters/types.js";
 
 /**
  * The bound on a single `step.agent` call absent an explicit
@@ -69,7 +70,7 @@ export async function runStepAgent<TOutput>(
 ): Promise<AgentExecutionResult<TOutput>> {
   const stepId = scopedStepId(runtime, id);
   const existing = await runtime.store.getStep(runtime.runId, stepId);
-  if (existing && existing.status === "completed") {
+  if (existing && isCheckpointedStepStatus(existing.status)) {
     return existing.output as AgentExecutionResult<TOutput>;
   }
 

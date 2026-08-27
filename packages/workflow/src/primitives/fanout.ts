@@ -3,6 +3,7 @@ import type { SlotRecord } from "../adapters/types.js";
 import type { SlotOutcome, WorkflowContext, WorkflowRuntime } from "./context.js";
 import { buildWorkflowContext } from "./context.js";
 import { AwaitingGateSignal, WorkflowBlockedIntake, WorkflowBudgetExceeded, WorkflowHeld } from "./signals.js";
+import { isCheckpointedStepStatus } from "../adapters/types.js";
 
 const RUN_LEVEL_SIGNALS = [AwaitingGateSignal, WorkflowBudgetExceeded, WorkflowHeld, WorkflowBlockedIntake] as const;
 
@@ -37,7 +38,7 @@ export async function runFanout<TItem, TResult>(
     items.map(async (item, index): Promise<SlotOutcome<TResult>> => {
       const slotId = `${id}__slot_${index}`;
       const existing = await runtime.store.getSlot(runtime.runId, slotId);
-      if (existing && existing.status === "completed") {
+      if (existing && isCheckpointedStepStatus(existing.status)) {
         return { slotId, status: "completed", output: existing.output as TResult };
       }
 

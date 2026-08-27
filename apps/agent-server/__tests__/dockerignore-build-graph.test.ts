@@ -8,6 +8,35 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 /**
  * The Docker build context must contain every module the image build runs.
  *
+ * ## The category, not the anecdote
+ *
+ * This codebase exists in FIVE copies, and only the first is ever read in
+ * review:
+ *
+ *   1. source          — what people read, typecheck and test
+ *   2. dist/           — compiled output; cross-package imports resolve HERE
+ *   3. build context   — what .dockerignore lets into `docker build`
+ *   4. the image       — what actually runs in Cloud Run
+ *   5. the environment — which commit a given service is actually serving
+ *
+ * Copy 5 is the reason prep is only ever deployed from `main` and never by
+ * `workflow_dispatch` on a branch: after a dispatch, "what is running in prep"
+ * cannot be answered from git. The others are at least derivable from a commit;
+ * that one would not be.
+ *
+ * Each can disagree with source, silently, and each disagreement has its own
+ * failure mode with no local signal. AU54 (SCRUM-351) closed copy 2 in both
+ * directions — stale output, and orphaned output whose source was deleted —
+ * and was then broken by copy 3: the split that fixed the stale-dist problem
+ * left `workspace-graph.mjs` outside the build context, so the image build
+ * died on a file that exists, typechecks, and runs fine from a checkout.
+ *
+ * The lesson is not "remember the carve-out". It is that a change touching the
+ * FILE LAYOUT of anything the build runs has to be checked against every copy,
+ * because four of the five are invisible to review. Guards for these belong
+ * with the thing they protect and must DERIVE what they check rather than
+ * restate it — a hand-maintained list is one more copy with the same problem.
+ *
  * `.dockerignore` excludes all of `scripts/` and then carves back the few files
  * the builder stage needs. AU54 split `build-workspaces.mjs`'s discovery and
  * topological sort into `workspace-graph.mjs` and did not add the second

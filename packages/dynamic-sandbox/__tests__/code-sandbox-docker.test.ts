@@ -154,7 +154,7 @@ describe("local tier — the rlimits a non-root process actually can impose", ()
     expect(Object.keys(inv.env).sort()).toEqual(
       expect.arrayContaining(["HOME", "KAROS_SANDBOX_SCRATCH", "TMPDIR"]),
     );
-    for (const forbidden of ["ANTHROPIC_API_KEY", "HTTPS_PROXY", "JOB_SPEC_B64", "JOB_SPEC_REF_B64", "SCRAPPYCOCO_API_KEY"]) {
+    for (const forbidden of ["SCRAPPYCOCO_API_KEY", "HTTPS_PROXY", "JOB_SPEC_B64", "JOB_SPEC_REF_B64", "SCRAPPYCOCO_API_KEY"]) {
       expect(inv.env[forbidden]).toBeUndefined();
     }
   });

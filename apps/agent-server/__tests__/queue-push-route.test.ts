@@ -42,7 +42,7 @@ describe("POST /api/v1/queue/pubsub-push", () => {
     await env.cleanup();
   });
 
-  describe("permissive local-dev config (no pushToken / pushAudienceUrl)", () => {
+  describe("permissive local-dev config (no pushAudienceUrl)", () => {
     let app: Application;
 
     beforeEach(() => {
@@ -96,29 +96,6 @@ describe("POST /api/v1/queue/pubsub-push", () => {
       expect(second.status).toBe(200);
       expect(second.body.runId).toBe(first.body.runId);
       expect(callCount()).toBe(callCountAfterFirst);
-    });
-  });
-
-  describe("pushToken configured", () => {
-    let app: Application;
-
-    beforeEach(() => {
-      app = createApp({ durableStore: env.durableStore, runtimeDeps: env.runtimeDeps, queuePushToken: "shared-secret-123" });
-    });
-
-    it("rejects a request with no ?token= with 401", async () => {
-      const res = await request(app).post(PUSH_PATH).send(envelope(validPayload, "token-test-1"));
-      expect(res.status).toBe(401);
-    });
-
-    it("rejects a request with the wrong ?token= with 401", async () => {
-      const res = await request(app).post(`${PUSH_PATH}?token=wrong-secret`).send(envelope(validPayload, "token-test-2"));
-      expect(res.status).toBe(401);
-    });
-
-    it("succeeds with the correct ?token=", async () => {
-      const res = await request(app).post(`${PUSH_PATH}?token=shared-secret-123`).send(envelope(validPayload, "token-test-3"));
-      expect(res.status).toBe(200);
     });
   });
 
