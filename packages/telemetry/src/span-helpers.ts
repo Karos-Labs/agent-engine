@@ -87,7 +87,11 @@ export function recordCostAndTokens(span: Span, attrs: CostAndTokenAttributes): 
 async function insertAgentRunRow(attrs: CostAndTokenAttributes): Promise<void> {
   try {
     const table = await biTable("agent_runs_bi");
-    if (!table) return; // BigQuery not configured — silent no-op, matches getTracer()'s contract
+    // Not counted as an attempt: BigQuery genuinely unconfigured is a
+    // deployment choice, not a failure, and conflating it with a denied insert
+    // would put the two indistinguishable states back together again.
+    if (!table) return;
+    sinkHealth.attempted += 1;
     await table.insert(
       [
         {
@@ -113,11 +117,61 @@ async function insertAgentRunRow(attrs: CostAndTokenAttributes): Promise<void> {
       ],
       { ignoreUnknownValues: true, skipInvalidRows: false },
     );
+    sinkHealth.succeeded += 1;
   } catch (err) {
+    // AU72 / SCRUM-372. This used to log at WARNING and stop there, and that
+    // silence — not the missing IAM role — is the actual defect. PRODUCTION
+    // NEVER WROTE A SINGLE TELEMETRY ROW, for its entire life, because
+    // `agent-engine-sa@karoscmo` had no grant on the dataset. Every insert was
+    // denied, every denial was swallowed, and every deploy reported success.
+    // Prep had the grant and 329 rows, so the sink anyone thought to check was
+    // the one that worked.
+    //
+    // Three changes, each closing one way it stayed invisible:
+    //   - ERROR, not WARNING. A permission denial is not a warning.
+    //   - a stable `event` string, so a log-based metric can alert on a rate:
+    //       gcloud logging metrics create telemetry_insert_failed     //         --log-filter='jsonPayload.event="telemetry.insert_failed"'
+    //   - counted in `sinkHealth`, which the diagnostics endpoint reports, so
+    //     a human looking at "what is switched off" sees a dead sink without
+    //     knowing to grep for it.
+    //
+    // Still non-fatal: telemetry must never take down the run it describes.
+    // Loud is the fix, not throwing.
+    sinkHealth.failed += 1;
+    sinkHealth.lastError = describeError(err);
     console.error(
-      JSON.stringify({ severity: "WARNING", message: "agent_runs_bi insert failed", error: describeError(err), runId: attrs.runId }),
+      JSON.stringify({
+        severity: "ERROR",
+        event: "telemetry.insert_failed",
+        message: "agent_runs_bi insert failed — this run's cost and token telemetry is LOST, not delayed",
+        error: sinkHealth.lastError,
+        runId: attrs.runId,
+        failedSoFar: sinkHealth.failed,
+      }),
     );
   }
+}
+
+/**
+ * Whether the BigQuery telemetry sink is actually writing (AU72 / SCRUM-372).
+ *
+ * Process-local and deliberately simple: the question it answers is "has this
+ * instance ever successfully written a row, and how many has it lost". That is
+ * enough to distinguish the three states that previously looked identical from
+ * outside — writing fine, never tried, and failing every time.
+ */
+export interface TelemetrySinkHealth {
+  attempted: number;
+  succeeded: number;
+  failed: number;
+  lastError?: string;
+}
+
+const sinkHealth: TelemetrySinkHealth = { attempted: 0, succeeded: 0, failed: 0 };
+
+/** A snapshot of the sink's health, for the diagnostics endpoint. */
+export function telemetrySinkHealth(): Readonly<TelemetrySinkHealth> {
+  return { ...sinkHealth };
 }
 
 function runInSpan<T>(name: string, setup: (span: Span) => void, fn: (span: Span) => Promise<T>): Promise<T> {
