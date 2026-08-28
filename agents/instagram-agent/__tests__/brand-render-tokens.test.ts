@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildBrandHeadHtml, contrastRatio, deriveBrandRenderTokens } from "../src/workflow/brand-render-tokens.js";
+import { buildBrandHeadHtml, contrastRatio, deriveBrandRenderTokens, paletteForSlide } from "../src/workflow/brand-render-tokens.js";
 import type { BrandTokens } from "../src/workflow/types.js";
 
 const baseTokens: BrandTokens = { templateDir: "t", slideTemplate: "slide.html" };
@@ -154,5 +154,146 @@ describe("buildBrandHeadHtml", () => {
     expect(head).toContain('content: "{ "');
     expect(head).toContain("var(--accent)");
     expect(head).not.toMatch(/#(?!272A35|F4F2EC)[0-9a-fA-F]{6}/); // no foreign hardcoded hexes
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// SCRUM-323 [AU39] — seeded palette variation across slides and covers
+// ─────────────────────────────────────────────────────────────────────────
+
+/** A kit with THREE legible in-kit accents — the only shape that can actually rotate. */
+function multiAccentBrand(): Record<string, unknown> {
+  return {
+    accent: "#A5E82B",
+    colors: {
+      primaryAccent: "#A5E82B",
+      secondaryAccent: "#FF5B5F",
+      neutralDark: "#272A35",
+      neutralLight: "#F4F2EC",
+    },
+    dominantColors: [
+      { hex: "#272A35", dominanceRank: 1, role: "ground" },
+      { hex: "#A5E82B", dominanceRank: 2, role: "accent" },
+      { hex: "#41C6FF", dominanceRank: 3, role: "accent" },
+    ],
+    visualStyle: "Dark Mode",
+  };
+}
+
+describe("palette ring: what the rotation is allowed to draw from", () => {
+  it("anchors the ring on the brand accent and appends the other legible kit colors", () => {
+    const tokens = deriveBrandRenderTokens(multiAccentBrand(), baseTokens)!;
+    expect(tokens.palette).toEqual(["#A5E82B", "#FF5B5F", "#41C6FF"]);
+  });
+
+  it("a one-accent kit yields a one-color ring — it CANNOT rotate, and says so", () => {
+    // The Geektime fixture's only non-ground kit color is its accent.
+    const tokens = deriveBrandRenderTokens(geektimeishBrand(), baseTokens)!;
+    expect(tokens.palette).toEqual(["#A5E82B"]);
+    const a = paletteForSlide(tokens, { index: 0 });
+    const b = paletteForSlide(tokens, { index: 3 });
+    expect(a?.rotates).toBe(false);
+    expect(a?.accent).toBe("#A5E82B");
+    expect(b?.accent).toBe("#A5E82B");
+  });
+
+  it("GUARD: a kit color too close to the ground is refused, not promoted to an accent", () => {
+    const brand = {
+      colors: { primaryAccent: "#FFD166", neutralDark: "#101418", neutralLight: "#F7F7F7" },
+      dominantColors: [
+        { hex: "#101418", dominanceRank: 1, role: "ground" },
+        { hex: "#161A1E", dominanceRank: 2, role: "accent" },
+        { hex: "#FFD166", dominanceRank: 3, role: "accent" },
+      ],
+    };
+    // This is what makes the guard fail: #161A1E is a real kit color with a
+    // real "accent" role, and it is still refused.
+    expect(contrastRatio("#161A1E", "#101418")).toBeLessThan(3);
+    const tokens = deriveBrandRenderTokens(brand, baseTokens)!;
+    expect(tokens.palette).toEqual(["#FFD166"]);
+    expect(tokens.palette).not.toContain("#161A1E");
+  });
+
+  it("with no derivable ground there is nothing to check legibility against, so nothing is promoted", () => {
+    const tokens = deriveBrandRenderTokens(
+      { accent: "#A5E82B", colors: { primaryAccent: "#A5E82B", secondaryAccent: "#FF5B5F" } },
+      baseTokens,
+    )!;
+    expect(tokens.cssVars["--bg"]).toBeUndefined();
+    expect(tokens.palette).toEqual(["#A5E82B"]);
+  });
+
+  it("drops malformed and duplicate kit colors instead of fixing them", () => {
+    const brand = {
+      ...multiAccentBrand(),
+      colors: {
+        primaryAccent: "#A5E82B",
+        secondaryAccent: "rgb(255,91,95)", // not a hex — dropped, never parsed
+        tertiaryAccent: "#a5e82b", // same color, different case — deduped
+        neutralDark: "#272A35",
+        neutralLight: "#F4F2EC",
+      },
+    };
+    const tokens = deriveBrandRenderTokens(brand, baseTokens)!;
+    expect(tokens.palette).toEqual(["#A5E82B", "#41C6FF"]);
+  });
+});
+
+describe("paletteForSlide: seeded, reproducible rotation", () => {
+  const tokens = () => deriveBrandRenderTokens(multiAccentBrand(), baseTokens)!;
+
+  it("steps one place per slide, so no two adjacent slides twin", () => {
+    const t = tokens();
+    const accents = [0, 1, 2, 3, 4, 5].map((index) => paletteForSlide(t, { index })!.accent);
+    expect(accents).toEqual(["#A5E82B", "#FF5B5F", "#41C6FF", "#A5E82B", "#FF5B5F", "#41C6FF"]);
+    for (let i = 1; i < accents.length; i++) expect(accents[i]).not.toBe(accents[i - 1]);
+  });
+
+  it("never leaves the Brand Kit — every slot, every seed, both surfaces", () => {
+    const t = tokens();
+    for (const seed of ["post-1", "post-2", "", "0"]) {
+      for (const surface of ["slide", "cover"] as const) {
+        for (let index = -3; index < 24; index++) {
+          const slot = paletteForSlide(t, { index, surface, seed })!;
+          expect(t.palette).toContain(slot.accent);
+          expect(t.palette).toContain(slot.secondary);
+        }
+      }
+    }
+  });
+
+  it("is reproducible: the same slot renders the same way every time", () => {
+    const first = paletteForSlide(tokens(), { index: 7, surface: "cover", seed: "post-4711" });
+    for (let n = 0; n < 50; n++) {
+      // A freshly derived token object, exactly as a second run would build it.
+      expect(paletteForSlide(tokens(), { index: 7, surface: "cover", seed: "post-4711" })).toEqual(first);
+    }
+  });
+
+  it("the seed actually moves the phase — it is not decoration", () => {
+    const t = tokens();
+    const atSlideZero = new Set(
+      ["post-1", "post-2", "post-3", "post-4", "post-5", "post-6"].map((seed) => paletteForSlide(t, { index: 0, seed })!.accent),
+    );
+    expect(atSlideZero.size).toBeGreaterThan(1);
+  });
+
+  it("a video cover is phase-offset from slide 0 of the same post", () => {
+    const t = tokens();
+    const cover = paletteForSlide(t, { index: 0, surface: "cover", seed: "post-9" })!;
+    const slide0 = paletteForSlide(t, { index: 0, surface: "slide", seed: "post-9" })!;
+    expect(cover.accent).not.toBe(slide0.accent);
+  });
+
+  it("secondary is the next color on the ring, so a slide never pairs a color with itself", () => {
+    const t = tokens();
+    for (let index = 0; index < 9; index++) {
+      const slot = paletteForSlide(t, { index })!;
+      expect(slot.secondary).not.toBe(slot.accent);
+    }
+  });
+
+  it("an empty ring rotates nothing at all rather than inventing a color", () => {
+    expect(paletteForSlide({ palette: [] }, { index: 0 })).toBeUndefined();
   });
 });
