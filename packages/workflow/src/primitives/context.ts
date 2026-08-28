@@ -3,7 +3,7 @@ import type { DurableStepStore, StepKind, WorkflowBudget } from "../adapters/typ
 import { runStepCode } from "./step-code.js";
 import { runStepAgent } from "./step-agent.js";
 import { runStepGate } from "./step-gate.js";
-import { runFanout } from "./fanout.js";
+import { runFanout, type FanoutOptions } from "./fanout.js";
 
 export type GateDefinition = Pick<Gate, "kind" | "payload" | "requiredRole" | "timeout">;
 export type GateResponse = NonNullable<Gate["response"]>;
@@ -84,11 +84,22 @@ export interface WorkflowContext {
     gate(id: string, def: GateDefinition): Promise<GateResponse>;
   };
 
-  /** Runs `fn` once per item, each in its own checkpointed slot (RFC-01 §8.1/§8.2) — per-slot retry and cost attribution, isolated from its siblings. */
+  /**
+   * Runs `fn` once per item, each in its own checkpointed slot (RFC-01
+   * §8.1/§8.2) — per-slot retry and cost attribution, isolated from its
+   * siblings.
+   *
+   * At most `options.concurrency` slots are in flight at once, defaulting to
+   * `DEFAULT_FANOUT_CONCURRENCY` (AU5 / SCRUM-316). Results are returned in
+   * ITEM ORDER, not completion order. A call site fanning out over a
+   * rate-limited third-party route should state its own budget explicitly:
+   * `wf.fanout(id, items, fn, { concurrency: 3 })`.
+   */
   fanout<TItem, TResult>(
     id: string,
     items: readonly TItem[],
     fn: (item: TItem, slotCtx: WorkflowContext, index: number) => Promise<TResult>,
+    options?: FanoutOptions,
   ): Promise<Array<SlotOutcome<TResult>>>;
 }
 
@@ -150,6 +161,6 @@ export function buildWorkflowContext(runtime: WorkflowRuntime): WorkflowContext 
       agent: (id, agent, input) => runStepAgent(runtime, id, agent, input),
       gate: (id, def) => runStepGate(runtime, id, def),
     },
-    fanout: (id, items, fn) => runFanout(runtime, id, items, fn),
+    fanout: (id, items, fn, options) => runFanout(runtime, id, items, fn, options),
   };
 }

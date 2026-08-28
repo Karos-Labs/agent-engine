@@ -121,9 +121,14 @@ export class WorkflowConcurrentRunError extends Error {
  * catch-all exactly like any other tooling failure and resolves the run to
  * `degraded` — which *is* resumable, so a retry can actually happen instead
  * of requiring someone to notice and hand-fix the Firestore doc. The
- * agent call itself is not cancelled (there is no cooperative cancellation
- * path through a ReAct loop's tool calls), so this bounds how long a run can
- * be wedged rather than freeing whatever resource the hung call was using.
+ * As of AU5 / SCRUM-316 the engine also ABORTS the step's `AbortSignal` with
+ * this error as the abort reason, and hands that signal to the agent on
+ * `AgentContext.metadata` (`stepAbortSignal(ctx)`). Read that for what it is:
+ * the cancellation is now PROPAGATED, not yet CONSUMED — `BaseAgent`'s ReAct
+ * loop in `@agent-engine/core` does not check it, so an in-flight provider
+ * call still runs to completion. Today this still mostly bounds how long a
+ * run can be wedged; it stops doing only that the moment a consumer reads
+ * the signal.
  */
 export class WorkflowStepTimeout extends Error {
   constructor(
