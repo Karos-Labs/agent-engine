@@ -6,6 +6,7 @@ import type { AgentContext } from "@agent-engine/core";
 import { WorkspaceStore } from "@agent-engine/tool-common";
 import { createWriteReport } from "../src/write-report.js";
 import { createGetReport } from "../src/get-report.js";
+import { createMemoryClientReportStore } from "../src/client-report-store.js";
 import { computeOverallScore, gradeFor } from "../src/scoring.js";
 import { DIMENSION_KEYS, type DimensionScore, type IntelReportOutput } from "../src/types.js";
 
@@ -83,7 +84,14 @@ describe("intel.writeReport / intel.getReport", () => {
   beforeEach(async () => {
     rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "karos-intel-"));
     store = new WorkspaceStore(rootDir);
-    tools = { "intel.writeReport": createWriteReport(store), "intel.getReport": createGetReport(store) };
+    // SCRUM-267: `intel.writeReport` now requires a client-report store — the
+    // portal's `clientReports/{clientId}` document is the deliverable, and the
+    // tool reports `not_available` rather than degrading to a workspace-only
+    // write (which is the defect the ticket names). Tests get the in-memory one.
+    tools = {
+      "intel.writeReport": createWriteReport(store, createMemoryClientReportStore()),
+      "intel.getReport": createGetReport(store),
+    };
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
   });

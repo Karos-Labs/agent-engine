@@ -9,6 +9,7 @@ import {
   createLandingEngineConfigFromEnv,
 } from "@agent-engine/tools";
 import { createServerMediaStore, createServerArchiveStore } from "./gcs-artifact-stores.js";
+import { createServerClientReportStore } from "./client-report-store.js";
 
 /**
  * The full tools registry this server can dispatch against — every
@@ -38,12 +39,16 @@ import { createServerMediaStore, createServerArchiveStore } from "./gcs-artifact
 export function createServerTools(workspaceStore: WorkspaceStoreLike, env: Record<string, string | undefined> = process.env): AgentToolRegistry {
   const mediaStore = createServerMediaStore(env);
   const archiveStore = createServerArchiveStore(env);
+  // SCRUM-267: the portal-facing clientReports store. `undefined` with no GCP
+  // project configured, which makes `intel.writeReport` report `not_available`
+  // rather than write only to the workspace — see `client-report-store.ts`.
+  const clientReportStore = createServerClientReportStore(env);
   return {
     // `env` threaded so `research.pull` builds its real ScrappyCoco scraper
     // from SCRAPPYCOCO_API_KEY. Without it the bundle would read process.env
     // anyway, but passing it keeps this composition root the single place a
     // deployment's configuration enters the tool graph.
-    ...createAllKarosTools(workspaceStore, mediaStore, { env }),
+    ...createAllKarosTools(workspaceStore, mediaStore, { env, ...(clientReportStore ? { clientReportStore } : {}) }),
     ...createKarosVideoTools({ env, ...(mediaStore ? { mediaStore } : {}) }),
     ...createKarosLandingTools(createLandingEngineConfigFromEnv({ env }), archiveStore, workspaceStore),
     // `mediaStore` doubles as Tier 0's gs:// reader: a client's upload lives in
