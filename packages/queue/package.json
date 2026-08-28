@@ -9,6 +9,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.test.json",
+    "pretest": "node ../../scripts/check-dist-freshness.mjs",
     "test": "npm run typecheck && vitest run"
   },
   "dependencies": {

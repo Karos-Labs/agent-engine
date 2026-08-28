@@ -39,9 +39,21 @@
  *   node scripts/check-dist-freshness.mjs           # rebuild whatever is stale
  *   node scripts/check-dist-freshness.mjs --check   # report and exit 1, build nothing
  *
- * KNOWN LIMIT: this is wired as the ROOT `pretest`, so it guards `npm test`
- * from the repo root (and therefore CI). Running `vitest` inside a single
- * package directly still bypasses it.
+ * WHERE THIS IS WIRED (the KNOWN LIMIT this used to carry is now closed):
+ *
+ *   - the ROOT `pretest`, guarding `npm test` from the repo root, and therefore
+ *     CI (`.github/workflows/quality.yml` runs `npm test`);
+ *   - EVERY workspace's own `pretest`, so `npm test --workspace <pkg>` and
+ *     `npm test` inside a package directory are guarded too. That is the local
+ *     run where debugging actually happens, and it used to bypass this
+ *     entirely. Warm cost measured at ~0.12s per invocation, ~4.7s across all
+ *     39 (AU54/SCRUM-351).
+ *
+ * A bare `npx vitest run` inside a package still does not fire any npm
+ * lifecycle hook, and nothing can make it. That path is covered from the other
+ * side instead: `scripts/vitest-source-resolution.mjs` removes `dist/` from
+ * vitest's resolution altogether, so there is no stale build for it to read.
+ * Between the two, no test path resolves through an out-of-date `dist/`.
  */
 import { execSync } from "node:child_process";
 import { readdirSync, existsSync, statSync, rmSync } from "node:fs";
