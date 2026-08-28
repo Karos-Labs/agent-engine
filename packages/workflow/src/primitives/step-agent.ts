@@ -164,14 +164,17 @@ export async function runStepAgent<TOutput>(
       // (RFC-01 §5.1) — recover the split from the per-turn telemetry for the span.
       const inputTokensCached = result.steps.reduce((sum, step) => sum + step.inputTokens.cached, 0);
       const inputTokensUncached = result.steps.reduce((sum, step) => sum + step.inputTokens.uncached, 0);
-      // SCRUM-361 item 3 precondition. `servedBy` is per-TURN; a step is
-      // attributed to the fallback if ANY of its turns was, because that is the
-      // question the reconciliation asks — was any part of this cost billed by
-      // someone other than Google. The last such turn wins for the adapter
-      // name, matching how `model` already picks the last turn's model.
-      const fellOver = result.steps.filter((step) => step.servedBy && step.servedBy.hop !== "primary");
+      // SCRUM-361 item 3, precondition 1. `servedBy` is per-TURN
+      // (AgentStepTelemetry.servedBy, AU61/SCRUM-360) and is present only when
+      // a turn was NOT primary-served. A step is attributed to the fallback if
+      // ANY of its turns was — deliberately NOT the last-turn rule `model`
+      // uses above — because the question the reconciliation asks is "was any
+      // part of this cost billed by someone other than Google", and a single
+      // Anthropic-served turn makes the answer yes. Among the fallback-served
+      // turns the last one names the adapter, so a step that failed over twice
+      // reports the vendor that actually finished the work.
+      const fellOver = result.steps.filter((step) => step.servedBy !== undefined && step.servedBy.hop !== "primary");
       const servedBy = fellOver.at(-1)?.servedBy;
-
       recordCostAndTokens(span, {
         runId: runtime.runId,
         clientId: runtime.clientSlug,
@@ -192,6 +195,8 @@ export async function runStepAgent<TOutput>(
         jobId: runtime.runId,
         stepId,
         operation: "workflow_step_agent",
+        // Spread rather than `servedByHop: servedBy?.hop`: `exactOptionalPropertyTypes`
+        // is on, and an explicit `undefined` is not the same as an absent key.
         ...(servedBy ? { servedByHop: servedBy.hop, servingAdapter: servedBy.adapter } : {}),
       });
       span.setAttribute("agent_status", result.status);
