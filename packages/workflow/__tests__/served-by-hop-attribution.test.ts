@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import type { CompletionResult, ModelRouter } from "@agent-engine/core";
+import type { CompletionResult, MockAgent, ModelRouter } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "../src/index.js";
 import type { WorkflowContext } from "../src/index.js";
 import { fakeRouterSequence, makeAgent, makeSimpleAgent, DraftOutputSchema } from "./test-helpers.js";
@@ -79,7 +79,13 @@ const NOOP_TOOL = {
   execute: async () => ({ status: "success" as const, result: { ok: true } }),
 };
 
-async function runOneAgentStep(agent: Parameters<WorkflowContext["step"]["agent"]>[1]): Promise<void> {
+// Generic over the agent output, not `BaseAgent<unknown>`: SCRUM-299 added
+// `selfCritique.gateInput: (draft: TOutput) => unknown`, which makes `BaseAgent<T>`
+// INVARIANT in T — a `MockAgent<DraftOutput>` is no longer assignable to the
+// `unknown` instantiation that `Parameters<...>[1]` collapses the generic to.
+// `step.agent` itself is generic, so inferring TOutput here matches how every
+// real call site is typed.
+async function runOneAgentStep<TOutput>(agent: MockAgent<TOutput>): Promise<void> {
   const engine = new WorkflowEngine(new MemoryDurableStepStore());
   const result = await engine.run(async (wf: WorkflowContext) => wf.step.agent("draft", agent, {}), baseParams);
   expect(result.status, "the workflow itself must have completed — otherwise the telemetry call never ran").toBe("completed");
