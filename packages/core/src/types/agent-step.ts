@@ -58,6 +58,15 @@ export const AgentStepConfigSchema = z.object({
        * `platform` cannot rely on the raw draft alone.
        */
       gateArgs: z.record(z.string(), z.unknown()).optional(),
+      /**
+       * Derives the gate tool's input from the draft, for the drafts
+       * `gateArgs` can't reach because they need the draft's own content
+       * (e.g. `gate.numbersSourced` on a fix-list draft needs the fixes'
+       * text joined into one string, not the draft object itself). Must
+       * return a plain object — `base-agent.ts` rejects an array, string, or
+       * other scalar return rather than spread it into `gateArgs`.
+       */
+      gateInput: z.custom<(draft: never) => unknown>((val) => typeof val === "function", { message: "gateInput must be a function" }).optional(),
     })
     .optional(),
 });
@@ -79,6 +88,8 @@ export interface AgentStepConfig<TOutput> {
     gateTool: string;
     maxRevisions?: number;
     gateArgs?: Record<string, unknown>;
+    /** Derives the gate tool's input from the draft. Must return a plain object; see `AgentStepConfigSchema`. */
+    gateInput?: (draft: TOutput) => unknown;
   };
 }
 
