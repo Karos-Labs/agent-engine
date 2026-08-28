@@ -60,15 +60,21 @@ export interface AgentRuntimeDeps {
    * `reputation-agent`'s pulse-number/review claims and its response/seen/
    * crisis ledgers (RFC-08) need the same durable, GCS-backed
    * `WorkspaceStoreLike` every other tenant-scoped write in this server
-   * uses — `createReputationPulseWorkflow` otherwise defaults to a local
+   * uses. `createReputationPulseWorkflow` used to default to a local
    * file-backed store, which is correct for a test/single-process run but
    * would silently reset per Cloud Run instance in production (a stateless
    * deployment can never guarantee the same instance handles a pulse's
-   * claim and its later resume). Optional here only because the other nine
-   * products don't need it — every real composition root should supply the
-   * same store instance it already built for `createAllKarosTools`.
+   * claim and its later resume). It no longer defaults to anything.
+   *
+   * REQUIRED (SCRUM-328 / AU45). It was optional, and two call sites papered
+   * over the absence with `?? createWorkspaceStore()`. Both fallbacks were
+   * dormant only because every real composition root happens to pass a store;
+   * an optional field whose absence causes silent, unannounced data loss is
+   * exactly the thing being removed. Every caller must supply the same store
+   * instance it already built for `createAllKarosTools`, and the compiler now
+   * enforces that rather than a convention.
    */
-  workspaceStore?: WorkspaceStoreLike;
+  workspaceStore: WorkspaceStoreLike;
   /**
    * `instagram-agent`'s own required `repoRoot` (`publish.renderCarousel`'s
    * `assertInside` bounds-check root — every `templateDir`/`outDir`/image
@@ -163,7 +169,7 @@ export function buildWorkflowForProduct(productId: ProductId, deps: AgentRuntime
     case "tiktok-agent":
       return createTikTokAgentWorkflow(deps);
     case "reputation-agent":
-      return createReputationPulseWorkflow({ ...deps, ...(deps.workspaceStore ? { store: deps.workspaceStore } : {}) });
+      return createReputationPulseWorkflow({ ...deps, store: deps.workspaceStore });
     case "seo-geo-agent":
       return createSeoGeoAgentWorkflow(deps);
     case "intel-report-agent":

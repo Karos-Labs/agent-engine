@@ -1,0 +1,9 @@
+// MUST NOT COMPILE once AgentRuntimeDeps.workspaceStore is required (SCRUM-328).
+import type { AgentToolRegistry, ModelRouter, PromptStore } from "@agent-engine/core";
+import type { AgentRuntimeDeps } from "../src/wiring/workflows.js";
+
+declare const tools: AgentToolRegistry;
+declare const promptStore: PromptStore;
+declare const router: ModelRouter;
+
+export const deps: AgentRuntimeDeps = { tools, promptStore, router };

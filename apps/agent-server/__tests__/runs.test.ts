@@ -142,7 +142,7 @@ describe("POST /api/v1/runs/start", () => {
     // Deliberately no ["client", "config"] doc written for "bare-client".
 
     const bareDurableStore = new MemoryDurableStepStore();
-    const bareRuntimeDeps = { tools: bareTools, promptStore: env.runtimeDeps.promptStore, router: env.runtimeDeps.router };
+    const bareRuntimeDeps = { tools: bareTools, promptStore: env.runtimeDeps.promptStore, router: env.runtimeDeps.router, workspaceStore: bareStore };
     const bareApp = createApp({
       durableStore: bareDurableStore,
       runtimeDeps: bareRuntimeDeps,
