@@ -12,7 +12,10 @@ import {
   type ReputationFetchImpl,
 } from "./types.js";
 
-const TOOL_VERSION = "1.0.0";
+// 1.0.1 (SCRUM-296/AU11): appstore.ts/gbp.ts now safeParse every external
+// response at the boundary instead of trusting a bare cast (the "N/A" rating
+// -> NaN defect this ticket names) — a real behavior change for this tool.
+const TOOL_VERSION = "1.0.1";
 
 export interface CreateReputationCaptureOptions {
   /** Defaults to `process.env` — injectable so a workflow (or a test) can supply credentials without mutating the real process environment. */

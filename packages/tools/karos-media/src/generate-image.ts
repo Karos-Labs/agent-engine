@@ -5,7 +5,8 @@ import { logWarning } from "@agent-engine/telemetry";
 import { defineTool, success, contentFail, toolingError, notAvailable } from "@agent-engine/tool-common";
 import { MEDIA_CACHE_PREFIX, type FindImagesCandidate } from "./find-images.js";
 
-const TOOL_VERSION = "1.0.0";
+// 1.0.1 (SCRUM-296/AU11): removed the redundant re-parse of already-validated input.
+const TOOL_VERSION = "1.0.1";
 
 /**
  * The image-generation call, narrowed to what this tool uses so the package
@@ -248,8 +249,10 @@ export function createGenerateImage(options: {
     version: TOOL_VERSION,
     inputSchema: GenerateImageInputSchema,
     async execute(rawInput) {
-      const input = GenerateImageInputSchema.parse(rawInput);
-
+      // See find-images.ts's identical comment: `defineTool` already parsed `rawInput`
+      // against `GenerateImageInputSchema` (defaults applied) before calling this —
+      // this cast reflects that instead of a second, actually-redundant `.parse()` call.
+      const input = rawInput as z.output<typeof GenerateImageInputSchema>;
       if (options.client === undefined) {
         return notAvailable(
           "image.generate: no image-generation backend configured — set GEMINI_VERTEX_PROJECT_ID (or GOOGLE_CLOUD_PROJECT) " +

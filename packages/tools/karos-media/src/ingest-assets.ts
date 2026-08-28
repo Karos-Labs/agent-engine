@@ -4,7 +4,8 @@ import { z } from "zod";
 import { defineTool, success, contentFail, toolingError } from "@agent-engine/tool-common";
 import { MEDIA_CACHE_PREFIX, downloadImage, type FindImagesCandidate } from "./find-images.js";
 
-const TOOL_VERSION = "1.0.0";
+// 1.0.1 (SCRUM-296/AU11): removed the redundant re-parse of already-validated input.
+const TOOL_VERSION = "1.0.1";
 
 /** Reads a `gs://` object. Structurally satisfied by `GcsArtifactStoreLike`/`GcsMediaStore`. */
 export interface ObjectReader {
@@ -167,8 +168,10 @@ export function createIngestAssets(options: { reader?: ObjectReader | undefined;
     version: TOOL_VERSION,
     inputSchema: IngestAssetsInputSchema,
     async execute(rawInput) {
-      const input = IngestAssetsInputSchema.parse(rawInput);
-
+      // See find-images.ts's identical comment: `defineTool` already parsed `rawInput`
+      // against `IngestAssetsInputSchema` (defaults applied) before calling this —
+      // this cast reflects that instead of a second, actually-redundant `.parse()` call.
+      const input = rawInput as z.output<typeof IngestAssetsInputSchema>;
       const relDir = `${MEDIA_CACHE_PREFIX}/${input.runId}`;
       const absDir = path.resolve(input.repoRoot, relDir);
       const rootResolved = path.resolve(input.repoRoot);

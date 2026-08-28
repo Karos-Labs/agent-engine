@@ -15,7 +15,8 @@ import {
   type ResearchPayload,
 } from "./payload.js";
 
-const TOOL_VERSION = "1.1.0";
+// 1.1.1 (SCRUM-296/AU11): removed the redundant re-parse of already-validated input.
+const TOOL_VERSION = "1.1.1";
 
 const SOCIAL_PLATFORMS = ["x", "instagram", "reddit", "tiktok"] as const;
 
@@ -102,7 +103,10 @@ export function createPull(store: WorkspaceStoreLike, scraper?: ScraperProvider)
     version: TOOL_VERSION,
     inputSchema: PullInputSchema,
     async execute(rawInput, { ctx }) {
-      const input = PullInputSchema.parse(rawInput);
+      // See karos-media/src/find-images.ts's identical comment: `defineTool` already
+      // parsed `rawInput` against `PullInputSchema` (defaults applied) before calling
+      // this — this cast reflects that instead of a second, actually-redundant `.parse()`.
+      const input = rawInput as z.output<typeof PullInputSchema>;
       const { job, query, window, maxResults } = input;
       const windowMs = parseDurationMs(window);
       // Keyed on the QUESTION, not just the job. Keyed on the job alone, a

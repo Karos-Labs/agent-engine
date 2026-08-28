@@ -6,7 +6,8 @@ import { defineTool, success, contentFail, toolingError } from "@agent-engine/to
 import { ImageProviderError, type ImageSearchHit, type ImageSearchProvider } from "./providers.js";
 import { MEDIA_ROUTES, singleProviderSource, type ImageSource, type MediaRoute } from "./routing.js";
 
-const TOOL_VERSION = "1.0.0";
+// 1.0.1 (SCRUM-296/AU11): removed the redundant re-parse of already-validated input.
+const TOOL_VERSION = "1.0.1";
 
 /**
  * Every downloaded file lands under this repo-relative prefix. Kept in one
@@ -118,7 +119,14 @@ export function createFindImages(source: ImageSource | ImageSearchProvider, fetc
     version: TOOL_VERSION,
     inputSchema: FindImagesInputSchema,
     async execute(rawInput) {
-      const input = FindImagesInputSchema.parse(rawInput);
+      // `defineTool` already ran `FindImagesInputSchema.safeParse` before calling this —
+      // `rawInput` is genuinely the post-default OUTPUT shape at runtime; `FindImagesInput`
+      // (this function's declared parameter type) is `z.input<...>`, the pre-default shape,
+      // because that is the type a caller assembling arguments should see. Re-parsing here
+      // to get the properly-typed value was actual removed work (SCRUM-296/AU11) — the two
+      // shapes already coincide at runtime, so this cast documents that instead of a second
+      // `.parse()` call redoing validation `defineTool` already did.
+      const input = rawInput as z.output<typeof FindImagesInputSchema>;
       const relDir = `${MEDIA_CACHE_PREFIX}/${input.runId}`;
       const absDir = path.resolve(input.repoRoot, relDir);
 

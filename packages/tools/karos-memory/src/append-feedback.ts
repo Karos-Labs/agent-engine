@@ -2,7 +2,8 @@ import { z } from "zod";
 import type { IdempotentWriteResult, WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, success } from "@agent-engine/tool-common";
 
-const TOOL_VERSION = "1.0.0";
+// 1.0.1 (SCRUM-296/AU11): removed the redundant re-parse of already-validated input (both tools below share this constant).
+const TOOL_VERSION = "1.0.1";
 
 export const AppendFeedbackInputSchema = z.object({
   /**
@@ -48,8 +49,7 @@ export function createAppendFeedback(store: WorkspaceStoreLike) {
     name: "memory.appendFeedback",
     version: TOOL_VERSION,
     inputSchema: AppendFeedbackInputSchema,
-    async execute(rawInput, { ctx }) {
-      const input = AppendFeedbackInputSchema.parse(rawInput);
+    async execute(input, { ctx }) {
       const segments = ["memory", "feedback", input.feedbackId];
       const { created } = await store.writeJson(ctx.clientSlug, segments, {
         feedbackId: input.feedbackId,
@@ -105,8 +105,7 @@ export function createReadFeedback(store: WorkspaceStoreLike) {
     name: "memory.readFeedback",
     version: TOOL_VERSION,
     inputSchema: ReadFeedbackInputSchema,
-    async execute(rawInput, { ctx }) {
-      const input = ReadFeedbackInputSchema.parse(rawInput);
+    async execute(input, { ctx }) {
       // No trailing placeholder segment: `dirPath` joins EVERY segment as a
       // directory, so `["memory","feedback","_"]` would look inside a literal
       // `_` folder and always return nothing. `appendFeedback` writes to

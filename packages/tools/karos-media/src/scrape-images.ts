@@ -5,7 +5,8 @@ import { defineTool, success, contentFail, toolingError, notAvailable } from "@a
 import { ScraperError, type ScrapedRecord, type ScraperProvider, type SocialPlatform } from "@agent-engine/tool-karos-scraper";
 import { MEDIA_CACHE_PREFIX, downloadImage, type FindImagesCandidate } from "./find-images.js";
 
-const TOOL_VERSION = "1.0.0";
+// 1.0.1 (SCRUM-296/AU11): removed the redundant re-parse of already-validated input.
+const TOOL_VERSION = "1.0.1";
 
 /**
  * Platforms searched for a visual need, in order.
@@ -76,8 +77,10 @@ export function createScrapeImages(options: { scraper?: ScraperProvider | undefi
     version: TOOL_VERSION,
     inputSchema: ScrapeImagesInputSchema,
     async execute(rawInput) {
-      const input = ScrapeImagesInputSchema.parse(rawInput);
-
+      // See find-images.ts's identical comment: `defineTool` already parsed `rawInput`
+      // against `ScrapeImagesInputSchema` (defaults applied) before calling this —
+      // this cast reflects that instead of a second, actually-redundant `.parse()` call.
+      const input = rawInput as z.output<typeof ScrapeImagesInputSchema>;
       if (options.scraper === undefined) {
         return notAvailable(
           "media.scrapeImages: no scraper configured — set SCRAPPYCOCO_API_KEY to enable the scrape tier " +

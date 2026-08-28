@@ -15,6 +15,14 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # AU11 (SCRUM-296): "Tool version drift" below diffs the working
+          # tree against a base commit (`github.event.before`, or a
+          # merge-base fallback). The default fetch-depth of 1 checks out
+          # only the pushed SHA with no parent reachable at all, which would
+          # leave that diff — and therefore the whole check — with nothing
+          # to compare against on every single run.
+          fetch-depth: 0
 
       - name: Set up Node.js 22
         uses: actions/setup-node@v4
@@ -60,6 +68,18 @@ jobs:
       # see; those are refused by assertModelPriced at model selection.
       - name: Model pricing coverage
         run: npm run check:pricing
+
+      # AU11 (SCRUM-296): every `defineTool()` call's TOOL_VERSION travels
+      # into telemetry (RFC-01 §9.1 rule 5); ~50 of them were "1.0.0" since
+      # creation because nothing ever forced a bump. This fails a push that
+      # changes a tool's file without changing its declared version.
+      # `github.event.before` is the commit `main` pointed at before this
+      # push — the right "everything this push introduced" boundary for a
+      # push-triggered workflow; it is the all-zero SHA on a branch's very
+      # first push (no prior commit exists), so BASE_SHA is left unset then
+      # and the script falls back to `origin/main`'s merge-base.
+      - name: Tool version drift
+        run: npm run check:tool-versions -- ${{ (github.event.before && github.event.before != '0000000000000000000000000000000000000000') && format('--base {0}', github.event.before) || '' }}
 
       # AU68 — shipped without a Jira ticket: every field the telemetry insert writes must exist as
       # a column. `ignoreUnknownValues: true` drops a missing one SILENTLY while
