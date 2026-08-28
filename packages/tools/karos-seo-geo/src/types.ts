@@ -39,7 +39,14 @@ export type InputMeasurementData =
 
 export interface InputMeasurement {
   data: InputMeasurementData;
-  /** Required when the config input carries a `gate` block (e.g. GEO-18 anti-stuffing). */
+  /**
+   * Required when the config input carries a `gate` block (e.g. GEO-18
+   * anti-stuffing). Omitting it does NOT mean "the gate passed" — it means
+   * the gate was never checked, and `gate_rule` then forces the norm to
+   * `on_fail_norm` just as an explicit `false` would (`grade_data_only_rule`:
+   * an unmeasured input is never guessed). Supply `true` only when the check
+   * actually ran and actually passed.
+   */
   gatePass?: boolean | undefined;
   /** `grade_data_only_rule`: an `estimated`/`unavailable` measurement scores 0 and is excluded from `dataCoveragePct`'s numerator. */
   coverage: DataCoverage;
@@ -54,7 +61,15 @@ export interface EvaluatedInput {
   norm: number;
   points: number;
   coverage: DataCoverage;
+  /** True whenever a config-declared gate withheld credit — i.e. `gateState` is `failed` or `unverified`. */
   gated: boolean;
+  /**
+   * Whether this input's config-declared gate was verified. `"none"` means
+   * the config declares no gate for this input; `"unverified"` means it
+   * declares one and the caller never measured it (scored as a failure, not
+   * waved through).
+   */
+  gateState: "none" | "pass" | "failed" | "unverified";
   /**
    * The normalization primitive this instance was scored with
    * (`normalization_fns`) — carried through to `seoGeo.recommend` so the
@@ -130,9 +145,21 @@ export interface VisibilityMetricsResult {
   citationShareBlended: number;
   mentionRateBlended: number;
   shareOfVoiceClient: number;
+  /** SOV per brand across the locked roster (`client` included), sorted by brandId — sums to 100 per GEO-27's formula. */
+  shareOfVoiceByBrand: Record<string, number>;
   rankFirstCompetitor: string | null;
   clientDomains: string[];
   rosterSize: number;
+  /**
+   * True when a non-empty `competitorRoster` was supplied, so every
+   * "over competitor_set" formula (share_of_voice, first_named,
+   * rank_first_competitor) really was scoped to the locked roster. False
+   * means no roster was frozen and those formulas fell back to the brands
+   * observed in the data — reported, never assumed.
+   */
+  rosterScoped: boolean;
+  /** Brands named in the capture set but absent from the locked roster, excluded from the roster-scoped formulas. Sorted; empty when `rosterScoped` is false. */
+  offRosterBrandsIgnored: string[];
 }
 
 export interface VisibilityIndexResult {

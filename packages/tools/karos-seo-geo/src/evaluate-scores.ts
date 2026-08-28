@@ -1,4 +1,4 @@
-import { applyGate, evaluateNorm } from "./normalize.js";
+import { applyGate, evaluateNorm, gateStateFor } from "./normalize.js";
 import { roundHalfUp } from "./round.js";
 import type { ScoringBucketConfig } from "./scoring-config.js";
 import type { BucketSubtotal, EvaluatedInput, InputMeasurement, ScoreBreakdown } from "./types.js";
@@ -56,15 +56,21 @@ export function evaluateScoreFamily(buckets: readonly ScoringBucketConfig[], mea
       let norm = 0;
       let coverage: EvaluatedInput["coverage"] = "unavailable";
       let gated = false;
+      let gateState: EvaluatedInput["gateState"] = "none";
 
       if (measurement) {
         coverage = measurement.coverage;
         if (measurement.coverage === "measured") {
           norm = evaluateNorm(input.params, measurement.data);
           if (input.gate) {
-            const gateResult = applyGate(norm, measurement.gatePass, input.gate.onFailNorm);
-            gated = gateResult !== norm;
-            norm = gateResult;
+            gateState = gateStateFor(measurement.gatePass);
+            // `gated` reports whether the gate withheld credit, NOT whether the number
+            // happened to move: the old `gateResult !== norm` test could not fire when
+            // the pre-gate norm already equalled `on_fail_norm` (the commonest case —
+            // both are usually 0), so a failed gate went unreported in exactly the
+            // situation an auditor most wants to see it.
+            gated = gateState !== "pass";
+            norm = applyGate(norm, measurement.gatePass, input.gate.onFailNorm);
           }
         }
       }
@@ -83,6 +89,7 @@ export function evaluateScoreFamily(buckets: readonly ScoringBucketConfig[], mea
         points,
         coverage,
         gated,
+        gateState,
         normalization: input.params.normalization,
       });
     });

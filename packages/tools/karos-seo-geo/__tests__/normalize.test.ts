@@ -8,6 +8,7 @@ import {
   normMultiBool,
   normCombine,
   applyGate,
+  gateStateFor,
   evaluateNorm,
 } from "../src/normalize.js";
 
@@ -64,7 +65,21 @@ describe("normalization primitives (seo-geo-scoring-config.json normalization_fn
   it("gate_rule: forces norm to on_fail_norm when gate.field measurement is false, e.g. GEO-18 anti-stuffing", () => {
     expect(applyGate(0.9, false, 0)).toBe(0);
     expect(applyGate(0.9, true, 0)).toBe(0.9);
-    expect(applyGate(0.9, undefined, 0)).toBe(0.9); // no gate measurement supplied -> pass through
+    // CHANGED (SCRUM-318): this line previously asserted `.toBe(0.9)` — "no gate
+    // measurement supplied -> pass through". That assertion locked in a gate that was
+    // structurally incapable of failing: of `gatePass`'s three states only `false` could
+    // fire it, and the commonest state (never measured) silently granted full credit for
+    // an anti-stuffing check nobody ran. GEO-18's `measure` states the rule as a ternary
+    // on `anti_stuffing_pass`, and `grade_data_only_rule` says an unmeasured input is
+    // "never guessed" — so an unverified gate fails closed, exactly like an explicit
+    // failure. `gateStateFor` keeps the two distinguishable in the breakdown.
+    expect(applyGate(0.9, undefined, 0)).toBe(0);
+  });
+
+  it("gateStateFor distinguishes a verified pass from a failure from a gate nobody checked", () => {
+    expect(gateStateFor(true)).toBe("pass");
+    expect(gateStateFor(false)).toBe("failed");
+    expect(gateStateFor(undefined)).toBe("unverified");
   });
 
   it("evaluateNorm dispatches to the right primitive by the config's declared normalization", () => {

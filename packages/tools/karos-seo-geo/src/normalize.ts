@@ -49,13 +49,40 @@ export function normMultiBool(subBools: readonly boolean[]): number {
 }
 
 /**
+ * Whether a config-declared gate was verified. `unverified` is a distinct
+ * third state from `pass`/`failed`: the gate field was never measured at
+ * all, so nothing is known about it.
+ */
+export type GateState = "pass" | "failed" | "unverified";
+
+export function gateStateFor(gatePass: boolean | undefined): GateState {
+  if (gatePass === true) return "pass";
+  if (gatePass === false) return "failed";
+  return "unverified";
+}
+
+/**
  * `normalization_fns.gate_rule`: if `gate.field` is false, norm is forced to
  * `gate.on_fail_norm` (e.g. GEO-18 anti-stuffing forces 0); otherwise the
  * normally-computed norm passes through unchanged.
+ *
+ * FAIL-CLOSED ON `unverified`. GEO-18's own `measure` states the rule as a
+ * ternary — `norm = anti_stuffing_pass ? min(actual/15,1) : 0` — and
+ * `grade_data_only_rule` decides what an unmeasured condition is worth:
+ * inputs that do not trace to real measured data are "excluded and shown as
+ * pending, never guessed". An absent `gatePass` is an unmeasured condition,
+ * so it is forced to `on_fail_norm` exactly like an explicit failure.
+ *
+ * This previously passed the norm through untouched when `gatePass` was
+ * `undefined`, which left the gate structurally incapable of failing for
+ * any caller that simply never supplied the field: `false` was the only one
+ * of its three input states that could fire it, and the commonest state
+ * (absent) silently granted full credit for an anti-stuffing check nobody
+ * ran. The caller distinguishes "verified pass" from "never checked" by
+ * supplying `gatePass` explicitly; `gateStateFor` reports which happened.
  */
 export function applyGate(norm: number, gatePass: boolean | undefined, onFailNorm: number): number {
-  if (gatePass === false) return onFailNorm;
-  return norm;
+  return gateStateFor(gatePass) === "pass" ? norm : onFailNorm;
 }
 
 /** One `combine.legs[]` entry, generalized over every non-`combine` primitive so `combine` can nest any of them. */
