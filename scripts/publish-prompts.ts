@@ -40,9 +40,7 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { initializeApp, applicationDefault } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
-
-// scripts/*.ts compiles as CommonJS under the root tsconfig — see setup-local.ts's own note.
-const REPO_ROOT = path.resolve(__dirname, "..");
+import { PROMPT_REGISTRY, REPO_ROOT, promptVersionPath, type PromptRegistryEntry } from "./prompt-registry";
 
 const GREEN = "\x1b[32m";
 const DIM = "\x1b[2m";
@@ -56,71 +54,90 @@ interface PromptToPublish {
   agent: string;
   versions: Map<string, string>; // version string -> content
   latestContent: string;
+  /** The registry entry this was loaded from — the declared, reviewed truth about ids/versions/owner. */
+  registry: PromptRegistryEntry;
 }
 
-/** Same traversal as setup-local.ts's `collectPrompts()` — fails loudly on a promptId collision across agents, the same "one shared PromptStore, no ambiguity" rule. */
-async function discoverPrompts(): Promise<PromptToPublish[]> {
-  const agentsDir = path.join(REPO_ROOT, "agents");
-  const seen = new Map<string, string>();
+/**
+ * SCRUM-325: loads exactly what `scripts/prompt-registry.ts` DECLARES, by
+ * path, instead of walking `agents/` and publishing whatever turned up.
+ *
+ * The walk this replaced could not disagree with the disk, so an unnumbered
+ * `latest.md`, a stray directory or a promptId that had quietly changed owner
+ * all published as if intended. The registry is a second, reviewed statement
+ * of the same facts; `npm run check:prompts` is what forces the two to agree,
+ * and it runs as its own job in quality.yml BEFORE any deploy publishes. This
+ * function therefore fails on a missing file rather than skipping it — a
+ * registry entry with no file on disk is a checked-in mistake, not an
+ * optional prompt.
+ */
+async function loadRegisteredPrompts(): Promise<PromptToPublish[]> {
   const prompts: PromptToPublish[] = [];
-
-  for (const agent of (await fs.readdir(agentsDir, { withFileTypes: true })).filter((e) => e.isDirectory())) {
-    const promptsDir = path.join(agentsDir, agent.name, "prompts");
-    let promptIds: string[];
-    try {
-      promptIds = (await fs.readdir(promptsDir, { withFileTypes: true })).filter((e) => e.isDirectory()).map((e) => e.name);
-    } catch {
-      continue; // an agent folder without a prompts/ dir is fine
-    }
-
-    for (const promptId of promptIds) {
-      const previousOwner = seen.get(promptId);
-      if (previousOwner !== undefined) {
+  for (const entry of PROMPT_REGISTRY) {
+    const versions = new Map<string, string>();
+    for (const version of entry.versions) {
+      const file = promptVersionPath(entry, version);
+      try {
+        versions.set(version, await fs.readFile(file, "utf8"));
+      } catch (err) {
         throw new Error(
-          `publish-prompts: promptId "${promptId}" is shipped by both "${previousOwner}" and "${agent.name}" — ` +
-            "one shared PromptStore can't serve both. Rename one of them before publishing.",
+          `publish-prompts: PROMPT_REGISTRY declares "${entry.promptId}@${version}" but ${path.relative(REPO_ROOT, file)} ` +
+            `could not be read (${err instanceof Error ? err.message : String(err)}). ` +
+            "Run `npm run check:prompts` — the registry and the repo disagree.",
         );
       }
-      seen.set(promptId, agent.name);
-
-      const dir = path.join(promptsDir, promptId);
-      const files = await fs.readdir(dir);
-      const versions = new Map<string, string>();
-      for (const file of files) {
-        const m = /^(\d+)\.md$/.exec(file);
-        if (m) versions.set(m[1]!, await fs.readFile(path.join(dir, file), "utf8"));
-      }
-      const latestContent = await fs.readFile(path.join(dir, "latest.md"), "utf8");
-      prompts.push({ promptId, agent: agent.name, versions, latestContent });
     }
+    const latestPath = path.join(REPO_ROOT, "agents", entry.agent, "prompts", entry.promptId, "latest.md");
+    const latestContent = await fs.readFile(latestPath, "utf8");
+    prompts.push({ promptId: entry.promptId, agent: entry.agent, versions, latestContent, registry: entry });
   }
   return prompts;
 }
 
 /**
- * Which version `prompts/{promptId}.latestVersion` should point at — matched
- * by CONTENT against the numbered files first, never assumed to be "the
- * highest number." When nothing matches (a real, observed case: `blog-craft`'s
- * `latest.md` has been edited ahead of its last numbered snapshot — an
- * un-versioned, in-progress iteration, not a data-entry error), `latest.md`'s
- * own content is published as a NEW synthesized version one past the highest
- * existing number, so `latestVersion` always points at a real
- * `promptVersions` doc rather than being orphaned or silently wrong. Mutates
- * `prompt.versions` to add that synthesized entry — the caller's write loop
- * picks it up automatically.
+ * Which version `prompts/{promptId}.latestVersion` is published as — the
+ * registry's declared `latestVersion`, VERIFIED byte-for-byte against
+ * `latest.md`, and a hard failure when they disagree.
+ *
+ * SCRUM-325 replaced what used to be here. The old version matched
+ * `latest.md` by content against the numbered files and, when nothing
+ * matched, SYNTHESIZED a new version one past the highest number, published
+ * `latest.md`'s text under it, and repointed `latestVersion` at the invention
+ * — with a dimmed `console.warn` and exit code 0. It ran that path against
+ * real prep and prod: `blog-craft` and `newsletter-craft` both had a
+ * `latest.md` matching none of their numbered versions, so a phantom `v4`
+ * was minted for each, out of text no numbered file in git ever contained.
+ * A publisher that invents the thing it cannot find has no failure mode; it
+ * always "succeeds", and the drift it was papering over is exactly the drift
+ * someone needed to be told about.
+ *
+ * So it refuses. `npm run check:prompts` catches the same condition in CI,
+ * before a deploy, with a better message; this is the last line, for a
+ * publish run by hand against prod.
  */
 function resolveLatestVersion(prompt: PromptToPublish): string {
-  for (const [version, content] of prompt.versions) {
-    if (content === prompt.latestContent) return version;
+  const declared = prompt.registry.latestVersion;
+  const declaredContent = prompt.versions.get(declared);
+  if (declaredContent === undefined) {
+    throw new Error(
+      `publish-prompts: "${prompt.promptId}" (${prompt.agent}): PROMPT_REGISTRY declares latestVersion "${declared}", ` +
+        `which is not among its declared versions [${prompt.registry.versions.join(", ")}]. ` +
+        "Fix scripts/prompt-registry.ts — nothing is published until the registry is self-consistent.",
+    );
   }
-  const highest = Math.max(0, ...[...prompt.versions.keys()].map(Number));
-  const synthesized = String(highest + 1);
-  console.warn(
-    `  ${DIM}⚠ "${prompt.promptId}" (${prompt.agent}): latest.md matches none of its numbered versions ` +
-      `(${[...prompt.versions.keys()].join(", ")}) — publishing it as a new version "${synthesized}".${RESET}`,
-  );
-  prompt.versions.set(synthesized, prompt.latestContent);
-  return synthesized;
+  if (declaredContent !== prompt.latestContent) {
+    const matches = [...prompt.versions.entries()].filter(([, content]) => content === prompt.latestContent).map(([v]) => v);
+    throw new Error(
+      `publish-prompts: "${prompt.promptId}" (${prompt.agent}): latest.md is not byte-identical to its declared ` +
+        `latestVersion ${declared}.md — ` +
+        (matches.length > 0
+          ? `it matches ${matches.map((v) => `${v}.md`).join(", ")}. `
+          : "it matches no numbered version at all. ") +
+        "Snapshot latest.md as a new numbered version and update scripts/prompt-registry.ts, or re-sync latest.md. " +
+        "This script no longer invents a version to publish it under. Nothing has been written for this prompt.",
+    );
+  }
+  return declared;
 }
 
 /**
@@ -199,15 +216,23 @@ async function main(): Promise<void> {
   if (!project) throw new Error("publish-prompts: GOOGLE_CLOUD_PROJECT (or GCLOUD_PROJECT) must be set");
   const databaseId = process.env.FIRESTORE_DATABASE_ID ?? "(default)";
 
-  const prompts = await discoverPrompts();
-  ok(`discovered ${prompts.length} promptIds across ${new Set(prompts.map((p) => p.agent)).size} agents`);
+  const prompts = await loadRegisteredPrompts();
+  ok(`loaded ${prompts.length} registered promptIds across ${new Set(prompts.map((p) => p.agent)).size} agents`);
+
+  // Resolve EVERY prompt's latestVersion before opening Firestore. Resolution
+  // now refuses on drift instead of inventing a version, and a refusal
+  // halfway through the write loop would leave prep/prod half-published —
+  // some prompts on their new content, the rest on their old. Validate the
+  // whole set first, write nothing until all of it is valid.
+  const latestVersions = new Map(prompts.map((prompt) => [prompt.promptId, resolveLatestVersion(prompt)]));
+  ok(`latest.md verified byte-identical to the registry's declared latestVersion for all ${prompts.length} prompts`);
 
   const app = initializeApp({ credential: applicationDefault(), projectId: project });
   const db = getFirestore(app, databaseId);
 
   let versionDocsWritten = 0;
   for (const prompt of prompts) {
-    const latestVersion = resolveLatestVersion(prompt);
+    const latestVersion = latestVersions.get(prompt.promptId)!;
     await withRetry(`prompts/${prompt.promptId}`, () => db.collection("prompts").doc(prompt.promptId).set({ latestVersion }));
     for (const [version, content] of prompt.versions) {
       await withRetry(`promptVersions/${prompt.promptId}@${version}`, () =>
@@ -222,7 +247,7 @@ async function main(): Promise<void> {
   console.log(`${DIM}  ${prompts.length} prompts, ${versionDocsWritten} version docs written to project "${project}" database "${databaseId}".${RESET}`);
 
   // Fail loudly, after publishing, if any pin in code would not resolve.
-  // Every version discoverPrompts() found on disk was just published above,
+  // Every version the registry declares was just published above,
   // so this passes for a normal bump and only trips when a skillRef points
   // at a version whose file was never created at all — the one remaining
   // way this class of outage could still happen.
