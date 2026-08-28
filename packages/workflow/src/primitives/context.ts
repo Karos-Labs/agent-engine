@@ -8,8 +8,26 @@ import { runFanout } from "./fanout.js";
 export type GateDefinition = Pick<Gate, "kind" | "payload" | "requiredRole" | "timeout">;
 export type GateResponse = NonNullable<Gate["response"]>;
 
+/**
+ * What one fan-out slot resolved to, as the workflow author sees it.
+ *
+ * The three middle statuses arrived with AU68 (SCRUM-366), mirroring
+ * `SlotRecord.status`: a slot body that hands back a tool outcome now reports
+ * that outcome instead of being flattened to `completed`. They keep `output`
+ * because the outcome IS the value — a caller that wants to inspect the tool's
+ * own payload still can, exactly as before.
+ *
+ * `failed` remains what it always meant: the slot body THREW, so there is no
+ * output at all, only a reason.
+ *
+ * The practical consequence for existing callers is that
+ * `status === "completed"` is now a strictly narrower claim than "did not
+ * throw" — which is the point. Code branching on `status === "failed"` to mean
+ * "anything but success" is now wrong and should ask `!== "completed"`.
+ */
 export type SlotOutcome<TResult> =
   | { slotId: string; status: "completed"; output: TResult }
+  | { slotId: string; status: "content_fail" | "not_available" | "tooling_error"; output: TResult; reason: string }
   | { slotId: string; status: "failed"; reason: string };
 
 /** Engine-internal state threaded through every primitive call — never exposed to workflow authors directly. */

@@ -85,12 +85,16 @@ export function applyClientLock(
 
   pending.forEach((item, i) => {
     const slot = draftSlots[i];
-    if (!slot || slot.status === "failed") {
-      // A slot that threw is an execution fault, never a verdict on the draft.
+    // AU68 (SCRUM-366): `!== "completed"` rather than `=== "failed"`. A slot
+    // outcome is no longer binary — a slot that resolved to `tooling_error` or
+    // `content_fail` is not a draft, and asking only about `failed` would let
+    // one through as if it had produced text.
+    if (!slot || slot.status !== "completed") {
+      // A slot that did not complete is an execution fault, never a verdict on the draft.
       retryQueue.push(
         chargeFailure(item, {
           kind: "tooling",
-          reason: `draft attempt failed: ${slot?.status === "failed" ? slot.reason : "no slot result returned"}`,
+          reason: `draft attempt failed: ${slot === undefined ? "no slot result returned" : slot.reason}`,
         }),
       );
       return;

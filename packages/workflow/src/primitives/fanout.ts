@@ -1,9 +1,25 @@
 import { describeError } from "@agent-engine/telemetry";
-import type { SlotRecord } from "../adapters/types.js";
+import type { SlotRecord, SlotRecordStatus } from "../adapters/types.js";
 import type { SlotOutcome, WorkflowContext, WorkflowRuntime } from "./context.js";
 import { buildWorkflowContext } from "./context.js";
 import { AwaitingGateSignal, WorkflowBlockedIntake, WorkflowBudgetExceeded, WorkflowHeld } from "./signals.js";
 import { isCheckpointedStepStatus } from "../adapters/types.js";
+import { describeOutcomeReason, statusFromOutcome } from "./outcome-status.js";
+
+/**
+ * The in-memory `SlotOutcome` for a recorded slot status, so the value the
+ * workflow author sees and the value persisted for the run record are derived
+ * in one place from one fact.
+ *
+ * Splitting them is how AU67/AU68 happened in the first place, one layer down:
+ * a record saying `tooling_error` while the returned outcome said `completed`
+ * would just move the lie rather than remove it.
+ */
+function slotOutcome<TResult>(slotId: string, status: SlotRecordStatus, output: TResult, error: string | undefined): SlotOutcome<TResult> {
+  if (status === "completed") return { slotId, status, output };
+  if (status === "failed") return { slotId, status, reason: error ?? "slot failed" };
+  return { slotId, status, output, reason: error ?? `slot resolved to "${status}"` };
+}
 
 const RUN_LEVEL_SIGNALS = [AwaitingGateSignal, WorkflowBudgetExceeded, WorkflowHeld, WorkflowBlockedIntake] as const;
 
@@ -39,7 +55,11 @@ export async function runFanout<TItem, TResult>(
       const slotId = `${id}__slot_${index}`;
       const existing = await runtime.store.getSlot(runtime.runId, slotId);
       if (existing && isCheckpointedStepStatus(existing.status)) {
-        return { slotId, status: "completed", output: existing.output as TResult };
+        // AU68: replay the RECORDED verdict, not a blanket `completed`. A slot
+        // that resolved to `tooling_error` must resume as `tooling_error` —
+        // otherwise the resume path would quietly reintroduce the very lie the
+        // first-run path just stopped telling.
+        return slotOutcome(slotId, existing.status, existing.output as TResult, existing.error);
       }
 
       const slotRuntime: WorkflowRuntime = { ...runtime, slotId };
@@ -49,33 +69,34 @@ export async function runFanout<TItem, TResult>(
       try {
         const output = await fn(item, slotCtx, index);
         const completedAt = runtime.now();
-        // AU67 / SCRUM-366, checked as a PRODUCER: unlike `step.gate`, this one
-        // is NOT structurally safe. `fn` is arbitrary caller code exactly like
-        // `step.code`'s body, so a slot body that returned a tool outcome
-        // directly would record `completed` for a `tooling_error` — the same
-        // defect, in the same shape, one primitive over.
+        // AU68 / SCRUM-366, having been checked as a PRODUCER in AU67 and found
+        // NOT structurally safe (unlike `step.gate`): `fn` is arbitrary caller
+        // code exactly like `step.code`'s body, so a slot handing back a tool
+        // outcome recorded `completed` for a `tooling_error` — the same defect,
+        // in the same shape, one primitive over.
         //
-        // It misreports nothing TODAY, and that is a property of the call
-        // sites rather than of this function: campaign-orchestrator's slots run
-        // whole channel workflows, whose inner steps record correctly on their
-        // own. Saying "fanout is fine" would be true and would stop being true
-        // the first time someone fans out over a tool call.
+        // It misreported nothing at the time, and that was a property of the
+        // six call sites rather than of this function: campaign-orchestrator's
+        // slots run whole channel workflows, whose inner steps record correctly
+        // on their own. "fanout is fine" was true and would have stopped being
+        // true the first time someone fanned out over a tool call.
         //
-        // Not fixed here because it is not a one-line change: `SlotRecord.status`
-        // is `completed | failed` only, widening it touches persisted slot
-        // records, and `report.ts` reads `listSlots` — the same enumeration
-        // AU67 did for steps has to be done for slots first. SCRUM-366.
+        // The same translation `step.code` uses, from the same module, so the
+        // two cannot drift.
+        const status = statusFromOutcome(output);
+        const reason = describeOutcomeReason(output);
         const record: SlotRecord = {
           slotId,
           fanoutId: id,
-          status: "completed",
+          status,
           output,
           durationMs: completedAt - startedAt,
           startedAt,
           completedAt,
+          ...reason,
         };
         await runtime.store.saveSlot(runtime.runId, record);
-        return { slotId, status: "completed", output };
+        return slotOutcome(slotId, status, output, reason.error);
       } catch (err) {
         if (RUN_LEVEL_SIGNALS.some((SignalClass) => err instanceof SignalClass)) {
           throw err;

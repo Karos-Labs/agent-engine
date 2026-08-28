@@ -1,10 +1,10 @@
-import type { AgentContext, AgentExecutionResult, BaseAgent } from "@agent-engine/core";
+import type { AgentContext, AgentExecutionResult, AgentExecutionStatus, BaseAgent } from "@agent-engine/core";
 import { recordCostAndTokens, withWorkflowStepSpan } from "@agent-engine/telemetry";
 import type { StepRecord } from "../adapters/types.js";
 import type { WorkflowRuntime } from "./context.js";
 import { markStepRunning, scopedStepId, sumRunCost } from "./context.js";
 import { WorkflowBudgetExceeded, WorkflowStepTimeout } from "./signals.js";
-import { isCheckpointedStepStatus } from "../adapters/types.js";
+import { isCheckpointedStepStatus, type StepRecordStatus } from "../adapters/types.js";
 
 /**
  * The bound on a single `step.agent` call absent an explicit
@@ -46,12 +46,63 @@ function withStepTimeout<T>(run: Promise<T>, stepId: string, timeoutMs: number):
 }
 
 /**
+ * The agent's terminal verdict, as the status a checkpoint records
+ * (AU68 / SCRUM-366).
+ *
+ * All four `AgentExecutionStatus` values are members of `StepRecordStatus`, so
+ * this is an identity mapping — and that is the point rather than an accident.
+ * `budget_exceeded` was added to `StepRecordSchema` for this function instead
+ * of being folded into `tooling_error`, because a loop that hit its configured
+ * turn ceiling did not malfunction. Writing this as a total mapping (rather
+ * than `result.status as StepRecordStatus`) is what makes the compiler, not a
+ * reviewer, the thing that catches a fifth value being added upstream.
+ */
+function stepStatusFromAgentStatus(status: AgentExecutionStatus): StepRecordStatus {
+  switch (status) {
+    case "completed":
+      return "completed";
+    case "content_fail":
+      return "content_fail";
+    case "tooling_error":
+      return "tooling_error";
+    case "budget_exceeded":
+      return "budget_exceeded";
+  }
+}
+
+/**
+ * The agent's own reason for a non-`completed` verdict, promoted onto the
+ * record — same argument as `step.code`'s `describeOutcomeReason`. A record
+ * that says THAT a step failed but not why makes an auth failure, a schema
+ * violation and a wedged tool look identical in a run report.
+ *
+ * The LAST turn carrying an error is the one that ended the loop; earlier ones
+ * were retried past.
+ */
+function describeAgentOutcome(result: AgentExecutionResult<unknown>): { error?: string } {
+  if (result.status === "completed") return {};
+  const turnError = [...result.steps].reverse().find((step) => step.error !== undefined)?.error;
+  return { error: turnError === undefined ? `agent step resolved to "${result.status}"` : `agent step resolved to "${result.status}": ${turnError}` };
+}
+
+/**
  * `step.agent(id, agent, input)` (RFC-01 §8.1/§8.2): invokes a `BaseAgent`,
- * checkpointing its full `AgentExecutionResult`. The step's own status is
- * always `"completed"` once the agent call returns without throwing — the
- * agent's *content* verdict (`completed`/`content_fail`/`tooling_error`/
- * `budget_exceeded`) lives inside the checkpointed `output`, for the
- * workflow author to inspect. Layer 1 never inspects it itself (RFC-01 §4).
+ * checkpointing its full `AgentExecutionResult`. The step's recorded status IS
+ * the agent's terminal `AgentExecutionStatus` — `completed`/`content_fail`/
+ * `tooling_error`/`budget_exceeded` — since AU68 (SCRUM-366).
+ *
+ * It used to be hardcoded `"completed"` whenever the call returned without
+ * throwing, which is AU67's defect one primitive over: a `BaseAgent` reports
+ * failure as a RETURNED status, never as an exception, so every failed agent
+ * step was persisted as a completed one. The verdict was not even unavailable
+ * to the recorder — it is read a few lines below for telemetry and set as a
+ * span attribute, then was dropped on the floor for the record.
+ *
+ * This is NOT Layer 1 making a content judgment (RFC-01 §4). It makes none: it
+ * copies down the verdict the agent itself reached, verbatim and unflattened,
+ * exactly as `step.code` copies down a tool's outcome. The workflow author
+ * still reads `result.status` from the returned value to decide control flow;
+ * nothing about that changed.
  *
  * `agent.run()` is raced against `DEFAULT_AGENT_STEP_TIMEOUT_MS` (override via
  * `WorkflowRuntime.agentStepTimeoutMs`) — a call that never settles throws
@@ -139,12 +190,16 @@ export async function runStepAgent<TOutput>(
       const record: StepRecord = {
         stepId,
         kind: "agent",
-        status: "completed",
+        // AU68: the step now says what the agent actually reported. It still
+        // RAN and its output is still replayable, so it stays checkpointed and
+        // resume is unchanged — see `isCheckpointedStepStatus`.
+        status: stepStatusFromAgentStatus(result.status),
         output: result,
         costUsd: result.totalCostUsd,
         durationMs: completedAt - startedAt,
         startedAt,
         completedAt,
+        ...describeAgentOutcome(result),
       };
       await runtime.store.saveStep(runtime.runId, record);
       return result;
