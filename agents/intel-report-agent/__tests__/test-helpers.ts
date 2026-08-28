@@ -6,7 +6,7 @@ import * as os from "node:os";
 import { FilePromptStore, type CompletionResult, type ModelRouter } from "@agent-engine/core";
 import { createAllKarosTools, WorkspaceStore } from "@agent-engine/tools";
 import { createOfflineScraper } from "@agent-engine/tool-karos-scraper";
-import { DIMENSION_KEYS, type DimensionScore, type IntelReportOutput } from "@agent-engine/tool-karos-intel";
+import { createMemoryClientReportStore, DIMENSION_KEYS, type DimensionScore, type IntelReportOutput } from "@agent-engine/tool-karos-intel";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const PROMPTS_ROOT = path.join(HERE, "..", "prompts");
@@ -122,6 +122,8 @@ export function goodIntelReport(overrides: Partial<IntelReportOutput> = {}): Int
 export interface TestEnvironment {
   rootDir: string;
   store: WorkspaceStore;
+  /** The portal-facing `clientReports/{clientId}` store the run writes its deliverable into (SCRUM-267). */
+  clientReportStore: ReturnType<typeof createMemoryClientReportStore>;
   tools: ReturnType<typeof createAllKarosTools>;
   cleanup: () => Promise<void>;
 }
@@ -136,7 +138,15 @@ export async function setupTestEnvironment(opts: { withProfile?: boolean } = {})
   // placeholder is what let every content agent draft from nothing for months.
   // Tests still need deterministic offline data, so they opt in here; nothing in
   // `apps/` does.
-  const tools = createAllKarosTools(store, undefined, { scraper: createOfflineScraper() });
+  // Same shape of opt-in as the scraper above, and for the same reason.
+  // SCRUM-267 made `intel.writeReport` report `not_available` when the
+  // portal-facing `clientReports/{clientId}` store is unwired, instead of
+  // degrading to a workspace-only write nobody downstream can read — so a run
+  // that never reaches the read path now fails loudly. `05-persist-report`
+  // is a real step of this agent's workflow, so the test env has to wire the
+  // in-memory store the way a deployment wires the Firestore one.
+  const clientReportStore = createMemoryClientReportStore();
+  const tools = createAllKarosTools(store, undefined, { scraper: createOfflineScraper(), clientReportStore });
 
   if (withProfile) {
     await store.writeJson("acme", ["client", "profile"], { name: "Acme Corp", industry: "B2B SaaS" });
@@ -147,6 +157,7 @@ export async function setupTestEnvironment(opts: { withProfile?: boolean } = {})
   return {
     rootDir,
     store,
+    clientReportStore,
     tools,
     cleanup: () => fs.rm(rootDir, { recursive: true, force: true }),
   };
