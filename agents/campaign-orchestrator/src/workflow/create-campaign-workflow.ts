@@ -1,5 +1,5 @@
-import type { AgentContext, AgentToolRegistry, ModelRouter, PromptStore } from "@agent-engine/core";
-import { readRunDirection, runDirectionField, type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure } from "@agent-engine/workflow";
+import { readForbiddenTopics, type AgentContext, type AgentToolRegistry, type ModelRouter, type PromptStore } from "@agent-engine/core";
+import { readRunDirection, runDirectionField, runTopicGuardrail, type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure } from "@agent-engine/workflow";
 import { createXAgentWorkflow } from "@agent-engine/agent-x";
 import { createLinkedInAgentWorkflow } from "@agent-engine/agent-linkedin";
 import { createRedditAgentWorkflow } from "@agent-engine/agent-reddit";
@@ -24,9 +24,23 @@ export interface ChannelRuntimeOptions {
    * Always `true` here (never surfaced as an orchestrator-level option): the
    * campaign's own `13-campaign-review` gate is the single human checkpoint
    * for the whole bundle (RFC-02 §4) — a channel pausing at its own
-   * per-channel `13-batch-review` gate mid-fan-out would mean five separate
-   * approvals instead of one, which is exactly what the campaign gate exists
-   * to replace.
+   * per-channel `13-batch-review`/`15-batch-review` gate mid-fan-out would
+   * mean five separate approvals instead of one, which is exactly what the
+   * campaign gate exists to replace.
+   *
+   * SCRUM-302/AU18: this was flagged as a real scrutiny gap — the five
+   * per-channel gates were the only surface that ever saw the drafted copy,
+   * and skipping all five left `13-campaign-review` reviewing
+   * `{campaignName, theme, channelResults}` with no actual post text in it.
+   * The chosen fix (below `runChannelSlot` and in `CampaignChannelResult`)
+   * keeps `autoApprove: true` — dropping it instead would mean the fan-out's
+   * `AwaitingGateSignal`s pause the run five times over (once per channel
+   * that reaches its own gate; `runFanout` treats a gate as a run-level
+   * signal, not a per-slot outcome, and a single `13-campaign-review`
+   * decision has no mechanism to resolve five separately-recorded per-channel
+   * gates in one call) — and instead folds each channel's own gate-would-show
+   * text (`preview`) into the campaign gate's payload, so the one human
+   * checkpoint actually reviews what the five bypassed gates would have.
    */
   autoApprove: true;
 }
@@ -67,7 +81,7 @@ async function runChannelSlot(
   channel: CampaignChannel,
   channelOptions: ChannelRuntimeOptions,
   wf: WorkflowContext,
-): Promise<{ deliverableId: string }> {
+): Promise<{ deliverableId: string; preview: string }> {
   switch (channel) {
     case "x":
       return createXAgentWorkflow(channelOptions)(wf);
@@ -126,6 +140,10 @@ export function createCampaignWorkflow(options: CreateCampaignWorkflowOptions) {
       return {
         goals: config.campaignGoals,
         ...(config.requestedTheme !== undefined ? { requestedTheme: config.requestedTheme } : {}),
+        // Carried from the same config read every channel's own intake already
+        // makes, so the campaign-level guardrail below (SCRUM-302/AU18) does
+        // not have to read `client.getConfig` a second time.
+        forbiddenTopics: readForbiddenTopics(config),
       };
     });
 
@@ -230,6 +248,28 @@ export function createCampaignWorkflow(options: CreateCampaignWorkflowOptions) {
       }
     });
 
+    // ── 08b: campaign-level topic guardrail (SCRUM-302/AU18) ──
+    //
+    // Every channel's own workflow already runs `runTopicGuardrail` over ITS
+    // OWN drafted text, unconditionally — `autoApprove` only skips that
+    // channel's human gate, never its guardrail. What had no guardrail at all
+    // was the campaign PLAN itself: `campaignName`/`theme`/`targetPillars`
+    // and each slot's `targetAudience`/`angle`/`keyMessage` are generated
+    // once, up front, by `CampaignStrategyAgent`, and nothing downstream ever
+    // checked that content against this client's forbidden topics before
+    // fanning five channels out to draft against it.
+    //
+    // Run before the fan-out, deliberately: a plan that already engages a
+    // forbidden subject should never spend five channels' worth of drafting
+    // (and five more guardrail calls) on it.
+    const planGuardrailText = [
+      plan.campaignName,
+      plan.theme,
+      ...plan.targetPillars,
+      ...plan.channelSlots.flatMap((slot) => [slot.targetAudience, slot.angle, slot.keyMessage]),
+    ].join("\n");
+    await runTopicGuardrail(wf, { tools: options.tools, promptStore: options.promptStore, router: options.router }, planGuardrailText, intake.forbiddenTopics);
+
     // ── 09-12: multi-channel fan-out (RFC-01 §5.5) ──
     const fanoutItems = await wf.step.code("09-prepare-channel-fanout-items", () => plan.channelSlots);
 
@@ -247,7 +287,17 @@ export function createCampaignWorkflow(options: CreateCampaignWorkflowOptions) {
       return plan.channelSlots.map((slot, index) => {
         const outcome = slotOutcomes[index]!;
         if (outcome.status === "completed") {
-          return { slotId: slot.slotId, channel: slot.channel, status: "completed", deliverableId: outcome.output.deliverableId };
+          // `preview` is the SCRUM-302/AU18 fix: the exact text that channel's
+          // own (auto-approved, never-shown) gate would have carried, folded
+          // in here so `13-campaign-review` is a real review of what five
+          // gates would have shown, not five bare deliverable ids.
+          return {
+            slotId: slot.slotId,
+            channel: slot.channel,
+            status: "completed",
+            deliverableId: outcome.output.deliverableId,
+            preview: outcome.output.preview,
+          };
         }
         return { slotId: slot.slotId, channel: slot.channel, status: "failed", reason: outcome.reason };
       });

@@ -500,6 +500,6 @@ ${draft.text}` }, { ctx });
       );
     });
 
-    return { topic: selected.topic, angle, targetKeyword: selected.targetKeyword, deliverableId };
+    return { topic: selected.topic, angle, targetKeyword: selected.targetKeyword, deliverableId, preview: draft.text };
   };
 }

@@ -129,4 +129,15 @@ export interface LinkedInAgentWorkflowResult {
    * which a reviewer approving it deserves to know without opening the run.
    */
   channelSetup: "already-configured" | "recorded" | "not-supplied";
+  /**
+   * The same post text this run's own `15-batch-review` gate showed a human
+   * (or would have, had `autoApprove` not skipped it) — i.e. `draft.text`.
+   *
+   * Added for SCRUM-302/AU18: campaign-orchestrator runs every channel with
+   * `autoApprove: true` and needs something to put in front of its own single
+   * campaign-review gate in place of the five per-channel gates it bypassed.
+   * A standalone caller that already got a real per-channel gate can ignore
+   * this field.
+   */
+  preview: string;
 }

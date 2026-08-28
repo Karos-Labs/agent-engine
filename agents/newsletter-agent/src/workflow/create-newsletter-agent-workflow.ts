@@ -512,6 +512,6 @@ ${draft.text}` }, { ctx });
       );
     });
 
-    return { mainStory: selected.mainStory, theme, targetAudience: intake.targetAudience, deliverableId };
+    return { mainStory: selected.mainStory, theme, targetAudience: intake.targetAudience, deliverableId, preview: draft.text };
   };
 }

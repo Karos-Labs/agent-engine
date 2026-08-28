@@ -688,6 +688,7 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
       targetAudience: draft.targetAudience,
       deliverableId,
       channelSetup: channelSetup.status,
+      preview: draft.text,
     };
   };
 }
