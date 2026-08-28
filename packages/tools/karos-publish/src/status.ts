@@ -6,7 +6,8 @@ import { draftSegments, type DraftRecord } from "./types.js";
 const TOOL_VERSION = "1.0.0";
 
 export const StatusInputSchema = z.object({
-  draftId: z.string().min(1),
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from the tool's own doc comment.
+  draftId: z.string().min(1).describe("Which draft's status to look up. Reports not_available if the id is unknown."),
 });
 export type StatusInput = z.infer<typeof StatusInputSchema>;
 
@@ -23,6 +24,7 @@ export interface StatusResult {
 export function createStatus(store: WorkspaceStoreLike) {
   return defineTool<StatusInput, StatusResult>({
     name: "publish.status",
+    description: "Read-only status lookup for a draft. Returns not_available when the draft id is unknown.",
     version: TOOL_VERSION,
     inputSchema: StatusInputSchema,
     async execute({ draftId }, { ctx }) {

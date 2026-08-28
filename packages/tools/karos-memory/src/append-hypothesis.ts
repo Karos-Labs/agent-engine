@@ -5,9 +5,9 @@ import { defineTool, success } from "@agent-engine/tool-common";
 const TOOL_VERSION = "1.0.0";
 
 export const AppendHypothesisInputSchema = z.object({
-  /** Caller-minted idempotency key for this one hypothesis. */
-  hypothesisId: z.string().min(1),
-  statement: z.string().min(1),
+  hypothesisId: z.string().min(1).describe("Caller-minted idempotency key for this one hypothesis."),
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from the tool's own doc comment.
+  statement: z.string().min(1).describe("The hypothesis itself, as a testable statement. Starts status: \"open\" until memory.resolveHypothesis closes it out."),
 });
 export type AppendHypothesisInput = z.infer<typeof AppendHypothesisInputSchema>;
 
@@ -15,6 +15,7 @@ export type AppendHypothesisInput = z.infer<typeof AppendHypothesisInputSchema>;
 export function createAppendHypothesis(store: WorkspaceStoreLike) {
   return defineTool<AppendHypothesisInput, IdempotentWriteResult>({
     name: "memory.appendHypothesis",
+    description: "Idempotent on hypothesisId — records a new hypothesis, starting status: \"open\" until memory.resolveHypothesis closes it out.",
     version: TOOL_VERSION,
     inputSchema: AppendHypothesisInputSchema,
     async execute({ hypothesisId, statement }, { ctx }) {

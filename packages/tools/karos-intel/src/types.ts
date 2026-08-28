@@ -279,37 +279,58 @@ export type BrandVoiceArchetype = z.infer<typeof BrandVoiceArchetypeSchema>;
  * directly, which is the whole point of a structured output. All optional,
  * exactly as the portal declares them.
  */
+// Top-level fields below carry .describe() transcribed from this schema's own doc comment
+// ("the company-profile extras the portal's ClientReport carries beyond what Client already
+// stores... all optional, exactly as the portal declares them") and each field's own name against
+// the portal's ClientReport interface documented above. None of these eight had a per-field TSDoc
+// comment of their own to transcribe (SCRUM-293 flag) — descriptions are the field's evident,
+// portal-mirrored purpose, not new invented copy.
 export const ReportProfileExtrasSchema = z.object({
-  url: z.string().optional(),
-  businessType: z.string().optional(),
-  founded: z.string().optional(),
-  authorization: z.string().optional(),
-  cnpj: z.string().optional(),
-  minInvestment: z.string().optional(),
-  techStack: z.string().optional(),
-  reportStatus: z.string().optional(),
+  url: z.string().optional().describe("The client's website URL, as the portal's ClientReport.url."),
+  businessType: z.string().optional().describe("The client's business type/category, as the portal's ClientReport.businessType."),
+  founded: z.string().optional().describe("When the client company was founded, as the portal's ClientReport.founded."),
+  authorization: z.string().optional().describe("The client's regulatory authorization status, as the portal's ClientReport.authorization."),
+  cnpj: z.string().optional().describe("The client's Brazilian company registration number (CNPJ), as the portal's ClientReport.cnpj."),
+  minInvestment: z.string().optional().describe("The client's minimum investment figure, as the portal's ClientReport.minInvestment."),
+  techStack: z.string().optional().describe("The client's technology stack, as the portal's ClientReport.techStack."),
+  reportStatus: z.string().optional().describe("This report's status label, as the portal's ClientReport.reportStatus."),
 });
 
 export const IntelReportOutputSchema = ReportProfileExtrasSchema.extend({
   /** The date the report describes, as the portal stores it (`ClientReport.reportDate`, a string). Defaulted at build time when the model omits it. */
-  reportDate: z.string().optional(),
-  dimensionScores: z.array(DimensionScoreSchema).length(DIMENSION_KEYS.length),
-  contentAnalysis: z.string().min(1),
-  conversionAnalysis: z.string().min(1),
-  seoAnalysis: z.string().min(1),
-  geoAnalysis: z.string().min(1),
-  positioningAnalysis: z.string().min(1),
-  brandAnalysis: z.string().min(1),
-  growthAnalysis: z.string().min(1),
-  swot: SwotSchema,
-  recommendations: z.array(RecommendationSchema).default([]),
-  competitorRankings: z.array(CompetitorRankingSchema).default([]),
-  competitors: z.array(ClientCompetitorSchema).default([]),
-  brandVoiceRows: z.array(BrandVoiceRowSchema).optional(),
-  brandVoiceArchetypes: z.array(BrandVoiceArchetypeSchema).optional(),
-  brandVoiceTerritory: z.string().optional(),
-  customerSentiment: z.array(CustomerSentimentEntrySchema).optional(),
-  whitespaceOpportunities: z.array(z.string()).optional(),
+  reportDate: z.string().optional().describe("The date the report describes, as the portal stores it (ClientReport.reportDate). Defaulted at build time when the model omits it."),
+  dimensionScores: z
+    .array(DimensionScoreSchema)
+    .length(DIMENSION_KEYS.length)
+    .describe(
+      "The model's 0-100 judgment score for each of the 8 fixed dimensions (contentMessaging, conversion, seo, geo, positioning, brand, growth, social — see DIMENSION_WEIGHTS). overallScore/overallGrade are then computed deterministically from these, never trusted to the model.",
+    ),
+  contentAnalysis: z.string().min(1).describe("Long-form prose analysis of the client's content & messaging dimension."),
+  conversionAnalysis: z.string().min(1).describe("Long-form prose analysis of the client's conversion dimension."),
+  seoAnalysis: z.string().min(1).describe("Long-form prose analysis of the client's SEO dimension."),
+  geoAnalysis: z.string().min(1).describe("Long-form prose analysis of the client's GEO (generative-engine optimization) dimension."),
+  positioningAnalysis: z.string().min(1).describe("Long-form prose analysis of the client's market positioning dimension."),
+  brandAnalysis: z.string().min(1).describe("Long-form prose analysis of the client's brand dimension."),
+  growthAnalysis: z.string().min(1).describe("Long-form prose analysis of the client's growth dimension."),
+  swot: SwotSchema.describe(
+    "Strengths/weaknesses/opportunities/threats, each synthesized from the report's own dimension scores and analysis prose. Schema-enforced minimum bullet counts (4/4/3/3) mirror the legacy prompt template exactly.",
+  ),
+  recommendations: z.array(RecommendationSchema).default([]).describe("The report's prioritized, numbered recommendations for the client."),
+  competitorRankings: z.array(CompetitorRankingSchema).default([]).describe("Each competitor's overall score/grade/rank plus its best and weakest dimension."),
+  competitors: z
+    .array(ClientCompetitorSchema)
+    .default([])
+    .describe(
+      "The full competitor roster this run identified, field-for-field matching the portal's ClientCompetitor interface. Merged (never replaced wholesale) with any existing manually-curated rows by write-report.ts.",
+    ),
+  brandVoiceRows: z.array(BrandVoiceRowSchema).optional().describe("The brand-voice comparison table: one row per scored dimension, one score per company."),
+  brandVoiceArchetypes: z.array(BrandVoiceArchetypeSchema).optional().describe("Each company's brand-voice archetype label."),
+  brandVoiceTerritory: z.string().optional().describe("The client's claimed brand-voice territory, as free text."),
+  customerSentiment: z
+    .array(CustomerSentimentEntrySchema)
+    .optional()
+    .describe("Per-company customer review-platform ratings (Reclame Aqui for Brazilian companies; G2/Capterra/Trustpilot otherwise)."),
+  whitespaceOpportunities: z.array(z.string()).optional().describe("Market gaps or unclaimed positioning opportunities the competitive analysis surfaced."),
   /**
    * Directive 2's "Dynamic Brand Feedback Loop" closing section
    * (`karosCMO/src/lib/intel/brain.ts` lines 225, 561-574: "This section
@@ -319,7 +340,12 @@ export const IntelReportOutputSchema = ReportProfileExtrasSchema.extend({
    * it unconditionally, unlike e.g. Customer Sentiment which is explicitly
    * conditional on data availability.
    */
-  brandSynchronizationUpdate: z.string().min(1),
+  brandSynchronizationUpdate: z
+    .string()
+    .min(1)
+    .describe(
+      "A prescriptive synthesis of what the competitive/positioning analysis implies for the client's brand guidelines, not a summary. Required because legacy states this section unconditionally in every report.",
+    ),
 });
 export type IntelReportOutput = z.infer<typeof IntelReportOutputSchema>;
 

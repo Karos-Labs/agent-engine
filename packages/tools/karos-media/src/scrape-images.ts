@@ -17,16 +17,18 @@ const TOOL_VERSION = "1.0.0";
 const VISUAL_PLATFORMS: readonly SocialPlatform[] = ["instagram", "tiktok"];
 
 export const ScrapeImagesInputSchema = z.object({
-  /** Bounds root. Every returned path is relative to this and provably inside it. */
-  repoRoot: z.string().min(1),
-  /** Namespaces the cache directory, exactly as the other media tools do. */
-  runId: z.string().min(1),
-  /** One entry per slide still missing a picture after the harvester tier. */
+  repoRoot: z.string().min(1).describe("Bounds root. Every returned path is relative to this and provably inside it."),
+  runId: z.string().min(1).describe("Namespaces the cache directory, exactly as the other media tools do."),
   needs: z
-    .array(z.object({ n: z.number().int().positive(), query: z.string().min(1) }))
-    .min(1),
-  /** Candidates to keep per need. Each platform search is a billed scrape. */
-  perNeed: z.number().int().min(1).max(6).default(3),
+    .array(
+      z.object({
+        n: z.number().int().positive().describe("This slide's number."),
+        query: z.string().min(1).describe("The search query for this slide's picture."),
+      }),
+    )
+    .min(1)
+    .describe("One entry per slide still missing a picture after the harvester tier."),
+  perNeed: z.number().int().min(1).max(6).default(3).describe("Candidates to keep per need. Each platform search is a billed scrape."),
 });
 export type ScrapeImagesInput = z.input<typeof ScrapeImagesInputSchema>;
 
@@ -73,6 +75,8 @@ export function createScrapeImages(options: { scraper?: ScraperProvider | undefi
 
   return defineTool<ScrapeImagesInput, ScrapeImagesResult>({
     name: "media.scrapeImages",
+    description:
+      "Tier 2 of the visual pipeline: searches Instagram/TikTok for a photograph of the actual real subject, which stock/CC libraries (Tier 1) and generation (Tier 3) cannot supply. Every candidate is licenseConfidence: \"unknown\", so this is reference/human-reviewed material, not what makes an unattended run complete. Reports not_available when no scraper is configured.",
     version: TOOL_VERSION,
     inputSchema: ScrapeImagesInputSchema,
     async execute(rawInput) {

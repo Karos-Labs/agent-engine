@@ -14,14 +14,15 @@ const HexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, "expected a 6-digit hex c
  */
 export const BrandColorPaletteSchema = z
   .object({
-    background: HexColor,
-    foreground: HexColor,
-    accent: HexColor,
-    ink: HexColor.optional(),
-    surface_1: HexColor.optional(),
-    surface_2: HexColor.optional(),
-    border: HexColor.optional(),
-    muted_foreground: HexColor.optional(),
+    // No existing TSDoc on these individual color fields to transcribe (SCRUM-293 flag) — synthesized from the schema's own doc comment and each gate script's usage.
+    background: HexColor.describe("Base background color, 6-digit hex — read by brand_check.py's palette_from_profile."),
+    foreground: HexColor.describe("Primary foreground/text color, 6-digit hex — read by brand_check.py's palette_from_profile."),
+    accent: HexColor.describe("Accent color, 6-digit hex — read by brand_check.py's palette_from_profile and graphic_qa.py's ink/accent checks."),
+    ink: HexColor.optional().describe("Optional ink color, 6-digit hex — read by graphic_qa.py's ink/accent checks when present."),
+    surface_1: HexColor.optional().describe("Optional first surface color, 6-digit hex."),
+    surface_2: HexColor.optional().describe("Optional second surface color, 6-digit hex."),
+    border: HexColor.optional().describe("Optional border color, 6-digit hex."),
+    muted_foreground: HexColor.optional().describe("Optional muted-foreground color, 6-digit hex."),
   })
   .passthrough();
 export type BrandColorPalette = z.infer<typeof BrandColorPaletteSchema>;
@@ -37,11 +38,10 @@ export type BrandColorPalette = z.infer<typeof BrandColorPaletteSchema>;
  */
 export const BrandProfileSchema = z
   .object({
-    color: BrandColorPaletteSchema,
-    /** PLAYBOOK §4b: a locked grade override; absent means `"auto"`. */
-    video_grade: z.string().min(1).optional(),
-    /** PLAYBOOK §2: a profile without this block does not build (v2-only). */
-    video_captions_v2: z.record(z.string(), z.unknown()).optional(),
+    // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from the schema's own doc comment.
+    color: BrandColorPaletteSchema.describe("The client's brand color palette (brand-profile.json's color block) — the subset every gate script reads."),
+    video_grade: z.string().min(1).optional().describe("PLAYBOOK §4b: a locked grade override; absent means \"auto\"."),
+    video_captions_v2: z.record(z.string(), z.unknown()).optional().describe("PLAYBOOK §2: a profile without this block does not build (v2-only)."),
   })
   .passthrough();
 export type BrandProfile = z.infer<typeof BrandProfileSchema>;

@@ -17,50 +17,41 @@ const TOOL_VERSION = "1.0.0";
 export const MEDIA_CACHE_PREFIX = ".media-cache";
 
 export const FindImagesInputSchema = z.object({
-  /** Bounds root. Every returned path is relative to this and provably inside it. */
-  repoRoot: z.string().min(1),
-  /**
-   * One entry per slide that needs a picture. `n` is echoed back on each
-   * candidate's description so the vetting agent can tell which need a
-   * candidate was found for, without the tool deciding the match itself —
-   * that judgement is step 06's job and stays there.
-   */
+  repoRoot: z.string().min(1).describe("Bounds root. Every returned path is relative to this and provably inside it."),
   needs: z
     .array(
       z.object({
-        n: z.number().int().positive(),
-        query: z.string().min(1),
-        /**
-         * What this slide needs a picture *of*, which decides the provider
-         * order (`ROUTE_CHAINS`). Optional and defaulted so every existing
-         * caller — including `instagram-agent` step 05b, which passes only
-         * `{n, query}` — keeps working unchanged on the general-purpose chain.
-         */
-        route: z.enum(MEDIA_ROUTES as unknown as [MediaRoute, ...MediaRoute[]]).default("default"),
+        n: z.number().int().positive().describe("This slide's number, echoed back on each candidate's description so the vetting agent can tell which need a candidate was found for."),
+        query: z.string().min(1).describe("The search query for this slide's picture."),
+        route: z
+          .enum(MEDIA_ROUTES as unknown as [MediaRoute, ...MediaRoute[]])
+          .default("default")
+          .describe(
+            "What this slide needs a picture of, which decides the provider order. Optional and defaulted so every existing caller keeps working unchanged on the general-purpose chain.",
+          ),
       }),
     )
-    .min(1),
-  /**
-   * Candidates to request from EACH provider in the need's chain.
-   *
-   * Was "per need" when only one provider was ever consulted. Every provider
-   * is now asked, so this is the per-source width and `maxPerNeed` is the
-   * total ceiling.
-   */
-  perNeed: z.number().int().min(1).max(10).default(3),
-  /**
-   * Ceiling on the merged pool for one need, after every provider answered.
-   *
-   * The pool is not free: step 06 reads every candidate's description in one
-   * prompt, so its cost and latency scale with this number (18 candidates
-   * already cost ~63s and $0.02 on prep run pubsub-20632239329452475).
-   * Diversity, not volume, is what the gate was missing — so the cap stays
-   * low and `interleaveByProvider` spends it across sources rather than on
-   * one source's deep tail.
-   */
-  maxPerNeed: z.number().int().min(1).max(30).default(6),
-  /** Namespaces the cache directory so two runs never collide on a filename. */
-  runId: z.string().min(1),
+    .min(1)
+    .describe(
+      "One entry per slide that needs a picture. `n` is echoed back on each candidate's description so the vetting agent can tell which need a candidate was found for, without the tool deciding the match itself.",
+    ),
+  perNeed: z
+    .number()
+    .int()
+    .min(1)
+    .max(10)
+    .default(3)
+    .describe("Candidates to request from EACH provider in the need's chain — the per-source width; maxPerNeed is the total ceiling."),
+  maxPerNeed: z
+    .number()
+    .int()
+    .min(1)
+    .max(30)
+    .default(6)
+    .describe(
+      "Ceiling on the merged candidate pool for one need, after every provider answered. Kept low because the vetting step's cost and latency scale with this number.",
+    ),
+  runId: z.string().min(1).describe("Namespaces the cache directory so two runs never collide on a filename."),
 });
 export type FindImagesInput = z.input<typeof FindImagesInputSchema>;
 
@@ -115,6 +106,8 @@ export function createFindImages(source: ImageSource | ImageSearchProvider, fetc
 
   return defineTool<FindImagesInput, FindImagesResult>({
     name: "media.findImages",
+    description:
+      "Searches, downloads, and returns repo-relative image paths for a set of slide needs, asking every configured provider in a need's route chain and merging results for diversity. Does NOT decide which image fits which slide, nor whether one is usable — that judgement belongs to the caller's own vetting step.",
     version: TOOL_VERSION,
     inputSchema: FindImagesInputSchema,
     async execute(rawInput) {

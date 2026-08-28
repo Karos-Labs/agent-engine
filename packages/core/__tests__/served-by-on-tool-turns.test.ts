@@ -71,6 +71,7 @@ function fakeRouter(turns: Array<() => CompletionResult<unknown>>): ModelRouter 
 
 const PING: AgentTool<unknown, unknown> = {
   name: "noop.ping",
+  description: "Test double: replies { ok: true }.",
   version: "1.0.0",
   inputSchema: z.object({}),
   execute: async () => ({ status: "success", result: { ok: true } }),

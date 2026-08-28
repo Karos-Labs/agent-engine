@@ -4,9 +4,10 @@ import { defineTool, success, contentFail, toolingError } from "@agent-engine/to
 const TOOL_VERSION = "1.0.0";
 
 export const BreakpointSchema = z.object({
-  label: z.string().min(1),
-  width: z.number().int().positive(),
-  height: z.number().int().positive(),
+  // No existing TSDoc on these three fields to transcribe (SCRUM-293 flag) — synthesized from DEFAULT_BREAKPOINTS' usage.
+  label: z.string().min(1).describe("A short name for this viewport, e.g. \"mobile\" or \"desktop\" — echoed back in the result and in any failure reason."),
+  width: z.number().int().positive().describe("Viewport width in pixels to render at."),
+  height: z.number().int().positive().describe("Viewport height in pixels to render at."),
 });
 export type Breakpoint = z.infer<typeof BreakpointSchema>;
 
@@ -16,12 +17,25 @@ const DEFAULT_BREAKPOINTS: Breakpoint[] = [
 ];
 
 export const RenderCheckInputSchema = z.object({
-  /** The already-running dev/preview server for this client's build (e.g. `http://localhost:3005`) — starting/stopping that server is the workflow's job, not this tool's. */
-  baseUrl: z.string().min(1),
-  path: z.string().min(1).default("/"),
-  breakpoints: z.array(BreakpointSchema).default(() => DEFAULT_BREAKPOINTS),
+  baseUrl: z
+    .string()
+    .min(1)
+    .describe(
+      "The already-running dev/preview server for this client's build (e.g. http://localhost:3005) — starting/stopping that server is the workflow's job, not this tool's.",
+    ),
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from its usage building `target`.
+  path: z.string().min(1).default("/").describe("The route, relative to baseUrl, to render and check, e.g. \"/pricing\"."),
+  breakpoints: z
+    .array(BreakpointSchema)
+    .default(() => DEFAULT_BREAKPOINTS)
+    .describe("Which viewport sizes to check the page at. Defaults to mobile (390x844) and desktop (1280x800)."),
   /** ENGINE-SPEC §8: "no blank / near-black opener (avg luminance >= 20)", on a 0-255 scale. */
-  minOpenerLuminance: z.number().min(0).max(255).default(20),
+  minOpenerLuminance: z
+    .number()
+    .min(0)
+    .max(255)
+    .default(20)
+    .describe("ENGINE-SPEC §8: \"no blank / near-black opener (avg luminance >= 20)\", on a 0-255 scale."),
 });
 export type RenderCheckInput = z.infer<typeof RenderCheckInputSchema>;
 
@@ -108,6 +122,8 @@ function computeOpenerLuminance(): number {
 export function createRenderCheck() {
   return defineTool<RenderCheckInput, RenderCheckResult>({
     name: "landing.renderCheck",
+    description:
+      "The render half of the ENGINE-SPEC §8 gate: checks an already-running dev/preview server returns HTTP 200, has no horizontal overflow, no near-black opener, and a clean console, at every configured breakpoint (default 390x844 mobile + 1280x800 desktop).",
     version: TOOL_VERSION,
     inputSchema: RenderCheckInputSchema,
     async execute({ baseUrl, path: routePath, breakpoints, minOpenerLuminance }) {

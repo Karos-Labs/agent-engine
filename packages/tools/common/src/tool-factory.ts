@@ -4,6 +4,13 @@ import { toolingError } from "./errors.js";
 
 export interface DefineToolOptions<TArgs, TResult> {
   name: string;
+  /**
+   * What the tool does and when to call it — the only prose about this tool
+   * the model ever sees (SCRUM-293 / AU7). Required so a new tool can't ship
+   * silently blank; source it from the tool's existing TSDoc rather than
+   * writing new copy.
+   */
+  description: string;
   /** Travels into every telemetry record (RFC-01 §9.1 rule 5). Bump on any behavior change. */
   version: string;
   inputSchema: ZodSchema<TArgs>;
@@ -27,6 +34,7 @@ export interface DefineToolOptions<TArgs, TResult> {
 export function defineTool<TArgs, TResult>(options: DefineToolOptions<TArgs, TResult>): AgentTool<TArgs, TResult> {
   return {
     name: options.name,
+    description: options.description,
     version: options.version,
     inputSchema: options.inputSchema,
     async execute(rawArgs, context) {

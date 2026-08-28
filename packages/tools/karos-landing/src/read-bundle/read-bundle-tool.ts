@@ -183,6 +183,8 @@ async function readBundleFromWorkspaceStore(
 export function createReadBundle(config: LandingEngineConfig, workspaceStore?: WorkspaceStoreLike) {
   return defineTool<ReadBundleInput, ReadBundleResult>({
     name: "landing.readBundle",
+    description:
+      "Reads this client's assembled input bundle: brand.json (required), intake.md (required), and the assets/ and oldSite/ directories (both optional, listed only). Tenant comes from context only — this tool takes no arguments. A missing/malformed brand.json or intake.md reports content_fail: real, actionable intake-data signal, not a tooling error.",
     version: TOOL_VERSION,
     inputSchema: ReadBundleInputSchema,
     async execute(_input, { ctx }) {

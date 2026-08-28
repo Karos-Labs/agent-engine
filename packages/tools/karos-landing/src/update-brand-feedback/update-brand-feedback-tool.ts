@@ -8,7 +8,9 @@ import { BrandJsonSchema, BrandFeedbackRoundSchema } from "../types.js";
 const TOOL_VERSION = "1.0.0";
 
 export const UpdateBrandFeedbackInputSchema = z.object({
-  entry: BrandFeedbackRoundSchema,
+  entry: BrandFeedbackRoundSchema.describe(
+    "The feedback round to append to this client's brand.json. Its `round` must equal the next expected round number or the write is rejected (FEEDBACK.md §4 step 0's idempotency rule).",
+  ),
 });
 export type UpdateBrandFeedbackInput = z.infer<typeof UpdateBrandFeedbackInputSchema>;
 
@@ -43,6 +45,8 @@ export interface UpdateBrandFeedbackResult {
 export function createUpdateBrandFeedback(config: LandingEngineConfig) {
   return defineTool<UpdateBrandFeedbackInput, UpdateBrandFeedbackResult>({
     name: "landing.updateBrandFeedback",
+    description:
+      "Appends one round to brand.json's feedback ledger (FEEDBACK.md §5's append-only rebuild audit trail). Rejects (content_fail) a round number that isn't exactly the next expected one, so a repeated call can never silently re-apply or skip a round.",
     version: TOOL_VERSION,
     inputSchema: UpdateBrandFeedbackInputSchema,
     async execute({ entry }, { ctx }) {

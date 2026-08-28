@@ -5,7 +5,10 @@ import { readCatalog, reservationSegments, writeCatalog, type ReservationRecord 
 
 const TOOL_VERSION = "1.0.0";
 
-export const ReleaseInputSchema = z.object({ reservationKey: z.string().min(1) });
+export const ReleaseInputSchema = z.object({
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from the tool's own doc comment.
+  reservationKey: z.string().min(1).describe("Which reservation (from topics.reserve) to return to the available floor."),
+});
 export type ReleaseInput = z.infer<typeof ReleaseInputSchema>;
 
 export interface ReleaseResult {
@@ -17,6 +20,7 @@ export interface ReleaseResult {
 export function createRelease(store: WorkspaceStoreLike) {
   return defineTool<ReleaseInput, ReleaseResult>({
     name: "topics.release",
+    description: "Returns a reservation's topics to the available floor (e.g. the run that reserved them failed). Idempotent: releasing twice is a no-op.",
     version: TOOL_VERSION,
     inputSchema: ReleaseInputSchema,
     async execute({ reservationKey }, { ctx }) {

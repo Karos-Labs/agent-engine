@@ -38,9 +38,14 @@ function exactClaimPattern(normalizedClaim: string): RegExp {
 }
 
 export const NumbersSourcedInputSchema = z.object({
-  text: z.string(),
-  /** Real source content (research snippets, dossier excerpts, ...) the draft's numeric claims must actually appear in. A citation marker in `text` with no matching figure here is NOT sourced. */
-  sources: z.array(z.string()).default([]),
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from the tool's own doc comment.
+  text: z.string().describe("The draft text to check for numeric claims (percentages, currency, multipliers, magnitude words)."),
+  sources: z
+    .array(z.string())
+    .default([])
+    .describe(
+      "Real source content (research snippets, dossier excerpts, ...) the draft's numeric claims must actually appear in. A citation marker in `text` with no matching figure here is NOT sourced.",
+    ),
 });
 export type NumbersSourcedInput = z.infer<typeof NumbersSourcedInputSchema>;
 
@@ -55,6 +60,8 @@ export type NumbersSourcedInput = z.infer<typeof NumbersSourcedInputSchema>;
  */
 export const numbersSourced = defineTool<NumbersSourcedInput, GateVerdict>({
   name: "gate.numbersSourced",
+  description:
+    "Fails if the draft makes a numeric claim (percentage, currency, \"10x\", \"$1.2 million\", ...) whose exact figure doesn't actually appear anywhere in sources. Deliberately stricter than checking for a citation-shaped substring: a source saying '15-20' does not support '20'.",
   version: TOOL_VERSION,
   inputSchema: NumbersSourcedInputSchema,
   async execute({ text, sources }) {

@@ -79,6 +79,8 @@ export function createKarosMediaTools(options: KarosMediaToolsOptions = {}): Age
     return {
       "media.findImages": defineTool<z.input<typeof FindImagesInputSchema>, never>({
         name: "media.findImages",
+        description:
+          "Stub registered when this deployment supplied an empty provider source: always reports not_available rather than searching, since no image-search provider is configured.",
         version: "1.0.0",
         inputSchema: FindImagesInputSchema,
         async execute() {

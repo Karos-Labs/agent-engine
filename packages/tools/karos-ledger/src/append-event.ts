@@ -5,11 +5,11 @@ import { defineTool, success } from "@agent-engine/tool-common";
 const TOOL_VERSION = "1.0.0";
 
 export const AppendEventInputSchema = z.object({
-  runId: z.string().min(1),
-  /** Caller-minted idempotency key for this one event. */
-  eventId: z.string().min(1),
-  level: z.enum(["info", "error", "success"]),
-  message: z.string().min(1),
+  // No existing TSDoc on these three fields to transcribe (SCRUM-293 flag) — synthesized from the tool's own doc comment and execute()'s usage.
+  runId: z.string().min(1).describe("The run this event belongs to."),
+  eventId: z.string().min(1).describe("Caller-minted idempotency key for this one event."),
+  level: z.enum(["info", "error", "success"]).describe("This event's severity/kind."),
+  message: z.string().min(1).describe("The human-readable event text."),
 });
 export type AppendEventInput = z.infer<typeof AppendEventInputSchema>;
 
@@ -17,6 +17,7 @@ export type AppendEventInput = z.infer<typeof AppendEventInputSchema>;
 export function createAppendEvent(store: WorkspaceStoreLike) {
   return defineTool<AppendEventInput, IdempotentWriteResult>({
     name: "ledger.appendEvent",
+    description: "Idempotent on (runId, eventId) — appends one entry to a run's event log with no duplicate rows on replay.",
     version: TOOL_VERSION,
     inputSchema: AppendEventInputSchema,
     async execute({ runId, eventId, level, message }, { ctx }) {

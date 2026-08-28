@@ -85,6 +85,7 @@ function config(overrides: Partial<AgentStepConfig<DraftOutput>> = {}): AgentSte
 
 const renderPreview: AgentTool = {
   name: "render.preview",
+  description: "Test double for render.preview.",
   version: "1.0.0",
   inputSchema: z.unknown(),
   execute: vi.fn(async () => ({ status: "success" as const, result: { withinLimit: true } })),

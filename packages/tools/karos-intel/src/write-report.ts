@@ -80,6 +80,8 @@ export interface WriteReportResult {
 export function createWriteReport(store: WorkspaceStoreLike, clientReportStore?: ClientReportStore) {
   return defineTool<import("./types.js").IntelReportOutput, WriteReportResult>({
     name: "intel.writeReport",
+    description:
+      "Writes a completed Intel Report to the portal's clientReports collection (the deliverable) and to the engine's own workspace mirror. overallScore/overallGrade are computed deterministically from dimensionScores, never trusted to the model. Reports not_available if no client-report store is wired, rather than silently degrading to a workspace-only write the portal will never show.",
     version: TOOL_VERSION,
     inputSchema: IntelReportOutputSchema,
     async execute(input, { ctx }) {

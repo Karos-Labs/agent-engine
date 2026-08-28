@@ -18,6 +18,8 @@ const TOOL_VERSION = "1.0.0";
 export function createReputationTriage() {
   return defineTool<TriageToolInput, TriageResult>({
     name: "reputation.triage",
+    description:
+      "The deterministic routing authority: scores and routes each review to RESPOND / FLAG / NO_ACTION and detects crisis conditions, using pure arithmetic over a frozen rubric. Never calls a model and never touches the network — \"the model extracts, arithmetic routes\".",
     version: TOOL_VERSION,
     inputSchema: TriageToolInputSchema,
     async execute({ payload, config }) {

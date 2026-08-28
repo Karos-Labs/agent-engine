@@ -16,11 +16,18 @@ const TOOL_VERSION = "1.0.0";
 const DEFAULT_BANNED_PROMISE_PHRASES = ["guaranteed returns", "risk-free", "guaranteed income", "zero risk", "guaranteed profit"];
 
 export const BrandComplianceInputSchema = z.object({
-  text: z.string(),
-  /** Terms this client's brand voice forbids — matched case-insensitively as substrings, on top of the always-on `DEFAULT_BANNED_PROMISE_PHRASES` bank. */
-  forbiddenTerms: z.array(z.string()).default([]),
-  /** A disclaimer/phrase the draft must contain verbatim (case-insensitive), if the client requires one. */
-  requiredDisclaimer: z.string().optional(),
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — description below is synthesized from the tool's own doc comment and `execute`'s usage, not carried over from an existing comment.
+  text: z.string().describe("The draft text to check for forbidden terms, banned promise/hype phrases, and a required disclaimer."),
+  forbiddenTerms: z
+    .array(z.string())
+    .default([])
+    .describe(
+      "Terms this client's brand voice forbids — matched case-insensitively as substrings, on top of the always-on `DEFAULT_BANNED_PROMISE_PHRASES` bank.",
+    ),
+  requiredDisclaimer: z
+    .string()
+    .optional()
+    .describe("A disclaimer/phrase the draft must contain verbatim (case-insensitive), if the client requires one."),
 });
 export type BrandComplianceInput = z.infer<typeof BrandComplianceInputSchema>;
 
@@ -51,6 +58,8 @@ export type BrandComplianceVerdict =
  */
 export const brandCompliance = defineTool<BrandComplianceInput, BrandComplianceVerdict>({
   name: "gate.brandCompliance",
+  description:
+    "Fails on a forbidden term, a banned promise/hype phrase, or a missing required disclaimer. forbiddenTerms/requiredDisclaimer are the client's own brand voice rules, passed in explicitly; the promise/hype bank is always active regardless of what the client configured.",
   version: TOOL_VERSION,
   inputSchema: BrandComplianceInputSchema,
   async execute({ text, forbiddenTerms, requiredDisclaimer }) {

@@ -18,6 +18,7 @@ export type ClientConfig = Record<string, unknown>;
 export function createGetConfig(store: WorkspaceStoreLike) {
   return defineTool<GetConfigInput, ClientConfig>({
     name: "client.getConfig",
+    description: "Read-only lookup of the tenant's free-form runtime config. Tenant comes from context only — this tool takes no arguments.",
     version: TOOL_VERSION,
     inputSchema: GetConfigInputSchema,
     async execute(_args, { ctx }) {

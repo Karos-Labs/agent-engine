@@ -4,19 +4,34 @@ import { defineTool, success } from "@agent-engine/tool-common";
 const TOOL_VERSION = "1.0.0";
 
 export const SubredditRulesGateInputSchema = z.object({
-  text: z.string(),
-  subreddit: z.string().min(1),
+  // text/subreddit/offLimits/aiContentBanned/disclosureRequired/requiredDisclosure/minKarma/minAccountAgeDays have no existing TSDoc to transcribe (SCRUM-293 flag) — descriptions synthesized from the tool's own doc comment and execute()'s usage of each field.
+  text: z.string().describe("The draft text being checked before it posts to `subreddit`."),
+  subreddit: z.string().min(1).describe("The target subreddit's name (without the r/ prefix), e.g. \"personalfinance\"."),
   /** Mirrors `SubredditRulesLookup.configStatus` (`client.getSubredditRules`) — carried through so a fully unconfigured client passes cleanly rather than being punished for data it never supplied. */
-  configStatus: z.enum(["configured", "unconfigured"]).default("unconfigured"),
-  offLimits: z.boolean().default(false),
-  aiContentBanned: z.boolean().default(false),
-  disclosureRequired: z.boolean().default(false),
-  requiredDisclosure: z.string().optional(),
-  minKarma: z.number().optional(),
-  minAccountAgeDays: z.number().optional(),
+  configStatus: z
+    .enum(["configured", "unconfigured"])
+    .default("unconfigured")
+    .describe(
+      "Mirrors `SubredditRulesLookup.configStatus` (`client.getSubredditRules`) — carried through so a fully unconfigured client passes cleanly rather than being punished for data it never supplied.",
+    ),
+  offLimits: z.boolean().default(false).describe("Whether this client has been banned from, or otherwise ruled off-limits for, `subreddit`."),
+  aiContentBanned: z.boolean().default(false).describe("Whether `subreddit`'s own rules ban AI-assisted content outright."),
+  disclosureRequired: z.boolean().default(false).describe("Whether `subreddit` requires a disclosure statement when the draft mentions the product."),
+  requiredDisclosure: z.string().optional().describe("The exact disclosure text `subreddit` requires, checked against `text` when `disclosureRequired` is true."),
+  minKarma: z.number().optional().describe("`subreddit`'s minimum account karma to post, if it has one. Unset means \"cannot check,\" not \"no minimum.\""),
+  minAccountAgeDays: z
+    .number()
+    .optional()
+    .describe("`subreddit`'s minimum account age in days to post, if it has one. Unset means \"cannot check,\" not \"no minimum.\""),
   /** The connecting account's real karma/age, if known — Phase 1 has no live Reddit account data source, so these are normally absent, not synthesized. */
-  accountKarma: z.number().optional(),
-  accountAgeDays: z.number().optional(),
+  accountKarma: z
+    .number()
+    .optional()
+    .describe("The connecting account's real karma, if known — Phase 1 has no live Reddit account data source, so this is normally absent, not synthesized."),
+  accountAgeDays: z
+    .number()
+    .optional()
+    .describe("The connecting account's real age in days, if known — Phase 1 has no live Reddit account data source, so this is normally absent, not synthesized."),
   /**
    * Whether this draft actually contains a product mention. Phase 1 has no
    * `account.json`-style `mention_names` text scan (`check-draft.mjs`
@@ -27,11 +42,25 @@ export const SubredditRulesGateInputSchema = z.object({
    * today). Defaults false so a pre-draft call — before any draft text
    * exists — never spuriously trips the warming/cooldown checks.
    */
-  mentionAttempted: z.boolean().default(false),
+  mentionAttempted: z
+    .boolean()
+    .default(false)
+    .describe(
+      "Whether this draft actually contains a product mention. Phase 1 has no `account.json`-style `mention_names` text scan; the caller derives this from the draft's own self-reported `disclosureIncluded` flag instead. Defaults false so a pre-draft call never spuriously trips the warming/cooldown checks.",
+    ),
   /** Mirrors `SubredditRulesLookup.mentionCooldownDays`/`lastMentionAt`/`accountWarmingUntil` — see that file for what each means. */
-  mentionCooldownDays: z.number().optional(),
-  lastMentionAt: z.string().optional(),
-  accountWarmingUntil: z.string().optional(),
+  mentionCooldownDays: z
+    .number()
+    .optional()
+    .describe("Mirrors `SubredditRulesLookup.mentionCooldownDays` — the number of days that must elapse between product mentions in this subreddit."),
+  lastMentionAt: z
+    .string()
+    .optional()
+    .describe("Mirrors `SubredditRulesLookup.lastMentionAt` — an ISO date string for when this account last mentioned the product in this subreddit."),
+  accountWarmingUntil: z
+    .string()
+    .optional()
+    .describe("Mirrors `SubredditRulesLookup.accountWarmingUntil` — an ISO date string before which this account may not mention the product at all."),
   /**
    * The caller's clock reading, as an ISO date string. This gate is a pure
    * function and must never read the system clock itself (so a fixture can
@@ -40,7 +69,12 @@ export const SubredditRulesGateInputSchema = z.object({
    * Absent `now` means the warming/cooldown checks cannot run — "cannot
    * check," not "assume it fails," same posture as an absent `accountKarma`.
    */
-  now: z.string().optional(),
+  now: z
+    .string()
+    .optional()
+    .describe(
+      "The caller's clock reading, as an ISO date string. This gate is a pure function and must never read the system clock itself. Absent `now` means the warming/cooldown checks cannot run.",
+    ),
 });
 export type SubredditRulesGateInput = z.infer<typeof SubredditRulesGateInputSchema>;
 
@@ -79,6 +113,8 @@ export type SubredditRulesVerdict =
  */
 export const subredditRules = defineTool<SubredditRulesGateInput, SubredditRulesVerdict>({
   name: "gate.subredditRules",
+  description:
+    "Checks whether a draft can actually post to its target subreddit: off-limits status, an AI-content ban, mention warming/cooldown windows, a missing required disclosure, or an account below the subreddit's karma/age floor — whichever of these the caller actually has data for. Never fabricates account state it wasn't given; an unset threshold or value means \"cannot check,\" not \"assume it fails.\"",
   version: TOOL_VERSION,
   inputSchema: SubredditRulesGateInputSchema,
   async execute({

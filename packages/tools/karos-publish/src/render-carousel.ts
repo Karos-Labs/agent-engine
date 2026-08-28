@@ -5,42 +5,47 @@ import { defineTool, success, contentFail, toolingError, type GcsArtifactStoreLi
 
 const TOOL_VERSION = "1.0.0";
 
+// n/template/fields/images have no existing TSDoc to transcribe (SCRUM-293 flag) — descriptions
+// below synthesized from fillTemplate's/validateRenderInputs' usage of each field.
 export const SlideSchema = z.object({
-  n: z.number().int().positive(),
-  template: z.string().min(1),
-  fields: z.record(z.string(), z.string()).default({}),
-  images: z.record(z.string(), z.string()).default({}),
-  /**
-   * Pre-assembled markup for `{{html:key}}` slots — a list archetype's rows,
-   * a comparison's columns. Distinct from `fields` because `fields` is escaped
-   * and this is not: only the calling agent's own fragment builder writes
-   * here, never a model directly. See `fillTemplate`.
-   */
-  htmlFragments: z.record(z.string(), z.string()).default({}),
+  n: z.number().int().positive().describe("This slide's position number in the carousel."),
+  template: z.string().min(1).describe("Repo-relative path (under templateDir) of this slide's HTML template."),
+  fields: z.record(z.string(), z.string()).default({}).describe("Model-authored copy substituted into the template's {{key}} slots, HTML-escaped before insertion."),
+  images: z.record(z.string(), z.string()).default({}).describe("Repo-relative image paths substituted into the template's {{image:key}} slots."),
+  htmlFragments: z
+    .record(z.string(), z.string())
+    .default({})
+    .describe(
+      "Pre-assembled markup for {{html:key}} slots — a list archetype's rows, a comparison's columns. Distinct from fields because fields is escaped and this is not: only the calling agent's own fragment builder writes here, never a model directly.",
+    ),
 });
 export type Slide = z.infer<typeof SlideSchema>;
 
 export const CanvasSchema = z.object({
-  w: z.number().int().positive().default(1080),
-  h: z.number().int().positive().default(1440),
-  /** Must be exactly 2 — the QA PNG floor depends on it (legacy `render.mjs`'s hard requirement, ported verbatim). */
-  scale: z.number().default(2),
-  slides_min: z.number().int().default(6),
-  slides_max: z.number().int().default(8),
+  w: z.number().int().positive().default(1080).describe("Canvas width in pixels."),
+  h: z.number().int().positive().default(1440).describe("Canvas height in pixels."),
+  scale: z.number().default(2).describe("Must be exactly 2 — the QA PNG floor depends on it (legacy render.mjs's hard requirement, ported verbatim)."),
+  slides_min: z.number().int().default(6).describe("Minimum expected slide count for this carousel."),
+  slides_max: z.number().int().default(8).describe("Maximum expected slide count for this carousel."),
 });
 
 export const RenderCarouselInputSchema = z.object({
-  client: z.string().min(1),
-  postId: z.string().min(1),
+  // client/postId have no existing TSDoc to transcribe (SCRUM-293 flag) — synthesized from usage.
+  client: z.string().min(1).describe("The client this carousel is being rendered for."),
+  postId: z.string().min(1).describe("This post's id, used to namespace rendered output."),
   /** Repo-relative directory holding the slide HTML templates. */
-  templateDir: z.string().min(1),
+  templateDir: z.string().min(1).describe("Repo-relative directory holding the slide HTML templates."),
   /** Repo-relative directory PNGs are written to. */
-  outDir: z.string().min(1),
+  outDir: z.string().min(1).describe("Repo-relative directory PNGs are written to (when no mediaStore is configured)."),
   /** Repo root every `templateDir`/`outDir`/image path is resolved and bounds-checked against. */
-  repoRoot: z.string().min(1),
-  slides: z.array(SlideSchema).min(1),
-  canvas: CanvasSchema.default(() => ({ w: 1080, h: 1440, scale: 2, slides_min: 6, slides_max: 8 })),
-  readyFlag: z.string().min(1).default("__CAROUSEL_READY__"),
+  repoRoot: z.string().min(1).describe("Repo root every templateDir/outDir/image path is resolved and bounds-checked against."),
+  slides: z.array(SlideSchema).min(1).describe("The carousel's slides, in order, each rendered from its own template."),
+  canvas: CanvasSchema.default(() => ({ w: 1080, h: 1440, scale: 2, slides_min: 6, slides_max: 8 })).describe("Render canvas dimensions and slide-count bounds."),
+  readyFlag: z
+    .string()
+    .min(1)
+    .default("__CAROUSEL_READY__")
+    .describe("The window flag (or document.body.dataset.ready value) the renderer polls for before screenshotting each slide."),
 });
 export type RenderCarouselInput = z.infer<typeof RenderCarouselInputSchema>;
 
@@ -262,6 +267,8 @@ export async function persistRenderedSlide(
 export function createRenderCarousel(mediaStore?: GcsArtifactStoreLike) {
   return defineTool<RenderCarouselInput, RenderCarouselResult>({
     name: "publish.renderCarousel",
+    description:
+      "Renders each slide's HTML template to a PNG via headless Chromium, uploading to GCS when a mediaStore is configured or writing to outDir on local disk otherwise. A typed-outcome port of legacy render.mjs's three-way exit contract: a bad/escaping path is a tooling failure, a missing image is a content failure, never confused.",
     version: TOOL_VERSION,
     inputSchema: RenderCarouselInputSchema,
     async execute(input) {

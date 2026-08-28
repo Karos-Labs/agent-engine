@@ -5,7 +5,8 @@ import { defineTool, success } from "@agent-engine/tool-common";
 const TOOL_VERSION = "1.0.0";
 
 export const ReadInputSchema = z.object({
-  scope: z.enum(["beliefs", "decisions", "hypotheses"]),
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from the tool's own doc comment.
+  scope: z.enum(["beliefs", "decisions", "hypotheses"]).describe("Which slice of instance memory to retrieve — one scope at a time rather than the whole memory document."),
 });
 export type ReadInput = z.infer<typeof ReadInputSchema>;
 
@@ -47,6 +48,8 @@ export type ReadResult =
 export function createRead(store: WorkspaceStoreLike) {
   return defineTool<ReadInput, ReadResult>({
     name: "memory.read",
+    description:
+      "Structured, retrieved-not-loaded-whole instance memory: reads one scope (beliefs, decisions, or hypotheses) at a time. An empty/default state is the normal starting condition, never not_available.",
     version: TOOL_VERSION,
     inputSchema: ReadInputSchema,
     async execute({ scope }, { ctx }) {

@@ -126,20 +126,38 @@ const PLATFORM_MAX_LENGTH: Record<string, number> = {
 };
 
 export const LintPostInputSchema = z.object({
-  text: z.string(),
-  platform: z.enum(["twitter", "x", "linkedin", "instagram", "facebook", "reddit", "blog", "newsletter", "generic"]).default("generic"),
-  /** Set false to skip the mechanical anti-AI-tell check below — on by default so every self-critique call exercises it without each workflow opting in. */
-  checkAntiSlop: z.boolean().default(true),
-  /** Zero-tolerance by default, matching legacy's absolute "no exclamation marks" / "auto-reject" rule across every migrated platform. Raise per-call only for a channel with its own documented exception. */
-  maxExclamationMarks: z.number().int().nonnegative().default(0),
-  /** Client-specific banned phrases, checked case-insensitively on top of the built-in AI-cliche bank. */
-  bannedPhrases: z.array(z.string()).default([]),
+  // No existing TSDoc on these two fields to transcribe (SCRUM-293 flag) — descriptions below synthesized from the tool's own doc comment and PLATFORM_MAX_LENGTH's usage.
+  text: z.string().describe("The draft text to lint."),
+  platform: z
+    .enum(["twitter", "x", "linkedin", "instagram", "facebook", "reddit", "blog", "newsletter", "generic"])
+    .default("generic")
+    .describe("Which platform's length limit to check the text against (see PLATFORM_MAX_LENGTH). Defaults to \"generic\"."),
+  checkAntiSlop: z
+    .boolean()
+    .default(true)
+    .describe(
+      "Set false to skip the mechanical anti-AI-tell check below — on by default so every self-critique call exercises it without each workflow opting in.",
+    ),
+  maxExclamationMarks: z
+    .number()
+    .int()
+    .nonnegative()
+    .default(0)
+    .describe(
+      "Zero-tolerance by default, matching legacy's absolute \"no exclamation marks\" / \"auto-reject\" rule across every migrated platform. Raise per-call only for a channel with its own documented exception.",
+    ),
+  bannedPhrases: z
+    .array(z.string())
+    .default([])
+    .describe("Client-specific banned phrases, checked case-insensitively on top of the built-in AI-cliche bank."),
 });
 export type LintPostInput = z.infer<typeof LintPostInputSchema>;
 
 /** Basic hygiene (non-empty, within the platform's length limit, no unresolved markdown link syntax) plus a mechanical anti-AI-tell check. */
 export const lintPost = defineTool<LintPostInput, GateVerdict>({
   name: "gate.lintPost",
+  description:
+    "Basic hygiene (non-empty, within the platform's length limit, no unresolved markdown link syntax) plus a mechanical anti-AI-tell check.",
   version: TOOL_VERSION,
   inputSchema: LintPostInputSchema,
   async execute({ text, platform, checkAntiSlop, maxExclamationMarks, bannedPhrases }) {

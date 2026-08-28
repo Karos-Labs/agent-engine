@@ -13,7 +13,10 @@ const REDDIT_COMMENT_LIMIT = 10000;
 /** Roughly what a thread view shows of a long comment before "read more" collapses it. */
 const REDDIT_FOLD_CHARACTERS = 300;
 
-export const RenderPreviewInputSchema = z.object({ text: z.string() });
+export const RenderPreviewInputSchema = z.object({
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from the tool's own doc comment.
+  text: z.string().describe("The composed reply comment body. Checked against Reddit's real 10,000-character comment limit."),
+});
 export type RenderPreviewInput = z.infer<typeof RenderPreviewInputSchema>;
 
 export interface RenderPreviewResult {
@@ -44,6 +47,8 @@ export interface RenderPreviewResult {
  */
 export const renderPreview: AgentTool<RenderPreviewInput, RenderPreviewResult> = defineTool({
   name: "render.preview",
+  description:
+    "A small, deterministic 'how would this actually look on Reddit' check for a reply: character count against Reddit's real 10,000-character comment limit and fold visibility, distinct from the content-judgment gates.",
   version: TOOL_VERSION,
   inputSchema: RenderPreviewInputSchema,
   async execute({ text }) {

@@ -7,7 +7,8 @@ const SEGMENTS = ["client", "competitors"] as const;
 const DEFAULT_LIMIT = 20;
 
 export const ListCompetitorsInputSchema = z.object({
-  limit: z.number().int().positive().default(DEFAULT_LIMIT),
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from execute()'s use of `.slice(0, limit)`.
+  limit: z.number().int().positive().default(DEFAULT_LIMIT).describe("Maximum number of competitors to return, taken from the front of the stored list."),
 });
 export type ListCompetitorsInput = z.infer<typeof ListCompetitorsInputSchema>;
 
@@ -30,6 +31,8 @@ export interface Competitor {
 export function createListCompetitors(store: WorkspaceStoreLike) {
   return defineTool<ListCompetitorsInput, Competitor[]>({
     name: "client.listCompetitors",
+    description:
+      "Read-only lookup of the tenant's competitor list, stored as a single JSON array file rather than one file per competitor. Tenant comes from context only.",
     version: TOOL_VERSION,
     inputSchema: ListCompetitorsInputSchema,
     async execute({ limit }, { ctx }) {

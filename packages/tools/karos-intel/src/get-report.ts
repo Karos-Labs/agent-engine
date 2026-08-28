@@ -17,6 +17,8 @@ export interface GetReportResult {
 export function createGetReport(store: WorkspaceStoreLike) {
   return defineTool<GetReportInput, GetReportResult>({
     name: "intel.getReport",
+    description:
+      "Reads back the persisted report + competitor roster for this client — the portal's read path, and useful for verifying intel.writeReport's effects.",
     version: TOOL_VERSION,
     inputSchema: GetReportInputSchema,
     async execute(_input, { ctx }) {

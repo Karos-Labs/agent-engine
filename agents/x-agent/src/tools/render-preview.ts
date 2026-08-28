@@ -9,7 +9,10 @@ const X_CHARACTER_LIMIT = 280;
 /** Roughly what's visible above the "Show more" fold on a typical timeline card. */
 const X_FOLD_CHARACTERS = 120;
 
-export const RenderPreviewInputSchema = z.object({ text: z.string() });
+export const RenderPreviewInputSchema = z.object({
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from the tool's own doc comment.
+  text: z.string().describe("The composed X post text. Checked against X's 280-character post limit."),
+});
 export type RenderPreviewInput = z.infer<typeof RenderPreviewInputSchema>;
 
 export interface RenderPreviewResult {
@@ -32,6 +35,8 @@ export interface RenderPreviewResult {
  */
 export const renderPreview: AgentTool<RenderPreviewInput, RenderPreviewResult> = defineTool({
   name: "render.preview",
+  description:
+    "A small, deterministic 'how would this actually look on X' check: character count and fold visibility, distinct from the content-judgment gates.",
   version: TOOL_VERSION,
   inputSchema: RenderPreviewInputSchema,
   async execute({ text }) {

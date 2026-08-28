@@ -20,31 +20,50 @@ const TOOL_VERSION = "1.1.0";
 const SOCIAL_PLATFORMS = ["x", "instagram", "reddit", "tiktok"] as const;
 
 export const PullInputSchema = z.object({
-  job: z.string().min(1),
-  query: z.string().min(1),
+  // job/query have no existing TSDoc to transcribe (SCRUM-293 flag) — synthesized from latestRunForQuery's usage.
+  job: z.string().min(1).describe("The research job's name — namespaces the cache alongside query."),
+  query: z.string().min(1).describe("The research question — cached runs are keyed on (job, query), not job alone, so a differently-worded run never reuses stale results."),
   /** Freshness window — a cached run inside this window is returned instead of re-fetching. */
-  window: z.string().min(1),
+  window: z.string().min(1).describe("Freshness window — a cached run inside this window is returned instead of re-fetching."),
   /**
    * How many live sources to retrieve. The payload is injected whole into the
    * extraction agent's prompt, so this is a token bill as much as a breadth
    * setting: a handful of real sources beats a pile of them.
    */
-  maxResults: z.number().int().min(1).max(10).default(4),
+  maxResults: z
+    .number()
+    .int()
+    .min(1)
+    .max(10)
+    .default(4)
+    .describe(
+      "How many live sources to retrieve. The payload is injected whole into the extraction agent's prompt, so this is a token bill as much as a breadth setting.",
+    ),
   /**
    * Whose prior deliverables to fold in as anti-repetition context, e.g.
    * `"instagram-agent"`. Omitted means no history section at all — a caller
    * that has not decided gets no half-answer.
    */
-  historyAgentId: z.string().min(1).optional(),
+  historyAgentId: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("Whose prior deliverables to fold in as anti-repetition context, e.g. \"instagram-agent\". Omitted means no history section at all."),
   /**
    * The client's own accounts, for pulling what they actually published
    * recently. Each entry costs a billed scrape, so callers name only the
    * accounts they want read.
    */
   socialAccounts: z
-    .array(z.object({ platform: z.enum(SOCIAL_PLATFORMS), username: z.string().min(1) }))
+    .array(
+      z.object({
+        platform: z.enum(SOCIAL_PLATFORMS).describe("Which social platform this account is on."),
+        username: z.string().min(1).describe("The account's username/handle on that platform."),
+      }),
+    )
     .max(4)
-    .optional(),
+    .optional()
+    .describe("The client's own accounts, for pulling what they actually published recently. Each entry costs a billed scrape."),
 });
 export type PullInput = z.input<typeof PullInputSchema>;
 
@@ -99,6 +118,8 @@ function toDocument(record: ScrapedRecord, contentChars: number): ResearchDocume
 export function createPull(store: WorkspaceStoreLike, scraper?: ScraperProvider) {
   return defineTool<PullInput, PullResult>({
     name: "research.pull",
+    description:
+      "Egress-bound, cached, freshness-enforced research fetch: a cached run inside window is returned as-is; otherwise real external sources are fetched via the configured scraper. Reports not_available naming the missing credential when no scraper is configured, rather than drafting from a placeholder payload.",
     version: TOOL_VERSION,
     inputSchema: PullInputSchema,
     async execute(rawInput, { ctx }) {

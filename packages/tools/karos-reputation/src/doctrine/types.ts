@@ -12,11 +12,12 @@ export const DOCTRINE_CONSTRAINTS = ["no_fault_concession", "no_blame", "no_fina
 export type DoctrineConstraint = (typeof DOCTRINE_CONSTRAINTS)[number];
 
 export const DoctrineVerdictSchema = z.object({
-  constraint: z.enum(DOCTRINE_CONSTRAINTS),
-  verdict: z.enum(["pass", "fail"]),
+  // constraint/verdict/rationale have no existing TSDoc to transcribe (SCRUM-293 flag) — synthesized from this schema's own field names and the input schema's doc comment.
+  constraint: z.enum(DOCTRINE_CONSTRAINTS).describe("Which of the four doctrine constraints this verdict judges."),
+  verdict: z.enum(["pass", "fail"]).describe("Whether the draft passes or fails this constraint."),
   /** The exact substring of the draft that justifies the verdict — empty only when the constraint cleanly passes with nothing to quote. */
-  quote: z.string(),
-  rationale: z.string().min(1),
+  quote: z.string().describe("The exact substring of the draft that justifies the verdict — empty only when the constraint cleanly passes with nothing to quote."),
+  rationale: z.string().min(1).describe("Why this verdict was reached."),
 });
 export type DoctrineVerdict = z.infer<typeof DoctrineVerdictSchema>;
 
@@ -52,9 +53,10 @@ export function describeVerdictSetViolation(verdicts: readonly { constraint: Doc
 }
 
 export const DoctrineGateInputSchema = z.object({
-  draftText: z.string().min(1),
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from the schema's usage.
+  draftText: z.string().min(1).describe("The drafted review response to check against the four doctrine constraints."),
   /** Lines from the client's `01-facts.md` — the closed universe `facts_grounded` claims must trace to. */
-  factsBase: z.array(z.string()).default([]),
+  factsBase: z.array(z.string()).default([]).describe("Lines from the client's 01-facts.md — the closed universe facts_grounded claims must trace to."),
   /**
    * The four quoted verdicts from the SEPARATE model pass (RFC-08 step 09 —
    * "the model that wrote a sentence is the worst judge of whether it
@@ -74,7 +76,10 @@ export const DoctrineGateInputSchema = z.object({
       if (violation !== null) {
         ctx.addIssue({ code: "custom", message: violation });
       }
-    }),
+    })
+    .describe(
+      "Exactly four quoted verdicts — one per doctrine constraint — from a SEPARATE model pass, never the same turn that drafted the reply. This tool validates the shape, computes the overall gate decision, and runs independent backstop checks that can override a model \"pass\" it disagrees with.",
+    ),
 });
 export type DoctrineGateInput = z.infer<typeof DoctrineGateInputSchema>;
 

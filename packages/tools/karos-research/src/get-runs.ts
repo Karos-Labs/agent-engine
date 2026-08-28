@@ -6,8 +6,9 @@ import { listRuns } from "./runs.js";
 const TOOL_VERSION = "1.0.0";
 
 export const GetRunsInputSchema = z.object({
-  job: z.string().min(1),
-  limit: z.number().int().positive().max(100).default(20),
+  // No existing TSDoc on these fields to transcribe (SCRUM-293 flag) — synthesized from execute()'s usage and the tool's own doc comment.
+  job: z.string().min(1).describe("Which job's run history to list."),
+  limit: z.number().int().positive().max(100).default(20).describe("Newest-first cap on how many run summaries to return."),
 });
 export type GetRunsInput = z.infer<typeof GetRunsInputSchema>;
 
@@ -25,6 +26,7 @@ export interface GetRunsResult {
 export function createGetRuns(store: WorkspaceStoreLike) {
   return defineTool<GetRunsInput, GetRunsResult>({
     name: "research.getRuns",
+    description: "Newest-first run history for a job — summaries with handles, not the full cached payload.",
     version: TOOL_VERSION,
     inputSchema: GetRunsInputSchema,
     async execute({ job, limit }, { ctx }) {

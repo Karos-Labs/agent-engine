@@ -59,12 +59,13 @@ export type BrandedShortsClientConfig = z.infer<typeof BrandedShortsClientConfig
 const HexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, "expected a 6-digit hex color");
 
 export const StyleCandidateSchema = z.object({
-  name: z.string().min(1),
-  description: z.string().min(1),
-  paletteUsage: z.string().min(1),
-  captionTreatment: z.string().min(1),
-  graphicsDirection: z.string().min(1),
-  endcardTreatment: z.string().min(1),
+  // No existing TSDoc on these fields to transcribe (SCRUM-293 flag) — synthesized from the schema's own doc comment and step 2's own output contract.
+  name: z.string().min(1).describe("This candidate's short, distinguishing name."),
+  description: z.string().min(1).describe("Prose description of this style candidate's overall direction."),
+  paletteUsage: z.string().min(1).describe("Prose description of how this candidate uses color — cross-referenced against paletteTokensUsed's literal hex codes, never trusted alone."),
+  captionTreatment: z.string().min(1).describe("Prose description of this candidate's caption styling."),
+  graphicsDirection: z.string().min(1).describe("Prose description of this candidate's motion-graphics direction."),
+  endcardTreatment: z.string().min(1).describe("Prose description of this candidate's endcard styling."),
   /**
    * The literal hex codes this candidate actually uses, declared explicitly
    * rather than left implicit in `paletteUsage`'s prose (P1#6 audit finding:
@@ -73,7 +74,12 @@ export const StyleCandidateSchema = z.object({
    * brand kit). `gate.styleTokenFidelity` cross-checks every value here
    * against `client.getBrand()`'s actual data.
    */
-  paletteTokensUsed: z.array(HexColor).min(1),
+  paletteTokensUsed: z
+    .array(HexColor)
+    .min(1)
+    .describe(
+      "The literal hex codes this candidate actually uses, declared explicitly rather than left implicit in paletteUsage's prose — gate.styleTokenFidelity cross-checks every value here against client.getBrand()'s actual data.",
+    ),
 });
 export type StyleCandidate = z.infer<typeof StyleCandidateSchema>;
 

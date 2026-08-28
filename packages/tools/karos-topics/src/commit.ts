@@ -5,7 +5,10 @@ import { readCatalog, reservationSegments, writeCatalog, type ReservationRecord 
 
 const TOOL_VERSION = "1.0.0";
 
-export const CommitInputSchema = z.object({ reservationKey: z.string().min(1) });
+export const CommitInputSchema = z.object({
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from the tool's own doc comment.
+  reservationKey: z.string().min(1).describe("Which reservation (from topics.reserve) to consume off the catalog floor for good."),
+});
 export type CommitInput = z.infer<typeof CommitInputSchema>;
 
 export interface CommitResult {
@@ -18,6 +21,7 @@ export interface CommitResult {
 export function createCommit(store: WorkspaceStoreLike) {
   return defineTool<CommitInput, CommitResult>({
     name: "topics.commit",
+    description: "Consumes a reservation's topics off the catalog floor for good. Idempotent: committing twice is a no-op.",
     version: TOOL_VERSION,
     inputSchema: CommitInputSchema,
     async execute({ reservationKey }, { ctx }) {

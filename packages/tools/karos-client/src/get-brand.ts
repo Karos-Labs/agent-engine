@@ -24,6 +24,7 @@ export interface ClientBrand {
 export function createGetBrand(store: WorkspaceStoreLike) {
   return defineTool<GetBrandInput, ClientBrand>({
     name: "client.getBrand",
+    description: "Read-only lookup of the tenant's brand kit. Tenant comes from context only — this tool takes no arguments.",
     version: TOOL_VERSION,
     inputSchema: GetBrandInputSchema,
     async execute(_args, { ctx }) {

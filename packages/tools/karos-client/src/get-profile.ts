@@ -31,6 +31,7 @@ export interface ClientProfile {
 export function createGetProfile(store: WorkspaceStoreLike) {
   return defineTool<GetProfileInput, ClientProfile>({
     name: "client.getProfile",
+    description: "Read-only lookup of the tenant's onboarding profile. Tenant is resolved exclusively from context — this tool's input schema declares no fields at all.",
     version: TOOL_VERSION,
     inputSchema: GetProfileInputSchema,
     async execute(_args, { ctx }) {

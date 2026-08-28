@@ -9,7 +9,10 @@ const LINKEDIN_CHARACTER_LIMIT = 3000;
 /** Roughly what's visible above the "…see more" fold before a reader has to tap through. */
 const LINKEDIN_FOLD_CHARACTERS = 210;
 
-export const RenderPreviewInputSchema = z.object({ text: z.string() });
+export const RenderPreviewInputSchema = z.object({
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from the tool's own doc comment.
+  text: z.string().describe("The composed LinkedIn post text. Checked against LinkedIn's 3,000-character feed-post limit."),
+});
 export type RenderPreviewInput = z.infer<typeof RenderPreviewInputSchema>;
 
 export interface RenderPreviewResult {
@@ -32,6 +35,8 @@ export interface RenderPreviewResult {
  */
 export const renderPreview: AgentTool<RenderPreviewInput, RenderPreviewResult> = defineTool({
   name: "render.preview",
+  description:
+    "A small, deterministic 'how would this actually look on LinkedIn' check: character count and fold visibility, distinct from the content-judgment gates.",
   version: TOOL_VERSION,
   inputSchema: RenderPreviewInputSchema,
   async execute({ text }) {

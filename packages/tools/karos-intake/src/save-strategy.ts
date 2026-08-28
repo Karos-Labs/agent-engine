@@ -15,37 +15,27 @@ const TOOL_VERSION = "1.0.0";
 const SEGMENT = "strategy";
 
 export const SaveStrategyInputSchema = z.object({
-  /** Which agent this document configures, e.g. "linkedin-agent". */
-  agent: z.string().min(1).regex(/^[a-z0-9][a-z0-9-]*$/, "agent must be lowercase-and-hyphens"),
-  /**
-   * The sub-document — a seat, an account, a config. Omitted writes the
-   * agent-level document.
-   *
-   * Charset-restricted because it becomes a path segment: a key containing a
-   * slash would write outside the agent's own folder, which for a tenant-bound
-   * store is the whole security property.
-   */
+  agent: z
+    .string()
+    .min(1)
+    .regex(/^[a-z0-9][a-z0-9-]*$/, "agent must be lowercase-and-hyphens")
+    .describe("Which agent this document configures, e.g. \"linkedin-agent\"."),
   key: z
     .string()
     .min(1)
     .regex(/^[a-z0-9][a-z0-9-]*$/, "key must be lowercase-and-hyphens")
-    .optional(),
-  /** The document itself, as markdown. */
-  markdown: z.string().min(1),
-  /**
-   * The same charter as machine-readable fields, for the parts of it a code
-   * step has to act on rather than read.
-   *
-   * A subreddit allowlist is the case that forced it: `reddit-agent`'s intake
-   * check compares against that list, and recovering an array from the prose
-   * that was rendered from it is a round trip that survives exactly until
-   * someone rewords a heading. `markdown` stays the document — this is a
-   * second view of it, never a replacement, which is why both are written
-   * together and neither is derived at read time.
-   */
-  data: z.record(z.string(), z.unknown()).optional(),
-  /** Where it came from — a form submission, a lab-repo path, a human. */
-  source: z.record(z.string(), z.unknown()).optional(),
+    .optional()
+    .describe(
+      "The sub-document — a seat, an account, a config. Omitted writes the agent-level document. Charset-restricted because it becomes a path segment: a key containing a slash would write outside the agent's own folder.",
+    ),
+  markdown: z.string().min(1).describe("The document itself, as markdown."),
+  data: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .describe(
+      "The same charter as machine-readable fields, for the parts of it a code step has to act on rather than read (e.g. a subreddit allowlist a check compares against). A second view of markdown, never a replacement — both are written together and neither is derived at read time.",
+    ),
+  source: z.record(z.string(), z.unknown()).optional().describe("Where it came from — a form submission, a lab-repo path, a human."),
 });
 export type SaveStrategyInput = z.infer<typeof SaveStrategyInputSchema>;
 
@@ -65,6 +55,8 @@ export type SaveStrategyInput = z.infer<typeof SaveStrategyInputSchema>;
 export function createSaveStrategy(store: WorkspaceStoreLike) {
   return defineTool<SaveStrategyInput, IdempotentWriteResult>({
     name: "intake.saveStrategy",
+    description:
+      "Writes a client's setup document (a charter: what an account should post, what it must never post, which accounts it engages). Idempotent per (agent, key) path; refuses to write an empty document.",
     version: TOOL_VERSION,
     inputSchema: SaveStrategyInputSchema,
     async execute({ agent, key, markdown, data, source }, { ctx }) {

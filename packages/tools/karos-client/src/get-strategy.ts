@@ -15,19 +15,19 @@ const TOOL_VERSION = "1.0.0";
 const SEGMENT = "strategy";
 
 export const GetStrategyInputSchema = z.object({
-  /**
-   * Which agent's setup document to read, e.g. "x-agent". Distinct from the
-   * running product id on purpose: two products can share one strategy
-   * document, and a document can outlive the agent that first needed it.
-   */
-  agent: z.string().min(1),
-  /**
-   * Optional sub-document — a per-seat or per-account intake rather than the
-   * account-level one. `x-agent`'s company page and each founder's seat are
-   * separate documents in the lab repo and stay separate here, because they
-   * describe different voices and must never be blended into one context.
-   */
-  key: z.string().min(1).optional(),
+  agent: z
+    .string()
+    .min(1)
+    .describe(
+      "Which agent's setup document to read, e.g. \"x-agent\". Distinct from the running product id on purpose: two products can share one strategy document, and a document can outlive the agent that first needed it.",
+    ),
+  key: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Optional sub-document — a per-seat or per-account intake rather than the account-level one. Kept separate because it can describe a different voice and must never be blended into the account-level document.",
+    ),
 });
 export type GetStrategyInput = z.infer<typeof GetStrategyInputSchema>;
 
@@ -74,6 +74,8 @@ export interface StrategyDocument {
 export function createGetStrategy(store: WorkspaceStoreLike) {
   return defineTool<GetStrategyInput, StrategyDocument>({
     name: "client.getStrategy",
+    description:
+      "The client's own setup/strategy document for one agent, as dynamic run context: what an account is chartered to post, what it must never post, and which accounts it engages. Reports not_available (not an error) when the client has not been set up for this agent.",
     version: TOOL_VERSION,
     inputSchema: GetStrategyInputSchema,
     async execute({ agent, key }, { ctx }) {

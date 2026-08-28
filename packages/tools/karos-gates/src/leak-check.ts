@@ -14,15 +14,19 @@ const BUILTIN_LEAK_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
 ];
 
 export const LeakCheckInputSchema = z.object({
-  text: z.string(),
-  /** Additional client-specific internal terms (codenames, etc), matched case-insensitively as literal substrings. */
-  extraTerms: z.array(z.string()).default([]),
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from the tool's own doc comment.
+  text: z.string().describe("The draft text to scan for leaked credentials, local file paths, or client-specific internal terms."),
+  extraTerms: z
+    .array(z.string())
+    .default([])
+    .describe("Additional client-specific internal terms (codenames, etc), matched case-insensitively as literal substrings."),
 });
 export type LeakCheckInput = z.infer<typeof LeakCheckInputSchema>;
 
 /** Fails if the draft looks like it leaked a credential, a local file path, or a client-specific internal term. */
 export const leakCheck = defineTool<LeakCheckInput, GateVerdict>({
   name: "gate.leakCheck",
+  description: "Fails if the draft looks like it leaked a credential, a local file path, or a client-specific internal term.",
   version: TOOL_VERSION,
   inputSchema: LeakCheckInputSchema,
   async execute({ text, extraTerms }) {

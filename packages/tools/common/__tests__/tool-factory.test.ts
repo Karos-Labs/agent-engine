@@ -15,6 +15,7 @@ describe("defineTool", () => {
   it("passes validated args through to execute", async () => {
     const tool = defineTool({
       name: "test.echo",
+      description: "Test double: echoes text back.",
       version: "1.0.0",
       inputSchema: z.object({ text: z.string() }),
       async execute(args) {
@@ -29,6 +30,7 @@ describe("defineTool", () => {
   it("returns tooling_error, not a thrown exception, when args fail the input schema", async () => {
     const tool = defineTool({
       name: "test.echo",
+      description: "Test double: echoes text back.",
       version: "1.0.0",
       inputSchema: z.object({ text: z.string() }),
       async execute(args) {
@@ -43,6 +45,7 @@ describe("defineTool", () => {
   it("strips a model-supplied tenant field that isn't part of the schema", async () => {
     const tool = defineTool({
       name: "test.echo",
+      description: "Test double: echoes text back.",
       version: "1.0.0",
       inputSchema: z.object({ text: z.string() }),
       async execute(args) {
@@ -58,6 +61,7 @@ describe("defineTool", () => {
   it("converts a thrown error into tooling_error instead of an unhandled rejection", async () => {
     const tool = defineTool({
       name: "test.boom",
+      description: "Test double: always throws.",
       version: "1.0.0",
       inputSchema: z.object({}),
       async execute() {
@@ -72,6 +76,7 @@ describe("defineTool", () => {
   it("preserves err.cause in the reported reason, not just the top-level message (RFC-01 §16.4)", async () => {
     const tool = defineTool({
       name: "test.boom",
+      description: "Test double: always throws, with a cause.",
       version: "1.0.0",
       inputSchema: z.object({}),
       async execute() {
@@ -88,6 +93,7 @@ describe("defineTool", () => {
   it("passes content_fail and not_available outcomes through unchanged", async () => {
     const tool = defineTool({
       name: "test.judge",
+      description: "Test double: returns content_fail or not_available depending on input.",
       version: "1.0.0",
       inputSchema: z.object({ verdict: z.enum(["fail", "missing"]) }),
       async execute(args) {

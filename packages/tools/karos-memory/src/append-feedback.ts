@@ -5,22 +5,19 @@ import { defineTool, success } from "@agent-engine/tool-common";
 const TOOL_VERSION = "1.0.0";
 
 export const AppendFeedbackInputSchema = z.object({
-  /**
-   * Caller-minted idempotency key. `${runId}-r${revision}` is the natural
-   * choice: a run replayed after a crash must not append a reviewer's note
-   * twice, and that key is stable across replays.
-   */
-  feedbackId: z.string().min(1),
-  /** Which product the feedback was about, so a later run can weight its own agent's history first. */
-  productId: z.string().min(1),
-  decision: z.enum(["approve", "revise", "reject"]),
-  actor: z.string().min(1),
-  /** The reviewer's words. The whole point of the row. */
-  note: z.string().min(1),
-  /** Which revision round produced the output being judged. */
-  revision: z.number().int().nonnegative().default(0),
-  /** The run this came from, for tracing a preference back to what prompted it. */
-  runId: z.string().min(1).optional(),
+  feedbackId: z
+    .string()
+    .min(1)
+    .describe(
+      "Caller-minted idempotency key. `${runId}-r${revision}` is the natural choice: a run replayed after a crash must not append a reviewer's note twice, and that key is stable across replays.",
+    ),
+  productId: z.string().min(1).describe("Which product the feedback was about, so a later run can weight its own agent's history first."),
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from execute()'s usage.
+  decision: z.enum(["approve", "revise", "reject"]).describe("The reviewer's verdict on the work being judged."),
+  actor: z.string().min(1).describe("Who gave this feedback (a human reviewer's name/id)."),
+  note: z.string().min(1).describe("The reviewer's words. The whole point of the row."),
+  revision: z.number().int().nonnegative().default(0).describe("Which revision round produced the output being judged."),
+  runId: z.string().min(1).optional().describe("The run this came from, for tracing a preference back to what prompted it."),
 });
 export type AppendFeedbackInput = z.input<typeof AppendFeedbackInputSchema>;
 
@@ -46,6 +43,8 @@ export type AppendFeedbackInput = z.input<typeof AppendFeedbackInputSchema>;
 export function createAppendFeedback(store: WorkspaceStoreLike) {
   return defineTool<AppendFeedbackInput, IdempotentWriteResult>({
     name: "memory.appendFeedback",
+    description:
+      "Durable review feedback, per client — a person's verdict (approve/revise/reject) plus their note, written for every decision including approvals so the system learns what's working, not only what's wrong. Idempotent on feedbackId, so a replayed run appends one row.",
     version: TOOL_VERSION,
     inputSchema: AppendFeedbackInputSchema,
     async execute(rawInput, { ctx }) {
@@ -67,15 +66,16 @@ export function createAppendFeedback(store: WorkspaceStoreLike) {
 }
 
 export const ReadFeedbackInputSchema = z.object({
-  /** Restrict to one product's history. Omit for every product's. */
-  productId: z.string().min(1).optional(),
-  /**
-   * Newest-first cap. Bounded because this lands in a drafting prompt: a
-   * client with two years of feedback would otherwise push the actual brief
-   * out of the context window, which is the exact "context bloat" defect the
-   * engine's own design notes call out.
-   */
-  limit: z.number().int().min(1).max(50).default(10),
+  productId: z.string().min(1).optional().describe("Restrict to one product's history. Omit for every product's."),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .default(10)
+    .describe(
+      "Newest-first cap. Bounded because this lands in a drafting prompt: a client with two years of feedback would otherwise push the actual brief out of the context window.",
+    ),
 });
 export type ReadFeedbackInput = z.input<typeof ReadFeedbackInputSchema>;
 
@@ -103,6 +103,8 @@ export interface ReadFeedbackResult {
 export function createReadFeedback(store: WorkspaceStoreLike) {
   return defineTool<ReadFeedbackInput, ReadFeedbackResult>({
     name: "memory.readFeedback",
+    description:
+      "Read-only: what people have asked for before, newest first — the read side of the feedback flywheel, so a run doesn't repeat a correction a client already gave.",
     version: TOOL_VERSION,
     inputSchema: ReadFeedbackInputSchema,
     async execute(rawInput, { ctx }) {

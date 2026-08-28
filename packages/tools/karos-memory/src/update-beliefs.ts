@@ -5,7 +5,8 @@ import { defineTool, success } from "@agent-engine/tool-common";
 const TOOL_VERSION = "1.0.0";
 
 export const UpdateBeliefsInputSchema = z.object({
-  diff: z.record(z.string(), z.unknown()),
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from the tool's own doc comment.
+  diff: z.record(z.string(), z.unknown()).describe("Key/value pairs to shallow-merge into the current beliefs document."),
 });
 export type UpdateBeliefsInput = z.infer<typeof UpdateBeliefsInputSchema>;
 
@@ -24,6 +25,7 @@ export interface UpdateBeliefsResult {
 export function createUpdateBeliefs(store: WorkspaceStoreLike) {
   return defineTool<UpdateBeliefsInput, UpdateBeliefsResult>({
     name: "memory.updateBeliefs",
+    description: "Shallow-merges diff into the current beliefs document and returns the merged result. A genuine mutation on every call — \"update\" means apply this diff now, not record it once.",
     version: TOOL_VERSION,
     inputSchema: UpdateBeliefsInputSchema,
     async execute({ diff }, { ctx }) {

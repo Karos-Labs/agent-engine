@@ -238,7 +238,8 @@ export abstract class BaseAgent<TOutput> {
   }
 
   /**
-   * Each allowed tool as `{name, inputSchema}` rather than a bare name.
+   * Each allowed tool as `{name, description, inputSchema}` rather than a
+   * bare name.
    *
    * `buildTurnSchema` constrains which tool the model may *name*, but nothing
    * constrains the `args` it invents for that tool — `args` is `z.unknown()`
@@ -250,20 +251,26 @@ export abstract class BaseAgent<TOutput> {
    * *is* the tool's own schema it can never drift from what `runOneTurn`
    * validates against.
    *
-   * A tool whose schema can't be represented as JSON Schema degrades to the
-   * bare name instead of failing the step — a less informative prompt is not
-   * a broken run. Reads through `scopedTools()` so this can only ever
-   * advertise tools the loop can actually reach.
+   * `description` (SCRUM-293 / AU7) is what the model reads to decide
+   * *whether* to call the tool at all, before it ever gets to `args` — the
+   * schema alone told it what shape to fill in, never what the tool does or
+   * when calling it makes sense. `AgentTool.description` is required, so
+   * this is always present when `tool` is found at all.
+   *
+   * A tool whose schema can't be represented as JSON Schema degrades to
+   * `{name, description}` instead of failing the step — a less informative
+   * prompt is not a broken run. Reads through `scopedTools()` so this can
+   * only ever advertise tools the loop can actually reach.
    */
-  private describeAllowedTools(): Array<{ name: string; inputSchema?: unknown }> {
+  private describeAllowedTools(): Array<{ name: string; description?: string; inputSchema?: unknown }> {
     const scoped = this.scopedTools();
     return this.config.allowedTools.map((name) => {
       const tool = scoped[name];
       if (!tool) return { name };
       try {
-        return { name, inputSchema: z.toJSONSchema(tool.inputSchema) };
+        return { name, description: tool.description, inputSchema: z.toJSONSchema(tool.inputSchema) };
       } catch {
-        return { name };
+        return { name, description: tool.description };
       }
     });
   }

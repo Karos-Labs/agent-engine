@@ -48,6 +48,8 @@ export function createReputationCapture(options: CreateReputationCaptureOptions 
 
   return defineTool<CaptureToolInput, CaptureToolResult>({
     name: "reputation.capture",
+    description:
+      "Captures reviews for each requested platform leg (Google Business Profile, App Store, or a manual export), each resolving to its own ok / UNAVAILABLE / not_in_roster outcome. A leg not in the client's roster is skipped cleanly, never guessed at; one leg's failure never erases another leg's already-captured outcome.",
     version: TOOL_VERSION,
     inputSchema: CaptureToolInputSchema,
     async execute({ legs }) {

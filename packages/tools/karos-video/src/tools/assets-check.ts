@@ -8,8 +8,7 @@ const TOOL_VERSION = "1.0.0";
 const SCRIPT_NAME = "brand_assets_check.py";
 
 export const AssetsCheckInputSchema = z.object({
-  /** Absolute or resolvable path to the client's `brand-profile.json`. */
-  profilePath: z.string().min(1),
+  profilePath: z.string().min(1).describe("Absolute or resolvable path to the client's brand-profile.json."),
 });
 export type AssetsCheckInput = z.infer<typeof AssetsCheckInputSchema>;
 
@@ -26,6 +25,8 @@ export function createAssetsCheck(options: KarosVideoToolOptions = {}) {
 
   return defineTool<AssetsCheckInput, GateVerdict>({
     name: "video.assetsCheck",
+    description:
+      "Physically opens every font/image a client's brand profile references, rather than trusting a path exists — catches a 0-byte or corrupt asset a bare path check would miss. Run at per-client onboarding and again before any run for a client whose assets may have moved.",
     version: TOOL_VERSION,
     inputSchema: AssetsCheckInputSchema,
     async execute({ profilePath }) {

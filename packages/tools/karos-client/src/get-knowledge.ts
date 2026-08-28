@@ -56,6 +56,8 @@ export interface ClientKnowledge {
 export function createGetKnowledge(store: WorkspaceStoreLike) {
   return defineTool<GetKnowledgeInput, ClientKnowledge>({
     name: "client.getKnowledge",
+    description:
+      "Read-only lookup of the client knowledge base the portal mirrors into this workspace: onboarding/context documents, recent meeting summaries, and the uploaded-reference-asset index. Tenant comes from context only — this tool takes no arguments.",
     version: TOOL_VERSION,
     inputSchema: GetKnowledgeInputSchema,
     async execute(_args, { ctx }) {

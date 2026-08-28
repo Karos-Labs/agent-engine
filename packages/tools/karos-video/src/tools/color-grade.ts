@@ -5,7 +5,8 @@ import { BrandProfileSchema } from "../types.js";
 const TOOL_VERSION = "1.0.0";
 
 export const ColorGradeInputSchema = z.object({
-  profile: BrandProfileSchema,
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from the tool's own doc comment.
+  profile: BrandProfileSchema.describe("The client's brand-profile.json — read for its optional video_grade lock; a missing lock resolves to \"auto\"."),
 });
 export type ColorGradeInput = z.infer<typeof ColorGradeInputSchema>;
 
@@ -27,6 +28,8 @@ export interface ColorGradeResult {
 export function createColorGrade() {
   return defineTool<ColorGradeInput, ColorGradeResult>({
     name: "video.colorGrade",
+    description:
+      "Resolves the grade for a build: the client's profile locks a specific grade (video_grade, changing it needs the client's explicit sign-off) or the job defaults to \"auto\", which build_short.py's per-segment analyzer resolves at render time. Zero judgment, no subprocess — pure data resolution.",
     version: TOOL_VERSION,
     inputSchema: ColorGradeInputSchema,
     async execute({ profile }) {

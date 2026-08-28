@@ -6,9 +6,10 @@ import type { HypothesisRecord } from "./read.js";
 const TOOL_VERSION = "1.0.0";
 
 export const ResolveHypothesisInputSchema = z.object({
-  hypothesisId: z.string().min(1),
-  resolution: z.string().min(1),
-  evidence: z.array(z.string()).optional(),
+  // No existing TSDoc on these fields to transcribe (SCRUM-293 flag) — synthesized from the tool's own doc comment.
+  hypothesisId: z.string().min(1).describe("Which existing hypothesis (from memory.appendHypothesis) to resolve."),
+  resolution: z.string().min(1).describe("How the hypothesis was resolved — the conclusion reached."),
+  evidence: z.array(z.string()).optional().describe("Supporting evidence for the resolution, if any."),
 });
 export type ResolveHypothesisInput = z.infer<typeof ResolveHypothesisInputSchema>;
 
@@ -31,6 +32,8 @@ export interface ResolveHypothesisResult {
 export function createResolveHypothesis(store: WorkspaceStoreLike) {
   return defineTool<ResolveHypothesisInput, ResolveHypothesisResult>({
     name: "memory.resolveHypothesis",
+    description:
+      "Transitions an existing hypothesis to status: \"resolved\". Reports not_available (not an error) when no hypothesis exists yet for the given id. Resolving the same hypothesis twice simply overwrites the record.",
     version: TOOL_VERSION,
     inputSchema: ResolveHypothesisInputSchema,
     async execute({ hypothesisId, resolution, evidence }, { ctx }) {

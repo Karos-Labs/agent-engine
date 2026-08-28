@@ -50,6 +50,8 @@ export interface Executive {
 export function createGetExecutives(store: WorkspaceStoreLike) {
   return defineTool<GetExecutivesInput, Executive[]>({
     name: "client.getExecutives",
+    description:
+      "Read-only lookup of the tenant's executive list — name/title plus, where a client has done the CV-mining work, career history, core pillars, off-limits topics, and voice tone for use in executive-voice posts. Tenant comes from context only — this tool takes no arguments.",
     version: TOOL_VERSION,
     inputSchema: GetExecutivesInputSchema,
     async execute(_args, { ctx }) {

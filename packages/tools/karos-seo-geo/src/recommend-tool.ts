@@ -18,6 +18,8 @@ export interface SeoGeoRecommendResult {
 export function createSeoGeoRecommend() {
   return defineTool<RecommendInput, SeoGeoRecommendResult>({
     name: "seoGeo.recommend",
+    description:
+      "Deterministic rec-firing off already-computed norms — reads seoGeo.score's per-input breakdown, never re-measures anything. Pass evaluateScoreFamily's SEO/GEO Readiness .inputs arrays as seoInputs/geoReadinessInputs.",
     version: TOOL_VERSION,
     inputSchema: RecommendInputSchema,
     async execute({ seoInputs, geoReadinessInputs }) {
