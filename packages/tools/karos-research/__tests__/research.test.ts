@@ -133,6 +133,24 @@ describe("karos-research", () => {
       const outcome = await tools["research.checkFreshness"]!.execute({ job: "j", window: "24h" }, { ctx });
       expect((outcome as { result: { fresh: boolean } }).result.fresh).toBe(true);
     });
+
+    it("AU12: answers from the latest.json pointer alone — never lists runs/ once the pointer exists", async () => {
+      for (let i = 0; i < 5; i++) {
+        vi.setSystemTime(new Date(Date.parse("2026-01-01T00:00:00Z") + i * 1000));
+        await tools["research.writeRun"]!.execute({ job: "j", runId: `r${i}`, query: "q", result: {} }, { ctx });
+      }
+      vi.setSystemTime(new Date("2026-01-01T01:00:00Z"));
+
+      const listJsonSpy = vi.spyOn(store, "listJson");
+      const outcome = await tools["research.checkFreshness"]!.execute({ job: "j", window: "24h" }, { ctx });
+
+      expect(outcome.status).toBe("success");
+      expect((outcome as { result: { lastRunId: string } }).result.lastRunId).toBe("r4");
+      // The whole point of AU12's fix: a bounded pointer read, not a scan of
+      // every historical run record on this "cache check" hot path.
+      expect(listJsonSpy).not.toHaveBeenCalled();
+      listJsonSpy.mockRestore();
+    });
   });
 
   describe("research.pull", () => {

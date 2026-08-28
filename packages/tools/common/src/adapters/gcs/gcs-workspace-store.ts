@@ -55,12 +55,40 @@ export class GcsWorkspaceStore implements WorkspaceStoreLike {
     return { filePath: objectPath, created: !existedBefore };
   }
 
+  /**
+   * AU12 conformance fix: two divergences from `WorkspaceStore.listJson`
+   * closed here (see `workspace-store-conformance.test.ts`, which runs the
+   * same operations against both backends and fails if they disagree
+   * again).
+   *
+   * 1. LISTING SCOPE. GCS has no real directories — `getFiles({prefix})`
+   *    matches any object key under the prefix, however deeply "nested" —
+   *    while `WorkspaceStore.listJson` reads one filesystem directory
+   *    non-recursively via `fs.readdir`. Left alone, a record ever written
+   *    one segment deeper than callers list at would appear on GCS and
+   *    silently vanish on the file store. Filtered out here so both
+   *    backends only ever return DIRECT children of the listed segments,
+   *    matching every current `karos-*` caller's one-level-deep layout.
+   * 2. SORT ORDER. `.sort((a,b) => a.name.localeCompare(b.name))` is
+   *    locale-aware (case-insensitive-ish collation); `WorkspaceStore`'s
+   *    bare `.sort()` on filenames is a byte-order comparison. The two
+   *    disagree on mixed-case ids (e.g. `"Zebra"` sorts before `"apple"`
+   *    under `localeCompare`, after it under byte order), so replaced with
+   *    the same byte-order comparison the file store gets from `.sort()`.
+   */
   async listJson<T>(clientSlug: string, segments: readonly string[]): Promise<Array<WorkspaceStoreListEntry<T>>> {
     const prefix = this.dirPrefix(clientSlug, segments);
     const [files] = await this.bucket.getFiles({ prefix });
 
+    const direct = files.filter((f) => {
+      if (!f.name.endsWith(".json")) return false;
+      const id = f.name.slice(prefix.length, -".json".length);
+      return id.length > 0 && !id.includes("/");
+    });
+    direct.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+
     const entries: Array<WorkspaceStoreListEntry<T>> = [];
-    for (const file of files.filter((f) => f.name.endsWith(".json")).sort((a, b) => a.name.localeCompare(b.name))) {
+    for (const file of direct) {
       const [buf] = await file.download();
       const id = file.name.slice(prefix.length, -".json".length);
       entries.push({ id, data: JSON.parse(buf.toString("utf8")) as T });

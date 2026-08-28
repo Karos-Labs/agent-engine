@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { IdempotentWriteResult, WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, success } from "@agent-engine/tool-common";
-import { runSegments, type RunRecord } from "./runs.js";
+import { writeRunRecord, type RunRecord } from "./runs.js";
 
 const TOOL_VERSION = "1.0.0";
 
@@ -21,7 +21,7 @@ export function createWriteRun(store: WorkspaceStoreLike) {
     inputSchema: WriteRunInputSchema,
     async execute({ job, runId, query, result }, { ctx }) {
       const record: RunRecord = { job, runId, query, result, at: Date.now() };
-      const { created } = await store.writeJson(ctx.clientSlug, runSegments(job, runId), record);
+      const { created } = await writeRunRecord(store, ctx.clientSlug, record);
       return success<IdempotentWriteResult>({ id: `${job}__${runId}`, created });
     },
   });
