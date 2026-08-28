@@ -82,6 +82,27 @@ export class NewsletterDraftAgent extends BaseAgent<NewsletterPostOutput> {
     description: "Draft a single newsletter edition for the selected main story and secondary sections.",
     allowedTools: ["render.preview", "gate.lintPost", "gate.numbersSourced", "gate.brandCompliance"],
     outputSchema: NewsletterPostOutputSchema,
+    // SCRUM-291 (AU14) — the third of this ticket's three named agents
+    // (AUDIT-2026-08-25 §3.2 ranks it below intel-report and blog, not risk-free).
+    // Sized from `NewsletterPostOutputSchema` and the channel's own enforced
+    // ceiling:
+    //   - `gate.lintPost`'s "newsletter" platform cap (karos-gates/src/lint-post.ts,
+    //     PLATFORM_MAX_LENGTH.newsletter) is 10,000 chars on `text`.
+    //   - `text` is the composed `intro` + each section's `heading`/`body` +
+    //     `callToAction.text` + `signoff` (this file's doc comment above), so
+    //     those constituent fields are counted a second time inside `text`: up to
+    //     ~10,000 chars twice is ~18,500 content chars from `text` plus a
+    //     multi-section `sections` array, before subjectLine/previewText add a
+    //     few hundred more.
+    //   ~19,000 content chars at ~3.5 chars/token (JSON-escaped prose,
+    //   conservative) is ~5.4k tokens of floor content — comfortably under the
+    //   16,384 default today, which is why this is the fleet's lowest-risk named
+    //   agent of the three, but "comfortably under an implicit default" is
+    //   exactly the number-picked-by-feel this ticket replaces: 20000 is an
+    //   explicit ceiling with margin for a model that runs long and for the
+    //   schema growing, set above (not below) today's default so this can never
+    //   regress an edition that was truncating for another reason.
+    maxTokens: 20_000,
     // Pinned — RFC-02 §5: claude-sonnet-4-6 today, claude-sonnet-5 is an
     // equally acceptable pin once available; never a fallback for a pinned step.
     modelPolicy: resolveModelPolicy("newsletter-draft", { policy: "pinned", model: "claude-sonnet-4-6" }),
