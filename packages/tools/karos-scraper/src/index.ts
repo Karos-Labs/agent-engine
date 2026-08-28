@@ -2,6 +2,7 @@ import { createScrappyCocoScraper } from "./scrappycoco.js";
 import type { ScraperProvider } from "./provider.js";
 
 export * from "./provider.js";
+export * from "./crawl.js";
 export * from "./scrappycoco.js";
 export * from "./offline.js";
 
