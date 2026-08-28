@@ -99,6 +99,40 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
     expect(result.status).toBe("blocked_intake");
   });
 
+  it("resolves to held, never rendering anything, when video.assetsCheck reports a zero-byte font (SCRUM-295 / AU10)", async () => {
+    const zeroByteFont = (finalMp4Path: string): Record<string, ProcessResult> => ({
+      ...happyPathResponses(finalMp4Path),
+      "brand_assets_check.py": {
+        stdout: [
+          "2/3 asset paths resolve and open",
+          "",
+          "BRAND ASSETS: FAIL (1)",
+          "  - ZERO-BYTE Spectral-SemiBold.ttf  (referenced by video_captions_v2.body.font_file) — exists but is empty; a path check would have passed this",
+        ].join("\n"),
+        stderr: "",
+        exitCode: 1,
+      },
+    });
+    env = await setupTestEnvironment({ responses: zeroByteFont });
+    const promptStore = makePromptStore();
+    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan()]);
+    const workflowFn = createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+    const result = await engine.run(workflowFn, { ...params, runId: "branded_shorts_run_bad_assets" });
+
+    expect(result.status).toBe("held");
+    if (result.status !== "held") throw new Error("unreachable");
+    expect(result.reason).toContain("Spectral-SemiBold.ttf");
+
+    // The failure must be caught before spending a transcribe/render cycle on
+    // assets already known to be broken — video.assetsCheck runs at step 00a,
+    // before intake (01) or the brand profile load (02).
+    const scriptsInvoked = env.runnerCalls.map((c) => path.basename(c.args[0] ?? c.command));
+    expect(scriptsInvoked).toEqual(["brand_assets_check.py"]);
+  });
+
   it("resolves to held, never failed, when the deterministic cut list fails video.cutGate — nothing borderline builds", async () => {
     const failingCutGate = (finalMp4Path: string): Record<string, ProcessResult> => ({
       ...happyPathResponses(finalMp4Path),

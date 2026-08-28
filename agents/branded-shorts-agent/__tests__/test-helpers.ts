@@ -125,6 +125,7 @@ export function scriptedRunner(byKey: Record<string, ProcessResult>): { runner: 
 
 export function happyPathResponses(finalMp4Path: string): Record<string, ProcessResult> {
   return {
+    "brand_assets_check.py": { stdout: "3/3 asset paths resolve and open\nBRAND ASSETS: PASS", stderr: "", exitCode: 0 },
     "cut_check.py": { stdout: "CUT GATE: PASS (1 segments, 0 cuts, 5.00s from a 5.00s window)", stderr: "", exitCode: 0 },
     "graphic_qa.py": { stdout: "", stderr: "", exitCode: 0 },
     "cutaway_check.py": { stdout: "CUTAWAY GATE: PASS (0 cutaways, 0 graphics, no conflicts)", stderr: "", exitCode: 0 },

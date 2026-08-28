@@ -445,6 +445,43 @@ Flag this section back to Claude Code explicitly when the trigger condition is a
 
 Each server ships with **two backends, selected by config, not by code path**: a **file + git adapter** for local/lab development (mirrors today's filesystem-as-state approach, so nothing about local iteration gets harder), and a **platform API adapter** for production. This dual-adapter design is what makes the eventual GCP/platform export a configuration change instead of a rewrite.
 
+### 9.2.1 Registered-but-unwired tools — SCRUM-295 / AU10 audit (2026-08-28)
+
+A grep across `agents/`, `apps/`, and `evals/` (excluding tests) found 11
+tools in the always-on registry — every tool `createAllKarosTools()` (§13,
+`packages/tools/src/index.ts`) merges into every agent's `AgentToolRegistry`
+regardless of whether that agent's workflow calls it — with **zero
+production call sites**: `ledger.upsertBrief`, `memory.appendHypothesis`,
+`memory.resolveHypothesis`, `publish.draft`, `publish.schedule`,
+`publish.status`, `research.getRuns`, `research.writeRun`,
+`research.checkFreshness`, `video.assetsCheck`, plus test-only
+`intel.getReport`. That is roughly 20% of this catalogue's implemented
+surface, and every one of them still costs registry tokens in every agent's
+tool list on every turn — the reason this audit sits next to AU7's registry
+cost work. All 11 are implemented and spec-complete (they appear in §9.2
+above); none is accidental scaffolding. Each gets a recorded disposition
+below instead of a silent delete, so this table stops being able to drift
+from what's actually wired without someone having to say so:
+
+| Tool(s) | Disposition |
+|---|---|
+| `video.assetsCheck` | **Wired, this change.** `create-branded-shorts-agent-workflow.ts` step `00a-assets-check` now calls it on every Branded Shorts run, right after the client's `brandedShortsProfilePath` is resolved and before that profile is read or anything downstream touches it — the guard the 0-byte-font incident (§4 above / RFC-06 §4) needed and, until this change, never had anywhere in the codebase. |
+| `publish.draft`, `publish.schedule`, `publish.status` | **Pending, not dead.** Tomer's decision record (SCRUM-333, decision 16, 2026-08-28): real publishing **is** being built — a global auto-publish toggle plus per-post manual control, executing only for channels where the client has completed a full platform integration. These three tools are already the draft/schedule/status record-keeping layer that decision needs (idempotent JSON records, keyed on `draftId`); they stay in the registry as the layer the publish feature builds on, not as abandoned surface. What is genuinely still missing — the per-platform publish adapters (X/LinkedIn/Instagram/Reddit) and the toggle/gating logic itself — does not exist in this repo yet and is not part of this change; nothing here posts anywhere. `packages/tools/karos-publish/README.md` updated to match. |
+| `ledger.upsertBrief` | **Unwired, kept.** Idempotent brief storage, spec-complete; no workflow writes a brief yet. Kept as ready-but-unused rather than removed, since deleting a spec-complete write path only to re-add it the next time an agent needs one is a worse outcome than the token cost of carrying it. |
+| `memory.appendHypothesis`, `memory.resolveHypothesis` | **Unwired, kept.** The open/resolve pair for `karos-memory`'s hypothesis tracking (§9.1); no agent currently runs a hypothesis/experiment loop that would call them. Same reasoning as `ledger.upsertBrief`. |
+| `research.getRuns`, `research.writeRun`, `research.checkFreshness` | **Unwired, kept.** `research.pull` — the one `karos-research` tool actually on a call path — already reads and writes its own run log directly against `runs.ts` (`latestRunForQuery`/`runSegments`), not through these three tool wrappers. They remain the externally-callable surface for a workflow that wants run history or a staleness check without calling `research.pull` itself; none does yet. |
+| `intel.getReport` | **Unwired in production, kept.** The read side of `intel.writeReport`, which *is* wired into production (SCRUM-267's portal-facing `clientReports` store). Six agent workflows (`x-agent`, `linkedin-agent`, `instagram-agent`, `reddit-agent`, `blog-agent`, `newsletter-agent`) already carry a comment noting `intel.getReport` has been registered since the intel agent shipped with no channel-agent caller — content agents read the intel report via `readClientIntelContext`, a different path, not this tool. It stays registered for the portal's own read path and for tests verifying `intel.writeReport`'s effect. |
+
+**Why reconcile instead of delete.** A registry entry with no caller is a
+real, measurable cost (tokens on every turn), but three of the six rows
+above are load-bearing for a decision or a read path that already exists
+elsewhere in this repo, and none of the eleven is accidental. Deleting a
+spec-complete tool and re-adding it the next time a workflow needs it is a
+worse outcome, repo-wide, than this table telling the truth about which
+tools are wired and which are staged. This section is the reconciliation;
+it should be re-read (and re-written) the next time one of these tools
+either gains a caller or is deliberately removed.
+
 ### 9.3 Serving
 
 All servers are served over MCP (HTTP, 2026-07-28 spec) as one deployment, with tenant resolved from a scoped credential at the edge (header-based routing, per §9.4). Local Claude Code sessions and the Agent SDK runner both connect to the same tool definitions — no drift between "what the lab sees" and "what production sees."
