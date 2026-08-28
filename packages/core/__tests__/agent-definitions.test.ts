@@ -66,7 +66,10 @@ describe("DynamicAgent", () => {
     expect(result.status).toBe("completed");
     expect(result.finalOutput).toEqual({ result: "done" });
     expect(promptStoreGetPrompt).not.toHaveBeenCalled();
-    expect(router.complete).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.anything(), expect.objectContaining({ system: "You are a helpful stage." }));
+    // SCRUM-298: `system` also carries the response contract now (appended
+    // after the constructor-supplied prompt) — assert the prefix, not exact equality.
+    const [, , , opts] = (router.complete as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect((opts as { system: string }).system).toMatch(/^You are a helpful stage\.\n\n/);
   });
 
   it("runs with no system prompt at all when the stage defines none", async () => {

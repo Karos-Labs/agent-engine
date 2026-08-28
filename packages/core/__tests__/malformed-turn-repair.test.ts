@@ -55,18 +55,26 @@ function finalTurn(output: unknown): () => CompletionResult<unknown> {
   });
 }
 
-/** Records every prompt the agent sends, so the repair feedback can be asserted on the wire. */
+/**
+ * Records every prompt (the uncached per-turn user message) and every system
+ * block (the cached prefix — see SCRUM-298) the agent sends, so the repair
+ * feedback and the response contract can each be asserted against the one
+ * they actually land in on the wire.
+ */
 function fakeRouter(turns: Array<() => CompletionResult<unknown> | Promise<CompletionResult<unknown>>>) {
   const queue = [...turns];
   const prompts: string[] = [];
-  const complete = vi.fn(async (prompt: string) => {
+  const systems: string[] = [];
+  const complete = vi.fn(async (prompt: string, _schema: unknown, _policy: unknown, opts?: { system?: string }) => {
     prompts.push(prompt);
+    systems.push(opts?.system ?? "");
     const next = queue.shift();
     if (!next) throw new Error("fakeRouter: exhausted configured turns");
     return next();
   });
   return {
     prompts,
+    systems,
     complete,
     router: { complete, completeAlias: vi.fn() } as unknown as ModelRouter,
   };
@@ -219,19 +227,26 @@ describe("BaseAgent — malformed turn repair", () => {
   });
 });
 
-describe("BaseAgent — response contract in the prompt", () => {
+// SCRUM-298: the response contract and the tool schemas are constant for the
+// life of a run, so they now live in the CACHED `system` block instead of
+// being re-serialized into the per-turn (uncached) prompt — see
+// `buildSystemPromptWithContract`. `prompts` stays free of this content;
+// `systems` is where it belongs now.
+describe("BaseAgent — response contract in the system prompt", () => {
   it("states the envelope, the required discriminator, and the `turn` wrapper for a tool-bearing step", async () => {
-    const { router, prompts } = fakeRouter([finalTurn({ body: "ok" })]);
+    const { router, prompts, systems } = fakeRouter([finalTurn({ body: "ok" })]);
 
     await new MockAgent(runtimeFor(router), config()).run(ctx, { topic: "ai" });
 
-    const prompt = prompts[0]!;
-    expect(prompt).toContain("responseContract");
-    expect(prompt).toContain('{\\"turn\\": <turn-object>}');
-    expect(prompt).toContain('\\"type\\" is REQUIRED');
-    expect(prompt).toContain("tool_call");
-    expect(prompt).toContain("never a JSON-encoded string in place of an object");
-    expect(prompt).toContain("allowedTools names");
+    const system = systems[0]!;
+    expect(system).toContain("responseContract");
+    expect(system).toContain('{\\"turn\\": <turn-object>}');
+    expect(system).toContain('\\"type\\" is REQUIRED');
+    expect(system).toContain("tool_call");
+    expect(system).toContain("never a JSON-encoded string in place of an object");
+    expect(system).toContain("allowedTools names");
+    // And it's actually gone from the per-turn prompt, not merely duplicated.
+    expect(prompts[0]!).not.toContain("responseContract");
   });
 
   // Building the prompt happens outside `runOneTurn`'s try/catch, so a schema
@@ -239,7 +254,7 @@ describe("BaseAgent — response contract in the prompt", () => {
   // describing the envelope would be a worse failure than not describing it.
   it("degrades instead of crashing the step when the output schema can't be rendered as JSON Schema", async () => {
     const unrepresentable = z.custom<{ body: string }>(() => true);
-    const { router, prompts } = fakeRouter([finalTurn({ body: "ok" })]);
+    const { router, systems } = fakeRouter([finalTurn({ body: "ok" })]);
 
     const result = await new MockAgent(runtimeFor(router), {
       ...config(),
@@ -248,20 +263,20 @@ describe("BaseAgent — response contract in the prompt", () => {
 
     expect(result.status).toBe("completed");
     // Still describes the wrapped envelope, from the rule buildTurnSchema guarantees.
-    expect(prompts[0]!).toContain('{\\"turn\\": <turn-object>}');
+    expect(systems[0]!).toContain('{\\"turn\\": <turn-object>}');
   });
 
   // A step with no tools gets an object-rooted schema that is never wrapped —
   // telling it to nest under `turn` would manufacture the exact failure this
   // contract exists to prevent.
   it("describes an unwrapped root, and no tool_call variant, for a step with no tools", async () => {
-    const { router, prompts } = fakeRouter([finalTurn({ body: "ok" })]);
+    const { router, systems } = fakeRouter([finalTurn({ body: "ok" })]);
 
     await new MockAgent(runtimeFor(router), config({ allowedTools: [] })).run(ctx, { topic: "ai" });
 
-    const prompt = prompts[0]!;
-    expect(prompt).toContain("Return the turn object itself, at the root.");
-    expect(prompt).not.toContain('{\\"turn\\": <turn-object>}');
-    expect(prompt).not.toContain("tool_call");
+    const system = systems[0]!;
+    expect(system).toContain("Return the turn object itself, at the root.");
+    expect(system).not.toContain('{\\"turn\\": <turn-object>}');
+    expect(system).not.toContain("tool_call");
   });
 });

@@ -31,7 +31,11 @@ describe("PromptStore resolution (RFC-01 §16.1)", () => {
     await agent.run(ctx, { firedRecommendations: [] });
 
     const expectedPrompt = readFileSync(path.join(PROMPTS_ROOT, "seo-geo-fix-draft", "1.md"), "utf8");
-    expect(router.complete).toHaveBeenCalledWith(expect.any(String), expect.anything(), expect.anything(), expect.objectContaining({ system: expectedPrompt }));
+    // SCRUM-298: `system` now also carries the response contract, appended
+    // after the resolved skill body — assert the prefix, not exact equality.
+    const call = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!;
+    const opts = call[3] as { system?: string };
+    expect(opts.system?.startsWith(`${expectedPrompt}\n\n`)).toBe(true);
   });
 
   it("SeoGeoNarrativeAgent actually passes the resolved prompt content as the system prompt at runtime", async () => {
@@ -43,6 +47,10 @@ describe("PromptStore resolution (RFC-01 §16.1)", () => {
     await agent.run(ctx, { seoScore: 0 });
 
     const expectedPrompt = readFileSync(path.join(PROMPTS_ROOT, "seo-geo-narrative", "1.md"), "utf8");
-    expect(router.complete).toHaveBeenCalledWith(expect.any(String), expect.anything(), expect.anything(), expect.objectContaining({ system: expectedPrompt }));
+    // SCRUM-298: `system` now also carries the response contract, appended
+    // after the resolved skill body — assert the prefix, not exact equality.
+    const call = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!;
+    const opts = call[3] as { system?: string };
+    expect(opts.system?.startsWith(`${expectedPrompt}\n\n`)).toBe(true);
   });
 });

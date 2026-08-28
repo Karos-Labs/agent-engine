@@ -42,7 +42,11 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     await agent.run(ctx, { topic: "x", rawPayload: {}, rawPayloadRef: "r1" });
 
     const expectedPrompt = readFileSync(path.join(PROMPTS_ROOT, "instagram-research", "1.md"), "utf8");
-    expect(router.complete).toHaveBeenCalledWith(expect.any(String), expect.anything(), expect.anything(), expect.objectContaining({ system: expectedPrompt }));
+    // SCRUM-298: `system` now also carries the response contract, appended
+    // after the resolved skill body — assert the prefix, not exact equality.
+    const call = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!;
+    const opts = call[3] as { system?: string };
+    expect(opts.system?.startsWith(`${expectedPrompt}\n\n`)).toBe(true);
   });
 
   it("InstagramCopyAgent and InstagramImageVettingAgent likewise resolve their own skillRefs, not an inline string", async () => {
@@ -56,13 +60,19 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // section: intel context + do-not-repeat constraints). v1 to v8 stay on
     // disk frozen.
     const expectedCopyPrompt = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "9.md"), "utf8");
-    expect(copyRouter.complete).toHaveBeenCalledWith(expect.any(String), expect.anything(), expect.anything(), expect.objectContaining({ system: expectedCopyPrompt }));
+    // SCRUM-298: `system` now also carries the response contract, appended
+    // after the resolved skill body — assert the prefix, not exact equality.
+    const copyCall = (copyRouter.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!;
+    const copyOpts = copyCall[3] as { system?: string };
+    expect(copyOpts.system?.startsWith(`${expectedCopyPrompt}\n\n`)).toBe(true);
 
     const vetRouter = fakeRouterSequence([finalTurn(goodImageVettingOutput())]);
     const vetAgent = new InstagramImageVettingAgent({ router: vetRouter, tools: {}, promptStore });
     await vetAgent.run(ctx, { slides: [], candidatePool: [] });
     const expectedVetPrompt = readFileSync(path.join(PROMPTS_ROOT, "instagram-image-vet", "2.md"), "utf8");
-    expect(vetRouter.complete).toHaveBeenCalledWith(expect.any(String), expect.anything(), expect.anything(), expect.objectContaining({ system: expectedVetPrompt }));
+    const vetCall = (vetRouter.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!;
+    const vetOpts = vetCall[3] as { system?: string };
+    expect(vetOpts.system?.startsWith(`${expectedVetPrompt}\n\n`)).toBe(true);
   });
 
   it("produces tooling_error, not a crash, when skillRef names a prompt the store doesn't have", async () => {

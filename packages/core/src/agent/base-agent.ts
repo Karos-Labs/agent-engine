@@ -180,21 +180,72 @@ export abstract class BaseAgent<TOutput> {
     return this.runtime.promptStore.getPrompt(promptId, version);
   }
 
-  /** Serializes the step's task, this run's identity, and the transcript so far. Override for real prompt engineering. */
+  /**
+   * Serializes the step's task, this run's identity, and the transcript so
+   * far. Override for real prompt engineering.
+   *
+   * SCRUM-298: this is the UNCACHED per-turn message, re-sent and
+   * re-tokenized on every turn — so it carries only what actually changes
+   * turn to turn. `responseContract` and `allowedTools` used to live here
+   * too, even though neither changes for the life of a run; they now live in
+   * `buildSystemPromptWithContract`'s CACHED system block instead (see
+   * below), and the transcript itself is elided past
+   * `RECENT_OBSERVATION_TURNS` (see `transcriptForPrompt`) so a 24-step
+   * `landing-make` run doesn't keep re-paying for every early tool result in
+   * full on every later turn. Not pretty-printed: the model needs the JSON,
+   * not the indentation, and `null, 2` was pure token waste on the uncached
+   * side of the prompt.
+   */
   protected buildTurnPrompt(ctx: AgentContext, input: unknown, transcript: readonly TranscriptEntry[]): string {
-    return JSON.stringify(
-      {
-        stepId: this.config.id,
-        description: this.config.description,
-        responseContract: this.describeResponseContract(),
-        allowedTools: this.describeAllowedTools(),
-        context: { runId: ctx.runId, clientSlug: ctx.clientSlug, productId: ctx.productId, slotId: ctx.slotId },
-        input,
-        transcript,
-      },
-      null,
-      2,
-    );
+    return JSON.stringify({
+      stepId: this.config.id,
+      description: this.config.description,
+      context: { runId: ctx.runId, clientSlug: ctx.clientSlug, productId: ctx.productId, slotId: ctx.slotId },
+      input,
+      transcript: this.transcriptForPrompt(transcript),
+    });
+  }
+
+  /**
+   * How many of the most recent tool_call/observation turn-pairs keep their
+   * full args/outcome in the prompt. Older pairs are elided to a one-line
+   * marker (SCRUM-298) — by the time a 24-step `landing-make` run is on turn
+   * 20, the model's next Thought is driven by what it just read/wrote, not
+   * by the full byte contents of a file it touched twelve turns ago, and
+   * re-sending that in full on every subsequent turn is exactly the
+   * quadratic-in-turns cost this ticket exists to cut. Fully synthetic and
+   * arbitrary the way any such window is — a step whose later turns
+   * genuinely depend on an early observation's full payload should carry
+   * that forward through its own state (e.g. re-reading the file), not rely
+   * on the transcript remembering it as unbounded history.
+   */
+  private static readonly RECENT_OBSERVATION_TURNS = 4;
+
+  /**
+   * Elides the args/outcome of tool_call+observation pairs older than
+   * `RECENT_OBSERVATION_TURNS`, leaving every other transcript entry
+   * (input, malformed_turn, write_fence_block, gate_feedback) untouched —
+   * those are either singletons or already-bounded repair signals, not the
+   * unbounded-growth source this targets.
+   */
+  private transcriptForPrompt(transcript: readonly TranscriptEntry[]): unknown[] {
+    const totalToolCalls = transcript.reduce((count, entry) => (entry.role === "tool_call" ? count + 1 : count), 0);
+    const keepFrom = Math.max(0, totalToolCalls - BaseAgent.RECENT_OBSERVATION_TURNS);
+
+    let toolCallIndex = 0;
+    return transcript.map((entry) => {
+      if (entry.role === "tool_call") {
+        toolCallIndex++;
+        if (toolCallIndex <= keepFrom) {
+          return { role: "tool_call", tool: entry.tool, elided: "older observation, see below" };
+        }
+        return entry;
+      }
+      if (entry.role === "observation" && toolCallIndex <= keepFrom) {
+        return { role: "observation", tool: entry.tool, elided: true };
+      }
+      return entry;
+    });
   }
 
   /**
@@ -215,6 +266,28 @@ export abstract class BaseAgent<TOutput> {
    * object-rooted schema that is *not* wrapped, and telling it to nest under
    * `turn` would manufacture the very failure this prevents.
    */
+  /**
+   * The CACHED half of the prompt (SCRUM-298): `loadSystemPrompt`'s
+   * craft-policy skill body, if any, followed by the response contract and
+   * the allowed tools' own schemas. Both were previously re-serialized into
+   * `buildTurnPrompt`'s uncached user message on every turn even though
+   * neither changes for the life of a run — `describeResponseContract` and
+   * `describeAllowedTools` are pure functions of `this.config` and
+   * `this.runtime.tools`, both fixed before the loop starts. Moving them here
+   * means they're paid for once (a cache write) instead of once per turn (an
+   * uncached read), and — because `MessagesApiAdapter.buildRequest` only
+   * places its cache breakpoint when `system` is present — this always
+   * returns a non-empty string so that breakpoint exists even for a step
+   * with no `skillRef` at all.
+   */
+  private buildSystemPromptWithContract(loadedSystemPrompt: string | undefined): string {
+    const contract = JSON.stringify({
+      responseContract: this.describeResponseContract(),
+      allowedTools: this.describeAllowedTools(),
+    });
+    return loadedSystemPrompt !== undefined ? `${loadedSystemPrompt}\n\n${contract}` : contract;
+  }
+
   private describeResponseContract(): Record<string, unknown> {
     const hasTools = this.config.allowedTools.length > 0;
     const wrapped = this.turnSchemaIsWrapped(hasTools);
@@ -351,13 +424,13 @@ export abstract class BaseAgent<TOutput> {
   ): Promise<TurnOutcome<TOutput>> {
     const turnSchema = this.buildTurnSchema();
     const prompt = this.buildTurnPrompt(ctx, input, transcript);
-    const opts: RouterCompleteOptions | undefined =
-      systemPrompt !== undefined || this.config.maxTokens !== undefined
-        ? {
-            ...(systemPrompt !== undefined ? { system: systemPrompt } : {}),
-            ...(this.config.maxTokens !== undefined ? { maxTokens: this.config.maxTokens } : {}),
-          }
-        : undefined;
+    // SCRUM-298: `system` is now unconditional — it always carries the
+    // response contract + tool schemas (see `buildSystemPromptWithContract`),
+    // not only when a `skillRef` resolved a craft-policy prompt.
+    const opts: RouterCompleteOptions = {
+      system: this.buildSystemPromptWithContract(systemPrompt),
+      ...(this.config.maxTokens !== undefined ? { maxTokens: this.config.maxTokens } : {}),
+    };
 
     const startedAt = this.clock();
     let completion;
