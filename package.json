@@ -20,6 +20,7 @@
     "check:config": "tsx scripts/config-inventory.ts --check",
     "check:pricing": "tsx scripts/check-model-pricing.ts",
     "check:bq-schema": "tsx scripts/check-bq-insert-schema.ts",
+    "check:prompts": "tsx scripts/check-prompts.ts",
     "pretest": "node scripts/check-dist-freshness.mjs && npm run check:pricing",
     "test": "npm run test --workspaces --if-present",
     "build:stale": "node scripts/check-dist-freshness.mjs",

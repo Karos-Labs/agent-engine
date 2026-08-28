@@ -85,3 +85,42 @@ jobs:
 
       - name: Run test suite (all workspaces)
         run: npm test
+
+  # SCRUM-325 (AU44) — a DISCRETE job, deliberately not a step inside
+  # `quality`: it reads only `agents/**/prompts/`, `agents/**/src/*.ts` and
+  # `packages/tools/karos-gates/src/index.ts` as text, so it needs neither
+  # `npm run build` nor Playwright, and it reports in ~15s instead of waiting
+  # behind the full build+test job. It is also the check that must be trusted
+  # to go red on its own: prompts are published to prep/prod by
+  # `scripts/publish-prompts.ts`, and until this ticket that script SILENTLY
+  # SYNTHESIZED a phantom version whenever a prompt's `latest.md` matched none
+  # of its numbered files — which was the live state of `blog-craft` and
+  # `newsletter-craft` on main. A publisher that invents what it cannot find
+  # cannot fail, so the drift has to be caught here, before the deploy job
+  # that publishes.
+  #
+  # What it fails on: registry-vs-disk disagreement (added, deleted,
+  # renumbered or re-owned prompts), a `latest.md` that is not byte-identical
+  # to its declared `latestVersion`, a per-prompt guardrail
+  # (`scripts/prompt-registry.ts`'s `requires`) missing from the prompt text,
+  # a `gate.*` a prompt names that `createKarosGatesTools()` does not return,
+  # and a `skillRef` pin no declared version satisfies.
+  prompt-registry:
+    name: Prompt registry · latest.md drift · per-prompt hygiene
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prompt registry, latest.md drift and per-prompt hygiene
+        run: npm run check:prompts

@@ -92,9 +92,12 @@ jobs:
       # a manual step nobody remembered after bumping a pin). Publishing
       # first means a broken pin fails HERE, before the new revision ever
       # takes traffic, instead of shipping code the old prompt set can't
-      # serve. scripts/publish-prompts.ts discovers every promptId under
-      # every agent generically and verifies every skillRef pin in source
-      # resolves — not a per-agent list to keep in sync by hand.
+      # serve. Since SCRUM-325, scripts/publish-prompts.ts publishes exactly
+      # what scripts/prompt-registry.ts declares (checked against the disk by
+      # this workflow's own `quality` gate, which the `needs: quality` below
+      # waits on) and verifies every skillRef pin in source resolves — and it
+      # REFUSES, rather than synthesizing a version, when a prompt's
+      # latest.md has drifted off its declared latestVersion.
       - name: Publish agent prompts to Firestore
         run: npx tsx scripts/publish-prompts.ts
         env:
