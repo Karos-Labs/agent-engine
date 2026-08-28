@@ -1,8 +1,7 @@
-import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
-import { promisify } from "node:util";
 import { z } from "zod";
 import { defineTool, success, toolingError } from "@agent-engine/tool-common";
+import { runSandboxedBuild } from "@agent-engine/dynamic-sandbox";
 import type { LandingEngineConfig } from "../config.js";
 import { siteRootForClient } from "../sandbox/site-sandbox.js";
 import { BrandJsonSchema, type BrandJson } from "../types.js";
@@ -16,8 +15,8 @@ import { checkCarryForward, readFileContents } from "./carry-forward.js";
 import type { GateViolation } from "./shared.js";
 import * as path from "node:path";
 
-const TOOL_VERSION = "1.0.0";
-const execFileAsync = promisify(execFile);
+const TOOL_VERSION = "1.1.0";
+const BUILD_TIMEOUT_MS = 300_000;
 // Resolved explicitly (never via `shell: true`) so a client-influenced value reaching this
 // call — the working directory is a build product of client/scraped content — can never be
 // interpreted by a shell; `npm.cmd` is npm's real executable name on Windows (`npm` alone is
@@ -146,19 +145,40 @@ export function createLandingGate(config: LandingEngineConfig) {
       let build: "skipped" | "pass" | "fail" = "skipped";
       const buildViolations: GateViolation[] = [];
       if (doBuild) {
-        try {
-          // No shell — argv is passed straight to the resolved npm binary, so nothing in
-          // `siteRoot` or the build output can be interpreted as shell syntax.
-          await execFileAsync(NPM_COMMAND, ["run", "build"], { cwd: siteRoot, timeout: 300_000 });
+        // SCRUM-317 / audit AU4. This line compiles and executes MODEL-AUTHORED code:
+        // `LandingMakeAgent` is the engine's only file-writing agent, and a Next.js build
+        // evaluates `next.config.ts`, every module a page reaches, and whatever build script
+        // the site's own package.json declares. It used to run with `execFile`'s default
+        // `env` — i.e. the engine's ENTIRE environment: ANTHROPIC_API_KEY,
+        // GOOGLE_APPLICATION_CREDENTIALS, the Firebase key, the proxy configuration. The
+        // `shell: true` hole was closed earlier; this is the credential hole behind it.
+        //
+        // `runSandboxedBuild` builds the child's environment from an explicit allowlist
+        // (@agent-engine/dynamic-sandbox's BUILD_ENV_ALLOWLIST) rather than inheriting or
+        // filtering, redirects HOME/TMPDIR to a throwaway scratch dir so `~`-anchored
+        // credential files (gcloud ADC, ~/.npmrc) are off the resolution path, and forwards
+        // no egress configuration. With BUILD_SANDBOX_IMAGE set it runs the same argv in a
+        // `--network none`, read-only, non-root container instead, which is the tier that
+        // makes "no ambient service-account access" true at the kernel level — the metadata
+        // server has no interface to answer on.
+        //
+        // No credential is granted here. If a build ever legitimately needs one, it is named
+        // in `extraEnv` at this call site, where a reviewer sees it.
+        const outcome = await runSandboxedBuild({
+          command: NPM_COMMAND,
+          commandArgs: ["run", "build"],
+          siteRoot,
+          timeoutMs: BUILD_TIMEOUT_MS,
+        });
+        if (outcome.ok) {
           build = "pass";
-        } catch (err) {
+        } else {
           build = "fail";
           // Prefers the actual `next build` stdout (the real compiler error) over the generic
-          // Error.message, matching gate.mjs:127's own `e.stdout || e.message || e` preference —
-          // a bare "Command failed: npm run build" message is far less useful for the "one
+          // failure message, matching gate.mjs:127's own `e.stdout || e.message || e`
+          // preference — a bare "Build exited with code 1" is far less useful for the "one
           // targeted fix" than the compiler's own diagnostic.
-          const stdout = (err as { stdout?: unknown } | undefined)?.stdout;
-          const message = typeof stdout === "string" && stdout.length > 0 ? stdout : err instanceof Error ? err.message : String(err);
+          const message = outcome.stdout.length > 0 ? outcome.stdout : outcome.stderr.length > 0 ? outcome.stderr : (outcome.error ?? "build failed");
           buildViolations.push({ rule: "build-fail", file: "-", line: 0, detail: message.slice(-600) });
         }
       }
