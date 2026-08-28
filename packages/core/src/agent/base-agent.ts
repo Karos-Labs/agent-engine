@@ -558,6 +558,17 @@ export abstract class BaseAgent<TOutput> {
       ...(turn.thought !== undefined ? { thought: turn.thought } : {}),
       toolCall: { name: tool.name, args: parsedArgs.data, result: outcome, toolVersion: tool.version },
       modelUsed: completion.modelUsed,
+      // SCRUM-361. This was the ONE telemetry construction in this file that
+      // omitted `servedBy` — the other five (disallowed tool, write-fence
+      // block, unregistered tool, bad args, and both `final` branches) all
+      // carry it. And it is the happy path: a healthy ReAct loop's tool turns
+      // all land here, so a step whose TOOL turns failed over but whose final
+      // turn did not recorded no provenance at all. That understates the
+      // fallback share, which is the exact quantity SCRUM-361 item 3 splits
+      // Vertex-billed Claude from Anthropic-billed Claude on.
+      ...(completion.provenance && completion.provenance.hop !== "primary"
+        ? { servedBy: { hop: completion.provenance.hop, adapter: completion.provenance.servedBy, failedOver: [...completion.provenance.failedOver] } }
+        : {}),
       inputTokens: completion.inputTokens,
       outputTokens: completion.outputTokens,
       durationMs,

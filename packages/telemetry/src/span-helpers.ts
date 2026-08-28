@@ -56,6 +56,27 @@ export interface CostAndTokenAttributes {
   jobId?: string;
   stepId?: string;
   operation?: string;
+  /**
+   * Which hop of the Claude fallback chain served this step, and the adapter
+   * that answered (AU61/SCRUM-360 produced them; SCRUM-361 item 3 needs them
+   * here). `"secondary"` / `"tertiary"` / an adapter name; absent when every
+   * turn was primary-served, which is the common case.
+   *
+   * THIS IS A PRECONDITION ON THE BILLING RECONCILIATION, not a nicety. A
+   * Claude call served by the direct-Anthropic hop is still recorded as
+   * `claude-*` and still costs money — but it is billed by ANTHROPIC, not by
+   * Google. A query comparing `agent_runs_bi` costs against a Vertex billing
+   * export with no way to exclude those rows reports a delta that means
+   * nothing. Measured on 2026-08-27 (SCRUM-361 comment 10368): 88% of one
+   * production run's spend and 100% of another's was fallback-served.
+   *
+   * ABSENT MEANS PRIMARY, NOT UNKNOWN. `base-agent.ts` only attaches
+   * `servedBy` when `provenance.hop !== "primary"`, so there is no
+   * null-unknown state to be careful of — see the NULL handling in the row
+   * literal below and the matching filter in `scripts/reconcile-billing.sql`.
+   */
+  servedByHop?: string;
+  servingAdapter?: string;
 }
 
 function setIdentityAttributes(span: Span, attrs: IdentityAttributes): void {
@@ -81,6 +102,14 @@ export function recordCostAndTokens(span: Span, attrs: CostAndTokenAttributes): 
   span.setAttribute("input_tokens_cached", attrs.inputTokensCached);
   span.setAttribute("input_tokens_uncached", attrs.inputTokensUncached);
   span.setAttribute("output_tokens", attrs.outputTokens);
+  // Traces get the same discriminator BigQuery does — a trace showing an
+  // expensive step is not interpretable without knowing who served it.
+  if (attrs.servedByHop !== undefined) {
+    span.setAttribute("served_by_hop", attrs.servedByHop);
+  }
+  if (attrs.servingAdapter !== undefined) {
+    span.setAttribute("serving_adapter", attrs.servingAdapter);
+  }
   void insertAgentRunRow(attrs);
 }
 
@@ -107,6 +136,12 @@ async function insertAgentRunRow(attrs: CostAndTokenAttributes): Promise<void> {
           errorDetails: null,
           timestamp: new Date().toISOString(),
           operation: attrs.operation ?? null,
+          // `?? null` and not `?? "primary"`: the row must say what the engine
+          // observed, and the engine only observes a hop when a chain was
+          // involved. The reconciliation query does the "NULL means Vertex"
+          // reading explicitly, where it can be read and argued with.
+          servedByHop: attrs.servedByHop ?? null,
+          servingAdapter: attrs.servingAdapter ?? null,
           jobId: attrs.jobId ?? null,
           stepId: attrs.stepId ?? null,
           // Every row this package writes is engine-originated — the
