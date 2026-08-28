@@ -96,31 +96,35 @@ describe("per-stage model selection", () => {
 
   it("sends the overridden model for the named stage, and only that stage", async () => {
     // The whole point of PER-stage: overriding one must not move the others.
-    const { seen } = await run("run-sm-one", { polish: "gemini-2.5-pro" });
+    // claude-opus-4-8, not gemini-2.5-pro: this stage's compiled default is
+    // vendor-less (anthropic), and since AU33 (SCRUM-311) a stage override
+    // must name a catalogued model of that SAME vendor — a real, catalogued
+    // but wrong-vendor id is exercised separately below, where it's the point.
+    const { seen } = await run("run-sm-one", { polish: "claude-opus-4-8" });
 
     expect(seen).toHaveLength(2);
     expect(seen[0]?.model, "draft keeps its default").toBe("claude-sonnet-4-6");
-    expect(seen[1]?.model, "polish takes the override").toBe("gemini-2.5-pro");
+    expect(seen[1]?.model, "polish takes the override").toBe("claude-opus-4-8");
   });
 
   it("can point every stage at a different model in one run", async () => {
-    const { seen } = await run("run-sm-both", { draft: "claude-haiku-4-5-20251001", polish: "gemini-2.5-pro" });
+    const { seen } = await run("run-sm-both", { draft: "claude-haiku-4-5-20251001", polish: "claude-opus-4-8" });
 
-    expect(seen.map((s) => s.model)).toEqual(["claude-haiku-4-5-20251001", "gemini-2.5-pro"]);
+    expect(seen.map((s) => s.model)).toEqual(["claude-haiku-4-5-20251001", "claude-opus-4-8"]);
   });
 
   it("reports the model that actually ran, not the compiled default", async () => {
     // A run whose telemetry names the default while billing for the override
     // is worse than no override at all: the cost record and the audit trail
     // both become wrong, and nothing surfaces it.
-    const { outcome } = await run("run-sm-report", { draft: "gemini-2.5-pro" });
+    const { outcome } = await run("run-sm-report", { draft: "claude-haiku-4-5-20251001" });
 
     if (outcome.outcome !== "started") throw new Error("unreachable");
     const steps = await env.durableStore.listSteps("run-sm-report");
     const draft = steps.find((s) => s.stepId === "draft");
     const telemetry = (draft?.output as { steps?: Array<{ modelUsed: string }> })?.steps ?? [];
     expect(telemetry.length).toBeGreaterThan(0);
-    expect(telemetry.every((t) => t.modelUsed === "gemini-2.5-pro")).toBe(true);
+    expect(telemetry.every((t) => t.modelUsed === "claude-haiku-4-5-20251001")).toBe(true);
   });
 
   it("ignores a key that names no stage rather than failing the run", async () => {
@@ -138,8 +142,42 @@ describe("per-stage model selection", () => {
     // `policy` drives fallback and cost tiering. Swapping the model id is a
     // different decision from re-tiering the step, and the models catalog is
     // what knows which vendor serves an id.
-    const { seen } = await run("run-sm-tier", { draft: "gemini-2.5-pro" });
+    const { seen } = await run("run-sm-tier", { draft: "claude-opus-4-8" });
 
     expect(seen[0]?.policy).toBe("pinned");
+  });
+
+  it("fails the run rather than silently routing a Studio typo to a nonexistent model (AU33 / SCRUM-311)", async () => {
+    // Before the model-capability catalog, this override reached the router
+    // unchecked — a typo in Studio would only surface once the provider
+    // rejected it, three layers away from the actual misconfiguration. The
+    // engine catches the thrown validation error at the workflow boundary
+    // (`WorkflowEngine.run`'s generic catch) and records it as a `degraded`
+    // run with the reason preserved, rather than as a silently wrong model.
+    const runId = "run-sm-typo";
+    const { outcome } = await run(runId, { draft: "claude-sonnet-4-fake-typo" });
+
+    expect(outcome.outcome).toBe("started");
+    if (outcome.outcome !== "started") throw new Error("unreachable");
+    expect(outcome.status).toBe("degraded");
+    const runRecord = await env.durableStore.getRun(runId);
+    expect(runRecord?.failureReason).toMatch(/not in the model-capability catalog/);
+  });
+
+  it("fails the run when a Studio override names a real, catalogued model from the wrong vendor", async () => {
+    // gemini-2.5-pro is a real catalogued model — just not one the Anthropic
+    // adapter this stage is wired to (its policy.vendor is unset, i.e.
+    // anthropic) will ever be asked to serve. `DefaultModelRouter` picks its
+    // adapter from `ModelPolicy.vendor` alone, never from the model id, so
+    // letting this through would have sent an anthropic-shaped request
+    // carrying a Gemini model id.
+    const runId = "run-sm-wrong-vendor";
+    const { outcome } = await run(runId, { draft: "gemini-2.5-pro" });
+
+    expect(outcome.outcome).toBe("started");
+    if (outcome.outcome !== "started") throw new Error("unreachable");
+    expect(outcome.status).toBe("degraded");
+    const runRecord = await env.durableStore.getRun(runId);
+    expect(runRecord?.failureReason).toMatch(/catalogued under vendor "gemini"/);
   });
 });

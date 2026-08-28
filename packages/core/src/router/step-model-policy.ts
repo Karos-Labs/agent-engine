@@ -1,6 +1,7 @@
 import type { ModelPolicy, ModelVendor } from "../types/model-policy.js";
-import { ModelVendorSchema } from "../types/model-policy.js";
+import { ModelVendorSchema, resolveModelVendor } from "../types/model-policy.js";
 import { assertModelPriced } from "../telemetry/pricing.js";
+import { assertModelCatalogued } from "./model-capabilities.js";
 
 export interface ResolveModelPolicyOptions {
   /** Defaults to `process.env`. Override for tests. */
@@ -121,7 +122,11 @@ export function resolveModelPolicy(
  * changing the vendor here from a bare string would be re-deriving a fact the
  * catalog already holds, and getting it wrong sends a model id to an API that
  * has never heard of it. A model whose vendor differs from the step's default
- * needs the env pair, which refuses that exact mismatch.
+ * needs the env pair, which refuses that exact mismatch — and, since AU33
+ * (SCRUM-311), so does this function: `assertModelCatalogued` below refuses
+ * both an override naming a model this engine's catalog has never heard of
+ * (a Studio typo) and one naming a real, catalogued model that belongs to a
+ * different vendor than this step is wired to (`model-capabilities.ts`).
  */
 export function applyStageModelOverride(
   stepId: string,
@@ -131,6 +136,11 @@ export function applyStageModelOverride(
   const override = stageModels?.[stepId];
   if (!override) return policy;
   if (override === policy.model) return policy;
+  // The identity/vendor check first (AU33 / SCRUM-311): an unknown or
+  // wrong-vendor model id is refused here regardless of whether it happens to
+  // have a pricing row, since a priced-but-nonexistent-or-wrong-vendor id is
+  // still not a model this step can actually call.
+  assertModelCatalogued(override, resolveModelVendor(policy), `applyStageModelOverride("${stepId}")`);
   // The other run-time path CI cannot see: an admin picking a model per run in
   // the Studio. Same refusal, same reason — before the run starts, not after
   // it has produced a cost figure nobody can trust.
