@@ -20,7 +20,7 @@ import type { ModelPolicy } from "../types/model-policy.js";
 // one on the wire.
 import { toRootObjectJsonSchema } from "../router/adapters/root-object-schema.js";
 import { StructuredOutputValidationError } from "../router/adapters/structured-output.js";
-import type { AgentToolOutcome, AgentToolRegistry } from "./tool.js";
+import type { AgentTool, AgentToolOutcome, AgentToolRegistry } from "./tool.js";
 import { enforceWriteFence } from "./write-fence.js";
 import { parseSkillRef } from "./prompt-store.js";
 import { describeError } from "./errors.js";
@@ -619,6 +619,26 @@ export abstract class BaseAgent<TOutput> {
     };
   }
 
+  /**
+   * A `gateInput` transform that throws, or returns something unsafe to
+   * merge with `gateArgs`, is a tooling_error — never silently spread into
+   * the gate call, where it could restore a vacuous pass.
+   */
+  private gateInputFailure(stepIndex: number, gateTool: AgentTool, startedAt: number, detail: string): GateCheckOutcome {
+    return {
+      kind: "tooling_error",
+      telemetry: this.zeroCostTelemetry(
+        stepIndex,
+        gateTool.name,
+        gateTool.version,
+        { error: `gateInput ${detail}` },
+        "tooling_error",
+        this.clock() - startedAt,
+        `self-critique gate "${gateTool.name}" gateInput ${detail}`,
+      ),
+    };
+  }
+
   /** Self-critique (RFC-01 §5.6): a mandatory call to a typed gate tool, never a free-text "check your work". */
   private async runGateCheck(
     ctx: AgentContext,
@@ -626,6 +646,7 @@ export abstract class BaseAgent<TOutput> {
     draft: TOutput,
     stepIndex: number,
     gateArgs?: Record<string, unknown>,
+    gateInput?: (draft: TOutput) => unknown,
   ): Promise<GateCheckOutcome> {
     const startedAt = this.clock();
     const gateTool = this.runtime.tools[gateToolName];
@@ -645,7 +666,30 @@ export abstract class BaseAgent<TOutput> {
       };
     }
 
-    const args = gateArgs ? { ...draft, ...gateArgs } : draft;
+    let gateDraft: unknown = draft;
+    if (gateInput) {
+      try {
+        gateDraft = gateInput(draft);
+      } catch (err) {
+        return this.gateInputFailure(stepIndex, gateTool, startedAt, `threw: ${describeError(err)}`);
+      }
+      // Only a plain, non-array object can be safely merged with `gateArgs`
+      // below. `typeof [] === "object"` and arrays are not `null`, so a
+      // bare `typeof gateDraft !== "object"` check does NOT catch an array
+      // return — and `gateInput: (draft) => draft.fixes.map(f => f.description)`
+      // (forgetting to join the list into `{ text: ... }`) is exactly the
+      // near-miss this transform invites. An uncaught array spreads into
+      // `{0:"a",1:"b",...gateArgs}` — no field the gate actually reads —
+      // which is precisely the vacuous pass this transform exists to
+      // replace, just reintroduced one level down. So arrays are rejected
+      // here alongside strings, numbers, and null.
+      if (gateDraft === null || typeof gateDraft !== "object" || Array.isArray(gateDraft)) {
+        const shape = gateDraft === null ? "null" : Array.isArray(gateDraft) ? "an array" : typeof gateDraft;
+        return this.gateInputFailure(stepIndex, gateTool, startedAt, `returned ${shape}, not a plain object`);
+      }
+    }
+
+    const args = gateArgs ? { ...(gateDraft as object), ...gateArgs } : gateDraft;
     let outcome: AgentToolOutcome<unknown>;
     try {
       outcome = await gateTool.execute(args, { ctx });
@@ -730,7 +774,14 @@ export abstract class BaseAgent<TOutput> {
     let currentDraft = draft;
 
     for (;;) {
-      const gateResult = await this.runGateCheck(ctx, gateToolName, currentDraft, loop.stepIndex, this.config.selfCritique.gateArgs);
+      const gateResult = await this.runGateCheck(
+        ctx,
+        gateToolName,
+        currentDraft,
+        loop.stepIndex,
+        this.config.selfCritique.gateArgs,
+        this.config.selfCritique.gateInput,
+      );
       steps.push(gateResult.telemetry);
       loop.stepIndex++;
 
