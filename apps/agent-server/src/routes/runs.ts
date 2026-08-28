@@ -6,7 +6,8 @@ import { describeError } from "@agent-engine/telemetry";
 import { GateAlreadyResolvedError, WorkflowConcurrentRunError, WorkflowEngine, type DurableStepStore } from "@agent-engine/workflow";
 import { buildRunReport } from "../report.js";
 import { RunJobRequestSchema, type RunJobRequest } from "../run-job.js";
-import { buildWorkflowForProduct, isKnownProductId, type AgentRuntimeDeps, type ProductId } from "../wiring/workflows.js";
+import { resolveWorkflowFn, UnknownProductError } from "../wiring/dynamic-workflows.js";
+import { isKnownProductId, type AgentRuntimeDeps, type WorkflowFn } from "../wiring/workflows.js";
 import { respondInternalError, respondWithLoggedDetail } from "./error-response.js";
 
 /** Hands a run-job off to the queue. Returns the id the consumer will derive from the published message. */
@@ -15,7 +16,15 @@ export type EnqueueRunJob = (request: RunJobRequest) => Promise<{ runId: string 
 export interface RunsRouterDeps {
   durableStore: DurableStepStore;
   runtimeDeps: AgentRuntimeDeps;
-  /** Looked up by `startRunJob` (via `resolveWorkflowFn`) when `/runs/start`'s `productId` isn't one of the 12 fixed products (Task 2's dynamic agents). Omit only if this deployment never dispatches one over HTTP. */
+  /**
+   * Looked up via `resolveWorkflowFn` whenever a `productId` isn't one of the
+   * fixed products (Task 2's dynamic agents) — by `startRunJob` for
+   * `/runs/start`, and by `/runs/:runId/resume` for the productId on the stored
+   * run record (SCRUM-315). Omit only if this deployment never dispatches one
+   * over HTTP; omitting it makes every dynamic agent unstartable AND
+   * unresumable, which `resolveWorkflowFn` says in as many words rather than
+   * failing vaguely.
+   */
   agentDefinitionStore?: AgentDefinitionStore;
   /**
    * Publishes a run-job message and returns the id the consumer will derive
@@ -104,10 +113,6 @@ const ResumeRunRequestSchema = z.object({
       .optional(),
   }),
 });
-
-function mapProductId(candidate: string): ProductId | undefined {
-  return isKnownProductId(candidate) ? candidate : undefined;
-}
 
 /** `/api/v1/runs/...` — start, resume, and status, per RFC-01 §7/§8. */
 export function createRunsRouter(deps: RunsRouterDeps): Router {
@@ -223,9 +228,32 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
       res.status(409).json({ error: `run "${runId}" is not awaiting a gate (current status: "${runRecord.status}")` });
       return;
     }
-    const productId = mapProductId(runRecord.productId);
-    if (!productId) {
-      res.status(500).json({ error: `run "${runId}" has an unrecognized productId "${runRecord.productId}"` });
+    // SCRUM-315 / AU6. Resolved through the SAME function `/runs/start` uses (via
+    // `startRunJob` → `resolveWorkflowFn`), which is the whole fix: this route used
+    // to narrow the stored productId to `KNOWN_PRODUCT_IDS` and 500 on anything
+    // else, so a dynamic agent (Task 2), dispatched by an `agentId` that is
+    // DELIBERATELY not one of the fixed 13, could be started but never resumed —
+    // the one entry point in the system that could not handle one. `/status`
+    // already handled an arbitrary productId; the asymmetry was the bug.
+    //
+    // Kept ahead of `resolveGate` for the same reason the old check was: an
+    // unresolvable productId must not consume the human's one-shot gate decision
+    // and leave the run unresumable in a second, worse way. It costs one store
+    // read, executes nothing, and cannot be deferred past the write it protects.
+    let workflowFn: WorkflowFn;
+    try {
+      workflowFn = await resolveWorkflowFn(runRecord.productId, deps.runtimeDeps, deps.agentDefinitionStore);
+    } catch (err) {
+      if (err instanceof UnknownProductError) {
+        // 500 rather than `/runs/start`'s 400, on purpose: the caller of `/resume`
+        // supplies only a runId — this productId came off the STORED run record, so
+        // an id that no longer resolves (a deleted definition, a deployment with no
+        // AgentDefinitionStore wired) is a server-side fault the client cannot fix
+        // by sending a different request.
+        res.status(500).json({ error: `run "${runId}" has an unresumable productId: ${err.message}` });
+        return;
+      }
+      respondInternalError(res, `resume could not resolve a workflow for run ${runId}`, err);
       return;
     }
 
@@ -265,7 +293,6 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
       return;
     }
 
-    const workflowFn = buildWorkflowForProduct(productId, deps.runtimeDeps);
     try {
       const result = await engine.run(workflowFn, {
         runId,
@@ -273,7 +300,10 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
         productId: runRecord.productId,
         runKind: runRecord.runKind,
       });
-      const report = await buildRunReport(deps.durableStore, runId, productId);
+      // `runRecord.productId`, not a narrowed `ProductId`: `buildRunReport` takes a
+      // plain string and has handled a dynamic agent's id since `/status` started
+      // passing one (see its `else` branch).
+      const report = await buildRunReport(deps.durableStore, runId, runRecord.productId);
       res.status(200).json({
         runId,
         status: result.status,
@@ -299,10 +329,11 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
       res.status(404).json({ error: `no run found for "${runId}"` });
       return;
     }
-    // Unlike /resume (which still only knows how to build/re-run a FIXED product's workflow
-    // — see below), status is read-only: buildRunReport already handles an arbitrary
-    // productId string (Task 2's dynamic agents included) via its own generic fallback, so
-    // this route never needs to reject one the way /resume's mapProductId gate still does.
+    // Read-only: buildRunReport handles an arbitrary productId string (Task 2's dynamic
+    // agents included) via its own generic fallback, so this route never needs to reject
+    // one. /resume no longer does either — it resolves the stored productId through
+    // `resolveWorkflowFn` exactly as /runs/start does (SCRUM-315); the two routes' notions
+    // of "a productId this server can handle" are the same one again.
     const report = await buildRunReport(deps.durableStore, runId, runRecord.productId);
     res.status(200).json({
       runId,
