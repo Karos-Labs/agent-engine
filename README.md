@@ -110,11 +110,27 @@ Then:
 
 ```bash
 curl localhost:8080/healthz
+
+# ENQUEUES a run and returns 202 {"runId":"pubsub-...","status":"queued"}.
+# It does NOT execute the run — a worker consuming the topic does.
 curl -X POST localhost:8080/api/v1/runs/start -H "Content-Type: application/json" \
   -d '{"clientSlug":"acme","productId":"linkedin-agent","runKind":"recurring"}'
+
+# The run's real state lives here, and 404s until a worker claims the message.
+curl localhost:8080/api/v1/runs/<runId>/status
 ```
 
-Every `/runs/start` makes real, billable model calls. Valid `productId`s
+`/runs/start` used to run the whole workflow inside the request. On Cloud Run
+that is a 300s ceiling with CPU throttling after it, which killed a Chromium
+render nine minutes after the request had already been severed — twice,
+reproducibly (AU66 / SCRUM-364). It now hands off to the same topic karosCMO
+publishes to, so exactly one path executes a run.
+
+Locally this needs `PUBSUB_PROJECT_ID` (or `GOOGLE_CLOUD_PROJECT`) plus a
+running consumer — see "Running jobs from a queue" below. With no queue
+configured the route says so, rather than quietly running the job itself.
+
+Every run makes real, billable model calls. Valid `productId`s
 are the six in `KNOWN_PRODUCT_IDS` (`apps/agent-server/src/wiring/workflows.ts`)
 — note that `instagram-agent`, `seo-geo-agent`, and `intel-report-agent` are
 built and tested but not yet dispatchable through the server.
@@ -303,15 +319,30 @@ commands need only `PUBSUB_PROJECT_ID` (or `GOOGLE_CLOUD_PROJECT`) and ADC —
 `gcloud auth application-default login`, same as every other GCP-backed piece
 of this repo.
 
-### Production: push, not a persistent pull consumer
+### Production: the pull consumer on a dedicated worker
 
-`apps/agent-server` exposes `POST /api/v1/queue/pubsub-push`, and a Pub/Sub
-**push** subscription is the recommended way to feed it — not the pull
-consumer above kept running as a second always-on process. Push is what
-Cloud Run is actually built for: each message arrives as one authenticated
-HTTPS request, so the service scales the same way it already does for
-`/api/v1/runs/start` (including to zero), and Pub/Sub's own subscription
-config handles retry/backoff/redelivery natively. A persistent pull consumer,
+**What is actually deployed** — read from the running subscriptions, not from
+this file: one PULL subscription, `karos-agent-runs-<env>-pull`, consumed by
+`agent-engine-<env>-worker`, a separate Cloud Run service running
+`queue-consumer.js` with `--min-instances=1` and `--no-cpu-throttling`. There
+is **no push subscription in any environment.**
+
+This section used to recommend push and describe it as the production model.
+That was a design intent and it never shipped. The push route
+(`POST /api/v1/queue/pubsub-push`) is still wired and still verified — AU2
+proved it REFUSES a plain invoker token once the audience became the full
+endpoint path — but nothing pushes to it today, so that proof is about a door
+nobody knocks on.
+
+Why the worker suits this workload, whatever the original argument said: a run
+takes minutes and does CPU-bound work (Chromium renders, video). Cloud Run
+throttles CPU outside request processing, so the properties the worker sets
+deliberately — `--no-cpu-throttling`, `min-instances=1`, a 600s ack deadline —
+are not overhead to be avoided. They are the requirement. AU66 measured what
+happens without them: a render that dies nine minutes after its request ended.
+
+The original argument for push, kept because it is still true of push and
+explains the trade: A persistent pull consumer,
 by contrast, needs a process kept alive between messages — on Cloud Run that
 means `--no-cpu-throttling` or `--min-instances=1`, plus reconnect handling
 for a streaming-pull connection that can drop — a whole class of operational

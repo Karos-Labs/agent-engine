@@ -11,6 +11,8 @@
 import type { AddressInfo } from "node:net";
 import { createApp } from "../apps/agent-server/src/app.js";
 import { setupTestEnvironment, type TestEnvironment } from "../apps/agent-server/__tests__/test-helpers.js";
+import { startRunJob } from "../apps/agent-server/src/run-job.js";
+import { randomUUID } from "node:crypto";
 
 const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";
@@ -60,7 +62,24 @@ async function main(): Promise<void> {
   narrate("Starting an in-process createApp() instance with fixture dependencies (WorkspaceStore in a temp dir, MemoryDurableStepStore, smartFakeRouter)...");
 
   const env: TestEnvironment = await setupTestEnvironment();
-  const app = createApp({ durableStore: env.durableStore, runtimeDeps: env.runtimeDeps });
+  // AU66 / SCRUM-364: `/runs/start` ENQUEUES now; it does not execute.
+  //
+  // This smoke test never actually needed the ROUTE to be synchronous — it
+  // needed a run to happen on a machine with no Pub/Sub. So it supplies its own
+  // implementation of "enqueue", which runs the job in-process. The route's
+  // contract is identical either way: hand it off, return 202.
+  //
+  // Keeping the route synchronous for this script's benefit would have been the
+  // tail wagging the dog, and would have preserved the trap for everyone else.
+  const app = createApp({
+    durableStore: env.durableStore,
+    runtimeDeps: env.runtimeDeps,
+    enqueueRunJob: async (request) => {
+      const runId = `smoke-${randomUUID()}`;
+      await startRunJob(request, runId, { durableStore: env.durableStore, runtimeDeps: env.runtimeDeps });
+      return { runId };
+    },
+  });
 
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once("listening", resolve));
@@ -86,11 +105,22 @@ async function main(): Promise<void> {
       body: JSON.stringify({ clientSlug: "acme", productId: "campaign-orchestrator", runKind: "recurring" }),
     });
     const startBody = (await startRes.json()) as RunResponse;
-    if (startRes.status !== 201 || startBody.status !== "awaiting_gate") {
-      throw new Error(`expected 201 "awaiting_gate", got ${startRes.status} ${JSON.stringify(startBody)}`);
+    // 202 + queued: the route hands off and returns. Nothing is created yet
+    // beyond the handoff, so the run's real state is read from /status.
+    if (startRes.status !== 202 || startBody.status !== "queued") {
+      throw new Error(`expected 202 "queued", got ${startRes.status} ${JSON.stringify(startBody)}`);
     }
-    const { runId, pendingGateId } = startBody;
-    ok(`201 runId="${runId}" status="awaiting_gate" pendingGateId="${pendingGateId}"`);
+    const { runId } = startBody;
+    ok(`202 runId="${runId}" status="queued"`);
+
+    sub("[2b/4] GET /api/v1/runs/:runId/status — the enqueued run reached its gate");
+    const queuedStatusRes = await fetch(`${baseUrl}/api/v1/runs/${runId}/status`);
+    const queuedStatus = (await queuedStatusRes.json()) as RunResponse;
+    if (queuedStatusRes.status !== 200 || queuedStatus.status !== "awaiting_gate") {
+      throw new Error(`expected 200 "awaiting_gate", got ${queuedStatusRes.status} ${JSON.stringify(queuedStatus)}`);
+    }
+    const pendingGateId = queuedStatus.pendingGateId;
+    ok(`200 status="awaiting_gate" pendingGateId="${pendingGateId}"`);
 
     // ── 3. POST /api/v1/runs/:runId/resume — approve the campaign review gate ──
     sub("[3/4] POST /api/v1/runs/:runId/resume — approve");
