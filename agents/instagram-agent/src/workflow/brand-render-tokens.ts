@@ -28,6 +28,14 @@ export interface BrandRenderTokens {
   handle?: string;
   /** Which visual treatment the badge/eyebrow components use. Always present — `plain` is the no-signal default. */
   badgeStyle: BadgeStyle;
+  /**
+   * The accent rotation ring: kit colors only, ordered, deduped, `[0]` always
+   * the brand accent so slide 0 of an unseeded carousel renders exactly as it
+   * did before rotation existed. Length 1 (or 0) means this kit CANNOT vary —
+   * see `paletteForSlide`, which reports that as `rotates: false` rather than
+   * pretending. Built by `buildAccentRing`; never a color the kit didn't ship.
+   */
+  palette: string[];
 }
 
 /**
@@ -188,6 +196,209 @@ function deriveBadgeStyle(brand: Record<string, unknown>, ground: string | undef
   return "plain";
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Seeded palette rotation across carousel slides and video covers (AU39)
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * The most colors the ring will carry. Past about six a rotation stops
+ * reading as one identity and starts reading as a swatch dump.
+ */
+const ACCENT_RING_MAX = 6;
+
+/**
+ * The floor a kit color must clear AGAINST THE GROUND before the rotation is
+ * allowed to promote it to an accent. 3:1 is WCAG AA for large text and
+ * non-text UI, which is what an accent actually renders as here (display
+ * type, rules, badge fills) — the 4.5:1 body floor above is a different job.
+ *
+ * This is the guard that can fail: a kit color the portal explicitly labelled
+ * an accent is still refused when it would disappear into the ground. Only
+ * the ANCHOR is exempt, because the anchor is the accent already shipping on
+ * every slide today and dropping it would be a regression wearing a guard's
+ * clothes, not a fix.
+ */
+const ACCENT_GROUND_CONTRAST_FLOOR = 3;
+
+/** `brand.colors` keys that name the ground/text furniture rather than an accent. */
+const NEUTRAL_COLOR_KEY = /neutral|background|ground|surface|text|ink|border|line/i;
+
+/** `dominantColors[].role` values that describe furniture rather than an accent. */
+const NON_ACCENT_ROLE = /ground|background|neutral|surface|text|ink/i;
+
+/**
+ * How far a video cover's phase sits from slide 0 of the same post, so a
+ * cover and the first carousel slide of one run don't render as twins.
+ */
+const COVER_PHASE_OFFSET = 1;
+
+/** Which surface a slot renders on. Covers get their own phase (`COVER_PHASE_OFFSET`). */
+export type PaletteSurface = "slide" | "cover";
+
+/** Addresses one renderable slot. Same address + same ring ⇒ same colors, always. */
+export interface PaletteSlot {
+  /** Zero-based position: carousel slide number, or the cover's own index. Non-finite is treated as 0. */
+  index: number;
+  /** Defaults to `"slide"`. */
+  surface?: PaletteSurface;
+  /**
+   * A stable per-run string (the run's `postId` is the intended one) that
+   * chooses WHERE on the ring this post starts. Omitted or empty means phase
+   * 0 — the accent, exactly as before. It must be stable across a resume:
+   * a clock or a random value here would make every visual regression
+   * unfalsifiable, which is the whole reason this is seeded and not random.
+   */
+  seed?: string;
+}
+
+/** The colors one slot renders with. Both are ring members — never derived, never invented. */
+export interface SlidePalette {
+  accent: string;
+  /** The next color on the ring, for a supporting mark. Equals `accent` only on a one-color ring. */
+  secondary: string;
+  /**
+   * Whether this kit can actually vary. `false` means the ring holds one
+   * color and every slot returns it — stated plainly so a caller never reads
+   * a constant as working variation.
+   */
+  rotates: boolean;
+}
+
+/** FNV-1a 32-bit. Pure, no clock, no randomness — the seed is the only input. */
+function fnv1a32(input: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+
+/** Floor-mod, so a negative index still lands on the ring. */
+function ringMod(value: number, length: number): number {
+  const m = Math.trunc(value) % length;
+  return m < 0 ? m + length : m;
+}
+
+/**
+ * Every hex the Brand Kit actually ships, in the order the rotation should
+ * prefer them: hand-authored `brandTokens.palette` first (explicit beats
+ * derived, the same ladder the rest of this module uses), then the named
+ * non-neutral roles in `brand.colors`, then the extracted `dominantColors`
+ * most-dominant first. Anything that isn't a valid hex is DROPPED here, not
+ * repaired.
+ */
+function kitAccentCandidates(b: Record<string, unknown>, brandTokens: BrandTokens): string[] {
+  const out: string[] = [];
+
+  for (const entry of Array.isArray(brandTokens.palette) ? brandTokens.palette : []) {
+    const hex = asHex(entry);
+    if (hex !== undefined) out.push(hex);
+  }
+
+  const colors = b["colors"];
+  if (Array.isArray(colors)) {
+    // The loose `ClientBrand.colors?: string[]` shape carries no role names,
+    // so the ground/fg exclusion and the contrast floor below are the only
+    // things separating an accent from a neutral here.
+    for (const entry of colors) {
+      const hex = asHex(entry);
+      if (hex !== undefined) out.push(hex);
+    }
+  } else if (typeof colors === "object" && colors !== null) {
+    for (const [key, value] of Object.entries(colors as Record<string, unknown>)) {
+      if (NEUTRAL_COLOR_KEY.test(key)) continue;
+      const hex = asHex(value);
+      if (hex !== undefined) out.push(hex);
+    }
+  }
+
+  const dominant = b["dominantColors"];
+  if (Array.isArray(dominant)) {
+    const ranked = [...dominant]
+      .map((c) => c as Record<string, unknown>)
+      .sort((a, z) => Number(a["dominanceRank"] ?? 99) - Number(z["dominanceRank"] ?? 99));
+    for (const entry of ranked) {
+      if (NON_ACCENT_ROLE.test(asString(entry["role"]) ?? "")) continue;
+      const hex = asHex(entry["hex"]);
+      if (hex !== undefined) out.push(hex);
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Builds the rotation ring. The anchor (today's accent) goes first and is
+ * exempt from the contrast check; every candidate after it must be a
+ * different color from the ground/fg pair and must clear
+ * `ACCENT_GROUND_CONTRAST_FLOOR` against the ground.
+ *
+ * With NO derivable ground there is nothing to check legibility against, so
+ * nothing is promoted and the ring stays at the anchor — the same
+ * refuse-to-guess rule the ground/fg derivation follows. A rotation is worth
+ * less than an unreadable slide.
+ */
+function buildAccentRing(
+  anchor: string | undefined,
+  candidates: readonly string[],
+  ground: string | undefined,
+  fg: string | undefined,
+): string[] {
+  const ring: string[] = [];
+  const seen = new Set<string>();
+  const take = (hex: string): void => {
+    const key = hex.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    ring.push(hex);
+  };
+
+  if (anchor !== undefined) take(anchor);
+  if (ground === undefined) return ring;
+
+  const furniture = new Set([ground.toLowerCase(), ...(fg !== undefined ? [fg.toLowerCase()] : [])]);
+  for (const hex of candidates) {
+    if (ring.length >= ACCENT_RING_MAX) break;
+    if (furniture.has(hex.toLowerCase())) continue;
+    if (contrastRatio(hex, ground) < ACCENT_GROUND_CONTRAST_FLOOR) continue;
+    take(hex);
+  }
+  return ring;
+}
+
+/**
+ * The colors one slide or cover renders with — a guided walk around
+ * `tokens.palette`, one step per slide, phase-shifted by the run seed and
+ * again for covers.
+ *
+ * SEEDED, NOT RANDOM: `(ring, index, surface, seed)` is the whole input, so
+ * the same run renders the same way twice and a visual diff between two runs
+ * of the same post means something changed. Nothing here reads a clock or a
+ * random source.
+ *
+ * Returns `undefined` for an empty ring (a client with no derivable kit
+ * color) — the caller keeps whatever accent it already uses. A one-color
+ * ring returns that color for every slot with `rotates: false`: the honest
+ * report that this kit has nothing to rotate, rather than a constant dressed
+ * up as variation.
+ */
+export function paletteForSlide(tokens: Pick<BrandRenderTokens, "palette">, slot: PaletteSlot): SlidePalette | undefined {
+  const ring = tokens.palette;
+  if (ring.length === 0) return undefined;
+
+  const index = Number.isFinite(slot.index) ? slot.index : 0;
+  const phase = slot.seed !== undefined && slot.seed.length > 0 ? fnv1a32(slot.seed) : 0;
+  const surfaceOffset = slot.surface === "cover" ? COVER_PHASE_OFFSET : 0;
+  const pos = ringMod(phase + surfaceOffset + index, ring.length);
+
+  return {
+    accent: ring[pos]!,
+    secondary: ring[ringMod(pos + 1, ring.length)]!,
+    rotates: ring.length > 1,
+  };
+}
+
 /**
  * Derives the render tokens for one client. `brand` is `client.getBrand`'s
  * raw result (untrusted, portal-authored); `brandTokens` is the frozen
@@ -258,6 +469,12 @@ export function deriveBrandRenderTokens(brand: unknown, brandTokens: BrandTokens
   // ── accent: extracted for assembleSlidesData's EXISTING channel, never a var ──
   const brandAccent = asHex(b["accent"]) ?? asHex((b["colors"] as Record<string, unknown> | undefined)?.["primaryAccent"]);
 
+  // ── palette ring: the accent, then whatever else the kit legibly ships ──
+  // Deliberately NOT part of `hasAnything` below: the ring is built from the
+  // same sources as the fields that already decide it, so it must never be
+  // the thing that turns an otherwise-empty kit into a present one.
+  const palette = buildAccentRing(brandAccent, kitAccentCandidates(b, brandTokens), ground, fg);
+
   const logoUrl = (() => {
     const url = asString(b["logoUrl"]);
     if (url === undefined) return undefined;
@@ -290,6 +507,7 @@ export function deriveBrandRenderTokens(brand: unknown, brandTokens: BrandTokens
     ...(logoUrl !== undefined ? { logoUrl } : {}),
     ...(handle !== undefined ? { handle } : {}),
     badgeStyle,
+    palette,
   };
 }
 
