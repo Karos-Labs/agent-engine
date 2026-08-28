@@ -94,6 +94,35 @@ function serializeOneStep(
     return { stepId: descriptor.stepId, type: descriptor.type, label: descriptor.label, status: "failed", durationMs: 0, error: "step did not run" };
   }
 
+  if (record.status === "running") {
+    // In flight — the terminal saveStep write hasn't landed yet, so there's
+    // no output/cost/duration to report, only that it's actively running.
+    return { stepId: descriptor.stepId, type: descriptor.type, label: descriptor.label, status: "running", durationMs: 0 };
+  }
+
+  // AU68 (SCRUM-366) — THE ORDER OF THESE TWO BRANCHES IS THE FIX, and it is
+  // the thing the ticket warned would go wrong.
+  //
+  // `serializeAgentRecord` is the consumer that has been silently compensating
+  // for the producer: it derives the reported status from
+  // `AgentExecutionResult.status` because the RECORD's status was hardcoded
+  // `completed` for every agent step, failed or not. Now that `step.agent`
+  // records its real verdict, both know the same fact — and if the
+  // record-status branch below ran first it would win, returning a bare
+  // `{status:"failed", error}` and DELETING the model, usage, cost and token
+  // counts that a failed step is exactly when you most need.
+  //
+  // So: an agent record is served by the branch that can say the most about it,
+  // and the two agree by construction rather than by luck. The failure is
+  // reported ONCE, from one place, with its evidence attached.
+  //
+  // A `failed` record cannot reach here holding an agent result — both `catch`
+  // paths that write `failed` write `output: null` — so nothing that threw is
+  // routed away from the branch below.
+  if (isAgentExecutionResult(record.output)) {
+    return serializeAgentRecord(descriptor, record.durationMs ?? 0, record.output);
+  }
+
   // AU67: `tooling_error` joins `failed` here. Both are FAULTS — one thrown,
   // one correctly reported as an outcome — and until SCRUM-365 the second was
   // recorded as `completed` and rendered as `done`, which is how a run could
@@ -102,7 +131,8 @@ function serializeOneStep(
   // `content_fail` and `not_available` deliberately do NOT join them. A
   // revision loop ASKS for content_fail and retries; marking every one a failed
   // step would make healthy loops read as broken, which is the same conflation
-  // in the opposite direction.
+  // in the opposite direction. `budget_exceeded` is likewise a designed ceiling
+  // and only reachable on an agent record, which never gets here.
   if (record.status === "failed" || record.status === "tooling_error") {
     return {
       stepId: descriptor.stepId,
@@ -112,16 +142,6 @@ function serializeOneStep(
       durationMs: record.durationMs ?? 0,
       error: record.error ?? "step failed",
     };
-  }
-
-  if (record.status === "running") {
-    // In flight — the terminal saveStep write hasn't landed yet, so there's
-    // no output/cost/duration to report, only that it's actively running.
-    return { stepId: descriptor.stepId, type: descriptor.type, label: descriptor.label, status: "running", durationMs: 0 };
-  }
-
-  if (isAgentExecutionResult(record.output)) {
-    return serializeAgentRecord(descriptor, record.durationMs ?? 0, record.output);
   }
 
   // A plain "code" step (or a fan-out slot whose inner logic wasn't an agent call) — no model/usage to report.

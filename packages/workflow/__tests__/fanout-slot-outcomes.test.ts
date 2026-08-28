@@ -22,11 +22,14 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
  * channel workflows, reputation's and seo-geo's route through `step.code`/
  * `step.agent` inside the slot, and all of those record correctly on their own.
  *
- * The real fix widens `SlotRecord.status` the way AU67 widened `StepRecord`'s,
- * which touches persisted slot records and `report.ts`'s `listSlots` and needs
- * its own enumeration first. This is the cheap half: it costs nothing now and
- * fails THE DAY someone writes the slot that would have broken it — which is
- * the day nobody will be looking, because "we fixed that".
+ * `SlotRecord.status` HAS since been widened (AU68 / SCRUM-366) and `fanout`
+ * now records a returned outcome honestly — see
+ * `step-agent-outcome-contract.test.ts`. This static guard is kept anyway, and
+ * deliberately: recording a `tooling_error` correctly is not the same thing as
+ * a workflow author noticing it. A slot that hands a tool outcome straight back
+ * still means the fan-out's own aggregate silently loses that item, and the
+ * guard is what makes that a compile-time conversation instead of a run report
+ * nobody reads.
  */
 describe("SCRUM-366: no fanout slot returns a tool outcome directly", () => {
   function sourceFiles(dir: string, out: string[] = []): string[] {
@@ -70,11 +73,11 @@ describe("SCRUM-366: no fanout slot returns a tool outcome directly", () => {
 });
 
 describe("SCRUM-366: the behaviour this guards, demonstrated", () => {
-  it("records a slot as completed even when its body returned a tooling_error", async () => {
-    // Not a wish — this is what `fanout` does today, asserted so the ticket has
-    // a failing-shaped fact to point at rather than a description. When
-    // SlotRecord.status is widened, THIS test changes, and its change is the
-    // signal that the widening actually took effect.
+  it("records a slot as tooling_error when its body returned a tooling_error", async () => {
+    // This assertion used to read `.toBe("completed")` and carried the note
+    // "when SlotRecord.status is widened, THIS test changes, and its change is
+    // the signal that the widening actually took effect." That is this edit.
+    // The behaviour it pinned is now the fixed behaviour, not the defect.
     const store = new MemoryDurableStepStore();
     const workflowFn = async (wf: WorkflowContext) =>
       wf.fanout("slots", [1], async () => ({ status: "tooling_error", reason: "browser launch timed out", result: {} }));
@@ -88,6 +91,6 @@ describe("SCRUM-366: the behaviour this guards, demonstrated", () => {
 
     const slots = await store.listSlots("run_fanout_outcome", "slots");
     expect(slots).toHaveLength(1);
-    expect(slots[0]!.status, "TODAY this is `completed` — that is the defect SCRUM-366 exists to close").toBe("completed");
+    expect(slots[0]!.status, "was `completed` before SCRUM-366 — the defect this ticket closed").toBe("tooling_error");
   });
 });

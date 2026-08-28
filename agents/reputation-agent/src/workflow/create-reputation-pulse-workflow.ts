@@ -585,8 +585,11 @@ export function createReputationPulseWorkflow(options: CreateReputationPulseWork
       mechanicalResult.passed.forEach((item, i) => {
         const slot = doctrineSlots[i];
         if (!slot) return;
-        if (slot.status === "failed") {
-          // The slot threw: nothing was learned about the draft (a crash).
+        // AU68 (SCRUM-366): `!== "completed"` rather than `=== "failed"` — a
+        // slot outcome is no longer binary, and a non-completed slot carries no
+        // verdict about the draft either way.
+        if (slot.status !== "completed") {
+          // The slot did not produce a verdict: nothing was learned about the draft.
           laterFailures.set(item.reviewId, { reason: `doctrine gate step failed: ${slot.reason}`, kind: "tooling" });
           return;
         }

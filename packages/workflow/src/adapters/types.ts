@@ -146,6 +146,14 @@ export const StepRecordSchema = z.object({
    * `failed` is kept, narrowed to what it always actually meant here: the body
    * THREW, so there is no outcome at all and no output to replay.
    *
+   * `budget_exceeded` joined the set in AU68 / SCRUM-366, when `step.agent`
+   * started recording its own verdict. It is `AgentExecutionStatus`'s fourth
+   * value and has no `step.code` counterpart — a tool outcome cannot be
+   * `budget_exceeded`, only an agent loop can. Mapping it onto `tooling_error`
+   * would have been the same flattening this list exists to refuse: a ReAct
+   * loop that ran out of its configured turn budget did not malfunction, it hit
+   * a ceiling someone chose.
+   *
    * ## Resume is unaffected — deliberately
    *
    * Four sites skip a step on resume, and they now ask
@@ -154,7 +162,7 @@ export const StepRecordSchema = z.object({
    * is exactly the set that was replayable before. Nothing re-runs that did not
    * re-run yesterday.
    */
-  status: z.enum(["running", "completed", "content_fail", "not_available", "tooling_error", "failed"]),
+  status: z.enum(["running", "completed", "content_fail", "not_available", "tooling_error", "budget_exceeded", "failed"]),
   output: z.unknown().optional(),
   costUsd: z.number().nonnegative().optional(),
   /**
@@ -206,7 +214,24 @@ export const SlotRecordSchema = z.object({
   slotId: z.string().min(1),
   /** The `fanout()` call this slot belongs to, for scoping `listSlots`. */
   fanoutId: z.string().min(1),
-  status: z.enum(["completed", "failed"]),
+  /**
+   * What this slot resolved to — the same vocabulary as {@link StepRecordSchema}
+   * minus `running` (a slot has no in-flight checkpoint) and minus
+   * `budget_exceeded` (a slot body is arbitrary code, not an agent loop; an
+   * agent loop inside it records its own step).
+   *
+   * Widened in AU68 / SCRUM-366. `fanout` was examined as a PRODUCER during
+   * AU67 and found NOT structurally safe — `fn` is arbitrary caller code
+   * exactly like `step.code`'s body, so a slot handing back a tool outcome
+   * recorded `completed` for a `tooling_error`. AU67 deferred it because
+   * widening this enum is not a one-line change; this is that change.
+   *
+   * It misreported nothing at the time, and that was a property of the six
+   * `.fanout(` call sites rather than of the primitive — which is exactly the
+   * kind of guarantee that stops holding the first time somebody fans out over
+   * a tool call.
+   */
+  status: z.enum(["completed", "content_fail", "not_available", "tooling_error", "failed"]),
   output: z.unknown(),
   durationMs: z.number().nonnegative(),
   startedAt: z.number(),
@@ -214,6 +239,7 @@ export const SlotRecordSchema = z.object({
   error: z.string().optional(),
 });
 export type SlotRecord = z.infer<typeof SlotRecordSchema>;
+export type SlotRecordStatus = SlotRecord["status"];
 
 /**
  * A registered gate — `agentEngineGates/{gateId}` (RFC-01 §8.4a), a
