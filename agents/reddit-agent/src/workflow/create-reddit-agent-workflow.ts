@@ -1,7 +1,7 @@
 import { readForbiddenTopics } from "@agent-engine/core";
-import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
+import type { AgentContext, AgentToolRegistry, GateResponse, ModelRouter, PromptStore } from "@agent-engine/core";
 import { runRedditChannelSetup, type RedditChannelSetupOutcome } from "@agent-engine/agent-setup";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField, type RevisionNote, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, readClientIntelContext} from "@agent-engine/workflow";
+import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField, type RevisionNote, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, readClientIntelContext, toAgentContext, runGate, finalizeDeliverable, recordOutputExcerpt} from "@agent-engine/workflow";
 import { RedditDraftAgent } from "../agent/reddit-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
 import { renderRedditDraftsEnvelope } from "./render-drafts-envelope.js";
@@ -43,34 +43,6 @@ function parseSubredditFromThreadUrl(url: string): string | undefined {
   return REDDIT_THREAD_URL_PATTERN.exec(url.trim())?.[1];
 }
 
-function toAgentContext(wf: WorkflowContext): AgentContext {
-  return {
-    runId: wf.runId,
-    clientSlug: wf.clientSlug,
-    productId: wf.productId,
-    runKind: wf.runKind,
-    ...(wf.slotId !== undefined ? { slotId: wf.slotId } : {}),
-    metadata: {},
-  };
-}
-
-/** Unwraps a gate tool's outcome into its `GateVerdict`, treating a broken gate call as a tooling failure — never a content verdict (RFC-01 §5.6/§6). */
-async function runGate(
-  tools: AgentToolRegistry,
-  gateName: string,
-  args: unknown,
-  ctx: AgentContext,
-): Promise<GateVerdict> {
-  const tool = tools[gateName];
-  if (!tool) {
-    throw new WorkflowToolingFailure(`no gate registered as "${gateName}"`);
-  }
-  const outcome = await tool.execute(args, { ctx });
-  if (outcome.status !== "success") {
-    throw new WorkflowToolingFailure(`gate "${gateName}" call failed: ${outcome.status}`);
-  }
-  return outcome.result as GateVerdict;
-}
 
 /**
  * `createRedditAgentWorkflow()` — Phase 2.5 Batch 2.1's domain-logic
@@ -553,41 +525,30 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
     const draft = review.output;
 
     // ── 19-20: deliverable & manifest persistence ──
-    const deliverableId = await wf.step.code("19-persist-deliverable", async (): Promise<string> => {
-      // Additive: `draftsEnvelope` is the v2 JSON envelope karosCMO's
-      // `reddit-drafts.ts` reader now expects on `asset.content` — the rest
-      // of `draft` stays untouched for any consumer that wants raw fields.
-      const redditUsername = clientContext.profile["redditUsername"];
-      const draftsEnvelope = renderRedditDraftsEnvelope({
-        ...(typeof redditUsername === "string" ? { account: redditUsername } : {}),
-        targetThreadUrl: selectedThread.targetThreadUrl,
-        targetThreadTitle: selectedThread.targetThreadTitle,
-        targetSubreddit: selectedThread.targetSubreddit,
-        draft,
-      });
-      const outcome = await tools["ledger.writeDeliverable"]!.execute(
-        { runId: wf.runId, kind: "reddit-reply", deliverable: { ...draft, draftsEnvelope } },
-        { ctx },
-      );
-      if (outcome.status !== "success") throw new WorkflowToolingFailure(`ledger.writeDeliverable failed: ${outcome.status}`);
-      return (outcome.result as { id: string }).id;
+    // Additive: `draftsEnvelope` is the v2 JSON envelope karosCMO's
+    // `reddit-drafts.ts` reader now expects on `asset.content` — the rest
+    // of `draft` stays untouched for any consumer that wants raw fields.
+    const redditUsername = clientContext.profile["redditUsername"];
+    const draftsEnvelope = renderRedditDraftsEnvelope({
+      ...(typeof redditUsername === "string" ? { account: redditUsername } : {}),
+      targetThreadUrl: selectedThread.targetThreadUrl,
+      targetThreadTitle: selectedThread.targetThreadTitle,
+      targetSubreddit: selectedThread.targetSubreddit,
+      draft,
     });
-
-    await wf.step.code("20-persist-manifest", async () => {
-      await tools["ledger.dashboardSnapshot"]!.execute(
-        {
-          runId: wf.runId,
-          snapshot: {
-            topic: selected.topic,
-            source: selected.source,
-            angle,
-            targetThreadUrl: selectedThread.targetThreadUrl,
-            targetSubreddit: selectedThread.targetSubreddit,
-            deliverableId,
-          },
-        },
-        { ctx },
-      );
+    const deliverableId = await finalizeDeliverable(wf, tools, ctx, {
+      persistDeliverableStepId: "19-persist-deliverable",
+      persistManifestStepId: "20-persist-manifest",
+      kind: "reddit-reply",
+      deliverable: { ...draft, draftsEnvelope },
+      snapshot: (deliverableId) => ({
+        topic: selected.topic,
+        source: selected.source,
+        angle,
+        targetThreadUrl: selectedThread.targetThreadUrl,
+        targetSubreddit: selectedThread.targetSubreddit,
+        deliverableId,
+      }),
     });
 
     // ── 21: commit updates (topics.commit, memory.appendDecision, ledger.feedbackAppend) ──
@@ -602,11 +563,7 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
       // history feed and the drafting directive on every future run.
       // Best-effort: losing an excerpt costs future dedup signal, never the
       // delivered post.
-      try {
-        await tools["ledger.recordOutputExcerpt"]?.execute({ agentId: "reddit-agent", runId: wf.runId, excerpt: draft.text }, { ctx });
-      } catch (error) {
-        console.error("commit-and-record: could not record the output excerpt for future dedup", error);
-      }
+      await recordOutputExcerpt(tools, ctx, wf.runId, "reddit-agent", draft.text);
       await tools["memory.appendDecision"]!.execute(
         {
           decisionId: `${wf.runId}__decision`,

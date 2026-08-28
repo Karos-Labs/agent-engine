@@ -1,7 +1,7 @@
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext, runTopicGuardrail, readRunDirection, runDirectionField } from "@agent-engine/workflow";
+import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext, runTopicGuardrail, readRunDirection, runDirectionField, toAgentContext, finalizeDeliverable } from "@agent-engine/workflow";
 import { BrandProfileSchema, type BrandProfile, type TranscriptWord, type VideoTranscript } from "@agent-engine/tool-karos-video";
 import { BrandedShortsGraphicsAgent } from "../agent/branded-shorts-graphics-agent.js";
 import { BrandedShortsHighlightsAgent } from "../agent/branded-shorts-highlights-agent.js";
@@ -36,16 +36,6 @@ export interface CreateBrandedShortsAgentWorkflowOptions {
   autoApprove?: boolean;
 }
 
-function toAgentContext(wf: WorkflowContext): AgentContext {
-  return {
-    runId: wf.runId,
-    clientSlug: wf.clientSlug,
-    productId: wf.productId,
-    runKind: wf.runKind,
-    ...(wf.slotId !== undefined ? { slotId: wf.slotId } : {}),
-    metadata: {},
-  };
-}
 
 /** Unwraps a gate tool's outcome into its `GateVerdict` — a broken gate call is a tooling failure, never a content verdict (RFC-01 §5.6/§6). */
 async function runGateTool(tools: AgentToolRegistry, toolName: string, args: unknown, ctx: AgentContext): Promise<GateVerdict> {
@@ -372,34 +362,22 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
     });
 
     // ── 11-13: persist deliverable, dashboard snapshot, commit + record ──
-    const deliverableId = await wf.step.code("11-persist-deliverable", async () => {
-      const outcome = await tools["ledger.writeDeliverable"]!.execute(
-        {
-          runId: wf.runId,
-          kind: "branded-shorts-video",
-          deliverable: {
-            outputPath: build!.outputPath,
-            ...(uploaded ? { gcsUri: uploaded.gcsUri, ...(uploaded.signedUrl ? { signedUrl: uploaded.signedUrl } : {}) } : {}),
-            durationSeconds: build!.durationSeconds,
-            overlays: build!.plan.overlays,
-            cutaways: build!.plan.cutaways,
-            highlightStarts,
-            contentCuts: cutPlan.contentCuts,
-            grade: colorGrade,
-            renderWarnings: build!.warnings,
-          },
-        },
-        { ctx },
-      );
-      if (outcome.status !== "success") throw new WorkflowToolingFailure(`ledger.writeDeliverable failed: ${outcome.status}`);
-      return (outcome.result as { id: string }).id;
-    });
-
-    await wf.step.code("12-persist-manifest", async () => {
-      await tools["ledger.dashboardSnapshot"]!.execute(
-        { runId: wf.runId, snapshot: { outputPath: build!.outputPath, durationSeconds: build!.durationSeconds, deliverableId } },
-        { ctx },
-      );
+    const deliverableId = await finalizeDeliverable(wf, tools, ctx, {
+      persistDeliverableStepId: "11-persist-deliverable",
+      persistManifestStepId: "12-persist-manifest",
+      kind: "branded-shorts-video",
+      deliverable: {
+        outputPath: build!.outputPath,
+        ...(uploaded ? { gcsUri: uploaded.gcsUri, ...(uploaded.signedUrl ? { signedUrl: uploaded.signedUrl } : {}) } : {}),
+        durationSeconds: build!.durationSeconds,
+        overlays: build!.plan.overlays,
+        cutaways: build!.plan.cutaways,
+        highlightStarts,
+        contentCuts: cutPlan.contentCuts,
+        grade: colorGrade,
+        renderWarnings: build!.warnings,
+      },
+      snapshot: (deliverableId) => ({ outputPath: build!.outputPath, durationSeconds: build!.durationSeconds, deliverableId }),
     });
 
     await wf.step.code("13-commit-and-record", async () => {

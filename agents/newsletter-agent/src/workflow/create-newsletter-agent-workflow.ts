@@ -1,6 +1,6 @@
 import { readForbiddenTopics } from "@agent-engine/core";
-import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField, type RevisionNote, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, readClientIntelContext} from "@agent-engine/workflow";
+import type { AgentContext, AgentToolRegistry, GateResponse, ModelRouter, PromptStore } from "@agent-engine/core";
+import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField, type RevisionNote, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, readClientIntelContext, toAgentContext, runGate, finalizeDeliverable, recordOutputExcerpt} from "@agent-engine/workflow";
 import { NewsletterDraftAgent, type NewsletterPostOutput } from "../agent/newsletter-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
 import type {
@@ -25,17 +25,6 @@ export interface CreateNewsletterAgentWorkflowOptions {
    * path, never for production wiring.
    */
   autoApprove?: boolean;
-}
-
-function toAgentContext(wf: WorkflowContext): AgentContext {
-  return {
-    runId: wf.runId,
-    clientSlug: wf.clientSlug,
-    productId: wf.productId,
-    runKind: wf.runKind,
-    ...(wf.slotId !== undefined ? { slotId: wf.slotId } : {}),
-    metadata: {},
-  };
 }
 
 /**
@@ -84,23 +73,6 @@ function composeCompliantDraft(draft: NewsletterPostOutput, brand: Record<string
   };
 }
 
-/** Unwraps a gate tool's outcome into its `GateVerdict`, treating a broken gate call as a tooling failure — never a content verdict (RFC-01 §5.6/§6). */
-async function runGate(
-  tools: AgentToolRegistry,
-  gateName: string,
-  args: unknown,
-  ctx: AgentContext,
-): Promise<GateVerdict> {
-  const tool = tools[gateName];
-  if (!tool) {
-    throw new WorkflowToolingFailure(`no gate registered as "${gateName}"`);
-  }
-  const outcome = await tool.execute(args, { ctx });
-  if (outcome.status !== "success") {
-    throw new WorkflowToolingFailure(`gate "${gateName}" call failed: ${outcome.status}`);
-  }
-  return outcome.result as GateVerdict;
-}
 
 /**
  * `createNewsletterAgentWorkflow()` (RFC-02 §5 — "same recipe" as the X,
@@ -461,26 +433,18 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
     const draft = review.output;
 
     // ── 17-18: deliverable & manifest persistence ──
-    const deliverableId = await wf.step.code("17-persist-deliverable", async (): Promise<string> => {
-      const outcome = await tools["ledger.writeDeliverable"]!.execute({ runId: wf.runId, kind: "newsletter-edition", deliverable: draft }, { ctx });
-      if (outcome.status !== "success") throw new WorkflowToolingFailure(`ledger.writeDeliverable failed: ${outcome.status}`);
-      return (outcome.result as { id: string }).id;
-    });
-
-    await wf.step.code("18-persist-manifest", async () => {
-      await tools["ledger.dashboardSnapshot"]!.execute(
-        {
-          runId: wf.runId,
-          snapshot: {
-            mainStory: selected.mainStory,
-            source: selected.source,
-            theme,
-            secondaryTopics: selected.secondaryTopics,
-            deliverableId,
-          },
-        },
-        { ctx },
-      );
+    const deliverableId = await finalizeDeliverable(wf, tools, ctx, {
+      persistDeliverableStepId: "17-persist-deliverable",
+      persistManifestStepId: "18-persist-manifest",
+      kind: "newsletter-edition",
+      deliverable: draft,
+      snapshot: (deliverableId) => ({
+        mainStory: selected.mainStory,
+        source: selected.source,
+        theme,
+        secondaryTopics: selected.secondaryTopics,
+        deliverableId,
+      }),
     });
 
     // ── 19: commit updates (topics.commit, memory.appendDecision, ledger.feedbackAppend) ──
@@ -493,12 +457,7 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
       // history feed and the drafting directive on every future run.
       // Best-effort: losing an excerpt costs future dedup signal, never the
       // delivered post.
-      try {
-        await tools["ledger.recordOutputExcerpt"]?.execute({ agentId: "newsletter-agent", runId: wf.runId, excerpt: `${draft.subjectLine}
-${draft.text}` }, { ctx });
-      } catch (error) {
-        console.error("commit-and-record: could not record the output excerpt for future dedup", error);
-      }
+      await recordOutputExcerpt(tools, ctx, wf.runId, "newsletter-agent", `${draft.subjectLine}\n${draft.text}`);
       await tools["memory.appendDecision"]!.execute(
         {
           decisionId: `${wf.runId}__decision`,

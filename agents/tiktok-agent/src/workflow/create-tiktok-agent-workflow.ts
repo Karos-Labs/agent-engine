@@ -22,7 +22,7 @@ import {
   readRichRunInput,
   firstAsset,
 } from "@agent-engine/core";
-import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, readOutputHistoryForDedup, dedupeDirective, readClientIntelContext, type WorkflowContext } from "@agent-engine/workflow";
+import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, readOutputHistoryForDedup, dedupeDirective, readClientIntelContext, type WorkflowContext, toAgentContext } from "@agent-engine/workflow";
 import { TikTokCommentaryAgent } from "../agent/tiktok-commentary-agent.js";
 import { TikTokMomentAgent } from "../agent/tiktok-moment-agent.js";
 import { boundsFromTranscript, sentenceBoundedWords, type TranscriptWordLike } from "./clip-bounds.js";
@@ -73,16 +73,6 @@ interface VideoBrand {
   logoUrl?: string;
 }
 
-function toAgentContext(wf: WorkflowContext): AgentContext {
-  return {
-    runId: wf.runId,
-    clientSlug: wf.clientSlug,
-    productId: wf.productId,
-    runKind: wf.runKind,
-    ...(wf.slotId !== undefined ? { slotId: wf.slotId } : {}),
-    metadata: {},
-  };
-}
 
 async function callTool(tools: AgentToolRegistry, name: string, args: unknown, ctx: AgentContext): Promise<unknown> {
   const tool = tools[name];

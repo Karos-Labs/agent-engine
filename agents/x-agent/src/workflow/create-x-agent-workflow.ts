@@ -1,5 +1,5 @@
-import { readForbiddenTopics, type AgentContext, type AgentToolRegistry, type GateResponse, type GateVerdict, type ModelRouter, type PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, readClientIntelContext } from "@agent-engine/workflow";
+import { readForbiddenTopics, type AgentContext, type AgentToolRegistry, type GateResponse, type ModelRouter, type PromptStore } from "@agent-engine/core";
+import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, readClientIntelContext, toAgentContext, runGate, finalizeDeliverable, recordOutputExcerpt } from "@agent-engine/workflow";
 import { XDraftAgent, type Lane } from "../agent/x-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
 import { renderXDraftsMarkdown } from "./render-drafts-markdown.js";
@@ -29,35 +29,6 @@ export interface CreateXAgentWorkflowOptions {
    * unset).
    */
   autoApprove?: boolean;
-}
-
-function toAgentContext(wf: WorkflowContext): AgentContext {
-  return {
-    runId: wf.runId,
-    clientSlug: wf.clientSlug,
-    productId: wf.productId,
-    runKind: wf.runKind,
-    ...(wf.slotId !== undefined ? { slotId: wf.slotId } : {}),
-    metadata: {},
-  };
-}
-
-/** Unwraps a gate tool's outcome into its `GateVerdict`, treating a broken gate call as a tooling failure — never a content verdict (RFC-01 §5.6/§6). */
-async function runGate(
-  tools: AgentToolRegistry,
-  gateName: string,
-  args: unknown,
-  ctx: AgentContext,
-): Promise<GateVerdict> {
-  const tool = tools[gateName];
-  if (!tool) {
-    throw new WorkflowToolingFailure(`no gate registered as "${gateName}"`);
-  }
-  const outcome = await tool.execute(args, { ctx });
-  if (outcome.status !== "success") {
-    throw new WorkflowToolingFailure(`gate "${gateName}" call failed: ${outcome.status}`);
-  }
-  return outcome.result as GateVerdict;
 }
 
 /** A bare `http(s)://` link — the mechanical half of "post clean, link in first reply" (x-craft.md §5). */
@@ -488,29 +459,21 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
     const draft = review.output;
 
     // ── 18-19: deliverable & manifest persistence ──
-    const deliverableId = await wf.step.code("18-persist-deliverable", async (): Promise<string> => {
-      // Additive: `draftsMarkdown` is the DRAFTS.md-shaped string karosCMO's
-      // `x-drafts.ts` parser needs on `asset.content` — the rest of `draft`
-      // stays untouched for any consumer that wants the raw structured fields.
-      const draftsMarkdown = renderXDraftsMarkdown({
-        targetHandle: intake.xHandle,
-        lane: laneSelection.lane,
-        angle: laneSelection.angle,
-        draft,
-      });
-      const outcome = await tools["ledger.writeDeliverable"]!.execute(
-        { runId: wf.runId, kind: "x-post", deliverable: { ...draft, draftsMarkdown } },
-        { ctx },
-      );
-      if (outcome.status !== "success") throw new WorkflowToolingFailure(`ledger.writeDeliverable failed: ${outcome.status}`);
-      return (outcome.result as { id: string }).id;
+    // Additive: `draftsMarkdown` is the DRAFTS.md-shaped string karosCMO's
+    // `x-drafts.ts` parser needs on `asset.content` — the rest of `draft`
+    // stays untouched for any consumer that wants the raw structured fields.
+    const draftsMarkdown = renderXDraftsMarkdown({
+      targetHandle: intake.xHandle,
+      lane: laneSelection.lane,
+      angle: laneSelection.angle,
+      draft,
     });
-
-    await wf.step.code("19-persist-manifest", async () => {
-      await tools["ledger.dashboardSnapshot"]!.execute(
-        { runId: wf.runId, snapshot: { topic: selected.topic, source: selected.source, lane: laneSelection.lane, angle: laneSelection.angle, deliverableId } },
-        { ctx },
-      );
+    const deliverableId = await finalizeDeliverable(wf, tools, ctx, {
+      persistDeliverableStepId: "18-persist-deliverable",
+      persistManifestStepId: "19-persist-manifest",
+      kind: "x-post",
+      deliverable: { ...draft, draftsMarkdown },
+      snapshot: (deliverableId) => ({ topic: selected.topic, source: selected.source, lane: laneSelection.lane, angle: laneSelection.angle, deliverableId }),
     });
 
     // ── 20: commit updates (topics.commit, memory.appendDecision, ledger.feedbackAppend) ──
@@ -523,11 +486,7 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       // history feed and the drafting directive on every future run.
       // Best-effort: losing an excerpt costs future dedup signal, never the
       // delivered post.
-      try {
-        await tools["ledger.recordOutputExcerpt"]?.execute({ agentId: "x-agent", runId: wf.runId, excerpt: draft.text }, { ctx });
-      } catch (error) {
-        console.error("commit-and-record: could not record the output excerpt for future dedup", error);
-      }
+      await recordOutputExcerpt(tools, ctx, wf.runId, "x-agent", draft.text);
       await tools["memory.appendDecision"]!.execute(
         {
           decisionId: `${wf.runId}__decision`,

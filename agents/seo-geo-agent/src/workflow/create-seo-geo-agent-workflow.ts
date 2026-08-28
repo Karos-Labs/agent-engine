@@ -1,5 +1,5 @@
-import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { readRunDirection, runDirectionField, type SlotOutcome, type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure } from "@agent-engine/workflow";
+import type { AgentContext, AgentToolRegistry, GateResponse, ModelRouter, PromptStore } from "@agent-engine/core";
+import { readRunDirection, runDirectionField, type SlotOutcome, type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, toAgentContext, runGate, finalizeDeliverable } from "@agent-engine/workflow";
 import {
   GEO_READINESS_BUCKETS,
   GEO_SCORE_MODEL,
@@ -52,35 +52,6 @@ export interface CreateSeoGeoAgentWorkflowOptions {
 
 /** The 4 parallel technical-SEO sub-checks RFC-04 §2 Phase 2 describes (`process/phase-1-technical-seo.md`'s technical infra / on-page / performance-CWV / keyword+content-gaps sub-agents). Modeled as a `wf.fanout` over `research.pull` calls, not 4 separate bounded `BaseAgent`s: the source skill's sub-agents do real judgment over real crawl data, but this repo's crawler is a Phase-1 stand-in with nothing for a model to judge yet (see `measurements.ts`'s header comment) — fanning out proves the wiring end-to-end without a bounded agent fabricating "CONFIRMED/LIKELY/HYPOTHESIS" findings against no real evidence. */
 const TECHNICAL_SEO_ASPECTS = ["technical-infra", "on-page", "performance-cwv", "keyword-content-gaps"] as const;
-
-function toAgentContext(wf: WorkflowContext): AgentContext {
-  return {
-    runId: wf.runId,
-    clientSlug: wf.clientSlug,
-    productId: wf.productId,
-    runKind: wf.runKind,
-    ...(wf.slotId !== undefined ? { slotId: wf.slotId } : {}),
-    metadata: {},
-  };
-}
-
-/** Unwraps a gate tool's outcome into its `GateVerdict`, treating a broken gate call as a tooling failure — never a content verdict (RFC-01 §5.6/§6). Copied verbatim from `linkedin-agent`'s `create-linkedin-agent-workflow.ts`. */
-async function runGate(
-  tools: AgentToolRegistry,
-  gateName: string,
-  args: unknown,
-  ctx: AgentContext,
-): Promise<GateVerdict> {
-  const tool = tools[gateName];
-  if (!tool) {
-    throw new WorkflowToolingFailure(`no gate registered as "${gateName}"`);
-  }
-  const outcome = await tool.execute(args, { ctx });
-  if (outcome.status !== "success") {
-    throw new WorkflowToolingFailure(`gate "${gateName}" call failed: ${outcome.status}`);
-  }
-  return outcome.result as GateVerdict;
-}
 
 /** Filters a `wf.fanout` result down to the completed slots' outputs — failed slots (RFC-01 §5.5 isolation) are simply excluded, never crash the run. */
 function completedOutputs<T>(slots: readonly SlotOutcome<T>[]): T[] {
@@ -623,26 +594,18 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
     }));
 
     // ── 17-18: deliverable & manifest persistence (reusing the ledger tools, same as linkedin-agent's steps 16-17) ──
-    const deliverableId = await wf.step.code("17-persist-deliverable", async (): Promise<string> => {
-      const outcome = await tools["ledger.writeDeliverable"]!.execute({ runId: wf.runId, kind: "seo-geo-report", deliverable: report }, { ctx });
-      if (outcome.status !== "success") throw new WorkflowToolingFailure(`ledger.writeDeliverable failed: ${outcome.status}`);
-      return (outcome.result as { id: string }).id;
-    });
-
-    await wf.step.code("18-persist-manifest", async () => {
-      await tools["ledger.dashboardSnapshot"]!.execute(
-        {
-          runId: wf.runId,
-          snapshot: {
-            seoScore: scoring.seoScore.score,
-            geoReadinessScore: scoring.geoReadiness.score,
-            visibilityIndexN: scoring.visibilityByN?.index ?? null,
-            firedRecommendationCount: recommendations.length,
-            deliverableId,
-          },
-        },
-        { ctx },
-      );
+    const deliverableId = await finalizeDeliverable(wf, tools, ctx, {
+      persistDeliverableStepId: "17-persist-deliverable",
+      persistManifestStepId: "18-persist-manifest",
+      kind: "seo-geo-report",
+      deliverable: report,
+      snapshot: (deliverableId) => ({
+        seoScore: scoring.seoScore.score,
+        geoReadinessScore: scoring.geoReadiness.score,
+        visibilityIndexN: scoring.visibilityByN?.index ?? null,
+        firedRecommendationCount: recommendations.length,
+        deliverableId,
+      }),
     });
 
     // ── 19: commit + record (memory.appendDecision), same convention as linkedin-agent's step 18 ──

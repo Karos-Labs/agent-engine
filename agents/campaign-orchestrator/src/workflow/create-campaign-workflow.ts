@@ -1,5 +1,5 @@
 import type { AgentContext, AgentToolRegistry, ModelRouter, PromptStore } from "@agent-engine/core";
-import { readRunDirection, runDirectionField, type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure } from "@agent-engine/workflow";
+import { readRunDirection, runDirectionField, type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, toAgentContext } from "@agent-engine/workflow";
 import { createXAgentWorkflow } from "@agent-engine/agent-x";
 import { createLinkedInAgentWorkflow } from "@agent-engine/agent-linkedin";
 import { createRedditAgentWorkflow } from "@agent-engine/agent-reddit";
@@ -51,16 +51,6 @@ export interface CreateCampaignWorkflowOptions {
   channelRouters: Record<CampaignChannel, ModelRouter>;
 }
 
-function toAgentContext(wf: WorkflowContext): AgentContext {
-  return {
-    runId: wf.runId,
-    clientSlug: wf.clientSlug,
-    productId: wf.productId,
-    runKind: wf.runKind,
-    ...(wf.slotId !== undefined ? { slotId: wf.slotId } : {}),
-    metadata: {},
-  };
-}
 
 /** Dispatches to the right channel's own, already-proven `createXAgentWorkflow()`-style factory — every channel's own 17-step workflow runs unmodified (with its own per-channel gate auto-approved), just inside this slot. */
 async function runChannelSlot(

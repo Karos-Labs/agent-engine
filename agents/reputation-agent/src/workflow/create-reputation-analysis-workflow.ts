@@ -1,5 +1,5 @@
 import type { AgentContext, AgentToolRegistry } from "@agent-engine/core";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowToolingFailure } from "@agent-engine/workflow";
+import { type WorkflowContext, WorkflowBlockedIntake, WorkflowToolingFailure, toAgentContext } from "@agent-engine/workflow";
 import type { CaptureLegOutcome } from "@agent-engine/tool-karos-reputation";
 import { parseReputationClientConfig } from "./intake.js";
 import type { ReputationAnalysisWorkflowResult } from "./types.js";
@@ -48,16 +48,6 @@ export interface CreateReputationAnalysisWorkflowOptions {
   tools: AgentToolRegistry;
 }
 
-function toAgentContext(wf: WorkflowContext): AgentContext {
-  return {
-    runId: wf.runId,
-    clientSlug: wf.clientSlug,
-    productId: wf.productId,
-    runKind: wf.runKind,
-    ...(wf.slotId !== undefined ? { slotId: wf.slotId } : {}),
-    metadata: {},
-  };
-}
 
 export function createReputationAnalysisWorkflow(options: CreateReputationAnalysisWorkflowOptions) {
   const tools = options.tools;

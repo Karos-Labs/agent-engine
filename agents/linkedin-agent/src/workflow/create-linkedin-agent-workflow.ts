@@ -1,7 +1,7 @@
 import { readForbiddenTopics } from "@agent-engine/core";
-import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
+import type { AgentContext, AgentToolRegistry, GateResponse, ModelRouter, PromptStore } from "@agent-engine/core";
 import { runLinkedInChannelSetup, type ChannelSetupOutcome } from "@agent-engine/agent-setup";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField, type RevisionNote, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, readClientIntelContext} from "@agent-engine/workflow";
+import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField, type RevisionNote, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, readClientIntelContext, toAgentContext, runGate, finalizeDeliverable, recordOutputExcerpt} from "@agent-engine/workflow";
 import { LinkedInDraftAgent } from "../agent/linkedin-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
 import { renderLinkedInDraftsMarkdown } from "./render-drafts-markdown.js";
@@ -107,34 +107,6 @@ function selectExecutive(executives: Executive[], requestedExecutiveName?: strin
   return executives[0]!;
 }
 
-function toAgentContext(wf: WorkflowContext): AgentContext {
-  return {
-    runId: wf.runId,
-    clientSlug: wf.clientSlug,
-    productId: wf.productId,
-    runKind: wf.runKind,
-    ...(wf.slotId !== undefined ? { slotId: wf.slotId } : {}),
-    metadata: {},
-  };
-}
-
-/** Unwraps a gate tool's outcome into its `GateVerdict`, treating a broken gate call as a tooling failure — never a content verdict (RFC-01 §5.6/§6). */
-async function runGate(
-  tools: AgentToolRegistry,
-  gateName: string,
-  args: unknown,
-  ctx: AgentContext,
-): Promise<GateVerdict> {
-  const tool = tools[gateName];
-  if (!tool) {
-    throw new WorkflowToolingFailure(`no gate registered as "${gateName}"`);
-  }
-  const outcome = await tool.execute(args, { ctx });
-  if (outcome.status !== "success") {
-    throw new WorkflowToolingFailure(`gate "${gateName}" call failed: ${outcome.status}`);
-  }
-  return outcome.result as GateVerdict;
-}
 
 /**
  * The restored default archetype rotation (Phase 2.5 Batch 2.2), ordered
@@ -630,31 +602,23 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
     const draft = review.output;
 
     // ── 16-17: deliverable & manifest persistence ──
-    const deliverableId = await wf.step.code("16-persist-deliverable", async (): Promise<string> => {
-      // Additive: `draftsMarkdown` is the "# LinkedIn drafts"-shaped string
-      // karosCMO's `li-drafts.ts` parser needs on `asset.content` — the rest
-      // of `draft` stays untouched for any consumer that wants raw fields.
-      const companyName = clientContext.profile["companyName"];
-      const draftsMarkdown = renderLinkedInDraftsMarkdown({
-        identity: clientContext.identity,
-        ...(typeof companyName === "string" ? { companyName } : {}),
-        archetype: draft.archetype,
-        topic: selected.topic,
-        draft,
-      });
-      const outcome = await tools["ledger.writeDeliverable"]!.execute(
-        { runId: wf.runId, kind: "linkedin-post", deliverable: { ...draft, draftsMarkdown } },
-        { ctx },
-      );
-      if (outcome.status !== "success") throw new WorkflowToolingFailure(`ledger.writeDeliverable failed: ${outcome.status}`);
-      return (outcome.result as { id: string }).id;
+    // Additive: `draftsMarkdown` is the "# LinkedIn drafts"-shaped string
+    // karosCMO's `li-drafts.ts` parser needs on `asset.content` — the rest
+    // of `draft` stays untouched for any consumer that wants raw fields.
+    const companyName = clientContext.profile["companyName"];
+    const draftsMarkdown = renderLinkedInDraftsMarkdown({
+      identity: clientContext.identity,
+      ...(typeof companyName === "string" ? { companyName } : {}),
+      archetype: draft.archetype,
+      topic: selected.topic,
+      draft,
     });
-
-    await wf.step.code("17-persist-manifest", async () => {
-      await tools["ledger.dashboardSnapshot"]!.execute(
-        { runId: wf.runId, snapshot: { topic: selected.topic, source: selected.source, archetype: draft.archetype, deliverableId } },
-        { ctx },
-      );
+    const deliverableId = await finalizeDeliverable(wf, tools, ctx, {
+      persistDeliverableStepId: "16-persist-deliverable",
+      persistManifestStepId: "17-persist-manifest",
+      kind: "linkedin-post",
+      deliverable: { ...draft, draftsMarkdown },
+      snapshot: (deliverableId) => ({ topic: selected.topic, source: selected.source, archetype: draft.archetype, deliverableId }),
     });
 
     // ── 18: commit updates (topics.commit, memory.appendDecision, ledger.feedbackAppend) ──
@@ -667,11 +631,7 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
       // history feed and the drafting directive on every future run.
       // Best-effort: losing an excerpt costs future dedup signal, never the
       // delivered post.
-      try {
-        await tools["ledger.recordOutputExcerpt"]?.execute({ agentId: "linkedin-agent", runId: wf.runId, excerpt: draft.text }, { ctx });
-      } catch (error) {
-        console.error("commit-and-record: could not record the output excerpt for future dedup", error);
-      }
+      await recordOutputExcerpt(tools, ctx, wf.runId, "linkedin-agent", draft.text);
       await tools["memory.appendDecision"]!.execute(
         { decisionId: `${wf.runId}__decision`, summary: `Posted about "${selected.topic}" (archetype: ${draft.archetype})` },
         { ctx },

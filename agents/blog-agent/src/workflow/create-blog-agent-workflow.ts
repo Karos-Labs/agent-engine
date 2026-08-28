@@ -1,6 +1,6 @@
 import { readForbiddenTopics } from "@agent-engine/core";
-import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField, type RevisionNote, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, readClientIntelContext} from "@agent-engine/workflow";
+import type { AgentContext, AgentToolRegistry, GateResponse, ModelRouter, PromptStore } from "@agent-engine/core";
+import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField, type RevisionNote, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, readClientIntelContext, toAgentContext, runGate, finalizeDeliverable, recordOutputExcerpt} from "@agent-engine/workflow";
 import { BlogDraftAgent } from "../agent/blog-draft-agent.js";
 import { renderPreview, BLOG_MIN_WORD_COUNT, BLOG_MAX_WORD_COUNT, type RenderPreviewResult } from "../tools/render-preview.js";
 import { buildBlogJsonLd, type BlogJsonLd } from "../tools/json-ld.js";
@@ -51,34 +51,6 @@ function deriveCanonicalUrl(website: unknown, slug: string): string | undefined 
   return `https://${host}/blog/${slug}`;
 }
 
-function toAgentContext(wf: WorkflowContext): AgentContext {
-  return {
-    runId: wf.runId,
-    clientSlug: wf.clientSlug,
-    productId: wf.productId,
-    runKind: wf.runKind,
-    ...(wf.slotId !== undefined ? { slotId: wf.slotId } : {}),
-    metadata: {},
-  };
-}
-
-/** Unwraps a gate tool's outcome into its `GateVerdict`, treating a broken gate call as a tooling failure — never a content verdict (RFC-01 §5.6/§6). */
-async function runGate(
-  tools: AgentToolRegistry,
-  gateName: string,
-  args: unknown,
-  ctx: AgentContext,
-): Promise<GateVerdict> {
-  const tool = tools[gateName];
-  if (!tool) {
-    throw new WorkflowToolingFailure(`no gate registered as "${gateName}"`);
-  }
-  const outcome = await tool.execute(args, { ctx });
-  if (outcome.status !== "success") {
-    throw new WorkflowToolingFailure(`gate "${gateName}" call failed: ${outcome.status}`);
-  }
-  return outcome.result as GateVerdict;
-}
 
 /**
  * `createBlogAgentWorkflow()` (RFC-02 §5 — "same recipe" as the X,
@@ -436,42 +408,35 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
     const draft = review.output;
 
     // ── 16-17: deliverable & manifest persistence ──
-    const deliverableId = await wf.step.code("16-persist-deliverable", async (): Promise<string> => {
-      // canonicalUrl is derived deterministically from the client's own configured
-      // domain, never taken from the model's draft — a draft-supplied value (should
-      // one ever appear) is discarded here rather than trusted.
-      const { canonicalUrl: _modelSuppliedCanonicalUrl, ...draftWithoutCanonicalUrl } = draft;
-      const canonicalUrl = deriveCanonicalUrl(clientContext.profile["website"], draft.slug);
-      // JSON-LD structured data (SEO/GEO remediation): a `BlogPosting` object always,
-      // a `FAQPage` object too when the draft's own `faqItems` is non-empty — built
-      // from the draft's own fields plus this same deterministic canonicalUrl, never
-      // the model's own guess. `authorName` falls back to the tenant slug (never a
-      // placeholder string) when the client has no display name configured.
-      // Persisted as a structured object (`jsonLd`), not a pre-serialized string —
-      // see json-ld.ts's own module comment for why.
-      const authorName = (clientContext.profile["name"] as string | undefined) ?? wf.clientSlug;
-      const jsonLd: BlogJsonLd = buildBlogJsonLd({
-        title: draft.title,
-        metaDescription: draft.metaDescription,
-        ...(canonicalUrl ? { canonicalUrl } : {}),
-        authorName,
-        datePublished: new Date().toISOString(),
-        faqItems: draft.faqItems,
-      });
-      const deliverable = { ...draftWithoutCanonicalUrl, ...(canonicalUrl ? { canonicalUrl } : {}), jsonLd };
-      const outcome = await tools["ledger.writeDeliverable"]!.execute({ runId: wf.runId, kind: "blog-post", deliverable }, { ctx });
-      if (outcome.status !== "success") throw new WorkflowToolingFailure(`ledger.writeDeliverable failed: ${outcome.status}`);
-      return (outcome.result as { id: string }).id;
-    });
-
-    await wf.step.code("17-persist-manifest", async () => {
-      await tools["ledger.dashboardSnapshot"]!.execute(
-        {
-          runId: wf.runId,
-          snapshot: { topic: selected.topic, source: selected.source, angle, targetKeyword: selected.targetKeyword, deliverableId },
-        },
-        { ctx },
-      );
+    const deliverableId = await finalizeDeliverable(wf, tools, ctx, {
+      persistDeliverableStepId: "16-persist-deliverable",
+      persistManifestStepId: "17-persist-manifest",
+      kind: "blog-post",
+      buildDeliverable: () => {
+        // canonicalUrl is derived deterministically from the client's own configured
+        // domain, never taken from the model's draft — a draft-supplied value (should
+        // one ever appear) is discarded here rather than trusted.
+        const { canonicalUrl: _modelSuppliedCanonicalUrl, ...draftWithoutCanonicalUrl } = draft;
+        const canonicalUrl = deriveCanonicalUrl(clientContext.profile["website"], draft.slug);
+        // JSON-LD structured data (SEO/GEO remediation): a `BlogPosting` object always,
+        // a `FAQPage` object too when the draft's own `faqItems` is non-empty — built
+        // from the draft's own fields plus this same deterministic canonicalUrl, never
+        // the model's own guess. `authorName` falls back to the tenant slug (never a
+        // placeholder string) when the client has no display name configured.
+        // Persisted as a structured object (`jsonLd`), not a pre-serialized string —
+        // see json-ld.ts's own module comment for why.
+        const authorName = (clientContext.profile["name"] as string | undefined) ?? wf.clientSlug;
+        const jsonLd: BlogJsonLd = buildBlogJsonLd({
+          title: draft.title,
+          metaDescription: draft.metaDescription,
+          ...(canonicalUrl ? { canonicalUrl } : {}),
+          authorName,
+          datePublished: new Date().toISOString(),
+          faqItems: draft.faqItems,
+        });
+        return { ...draftWithoutCanonicalUrl, ...(canonicalUrl ? { canonicalUrl } : {}), jsonLd };
+      },
+      snapshot: (deliverableId) => ({ topic: selected.topic, source: selected.source, angle, targetKeyword: selected.targetKeyword, deliverableId }),
     });
 
     // ── 18: commit updates (topics.commit, memory.appendDecision, ledger.feedbackAppend) ──
@@ -484,12 +449,7 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
       // history feed and the drafting directive on every future run.
       // Best-effort: losing an excerpt costs future dedup signal, never the
       // delivered post.
-      try {
-        await tools["ledger.recordOutputExcerpt"]?.execute({ agentId: "blog-agent", runId: wf.runId, excerpt: `${draft.title}
-${draft.text}` }, { ctx });
-      } catch (error) {
-        console.error("commit-and-record: could not record the output excerpt for future dedup", error);
-      }
+      await recordOutputExcerpt(tools, ctx, wf.runId, "blog-agent", `${draft.title}\n${draft.text}`);
       await tools["memory.appendDecision"]!.execute(
         { decisionId: `${wf.runId}__decision`, summary: `Published about "${selected.topic}" (keyword: ${selected.targetKeyword}, angle: ${angle})` },
         { ctx },
