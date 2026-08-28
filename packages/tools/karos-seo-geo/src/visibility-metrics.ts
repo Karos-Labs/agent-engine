@@ -47,12 +47,22 @@ interface FirstFlags {
  * winner-take-all per cell, matching the formula's literal boolean-OR
  * semantics applied independently to each entity.
  */
-function evaluateFirstFlags(cell: SeoGeoCaptureCell, competitorDomains: Readonly<Record<string, readonly string[]>>): FirstFlags {
+function evaluateFirstFlags(
+  cell: SeoGeoCaptureCell,
+  competitorDomains: Readonly<Record<string, readonly string[]>>,
+  isRosterMember: (brandId: string) => boolean,
+): FirstFlags {
   const namedOffsets: Array<{ id: string; offset: number }> = [];
   if (cell.brandMentioned && cell.brandFirstMentionCharOffset !== undefined) {
     namedOffsets.push({ id: "client", offset: cell.brandFirstMentionCharOffset });
   }
   for (const competitor of cell.competitorsNamed) {
+    // "argmax over competitor_set": the comparison set is the LOCKED roster
+    // (`competitor_set_hash`), not every brand an answer happens to name. A
+    // brand outside the frozen roster is not a competitor, so it can neither
+    // strip the client of first position nor be emitted as
+    // `rank_first_competitor`.
+    if (!isRosterMember(competitor.brandId)) continue;
     namedOffsets.push({ id: competitor.brandId, offset: competitor.charOffset });
   }
   const firstNamedId = namedOffsets.length > 0 ? namedOffsets.reduce((min, cur) => (cur.offset < min.offset ? cur : min)).id : null;
@@ -61,7 +71,10 @@ function evaluateFirstFlags(cell: SeoGeoCaptureCell, competitorDomains: Readonly
   const firstCitation = cell.citations.find((c) => c.ordinal === 1);
   let competitorFirstCitedId: string | null = null;
   if (firstCitation) {
-    for (const [brandId, domains] of Object.entries(competitorDomains)) {
+    // Sorted so that a domain claimed by two roster members resolves to the same
+    // brand on every run (`reproducibility.rule`: nothing drifts silently).
+    for (const [brandId, domains] of Object.entries(competitorDomains).sort((a, b) => a[0].localeCompare(b[0]))) {
+      if (!isRosterMember(brandId)) continue;
       if (domains.includes(firstCitation.domain)) {
         competitorFirstCitedId = brandId;
         break;
@@ -82,7 +95,36 @@ export function computeVisibilityMetrics(options: ComputeVisibilityMetricsOption
   const engines = VISIBILITY_ENGINES_CONFIG as readonly SeoGeoVisibilityEngine[];
   const rosterSize = competitorRoster.length + 1; // + client
 
-  const cellFirstFlags = new Map<SeoGeoCaptureCell, FirstFlags>(cells.map((cell) => [cell, evaluateFirstFlags(cell, competitorDomains)]));
+  /**
+   * The locked roster (`competitor_set_hash`) scopes every formula the config
+   * writes as "over competitor_set". When no roster is supplied there is no
+   * locked set to scope to — and scoping to `{client}` alone would make
+   * share_of_voice structurally incapable of being anything but 100% and the
+   * client structurally incapable of losing first position. So an empty
+   * roster falls back to the observed brands (the pre-existing behaviour) and
+   * `rosterScoped: false` says so, rather than quietly asserting roster
+   * semantics the inputs cannot support.
+   */
+  const rosterScoped = competitorRoster.length > 0;
+  const rosterSet = new Set(competitorRoster);
+  const isRosterMember = (brandId: string): boolean => !rosterScoped || rosterSet.has(brandId);
+
+  const cellFirstFlags = new Map<SeoGeoCaptureCell, FirstFlags>(
+    cells.map((cell) => [cell, evaluateFirstFlags(cell, competitorDomains, isRosterMember)]),
+  );
+
+  /**
+   * `cited(p,e)`, defined once. The config fixes this predicate in
+   * `citation_share`'s formula — "client root domain in citations[p][e].domain"
+   * — and `ghost_citation_rate` then divides by that same `sum_p cited`.
+   * `brandCited` alone is a looser flag (the answer cited the brand somehow);
+   * using it for the ghost denominator while the numerator's subtrahend also
+   * required a client-domain match made the two legs of one formula mean
+   * different things, inflating the ghost rate for every answer that cited a
+   * third-party page about the client.
+   */
+  const isCited = (cell: SeoGeoCaptureCell): boolean =>
+    cell.brandCited && clientDomains.some((d) => cell.citations.some((cite) => cite.domain === d));
 
   const perEngine: PerEngineVisibilityMetrics[] = engines.map((engine) => {
     const engineCells = cells.filter((c) => c.engine === engine);
@@ -90,16 +132,14 @@ export function computeVisibilityMetrics(options: ComputeVisibilityMetricsOption
     const nEffective = denominatorFor(engineCells, promptCount, denominator);
     const safeDen = Math.max(nEffective, 1);
 
-    const citedCount = engineCells.filter((c) => c.brandCited && clientDomains.some((d) => c.citations.some((cite) => cite.domain === d))).length;
+    const citedCount = engineCells.filter(isCited).length;
     const namedCount = engineCells.filter((c) => c.brandMentioned).length;
-    const namedAndCitedCount = engineCells.filter(
-      (c) => c.brandMentioned && c.brandCited && clientDomains.some((d) => c.citations.some((cite) => cite.domain === d)),
-    ).length;
+    const namedAndCitedCount = engineCells.filter((c) => c.brandMentioned && isCited(c)).length;
 
     const citationShare = citedCount / safeDen;
     const mentionShare = namedCount / safeDen;
-    const totalCited = engineCells.filter((c) => c.brandCited).length;
-    const ghostCitationRate = totalCited === 0 ? 0 : ((totalCited - namedAndCitedCount) / Math.max(totalCited, 1)) * 100;
+    // ghost_citation_rate[e] = (sum_p cited - sum_p named_AND_cited)/max(sum_p cited,1) * 100
+    const ghostCitationRate = citedCount === 0 ? 0 : ((citedCount - namedAndCitedCount) / Math.max(citedCount, 1)) * 100;
 
     const firstCount = engineCells.filter((cell) => cellFirstFlags.get(cell)!.clientFirst).length;
     const firstPositionRate = firstCount / safeDen;
@@ -140,15 +180,31 @@ export function computeVisibilityMetrics(options: ComputeVisibilityMetricsOption
     denominator === "N_e" ? perEngine.reduce((sum, e) => sum + Math.max(e.nEffective, 1), 0) : promptCount * engines.length;
   const mentionRateBlended = blendedMentionDenominator > 0 ? totalNamedAcrossEngines / blendedMentionDenominator : 0;
 
-  // GEO-27 share_of_voice: SOV[b] = mentions(b) / sum_{b' in roster} mentions(b') * 100.
+  // GEO-27 share_of_voice: "SOV[b] = mentions(b) / sum_{b' in client+competitor_set}
+  // mentions(b') * 100; share_of_voice = SOV[client]; sums to 100 across locked roster".
+  // The denominator is the LOCKED roster, so a brand the model happened to name that is
+  // not on `competitor_set` must not enter the sum — it would depress the client's SOV
+  // (and with it GEO-27, 20 of the Visibility Index's 100 points) for a brand nobody
+  // chose to compete against, and would break the config's own "sums to 100" invariant.
   const mentionTotals: Record<string, number> = {};
+  const offRosterBrands = new Set<string>();
   for (const cell of cells) {
     for (const [brandId, count] of Object.entries(cell.mentionCounts)) {
+      if (brandId !== "client" && !isRosterMember(brandId)) {
+        offRosterBrands.add(brandId);
+        continue;
+      }
       mentionTotals[brandId] = (mentionTotals[brandId] ?? 0) + count;
     }
   }
   const rosterMentionSum = Object.values(mentionTotals).reduce((sum, n) => sum + n, 0);
-  const shareOfVoiceClient = rosterMentionSum > 0 ? ((mentionTotals["client"] ?? 0) / rosterMentionSum) * 100 : 0;
+  const sovFor = (brandId: string): number => (rosterMentionSum > 0 ? ((mentionTotals[brandId] ?? 0) / rosterMentionSum) * 100 : 0);
+  const shareOfVoiceClient = sovFor("client");
+  const shareOfVoiceByBrand: Record<string, number> = Object.fromEntries(
+    Object.keys(mentionTotals)
+      .sort()
+      .map((brandId) => [brandId, sovFor(brandId)]),
+  );
 
   // BOTH-14: rank_first_competitor = argmax over competitor_set of how often
   // that competitor independently achieves first(p,e) (named-first OR
@@ -159,18 +215,22 @@ export function computeVisibilityMetrics(options: ComputeVisibilityMetricsOption
       competitorFirstCounts[competitor] = (competitorFirstCounts[competitor] ?? 0) + 1;
     }
   }
+  // Ties break on brandId ascending, so the emitted competitor depends only on the
+  // frozen inputs and never on which capture cell happened to be scanned first
+  // (`reproducibility.rule`: identical inputs, bit-identical outputs).
   const rankFirstCompetitor =
-    Object.keys(competitorFirstCounts).length > 0
-      ? (Object.entries(competitorFirstCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null)
-      : null;
+    Object.entries(competitorFirstCounts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ?? null;
 
   return {
     perEngine,
     citationShareBlended,
     mentionRateBlended,
     shareOfVoiceClient,
+    shareOfVoiceByBrand,
     rankFirstCompetitor,
     clientDomains: [...clientDomains],
     rosterSize,
+    rosterScoped,
+    offRosterBrandsIgnored: [...offRosterBrands].sort(),
   };
 }

@@ -132,6 +132,42 @@ export function evaluateRecommendations(inputValuesByRecId: Record<string, RecIn
   });
 }
 
+export interface CatalogCoverage {
+  /** Every rec_id in `rec-catalog.data.ts`. */
+  catalogRecIds: string[];
+  /** rec_ids the scoring config actually produces a scored instance for — the only ones `evaluateRecommendations` can ever fire. */
+  scoredRecIds: string[];
+  /** In the catalog but never scored: these recommendations are structurally unfirable, no matter what a run measures. */
+  unscoredCatalogRecIds: string[];
+  /** Referenced by the scoring config but absent from the catalog: these would be scored and then silently dropped. */
+  uncatalogedScoredRecIds: string[];
+}
+
+/**
+ * Diffs the rec catalog against the rec_ids the scoring config actually
+ * scores. `evaluateRecommendations` skips any rec with no scored instance,
+ * so a catalog entry the scoring config never references can never fire —
+ * it is a recommendation the engine is structurally incapable of making.
+ *
+ * SCRUM-318 (AU27) asks for the agent-engine catalog to be reconciled
+ * against v2's, which is the authority on which of these gaps are v2
+ * additions still to be wired up and which are dead entries to drop. That
+ * comparison could not be made here (`karos-agents` is unreachable from
+ * this environment), so this function exposes the measurement instead of
+ * asserting a conclusion: the gap is now countable and testable, and
+ * SCRUM-319/320 can reconcile against a real number rather than a guess.
+ */
+export function computeCatalogCoverage(scoredRecIds: Iterable<string>): CatalogCoverage {
+  const catalog = new Set(Object.keys(RAW_CATALOG));
+  const scored = new Set(scoredRecIds);
+  return {
+    catalogRecIds: [...catalog].sort(),
+    scoredRecIds: [...scored].sort(),
+    unscoredCatalogRecIds: [...catalog].filter((r) => !scored.has(r)).sort(),
+    uncatalogedScoredRecIds: [...scored].filter((r) => !catalog.has(r)).sort(),
+  };
+}
+
 /** Groups `evaluateScoreFamily`'s flat `EvaluatedInput[]` by `recId`, the shape `evaluateRecommendations` expects. */
 export function groupInputsByRecId(
   inputs: readonly { recId: string; norm: number; weight: number; normalization: InstanceNormalization }[],
