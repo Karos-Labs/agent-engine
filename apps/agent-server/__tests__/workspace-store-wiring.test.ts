@@ -73,6 +73,52 @@ describe("T-P0b: workspace store injection (SCRUM-263)", () => {
       }
     });
   });
+
+  /**
+   * SCRUM-327 (AU43) / Tomer decision record, SCRUM-333, ruling 14: the
+   * workspace store gets ITS OWN DEDICATED BUCKET — no more sharing retention
+   * policy between durable tenant state and 7-day disposable renders.
+   *
+   * The suite above ("supplies _GCS_WORKSPACE_BUCKET from a GitHub var") is
+   * structurally incapable of catching a regression here: it only asserts the
+   * substitution comes from *some* `vars.*` name, and
+   * `vars.PREP_GCS_ARTIFACTS_BUCKET` satisfies that regex just as well as a
+   * dedicated `vars.PREP_GCS_WORKSPACE_BUCKET` would. That is exactly the
+   * failure T-P0b found live: `_GCS_WORKSPACE_BUCKET` was wired to the SAME
+   * GitHub variable as `_GCS_ARTIFACTS_BUCKET` in both environments, so the
+   * two prior tests were green the entire time the bug existed. This test
+   * asserts the two substitutions read from two DIFFERENT variable names.
+   */
+  describe("SCRUM-327: workspace bucket is dedicated, never the artifacts bucket variable", () => {
+    const workspaceAndArtifactsVars = (yml: string): { workspaceVar: string; artifactsVar: string } => {
+      const workspace = /_GCS_WORKSPACE_BUCKET="\$\{\{ vars\.([A-Z_]+) \}\}"/.exec(yml);
+      const artifacts = /_GCS_ARTIFACTS_BUCKET="\$\{\{ vars\.([A-Z_]+) \}\}"/.exec(yml);
+      if (!workspace || !artifacts) throw new Error("expected both _GCS_WORKSPACE_BUCKET and _GCS_ARTIFACTS_BUCKET substitutions to be present");
+      return { workspaceVar: workspace[1]!, artifactsVar: artifacts[1]! };
+    };
+
+    it("deploy-prep: _GCS_WORKSPACE_BUCKET is not fed from the artifacts-bucket variable", () => {
+      const { workspaceVar, artifactsVar } = workspaceAndArtifactsVars(read(".github/workflows/deploy-prep.yml"));
+      expect(workspaceVar).not.toBe(artifactsVar);
+      expect(workspaceVar).toBe("PREP_GCS_WORKSPACE_BUCKET");
+    });
+
+    it("deploy-prod: _GCS_WORKSPACE_BUCKET is not fed from the artifacts-bucket variable", () => {
+      const { workspaceVar, artifactsVar } = workspaceAndArtifactsVars(read(".github/workflows/deploy-prod.yml"));
+      expect(workspaceVar).not.toBe(artifactsVar);
+      expect(workspaceVar).toBe("PROD_GCS_WORKSPACE_BUCKET");
+    });
+
+    it("deploy-prep validates the new PREP_GCS_WORKSPACE_BUCKET repo variable is present before deploying", () => {
+      const yml = read(".github/workflows/deploy-prep.yml");
+      expect(yml).toMatch(/for v in [^\n]*\bPREP_GCS_WORKSPACE_BUCKET\b/);
+    });
+
+    it("deploy-prod validates the new PROD_GCS_WORKSPACE_BUCKET repo variable is present before deploying", () => {
+      const yml = read(".github/workflows/deploy-prod.yml");
+      expect(yml).toMatch(/for v in [^\n]*\bPROD_GCS_WORKSPACE_BUCKET\b/);
+    });
+  });
 });
 
 /**

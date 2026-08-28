@@ -48,7 +48,7 @@ jobs:
       - name: Validate required repo variables
         run: |
           missing=()
-          for v in PROD_PROJECT_ID PROD_SERVICE_ACCOUNT PROD_FIRESTORE_PROJECT_ID PROD_QUEUE_SUBSCRIPTION PROD_GCS_MEDIA_BUCKET PROD_GCS_ARTIFACTS_BUCKET PREP_PROJECT_ID; do
+          for v in PROD_PROJECT_ID PROD_SERVICE_ACCOUNT PROD_FIRESTORE_PROJECT_ID PROD_QUEUE_SUBSCRIPTION PROD_GCS_MEDIA_BUCKET PROD_GCS_ARTIFACTS_BUCKET PROD_GCS_WORKSPACE_BUCKET PREP_PROJECT_ID; do
             [ -n "${!v}" ] || missing+=("$v")
           done
           if [ "${#missing[@]}" -gt 0 ]; then
@@ -62,6 +62,7 @@ jobs:
           PROD_QUEUE_SUBSCRIPTION: ${{ vars.PROD_QUEUE_SUBSCRIPTION }}
           PROD_GCS_MEDIA_BUCKET: ${{ vars.PROD_GCS_MEDIA_BUCKET }}
           PROD_GCS_ARTIFACTS_BUCKET: ${{ vars.PROD_GCS_ARTIFACTS_BUCKET }}
+          PROD_GCS_WORKSPACE_BUCKET: ${{ vars.PROD_GCS_WORKSPACE_BUCKET }}
           PREP_PROJECT_ID: ${{ vars.PREP_PROJECT_ID }}
 
       - name: Authenticate to Google Cloud
@@ -103,4 +104,4 @@ jobs:
             --project="${{ vars.PROD_PROJECT_ID }}" \
             --config=cloudbuild.promote.yaml \
             --no-source \
-            --substitutions=_REGION="${{ vars.PROD_REGION || 'us-central1' }}",_SERVICE_PREFIX="agent-engine-prod",_SERVICE_ACCOUNT="${{ vars.PROD_SERVICE_ACCOUNT }}",_PREP_PROJECT_ID="${{ vars.PREP_PROJECT_ID }}",_PREP_REGION="${{ vars.PREP_REGION || 'us-central1' }}",_SHA="${{ steps.sha.outputs.sha }}",_GOOGLE_CLOUD_PROJECT="${{ vars.PROD_FIRESTORE_PROJECT_ID }}",_FIRESTORE_DATABASE_ID="${{ vars.PROD_FIRESTORE_DATABASE_ID || '(default)' }}",_ANTHROPIC_VERTEX_PROJECT_ID="${{ vars.PROD_PROJECT_ID }}",_ANTHROPIC_API_KEY_SECRET="anthropic-api-key",_PUBSUB_PROJECT_ID="${{ vars.PROD_PROJECT_ID }}",_QUEUE_SUBSCRIPTION_RUN_JOBS="${{ vars.PROD_QUEUE_SUBSCRIPTION }}",_GCS_MEDIA_BUCKET="${{ vars.PROD_GCS_MEDIA_BUCKET }}",_GCS_ARTIFACTS_BUCKET="${{ vars.PROD_GCS_ARTIFACTS_BUCKET }}",_GCS_WORKSPACE_BUCKET="${{ vars.PROD_GCS_ARTIFACTS_BUCKET }}"
+            --substitutions=_REGION="${{ vars.PROD_REGION || 'us-central1' }}",_SERVICE_PREFIX="agent-engine-prod",_SERVICE_ACCOUNT="${{ vars.PROD_SERVICE_ACCOUNT }}",_PREP_PROJECT_ID="${{ vars.PREP_PROJECT_ID }}",_PREP_REGION="${{ vars.PREP_REGION || 'us-central1' }}",_SHA="${{ steps.sha.outputs.sha }}",_GOOGLE_CLOUD_PROJECT="${{ vars.PROD_FIRESTORE_PROJECT_ID }}",_FIRESTORE_DATABASE_ID="${{ vars.PROD_FIRESTORE_DATABASE_ID || '(default)' }}",_ANTHROPIC_VERTEX_PROJECT_ID="${{ vars.PROD_PROJECT_ID }}",_ANTHROPIC_API_KEY_SECRET="anthropic-api-key",_PUBSUB_PROJECT_ID="${{ vars.PROD_PROJECT_ID }}",_QUEUE_SUBSCRIPTION_RUN_JOBS="${{ vars.PROD_QUEUE_SUBSCRIPTION }}",_GCS_MEDIA_BUCKET="${{ vars.PROD_GCS_MEDIA_BUCKET }}",_GCS_ARTIFACTS_BUCKET="${{ vars.PROD_GCS_ARTIFACTS_BUCKET }}",_GCS_WORKSPACE_BUCKET="${{ vars.PROD_GCS_WORKSPACE_BUCKET }}"
