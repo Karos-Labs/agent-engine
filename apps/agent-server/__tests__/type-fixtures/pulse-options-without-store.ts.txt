@@ -1,0 +1,9 @@
+// MUST NOT COMPILE once CreateReputationPulseWorkflowOptions.store is required (SCRUM-328).
+import type { AgentToolRegistry, ModelRouter, PromptStore } from "@agent-engine/core";
+import { createReputationPulseWorkflow } from "@agent-engine/agent-reputation";
+
+declare const tools: AgentToolRegistry;
+declare const promptStore: PromptStore;
+declare const router: ModelRouter;
+
+export const wf = createReputationPulseWorkflow({ tools, promptStore, router });

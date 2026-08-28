@@ -1,6 +1,5 @@
 import express, { type Application } from "express";
 import { MemoryAgentDefinitionStore } from "@agent-engine/core";
-import { createWorkspaceStore } from "@agent-engine/tools";
 import type { DurableStepStore } from "@agent-engine/workflow";
 import { createAgentsRouter } from "./routes/agents.js";
 import { createDeliverablesRouter } from "./routes/deliverables.js";
@@ -77,6 +76,6 @@ export function createApp(deps: CreateAppDeps): Application {
   app.use(createDiagnosticsRouter());
   app.use(createRunsRouter(runsDeps));
   app.use(createAgentsRouter({ agentDefinitionStore }));
-  app.use(createDeliverablesRouter({ durableStore: deps.durableStore, workspaceStore: deps.runtimeDeps.workspaceStore ?? createWorkspaceStore() }));
+  app.use(createDeliverablesRouter({ durableStore: deps.durableStore, workspaceStore: deps.runtimeDeps.workspaceStore }));
   return app;
 }

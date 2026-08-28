@@ -281,7 +281,9 @@ export async function setupTestEnvironment(clientSlug = "acme"): Promise<TestEnv
     rootDir,
     store,
     durableStore,
-    runtimeDeps: { tools, promptStore, router },
+    // The SAME store `tools` was built over (SCRUM-328): the server's composition
+    // roots thread one instance through both, and so must the test environment.
+    runtimeDeps: { tools, promptStore, router, workspaceStore: store },
     cleanup: () => fs.rm(rootDir, { recursive: true, force: true }),
   };
 }

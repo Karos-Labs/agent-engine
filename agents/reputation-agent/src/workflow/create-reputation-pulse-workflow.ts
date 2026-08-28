@@ -1,6 +1,6 @@
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentToolRegistry, GateResponse, ModelRouter, PromptStore } from "@agent-engine/core";
-import { createWorkspaceStore, type WorkspaceStoreLike } from "@agent-engine/tool-common";
+import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import type { Annotations, CaptureLegOutcome, DoctrineGateResult, Review, TriageResult } from "@agent-engine/tool-karos-reputation";
 import { readRunDirection, runDirectionField, type SlotOutcome, type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail } from "@agent-engine/workflow";
 import { ReputationDoctrineGateAgent } from "../agent/reputation-doctrine-gate-agent.js";
@@ -99,13 +99,17 @@ export interface CreateReputationPulseWorkflowOptions {
    * against directly — these are NOT exposed as registered tools (there is
    * no generic "claim"/"ledger" tool in this codebase to reuse, per RFC-08's
    * own instruction to "build an equivalent using the WorkspaceStoreLike
-   * primitives directly if nothing existing fits"). Defaults to
-   * `createWorkspaceStore()`, matching every other `karos-*` server's own
-   * default — pass an explicit store (e.g. one pointed at a temp directory)
-   * so this and the tool registry share one isolated workspace, exactly what
-   * tests need.
+   * primitives directly if nothing existing fits").
+   *
+   * REQUIRED (SCRUM-328 / AU45). This used to default to
+   * `createWorkspaceStore()` — a local, file-backed store that, as the note
+   * on `AgentRuntimeDeps.workspaceStore` already admitted, "would silently
+   * reset per Cloud Run instance in production". A pulse whose claims and
+   * ledgers land on instance-local disk loses them on the next request, with
+   * no error anywhere. Callers pass an explicit store (in tests, one pointed
+   * at a temp directory) so this and the tool registry share one workspace.
    */
-  store?: WorkspaceStoreLike;
+  store: WorkspaceStoreLike;
   /**
    * Skips the step 10 `reputation_approve_all` human gate and records a
    * synthetic `actor: "system"` approval instead — off by default, matching
@@ -161,7 +165,7 @@ function completedOutputs<T>(slots: readonly SlotOutcome<T>[]): T[] {
  */
 export function createReputationPulseWorkflow(options: CreateReputationPulseWorkflowOptions) {
   const tools = options.tools;
-  const store = options.store ?? createWorkspaceStore();
+  const store = options.store;
 
   return async function reputationPulseWorkflow(wf: WorkflowContext): Promise<ReputationPulseWorkflowResult> {
     const ctx = toAgentContext(wf);

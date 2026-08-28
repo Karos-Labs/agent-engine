@@ -1,0 +1,16 @@
+// MUST COMPILE, before and after SCRUM-328. This is the positive control: it
+// proves the tsc invocation used by these tests can actually SUCCEED, so a
+// broken invocation (bad flags, unresolvable imports) cannot make the two
+// "must not compile" assertions pass vacuously.
+import type { AgentToolRegistry, ModelRouter, PromptStore } from "@agent-engine/core";
+import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
+import { createReputationPulseWorkflow } from "@agent-engine/agent-reputation";
+import type { AgentRuntimeDeps } from "../src/wiring/workflows.js";
+
+declare const tools: AgentToolRegistry;
+declare const promptStore: PromptStore;
+declare const router: ModelRouter;
+declare const workspaceStore: WorkspaceStoreLike;
+
+export const deps: AgentRuntimeDeps = { tools, promptStore, router, workspaceStore };
+export const wf = createReputationPulseWorkflow({ tools, promptStore, router, store: workspaceStore });
