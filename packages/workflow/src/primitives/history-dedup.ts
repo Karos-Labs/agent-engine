@@ -113,9 +113,40 @@ export function buildClientIntelContext(report: unknown): string | undefined {
   const strList = (v: unknown): string[] =>
     Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim().length > 0) : [];
 
-  const voiceRows = strList(r["brandVoiceRows"]);
+  // SCRUM-267 corrected these two fields to the portal's real shapes —
+  // `BrandVoiceRow { dimension, scores }` and `{ company, archetype }` — because
+  // a flat string list is not what `ClientReport` declares and never rendered.
+  // Both forms are still accepted here: this function reads whatever
+  // `intel.getReport` hands back, and a client whose report predates that
+  // change still has flat strings on disk. Dropping them would silently strip
+  // voice guidance out of every drafting prompt for those clients.
+  const objList = (v: unknown, render: (row: Record<string, unknown>) => string | undefined): string[] =>
+    Array.isArray(v)
+      ? v
+          .map((x) =>
+            typeof x === "string" ? x : typeof x === "object" && x !== null ? render(x as Record<string, unknown>) : undefined,
+          )
+          .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+          .map((x) => x.trim())
+      : [];
+
+  const voiceRows = objList(r["brandVoiceRows"], (row) => {
+    const dimension = str(row["dimension"]);
+    const scores = row["scores"];
+    if (dimension === undefined) return undefined;
+    if (typeof scores !== "object" || scores === null) return dimension;
+    const cells = Object.entries(scores as Record<string, unknown>)
+      .filter(([, v]) => typeof v === "string" && v.trim().length > 0)
+      .map(([company, v]) => `${company}: ${(v as string).trim()}`);
+    return cells.length > 0 ? `${dimension} — ${cells.join("; ")}` : dimension;
+  });
   if (voiceRows.length > 0) parts.push(`Brand voice:\n- ${voiceRows.slice(0, 8).join("\n- ")}`);
-  const archetypes = strList(r["brandVoiceArchetypes"]);
+  const archetypes = objList(r["brandVoiceArchetypes"], (row) => {
+    const archetype = str(row["archetype"]);
+    if (archetype === undefined) return undefined;
+    const company = str(row["company"]);
+    return company === undefined ? archetype : `${company}: ${archetype}`;
+  });
   if (archetypes.length > 0) parts.push(`Voice archetypes: ${archetypes.slice(0, 4).join(", ")}`);
   const territory = str(r["brandVoiceTerritory"]);
   if (territory !== undefined) parts.push(`Voice territory: ${territory}`);

@@ -2,7 +2,7 @@ import type { AgentToolRegistry } from "@agent-engine/core";
 import type { WorkspaceStoreLike, GcsArtifactStoreLike } from "@agent-engine/tool-common";
 import { createKarosClientTools } from "@agent-engine/tool-karos-client";
 import { createKarosGatesTools } from "@agent-engine/tool-karos-gates";
-import { createKarosIntelTools } from "@agent-engine/tool-karos-intel";
+import { createKarosIntelTools, type ClientReportStore } from "@agent-engine/tool-karos-intel";
 import { createKarosLedgerTools } from "@agent-engine/tool-karos-ledger";
 import { createKarosMemoryTools } from "@agent-engine/tool-karos-memory";
 import { createKarosPublishTools } from "@agent-engine/tool-karos-publish";
@@ -99,6 +99,15 @@ export interface AllKarosToolsOptions {
    * `createOfflineScraper()` explicitly.
    */
   scraper?: ScraperProvider | null;
+  /**
+   * The portal-facing `clientReports/{clientId}` store `intel.writeReport`
+   * persists into (SCRUM-267 / decision 5). No default: unwired,
+   * `intel.writeReport` reports `not_available` rather than silently writing
+   * only to the workspace, which is the bug that ticket exists to fix. A
+   * deployment passes `createFirestoreClientReportStore(db)`; a test passes
+   * `createMemoryClientReportStore()`.
+   */
+  clientReportStore?: ClientReportStore;
 }
 
 export function createAllKarosTools(
@@ -109,7 +118,7 @@ export function createAllKarosTools(
   return {
     ...createKarosClientTools(store),
     ...createKarosGatesTools(),
-    ...createKarosIntelTools(store),
+    ...createKarosIntelTools(store, options.clientReportStore),
     ...createKarosLedgerTools(store),
     ...createKarosMemoryTools(store),
     ...createKarosPublishTools(store, mediaStore),

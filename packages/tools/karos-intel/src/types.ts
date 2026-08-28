@@ -246,7 +246,53 @@ export interface PersistedClientCompetitor extends ClientCompetitor {
  */
 export const WIDE_SCAN_MIN_COMPETITORS = 8;
 
-export const IntelReportOutputSchema = z.object({
+/**
+ * The portal's `BrandVoiceRow` (`karosCMO/src/lib/types.ts` lines 1497-1500,
+ * read directly): one row of the brand-voice comparison TABLE, keyed by
+ * dimension, with one column per company.
+ * ```
+ * export interface BrandVoiceRow { dimension: string; scores: Record<string, string>; }
+ * ```
+ * This used to be `z.array(z.string())` here, which is not that shape at all —
+ * a flat list cannot populate a per-company comparison table, so the portal
+ * rendered nothing for it. Corrected under SCRUM-267 (T-A18): the persisted
+ * record has to BE the portal's `ClientReport`, field for field.
+ */
+export const BrandVoiceRowSchema = z.object({
+  dimension: z.string().min(1),
+  scores: z.record(z.string(), z.string()),
+});
+export type BrandVoiceRow = z.infer<typeof BrandVoiceRowSchema>;
+
+/** The portal's `brandVoiceArchetypes` element (`ClientReport`, line 1602): `Array<{ company: string; archetype: string }>` — again NOT a flat string list. */
+export const BrandVoiceArchetypeSchema = z.object({
+  company: z.string().min(1),
+  archetype: z.string().min(1),
+});
+export type BrandVoiceArchetype = z.infer<typeof BrandVoiceArchetypeSchema>;
+
+/**
+ * The company-profile extras the portal's `ClientReport` carries "beyond what
+ * Client already stores" (`karosCMO/src/lib/types.ts` lines 1576-1584). Legacy
+ * populated them by regex-parsing the report markdown
+ * (`report-parser.ts` -> `buildClientReport`); here the model reports them
+ * directly, which is the whole point of a structured output. All optional,
+ * exactly as the portal declares them.
+ */
+export const ReportProfileExtrasSchema = z.object({
+  url: z.string().optional(),
+  businessType: z.string().optional(),
+  founded: z.string().optional(),
+  authorization: z.string().optional(),
+  cnpj: z.string().optional(),
+  minInvestment: z.string().optional(),
+  techStack: z.string().optional(),
+  reportStatus: z.string().optional(),
+});
+
+export const IntelReportOutputSchema = ReportProfileExtrasSchema.extend({
+  /** The date the report describes, as the portal stores it (`ClientReport.reportDate`, a string). Defaulted at build time when the model omits it. */
+  reportDate: z.string().optional(),
   dimensionScores: z.array(DimensionScoreSchema).length(DIMENSION_KEYS.length),
   contentAnalysis: z.string().min(1),
   conversionAnalysis: z.string().min(1),
@@ -259,8 +305,8 @@ export const IntelReportOutputSchema = z.object({
   recommendations: z.array(RecommendationSchema).default([]),
   competitorRankings: z.array(CompetitorRankingSchema).default([]),
   competitors: z.array(ClientCompetitorSchema).default([]),
-  brandVoiceRows: z.array(z.string()).optional(),
-  brandVoiceArchetypes: z.array(z.string()).optional(),
+  brandVoiceRows: z.array(BrandVoiceRowSchema).optional(),
+  brandVoiceArchetypes: z.array(BrandVoiceArchetypeSchema).optional(),
   brandVoiceTerritory: z.string().optional(),
   customerSentiment: z.array(CustomerSentimentEntrySchema).optional(),
   whitespaceOpportunities: z.array(z.string()).optional(),
@@ -277,13 +323,138 @@ export const IntelReportOutputSchema = z.object({
 });
 export type IntelReportOutput = z.infer<typeof IntelReportOutputSchema>;
 
-/** The persisted `ClientReport` record — `IntelReportOutput` plus the deterministically-computed grade and bookkeeping fields. */
-export interface ClientReportRecord extends IntelReportOutput {
+/**
+ * The portal's stored dimension score (`karosCMO/src/lib/types.ts` lines
+ * 1464-1469) — three fields, not two:
+ * ```
+ * export interface DimensionScore { dimension: string; weight: number; score: number; }
+ * ```
+ * `weight` is DELIBERATELY absent from the model-facing `DimensionScoreSchema`
+ * above and filled in here from `DIMENSION_WEIGHTS`, for the same reason
+ * `overallScore` is computed rather than accepted: the weights are the scoring
+ * methodology, fixed in code, and a model that could restate them could also
+ * restate them wrong. The portal renders each dimension's contribution FROM
+ * this field, so omitting it (as this package did before SCRUM-267) renders
+ * every weight as `undefined`.
+ */
+export interface PersistedDimensionScore {
+  dimension: string;
+  weight: number;
+  score: number;
+}
+
+/**
+ * THE PORTAL'S `ClientReport`, field for field
+ * (`karosCMO/src/lib/types.ts` lines 1572-1613, read directly from the
+ * checked-out portal source — not reconstructed from the ticket text).
+ *
+ * This replaces `ClientReportRecord`, which was `IntelReportOutput` plus four
+ * bookkeeping fields and therefore NOT the shape the portal reads: it had no
+ * `id`, no `clientId`, no `reportDate`, no `rawMarkdown`, no `reportHtml`, no
+ * `weight` on its dimension scores, and it carried `brandSynchronizationUpdate`,
+ * a field the portal's interface does not declare. SCRUM-267 names two of those
+ * directly; Tomer's 2026-08-28 decision 5 makes the whole list load-bearing —
+ * "the output must be written in EXACTLY the same shape, to EXACTLY the same
+ * Firestore location the system already reads from."
+ *
+ * So: every field below exists on the portal's interface, and no field below
+ * does not. `brandSynchronizationUpdate` survives as a rendered SECTION inside
+ * `rawMarkdown`/`reportHtml` (which is where every other section of the legacy
+ * report lived too), never as an undeclared extra key on the document.
+ */
+export interface ClientReport {
+  id: string;
+  clientId: string;
+  reportDate: string;
+  url?: string;
+  businessType?: string;
+  founded?: string;
+  authorization?: string;
+  cnpj?: string;
+  minInvestment?: string;
+  techStack?: string;
+  reportStatus?: string;
   overallScore: number;
   overallGrade: string;
+  dimensionScores: PersistedDimensionScore[];
+  competitorRankings: CompetitorRanking[];
+  contentAnalysis: string;
+  conversionAnalysis: string;
+  seoAnalysis: string;
+  geoAnalysis: string;
+  positioningAnalysis: string;
+  brandAnalysis: string;
+  growthAnalysis: string;
+  swot: Swot;
+  recommendations: Recommendation[];
+  brandVoiceRows?: BrandVoiceRow[];
+  brandVoiceArchetypes?: BrandVoiceArchetype[];
+  brandVoiceTerritory?: string;
+  customerSentiment?: CustomerSentimentEntry[];
+  whitespaceOpportunities?: string[];
+  rawMarkdown: string;
+  reportHtml?: string;
+  pdfUrl?: string;
   createdAt: number;
   updatedAt: number;
 }
+
+/**
+ * The exact set of keys the portal's `ClientReport` declares. Used by
+ * `assertPortalClientReportShape` to fail a write that has drifted — an extra
+ * key means this package invented a field the portal will never read; a
+ * missing REQUIRED key means the portal renders a hole.
+ */
+export const CLIENT_REPORT_REQUIRED_KEYS = [
+  "id",
+  "clientId",
+  "reportDate",
+  "overallScore",
+  "overallGrade",
+  "dimensionScores",
+  "competitorRankings",
+  "contentAnalysis",
+  "conversionAnalysis",
+  "seoAnalysis",
+  "geoAnalysis",
+  "positioningAnalysis",
+  "brandAnalysis",
+  "growthAnalysis",
+  "swot",
+  "recommendations",
+  "rawMarkdown",
+  "createdAt",
+  "updatedAt",
+] as const;
+
+export const CLIENT_REPORT_OPTIONAL_KEYS = [
+  "url",
+  "businessType",
+  "founded",
+  "authorization",
+  "cnpj",
+  "minInvestment",
+  "techStack",
+  "reportStatus",
+  "brandVoiceRows",
+  "brandVoiceArchetypes",
+  "brandVoiceTerritory",
+  "customerSentiment",
+  "whitespaceOpportunities",
+  "reportHtml",
+  "pdfUrl",
+] as const;
+
+/**
+ * The Firestore collection the portal reads a client report FROM — literally
+ * `adminDb().collection("clientReports")` (`karosCMO/src/lib/data.ts` line
+ * 105), with the document id equal to the clientId (`getClientReport`, line
+ * 1369: `col.clientReports().doc(clientId).get()`).
+ *
+ * Named here as a constant because decision 5's constraint is about this exact
+ * string: the read path does not change, so the write path has to come to it.
+ */
+export const CLIENT_REPORTS_COLLECTION = "clientReports";
 
 /** One doc per client (legacy `upsertClientReport`'s Firestore doc ID = clientId) — `ctx.clientSlug` already scopes the tenant partition, so no client identifier repeats in the path. */
 export function reportSegments(): string[] {

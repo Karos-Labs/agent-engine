@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, notAvailable, success } from "@agent-engine/tool-common";
-import { competitorSegments, reportSegments, type ClientReportRecord, type PersistedClientCompetitor } from "./types.js";
+import { competitorSegments, reportSegments, type ClientReport, type PersistedClientCompetitor } from "./types.js";
 
 const TOOL_VERSION = "1.0.0";
 
@@ -9,7 +9,7 @@ export const GetReportInputSchema = z.object({});
 export type GetReportInput = z.infer<typeof GetReportInputSchema>;
 
 export interface GetReportResult {
-  report: ClientReportRecord;
+  report: ClientReport;
   competitors: PersistedClientCompetitor[];
 }
 
@@ -20,7 +20,7 @@ export function createGetReport(store: WorkspaceStoreLike) {
     version: TOOL_VERSION,
     inputSchema: GetReportInputSchema,
     async execute(_input, { ctx }) {
-      const report = await store.readJson<ClientReportRecord>(ctx.clientSlug, reportSegments());
+      const report = await store.readJson<ClientReport>(ctx.clientSlug, reportSegments());
       if (!report) {
         return notAvailable(`no Intel Report has been written yet for client "${ctx.clientSlug}"`);
       }
