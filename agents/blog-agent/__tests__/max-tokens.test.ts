@@ -49,6 +49,8 @@ function passingGateTools(): AgentToolRegistry {
   return {
     "gate.lintPost": {
       name: "gate.lintPost",
+      // Required since SCRUM-293 (AU7) — every tool carries a description the model reads.
+      description: "Test stub for the post lint gate: always passes.",
       version: "test",
       inputSchema: z.unknown(),
       execute: async () => ({ status: "success", result: { verdict: "pass", evidence: [], toolVersion: "test" } }),

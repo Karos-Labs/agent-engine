@@ -16,7 +16,8 @@ import { MemoryDurableStepStore, WorkflowEngine, WorkflowToolingFailure, finaliz
 const baseParams = { runId: "run_lifted_1", clientSlug: "acme", productId: "x-agent", runKind: "recurring" as const };
 
 function tool(execute: (args: unknown) => Promise<unknown>): AgentToolRegistry[string] {
-  return { name: "t", version: "1.0.0", inputSchema: { parse: (v: unknown) => v } as never, execute: execute as never };
+  // `description` is required on AgentTool since SCRUM-293 (AU7).
+  return { name: "t", description: "Test stub tool.", version: "1.0.0", inputSchema: { parse: (v: unknown) => v } as never, execute: execute as never };
 }
 
 describe("toAgentContext", () => {
