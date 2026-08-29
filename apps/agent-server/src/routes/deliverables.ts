@@ -1,6 +1,7 @@
 import { Router } from "express";
 import type { DurableStepStore } from "@agent-engine/workflow";
 import type { WorkspaceStoreLike } from "@agent-engine/tools";
+import { enforceTenantEntitlement } from "../auth/tenant-assertion.js";
 
 export interface DeliverablesRouterDeps {
   durableStore: DurableStepStore;
@@ -33,6 +34,13 @@ export function createDeliverablesRouter(deps: DeliverablesRouterDeps): Router {
       res.status(404).json({ error: `no run found for "${runId}"` });
       return;
     }
+    // AU46 / SCRUM-329: `clientSlug` is recovered from the run record (see
+    // this file's own module docstring above), which is exactly what makes
+    // this route a runId-guessing cross-tenant read risk without this
+    // check — a caller only needs a runId and a kind, and both are
+    // low-cardinality, guessable strings. Checked before the workspace-store
+    // read, not after, so a non-entitled caller never causes the read at all.
+    if (enforceTenantEntitlement(req, res, runRecord.clientSlug)) return;
 
     const record = await deps.workspaceStore.readJson<unknown>(runRecord.clientSlug, ["ledger", "deliverables", runId, "_", kind]);
     if (record === undefined) {
