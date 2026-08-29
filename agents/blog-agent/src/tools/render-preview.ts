@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { defineTool, success } from "@agent-engine/tool-common";
+import { checkLength, defineTool, success, truncateAtFold, truncateToLimit } from "@agent-engine/tool-common";
 import type { AgentTool } from "@agent-engine/core";
 
 const TOOL_VERSION = "1.0.0";
@@ -82,17 +82,17 @@ export const renderPreview: AgentTool<RenderPreviewInput, RenderPreviewResult> =
   version: TOOL_VERSION,
   inputSchema: RenderPreviewInputSchema,
   async execute({ title, metaDescription, text }) {
-    const titleCharacterCount = title.length;
-    const titleWithinLimit = titleCharacterCount <= BLOG_TITLE_LIMIT;
-    const metaDescriptionCharacterCount = metaDescription.length;
-    const metaDescriptionWithinLimit = metaDescriptionCharacterCount <= BLOG_META_DESCRIPTION_LIMIT;
-    const bodyCharacterCount = text.length;
-    const bodyWithinLimit = bodyCharacterCount <= BLOG_BODY_LIMIT;
+    const { characterCount: titleCharacterCount, withinLimit: titleWithinLimit } = checkLength(title, BLOG_TITLE_LIMIT);
+    const { characterCount: metaDescriptionCharacterCount, withinLimit: metaDescriptionWithinLimit } = checkLength(
+      metaDescription,
+      BLOG_META_DESCRIPTION_LIMIT,
+    );
+    const { characterCount: bodyCharacterCount, withinLimit: bodyWithinLimit } = checkLength(text, BLOG_BODY_LIMIT);
     const wordCount = text.split(/\s+/).filter(Boolean).length;
     const wordCountWithinFloor = wordCount >= BLOG_MIN_WORD_COUNT;
     const wordCountAboveCeiling = wordCount > BLOG_MAX_WORD_COUNT;
-    const aboveTheFold = text.length > BLOG_FOLD_CHARACTERS ? `${title}\n${text.slice(0, BLOG_FOLD_CHARACTERS)}…` : `${title}\n${text}`;
-    const rendered = bodyWithinLimit ? text : `${text.slice(0, BLOG_BODY_LIMIT - 1)}…`;
+    const aboveTheFold = `${title}\n${truncateAtFold(text, BLOG_FOLD_CHARACTERS)}`;
+    const rendered = truncateToLimit(text, BLOG_BODY_LIMIT);
     return success<RenderPreviewResult>({
       titleCharacterCount,
       titleWithinLimit,

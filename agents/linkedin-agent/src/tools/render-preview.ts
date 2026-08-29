@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { defineTool, success } from "@agent-engine/tool-common";
+import { checkLength, defineTool, success, truncateAtFold, truncateToLimit } from "@agent-engine/tool-common";
 import type { AgentTool } from "@agent-engine/core";
 
 const TOOL_VERSION = "1.0.0";
@@ -40,10 +40,9 @@ export const renderPreview: AgentTool<RenderPreviewInput, RenderPreviewResult> =
   version: TOOL_VERSION,
   inputSchema: RenderPreviewInputSchema,
   async execute({ text }) {
-    const characterCount = text.length;
-    const withinLimit = characterCount <= LINKEDIN_CHARACTER_LIMIT;
-    const aboveTheFold = text.length > LINKEDIN_FOLD_CHARACTERS ? `${text.slice(0, LINKEDIN_FOLD_CHARACTERS)}…` : text;
-    const rendered = withinLimit ? text : `${text.slice(0, LINKEDIN_CHARACTER_LIMIT - 1)}…`;
+    const { characterCount, withinLimit } = checkLength(text, LINKEDIN_CHARACTER_LIMIT);
+    const aboveTheFold = truncateAtFold(text, LINKEDIN_FOLD_CHARACTERS);
+    const rendered = truncateToLimit(text, LINKEDIN_CHARACTER_LIMIT);
     return success<RenderPreviewResult>({ characterCount, withinLimit, aboveTheFold, rendered });
   },
 });
