@@ -88,7 +88,23 @@ function fixtureRoot(mutate: (root: string) => void): string {
 const promptFile = (root: string, agent: string, promptId: string, file: string): string =>
   path.join(root, "agents", agent, "prompts", promptId, file);
 
-describe("SCRUM-325: prompt registry and latest.md drift", () => {
+/**
+ * Explicit timeout, matching the precedent runs.test.ts set for the three
+ * whole-workflow HTTP tests: every case in this file shells out to
+ * `npx tsx scripts/check-prompts.ts`, which type-strips and runs a script that walks the whole
+ * repo. That is 3-8s of real work on a quiet machine and more under load, against
+ * vitest's 5s default — green in isolation, red the moment the rest of this
+ * workspace's suite runs alongside it, which is the worst failure shape there is.
+ *
+ * SCRUM-296 landed a second file in this workspace doing the same thing
+ * (tool-version-drift.test.ts), so the two now contend for the machine and both
+ * tipped over at once.
+ *
+ * Declared on the describe rather than raising the global: these are legitimately
+ * slow and should say so here, while a genuinely hung 5s unit test elsewhere in
+ * this workspace still fails fast.
+ */
+describe("SCRUM-325: prompt registry and latest.md drift", { timeout: 120_000 }, () => {
   it("the repo itself is clean — registry, latest.md, hygiene and every pin agree", () => {
     const { result, exitCode } = runCheck(repoRoot);
     expect(result.problems, JSON.stringify(result.problems, null, 2)).toEqual([]);

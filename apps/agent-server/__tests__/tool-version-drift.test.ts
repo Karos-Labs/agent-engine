@@ -88,7 +88,22 @@ function fixtureRepo(): string {
   return dir;
 }
 
-describe("SCRUM-296: TOOL_VERSION drift check", () => {
+/**
+ * Explicit timeout, matching the precedent runs.test.ts set for the three
+ * whole-workflow HTTP tests: every case in this file shells out to
+ * `npx tsx scripts/check-tool-versions.ts`, which type-strips and runs a script that walks the whole
+ * repo. That is 3-8s of real work on a quiet machine and more under load, against
+ * vitest's 5s default — green in isolation, red the moment the rest of this
+ * workspace's suite runs alongside it, which is the worst failure shape there is.
+ *
+ * Each case also seeds a real git repo and commits into it before running the
+ * check, so it carries git's process cost on top of tsx's.
+ *
+ * Declared on the describe rather than raising the global: these are legitimately
+ * slow and should say so here, while a genuinely hung 5s unit test elsewhere in
+ * this workspace still fails fast.
+ */
+describe("SCRUM-296: TOOL_VERSION drift check", { timeout: 120_000 }, () => {
   it("passes on an untouched repo — nothing changed since the base ref", () => {
     const dir = fixtureRepo();
     const { result, exitCode } = runCheck(dir, "HEAD");

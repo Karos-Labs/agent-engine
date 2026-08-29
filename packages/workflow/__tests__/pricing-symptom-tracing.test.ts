@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SpanStatusCode, trace } from "@opentelemetry/api";
 import { NodeTracerProvider, InMemorySpanExporter, SimpleSpanProcessor, type ReadableSpan } from "@opentelemetry/sdk-trace-node";
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
-import { applyStageModelOverride, type AgentContext, type AgentExecutionResult, type BaseAgent } from "@agent-engine/core";
+import { applyStageModelOverride, assertModelPriced, type AgentContext, type AgentExecutionResult, type BaseAgent } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine, type WorkflowContext } from "../src/index.js";
 
 /**
@@ -30,9 +30,17 @@ import { MemoryDurableStepStore, WorkflowEngine, type WorkflowContext } from "..
  */
 describe("AU42/SCRUM-326 — the AU36 pricing-fallback fix fails loudly in the step's span, not just in logs", () => {
   it("assertModelPriced (AU36 / SCRUM-314, packages/core/src/telemetry/pricing.ts) throws for an unpriced model — confirms the guard this test's scenario depends on is really in the code, not assumed", () => {
-    expect(() => applyStageModelOverride("draft", { policy: "portable", model: "claude-sonnet-4-6" }, { draft: "totally-unpriced-mystery-model-xyz" })).toThrow(
-      /has no pricing row/,
-    );
+    // Called DIRECTLY, not through `applyStageModelOverride`. AU33/SCRUM-311
+    // added a model-capability catalogue check that now runs FIRST in that
+    // function, so a made-up id is refused for being uncatalogued before the
+    // pricing guard ever sees it — a second correct refusal, not a weaker one,
+    // but it would make this assertion prove the wrong guard exists.
+    expect(() => assertModelPriced("totally-unpriced-mystery-model-xyz", 'applyStageModelOverride("draft")')).toThrow(/has no pricing row/);
+    // And the composed path still refuses the same id, on whichever ground
+    // comes first — which is what the scenario below actually depends on.
+    expect(() =>
+      applyStageModelOverride("draft", { policy: "portable", model: "claude-sonnet-4-6" }, { draft: "totally-unpriced-mystery-model-xyz" }),
+    ).toThrow();
   });
 
   let exporter: InMemorySpanExporter;
