@@ -113,7 +113,7 @@ describe("end-to-end: the 23-step Reddit agent reply-only workflow", () => {
     expect(catalog?.some((t) => t.status === "committed")).toBe(true);
 
     // The target thread URL is recorded so a future run's step 09 dedup check can find it.
-    const decisions = await env.store.listJson("acme", ["memory", "decisions"]);
+    const decisions = await env.store.listJson("acme", ["memory", "products", params.productId, "decisions"]);
     expect(decisions.some((d) => (d.data as { summary: string }).summary.includes(DEFAULT_TARGET_THREAD_URL))).toBe(true);
 
     const descriptors: DynamicAgentStepDescriptor[] = ALL_22_STEP_IDS.map((stepId) => ({

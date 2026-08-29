@@ -80,7 +80,7 @@ describe("end-to-end: the 9-phase SEO & GEO agent workflow (RFC-04)", () => {
     const snapshot = await env.store.readJson("acme", ["ledger", "dashboard-snapshots", params.runId]);
     expect(snapshot).toBeTruthy();
 
-    const decisions = await env.store.listJson("acme", ["memory", "decisions"]);
+    const decisions = await env.store.listJson("acme", ["memory", "products", params.productId, "decisions"]);
     expect(decisions.some((d) => (d.data as { decisionId: string }).decisionId === `${params.runId}__decision`)).toBe(true);
   });
 

@@ -82,7 +82,7 @@ describe("multi-tenant isolation across the 5-channel fan-out (zero cross-tenant
     // globex has zero deliverables, zero decisions — nothing was ever written under its tenant.
     const globexDeliverables = await env.store.listJson("globex", ["ledger", "deliverables", params.runId, "_"]);
     expect(globexDeliverables).toHaveLength(0);
-    const globexDecisions = await env.store.listJson("globex", ["memory", "decisions"]);
+    const globexDecisions = await env.store.listJson("globex", ["memory", "products", params.productId, "decisions"]);
     expect(globexDecisions).toHaveLength(0);
 
     // acme, meanwhile, really did get its full bundle of deliverables.

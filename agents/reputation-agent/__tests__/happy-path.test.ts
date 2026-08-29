@@ -141,7 +141,7 @@ describe("end-to-end: the reputation pulse workflow happy path (RFC-08 §5)", ()
     const learningLog = await env.store.listJson(env.clientSlug, ["reputation", "learning-log"]);
     expect(learningLog).toHaveLength(1);
 
-    const decisions = await env.store.listJson(env.clientSlug, ["memory", "decisions"]);
+    const decisions = await env.store.listJson(env.clientSlug, ["memory", "products", params.productId, "decisions"]);
     expect(decisions.some((d) => (d.data as { decisionId: string }).decisionId === `${params.runId}__no_action__${NO_ACTION_ID.replace(/[:/\\]/g, "__")}`)).toBe(
       true,
     );

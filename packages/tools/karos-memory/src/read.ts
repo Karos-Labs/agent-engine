@@ -97,7 +97,17 @@ export function createRead(store: WorkspaceStoreLike) {
         return success<ReadResult>({ scope: "beliefs", beliefs });
       }
       if (scope === "decisions") {
-        const entries = await store.listJson<DecisionRecord>(ctx.clientSlug, ["memory", "decisions"]);
+        // Product-scoped (AU24) — see the matching note on `createAppendDecision`.
+        // Deliberately NOT merged with any pre-fix, client-wide-only decision rows
+        // still sitting on disk at the old `["memory","decisions",...]` path: those
+        // rows carry no `productId` field (the schema never had one), so there is no
+        // reliable way to attribute an old row to one product without guessing from
+        // its free-text `summary` — which is exactly the kind of silent, looks-right-
+        // isn't guess this fix exists to remove. A client's per-product rotation state
+        // (e.g. LinkedIn's "last archetype") starts empty the first run after this
+        // ships rather than being backfilled from a guess; see the package README for
+        // the full migration note.
+        const entries = await store.listJson<DecisionRecord>(ctx.clientSlug, ["memory", "products", ctx.productId, "decisions"]);
         const items = boundHistory(entries.map((e) => e.data), since, limit);
         return success<ReadResult>({ scope: "decisions", items });
       }

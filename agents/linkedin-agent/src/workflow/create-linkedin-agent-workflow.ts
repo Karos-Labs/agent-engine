@@ -319,15 +319,25 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
       const outcome = await tools["memory.read"]!.execute({ scope: "decisions" }, { ctx });
       if (outcome.status !== "success") return { summaries: [] };
       const result = outcome.result as { scope: string; items: Array<{ summary: string; at?: number }> };
-      // Filtered to only decisions that actually parse an archetype, then sorted
-      // most-recent-first by the decision's own recorded timestamp (mirroring
-      // x-agent's lane.ts) — "decisions" is a client-wide memory scope, so a client
-      // running LinkedIn alongside other channels has non-LinkedIn decisions
-      // interleaved here too. Taking the single most-recent decision *overall*
-      // (regardless of channel) silently disabled "never repeat the last archetype"
-      // (lanes.md §2 — the rule that does most of the rotation's dedup work)
-      // whenever another channel's run happened to be more recent than LinkedIn's
-      // own last post (a multi-channel dedup audit finding).
+      // `memory.read({scope:"decisions"})` is now product-scoped (AU24 / audit
+      // §4.2-§4.3-3): `karos-memory` keys the decision log by `(clientSlug,
+      // productId)`, so `result.items` here is already just this LinkedIn
+      // product's own history — a same-client `x-agent`/`blog-agent`/etc. post
+      // can no longer stand in for "the last LinkedIn post," at any timestamp.
+      // (Before that fix, decisions were keyed by `clientSlug` alone: every
+      // product for a client shared one bucket, and the single most-recent
+      // decision *overall* could be a different channel's, silently disabling
+      // "never repeat the last archetype" — lanes.md §2 — whenever that
+      // channel's run happened to be more recent than LinkedIn's own last
+      // post.) The archetype-parsing below still has a real job: a decision
+      // row has no first-class `archetype` field, only the free-text
+      // `summary` step 18 writes it into, so this still has to pull the value
+      // back out of that string and, since a rotation only ever *chooses*
+      // among decisions that recorded one, filter out any row that doesn't
+      // parse one (there shouldn't be any within this product's own log, but
+      // a malformed/legacy row is a "skip it," not a crash). Sorting by the
+      // decision's own `at` (mirroring x-agent's lane.ts) still matters:
+      // `listJson` returns entries in filename order, not chronological order.
       const archetypeBearing = result.items
         .map((item) => ({ at: item.at ?? 0, archetype: extractArchetypeFromSummary(item.summary) }))
         .filter((item): item is { at: number; archetype: LinkedInArchetype } => item.archetype !== undefined);

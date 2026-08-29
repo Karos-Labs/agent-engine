@@ -117,9 +117,66 @@ describe("karos-memory", () => {
       expect(first).toEqual({ status: "success", result: { id: "d1", created: true } });
       expect(second).toEqual({ status: "success", result: { id: "d1", created: false } });
 
-      const entries = await store.listJson("acme", ["memory", "decisions"]);
+      const entries = await store.listJson("acme", ["memory", "products", "linkedin", "decisions"]);
       expect(entries).toHaveLength(1);
       expect((entries[0]?.data as { summary: string }).summary).toBe("v2");
+    });
+
+    it("writes under a path segmented by ctx.productId, not just ctx.clientSlug (AU24)", async () => {
+      await tools["memory.appendDecision"]!.execute({ decisionId: "d1", summary: "posted on linkedin" }, { ctx });
+
+      expect(await store.exists("acme", ["memory", "products", "linkedin", "decisions", "d1"])).toBe(true);
+      // Same client, different product: must land in a different bucket entirely.
+      expect(await store.exists("acme", ["memory", "products", "x-agent", "decisions", "d1"])).toBe(false);
+    });
+  });
+
+  describe("AU24: decisions are scoped by (clientSlug, productId), not clientSlug alone", () => {
+    const linkedinCtx: AgentContext = { ...ctx, productId: "linkedin-agent" };
+    const xAgentCtx: AgentContext = { ...ctx, productId: "x-agent" };
+
+    it("memory.read({scope:\"decisions\"}) for one product never returns another product's rows for the same client", async () => {
+      await tools["memory.appendDecision"]!.execute(
+        { decisionId: "li_1", summary: 'Posted about "rollout" (archetype: teardown-framework)' },
+        { ctx: linkedinCtx },
+      );
+      // Same client, a different product, a LATER timestamp than the LinkedIn row above
+      // (appended after it) — this is exactly the shape that let a same-client,
+      // different-channel decision stand in for "the last post" before the fix.
+      await tools["memory.appendDecision"]!.execute(
+        { decisionId: "x_1", summary: 'Posted about "roadmap" (lane: knowledge)' },
+        { ctx: xAgentCtx },
+      );
+
+      const linkedinDecisions = await tools["memory.read"]!.execute({ scope: "decisions" }, { ctx: linkedinCtx });
+      const xDecisions = await tools["memory.read"]!.execute({ scope: "decisions" }, { ctx: xAgentCtx });
+
+      expect(linkedinDecisions.status).toBe("success");
+      expect(xDecisions.status).toBe("success");
+      const linkedinResult = (linkedinDecisions as { status: "success"; result: ReadResult }).result;
+      const xResult = (xDecisions as { status: "success"; result: ReadResult }).result;
+      if (linkedinResult.scope === "decisions") {
+        expect(linkedinResult.items.map((i) => i.decisionId)).toEqual(["li_1"]);
+      }
+      if (xResult.scope === "decisions") {
+        expect(xResult.items.map((i) => i.decisionId)).toEqual(["x_1"]);
+      }
+    });
+
+    it("migration: pre-fix rows at the old unscoped path are not backfilled into any product's read", async () => {
+      // Simulates a decision written before this fix, at the old (clientSlug-only)
+      // path `memory.appendDecision` used to write to.
+      await store.writeJson("acme", ["memory", "decisions", "legacy_1"], {
+        decisionId: "legacy_1",
+        summary: 'Posted about "old post" (archetype: teardown-framework)',
+        at: Date.now() - 1_000_000,
+      });
+
+      const outcome = await tools["memory.read"]!.execute({ scope: "decisions" }, { ctx: linkedinCtx });
+      expect(outcome).toEqual({ status: "success", result: { scope: "decisions", items: [] } });
+
+      // The legacy row itself is left in place, not deleted by the read.
+      expect(await store.exists("acme", ["memory", "decisions", "legacy_1"])).toBe(true);
     });
   });
 
@@ -178,8 +235,8 @@ describe("karos-memory", () => {
         { ctx },
       );
 
-      const acmeExists = await store.exists("acme", ["memory", "decisions", "d1"]);
-      const attackerExists = await store.exists("attacker-corp", ["memory", "decisions", "d1"]);
+      const acmeExists = await store.exists("acme", ["memory", "products", "linkedin", "decisions", "d1"]);
+      const attackerExists = await store.exists("attacker-corp", ["memory", "products", "linkedin", "decisions", "d1"]);
       expect(acmeExists).toBe(true);
       expect(attackerExists).toBe(false);
     });
