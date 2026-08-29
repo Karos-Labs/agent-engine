@@ -121,6 +121,17 @@ export interface SeoGeoCaptureCell {
   mentionCounts: Record<string, number>;
   /** Per-mention sentiment, pre-classified and frozen (`net_sentiment`'s cached-label rule) — this scoring layer never classifies. */
   sentimentPerMention: Array<{ mentionIndex: number; label: "pos" | "neg" | "neutral" }>;
+  /**
+   * SHA-256 over the frozen raw provider payload (`response_set.per_prompt_engine_fields`'s
+   * `raw_sha256`) — provenance only (`non_scoring_fields.provenance`), never
+   * read by any scoring metric in this file. Optional here (unlike
+   * `@agent-engine/tool-karos-research`'s `CaptureCell`, which always sets
+   * it) purely so hand-built fixtures elsewhere in this package's own test
+   * suite don't need updating for a field they never assert on.
+   */
+  rawSha256?: string | undefined;
+  /** Set only when `captureTier` is `UNAVAILABLE` because a pre-flight credit probe rejected this cell — see `tool-karos-research`'s `CaptureCell` for the full contract. */
+  unavailableReason?: "credit_probe_402" | "no_adapter_wired" | undefined;
 }
 
 /** Which raw-count denominator a per-engine metric divides by — RFC-04's flagged, not-silently-resolved "N vs N_e" decision (Daniel). */

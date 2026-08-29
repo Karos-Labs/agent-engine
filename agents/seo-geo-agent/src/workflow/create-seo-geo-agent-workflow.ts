@@ -80,6 +80,8 @@ function toSeoGeoCell(cell: {
   citations: Array<{ domain: string; ordinal: number }>;
   mentionCounts: Record<string, number>;
   sentimentPerMention: Array<{ mentionIndex: number; label: "pos" | "neg" | "neutral" }>;
+  rawSha256?: string;
+  unavailableReason?: "credit_probe_402" | "no_adapter_wired";
 }): SeoGeoCaptureCell {
   return {
     promptId: cell.promptId,
@@ -93,6 +95,8 @@ function toSeoGeoCell(cell: {
     citations: cell.citations,
     mentionCounts: cell.mentionCounts,
     sentimentPerMention: cell.sentimentPerMention,
+    ...(cell.rawSha256 !== undefined ? { rawSha256: cell.rawSha256 } : {}),
+    ...(cell.unavailableReason !== undefined ? { unavailableReason: cell.unavailableReason } : {}),
   };
 }
 
@@ -183,7 +187,14 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       const beliefsOutcome = await tools["memory.read"]!.execute({ scope: "beliefs" }, { ctx });
       const beliefs = beliefsOutcome.status === "success" ? (beliefsOutcome.result as { beliefs: Record<string, unknown> }).beliefs : {};
       const priorFrozen = beliefs["seoGeoFrozenPromptSet"] as
-        | { prompts: SeoGeoPromptSetDraft["prompts"]; competitorRoster: string[]; promptSetHash: string }
+        | {
+            prompts: SeoGeoPromptSetDraft["prompts"];
+            competitorRoster: string[];
+            promptSetHash: string;
+            language?: string;
+            languageFallbackApplied?: boolean;
+            quotaShortfalls?: string[];
+          }
         | undefined;
 
       // RFC-04 §3: recurring runs reuse the prior frozen prompt set "for trend
@@ -191,7 +202,18 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       // recurring run is a logged drift event, never silent — handled in step 04
       // once the human gate (step 03) has actually approved whatever this step proposes.
       if (wf.runKind === "recurring" && priorFrozen) {
-        return { prompts: priorFrozen.prompts, competitorRoster: priorFrozen.competitorRoster, source: "reused" };
+        return {
+          prompts: priorFrozen.prompts,
+          competitorRoster: priorFrozen.competitorRoster,
+          source: "reused",
+          // `?? "en"` covers only a belief record written before this field
+          // existed — every record frozen by THIS version of step 04 always
+          // carries `language` (SCRUM-320: the bug this port fixes was step 04
+          // silently dropping it, not step 02 failing to read it).
+          language: priorFrozen.language ?? "en",
+          languageFallbackApplied: priorFrozen.languageFallbackApplied ?? false,
+          quotaShortfalls: priorFrozen.quotaShortfalls ?? [],
+        };
       }
 
       // No real prompt-authoring UI/judgment source exists in this repo yet
@@ -199,9 +221,17 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       // `prompt-set.ts`'s header comment for why this is a deterministic
       // template stand-in instead.
       const industry = (clientContext.profile["industry"] as string | undefined) ?? "this industry";
-      const prompts = deriveDefaultPromptSet(industry);
+      const requestedLanguage = clientContext.profile["language"] as string | undefined;
+      const drafted = deriveDefaultPromptSet(industry, requestedLanguage);
       const competitorRoster = clientContext.competitors.map((c) => c.name);
-      return { prompts, competitorRoster, source: "drafted" };
+      return {
+        prompts: drafted.prompts,
+        competitorRoster,
+        source: "drafted",
+        language: drafted.language,
+        languageFallbackApplied: drafted.languageFallbackApplied,
+        quotaShortfalls: drafted.quotaShortfalls,
+      };
     });
 
     // ── 03: human gate — nothing spends AI-visibility capture budget without sign-off ──
@@ -214,6 +244,19 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
             prompts: promptSetDraft.prompts,
             competitorRoster: promptSetDraft.competitorRoster,
             source: promptSetDraft.source,
+            language: promptSetDraft.language,
+            languageFallbackApplied: promptSetDraft.languageFallbackApplied,
+            quotaShortfalls: promptSetDraft.quotaShortfalls,
+            // Every prompt's `desiredOutcome` is already `DESIRED_OUTCOME_NEUTRAL_PREFILL`
+            // ("named_in_answer") — surfaced again here, at the top level, as the
+            // rationale the reviewer sees next to each toggle
+            // (`capture-config.data.ts`'s `prefill_rule`: "shown next to each
+            // toggle so the client makes a real choice, not a rubber-stamp").
+            // Per-prompt edits to this default are NOT wired: `GateResponse`
+            // carries only approve/revise/reject + free-text feedback, no
+            // structured per-prompt override — a real gap, not silently faked.
+            desiredOutcomePrefillRationale:
+              "Pre-fill is NEUTRAL: default desired_outcome = named_in_answer (never named_first, which makes every prompt read as failure; never not_applicable, which hides gaps).",
           },
           requiredRole: "account_manager",
           timeout: { duration: "24h", onTimeout: "hold" },
@@ -224,7 +267,10 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
 
     // ── 04: freeze + hash the approved prompt set/roster — the reproducibility spine ──
     const frozen = await wf.step.code("04-freeze-prompt-set", async (): Promise<SeoGeoFrozenSet> => {
-      const promptSetHash = sha256Hex(promptSetDraft.prompts);
+      // `language` is folded into `promptSetHash`'s own input (not just carried
+      // as a sibling field) so two prompt sets that ever produced byte-identical
+      // text across two languages would still mint different hashes.
+      const promptSetHash = sha256Hex({ prompts: promptSetDraft.prompts, language: promptSetDraft.language });
       const competitorSetHash = sha256Hex([...promptSetDraft.competitorRoster].sort());
       const engineListHash = sha256Hex(SEO_GEO_VISIBILITY_ENGINES);
       // Phase 0's "category vocabulary" (RFC-04 §2) — the only gazetteer content
@@ -246,6 +292,15 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
         );
       }
 
+      // SCRUM-320 fix: this diff previously omitted `language` (and
+      // `languageFallbackApplied`/`quotaShortfalls`) entirely. A recurring run
+      // would then read `priorFrozen.language` back as `undefined` in step 02
+      // above, fall back to "en", and report `promptSet.language: "en"` in
+      // every subsequent run's report/gate metadata even for a client whose
+      // frozen prompts are genuinely Spanish (hash-stable, since the PROMPTS
+      // themselves were still reused correctly — only the reported language
+      // metadata was wrong). Every field this step freezes now round-trips
+      // through belief storage, not just the prompts/hash/roster.
       await tools["memory.updateBeliefs"]!.execute(
         {
           diff: {
@@ -253,6 +308,9 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
               prompts: promptSetDraft.prompts,
               competitorRoster: promptSetDraft.competitorRoster,
               promptSetHash,
+              language: promptSetDraft.language,
+              languageFallbackApplied: promptSetDraft.languageFallbackApplied,
+              quotaShortfalls: promptSetDraft.quotaShortfalls,
               frozenAt: new Date().toISOString(),
             },
           },
@@ -268,6 +326,9 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
         engineListHash,
         gazetteerHash,
         driftLogged,
+        language: promptSetDraft.language,
+        languageFallbackApplied: promptSetDraft.languageFallbackApplied,
+        quotaShortfalls: promptSetDraft.quotaShortfalls,
       };
     });
 
@@ -589,6 +650,9 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
         source: promptSetDraft.source,
         promptSetHash: frozen.promptSetHash,
         competitorSetHash: frozen.competitorSetHash,
+        language: frozen.language,
+        languageFallbackApplied: frozen.languageFallbackApplied,
+        quotaShortfalls: frozen.quotaShortfalls,
       },
       runKind: wf.runKind,
     }));

@@ -4,7 +4,7 @@ import { createPull } from "./pull.js";
 import { createGetRuns } from "./get-runs.js";
 import { createWriteRun } from "./write-run.js";
 import { createCheckFreshness } from "./check-freshness.js";
-import { createCaptureVisibility } from "./capture-visibility.js";
+import { createCaptureVisibility, type CreditProbe } from "./capture-visibility.js";
 import { createScraperProvider, type ScraperProvider } from "@agent-engine/tool-karos-scraper";
 
 export * from "./runs.js";
@@ -20,6 +20,14 @@ export interface KarosResearchToolsOptions {
   /** Overrides the env-derived scraper. Tests pass a fake; `null` forces the unconfigured path. */
   scraper?: ScraperProvider | null;
   fetchImpl?: typeof fetch;
+  /**
+   * Injected pre-flight credit probe for `research.captureVisibility`
+   * (RFC-04 §5's "Pre-flight credit probe AND per-cell 402 handling").
+   * Omitted (the default) means every cell probes `{ ok: true }` — today's
+   * stand-in behavior is unchanged until a real provider client is wired up
+   * and supplies one. Tests pass a fake to exercise the 402 path.
+   */
+  visibilityCreditProbe?: CreditProbe;
 }
 
 /**
@@ -44,6 +52,9 @@ export function createKarosResearchTools(
     "research.getRuns": createGetRuns(store),
     "research.writeRun": createWriteRun(store),
     "research.checkFreshness": createCheckFreshness(store),
-    "research.captureVisibility": createCaptureVisibility(store),
+    "research.captureVisibility": createCaptureVisibility(
+      store,
+      options.visibilityCreditProbe ? { creditProbe: options.visibilityCreditProbe } : {},
+    ),
   };
 }
