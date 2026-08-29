@@ -1,13 +1,19 @@
 import {
   ScraperError,
+  type CrawlOptions,
+  type PageStatus,
   type RawPage,
+  type RobotsInfo,
   type ScrapeOptions,
   type ScrapedRecord,
   type ScraperProvider,
   type SearchOptions,
+  type SiteCrawlResult,
+  type SitemapResult,
   type SocialHistoryRequest,
   type SocialPlatform,
 } from "./provider.js";
+import { crawlSiteViaFetch, fetchPageStatus, fetchRobotsViaFetch, fetchSitemapViaFetch } from "./crawl.js";
 
 /** Verified live against the account before this was written. */
 const DEFAULT_BASE_URL = "https://api.scrappycoco.ai/api/v1";
@@ -263,6 +269,26 @@ export function createScrappyCocoScraper(options: ScrappyCocoOptions): ScraperPr
         ...(asString(outputs?.["html"]) ? { html: asString(outputs?.["html"])! } : {}),
         ...(record.title ? { title: record.title } : {}),
       };
+    },
+
+    // Crawl capabilities (T-A1). Plain `fetch`, not the billed `execute()`
+    // endpoint above: a status check, robots.txt, and sitemap.xml are public,
+    // unauthenticated documents with no ScrappyCoco capability to buy.
+
+    async fetchStatus(url: string, opts: ScrapeOptions = {}): Promise<PageStatus | undefined> {
+      return fetchPageStatus(url, fetchImpl, opts.timeoutMs ?? defaultTimeoutMs);
+    },
+
+    async fetchRobots(url: string, opts: ScrapeOptions = {}): Promise<RobotsInfo | undefined> {
+      return fetchRobotsViaFetch(url, fetchImpl, opts.timeoutMs ?? defaultTimeoutMs);
+    },
+
+    async fetchSitemap(url: string, opts: ScrapeOptions = {}): Promise<SitemapResult | undefined> {
+      return fetchSitemapViaFetch(url, fetchImpl, opts.timeoutMs ?? defaultTimeoutMs, opts.limit ?? 50);
+    },
+
+    async crawlSite(seedUrl: string, opts: CrawlOptions = {}): Promise<SiteCrawlResult> {
+      return crawlSiteViaFetch(seedUrl, opts, fetchImpl, defaultTimeoutMs);
     },
   };
 }

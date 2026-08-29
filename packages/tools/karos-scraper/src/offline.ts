@@ -1,4 +1,15 @@
-import type { RawPage, ScrapedRecord, ScraperProvider, SocialHistoryRequest, SocialPlatform } from "./provider.js";
+import type {
+  CrawlOptions,
+  PageStatus,
+  RawPage,
+  RobotsInfo,
+  ScrapedRecord,
+  ScraperProvider,
+  SiteCrawlResult,
+  SitemapResult,
+  SocialHistoryRequest,
+  SocialPlatform,
+} from "./provider.js";
 
 /**
  * A deterministic, network-free `ScraperProvider` for tests and local
@@ -69,6 +80,55 @@ export function createOfflineScraper(options: { documentsPerQuery?: number } = {
 
     async fetchRaw(url: string): Promise<RawPage | undefined> {
       return { url, title: `Offline page for ${url}`, text: "SYNTHETIC TEST DATA - not a real page." };
+    },
+
+    // Crawl capabilities (T-A1). Deterministic and network-free, same as
+    // every other method here: a fixed, self-labelled shape rather than a
+    // real crawl, so a run using this provider by mistake is obvious from the
+    // data itself.
+
+    async fetchStatus(url: string): Promise<PageStatus | undefined> {
+      return { url, status: 200, ok: true, headers: { "content-type": "text/html; charset=offline-fixture" } };
+    },
+
+    async fetchRobots(url: string): Promise<RobotsInfo | undefined> {
+      const origin = new URL(url).origin;
+      return {
+        url: `${origin}/robots.txt`,
+        status: 200,
+        groups: [{ userAgent: "*", disallow: [], allow: [] }],
+        sitemaps: [`${origin}/sitemap.xml`],
+      };
+    },
+
+    async fetchSitemap(url: string, opts = {}): Promise<SitemapResult | undefined> {
+      const origin = new URL(url).origin;
+      const count = Math.min(opts.limit ?? perQuery, perQuery);
+      return {
+        url: `${origin}/sitemap.xml`,
+        status: 200,
+        entries: Array.from({ length: count }, (_, i) => ({
+          url: `${origin}/offline-page-${i}`,
+          lastModified: "2026-01-01T00:00:00.000Z",
+        })),
+      };
+    },
+
+    async crawlSite(seedUrl: string, options: CrawlOptions = {}): Promise<SiteCrawlResult> {
+      const origin = new URL(seedUrl).origin;
+      const count = Math.min(options.limit ?? perQuery, perQuery);
+      const sitemap = await this.fetchSitemap!(seedUrl, { limit: count });
+      const robots = await this.fetchRobots!(seedUrl);
+      return {
+        seedUrl,
+        pages: [
+          { url: seedUrl, status: 200 },
+          ...(sitemap?.entries ?? []).map((entry) => ({ url: entry.url, status: 200 })),
+        ],
+        ...(sitemap ? { sitemap } : {}),
+        ...(robots ? { robots } : {}),
+        truncated: false,
+      };
     },
   };
 }

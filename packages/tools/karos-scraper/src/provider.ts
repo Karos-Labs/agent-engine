@@ -96,6 +96,86 @@ export class ScraperError extends Error {
   }
 }
 
+/**
+ * One HTTP response's status line plus normalised headers — the "is this URL
+ * alive, and what did the server actually say" signal a crawl needs before a
+ * billed extraction is worth spending on it.
+ */
+export interface PageStatus {
+  readonly url: string;
+  readonly status: number;
+  readonly ok: boolean;
+  /** Final URL after redirects, when it differs from the one requested. */
+  readonly redirectedTo?: string;
+  /** Header names lower-cased. `x-robots-tag` lives here, not modelled separately. */
+  readonly headers: Readonly<Record<string, string>>;
+}
+
+/**
+ * One robots.txt rule block, already resolved to a single user-agent.
+ *
+ * A robots.txt group that lists several `User-agent:` lines above one shared
+ * rule set is expanded into one `RobotsRuleGroup` per agent named, so a
+ * caller checking "is Googlebot disallowed" never has to re-parse a
+ * comma-free multi-agent block itself.
+ */
+export interface RobotsRuleGroup {
+  readonly userAgent: string;
+  readonly disallow: readonly string[];
+  readonly allow: readonly string[];
+}
+
+/** robots.txt for one origin, parsed. */
+export interface RobotsInfo {
+  /** The robots.txt URL actually fetched. */
+  readonly url: string;
+  readonly status: number;
+  readonly groups: readonly RobotsRuleGroup[];
+  /** `Sitemap:` lines, in file order. */
+  readonly sitemaps: readonly string[];
+}
+
+export interface SitemapEntry {
+  readonly url: string;
+  /** ISO 8601 `<lastmod>`, when the sitemap carries one. */
+  readonly lastModified?: string;
+}
+
+/** One `sitemap.xml` (or one leaf of a sitemap index), parsed. */
+export interface SitemapResult {
+  /** The sitemap URL actually fetched. */
+  readonly url: string;
+  readonly status: number;
+  readonly entries: readonly SitemapEntry[];
+  /** Present when `url` was a `<sitemapindex>`: the child sitemap URLs it names, not yet fetched. */
+  readonly childSitemaps?: readonly string[];
+}
+
+export interface CrawlOptions extends ScrapeOptions {
+  /** How many link-hops to follow from the seed when no sitemap is found. 0 = seed page only. Default 1. */
+  readonly maxDepth?: number;
+  /** Restrict discovered URLs to the seed's origin. Default true. */
+  readonly sameOriginOnly?: boolean;
+}
+
+export interface CrawlPage {
+  readonly url: string;
+  /** 0 when the page could not be reached at all (network failure, not an HTTP status). */
+  readonly status: number;
+}
+
+/** The map of a site: what pages exist and whether each answered. */
+export interface SiteCrawlResult {
+  readonly seedUrl: string;
+  readonly pages: readonly CrawlPage[];
+  /** Present when a sitemap was found and used as the page source. */
+  readonly sitemap?: SitemapResult;
+  /** Present when the seed origin's robots.txt was reachable. */
+  readonly robots?: RobotsInfo;
+  /** True when `pages` stops short of the full site — hit `limit`, `maxDepth`, or a truncated sitemap. */
+  readonly truncated: boolean;
+}
+
 export interface ScraperProvider {
   readonly name: string;
 
@@ -118,4 +198,32 @@ export interface ScraperProvider {
    * back-doored through `raw`.
    */
   searchSocial(platform: SocialPlatform, query: string, options?: ScrapeOptions): Promise<ScrapedRecord[]>;
+
+  /**
+   * Crawl capabilities (T-A1): map a site, and expose the status/headers/
+   * robots/sitemap signals SEO and GEO-Readiness measurement (T-A2/T-A3)
+   * derive `crawl_snapshot` from. Optional, unlike the five capabilities
+   * above: several existing callers construct a `ScraperProvider` literal
+   * (`karos-research`'s and `karos-media`'s test fakes among them) without
+   * these, and a required method would break every one of them for a
+   * capability they never use. `createScrappyCocoScraper` and
+   * `createOfflineScraper` both implement all four.
+   */
+
+  /** HTTP status + headers for one URL, via HEAD (falling back to GET when a server rejects HEAD). No vendor billing: this is a plain fetch, not a ScrappyCoco execution. */
+  fetchStatus?(url: string, options?: ScrapeOptions): Promise<PageStatus | undefined>;
+
+  /** robots.txt for the URL's origin, parsed into per-agent rule groups plus any `Sitemap:` lines. */
+  fetchRobots?(url: string, options?: ScrapeOptions): Promise<RobotsInfo | undefined>;
+
+  /** `sitemap.xml` for the URL's origin (or `url` itself, when it already names a sitemap). `undefined` when none is found. */
+  fetchSitemap?(url: string, options?: ScrapeOptions): Promise<SitemapResult | undefined>;
+
+  /**
+   * Discover the reachable pages of a site from a seed URL. Prefers the
+   * site's own sitemap when one resolves (cheaper and more complete than
+   * following links); falls back to breadth-first link-following bounded by
+   * `options.maxDepth` and `options.limit`.
+   */
+  crawlSite?(seedUrl: string, options?: CrawlOptions): Promise<SiteCrawlResult>;
 }
