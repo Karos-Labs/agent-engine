@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, parseDurationMs, success } from "@agent-engine/tool-common";
-import { latestRun, runSegments, type RunRecord } from "./runs.js";
+import { latestRun, writeRunRecord, type RunRecord } from "./runs.js";
 
 const TOOL_VERSION = "1.0.0";
 
@@ -99,7 +99,7 @@ export function createCaptureVisibility(store: WorkspaceStoreLike) {
         sentimentPerMention: [],
       };
       const record: RunRecord = { job, runId, query: promptId, result: cell, at: Date.now() };
-      await store.writeJson(ctx.clientSlug, runSegments(job, runId), record);
+      await writeRunRecord(store, ctx.clientSlug, record);
 
       return success<CaptureVisibilityResult>({ runId, cell, fromCache: false, ageMs: 0 });
     },

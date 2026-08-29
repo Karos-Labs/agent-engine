@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -27,6 +27,7 @@ describe("karos-memory", () => {
   });
 
   afterEach(async () => {
+    vi.useRealTimers();
     await fs.rm(rootDir, { recursive: true, force: true });
   });
 
@@ -69,6 +70,40 @@ describe("karos-memory", () => {
       if (hypothesesResult.scope === "hypotheses") {
         expect(hypothesesResult.items).toHaveLength(1);
         expect(hypothesesResult.items[0]?.status).toBe("open");
+      }
+    });
+
+    it("AU12: since/limit bound decisions to the most recent matching ones", async () => {
+      vi.useFakeTimers();
+      const at = (ms: number) => vi.setSystemTime(new Date(ms));
+      const base = Date.parse("2026-01-01T00:00:00Z");
+
+      at(base);
+      await tools["memory.appendDecision"]!.execute({ decisionId: "d1", summary: "oldest" }, { ctx });
+      at(base + 1000);
+      await tools["memory.appendDecision"]!.execute({ decisionId: "d2", summary: "middle" }, { ctx });
+      at(base + 2000);
+      await tools["memory.appendDecision"]!.execute({ decisionId: "d3", summary: "newest" }, { ctx });
+
+      // since: only d2 and d3 were recorded at/after base+1000.
+      const sinceOnly = await tools["memory.read"]!.execute({ scope: "decisions", since: base + 1000 }, { ctx });
+      const sinceResult = (sinceOnly as { result: ReadResult }).result;
+      if (sinceResult.scope === "decisions") {
+        expect(sinceResult.items.map((i) => i.decisionId)).toEqual(["d3", "d2"]);
+      }
+
+      // limit: most-recent-first, capped at 2 — d1 (oldest) falls off.
+      const limitOnly = await tools["memory.read"]!.execute({ scope: "decisions", limit: 2 }, { ctx });
+      const limitResult = (limitOnly as { result: ReadResult }).result;
+      if (limitResult.scope === "decisions") {
+        expect(limitResult.items.map((i) => i.decisionId)).toEqual(["d3", "d2"]);
+      }
+
+      // Neither given: unbounded, original (store/id-sorted) order preserved.
+      const unbounded = await tools["memory.read"]!.execute({ scope: "decisions" }, { ctx });
+      const unboundedResult = (unbounded as { result: ReadResult }).result;
+      if (unboundedResult.scope === "decisions") {
+        expect(unboundedResult.items.map((i) => i.decisionId)).toEqual(["d1", "d2", "d3"]);
       }
     });
   });

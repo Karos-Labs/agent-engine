@@ -4,7 +4,7 @@ import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, parseDurationMs, success, toolingError, notAvailable } from "@agent-engine/tool-common";
 import { readOutputHistory } from "@agent-engine/tool-karos-ledger";
 import { ScraperError, type ScrapedRecord, type ScraperProvider, type SocialPlatform } from "@agent-engine/tool-karos-scraper";
-import { latestRunForQuery, runSegments, type RunRecord } from "./runs.js";
+import { latestRunForQuery, writeRunRecord, type RunRecord } from "./runs.js";
 import {
   DEFAULT_CONTENT_CHARS,
   HISTORY_EXCERPT_CHARS,
@@ -179,7 +179,7 @@ export function createPull(store: WorkspaceStoreLike, scraper?: ScraperProvider)
 
       const runId = randomUUID();
       const record: RunRecord = { job, runId, query, result, at: Date.now() };
-      await store.writeJson(ctx.clientSlug, runSegments(job, runId), record);
+      await writeRunRecord(store, ctx.clientSlug, record);
 
       return success<PullResult>({ runId, query, result, fromCache: false, ageMs: 0 });
     },
