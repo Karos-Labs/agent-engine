@@ -54,6 +54,25 @@ export class BlogDraftAgent extends BaseAgent<BlogPostOutput> {
     description: "Draft a single long-form blog article for the selected content pillar, target keyword, and angle.",
     allowedTools: ["render.preview", "gate.lintPost", "gate.numbersSourced", "gate.brandCompliance"],
     outputSchema: BlogPostOutputSchema,
+    // SCRUM-291 (AU14) — this fleet's #2 truncation risk after intel-report
+    // (AUDIT-2026-08-25 §3.2). Sized from `BlogPostOutputSchema` and the
+    // channel's own enforced ceiling, not by feel:
+    //   - `gate.lintPost`'s real "blog" platform cap (karos-gates/src/lint-post.ts,
+    //     PLATFORM_MAX_LENGTH.blog) is 20,000 chars — "~3,000-4,000 words" per
+    //     that file's own comment — on `text`.
+    //   - `text` is `title + bodyMarkdown` (this file's doc comment above), so
+    //     `bodyMarkdown` alone is counted a second time inside `text`: up to
+    //     ~20,000 chars twice is ~40,000 content chars from those two fields
+    //     alone, before excerpt/headersList/metaDescription/faqItems/slug/
+    //     canonicalUrl (another ~4,000 chars at realistic sizes).
+    //   ~44,000 content chars at ~3.5 chars/token (JSON-escaped prose,
+    //   conservative) is ~12.6k tokens of floor content for a draft that hits
+    //   the gate's own target length — already 77% of the adapter's 16,384
+    //   default (`DEFAULT_MAX_TOKENS`, messages-api-adapter.ts:19) with zero
+    //   margin for a model that runs past the target before self-critique trims
+    //   it, or for the schema growing (SCRUM-291's whole point). 24000 keeps
+    //   ~1.9x margin over that floor.
+    maxTokens: 24_000,
     // Pinned — RFC-02 §5: claude-sonnet-4-6 today, claude-sonnet-5 is an
     // equally acceptable pin once available; never a fallback for a pinned step.
     modelPolicy: resolveModelPolicy("blog-draft", { policy: "pinned", model: "claude-sonnet-4-6" }),
