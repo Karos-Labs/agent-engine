@@ -25,12 +25,18 @@ import { fileURLToPath } from "node:url";
  * research for saying the quiet part in a document nobody publishes. That is
  * a worse failure than the one being prevented.
  *
- * `campaign-orchestrator` produces a strategy and fans out to the channel
- * agents, each of which checks its own output. Checking the plan as well would
- * be checking a thing that is never shown to anyone.
+ * `campaign-orchestrator` fans out to the channel agents, each of which
+ * checks its own drafted output — but the campaign PLAN itself
+ * (`campaignName`/`theme`/`targetPillars` and each slot's
+ * `targetAudience`/`angle`/`keyMessage`) is generated once, up front, and is
+ * shown directly in `13-campaign-review`'s own gate payload. SCRUM-302/AU18
+ * found that gap — a plan already visible to a human reviewer with no
+ * guardrail ever run over it — so `campaign-orchestrator` now calls
+ * `runTopicGuardrail` over the plan and moved from `INTERNAL` to `PUBLISHES`
+ * below.
  *
- * If one of those three ever starts publishing, move it and this test fails
- * until someone does.
+ * If one of the two remaining `INTERNAL` agents ever starts publishing, move
+ * it too and this test fails until someone does.
  */
 
 // Anchored on this file, not process.cwd(): vitest's cwd depends on how the
@@ -41,6 +47,7 @@ const AGENTS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..
 const PUBLISHES = [
   "blog-agent",
   "branded-shorts-agent",
+  "campaign-orchestrator",
   "instagram-agent",
   "landing-builder-agent",
   "linkedin-agent",
@@ -52,7 +59,7 @@ const PUBLISHES = [
 ];
 
 /** Agents whose deliverable is internal, with the reason recorded above. */
-const INTERNAL = ["campaign-orchestrator", "intel-report-agent", "seo-geo-agent"];
+const INTERNAL = ["intel-report-agent", "seo-geo-agent"];
 
 function workflowSource(agent: string): string {
   const dir = join(AGENTS_DIR, agent, "src", "workflow");

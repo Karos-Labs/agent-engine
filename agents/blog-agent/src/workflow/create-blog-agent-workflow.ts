@@ -460,6 +460,6 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
       );
     });
 
-    return { topic: selected.topic, angle, targetKeyword: selected.targetKeyword, deliverableId };
+    return { topic: selected.topic, angle, targetKeyword: selected.targetKeyword, deliverableId, preview: draft.text };
   };
 }

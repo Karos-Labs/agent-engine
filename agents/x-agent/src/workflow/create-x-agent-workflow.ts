@@ -500,6 +500,6 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       );
     });
 
-    return { topic: selected.topic, angle: laneSelection.angle, lane: laneSelection.lane, targetHandle: intake.xHandle, deliverableId };
+    return { topic: selected.topic, angle: laneSelection.angle, lane: laneSelection.lane, targetHandle: intake.xHandle, deliverableId, preview: draft.text };
   };
 }

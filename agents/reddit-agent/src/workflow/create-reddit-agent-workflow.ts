@@ -583,6 +583,7 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
       topic: selected.topic,
       angle,
       deliverableId,
+      preview: draft.text,
     };
   };
 }
