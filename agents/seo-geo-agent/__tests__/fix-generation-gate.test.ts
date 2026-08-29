@@ -43,7 +43,18 @@ describe("12-fix-generation-review gate (RFC-04 §2 Phase 7 — \"nothing ships 
 
     await engine.resolveGate(runId, "12-fix-generation-review", { decision: "approve", actor: "jane@karoslabs.com", at: new Date().toISOString() });
     const third = await engine.run(workflowFn, { ...baseParams, runId });
-    expect(third.status).toBe("completed");
+    // The fixes and narrative are now drafted, so the run pauses again at the
+    // new final review gate rather than completing straight through.
+    expect(third.status).toBe("awaiting_gate");
+    if (third.status !== "awaiting_gate") throw new Error("unreachable");
+    expect(third.pendingGateId).toContain("16-batch-review-r0");
+
+    const stepsAfterFixApproval = await durableStore.listSteps(runId);
+    expect(stepsAfterFixApproval.map((s) => s.stepId)).toContain("13-draft-fixes");
+
+    await engine.resolveGate(runId, "16-batch-review-r0", { decision: "approve", actor: "jane@karoslabs.com", at: new Date().toISOString() });
+    const fourth = await engine.run(workflowFn, { ...baseParams, runId });
+    expect(fourth.status).toBe("completed");
 
     const finalSteps = await durableStore.listSteps(runId);
     expect(finalSteps.map((s) => s.stepId)).toContain("13-draft-fixes");

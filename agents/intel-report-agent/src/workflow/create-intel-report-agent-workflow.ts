@@ -1,5 +1,28 @@
-import type { AgentContext, AgentToolRegistry, GateResponse, ModelRouter, PromptStore } from "@agent-engine/core";
-import { readRunDirection, runDirectionField, type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, toAgentContext, runGate, finalizeDeliverable } from "@agent-engine/workflow";
+import type {
+  AgentContext,
+  AgentToolRegistry,
+  GateResponse,
+  ModelRouter,
+  PromptStore,
+  GateVerdict,
+} from "@agent-engine/core";
+import {
+  readRunDirection,
+  runDirectionField,
+  type WorkflowContext,
+  WorkflowBlockedIntake,
+  WorkflowHeld,
+  WorkflowToolingFailure,
+  toAgentContext,
+  runGate,
+  finalizeDeliverable,
+  type RevisionNote,
+  MAX_REVISION_ROUNDS,
+  persistReviewFeedbackToMemory,
+  readPastFeedback,
+  revisionDirective,
+  runReviewCycle,
+} from "@agent-engine/workflow";
 import type { ClientBrand, ClientProfile, Competitor } from "@agent-engine/tools";
 import type { IntelReportOutput } from "@agent-engine/tool-karos-intel";
 import { IntelReportDraftAgent } from "../agent/intel-report-draft-agent.js";
@@ -109,55 +132,96 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
       return { runId: result.runId, query: result.query, result: result.result, fromCache: result.fromCache };
     });
 
-    // ── 02: generate the report — one bounded BaseAgent, structured output straight in ──
+    // The read side of the feedback flywheel: what this client asked for on
+    // previous runs, injected into the drafting prompt. Bounded and
+    // best-effort — a memory read failing must not stop a run that can draft
+    // perfectly well without it.
+    const pastFeedback = await readPastFeedback(wf, tools, ctx, "01b-read-past-feedback");
+
+    // ── 02-03: generate the report, then verify its numeric claims — one full drafting pass ──
     const draftAgent = new IntelReportDraftAgent({ router: options.router, tools, promptStore: options.promptStore });
-    const draftResult = await wf.step.agent("02-generate-report", draftAgent, {
-      ...runDirectionField(runDirection),
-      profile: clientContext.profile,
-      brand: clientContext.brand,
-      competitors: clientContext.competitors,
-      research: { query: research.query, result: research.result },
+    /**
+     * One full drafting pass: generate the report, then verify its numbers
+     * are sourced.
+     *
+     * No terminal topic guardrail here, deliberately — this report is an
+     * internal deliverable read by the client's own team, never published,
+     * and `guardrail-coverage.test.ts` (apps/agent-server) enforces exactly
+     * that split across every agent in this repo.
+     *
+     * Called once per REVISION round by `runReviewCycle`. `revision` is
+     * folded into every checkpointed step id inside it (via `rev`), so a
+     * second round genuinely re-generates instead of short-circuiting on the
+     * first round's checkpoints — while everything OUTSIDE it (client
+     * context, research) keeps its id and is reused. That reuse is why the
+     * revision is in-run rather than a fresh run.
+     */
+    const draftOnce = async (revision: number, notes: readonly RevisionNote[]): Promise<IntelReportOutput> => {
+      /** Revision 0 keeps the ORIGINAL ids, so a first-pass trace is unchanged. */
+      const rev = (id: string) => (revision === 0 ? id : `${id}-r${revision}`);
+      const directive = revisionDirective(notes);
+
+      const draftResult = await wf.step.agent(rev("02-generate-report"), draftAgent, {
+        ...runDirectionField(runDirection),
+        profile: clientContext.profile,
+        brand: clientContext.brand,
+        competitors: clientContext.competitors,
+        research: { query: research.query, result: research.result },
+        // Two distinct steers, kept apart on purpose: `pastFeedback` is what
+        // this client has said across previous RUNS, `revisionRequest` is what
+        // a reviewer asked about THIS report minutes ago.
+        ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
+        ...(directive !== undefined ? { revisionRequest: directive } : {}),
+      });
+
+      if (draftResult.status === "content_fail") {
+        throw new WorkflowHeld(`report draft did not produce a valid structured output: ${draftResult.status}`);
+      }
+      if (draftResult.status !== "completed") {
+        throw new WorkflowToolingFailure(`report generation step resolved to "${draftResult.status}"`);
+      }
+      const report = draftResult.finalOutput!;
+
+      // ── verify — every numeric claim across the 7 analysis sections must trace back
+      // to the research pull's own content (RFC-05 §5 / §3 step 4's "reconcile the
+      // score/grade discrepancy" note resolved: the model's dimension scores are real
+      // judgment calls, never invented numbers to be caught here — this gate is about the
+      // report's *prose* claims, e.g. "conversion rate improved 30%", not about the
+      // dimension scores themselves). ──
+      await wf.step.code(rev("03-verify-numbers-sourced"), async () => {
+        const text = concatenateAnalysisProse(report);
+        const sources = [research.query, JSON.stringify(research.result)];
+        const verdict = await runGate(tools, "gate.numbersSourced", { text, sources }, ctx);
+        if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.numbersSourced: ${verdict.reason}`);
+        if (verdict.verdict === "content_fail") throw new WorkflowHeld(`numbers not sourced: ${verdict.reason}`);
+        return verdict;
+      });
+
+      return report;
+    };
+
+    // ── The universal approve / revise / reject cycle ──
+    //
+    // `revise` re-generates with the reviewer's feedback injected, reusing
+    // everything already checkpointed, instead of holding the run and
+    // forcing somebody to dispatch a fresh one that knows nothing about the
+    // feedback. Every decision, approvals included, reaches client memory.
+    const review = await runReviewCycle(wf, {
+      gateId: "04-batch-review",
+      maxRevisions: MAX_REVISION_ROUNDS,
+      ...(options.autoApprove ? { autoApprove: true } : {}),
+      attempt: draftOnce,
+      buildGate: (report, revision) => ({
+        kind: "batch_review",
+        payload: { runId: wf.runId, dimensionScores: report.dimensionScores, swot: report.swot, revision },
+        requiredRole: "account_manager",
+        timeout: { duration: "24h", onTimeout: "hold" },
+      }),
+      onDecision: async ({ revision, response }) => {
+        await persistReviewFeedbackToMemory(wf, tools, ctx, revision, response);
+      },
     });
-
-    if (draftResult.status === "content_fail") {
-      throw new WorkflowHeld(`report draft did not produce a valid structured output: ${draftResult.status}`);
-    }
-    if (draftResult.status !== "completed") {
-      throw new WorkflowToolingFailure(`report generation step resolved to "${draftResult.status}"`);
-    }
-    const report = draftResult.finalOutput!;
-
-    // ── 03: verify — every numeric claim across the 7 analysis sections must trace back
-    // to the research pull's own content (RFC-05 §5 / §3 step 4's "reconcile the
-    // score/grade discrepancy" note resolved: the model's dimension scores are real
-    // judgment calls, never invented numbers to be caught here — this gate is about the
-    // report's *prose* claims, e.g. "conversion rate improved 30%", not about the
-    // dimension scores themselves). ──
-    await wf.step.code("03-verify-numbers-sourced", async () => {
-      const text = concatenateAnalysisProse(report);
-      const sources = [research.query, JSON.stringify(research.result)];
-      const verdict = await runGate(tools, "gate.numbersSourced", { text, sources }, ctx);
-      if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.numbersSourced: ${verdict.reason}`);
-      if (verdict.verdict === "content_fail") throw new WorkflowHeld(`numbers not sourced: ${verdict.reason}`);
-      return verdict;
-    });
-
-    // ── 04: human batch-review gate — nothing ships without a real approval ──
-    const reviewDecision: GateResponse = options.autoApprove
-      ? await wf.step.code("04-batch-review", () => ({
-          decision: "approve" as const,
-          actor: "system",
-          at: new Date().toISOString(),
-        }))
-      : await wf.step.gate("04-batch-review", {
-          kind: "batch_review",
-          payload: { runId: wf.runId, dimensionScores: report.dimensionScores, swot: report.swot },
-          requiredRole: "account_manager",
-          timeout: { duration: "24h", onTimeout: "hold" },
-        });
-    if (reviewDecision.decision !== "approve") {
-      throw new WorkflowHeld(`batch rejected: ${reviewDecision.reason ?? "no reason given"}`);
-    }
+    const report = review.output;
 
     // ── 05: persist — intel.writeReport computes overallScore/overallGrade deterministically ──
     const writeOutcome = await wf.step.code("05-persist-report", async () => {
@@ -178,7 +242,7 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
     // ── 08: record the review decision into the feedback log (learning loop, RFC-01 §8.2) ──
     await wf.step.code("08-record-feedback", async () => {
       await tools["ledger.feedbackAppend"]!.execute(
-        { runId: wf.runId, feedbackId: `${wf.runId}__review`, decision: reviewDecision.decision, actor: reviewDecision.actor },
+        { runId: wf.runId, feedbackId: `${wf.runId}__review`, decision: review.response.decision, actor: review.response.actor },
         { ctx },
       );
     });

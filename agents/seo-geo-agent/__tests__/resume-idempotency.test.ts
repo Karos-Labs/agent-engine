@@ -99,8 +99,8 @@ describe("checkpoint resume idempotency (RFC-01 §8.1) — steps and fan-out slo
     expect(first.status).toBe("degraded");
 
     const stepsAfterCrash = await durableStore.listSteps(runId);
-    const persistDeliverableStep = stepsAfterCrash.find((s) => s.stepId === "17-persist-deliverable");
-    const persistManifestStep = stepsAfterCrash.find((s) => s.stepId === "18-persist-manifest");
+    const persistDeliverableStep = stepsAfterCrash.find((s) => s.stepId === "18-persist-deliverable");
+    const persistManifestStep = stepsAfterCrash.find((s) => s.stepId === "19-persist-manifest");
     expect(persistDeliverableStep?.status).toBe("completed");
     expect(persistManifestStep?.status).toBe("failed");
 

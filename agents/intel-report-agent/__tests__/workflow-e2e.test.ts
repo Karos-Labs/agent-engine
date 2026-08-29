@@ -9,9 +9,12 @@ const params = { runId: "intel_run_1", clientSlug: "acme", productId: "intel-rep
 const ALL_STEP_IDS = [
   "00-load-client-context",
   "01-research-pull",
+  "01b-read-past-feedback",
   "02-generate-report",
   "03-verify-numbers-sourced",
-  "04-batch-review",
+  // Revision-scoped: `-r0` is the first review round. A `revise` decision
+  // registers `-r1` after re-generating.
+  "04-batch-review-r0",
   "05-persist-report",
   "06-persist-deliverable",
   "07-persist-manifest",
@@ -90,12 +93,12 @@ describe("end-to-end: the Intel Report agent workflow (RFC-05 §3)", () => {
     const first = await engine.run(workflowFn, params);
     expect(first.status).toBe("awaiting_gate");
     if (first.status !== "awaiting_gate") throw new Error("unreachable");
-    expect(first.pendingGateId).toContain("04-batch-review");
+    expect(first.pendingGateId).toContain("04-batch-review-r0");
 
     const beforeApproval = await env.tools["intel.getReport"]!.execute({}, { ctx: { ...params, runId: "verify", metadata: {} } });
     expect(beforeApproval.status).toBe("not_available");
 
-    await engine.resolveGate(params.runId, "04-batch-review", {
+    await engine.resolveGate(params.runId, "04-batch-review-r0", {
       decision: "approve",
       actor: "jane@karoslabs.com",
       at: new Date(2026, 7, 17).toISOString(),
@@ -117,7 +120,7 @@ describe("end-to-end: the Intel Report agent workflow (RFC-05 §3)", () => {
     // And the checkpoint carries the DECISION, which is the only place the
     // run records that a human approved this and who they were.
     const gateStep = stepRecords.find((s) => s.kind === "gate");
-    expect(gateStep?.stepId).toBe("04-batch-review");
+    expect(gateStep?.stepId).toBe("04-batch-review-r0");
     expect(gateStep?.output).toMatchObject({ decision: "approve", actor: "jane@karoslabs.com" });
   });
 
@@ -130,7 +133,7 @@ describe("end-to-end: the Intel Report agent workflow (RFC-05 §3)", () => {
     const engine = new WorkflowEngine(durableStore);
 
     await engine.run(workflowFn, params);
-    await engine.resolveGate(params.runId, "04-batch-review", {
+    await engine.resolveGate(params.runId, "04-batch-review-r0", {
       decision: "reject",
       actor: "jane@karoslabs.com",
       reason: "dimension scores look inflated this run",
@@ -140,7 +143,8 @@ describe("end-to-end: the Intel Report agent workflow (RFC-05 §3)", () => {
     const result = await engine.run(workflowFn, params);
     expect(result.status).toBe("held");
     if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/batch rejected/i);
+    expect(result.reason).toMatch(/review rejected/i);
+    expect(result.reason).toMatch(/dimension scores look inflated this run/);
 
     const readReport = await env.tools["intel.getReport"]!.execute({}, { ctx: { ...params, runId: "verify", metadata: {} } });
     expect(readReport.status).toBe("not_available");
