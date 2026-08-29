@@ -45,7 +45,7 @@ describe("Layer 3 tool registry — cross-cutting", () => {
   it("merges all ten servers' tools into one registry with no name collisions", () => {
     const expectedPrefixes = ["client.", "gate.", "intel.", "ledger.", "memory.", "publish.", "reputation.", "research.", "seoGeo.", "topics."];
     const names = Object.keys(tools);
-    // 9 client + 6 gates + 2 intel + 9 ledger + 7 memory + 4 publish + 3 reputation + 5 research + 2 seoGeo + 4 topics = 51
+    // 9 client + 6 gates + 2 intel + 8 ledger + 7 memory + 4 publish + 3 reputation + 5 research + 2 seoGeo + 4 topics = 50
     // (client grew from 8 to 9: client.getKnowledge reads the knowledge base the
     // portal's sync mirrors into the workspace — onboarding context docs, recent
     // meeting summaries, the reference-asset index. See
@@ -66,7 +66,12 @@ describe("Layer 3 tool registry — cross-cutting", () => {
     // the universal review cycle's feedback flywheel — every approve/revise/
     // reject decision persists here, and the next drafting prompt reads it
     // back. See packages/workflow/src/primitives/review-cycle.ts.)
-    expect(names.length).toBe(51);
+    // (ledger shrank from 9 to 8, AU22: ledger.feedbackAppend retired — it wrote
+    // to ["ledger","feedback",...] but nothing ever read that path. Every
+    // former caller now goes through memory.appendFeedback/memory.readFeedback
+    // above instead, the one real feedback pipeline. See createKarosLedgerTools's
+    // own doc comment in packages/tools/karos-ledger/src/index.ts.)
+    expect(names.length).toBe(50);
     for (const prefix of expectedPrefixes) {
       expect(names.some((n) => n.startsWith(prefix))).toBe(true);
     }

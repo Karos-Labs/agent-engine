@@ -239,13 +239,31 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
       snapshot: (deliverableId) => ({ ...writeOutcome, deliverableId }),
     });
 
-    // ── 08: record the review decision into the feedback log (learning loop, RFC-01 §8.2) ──
-    await wf.step.code("08-record-feedback", async () => {
-      await tools["ledger.feedbackAppend"]!.execute(
-        { runId: wf.runId, feedbackId: `${wf.runId}__review`, decision: review.response.decision, actor: review.response.actor },
-        { ctx },
-      );
-    });
+    // ── 08: record the review decision into durable client memory (AU22 + AU19) ──
+    //
+    // AU22: this step used to call `ledger.feedbackAppend`, which wrote to
+    // `["ledger","feedback",runId,feedbackId]` — a path nothing in this repo
+    // ever read back (no `ledger.readFeedback`/`ledger.listFeedback` tool was
+    // ever registered), so every review decision here was a write into the
+    // void. That tool is deleted as of AU22; the one real feedback pipeline is
+    // `persistReviewFeedbackToMemory` (packages/workflow/src/primitives/
+    // review-cycle.ts), which writes via `memory.appendFeedback` — the store
+    // `memory.readFeedback`, and so `01b-read-past-feedback` above, actually
+    // reads.
+    //
+    // AU19 (merged first) additionally wired `runReviewCycle`'s `onDecision`
+    // to persist EVERY round's response, approvals included. This final-
+    // decision write therefore lands on the same `review-feedback-r${revision}`
+    // step id that `onDecision` already checkpointed for the approving round,
+    // making it an idempotent backstop rather than a second record. It is kept
+    // (rather than dropped) so this agent still carries the same explicit
+    // 08-record-feedback step as the five other agents AU22 converted.
+    //
+    // `review.revision` — not a hardcoded 0 — is the round that was actually
+    // approved: unlike the five agents in AU22's diff, this workflow HAS a
+    // revision loop, so a report approved on round 2 must be recorded against
+    // round 2.
+    await persistReviewFeedbackToMemory(wf, tools, ctx, review.revision, review.response);
 
     return {
       overallScore: writeOutcome.overallScore,

@@ -219,6 +219,62 @@ describe("karos-memory", () => {
     });
   });
 
+  // These two tools back the one real feedback pipeline every review-gated
+  // agent uses (`packages/workflow/src/primitives/review-cycle.ts`'s
+  // `persistReviewFeedbackToMemory`/`readPastFeedback`) — the replacement for
+  // AU22's retired `ledger.feedbackAppend` write-only log. This package had
+  // no direct test for either tool before this ticket; the agent-level
+  // proof lives in `agents/intel-report-agent/__tests__/workflow-e2e.test.ts`.
+  describe("memory.appendFeedback / memory.readFeedback", () => {
+    it("is idempotent on feedbackId: a replayed append does not duplicate the row", async () => {
+      const args = { feedbackId: "fb_1", productId: "blog-agent", decision: "approve" as const, actor: "jane@karoslabs.com", note: "v1" };
+      const first = await tools["memory.appendFeedback"]!.execute(args, { ctx });
+      const second = await tools["memory.appendFeedback"]!.execute({ ...args, note: "v2" }, { ctx });
+
+      expect(first).toEqual({ status: "success", result: { id: "fb_1", created: true } });
+      expect(second).toEqual({ status: "success", result: { id: "fb_1", created: false } });
+
+      const entries = await store.listJson("acme", ["memory", "feedback"]);
+      expect(entries).toHaveLength(1);
+      expect((entries[0]?.data as { note: string }).note).toBe("v2");
+    });
+
+    it("reads back what was written — the write-then-read proof this pipeline exists for", async () => {
+      await tools["memory.appendFeedback"]!.execute(
+        { feedbackId: "fb_1", productId: "blog-agent", decision: "approve", actor: "jane@karoslabs.com", note: "shorter hooks are working", revision: 0, runId: "run_1" },
+        { ctx },
+      );
+      await tools["memory.appendFeedback"]!.execute(
+        { feedbackId: "fb_2", productId: "blog-agent", decision: "reject", actor: "jane@karoslabs.com", note: "stop leading with the metric", revision: 0, runId: "run_2" },
+        { ctx },
+      );
+
+      const outcome = await tools["memory.readFeedback"]!.execute({ productId: "blog-agent", limit: 10 }, { ctx });
+      expect(outcome.status).toBe("success");
+      if (outcome.status !== "success") throw new Error("unreachable");
+      const entries = (outcome.result as { entries: Array<{ feedbackId: string; note: string; decision: string }> }).entries;
+      expect(entries.map((e) => e.feedbackId).sort()).toEqual(["fb_1", "fb_2"]);
+      expect(entries.find((e) => e.feedbackId === "fb_1")?.note).toBe("shorter hooks are working");
+    });
+
+    it("filters by productId, so one client's other agents never see this agent's feedback", async () => {
+      await tools["memory.appendFeedback"]!.execute(
+        { feedbackId: "fb_blog", productId: "blog-agent", decision: "approve", actor: "jane@karoslabs.com", note: "blog note" },
+        { ctx },
+      );
+      await tools["memory.appendFeedback"]!.execute(
+        { feedbackId: "fb_reddit", productId: "reddit-agent", decision: "approve", actor: "jane@karoslabs.com", note: "reddit note" },
+        { ctx },
+      );
+
+      const outcome = await tools["memory.readFeedback"]!.execute({ productId: "blog-agent", limit: 10 }, { ctx });
+      expect(outcome.status).toBe("success");
+      if (outcome.status !== "success") throw new Error("unreachable");
+      const entries = (outcome.result as { entries: Array<{ feedbackId: string }> }).entries;
+      expect(entries.map((e) => e.feedbackId)).toEqual(["fb_blog"]);
+    });
+  });
+
   describe("memory.updateBeliefs", () => {
     it("merges a diff into existing beliefs without clobbering unrelated keys", async () => {
       await tools["memory.updateBeliefs"]!.execute({ diff: { a: 1 } }, { ctx });

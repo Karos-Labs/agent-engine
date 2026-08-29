@@ -6,6 +6,15 @@ import { fakeRouterSequence, finalTurn, goodIntelReport, makePromptStore, setupT
 
 const params = { runId: "intel_run_1", clientSlug: "acme", productId: "intel-report-agent", runKind: "recurring" as const };
 
+// AU22: `08-record-feedback` (the old `ledger.feedbackAppend` write-only-log
+// call) is gone. Its replacement, `persistReviewFeedbackToMemory`, only
+// checkpoints a step (`review-feedback-r0`) when the reviewer left free-text
+// `feedback`/`reason` — nothing to persist otherwise, same as every other
+// review-gated agent in this repo (see that helper's own doc comment). None
+// of the three tests below give the gate response a `feedback`/`reason` on
+// approve, so `review-feedback-r0` never appears in ALL_STEP_IDS; the
+// dedicated test further down resolves the gate WITH `feedback` and asserts
+// that step exists and is actually readable back.
 const ALL_STEP_IDS = [
   "00-load-client-context",
   "01-research-pull",
@@ -18,7 +27,6 @@ const ALL_STEP_IDS = [
   "05-persist-report",
   "06-persist-deliverable",
   "07-persist-manifest",
-  "08-record-feedback",
 ];
 
 function goodReportRouter() {
@@ -122,6 +130,64 @@ describe("end-to-end: the Intel Report agent workflow (RFC-05 §3)", () => {
     const gateStep = stepRecords.find((s) => s.kind === "gate");
     expect(gateStep?.stepId).toBe("04-batch-review-r0");
     expect(gateStep?.output).toMatchObject({ decision: "approve", actor: "jane@karoslabs.com" });
+  });
+
+  // AU22: this is the write-then-read proof the ticket asks for. The old
+  // `ledger.feedbackAppend` call wrote to `["ledger","feedback",runId,...]`,
+  // a path nothing in this repo ever read — a genuine write-only log. Step
+  // 08 now calls `persistReviewFeedbackToMemory` instead, which writes
+  // through `memory.appendFeedback`. This test proves that write is not
+  // another dead end: the exact same reviewer note comes back out through
+  // `memory.readFeedback`, the one real feedback pipeline's read side
+  // (`packages/workflow/src/primitives/review-cycle.ts`'s `readPastFeedback`
+  // reads through this same tool for every other review-gated agent).
+  it("persists the reviewer's approval feedback to durable memory, and it is actually readable back (AU22)", async () => {
+    const promptStore = makePromptStore();
+    const router = goodReportRouter();
+    const workflowFn = createIntelReportAgentWorkflow({ tools: env.tools, promptStore, router });
+
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+
+    await engine.run(workflowFn, params);
+    await engine.resolveGate(params.runId, "04-batch-review", {
+      decision: "approve",
+      actor: "jane@karoslabs.com",
+      feedback: "The GEO section is exactly the level of detail clients want — keep leading with the competitor comparison.",
+      at: new Date(2026, 7, 17).toISOString(),
+    });
+
+    const result = await engine.run(workflowFn, params);
+    expect(result.status).toBe("completed");
+
+    // The write side: a real step ran and checkpointed it, alongside every
+    // other step this run produced.
+    const stepRecords = await durableStore.listSteps(params.runId);
+    const feedbackStep = stepRecords.find((s) => s.stepId === "review-feedback-r0");
+    expect(feedbackStep?.status).toBe("completed");
+    expect(stepRecords.some((s) => s.stepId === "08-record-feedback")).toBe(false);
+
+    // The read side: the SAME note, retrieved through `memory.readFeedback`
+    // — not by poking at the workspace store's raw file layout, but through
+    // the actual tool a drafting prompt would call on a later run.
+    const readOutcome = await env.tools["memory.readFeedback"]!.execute(
+      { productId: "intel-report-agent", limit: 10 },
+      { ctx: { ...params, runId: "verify", metadata: {} } },
+    );
+    expect(readOutcome.status).toBe("success");
+    if (readOutcome.status !== "success") throw new Error("unreachable");
+    const entries = (readOutcome.result as { entries: Array<{ decision: string; actor: string; note: string; runId?: string }> }).entries;
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      decision: "approve",
+      actor: "jane@karoslabs.com",
+      note: "The GEO section is exactly the level of detail clients want — keep leading with the competitor comparison.",
+      runId: params.runId,
+    });
+
+    // And the retired write-only log is really gone, not just unused: the
+    // tool no longer exists in the registry at all.
+    expect(env.tools["ledger.feedbackAppend"]).toBeUndefined();
   });
 
   it("rejects the batch review with a reason -> held, and nothing is persisted", async () => {

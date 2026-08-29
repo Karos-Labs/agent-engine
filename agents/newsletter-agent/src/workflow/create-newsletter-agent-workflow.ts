@@ -447,7 +447,11 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
       }),
     });
 
-    // ── 19: commit updates (topics.commit, memory.appendDecision, ledger.feedbackAppend) ──
+    // ── 19: commit updates (topics.commit, memory.appendDecision) — the review
+    // decision itself is already durable: `onDecision` above called
+    // `persistReviewFeedbackToMemory` for every round, which is the one real
+    // feedback pipeline (AU22: this step used to also call the now-retired
+    // `ledger.feedbackAppend`, a write-only log nothing ever read). ──
     await wf.step.code("19-commit-and-record", async () => {
       if (selected.source === "reserved" && reservation.reservationKey) {
         await tools["topics.commit"]!.execute({ reservationKey: reservation.reservationKey }, { ctx });
@@ -463,10 +467,6 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
           decisionId: `${wf.runId}__decision`,
           summary: `Sent edition about "${selected.mainStory}" (theme: ${theme}, secondary: ${selected.secondaryTopics.join(", ") || "none"})`,
         },
-        { ctx },
-      );
-      await tools["ledger.feedbackAppend"]!.execute(
-        { runId: wf.runId, feedbackId: `${wf.runId}__review`, decision: review.response.decision, actor: review.response.actor },
         { ctx },
       );
     });
