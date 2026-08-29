@@ -1,3 +1,4 @@
+import { recordModelCallMetric, withModelCallSpan } from "@agent-engine/telemetry";
 import type { ZodSchema } from "../types/agent-step.js";
 import type { ModelPolicy } from "../types/model-policy.js";
 import { resolveModelVendor, type ModelVendor } from "../types/model-policy.js";
@@ -84,7 +85,8 @@ export class DefaultModelRouter implements ModelRouter {
     policy: ModelPolicy,
     opts?: RouterCompleteOptions,
   ): Promise<CompletionResult<TOutput>> {
-    const adapter = this.adapterForVendor(resolveModelVendor(policy));
+    const vendor = resolveModelVendor(policy);
+    const adapter = this.adapterForVendor(vendor);
     const baseReq: CompletionRequest<TOutput> = {
       prompt,
       schema,
@@ -93,13 +95,36 @@ export class DefaultModelRouter implements ModelRouter {
       ...(opts?.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
     };
 
+    // One span (and one metric point) per attempt (AU42/SCRUM-326) — a
+    // `portable`/`commodity` step's primary hop and its fallback hop are two
+    // separately-timed child spans under the step's own span, never one span
+    // silently covering both. `ModelAdapter.complete()` only ever resolves or
+    // throws (see `withModelCallSpan`'s doc comment), so a failed attempt
+    // reaches `withModelCallSpan`'s own catch — no `markOutcome` needed here.
+    const callAdapter = (model: string): Promise<CompletionResult<TOutput>> =>
+      withModelCallSpan({ vendor, model, tier: policy.policy }, async (span) => {
+        const startedAt = Date.now();
+        try {
+          const result = await adapter.complete({ ...baseReq, model });
+          span.setAttribute("model_used", result.modelUsed);
+          span.setAttribute("input_tokens_uncached", result.inputTokens.uncached);
+          span.setAttribute("input_tokens_cached", result.inputTokens.cached);
+          span.setAttribute("output_tokens", result.outputTokens);
+          recordModelCallMetric({ vendor, model, status: "ok", durationMs: Date.now() - startedAt });
+          return result;
+        } catch (err) {
+          recordModelCallMetric({ vendor, model, status: "error", durationMs: Date.now() - startedAt });
+          throw err;
+        }
+      });
+
     if (policy.policy === "pinned") {
       // A pinned step never silently swaps models, even if a fallback were present.
-      return adapter.complete(baseReq);
+      return callAdapter(policy.model);
     }
 
     try {
-      return await adapter.complete(baseReq);
+      return await callAdapter(policy.model);
     } catch (err) {
       if (!policy.fallbackModel) {
         throw err;
@@ -107,7 +132,7 @@ export class DefaultModelRouter implements ModelRouter {
       // Same vendor, fallback model id — a fallback is a cheaper/smaller
       // variant of the same call shape, never a different structured-output
       // mechanism swapped in mid-failure.
-      return adapter.complete({ ...baseReq, model: policy.fallbackModel });
+      return callAdapter(policy.fallbackModel);
     }
   }
 

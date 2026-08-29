@@ -1,5 +1,5 @@
 import type { AgentContext, AgentExecutionResult, AgentExecutionStatus, BaseAgent } from "@agent-engine/core";
-import { recordCostAndTokens, withWorkflowStepSpan } from "@agent-engine/telemetry";
+import { recordCostAndTokens, recordWorkflowStepMetric, withWorkflowStepSpan } from "@agent-engine/telemetry";
 import type { StepRecord } from "../adapters/types.js";
 import type { WorkflowRuntime } from "./context.js";
 import { markStepRunning, scopedStepId, sumRunCost } from "./context.js";
@@ -203,7 +203,7 @@ export async function runStepAgent<TOutput>(
       stepId,
       stepKind: "agent",
     },
-    async (span) => {
+    async (span, markOutcome) => {
       const startedAt = runtime.now();
       await markStepRunning(runtime, stepId, "agent", startedAt);
       const timeoutMs = runtime.agentStepTimeoutMs ?? DEFAULT_AGENT_STEP_TIMEOUT_MS;
@@ -250,6 +250,28 @@ export async function runStepAgent<TOutput>(
         ...(servedBy ? { servedByHop: servedBy.hop, servingAdapter: servedBy.adapter } : {}),
       });
       span.setAttribute("agent_status", result.status);
+      recordWorkflowStepMetric({ stepKind: "agent", status: result.status });
+      // AU42/SCRUM-326 — same fix as `runStepCode`'s, for the same reason.
+      // `agent.run()` returning normally is not the same as the step
+      // succeeding: AU68 (SCRUM-366, see this function's own doc comment)
+      // made the checkpoint say what the agent actually reported, but the
+      // SPAN still only went `ERROR` if something threw. An unpriced-model
+      // turn (`assertModelPriced`, `packages/core/src/telemetry/pricing.ts`)
+      // is exactly this shape: `BaseAgent.runOneTurn` catches it and returns a
+      // `tooling_error` turn rather than throwing, so before this line the
+      // resulting step span read `OK` — a pricing refusal that fails loudly
+      // in the logs and in the checkpoint, and silently in the trace.
+      //
+      // `content_fail` and `budget_exceeded` deliberately stay `OK`-status:
+      // per `stepStatusFromAgentStatus`'s own doc comment, neither is a
+      // malfunction — `content_fail` is the agent's content verdict (a
+      // revision-loop signal, Layer 1 makes zero content judgments per
+      // RFC-01 §4) and `budget_exceeded` is a designed turn-ceiling stop, not
+      // a broken call. Only `tooling_error` is an actual failure worth a
+      // trace saying so.
+      if (result.status === "tooling_error") {
+        markOutcome(true, describeAgentOutcome(result).error ?? `agent step resolved to "${result.status}"`);
+      }
 
       const record: StepRecord = {
         stepId,

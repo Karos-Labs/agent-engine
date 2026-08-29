@@ -1,3 +1,4 @@
+import { recordGateMetric, recordGateSpan } from "@agent-engine/telemetry";
 import type { GateRecord, StepRecord } from "../adapters/types.js";
 import type { GateDefinition, GateResponse, WorkflowRuntime } from "./context.js";
 import { markStepRunning, scopedStepId } from "./context.js";
@@ -65,13 +66,35 @@ function gateCompletedAt(runtime: WorkflowRuntime, response: GateResponse, start
  *
  * Best-effort by the same rule as `markStepRunning`: a checkpoint is reporting,
  * and a reporting failure must never turn an approved gate into a stalled run.
+ *
+ * Also where the gate's span is recorded (AU42/SCRUM-326) — see
+ * `recordGateSpan`'s own doc comment for why it is an explicitly-timed span
+ * rather than a live one, and why it belongs on this exact code path: this
+ * function only reaches the `saveStep` below once, on the replay that first
+ * sees the resolution (the early return above is what makes that true), so
+ * the span is recorded exactly once too, backdated to `startedAt` and ended
+ * at `completedAt` — the same two timestamps the checkpoint itself uses.
  */
-async function recordResolvedGateStep(runtime: WorkflowRuntime, stepId: string, response: GateResponse): Promise<void> {
+async function recordResolvedGateStep(runtime: WorkflowRuntime, stepId: string, gateId: string, response: GateResponse): Promise<void> {
   try {
     const existing = await runtime.store.getStep(runtime.runId, stepId);
     if (existing && isCheckpointedStepStatus(existing.status)) return;
     const startedAt = existing?.startedAt ?? runtime.now();
     const completedAt = gateCompletedAt(runtime, response, startedAt);
+    recordGateSpan(
+      {
+        runId: runtime.runId,
+        clientSlug: runtime.clientSlug,
+        productId: runtime.productId,
+        stepId,
+        gateId,
+        decision: response.decision,
+        actor: response.actor,
+      },
+      startedAt,
+      completedAt,
+    );
+    recordGateMetric({ decision: response.decision });
     const record: StepRecord = {
       stepId,
       kind: "gate",
@@ -125,11 +148,15 @@ async function recordResolvedGateStep(runtime: WorkflowRuntime, stepId: string, 
  * remains the only thing consulted to decide whether the gate is resolved, and
  * both checkpoint writes are best-effort.
  *
- * NO TELEMETRY SPAN, unlike `runStepCode`/`runStepAgent`. A gate's elapsed time
- * is human time, and it is re-entered once per resume attempt — a span per
- * replay that ends by throwing `AwaitingGateSignal` would report a handful of
+ * NO LIVE TELEMETRY SPAN around this whole function, unlike
+ * `runStepCode`/`runStepAgent`. A gate's elapsed time is human time, and this
+ * function is re-entered once per resume attempt — a span wrapping every call
+ * that ends by throwing `AwaitingGateSignal` would report a handful of
  * sub-millisecond "failures" instead of one 24-hour wait. The `"running"`
- * checkpoint plus `currentStepId` is the honest progress signal here.
+ * checkpoint plus `currentStepId` is the honest progress signal while the
+ * gate is still pending; once it resolves, `recordResolvedGateStep` records
+ * an explicitly-timed span backdated over the real wait (AU42/SCRUM-326) —
+ * see `recordGateSpan`'s doc comment.
  */
 export async function runStepGate(runtime: WorkflowRuntime, id: string, def: GateDefinition): Promise<GateResponse> {
   const gateId = qualifyGateId(runtime.runId, id);
@@ -142,7 +169,7 @@ export async function runStepGate(runtime: WorkflowRuntime, id: string, def: Gat
   const existing = await runtime.store.getGate(gateId);
 
   if (existing?.response) {
-    await recordResolvedGateStep(runtime, stepId, existing.response);
+    await recordResolvedGateStep(runtime, stepId, gateId, existing.response);
     return existing.response;
   }
 

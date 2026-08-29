@@ -9,6 +9,7 @@ import { createHealthRouter } from "./routes/health.js";
 import { createQueueRouter, type VerifyPushIdToken } from "./routes/queue.js";
 import { createRunsRouter, type RunsRouterDeps } from "./routes/runs.js";
 import { createServiceIdentityMiddleware, type ServiceIdentityConfig } from "./auth/service-identity.js";
+import { httpTracingMiddleware } from "./telemetry/http-tracing-middleware.js";
 
 export interface CreateAppDeps extends RunsRouterDeps {
   durableStore: DurableStepStore;
@@ -42,6 +43,12 @@ export function createApp(deps: CreateAppDeps): Application {
 
   const app = express();
   app.use(express.json());
+
+  // AU42/SCRUM-326: the top-of-trace HTTP request span, mounted before
+  // EVERYTHING else — including the two exemptions below — so a request that
+  // never reaches an authenticated route (a bad push token, a liveness probe)
+  // still gets a span, matching what the caller actually saw.
+  app.use(httpTracingMiddleware());
 
   // Mount order is load-bearing (AU1). Two routes sit deliberately BEFORE the
   // authentication middleware:
