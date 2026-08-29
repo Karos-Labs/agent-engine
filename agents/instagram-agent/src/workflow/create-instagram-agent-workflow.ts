@@ -515,6 +515,15 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // carousel drafted in fluent English for a Hebrew-only outlet passed every
     // check that existed and shipped anyway (prep job hcf9ymPGJC7mDS5pcEQ4).
     //
+    // SCRUM-309 (AU31): prose is a real signal but not a reliable one — the
+    // fix above still depends on someone's profile blurb happening to
+    // mention a language. `client.getBrand`'s structured `language` field
+    // (read here, independently of step 02c's frozen render-token copy of
+    // the same brand kit — see that step's own comment for why they are
+    // deliberately two separate calls) is threaded in as a third,
+    // unconditional argument so a language requirement no longer depends on
+    // which sentence a human happened to write it into.
+    //
     // Best-effort and non-blocking on purpose: a client with no profile/voice
     // rules set up yet should still get a carousel, in English, same as
     // before this step existed — this step only ever ADDS context, it never
@@ -522,9 +531,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     const clientVoiceContext = await wf.step.code("02b-load-client-voice-context", async () => {
       const profileOutcome = await tools["client.getProfile"]?.execute({}, { ctx });
       const voiceOutcome = await tools["client.getVoiceRules"]?.execute({}, { ctx });
+      const brandOutcome = await tools["client.getBrand"]?.execute({}, { ctx });
       return buildClientVoiceContext(
         profileOutcome?.status === "success" ? (profileOutcome.result as Record<string, unknown>) : undefined,
         voiceOutcome?.status === "success" ? (voiceOutcome.result as Record<string, unknown>) : undefined,
+        brandOutcome?.status === "success" ? (brandOutcome.result as Record<string, unknown>) : undefined,
       );
     });
 

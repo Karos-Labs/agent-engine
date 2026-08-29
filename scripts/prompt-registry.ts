@@ -152,7 +152,7 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
     requires: { numbersSourced: true },
   },
   { promptId: "landing-compose", agent: "landing-builder-agent", versions: ["1"], latestVersion: "1" },
-  { promptId: "landing-copy", agent: "landing-builder-agent", versions: ["1"], latestVersion: "1" },
+  { promptId: "landing-copy", agent: "landing-builder-agent", versions: ["1", "2"], latestVersion: "2" },
   { promptId: "landing-craft-verdict", agent: "landing-builder-agent", versions: ["1"], latestVersion: "1" },
   { promptId: "landing-make", agent: "landing-builder-agent", versions: ["1"], latestVersion: "1" },
   {

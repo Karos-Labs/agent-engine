@@ -293,7 +293,7 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       const rev = (id: string) => (revision === 0 ? id : `${id}-r${revision}`);
       const directive = revisionDirective(notes);
 
-    const clientVoiceContext = buildClientVoiceContext(clientContext.profile, clientContext.voiceRules);
+    const clientVoiceContext = buildClientVoiceContext(clientContext.profile, clientContext.voiceRules, clientContext.brand);
     const draftResult = await wf.step.agent(rev("10-draft-post"), draftAgent, {
       ...runDirectionField(runDirection),
       topic: selected.topic,

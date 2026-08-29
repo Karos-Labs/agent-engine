@@ -394,7 +394,7 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
       const rev = (id: string) => (revision === 0 ? id : `${id}-r${revision}`);
       const directive = revisionDirective(notes);
 
-    const clientVoiceContext = buildClientVoiceContext(clientContext.profile, clientContext.voiceRules);
+    const clientVoiceContext = buildClientVoiceContext(clientContext.profile, clientContext.voiceRules, clientContext.brand);
     const draftResult = await wf.step.agent(rev("12-draft-reply"), draftAgent, {
       ...runDirectionField(runDirection),
       topic: selected.topic,

@@ -2,7 +2,7 @@ import * as path from "node:path";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
 import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext, runTopicGuardrail, readRunDirection, runDirectionField, toAgentContext } from "@agent-engine/workflow";
 import type { BrandJson, CarryForwardItem, LandingGateVerdict, LandingSection, ReadBundleResult } from "@agent-engine/tool-karos-landing";
-import { carryForwardLabel, CarryForwardPlacementFileSchema } from "@agent-engine/tool-karos-landing";
+import { carryForwardLabel, CarryForwardPlacementFileSchema, resolveBrandLanguage } from "@agent-engine/tool-karos-landing";
 import { LandingCopyAgent, type LandingCopyOutput } from "../agent/landing-copy-agent.js";
 import { LandingComposeAgent, type LandingComposeOutput } from "../agent/landing-compose-agent.js";
 import { LandingCraftVerdictAgent } from "../agent/landing-craft-verdict-agent.js";
@@ -138,7 +138,19 @@ export function createLandingBuilderAgentWorkflow(options: CreateLandingBuilderA
     if (!isRebuild) {
       // ── 02: COPY (fresh build) ──
       const copyAgent = new LandingCopyAgent({ router: options.router, tools, promptStore: options.promptStore });
-      const copyResult = await wf.step.agent("02-copy", copyAgent, { ...runDirectionField(runDirection), brand, intakeMarkdown: intake.intakeMarkdown });
+      // SCRUM-309 (AU31): `resolveBrandLanguage` reads the structured
+      // `brand.language` field ahead of the legacy `brand.voice.lang` free-text
+      // key `landing-copy-agent.ts` used to be the model's only route to — see
+      // that function's doc comment. Passed as an explicit field alongside the
+      // raw `brand` object (still passed in full) so the language requirement
+      // no longer depends on the model noticing an ad hoc key in a passthrough
+      // bag.
+      const copyResult = await wf.step.agent("02-copy", copyAgent, {
+        ...runDirectionField(runDirection),
+        brand,
+        intakeMarkdown: intake.intakeMarkdown,
+        resolvedLanguage: resolveBrandLanguage(brand),
+      });
       if (copyResult.status !== "completed") throw new WorkflowToolingFailure(`landing-copy step resolved to "${copyResult.status}"`);
       const copyOutput = copyResult.finalOutput as LandingCopyOutput;
       assumptions.push(...copyOutput.assumptions);
@@ -201,10 +213,13 @@ export function createLandingBuilderAgentWorkflow(options: CreateLandingBuilderA
       let mergedContent = structural.content;
       if (touched.size > 0) {
         const copyAgent = new LandingCopyAgent({ router: options.router, tools, promptStore: options.promptStore });
+        // SCRUM-309 (AU31): same structured-language resolution as the fresh-build
+        // 02-copy call above — see that call site's comment.
         const copyResult = await wf.step.agent("02-copy-rebuild", copyAgent, {
       ...runDirectionField(runDirection),
           brand,
           intakeMarkdown: intake.intakeMarkdown,
+          resolvedLanguage: resolveBrandLanguage(brand),
           feedbackDelta: {
             edits: classified.edits.filter((c) => touched.has(c.section)),
             additions: classified.additions,
