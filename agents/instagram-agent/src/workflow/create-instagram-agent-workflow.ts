@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentTool, AgentToolRegistry, GateResponse, ModelRouter, PromptStore, TemplateFeedback } from "@agent-engine/core";
-import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext } from "@agent-engine/workflow";
+import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, toAgentContext } from "@agent-engine/workflow";
 import type { RenderCarouselInput, RenderCarouselResult } from "@agent-engine/tool-karos-publish";
 import { InstagramCopyAgent } from "../agent/instagram-copy-agent.js";
 import { InstagramImageVettingAgent } from "../agent/instagram-image-vetting-agent.js";
@@ -317,16 +317,6 @@ export interface CreateInstagramAgentWorkflowOptions {
   fetchImpl?: typeof fetch;
 }
 
-function toAgentContext(wf: WorkflowContext): AgentContext {
-  return {
-    runId: wf.runId,
-    clientSlug: wf.clientSlug,
-    productId: wf.productId,
-    runKind: wf.runKind,
-    ...(wf.slotId !== undefined ? { slotId: wf.slotId } : {}),
-    metadata: {},
-  };
-}
 
 /**
  * `createInstagramAgentWorkflow()` (RFC-03): the 9-step run protocol,

@@ -2,7 +2,7 @@ import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentToolRegistry, GateResponse, ModelRouter, PromptStore } from "@agent-engine/core";
 import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import type { Annotations, CaptureLegOutcome, DoctrineGateResult, Review, TriageResult } from "@agent-engine/tool-karos-reputation";
-import { readRunDirection, runDirectionField, type SlotOutcome, type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail } from "@agent-engine/workflow";
+import { readRunDirection, runDirectionField, type SlotOutcome, type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, toAgentContext } from "@agent-engine/workflow";
 import { ReputationDoctrineGateAgent } from "../agent/reputation-doctrine-gate-agent.js";
 import { ReputationDraftAgent } from "../agent/reputation-draft-agent.js";
 import { REPUTATION_CLASSIFIER_MODEL_ID, ReputationExtractionAgent } from "../agent/reputation-extraction-agent.js";
@@ -120,16 +120,6 @@ export interface CreateReputationPulseWorkflowOptions {
   autoApprove?: boolean;
 }
 
-function toAgentContext(wf: WorkflowContext): AgentContext {
-  return {
-    runId: wf.runId,
-    clientSlug: wf.clientSlug,
-    productId: wf.productId,
-    runKind: wf.runKind,
-    ...(wf.slotId !== undefined ? { slotId: wf.slotId } : {}),
-    metadata: {},
-  };
-}
 
 function completedOutputs<T>(slots: readonly SlotOutcome<T>[]): T[] {
   return slots.filter((s): s is Extract<SlotOutcome<T>, { status: "completed" }> => s.status === "completed").map((s) => s.output);

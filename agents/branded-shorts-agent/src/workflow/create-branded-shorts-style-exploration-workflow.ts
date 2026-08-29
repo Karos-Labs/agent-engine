@@ -1,5 +1,5 @@
 import type { AgentContext, AgentToolRegistry, ModelRouter, PromptStore } from "@agent-engine/core";
-import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext } from "@agent-engine/workflow";
+import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext, toAgentContext } from "@agent-engine/workflow";
 import { BrandedShortsStyleExplorationAgent } from "../agent/branded-shorts-style-exploration-agent.js";
 import { styleTokenFidelityGate } from "./style-token-fidelity-gate.js";
 import type { StyleCandidate, StyleExplorationWorkflowResult } from "./types.js";
@@ -19,16 +19,6 @@ export interface CreateBrandedShortsStyleExplorationWorkflowOptions {
   autoApprove?: boolean;
 }
 
-function toAgentContext(wf: WorkflowContext): AgentContext {
-  return {
-    runId: wf.runId,
-    clientSlug: wf.clientSlug,
-    productId: wf.productId,
-    runKind: wf.runKind,
-    ...(wf.slotId !== undefined ? { slotId: wf.slotId } : {}),
-    metadata: {},
-  };
-}
 
 /**
  * `createBrandedShortsStyleExplorationWorkflow()` (RFC-06 §1/§2/§7, SKILL.md

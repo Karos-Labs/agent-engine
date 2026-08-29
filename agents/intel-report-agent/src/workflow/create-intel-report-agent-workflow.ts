@@ -1,5 +1,5 @@
-import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { readRunDirection, runDirectionField, type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure } from "@agent-engine/workflow";
+import type { AgentContext, AgentToolRegistry, GateResponse, ModelRouter, PromptStore } from "@agent-engine/core";
+import { readRunDirection, runDirectionField, type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, toAgentContext, runGate, finalizeDeliverable } from "@agent-engine/workflow";
 import type { ClientBrand, ClientProfile, Competitor } from "@agent-engine/tools";
 import type { IntelReportOutput } from "@agent-engine/tool-karos-intel";
 import { IntelReportDraftAgent } from "../agent/intel-report-draft-agent.js";
@@ -21,34 +21,6 @@ export interface CreateIntelReportAgentWorkflowOptions {
   autoApprove?: boolean;
 }
 
-function toAgentContext(wf: WorkflowContext): AgentContext {
-  return {
-    runId: wf.runId,
-    clientSlug: wf.clientSlug,
-    productId: wf.productId,
-    runKind: wf.runKind,
-    ...(wf.slotId !== undefined ? { slotId: wf.slotId } : {}),
-    metadata: {},
-  };
-}
-
-/** Unwraps a gate tool's outcome into its `GateVerdict`, treating a broken gate call as a tooling failure — never a content verdict (RFC-01 §5.6/§6). Copied verbatim from the LinkedIn agent's workflow. */
-async function runGate(
-  tools: AgentToolRegistry,
-  gateName: string,
-  args: unknown,
-  ctx: AgentContext,
-): Promise<GateVerdict> {
-  const tool = tools[gateName];
-  if (!tool) {
-    throw new WorkflowToolingFailure(`no gate registered as "${gateName}"`);
-  }
-  const outcome = await tool.execute(args, { ctx });
-  if (outcome.status !== "success") {
-    throw new WorkflowToolingFailure(`gate "${gateName}" call failed: ${outcome.status}`);
-  }
-  return outcome.result as GateVerdict;
-}
 
 /**
  * The 7 analysis prose fields `IntelReportOutput` carries — concatenated
@@ -195,20 +167,12 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
     });
 
     // ── 06-07: deliverable & manifest persistence — normal portal visibility for this run ──
-    const deliverableId = await wf.step.code("06-persist-deliverable", async (): Promise<string> => {
-      const outcome = await tools["ledger.writeDeliverable"]!.execute(
-        { runId: wf.runId, kind: "intel-report", deliverable: { ...report, ...writeOutcome } },
-        { ctx },
-      );
-      if (outcome.status !== "success") throw new WorkflowToolingFailure(`ledger.writeDeliverable failed: ${outcome.status}`);
-      return (outcome.result as { id: string }).id;
-    });
-
-    await wf.step.code("07-persist-manifest", async () => {
-      await tools["ledger.dashboardSnapshot"]!.execute(
-        { runId: wf.runId, snapshot: { ...writeOutcome, deliverableId } },
-        { ctx },
-      );
+    const deliverableId = await finalizeDeliverable(wf, tools, ctx, {
+      persistDeliverableStepId: "06-persist-deliverable",
+      persistManifestStepId: "07-persist-manifest",
+      kind: "intel-report",
+      deliverable: { ...report, ...writeOutcome },
+      snapshot: (deliverableId) => ({ ...writeOutcome, deliverableId }),
     });
 
     // ── 08: record the review decision into the feedback log (learning loop, RFC-01 §8.2) ──
