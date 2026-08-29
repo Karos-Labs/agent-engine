@@ -125,6 +125,10 @@ describe("BaseAgent resolves skillRef through runtime.promptStore", () => {
     };
   }
 
+  // SCRUM-298: `system` now always carries the response contract too (see
+  // `buildSystemPromptWithContract`), appended after the loaded skill body —
+  // so these assert the skill content is present at the front of `system`,
+  // not that `system` equals it exactly.
   it("passes the resolved prompt content as the system prompt when skillRef and promptStore are both set", async () => {
     const { router, complete } = fakeRouter();
     const promptStore = new InMemoryPromptStore();
@@ -134,12 +138,8 @@ describe("BaseAgent resolves skillRef through runtime.promptStore", () => {
     const agent = new MockAgent(runtime, makeConfig({ skillRef: "linkedin-voice@3" }));
     await agent.run(ctx, {});
 
-    expect(complete).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.anything(),
-      expect.anything(),
-      expect.objectContaining({ system: "Always confident, never jargon." }),
-    );
+    const [, , , opts] = complete.mock.calls[0]!;
+    expect((opts as { system: string }).system).toMatch(/^Always confident, never jargon\.\n\n/);
   });
 
   it("resolves to the store's latest version when skillRef names only an id", async () => {
@@ -152,10 +152,11 @@ describe("BaseAgent resolves skillRef through runtime.promptStore", () => {
     const agent = new MockAgent(runtime, makeConfig({ skillRef: "linkedin-voice" }));
     await agent.run(ctx, {});
 
-    expect(complete).toHaveBeenCalledWith(expect.any(String), expect.anything(), expect.anything(), expect.objectContaining({ system: "v2 latest" }));
+    const [, , , opts] = complete.mock.calls[0]!;
+    expect((opts as { system: string }).system).toMatch(/^v2 latest\n\n/);
   });
 
-  it("produces no system prompt when skillRef is set but no promptStore is configured", async () => {
+  it("system carries only the response contract (no skill body) when skillRef is set but no promptStore is configured", async () => {
     const { router, complete } = fakeRouter();
     const runtime: BaseAgentRuntime = { router, tools: {} };
     const agent = new MockAgent(runtime, makeConfig({ skillRef: "linkedin-voice" }));
@@ -163,10 +164,11 @@ describe("BaseAgent resolves skillRef through runtime.promptStore", () => {
 
     expect(result.status).toBe("completed");
     const [, , , opts] = complete.mock.calls[0]!;
-    expect(opts).toBeUndefined();
+    expect((opts as { system: string }).system).toContain("responseContract");
+    expect((opts as { system: string }).system.startsWith("{")).toBe(true);
   });
 
-  it("produces no system prompt when no skillRef is set, even with a promptStore configured", async () => {
+  it("system carries only the response contract (no skill body) when no skillRef is set, even with a promptStore configured", async () => {
     const { router, complete } = fakeRouter();
     const promptStore = new InMemoryPromptStore();
     promptStore.setPrompt("linkedin-voice", "1", "should never be used");
@@ -176,7 +178,8 @@ describe("BaseAgent resolves skillRef through runtime.promptStore", () => {
     await agent.run(ctx, {});
 
     const [, , , opts] = complete.mock.calls[0]!;
-    expect(opts).toBeUndefined();
+    expect((opts as { system: string }).system).not.toContain("should never be used");
+    expect((opts as { system: string }).system).toContain("responseContract");
   });
 
   it("resolves to tooling_error when skillRef names a prompt the store doesn't have", async () => {

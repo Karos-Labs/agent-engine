@@ -448,8 +448,11 @@ describe("BaseAgent — tool advertisement", () => {
 
     await new MockAgent(runtime, baseConfig({ allowedTools: ["gate.numbersSourced"] })).run(ctx, {});
 
-    const prompt = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]![0] as string;
-    const advertised = JSON.parse(prompt).allowedTools as Array<{
+    // SCRUM-298: the tool schemas live in the cached `system` block now, not
+    // in the per-turn `prompt` — see `buildSystemPromptWithContract`.
+    const call = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[0] as unknown[];
+    const opts = call[3] as { system?: string };
+    const advertised = JSON.parse(opts.system ?? "{}").allowedTools as Array<{
       name: string;
       description?: string;
       inputSchema?: { properties?: Record<string, { description?: string }> };
@@ -463,5 +466,43 @@ describe("BaseAgent — tool advertisement", () => {
     expect(advertised[0]?.description).toBe("Fails when a draft cites a number with no matching source.");
     expect(advertised[0]?.inputSchema?.properties?.["text"]?.description).toBe("The drafted text to check for unsourced numeric claims.");
     expect(advertised[0]?.inputSchema?.properties?.["sources"]?.description).toBe("The source strings a cited number must appear in.");
+  });
+});
+
+describe("BaseAgent — old observation elision (SCRUM-298)", () => {
+  it("keeps the most recent tool turns' full args/outcome but elides older ones, capping per-turn prompt growth", async () => {
+    const research = fakeTool("research.pull", async () => ({ status: "success", result: { hits: 1 } }));
+    // 10 distinct tool_call turns, each carrying a unique, easy-to-grep
+    // marker in both its args and its observation, followed by a final turn.
+    // Before SCRUM-298, every one of these markers would still be present,
+    // verbatim, in the LAST turn's prompt — the full transcript was
+    // re-serialized whole on every turn. After it, only the markers from the
+    // most recent turns survive; earlier ones are elided to a one-line stub.
+    const totalToolTurns = 10;
+    const markerFor = (i: number) => `UNIQUE_OBSERVATION_MARKER_TURN_${i}`;
+    const turns = [
+      ...Array.from({ length: totalToolTurns }, (_, i) => toolCallTurn("research.pull", { query: markerFor(i) })),
+      finalTurn({ body: "done" }),
+    ];
+    const router = fakeRouter(turns);
+    const runtime: BaseAgentRuntime = { router, tools: { "research.pull": research } };
+
+    await new MockAgent(runtime, baseConfig({ allowedTools: ["research.pull"], maxSteps: totalToolTurns + 1 })).run(ctx, { topic: "x" });
+
+    // The prompt for the FINAL turn (call index `totalToolTurns`, 0-based) —
+    // the one that would have carried the entire 10-turn history in full
+    // under the old, unelided behaviour.
+    const calls = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    const lastPrompt = calls[totalToolTurns]![0] as string;
+
+    // The oldest turns' markers must be gone from the prompt entirely...
+    expect(lastPrompt).not.toContain(markerFor(0));
+    expect(lastPrompt).not.toContain(markerFor(1));
+    // ...while the most recent ones are still there in full.
+    expect(lastPrompt).toContain(markerFor(totalToolTurns - 1));
+    expect(lastPrompt).toContain(markerFor(totalToolTurns - 2));
+    // And the elided entries are marked as such, not silently dropped —
+    // the model still sees that a tool ran, just not its full payload.
+    expect(lastPrompt).toContain("elided");
   });
 });
