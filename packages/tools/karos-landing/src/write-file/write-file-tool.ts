@@ -9,8 +9,9 @@ const TOOL_VERSION = "1.0.0";
 
 export const WriteSiteFileInputSchema = z.object({
   /** Relative to `OUTPUT_PATH/site` (e.g. `src/app/globals.css`, `src/content/forge.ts`). Never absolute, never containing `..` — enforced by the sandbox, not by convention. */
-  relativePath: z.string().min(1),
-  content: z.string(),
+  relativePath: z.string().min(1).describe("Path, relative to OUTPUT_PATH/site (e.g. \"src/app/globals.css\", \"src/content/forge.ts\"), of the file to write. Never absolute, never containing \"..\" — enforced by the sandbox, not by convention."),
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from execute()'s usage.
+  content: z.string().describe("The file's full contents to write, as UTF-8 text."),
 });
 export type WriteSiteFileInput = z.infer<typeof WriteSiteFileInputSchema>;
 
@@ -64,6 +65,8 @@ function isProtectedConfigFile(relativePath: string): boolean {
 export function createWriteSiteFile(config: LandingEngineConfig) {
   return defineTool<WriteSiteFileInput, WriteSiteFileResult>({
     name: "landing.writeSiteFile",
+    description:
+      "The scoped file-write tool the MAKE phase uses to re-skin tokens/fonts, write the content file, and compose bespoke/carry-forward components. Bounded structurally to one client's OUTPUT_PATH/site; refuses to touch build/package configuration files (next.config.*, package(-lock).json, tsconfig*.json, .npmrc, .env*), since those execute as real code at build time. Requires the site to already exist — call landing.copyTemplate first.",
     version: TOOL_VERSION,
     inputSchema: WriteSiteFileInputSchema,
     async execute({ relativePath, content }, { ctx }) {

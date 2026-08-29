@@ -23,6 +23,7 @@ export interface VoiceRules {
 export function createGetVoiceRules(store: WorkspaceStoreLike) {
   return defineTool<GetVoiceRulesInput, VoiceRules>({
     name: "client.getVoiceRules",
+    description: "Read-only lookup of the tenant's editorial voice/style rules. Tenant comes from context only — this tool takes no arguments.",
     version: TOOL_VERSION,
     inputSchema: GetVoiceRulesInputSchema,
     async execute(_args, { ctx }) {

@@ -13,7 +13,12 @@ const NEWSLETTER_BODY_LIMIT = 10000;
 /** Roughly what's visible in an inbox reading pane before scrolling. */
 const NEWSLETTER_FOLD_CHARACTERS = 240;
 
-export const RenderPreviewInputSchema = z.object({ subjectLine: z.string(), previewText: z.string(), text: z.string() });
+export const RenderPreviewInputSchema = z.object({
+  // No existing TSDoc on these fields to transcribe (SCRUM-293 flag) — synthesized from the tool's own doc comment and execute()'s usage.
+  subjectLine: z.string().describe("The edition's email subject line. Checked against a 70-character ceiling (roughly where most inbox clients truncate it)."),
+  previewText: z.string().describe("The edition's preview text/preheader. Checked against a 140-character ceiling (roughly where most inbox clients truncate it)."),
+  text: z.string().describe("The composed edition body. Checked against a 10,000-character ceiling."),
+});
 export type RenderPreviewInput = z.infer<typeof RenderPreviewInputSchema>;
 
 export interface RenderPreviewResult {
@@ -45,6 +50,8 @@ export interface RenderPreviewResult {
  */
 export const renderPreview: AgentTool<RenderPreviewInput, RenderPreviewResult> = defineTool({
   name: "render.preview",
+  description:
+    "A small, deterministic 'how would this actually look in an inbox' check: subject-line/preview-text/body length ceilings, distinct from the content-judgment gates.",
   version: TOOL_VERSION,
   inputSchema: RenderPreviewInputSchema,
   async execute({ subjectLine, previewText, text }) {

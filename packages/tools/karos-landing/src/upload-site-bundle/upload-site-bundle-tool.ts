@@ -8,8 +8,9 @@ import type { LandingEngineConfig } from "../config.js";
 const TOOL_VERSION = "1.0.0";
 
 export const UploadSiteBundleInputSchema = z.object({
-  clientSlug: z.string().min(1),
-  runId: z.string().min(1),
+  // No existing TSDoc on these fields to transcribe (SCRUM-293 flag) — synthesized from execute()'s usage and the tool's own doc comment.
+  clientSlug: z.string().min(1).describe("Which client's site directory to archive."),
+  runId: z.string().min(1).describe("This run's id — the uploaded objects land under landing/<clientSlug>/<runId>/site/ in GCS."),
 });
 export type UploadSiteBundleInput = z.infer<typeof UploadSiteBundleInputSchema>;
 
@@ -54,6 +55,8 @@ async function listFilesRecursive(root: string, dir: string = root): Promise<str
 export function createUploadSiteBundle(config: LandingEngineConfig, artifactStore: GcsArtifactStoreLike) {
   return defineTool<UploadSiteBundleInput, UploadSiteBundleResult>({
     name: "landing.uploadSiteBundle",
+    description:
+      "Archives a client's current site directory to GCS, one object per file under a shared landing/<clientSlug>/<runId>/site/ prefix, mirroring the on-disk tree rather than a single tar/zip.",
     version: TOOL_VERSION,
     inputSchema: UploadSiteBundleInputSchema,
     async execute({ clientSlug, runId }) {

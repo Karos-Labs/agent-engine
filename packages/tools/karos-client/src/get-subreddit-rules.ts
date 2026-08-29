@@ -5,7 +5,10 @@ import { defineTool, success } from "@agent-engine/tool-common";
 const TOOL_VERSION = "1.0.0";
 const SEGMENTS = ["client", "subreddit-rules"] as const;
 
-export const GetSubredditRulesInputSchema = z.object({ subreddit: z.string().min(1) });
+export const GetSubredditRulesInputSchema = z.object({
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from the tool's own doc comment.
+  subreddit: z.string().min(1).describe("The subreddit's name (without the r/ prefix) to look up configured posting rules for, e.g. \"personalfinance\"."),
+});
 export type GetSubredditRulesInput = z.infer<typeof GetSubredditRulesInputSchema>;
 
 /** One subreddit's configured posting rules — an optional enrichment a client may set up per target subreddit. */
@@ -78,6 +81,8 @@ export interface SubredditRulesLookup {
 export function createGetSubredditRules(store: WorkspaceStoreLike) {
   return defineTool<GetSubredditRulesInput, SubredditRulesLookup>({
     name: "client.getSubredditRules",
+    description:
+      "Read-only lookup of one subreddit's configured posting rules (promo/disclosure/AI-content/karma-and-age-floor posture) for the current tenant. An unconfigured subreddit gets configStatus: \"unconfigured\" and fully permissive defaults, never a blocked outcome.",
     version: TOOL_VERSION,
     inputSchema: GetSubredditRulesInputSchema,
     async execute({ subreddit }, { ctx }) {

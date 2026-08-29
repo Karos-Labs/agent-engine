@@ -6,8 +6,9 @@ const TOOL_VERSION = "1.0.0";
 const SCRIPT_NAME = "build_short.py";
 
 export const RenderInputSchema = z.object({
-  profilePath: z.string().min(1),
-  jobPath: z.string().min(1),
+  // No existing TSDoc on these fields to transcribe (SCRUM-293 flag) — synthesized from execute()'s usage.
+  profilePath: z.string().min(1).describe("Path to the client's brand-profile.json."),
+  jobPath: z.string().min(1).describe("Path to the job's edit-decision file passed to build_short.py's --job argument."),
 });
 export type RenderInput = z.infer<typeof RenderInputSchema>;
 
@@ -53,6 +54,8 @@ export function createRender(options: KarosVideoToolOptions = {}) {
 
   return defineTool<RenderInput, RenderResult>({
     name: "video.render",
+    description:
+      "The actual ffmpeg/PIL encode — no model call, and never a content gate itself: a render failure is a tooling problem, not a judgment about the video, so a non-zero exit always maps to tooling_error, never content_fail.",
     version: TOOL_VERSION,
     inputSchema: RenderInputSchema,
     async execute({ profilePath, jobPath }) {

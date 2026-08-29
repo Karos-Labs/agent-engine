@@ -21,13 +21,12 @@ const TOOL_VERSION = "1.0.0";
  */
 
 export const GenerateVideoInputSchema = z.object({
-  repoRoot: z.string().min(1),
-  runId: z.string().min(1),
-  /** What the plate should show — a scene, not a message. */
-  brief: z.string().min(1).max(1200),
-  /** Veo generates short clips; the pipeline loops/cuts as needed. */
-  durationSeconds: z.number().int().min(4).max(8).default(8),
-  aspectRatio: z.enum(["9:16", "16:9"]).default("9:16"),
+  // No existing TSDoc on these two fields to transcribe (SCRUM-293 flag) — synthesized from find-images.ts's identical fields and this file's own doc comment.
+  repoRoot: z.string().min(1).describe("Bounds root. The written clip path is relative to this and provably inside it."),
+  runId: z.string().min(1).describe("Namespaces the cache directory, exactly as media.findImages does."),
+  brief: z.string().min(1).max(1200).describe("What the plate should show — a scene, not a message."),
+  durationSeconds: z.number().int().min(4).max(8).default(8).describe("Veo generates short clips; the pipeline loops/cuts as needed."),
+  aspectRatio: z.enum(["9:16", "16:9"]).default("9:16").describe("The generated clip's aspect ratio."),
 });
 export type GenerateVideoInput = z.infer<typeof GenerateVideoInputSchema>;
 
@@ -96,6 +95,8 @@ export function createGenerateVideo(options: GenerateVideoOptions = {}) {
 
   return defineTool<GenerateVideoInput, GenerateVideoResult>({
     name: "video.generateClip",
+    description:
+      "Tier 3 of the clip pipeline's sourcing cascade: generates a short B-roll plate via Veo for when a run has no user-attached episode (Tier 1) and no harvestable footage (Tier 2). Reports not_available when unconfigured; retries the same transient quota/availability shape image.generate does.",
     version: TOOL_VERSION,
     inputSchema: GenerateVideoInputSchema,
     async execute(input) {

@@ -12,30 +12,24 @@ export interface ObjectReader {
 }
 
 export const IngestAssetsInputSchema = z.object({
-  /** Bounds root. Every returned path is relative to this and provably inside it. */
-  repoRoot: z.string().min(1),
-  /** Namespaces the cache directory, exactly as the other media tools do. */
-  runId: z.string().min(1),
-  /**
-   * What kind of media is being ingested.
-   *
-   * Not cosmetic: the two kinds need different content-type tables and wildly
-   * different size ceilings — a slide photograph over 12 MB is a mistake, and a
-   * podcast episode under 12 MB barely exists. Defaulting to `"image"` keeps
-   * every existing caller unchanged.
-   */
-  kind: z.enum(["image", "video"]).default("image"),
-  /** The assets a person attached to this run, in upload order. */
+  repoRoot: z.string().min(1).describe("Bounds root. Every returned path is relative to this and provably inside it."),
+  runId: z.string().min(1).describe("Namespaces the cache directory, exactly as the other media tools do."),
+  kind: z
+    .enum(["image", "video"])
+    .default("image")
+    .describe(
+      "What kind of media is being ingested. Not cosmetic: the two kinds need different content-type tables and wildly different size ceilings.",
+    ),
   assets: z
     .array(
       z.object({
-        uri: z.string().min(1),
-        label: z.string().min(1).optional(),
-        /** Slide this asset is destined for. Assigned by the caller, by upload order. */
-        slot: z.number().int().positive(),
+        uri: z.string().min(1).describe("The asset's source URI — a gs:// object or an https:// URL."),
+        label: z.string().min(1).optional().describe("Free-text label for this asset, if the uploader gave one."),
+        slot: z.number().int().positive().describe("Slide this asset is destined for. Assigned by the caller, by upload order."),
       }),
     )
-    .min(1),
+    .min(1)
+    .describe("The assets a person attached to this run, in upload order."),
 });
 export type IngestAssetsInput = z.input<typeof IngestAssetsInputSchema>;
 
@@ -164,6 +158,8 @@ export function createIngestAssets(options: { reader?: ObjectReader | undefined;
 
   return defineTool<IngestAssetsInput, IngestAssetsResult>({
     name: "media.ingestAssets",
+    description:
+      "Tier 0: pulls media a person attached directly to this run into the shared .media-cache directory (https:// fetched directly, gs:// via the injected reader), so it clears the same rights-gate/path guarantees every other tier's candidates do.",
     version: TOOL_VERSION,
     inputSchema: IngestAssetsInputSchema,
     async execute(rawInput) {

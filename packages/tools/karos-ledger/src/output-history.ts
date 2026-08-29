@@ -54,10 +54,10 @@ export async function readOutputHistory(
 }
 
 export const RecordOutputExcerptInputSchema = z.object({
-  /** Which agent produced it — history is compared within an agent, never across. */
-  agentId: z.string().min(1),
-  runId: z.string().min(1),
-  excerpt: z.string(),
+  agentId: z.string().min(1).describe("Which agent produced it — history is compared within an agent, never across."),
+  // No existing TSDoc on these two fields to transcribe (SCRUM-293 flag) — synthesized from execute()'s usage.
+  runId: z.string().min(1).describe("The run that produced this excerpt. A resumed/retried run re-records over its own entry rather than adding a second one."),
+  excerpt: z.string().describe("The deliverable's text to compare future runs against. Trimmed and capped at OUTPUT_EXCERPT_MAX_CHARS; an empty excerpt is not recorded at all."),
 });
 export type RecordOutputExcerptInput = z.infer<typeof RecordOutputExcerptInputSchema>;
 
@@ -82,6 +82,8 @@ export interface RecordOutputExcerptResult {
 export function createRecordOutputExcerpt(store: WorkspaceStoreLike) {
   return defineTool<RecordOutputExcerptInput, RecordOutputExcerptResult>({
     name: "ledger.recordOutputExcerpt",
+    description:
+      "Appends this run's deliverable excerpt to the agent's output-history log, so the next run has something to compare against for anti-repetition checks. Idempotent on runId; an empty excerpt is not recorded at all.",
     version: TOOL_VERSION,
     inputSchema: RecordOutputExcerptInputSchema,
     async execute({ agentId, runId, excerpt }, { ctx }) {
@@ -107,9 +109,9 @@ export function createRecordOutputExcerpt(store: WorkspaceStoreLike) {
 }
 
 export const ListOutputExcerptsInputSchema = z.object({
-  agentId: z.string().min(1),
-  /** Excluded from the result — a run must not be compared against itself on resume. */
-  excludeRunId: z.string().min(1).optional(),
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from execute()'s usage.
+  agentId: z.string().min(1).describe("Which agent's excerpt log to read."),
+  excludeRunId: z.string().min(1).optional().describe("Excluded from the result — a run must not be compared against itself on resume."),
 });
 export type ListOutputExcerptsInput = z.infer<typeof ListOutputExcerptsInputSchema>;
 
@@ -121,6 +123,7 @@ export interface ListOutputExcerptsResult {
 export function createListOutputExcerpts(store: WorkspaceStoreLike) {
   return defineTool<ListOutputExcerptsInput, ListOutputExcerptsResult>({
     name: "ledger.listOutputExcerpts",
+    description: "Read-only: every excerpt still inside the recency window for this tenant and agent, for anti-repetition comparison.",
     version: TOOL_VERSION,
     inputSchema: ListOutputExcerptsInputSchema,
     async execute({ agentId, excludeRunId }, { ctx }) {

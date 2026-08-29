@@ -44,7 +44,7 @@ const finalTurn = (output: unknown) => () => ({
 });
 
 function fakeTool(name: string, execute: (args: unknown) => Promise<AgentToolOutcome<unknown>>): AgentTool {
-  return { name, version: "1.0.0", inputSchema: z.unknown(), execute: vi.fn(execute) };
+  return { name, description: `Test double for ${name}.`, version: "1.0.0", inputSchema: z.unknown(), execute: vi.fn(execute) };
 }
 
 /** The gate this ticket exists to unblock: fails when `args.text` cites a number with no matching source. */

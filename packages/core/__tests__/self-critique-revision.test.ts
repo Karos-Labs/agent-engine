@@ -53,7 +53,7 @@ const toolCallTurn = (tool: string, args: unknown = {}) => () => ({
 });
 
 function fakeTool(name: string, execute: (args: unknown) => Promise<AgentToolOutcome<unknown>>): AgentTool {
-  return { name, version: "1.0.0", inputSchema: z.unknown(), execute: vi.fn(execute) };
+  return { name, description: `Test double for ${name}.`, version: "1.0.0", inputSchema: z.unknown(), execute: vi.fn(execute) };
 }
 
 /** Fails its first verdict, passes every one after — the shape that drives exactly one revision. */

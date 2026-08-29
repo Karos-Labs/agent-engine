@@ -5,11 +5,15 @@ import { defineTool, success, toolingError, type GcsArtifactStoreLike } from "@a
 const TOOL_VERSION = "1.0.0";
 
 export const UploadDeliverableInputSchema = z.object({
-  /** A real local path to an already-rendered, already-gated file (e.g. `RenderResult.outputPath`) — every ffprobe/ffmpeg-subprocess-bound gate in this package needs the MP4 on disk, so this tool only ever runs after all of them have already passed. */
-  localPath: z.string().min(1),
-  /** GCS object key to upload under, e.g. `branded-shorts/<clientSlug>/<runId>/final.mp4`. */
-  objectPath: z.string().min(1),
-  contentType: z.string().min(1).optional(),
+  localPath: z
+    .string()
+    .min(1)
+    .describe(
+      "A real local path to an already-rendered, already-gated file (e.g. RenderResult.outputPath) — every ffprobe/ffmpeg-subprocess-bound gate in this package needs the MP4 on disk, so this tool only ever runs after all of them have already passed.",
+    ),
+  objectPath: z.string().min(1).describe("GCS object key to upload under, e.g. branded-shorts/<clientSlug>/<runId>/final.mp4."),
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from execute()'s usage.
+  contentType: z.string().min(1).optional().describe("Optional MIME type to set on the uploaded object, e.g. video/mp4."),
 });
 export type UploadDeliverableInput = z.infer<typeof UploadDeliverableInputSchema>;
 
@@ -31,6 +35,8 @@ export interface UploadDeliverableResult {
 export function createUploadDeliverable(mediaStore: GcsArtifactStoreLike) {
   return defineTool<UploadDeliverableInput, UploadDeliverableResult>({
     name: "video.uploadDeliverable",
+    description:
+      "Uploads a file that has already finished local rendering and every local-file-bound gate to GCS, now that nothing downstream still needs it as a real path on disk. Only constructed when a mediaStore was actually supplied.",
     version: TOOL_VERSION,
     inputSchema: UploadDeliverableInputSchema,
     async execute({ localPath, objectPath, contentType }) {

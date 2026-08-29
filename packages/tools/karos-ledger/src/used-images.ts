@@ -23,7 +23,8 @@ const SEGMENTS = ["ledger", "used-images"] as const;
  * before vetting the next carousel's candidates.
  */
 export const RecordUsedImagesInputSchema = z.object({
-  imagePaths: z.array(z.string().min(1)),
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from this file's own doc comment.
+  imagePaths: z.array(z.string().min(1)).describe("Image paths that have just shipped in a post, to record as used and never reused across future posts for this client."),
 });
 export type RecordUsedImagesInput = z.infer<typeof RecordUsedImagesInputSchema>;
 
@@ -36,6 +37,7 @@ export interface RecordUsedImagesResult {
 export function createRecordUsedImages(store: WorkspaceStoreLike) {
   return defineTool<RecordUsedImagesInput, RecordUsedImagesResult>({
     name: "ledger.recordUsedImages",
+    description: "Records image paths as used for this client, for cross-post image-reuse prevention. Idempotent per path: recording the same path again is a no-op.",
     version: TOOL_VERSION,
     inputSchema: RecordUsedImagesInputSchema,
     async execute({ imagePaths }, { ctx }) {
@@ -70,6 +72,7 @@ export interface ListUsedImagesResult {
 export function createListUsedImages(store: WorkspaceStoreLike) {
   return defineTool<ListUsedImagesInput, ListUsedImagesResult>({
     name: "ledger.listUsedImages",
+    description: "Read-only lookup of every image path ever recorded as used for this tenant, across every prior post.",
     version: TOOL_VERSION,
     inputSchema: ListUsedImagesInputSchema,
     async execute(_input, { ctx }) {

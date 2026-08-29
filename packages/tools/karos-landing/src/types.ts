@@ -82,43 +82,55 @@ export const BrandTypographySchema = z
   })
   .passthrough();
 
+// No existing per-field TSDoc to transcribe on this schema (SCRUM-293 flag) — descriptions below
+// synthesized from FEEDBACK.md §4/§5's idempotency rule (documented on landing.updateBrandFeedback)
+// and each field's evident role in that append-only rebuild audit trail.
 export const BrandFeedbackRoundSchema = z
   .object({
-    round: z.number().int().positive(),
-    reviewedBuild: z.string().min(1),
-    producedBuild: z.string().min(1).optional(),
-    submittedAt: z.string().min(1),
-    appliedAt: z.string().min(1).optional(),
-    source: z.string().min(1),
-    summary: z.string().optional(),
-    applied: z.array(z.record(z.string(), z.unknown())).default([]),
-    kept: z.array(z.record(z.string(), z.unknown())).default([]),
-    outOfScope: z.array(z.record(z.string(), z.unknown())).default([]),
-    roundFile: z.string().optional(),
+    round: z.number().int().positive().describe("This feedback round's sequence number. Must equal the client's (brand.feedback?.lastRound ?? 0) + 1, or the write is rejected."),
+    reviewedBuild: z.string().min(1).describe("Identifier of the build this round of feedback reviewed."),
+    producedBuild: z.string().min(1).optional().describe("Identifier of the rebuild produced in response to this feedback round, once one exists."),
+    submittedAt: z.string().min(1).describe("When this feedback was submitted, as an ISO date string."),
+    appliedAt: z.string().min(1).optional().describe("When this feedback's changes were applied to the build, as an ISO date string, once they have been."),
+    source: z.string().min(1).describe("Who or what submitted this feedback (a human reviewer, a coding agent, etc)."),
+    summary: z.string().optional().describe("A short prose summary of this feedback round."),
+    applied: z.array(z.record(z.string(), z.unknown())).default([]).describe("Feedback items from this round that were applied to the build."),
+    kept: z.array(z.record(z.string(), z.unknown())).default([]).describe("Feedback items from this round that were considered and deliberately left as-is."),
+    outOfScope: z.array(z.record(z.string(), z.unknown())).default([]).describe("Feedback items from this round ruled out of scope for this build."),
+    roundFile: z.string().optional().describe("Path to a fuller record of this round, if one was written outside brand.json itself."),
   })
   .passthrough();
 
+// Top-level fields below carry .describe() sourced from this schema's own header comment
+// ("the brand.json contract, ENGINE-SPEC.md §4") and each field's role in the tools that read it
+// (landing.gate, landing.readBundle, landing.updateBrandFeedback). Most fields had no per-field
+// TSDoc of their own to transcribe (SCRUM-293 flag) — descriptions below are synthesized from
+// the field's evident purpose in this contract, not new invented copy.
 export const BrandJsonSchema = z
   .object({
-    client: z.string().min(1),
-    company: z.string().min(1).optional(),
-    identity: z.record(z.string(), z.unknown()).optional(),
-    tokens: BrandTokensSchema,
-    fonts: BrandFontsSchema,
-    brandLaw: z.array(z.string()).default([]),
-    typography: BrandTypographySchema.optional(),
-    voice: z.record(z.string(), z.unknown()).optional(),
-    assets: z.record(z.string(), z.unknown()).optional(),
-    oldSite: z.record(z.string(), z.unknown()).optional(),
-    carryForward: z.array(CarryForwardItemSchema).default([]),
-    references: z.array(z.string()).default([]),
-    content: z.record(z.string(), z.unknown()).optional(),
+    client: z.string().min(1).describe("The client's slug/identifier, as recorded in this brand.json."),
+    company: z.string().min(1).optional().describe("The client's company/display name."),
+    identity: z.record(z.string(), z.unknown()).optional().describe("Free-form brand identity fields (loose — not a fixed schema)."),
+    tokens: BrandTokensSchema.describe("Design tokens: color palette, contrast ratio, ground mode, ease, and the semantic color-role mapping landing.gate checks against globals.css."),
+    fonts: BrandFontsSchema.describe("The client's typeface choices: display, body, and optional mono font, plus an optional usage rule."),
+    brandLaw: z.array(z.string()).default([]).describe("The client's non-negotiable brand rules, as a flat list of statements."),
+    typography: BrandTypographySchema.optional().describe("Typographic bans (em dash, en dash, exclamation marks) landing.gate's brand-lint check enforces."),
+    voice: z.record(z.string(), z.unknown()).optional().describe("Free-form brand voice/tone fields (loose — not a fixed schema)."),
+    assets: z.record(z.string(), z.unknown()).optional().describe("Free-form references to the client's brand assets (logos, images, etc — loose, not a fixed schema)."),
+    oldSite: z.record(z.string(), z.unknown()).optional().describe("Free-form captured state from the client's previous site, when one existed."),
+    carryForward: z
+      .array(CarryForwardItemSchema)
+      .default([])
+      .describe("Elements from the old site or brand that MUST appear somewhere in the new build (ENGINE-SPEC §3) — landing.gate fails if one goes missing."),
+    references: z.array(z.string()).default([]).describe("Reference URLs or file paths informing this brand's design/content decisions."),
+    content: z.record(z.string(), z.unknown()).optional().describe("Free-form client-supplied content fields feeding page copy (loose — not a fixed schema)."),
     feedback: z
       .object({
-        lastRound: z.number().int().positive(),
-        rounds: z.array(BrandFeedbackRoundSchema).default([]),
+        lastRound: z.number().int().positive().describe("The most recent feedback round number recorded."),
+        rounds: z.array(BrandFeedbackRoundSchema).default([]).describe("The full history of brand feedback rounds — what was applied, kept, and marked out of scope in each."),
       })
-      .optional(),
+      .optional()
+      .describe("The brand-feedback review history landing.updateBrandFeedback appends to."),
   })
   .passthrough();
 export type BrandJson = z.infer<typeof BrandJsonSchema>;

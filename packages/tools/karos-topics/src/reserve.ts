@@ -15,9 +15,10 @@ export const LANE_FLOOR = 5;
 
 export const ReserveInputSchema = z.object({
   /** Caller-supplied idempotency key (RFC-01 §9.1 rule 2) — replaying it returns the same reservation, never a second one. */
-  reservationKey: z.string().min(1),
-  count: z.number().int().positive(),
-  excludeTopics: z.array(z.string()).default([]),
+  reservationKey: z.string().min(1).describe("Caller-supplied idempotency key — replaying it returns the same reservation, never a second one."),
+  // count/excludeTopics have no existing TSDoc to transcribe (SCRUM-293 flag) — synthesized from execute()'s usage.
+  count: z.number().int().positive().describe("How many topics to reserve off the catalog floor."),
+  excludeTopics: z.array(z.string()).default([]).describe("Topics to exclude from consideration even if available on the floor."),
   /**
    * Optional lane filter + floor guard (carousel-agent-v2's cadence model —
    * SKILL.md step 03: "candidates are unused rows in the lane chosen at step
@@ -31,7 +32,13 @@ export const ReserveInputSchema = z.object({
    * no floor check or proactive top-up ever runs. This field is additive and
    * changes nothing for a caller that doesn't pass it.
    */
-  lane: z.string().min(1).optional(),
+  lane: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Optional lane filter + floor guard (carousel-agent-v2's cadence model). Omitted (the default): every available topic regardless of lane is eligible, and no floor check or proactive top-up ever runs.",
+    ),
 });
 export type ReserveInput = z.infer<typeof ReserveInputSchema>;
 
@@ -66,6 +73,8 @@ export interface ReserveResult {
 export function createReserve(store: WorkspaceStoreLike) {
   return defineTool<ReserveInput, ReserveResult>({
     name: "topics.reserve",
+    description:
+      "Reserves `count` topics off the no-repeat catalog floor. Idempotent on reservationKey. When lane is supplied, also enforces and proactively tops up against the lane's floor of 5 unused rows, refusing (content_fail) a reservation that would breach it.",
     version: TOOL_VERSION,
     inputSchema: ReserveInputSchema,
     async execute({ reservationKey, count, excludeTopics, lane }, { ctx }) {

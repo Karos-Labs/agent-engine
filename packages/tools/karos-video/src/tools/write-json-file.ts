@@ -8,8 +8,9 @@ import { assertNoTraversalOrNul, assertWithinTenantWorkRoot } from "../sandbox.j
 const TOOL_VERSION = "1.0.0";
 
 export const WriteJsonFileInputSchema = z.object({
-  path: z.string().min(1),
-  data: z.unknown(),
+  // No existing TSDoc on these fields to transcribe (SCRUM-293 flag) — synthesized from the tool's own doc comment.
+  path: z.string().min(1).describe("Path to write the JSON file to. Checked for traversal/NUL bytes, and confined to the tenant's work root when one is configured."),
+  data: z.unknown().describe("The data to serialize and write as JSON."),
 });
 export type WriteJsonFileInput = z.infer<typeof WriteJsonFileInputSchema>;
 
@@ -45,6 +46,8 @@ export function createWriteJsonFile(options: KarosVideoToolOptions = {}) {
 
   return defineTool<WriteJsonFileInput, WriteJsonFileResult>({
     name: "video.writeJsonFile",
+    description:
+      "The one real-disk write this package owns: writes JSON to a local path a Python engine script can open by --profile/--job/--transcript. Every path is traversal/NUL-checked, and confined to the tenant's work root when one is configured.",
     version: TOOL_VERSION,
     inputSchema: WriteJsonFileInputSchema,
     async execute({ path, data }, { ctx }) {

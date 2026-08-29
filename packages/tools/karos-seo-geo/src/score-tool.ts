@@ -28,6 +28,8 @@ export interface SeoGeoScoreResult {
 export function createSeoGeoScore() {
   return defineTool<ScoreInput, SeoGeoScoreResult>({
     name: "seoGeo.score",
+    description:
+      "Pure, deterministic SEO/GEO scoring — zero LLM judgment calls. Wraps evaluateScoreFamily for SEO + GEO Readiness and, when capture data is supplied, the Visibility Index. Identical inputs (and an identical inputsDigest) always produce identical integer scores.",
     version: TOOL_VERSION,
     inputSchema: ScoreInputSchema,
     async execute({ seoMeasurements, geoReadinessMeasurements, visibility, hashInputs }) {

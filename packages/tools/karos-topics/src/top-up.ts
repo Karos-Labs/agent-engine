@@ -6,9 +6,14 @@ import { DEFAULT_LANE, normalizeTopic, readCatalog, writeCatalog } from "./catal
 const TOOL_VERSION = "1.0.0";
 
 export const TopUpInputSchema = z.object({
-  topics: z.array(z.string().min(1)),
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from performTopUp's usage.
+  topics: z.array(z.string().min(1)).describe("New topics to add to the catalog floor. Idempotent per topic: adding the same topic again is a no-op."),
   /** Which lane these topics belong to (carousel-agent-v2's cadence model). Omit for a caller with no lane concept — every added row lands in `DEFAULT_LANE`. */
-  lane: z.string().min(1).optional(),
+  lane: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("Which lane these topics belong to (carousel-agent-v2's cadence model). Omit for a caller with no lane concept — every added row lands in DEFAULT_LANE."),
 });
 export type TopUpInput = z.infer<typeof TopUpInputSchema>;
 
@@ -49,6 +54,7 @@ export async function performTopUp(store: WorkspaceStoreLike, clientSlug: string
 export function createTopUp(store: WorkspaceStoreLike) {
   return defineTool<TopUpInput, TopUpResult>({
     name: "topics.topUp",
+    description: "Adds new topics to the no-repeat catalog floor, optionally into a named lane. Idempotent per topic: adding the same topic (by trimmed, lowercased form) again is a no-op.",
     version: TOOL_VERSION,
     inputSchema: TopUpInputSchema,
     async execute({ topics, lane }, { ctx }) {

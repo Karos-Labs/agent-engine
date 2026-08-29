@@ -8,9 +8,13 @@ const TOOL_VERSION = "1.0.0";
 const SCRIPT_NAME = "brand_check.py";
 
 export const BrandGateInputSchema = z.object({
-  profilePath: z.string().min(1),
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from assets-check.ts's identical field.
+  profilePath: z.string().min(1).describe("Absolute or resolvable path to the client's brand-profile.json."),
   /** One or more rendered PNGs (a graphic frame, a cutaway plate, an endcard) — every meaningfully-visible pixel must sit near the profile's palette. */
-  imagePaths: z.array(z.string().min(1)).min(1),
+  imagePaths: z
+    .array(z.string().min(1))
+    .min(1)
+    .describe("One or more rendered PNGs (a graphic frame, a cutaway plate, an endcard) — every meaningfully-visible pixel must sit near the profile's palette."),
 });
 export type BrandGateInput = z.infer<typeof BrandGateInputSchema>;
 
@@ -25,6 +29,8 @@ export function createBrandGate(options: KarosVideoToolOptions = {}) {
 
   return defineTool<BrandGateInput, GateVerdict>({
     name: "video.brandGate",
+    description:
+      "The standalone palette + zero-tolerance-red gate, usable on any rendered image — a cutaway plate, an endcard, a one-off asset — independent of the full per-overlay video.graphicsGate pipeline.",
     version: TOOL_VERSION,
     inputSchema: BrandGateInputSchema,
     async execute({ profilePath, imagePaths }) {

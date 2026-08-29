@@ -59,7 +59,7 @@ function fakeTool(
   execute: (args: unknown, context: { ctx: AgentContext }) => Promise<AgentToolOutcome<unknown>>,
   version = "1.0.0",
 ): AgentTool {
-  return { name, version, inputSchema: z.unknown(), execute: vi.fn(execute) };
+  return { name, description: `Test double for ${name}.`, version, inputSchema: z.unknown(), execute: vi.fn(execute) };
 }
 
 function baseConfig(overrides: Partial<AgentStepConfig<DraftOutput>> = {}): AgentStepConfig<DraftOutput> {
@@ -335,6 +335,7 @@ describe("BaseAgent — recoverable model mistakes", () => {
   const strictTool = (name: string) =>
     ({
       name,
+      description: `Test double for ${name}.`,
       version: "1.0.0",
       inputSchema: z.object({ text: z.string(), sources: z.array(z.string()) }),
       execute: vi.fn(async () => ({ status: "success", result: { verdict: "pass" } }) as AgentToolOutcome<unknown>),
@@ -434,8 +435,12 @@ describe("BaseAgent — tool advertisement", () => {
   it("sends each allowed tool's input schema, not just its name", async () => {
     const gate: AgentTool = {
       name: "gate.numbersSourced",
+      description: "Fails when a draft cites a number with no matching source.",
       version: "1.0.0",
-      inputSchema: z.object({ text: z.string(), sources: z.array(z.string()) }),
+      inputSchema: z.object({
+        text: z.string().describe("The drafted text to check for unsourced numeric claims."),
+        sources: z.array(z.string()).describe("The source strings a cited number must appear in."),
+      }),
       execute: vi.fn(async () => ({ status: "success", result: {} }) as AgentToolOutcome<unknown>),
     };
     const router = fakeRouter([finalTurn({ body: "drafted" })]);
@@ -444,8 +449,19 @@ describe("BaseAgent — tool advertisement", () => {
     await new MockAgent(runtime, baseConfig({ allowedTools: ["gate.numbersSourced"] })).run(ctx, {});
 
     const prompt = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]![0] as string;
-    const advertised = JSON.parse(prompt).allowedTools as Array<{ name: string; inputSchema?: { properties?: Record<string, unknown> } }>;
+    const advertised = JSON.parse(prompt).allowedTools as Array<{
+      name: string;
+      description?: string;
+      inputSchema?: { properties?: Record<string, { description?: string }> };
+    }>;
     expect(advertised[0]?.name).toBe("gate.numbersSourced");
     expect(Object.keys(advertised[0]?.inputSchema?.properties ?? {})).toEqual(["text", "sources"]);
+
+    // SCRUM-293 (AU7): the model reads this prompt payload and nothing else about a
+    // tool — so both the tool-level description and every field's description must
+    // survive from the AgentTool/Zod schema all the way into this JSON payload.
+    expect(advertised[0]?.description).toBe("Fails when a draft cites a number with no matching source.");
+    expect(advertised[0]?.inputSchema?.properties?.["text"]?.description).toBe("The drafted text to check for unsourced numeric claims.");
+    expect(advertised[0]?.inputSchema?.properties?.["sources"]?.description).toBe("The source strings a cited number must appear in.");
   });
 });

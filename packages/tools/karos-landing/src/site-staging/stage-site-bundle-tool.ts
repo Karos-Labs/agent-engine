@@ -14,8 +14,9 @@ import {
 const TOOL_VERSION = "1.0.0";
 
 export const StageSiteBundleInputSchema = z.object({
-  clientSlug: z.string().min(1),
-  runId: z.string().min(1),
+  // No existing TSDoc on these fields to transcribe (SCRUM-293 flag) — synthesized from execute()'s usage and the tool's own doc comment.
+  clientSlug: z.string().min(1).describe("Which client's working site tree to stage."),
+  runId: z.string().min(1).describe("This run's id — the staged tree and its manifest are written under runs/<runId>/staging/ in GCS."),
 });
 export type StageSiteBundleInput = z.infer<typeof StageSiteBundleInputSchema>;
 
@@ -44,6 +45,8 @@ export interface StageSiteBundleResult {
 export function createStageSiteBundle(config: LandingEngineConfig, artifactStore: GcsArtifactStoreLike) {
   return defineTool<StageSiteBundleInput, StageSiteBundleResult>({
     name: "landing.stageSiteBundle",
+    description:
+      "Copies the working site tree into the run's GCS staging area so it survives a human-review gate pause that resumes on another container. Called immediately before the gate; distinct from landing.uploadSiteBundle, which publishes only after approval.",
     version: TOOL_VERSION,
     inputSchema: StageSiteBundleInputSchema,
     async execute({ clientSlug, runId }) {

@@ -5,8 +5,9 @@ import { defineTool, success } from "@agent-engine/tool-common";
 const TOOL_VERSION = "1.0.0";
 
 export const UpsertBriefInputSchema = z.object({
-  briefId: z.string().min(1),
-  content: z.unknown(),
+  // No existing TSDoc on these fields to transcribe (SCRUM-293 flag) — synthesized from execute()'s usage and the tool's own doc comment.
+  briefId: z.string().min(1).describe("The brief's id — the same id always overwrites, never duplicates."),
+  content: z.unknown().describe("The brief's content, as arbitrary JSON."),
 });
 export type UpsertBriefInput = z.infer<typeof UpsertBriefInputSchema>;
 
@@ -14,6 +15,7 @@ export type UpsertBriefInput = z.infer<typeof UpsertBriefInputSchema>;
 export function createUpsertBrief(store: WorkspaceStoreLike) {
   return defineTool<UpsertBriefInput, IdempotentWriteResult>({
     name: "ledger.upsertBrief",
+    description: "Idempotent on briefId — an upsert by definition: the same id always overwrites, never duplicates.",
     version: TOOL_VERSION,
     inputSchema: UpsertBriefInputSchema,
     async execute({ briefId, content }, { ctx }) {

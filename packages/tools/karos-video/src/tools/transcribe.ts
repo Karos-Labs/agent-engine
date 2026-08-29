@@ -24,9 +24,9 @@ const TRANSCRIBE_TIMEOUT_MS = 180_000;
 export type TranscribeFetchImpl = typeof fetch;
 
 export const TranscribeInputSchema = z.object({
-  videoPath: z.string().min(1),
-  /** Overrides `env.ELEVENLABS_API_KEY` when set. */
-  apiKey: z.string().min(1).optional(),
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from execute()'s usage.
+  videoPath: z.string().min(1).describe("Path to the source video/audio file to send to ElevenLabs Scribe for word-level transcription."),
+  apiKey: z.string().min(1).optional().describe("Overrides env.ELEVENLABS_API_KEY when set."),
 });
 export type TranscribeInput = z.infer<typeof TranscribeInputSchema>;
 
@@ -88,6 +88,8 @@ export function createTranscribe(options: CreateTranscribeOptions = {}) {
 
   return defineTool<TranscribeInput, VideoTranscript>({
     name: "video.transcribe",
+    description:
+      "Word-level transcription via ElevenLabs Scribe (RFC-06 §2 stage 1). Returns not_available when no API key is configured (an operator problem), tooling_error when the vendor call itself fails (a retry problem) — the two are never conflated.",
     version: TOOL_VERSION,
     inputSchema: TranscribeInputSchema,
     async execute({ videoPath, apiKey }) {

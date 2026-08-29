@@ -7,7 +7,8 @@ import { assertReadPathWithinRoot, siteRootForClient } from "../sandbox/site-san
 const TOOL_VERSION = "1.0.0";
 
 export const ReadSiteFileInputSchema = z.object({
-  relativePath: z.string().min(1),
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from the tool's own doc comment.
+  relativePath: z.string().min(1).describe("Path, relative to this client's site root, of the file to read (e.g. \"brand.json\" or \"src/content/home.ts\")."),
 });
 export type ReadSiteFileInput = z.infer<typeof ReadSiteFileInputSchema>;
 
@@ -25,6 +26,8 @@ export interface ReadSiteFileResult {
 export function createReadSiteFile(config: LandingEngineConfig) {
   return defineTool<ReadSiteFileInput, ReadSiteFileResult>({
     name: "landing.readSiteFile",
+    description:
+      "Reads a file back out of this client's own site directory — the read-side counterpart MODE=rebuild needs to load durable build state (brand.json, src/content/<slug>.ts, page.tsx) before applying a feedback delta.",
     version: TOOL_VERSION,
     inputSchema: ReadSiteFileInputSchema,
     async execute({ relativePath }, { ctx }) {

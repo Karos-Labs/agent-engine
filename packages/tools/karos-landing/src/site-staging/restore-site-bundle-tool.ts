@@ -9,8 +9,9 @@ import { type StagingManifest, directoryHasFiles, manifestObjectPath, stagedObje
 const TOOL_VERSION = "1.0.0";
 
 export const RestoreSiteBundleInputSchema = z.object({
-  clientSlug: z.string().min(1),
-  runId: z.string().min(1),
+  // No existing TSDoc on these fields to transcribe (SCRUM-293 flag) — synthesized from execute()'s usage and the tool's own doc comment.
+  clientSlug: z.string().min(1).describe("Which client's site tree to restore onto local disk."),
+  runId: z.string().min(1).describe("The run whose staged bundle (uploaded by landing.stageSiteBundle before the gate) to restore from GCS."),
 });
 export type RestoreSiteBundleInput = z.infer<typeof RestoreSiteBundleInputSchema>;
 
@@ -47,6 +48,8 @@ export interface RestoreSiteBundleResult {
 export function createRestoreSiteBundle(config: LandingEngineConfig, artifactStore: GcsArtifactStoreLike) {
   return defineTool<RestoreSiteBundleInput, RestoreSiteBundleResult>({
     name: "landing.restoreSiteBundle",
+    description:
+      "Puts the staged site tree back on local disk after a human-review gate, so the steps that follow can work the way they always have. A no-op (source: \"local\") when the tree is already on this container; otherwise pulls it back down from GCS (source: \"gcs\").",
     version: TOOL_VERSION,
     inputSchema: RestoreSiteBundleInputSchema,
     async execute({ clientSlug, runId }) {

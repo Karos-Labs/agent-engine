@@ -6,9 +6,9 @@ import { draftSegments, type DraftRecord } from "./types.js";
 const TOOL_VERSION = "1.0.0";
 
 export const ScheduleInputSchema = z.object({
-  draftId: z.string().min(1),
-  /** Treated as an opaque ISO-8601 timestamp string — no date-format validation beyond non-empty. */
-  publishAt: z.string().min(1),
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from the tool's own doc comment.
+  draftId: z.string().min(1).describe("The existing draft to schedule. Reports not_available if no draft exists for this id."),
+  publishAt: z.string().min(1).describe("Treated as an opaque ISO-8601 timestamp string — no date-format validation beyond non-empty."),
 });
 export type ScheduleInput = z.infer<typeof ScheduleInputSchema>;
 
@@ -29,6 +29,8 @@ export interface ScheduleResult {
 export function createSchedule(store: WorkspaceStoreLike) {
   return defineTool<ScheduleInput, ScheduleResult>({
     name: "publish.schedule",
+    description:
+      "Transitions an existing draft to status: \"scheduled\" at publishAt. Requires the draft to already exist (not_available if it doesn't). Idempotent: calling again with the exact same publishAt on an already-scheduled draft is a no-op.",
     version: TOOL_VERSION,
     inputSchema: ScheduleInputSchema,
     async execute({ draftId, publishAt }, { ctx }) {

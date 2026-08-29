@@ -69,6 +69,18 @@ export interface AgentToolCallContext {
  */
 export interface AgentTool<TArgs = unknown, TResult = unknown> {
   name: string;
+  /**
+   * What the tool does and when to call it, exactly as the model reads it —
+   * this is the ONLY prose about a tool that ever reaches the model
+   * (SCRUM-293 / AU7). Everything else attached to a tool (this file's own
+   * TSDoc, the doc comment on a `create*` factory) is stripped at compile
+   * time and never crosses into the prompt; before this field existed
+   * `describeAllowedTools` advertised a bare `{name, inputSchema}`, so the
+   * model chose between ~74 tools and constructed every call's arguments
+   * from field names and types alone. Required, not optional — a tool with
+   * no description is exactly the gap this field exists to close.
+   */
+  description: string;
   /** Travels into every telemetry record — RFC-01 §9.1 rule 5. */
   version: string;
   inputSchema: ZodSchema<TArgs>;

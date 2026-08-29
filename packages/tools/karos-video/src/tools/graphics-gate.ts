@@ -8,10 +8,11 @@ const TOOL_VERSION = "1.0.0";
 const SCRIPT_NAME = "graphic_qa.py";
 
 export const GraphicsGateInputSchema = z.object({
-  profilePath: z.string().min(1),
+  // No existing TSDoc on these two fields to transcribe (SCRUM-293 flag) — synthesized from assets-check.ts's identical field and execute()'s usage.
+  profilePath: z.string().min(1).describe("Absolute or resolvable path to the client's brand-profile.json."),
   /** The footage timeline to test against (`base.mp4` — SKILL.md's per-overlay real-footage requirement). */
-  videoPath: z.string().min(1),
-  jobPath: z.string().min(1),
+  videoPath: z.string().min(1).describe("The footage timeline to test against (base.mp4 — SKILL.md's per-overlay real-footage requirement)."),
+  jobPath: z.string().min(1).describe("Path to the job's edit-decision file, including scheduled overlay placements/timing."),
 });
 export type GraphicsGateInput = z.infer<typeof GraphicsGateInputSchema>;
 
@@ -30,6 +31,8 @@ export function createGraphicsGate(options: KarosVideoToolOptions = {}) {
 
   return defineTool<GraphicsGateInput, GateVerdict>({
     name: "video.graphicsGate",
+    description:
+      "Covers all four mandatory per-overlay checks in one call: palette, visibility over the actual footage at its scheduled time/position, chroma safety under 4:2:0, and motion sanity. A fail is auto-remedied (heavier rim / reposition / thicken) then re-gated — never ship a borderline graphic.",
     version: TOOL_VERSION,
     inputSchema: GraphicsGateInputSchema,
     async execute({ profilePath, videoPath, jobPath }) {

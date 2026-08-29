@@ -11,8 +11,12 @@ const TOOL_VERSION = "1.0.0";
 const SKIP_DIR_NAMES = new Set(["node_modules", ".next", ".git", "dist"]);
 
 export const CopyTemplateInputSchema = z.object({
-  /** Re-copy over an existing site directory for this client. Default false so a `MODE=rebuild` run (which must NOT recopy the template — FEEDBACK.md §4 step 4) can never accidentally clobber a client's built state by calling this tool again. */
-  force: z.boolean().default(false),
+  force: z
+    .boolean()
+    .default(false)
+    .describe(
+      "Re-copy over an existing site directory for this client. Default false so a MODE=rebuild run (which must NOT recopy the template) can never accidentally clobber a client's built state by calling this tool again.",
+    ),
 });
 export type CopyTemplateInput = z.infer<typeof CopyTemplateInputSchema>;
 
@@ -61,6 +65,8 @@ async function pathExists(p: string): Promise<boolean> {
 export function createCopyTemplate(config: LandingEngineConfig) {
   return defineTool<CopyTemplateInput, CopyTemplateResult>({
     name: "landing.copyTemplate",
+    description:
+      "The one tool allowed to create OUTPUT_PATH/site: copies the FORGE template kit byte-for-byte into this client's site root. Every other write tool in this package requires the site root to already exist, so a stray write call can never silently originate a new client directory tree.",
     version: TOOL_VERSION,
     inputSchema: CopyTemplateInputSchema,
     async execute({ force }, { ctx }) {

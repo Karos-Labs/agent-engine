@@ -6,7 +6,8 @@ import { resolveRuntime, type KarosVideoToolOptions } from "../config.js";
 const TOOL_VERSION = "1.0.0";
 
 export const SelfEvalGateInputSchema = z.object({
-  videoPath: z.string().min(1),
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from execute()'s usage.
+  videoPath: z.string().min(1).describe("Path to the finished, rendered video file to run the post-encode bitstream color-tag check against."),
   /**
    * Non-fatal advisories carried forward from `video.render`'s stdout (e.g.
    * `build_short.py`'s caption-density warning, PLAYBOOK §2) — folded into
@@ -16,7 +17,12 @@ export const SelfEvalGateInputSchema = z.object({
    * otherwise consumed. Never turned into a `content_fail` on its own:
    * `build_short.py` itself treats this as advisory, not fatal.
    */
-  renderWarnings: z.array(z.string()).default([]),
+  renderWarnings: z
+    .array(z.string())
+    .default([])
+    .describe(
+      "Non-fatal advisories carried forward from video.render's stdout (e.g. build_short.py's caption-density warning, PLAYBOOK §2) — folded into this gate's own evidence, on both pass and content_fail, never turned into a content_fail on its own.",
+    ),
 });
 export type SelfEvalGateInput = z.infer<typeof SelfEvalGateInputSchema>;
 
@@ -53,6 +59,8 @@ export function createSelfEvalGate(options: KarosVideoToolOptions = {}) {
 
   return defineTool<SelfEvalGateInput, GateVerdict>({
     name: "video.selfEvalGate",
+    description:
+      "PARTIAL IMPLEMENTATION, honestly reported as such: verifies the finished file's post-encode SDR bitstream color tags (build_short.py's SDR_TAGS/SETPARAMS, the 'orange renders as red' HLG fix) via ffprobe. The other PLAYBOOK §6 checks (saturation-sanity, flash-scan, caption-legibility) are not yet implemented and are reported as such in this gate's evidence rather than silently claimed as covered.",
     version: TOOL_VERSION,
     inputSchema: SelfEvalGateInputSchema,
     async execute({ videoPath, renderWarnings }) {

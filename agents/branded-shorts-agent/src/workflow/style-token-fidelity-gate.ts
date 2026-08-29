@@ -6,9 +6,12 @@ import { StyleCandidateSchema } from "./types.js";
 const TOOL_VERSION = "1.0.0";
 
 export const StyleTokenFidelityInputSchema = z.object({
-  candidates: z.array(StyleCandidateSchema),
-  /** `client.getBrand()`'s loose, free-form record — merged onto the draft via `selfCritique.gateArgs`, same static-fields convention `numbersSourced`'s doc comment describes. */
-  brand: z.record(z.string(), z.unknown()),
+  candidates: z.array(StyleCandidateSchema).describe("The style candidates to check — every hex code each declares in paletteTokensUsed must appear somewhere in the client's actual brand data."),
+  brand: z
+    .record(z.string(), z.unknown())
+    .describe(
+      "client.getBrand()'s loose, free-form record — merged onto the draft via selfCritique.gateArgs, same static-fields convention numbersSourced's doc comment describes.",
+    ),
 });
 export type StyleTokenFidelityInput = z.infer<typeof StyleTokenFidelityInputSchema>;
 
@@ -38,6 +41,8 @@ const HEX_PATTERN = /#[0-9a-f]{6}/gi;
  */
 export const styleTokenFidelityGate = defineTool<StyleTokenFidelityInput, GateVerdict>({
   name: "gate.styleTokenFidelity",
+  description:
+    "SKILL.md's HARD GATE that 'token fidelity is a hard gate — off-palette caps the score': every literal hex code a style candidate declares in paletteTokensUsed must appear somewhere in the client's actual brand data, or the candidate is off-palette by construction, regardless of how convincing its prose is.",
   version: TOOL_VERSION,
   inputSchema: StyleTokenFidelityInputSchema,
   async execute({ candidates, brand }) {

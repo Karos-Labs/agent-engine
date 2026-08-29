@@ -14,13 +14,14 @@ export const CAPTURE_TIERS = ["MEASURED", "MEASURED_grounded", "ESTIMATED", "UNA
 export type CaptureTier = (typeof CAPTURE_TIERS)[number];
 
 export const CaptureVisibilityInputSchema = z.object({
-  promptId: z.string().min(1),
-  promptText: z.string().min(1),
-  engine: z.enum(VISIBILITY_ENGINES),
-  clientDomains: z.array(z.string()).min(1),
-  competitorRoster: z.array(z.string()).default([]),
+  // promptId/promptText/engine/clientDomains/competitorRoster have no existing TSDoc to transcribe (SCRUM-293 flag) — synthesized from CaptureCell's usage and the tool's own doc comment.
+  promptId: z.string().min(1).describe("Which prompt in the fixed capture matrix this cell is for."),
+  promptText: z.string().min(1).describe("The exact prompt text sent to the AI-visibility engine."),
+  engine: z.enum(VISIBILITY_ENGINES).describe("Which of the 5 fixed AI-visibility engines this cell captures (chatgpt, perplexity, gemini, claude, copilot)."),
+  clientDomains: z.array(z.string()).min(1).describe("The client's own domains, to detect whether/where the client's brand is mentioned or cited."),
+  competitorRoster: z.array(z.string()).default([]).describe("Competitor brand ids to detect being named in the engine's answer."),
   /** Freshness window, same convention as `research.pull` — a cached cell inside this window is returned instead of re-capturing. */
-  window: z.string().min(1),
+  window: z.string().min(1).describe("Freshness window, same convention as research.pull — a cached cell inside this window is returned instead of re-capturing."),
 });
 export type CaptureVisibilityInput = z.infer<typeof CaptureVisibilityInputSchema>;
 
@@ -69,6 +70,8 @@ function jobFor(engine: VisibilityEngine, promptId: string): string {
 export function createCaptureVisibility(store: WorkspaceStoreLike) {
   return defineTool<CaptureVisibilityInput, CaptureVisibilityResult>({
     name: "research.captureVisibility",
+    description:
+      "Captures one (prompt x engine) AI-visibility cell, cached and freshness-enforced like research.pull. Phase 1 has no real capture adapter wired up yet, so the stand-in cell is honestly captureTier: \"UNAVAILABLE\" rather than a fabricated measurement.",
     version: TOOL_VERSION,
     inputSchema: CaptureVisibilityInputSchema,
     async execute({ promptId, engine, window }, { ctx }) {

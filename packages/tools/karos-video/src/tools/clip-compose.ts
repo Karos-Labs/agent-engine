@@ -81,30 +81,30 @@ export function buildSrt(words: readonly SrtWord[], clipStartSeconds = 0, wordsP
 
 /** The brand inputs `video.brandFrame` composites. Everything optional except the ground color the bars are painted in. */
 export const BrandFrameBrandSchema = z.object({
-  /** Bar/padding color. */
-  ground: z.string().regex(HEX6),
-  /** Text color for the header and handle. */
-  fg: z.string().regex(HEX6).default("#F4F2EC"),
-  /** The thin accent rule along each bar's inner edge. */
-  accent: z.string().regex(HEX6).optional(),
-  /** Local PNG/JPEG path (the caller downloads it — e.g. via `downloadBrandLogo` — this tool never fetches). */
-  logoPath: z.string().min(1).optional(),
-  /** "PITCH SCHOOL | LESSON 15"-style standing header, top bar. */
-  seriesHeader: z.string().min(1).max(60).optional(),
-  /** "@clienthandle" watermark, bottom bar. */
-  handle: z.string().min(1).max(48).optional(),
+  ground: z.string().regex(HEX6).describe("Bar/padding color, 6-digit hex."),
+  fg: z.string().regex(HEX6).default("#F4F2EC").describe("Text color for the header and handle, 6-digit hex."),
+  accent: z.string().regex(HEX6).optional().describe("The thin accent rule along each bar's inner edge, 6-digit hex."),
+  logoPath: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("Local PNG/JPEG path (the caller downloads it — e.g. via downloadBrandLogo — this tool never fetches)."),
+  seriesHeader: z.string().min(1).max(60).optional().describe('"PITCH SCHOOL | LESSON 15"-style standing header, top bar.'),
+  handle: z.string().min(1).max(48).optional().describe('"@clienthandle" watermark, bottom bar.'),
 });
 export type BrandFrameBrand = z.infer<typeof BrandFrameBrandSchema>;
 
 export const BrandFrameInputSchema = z.object({
-  videoPath: z.string().min(1),
-  outputPath: z.string().min(1),
-  brand: BrandFrameBrandSchema,
-  /** SRT file to burn as captions. Absent means no captions. */
-  srtPath: z.string().min(1).optional(),
-  canvas: z.object({ w: z.number().int().positive(), h: z.number().int().positive() }).default(() => ({ w: 1080, h: 1920 })),
-  /** Bar height in pixels, top and bottom. */
-  barHeight: z.number().int().positive().default(200),
+  // No existing TSDoc on these two fields to transcribe (SCRUM-293 flag) — synthesized from execute()'s usage.
+  videoPath: z.string().min(1).describe("Path to the source clip to composite the branded frame onto."),
+  outputPath: z.string().min(1).describe("Path to write the finished, branded clip to."),
+  brand: BrandFrameBrandSchema.describe("The brand inputs to composite — everything optional except the ground color the bars are painted in."),
+  srtPath: z.string().min(1).optional().describe("SRT file to burn as captions. Absent means no captions."),
+  canvas: z
+    .object({ w: z.number().int().positive(), h: z.number().int().positive() })
+    .default(() => ({ w: 1080, h: 1920 }))
+    .describe("Output canvas size in pixels. Defaults to 1080x1920 (9:16)."),
+  barHeight: z.number().int().positive().default(200).describe("Bar height in pixels, top and bottom."),
 });
 export type BrandFrameInput = z.infer<typeof BrandFrameInputSchema>;
 
@@ -193,10 +193,11 @@ async function assertToolPath(runtime: ReturnType<typeof resolveRuntime>, client
 }
 
 export const CutClipInputSchema = z.object({
-  sourcePath: z.string().min(1),
-  startSeconds: z.number().nonnegative(),
-  endSeconds: z.number().positive(),
-  outputPath: z.string().min(1),
+  // No existing TSDoc on these fields to transcribe (SCRUM-293 flag) — synthesized from execute()'s usage.
+  sourcePath: z.string().min(1).describe("Path to the source video file to cut a clip from."),
+  startSeconds: z.number().nonnegative().describe("Start of the [start, end) span to cut, in seconds from the start of the source."),
+  endSeconds: z.number().positive().describe("End of the [start, end) span to cut, in seconds from the start of the source; must be after startSeconds."),
+  outputPath: z.string().min(1).describe("Path to write the re-encoded cut clip to."),
 });
 export type CutClipInput = z.infer<typeof CutClipInputSchema>;
 
@@ -210,6 +211,8 @@ export function createCutClip(options: KarosVideoToolOptions = {}) {
   const runtime = resolveRuntime(options);
   return defineTool<CutClipInput, CutClipResult>({
     name: "video.cutClip",
+    description:
+      "One re-encoded cut of [start, end) from a source file. Re-encode, not stream copy: a copy cut lands on the previous keyframe and ships seconds of the wrong sentence.",
     version: TOOL_VERSION,
     inputSchema: CutClipInputSchema,
     async execute({ sourcePath, startSeconds, endSeconds, outputPath }, { ctx }) {
@@ -262,6 +265,8 @@ export function createBrandFrame(options: KarosVideoToolOptions = {}) {
   const runtime = resolveRuntime(options);
   return defineTool<BrandFrameInput, BrandFrameResult>({
     name: "video.brandFrame",
+    description:
+      "Composites the branded 9:16 frame onto a clip: bars, header, handle, logo, captions, all optional — a missing logo, an unset series header, or no caption file is skipped, never a failure. The tool only fails over ffmpeg itself.",
     version: TOOL_VERSION,
     inputSchema: BrandFrameInputSchema,
     async execute(input, { ctx }) {

@@ -36,56 +36,40 @@ export interface ImageGenerationClient {
 }
 
 export const GenerateImageInputSchema = z.object({
-  /** Bounds root. Written paths are relative to this and provably inside it. */
-  repoRoot: z.string().min(1),
-  /** Namespaces the cache directory, exactly as `media.findImages` does. */
-  runId: z.string().min(1),
-  /**
-   * One entry per slide that retrieval could not satisfy. Deliberately not
-   * "every slide": each image is a real, billed generation, so this tool is
-   * called for the gaps rather than the whole carousel.
-   */
+  repoRoot: z.string().min(1).describe("Bounds root. Written paths are relative to this and provably inside it."),
+  runId: z.string().min(1).describe("Namespaces the cache directory, exactly as media.findImages does."),
   needs: z
     .array(
       z.object({
-        n: z.number().int().positive(),
-        /** The slide's own `visualNeed`, used as the generation brief. */
-        prompt: z.string().min(1),
+        n: z.number().int().positive().describe("This slide's number."),
+        prompt: z.string().min(1).describe("The slide's own visualNeed, used as the generation brief."),
       }),
     )
-    .min(1),
-  /**
-   * Images per need, as separate billed calls. One is usually right: a rescue
-   * needs a picture that works, not a shortlist, and the gate is about to
-   * judge whatever arrives.
-   */
-  perNeed: z.number().int().min(1).max(3).default(1),
-  /** Passed through as `imageConfig.aspectRatio`; verified accepted by the model. */
-  aspectRatio: z.enum(["1:1", "3:4", "4:3", "9:16", "16:9"]).default("4:3"),
-  /**
-   * Photographic direction for the brief, derived by the caller from the
-   * client's own brand tokens and canvas.
-   *
-   * Every field is optional and every field is only ever passed through, never
-   * invented here. A caller with nothing to say supplies nothing and the brief
-   * falls back to neutral direction — which is what it always did.
-   */
+    .min(1)
+    .describe(
+      "One entry per slide that retrieval could not satisfy. Deliberately not \"every slide\": each image is a real, billed generation, so this tool is called for the gaps rather than the whole carousel.",
+    ),
+  perNeed: z
+    .number()
+    .int()
+    .min(1)
+    .max(3)
+    .default(1)
+    .describe("Images per need, as separate billed calls. One is usually right: a rescue needs a picture that works, not a shortlist."),
+  aspectRatio: z.enum(["1:1", "3:4", "4:3", "9:16", "16:9"]).default("4:3").describe("Passed through as imageConfig.aspectRatio; verified accepted by the model."),
   art: z
     .object({
-      /** e.g. "editorial", "documentary", "minimal product photography". */
-      aesthetic: z.string().min(1).optional(),
-      /** e.g. "soft diffused daylight", "hard directional studio light". */
-      lighting: z.string().min(1).optional(),
-      /** Named or hex colours the frame should sit in. */
-      palette: z.array(z.string().min(1)).max(6).optional(),
-      /** The client's single accent colour, when they have one. */
-      accentColor: z.string().min(1).optional(),
-      /** e.g. "calm and considered", "urgent". */
-      mood: z.string().min(1).optional(),
-      /** Extra client-specific direction, appended verbatim. */
-      notes: z.string().min(1).optional(),
+      aesthetic: z.string().min(1).optional().describe("e.g. \"editorial\", \"documentary\", \"minimal product photography\"."),
+      lighting: z.string().min(1).optional().describe("e.g. \"soft diffused daylight\", \"hard directional studio light\"."),
+      palette: z.array(z.string().min(1)).max(6).optional().describe("Named or hex colours the frame should sit in."),
+      accentColor: z.string().min(1).optional().describe("The client's single accent colour, when they have one."),
+      mood: z.string().min(1).optional().describe("e.g. \"calm and considered\", \"urgent\"."),
+      notes: z.string().min(1).optional().describe("Extra client-specific direction, appended verbatim."),
     })
-    .optional(),
+    .optional()
+    .describe(
+      "Photographic direction for the brief, derived by the caller from the client's own brand tokens and canvas. Every field is only ever passed through, never invented here — a caller with nothing to say supplies nothing and the brief falls back to neutral direction.",
+    ),
 });
 export type GenerateImageInput = z.input<typeof GenerateImageInputSchema>;
 /** The post-parse shape, so `buildBrief` can name the art block without restating it. */
@@ -245,6 +229,8 @@ export function createGenerateImage(options: {
 
   return defineTool<GenerateImageInput, GenerateImageResult>({
     name: "image.generate",
+    description:
+      "Generates a real, billed image per unmet slide need via Vertex Gemini image generation, retrying transient rate-limit/availability errors with backoff. Reports not_available when no generation backend is configured, rather than a per-call failure.",
     version: TOOL_VERSION,
     inputSchema: GenerateImageInputSchema,
     async execute(rawInput) {

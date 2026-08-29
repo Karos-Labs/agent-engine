@@ -8,9 +8,10 @@ const TOOL_VERSION = "1.0.0";
 const SCRIPT_NAME = "cut_check.py";
 
 export const CutGateInputSchema = z.object({
-  jobPath: z.string().min(1),
-  transcriptPath: z.string().min(1),
-  verbose: z.boolean().default(false),
+  // No existing TSDoc on these fields to transcribe (SCRUM-293 flag) — synthesized from execute()'s usage.
+  jobPath: z.string().min(1).describe("Path to the job's edit-decision file (cut list) to check."),
+  transcriptPath: z.string().min(1).describe("Path to the source footage's transcript, used to verify each removed span is filler-or-declared."),
+  verbose: z.boolean().default(false).describe("Pass --verbose through to cut_check.py for more detailed evidence output."),
 });
 export type CutGateInput = z.infer<typeof CutGateInputSchema>;
 
@@ -26,6 +27,8 @@ export function createCutGate(options: KarosVideoToolOptions = {}) {
 
   return defineTool<CutGateInput, GateVerdict>({
     name: "video.cutGate",
+    description:
+      "The mechanical cut-craft gate: min segment length, max cut density, minimum retention, and the honesty check that every removed span is filler-or-declared. content_fail here means fix the cut list and re-check, never build anyway.",
     version: TOOL_VERSION,
     inputSchema: CutGateInputSchema,
     async execute({ jobPath, transcriptPath, verbose }) {

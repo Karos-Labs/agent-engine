@@ -24,9 +24,11 @@ const BUILD_TIMEOUT_MS = 300_000;
 const NPM_COMMAND = process.platform === "win32" ? "npm.cmd" : "npm";
 
 export const LandingGateInputSchema = z.object({
-  brand: BrandJsonSchema,
-  /** Mirrors `gate.mjs --build`: runs `npm run build` in the site directory. Off by default — slow, and out of scope for most calls (e.g. a mid-MAKE check). */
-  doBuild: z.boolean().default(false),
+  brand: BrandJsonSchema.describe("This client's brand.json contract — checked against the built site's globals.css, fonts, and content for token drift, font fidelity, brand lint, and carry-forward completeness."),
+  doBuild: z
+    .boolean()
+    .default(false)
+    .describe("Mirrors gate.mjs --build: runs npm run build in the site directory. Off by default — slow, and out of scope for most calls (e.g. a mid-MAKE check)."),
 });
 export type LandingGateInput = z.infer<typeof LandingGateInputSchema>;
 
@@ -101,6 +103,8 @@ function summarizeEvidence(checks: LandingGateChecks): string[] {
 export function createLandingGate(config: LandingEngineConfig) {
   return defineTool<LandingGateInput, LandingGateVerdict>({
     name: "landing.gate",
+    description:
+      "A TypeScript port of engine/gate.mjs's objective floor for a built landing site: token drift, font fidelity, brand lint, structure, and carry-forward completeness, plus an optional sandboxed `npm run build`. Read-only — reads the already-built site off disk for this client and never writes anything.",
     version: TOOL_VERSION,
     inputSchema: LandingGateInputSchema,
     async execute({ brand, doBuild }, { ctx }) {

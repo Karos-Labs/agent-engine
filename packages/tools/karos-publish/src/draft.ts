@@ -6,9 +6,10 @@ import { draftSegments, type DraftRecord } from "./types.js";
 const TOOL_VERSION = "1.0.0";
 
 export const DraftInputSchema = z.object({
-  draftId: z.string().min(1),
-  platform: z.string().min(1),
-  content: z.unknown(),
+  // No existing TSDoc on these fields to transcribe (SCRUM-293 flag) — synthesized from execute()'s usage and the tool's own doc comment.
+  draftId: z.string().min(1).describe("The draft's id — the same id called twice overwrites the same record, never a duplicate."),
+  platform: z.string().min(1).describe("Which platform this draft targets, e.g. \"linkedin\", \"instagram\"."),
+  content: z.unknown().describe("The draft's content, as arbitrary JSON."),
 });
 export type DraftInput = z.infer<typeof DraftInputSchema>;
 
@@ -21,6 +22,8 @@ export type DraftInput = z.infer<typeof DraftInputSchema>;
 export function createDraft(store: WorkspaceStoreLike) {
   return defineTool<DraftInput, IdempotentWriteResult>({
     name: "publish.draft",
+    description:
+      "Idempotent on draftId — writes (or overwrites) a draft, always landing it back in status: \"draft\". A re-draft supersedes any prior scheduling rather than merging with it.",
     version: TOOL_VERSION,
     inputSchema: DraftInputSchema,
     async execute({ draftId, platform, content }, { ctx }) {

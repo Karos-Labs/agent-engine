@@ -26,16 +26,16 @@ const TOOL_VERSION = "1.0.0";
  */
 
 export const HarvestVideoInputSchema = z.object({
-  repoRoot: z.string().min(1),
-  runId: z.string().min(1),
-  /** What to look for — the run's topic/angle. */
-  query: z.string().min(1).max(400),
-  /** Cap on the source file, defaulted well under the ingest ceiling. */
+  // No existing TSDoc on these two fields to transcribe (SCRUM-293 flag) — synthesized from find-images.ts's identical fields.
+  repoRoot: z.string().min(1).describe("Bounds root. The written clip path is relative to this and provably inside it."),
+  runId: z.string().min(1).describe("Namespaces the cache directory, exactly as media.findImages does."),
+  query: z.string().min(1).max(400).describe("What to look for — the run's topic/angle."),
   maxBytes: z
     .number()
     .int()
     .positive()
-    .default(256 * 1024 * 1024),
+    .default(256 * 1024 * 1024)
+    .describe("Cap on the source file, defaulted well under the ingest ceiling."),
 });
 export type HarvestVideoInput = z.infer<typeof HarvestVideoInputSchema>;
 
@@ -63,6 +63,8 @@ export function createHarvestVideo(options: { provider?: VideoHarvestProvider | 
   const fetchImpl = options.fetchImpl ?? fetch;
   return defineTool<HarvestVideoInput, HarvestVideoResult>({
     name: "media.harvestVideo",
+    description:
+      "Tier 2b of the clip cascade: finds contextual footage from the open web (a podcast soundbite, a keynote clip) by topic. Reports not_available until a real video-search backend is wired, so the cascade always moves on to Tier 3 rather than holding.",
     version: TOOL_VERSION,
     inputSchema: HarvestVideoInputSchema,
     async execute(input) {

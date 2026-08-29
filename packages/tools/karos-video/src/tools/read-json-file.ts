@@ -7,7 +7,8 @@ import { assertNoTraversalOrNul, assertWithinTenantWorkRoot } from "../sandbox.j
 const TOOL_VERSION = "1.0.0";
 
 export const ReadJsonFileInputSchema = z.object({
-  path: z.string().min(1),
+  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from the tool's own doc comment.
+  path: z.string().min(1).describe("Path to the on-disk JSON file to read (e.g. a brand-profile.json a Python engine script also reads by path)."),
 });
 export type ReadJsonFileInput = z.infer<typeof ReadJsonFileInputSchema>;
 
@@ -33,6 +34,8 @@ export function createReadJsonFile(options: KarosVideoToolOptions = {}) {
 
   return defineTool<ReadJsonFileInput, ReadJsonFileResult>({
     name: "video.readJsonFile",
+    description:
+      "The read-side companion to video.writeJsonFile: loads a client's real brand-profile.json (or any other on-disk JSON the Python engine also reads by path) through a Layer 3 tool. Every path is traversal/NUL-checked, and confined to the tenant's work root when one is configured.",
     version: TOOL_VERSION,
     inputSchema: ReadJsonFileInputSchema,
     async execute({ path }, { ctx }) {

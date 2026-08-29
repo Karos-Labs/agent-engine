@@ -26,7 +26,12 @@ export const BLOG_MIN_WORD_COUNT = 600;
  */
 export const BLOG_MAX_WORD_COUNT = 3000;
 
-export const RenderPreviewInputSchema = z.object({ title: z.string(), metaDescription: z.string(), text: z.string() });
+export const RenderPreviewInputSchema = z.object({
+  // No existing TSDoc on these fields to transcribe (SCRUM-293 flag) — synthesized from the tool's own doc comment and execute()'s usage.
+  title: z.string().describe("The article's H1/title. Checked against a 120-character ceiling."),
+  metaDescription: z.string().describe("The article's SEO meta description. Checked against a 160-character ceiling."),
+  text: z.string().describe("The composed article body. Checked against a 20,000-character ceiling and a 600-3,000 word count band."),
+});
 export type RenderPreviewInput = z.infer<typeof RenderPreviewInputSchema>;
 
 export interface RenderPreviewResult {
@@ -72,6 +77,8 @@ export interface RenderPreviewResult {
  */
 export const renderPreview: AgentTool<RenderPreviewInput, RenderPreviewResult> = defineTool({
   name: "render.preview",
+  description:
+    "A small, deterministic 'how would this actually look as a published article' check: title/meta-description/body length ceilings plus a word-count floor and ceiling, distinct from the content-judgment gates.",
   version: TOOL_VERSION,
   inputSchema: RenderPreviewInputSchema,
   async execute({ title, metaDescription, text }) {
