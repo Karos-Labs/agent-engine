@@ -2,7 +2,14 @@ import { z } from "zod";
 import { BaseAgent, resolveModelPolicy, type AgentStepConfig } from "@agent-engine/core";
 
 export const LandingCopyOutputSchema = z.object({
-  /** `LandingContent.lang` (content-schema.ts) — e.g. `"en-US"`, from `brand.voice.lang`. */
+  /**
+   * `LandingContent.lang` (content-schema.ts) — e.g. `"en-US"`. SCRUM-309
+   * (AU31): the input's `resolvedLanguage` field (from
+   * `resolveBrandLanguage(brand)`, `@agent-engine/tool-karos-landing`) is the
+   * structured signal for this; fall back to `brand.voice.lang` only when
+   * `resolvedLanguage` is absent (a brand.json authored before either
+   * existed).
+   */
   lang: z.string().min(1),
   /** `LandingContent.meta` — the real `<html>`/`<head>` title + meta description this client's site ships, patched into `layout.tsx` by MAKE. Real marketing copy, not filler: the same on-brand discipline as every section below. */
   meta: z.object({
@@ -30,6 +37,6 @@ export class LandingCopyAgent extends BaseAgent<LandingCopyOutput> {
     allowedTools: [],
     outputSchema: LandingCopyOutputSchema,
     modelPolicy: resolveModelPolicy("landing-copy", { policy: "pinned", model: "claude-sonnet-4-6" }),
-    skillRef: "landing-copy@1",
+    skillRef: "landing-copy@2",
   };
 }

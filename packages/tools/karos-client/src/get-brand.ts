@@ -14,6 +14,26 @@ export interface ClientBrand {
   colors?: string[];
   logoUrl?: string;
   tagline?: string;
+  /**
+   * SCRUM-309 (AU31). The language this client's content must be written
+   * in — a plain name ("Hebrew", "Japanese") or a BCP-47-ish tag ("he",
+   * "en-US"), whichever the portal captures; free text either way, on
+   * purpose, since this field's whole job is to stop being free text
+   * *elsewhere*. Before this field existed, the only way a language
+   * requirement reached a drafting prompt was if `client.getProfile`'s
+   * `description` happened to mention it in prose (e.g. "Israel's largest
+   * Hebrew-language technology site") — a brand-voice document that stated
+   * Hebrew nowhere near that blurb produced no signal at all, and the
+   * geektime carousel shipped in fluent English and passed every check
+   * (root cause 1 of that incident: no language dimension existed anywhere
+   * in the QA chain). Consumed by `buildClientVoiceContext`
+   * (`@agent-engine/workflow`), which every channel's copy-drafting step
+   * threads into its prompt regardless of what profile/voice-rules prose
+   * says. Optional so a client with no brand kit configured yet, or one
+   * whose portal hasn't set this, still gets a run — same
+   * refuse-to-guess-but-never-block posture as the rest of this file.
+   */
+  language?: string;
   [key: string]: unknown;
 }
 

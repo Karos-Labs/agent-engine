@@ -31,7 +31,31 @@ export const BrandedShortsIntakeSchema = z.object({
 });
 export type BrandedShortsIntake = z.infer<typeof BrandedShortsIntakeSchema>;
 
-/** The client-config slice step 00 reads: intake for this run, plus the locked brand style (SKILL.md step 0). */
+/**
+ * The client-config slice step 00 reads: intake for this run, plus the
+ * locked brand style (SKILL.md step 0). NOTE (SCRUM-309 / AU31): this is a
+ * pointer/run-config wrapper, not the brand kit itself — the actual brand
+ * data for this product is `BrandProfileSchema`
+ * (`@agent-engine/tool-karos-video`, `packages/tools/karos-video/src/types.ts`),
+ * loaded off disk at `brandedShortsProfilePath` by
+ * `create-branded-shorts-agent-workflow.ts`'s "02-load-brand-profile" step.
+ * That schema is `{ color, video_grade, video_captions_v2 }` only — no
+ * voice/tone/language field exists there because none of this product's
+ * output is free-text copy the model drafts: captions and the `illustrates`/
+ * `phrase` fields on graphics/cutaway plans are required to quote the
+ * source video's own transcript verbatim (THE RELEVANCE LAW, PLAYBOOK §4d
+ * point 1; see `branded-shorts-graphics` prompt: "you cannot name the exact
+ * phrase a graphic illustrates, do not propose it"), and `endcardOverride`
+ * above is text the client supplies directly, never model-composed. A
+ * client's spoken language is therefore whatever language they recorded
+ * in — this pipeline has no language-CHOICE step for a language field to
+ * govern, unlike the six copy-drafting channels `ClientBrand.language`
+ * (`@agent-engine/tool-karos-client`) now feeds. Threading a `language`
+ * field through this schema would be dead config nothing reads; if a real
+ * language-sensitive step is ever added here (e.g. translated captions),
+ * it should read `ClientBrand.language` for the same client the same way
+ * the six copy channels do, not reinvent a third field.
+ */
 export const BrandedShortsClientConfigSchema = z.object({
   brandedShortsIntake: BrandedShortsIntakeSchema.optional(),
   /** Path to the client's locked `brand-profile.json` — absent means "no locked style yet," which blocks the run (run the Style Exploration workflow first). */

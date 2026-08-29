@@ -107,6 +107,24 @@ export const BrandJsonSchema = z
     fonts: BrandFontsSchema,
     brandLaw: z.array(z.string()).default([]),
     typography: BrandTypographySchema.optional(),
+    /**
+     * SCRUM-309 (AU31). The language this client's site copy must be
+     * written in — same field name and free-text shape as `ClientBrand.language`
+     * (`@agent-engine/tool-karos-client`'s `get-brand.ts`), so a language
+     * requirement is captured identically wherever a client's brand kit is
+     * read, instead of each channel inventing its own path for the same
+     * fact. Before this field existed, `landing-copy`'s only route to a
+     * client's language was the model reading it back out of the free-form
+     * `voice` bag below (`voice.lang`, per `landing-copy-agent.ts`'s own
+     * doc comment) — an unstructured, unvalidated, undocumented key that
+     * `resolveBrandLanguage` below still falls back to for brand.json files
+     * authored before this field existed, but which nothing requires a new
+     * client's intake to populate. Optional, same refuse-to-guess posture
+     * as the rest of this schema: a brand.json with no language set still
+     * builds, in whatever language the model infers from voice/intake, same
+     * as before this field existed.
+     */
+    language: z.string().min(1).optional(),
     voice: z.record(z.string(), z.unknown()).optional(),
     assets: z.record(z.string(), z.unknown()).optional(),
     oldSite: z.record(z.string(), z.unknown()).optional(),
@@ -122,6 +140,25 @@ export const BrandJsonSchema = z
   })
   .passthrough();
 export type BrandJson = z.infer<typeof BrandJsonSchema>;
+
+/**
+ * SCRUM-309 (AU31). Resolves this client's copy language with the same
+ * precedence `buildClientVoiceContext` (`@agent-engine/workflow`) applies
+ * for the other six channels: the structured field wins whenever it is
+ * present, and only a brand.json authored before that field existed falls
+ * back to the free-text `voice.lang` key `landing-copy-agent.ts` used to
+ * rely on exclusively. Returns `undefined` — never a guessed default — when
+ * neither is set, so a client with no language configured yet still builds,
+ * in whatever language the model infers, same as before this function
+ * existed.
+ */
+export function resolveBrandLanguage(brand: Pick<BrandJson, "language" | "voice"> | undefined): string | undefined {
+  if (!brand) return undefined;
+  if (typeof brand.language === "string" && brand.language.trim().length > 0) return brand.language.trim();
+  const legacy = brand.voice?.["lang"];
+  if (typeof legacy === "string" && legacy.trim().length > 0) return legacy.trim();
+  return undefined;
+}
 
 /**
  * The section taxonomy (ENGINE-SPEC §7). `nav`/`hero`/`footer` are required
