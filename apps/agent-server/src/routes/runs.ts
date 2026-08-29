@@ -8,6 +8,7 @@ import { buildRunReport } from "../report.js";
 import { RunJobRequestSchema, type RunJobRequest } from "../run-job.js";
 import { resolveWorkflowFn, UnknownProductError } from "../wiring/dynamic-workflows.js";
 import { isKnownProductId, type AgentRuntimeDeps, type WorkflowFn } from "../wiring/workflows.js";
+import { enforceTenantEntitlement } from "../auth/tenant-assertion.js";
 import { respondInternalError, respondWithLoggedDetail } from "./error-response.js";
 
 /** Hands a run-job off to the queue. Returns the id the consumer will derive from the published message. */
@@ -164,6 +165,12 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
     }
     const { clientSlug, productId, runKind } = parsed.data;
 
+    // AU46 / SCRUM-329: the request names its own target clientSlug (unlike
+    // the runId-addressed routes below, there is no stored record to read it
+    // from), so entitlement is checked directly against the parsed body,
+    // before anything else about the request is acted on.
+    if (enforceTenantEntitlement(req, res, clientSlug)) return;
+
     // Validated BEFORE publishing, and kept synchronous on purpose. Resolving a
     // productId is a name lookup and, for a dynamic agent, one store read — it
     // does not execute anything, so enqueueing is no reason to stop doing it.
@@ -218,6 +225,13 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
       res.status(404).json({ error: `no run found for "${runId}"` });
       return;
     }
+    // AU46 / SCRUM-329: this route is addressed by runId alone, so
+    // entitlement can only be checked once the run record — and the
+    // clientSlug it actually belongs to — has been read back. Checked before
+    // the gate-status check below so a non-entitled caller learns nothing
+    // about a foreign tenant's run beyond "a run with this id exists"
+    // (which the 404 above already would have revealed either way).
+    if (enforceTenantEntitlement(req, res, runRecord.clientSlug)) return;
     // Fast, common-case rejection for the exact scenario the concurrency audit finding
     // named: resuming a run that isn't actually paused at a gate (already running,
     // already completed, or resumed by someone else a moment ago). The store-level
@@ -329,6 +343,10 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
       res.status(404).json({ error: `no run found for "${runId}"` });
       return;
     }
+    // AU46 / SCRUM-329: this is the exact cross-tenant read the ticket
+    // closes — runId-guessing against another client's run — so it is
+    // checked here even though the route is otherwise read-only.
+    if (enforceTenantEntitlement(req, res, runRecord.clientSlug)) return;
     // Read-only: buildRunReport handles an arbitrary productId string (Task 2's dynamic
     // agents included) via its own generic fallback, so this route never needs to reject
     // one. /resume no longer does either — it resolves the stored productId through

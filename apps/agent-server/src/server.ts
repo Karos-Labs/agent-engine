@@ -8,6 +8,7 @@ import { createQueuePushVerifier } from "./wiring/queue-push-auth.js";
 import { createServerTools } from "./wiring/tools.js";
 import { createRunJobPublisher } from "./wiring/enqueue-run-job.js";
 import { createServiceIdentityConfigFromEnv } from "./wiring/auth.js";
+import { createTenantAssertionConfigFromEnv } from "./wiring/tenant-assertion.js";
 import { createServerTemplateStore } from "./wiring/template-store.js";
 import { assertFirestoreDatabaseIdOrExit } from "./wiring/firestore-database-id.js";
 import { createServerWorkspaceStore } from "./wiring/workspace-store.js";
@@ -60,6 +61,7 @@ async function main(): Promise<void> {
     ...resolveQueuePushConfig(),
     verifyPushIdToken: createQueuePushVerifier(),
     auth: createServiceIdentityConfigFromEnv(),
+    tenantAssertion: createTenantAssertionConfigFromEnv(),
   });
 
   const port = resolvePort();

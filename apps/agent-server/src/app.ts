@@ -9,6 +9,7 @@ import { createHealthRouter } from "./routes/health.js";
 import { createQueueRouter, type VerifyPushIdToken } from "./routes/queue.js";
 import { createRunsRouter, type RunsRouterDeps } from "./routes/runs.js";
 import { createServiceIdentityMiddleware, type ServiceIdentityConfig } from "./auth/service-identity.js";
+import { createTenantAssertionMiddleware, type TenantAssertionConfig } from "./auth/tenant-assertion.js";
 
 export interface CreateAppDeps extends RunsRouterDeps {
   durableStore: DurableStepStore;
@@ -22,6 +23,15 @@ export interface CreateAppDeps extends RunsRouterDeps {
    * env-built config.
    */
   auth?: ServiceIdentityConfig;
+  /**
+   * Tenant entitlement at the edge (AU46 / SCRUM-329). Omitted means
+   * disabled — no `req.tenantAssertion` is attached, and every route's
+   * `enforceTenantEntitlement` call becomes a no-op, i.e. today's
+   * caller-asserted-clientSlug behaviour. `server.ts` supplies the real,
+   * env-built config; see `wiring/tenant-assertion.ts` for why it stays
+   * off by default.
+   */
+  tenantAssertion?: TenantAssertionConfig;
 }
 
 /**
@@ -69,6 +79,17 @@ export function createApp(deps: CreateAppDeps): Application {
 
   if (deps.auth) {
     app.use(createServiceIdentityMiddleware(deps.auth));
+  }
+
+  // Layered on top of "who is the caller" (AU1, immediately above): "which
+  // tenant is this specific request for" (AU46 / SCRUM-329). Mounted after
+  // service identity and before every router that reads or resolves a
+  // clientSlug, so `req.tenantAssertion` is available by the time any of
+  // them runs `enforceTenantEntitlement`. Docs/diagnostics carry no
+  // clientSlug and don't need it, but mounting here rather than per-router
+  // costs nothing and matches AU1's own mount-order comment below.
+  if (deps.tenantAssertion) {
+    app.use(createTenantAssertionMiddleware(deps.tenantAssertion));
   }
 
   // Everything below is authenticated whenever `deps.auth.enabled` is set.

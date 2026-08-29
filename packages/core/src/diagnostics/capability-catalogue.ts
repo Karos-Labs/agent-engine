@@ -357,6 +357,20 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
     security: true,
   },
   {
+    id: "tenant-assertion",
+    title: "Tenant entitlement at the HTTP edge",
+    owner: "apps/agent-server (auth/tenant-assertion.ts)",
+    requires: [
+      { name: "TENANT_ASSERTION_ENABLED", kind: "required" },
+      { name: "TENANT_ASSERTION_SECRET", kind: "required" },
+    ],
+    whenAbsent:
+      "clientSlug stays caller-asserted: service-identity-auth (above) proves the portal called, but nothing checks that a given request's clientSlug is the one the portal is actually entitled to act for on behalf of. A runId-addressed route (status, resume, deliverables) trusts whichever clientSlug the stored run record names, with no cross-check against who is asking.",
+    rationale:
+      "AU46 / SCRUM-329, decision 9 (Tomer, 2026-08-28, SCRUM-333 comment 10404): the portal signs a per-request tenant assertion; the engine verifies it. Off by default because the portal-side signer does not exist in karosCMO yet — see docs/decisions/AU46-tenant-identity.md.",
+    security: true,
+  },
+  {
     id: "dynamic-code-steps",
     title: "Dynamic code steps — running Studio-authored code inside a sandbox",
     owner: "packages/dynamic-sandbox",
