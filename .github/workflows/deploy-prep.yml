@@ -12,8 +12,12 @@ name: Deploy to Prep
 #   1. gcloud iam service-accounts create agent-engine-sa --project=karoscmo-prep
 #   2. Grant it aiplatform.user + pubsub.subscriber on karoscmo-prep,
 #      datastore.user on karoscmo (the separate Firestore project — Firestore
-#      is not enabled in karoscmo-prep itself), storage.objectAdmin on both
-#      GCS buckets.
+#      is not enabled in karoscmo-prep itself), storage.objectAdmin on all
+#      THREE GCS buckets (media, artifacts, and — since SCRUM-327 / decision
+#      14 of the 2026-08-28 record on SCRUM-333 — the now-DEDICATED workspace
+#      bucket, which must never share a bucket, and therefore never share a
+#      lifecycle/retention policy, with the disposable-artifacts bucket).
+#      See infra/terraform/ for this as code.
 #   3. Update the existing GitHub WIF provider's attributeCondition (or add a
 #      new provider) to also trust repo:karoslabs/agent-engine — today it
 #      trusts only karoslabs/karosCMO (see karosCMO's own deployer SA
@@ -48,7 +52,7 @@ jobs:
       - name: Validate required repo variables
         run: |
           missing=()
-          for v in PREP_PROJECT_ID PREP_SERVICE_ACCOUNT PREP_FIRESTORE_PROJECT_ID PREP_QUEUE_SUBSCRIPTION PREP_GCS_MEDIA_BUCKET PREP_GCS_ARTIFACTS_BUCKET; do
+          for v in PREP_PROJECT_ID PREP_SERVICE_ACCOUNT PREP_FIRESTORE_PROJECT_ID PREP_QUEUE_SUBSCRIPTION PREP_GCS_MEDIA_BUCKET PREP_GCS_ARTIFACTS_BUCKET PREP_GCS_WORKSPACE_BUCKET; do
             [ -n "${!v}" ] || missing+=("$v")
           done
           if [ "${#missing[@]}" -gt 0 ]; then
@@ -62,6 +66,7 @@ jobs:
           PREP_QUEUE_SUBSCRIPTION: ${{ vars.PREP_QUEUE_SUBSCRIPTION }}
           PREP_GCS_MEDIA_BUCKET: ${{ vars.PREP_GCS_MEDIA_BUCKET }}
           PREP_GCS_ARTIFACTS_BUCKET: ${{ vars.PREP_GCS_ARTIFACTS_BUCKET }}
+          PREP_GCS_WORKSPACE_BUCKET: ${{ vars.PREP_GCS_WORKSPACE_BUCKET }}
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -109,4 +114,4 @@ jobs:
           gcloud builds submit \
             --project="${{ vars.PREP_PROJECT_ID }}" \
             --config=cloudbuild.yaml \
-            --substitutions=COMMIT_SHA="${{ github.sha }}",_REGION="${{ vars.PREP_REGION || 'us-central1' }}",_SERVICE_PREFIX="agent-engine-prep",_SERVICE_ACCOUNT="${{ vars.PREP_SERVICE_ACCOUNT }}",_GOOGLE_CLOUD_PROJECT="${{ vars.PREP_FIRESTORE_PROJECT_ID }}",_BQ_PROJECT_ID="${{ vars.PREP_PROJECT_ID }}",_FIRESTORE_DATABASE_ID="${{ vars.PREP_FIRESTORE_DATABASE_ID || 'prep' }}",_ANTHROPIC_VERTEX_PROJECT_ID="${{ vars.PREP_PROJECT_ID }}",_ANTHROPIC_API_KEY_SECRET="anthropic-api-key",_PUBSUB_PROJECT_ID="${{ vars.PREP_PROJECT_ID }}",_QUEUE_SUBSCRIPTION_RUN_JOBS="${{ vars.PREP_QUEUE_SUBSCRIPTION }}",_GCS_MEDIA_BUCKET="${{ vars.PREP_GCS_MEDIA_BUCKET }}",_GCS_ARTIFACTS_BUCKET="${{ vars.PREP_GCS_ARTIFACTS_BUCKET }}",_GCS_WORKSPACE_BUCKET="${{ vars.PREP_GCS_ARTIFACTS_BUCKET }}"
+            --substitutions=COMMIT_SHA="${{ github.sha }}",_REGION="${{ vars.PREP_REGION || 'us-central1' }}",_SERVICE_PREFIX="agent-engine-prep",_SERVICE_ACCOUNT="${{ vars.PREP_SERVICE_ACCOUNT }}",_GOOGLE_CLOUD_PROJECT="${{ vars.PREP_FIRESTORE_PROJECT_ID }}",_BQ_PROJECT_ID="${{ vars.PREP_PROJECT_ID }}",_FIRESTORE_DATABASE_ID="${{ vars.PREP_FIRESTORE_DATABASE_ID || 'prep' }}",_ANTHROPIC_VERTEX_PROJECT_ID="${{ vars.PREP_PROJECT_ID }}",_ANTHROPIC_API_KEY_SECRET="anthropic-api-key",_PUBSUB_PROJECT_ID="${{ vars.PREP_PROJECT_ID }}",_QUEUE_SUBSCRIPTION_RUN_JOBS="${{ vars.PREP_QUEUE_SUBSCRIPTION }}",_GCS_MEDIA_BUCKET="${{ vars.PREP_GCS_MEDIA_BUCKET }}",_GCS_ARTIFACTS_BUCKET="${{ vars.PREP_GCS_ARTIFACTS_BUCKET }}",_GCS_WORKSPACE_BUCKET="${{ vars.PREP_GCS_WORKSPACE_BUCKET }}"
