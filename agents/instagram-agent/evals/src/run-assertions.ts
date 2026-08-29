@@ -1,5 +1,15 @@
+import type { AgentContext } from "@agent-engine/core";
+import { createKarosGatesTools } from "@agent-engine/tools";
 import { checkSlidesData } from "../../src/workflow/slides-data.js";
 import type { InstagramDeterministicAssertionResult, InstagramGoldenRun } from "./types.js";
+
+/**
+ * `gate.brandCompliance` is the real, deterministic, stateless-and-pure
+ * `karos-gates` tool `checkSlidesData` now calls (SCRUM-301/AU17) — no store,
+ * no model, so building one real registry once and reusing it across every
+ * golden run keeps this eval exactly as fast/free/zero-model-cost as before.
+ */
+const GATES_TOOLS = createKarosGatesTools();
 
 /**
  * Deterministic assertions for the Instagram agent (RFC-01 §12 bullet 2):
@@ -9,11 +19,12 @@ import type { InstagramDeterministicAssertionResult, InstagramGoldenRun } from "
  * zero model cost — and exactly the same function the real workflow's step
  * 07 runs on every attempt, so a regression here is a regression there too.
  */
-export function runInstagramDeterministicAssertions(goldenRun: InstagramGoldenRun): InstagramDeterministicAssertionResult[] {
+export async function runInstagramDeterministicAssertions(goldenRun: InstagramGoldenRun): Promise<InstagramDeterministicAssertionResult[]> {
   const results: InstagramDeterministicAssertionResult[] = [];
   const { id, styleConfig, research, endorsedCopy, endorsedSelections } = goldenRun;
 
-  const selfCheck = checkSlidesData(endorsedCopy, endorsedSelections.selections, research, styleConfig);
+  const ctx: AgentContext = { runId: `eval_${id}`, clientSlug: "golden", productId: "instagram-agent", runKind: "recurring", metadata: {} };
+  const selfCheck = await checkSlidesData(GATES_TOOLS, ctx, endorsedCopy, endorsedSelections.selections, research, styleConfig);
   results.push(
     selfCheck.ok
       ? { goldenRunId: id, check: "step07.checkSlidesData", verdict: "pass" }

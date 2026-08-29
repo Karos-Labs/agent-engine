@@ -1,3 +1,5 @@
+import type { AgentContext, AgentToolRegistry, GateVerdict } from "@agent-engine/core";
+import { WorkflowToolingFailure } from "@agent-engine/workflow";
 import type { RenderCarouselInput, Slide } from "@agent-engine/tool-karos-publish";
 import { templateFileName } from "@agent-engine/tool-karos-templates";
 import type {
@@ -339,13 +341,35 @@ function contentFor(
  * decision.) `check: "render"` rules are out of scope for this function
  * entirely — those are checked post-render, against the rendered attempt's
  * structured slide data, by step 08b's `InstagramVisualQaAgent` instead.
+ *
+ * SCRUM-301/AU17: `banned_words`/`banned_chars`/`compliance.never_say`/
+ * `compliance.required_framing` used to be a hand-rolled case-insensitive
+ * substring scan duplicated right here — the exact algorithm the shared
+ * `gate.brandCompliance` tool (`packages/tools/karos-gates/src/brand-compliance.ts`)
+ * already implements and every other migrated content agent
+ * (blog/reddit/x/linkedin/newsletter-agent's own step "verify-brand-
+ * compliance") already calls for precisely this "client's own forbidden
+ * terms / required disclaimer" check. This function now calls that same
+ * tool instead of re-implementing the scan, so a client's `banned_words` and
+ * `banned_chars` both flow through `forbiddenTerms` (a single-character
+ * "banned char" is just a length-1 forbidden term to a substring scan), a
+ * regulated client's `never_say` list flows through the same `forbiddenTerms`
+ * parameter, and each `required_framing` phrase is checked via
+ * `requiredDisclaimer` (one call per phrase, since that field is
+ * single-phrase and required_framing is an array). This picks up
+ * `gate.brandCompliance`'s always-on `DEFAULT_BANNED_PROMISE_PHRASES` floor
+ * ("guaranteed returns", "risk-free", ...) as a side effect — the same floor
+ * every other migrated agent already gets for free — which is new coverage,
+ * not a behavior this function had before.
  */
-export function checkSlidesData(
+export async function checkSlidesData(
+  tools: AgentToolRegistry,
+  ctx: AgentContext,
   copy: InstagramCopyOutput,
   selections: ImageSelection[],
   research: ResearchOutput,
   styleConfig: StyleConfig,
-): SlidesDataSelfCheck {
+): Promise<SlidesDataSelfCheck> {
   const { canvas, banned_words: bannedWords, banned_chars: bannedChars, compliance } = styleConfig;
 
   if (copy.slides.length < canvas.slides_min || copy.slides.length > canvas.slides_max) {
@@ -382,31 +406,40 @@ export function checkSlidesData(
     }
   }
 
+  const brandComplianceTool = tools["gate.brandCompliance"];
+  if (!brandComplianceTool) {
+    throw new WorkflowToolingFailure(`"gate.brandCompliance" is not registered — step 07's banned-word/char and compliance checks cannot run without it`);
+  }
+  const runBrandCompliance = async (text: string, forbiddenTerms: string[], requiredDisclaimer?: string): Promise<GateVerdict> => {
+    const outcome = await brandComplianceTool.execute({ text, forbiddenTerms, ...(requiredDisclaimer !== undefined ? { requiredDisclaimer } : {}) }, { ctx });
+    if (outcome.status !== "success") {
+      throw new WorkflowToolingFailure(`gate.brandCompliance failed: ${outcome.status}`);
+    }
+    return outcome.result as GateVerdict;
+  };
+
   for (const slide of copy.slides) {
     const slideText = `${slide.headline} ${slide.body}`;
-    const lowerSlideText = slideText.toLowerCase();
-    for (const word of bannedWords) {
-      if (word.length > 0 && lowerSlideText.includes(word.toLowerCase())) {
-        return { ok: false, reason: `slide ${slide.n} uses a banned word: "${word}"` };
-      }
-    }
-    for (const char of bannedChars) {
-      if (char.length > 0 && slideText.includes(char)) {
-        return { ok: false, reason: `slide ${slide.n} uses a banned character: "${char}"` };
-      }
+    const verdict = await runBrandCompliance(slideText, [...bannedWords, ...bannedChars]);
+    if (verdict.verdict === "content_fail") {
+      return { ok: false, reason: `slide ${slide.n} failed the banned word/character check (gate.brandCompliance): ${verdict.reason}` };
     }
   }
 
   if (compliance.regulated) {
-    const combinedLower = copy.slides.map((s) => `${s.headline}\n${s.body}`).join("\n").toLowerCase();
+    const combinedText = copy.slides.map((s) => `${s.headline}\n${s.body}`).join("\n");
+
     for (const phrase of compliance.required_framing) {
-      if (!combinedLower.includes(phrase.toLowerCase())) {
+      const verdict = await runBrandCompliance(combinedText, [], phrase);
+      if (verdict.verdict === "content_fail") {
         return { ok: false, reason: `regulated client's required framing phrase is missing from the post: "${phrase}"` };
       }
     }
-    for (const phrase of compliance.never_say) {
-      if (combinedLower.includes(phrase.toLowerCase())) {
-        return { ok: false, reason: `regulated client's post contains a "never say" phrase: "${phrase}"` };
+
+    if (compliance.never_say.length > 0) {
+      const verdict = await runBrandCompliance(combinedText, compliance.never_say);
+      if (verdict.verdict === "content_fail") {
+        return { ok: false, reason: `regulated client's post contains a "never say" phrase (gate.brandCompliance): ${verdict.reason}` };
       }
     }
   }
