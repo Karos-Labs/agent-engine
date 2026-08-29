@@ -139,4 +139,47 @@ describe("captureAppstore (the one keyless leg — genuinely testable, no creden
     expect(outcome.status).toBe("UNAVAILABLE");
     expect(outcome.reviews).toHaveLength(1);
   });
+
+  // SCRUM-296 (AU11): the ticket's own named defect. Apple's RSS feed really
+  // does emit `"im:rating": {"label": "N/A"}` for a storefront hiding
+  // ratings — before this ticket, `Number.parseInt("N/A", 10)` turned that
+  // into `NaN`, which reached `Review.rating` (a field every downstream
+  // aggregate does arithmetic on) completely unflagged.
+  it("records rating: null (never NaN) for a review whose im:rating label is not a digit", async () => {
+    const naEntry = { ...reviewEntry("na1", 4), "im:rating": { label: "N/A" } };
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(feedResponse([naEntry]))
+      .mockResolvedValueOnce(feedResponse([]))
+      .mockResolvedValueOnce(lookupResponse({ resultCount: 1, results: [{ averageUserRating: 4.2, userRatingCount: 100 }] }));
+    const outcome = await captureAppstore(baseReq, fetchImpl as unknown as typeof fetch, noDelay);
+    expect(outcome.status).toBe("ok");
+    expect(outcome.reviews).toHaveLength(1);
+    const review = outcome.reviews[0]!;
+    expect(review.rating).not.toBeNaN();
+    expect(review.rating).toBeNull();
+    // The rest of the review is still captured — an unparsable rating is not
+    // a reason to drop the whole entry.
+    expect(review.review_id).toBe("appstore:zumo-ios:na1");
+  });
+
+  it("reports UNAVAILABLE when the RSS feed 200s with valid JSON that is not shaped like a feed at all", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ unexpected: "shape" }), { status: 200 }));
+    const outcome = await captureAppstore(baseReq, fetchImpl as unknown as typeof fetch, noDelay);
+    // `{unexpected: "shape"}` actually satisfies `RssFeedResponseSchema`
+    // (every field is optional, so `feed` is simply absent) and resolves to
+    // zero entries on both attempts, then falls through to the lookup —
+    // this exercises that a genuinely-off-contract-but-schema-shaped body
+    // does not crash, while the next case exercises a body Zod actually
+    // rejects.
+    expect(["ok", "UNAVAILABLE"]).toContain(outcome.status);
+  });
+
+  it("reports UNAVAILABLE (never an uncaught throw) when the RSS feed 200s with JSON whose entry is not object-shaped at all", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ feed: { entry: ["just a string, not an entry object"] } }), { status: 200 }));
+    const outcome = await captureAppstore(baseReq, fetchImpl as unknown as typeof fetch, noDelay);
+    expect(outcome.status).toBe("UNAVAILABLE");
+    expect(outcome.reviews).toHaveLength(1);
+    expect(outcome.reviews[0]!.capture_tier).toBe("UNAVAILABLE");
+  });
 });

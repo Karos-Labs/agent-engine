@@ -102,4 +102,33 @@ describe("captureGbp (mocked Google-approved OAuth contract)", () => {
     expect(outcome.status).toBe("UNAVAILABLE");
     expect(outcome.reason).toContain("ECONNRESET");
   });
+
+  // SCRUM-296 (AU11): one malformed review record must cost itself, not the
+  // whole leg. Before this ticket, `rev.name.split("/")` ran on a bare cast
+  // with no narrowing — a review missing `name` threw, was caught by
+  // `captureGbp`'s outer try/catch, and turned an otherwise-successful page
+  // (with a perfectly good sibling review) into a single UNAVAILABLE
+  // tombstone that discarded every review already captured.
+  it("skips a malformed review (missing name) and keeps the rest of the page, rather than failing the whole leg", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonResponse({
+        reviews: [
+          { starRating: "ONE", comment: "no name field at all — a shape the real API has never sent, but the boundary must not trust that" },
+          { name: "accounts/1/locations/1/reviews/rev-good", starRating: "FIVE", comment: "Great!" },
+        ],
+      }),
+    );
+    const outcome = await captureGbp(baseReq, { GOOGLE_BUSINESS_TOKEN: "tok" }, fetchImpl as unknown as typeof fetch);
+    expect(outcome.status).toBe("ok");
+    expect(outcome.reviews).toHaveLength(1);
+    expect(outcome.reviews[0]).toMatchObject({ review_id: "google:loc-main:rev-good", rating: 5 });
+  });
+
+  it("reports UNAVAILABLE when the response body is valid JSON but not shaped like the GBP contract (e.g. reviews is a string, not an array)", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ reviews: "not an array" }));
+    const outcome = await captureGbp(baseReq, { GOOGLE_BUSINESS_TOKEN: "tok" }, fetchImpl as unknown as typeof fetch);
+    expect(outcome.status).toBe("UNAVAILABLE");
+    expect(outcome.reviews).toHaveLength(1);
+    expect(outcome.reviews[0]!.capture_tier).toBe("UNAVAILABLE");
+  });
 });

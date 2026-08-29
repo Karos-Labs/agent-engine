@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { z } from "zod";
 import { fetchWithDeadline } from "./http.js";
 import type { Review } from "../triage/types.js";
 import { captureNowIso as nowIso, unavailableLeg } from "./tombstone.js";
@@ -8,14 +9,60 @@ function sha256Hex(raw: string): string {
   return createHash("sha256").update(raw, "utf8").digest("hex");
 }
 
-interface RssEntry {
-  "im:rating"?: { label: string };
-  id?: { label: string };
-  author?: { name?: { label?: string } };
-  title?: { label?: string };
-  content?: { label?: string };
-  updated?: { label?: string };
-}
+// SCRUM-296 (AU11): output validation at this external boundary. Apple's RSS
+// feed and lookup endpoints are the audit's own named example — an
+// `"im:rating"` label of `"N/A"` (a real value Apple returns for a
+// storefront that hides ratings) went through `Number.parseInt(...)` with no
+// check on the result, turning into `NaN` and landing, un-flagged, in a
+// `Review.rating` field every downstream aggregate (`baseline_rating_avg`,
+// rating-dip detection) then does arithmetic on. `RatingLabelSchema` below
+// is the fix: a label that is not a plain "1".."5" digit string safeParses
+// to `undefined`, which this file turns into `rating: null` — the same
+// "no rating" representation `gbp.ts` already uses for its own rating
+// lookup miss, and a value `ReviewSchema` (`triage/types.ts`) already
+// declares valid. The two response schemas below do the same for the
+// response's own top-level shape: a page that 200s with JSON that is not
+// shaped like Apple's feed/lookup contract is a parse failure, not a
+// zero-review page (ADAPTERS.md rule 1 — a tombstone, never a silent zero).
+const RssEntrySchema = z.object({
+  "im:rating": z.object({ label: z.string() }).optional(),
+  id: z.object({ label: z.string() }).optional(),
+  author: z.object({ name: z.object({ label: z.string().optional() }).optional() }).optional(),
+  title: z.object({ label: z.string().optional() }).optional(),
+  content: z.object({ label: z.string().optional() }).optional(),
+  updated: z.object({ label: z.string().optional() }).optional(),
+});
+type RssEntry = z.infer<typeof RssEntrySchema>;
+
+const RssFeedResponseSchema = z.object({
+  feed: z
+    .object({
+      entry: z.union([RssEntrySchema, z.array(RssEntrySchema)]).optional(),
+    })
+    .optional(),
+});
+
+/**
+ * Apple's real rating labels are plain digit strings ("1".."5"). `"N/A"` and
+ * anything else that is not one of those five values safeParses to
+ * `undefined` here rather than silently becoming `NaN` via `Number.parseInt`.
+ */
+const RatingLabelSchema = z
+  .string()
+  .regex(/^[1-5]$/)
+  .transform((label) => Number.parseInt(label, 10));
+
+const LookupResponseSchema = z.object({
+  resultCount: z.number().optional(),
+  results: z
+    .array(
+      z.object({
+        averageUserRating: z.number().nullable().optional(),
+        userRatingCount: z.number().nullable().optional(),
+      }),
+    )
+    .optional(),
+});
 
 interface LookupResult {
   listed: boolean;
@@ -28,7 +75,12 @@ async function appstoreLookup(appId: string, country: string, fetchImpl: Reputat
   try {
     const response = await fetchWithDeadline(fetchImpl, `https://itunes.apple.com/lookup?id=${appId}&country=${country}`);
     if (!response.ok) return null;
-    const data = (await response.json()) as { resultCount?: number; results?: Array<{ averageUserRating?: number; userRatingCount?: number }> };
+    const json: unknown = await response.json();
+    const parsed = LookupResponseSchema.safeParse(json);
+    if (!parsed.success) {
+      throw new Error(`itunes lookup response did not match the expected shape: ${parsed.error.message}`);
+    }
+    const data = parsed.data;
     if (!data.resultCount) return { listed: false };
     const result = data.results?.[0] ?? {};
     return { listed: true, official_rating_avg: result.averageUserRating ?? null, official_rating_count: result.userRatingCount ?? null };
@@ -45,8 +97,12 @@ async function appstorePages(req: AppstoreLegRequest, fetchImpl: ReputationFetch
     if (!response.ok) break;
     const raw = await response.text();
     const rawSha256 = sha256Hex(raw);
-    const data = JSON.parse(raw) as { feed?: { entry?: RssEntry | RssEntry[] } };
-    let entries = data.feed?.entry ?? [];
+    const json: unknown = JSON.parse(raw);
+    const parsed = RssFeedResponseSchema.safeParse(json);
+    if (!parsed.success) {
+      throw new Error(`appstore RSS page ${page} did not match the expected feed shape: ${parsed.error.message}`);
+    }
+    let entries: RssEntry | RssEntry[] = parsed.data.feed?.entry ?? [];
     // iTunes RSS returns a single object (not an array) when a page has exactly
     // one entry — normalize so the loop never crashes on a one-review page.
     if (!Array.isArray(entries)) entries = [entries];
@@ -55,6 +111,10 @@ async function appstorePages(req: AppstoreLegRequest, fetchImpl: ReputationFetch
     for (const entry of entries) {
       if (!("im:rating" in entry) || !entry["im:rating"]) continue; // first entry on page 1 is app metadata
       gotReview = true;
+      // A label outside "1".."5" (Apple's own "N/A" among them) safeParses to
+      // `undefined` — recorded as `rating: null`, never the `NaN` this ticket
+      // names as the live defect, and never silently dropping the review.
+      const rating = RatingLabelSchema.safeParse(entry["im:rating"].label);
       records.push({
         review_id: `appstore:${req.listingId}:${entry.id?.label ?? ""}`,
         platform: "appstore",
@@ -62,7 +122,7 @@ async function appstorePages(req: AppstoreLegRequest, fetchImpl: ReputationFetch
         capture_tier: "MEASURED",
         listing_id: req.listingId,
         listing_label: req.listingLabel,
-        rating: Number.parseInt(entry["im:rating"]!.label, 10),
+        rating: rating.success ? rating.data : null,
         author: entry.author?.name?.label ?? null,
         text: `${entry.title?.label ?? ""}\n${entry.content?.label ?? ""}`,
         created_at: entry.updated?.label ?? "",

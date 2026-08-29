@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { z } from "zod";
 import { describeFetchFailure, fetchWithDeadline } from "./http.js";
 import type { Review } from "../triage/types.js";
 import { unavailableLeg } from "./tombstone.js";
@@ -10,15 +11,32 @@ function sha256Hex(raw: string): string {
   return createHash("sha256").update(raw, "utf8").digest("hex");
 }
 
-interface GbpReviewApi {
-  name: string;
-  starRating?: string;
-  reviewer?: { displayName?: string };
-  comment?: string;
-  createTime?: string;
-  updateTime?: string;
-  reviewReply?: { comment?: string; updateTime?: string };
-}
+// SCRUM-296 (AU11): output validation at this external boundary. The page
+// itself is validated as a whole (a body that isn't shaped like the GBP API
+// contract at all is a leg failure, same as appstore.ts's feed schema) but
+// each REVIEW is validated individually and a bad one is skipped rather than
+// thrown: `rev.name.split("/")` below used to run on an un-narrowed cast, so
+// one review missing `name` (a renamed/optional field on Google's side) threw
+// past this file's per-page loop, was caught by captureGbp's outer try/catch,
+// and turned the WHOLE leg — every review on every page already captured —
+// into a single UNAVAILABLE tombstone. A malformed record is exactly the
+// kind of partial failure this codebase otherwise treats as "skip it, keep
+// going" (see appstore.ts's own rating-label handling); it should cost one
+// review, not the leg.
+const GbpReviewApiSchema = z.object({
+  name: z.string().min(1),
+  starRating: z.string().optional(),
+  reviewer: z.object({ displayName: z.string().optional() }).optional(),
+  comment: z.string().optional(),
+  createTime: z.string().optional(),
+  updateTime: z.string().optional(),
+  reviewReply: z.object({ comment: z.string().optional(), updateTime: z.string().optional() }).optional(),
+});
+
+const GbpApiResponseSchema = z.object({
+  reviews: z.array(z.unknown()).optional(),
+  nextPageToken: z.string().optional(),
+});
 
 /**
  * `capture_gbp` (capture.py): Google Business Profile API v4 reviews,
@@ -53,10 +71,17 @@ export async function captureGbp(
         return dead(`GBP API returned HTTP ${response.status}`);
       }
       const raw = await response.text();
-      const data = JSON.parse(raw) as { reviews?: GbpReviewApi[]; nextPageToken?: string };
+      const json: unknown = JSON.parse(raw);
+      const parsed = GbpApiResponseSchema.safeParse(json);
+      if (!parsed.success) {
+        throw new Error(`GBP API response did not match the expected shape: ${parsed.error.message}`);
+      }
       const rawSha256 = sha256Hex(raw);
 
-      for (const rev of data.reviews ?? []) {
+      for (const rawReview of parsed.data.reviews ?? []) {
+        const reviewParsed = GbpReviewApiSchema.safeParse(rawReview);
+        if (!reviewParsed.success) continue; // one malformed review costs itself, not the leg
+        const rev = reviewParsed.data;
         const reply = rev.reviewReply;
         records.push({
           review_id: `google:${req.listingId}:${rev.name.split("/").pop()}`,
@@ -75,7 +100,7 @@ export async function captureGbp(
           raw_sha256: rawSha256,
         });
       }
-      pageToken = data.nextPageToken;
+      pageToken = parsed.data.nextPageToken;
     } while (pageToken);
   } catch (err) {
     return dead(describeFetchFailure(err, "the GBP API"));
