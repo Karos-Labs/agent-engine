@@ -1,4 +1,4 @@
-import { trace, type Tracer } from "@opentelemetry/api";
+import { metrics, trace, type Meter, type Tracer } from "@opentelemetry/api";
 // Type-only: erased at compile time, so this does not pull the OTel SDK
 // dependency graph into every workspace that imports this module the way a
 // runtime import would — see the `started` comment below for why that matters.
@@ -20,6 +20,21 @@ export function getTracer(): Tracer {
   return trace.getTracer(INSTRUMENTATION_NAME, INSTRUMENTATION_VERSION);
 }
 
+/**
+ * Returns a `Meter` via the OpenTelemetry API (AU42/SCRUM-326) — the metrics
+ * counterpart of `getTracer()` above, with the identical no-op guarantee:
+ * `metrics.getMeter()` returns the API's own no-op `Meter` until
+ * `initTelemetry()` registers a real `MeterProvider`, so every counter and
+ * histogram created against it before that is a cheap no-op, not a crash or
+ * a buffered leak. Called fresh on every use (see `metrics.ts`) rather than
+ * memoized at module scope, for the same reason `getTracer()` is: a Meter
+ * fetched before `initTelemetry()` runs must not stay bound to the no-op
+ * implementation for the life of the process.
+ */
+export function getMeter(): Meter {
+  return metrics.getMeter(INSTRUMENTATION_NAME, INSTRUMENTATION_VERSION);
+}
+
 // NodeSDK is loaded lazily (require, not a static import) so importing this
 // module — which every workspace using getTracer()/span-helpers does — never
 // pulls in the OTel SDK/Cloud Trace exporter dependency graph unless
@@ -39,10 +54,19 @@ let sdkInstance: NodeSDK | null = null;
 const TELEMETRY_OTLP_TRACES_ENDPOINT = "https://telemetry.googleapis.com/v1/traces";
 
 /**
- * Starts real OpenTelemetry tracing, exporting directly to Cloud Trace via
- * the standard OTLP exporter — no Collector, mirroring karosCMO's Phase 2
- * topology (src/instrumentation.node.ts). No-ops without
- * `GOOGLE_CLOUD_PROJECT` set.
+ * Same OTLP ingest host as traces above, `/v1/metrics` instead of
+ * `/v1/traces` — Google's documented OTLP endpoint pair for Cloud
+ * Trace/Cloud Monitoring (both under `telemetry.googleapis.com`), so the
+ * counters and histograms `metrics.ts` records (AU42/SCRUM-326) reach Cloud
+ * Monitoring the same direct-no-Collector way traces reach Cloud Trace.
+ */
+const TELEMETRY_OTLP_METRICS_ENDPOINT = "https://telemetry.googleapis.com/v1/metrics";
+
+/**
+ * Starts real OpenTelemetry tracing (and metrics — AU42/SCRUM-326), exporting
+ * directly to Cloud Trace/Cloud Monitoring via the standard OTLP exporters —
+ * no Collector, mirroring karosCMO's Phase 2 topology
+ * (src/instrumentation.node.ts). No-ops without `GOOGLE_CLOUD_PROJECT` set.
  *
  * A standard OTLP exporter has no built-in notion of Google credentials
  * (unlike the old TraceExporter) — the migration guide's documented pattern
@@ -68,6 +92,8 @@ export async function initTelemetry(): Promise<void> {
     { resourceFromAttributes },
     { ATTR_SERVICE_NAME, ATTR_DEPLOYMENT_ENVIRONMENT_NAME },
     { OTLPTraceExporter },
+    { OTLPMetricExporter },
+    { PeriodicExportingMetricReader },
     { gcpDetector },
     { GoogleAuth },
   ] = await Promise.all([
@@ -76,6 +102,8 @@ export async function initTelemetry(): Promise<void> {
     import("@opentelemetry/resources"),
     import("@opentelemetry/semantic-conventions"),
     import("@opentelemetry/exporter-trace-otlp-proto"),
+    import("@opentelemetry/exporter-metrics-otlp-proto"),
+    import("@opentelemetry/sdk-metrics"),
     import("@opentelemetry/resource-detector-gcp"),
     import("google-auth-library"),
   ]);
@@ -88,6 +116,13 @@ export async function initTelemetry(): Promise<void> {
 
   const auth = new GoogleAuth({ scopes: "https://www.googleapis.com/auth/cloud-platform" });
   const authClient = await auth.getClient();
+  // Shared by both exporters below — a fresh bearer token per export either way
+  // (`getRequestHeaders()` handles the ADC cache/refresh internally), so one
+  // client is enough for both.
+  const authHeaders = async (): Promise<Record<string, string>> => {
+    const rawHeaders = await authClient.getRequestHeaders();
+    return Object.fromEntries(rawHeaders.entries());
+  };
 
   const sdk = new NodeSDK({
     resourceDetectors: [gcpDetector],
@@ -98,12 +133,22 @@ export async function initTelemetry(): Promise<void> {
     spanProcessor: new BatchSpanProcessor(
       new OTLPTraceExporter({
         url: TELEMETRY_OTLP_TRACES_ENDPOINT,
-        async headers(): Promise<Record<string, string>> {
-          const rawHeaders = await authClient.getRequestHeaders();
-          return Object.fromEntries(rawHeaders.entries());
-        },
+        headers: authHeaders,
       }),
     ),
+    // AU42/SCRUM-326: metrics alongside traces, same direct-to-Google-Cloud,
+    // no-Collector topology. `PeriodicExportingMetricReader`'s default 60s
+    // export interval is fine here — unlike a span (whose value is tied to one
+    // request), a counter/histogram data point is meaningful as a periodic
+    // aggregate, not something that needs per-event flushing.
+    metricReaders: [
+      new PeriodicExportingMetricReader({
+        exporter: new OTLPMetricExporter({
+          url: TELEMETRY_OTLP_METRICS_ENDPOINT,
+          headers: authHeaders,
+        }),
+      }),
+    ],
   });
   sdk.start();
   sdkInstance = sdk;

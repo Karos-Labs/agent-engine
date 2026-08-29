@@ -1,5 +1,5 @@
 import type { RunKind } from "@agent-engine/core";
-import { describeError } from "@agent-engine/telemetry";
+import { describeError, recordWorkflowRunMetric, withWorkflowRunSpan } from "@agent-engine/telemetry";
 import type { DurableStepStore, RunRecord, RunStatus, WorkflowBudget } from "../adapters/types.js";
 import type { GateResponse, WorkflowContext, WorkflowRuntime } from "../primitives/context.js";
 import { buildWorkflowContext, sumRunCost } from "../primitives/context.js";
@@ -160,49 +160,77 @@ export class WorkflowEngine {
     };
     const wf = buildWorkflowContext(runtime);
 
-    try {
-      const output = await workflowFn(wf);
-      const totalCostUsd = await sumRunCost(this.store, params.runId);
-      await this.store.updateRun(params.runId, { status: "completed", updatedAt: this.now(), totalCostUsd, ...terminalRunFields() });
-      return { status: "completed", runId: params.runId, output, totalCostUsd };
-    } catch (err) {
-      const totalCostUsd = await sumRunCost(this.store, params.runId);
+    // AU42/SCRUM-326: the parent span for the whole "HTTP request → run →
+    // steps → tool calls → model calls" trace — every step/tool/model-call
+    // span created from inside `workflowFn` nests under this one, since
+    // `startActiveSpan` (`withWorkflowRunSpan`) makes it the ambient context
+    // for the `await workflowFn(wf)` call below. See `WorkflowRunSpanAttributes`
+    // and `markOutcome`'s own doc comment for why `failed`/`degraded` below
+    // call it explicitly: this method's own outcome switch never lets an
+    // exception escape (every branch RETURNS a `WorkflowRunResult`), so
+    // `runInSpan`'s automatic catch-and-mark-ERROR never fires here on its own.
+    return withWorkflowRunSpan({ runId: params.runId, clientSlug: params.clientSlug, productId: params.productId, runKind: params.runKind }, async (span, markOutcome) => {
+      try {
+        const output = await workflowFn(wf);
+        const totalCostUsd = await sumRunCost(this.store, params.runId);
+        await this.store.updateRun(params.runId, { status: "completed", updatedAt: this.now(), totalCostUsd, ...terminalRunFields() });
+        span.setAttribute("run_status", "completed");
+        recordWorkflowRunMetric({ runKind: params.runKind, status: "completed" });
+        return { status: "completed", runId: params.runId, output, totalCostUsd };
+      } catch (err) {
+        const totalCostUsd = await sumRunCost(this.store, params.runId);
 
-      if (err instanceof AwaitingGateSignal) {
-        await this.store.updateRun(params.runId, {
-          status: "awaiting_gate",
-          updatedAt: this.now(),
-          totalCostUsd,
-          ...terminalRunFields({ pendingGateId: err.gateId }),
-        });
-        return { status: "awaiting_gate", runId: params.runId, output: null, pendingGateId: err.gateId, totalCostUsd };
-      }
+        if (err instanceof AwaitingGateSignal) {
+          await this.store.updateRun(params.runId, {
+            status: "awaiting_gate",
+            updatedAt: this.now(),
+            totalCostUsd,
+            ...terminalRunFields({ pendingGateId: err.gateId }),
+          });
+          // A pause, not a failure — the run is exactly where it should be.
+          span.setAttribute("run_status", "awaiting_gate");
+          recordWorkflowRunMetric({ runKind: params.runKind, status: "awaiting_gate" });
+          return { status: "awaiting_gate", runId: params.runId, output: null, pendingGateId: err.gateId, totalCostUsd };
+        }
 
-      if (err instanceof WorkflowContentFailure || err instanceof WorkflowBudgetExceeded) {
+        if (err instanceof WorkflowContentFailure || err instanceof WorkflowBudgetExceeded) {
+          const failureReason = describeError(err);
+          await this.store.updateRun(params.runId, { status: "failed", updatedAt: this.now(), totalCostUsd, ...terminalRunFields({ failureReason }) });
+          span.setAttribute("run_status", "failed");
+          markOutcome(true, failureReason);
+          recordWorkflowRunMetric({ runKind: params.runKind, status: "failed" });
+          return { status: "failed", runId: params.runId, output: null, failureReason, totalCostUsd };
+        }
+
+        if (err instanceof WorkflowHeld) {
+          const reason = describeError(err);
+          await this.store.updateRun(params.runId, { status: "held", updatedAt: this.now(), totalCostUsd, ...terminalRunFields({ reason }) });
+          // A legitimate domain outcome ("nothing honestly cleared the gates"), not a malfunction — see WorkflowRunResult's own doc comment.
+          span.setAttribute("run_status", "held");
+          recordWorkflowRunMetric({ runKind: params.runKind, status: "held" });
+          return { status: "held", runId: params.runId, output: null, reason, totalCostUsd };
+        }
+
+        if (err instanceof WorkflowBlockedIntake) {
+          const reason = describeError(err);
+          await this.store.updateRun(params.runId, { status: "blocked_intake", updatedAt: this.now(), totalCostUsd, ...terminalRunFields({ reason }) });
+          // Missing client input, not an agent fault — see WorkflowRunResult's own doc comment.
+          span.setAttribute("run_status", "blocked_intake");
+          recordWorkflowRunMetric({ runKind: params.runKind, status: "blocked_intake" });
+          return { status: "blocked_intake", runId: params.runId, output: null, reason, totalCostUsd };
+        }
+
+        // WorkflowToolingFailure, or any other uncaught error: something broke — never recorded as a content verdict (RFC-01 §5.6/§6).
+        // describeError walks the whole .cause chain (RFC-01 §16.4) — the network/tooling
+        // failure actually at fault must stay legible, not flatten into one opaque message.
         const failureReason = describeError(err);
-        await this.store.updateRun(params.runId, { status: "failed", updatedAt: this.now(), totalCostUsd, ...terminalRunFields({ failureReason }) });
-        return { status: "failed", runId: params.runId, output: null, failureReason, totalCostUsd };
+        await this.store.updateRun(params.runId, { status: "degraded", updatedAt: this.now(), totalCostUsd, ...terminalRunFields({ failureReason }) });
+        span.setAttribute("run_status", "degraded");
+        markOutcome(true, failureReason);
+        recordWorkflowRunMetric({ runKind: params.runKind, status: "degraded" });
+        return { status: "degraded", runId: params.runId, output: null, failureReason, totalCostUsd };
       }
-
-      if (err instanceof WorkflowHeld) {
-        const reason = describeError(err);
-        await this.store.updateRun(params.runId, { status: "held", updatedAt: this.now(), totalCostUsd, ...terminalRunFields({ reason }) });
-        return { status: "held", runId: params.runId, output: null, reason, totalCostUsd };
-      }
-
-      if (err instanceof WorkflowBlockedIntake) {
-        const reason = describeError(err);
-        await this.store.updateRun(params.runId, { status: "blocked_intake", updatedAt: this.now(), totalCostUsd, ...terminalRunFields({ reason }) });
-        return { status: "blocked_intake", runId: params.runId, output: null, reason, totalCostUsd };
-      }
-
-      // WorkflowToolingFailure, or any other uncaught error: something broke — never recorded as a content verdict (RFC-01 §5.6/§6).
-      // describeError walks the whole .cause chain (RFC-01 §16.4) — the network/tooling
-      // failure actually at fault must stay legible, not flatten into one opaque message.
-      const failureReason = describeError(err);
-      await this.store.updateRun(params.runId, { status: "degraded", updatedAt: this.now(), totalCostUsd, ...terminalRunFields({ failureReason }) });
-      return { status: "degraded", runId: params.runId, output: null, failureReason, totalCostUsd };
-    }
+    });
   }
 
   /**

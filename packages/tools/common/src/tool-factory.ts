@@ -1,5 +1,5 @@
 import type { AgentTool, AgentToolCallContext, AgentToolOutcome, ZodSchema } from "@agent-engine/core";
-import { describeError, withToolCallSpan } from "@agent-engine/telemetry";
+import { describeError, recordToolCallMetric, withToolCallSpan } from "@agent-engine/telemetry";
 import { toolingError } from "./errors.js";
 
 export interface DefineToolOptions<TArgs, TResult> {
@@ -44,15 +44,26 @@ export function defineTool<TArgs, TResult>(options: DefineToolOptions<TArgs, TRe
             toolName: options.name,
             toolVersion: options.version,
           },
-          async (span) => {
+          async (span, markOutcome) => {
             const outcome = await options.execute(parsed.data, context);
             span.setAttribute("outcome_status", outcome.status);
+            recordToolCallMetric({ toolName: options.name, status: outcome.status });
+            // AU42/SCRUM-326 — same defect as `runStepCode`/`runStepAgent`: a
+            // tool reports `tooling_error` by RETURNING it (RFC-01 §6), so
+            // without this the span stayed `OK` for the exact case
+            // `tooling_error` exists to distinguish from a content judgment.
+            // `content_fail`/`not_available` stay `OK`-status — both are real,
+            // designed outcomes, not something that broke.
+            if (outcome.status === "tooling_error") {
+              markOutcome(true, outcome.reason);
+            }
             return outcome;
           },
         );
       } catch (err) {
         // describeError walks the whole `.cause` chain (RFC-01 §16.4) — a network-layer
         // failure at the root must stay legible, not flatten into one opaque message.
+        recordToolCallMetric({ toolName: options.name, status: "threw" });
         return toolingError(`"${options.name}" threw: ${describeError(err)}`);
       }
     },

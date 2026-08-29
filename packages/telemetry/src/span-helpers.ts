@@ -1,7 +1,8 @@
-import { SpanStatusCode, trace, type Span } from "@opentelemetry/api";
+import { context, SpanKind, SpanStatusCode, trace, type Span } from "@opentelemetry/api";
 import { getTracer } from "./tracer.js";
 import { describeError } from "./errors.js";
 import { biTable } from "./bigquery-client.js";
+import { recordHttpRequestMetric } from "./metrics.js";
 
 interface IdentityAttributes {
   runId: string;
@@ -209,13 +210,34 @@ export function telemetrySinkHealth(): Readonly<TelemetrySinkHealth> {
   return { ...sinkHealth };
 }
 
-function runInSpan<T>(name: string, setup: (span: Span) => void, fn: (span: Span) => Promise<T>): Promise<T> {
+/**
+ * Lets a wrapped callback declare "this call came back without throwing, but
+ * it is still a failure" (AU42/SCRUM-326) — a `tooling_error`/`content_fail`
+ * step outcome, an `error` tool outcome — none of which raise an exception,
+ * so `runInSpan`'s own catch block never sees them. Before this, every span
+ * below ended `OK` unless its wrapped call literally threw, which is exactly
+ * the "structurally incapable of failing" shape: a step or tool call that
+ * fails BY RETURNING a failure verdict (the normal path for both, per
+ * RFC-01 §6) produced a trace indistinguishable from success. Call with
+ * `true` (and, ideally, a message) once the outcome is known; leave unset and
+ * the span defaults to `OK`, same as before.
+ */
+type MarkSpanOutcome = (isError: boolean, message?: string) => void;
+
+function runInSpan<T>(name: string, setup: (span: Span) => void, fn: (span: Span, markOutcome: MarkSpanOutcome) => Promise<T>): Promise<T> {
   const tracer = getTracer();
   return tracer.startActiveSpan(name, async (span) => {
     setup(span);
+    let outcomeSet = false;
+    const markOutcome: MarkSpanOutcome = (isError, message) => {
+      outcomeSet = true;
+      span.setStatus(isError ? { code: SpanStatusCode.ERROR, ...(message !== undefined ? { message } : {}) } : { code: SpanStatusCode.OK });
+    };
     try {
-      const result = await fn(span);
-      span.setStatus({ code: SpanStatusCode.OK });
+      const result = await fn(span, markOutcome);
+      if (!outcomeSet) {
+        span.setStatus({ code: SpanStatusCode.OK });
+      }
       return result;
     } catch (err) {
       span.recordException(err instanceof Error ? err : String(err));
@@ -228,7 +250,7 @@ function runInSpan<T>(name: string, setup: (span: Span) => void, fn: (span: Span
 }
 
 /** Wraps one Layer 1 workflow step (`step.code`/`step.agent`) in a span tagged per RFC-01 §11. */
-export function withWorkflowStepSpan<T>(attrs: WorkflowStepSpanAttributes, fn: (span: Span) => Promise<T>): Promise<T> {
+export function withWorkflowStepSpan<T>(attrs: WorkflowStepSpanAttributes, fn: (span: Span, markOutcome: MarkSpanOutcome) => Promise<T>): Promise<T> {
   return runInSpan(
     `workflow.step.${attrs.stepKind}`,
     (span) => {
@@ -241,7 +263,7 @@ export function withWorkflowStepSpan<T>(attrs: WorkflowStepSpanAttributes, fn: (
 }
 
 /** Wraps one Layer 3 tool execution in a span tagged per RFC-01 §11 (including `tool_version`). */
-export function withToolCallSpan<T>(attrs: ToolCallSpanAttributes, fn: (span: Span) => Promise<T>): Promise<T> {
+export function withToolCallSpan<T>(attrs: ToolCallSpanAttributes, fn: (span: Span, markOutcome: MarkSpanOutcome) => Promise<T>): Promise<T> {
   return runInSpan(
     `tool.call.${attrs.toolName}`,
     (span) => {
@@ -251,6 +273,169 @@ export function withToolCallSpan<T>(attrs: ToolCallSpanAttributes, fn: (span: Sp
     },
     fn,
   );
+}
+
+/** Attributes for one workflow-run span (AU42/SCRUM-326) — the parent every step/tool/model-call span in a run nests under. */
+export interface WorkflowRunSpanAttributes {
+  runId: string;
+  clientSlug: string;
+  productId: string;
+  runKind: string;
+}
+
+/**
+ * Wraps one `WorkflowEngine.run()` invocation — an initial run or a resume —
+ * in a span (AU42/SCRUM-326). This is the top of the "HTTP request → run →
+ * steps → tool calls → model calls" trace the ticket asks for: every
+ * `step.code`/`step.agent`/`step.gate` call made from inside `workflowFn`
+ * nests under this span, since `startActiveSpan` makes it the ambient
+ * context for the whole `await workflowFn(wf)` call.
+ *
+ * `run()` never lets an unhandled exception escape past its own outcome
+ * switch — every branch, including `failed`/`degraded`, is a RETURNED
+ * `WorkflowRunResult`, not a throw — so exactly like the step/tool spans
+ * above, the caller must call `markOutcome(true, reason)` itself for the
+ * outcomes that are actually failures; see `WorkflowEngine.run()`.
+ */
+export function withWorkflowRunSpan<T>(attrs: WorkflowRunSpanAttributes, fn: (span: Span, markOutcome: MarkSpanOutcome) => Promise<T>): Promise<T> {
+  return runInSpan(
+    "workflow.run",
+    (span) => {
+      span.setAttribute("run_id", attrs.runId);
+      span.setAttribute("client_slug", attrs.clientSlug);
+      span.setAttribute("product_id", attrs.productId);
+      span.setAttribute("run_kind", attrs.runKind);
+    },
+    fn,
+  );
+}
+
+/** Attributes for one model-adapter call span (AU42/SCRUM-326). */
+export interface ModelCallSpanAttributes {
+  vendor: string;
+  model: string;
+  /** `ModelPolicy.policy` — "pinned" | "portable" | "commodity" (RFC-01 §5.4). */
+  tier: string;
+}
+
+/**
+ * Wraps one attempt at a model-adapter `complete()` call (AU42/SCRUM-326) —
+ * one span per hop, so a `portable`/`commodity` step's primary attempt and
+ * its fallback attempt (see `DefaultModelRouter.complete`) are two distinct,
+ * separately-timed child spans under the same workflow-step span, not one
+ * span silently covering both.
+ *
+ * Unlike the step/tool spans above, a `ModelAdapter.complete()` failure is
+ * always a thrown exception (never a returned "soft" failure shape — every
+ * adapter in `packages/core/src/router/adapters` either resolves or throws),
+ * so this reuses `runInSpan`'s automatic catch-and-record for the failure
+ * case; the wrapped callback only needs to set success attributes.
+ */
+export function withModelCallSpan<T>(attrs: ModelCallSpanAttributes, fn: (span: Span, markOutcome: MarkSpanOutcome) => Promise<T>): Promise<T> {
+  return runInSpan(
+    `model.call.${attrs.vendor}`,
+    (span) => {
+      span.setAttribute("vendor", attrs.vendor);
+      span.setAttribute("model", attrs.model);
+      span.setAttribute("tier", attrs.tier);
+    },
+    fn,
+  );
+}
+
+/** Attributes for one resolved gate span (AU42/SCRUM-326). */
+export interface GateSpanAttributes {
+  runId: string;
+  clientSlug: string;
+  productId: string;
+  stepId: string;
+  gateId: string;
+  decision: string;
+  actor?: string;
+}
+
+/**
+ * Records one resolved `step.gate` as a span with EXPLICIT start/end times
+ * (AU42/SCRUM-326) — deliberately NOT `startActiveSpan`/`runInSpan` like
+ * every span above. `runStepGate` (packages/workflow) is re-entered once per
+ * resume attempt while a gate is still pending, throwing `AwaitingGateSignal`
+ * every time until a response exists; wrapping that in a live span would
+ * report a run of sub-millisecond "failures" instead of the one real —
+ * possibly multi-hour or multi-day — human wait. The caller
+ * (`recordResolvedGateStep`) already computes the true `startedAt`
+ * (first time this gate's step became current) and `completedAt` (when the
+ * response landed) for its own checkpoint record; this just opens a span
+ * backdated to the former and ends it at the latter, exactly once, only on
+ * the replay pass that actually sees the resolution.
+ *
+ * Always `OK`, regardless of `decision`: a rejected gate is a resolved human
+ * decision, not a malfunction (see `runStepGate`'s own doc comment) — the
+ * decision is carried as an attribute, not a failure status.
+ */
+export function recordGateSpan(attrs: GateSpanAttributes, startedAt: number, completedAt: number): void {
+  const span = getTracer().startSpan("workflow.gate", { startTime: startedAt });
+  span.setAttribute("run_id", attrs.runId);
+  span.setAttribute("client_slug", attrs.clientSlug);
+  span.setAttribute("product_id", attrs.productId);
+  span.setAttribute("step_id", attrs.stepId);
+  span.setAttribute("gate_id", attrs.gateId);
+  span.setAttribute("gate_decision", attrs.decision);
+  if (attrs.actor !== undefined) {
+    span.setAttribute("gate_actor", attrs.actor);
+  }
+  span.setStatus({ code: SpanStatusCode.OK });
+  span.end(completedAt);
+}
+
+/**
+ * Minimal, Express-agnostic shape this module needs from an HTTP
+ * request/response (AU42/SCRUM-326) — structural typing so this package
+ * never takes an `express` dependency of its own; `apps/agent-server`'s
+ * middleware wrapper supplies real `Request`/`Response` objects, which
+ * satisfy this shape without a cast.
+ */
+export interface HttpSpanRequest {
+  method: string;
+  path: string;
+  route?: { path: string };
+  baseUrl?: string;
+}
+export interface HttpSpanResponseLike {
+  statusCode: number;
+  on(event: "finish", listener: () => void): void;
+}
+
+/**
+ * Opens the top-of-trace HTTP request span (AU42/SCRUM-326) — the "HTTP
+ * request" half of "a full trace from HTTP request → run → steps → tool
+ * calls → model calls". Makes the span the ACTIVE context for the rest of
+ * the middleware/route chain (`next()` runs inside `context.with(...)`), so
+ * every `workflow.run`/`workflow.step.*`/`tool.call.*`/`model.call.*` span
+ * created while handling this request nests underneath it — the same
+ * mechanism `runInSpan`'s `startActiveSpan` relies on, one level up.
+ *
+ * Ends on the response's `finish` event rather than synchronously after
+ * `next()` returns: Express middleware calls `next()` and returns
+ * immediately, long before the request is actually done (every downstream
+ * handler is async) — ending here would close the span before the run it is
+ * supposed to contain even starts.
+ */
+export function withHttpRequestSpan(req: HttpSpanRequest, res: HttpSpanResponseLike, next: () => void): void {
+  const span = getTracer().startSpan(`HTTP ${req.method}`, { kind: SpanKind.SERVER });
+  span.setAttribute("http.method", req.method);
+  span.setAttribute("http.target", req.path);
+
+  context.with(trace.setSpan(context.active(), span), () => {
+    res.on("finish", () => {
+      const route = req.route !== undefined ? `${req.baseUrl ?? ""}${req.route.path}` : req.path;
+      span.setAttribute("http.route", route);
+      span.setAttribute("http.status_code", res.statusCode);
+      span.setStatus({ code: res.statusCode >= 500 ? SpanStatusCode.ERROR : SpanStatusCode.OK });
+      recordHttpRequestMetric({ method: req.method, route, statusCode: res.statusCode });
+      span.end();
+    });
+    next();
+  });
 }
 
 /**

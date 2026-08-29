@@ -20,5 +20,10 @@
     "google-auth-library": "^10.9.1",
     "openai": "^7.4.0",
     "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@opentelemetry/context-async-hooks": "^2.10.0",
+    "@opentelemetry/sdk-trace-base": "^2.10.0",
+    "@opentelemetry/sdk-trace-node": "^2.10.0"
   }
 }
