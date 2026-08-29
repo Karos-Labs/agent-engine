@@ -127,6 +127,25 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
       };
     });
 
+    // ── 00a: assets check — SCRUM-295 (AU10). `brand_assets_check.py`
+    // physically opens every font/image the brand profile references, which
+    // is the check `os.path.exists()` cannot do (the karoslabs 0-byte
+    // `Spectral-SemiBold.ttf` incident — RFC-06 §4). `video.assetsCheck`
+    // shipped with the rest of `karos-video` (RFC-06 §6) but, before this
+    // ticket, had no call site anywhere in the codebase: a corrupt or
+    // missing asset would not surface until `video.render` failed deep into
+    // the pipeline, or — worse — rendered a broken video that passed every
+    // downstream gate. Runs on every call, not only a client's first: assets
+    // can be replaced between runs, which is exactly why the tool's own doc
+    // comment calls for re-checking "before any run for a client whose
+    // assets may have moved."
+    await wf.step.code("00a-assets-check", async () => {
+      const verdict = await runGateTool(tools, "video.assetsCheck", { profilePath: brandResolve.profilePath }, ctx);
+      if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`video.assetsCheck: ${verdict.reason}`);
+      if (verdict.verdict === "content_fail") throw new WorkflowHeld(`client brand assets failed video.assetsCheck: ${verdict.reason}`);
+      return verdict;
+    });
+
     // ── 01: per-upload intake (RFC-06 §7 / assets/INTAKE-REQUEST.md) ──
     const intake: BrandedShortsIntake = await wf.step.code("01-load-intake", () => {
       const parsed = BrandedShortsIntakeSchema.safeParse(brandResolve.intakeRaw);
