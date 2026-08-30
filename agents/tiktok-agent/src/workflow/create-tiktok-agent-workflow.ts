@@ -4,25 +4,33 @@ import path from "node:path";
 import { buildSrt } from "@agent-engine/tool-karos-video";
 import { downloadBrandLogo } from "@agent-engine/tool-karos-media";
 import {
-  GUARDRAIL_OUTPUT_FIELDS,
-  GUARDRAIL_STEP_ID,
-  GuardrailViolationError,
-  DynamicAgent,
-  buildGuardrailInput,
-  buildGuardrailSystemPrompt,
-  buildOutputSchema,
   readForbiddenTopics,
-  toVerdict,
   type AgentContext,
   type AgentToolRegistry,
   type GateVerdict,
-  type GuardrailOutput,
   type ModelRouter,
   type PromptStore,
   readRichRunInput,
   firstAsset,
 } from "@agent-engine/core";
-import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, readOutputHistoryForDedup, dedupeDirective, readClientIntelContext, type WorkflowContext, toAgentContext } from "@agent-engine/workflow";
+import {
+  AwaitingGateSignal,
+  MAX_REVISION_ROUNDS,
+  WorkflowBlockedIntake,
+  WorkflowHeld,
+  WorkflowToolingFailure,
+  dedupeDirective,
+  persistReviewFeedbackToMemory,
+  readClientIntelContext,
+  readOutputHistoryForDedup,
+  readPastFeedback,
+  revisionDirective,
+  runReviewCycle,
+  runTopicGuardrail,
+  toAgentContext,
+  type RevisionNote,
+  type WorkflowContext,
+} from "@agent-engine/workflow";
 import { TikTokCommentaryAgent } from "../agent/tiktok-commentary-agent.js";
 import { TikTokMomentAgent } from "../agent/tiktok-moment-agent.js";
 import { boundsFromTranscript, sentenceBoundedWords, type TranscriptWordLike } from "./clip-bounds.js";
@@ -123,7 +131,18 @@ async function runGate(tools: AgentToolRegistry, name: string, args: unknown, ct
  * `topics.reserve`/`commit`/`release` IS the legacy catalog: the forward
  * pipeline of candidate moments and the hard dedup gate in one. A run that
  * fails releases its reservation, so a moment is never burned by a run that
- * shipped nothing.
+ * shipped nothing. A run PAUSED at the review gate has not failed and keeps
+ * its reservation — see the catch around the review cycle.
+ *
+ * ## Review
+ *
+ * The `[approve]` step above is `runReviewCycle`, the same approve / revise /
+ * reject loop every other migrated agent uses. `revise` re-writes the
+ * commentary with the reviewer's note in hand and re-renders the clip around
+ * it, in-run: the transcript, the selected moment and the cut bounds keep
+ * their step ids and are reused, so a revision costs one drafting call and one
+ * render rather than a whole second run. Bounded at `MAX_REVISION_ROUNDS`,
+ * because every round re-runs paid work.
  */
 /**
  * Downloads an attached source video and returns an absolute path to it.
@@ -181,18 +200,33 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
     const runInput = (wf.input ?? {}) as Record<string, unknown>;
 
     // ── 00: INTAKE — the client's clip settings, or nothing ──
-    const config: TikTokClipConfig = await wf.step.code("00-intake", async () => {
-      const raw = await callTool(tools, "client.getConfig", {}, ctx);
-      const parsed = TikTokClipConfigSchema.safeParse((raw as { tiktokClips?: unknown }).tiktokClips);
-      if (!parsed.success) {
-        // Not a tooling error: nobody has told us which shows this client may
-        // clip, and that is a decision a person makes, not a default.
-        throw new WorkflowBlockedIntake(
-          `client has no usable tiktokClips config (needs at least a sourcePool): ${parsed.error.message}`,
-        );
-      }
-      return parsed.data;
-    });
+    //
+    // `forbiddenTopics` comes out of the SAME read as the clip settings, so
+    // the terminal guardrail below needs no second one. It used to: this file
+    // imported `readForbiddenTopics` and never once called it, so
+    // `runTopicGuardrail` fell through to its own `client.getConfig` read and
+    // every run paid an extra `guardrail-verify-load-topics` step plus a
+    // duplicate config call — including the majority of runs, for clients who
+    // forbid nothing, where the guardrail then does not run at all.
+    const intakeConfig = await wf.step.code(
+      "00-intake",
+      async (): Promise<{ config: TikTokClipConfig; forbiddenTopics: string[] }> => {
+        const raw = await callTool(tools, "client.getConfig", {}, ctx);
+        const parsed = TikTokClipConfigSchema.safeParse((raw as { tiktokClips?: unknown }).tiktokClips);
+        if (!parsed.success) {
+          // Not a tooling error: nobody has told us which shows this client may
+          // clip, and that is a decision a person makes, not a default.
+          throw new WorkflowBlockedIntake(
+            `client has no usable tiktokClips config (needs at least a sourcePool): ${parsed.error.message}`,
+          );
+        }
+        // From the client's own stored configuration, never the job payload —
+        // the same rule `runTopicGuardrail` applies when it reads this itself.
+        return { config: parsed.data, forbiddenTopics: readForbiddenTopics(raw) };
+      },
+    );
+    const config: TikTokClipConfig = intakeConfig.config;
+    const forbiddenTopics: readonly string[] = intakeConfig.forbiddenTopics;
 
     // ── 00b: seed the commentary-clip lane from the client's own guest
     // watchlist, before this run's own reservation ever touches it ──
@@ -347,11 +381,22 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       throw new WorkflowHeld(`no source footage from any tier — ${tierOutcomes.join("; ")}`);
     });
 
-    /** Hands a reservation back so a failed run does not burn the moment. */
+    /**
+     * Hands a reservation back so a failed run does not burn the moment.
+     *
+     * Idempotent within a pass. The review cycle below gives this two callers
+     * that can fire for the same failure — a drafting step that throws inside
+     * `attempt`, and the catch wrapping the cycle — and `topics.release` is
+     * not a no-op the second time: it puts the row back for anyone to claim
+     * and records a second release against a reservation that only ever
+     * existed once.
+     */
+    let reservationReleased = false;
     const releaseReservation = async (): Promise<void> => {
-      if (!intake.reservationKey) return;
+      if (!intake.reservationKey || reservationReleased) return;
       const tool = tools["topics.release"];
       if (!tool) return;
+      reservationReleased = true;
       await tool.execute({ reservationKey: intake.reservationKey }, { ctx }).catch(() => undefined);
     };
 
@@ -446,62 +491,22 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
     const outputHistory = await readOutputHistoryForDedup(wf, tools, ctx, "tiktok-agent", "read-output-history");
     const recentPostsDirective = dedupeDirective(outputHistory);
     const clientIntelContext = await readClientIntelContext(wf, tools, ctx, "read-intel-context");
-
-    // ── 06: COMPOSE — the commentary layer (judgment) ──
-    const commentary: Commentary = await wf.step.code("06-commentary", async () => {
-      const agent = new TikTokCommentaryAgent({ router: options.router, tools, promptStore: options.promptStore });
-      const exec = await wf.step.agent("06a-commentary", agent, {
-        topic: intake.topic,
-        hookLine: moment.hookLine,
-        hookType: moment.hookType,
-        clipText: bounds.text,
-        ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
-        ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
-      });
-      if (exec.status === "content_fail") {
-        await releaseReservation();
-        throw new WorkflowHeld("commentary did not clear its own output validation");
-      }
-      if (exec.status !== "completed") {
-        await releaseReservation();
-        throw new WorkflowToolingFailure(`commentary step resolved to "${exec.status}"`);
-      }
-      return exec.finalOutput as Commentary;
-    });
-
-    // ── 07: compliance pass ──
-    await wf.step.code("07-compliance", async () => {
-      const text = `${commentary.caption}\n\n${commentary.about}`;
-
-      // Source credit first, and checked in code rather than asked of the
-      // model that wrote it. The legacy rule is explicit that the on-clip
-      // attribution block is not enough — the caption has to name it — and a
-      // clip that ships uncredited is the one failure here with a party
-      // outside this system.
-      if (!commentary.caption.includes(commentary.sourceCredit)) {
-        await releaseReservation();
-        throw new WorkflowHeld("the caption does not carry the source credit, and an on-clip attribution block alone is not enough");
-      }
-
-      for (const [gate, args] of [
-        ["gate.lintPost", { text }],
-        ["gate.brandCompliance", { text }],
-        ["gate.noPlaceholder", { text }],
-        ["gate.leakCheck", { text }],
-      ] as const) {
-        const verdict = await runGate(tools, gate, args, ctx);
-        if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`${gate}: ${verdict.reason}`);
-        if (verdict.verdict === "content_fail") {
-          await releaseReservation();
-          throw new WorkflowHeld(`${gate} failed: ${verdict.reason}`);
-        }
-      }
-    });
+    // The read side of the feedback flywheel the review cycle below writes to:
+    // what this client asked for on PREVIOUS runs. Distinct from the revision
+    // notes threaded through `produceClip` the same way a standing preference
+    // is distinct from a note about the clip in front of you. Bounded and
+    // best-effort — it lands in a drafting prompt, and a memory read failing
+    // must not stop a run that can write a caption without it.
+    const pastFeedback = await readPastFeedback(wf, tools, ctx, "read-past-feedback");
 
     // ── 07b: the client's brand, for the framed clip. Best-effort, never
     //         blocking — brand furniture must never be able to hold a run,
-    //         the same rule the slide pipeline's brand kit follows. ──
-    const workDir = path.join(os.tmpdir(), "tiktok-agent", wf.runId);
+    //         the same rule the slide pipeline's brand kit follows.
+    //
+    //         Read ONCE, above the review cycle: a reviewer's note changes the
+    //         caption, never the client's own colours, so every revision's
+    //         render reuses this rather than re-reading it. ──
+    const baseWorkDir = path.join(os.tmpdir(), "tiktok-agent", wf.runId);
     const videoBrand = await wf.step.code("07b-load-video-brand", async (): Promise<VideoBrand> => {
       const HEX6 = /^#[0-9a-fA-F]{6}$/;
       const asHex = (v: unknown): string | undefined => (typeof v === "string" && HEX6.test(v.trim()) ? v.trim() : undefined);
@@ -522,162 +527,290 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       };
     });
 
-    // ── 08: render — cut, caption, branded frame, all pure ffmpeg. The old
-    //        `video.render` call shelled into the unvendored Python engine
-    //        with the wrong argument shape; this path depends on nothing but
-    //        the ffmpeg already in the server image. ──
-    const rendered = await wf.step.code("08-render", async (): Promise<{ outputPath: string; durationSeconds: number | null }> => {
-      await fs.mkdir(workDir, { recursive: true });
+    /** One round's finished clip: what the gate shows a reviewer, and what step 12 persists once one approves it. */
+    interface ClipDraft {
+      commentary: Commentary;
+      renderedPath: string;
+      durationSeconds: number;
+      uploaded: { gcsUri: string; signedUrl?: string } | null;
+    }
 
-      // Cut the moment out of the source (a generated plate is already the clip).
-      let clipPath = intake.sourcePath;
-      if (bounds.needsCut) {
-        const cutOutcome = await tools["video.cutClip"]?.execute(
+    /**
+     * One full clip-production pass: the commentary layer, every content gate,
+     * the cut/brand render, the blocking QA gate, the reviewer's upload, and
+     * the terminal topic guardrail.
+     *
+     * Called once per REVISION round by `runReviewCycle`. `revision` is folded
+     * into every checkpointed step id inside it (via `rev`), so a second round
+     * genuinely re-writes and RE-RENDERS instead of short-circuiting on the
+     * first round's checkpoints — while everything OUTSIDE it (the topic
+     * claim, the source cascade, the transcript, the moment, the cut bounds,
+     * the brand) keeps its id and is reused. That reuse is the whole reason
+     * the revision happens in-run rather than as a fresh run: a new run would
+     * re-transcribe the episode and re-pick a moment nobody objected to.
+     *
+     * Nothing in here releases the reservation. Every throw out of this
+     * callback reaches the single catch around the cycle below, which is the
+     * one place the moment is handed back — two release sites for one failure
+     * is how a reservation gets released twice.
+     */
+    const produceClip = async (revision: number, notes: readonly RevisionNote[]): Promise<ClipDraft> => {
+      /** Revision 0 keeps the ORIGINAL ids, so a first-pass trace is unchanged. */
+      const rev = (id: string) => (revision === 0 ? id : `${id}-r${revision}`);
+      const directive = revisionDirective(notes);
+      // A later round renders into its own directory. Sharing one would
+      // overwrite `clip-framed.mp4` in place, and the r0 gate record — the
+      // audit trail of what a human actually looked at — would then point at a
+      // file holding the r1 clip.
+      const workDir = revision === 0 ? baseWorkDir : path.join(baseWorkDir, `r${revision}`);
+
+      // ── 06: COMPOSE — the commentary layer (judgment) ──
+      const commentary: Commentary = await wf.step.code(rev("06-commentary"), async () => {
+        const agent = new TikTokCommentaryAgent({ router: options.router, tools, promptStore: options.promptStore });
+        const exec = await wf.step.agent(rev("06a-commentary"), agent, {
+          topic: intake.topic,
+          hookLine: moment.hookLine,
+          hookType: moment.hookType,
+          clipText: bounds.text,
+          ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
+          ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
+          // Two distinct steers, kept apart: `pastFeedback` is what this client
+          // has said across previous RUNS, `revisionRequest` is what a reviewer
+          // asked about THIS clip minutes ago.
+          ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
+          ...(directive !== undefined ? { revisionRequest: directive } : {}),
+        });
+        if (exec.status === "content_fail") {
+          throw new WorkflowHeld("commentary did not clear its own output validation");
+        }
+        if (exec.status !== "completed") {
+          throw new WorkflowToolingFailure(`commentary step resolved to "${exec.status}"`);
+        }
+        return exec.finalOutput as Commentary;
+      });
+
+      // ── 07: compliance pass ──
+      await wf.step.code(rev("07-compliance"), async () => {
+        const text = `${commentary.caption}\n\n${commentary.about}`;
+
+        // Source credit first, and checked in code rather than asked of the
+        // model that wrote it. The legacy rule is explicit that the on-clip
+        // attribution block is not enough — the caption has to name it — and a
+        // clip that ships uncredited is the one failure here with a party
+        // outside this system.
+        if (!commentary.caption.includes(commentary.sourceCredit)) {
+          throw new WorkflowHeld("the caption does not carry the source credit, and an on-clip attribution block alone is not enough");
+        }
+
+        for (const [gate, args] of [
+          ["gate.lintPost", { text }],
+          ["gate.brandCompliance", { text }],
+          ["gate.noPlaceholder", { text }],
+          ["gate.leakCheck", { text }],
+        ] as const) {
+          const verdict = await runGate(tools, gate, args, ctx);
+          if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`${gate}: ${verdict.reason}`);
+          if (verdict.verdict === "content_fail") {
+            throw new WorkflowHeld(`${gate} failed: ${verdict.reason}`);
+          }
+        }
+      });
+
+      // ── 08: render — cut, caption, branded frame, all pure ffmpeg. The old
+      //        `video.render` call shelled into the unvendored Python engine
+      //        with the wrong argument shape; this path depends on nothing but
+      //        the ffmpeg already in the server image. ──
+      const rendered = await wf.step.code(rev("08-render"), async (): Promise<{ outputPath: string; durationSeconds: number | null }> => {
+        await fs.mkdir(workDir, { recursive: true });
+
+        // Cut the moment out of the source (a generated plate is already the clip).
+        let clipPath = intake.sourcePath;
+        if (bounds.needsCut) {
+          const cutOutcome = await tools["video.cutClip"]?.execute(
+            {
+              sourcePath: intake.sourcePath,
+              startSeconds: bounds.startSeconds,
+              endSeconds: bounds.endSeconds,
+              outputPath: path.join(workDir, "clip-cut.mp4"),
+            },
+            { ctx },
+          );
+          if (cutOutcome === undefined || cutOutcome.status !== "success") {
+            throw new WorkflowToolingFailure(
+              `video.cutClip failed: ${cutOutcome === undefined ? "tool not registered" : `${cutOutcome.status}${"reason" in cutOutcome ? ` (${cutOutcome.reason})` : ""}`}`,
+            );
+          }
+          clipPath = (cutOutcome.result as { outputPath: string }).outputPath;
+        }
+
+        // Burned captions, from the moment's own word timings — clip-relative.
+        let srtPath: string | undefined;
+        if (bounds.words.length > 0) {
+          const srt = buildSrt(
+            bounds.words.map((w) => ({ word: w.text, start: w.start, end: w.end })),
+            bounds.startSeconds,
+          );
+          srtPath = path.join(workDir, "captions.srt");
+          await fs.writeFile(srtPath, srt, "utf8");
+        }
+
+        // The logo, downloaded fresh for this render (any failure = no logo,
+        // never a hold).
+        let logoPath: string | undefined;
+        if (videoBrand.logoUrl !== undefined) {
+          const download = await downloadBrandLogo(options.fetchImpl ?? fetch, videoBrand.logoUrl);
+          // SVG can't overlay in ffmpeg without a rasterizer — raster formats only here.
+          if (download !== undefined && download.mime !== "image/svg+xml") {
+            logoPath = path.join(workDir, download.mime === "image/png" ? "logo.png" : "logo.jpg");
+            await fs.writeFile(logoPath, download.bytes);
+          }
+        }
+
+        const frameOutcome = await tools["video.brandFrame"]?.execute(
           {
-            sourcePath: intake.sourcePath,
-            startSeconds: bounds.startSeconds,
-            endSeconds: bounds.endSeconds,
-            outputPath: path.join(workDir, "clip-cut.mp4"),
+            videoPath: clipPath,
+            outputPath: path.join(workDir, "clip-framed.mp4"),
+            brand: {
+              ground: videoBrand.ground,
+              fg: videoBrand.fg,
+              ...(videoBrand.accent !== undefined ? { accent: videoBrand.accent } : {}),
+              ...(videoBrand.handle !== undefined ? { handle: videoBrand.handle } : {}),
+              ...(videoBrand.seriesHeader !== undefined ? { seriesHeader: videoBrand.seriesHeader } : {}),
+              ...(logoPath !== undefined ? { logoPath } : {}),
+            },
+            ...(srtPath !== undefined ? { srtPath } : {}),
           },
           { ctx },
         );
-        if (cutOutcome === undefined || cutOutcome.status !== "success") {
+        if (frameOutcome === undefined || frameOutcome.status !== "success") {
           throw new WorkflowToolingFailure(
-            `video.cutClip failed: ${cutOutcome === undefined ? "tool not registered" : `${cutOutcome.status}${"reason" in cutOutcome ? ` (${cutOutcome.reason})` : ""}`}`,
+            `video.brandFrame failed: ${frameOutcome === undefined ? "tool not registered" : `${frameOutcome.status}${"reason" in frameOutcome ? ` (${frameOutcome.reason})` : ""}`}`,
           );
         }
-        clipPath = (cutOutcome.result as { outputPath: string }).outputPath;
-      }
+        const framed = frameOutcome.result as { outputPath: string; durationSeconds: number | null };
+        return { outputPath: framed.outputPath, durationSeconds: framed.durationSeconds ?? null };
+      });
+      const renderedPath = rendered.outputPath;
+      // The framed file's probed length is the truth; the transcript-derived
+      // window is the fallback (a generated plate's window is zero-width).
+      const durationSeconds = rendered.durationSeconds ?? bounds.endSeconds - bounds.startSeconds;
 
-      // Burned captions, from the moment's own word timings — clip-relative.
-      let srtPath: string | undefined;
-      if (bounds.words.length > 0) {
-        const srt = buildSrt(
-          bounds.words.map((w) => ({ word: w.text, start: w.start, end: w.end })),
-          bounds.startSeconds,
-        );
-        srtPath = path.join(workDir, "captions.srt");
-        await fs.writeFile(srtPath, srt, "utf8");
-      }
-
-      // The logo, downloaded fresh for this render (any failure = no logo,
-      // never a hold).
-      let logoPath: string | undefined;
-      if (videoBrand.logoUrl !== undefined) {
-        const download = await downloadBrandLogo(options.fetchImpl ?? fetch, videoBrand.logoUrl);
-        // SVG can't overlay in ffmpeg without a rasterizer — raster formats only here.
-        if (download !== undefined && download.mime !== "image/svg+xml") {
-          logoPath = path.join(workDir, download.mime === "image/png" ? "logo.png" : "logo.jpg");
-          await fs.writeFile(logoPath, download.bytes);
+      await wf.step.code(rev("09-qa-gate"), async () => {
+        // Blocking. The legacy rule: "Any failure aborts THIS candidate (never
+        // ship degraded)." `video.brandGate` was dropped from this list — its
+        // real contract takes PNG stills for the Python engine, not an MP4, and
+        // the branded frame is now composited deterministically upstream.
+        const verdict = await runGate(tools, "video.selfEvalGate", { videoPath: renderedPath }, ctx);
+        if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`video.selfEvalGate: ${verdict.reason}`);
+        if (verdict.verdict === "content_fail") {
+          throw new WorkflowHeld(`video.selfEvalGate failed: ${verdict.reason}`);
         }
-      }
+      });
 
-      const frameOutcome = await tools["video.brandFrame"]?.execute(
-        {
-          videoPath: clipPath,
-          outputPath: path.join(workDir, "clip-framed.mp4"),
-          brand: {
-            ground: videoBrand.ground,
-            fg: videoBrand.fg,
-            ...(videoBrand.accent !== undefined ? { accent: videoBrand.accent } : {}),
-            ...(videoBrand.handle !== undefined ? { handle: videoBrand.handle } : {}),
-            ...(videoBrand.seriesHeader !== undefined ? { seriesHeader: videoBrand.seriesHeader } : {}),
-            ...(logoPath !== undefined ? { logoPath } : {}),
-          },
-          ...(srtPath !== undefined ? { srtPath } : {}),
-        },
-        { ctx },
-      );
-      if (frameOutcome === undefined || frameOutcome.status !== "success") {
-        throw new WorkflowToolingFailure(
-          `video.brandFrame failed: ${frameOutcome === undefined ? "tool not registered" : `${frameOutcome.status}${"reason" in frameOutcome ? ` (${frameOutcome.reason})` : ""}`}`,
+      // ── 10a: upload BEFORE the human gate, so the reviewer can actually
+      //         watch what they're approving (a bare container path is not a
+      //         reviewable clip). Registered only when a media store is
+      //         configured; absent, the gate carries the local path as before. ──
+      const uploaded = await wf.step.code(rev("10a-upload-clip"), async () => {
+        const uploadTool = tools["video.uploadDeliverable"];
+        if (!uploadTool) return null;
+        // Revision-suffixed for the same reason the work directory is: a
+        // revision must not overwrite the object the previous round's gate
+        // record links a reviewer to.
+        const objectName = revision === 0 ? "clip.mp4" : `clip-r${revision}.mp4`;
+        const outcome = await uploadTool.execute(
+          { localPath: renderedPath, objectPath: `tiktok/${wf.clientSlug}/${wf.runId}/${objectName}`, contentType: "video/mp4" },
+          { ctx },
         );
-      }
-      const framed = frameOutcome.result as { outputPath: string; durationSeconds: number | null };
-      return { outputPath: framed.outputPath, durationSeconds: framed.durationSeconds ?? null };
-    });
-    const renderedPath = rendered.outputPath;
-    // The framed file's probed length is the truth; the transcript-derived
-    // window is the fallback (a generated plate's window is zero-width).
-    const durationSeconds = rendered.durationSeconds ?? bounds.endSeconds - bounds.startSeconds;
+        if (outcome.status !== "success") {
+          console.error(`${rev("10a-upload-clip")}: upload failed (${outcome.status}) — the gate and deliverable carry the local path only`);
+          return null;
+        }
+        return outcome.result as { gcsUri: string; signedUrl?: string };
+      });
 
-    await wf.step.code("09-qa-gate", async () => {
-      // Blocking. The legacy rule: "Any failure aborts THIS candidate (never
-      // ship degraded)." `video.brandGate` was dropped from this list — its
-      // real contract takes PNG stills for the Python engine, not an MP4, and
-      // the branded frame is now composited deterministically upstream.
-      const verdict = await runGate(tools, "video.selfEvalGate", { videoPath: renderedPath }, ctx);
-      if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`video.selfEvalGate: ${verdict.reason}`);
-      if (verdict.verdict === "content_fail") {
-        await releaseReservation();
-        throw new WorkflowHeld(`video.selfEvalGate failed: ${verdict.reason}`);
-      }
-    });
-
-    // ── 10a: upload BEFORE the human gate, so the reviewer can actually
-    //         watch what they're approving (a bare container path is not a
-    //         reviewable clip). Registered only when a media store is
-    //         configured; absent, the gate carries the local path as before. ──
-    const uploaded = await wf.step.code("10a-upload-clip", async () => {
-      const uploadTool = tools["video.uploadDeliverable"];
-      if (!uploadTool) return null;
-      const outcome = await uploadTool.execute(
-        { localPath: renderedPath, objectPath: `tiktok/${wf.clientSlug}/${wf.runId}/clip.mp4`, contentType: "video/mp4" },
-        { ctx },
-      );
-      if (outcome.status !== "success") {
-        console.error(`10a-upload-clip: upload failed (${outcome.status}) — the gate and deliverable carry the local path only`);
-        return null;
-      }
-      return outcome.result as { gcsUri: string; signedUrl?: string };
-    });
-
-    // ── 10: terminal topic guardrail ──
-    //
-    // The same check the dynamic runner appends to every dynamic agent, run
-    // here for the same reason: the client's own forbidden-topic list is a
-    // promise about what their account will not talk about, and a clip of
-    // someone ELSE saying it is still their account saying it. Runs before the
-    // human gate so a reviewer is never shown something that should not exist.
-    await runTopicGuardrail(
-      wf,
-      { tools, promptStore: options.promptStore, router: options.router },
-      `${commentary.caption}
+      // ── 10: terminal topic guardrail ──
+      //
+      // The same check the dynamic runner appends to every dynamic agent, run
+      // here for the same reason: the client's own forbidden-topic list is a
+      // promise about what their account will not talk about, and a clip of
+      // someone ELSE saying it is still their account saying it. Runs before the
+      // human gate so a reviewer is never shown something that should not exist.
+      //
+      // Two arguments beyond the text, both load-bearing. `forbiddenTopics` is
+      // what step 00 already read, so the guardrail does not read the client's
+      // config a second time. The `-r{n}` suffix gives each revision round its
+      // own checkpoint: without it the fixed step id short-circuits on round
+      // 0's checkpoint and the REVISED caption is never actually verified,
+      // while the trace still reports a pass.
+      await runTopicGuardrail(
+        wf,
+        { tools, promptStore: options.promptStore, router: options.router },
+        `${commentary.caption}
 
 ${commentary.about}
 
 ${bounds.text}`,
-    ).catch(async (err) => {
-      // A violation is the one thing that stops the run here, and the moment
-      // goes back so a rejected clip does not burn it.
-      await releaseReservation();
-      throw err;
-    });
+        forbiddenTopics,
+        revision === 0 ? undefined : `-r${revision}`,
+      );
 
-    // ── 11: human approval ──
-    const review = options.autoApprove
-      ? await wf.step.code("11-clip-review", () => ({ decision: "approve" as const, actor: "system", reason: undefined as string | undefined }))
-      : await wf.step.gate("11-clip-review", {
-          kind: "batch_review",
-          payload: {
-            runId: wf.runId,
-            topic: intake.topic,
-            lane: CLIP_LANE,
-            preview: commentary.caption,
-            clipPath: renderedPath,
-            durationSeconds,
-            sourceTier: intake.sourceTier,
-            // The reviewer's actual preview — a signed URL they can watch.
-            ...(uploaded?.signedUrl !== undefined ? { videoUrl: uploaded.signedUrl } : {}),
-            ...(uploaded !== null ? { gcsUri: uploaded.gcsUri } : {}),
-          },
-          requiredRole: "account_manager",
-          timeout: { duration: "24h", onTimeout: "hold" },
-        });
-    if (review.decision !== "approve") {
+      return { commentary, renderedPath, durationSeconds, uploaded };
+    };
+
+    // ── 11: the universal approve / revise / reject cycle ──
+    //
+    // `revise` re-writes the commentary with the reviewer's feedback in hand
+    // and re-renders the clip around it, reusing everything already
+    // checkpointed, instead of holding the run and forcing somebody to
+    // dispatch a fresh one that knows nothing about why the first was turned
+    // down. Every decision, approvals included, is written to client memory.
+    const review = await runReviewCycle<ClipDraft>(wf, {
+      gateId: "11-clip-review",
+      maxRevisions: MAX_REVISION_ROUNDS,
+      ...(options.autoApprove ? { autoApprove: true } : {}),
+      attempt: produceClip,
+      buildGate: (draft, revision) => ({
+        kind: "batch_review",
+        payload: {
+          runId: wf.runId,
+          topic: intake.topic,
+          lane: CLIP_LANE,
+          preview: draft.commentary.caption,
+          clipPath: draft.renderedPath,
+          durationSeconds: draft.durationSeconds,
+          sourceTier: intake.sourceTier,
+          revision,
+          // The reviewer's actual preview — a signed URL they can watch.
+          ...(draft.uploaded?.signedUrl !== undefined ? { videoUrl: draft.uploaded.signedUrl } : {}),
+          ...(draft.uploaded !== null ? { gcsUri: draft.uploaded.gcsUri } : {}),
+        },
+        requiredRole: "account_manager",
+        timeout: { duration: "24h", onTimeout: "hold" },
+      }),
+      onDecision: async ({ revision, response }) => {
+        await persistReviewFeedbackToMemory(wf, tools, ctx, revision, response);
+      },
+    }).catch(async (error: unknown): Promise<never> => {
+      // The moment goes back for anything that ends this run without a clip: a
+      // rejection, the revision ceiling, a content gate that said no inside
+      // `produceClip`, a guardrail violation.
+      //
+      // Every such failure releases here and ONLY here — but a gate nobody has
+      // answered yet is not one of them. `step.gate` throws
+      // `AwaitingGateSignal` to PAUSE the run; that is the literal "throw to
+      // pause" contract `WorkflowEngine.run` catches to return
+      // `awaiting_gate`, and it arrives at this catch on every single run that
+      // actually waits for a human. Releasing on it would hand the moment back
+      // the instant the clip reached a reviewer: the row returns to the lane
+      // while the clip made from it sits awaiting approval, the next run
+      // claims the same moment, and the approval that eventually lands commits
+      // a reservation that no longer means anything.
+      if (error instanceof AwaitingGateSignal) throw error;
       await releaseReservation();
-      throw new WorkflowHeld(`clip rejected: ${review.reason ?? "no reason given"}`);
-    }
+      throw error;
+    });
+    const { commentary, renderedPath, durationSeconds, uploaded } = review.output;
 
     // ── 12: QUEUE ──
     const deliverableId: string = await wf.step.code("12-persist-deliverable", async () => {
