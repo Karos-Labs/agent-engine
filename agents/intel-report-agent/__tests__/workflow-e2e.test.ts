@@ -150,7 +150,7 @@ describe("end-to-end: the Intel Report agent workflow (RFC-05 §3)", () => {
     const engine = new WorkflowEngine(durableStore);
 
     await engine.run(workflowFn, params);
-    await engine.resolveGate(params.runId, "04-batch-review", {
+    await engine.resolveGate(params.runId, "04-batch-review-r0", {
       decision: "approve",
       actor: "jane@karoslabs.com",
       feedback: "The GEO section is exactly the level of detail clients want — keep leading with the competitor comparison.",
