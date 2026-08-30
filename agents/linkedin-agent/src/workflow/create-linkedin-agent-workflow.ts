@@ -1,7 +1,7 @@
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentToolRegistry, GateResponse, ModelRouter, PromptStore } from "@agent-engine/core";
 import { runLinkedInChannelSetup, type ChannelSetupOutcome } from "@agent-engine/agent-setup";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField, type RevisionNote, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, readClientIntelContext, toAgentContext, runGate, finalizeDeliverable, recordOutputExcerpt} from "@agent-engine/workflow";
+import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField, type RevisionNote, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, toAgentContext, runGate, finalizeDeliverable, recordOutputExcerpt} from "@agent-engine/workflow";
 import { LinkedInDraftAgent } from "../agent/linkedin-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
 import { renderLinkedInDraftsMarkdown } from "./render-drafts-markdown.js";
@@ -44,6 +44,16 @@ export interface CreateLinkedInAgentWorkflowOptions {
    */
   identityScope?: LinkedInIdentityScope;
 }
+
+/**
+ * How many drafting passes the verified de-duplication check may cost —
+ * initial draft plus two redraft steers, the same budget instagram-agent's
+ * `MAX_SELF_CHECK_ATTEMPTS` gives its own 07d dedupe check. On the last
+ * attempt a `similar` draft ships FLAGGED (the verdict stays checkpointed for
+ * the trace and the reviewer), never held: `evaluateDedupe`'s own policy is
+ * that de-duplication flags and steers, it does not hold a run.
+ */
+const MAX_DEDUPE_ATTEMPTS = 3;
 
 /** A valid archetype name, or `undefined` if the string isn't one of `LINKEDIN_ARCHETYPES`. */
 function parseArchetype(value: unknown): LinkedInArchetype | undefined {
@@ -498,33 +508,74 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
       const directive = revisionDirective(notes);
 
     const clientVoiceContext = buildClientVoiceContext(clientContext.profile, clientContext.voiceRules, clientContext.brand);
-    const draftResult = await wf.step.agent(rev("09-draft-post"), draftAgent, {
-      ...runDirectionField(runDirection),
-      topic: selected.topic,
-      source: selected.source,
-      archetype: archetypeSelection.archetype,
-      voiceRules: clientContext.voiceRules,
-      identity: clientContext.identity,
-      // The client's own profile description + voice-rules guidelines,
-      // verbatim — this is where a language requirement like Geektime's
-      // "Hebrew-language technology site" actually lives.
-      ...(clientVoiceContext !== undefined ? { clientVoiceContext } : {}),
-      ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
-      ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
-      // Two distinct steers, kept apart on purpose: `pastFeedback` is what
-      // this client has said across previous RUNS, `revisionRequest` is what
-      // a reviewer asked about THIS draft minutes ago.
-      ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
-      ...(directive !== undefined ? { revisionRequest: directive } : {}),
-    });
 
-    if (draftResult.status === "content_fail") {
-      throw new WorkflowHeld(`draft did not clear its own self-critique gate: ${draftResult.status}`);
-    }
-    if (draftResult.status !== "completed") {
-      throw new WorkflowToolingFailure(`draft step resolved to "${draftResult.status}"`);
-    }
-    const draft = draftResult.finalOutput!;
+    // ── 09/09a: draft, then VERIFY it is not a repeat, before anything else ──
+    //
+    // `recentPosts` in the drafting input below is ADVISORY: it asks the model
+    // not to repeat itself and nothing ever checked whether it listened, so a
+    // lightly-reworded reissue of last week's post passed every gate. 09a is
+    // the verification half — the same `checkOutputDedupe` primitive, scoring
+    // the same excerpt window the read above pulled, with `evaluateDedupe`'s
+    // calibrated trigram-Jaccard threshold, in the same place instagram-agent
+    // puts its own 07d check: inside the drafting pass, so a `similar` verdict
+    // COSTS the draft (it is redrafted with the offending post quoted into the
+    // prompt) and the human at step 15 can never be shown a draft that has not
+    // been scored.
+    //
+    // On the final attempt the draft ships FLAGGED rather than held — two
+    // posts a fortnight apart about the same launch may be exactly right, and
+    // a fixed threshold is not entitled to overrule the person reviewing at
+    // 15. The verdict is checkpointed either way.
+    //
+    // The scored text is exactly what step 18 records back into the window
+    // (`draft.text`), so every future run compares like with like.
+    const draftWithVerifiedDedupe = async () => {
+      /** Set by a failed 09a check, so the NEXT attempt's prompt names exactly which published post to move away from. */
+      let dedupeRetrySteer: string | undefined;
+      for (let attempt = 1; attempt <= MAX_DEDUPE_ATTEMPTS; attempt++) {
+        /** Attempt 1 keeps the ORIGINAL step ids, so a run that never repeats itself has a byte-identical trace to what it had before this check existed. */
+        const att = (id: string) => (attempt === 1 ? id : `${id}-attempt-${attempt}`);
+        const draftResult = await wf.step.agent(rev(att("09-draft-post")), draftAgent, {
+          ...runDirectionField(runDirection),
+          topic: selected.topic,
+          source: selected.source,
+          archetype: archetypeSelection.archetype,
+          voiceRules: clientContext.voiceRules,
+          identity: clientContext.identity,
+          // The client's own profile description + voice-rules guidelines,
+          // verbatim — this is where a language requirement like Geektime's
+          // "Hebrew-language technology site" actually lives.
+          ...(clientVoiceContext !== undefined ? { clientVoiceContext } : {}),
+          ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
+          ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
+          ...(dedupeRetrySteer !== undefined ? { dedupeAvoid: dedupeRetrySteer } : {}),
+          // Two distinct steers, kept apart on purpose: `pastFeedback` is what
+          // this client has said across previous RUNS, `revisionRequest` is what
+          // a reviewer asked about THIS draft minutes ago.
+          ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
+          ...(directive !== undefined ? { revisionRequest: directive } : {}),
+        });
+
+        if (draftResult.status === "content_fail") {
+          throw new WorkflowHeld(`draft did not clear its own self-critique gate: ${draftResult.status}`);
+        }
+        if (draftResult.status !== "completed") {
+          throw new WorkflowToolingFailure(`draft step resolved to "${draftResult.status}"`);
+        }
+        const candidate = draftResult.finalOutput!;
+
+        const dedupeVerdict = await checkOutputDedupe(wf, rev(att("09a-verify-not-duplicate")), candidate.text, outputHistory);
+        if (dedupeVerdict.status === "similar" && attempt < MAX_DEDUPE_ATTEMPTS) {
+          dedupeRetrySteer = dedupeRetryDirective(dedupeVerdict, outputHistory);
+          continue;
+        }
+        return candidate;
+      }
+      // Unreachable: the loop's last attempt always returns, because the
+      // `continue` above is guarded on `attempt < MAX_DEDUPE_ATTEMPTS`.
+      throw new WorkflowToolingFailure("the de-duplication redraft loop ended without a draft");
+    };
+    const draft = await draftWithVerifiedDedupe();
 
     await wf.step.code(rev("10-verify-numbers-sourced"), async () => {
       const sources = candidateSummary.hasNumericInsight ? [candidateSummary.sourceLabel] : [];

@@ -40,6 +40,11 @@ const ALL_22_STEP_IDS = [
   "10-verify-subreddit-eligibility",
   "11-determine-angle",
   "12-draft-reply",
+  // AU20: the VERIFIED half of de-duplication. `recentPosts` in the drafting
+  // prompt only asks the model not to repeat itself; 12a scores the finished
+  // draft against the same excerpt window, inside the drafting pass, so the
+  // reviewer is never shown a draft that was not measured.
+  "12a-verify-not-duplicate",
   "13-verify-numbers-sourced",
   "14-verify-brand-compliance",
   "15-verify-no-placeholder",
