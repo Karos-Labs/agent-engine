@@ -21,6 +21,46 @@ describe("seoGeo.score tool", () => {
     expect(outcome.result.seoScore.partial).toBe(true);
     expect(outcome.result.hashInputsIncomplete).toBe(true);
     expect(outcome.result.visibility).toBeNull();
+    expect(outcome.result.visibilityMetrics).toBeNull();
+  });
+
+  it("surfaces the KNOWN/FOUND split and the resolved denominator decision alongside the blended index", async () => {
+    const tool = createSeoGeoScore();
+    const outcome = await tool.execute(
+      {
+        seoMeasurements: {},
+        geoReadinessMeasurements: {},
+        hashInputs: {},
+        visibility: {
+          cells: [
+            {
+              promptId: "p1",
+              engine: "chatgpt",
+              captureTier: "MEASURED",
+              brandMentioned: true,
+              brandCited: false,
+              competitorsNamed: [],
+              citations: [],
+              mentionCounts: { client: 1 },
+              sentimentPerMention: [],
+            },
+          ],
+          promptCount: 1,
+          clientDomains: ["client.com"],
+          competitorRoster: [],
+          promptCohorts: { p1: "known" },
+        },
+      } as never,
+      { ctx },
+    );
+    expect(outcome.status).toBe("success");
+    if (outcome.status !== "success") throw new Error("unreachable");
+    const metrics = outcome.result.visibilityMetrics!;
+    expect(metrics.denominatorDecision.status).toBe("resolved");
+    expect(metrics.knownVsFound.neverBlend).toBe(true);
+    expect(metrics.knownVsFound.knownPromptCount).toBe(1);
+    // One answer is far below the 10-answer floor, so the tool publishes a count.
+    expect(metrics.knownVsFound.known.find((r) => r.engine === "chatgpt")!.named.display).toBe("1 of 1 answers");
   });
 
   it("rejects malformed input as a tooling_error, not a thrown exception", async () => {

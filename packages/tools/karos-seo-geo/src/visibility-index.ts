@@ -16,7 +16,13 @@ export function computeVisibilityIndex(metrics: VisibilityMetricsResult): Visibi
   const targetCite = CONSTANTS.TARGET_CITE;
   const targetMention = CONSTANTS.TARGET_MENTION;
 
-  const meanFirstPositionRate = metrics.perEngine.reduce((sum, e) => sum + e.firstPositionRate, 0) / metrics.perEngine.length;
+  // BOTH-14's blended leg reads the `N`-based aggregate, not the mean of the
+  // per-engine rates: those divide by `N_e` under the closed denominator
+  // decision (`VISIBILITY_DENOMINATOR_DECISION`), and averaging them would drag
+  // `N_e` into the Index the same decision fixes on `N`. Identical to the old
+  // mean whenever every engine's `N_e` equals `N`.
+  // `netSentiment` and `ghostCitationRate` are ratios of counts to counts —
+  // neither has an N/N_e denominator to disagree about, so their means stand.
   const meanNetSentiment = metrics.perEngine.reduce((sum, e) => sum + e.netSentiment, 0) / metrics.perEngine.length;
   const meanGhostCitationRate = metrics.perEngine.reduce((sum, e) => sum + e.ghostCitationRate, 0) / metrics.perEngine.length;
 
@@ -31,7 +37,7 @@ export function computeVisibilityIndex(metrics: VisibilityMetricsResult): Visibi
       recId: "BOTH-14",
       name: "who_ranks_first",
       weight: 20,
-      norm: clamp(meanFirstPositionRate / 1.0, 0, 1),
+      norm: clamp(metrics.firstPositionRateBlended / 1.0, 0, 1),
     },
     {
       recId: "GEO-27",

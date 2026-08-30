@@ -134,14 +134,111 @@ export interface SeoGeoCaptureCell {
   unavailableReason?: "credit_probe_402" | "no_adapter_wired" | undefined;
 }
 
-/** Which raw-count denominator a per-engine metric divides by — RFC-04's flagged, not-silently-resolved "N vs N_e" decision (Daniel). */
+/** Which raw-count denominator a metric divides by. No longer a choice — see `VisibilityDenominatorDecision`. */
 export type VisibilityDenominator = "N" | "N_e";
+
+/**
+ * The CLOSED form of `seo-geo-capture-config.json`'s
+ * `open_scoring_decisions.N_vs_N_e` ("BLOCKING, for Daniel"). v2 decided it on
+ * 2026-08-20 against a real client run and the decision is ratified in
+ * `docs/AUDIT-2026-08-25-architecture-optimization-plan.md` §4c.2: per-engine
+ * rates divide by `N_e` (answers that actually exist), the blended Visibility
+ * Index divides by `N` (the raw frozen prompt count), and BOTH counts are
+ * printed on every per-engine row so neither can silently stand in for the
+ * other. `status` is `"resolved"` — this type cannot express "pending" again.
+ */
+export interface VisibilityDenominatorDecision {
+  status: "resolved";
+  /** The date v2 decided it, on real data — not the date this port landed. */
+  decidedOn: string;
+  perEngineRates: "N_e";
+  blendedIndex: "N";
+  bothAlwaysPrinted: true;
+  supersedes: string;
+  ratifiedIn: string;
+}
+
+/**
+ * v2's KNOWN/FOUND split (decided 2026-08-20 on real client data; ratified in
+ * `docs/AUDIT-2026-08-25-architecture-optimization-plan.md` §4c.2). `known` =
+ * the prompt names the company, so the answer measures RECOGNITION; `found` =
+ * it does not, so the answer measures DISCOVERY. They answer different
+ * questions about different prompt populations, so they are published side by
+ * side and NEVER averaged into one visibility number — the single blended
+ * KNOWN+FOUND score is retired.
+ */
+export const VISIBILITY_COHORTS = ["known", "found"] as const;
+export type VisibilityCohort = (typeof VISIBILITY_COHORTS)[number];
+
+/**
+ * One publishable figure. v2's floor: an engine with fewer than
+ * `MIN_ANSWERS_FOR_RATE` answers publishes a COUNT, never a percentage — a
+ * "50%" off two answers reads as a measurement and is noise. Below the floor
+ * `ratePct` is `null` (not 0, not a rounded guess) and `display` is the count.
+ */
+export interface PublishedRate {
+  count: number;
+  /** The N_e this figure is out of: answers that actually exist for this engine (and cohort). */
+  answers: number;
+  /** True when `answers < MIN_ANSWERS_FOR_RATE` — a count publishes instead of a rate. */
+  countsOnly: boolean;
+  /** `null` whenever `countsOnly`; there is no percentage to publish and none is invented. */
+  ratePct: number | null;
+  /** Exactly what a report prints: `"3 of 7 answers"` below the floor, `"42.9%"` at or above it. */
+  display: string;
+}
+
+/** One (engine × cohort) row of the KNOWN/FOUND report. Rows are published, never merged with the other cohort's row. */
+export interface CohortEngineVisibility {
+  engine: SeoGeoVisibilityEngine;
+  cohort: VisibilityCohort;
+  /** `N` for this cohort: every prompt assigned to it, answered or not. Always printed alongside `nEffective`. */
+  n: number;
+  /** `N_e` for this (engine, cohort): cohort cells whose `captureTier !== "UNAVAILABLE"`. Every rate here divides by this. */
+  nEffective: number;
+  /** True when `nEffective < MIN_ANSWERS_FOR_RATE` — every figure in this row publishes as a count. */
+  countsOnly: boolean;
+  named: PublishedRate;
+  cited: PublishedRate;
+  first: PublishedRate;
+  /** The marker that travels with the data: this row may never be averaged with the other cohort's row. */
+  neverBlend: true;
+}
+
+/** KNOWN and FOUND, side by side. There is deliberately no combined field — that number is retired. */
+export interface KnownVsFoundReport {
+  /** Travels with the data (v2, 2026-08-20): no consumer may average `known` with `found`. */
+  neverBlend: true;
+  known: CohortEngineVisibility[];
+  found: CohortEngineVisibility[];
+  /**
+   * False when no `promptCohorts` map was supplied: nothing was classified, so
+   * `known`/`found` are EMPTY rather than filled with fabricated zero rows, and
+   * every prompt lands in `unclassifiedPromptIds`.
+   */
+  cohortsScoped: boolean;
+  /** Prompts with no cohort assignment — excluded from both cohorts rather than guessed into one. Sorted. */
+  unclassifiedPromptIds: string[];
+  knownPromptCount: number;
+  foundPromptCount: number;
+}
 
 export interface PerEngineVisibilityMetrics {
   engine: SeoGeoVisibilityEngine;
+  /** `N`: the raw frozen prompt count. Always printed, even though no rate on this row divides by it. */
   n: number;
+  /** `N_e`: this engine's cells whose `captureTier !== "UNAVAILABLE"`. Always printed; every rate on this row divides by it. */
   nEffective: number;
+  /** Always `"N_e"` — the denominator decision is closed (`VisibilityDenominatorDecision`), so this records a fact, not a choice. */
   denominatorUsed: VisibilityDenominator;
+  /**
+   * Always `true`: these rates POOL known-prompt and found-prompt answers.
+   * They exist to feed the blended Visibility Index that the same ratified
+   * decision preserves — they are NOT the client-facing visibility figure, and
+   * rendering one as "your visibility" re-creates exactly the blended score v2
+   * retired. Publish `VisibilityMetricsResult.knownVsFound` instead.
+   */
+  cohortBlind: true;
   citationShare: number;
   mentionShare: number;
   ghostCitationRate: number;
@@ -153,8 +250,31 @@ export interface PerEngineVisibilityMetrics {
 
 export interface VisibilityMetricsResult {
   perEngine: PerEngineVisibilityMetrics[];
+  /**
+   * The retired-blend replacement: KNOWN and FOUND published separately, with
+   * the `neverBlend` marker on the report and on every row.
+   */
+  knownVsFound: KnownVsFoundReport;
+  /** The closed N-vs-N_e decision, carried on every result so a consumer never has to look it up. */
+  denominatorDecision: VisibilityDenominatorDecision;
+  /**
+   * What the caller asked for on the retired `denominator` option, echoed back,
+   * or `null` when nothing was asked. The decision is closed, so this request
+   * changes no number — recorded here so an ignored request is visible IN THE
+   * DATA rather than only in a comment.
+   */
+  denominatorRequested: VisibilityDenominator | null;
+  /** Index input, `N`-based (`Σ_e cited / (N × engines)`) — see `PerEngineVisibilityMetrics.cohortBlind`. */
   citationShareBlended: number;
+  /** Index input, `N`-based (`Σ_e named / (N × engines)`) — see `PerEngineVisibilityMetrics.cohortBlind`. */
   mentionRateBlended: number;
+  /**
+   * Index input, `N`-based (`Σ_e first / (N × engines)`). BOTH-14's blended leg
+   * used to be the arithmetic mean of the per-engine rates; once those flipped
+   * to `N_e` that mean would have dragged `N_e` into the Index, which the
+   * decision fixes on `N`. Identical to the old mean whenever `N_e == N`.
+   */
+  firstPositionRateBlended: number;
   shareOfVoiceClient: number;
   /** SOV per brand across the locked roster (`client` included), sorted by brandId — sums to 100 per GEO-27's formula. */
   shareOfVoiceByBrand: Record<string, number>;

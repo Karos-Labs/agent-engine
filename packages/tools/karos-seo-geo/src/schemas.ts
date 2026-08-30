@@ -58,7 +58,25 @@ export const ScoreInputSchema = z.object({
         .describe(
           "brandId -> that competitor's own domains — enables BOTH-14's \"first_cited\" leg for competitors, symmetric to clientDomains. Omitted entirely when no domain roster is known yet.",
         ),
-      denominator: z.enum(["N", "N_e"]).default("N").describe("Whether to score against the full prompt count (N) or only the effectively-measured subset (N_e)."),
+      /**
+       * promptId -> `"known"` (the prompt names the client company — recognition)
+       * or `"found"` (it doesn't — discovery). Classification is supplied, never
+       * inferred; an unlisted prompt is reported as unclassified and counted in
+       * neither cohort. The two cohorts are published separately and never averaged.
+       */
+      promptCohorts: z
+        .record(z.string(), z.enum(["known", "found"]))
+        .default({})
+        .describe(
+          "promptId -> \"known\" (the prompt names the company — recognition) or \"found\" (it doesn't — discovery). Reported separately and never averaged; an unlisted prompt is counted in neither cohort.",
+        ),
+      /** @deprecated The N-vs-N_e decision is resolved — see `VISIBILITY_DENOMINATOR_DECISION`. Accepted for compatibility; changes no number. */
+      denominator: z
+        .enum(["N", "N_e"])
+        .default("N")
+        .describe(
+          "RETIRED: the N vs N_e denominator decision is resolved (per-engine rates use N_e, the blended index uses N, both always printed). Still accepted so existing callers compile, but it selects nothing — the value is echoed back on the metrics result as denominatorRequested.",
+        ),
     })
     .optional()
     .describe("AI-visibility capture data feeding the GEO visibility sub-score. Omitted when visibility capture hasn't run."),
