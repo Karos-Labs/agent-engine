@@ -10,6 +10,10 @@ import { goodFixDrafts, goodNarrative } from "./test-helpers.js";
 const ctx: AgentContext = { runId: "run_1", clientSlug: "acme", productId: "seo-geo-agent", runKind: "recurring", metadata: {} };
 
 describe("PromptStore resolution (RFC-01 §16.1)", () => {
+  // v1 stays a frozen historical snapshot (T-A13/SCRUM-269 bumped both
+  // agents' pinned `skillRef` to `@2`) — still resolvable by version number,
+  // exactly as any past run's checkpointed trace that named "@1" needs it to
+  // remain.
   it("resolves 'seo-geo-fix-draft@1' to the real prompts/seo-geo-fix-draft/1.md file content", async () => {
     const promptStore = makePromptStore();
     const resolved = await promptStore.getPrompt("seo-geo-fix-draft", "1");
@@ -22,6 +26,20 @@ describe("PromptStore resolution (RFC-01 §16.1)", () => {
     expect(resolved).toContain("never invent a number");
   });
 
+  it("resolves 'seo-geo-fix-draft@2' to the real prompts/seo-geo-fix-draft/2.md file content", async () => {
+    const promptStore = makePromptStore();
+    const resolved = await promptStore.getPrompt("seo-geo-fix-draft", "2");
+    expect(resolved).toContain("Ground everything in what you were given");
+    expect(resolved).toContain("clientAttachedReferences");
+  });
+
+  it("resolves 'seo-geo-narrative@2' to the real prompts/seo-geo-narrative/2.md file content", async () => {
+    const promptStore = makePromptStore();
+    const resolved = await promptStore.getPrompt("seo-geo-narrative", "2");
+    expect(resolved).toContain("never invent a number");
+    expect(resolved).toContain("clientAttachedReferences");
+  });
+
   it("SeoGeoFixDraftAgent actually passes the resolved prompt content as the system prompt at runtime", async () => {
     const promptStore = makePromptStore();
     const router = fakeRouterSequence([finalTurn(goodFixDrafts())]);
@@ -30,7 +48,8 @@ describe("PromptStore resolution (RFC-01 §16.1)", () => {
 
     await agent.run(ctx, { firedRecommendations: [] });
 
-    const expectedPrompt = readFileSync(path.join(PROMPTS_ROOT, "seo-geo-fix-draft", "1.md"), "utf8");
+    // The agent is pinned to `seo-geo-fix-draft@2` (T-A13/SCRUM-269).
+    const expectedPrompt = readFileSync(path.join(PROMPTS_ROOT, "seo-geo-fix-draft", "2.md"), "utf8");
     // SCRUM-298: `system` now also carries the response contract, appended
     // after the resolved skill body — assert the prefix, not exact equality.
     const call = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!;
@@ -46,7 +65,8 @@ describe("PromptStore resolution (RFC-01 §16.1)", () => {
 
     await agent.run(ctx, { seoScore: 0 });
 
-    const expectedPrompt = readFileSync(path.join(PROMPTS_ROOT, "seo-geo-narrative", "1.md"), "utf8");
+    // The agent is pinned to `seo-geo-narrative@2` (T-A13/SCRUM-269).
+    const expectedPrompt = readFileSync(path.join(PROMPTS_ROOT, "seo-geo-narrative", "2.md"), "utf8");
     // SCRUM-298: `system` now also carries the response contract, appended
     // after the resolved skill body — assert the prefix, not exact equality.
     const call = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!;

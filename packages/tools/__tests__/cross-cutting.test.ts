@@ -45,7 +45,10 @@ describe("Layer 3 tool registry — cross-cutting", () => {
   it("merges all ten servers' tools into one registry with no name collisions", () => {
     const expectedPrefixes = ["client.", "gate.", "intel.", "ledger.", "memory.", "publish.", "reputation.", "research.", "seoGeo.", "topics."];
     const names = Object.keys(tools);
-    // 9 client + 6 gates + 2 intel + 8 ledger + 7 memory + 4 publish + 3 reputation + 5 research + 2 seoGeo + 4 topics = 50
+    // 9 client + 6 gates + 2 intel + 8 ledger + 7 memory + 4 publish + 3 reputation + 6 research + 2 seoGeo + 4 topics = 51
+    // (research grew from 5 to 6: research.crawlTechnicalSeo, T-A2/SCRUM-236 —
+    // real robots.txt/sitemap.xml/HTTP-status crawl facts backing step 06's
+    // technical-SEO measurements. See karos-research/src/crawl-technical-seo.ts.)
     // (client grew from 8 to 9: client.getKnowledge reads the knowledge base the
     // portal's sync mirrors into the workspace — onboarding context docs, recent
     // meeting summaries, the reference-asset index. See
@@ -71,7 +74,7 @@ describe("Layer 3 tool registry — cross-cutting", () => {
     // former caller now goes through memory.appendFeedback/memory.readFeedback
     // above instead, the one real feedback pipeline. See createKarosLedgerTools's
     // own doc comment in packages/tools/karos-ledger/src/index.ts.)
-    expect(names.length).toBe(50);
+    expect(names.length).toBe(51);
     for (const prefix of expectedPrefixes) {
       expect(names.some((n) => n.startsWith(prefix))).toBe(true);
     }

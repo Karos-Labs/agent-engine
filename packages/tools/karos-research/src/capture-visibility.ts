@@ -58,7 +58,67 @@ export interface CaptureCell {
    * the two failure modes are never conflated in review.
    */
   unavailableReason?: "credit_probe_402" | "no_adapter_wired";
+  /**
+   * Gemini-only (T-A3/SCRUM-237): true when Google's AI Overview /
+   * Grounding-with-Google-Search equivalent genuinely did not render for
+   * this query at all (no grounding chunks came back) — distinct from
+   * `brandMentioned: false`, which means an answer (grounded or not) DID
+   * come back and simply never named the brand. Conflating the two would
+   * hide a real "AIO isn't showing for this prompt" signal inside what
+   * looks like an ordinary brand-absent miss. `undefined` for every other
+   * engine, and for Gemini whenever grounding DID render.
+   */
+  aioAbsent?: boolean;
 }
+
+/**
+ * What one real engine adapter is handed to capture one (prompt × engine)
+ * answer (T-A3/SCRUM-237) — deliberately the same fields
+ * `CaptureVisibilityInput` already carries, nothing more: an adapter gets
+ * exactly what a human reviewer approved at the prompt-set gate (step 03)
+ * and nothing it could use to fabricate context the run never actually gave
+ * it.
+ */
+export interface EngineCaptureRequest {
+  promptId: string;
+  promptText: string;
+  engine: VisibilityEngine;
+  clientDomains: readonly string[];
+  competitorRoster: readonly string[];
+}
+
+/**
+ * What a real engine adapter hands back — everything `CaptureCell` needs
+ * except `promptId`/`engine` (the tool already knows those) and `rawSha256`
+ * (hashed by the tool itself, over `rawPayload`, so every adapter freezes
+ * provenance the same way rather than each computing its own hash).
+ */
+export interface EngineCaptureAdapterResult {
+  captureTier: CaptureTier;
+  brandMentioned: boolean;
+  brandFirstMentionCharOffset?: number;
+  brandCited: boolean;
+  brandFirstCitationOrdinal?: number;
+  competitorsNamed: Array<{ brandId: string; charOffset: number }>;
+  citations: Array<{ domain: string; ordinal: number }>;
+  mentionCounts: Record<string, number>;
+  sentimentPerMention: Array<{ mentionIndex: number; label: "pos" | "neg" | "neutral" }>;
+  /** The frozen raw provider payload this cell is derived from — hashed into `rawSha256`, never scored directly. */
+  rawPayload: unknown;
+  aioAbsent?: boolean;
+}
+
+/**
+ * One real capture per (prompt × engine) pair (T-A3/SCRUM-237): makes the
+ * actual provider call (Perplexity Sonar, Anthropic Messages + `web_search`,
+ * Gemini Grounding with Google Search, or a ScrappyCoco CLI route for
+ * ChatGPT/Copilot — see `capture-adapters/index.ts`) and returns the result.
+ * Throwing signals a genuine capture failure (`tooling_error` — RFC-01 §5.6:
+ * a broken provider call is never a content verdict), NOT "nothing to
+ * report"; an engine with nothing to say is still a successful capture with
+ * `brandMentioned: false`.
+ */
+export type EngineCaptureAdapter = (request: EngineCaptureRequest) => Promise<EngineCaptureAdapterResult>;
 
 export interface CaptureVisibilityResult {
   runId: string;
@@ -94,6 +154,16 @@ export type CreditProbe = (engine: VisibilityEngine, promptId: string) => Promis
 
 export interface CaptureVisibilityToolOptions {
   creditProbe?: CreditProbe;
+  /**
+   * Per-engine real capture adapters (T-A3/SCRUM-237) — the drop-in swap
+   * this tool's contract was always designed for (see this file's own
+   * header comment). An engine with no adapter here still gets an honest
+   * `UNAVAILABLE`/`no_adapter_wired` cell, exactly as before this ticket —
+   * so a deployment can wire up Perplexity/Claude/Gemini/ChatGPT/Copilot one
+   * at a time (or not at all) without any of this tool's callers noticing
+   * anything beyond the cells that engine now produces.
+   */
+  adapters?: Partial<Record<VisibilityEngine, EngineCaptureAdapter>>;
 }
 
 /** Stable SHA-256 over any JSON-serializable value — same convention as `seo-geo-agent`'s `sha256Hex` (internally consistent and deterministic; not required to match any external/legacy hash format). */
@@ -142,22 +212,23 @@ function jobFor(engine: VisibilityEngine, promptId: string): string {
  * SEO/GEO capture matrix is fixed-shape (N prompts × 5 engines), not
  * free-form research queries.
  *
- * Phase 1 has no real capture adapter wired up yet (first-party Perplexity
- * Sonar / Claude web_search / Gemini grounding APIs, or a paid tracker for
- * ChatGPT + Copilot) — production adapter wiring is a follow-up swap, not a
- * change to this tool's contract. The stand-in cell is honestly
- * `captureTier: "UNAVAILABLE"` (never a fabricated MEASURED/ESTIMATED
- * answer) so `grade_data_only_rule` downstream in `seoGeo.score` correctly
+ * T-A3/SCRUM-237: a real `options.adapters[engine]` now performs a genuine
+ * capture (Perplexity Sonar, Claude + `web_search`, Gemini Grounding with
+ * Google Search, or a ScrappyCoco CLI route for ChatGPT/Copilot). An engine
+ * with NO adapter configured still gets the honest Phase 1 stand-in cell —
+ * `captureTier: "UNAVAILABLE"` / `unavailableReason: "no_adapter_wired"`,
+ * never a fabricated MEASURED/ESTIMATED answer — exactly as before this
+ * ticket, so `grade_data_only_rule` downstream in `seoGeo.score` correctly
  * excludes it from any grade and from `N_e`.
  */
 export function createCaptureVisibility(store: WorkspaceStoreLike, options: CaptureVisibilityToolOptions = {}) {
   return defineTool<CaptureVisibilityInput, CaptureVisibilityResult>({
     name: "research.captureVisibility",
     description:
-      "Captures one (prompt x engine) AI-visibility cell, cached and freshness-enforced like research.pull. Phase 1 has no real capture adapter wired up yet, so the stand-in cell is honestly captureTier: \"UNAVAILABLE\" rather than a fabricated measurement.",
+      "Captures one (prompt x engine) AI-visibility cell, cached and freshness-enforced like research.pull. An engine with a real adapter configured (Perplexity/Claude/Gemini/ChatGPT/Copilot) captures for real; every other engine reports the honest Phase 1 stand-in, captureTier: \"UNAVAILABLE\", rather than a fabricated measurement.",
     version: TOOL_VERSION,
     inputSchema: CaptureVisibilityInputSchema,
-    async execute({ promptId, engine, window }, { ctx }) {
+    async execute({ promptId, promptText, engine, clientDomains, competitorRoster, window }, { ctx }) {
       const windowMs = parseDurationMs(window);
       const job = jobFor(engine, promptId);
       const cached = await latestRun(store, ctx.clientSlug, job);
@@ -178,23 +249,47 @@ export function createCaptureVisibility(store: WorkspaceStoreLike, options: Capt
       const runId = randomUUID();
       const probe = options.creditProbe ? await options.creditProbe(engine, promptId) : { ok: true };
 
-      // Phase 1 has no real capture adapter wired up yet (first-party
-      // Perplexity Sonar / Claude web_search / Gemini grounding APIs, or a
-      // paid tracker for ChatGPT + Copilot) — production adapter wiring is a
-      // follow-up swap, not a change to this tool's contract. Both terminal
-      // paths below are honestly `UNAVAILABLE` (never a fabricated
-      // MEASURED/ESTIMATED answer), but they are NOT the same failure and
-      // must not be reported as if they were: a credit probe rejecting a
-      // cell mid-batch is a real, per-cell degradation event; "no adapter
-      // wired" is this environment's permanent Phase 1 state.
-      const cell: CaptureCell = probe.ok
-        ? buildUnavailableCell(promptId, engine, "no_adapter_wired", { reason: "no_adapter_wired", promptId, engine })
-        : buildUnavailableCell(promptId, engine, "credit_probe_402", {
-            reason: "credit_probe_402",
-            promptId,
-            engine,
-            probeStatus: probe.status ?? 402,
-          });
+      if (!probe.ok) {
+        // A credit probe rejecting a cell mid-batch is a real, per-cell
+        // degradation event (`degradation`'s "Perplexity credit pre-flight
+        // probe + per-cell 402 handling") — the adapter (if any) is never
+        // even called for this cell.
+        const cell = buildUnavailableCell(promptId, engine, "credit_probe_402", { reason: "credit_probe_402", promptId, engine, probeStatus: probe.status ?? 402 });
+        const record: RunRecord = { job, runId, query: promptId, result: cell, at: Date.now() };
+        await writeRunRecord(store, ctx.clientSlug, record);
+        return success<CaptureVisibilityResult>({ runId, cell, fromCache: false, ageMs: 0 });
+      }
+
+      const adapter = options.adapters?.[engine];
+      let cell: CaptureCell;
+      if (adapter === undefined) {
+        // This environment's permanent state for an engine with no real
+        // adapter configured — distinct from the credit-probe branch above,
+        // never conflated (`unavailableReason`).
+        cell = buildUnavailableCell(promptId, engine, "no_adapter_wired", { reason: "no_adapter_wired", promptId, engine });
+      } else {
+        // A genuine capture failure (the provider call itself broke) is
+        // `tooling_error`, never silently downgraded to an UNAVAILABLE cell
+        // — RFC-01 §5.6: that distinction is exactly what let a broken
+        // research pipeline read as "a topic with nothing to say" for
+        // months (see `research.pull`'s own doc comment for the same rule).
+        const adapterResult = await adapter({ promptId, promptText, engine, clientDomains, competitorRoster });
+        cell = {
+          promptId,
+          engine,
+          captureTier: adapterResult.captureTier,
+          brandMentioned: adapterResult.brandMentioned,
+          ...(adapterResult.brandFirstMentionCharOffset !== undefined ? { brandFirstMentionCharOffset: adapterResult.brandFirstMentionCharOffset } : {}),
+          brandCited: adapterResult.brandCited,
+          ...(adapterResult.brandFirstCitationOrdinal !== undefined ? { brandFirstCitationOrdinal: adapterResult.brandFirstCitationOrdinal } : {}),
+          competitorsNamed: adapterResult.competitorsNamed,
+          citations: adapterResult.citations,
+          mentionCounts: adapterResult.mentionCounts,
+          sentimentPerMention: adapterResult.sentimentPerMention,
+          rawSha256: sha256Hex(adapterResult.rawPayload),
+          ...(adapterResult.aioAbsent !== undefined ? { aioAbsent: adapterResult.aioAbsent } : {}),
+        };
+      }
 
       const record: RunRecord = { job, runId, query: promptId, result: cell, at: Date.now() };
       await writeRunRecord(store, ctx.clientSlug, record);

@@ -92,9 +92,24 @@ export interface SeoGeoCrawlAspectResult {
   aspect: string;
   runId: string;
   fromCache: boolean;
+  /**
+   * Present only for the `"technical-infra"` aspect (T-A2/SCRUM-236): the
+   * real, HTTP-derived crawl facts `research.crawlTechnicalSeo` returned —
+   * `undefined` either because this isn't that aspect, or because no scraper
+   * capable of crawling is configured (`not_available`, never a placeholder).
+   */
+  technicalSnapshot?: import("@agent-engine/tools").TechnicalSeoSnapshot;
 }
 
-/** Phase 2's output — see `create-seo-geo-agent-workflow.ts` step 06 for why every measurement is `coverage: "unavailable"` in this environment. */
+/**
+ * Phase 2's output. Most inputs still honestly report `coverage:
+ * "unavailable"` (no real Core Web Vitals tool, on-page content parser, or
+ * keyword/content-gap NLP classifier exists in this environment) — but a
+ * real subset (`measurements.ts`'s `buildTechnicalMeasurements`) is now
+ * genuinely `coverage: "measured"` from `technicalSnapshot`'s real crawl
+ * facts (T-A2/SCRUM-236), where before this ticket EVERY input was
+ * unconditionally unavailable regardless of what step 05 actually crawled.
+ */
 export interface SeoGeoTechnicalPhaseResult {
   seoMeasurements: Record<string, import("@agent-engine/tool-karos-seo-geo").InputMeasurement>;
   geoReadinessMeasurements: Record<string, import("@agent-engine/tool-karos-seo-geo").InputMeasurement>;

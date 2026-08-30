@@ -9,6 +9,7 @@ import type {
 import {
   readRunDirection,
   runDirectionField,
+  type RunDirection,
   type SlotOutcome,
   type WorkflowContext,
   WorkflowBlockedIntake,
@@ -36,11 +37,11 @@ import {
 } from "@agent-engine/tool-karos-seo-geo";
 import type { SeoGeoScoreResult } from "@agent-engine/tool-karos-seo-geo";
 import type { SeoGeoRecommendResult } from "@agent-engine/tool-karos-seo-geo";
-import type { Competitor } from "@agent-engine/tools";
+import type { Competitor, TechnicalSeoSnapshot } from "@agent-engine/tools";
 import { SeoGeoFixDraftAgent } from "../agent/seo-geo-fix-draft-agent.js";
 import { SeoGeoNarrativeAgent } from "../agent/seo-geo-narrative-agent.js";
 import { buildConnectorOverlay } from "./connector-overlay.js";
-import { buildUnavailableMeasurements } from "./measurements.js";
+import { buildTechnicalMeasurements } from "./measurements.js";
 import { deriveDefaultPromptSet, sha256Hex } from "./prompt-set.js";
 import type {
   SeoGeoAgentWorkflowResult,
@@ -73,12 +74,48 @@ export interface CreateSeoGeoAgentWorkflowOptions {
   autoApprove?: boolean;
 }
 
-/** The 4 parallel technical-SEO sub-checks RFC-04 §2 Phase 2 describes (`process/phase-1-technical-seo.md`'s technical infra / on-page / performance-CWV / keyword+content-gaps sub-agents). Modeled as a `wf.fanout` over `research.pull` calls, not 4 separate bounded `BaseAgent`s: the source skill's sub-agents do real judgment over real crawl data, but this repo's crawler is a Phase-1 stand-in with nothing for a model to judge yet (see `measurements.ts`'s header comment) — fanning out proves the wiring end-to-end without a bounded agent fabricating "CONFIRMED/LIKELY/HYPOTHESIS" findings against no real evidence. */
+/**
+ * The 4 parallel technical-SEO sub-checks RFC-04 §2 Phase 2 describes
+ * (`process/phase-1-technical-seo.md`'s technical infra / on-page /
+ * performance-CWV / keyword+content-gaps sub-agents). Modeled as a
+ * `wf.fanout`, not 4 separate bounded `BaseAgent`s: the source skill's
+ * sub-agents do real judgment over real crawl data, and `technical-infra`
+ * (T-A2/SCRUM-236) now has exactly that — `research.crawlTechnicalSeo`'s real
+ * robots.txt/sitemap.xml/HTTP-status facts — but the other three still have
+ * no real tool behind them (on-page content parsing, Core Web Vitals RUM,
+ * keyword/content-gap NLP), so fanning out over plain `research.pull` calls
+ * for those three still proves the wiring end-to-end without a bounded agent
+ * fabricating "CONFIRMED/LIKELY/HYPOTHESIS" findings against no real
+ * evidence (see `measurements.ts`'s header comment for exactly which inputs
+ * this environment can and cannot honestly measure today).
+ */
 const TECHNICAL_SEO_ASPECTS = ["technical-infra", "on-page", "performance-cwv", "keyword-content-gaps"] as const;
 
 /** Filters a `wf.fanout` result down to the completed slots' outputs — failed slots (RFC-01 §5.5 isolation) are simply excluded, never crash the run. */
 function completedOutputs<T>(slots: readonly SlotOutcome<T>[]): T[] {
   return slots.filter((s): s is Extract<SlotOutcome<T>, { status: "completed" }> => s.status === "completed").map((s) => s.output);
+}
+
+/**
+ * T-A13/SCRUM-269: the `"reference"`-role assets a client attached to this
+ * run (`RichRunInputSchema.mediaAssets`, resolved once as `runDirection` — see
+ * `readRunDirection`) — a competitor teardown, a screenshot of a desired
+ * layout, a brand style sheet — described to the fix-drafting and narrative
+ * steps as material to ground *tone and framing* against, never as a source
+ * this agent has actually fetched: neither step has a tool that reads the
+ * bytes behind `uri`, only the portal-supplied metadata, so the prompt must
+ * never claim to have "reviewed" it.
+ *
+ * Mirrors `runDirectionField`'s omit-when-absent rule for the same reason
+ * that one gives: an explicit empty array in the payload invites the model to
+ * remark on having nothing attached instead of simply working without the
+ * field at all.
+ */
+function referenceMaterialsField(direction: RunDirection): { clientAttachedReferences?: Array<{ uri: string; label?: string }> } {
+  const refs = direction.mediaAssets
+    .filter((asset) => asset.role === "reference")
+    .map((asset) => ({ uri: asset.uri, ...(asset.label !== undefined ? { label: asset.label } : {}) }));
+  return refs.length > 0 ? { clientAttachedReferences: refs } : {};
 }
 
 /** Best-effort domain for `seoGeo.score`'s `visibility.clientDomains` (`min(1)`). No canonical "website" field is guaranteed by `client.getProfile`'s loose shape (RFC-01 §9's onboarding-profile note) — falling back to an obviously-synthetic, never-resolvable placeholder is honest (citation/domain matching against it will simply never hit) rather than guessing a real-looking domain that might not belong to this client. */
@@ -105,6 +142,7 @@ function toSeoGeoCell(cell: {
   sentimentPerMention: Array<{ mentionIndex: number; label: "pos" | "neg" | "neutral" }>;
   rawSha256?: string;
   unavailableReason?: "credit_probe_402" | "no_adapter_wired";
+  aioAbsent?: boolean;
 }): SeoGeoCaptureCell {
   return {
     promptId: cell.promptId,
@@ -120,6 +158,7 @@ function toSeoGeoCell(cell: {
     sentimentPerMention: cell.sentimentPerMention,
     ...(cell.rawSha256 !== undefined ? { rawSha256: cell.rawSha256 } : {}),
     ...(cell.unavailableReason !== undefined ? { unavailableReason: cell.unavailableReason } : {}),
+    ...(cell.aioAbsent !== undefined ? { aioAbsent: cell.aioAbsent } : {}),
   };
 }
 
@@ -282,7 +321,17 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
               "Pre-fill is NEUTRAL: default desired_outcome = named_in_answer (never named_first, which makes every prompt read as failure; never not_applicable, which hides gaps).",
           },
           requiredRole: "account_manager",
-          timeout: { duration: "24h", onTimeout: "hold" },
+          // SCRUM-273/T-A20: shrunk from a 24h hold to a 1h auto-approve —
+          // the scrape -> AI-engine-query -> inference/synthesis pipeline
+          // upstream of both of this agent's gates now runs fully automated
+          // end to end (T-A2/T-A3/T-A7 above), so a run no longer needs to
+          // sit at `awaiting_gate` indefinitely for a human who may never
+          // look; `runStepGate`'s `auto_approve` handling (packages/workflow)
+          // synthesizes an `approve` from `actor: "system:gate-timeout"`
+          // after 1h with no human response, distinguishable in the audit
+          // trail from both a genuine human approval and `autoApprove`'s
+          // own `actor: "system"` test/demo opt-out.
+          timeout: { duration: "1h", onTimeout: "auto_approve" },
         });
     if (promptSetDecision.decision !== "approve") {
       throw new WorkflowHeld(`prompt set rejected: ${promptSetDecision.reason ?? "no reason given"}`);
@@ -356,20 +405,39 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
     });
 
     // ── 05: crawl + technical SEO — 4 parallel sub-checks (RFC-04 §2 Phase 2), fanned out ──
+    //
+    // Only "technical-infra" has a real tool behind it today
+    // (`research.crawlTechnicalSeo`, T-A2/SCRUM-236 — wiring T-A1's crawl
+    // capabilities up as a tool for the first time). The other 3
+    // (`on-page`/`performance-cwv`/`keyword-content-gaps`) still call
+    // `research.pull`, exactly as before this ticket: on-page content
+    // parsing, Core Web Vitals RUM, and keyword/content-gap NLP have no real
+    // tool in this environment yet, so there is nothing honest for those
+    // three to derive beyond what `research.pull` already did. Every aspect
+    // still fans out and checkpoints independently (RFC-01 §5.5 isolation) —
+    // a crawl failure never blocks the other three.
     const crawlSlots = await wf.fanout(
       "05-crawl-technical-seo",
       TECHNICAL_SEO_ASPECTS,
       async (aspect, slotCtx): Promise<SeoGeoCrawlAspectResult> => {
         const slotAgentCtx = toAgentContext(slotCtx);
+        const domain = clientContext.clientDomains[0] ?? wf.clientSlug;
+
+        if (aspect === "technical-infra") {
+          const outcome = await tools["research.crawlTechnicalSeo"]!.execute({ seedUrl: `https://${domain}`, limit: 10 }, { ctx: slotAgentCtx });
+          if (outcome.status !== "success") {
+            throw new WorkflowToolingFailure(`research.crawlTechnicalSeo (${aspect}) failed: ${outcome.status}`);
+          }
+          const result = outcome.result as { runId: string; snapshot: TechnicalSeoSnapshot };
+          return { aspect, runId: result.runId, fromCache: false, technicalSnapshot: result.snapshot };
+        }
+
         // Hyphenated, not colon-separated: `research.pull`'s `job` string is used
         // directly as a `WorkspaceStore` path segment (see
         // `karos-research/src/runs.ts`'s `runSegments`), and `:` is an invalid
         // Windows path character outside a drive letter — this bit a first
         // draft of this step with an `ENOENT` on `mkdir`.
-        const outcome = await tools["research.pull"]!.execute(
-          { job: `seo-crawl-${aspect}`, query: clientContext.clientDomains[0] ?? wf.clientSlug, window: "30d" },
-          { ctx: slotAgentCtx },
-        );
+        const outcome = await tools["research.pull"]!.execute({ job: `seo-crawl-${aspect}`, query: domain, window: "30d" }, { ctx: slotAgentCtx });
         if (outcome.status !== "success") {
           throw new WorkflowToolingFailure(`research.pull (${aspect}) failed: ${outcome.status}`);
         }
@@ -384,9 +452,15 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       const crawlSnapshotHash = sha256Hex(
         [...completedAspects].sort((a, b) => a.aspect.localeCompare(b.aspect)).map((a) => ({ aspect: a.aspect, runId: a.runId })),
       );
+      // "technical-infra" is the only aspect carrying a real snapshot today
+      // (see step 05's own comment) — `find` rather than assuming array
+      // position, since a failed technical-infra slot is simply excluded by
+      // `completedOutputs` (RFC-01 §5.5), leaving `technicalSnapshot`
+      // `undefined` and every derived measurement honestly `unavailable`.
+      const technicalSnapshot = completedAspects.find((a) => a.aspect === "technical-infra")?.technicalSnapshot;
       return {
-        seoMeasurements: buildUnavailableMeasurements(SEO_BUCKETS),
-        geoReadinessMeasurements: buildUnavailableMeasurements(GEO_READINESS_BUCKETS),
+        seoMeasurements: buildTechnicalMeasurements(SEO_BUCKETS, technicalSnapshot),
+        geoReadinessMeasurements: buildTechnicalMeasurements(GEO_READINESS_BUCKETS, technicalSnapshot),
         crawlSnapshotHash,
         aspectsAttempted: crawlSlots.length,
         aspectsCompleted: completedAspects.length,
@@ -401,24 +475,38 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
     }
     const captureJobs: CaptureJob[] = frozen.prompts.flatMap((p) => SEO_GEO_VISIBILITY_ENGINES.map((engine) => ({ ...p, engine })));
 
-    const captureSlots = await wf.fanout("07-capture-ai-visibility", captureJobs, async (job, slotCtx) => {
-      const slotAgentCtx = toAgentContext(slotCtx);
-      const outcome = await tools["research.captureVisibility"]!.execute(
-        {
-          promptId: job.promptId,
-          promptText: job.promptText,
-          engine: job.engine,
-          clientDomains: clientContext.clientDomains,
-          competitorRoster: frozen.competitorRoster,
-          window: "30d",
-        },
-        { ctx: slotAgentCtx },
-      );
-      if (outcome.status !== "success") {
-        throw new WorkflowToolingFailure(`research.captureVisibility (${job.engine}/${job.promptId}) failed: ${outcome.status}`);
-      }
-      return (outcome.result as { cell: Parameters<typeof toSeoGeoCell>[0] }).cell;
-    });
+    const captureSlots = await wf.fanout(
+      "07-capture-ai-visibility",
+      captureJobs,
+      async (job, slotCtx) => {
+        const slotAgentCtx = toAgentContext(slotCtx);
+        const outcome = await tools["research.captureVisibility"]!.execute(
+          {
+            promptId: job.promptId,
+            promptText: job.promptText,
+            engine: job.engine,
+            clientDomains: clientContext.clientDomains,
+            competitorRoster: frozen.competitorRoster,
+            window: "30d",
+          },
+          { ctx: slotAgentCtx },
+        );
+        if (outcome.status !== "success") {
+          throw new WorkflowToolingFailure(`research.captureVisibility (${job.engine}/${job.promptId}) failed: ${outcome.status}`);
+        }
+        return (outcome.result as { cell: Parameters<typeof toSeoGeoCell>[0] }).cell;
+      },
+      // T-A3/SCRUM-237: 2 of the 5 engines (chatgpt/copilot) route through
+      // ScrappyCoco's CLI-driven browser-automation capability, which is the
+      // one of the 5 least able to tolerate a large concurrent burst — the
+      // source ticket's own "concurrency 3" instruction. Applied to the
+      // WHOLE capture fanout (all 5 engines' jobs are interleaved in
+      // `captureJobs`) rather than only the ScrappyCoco-routed jobs, for
+      // simplicity: a lower shared ceiling costs a real run some wall-clock
+      // time, never correctness, and this fanout already isolates a single
+      // slot's failure from the rest (RFC-01 §5.5) regardless of ordering.
+      { concurrency: 3 },
+    );
 
     // ── 08: assemble the frozen capture-cell blob (the "response set") ──
     const visibilityCapture = await wf.step.code("08-assemble-visibility-cells", (): SeoGeoVisibilityCapture => {
@@ -581,7 +669,9 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
             topAgentDirect: topAgentDirect.map((r) => ({ recId: r.recId, recommendation: r.recommendation, priorityScore: r.priorityScore })),
           },
           requiredRole: "account_manager",
-          timeout: { duration: "24h", onTimeout: "hold" },
+          // SCRUM-273/T-A20: same 1h auto-approve as step 03 — see that
+          // gate's comment.
+          timeout: { duration: "1h", onTimeout: "auto_approve" },
         });
     if (fixGenerationDecision.decision !== "approve") {
       throw new WorkflowHeld(`fix generation rejected: ${fixGenerationDecision.reason ?? "no reason given"}`);
@@ -628,6 +718,7 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
         const fixAgent = new SeoGeoFixDraftAgent({ router: options.router, tools, promptStore: options.promptStore });
         const fixResult = await wf.step.agent(rev("13-draft-fixes"), fixAgent, {
           ...runDirectionField(runDirection),
+          ...referenceMaterialsField(runDirection),
           firedRecommendations: topAgentDirect.map((r) => ({
             recId: r.recId,
             recommendation: r.recommendation,
@@ -651,6 +742,7 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       const narrativeAgent = new SeoGeoNarrativeAgent({ router: options.router, tools, promptStore: options.promptStore });
       const narrativeResult = await wf.step.agent(rev("14-draft-narrative"), narrativeAgent, {
         ...runDirectionField(runDirection),
+        ...referenceMaterialsField(runDirection),
         seoScore: scoring.seoScore.score,
         seoDataCoveragePct: Math.round(scoring.seoScore.dataCoveragePct),
         geoReadinessScore: scoring.geoReadiness.score,

@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import { FilePromptStore, type CompletionResult, type ModelRouter } from "@agent-engine/core";
-import { createAllKarosTools, WorkspaceStore } from "@agent-engine/tools";
+import { createAllKarosTools, WorkspaceStore, type EngineCaptureAdapter, type VisibilityEngine } from "@agent-engine/tools";
 import { createOfflineScraper } from "@agent-engine/tool-karos-scraper";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -138,7 +138,14 @@ export function withMeasuredCapture(tools: ReturnType<typeof createAllKarosTools
 }
 
 export async function setupTestEnvironment(
-  opts: { withProfile?: boolean; withBrand?: boolean; withCompetitors?: boolean; language?: string } = {},
+  opts: {
+    withProfile?: boolean;
+    withBrand?: boolean;
+    withCompetitors?: boolean;
+    language?: string;
+    /** T-A3/SCRUM-237: inject a fake per-engine adapter map instead of the default `null` (every engine honestly unconfigured). */
+    visibilityAdapters?: Partial<Record<VisibilityEngine, EngineCaptureAdapter>> | null;
+  } = {},
 ): Promise<TestEnvironment> {
   const withProfile = opts.withProfile ?? true;
   const withBrand = opts.withBrand ?? true;
@@ -151,7 +158,15 @@ export async function setupTestEnvironment(
   // placeholder is what let every content agent draft from nothing for months.
   // Tests still need deterministic offline data, so they opt in here; nothing in
   // `apps/` does.
-  const tools = createAllKarosTools(store, undefined, { scraper: createOfflineScraper() });
+  //
+  // `visibilityAdapters: null` (T-A3/SCRUM-237) is the same discipline applied
+  // to `research.captureVisibility`'s real per-engine adapters: deterministic
+  // tests must never depend on whichever of PERPLEXITY_API_KEY/
+  // ANTHROPIC_API_KEY/GEMINI_API_KEY/SCRAPPYCOCO_API_KEY happen to be set in
+  // whatever shell runs them. A test that wants a MEASURED cell uses
+  // `withMeasuredCapture` below (or wires a fake adapter directly), never the
+  // ambient environment.
+  const tools = createAllKarosTools(store, undefined, { scraper: createOfflineScraper(), visibilityAdapters: opts.visibilityAdapters ?? null });
 
   if (withProfile) {
     await store.writeJson("acme", ["client", "profile"], {
