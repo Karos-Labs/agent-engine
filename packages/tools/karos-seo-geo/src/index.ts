@@ -15,6 +15,7 @@ export * from "./recommend.js";
 export * from "./schemas.js";
 export * from "./score-tool.js";
 export * from "./recommend-tool.js";
+export * from "./routable-recommendation-contract.js";
 export { GRADE_DATA_ONLY_RULE } from "./scoring-config.js";
 
 /** The `karos-seo-geo` tool registry (RFC-04 Phase 4/6) — deterministic scoring and rec-firing, zero LLM judgment calls. */
