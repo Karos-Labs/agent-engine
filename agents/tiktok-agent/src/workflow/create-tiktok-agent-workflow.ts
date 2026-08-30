@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { buildSrt } from "@agent-engine/tool-karos-video";
-import { downloadBrandLogo } from "@agent-engine/tool-karos-media";
+import { downloadBrandLogo, planBrandLogoPlacement, readBrandLogoInk } from "@agent-engine/tool-karos-media";
 import {
   GUARDRAIL_OUTPUT_FIELDS,
   GUARDRAIL_STEP_ID,
@@ -563,12 +563,30 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       // The logo, downloaded fresh for this render (any failure = no logo,
       // never a hold).
       let logoPath: string | undefined;
+      let logoScrim: string | undefined;
       if (videoBrand.logoUrl !== undefined) {
         const download = await downloadBrandLogo(options.fetchImpl ?? fetch, videoBrand.logoUrl);
         // SVG can't overlay in ffmpeg without a rasterizer — raster formats only here.
         if (download !== undefined && download.mime !== "image/svg+xml") {
-          logoPath = path.join(workDir, download.mime === "image/png" ? "logo.png" : "logo.jpg");
-          await fs.writeFile(logoPath, download.bytes);
+          // AU38 (SCRUM-322): the cover's top bar is painted in
+          // `videoBrand.ground`, so the mark's own decoded colors are checked
+          // against THAT token before it is composited. A mark that clears
+          // WCAG 3:1 overlays bare; one that does not gets the plate the plan
+          // verified it does clear; and a mark whose bytes are unreadable is
+          // reported unchecked rather than credited with a contrast nobody
+          // computed. No prompt is involved in any of it.
+          const ink = readBrandLogoInk(download);
+          const placement = planBrandLogoPlacement({
+            ground: videoBrand.ground,
+            ...(ink !== undefined ? { ink } : {}),
+            fg: videoBrand.fg,
+            surface: "cover",
+          });
+          if (placement.decision !== "omit") {
+            logoPath = path.join(workDir, download.mime === "image/png" ? "logo.png" : "logo.jpg");
+            await fs.writeFile(logoPath, download.bytes);
+            logoScrim = placement.scrim?.color;
+          }
         }
       }
 
@@ -583,6 +601,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
             ...(videoBrand.handle !== undefined ? { handle: videoBrand.handle } : {}),
             ...(videoBrand.seriesHeader !== undefined ? { seriesHeader: videoBrand.seriesHeader } : {}),
             ...(logoPath !== undefined ? { logoPath } : {}),
+            ...(logoPath !== undefined && logoScrim !== undefined ? { logoScrim } : {}),
           },
           ...(srtPath !== undefined ? { srtPath } : {}),
         },

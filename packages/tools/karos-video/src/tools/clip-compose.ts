@@ -44,6 +44,9 @@ export function hexToFfmpeg(hex: string): string {
   return `0x${hex.slice(1)}`;
 }
 
+/** Breathing room between the mark and the edge of its legibility plate, in output pixels. */
+const LOGO_SCRIM_PAD = 16;
+
 export interface SrtWord {
   word: string;
   start: number;
@@ -89,6 +92,13 @@ export const BrandFrameBrandSchema = z.object({
     .min(1)
     .optional()
     .describe("Local PNG/JPEG path (the caller downloads it — e.g. via downloadBrandLogo — this tool never fetches)."),
+  logoScrim: z
+    .string()
+    .regex(HEX6)
+    .optional()
+    .describe(
+      "A legibility plate painted behind the logo, 6-digit hex. The caller sets it when the mark's own colors do not clear WCAG 3:1 against `ground` — see `planBrandLogoPlacement` in karos-media, which computes that ratio from the mark's decoded pixels. Absent means the mark already clears the floor on the bar, or that there is no logo; this tool never decides legibility for itself.",
+    ),
   seriesHeader: z.string().min(1).max(60).optional().describe('"PITCH SCHOOL | LESSON 15"-style standing header, top bar.'),
   handle: z.string().min(1).max(48).optional().describe('"@clienthandle" watermark, bottom bar.'),
 });
@@ -160,7 +170,19 @@ export function buildBrandFrameFilter(input: BrandFrameInput): string {
   // The logo is a second input, scaled to sit inside the top bar and
   // overlaid at the start-side corner (`h` in overlay expressions is the
   // OVERLAID input's height).
-  return `${base}[framed];[1:v]scale=-1:${Math.round(bar * 0.55)}[logo];[framed][logo]overlay=48:${Math.round(bar / 2)}-h/2[out]`;
+  //
+  // AU38 (SCRUM-322): when the caller's contrast plan says the mark would
+  // disappear into the bar, `logoScrim` is the plate it verified the mark
+  // DOES clear. It is applied as a `pad` around the scaled mark rather than
+  // a separate `drawbox`, because the mark's scaled width is only known
+  // inside the filter graph — a drawbox would need a width nobody has yet.
+  const logoHeight = Math.round(bar * 0.55);
+  const scrim = input.brand.logoScrim;
+  const logoChain =
+    scrim === undefined
+      ? `[1:v]scale=-1:${logoHeight}[logo]`
+      : `[1:v]scale=-1:${logoHeight},pad=iw+${2 * LOGO_SCRIM_PAD}:ih+${2 * LOGO_SCRIM_PAD}:${LOGO_SCRIM_PAD}:${LOGO_SCRIM_PAD}:color=${hexToFfmpeg(scrim)}[logo]`;
+  return `${base}[framed];${logoChain};[framed][logo]overlay=48:${Math.round(bar / 2)}-h/2[out]`;
 }
 
 /** ffprobe duration of a finished file — the same probe `selfEvalGate` trusts. */
@@ -337,6 +359,7 @@ export function createBrandFrame(options: KarosVideoToolOptions = {}) {
         ...(brand.seriesHeader !== undefined ? ["series-header"] : []),
         ...(brand.handle !== undefined ? ["handle"] : []),
         ...(brand.logoPath !== undefined ? ["logo"] : []),
+        ...(brand.logoPath !== undefined && brand.logoScrim !== undefined ? ["logo-scrim"] : []),
         ...(effective.srtPath !== undefined ? ["captions"] : []),
       ];
       return success<BrandFrameResult>({
