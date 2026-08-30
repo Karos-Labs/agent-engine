@@ -2,6 +2,7 @@
   "id": "linkedin-post-hybrid-anchor-days",
   "description": "A LinkedIn post about fixed hybrid anchor-days reducing scheduling conflicts, sourced from an internal client survey.",
   "agentId": "linkedin-agent",
+  "language": "en",
   "input": {
     "topic": "hybrid work anchor days",
     "clientSlug": "acme",
