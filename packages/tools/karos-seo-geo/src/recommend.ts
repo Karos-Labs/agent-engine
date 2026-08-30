@@ -1,5 +1,7 @@
 import { recCatalogData } from "./config/rec-catalog.data.js";
+import { routingFor } from "./config/rec-routing-map.js";
 import { roundHalfUp } from "./round.js";
+import type { ActionKind, FixAction, RecOwner } from "./routable-recommendation-contract.js";
 
 /** Failing these hard-gates the queue jumps the normal priority ordering (`routing-config.json` `trigger.priority_formula`). */
 const CRITICAL_ELIGIBILITY_RECS = new Set(["BOTH-01", "BOTH-02", "GEO-01", "GEO-08", "GEO-10"]);
@@ -43,6 +45,55 @@ export interface FiredRecommendation {
   hardOverride: boolean;
 }
 
+/** The catalog's `lever` field. `"BOTH"` is the contract's default for an absent or unrecognized value. */
+export type RecLever = "SEO" | "GEO" | "BOTH";
+const KNOWN_LEVERS = new Set<string>(["SEO", "GEO", "BOTH"]);
+
+/** The catalog's `product_ref` — a **lab** product/folder reference, never an engine `productId` (contract Rule 1). */
+export interface CatalogProductRef {
+  id: string;
+  folder: string;
+  status: string;
+}
+
+/**
+ * The wire shape of a fired recommendation (SCRUM-257 / T-A4), per
+ * `docs/routable-recommendation-contract.md` §"The canonical shape".
+ *
+ * It **extends** `FiredRecommendation` rather than replacing it: all ten
+ * scoring fields are untouched, and every existing consumer that reads a
+ * `FiredRecommendation[]` keeps working unchanged. What is added is the two
+ * halves the old wire shape threw away:
+ *
+ *  - `check`/`lever`/`productRef` were sitting on each `rec-catalog.data.ts`
+ *    row all along and were simply never read — `recommend.ts` only ever
+ *    touched `recommendation`/`impact`/`effort`/`delivery`/`source`;
+ *  - `fixAction`/`actionKind`/`owner`/`engineProductId` come from
+ *    `config/rec-routing-map.ts`, this ticket's 75-row table.
+ *
+ * `engineProductId` is present only when `owner === "karos_agent"`, which the
+ * routing table enforces in its own type (contract Rule 3).
+ */
+export interface RoutableRecommendation extends FiredRecommendation {
+  /** The failing check — the evidence behind the recommendation (catalog `check`). */
+  check: string;
+  lever: RecLever;
+  /** Catalog `product_ref`. `folder` is a lab folder name, never an engine `productId` (Rule 1). */
+  productRef: CatalogProductRef | null;
+  fixAction: FixAction;
+  actionKind: ActionKind;
+  owner: RecOwner;
+  /**
+   * Part of the contract's shape table, kept here so this side emits the same
+   * field set karos-portal's parser reads. No `rec-catalog.data.ts` record
+   * carries a target platform today, so nothing populates it — it is left
+   * absent rather than filled with a guess.
+   */
+  targetPlatform?: string;
+  /** Only present when `owner === "karos_agent"`; a `KNOWN_PRODUCT_IDS` member, pinned by test. */
+  engineProductId?: string;
+}
+
 /**
  * `trigger.fires_when`: "per distinct rec_id, FIRE if min(norm across
  * weighted input_weight>0 instances) < 1.0. Bands: norm>=1.0 pass (no
@@ -67,8 +118,36 @@ function evidencePenaltyFor(source: string): number {
   return source.includes("VENDOR-correlational") ? 1 : 0;
 }
 
-type RecCatalogEntry = { recommendation: string; impact: string; effort: string; delivery: string; source: string };
+type RecCatalogEntry = {
+  recommendation: string;
+  impact: string;
+  effort: string;
+  delivery: string;
+  source: string;
+  /** Read since SCRUM-257 — the evidence half of the routable contract, previously discarded. */
+  check?: string;
+  lever?: string;
+  product_ref?: { id: string; folder: string; status: string } | null;
+};
 const RAW_CATALOG = recCatalogData as unknown as Record<string, RecCatalogEntry>;
+
+/** Contract default: an absent or unrecognized `lever` is `"BOTH"`, never dropped and never guessed at. */
+function leverOf(catalogEntry: RecCatalogEntry): RecLever {
+  const raw = catalogEntry.lever;
+  return raw !== undefined && KNOWN_LEVERS.has(raw) ? (raw as RecLever) : "BOTH";
+}
+
+/** Contract default: `check` is a string on the wire, empty when the catalog row has none. */
+function checkOf(catalogEntry: RecCatalogEntry): string {
+  return catalogEntry.check ?? "";
+}
+
+/** Normalizes the catalog's `product_ref` to `{id, folder, status} | null` — `folder` stays a lab folder name (Rule 1). */
+function productRefOf(catalogEntry: RecCatalogEntry): CatalogProductRef | null {
+  const ref = catalogEntry.product_ref;
+  if (!ref) return null;
+  return { id: ref.id, folder: ref.folder, status: ref.status };
+}
 
 /**
  * Rec-firing + priority engine, ported verbatim from `seo-geo-routing-config.json`
@@ -83,9 +162,15 @@ const RAW_CATALOG = recCatalogData as unknown as Record<string, RecCatalogEntry>
  * Failing a critical-eligibility rec (BOTH-01, BOTH-02, GEO-01, GEO-08,
  * GEO-10) jumps the queue via a large additive override, never a silent
  * reprioritization of the base formula.
+ *
+ * Since SCRUM-257 every fired row is a `RoutableRecommendation`: the ten
+ * scoring fields, unchanged, plus the catalog's own `check`/`lever`/
+ * `product_ref` and this repo's `config/rec-routing-map.ts` routing. None of
+ * the scoring arithmetic reads any of those — enrichment is attachment, not
+ * input, so the priority queue is bit-identical to before.
  */
-export function evaluateRecommendations(inputValuesByRecId: Record<string, RecInputInstance[]>): FiredRecommendation[] {
-  const fired: FiredRecommendation[] = [];
+export function evaluateRecommendations(inputValuesByRecId: Record<string, RecInputInstance[]>): RoutableRecommendation[] {
+  const fired: RoutableRecommendation[] = [];
 
   for (const [recId, catalogEntry] of Object.entries(RAW_CATALOG)) {
     const instances = (inputValuesByRecId[recId] ?? []).filter((i) => i.weight > 0);
@@ -107,6 +192,7 @@ export function evaluateRecommendations(inputValuesByRecId: Record<string, RecIn
     const hardOverride = fireState === "fail" && CRITICAL_ELIGIBILITY_RECS.has(recId);
     const priorityScore = hardOverride ? basePriority + HARD_OVERRIDE_BONUS : basePriority;
 
+    const routing = routingFor(recId);
     fired.push({
       recId,
       recommendation: catalogEntry.recommendation,
@@ -118,6 +204,15 @@ export function evaluateRecommendations(inputValuesByRecId: Record<string, RecIn
       delivery: catalogEntry.delivery,
       priorityScore,
       hardOverride,
+      check: checkOf(catalogEntry),
+      lever: leverOf(catalogEntry),
+      productRef: productRefOf(catalogEntry),
+      fixAction: routing.fixAction,
+      actionKind: routing.actionKind,
+      owner: routing.owner,
+      // Spread rather than `engineProductId: routing.engineProductId`, so a non-`karos_agent` row
+      // emits no key at all instead of an explicit `undefined` on the wire.
+      ...(routing.owner === "karos_agent" ? { engineProductId: routing.engineProductId } : {}),
     });
   }
 
