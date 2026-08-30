@@ -3,6 +3,17 @@ import { z } from "zod";
 import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, parseDurationMs, success, toolingError, notAvailable } from "@agent-engine/tool-common";
 import { readOutputHistory } from "@agent-engine/tool-karos-ledger";
+// SCRUM-321 (AU37) — the visual-pattern read path below folds in the client's
+// own learned house style. Imported from the package that OWNS that document
+// (`karos-media`) rather than re-deriving its store path here, for exactly the
+// reason `readOutputHistory` above is imported from `karos-ledger`: two
+// definitions of where a record lives is one definition too many, and the copy
+// that drifts is the one that silently reads nothing.
+import {
+  readVisualPatternConsent,
+  readVisualPatternProfile,
+  renderVisualPatternReference,
+} from "@agent-engine/tool-karos-media";
 import { ScraperError, type ScrapedRecord, type ScraperProvider, type SocialPlatform } from "@agent-engine/tool-karos-scraper";
 import { latestRunForQuery, writeRunRecord, type RunRecord } from "./runs.js";
 import {
@@ -13,10 +24,13 @@ import {
   type ResearchHistory,
   type ResearchHistoryPost,
   type ResearchPayload,
+  type ResearchVisualPatterns,
 } from "./payload.js";
 
+// 1.2.0 (SCRUM-321/AU37): additive `includeVisualPatterns` read path on the
+// account-history half of the payload.
 // 1.1.1 (SCRUM-296/AU11): removed the redundant re-parse of already-validated input.
-const TOOL_VERSION = "1.1.1";
+const TOOL_VERSION = "1.2.0";
 
 const SOCIAL_PLATFORMS = ["x", "instagram", "reddit", "tiktok"] as const;
 
@@ -65,6 +79,23 @@ export const PullInputSchema = z.object({
     .max(4)
     .optional()
     .describe("The client's own accounts, for pulling what they actually published recently. Each entry costs a billed scrape."),
+  /**
+   * SCRUM-321 (AU37). Opt in to folding this client's learned visual-pattern
+   * profile into the payload, so a copy-drafting or template-selection prompt
+   * gets the client's own house style instead of the one static generic
+   * template.
+   *
+   * Costs nothing and reaches no network: the profile is read from the
+   * client's own workspace, written earlier by
+   * `media.ingestVisualPatterns`. Defaults to false so no existing caller's
+   * payload changes shape.
+   */
+  includeVisualPatterns: z
+    .boolean()
+    .default(false)
+    .describe(
+      "Fold this client's learned visual-pattern profile (written earlier by media.ingestVisualPatterns) into the payload as an aesthetic reference. Reads the client's own workspace, not the network. Omitted from the payload entirely when consent is not currently granted or no profile has been ingested.",
+    ),
 });
 export type PullInput = z.input<typeof PullInputSchema>;
 
@@ -165,6 +196,11 @@ export function createPull(store: WorkspaceStoreLike, scraper?: ScraperProvider)
       }
 
       const history = await buildHistory(store, ctx.clientSlug, input, scraper);
+      // SCRUM-321 (AU37) — additive, and deliberately a separate call rather
+      // than a new branch inside `buildHistory`: this reads a stored document,
+      // never the network, and folding it into the scraper-driven history
+      // builder would entangle a free local read with billed egress.
+      const visualPatterns = await buildVisualPatterns(store, ctx.clientSlug, input);
 
       const result: ResearchPayload = {
         provider: scraper.name,
@@ -172,6 +208,7 @@ export function createPull(store: WorkspaceStoreLike, scraper?: ScraperProvider)
         fetchedAt: new Date().toISOString(),
         documents,
         ...(history ? { history } : {}),
+        ...(visualPatterns ? { visualPatterns } : {}),
         ...(documents.length === 0
           ? { note: `${scraper.name} returned no results for this query; no external facts are available for this run.` }
           : {}),
@@ -263,4 +300,54 @@ async function buildHistory(
     priorTopics,
     ...(problems.length > 0 ? { note: problems.join("; ") } : {}),
   };
+}
+
+/**
+ * SCRUM-321 (AU37) — the visual half of the account-history read path.
+ *
+ * Assembles the client's own learned house style, or returns `undefined` and
+ * leaves the key off the payload entirely. Four things make it `undefined`,
+ * and only one of them is a problem:
+ *
+ * - the caller did not opt in (`includeVisualPatterns` defaults to false, so
+ *   no existing caller's payload changes shape);
+ * - the client's consent is not currently `granted`. Consent gates
+ *   `media.ingestVisualPatterns`' scrape at ingestion time; re-checking it
+ *   here means a client who withdraws consent stops having their own history
+ *   steer their copy on the very next run, not on the next re-ingestion that
+ *   may never come. `media.getVisualPatterns` stays ungated so a human can
+ *   always still read and correct what was stored;
+ * - no profile has been ingested yet;
+ * - the store read failed, which is logged as a payload `note` nowhere and
+ *   simply degrades — same posture as `buildHistory`: losing the aesthetic
+ *   reference is a quality regression, not a reason to publish nothing.
+ *
+ * Written as a standalone function taking `(store, clientSlug, input)` rather
+ * than as a branch inside `buildHistory` so it is trivially separable: nothing
+ * above it changed except one `await` and one spread in the payload literal.
+ */
+async function buildVisualPatterns(
+  store: WorkspaceStoreLike,
+  clientSlug: string,
+  input: z.infer<typeof PullInputSchema>,
+): Promise<ResearchVisualPatterns | undefined> {
+  if (input.includeVisualPatterns !== true) return undefined;
+
+  try {
+    const consent = await readVisualPatternConsent(store, clientSlug);
+    if (!consent.granted) return undefined;
+
+    const profile = await readVisualPatternProfile(store, clientSlug);
+    if (profile === undefined) return undefined;
+
+    return {
+      versionId: profile.versionId,
+      generatedAt: profile.generatedAt,
+      reviewStatus: profile.review.status,
+      reference: renderVisualPatternReference(profile),
+      templateHints: profile.templateHints,
+    };
+  } catch {
+    return undefined;
+  }
 }

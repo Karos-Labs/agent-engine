@@ -41,6 +41,28 @@ export interface ResearchHistory {
   readonly note?: string;
 }
 
+/**
+ * SCRUM-321 (AU37) — the client's own learned house style, folded into the
+ * payload so a copy-drafting prompt has an aesthetic reference that is
+ * actually theirs rather than the one static generic template.
+ *
+ * Deliberately a third top-level key rather than another `history` field:
+ * `documents` is what the world says, `history` is what this client already
+ * said (so as not to repeat it), and this is how this client *looks* (so as to
+ * match it). A model handed all three merged cannot tell which is which.
+ */
+export interface ResearchVisualPatterns {
+  /** Which stored version this came from, e.g. `v0003`. Makes a run attributable to a profile a human can open. */
+  readonly versionId: string;
+  readonly generatedAt: string;
+  /** `unreviewed` here is a real caveat, and the rendered reference block says so in words too. */
+  readonly reviewStatus: string;
+  /** The rendered prose block, ready to drop into a copy or template-selection prompt. */
+  readonly reference: string;
+  /** Plain-language steers a template picker can use without parsing the prose. */
+  readonly templateHints: readonly string[];
+}
+
 export interface ResearchPayload {
   /** Which scraper answered. Recorded so a stale run is attributable. */
   readonly provider: string;
@@ -50,6 +72,14 @@ export interface ResearchPayload {
   readonly documents: ResearchDocument[];
   /** Omitted entirely when the caller asked for no history, rather than present-and-empty. */
   readonly history?: ResearchHistory;
+  /**
+   * SCRUM-321 (AU37). Present only when the caller opted in AND the client's
+   * consent is currently granted AND a profile has actually been ingested.
+   * Omitted entirely otherwise — an empty shell here would read like "this
+   * client has no house style", which is a different claim from "nobody has
+   * looked yet".
+   */
+  readonly visualPatterns?: ResearchVisualPatterns;
   /** Set when the scraper answered but found nothing, so empty is never mistaken for broken. */
   readonly note?: string;
 }
