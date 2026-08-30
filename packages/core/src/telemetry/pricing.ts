@@ -113,8 +113,14 @@ export function pricingForModel(modelName: string): ModelPricing {
   return lookupModelPricing(modelName) ?? unpricedFallback(modelName);
 }
 
-/** The lookup itself, absent the fallback — so `assertModelPriced` can ask without triggering one. */
-function lookupModelPricing(modelName: string): ModelPricing | undefined {
+/**
+ * The lookup itself, absent the fallback — so `assertModelPriced` can ask
+ * without triggering one. Exported since AU34 (SCRUM-312): the per-client
+ * content-language router (`router/client-model-policy.ts`) has to be able to
+ * skip an unpriced candidate while it is still *choosing* one, rather than
+ * select it and then be refused by `assertModelPriced` after the fact.
+ */
+export function lookupModelPricing(modelName: string): ModelPricing | undefined {
   const direct = MODEL_PRICING[modelName];
   if (direct) return direct;
 

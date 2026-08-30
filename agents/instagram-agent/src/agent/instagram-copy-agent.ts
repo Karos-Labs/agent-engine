@@ -30,7 +30,21 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyOutput> {
     outputSchema: InstagramCopyOutputSchema,
     // Pinned — RFC-02 §5's rationale applies identically here: drafting/
     // brand-voice judgment is never a fallback-eligible step.
-    modelPolicy: resolveModelPolicy("instagram-copy", { policy: "pinned", model: "claude-sonnet-4-6" }),
+    //
+    // `contentLanguageSensitive` (AU34 / SCRUM-312): this is the step that
+    // writes the words the client's audience reads, so it is the step whose
+    // model has to be able to write them in the client's own language. When
+    // the client's brand kit states a non-English `language`
+    // (AU31/SCRUM-309), `applyClientLanguagePolicy` re-points this step at a
+    // catalogued model that AU33's capability table rates as capable of it —
+    // per client, at run time, with no deployment change. That supersedes the
+    // `MODEL_STEP_INSTAGRAM_COPY_VENDOR`/`_MODEL` env pair (AU32/SCRUM-310),
+    // which still works and is still the only way to move this step to a
+    // different VENDOR, but is one global setting for every tenant in the
+    // process and so cannot be right for two clients publishing in two
+    // languages. `pinned` is unaffected: this changes which model the step is
+    // pinned TO, it does not make the step fallback-eligible.
+    modelPolicy: resolveModelPolicy("instagram-copy", { policy: "pinned", model: "claude-sonnet-4-6", contentLanguageSensitive: true }),
     // Pinned to "2": v1 stays frozen as the pre-photographability baseline,
     // the same convention every other agent here follows. v2 adds the
     // single-photographable-scene rules to §4 — prep run

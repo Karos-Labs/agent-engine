@@ -72,6 +72,18 @@ export interface RunWorkflowParams {
    * `AgentContext.stageModels`.
    */
   stageModels?: Record<string, string>;
+  /**
+   * The language this client publishes in — AU31/SCRUM-309's BrandKit
+   * `language` field, resolved once by the dispatcher
+   * (`loadClientContentLanguage`, `@agent-engine/core`) and reaching every
+   * agent step through `AgentContext.contentLanguage`.
+   *
+   * Deliberately NOT read from `params.input`: it is the client's standing
+   * configuration, not this run's request, and a run brief must not be able to
+   * re-point a step's model (the same separation `stageModels`' own doc
+   * comment draws, for the same spend/quality reason).
+   */
+  contentLanguage?: string;
 }
 
 /**
@@ -153,6 +165,7 @@ export class WorkflowEngine {
       runKind: params.runKind,
       input,
       ...(params.stageModels !== undefined ? { stageModels: params.stageModels } : {}),
+      ...(params.contentLanguage !== undefined ? { contentLanguage: params.contentLanguage } : {}),
       store: this.store,
       now: this.now,
       ...(budget !== undefined ? { budget } : {}),

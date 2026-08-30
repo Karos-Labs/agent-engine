@@ -40,6 +40,13 @@ export interface WorkflowRuntime {
   input: Readonly<Record<string, unknown>>;
   /** Per-stage model overrides for this run, passed straight to each step's `AgentContext`. */
   stageModels?: Readonly<Record<string, string>>;
+  /**
+   * The language this client publishes in (AU31/SCRUM-309's BrandKit
+   * `language` field), read once at dispatch and passed straight to each
+   * step's `AgentContext`. Drives AU34/SCRUM-312's per-client model policy for
+   * copy steps; absent leaves every step on its compiled model.
+   */
+  contentLanguage?: string;
   store: DurableStepStore;
   budget?: WorkflowBudget;
   /** Overrides `DEFAULT_AGENT_STEP_TIMEOUT_MS` for every `step.agent` call in this run. */
