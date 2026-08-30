@@ -6,6 +6,7 @@ import {
   createKarosLandingTools,
   createKarosIntakeTools,
   createKarosMediaTools,
+  createKarosConnectorsTools,
   createLandingEngineConfigFromEnv,
 } from "@agent-engine/tools";
 import { createServerMediaStore, createServerArchiveStore } from "./gcs-artifact-stores.js";
@@ -60,5 +61,13 @@ export function createServerTools(workspaceStore: WorkspaceStoreLike, env: Recor
     // name it in a step -- a drafting agent that never calls it cannot
     // rewrite the charter it is judged against.
     ...createKarosIntakeTools(workspaceStore),
+    // SCRUM-232 (T-A6): the Google first-party connector pack. Merged in here
+    // rather than inside createAllKarosTools() for the same reason media.* is
+    // — it reaches a client's own Search Console/GA4/GBP on that client's
+    // OAuth grant. `env` is threaded so PSI_API_KEY and the
+    // GOOGLE_OAUTH_CLIENT_* pair enter the tool graph at this one composition
+    // root; with none of them set the tool reports `not_available` and the
+    // SEO/GEO score still computes in full from the validated Layer-2 path.
+    ...createKarosConnectorsTools({ env }),
   };
 }

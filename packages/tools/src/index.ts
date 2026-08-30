@@ -14,6 +14,7 @@ import { createKarosTopicsTools } from "@agent-engine/tool-karos-topics";
 
 export * from "@agent-engine/tool-common";
 export * from "@agent-engine/tool-karos-client";
+export * from "@agent-engine/tool-karos-connectors";
 export * from "@agent-engine/tool-karos-gates";
 export * from "@agent-engine/tool-karos-intake";
 export * from "@agent-engine/tool-karos-intel";
@@ -81,6 +82,18 @@ export * from "@agent-engine/tool-karos-video";
  * because "this deployment has not enabled image search" and "image search
  * broke" want different responses. `apps/agent-server` wires it in explicitly
  * alongside the other two.
+ *
+ * `connectors.*` (`@agent-engine/tool-karos-connectors`, SCRUM-232 / T-A6) is
+ * exported here and excluded from `createAllKarosTools()` on exactly the
+ * `media.*` principle, one notch sharper: it reaches a CLIENT'S OWN Search
+ * Console, Analytics and Business Profile on that client's OAuth grant, and
+ * the GBP scope is write-capable at the grant level (no read-only GBP scope
+ * exists — see that package's `allowlist.ts`). A caller that asks for "all
+ * karos tools" must not acquire that egress by default. An unconfigured
+ * deployment gets `not_available`, not `tooling_error`, because "this
+ * deployment has not enabled Google connectors" is a choice — the SEO/GEO
+ * score is fully computable without any of them (Layer 2 is the validated
+ * default).
  *
  * `mediaStore` (Task 1, RFC-01's GCS media store) is optional, mirroring
  * `store`: wire it (via `GCS_MEDIA_BUCKET` at your composition root) to make
