@@ -541,4 +541,107 @@ describe("karos-research", () => {
       expect(acmeRuns).toHaveLength(1);
     });
   });
+
+  /**
+   * SCRUM-321 (AU37) — the additive visual-pattern read path on `research.pull`.
+   *
+   * Self-contained on purpose: it touches nothing the blocks above set up, so
+   * a later merge that restructures the documents/history half of the payload
+   * (Batch 2's SCRUM-236 rewires seo-geo steps 05/06 around exactly that)
+   * collides with none of it.
+   */
+  describe("research.pull — visual patterns (SCRUM-321/AU37)", () => {
+    /** The shape `media.ingestVisualPatterns` writes. Seeded directly here so this test needs no vision model. */
+    const profile = {
+      schema: "karos.visual-patterns/v1",
+      version: 1,
+      versionId: "v0001",
+      clientSlug: "acme",
+      generatedAt: "2026-01-01T00:00:00.000Z",
+      generatedBy: { tool: "media.ingestVisualPatterns", toolVersion: "1.0.0", visionModel: "m", scraper: "fake/scraper" },
+      consent: { grantedBy: "ops@karoslabs.test", accountsRead: [{ platform: "instagram", username: "acmecoffee" }] },
+      review: { status: "unreviewed" },
+      summary: "Warm interiors, one human subject, captions that open on a question.",
+      patterns: [
+        {
+          label: "warm interior light",
+          observation: "Every top post is lit by low, warm indoor light.",
+          appliesTo: "colour",
+          evidence: ["https://social.test/p1"],
+          confidence: "high",
+        },
+      ],
+      templateHints: ["full-bleed photo with the caption below"],
+      sourcePosts: [],
+      coverage: { accountsRequested: 1, accountsConsented: 1, postsSeen: 3, postsAnalysed: 2, problems: [] },
+    };
+
+    async function seedProfile(): Promise<void> {
+      await store.writeJson("acme", ["client", "visual-patterns", "v0001"], profile);
+    }
+    async function seedConsent(status: "granted" | "revoked"): Promise<void> {
+      await store.writeJson("acme", ["client", "consent"], {
+        visualPatternIngestion: { status, accounts: [{ platform: "instagram", username: "acmecoffee" }] },
+      });
+    }
+    async function pull(args: Record<string, unknown>): Promise<Record<string, unknown>> {
+      const outcome = await tools["research.pull"]!.execute(
+        { job: "j", query: "acme trends", window: "24h", ...args } as never,
+        { ctx },
+      );
+      expect(outcome.status).toBe("success");
+      return (outcome as { result: { result: Record<string, unknown> } }).result.result;
+    }
+
+    it("folds the client's own house style into the payload when the caller opts in and consent is granted", async () => {
+      await seedConsent("granted");
+      await seedProfile();
+
+      const payload = await pull({ includeVisualPatterns: true });
+      const patterns = payload["visualPatterns"] as {
+        versionId: string;
+        reviewStatus: string;
+        reference: string;
+        templateHints: string[];
+      };
+
+      expect(patterns.versionId).toBe("v0001");
+      expect(patterns.reviewStatus).toBe("unreviewed");
+      expect(patterns.reference).toContain("warm interior light");
+      expect(patterns.reference).toContain("has not been reviewed by a human yet");
+      expect(patterns.templateHints).toEqual(["full-bleed photo with the caption below"]);
+      // Still a third key beside the two halves the payload already had.
+      expect(payload["documents"]).toBeDefined();
+    });
+
+    it("omits the key entirely when the caller does not opt in", async () => {
+      await seedConsent("granted");
+      await seedProfile();
+
+      const payload = await pull({});
+      expect(payload).not.toHaveProperty("visualPatterns");
+    });
+
+    it("omits the key when a profile exists but consent has been revoked", async () => {
+      await seedConsent("revoked");
+      await seedProfile();
+
+      const payload = await pull({ includeVisualPatterns: true });
+      expect(payload).not.toHaveProperty("visualPatterns");
+    });
+
+    it("omits the key when no consent record exists at all, even with a stored profile", async () => {
+      await seedProfile();
+
+      const payload = await pull({ includeVisualPatterns: true });
+      expect(payload).not.toHaveProperty("visualPatterns");
+    });
+
+    it("omits the key for a consenting client that has never been ingested", async () => {
+      await seedConsent("granted");
+
+      const payload = await pull({ includeVisualPatterns: true });
+      expect(payload).not.toHaveProperty("visualPatterns");
+    });
+  });
 });
