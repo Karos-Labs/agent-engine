@@ -5,7 +5,7 @@ import { computeVisibilityMetrics } from "./visibility-metrics.js";
 import { computeVisibilityIndex } from "./visibility-index.js";
 import { computeInputsDigest, type HashInputs } from "./hash.js";
 import { ScoreInputSchema, type ScoreInput } from "./schemas.js";
-import type { ScoreBreakdown, VisibilityIndexResult } from "./types.js";
+import type { ScoreBreakdown, VisibilityIndexResult, VisibilityMetricsResult } from "./types.js";
 
 const TOOL_VERSION = "1.0.0";
 
@@ -13,6 +13,14 @@ export interface SeoGeoScoreResult {
   seoScore: ScoreBreakdown;
   geoReadiness: ScoreBreakdown;
   visibility: VisibilityIndexResult | null;
+  /**
+   * The metrics the Index was computed from — carries the KNOWN/FOUND report
+   * (`knownVsFound`, with its `neverBlend` marker) and the resolved
+   * `denominatorDecision`. `null` whenever no capture data was supplied. This
+   * is what a report should publish; `visibility.index` is the blended Index,
+   * which pools cohorts by construction.
+   */
+  visibilityMetrics: VisibilityMetricsResult | null;
   inputsDigest: string;
   /** True whenever any hash_inputs field was omitted — the digest is well-formed but not yet a complete reproducibility snapshot. */
   hashInputsIncomplete: boolean;
@@ -37,16 +45,18 @@ export function createSeoGeoScore() {
       const geoReadiness = evaluateScoreFamily(GEO_READINESS_BUCKETS, geoReadinessMeasurements);
 
       let visibilityIndex: VisibilityIndexResult | null = null;
+      let visibilityMetrics: VisibilityMetricsResult | null = null;
       if (visibility) {
-        const metrics = computeVisibilityMetrics({
+        visibilityMetrics = computeVisibilityMetrics({
           cells: visibility.cells,
           promptCount: visibility.promptCount,
           clientDomains: visibility.clientDomains,
           competitorRoster: visibility.competitorRoster,
           competitorDomains: visibility.competitorDomains,
+          promptCohorts: visibility.promptCohorts,
           denominator: visibility.denominator,
         });
-        visibilityIndex = computeVisibilityIndex(metrics);
+        visibilityIndex = computeVisibilityIndex(visibilityMetrics);
       }
 
       const hashInputsIncomplete = REPRODUCIBILITY.hash_inputs.some((field) => !hashInputs[field]);
@@ -56,6 +66,7 @@ export function createSeoGeoScore() {
         seoScore,
         geoReadiness,
         visibility: visibilityIndex,
+        visibilityMetrics,
         inputsDigest,
         hashInputsIncomplete,
       });
