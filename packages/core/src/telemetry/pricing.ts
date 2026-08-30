@@ -44,6 +44,34 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   "gpt-4o": { inputPer1M: 2.5, outputPer1M: 10.0 },
   "gemini-2.5-flash": { inputPer1M: 0.3, outputPer1M: 2.5 },
   "gemini-2.5-pro": { inputPer1M: 1.25, outputPer1M: 10.0 },
+  // Anthropic's next dateless generation (see
+  // `router/adapters/agent-platform-model-ids.ts`'s doc comment — "dateless
+  // ids are, from the 4.6 generation on, themselves pinned snapshots"). Not yet
+  // GA anywhere in this codebase — no agent's `modelPolicy.model` names either
+  // one today — but `assertModelPriced` refuses an unpriced id at SELECTION
+  // time, so a step retargeted at one via `MODEL_STEP_<ID>_MODEL` the day it
+  // ships would be refused outright with no route to a number at all. Priced at
+  // the current top-of-tier Opus/Sonnet rate as a PLACEHOLDER, not a published
+  // vendor number; replace with the real published rate (and cross-check
+  // karosCMO's own `MODEL_PRICING`) the moment Anthropic GAs either model — do
+  // not assume this placeholder is still correct. (SCRUM-314/AU36)
+  "claude-opus-5": { inputPer1M: 15.0, outputPer1M: 75.0 },
+  "claude-sonnet-5": { inputPer1M: 3.0, outputPer1M: 15.0 },
+
+  // Google's own Gemini Developer API pricing page (ai.google.dev/gemini-api/docs/pricing,
+  // checked 2026-08-29) no longer lists this model at all — Gemini 1.5 Flash
+  // appears to be past end-of-life on the current price list. It still needs a
+  // row regardless: it is `CLAUDE_FALLBACK_GEMINI_MODEL`'s default in
+  // `create-model-router-from-env.ts` — the tertiary hop `ResilientClaudeAdapter`
+  // falls back to once BOTH Claude routes (Agent Platform, direct Anthropic) are
+  // exhausted, so it is the one automatic model-identity change in the whole
+  // router, and until now the one billed at Sonnet's rate. Rate is the ≤128k
+  // tier from this model's original (2024) launch pricing, its one stable
+  // published number for nearly its whole lifetime; reconfirm against a live
+  // invoice if it is still actually being routed to in production, and consider
+  // whether that env default should move to a currently-listed model instead —
+  // a routing decision, not a pricing one, out of scope here. (SCRUM-314/AU36)
+  "gemini-1.5-flash": { inputPer1M: 0.075, outputPer1M: 0.3 },
   // Model Garden Model-as-a-Service (`vendor: "model-garden"`) partner
   // models, confirmed against cloud.google.com/vertex-ai/generative-ai/pricing
   // (checked 2026-08-20). Keyed by the exact model id string a step's

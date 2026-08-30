@@ -1,5 +1,28 @@
-import type { AgentContext, AgentToolRegistry, GateResponse, ModelRouter, PromptStore } from "@agent-engine/core";
-import { readRunDirection, runDirectionField, type SlotOutcome, type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, toAgentContext, runGate, finalizeDeliverable } from "@agent-engine/workflow";
+import type {
+  AgentContext,
+  AgentToolRegistry,
+  GateResponse,
+  ModelRouter,
+  PromptStore,
+  GateVerdict,
+} from "@agent-engine/core";
+import {
+  readRunDirection,
+  runDirectionField,
+  type SlotOutcome,
+  type WorkflowContext,
+  WorkflowBlockedIntake,
+  WorkflowHeld,
+  WorkflowToolingFailure,
+  toAgentContext,
+  runGate,
+  finalizeDeliverable,
+  type RevisionNote,
+  MAX_REVISION_ROUNDS,
+  persistReviewFeedbackToMemory,
+  revisionDirective,
+  runReviewCycle,
+} from "@agent-engine/workflow";
 import {
   GEO_READINESS_BUCKETS,
   GEO_SCORE_MODEL,
@@ -80,6 +103,8 @@ function toSeoGeoCell(cell: {
   citations: Array<{ domain: string; ordinal: number }>;
   mentionCounts: Record<string, number>;
   sentimentPerMention: Array<{ mentionIndex: number; label: "pos" | "neg" | "neutral" }>;
+  rawSha256?: string;
+  unavailableReason?: "credit_probe_402" | "no_adapter_wired";
 }): SeoGeoCaptureCell {
   return {
     promptId: cell.promptId,
@@ -93,6 +118,8 @@ function toSeoGeoCell(cell: {
     citations: cell.citations,
     mentionCounts: cell.mentionCounts,
     sentimentPerMention: cell.sentimentPerMention,
+    ...(cell.rawSha256 !== undefined ? { rawSha256: cell.rawSha256 } : {}),
+    ...(cell.unavailableReason !== undefined ? { unavailableReason: cell.unavailableReason } : {}),
   };
 }
 
@@ -183,7 +210,14 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       const beliefsOutcome = await tools["memory.read"]!.execute({ scope: "beliefs" }, { ctx });
       const beliefs = beliefsOutcome.status === "success" ? (beliefsOutcome.result as { beliefs: Record<string, unknown> }).beliefs : {};
       const priorFrozen = beliefs["seoGeoFrozenPromptSet"] as
-        | { prompts: SeoGeoPromptSetDraft["prompts"]; competitorRoster: string[]; promptSetHash: string }
+        | {
+            prompts: SeoGeoPromptSetDraft["prompts"];
+            competitorRoster: string[];
+            promptSetHash: string;
+            language?: string;
+            languageFallbackApplied?: boolean;
+            quotaShortfalls?: string[];
+          }
         | undefined;
 
       // RFC-04 §3: recurring runs reuse the prior frozen prompt set "for trend
@@ -191,7 +225,18 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       // recurring run is a logged drift event, never silent — handled in step 04
       // once the human gate (step 03) has actually approved whatever this step proposes.
       if (wf.runKind === "recurring" && priorFrozen) {
-        return { prompts: priorFrozen.prompts, competitorRoster: priorFrozen.competitorRoster, source: "reused" };
+        return {
+          prompts: priorFrozen.prompts,
+          competitorRoster: priorFrozen.competitorRoster,
+          source: "reused",
+          // `?? "en"` covers only a belief record written before this field
+          // existed — every record frozen by THIS version of step 04 always
+          // carries `language` (SCRUM-320: the bug this port fixes was step 04
+          // silently dropping it, not step 02 failing to read it).
+          language: priorFrozen.language ?? "en",
+          languageFallbackApplied: priorFrozen.languageFallbackApplied ?? false,
+          quotaShortfalls: priorFrozen.quotaShortfalls ?? [],
+        };
       }
 
       // No real prompt-authoring UI/judgment source exists in this repo yet
@@ -199,9 +244,17 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       // `prompt-set.ts`'s header comment for why this is a deterministic
       // template stand-in instead.
       const industry = (clientContext.profile["industry"] as string | undefined) ?? "this industry";
-      const prompts = deriveDefaultPromptSet(industry);
+      const requestedLanguage = clientContext.profile["language"] as string | undefined;
+      const drafted = deriveDefaultPromptSet(industry, requestedLanguage);
       const competitorRoster = clientContext.competitors.map((c) => c.name);
-      return { prompts, competitorRoster, source: "drafted" };
+      return {
+        prompts: drafted.prompts,
+        competitorRoster,
+        source: "drafted",
+        language: drafted.language,
+        languageFallbackApplied: drafted.languageFallbackApplied,
+        quotaShortfalls: drafted.quotaShortfalls,
+      };
     });
 
     // ── 03: human gate — nothing spends AI-visibility capture budget without sign-off ──
@@ -214,6 +267,19 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
             prompts: promptSetDraft.prompts,
             competitorRoster: promptSetDraft.competitorRoster,
             source: promptSetDraft.source,
+            language: promptSetDraft.language,
+            languageFallbackApplied: promptSetDraft.languageFallbackApplied,
+            quotaShortfalls: promptSetDraft.quotaShortfalls,
+            // Every prompt's `desiredOutcome` is already `DESIRED_OUTCOME_NEUTRAL_PREFILL`
+            // ("named_in_answer") — surfaced again here, at the top level, as the
+            // rationale the reviewer sees next to each toggle
+            // (`capture-config.data.ts`'s `prefill_rule`: "shown next to each
+            // toggle so the client makes a real choice, not a rubber-stamp").
+            // Per-prompt edits to this default are NOT wired: `GateResponse`
+            // carries only approve/revise/reject + free-text feedback, no
+            // structured per-prompt override — a real gap, not silently faked.
+            desiredOutcomePrefillRationale:
+              "Pre-fill is NEUTRAL: default desired_outcome = named_in_answer (never named_first, which makes every prompt read as failure; never not_applicable, which hides gaps).",
           },
           requiredRole: "account_manager",
           timeout: { duration: "24h", onTimeout: "hold" },
@@ -224,7 +290,10 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
 
     // ── 04: freeze + hash the approved prompt set/roster — the reproducibility spine ──
     const frozen = await wf.step.code("04-freeze-prompt-set", async (): Promise<SeoGeoFrozenSet> => {
-      const promptSetHash = sha256Hex(promptSetDraft.prompts);
+      // `language` is folded into `promptSetHash`'s own input (not just carried
+      // as a sibling field) so two prompt sets that ever produced byte-identical
+      // text across two languages would still mint different hashes.
+      const promptSetHash = sha256Hex({ prompts: promptSetDraft.prompts, language: promptSetDraft.language });
       const competitorSetHash = sha256Hex([...promptSetDraft.competitorRoster].sort());
       const engineListHash = sha256Hex(SEO_GEO_VISIBILITY_ENGINES);
       // Phase 0's "category vocabulary" (RFC-04 §2) — the only gazetteer content
@@ -246,6 +315,15 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
         );
       }
 
+      // SCRUM-320 fix: this diff previously omitted `language` (and
+      // `languageFallbackApplied`/`quotaShortfalls`) entirely. A recurring run
+      // would then read `priorFrozen.language` back as `undefined` in step 02
+      // above, fall back to "en", and report `promptSet.language: "en"` in
+      // every subsequent run's report/gate metadata even for a client whose
+      // frozen prompts are genuinely Spanish (hash-stable, since the PROMPTS
+      // themselves were still reused correctly — only the reported language
+      // metadata was wrong). Every field this step freezes now round-trips
+      // through belief storage, not just the prompts/hash/roster.
       await tools["memory.updateBeliefs"]!.execute(
         {
           diff: {
@@ -253,6 +331,9 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
               prompts: promptSetDraft.prompts,
               competitorRoster: promptSetDraft.competitorRoster,
               promptSetHash,
+              language: promptSetDraft.language,
+              languageFallbackApplied: promptSetDraft.languageFallbackApplied,
+              quotaShortfalls: promptSetDraft.quotaShortfalls,
               frozenAt: new Date().toISOString(),
             },
           },
@@ -268,6 +349,9 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
         engineListHash,
         gazetteerHash,
         driftLogged,
+        language: promptSetDraft.language,
+        languageFallbackApplied: promptSetDraft.languageFallbackApplied,
+        quotaShortfalls: promptSetDraft.quotaShortfalls,
       };
     });
 
@@ -503,61 +587,133 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       throw new WorkflowHeld(`fix generation rejected: ${fixGenerationDecision.reason ?? "no reason given"}`);
     }
 
-    // ── 13: fix drafting — one bounded agent, only when there's something agent-direct to draft ──
-    let fixDrafts: SeoGeoFixDraft[] = [];
-    if (topAgentDirect.length > 0) {
-      const fixAgent = new SeoGeoFixDraftAgent({ router: options.router, tools, promptStore: options.promptStore });
-      const fixResult = await wf.step.agent("13-draft-fixes", fixAgent, {
+    /** What one Phase 7/8 drafting pass produces, once its own gates have all passed. */
+    interface DraftResult {
+      fixDrafts: SeoGeoFixDraft[];
+      narrative: string;
+    }
+
+    /**
+     * One full Phase 7/8 drafting pass: fix drafts (when there's something
+     * agent-direct to draft), the narrative, then its numbers-sourced check.
+     *
+     * No terminal topic guardrail here, deliberately — this report is an
+     * internal deliverable read by the client's own team, never published,
+     * and `guardrail-coverage.test.ts` (apps/agent-server) enforces exactly
+     * that split across every agent in this repo. See that suite's own doc
+     * comment.
+     *
+     * Called once per REVISION round by `runReviewCycle`. `revision` is
+     * folded into every checkpointed step id inside it (via `rev`), so a
+     * second round genuinely re-drafts instead of short-circuiting on the
+     * first round's checkpoints — while everything OUTSIDE it (scoring,
+     * recommendations, the connector overlay) keeps its id and is reused.
+     * That reuse is why the revision is in-run rather than a fresh run.
+     *
+     * This is a gap the pipeline had before this change, not merely an
+     * omission of style: the only human sign-off before this was step 12's
+     * `fix_generation_review`, which approves generating fixes at all —
+     * BEFORE the fixes or the narrative exist. Nothing downstream of that
+     * ever showed a human what the report's own prose actually says before
+     * shipping it.
+     */
+    const draftOnce = async (revision: number, notes: readonly RevisionNote[]): Promise<DraftResult> => {
+      /** Revision 0 keeps the ORIGINAL ids, so a first-pass trace is unchanged. */
+      const rev = (id: string) => (revision === 0 ? id : `${id}-r${revision}`);
+      const directive = revisionDirective(notes);
+
+      // ── fix drafting — one bounded agent, only when there's something agent-direct to draft ──
+      let fixDrafts: SeoGeoFixDraft[] = [];
+      if (topAgentDirect.length > 0) {
+        const fixAgent = new SeoGeoFixDraftAgent({ router: options.router, tools, promptStore: options.promptStore });
+        const fixResult = await wf.step.agent(rev("13-draft-fixes"), fixAgent, {
+          ...runDirectionField(runDirection),
+          firedRecommendations: topAgentDirect.map((r) => ({
+            recId: r.recId,
+            recommendation: r.recommendation,
+            fireState: r.fireState,
+            worstNorm: r.worstNorm,
+            impact: r.impact,
+            effort: r.effort,
+          })),
+          ...(directive !== undefined ? { revisionRequest: directive } : {}),
+        });
+        if (fixResult.status === "content_fail") {
+          throw new WorkflowHeld(`fix drafting did not clear its own output validation: ${fixResult.status}`);
+        }
+        if (fixResult.status !== "completed") {
+          throw new WorkflowToolingFailure(`fix draft step resolved to "${fixResult.status}"`);
+        }
+        fixDrafts = fixResult.finalOutput!.fixes;
+      }
+
+      // ── narrative drafting — the report's one prose step (RFC-04 §2 Phase 8) ──
+      const narrativeAgent = new SeoGeoNarrativeAgent({ router: options.router, tools, promptStore: options.promptStore });
+      const narrativeResult = await wf.step.agent(rev("14-draft-narrative"), narrativeAgent, {
         ...runDirectionField(runDirection),
-        firedRecommendations: topAgentDirect.map((r) => ({
-          recId: r.recId,
-          recommendation: r.recommendation,
-          fireState: r.fireState,
-          worstNorm: r.worstNorm,
-          impact: r.impact,
-          effort: r.effort,
-        })),
+        seoScore: scoring.seoScore.score,
+        seoDataCoveragePct: Math.round(scoring.seoScore.dataCoveragePct),
+        geoReadinessScore: scoring.geoReadiness.score,
+        geoDataCoveragePct: Math.round(scoring.geoReadiness.dataCoveragePct),
+        visibilityIndex: scoring.visibilityByN?.index ?? null,
+        firedRecommendationCount: recommendations.length,
+        topFiredRecommendations: recommendations.slice(0, 3).map((r) => ({ recId: r.recId, recommendation: r.recommendation, fireState: r.fireState })),
+        ...(directive !== undefined ? { revisionRequest: directive } : {}),
       });
-      if (fixResult.status === "content_fail") {
-        throw new WorkflowHeld(`fix drafting did not clear its own output validation: ${fixResult.status}`);
+      if (narrativeResult.status === "content_fail") {
+        throw new WorkflowHeld(`narrative did not clear its own output validation: ${narrativeResult.status}`);
       }
-      if (fixResult.status !== "completed") {
-        throw new WorkflowToolingFailure(`fix draft step resolved to "${fixResult.status}"`);
+      if (narrativeResult.status !== "completed") {
+        throw new WorkflowToolingFailure(`narrative step resolved to "${narrativeResult.status}"`);
       }
-      fixDrafts = fixResult.finalOutput!.fixes;
-    }
+      const narrative = narrativeResult.finalOutput!;
 
-    // ── 14: narrative drafting — the report's one prose step (RFC-04 §2 Phase 8) ──
-    const narrativeAgent = new SeoGeoNarrativeAgent({ router: options.router, tools, promptStore: options.promptStore });
-    const narrativeResult = await wf.step.agent("14-draft-narrative", narrativeAgent, {
-      ...runDirectionField(runDirection),
-      seoScore: scoring.seoScore.score,
-      seoDataCoveragePct: Math.round(scoring.seoScore.dataCoveragePct),
-      geoReadinessScore: scoring.geoReadiness.score,
-      geoDataCoveragePct: Math.round(scoring.geoReadiness.dataCoveragePct),
-      visibilityIndex: scoring.visibilityByN?.index ?? null,
-      firedRecommendationCount: recommendations.length,
-      topFiredRecommendations: recommendations.slice(0, 3).map((r) => ({ recId: r.recId, recommendation: r.recommendation, fireState: r.fireState })),
+      // ── gate the narrative against fabricated numbers (RFC-04 §2 Phase 8's own recommendation) ──
+      await wf.step.code(rev("15-verify-narrative-numbers"), async () => {
+        const sources = buildNarrativeSources(scoring, recommendations.length);
+        const verdict = await runGate(tools, "gate.numbersSourced", { text: narrative.summary, sources }, ctx);
+        if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.numbersSourced: ${verdict.reason}`);
+        if (verdict.verdict === "content_fail") throw new WorkflowHeld(`narrative numbers not sourced: ${verdict.reason}`);
+        return verdict;
+      });
+
+      return { fixDrafts, narrative: narrative.summary };
+    };
+
+    // ── 16: human batch-review gate — nothing ships without a real review of what will actually ship ──
+    //
+    // `revise` re-drafts the fixes/narrative with the reviewer's feedback
+    // injected, reusing everything already checkpointed (scoring, the fired
+    // recommendations, the connector overlay), instead of holding the run and
+    // forcing somebody to dispatch a fresh one that knows nothing about the
+    // feedback. Every decision, approvals included, reaches client memory.
+    const review = await runReviewCycle(wf, {
+      gateId: "16-batch-review",
+      maxRevisions: MAX_REVISION_ROUNDS,
+      ...(options.autoApprove ? { autoApprove: true } : {}),
+      attempt: draftOnce,
+      buildGate: (draft, revision) => ({
+        kind: "batch_review",
+        payload: {
+          runId: wf.runId,
+          seoScore: scoring.seoScore.score,
+          geoReadinessScore: scoring.geoReadiness.score,
+          firedRecommendationCount: recommendations.length,
+          fixDraftCount: draft.fixDrafts.length,
+          preview: draft.narrative,
+          revision,
+        },
+        requiredRole: "account_manager",
+        timeout: { duration: "24h", onTimeout: "hold" },
+      }),
+      onDecision: async ({ revision, response }) => {
+        await persistReviewFeedbackToMemory(wf, tools, ctx, revision, response);
+      },
     });
-    if (narrativeResult.status === "content_fail") {
-      throw new WorkflowHeld(`narrative did not clear its own output validation: ${narrativeResult.status}`);
-    }
-    if (narrativeResult.status !== "completed") {
-      throw new WorkflowToolingFailure(`narrative step resolved to "${narrativeResult.status}"`);
-    }
-    const narrative = narrativeResult.finalOutput!;
+    const { fixDrafts, narrative: narrativeSummary } = review.output;
 
-    // ── 15: gate the narrative against fabricated numbers (RFC-04 §2 Phase 8's own recommendation) ──
-    await wf.step.code("15-verify-narrative-numbers", async () => {
-      const sources = buildNarrativeSources(scoring, recommendations.length);
-      const verdict = await runGate(tools, "gate.numbersSourced", { text: narrative.summary, sources }, ctx);
-      if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.numbersSourced: ${verdict.reason}`);
-      if (verdict.verdict === "content_fail") throw new WorkflowHeld(`narrative numbers not sourced: ${verdict.reason}`);
-      return verdict;
-    });
-
-    // ── 16: assemble the one merged report object ──
-    const report = await wf.step.code("16-assemble-report", (): SeoGeoReport => ({
+    // ── 17: assemble the one merged report object ──
+    const report = await wf.step.code("17-assemble-report", (): SeoGeoReport => ({
       seoScore: scoring.seoScore,
       geoReadiness: scoring.geoReadiness,
       visibility: {
@@ -578,7 +734,7 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       connectorOverlay,
       firedRecommendations: recommendations,
       fixDrafts,
-      narrative: narrative.summary,
+      narrative: narrativeSummary,
       reproducibility: {
         inputsDigest: scoring.inputsDigest,
         hashInputsIncomplete: scoring.hashInputsIncomplete,
@@ -589,14 +745,17 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
         source: promptSetDraft.source,
         promptSetHash: frozen.promptSetHash,
         competitorSetHash: frozen.competitorSetHash,
+        language: frozen.language,
+        languageFallbackApplied: frozen.languageFallbackApplied,
+        quotaShortfalls: frozen.quotaShortfalls,
       },
       runKind: wf.runKind,
     }));
 
-    // ── 17-18: deliverable & manifest persistence (reusing the ledger tools, same as linkedin-agent's steps 16-17) ──
+    // ── 18-19: deliverable & manifest persistence (reusing the ledger tools, same as linkedin-agent's steps 16-17) ──
     const deliverableId = await finalizeDeliverable(wf, tools, ctx, {
-      persistDeliverableStepId: "17-persist-deliverable",
-      persistManifestStepId: "18-persist-manifest",
+      persistDeliverableStepId: "18-persist-deliverable",
+      persistManifestStepId: "19-persist-manifest",
       kind: "seo-geo-report",
       deliverable: report,
       snapshot: (deliverableId) => ({
@@ -608,8 +767,12 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       }),
     });
 
-    // ── 19: commit + record (memory.appendDecision), same convention as linkedin-agent's step 18 ──
-    await wf.step.code("19-commit-and-record", async () => {
+    // ── 20: commit + record (memory.appendDecision) — the review decision
+    // itself is already durable: `onDecision` above called
+    // `persistReviewFeedbackToMemory` for every round, which is the one real
+    // feedback pipeline (AU22: this step used to also call the now-retired
+    // `ledger.feedbackAppend`, a write-only log nothing ever read). ──
+    await wf.step.code("20-commit-and-record", async () => {
       await tools["memory.appendDecision"]!.execute(
         {
           decisionId: `${wf.runId}__decision`,

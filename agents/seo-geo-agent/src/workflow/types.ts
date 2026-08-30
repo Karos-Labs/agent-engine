@@ -26,9 +26,38 @@ export interface SeoGeoClientContext {
   clientDomains: string[];
 }
 
+/**
+ * The 5 LOCKED prompt intent types (`seo-geo-capture-config.json`
+ * `prompt_set.intent_types`, verbatim) — "Per-intent-type quota enforced so
+ * coverage is guaranteed and reproducible." Locked means exactly these 5,
+ * never a 6th invented ad hoc and never fewer.
+ */
+export const SEO_GEO_PROMPT_INTENT_TYPES = ["discovery", "comparison", "brand", "problem", "navigational"] as const;
+export type SeoGeoPromptIntentType = (typeof SEO_GEO_PROMPT_INTENT_TYPES)[number];
+
+/**
+ * `desired_outcome` enum (`seo-geo-capture-config.json` `prompt_set.client_confirmation`,
+ * verbatim): what the client is confirming they want THIS prompt to do for
+ * their brand once captured.
+ */
+export const SEO_GEO_DESIRED_OUTCOMES = ["named_first", "named_in_answer", "cited", "not_applicable"] as const;
+export type SeoGeoDesiredOutcome = (typeof SEO_GEO_DESIRED_OUTCOMES)[number];
+
+/**
+ * The NEUTRAL pre-fill (`prompt_set.desired_outcome_prefill_default`,
+ * verbatim) — deliberately never `named_first` (which would make every
+ * prompt read as a foregone failure) and never `not_applicable` (which
+ * would hide real gaps). Keep this exact value; changing it un-neutralizes
+ * every client approval screen silently.
+ */
+export const DESIRED_OUTCOME_NEUTRAL_PREFILL: SeoGeoDesiredOutcome = "named_in_answer";
+
 export interface SeoGeoPrompt {
   promptId: string;
   promptText: string;
+  intentType: SeoGeoPromptIntentType;
+  /** Pre-filled `DESIRED_OUTCOME_NEUTRAL_PREFILL` at draft time — see that constant's doc. Per-prompt client edits are not wired (no gate-response field carries them yet; `GateResponse` only carries approve/revise/reject + free-text feedback), so every prompt currently freezes with the neutral default. */
+  desiredOutcome: SeoGeoDesiredOutcome;
 }
 
 /** What step 02 proposes to the human gate (step 03) — not yet frozen/hashed. */
@@ -36,6 +65,12 @@ export interface SeoGeoPromptSetDraft {
   prompts: SeoGeoPrompt[];
   competitorRoster: string[];
   source: "reused" | "drafted";
+  /** BCP-47-ish language tag the prompts were actually drafted in (e.g. "en", "es") — always the language ACTUALLY used, after any fallback. */
+  language: string;
+  /** True when the client's requested/profile language has no template set and this draft fell back to "en" — never silent (surfaced on the gate payload and frozen alongside the set). */
+  languageFallbackApplied: boolean;
+  /** Per-intent-type shortfalls against the enforced quota (RFC-04 §2 Phase 1's "Per-intent-type quota enforced"), e.g. after 5-shingle dedupe removed a near-duplicate with nothing to backfill it — never silently padded with a fabricated prompt to hit the count. Empty when every intent type met its quota. */
+  quotaShortfalls: string[];
 }
 
 /** What step 04 freezes after the gate approves — the reproducibility-spine fields RFC-04 §2 Phase 1 calls for. */
@@ -48,6 +83,9 @@ export interface SeoGeoFrozenSet {
   gazetteerHash: string;
   /** True when this recurring run's prompt set differs from the prior frozen one — logged via `memory.appendDecision`, never silent (RFC-04 §3/§4). */
   driftLogged: boolean;
+  language: string;
+  languageFallbackApplied: boolean;
+  quotaShortfalls: string[];
 }
 
 export interface SeoGeoCrawlAspectResult {
@@ -160,6 +198,10 @@ export interface SeoGeoReport {
     source: "reused" | "drafted";
     promptSetHash: string;
     competitorSetHash: string;
+    /** The language this frozen set's prompts were actually drafted in — must reflect the client's language on every run, baseline and recurring alike (SCRUM-320: a recurring run silently reporting "en" for a client whose frozen prompts are Spanish is the exact regression this field guards against). */
+    language: string;
+    languageFallbackApplied: boolean;
+    quotaShortfalls: string[];
   };
   runKind: string;
 }

@@ -54,7 +54,7 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
     const deliverables = await env.store.listJson(env.clientSlug, ["ledger", "deliverables", params.runId, "_"]);
     expect(deliverables.map((d) => d.id)).toEqual(["branded-shorts-video"]);
 
-    const decisions = await env.store.listJson(env.clientSlug, ["memory", "decisions"]);
+    const decisions = await env.store.listJson(env.clientSlug, ["memory", "products", params.productId, "decisions"]);
     expect(decisions.some((d) => (d.data as { decisionId: string }).decisionId === `${params.runId}__decision`)).toBe(true);
   });
 

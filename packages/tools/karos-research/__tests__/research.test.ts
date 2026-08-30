@@ -445,6 +445,89 @@ describe("karos-research", () => {
     });
   });
 
+  // SCRUM-320 (AU29): frozen raw-payload hashing, immutable capture_tier, and
+  // the pre-flight credit probe's per-cell 402 mapping to UNAVAILABLE.
+  describe("research.captureVisibility — raw-payload freeze + credit probe (SCRUM-320 / AU29)", () => {
+    const args = {
+      promptId: "p1",
+      promptText: "who are the best acme alternatives?",
+      engine: "perplexity" as const,
+      clientDomains: ["acme.com"],
+      window: "24h",
+    };
+
+    it("freezes a rawSha256 on every cell, including the honest UNAVAILABLE stand-in, and tags the reason distinctly from a credit-probe rejection", async () => {
+      const outcome = await tools["research.captureVisibility"]!.execute(args, { ctx });
+      const result = (outcome as { result: { cell: { rawSha256?: string; unavailableReason?: string } } }).result;
+      expect(result.cell.rawSha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(result.cell.unavailableReason).toBe("no_adapter_wired");
+    });
+
+    it("maps a per-cell 402 credit-probe rejection to UNAVAILABLE without affecting a sibling cell in the same batch (tiering is per cell, not a binary per-engine flip)", async () => {
+      const rejectedPromptIds = new Set(["p1"]);
+      const probeTools = createKarosResearchTools(store, {
+        visibilityCreditProbe: async (_engine, promptId) => (rejectedPromptIds.has(promptId) ? { ok: false, status: 402 } : { ok: true }),
+      });
+
+      const rejected = await probeTools["research.captureVisibility"]!.execute({ ...args, promptId: "p1" }, { ctx });
+      const allowed = await probeTools["research.captureVisibility"]!.execute({ ...args, promptId: "p2" }, { ctx });
+
+      const rejectedCell = (rejected as { result: { cell: { captureTier: string; unavailableReason?: string } } }).result.cell;
+      const allowedCell = (allowed as { result: { cell: { captureTier: string; unavailableReason?: string } } }).result.cell;
+      expect(rejectedCell.captureTier).toBe("UNAVAILABLE");
+      expect(rejectedCell.unavailableReason).toBe("credit_probe_402");
+      // The sibling cell in the same batch was never touched by the other cell's 402 — its own probe passed.
+      expect(allowedCell.captureTier).toBe("UNAVAILABLE");
+      expect(allowedCell.unavailableReason).toBe("no_adapter_wired");
+    });
+
+    it("never silently upgrades a frozen cell on a cache hit, even if the probe would now behave differently — the probe is not re-consulted inside the freshness window", async () => {
+      let probeCalls = 0;
+      const probeTools = createKarosResearchTools(store, {
+        visibilityCreditProbe: async () => {
+          probeCalls += 1;
+          // If the tool re-probed on the cache-hit path, this second call would
+          // flip the reason from credit_probe_402 to no_adapter_wired — proving
+          // any observed change came from a live re-probe, not from freezing.
+          return probeCalls === 1 ? { ok: false, status: 402 } : { ok: true };
+        },
+      });
+
+      const first = await probeTools["research.captureVisibility"]!.execute(args, { ctx });
+      const firstResult = (first as { result: { runId: string; cell: { unavailableReason?: string } } }).result;
+      expect(firstResult.cell.unavailableReason).toBe("credit_probe_402");
+
+      vi.setSystemTime(new Date("2026-01-01T01:00:00Z")); // +1h, inside the 24h window
+      const second = await probeTools["research.captureVisibility"]!.execute(args, { ctx });
+      const secondResult = (second as { result: { runId: string; fromCache: boolean; cell: { unavailableReason?: string } } }).result;
+
+      expect(secondResult.fromCache).toBe(true);
+      expect(secondResult.runId).toBe(firstResult.runId);
+      expect(secondResult.cell.unavailableReason).toBe("credit_probe_402"); // frozen, not silently upgraded
+      expect(probeCalls).toBe(1); // the probe was never re-consulted for a cache hit
+    });
+
+    it("does re-probe once the cached cell goes stale — freezing applies within the window, not forever", async () => {
+      let probeCalls = 0;
+      const probeTools = createKarosResearchTools(store, {
+        visibilityCreditProbe: async () => {
+          probeCalls += 1;
+          return { ok: false, status: 402 };
+        },
+      });
+
+      const first = await probeTools["research.captureVisibility"]!.execute(args, { ctx });
+      vi.setSystemTime(new Date("2026-01-02T01:00:00Z")); // +25h, outside the 24h window
+      const second = await probeTools["research.captureVisibility"]!.execute(args, { ctx });
+
+      const firstRunId = (first as { result: { runId: string } }).result.runId;
+      const secondResult = (second as { result: { runId: string; fromCache: boolean } }).result;
+      expect(secondResult.fromCache).toBe(false);
+      expect(secondResult.runId).not.toBe(firstRunId);
+      expect(probeCalls).toBe(2);
+    });
+  });
+
   describe("tenant scoping", () => {
     it("ignores a model-supplied clientSlug override in favor of ctx.clientSlug", async () => {
       await tools["research.writeRun"]!.execute(

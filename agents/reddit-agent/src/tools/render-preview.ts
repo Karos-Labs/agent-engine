@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { defineTool, success } from "@agent-engine/tool-common";
+import { checkLength, defineTool, success, truncateAtFold, truncateToLimit } from "@agent-engine/tool-common";
 import type { AgentTool } from "@agent-engine/core";
 
 const TOOL_VERSION = "2.0.0";
@@ -52,10 +52,9 @@ export const renderPreview: AgentTool<RenderPreviewInput, RenderPreviewResult> =
   version: TOOL_VERSION,
   inputSchema: RenderPreviewInputSchema,
   async execute({ text }) {
-    const characterCount = text.length;
-    const withinLimit = characterCount <= REDDIT_COMMENT_LIMIT;
-    const aboveTheFold = text.length > REDDIT_FOLD_CHARACTERS ? `${text.slice(0, REDDIT_FOLD_CHARACTERS)}…` : text;
-    const rendered = withinLimit ? text : `${text.slice(0, REDDIT_COMMENT_LIMIT - 1)}…`;
+    const { characterCount, withinLimit } = checkLength(text, REDDIT_COMMENT_LIMIT);
+    const aboveTheFold = truncateAtFold(text, REDDIT_FOLD_CHARACTERS);
+    const rendered = truncateToLimit(text, REDDIT_COMMENT_LIMIT);
     return success<RenderPreviewResult>({
       characterCount,
       withinLimit,

@@ -102,35 +102,13 @@ describe("karos-ledger", () => {
     });
   });
 
-  describe("ledger.feedbackAppend", () => {
-    it("requires a reason on rejection", async () => {
-      const outcome = await tools["ledger.feedbackAppend"]!.execute(
-        { runId: "run_1", feedbackId: "fb_1", decision: "reject", actor: "jane@karoslabs.com" },
-        { ctx },
-      );
-      expect(outcome.status).toBe("tooling_error");
-    });
-
-    it("allows an approval with no reason, and a rejection with one", async () => {
-      const approve = await tools["ledger.feedbackAppend"]!.execute(
-        { runId: "run_1", feedbackId: "fb_1", decision: "approve", actor: "jane@karoslabs.com" },
-        { ctx },
-      );
-      const reject = await tools["ledger.feedbackAppend"]!.execute(
-        { runId: "run_1", feedbackId: "fb_2", decision: "reject", actor: "jane@karoslabs.com", reason: "voice mismatch" },
-        { ctx },
-      );
-      expect(approve.status).toBe("success");
-      expect(reject.status).toBe("success");
-    });
-
-    it("is idempotent on (runId, feedbackId)", async () => {
-      const args = { runId: "run_1", feedbackId: "fb_1", decision: "approve" as const, actor: "jane@karoslabs.com" };
-      await tools["ledger.feedbackAppend"]!.execute(args, { ctx });
-      const second = await tools["ledger.feedbackAppend"]!.execute(args, { ctx });
-      expect(second).toEqual({ status: "success", result: { id: "run_1__fb_1", created: false } });
-    });
-  });
+  // `ledger.feedbackAppend` retired (AU22): it was a write-only log with no
+  // reader anywhere in the codebase. See `createKarosLedgerTools`'s own doc
+  // comment in `../src/index.ts` for the full story and its replacement
+  // (`memory.appendFeedback`/`memory.readFeedback`), which is covered by
+  // `packages/tools/karos-memory/__tests__/memory.test.ts` and by
+  // `agents/intel-report-agent/__tests__/workflow-e2e.test.ts`'s
+  // write-then-read test.
 
   describe("ledger.recordUsedImages / ledger.listUsedImages (cross-post image-reuse prevention, P0 parity audit Fix 3)", () => {
     it("records image paths and lists them back, deduped and idempotent on replay", async () => {

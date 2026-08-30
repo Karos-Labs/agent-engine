@@ -1618,8 +1618,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         copy = { ...copy, slides: copy.slides.map((s) => (downgradedNs.has(s.n) ? { ...s, layout: "text_only" } : s)) };
       }
 
-      const selfCheck = checkSlidesData(copy, selections, research, frozen.styleConfig);
-      const attemptChecked = await wf.step.code(rev(`07-self-check-attempt-${attempt}`), () => selfCheck);
+      const attemptChecked = await wf.step.code(rev(`07-self-check-attempt-${attempt}`), () =>
+        checkSlidesData(tools, ctx, copy, selections, research, frozen.styleConfig),
+      );
 
       if (!attemptChecked.ok) {
         lastSelfCheckReason = attemptChecked.reason;

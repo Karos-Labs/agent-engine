@@ -19,7 +19,7 @@ function goodPost(overrides: Record<string, unknown> = {}) {
 
 /** Seeds a `memory.decisions` row directly (bypassing `memory.appendDecision`, whose input schema strips any field not named `decisionId`/`summary`/`rationale` — same pattern the rest of this suite already uses to seed `client.*` state). */
 async function seedDecision(env: TestEnvironment, decisionId: string, lane: string, at: number) {
-  await env.store.writeJson("acme", ["memory", "decisions", decisionId], {
+  await env.store.writeJson("acme", ["memory", "products", "x-agent", "decisions", decisionId], {
     decisionId,
     summary: `Posted about "${decisionId}" (lane: ${lane}, angle: trend-observation)`,
     at,

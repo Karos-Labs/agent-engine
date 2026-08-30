@@ -194,6 +194,57 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       return parsed.data;
     });
 
+    // ── 00b: seed the commentary-clip lane from the client's own guest
+    // watchlist, before this run's own reservation ever touches it ──
+    //
+    // Nothing in this repo ever wrote a `commentary-clip` row: `topics.topUp`
+    // has exactly one caller before this one — `topics.reserve`'s own
+    // proactive top-up (see reserve.ts's doc comment), which passes an empty
+    // array. So this lane sat at zero rows forever and every reservation
+    // below breached `LANE_FLOOR`, holding every real run regardless of
+    // `sourcePool`/`guestWatchlist`. instagram-agent closed the equivalent
+    // gap for its own lane with research-derived seeding (`00-auto-setup`);
+    // this agent has no research query to build (a clip's "topic" is a
+    // person to look out for in an already-attached recording, not a subject
+    // to research), but it does not need one — `guestWatchlist` is, per this
+    // agent's own config contract, "the highest-yield discovery signal", a
+    // real name the client themselves gave us. Seeding the catalog from it is
+    // exactly as honest as instagram seeding from real research titles, and
+    // just as clearly not fabricated invention.
+    //
+    // Never fails the run, exactly like `runAutoSetup`: no watchlist, or a
+    // `topics.topUp` tool this deployment never registered, degrades to a
+    // note, and step 01 still tries its own reservation (holding honestly, as
+    // it always has, if the lane is still empty after this).
+    //
+    // Unlike instagram's research-derived seeding, this costs no external
+    // call and needs no "is this lane already healthy" gate before trying:
+    // `guestWatchlist` is config already loaded above, and `topics.topUp` is
+    // idempotent per normalized topic (`top-up.ts`), so calling it every run
+    // is a no-op write once every name is already in the catalog. A
+    // whole-catalog size check would also be the wrong signal here regardless
+    // — `topics.topUp`'s `catalogSize` counts rows across every lane a client
+    // has (see `top-up.ts`), and this client's catalog is keyed only by
+    // `clientSlug`, not by product, so a client who also runs another channel
+    // agent under the same slug would look "healthy" by that count while this
+    // lane is still at zero.
+    await wf.step.code("00b-seed-catalog", async () => {
+      const topUp = tools["topics.topUp"];
+      if (topUp === undefined) {
+        return { seeded: 0, notes: ["topics.topUp is not registered; nothing to seed the commentary-clip lane with"] };
+      }
+      if (config.guestWatchlist.length === 0) {
+        return { seeded: 0, notes: ["client's guestWatchlist is empty; nothing real to seed the commentary-clip lane with"] };
+      }
+
+      const seeded = await topUp.execute({ topics: config.guestWatchlist, lane: CLIP_LANE }, { ctx });
+      if (seeded.status !== "success") {
+        return { seeded: 0, notes: [`seeding the commentary-clip lane failed: ${seeded.status}`] };
+      }
+      const { added, catalogSize } = seeded.result as { added: number; catalogSize: number };
+      return { seeded: added, notes: [`${added} new name(s) from the client's guestWatchlist landed in the ${CLIP_LANE} lane (catalog now ${catalogSize} row(s) across all lanes)`] };
+    });
+
     // ── 01: claim the topic — the source cascade below needs it (a web
     //        harvest searches by it, a generated plate is briefed by it) ──
     const claim = await wf.step.code("01-claim-topic", async (): Promise<{ topic: string; reservationKey?: string }> => {

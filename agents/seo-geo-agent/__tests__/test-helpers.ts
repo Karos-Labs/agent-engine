@@ -137,7 +137,9 @@ export function withMeasuredCapture(tools: ReturnType<typeof createAllKarosTools
   } as ReturnType<typeof createAllKarosTools>;
 }
 
-export async function setupTestEnvironment(opts: { withProfile?: boolean; withBrand?: boolean; withCompetitors?: boolean } = {}): Promise<TestEnvironment> {
+export async function setupTestEnvironment(
+  opts: { withProfile?: boolean; withBrand?: boolean; withCompetitors?: boolean; language?: string } = {},
+): Promise<TestEnvironment> {
   const withProfile = opts.withProfile ?? true;
   const withBrand = opts.withBrand ?? true;
   const withCompetitors = opts.withCompetitors ?? true;
@@ -152,7 +154,12 @@ export async function setupTestEnvironment(opts: { withProfile?: boolean; withBr
   const tools = createAllKarosTools(store, undefined, { scraper: createOfflineScraper() });
 
   if (withProfile) {
-    await store.writeJson("acme", ["client", "profile"], { name: "Acme Corp", industry: "B2B SaaS", website: "https://acme.example" });
+    await store.writeJson("acme", ["client", "profile"], {
+      name: "Acme Corp",
+      industry: "B2B SaaS",
+      website: "https://acme.example",
+      ...(opts.language ? { language: opts.language } : {}),
+    });
   }
   if (withBrand) {
     await store.writeJson("acme", ["client", "brand"], { forbiddenTerms: ["guaranteed", "the best", "#1"] });

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { defineTool, success } from "@agent-engine/tool-common";
+import { checkLength, defineTool, success, truncateAtFold, truncateToLimit } from "@agent-engine/tool-common";
 import type { AgentTool } from "@agent-engine/core";
 
 const TOOL_VERSION = "1.0.0";
@@ -55,15 +55,17 @@ export const renderPreview: AgentTool<RenderPreviewInput, RenderPreviewResult> =
   version: TOOL_VERSION,
   inputSchema: RenderPreviewInputSchema,
   async execute({ subjectLine, previewText, text }) {
-    const subjectLineCharacterCount = subjectLine.length;
-    const subjectLineWithinLimit = subjectLineCharacterCount <= NEWSLETTER_SUBJECT_LINE_LIMIT;
-    const previewTextCharacterCount = previewText.length;
-    const previewTextWithinLimit = previewTextCharacterCount <= NEWSLETTER_PREVIEW_TEXT_LIMIT;
-    const bodyCharacterCount = text.length;
-    const bodyWithinLimit = bodyCharacterCount <= NEWSLETTER_BODY_LIMIT;
-    const aboveTheFold =
-      text.length > NEWSLETTER_FOLD_CHARACTERS ? `${subjectLine}\n${text.slice(0, NEWSLETTER_FOLD_CHARACTERS)}…` : `${subjectLine}\n${text}`;
-    const rendered = bodyWithinLimit ? text : `${text.slice(0, NEWSLETTER_BODY_LIMIT - 1)}…`;
+    const { characterCount: subjectLineCharacterCount, withinLimit: subjectLineWithinLimit } = checkLength(
+      subjectLine,
+      NEWSLETTER_SUBJECT_LINE_LIMIT,
+    );
+    const { characterCount: previewTextCharacterCount, withinLimit: previewTextWithinLimit } = checkLength(
+      previewText,
+      NEWSLETTER_PREVIEW_TEXT_LIMIT,
+    );
+    const { characterCount: bodyCharacterCount, withinLimit: bodyWithinLimit } = checkLength(text, NEWSLETTER_BODY_LIMIT);
+    const aboveTheFold = `${subjectLine}\n${truncateAtFold(text, NEWSLETTER_FOLD_CHARACTERS)}`;
+    const rendered = truncateToLimit(text, NEWSLETTER_BODY_LIMIT);
     return success<RenderPreviewResult>({
       subjectLineCharacterCount,
       subjectLineWithinLimit,

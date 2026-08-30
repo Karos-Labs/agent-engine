@@ -17,6 +17,7 @@
     "@agent-engine/tool-common": "^0.0.1",
     "@agent-engine/tool-karos-media": "^0.0.1",
     "@agent-engine/tool-karos-scraper": "^0.0.1",
+    "@agent-engine/tool-karos-topics": "^0.0.1",
     "@agent-engine/tool-karos-video": "^0.0.1",
     "@agent-engine/tools": "^0.0.1",
     "@agent-engine/workflow": "^0.0.1",

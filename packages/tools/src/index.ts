@@ -7,7 +7,7 @@ import { createKarosLedgerTools } from "@agent-engine/tool-karos-ledger";
 import { createKarosMemoryTools } from "@agent-engine/tool-karos-memory";
 import { createKarosPublishTools } from "@agent-engine/tool-karos-publish";
 import { createKarosReputationTools } from "@agent-engine/tool-karos-reputation";
-import { createKarosResearchTools } from "@agent-engine/tool-karos-research";
+import { createKarosResearchTools, type CreditProbe } from "@agent-engine/tool-karos-research";
 import type { ScraperProvider } from "@agent-engine/tool-karos-scraper";
 import { createKarosSeoGeoTools } from "@agent-engine/tool-karos-seo-geo";
 import { createKarosTopicsTools } from "@agent-engine/tool-karos-topics";
@@ -108,6 +108,8 @@ export interface AllKarosToolsOptions {
    * `createMemoryClientReportStore()`.
    */
   clientReportStore?: ClientReportStore;
+  /** Injected pre-flight credit probe for `research.captureVisibility` (RFC-04 §5) — see `KarosResearchToolsOptions.visibilityCreditProbe`. Omitted means every cell probes `{ ok: true }`. */
+  visibilityCreditProbe?: CreditProbe;
 }
 
 export function createAllKarosTools(
@@ -126,6 +128,7 @@ export function createAllKarosTools(
     ...createKarosResearchTools(store, {
       ...(options.env ? { env: options.env } : {}),
       ...(options.scraper !== undefined ? { scraper: options.scraper } : {}),
+      ...(options.visibilityCreditProbe ? { visibilityCreditProbe: options.visibilityCreditProbe } : {}),
     }),
     ...createKarosSeoGeoTools(),
     ...createKarosTopicsTools(store),

@@ -21,10 +21,13 @@ const NON_FANOUT_STEP_IDS = [
   "13-draft-fixes",
   "14-draft-narrative",
   "15-verify-narrative-numbers",
-  "16-assemble-report",
-  "17-persist-deliverable",
-  "18-persist-manifest",
-  "19-commit-and-record",
+  // Revision-scoped: `-r0` is the first review round. A `revise` decision
+  // registers `-r1` after re-drafting the fixes/narrative.
+  "16-batch-review-r0",
+  "17-assemble-report",
+  "18-persist-deliverable",
+  "19-persist-manifest",
+  "20-commit-and-record",
 ];
 
 describe("end-to-end: the 9-phase SEO & GEO agent workflow (RFC-04)", () => {
@@ -80,7 +83,7 @@ describe("end-to-end: the 9-phase SEO & GEO agent workflow (RFC-04)", () => {
     const snapshot = await env.store.readJson("acme", ["ledger", "dashboard-snapshots", params.runId]);
     expect(snapshot).toBeTruthy();
 
-    const decisions = await env.store.listJson("acme", ["memory", "decisions"]);
+    const decisions = await env.store.listJson("acme", ["memory", "products", params.productId, "decisions"]);
     expect(decisions.some((d) => (d.data as { decisionId: string }).decisionId === `${params.runId}__decision`)).toBe(true);
   });
 

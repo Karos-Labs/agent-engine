@@ -59,7 +59,7 @@ describe("AU26: zero measured capture cells holds the run", () => {
     expect(capture.capturedCount).toBe(capture.attemptedCount);
 
     // Nothing past the hold ran: no scoring, no narrative, no persistence.
-    for (const stepId of ["09-compute-scores", "13-draft-fixes", "14-draft-narrative", "17-persist-deliverable"]) {
+    for (const stepId of ["09-compute-scores", "13-draft-fixes", "14-draft-narrative", "18-persist-deliverable"]) {
       expect(await durableStore.getStep(params.runId, stepId), `${stepId} must not have run`).toBeUndefined();
     }
 

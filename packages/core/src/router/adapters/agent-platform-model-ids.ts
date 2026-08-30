@@ -17,11 +17,13 @@
  * directions: outbound on the request, and inbound on `response.model`.
  *
  * Skipping the inbound direction is not cosmetic. `computeStepCostUsd` looks
- * the returned model name up in `MODEL_PRICING`, and a miss falls back to
- * `DEFAULT_MODEL_PRICING` (Sonnet's $3/$15) *silently* — so an un-normalized
- * Agent Platform run would bill Opus work at Sonnet rates in every telemetry
- * record and every per-step cost report (RFC-01 §11). A wrong number that
- * looks plausible is worse than a missing one.
+ * the returned model name up in `MODEL_PRICING`, and a miss now throws
+ * refused by `assertModelPriced` at selection time rather than billing at
+ * `DEFAULT_MODEL_PRICING` (Sonnet's $3/$15) — so an un-normalized Agent
+ * Platform run would fail the step loudly instead of billing Opus work at
+ * Sonnet rates in every telemetry record and every per-step cost report
+ * (RFC-01 §11). A wrong number that looks plausible is worse than a missing
+ * one, and a missing one is worse than a loud failure.
  */
 
 /** `claude-haiku-4-5-20251001` → captures (`claude-haiku-4-5`, `20251001`). */

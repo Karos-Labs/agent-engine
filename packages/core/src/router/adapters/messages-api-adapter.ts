@@ -140,8 +140,8 @@ export class MessagesApiAdapter implements ModelAdapter {
     // number that would have shown these turns are neither free nor cheap.
     const reportedUsage = {
       // Normalized back to canonical form — `computeStepCostUsd` looks this
-      // up in `MODEL_PRICING`, and a provider-spelled miss falls back to
-      // Sonnet's rate silently. See `./agent-platform-model-ids.ts`.
+      // up in `MODEL_PRICING`, and a provider-spelled miss now throws rather
+      // than silently falling back to Sonnet's rate. See `./agent-platform-model-ids.ts`.
       modelUsed: this.modelIds.toCanonical(response.model),
       inputTokens: {
         cached: usage.cache_read_input_tokens ?? 0,

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { computeStepCostUsd, summarizeStepTelemetry, type AgentStepTelemetry } from "../src/index.js";
+import {
+  computeStepCostUsd,
+  pricingForModel,
+  assertModelPriced,
+  summarizeStepTelemetry,
+  type AgentStepTelemetry,
+} from "../src/index.js";
 
 describe("computeStepCostUsd", () => {
   it("matches karosCMO's flat computeCostUsd when there are no cached tokens", () => {
@@ -14,10 +20,39 @@ describe("computeStepCostUsd", () => {
     expect(cached).toBeCloseTo(full * 0.1, 6);
   });
 
-  it("falls back to the default pricing row for an unlisted model", () => {
-    const known = computeStepCostUsd("claude-sonnet-4-6", { cached: 0, uncached: 1_000_000 }, 1_000_000);
-    const unknown = computeStepCostUsd("some-future-model-nobody-priced-yet", { cached: 0, uncached: 1_000_000 }, 1_000_000);
-    expect(unknown).toBeCloseTo(known, 6);
+  it("refuses an unpriced model at SELECTION time, before any spend (AU36, via main's assertModelPriced)", () => {
+    // AU36 originally made `pricingForModel` itself throw. `main` had already
+    // landed a deliberately different answer to the same problem, and kept it:
+    // `pricingForModel` runs AFTER the model call, from `computeStepCostUsd`,
+    // so throwing there destroys a completed step's output while the money
+    // stays spent. The refusal belongs at model SELECTION instead, which is
+    // where `assertModelPriced` puts it — before the call happens.
+    expect(() => assertModelPriced("some-future-model-nobody-priced-yet", "test")).toThrow(/no pricing row/);
+    // ...and the post-spend path stays non-fatal but loud (see unpricedFallback).
+    expect(() => pricingForModel("some-future-model-nobody-priced-yet")).not.toThrow();
+  });
+
+  it("still resolves the two id-translation fallbacks (canonical @-date, undated base) before giving up", () => {
+    // Agent Platform's own spelling of a dated Haiku snapshot.
+    expect(pricingForModel("claude-haiku-4-5@20251001").inputPer1M).toBe(0.8);
+    // A dated id whose exact row is missing but whose undated base is priced.
+    expect(pricingForModel("claude-haiku-4-5-20301231").inputPer1M).toBe(0.8);
+  });
+
+  it("prices the previously-missing rows: Opus 5, Sonnet 5, and the Gemini tertiary-fallback default", () => {
+    // gemini-1.5-flash is `CLAUDE_FALLBACK_GEMINI_MODEL`'s default in
+    // create-model-router-from-env.ts — the one automatic model-identity
+    // change in the whole router (ResilientClaudeAdapter's tertiary hop) —
+    // so it must resolve to its own real row rather than the Sonnet-rate default.
+    expect(() => pricingForModel("gemini-1.5-flash")).not.toThrow();
+    expect(pricingForModel("gemini-1.5-flash")).toEqual({ inputPer1M: 0.075, outputPer1M: 0.3 });
+    expect(pricingForModel("claude-opus-5")).toEqual({ inputPer1M: 15.0, outputPer1M: 75.0 });
+    expect(pricingForModel("claude-sonnet-5")).toEqual({ inputPer1M: 3.0, outputPer1M: 15.0 });
+  });
+
+  it("prices the Vertex/Agent-Platform Gemini models already wired through GeminiAdapter", () => {
+    expect(pricingForModel("gemini-2.5-pro")).toEqual({ inputPer1M: 1.25, outputPer1M: 10.0 });
+    expect(pricingForModel("gemini-2.5-flash")).toEqual({ inputPer1M: 0.3, outputPer1M: 2.5 });
   });
 
   it("rounds to 6 decimal places", () => {

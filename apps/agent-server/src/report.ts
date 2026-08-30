@@ -210,14 +210,25 @@ const GATE_STEP_ID_BY_PRODUCT: Record<OriginalChannelProductId, string> = {
  * a conditional fix-generation review later) — `resolvedGateStepRecords`
  * already accepts a list, not just one id, for exactly this case.
  */
+// SCRUM-303 / AU19: intel-report-agent and tiktok-agent adopted
+// `runReviewCycle` (their single-shot gate is now revision-scoped,
+// `${gateId}-r${revision}`, same as every migrated channel agent — see the
+// "2026-08" note above `GATE_STEP_ID_BY_PRODUCT`), and seo-geo-agent gained a
+// brand-new revision-scoped `16-batch-review` on top of its existing two
+// gates. The adaptive path below (`discoveredDescriptors`) doesn't actually
+// need any of these ids — it builds descriptors from whatever gate step a
+// run genuinely recorded, suffix and all — but the bare pre-migration ids are
+// kept alongside the new "-r0" form for `resolvedGateStepRecords`'s own
+// historical-backfill case (a run whose gate checkpoint predates the engine
+// recording one itself).
 const GATE_STEP_IDS_BY_NEW_PRODUCT: Record<Exclude<ProductId, OriginalChannelProductId | "campaign-orchestrator">, readonly string[]> = {
-  "instagram-agent": ["09a-batch-review"],
+  "instagram-agent": ["09a-batch-review", "09a-batch-review-r0"],
   "landing-builder-agent": ["08-human-review"],
   "branded-shorts-agent": ["10-delivery-review"],
   "reputation-agent": ["10-reputation-approve-all"],
-  "seo-geo-agent": ["03-prompt-set-review", "12-fix-generation-review"],
-  "intel-report-agent": ["04-batch-review"],
-  "tiktok-agent": ["11-clip-review"],
+  "seo-geo-agent": ["03-prompt-set-review", "12-fix-generation-review", "16-batch-review-r0"],
+  "intel-report-agent": ["04-batch-review", "04-batch-review-r0"],
+  "tiktok-agent": ["11-clip-review", "11-clip-review-r0"],
 };
 
 /** Recovers a step id's intended ordering position from its own "NN-..." prefix — the convention every step id in this codebase already follows (`00-`, `01-`, `10a-`, ...). Ties (e.g. `"10-delivery-review"` vs `"10a-upload-to-gcs"`) fall back to a plain string compare. */

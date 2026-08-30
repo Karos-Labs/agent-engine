@@ -439,7 +439,11 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
       snapshot: (deliverableId) => ({ topic: selected.topic, source: selected.source, angle, targetKeyword: selected.targetKeyword, deliverableId }),
     });
 
-    // ── 18: commit updates (topics.commit, memory.appendDecision, ledger.feedbackAppend) ──
+    // ── 18: commit updates (topics.commit, memory.appendDecision) — the review
+    // decision itself is already durable: `onDecision` above called
+    // `persistReviewFeedbackToMemory` for every round, which is the one real
+    // feedback pipeline (AU22: this step used to also call the now-retired
+    // `ledger.feedbackAppend`, a write-only log nothing ever read). ──
     await wf.step.code("18-commit-and-record", async () => {
       if (selected.source === "reserved" && reservation.reservationKey) {
         await tools["topics.commit"]!.execute({ reservationKey: reservation.reservationKey }, { ctx });
@@ -452,10 +456,6 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
       await recordOutputExcerpt(tools, ctx, wf.runId, "blog-agent", `${draft.title}\n${draft.text}`);
       await tools["memory.appendDecision"]!.execute(
         { decisionId: `${wf.runId}__decision`, summary: `Published about "${selected.topic}" (keyword: ${selected.targetKeyword}, angle: ${angle})` },
-        { ctx },
-      );
-      await tools["ledger.feedbackAppend"]!.execute(
-        { runId: wf.runId, feedbackId: `${wf.runId}__review`, decision: review.response.decision, actor: review.response.actor },
         { ctx },
       );
     });
