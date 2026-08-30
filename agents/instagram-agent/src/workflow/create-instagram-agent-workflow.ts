@@ -21,8 +21,8 @@ import {
   templateFileName,
   type TemplateStore,
 } from "@agent-engine/tool-karos-templates";
-import { brandLogoDataUri, downloadBrandLogo } from "@agent-engine/tool-karos-media";
-import { buildBrandHeadHtml, buildBrandLogoBodyHtml, deriveBrandRenderTokens } from "./brand-render-tokens.js";
+import { brandLogoDataUri, downloadBrandLogo, parseBrandLogoDataUri } from "@agent-engine/tool-karos-media";
+import { buildBrandHeadHtml, buildBrandLogoBodyHtml, deriveBrandRenderTokens, planBrandLogo } from "./brand-render-tokens.js";
 import { ARCHETYPE_TEMPLATE_FILES, assembleSlidesData, checkSlidesData, resolveLayout } from "./slides-data.js";
 import { checkCraftHygiene } from "./craft-hygiene.js";
 import { checkExpectedScript, languageGateText, runLanguageFluency, LANGUAGE_FLUENCY_STEP_ID, LANGUAGE_SCRIPT_STEP_ID } from "./language-gate.js";
@@ -643,9 +643,22 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     const brandFragments = async (): Promise<{ head?: string; body?: string }> => {
       if (brandKit === undefined) return {};
       const logoDataUri = await ensureBrandLogoDataUri();
+      // AU38 (SCRUM-322): WHERE the mark goes and WHETHER it survives this
+      // client's ground are decided here, by `planBrandLogo`, from the mark's
+      // own decoded pixels against the ground token the slide will actually
+      // render on — not by a sentence in a prompt asking for a legible
+      // placement. A plan whose decision is `omit` emits neither the rules
+      // nor the `<img>`: an illegible mark ships as nothing, never as a
+      // smudge, and never as a held run.
+      const download = logoDataUri !== undefined ? parseBrandLogoDataUri(logoDataUri) : undefined;
+      const placement =
+        download !== undefined
+          ? planBrandLogo(brandKit, download, { hasSeriesBadge: frozen.brandTokens.seriesBadge !== undefined })
+          : undefined;
+      const showLogo = logoDataUri !== undefined && placement !== undefined && placement.decision !== "omit";
       return {
-        head: buildBrandHeadHtml(brandKit, logoDataUri !== undefined ? { logoDataUri } : {}),
-        ...(logoDataUri !== undefined ? { body: buildBrandLogoBodyHtml(logoDataUri) } : {}),
+        head: buildBrandHeadHtml(brandKit, showLogo ? { logo: placement } : {}),
+        ...(showLogo ? { body: buildBrandLogoBodyHtml(logoDataUri) } : {}),
       };
     };
 

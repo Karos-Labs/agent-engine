@@ -13,7 +13,12 @@ import {
   TranscribeInputSchema,
   UploadDeliverableInputSchema,
 } from "@agent-engine/tool-karos-video";
-import { GenerateVideoInputSchema, HarvestVideoInputSchema } from "@agent-engine/tool-karos-media";
+import {
+  BRAND_LOGO_CONTRAST_FLOOR,
+  GenerateVideoInputSchema,
+  HarvestVideoInputSchema,
+  contrastRatio,
+} from "@agent-engine/tool-karos-media";
 import { createTikTokAgentWorkflow } from "../src/workflow/create-tiktok-agent-workflow.js";
 
 /**
@@ -580,5 +585,84 @@ describe("branded frame inputs", () => {
     expect(brand["ground"]).toBe("#17181C");
     expect(brand["fg"]).toBe("#F4F2EC");
     expect(brand["handle"]).toBeUndefined();
+  });
+
+  /**
+   * AU38 (SCRUM-322) — the video cover's logo gets the same enforced
+   * contrast the carousel's does, against the bar color it actually lands on.
+   *
+   * Two solid 16x16 RGBA PNGs, encoded for these tests, so the decoded ink is
+   * exactly `#000000` / `#FFFFFF` and the ratio against this client's
+   * `#101418` bars is a number this test recomputes from the published WCAG
+   * formula rather than reading back off the implementation.
+   */
+  const BLACK_MARK = "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAGElEQVR4nGNgYGD4TyEeNWDUgFEDhocBAJvM/wGi6G+mAAAAAElFTkSuQmCC";
+  const WHITE_MARK = "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAFklEQVR4nGP4TyFgGDVg1IBRA4aLAQBdePwur/3haQAAAABJRU5ErkJggg==";
+
+  async function frameBrandForLogo(runId: string, markBase64: string): Promise<Record<string, unknown>> {
+    const h = stubTools();
+    (h.tools as unknown as Record<string, unknown>)["client.getBrand"] = {
+      name: "client.getBrand",
+      version: "1.0.0",
+      inputSchema: { safeParse: (v: unknown) => ({ success: true as const, data: v }) },
+      async execute() {
+        return {
+          status: "success" as const,
+          result: { colors: { neutralDark: "#101418", neutralLight: "#F2F0EA" }, logoUrl: "https://logos.example/mark.png" },
+        };
+      },
+    };
+    let frameArgs: Record<string, unknown> | undefined;
+    const original = (h.tools as unknown as Record<string, { execute: (a: never, c: never) => unknown }>)["video.brandFrame"]!;
+    (h.tools as unknown as Record<string, unknown>)["video.brandFrame"] = {
+      ...original,
+      async execute(args: never, callCtx: never) {
+        frameArgs = BrandFrameInputSchema.parse(args) as unknown as Record<string, unknown>;
+        return original.execute(args, callCtx);
+      },
+    };
+    const bytes = Buffer.from(markBase64, "base64");
+    const fetchImpl = (async () => ({
+      ok: true,
+      headers: { get: (n: string) => (n === "content-type" ? "image/png" : null) },
+      arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    })) as unknown as typeof fetch;
+
+    const workflow = createTikTokAgentWorkflow({
+      tools: h.tools,
+      promptStore: new FilePromptStore(PROMPTS_ROOT),
+      router: smartFakeRouter([GOOD_MOMENT, GOOD_COMMENTARY]),
+      autoApprove: true,
+      fetchImpl,
+    });
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflow, {
+      ...PARAMS,
+      runId,
+      input: { sourcePath: "/tmp/episode.mp4" },
+    });
+    expect(result.status).toBe("completed");
+    expect(frameArgs, "video.brandFrame must have been called").toBeDefined();
+    return frameArgs!["brand"] as Record<string, unknown>;
+  }
+
+  it("overlays a mark that clears the floor on the bar with no plate behind it", async () => {
+    expect(contrastRatio("#FFFFFF", "#101418")).toBeGreaterThanOrEqual(BRAND_LOGO_CONTRAST_FLOOR);
+    const brand = await frameBrandForLogo("run-tt-logo-legible", WHITE_MARK);
+    expect(typeof brand["logoPath"]).toBe("string");
+    expect(brand["logoScrim"]).toBeUndefined();
+  });
+
+  it("CATCHES a mark that would vanish into the bar and hands the compositor a verified plate", async () => {
+    // The plant, as a real number: a black mark on #101418 bars is 1.14:1.
+    const measured = contrastRatio("#000000", "#101418");
+    expect(measured).toBeCloseTo(1.14, 2);
+    expect(measured).toBeLessThan(BRAND_LOGO_CONTRAST_FLOOR);
+
+    const brand = await frameBrandForLogo("run-tt-logo-illegible", BLACK_MARK);
+    expect(typeof brand["logoPath"]).toBe("string");
+    // The kit's own fg, chosen because the mark demonstrably clears the floor
+    // against it — not because it is a nice color.
+    expect(brand["logoScrim"]).toBe("#F2F0EA");
+    expect(contrastRatio("#000000", brand["logoScrim"] as string)).toBeGreaterThanOrEqual(BRAND_LOGO_CONTRAST_FLOOR);
   });
 });

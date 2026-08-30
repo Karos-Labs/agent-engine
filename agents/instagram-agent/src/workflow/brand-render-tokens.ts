@@ -1,3 +1,9 @@
+import {
+  planBrandLogoPlacement,
+  readBrandLogoInk,
+  type BrandLogoDownload,
+  type BrandLogoPlacement,
+} from "@agent-engine/tool-karos-media";
 import type { BrandTokens } from "./types.js";
 
 /**
@@ -555,7 +561,7 @@ const BADGE_VARIANT_CSS: Record<BadgeStyle, string> = {
  * own `<style>` and would silently override the per-slide `{{accentColor}}`
  * channel — the accent has exactly one channel, and it is that one.
  */
-export function buildBrandHeadHtml(tokens: BrandRenderTokens, options: { logoDataUri?: string } = {}): string {
+export function buildBrandHeadHtml(tokens: BrandRenderTokens, options: { logo?: BrandLogoPlacement } = {}): string {
   const parts: string[] = [];
 
   for (const family of tokens.fontFamilies) {
@@ -591,22 +597,79 @@ export function buildBrandHeadHtml(tokens: BrandRenderTokens, options: { logoDat
   );
   const variant = BADGE_VARIANT_CSS[tokens.badgeStyle];
   if (variant.length > 0) css.push(variant);
-  if (options.logoDataUri !== undefined) {
-    css.push(
-      [
-        ".brand-logo {",
-        "  position: absolute; top: 44px; inset-inline-start: 44px; z-index: 6;",
-        "  width: 150px; height: auto; display: block;",
-        "}",
-        // The badge shares the logo's corner; with a logo present it slides
-        // past the 150px mark plus a margin instead of painting over it.
-        ".brand-badge { inset-inline-start: 220px; top: 62px; }",
-      ].join("\n"),
-    );
-  }
+  const logoCss = brandLogoCss(options.logo);
+  if (logoCss !== undefined) css.push(logoCss);
   if (css.length > 0) parts.push(`<style>\n${css.join("\n")}\n</style>`);
 
   return parts.join("\n");
+}
+
+/**
+ * The logo's rules, emitted from the PLAN rather than from a fixed block.
+ *
+ * Every number here comes out of `planBrandLogoPlacement` — the corner, the
+ * insets, the width, and (when the mark would otherwise disappear into the
+ * ground) the scrim plate and the ratio that plate was chosen to clear. The
+ * corner is a rule, not a constant: a client with a standing series badge
+ * has that badge in the start-side corner already, so the mark takes the
+ * other one. That is why `.brand-badge` no longer gets shoved sideways by a
+ * magic 220px — the two pieces of furniture no longer share a corner at all.
+ *
+ * `undefined` for an omitted plan: no rules, and the caller emits no `<img>`
+ * either, so an illegible mark renders as nothing rather than as a smudge.
+ */
+function brandLogoCss(placement: BrandLogoPlacement | undefined): string | undefined {
+  if (placement === undefined || placement.decision === "omit") return undefined;
+  const side = placement.corner === "top-end" ? "inset-inline-end" : "inset-inline-start";
+  const rules = [
+    ".brand-logo {",
+    `  position: absolute; top: ${placement.insetBlockPx}px; ${side}: ${placement.insetInlinePx}px; z-index: 6;`,
+    `  width: ${placement.widthPx}px; height: auto; display: block;`,
+  ];
+  if (placement.scrim !== undefined) {
+    // The plate goes on the <img> itself: `background` shows through the
+    // transparent ground of a PNG/SVG mark, and `content-box` padding keeps
+    // `width` meaning the mark's width rather than the plate's.
+    rules.push(
+      `  box-sizing: content-box; background: ${placement.scrim.color};`,
+      `  padding: ${placement.scrim.padPx}px; border-radius: ${placement.scrim.radiusPx}px;`,
+    );
+  }
+  rules.push("}");
+  return rules.join("\n");
+}
+
+/**
+ * The default templates' own `:root { --bg: #17181C }`. A client whose kit
+ * derives no ground still renders on THAT, so it is the background the
+ * contrast check has to run against — checking against nothing, or against a
+ * guessed white, would be the check quietly not happening.
+ */
+export const DEFAULT_TEMPLATE_GROUND = "#17181C";
+
+/**
+ * The one place the render path decides where this run's logo goes and
+ * whether it is legible there.
+ *
+ * The ground is the token the mark will actually land on: the kit's `--bg`
+ * override when it derived one, the templates' own ground otherwise. The
+ * mark's colors are read from the DOWNLOADED BYTES — not from a field
+ * anybody typed — so the ratio in the returned plan is a measurement of the
+ * asset, not a claim about it.
+ */
+export function planBrandLogo(
+  tokens: BrandRenderTokens,
+  download: BrandLogoDownload,
+  options: { hasSeriesBadge?: boolean } = {},
+): BrandLogoPlacement {
+  const ink = readBrandLogoInk(download);
+  return planBrandLogoPlacement({
+    ground: tokens.cssVars["--bg"] ?? DEFAULT_TEMPLATE_GROUND,
+    ...(ink !== undefined ? { ink } : {}),
+    ...(tokens.cssVars["--fg"] !== undefined ? { fg: tokens.cssVars["--fg"] } : {}),
+    ...(options.hasSeriesBadge !== undefined ? { hasSeriesBadge: options.hasSeriesBadge } : {}),
+    surface: "slide",
+  });
 }
 
 /**
