@@ -6,7 +6,9 @@ import type {
   PromptStore,
   GateVerdict,
 } from "@agent-engine/core";
+import { routeContextDocumentModel, type ContextDocumentRoutingOptions } from "@agent-engine/core";
 import {
+  readLatestBrandVoice,
   readRunDirection,
   runDirectionField,
   type WorkflowContext,
@@ -25,7 +27,11 @@ import {
 } from "@agent-engine/workflow";
 import type { ClientBrand, ClientProfile, Competitor } from "@agent-engine/tools";
 import type { IntelReportOutput } from "@agent-engine/tool-karos-intel";
-import { IntelReportDraftAgent } from "../agent/intel-report-draft-agent.js";
+import {
+  IntelReportDraftAgent,
+  INTEL_REPORT_DRAFT_MAX_TOKENS,
+  INTEL_REPORT_DRAFT_MODEL_POLICY,
+} from "../agent/intel-report-draft-agent.js";
 import type { IntelReportAgentWorkflowResult, IntelReportClientContext, IntelReportResearch } from "./types.js";
 
 export interface CreateIntelReportAgentWorkflowOptions {
@@ -42,6 +48,19 @@ export interface CreateIntelReportAgentWorkflowOptions {
    * production wiring.
    */
   autoApprove?: boolean;
+  /**
+   * SCRUM-380 (D1-v2). Per-instance model routing for the context-document
+   * generation step (`02-generate-report`) — see
+   * `routeContextDocumentModel` (`@agent-engine/core`) for what "document
+   * complexity" is measured from and why.
+   *
+   * Optional, and its own default is conservative: with nothing passed, a
+   * hard instance still escalates within the `anthropic` vendor (which the
+   * router always has), and the cross-vendor large-context escalation stays
+   * off. A deployment that has Gemini wired should pass
+   * `{ allowVendorEscalation: true }`.
+   */
+  contextDocumentRouting?: ContextDocumentRoutingOptions;
 }
 
 
@@ -139,7 +158,6 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
     const pastFeedback = await readPastFeedback(wf, tools, ctx, "01b-read-past-feedback");
 
     // ── 02-03: generate the report, then verify its numeric claims — one full drafting pass ──
-    const draftAgent = new IntelReportDraftAgent({ router: options.router, tools, promptStore: options.promptStore });
     /**
      * One full drafting pass: generate the report, then verify its numbers
      * are sourced.
@@ -161,10 +179,61 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
       const rev = (id: string) => (revision === 0 ? id : `${id}-r${revision}`);
       const directive = revisionDirective(notes);
 
+      // ── SCRUM-380 (D1-v2), part 2: Brand Voice, always-latest ──
+      //
+      // Deliberately NOT wrapped in `wf.step.code`, and deliberately read
+      // HERE rather than reused from `00-load-client-context`'s checkpoint.
+      // A checkpoint IS a cache: a completed step is replayed verbatim on
+      // every later pass without its body running again (`step-code.ts`).
+      // This run pauses at a 24-hour human gate in the middle, and the whole
+      // reason a reviewer clicks "revise" is often that the voice is wrong —
+      // so the realistic sequence is edit-the-Brand-Voice-then-revise, and a
+      // re-draft served from yesterday's checkpoint would be blind to the
+      // very edit it was asked to act on. See `readLatestBrandVoice`'s own
+      // doc comment. Best-effort: a failed read falls back to the brand kit
+      // step 00 already loaded, so freshness can never cost a run.
+      //
+      // No new checkpointed step id appears anywhere as a result — which is
+      // both the mechanism and the reason `workflow-e2e.test.ts`'s exact
+      // `ALL_STEP_IDS` equality still holds.
+      const brandVoice = await readLatestBrandVoice(tools, ctx, clientContext.brand);
+
+      // ── SCRUM-380 (D1-v2), part 1: complexity-driven routing for THIS instance ──
+      //
+      // Pure and deterministic — every signal is already in hand, so this
+      // adds no tool call, no probe turn, and nothing that could fail and
+      // take the run with it. Re-derived per attempt because the inputs
+      // genuinely change per attempt: a revision round carries the
+      // reviewer's directive and a higher round number, both of which the
+      // scorer counts.
+      const route = routeContextDocumentModel(
+        INTEL_REPORT_DRAFT_MODEL_POLICY,
+        {
+          competitorCount: clientContext.competitors.length,
+          evidenceChars: JSON.stringify(research.result ?? null).length,
+          clientContextChars: JSON.stringify({ profile: clientContext.profile, brand: brandVoice.brand }).length,
+          steerCount:
+            (runDirection.direction ? 1 : 0) + (directive !== undefined ? 1 : 0) + pastFeedback.length,
+          revision,
+        },
+        { maxOutputTokens: INTEL_REPORT_DRAFT_MAX_TOKENS, ...options.contextDocumentRouting },
+      );
+      const draftAgent = new IntelReportDraftAgent(
+        { router: options.router, tools, promptStore: options.promptStore },
+        { modelPolicy: route.policy },
+      );
+
       const draftResult = await wf.step.agent(rev("02-generate-report"), draftAgent, {
         ...runDirectionField(runDirection),
         profile: clientContext.profile,
-        brand: clientContext.brand,
+        // The freshly-read kit, not step 00's checkpointed copy.
+        brand: brandVoice.brand,
+        // First-class, alongside the client context rather than buried inside
+        // the brand-kit blob: the model reads a named `brandVoice` field
+        // instead of having to go looking for `brand.voice`. Omitted entirely
+        // when the client has no Brand Voice set, so a client without one
+        // sends a byte-identical prompt to what it sent before.
+        ...(brandVoice.voice !== undefined ? { brandVoice: brandVoice.voice } : {}),
         competitors: clientContext.competitors,
         research: { query: research.query, result: research.result },
         // Two distinct steers, kept apart on purpose: `pastFeedback` is what
