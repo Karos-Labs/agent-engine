@@ -158,7 +158,7 @@ describe("03-prompt-set-review gate (RFC-04 §2 Phase 1)", () => {
 
       // Baseline (setup) run — drafts fresh in Spanish.
       const router1 = smartFakeRouter([goodFixDrafts(), goodNarrative()]);
-      const workflow1 = createSeoGeoAgentWorkflow({ tools: spanishEnv.tools, promptStore, router: router1, autoApprove: true });
+      const workflow1 = createSeoGeoAgentWorkflow({ tools: withMeasuredCapture(spanishEnv.tools), promptStore, router: router1, autoApprove: true });
       const durableStore1 = new MemoryDurableStepStore();
       const engine1 = new WorkflowEngine(durableStore1);
       const firstRunId = "seo_geo_run_es_baseline";
@@ -178,7 +178,7 @@ describe("03-prompt-set-review gate (RFC-04 §2 Phase 1)", () => {
       // (language included) forward, exactly like the "reuses the prior run's
       // frozen prompt set" test above.
       const router2 = smartFakeRouter([goodFixDrafts(), goodNarrative()]);
-      const workflow2 = createSeoGeoAgentWorkflow({ tools: spanishEnv.tools, promptStore, router: router2, autoApprove: true });
+      const workflow2 = createSeoGeoAgentWorkflow({ tools: withMeasuredCapture(spanishEnv.tools), promptStore, router: router2, autoApprove: true });
       const durableStore2 = new MemoryDurableStepStore();
       const engine2 = new WorkflowEngine(durableStore2);
       const secondRunId = "seo_geo_run_es_recurring";

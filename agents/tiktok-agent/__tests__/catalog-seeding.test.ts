@@ -114,6 +114,16 @@ function buildTools(store: WorkspaceStore, config: unknown): AgentToolRegistry {
     ...topicsTools,
     "video.transcribe": tool("video.transcribe", () => ok({ words: transcriptWords() })),
     "video.cutGate": tool("video.cutGate", () => ok(pass)),
+    // Main's render pipeline (cutClip -> brandFrame -> selfEvalGate ->
+    // uploadDeliverable) replaced dev-era `video.render`; this suite is about
+    // 00b-seed-catalog, so every one of them is a pass-through stub — the point
+    // is only that step 08 gets far enough for the reservation to commit.
+    "video.cutClip": tool("video.cutClip", (args) => ok({ outputPath: (args as unknown as { outputPath?: string }).outputPath ?? "/tmp/clip.mp4", durationSeconds: 40 })),
+    "video.brandFrame": tool("video.brandFrame", (args) => ok({ outputPath: (args as unknown as { outputPath?: string }).outputPath ?? "/tmp/clip-branded.mp4" })),
+    "video.uploadDeliverable": tool("video.uploadDeliverable", () => ok({ uri: "gs://bucket/clip.mp4" })),
+    "ledger.recordOutputExcerpt": tool("ledger.recordOutputExcerpt", () => ok({ id: "exc-1" })),
+    "ledger.dashboardSnapshot": tool("ledger.dashboardSnapshot", () => ok({ ok: true })),
+    "media.ingestAssets": tool("media.ingestAssets", () => ok({ assets: [] })),
     "video.render": tool("video.render", () => ok({ outputPath: "/tmp/clip.mp4" })),
     "video.selfEvalGate": tool("video.selfEvalGate", () => ok(pass)),
     "video.brandGate": tool("video.brandGate", () => ok(pass)),

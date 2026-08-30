@@ -3,7 +3,7 @@ import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import type { CompletionResult, ModelRouter } from "@agent-engine/core";
 import { createSeoGeoAgentWorkflow } from "../src/workflow/create-seo-geo-agent-workflow.js";
 import type { SeoGeoReport } from "../src/workflow/types.js";
-import { goodFixDrafts, goodNarrative, makePromptStore, setupTestEnvironment, smartFakeRouter, type TestEnvironment } from "./test-helpers.js";
+import { goodFixDrafts, goodNarrative, makePromptStore, setupTestEnvironment, smartFakeRouter, withMeasuredCapture, type TestEnvironment } from "./test-helpers.js";
 
 /**
  * SCRUM-303 / AU19: seo-geo-agent adopts the shared `runReviewCycle` primitive
@@ -71,7 +71,7 @@ describe("seo-geo-agent review cycle (runReviewCycle)", () => {
     const revisedFixDrafts = { fixes: [{ recId: "SEO-02", title: "Revised fix", description: "Rewritten per reviewer feedback, still grounded in the same recommendation data." }] };
     const revisedNarrative = { summary: "Revised per reviewer note: leads with the SEO gap first, not the GEO one." };
     const router = sequentialFakeRouter([goodFixDrafts(), goodNarrative(), revisedFixDrafts, revisedNarrative]);
-    const workflowFn = createSeoGeoAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router });
+    const workflowFn = createSeoGeoAgentWorkflow({ tools: withMeasuredCapture(env.tools), promptStore: makePromptStore(), router });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
     const runId = "seo_geo_rev_1";
@@ -120,7 +120,7 @@ describe("seo-geo-agent review cycle (runReviewCycle)", () => {
 
   it("saves the reviewer's words to client memory, on a revision and on an approval alike", async () => {
     const router = sequentialFakeRouter([goodFixDrafts(), goodNarrative()]);
-    const workflowFn = createSeoGeoAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router });
+    const workflowFn = createSeoGeoAgentWorkflow({ tools: withMeasuredCapture(env.tools), promptStore: makePromptStore(), router });
     const engine = new WorkflowEngine(new MemoryDurableStepStore());
     const runId = "seo_geo_rev_memory";
 
@@ -142,7 +142,7 @@ describe("seo-geo-agent review cycle (runReviewCycle)", () => {
 
   it("still holds on an outright rejection, and nothing is persisted", async () => {
     const router = sequentialFakeRouter([goodFixDrafts(), goodNarrative()]);
-    const workflowFn = createSeoGeoAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router });
+    const workflowFn = createSeoGeoAgentWorkflow({ tools: withMeasuredCapture(env.tools), promptStore: makePromptStore(), router });
     const engine = new WorkflowEngine(new MemoryDurableStepStore());
     const runId = "seo_geo_rev_reject";
 
@@ -184,7 +184,7 @@ describe("seo-geo-agent deliberately has no terminal topic guardrail", () => {
       summary: "This audit found the strongest growth opportunity is accepting digital assets on a distributed ledger for enterprise invoicing.",
     };
     const router = smartFakeRouter([goodFixDrafts(), narrativeWithForbiddenTopic]);
-    const workflowFn = createSeoGeoAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router, autoApprove: true });
+    const workflowFn = createSeoGeoAgentWorkflow({ tools: withMeasuredCapture(env.tools), promptStore: makePromptStore(), router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
 
     const result = await new WorkflowEngine(durableStore).run(workflowFn, { ...baseParams, runId: "seo_geo_no_guardrail" });
