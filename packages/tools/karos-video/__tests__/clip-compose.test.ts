@@ -77,6 +77,24 @@ describe("buildBrandFrameFilter", () => {
     expect(filter).toContain("[framed][logo]overlay=48:100-h/2[out]");
   });
 
+  /**
+   * AU38 (SCRUM-322). The caller computes the contrast — `planBrandLogoPlacement`
+   * in karos-media, against the same `ground` the bars are painted in — and
+   * hands down the plate it verified. This tool's job is only to paint it,
+   * and to paint NOTHING when it wasn't asked to.
+   */
+  it("pads the logo in the caller's verified scrim plate when one is set, and leaves it bare when it isn't", () => {
+    const bare = buildBrandFrameFilter({ ...base, brand: { ...base.brand, logoPath: "logo.png" } });
+    expect(bare).toContain("[1:v]scale=-1:110[logo]");
+    expect(bare).not.toContain("pad=iw");
+
+    const scrimmed = buildBrandFrameFilter({ ...base, brand: { ...base.brand, logoPath: "logo.png", logoScrim: "#FFFFFF" } });
+    expect(scrimmed).toContain("[1:v]scale=-1:110,pad=iw+32:ih+32:16:16:color=0xFFFFFF[logo]");
+    expect(scrimmed).toContain("[framed][logo]overlay=48:100-h/2[out]");
+    // No logo at all means no plate, whatever the field says.
+    expect(buildBrandFrameFilter({ ...base, brand: { ...base.brand, logoScrim: "#FFFFFF" } })).not.toContain("pad=iw");
+  });
+
   it("burns captions when an srt is given, with colon-escaped forward-slash paths", () => {
     const filter = buildBrandFrameFilter({ ...base, srtPath: "C:\\work\\clip.srt" });
     expect(filter).toContain("subtitles='C\\:/work/clip.srt'");

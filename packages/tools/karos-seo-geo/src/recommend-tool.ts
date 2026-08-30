@@ -1,11 +1,19 @@
 import { defineTool, success } from "@agent-engine/tool-common";
-import { evaluateRecommendations, groupInputsByRecId, type FiredRecommendation } from "./recommend.js";
+import { evaluateRecommendations, groupInputsByRecId, type RoutableRecommendation } from "./recommend.js";
 import { RecommendInputSchema, type RecommendInput } from "./schemas.js";
 
 const TOOL_VERSION = "1.0.0";
 
 export interface SeoGeoRecommendResult {
-  fired: FiredRecommendation[];
+  /**
+   * Since SCRUM-257 these are `RoutableRecommendation`s: the same ten scoring
+   * fields plus the catalog's `check`/`lever`/`productRef` and the routing
+   * (`fixAction`/`actionKind`/`owner`/`engineProductId?`).
+   * `RoutableRecommendation` extends `FiredRecommendation`, so a consumer
+   * still typed against the old ten-field shape keeps compiling and simply
+   * ignores the added fields.
+   */
+  fired: RoutableRecommendation[];
 }
 
 /**

@@ -1,6 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import type { AgentToolRegistry } from "@agent-engine/core";
-import { defineTool, notAvailable } from "@agent-engine/tool-common";
+import { createWorkspaceStore, defineTool, notAvailable, type WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { z } from "zod";
 import { createFindImages, FindImagesInputSchema } from "./find-images.js";
 import { createGenerateImage, type ImageGenerationClient } from "./generate-image.js";
@@ -8,6 +8,7 @@ import { createGenerateVideo, type VideoGenerationClient } from "./generate-vide
 import { createHarvestVideo, type VideoHarvestProvider } from "./harvest-video.js";
 import { createScrapeImages } from "./scrape-images.js";
 import { createIngestAssets, type ObjectReader } from "./ingest-assets.js";
+import { createGetVisualPatterns, createIngestVisualPatterns, type VisionAnalysisClient } from "./visual-patterns.js";
 import { createScraperProvider, type ScraperProvider } from "@agent-engine/tool-karos-scraper";
 import type { ImageSearchProvider } from "./providers.js";
 import { buildProviderRegistry, createImageSource, singleProviderSource, type ImageSource } from "./routing.js";
@@ -23,6 +24,7 @@ export * from "./quality.js";
 export * from "./brand-logo.js";
 export * from "./generate-video.js";
 export * from "./harvest-video.js";
+export * from "./visual-patterns.js";
 
 export interface KarosMediaToolsOptions {
   env?: Record<string, string | undefined>;
@@ -41,6 +43,23 @@ export interface KarosMediaToolsOptions {
   scraper?: ScraperProvider | null;
   /** Reads `gs://` attachments for Tier 0. Without it a gs:// upload is reported unmet rather than skipped. */
   objectReader?: ObjectReader | undefined;
+  /**
+   * SCRUM-321 (AU37). The client workspace `media.ingestVisualPatterns` reads
+   * consent from and writes versioned profiles to. Defaults to the same
+   * file+git store `createKarosClientTools` defaults to, so the visual-pattern
+   * documents sit beside `client/brand` and `client/config` rather than in a
+   * storage mechanism of their own.
+   */
+  store?: WorkspaceStoreLike;
+  /**
+   * SCRUM-321 (AU37). The vision model that reads a client's past posts.
+   * Defaults to the same Vertex credential `image.generate` already uses, so
+   * enabling the capability costs no new key; `null` disables it explicitly and
+   * tests pass a fake.
+   */
+  visionClient?: VisionAnalysisClient | null;
+  /** SCRUM-321 (AU37). Overrides the vision model id. No env var: the default is a priced, in-catalogue model. */
+  visionModel?: string;
 }
 
 /**
@@ -99,6 +118,15 @@ export function createKarosMediaTools(options: KarosMediaToolsOptions = {}): Age
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
   });
 
+  // SCRUM-321 (AU37). Same Vertex credential as `image.generate`/
+  // `video.generateClip`, cast to the narrow slice the analysis uses.
+  const visionClient: VisionAnalysisClient | undefined =
+    options.visionClient === null
+      ? undefined
+      : (options.visionClient ??
+        (createImageGenerationClientFromEnv(options.env ?? process.env) as unknown as VisionAnalysisClient | undefined));
+  const visualPatternStore = options.store ?? createWorkspaceStore();
+
   return {
     // ── Tier 0: media the client attached to this run ──
     "media.ingestAssets": createIngestAssets({
@@ -142,6 +170,19 @@ export function createKarosMediaTools(options: KarosMediaToolsOptions = {}): Age
       ...(readVideoModel(options.env ?? process.env) ? { model: readVideoModel(options.env ?? process.env)! } : {}),
       ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
     }),
+    // ── SCRUM-321 (AU37): the client's OWN back catalogue as an aesthetic
+    // source. Opt-in, consent-gated, and stored as reviewable prose — see
+    // `visual-patterns.ts`. Registered unconditionally like every other
+    // credentialed capability here; the consent gate, not the registry, is
+    // what decides whether a given client's history is ever read.
+    "media.ingestVisualPatterns": createIngestVisualPatterns({
+      store: visualPatternStore,
+      ...(scraper ? { scraper } : {}),
+      ...(visionClient ? { visionClient } : {}),
+      ...(options.visionModel ? { visionModel: options.visionModel } : {}),
+      ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    }),
+    "media.getVisualPatterns": createGetVisualPatterns(visualPatternStore),
   };
 }
 

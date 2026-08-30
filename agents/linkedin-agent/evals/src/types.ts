@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { EvalLanguageSchema } from "@agent-engine/evals";
 import { LINKEDIN_ARCHETYPES } from "../../src/workflow/types.js";
 
 /**
@@ -14,6 +15,18 @@ export const LinkedInGoldenRunSchema = z.object({
   id: z.string().min(1),
   description: z.string().min(1),
   agentId: z.string().min(1),
+  /**
+   * The language this run's client publishes in, and therefore the language
+   * this endorsed post is graded as (SCRUM-308 / AU25, rung 4).
+   *
+   * Defaults to `en` so every golden run written before per-language grading
+   * existed keeps loading unchanged. The default is NOT "unknown": a fixture
+   * with no language stated is an English one, because that is what every
+   * fixture written to date actually is — an "unknown" default would let a
+   * Hebrew fixture be added with the field forgotten and grade nothing, which
+   * is the AU32 failure mode reproduced inside the eval harness itself.
+   */
+  language: EvalLanguageSchema.default("en"),
   input: z.record(z.string(), z.unknown()),
   endorsedOutput: z.object({
     headline: z.string().min(1),

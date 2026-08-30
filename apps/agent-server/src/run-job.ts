@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { RunKindSchema, type AgentDefinitionStore } from "@agent-engine/core";
+import { loadClientContentLanguage, RunKindSchema, type AgentDefinitionStore } from "@agent-engine/core";
 import {
   WorkflowConcurrentRunError,
   WorkflowEngine,
@@ -125,6 +125,16 @@ export async function startRunJob(request: RunJobRequest, runId: string, deps: S
     return { outcome: "error", runId, message: err instanceof Error ? err.message : String(err) };
   }
 
+  // AU34 (SCRUM-312). Read once per run, here, because this is where the
+  // tenant-scoped workspace store is actually in hand — Layer 2 has no I/O of
+  // its own (RFC-01 §4), so a `BaseAgent` can never look this up itself. It is
+  // the CLIENT's standing configuration, so it is deliberately not taken from
+  // the request: a caller cannot re-point a copy step's model by claiming a
+  // language in a run brief. `loadClientContentLanguage` returns undefined
+  // (never throws) for a client who has stated nothing or whose store read
+  // fails, which leaves every step on exactly the model it had.
+  const contentLanguage = await loadClientContentLanguage(deps.runtimeDeps.workspaceStore, request.clientSlug);
+
   try {
     const result = await engine.run(workflowFn, {
       runId,
@@ -133,6 +143,7 @@ export async function startRunJob(request: RunJobRequest, runId: string, deps: S
       runKind: request.runKind,
       ...(request.input !== undefined ? { input: request.input } : {}),
       ...(request.stageModels !== undefined ? { stageModels: request.stageModels } : {}),
+      ...(contentLanguage !== undefined ? { contentLanguage } : {}),
     });
     const report = await buildRunReport(deps.durableStore, runId, request.productId);
     return {

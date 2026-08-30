@@ -33,6 +33,11 @@ const HAPPY_PATH_STEP_IDS = [
   // The client's Brand Kit (client/brand.json), best-effort — frozen once so
   // a portal edit mid-run can't change the tokens between attempts.
   "02c-load-brand-kit",
+  // The client's declared target language (SCRUM-310/AU32) — the structured
+  // `client.getBrand().language` field, frozen once and consulted by the
+  // language-compliance gate at 07e/07f. Present on every run; the gate
+  // itself only appears when the value is non-empty, which it is not here.
+  "02d-load-target-language",
   "03-claim-topic",
   "04a-research-pull",
   "04b-research-extract-facts",

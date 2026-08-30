@@ -21,10 +21,11 @@ import {
   templateFileName,
   type TemplateStore,
 } from "@agent-engine/tool-karos-templates";
-import { brandLogoDataUri, downloadBrandLogo } from "@agent-engine/tool-karos-media";
-import { buildBrandHeadHtml, buildBrandLogoBodyHtml, deriveBrandRenderTokens } from "./brand-render-tokens.js";
+import { brandLogoDataUri, downloadBrandLogo, parseBrandLogoDataUri } from "@agent-engine/tool-karos-media";
+import { buildBrandHeadHtml, buildBrandLogoBodyHtml, deriveBrandRenderTokens, planBrandLogo } from "./brand-render-tokens.js";
 import { ARCHETYPE_TEMPLATE_FILES, assembleSlidesData, checkSlidesData, resolveLayout } from "./slides-data.js";
 import { checkCraftHygiene } from "./craft-hygiene.js";
+import { checkExpectedScript, languageGateText, runLanguageFluency, LANGUAGE_FLUENCY_STEP_ID, LANGUAGE_SCRIPT_STEP_ID } from "./language-gate.js";
 import {
   BrandTokensSchema,
   type BrandTokens,
@@ -568,6 +569,34 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           deriveBrandRenderTokens(brandOutcome?.status === "success" ? brandOutcome.result : undefined, frozen.brandTokens) ?? null
         );
       })) ?? undefined;
+
+    // ── 02d: the client's declared target language — the language gate's subject ──
+    //
+    // SCRUM-310 (AU32). 02b folds `client.getBrand().language` into a PROMPT
+    // (a requirement the drafting model is asked to follow); steps 07e/07f
+    // need the bare value back out to CHECK that it was followed. Reading the
+    // structured field rather than re-deriving a language out of 02b's prose
+    // blob is the whole point of AU31 having introduced the field.
+    //
+    // A separate checkpointed step rather than a widening of 02b or 02c, for
+    // exactly the reason 02c's own comment gives: both of those checkpoint
+    // shapes are already in production, and an in-flight run resuming across
+    // this deploy would replay an old-shape checkpoint into new-shape code.
+    // Checkpointed, so a portal edit mid-run cannot change the language
+    // between attempt 1 and a revision — the gate must judge against the
+    // language the copy was actually drafted for.
+    //
+    // `?? undefined` across the checkpoint boundary for the same JSON
+    // round-trip reason as 02c: a step's `undefined` comes back as `null` on
+    // a resumed run.
+    const targetLanguage =
+      (await wf.step.code("02d-load-target-language", async () => {
+        const brandOutcome = await tools["client.getBrand"]?.execute({}, { ctx });
+        if (brandOutcome?.status !== "success") return null;
+        const language = (brandOutcome.result as { language?: unknown }).language;
+        return typeof language === "string" && language.trim().length > 0 ? language.trim() : null;
+      })) ?? undefined;
+
     const brandFetch = options.fetchImpl ?? fetch;
     let cachedLogoDataUri: string | undefined;
     /**
@@ -614,9 +643,22 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     const brandFragments = async (): Promise<{ head?: string; body?: string }> => {
       if (brandKit === undefined) return {};
       const logoDataUri = await ensureBrandLogoDataUri();
+      // AU38 (SCRUM-322): WHERE the mark goes and WHETHER it survives this
+      // client's ground are decided here, by `planBrandLogo`, from the mark's
+      // own decoded pixels against the ground token the slide will actually
+      // render on — not by a sentence in a prompt asking for a legible
+      // placement. A plan whose decision is `omit` emits neither the rules
+      // nor the `<img>`: an illegible mark ships as nothing, never as a
+      // smudge, and never as a held run.
+      const download = logoDataUri !== undefined ? parseBrandLogoDataUri(logoDataUri) : undefined;
+      const placement =
+        download !== undefined
+          ? planBrandLogo(brandKit, download, { hasSeriesBadge: frozen.brandTokens.seriesBadge !== undefined })
+          : undefined;
+      const showLogo = logoDataUri !== undefined && placement !== undefined && placement.decision !== "omit";
       return {
-        head: buildBrandHeadHtml(brandKit, logoDataUri !== undefined ? { logoDataUri } : {}),
-        ...(logoDataUri !== undefined ? { body: buildBrandLogoBodyHtml(logoDataUri) } : {}),
+        head: buildBrandHeadHtml(brandKit, showLogo ? { logo: placement } : {}),
+        ...(showLogo ? { body: buildBrandLogoBodyHtml(logoDataUri) } : {}),
       };
     };
 
@@ -1634,6 +1676,71 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       if (!craftHygiene.ok) {
         lastSelfCheckReason = craftHygiene.reason;
         continue;
+      }
+
+      // ── 07e/07f: the language-compliance gate (SCRUM-310/AU32) ──
+      //
+      // Both stages run BEFORE step 08's render, deliberately: text baked
+      // into a 1080x1440 PNG is the one thing a reviewer at gate 09a cannot
+      // fix in place. Neither existing quality judge covers this —
+      // `instagram-image-vet@2` judges candidate photographs and
+      // `instagram-visual-qa@1` judges the rendered attempt's structured
+      // slide data against `check: "render"` layout rules; nothing asked
+      // whether the words are fluent text in the client's own language,
+      // which is how the geektime carousel shipped in English for a
+      // Hebrew-only outlet and passed every check that existed.
+      //
+      // Both stages are skipped entirely when the client has declared no
+      // target language (step 02d) — there is nothing to check against, and
+      // like `runTopicGuardrail` on a client who forbids no topics, that
+      // costs no model call and adds no step to the trace.
+      //
+      // A failure routes into this SAME shared retry loop as every other
+      // self-check, for the same reason: the remedy for wrong-language copy
+      // is a redraft (RETURN: 05), and the language requirement is already
+      // in the drafting prompt (step 02b) — the model is being told it did
+      // not follow it.
+      //
+      // Placed ahead of 07d rather than after it so the cheapest rejection
+      // happens first: a wrong-language draft is dead either way, and
+      // scoring it for similarity against the client's back catalogue (or
+      // building a dedupe steer out of it) is work thrown away. Step ids in
+      // this loop are already not monotonic in execution order — 07d runs
+      // before 07c — because they name what a step is, not when it runs.
+      if (targetLanguage !== undefined) {
+        const gateText = languageGateText(copy);
+
+        // Stage 1 — deterministic, no model call, no tools. Runs first so
+        // the catastrophic case (an entirely wrong-script post) never pays
+        // for stage 2.
+        const scriptCheck = await wf.step.code(rev(`${LANGUAGE_SCRIPT_STEP_ID}-attempt-${attempt}`), () =>
+          checkExpectedScript(gateText, targetLanguage),
+        );
+        if (!scriptCheck.ok) {
+          lastSelfCheckReason = `slide copy failed the deterministic language/script check: ${scriptCheck.reason}`;
+          continue;
+        }
+
+        // Stage 2 — one commodity-tier judge call. Hebrew-shaped nonsense is
+        // still Hebrew characters, so stage 1 cannot see it.
+        const fluency = await runLanguageFluency(
+          wf,
+          { tools, promptStore: options.promptStore, router: options.router },
+          gateText,
+          targetLanguage,
+          rev(`${LANGUAGE_FLUENCY_STEP_ID}-attempt-${attempt}`),
+        );
+        // `error` is never a failure of the draft — same fail-open-loudly
+        // posture as `runTopicGuardrail`. The verdict is in the step's own
+        // checkpointed output, so a human can see the check did not run
+        // rather than a green tick it did not earn.
+        if (fluency.status === "not_fluent") {
+          lastSelfCheckReason =
+            `slide copy is not fluent ${targetLanguage} on attempt ${attempt}: ` +
+            `${fluency.issues.length > 0 ? fluency.issues.join("; ") : "no specific issues given"}` +
+            `${fluency.evidence ? ` (e.g. "${fluency.evidence}")` : ""}`;
+          continue;
+        }
       }
 
       // ── 07d: is this draft a repeat of something this client already published? ──

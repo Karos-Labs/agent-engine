@@ -8,3 +8,8 @@ export * from "./primitives/research-candidate.js";
 export * from "./primitives/run-direction.js";
 export * from "./primitives/client-voice-context.js";
 export * from "./primitives/history-dedup.js";
+// SCRUM-380 (D1-v2): the always-latest Brand Voice read. Appended here rather
+// than added to `primitives/index.js` to match how every other
+// context-building primitive above is exported, and to keep the change to a
+// single new line.
+export * from "./primitives/brand-voice.js";

@@ -29,6 +29,11 @@ const ALL_19_STEP_IDS = [
   "07-select-candidate",
   "08-determine-archetype",
   "09-draft-post",
+  // AU20: the VERIFIED half of de-duplication. `recentPosts` in the drafting
+  // prompt only asks the model not to repeat itself; 09a scores the finished
+  // draft against the same excerpt window, inside the drafting pass, so the
+  // reviewer is never shown a draft that was not measured.
+  "09a-verify-not-duplicate",
   "10-verify-numbers-sourced",
   "11-verify-brand-compliance",
   "12-render-preview-check",

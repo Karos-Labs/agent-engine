@@ -191,6 +191,11 @@ export async function runStepAgent<TOutput>(
     // Every agent step in the engine is constructed here, so this is the one
     // place a per-run model choice has to be attached for all of them.
     ...(runtime.stageModels !== undefined ? { stageModels: runtime.stageModels } : {}),
+    // Same reasoning, one level up: the client's stated content language is
+    // read once per run (the store is only in hand at dispatch — Layer 2 has
+    // no I/O of its own), and every agent step in the engine is constructed
+    // here, so this is the one place it has to be attached for all of them.
+    ...(runtime.contentLanguage !== undefined ? { contentLanguage: runtime.contentLanguage } : {}),
     metadata: { [STEP_ABORT_SIGNAL_METADATA_KEY]: abortController.signal },
   };
 

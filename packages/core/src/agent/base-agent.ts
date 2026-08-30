@@ -12,6 +12,7 @@ import { GateVerdictSchema } from "../types/gate.js";
 import { computeStepCostUsd, summarizeStepTelemetry } from "../telemetry/pricing.js";
 import type { RouterCompleteOptions } from "../router/model-router.js";
 import { applyStageModelOverride } from "../router/step-model-policy.js";
+import { applyClientLanguagePolicy } from "../router/client-model-policy.js";
 import type { ModelPolicy } from "../types/model-policy.js";
 // Both are pure, I/O-free schema helpers, so reaching into `router/adapters`
 // from here doesn't give Layer 2 a second channel out (RFC-01 §4) — and
@@ -411,11 +412,24 @@ export abstract class BaseAgent<TOutput> {
   }
 
   /**
-   * This step's model policy for THIS run: its compiled/env-resolved default
-   * with any Studio per-stage override applied on top.
+   * This step's model policy for THIS run.
+   *
+   * Three statements compose here, least specific first:
+   *
+   *   1. `config.modelPolicy` — the compiled default, already carrying any
+   *      `MODEL_STEP_<ID>_VENDOR`/`_MODEL` deployment override
+   *      (`resolveModelPolicy`, resolved at module-evaluation time).
+   *   2. the client's content language (AU34/SCRUM-312) — a standing fact
+   *      about THIS tenant, which supersedes the env pair precisely because
+   *      the env pair is global-per-deployment and cannot be right for two
+   *      clients with different content languages at once. Only steps that
+   *      opted in via `ModelPolicy.contentLanguageSensitive` move.
+   *   3. Studio's per-run `stageModels` — a human choosing a model for this
+   *      one run, and so the last word, exactly as before.
    */
   protected effectivePolicy(ctx: AgentContext): ModelPolicy {
-    return applyStageModelOverride(this.config.id, this.config.modelPolicy, ctx.stageModels);
+    const forClient = applyClientLanguagePolicy(this.config.id, this.config.modelPolicy, ctx.contentLanguage);
+    return applyStageModelOverride(this.config.id, forClient, ctx.stageModels);
   }
 
   private clock(): number {

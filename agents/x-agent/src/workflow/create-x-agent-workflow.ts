@@ -1,5 +1,5 @@
 import { readForbiddenTopics, type AgentContext, type AgentToolRegistry, type GateResponse, type ModelRouter, type PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, readClientIntelContext, toAgentContext, runGate, finalizeDeliverable, recordOutputExcerpt } from "@agent-engine/workflow";
+import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, toAgentContext, runGate, finalizeDeliverable, recordOutputExcerpt } from "@agent-engine/workflow";
 import { XDraftAgent, type Lane } from "../agent/x-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
 import { renderXDraftsMarkdown } from "./render-drafts-markdown.js";
@@ -33,6 +33,16 @@ export interface CreateXAgentWorkflowOptions {
 
 /** A bare `http(s)://` link — the mechanical half of "post clean, link in first reply" (x-craft.md §5). */
 const BARE_URL_PATTERN = /https?:\/\//i;
+
+/**
+ * How many drafting passes the verified de-duplication check may cost —
+ * initial draft plus two redraft steers, the same budget instagram-agent's
+ * `MAX_SELF_CHECK_ATTEMPTS` gives its own 07d dedupe check. On the last
+ * attempt a `similar` draft ships FLAGGED (the verdict stays checkpointed for
+ * the trace and the reviewer), never held: `evaluateDedupe`'s own policy is
+ * that de-duplication flags and steers, it does not hold a run.
+ */
+const MAX_DEDUPE_ATTEMPTS = 3;
 
 /**
  * `createXAgentWorkflow()` (RFC-02 §3): the 21-step recurring/on-demand run
@@ -294,51 +304,92 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       const directive = revisionDirective(notes);
 
     const clientVoiceContext = buildClientVoiceContext(clientContext.profile, clientContext.voiceRules, clientContext.brand);
-    const draftResult = await wf.step.agent(rev("10-draft-post"), draftAgent, {
-      ...runDirectionField(runDirection),
-      topic: selected.topic,
-      source: selected.source,
-      lane: laneSelection.lane,
-      angle: laneSelection.angle,
-      targetHandle: intake.xHandle,
-      voiceRules: clientContext.voiceRules,
-      // The client's own profile description + voice-rules guidelines,
-      // verbatim — this is where a language requirement like Geektime's
-      // "Hebrew-language technology site" actually lives.
-      ...(clientVoiceContext !== undefined ? { clientVoiceContext } : {}),
-      ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
-      ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
-      // Omitted rather than passed as null when absent: an explicit
-      // "accountCharter: null" in the payload invites the model to remark on
-      // its absence instead of simply working without one.
-      ...(clientContext.strategy ? { accountCharter: clientContext.strategy } : {}),
-      // Two distinct steers, kept apart: `pastFeedback` is what this client
-      // has said across previous RUNS, `revisionRequest` is what a reviewer
-      // asked about THIS draft minutes ago.
-      ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
-      ...(directive !== undefined ? { revisionRequest: directive } : {}),
-    });
 
-    if (draftResult.status === "content_fail") {
-      throw new WorkflowHeld(`draft did not clear its own self-critique gate: ${draftResult.status}`);
-    }
-    if (draftResult.status !== "completed") {
-      throw new WorkflowToolingFailure(`draft step resolved to "${draftResult.status}"`);
-    }
-    // Phase 2.5 fix-batch: `mainPostText` is schema-required to carry the same
-    // content as `text` (see XPostOutputSchema's own doc comment), but that
-    // was only ever "enforced by prompt instruction" — every content gate
-    // below (`gate.numbersSourced`, `gate.brandCompliance`, `render.preview`,
-    // and the agent's own self-critique `gate.lintPost` call) checks `text`
-    // only, so a banned phrase, unsourced number, or over-limit string could
-    // hide in a diverging `mainPostText` while `text` passed every check.
-    // Structurally deriving `mainPostText` from the model's own gated `text`
-    // here — rather than trusting the model to keep the two fields in sync,
-    // or re-running every gate a second time against a second field — closes
-    // that gap by construction: whatever content actually cleared every gate
-    // is exactly what step 13's link-placement check (and everything
-    // downstream) now sees.
-    const draft = { ...draftResult.finalOutput!, mainPostText: draftResult.finalOutput!.text };
+    // ── 10/10a: draft, then VERIFY it is not a repeat, before anything else ──
+    //
+    // `recentPosts` in the drafting input below is ADVISORY: it asks the model
+    // not to repeat itself and nothing ever checked whether it listened, so a
+    // lightly-reworded reissue of last week's post passed every gate. 10a is
+    // the verification half — the same `checkOutputDedupe` primitive, scoring
+    // the same excerpt window step 04e read with `evaluateDedupe`'s calibrated
+    // trigram-Jaccard threshold, in the same place instagram-agent puts its
+    // own 07d check: inside the drafting pass, so a `similar` verdict COSTS
+    // the draft (it is redrafted with the offending post quoted into the
+    // prompt) and the human at step 15 can never be shown a draft that has
+    // not been scored.
+    //
+    // On the final attempt the draft ships FLAGGED rather than held — two
+    // posts a fortnight apart about the same launch may be exactly right, and
+    // a fixed threshold is not entitled to overrule the person reviewing at
+    // 15. The verdict is checkpointed either way.
+    //
+    // The scored text is exactly what step 20 records back into the window
+    // (`draft.text`), so every future run compares like with like.
+    const draftWithVerifiedDedupe = async () => {
+      /** Set by a failed 10a check, so the NEXT attempt's prompt names exactly which published post to move away from. */
+      let dedupeRetrySteer: string | undefined;
+      for (let attempt = 1; attempt <= MAX_DEDUPE_ATTEMPTS; attempt++) {
+        /** Attempt 1 keeps the ORIGINAL step ids, so a run that never repeats itself has a byte-identical trace to what it had before this check existed. */
+        const att = (id: string) => (attempt === 1 ? id : `${id}-attempt-${attempt}`);
+        const draftResult = await wf.step.agent(rev(att("10-draft-post")), draftAgent, {
+          ...runDirectionField(runDirection),
+          topic: selected.topic,
+          source: selected.source,
+          lane: laneSelection.lane,
+          angle: laneSelection.angle,
+          targetHandle: intake.xHandle,
+          voiceRules: clientContext.voiceRules,
+          // The client's own profile description + voice-rules guidelines,
+          // verbatim — this is where a language requirement like Geektime's
+          // "Hebrew-language technology site" actually lives.
+          ...(clientVoiceContext !== undefined ? { clientVoiceContext } : {}),
+          ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
+          ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
+          ...(dedupeRetrySteer !== undefined ? { dedupeAvoid: dedupeRetrySteer } : {}),
+          // Omitted rather than passed as null when absent: an explicit
+          // "accountCharter: null" in the payload invites the model to remark on
+          // its absence instead of simply working without one.
+          ...(clientContext.strategy ? { accountCharter: clientContext.strategy } : {}),
+          // Two distinct steers, kept apart: `pastFeedback` is what this client
+          // has said across previous RUNS, `revisionRequest` is what a reviewer
+          // asked about THIS draft minutes ago.
+          ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
+          ...(directive !== undefined ? { revisionRequest: directive } : {}),
+        });
+
+        if (draftResult.status === "content_fail") {
+          throw new WorkflowHeld(`draft did not clear its own self-critique gate: ${draftResult.status}`);
+        }
+        if (draftResult.status !== "completed") {
+          throw new WorkflowToolingFailure(`draft step resolved to "${draftResult.status}"`);
+        }
+        // Phase 2.5 fix-batch: `mainPostText` is schema-required to carry the same
+        // content as `text` (see XPostOutputSchema's own doc comment), but that
+        // was only ever "enforced by prompt instruction" — every content gate
+        // below (`gate.numbersSourced`, `gate.brandCompliance`, `render.preview`,
+        // and the agent's own self-critique `gate.lintPost` call) checks `text`
+        // only, so a banned phrase, unsourced number, or over-limit string could
+        // hide in a diverging `mainPostText` while `text` passed every check.
+        // Structurally deriving `mainPostText` from the model's own gated `text`
+        // here — rather than trusting the model to keep the two fields in sync,
+        // or re-running every gate a second time against a second field — closes
+        // that gap by construction: whatever content actually cleared every gate
+        // is exactly what step 13's link-placement check (and everything
+        // downstream) now sees.
+        const candidate = { ...draftResult.finalOutput!, mainPostText: draftResult.finalOutput!.text };
+
+        const dedupeVerdict = await checkOutputDedupe(wf, rev(att("10a-verify-not-duplicate")), candidate.text, outputHistory);
+        if (dedupeVerdict.status === "similar" && attempt < MAX_DEDUPE_ATTEMPTS) {
+          dedupeRetrySteer = dedupeRetryDirective(dedupeVerdict, outputHistory);
+          continue;
+        }
+        return candidate;
+      }
+      // Unreachable: the loop's last attempt always returns, because the
+      // `continue` above is guarded on `attempt < MAX_DEDUPE_ATTEMPTS`.
+      throw new WorkflowToolingFailure("the de-duplication redraft loop ended without a draft");
+    };
+    const draft = await draftWithVerifiedDedupe();
 
     await wf.step.code(rev("11-verify-numbers-sourced"), async () => {
       const sources = candidateSummary.hasNumericInsight ? [candidateSummary.sourceLabel] : [];

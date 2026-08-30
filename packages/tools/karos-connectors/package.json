@@ -1,0 +1,20 @@
+{
+  "name": "@agent-engine/tool-karos-connectors",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Google first-party connector pack (SCRUM-232 / T-A6): read-only GSC, PageSpeed-CrUX, GA4 and GBP HTTP clients behind the enforced per-connector READ-method allowlist. Network-capable by design, which is exactly why it does not live inside the fixture-lockable karos-seo-geo scoring package.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "pretest": "node ../../../scripts/check-dist-freshness.mjs",
+    "test": "npm run typecheck && vitest run"
+  },
+  "dependencies": {
+    "@agent-engine/core": "^0.0.1",
+    "@agent-engine/tool-common": "^0.0.1",
+    "zod": "^4.4.3"
+  }
+}

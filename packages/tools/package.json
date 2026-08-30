@@ -16,6 +16,7 @@
     "@agent-engine/core": "^0.0.1",
     "@agent-engine/tool-common": "^0.0.1",
     "@agent-engine/tool-karos-client": "^0.0.1",
+    "@agent-engine/tool-karos-connectors": "^0.0.1",
     "@agent-engine/tool-karos-gates": "^0.0.1",
     "@agent-engine/tool-karos-intake": "^0.0.1",
     "@agent-engine/tool-karos-intel": "^0.0.1",

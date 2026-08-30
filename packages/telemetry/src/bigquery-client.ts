@@ -51,6 +51,34 @@ export async function biTable(tableId: string): Promise<Table | null> {
   return bq.dataset(DATASET_ID()).table(tableId);
 }
 
+/**
+ * Reads rows back out of the BI dataset with a parameterized Standard SQL
+ * query (SCRUM-308 / AU25).
+ *
+ * The counterpart to `biTable`, and added for the same reason that exists: the
+ * eval ladder persists a score into `agent_runs_bi` and has to be able to
+ * prove the row is readable back out, which a `Table` handle cannot do —
+ * `Table.insert` writes, and nothing on it reads. Same no-op contract as
+ * `biTable`: null when no project is resolvable, so a caller in an
+ * unconfigured environment gets "not configured" rather than a crash or — far
+ * worse — an empty array indistinguishable from "the row is not there".
+ *
+ * Named parameters only. Every value a caller filters on here (a client slug,
+ * a golden-run id) is text that came from somewhere else, and whether to
+ * interpolate it into SQL is not a decision to leave to each call site.
+ *
+ * No `location` option, deliberately: the client resolves a query's location
+ * from the dataset the SQL references, and adding an env var for it would put
+ * a fourth "where does telemetry go" knob next to the three this file already
+ * spends its header untangling.
+ */
+export async function biQuery<T = Record<string, unknown>>(sql: string, params: Record<string, unknown> = {}): Promise<T[] | null> {
+  const bq = await getBigQuery();
+  if (!bq) return null;
+  const [rows] = await bq.query({ query: sql, params });
+  return rows as T[];
+}
+
 /** Test seam: drops the memoized client so the next call re-reads the env. */
 export function __resetBigQueryClient(): void {
   client = undefined;

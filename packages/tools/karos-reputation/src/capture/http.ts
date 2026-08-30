@@ -1,49 +1,19 @@
 /**
- * Bounded fetch for the review-capture adapters.
+ * Re-export shim. The bounded-fetch stack this file used to hold now lives in
+ * `@agent-engine/tool-common`'s `http.ts`, unchanged — same signatures, same
+ * 15s default budget, same `TimeoutError`/`AbortError` classification — so the
+ * capture adapters below it keep the exact stack they were written and tested
+ * against while the repo has ONE outbound HTTP stack rather than four.
  *
- * Every leg here already degrades correctly when a vendor says no: a missing
- * key or an HTTP error produces a dead-leg tombstone rather than a silent zero
- * (ADAPTERS.md rule 1). What none of them bounded was TIME. A vendor that
- * accepts the connection and then never answers held the step open until the
- * container's own request deadline killed it, which loses the whole run
- * mid-flight — strictly worse than the tombstone the same adapter would have
- * written for an outright refusal.
+ * That promotion is the action `docs/AUDIT-2026-08-25-architecture-optimization-plan.md:56`
+ * (matrix row R5) prescribes for this exact file: *"Promote reputation's
+ * `fetchWithDeadline` + a shared retry policy into `tools/common`; adopt
+ * everywhere."* The shared retry policy (`fetchWithRetry`) — the half R5 says
+ * existed in no tool but `image.generate` — lives beside it there.
  *
- * So a timeout here is not an error path bolted on; it is the same dead-leg
- * path the adapter already has, reached by a different route.
+ * Kept as a shim rather than deleted so `appstore.ts`/`gbp.ts` keep their
+ * relative `./http.js` imports and nothing about this package's behaviour
+ * moves in the same change that moves the code.
  */
-
-/**
- * One capture leg's budget. Review APIs answer in well under a second when
- * healthy, so this is far above normal and exists only to bound the
- * pathological case.
- */
-export const CAPTURE_TIMEOUT_MS = 15_000;
-
-export type CaptureFetch = (url: string, init?: RequestInit) => Promise<Response>;
-
-/**
- * Adds a deadline to one capture request, preserving whatever init the caller
- * passed. A caller that already set its own `signal` keeps it — a deliberate
- * per-call budget beats this default.
- */
-export async function fetchWithDeadline(
-  fetchImpl: CaptureFetch,
-  url: string,
-  init: RequestInit = {},
-  timeoutMs: number = CAPTURE_TIMEOUT_MS,
-): Promise<Response> {
-  if (init.signal) return fetchImpl(url, init);
-  return fetchImpl(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
-}
-
-/** True when a thrown error is this deadline firing rather than a transport failure. */
-export function isDeadlineError(err: unknown): boolean {
-  return err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
-}
-
-/** A dead-leg reason line that says which of the two happened. */
-export function describeFetchFailure(err: unknown, vendor: string): string {
-  if (isDeadlineError(err)) return `${vendor} did not respond within ${CAPTURE_TIMEOUT_MS / 1000}s`;
-  return `${vendor} could not be reached: ${err instanceof Error ? err.message : String(err)}`;
-}
+export { CAPTURE_TIMEOUT_MS, describeFetchFailure, fetchWithDeadline, isDeadlineError } from "@agent-engine/tool-common";
+export type { CaptureFetch } from "@agent-engine/tool-common";
