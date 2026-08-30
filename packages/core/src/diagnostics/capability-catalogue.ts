@@ -226,6 +226,34 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
     shortfall: "no credentialed review source",
   },
 
+  // ── Google first-party connectors (SEO/GEO Layer 1) ──────────────────────
+  {
+    id: "google-connectors-oauth",
+    title: "Google first-party SEO data — Search Console rankings, GA4 AI-referral outcomes, Business Profile listing",
+    owner: "packages/tools/karos-connectors (connectors.googleDataSync)",
+    requires: [
+      { name: "GOOGLE_OAUTH_CLIENT_ID", kind: "required" },
+      { name: "GOOGLE_OAUTH_CLIENT_SECRET", kind: "required" },
+      { name: "GSC_SERVICE_ACCOUNT_KEY", kind: "enhances" },
+      { name: "GSC_SITE_URL", kind: "enhances" },
+    ],
+    whenAbsent:
+      "Every client stays on the SEO/GEO Layer-2 path, which is the validated default and produces a complete, scored, deliverable 0-100 result on its own. What is lost is accuracy and detail, not the score: real Google positions/impressions/clicks show an honest empty state instead of numbers, GEO-01/41's AI-features opt-out leg drops from its denominator (partial credit over the remaining robots legs), GEO-28 reads a proxy labelled 'estimated (proxy)' instead of real AI-surface impressions, and GA4's AI-referral panel shows 'Connect Google Analytics to measure' rather than a fabricated zero. Each connector's snapshot hash resolves to the literal UNCONNECTED.",
+    rationale:
+      "packages/tools/karos-seo-geo/src/config/connectors-config.data.ts works_unconnected.guarantee — connecting Google is a per-input accuracy upgrade and never a hard dependency; revoking cannot break the product.",
+    shortfall: "no Google connection — first-party SEO data unavailable",
+  },
+  {
+    id: "google-connectors-psi",
+    title: "Core Web Vitals field data — real-user p75 LCP/INP/CLS from PageSpeed Insights / CrUX",
+    owner: "packages/tools/karos-connectors (connectors.googleDataSync)",
+    requires: [{ name: "PSI_API_KEY", kind: "required" }],
+    whenAbsent:
+      "SEO-04 scores from the lab p75 the Lighthouse audit already produces, against the SAME 8/7/5 bands — the Technical/CWV bucket scores in full either way. The field-data swap changes the measured value and its confidence label (estimated -> measured_field), not the formula. Note the key alone does not switch anything: field data is read only for a client who has also set the per-client Google-connect opt-in, so the lab->field move is always a logged per-client source change (Defect-2).",
+    rationale: "connectors-config.data.ts crux_per_client_gate, and per_metric_degradation's SEO-04 line.",
+    shortfall: "no field CWV — lab p75 only",
+  },
+
   // ── Landing builder ──────────────────────────────────────────────────────
   {
     id: "landing-builder",
