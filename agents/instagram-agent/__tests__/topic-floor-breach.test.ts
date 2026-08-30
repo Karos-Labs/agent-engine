@@ -43,6 +43,9 @@ describe("03-claim-topic: the topics catalog is the only dedup gate (RFC-03 §2.
       "02-freeze-style-config",
       "02b-load-client-voice-context",
       "02c-load-brand-kit",
+      // The client's declared target language (SCRUM-310/AU32) — read once,
+      // frozen, and consulted by steps 07e/07f.
+      "02d-load-target-language",
       "03-claim-topic",
     ]);
 
