@@ -37,6 +37,25 @@ export const AgentContextSchema = z.object({
    * should not take down a run that is otherwise fine.
    */
   stageModels: z.record(z.string(), z.string().min(1)).optional(),
+  /**
+   * The language THIS client publishes in — AU31/SCRUM-309's BrandKit
+   * `language` field, read once per run from the tenant's own stored
+   * configuration (`loadClientContentLanguage`) and threaded down here rather
+   * than re-read per step.
+   *
+   * It rides on the context for the same reason `stageModels` does, and for
+   * one more: Layer 2 has no I/O except through Layer 3 tools (RFC-01 §4), so
+   * a `BaseAgent` cannot go and read the workspace store itself. The read
+   * happens once, at dispatch, where the store is already in hand; every step
+   * of the run then sees the same value, and `applyClientLanguagePolicy`
+   * (AU34/SCRUM-312) uses it to re-point copy steps at a model that can
+   * actually write in it.
+   *
+   * Free text on purpose ("Hebrew", "he", "he-IL") — it is AU31's field
+   * verbatim, not a re-normalized copy of it. Absent means "this client has
+   * stated nothing", which leaves every step on exactly the model it had.
+   */
+  contentLanguage: z.string().min(1).optional(),
   metadata: z.record(z.string(), z.unknown()),
 });
 export type AgentContext = z.infer<typeof AgentContextSchema>;

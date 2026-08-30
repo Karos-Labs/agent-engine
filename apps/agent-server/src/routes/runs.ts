@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
-import { GateResponseSchema, type AgentDefinitionStore } from "@agent-engine/core";
+import { GateResponseSchema, loadClientContentLanguage, type AgentDefinitionStore } from "@agent-engine/core";
 import { describeError } from "@agent-engine/telemetry";
 import { GateAlreadyResolvedError, WorkflowConcurrentRunError, WorkflowEngine, type DurableStepStore } from "@agent-engine/workflow";
 import { buildRunReport } from "../report.js";
@@ -307,12 +307,23 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
       return;
     }
 
+    // AU34 (SCRUM-312). Re-read on resume for the same reason `budget` and
+    // `input` are recovered from the run record inside `engine.run`: the second
+    // half of a gated run has to draft under the same rules as the first.
+    // Without it, a Hebrew-language client's copy step resolves to a
+    // Hebrew-capable model before the gate and silently falls back to the
+    // compiled default after it — the exact shape of silent wrong output this
+    // ticket exists to remove. It is the CLIENT's standing configuration, not
+    // per-run state, so re-reading it is equivalent to carrying it forward.
+    const contentLanguage = await loadClientContentLanguage(deps.runtimeDeps.workspaceStore, runRecord.clientSlug);
+
     try {
       const result = await engine.run(workflowFn, {
         runId,
         clientSlug: runRecord.clientSlug,
         productId: runRecord.productId,
         runKind: runRecord.runKind,
+        ...(contentLanguage !== undefined ? { contentLanguage } : {}),
       });
       // `runRecord.productId`, not a narrowed `ProductId`: `buildRunReport` takes a
       // plain string and has handled a dynamic agent's id since `/status` started
