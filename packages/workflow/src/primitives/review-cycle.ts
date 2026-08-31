@@ -74,6 +74,16 @@ export interface ReviewCycleOptions<T> {
     response: GateResponse;
     /** Template notes, already split out for the caller's convenience. */
     templateFeedback: readonly TemplateFeedback[];
+    /**
+     * The output `attempt` produced THIS round — added SCRUM-306 (AU23) so a
+     * caller's `onDecision` can persist the actual drafted content a
+     * rejection (or any other decision) was made about, not only the
+     * reviewer's verdict on it. Safe to read here without any staleness risk:
+     * the cycle is a strict, single-threaded loop (attempt -> buildGate ->
+     * gate -> onDecision, one round fully resolves before the next begins),
+     * so `output` is always the SAME draft `response` just judged.
+     */
+    output: T;
   }) => Promise<void>;
 }
 
@@ -116,7 +126,7 @@ export async function runReviewCycle<T>(wf: WorkflowContext, options: ReviewCycl
 
     const templateFeedback = response.templateFeedback ?? [];
     if (options.onDecision) {
-      await options.onDecision({ revision, response, templateFeedback });
+      await options.onDecision({ revision, response, templateFeedback, output });
     }
 
     if (response.decision === "approve") {
@@ -174,6 +184,21 @@ export const MAX_REVISION_ROUNDS = 2;
  * failing an already-APPROVED run because a memory write timed out would
  * discard a finished deliverable the client is waiting for. The gate record
  * still holds the decision verbatim, so nothing is unrecoverable.
+ *
+ * ## `content` (SCRUM-306 / AU23)
+ *
+ * Optional and caller-supplied, deliberately: this function stays generic
+ * across agents (Layer 1 makes no content judgments, RFC-01 §4), so it does
+ * not know how to turn a `DraftResult` or a `ClipDraft` into text — the
+ * caller does that, typically `JSON.stringify(output)` on the `output` its
+ * own `onDecision` now receives from `runReviewCycle`. Passed straight
+ * through to `memory.appendFeedback`'s `content` field: stored and read back
+ * byte-identical, no trimming, no truncation. The caller also decides WHEN
+ * to attach it — most call sites only do so on `reject`, since that is the
+ * one decision whose content previously had nowhere durable to go (an
+ * approval's content already lands in `ledger.writeDeliverable`; a `revise`
+ * round's content is superseded by the next attempt, which sees the
+ * reviewer's `feedback` text via `notes`/`revisionDirective`).
  */
 export async function persistReviewFeedbackToMemory(
   wf: WorkflowContext,
@@ -181,6 +206,7 @@ export async function persistReviewFeedbackToMemory(
   ctx: AgentContext,
   revision: number,
   response: GateResponse,
+  content?: string,
 ): Promise<void> {
   const note = response.feedback ?? response.reason;
   const append = tools["memory.appendFeedback"];
@@ -196,6 +222,7 @@ export async function persistReviewFeedbackToMemory(
           note,
           revision,
           runId: wf.runId,
+          ...(content !== undefined ? { content } : {}),
         },
         { ctx },
       ),
@@ -212,6 +239,12 @@ export async function persistReviewFeedbackToMemory(
  * Bounded and best-effort for the same two reasons everywhere it is used: an
  * unbounded history would push the actual brief out of the context window,
  * and a memory read failing must not stop a run that can draft without it.
+ *
+ * SCRUM-306 (AU23): when an entry carries `content` (typically a past
+ * `reject`'s drafted content — see `persistReviewFeedbackToMemory`), it is
+ * appended after the note verbatim, so a drafting prompt built from this list
+ * can show a reviser both WHY something was rejected and WHAT was rejected,
+ * instead of asking it to learn from half a sentence.
  */
 export async function readPastFeedback(
   wf: WorkflowContext,
@@ -225,8 +258,8 @@ export async function readPastFeedback(
     try {
       const outcome = await read.execute({ productId: wf.productId, limit: 10 }, { ctx });
       if (outcome.status !== "success") return [] as string[];
-      return (outcome.result as { entries: Array<{ decision: string; note: string }> }).entries.map(
-        (e) => `(${e.decision}) ${e.note}`,
+      return (outcome.result as { entries: Array<{ decision: string; note: string; content?: string }> }).entries.map(
+        (e) => (e.content !== undefined ? `(${e.decision}) ${e.note}\nContent: ${e.content}` : `(${e.decision}) ${e.note}`),
       );
     } catch (error) {
       console.error(`${stepId}: could not read client feedback history, drafting without it`, error);

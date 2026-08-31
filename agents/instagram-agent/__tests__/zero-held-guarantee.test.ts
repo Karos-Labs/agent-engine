@@ -244,6 +244,24 @@ describe("zero-held guarantee: a picture problem never costs the post", () => {
     // `runReviewCycle` is generic across agents, so the wording is
     // "review rejected" rather than anything carousel-specific.
     expect(result.reason).toMatch(/review rejected/i);
+
+    // SCRUM-306 (AU23): the rejected draft's content used to survive only in
+    // this run's own step checkpoints — never durable, never readable by a
+    // future run. It must now be on the same feedback row as the reason.
+    const readOutcome = await registry["memory.readFeedback"]!.execute(
+      { productId: "instagram-agent", limit: 10 },
+      { ctx: { ...base, runId: "verify", metadata: {} } },
+    );
+    expect(readOutcome.status).toBe("success");
+    if (readOutcome.status !== "success") throw new Error("unreachable");
+    const entries = (readOutcome.result as { entries: Array<{ decision: string; note: string; content?: string }> }).entries;
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.decision).toBe("reject");
+    expect(entries[0]?.note).toBe("not on brand this week");
+    const parsedDraft = JSON.parse(entries[0]!.content!) as { copy: { caption: string } };
+    // The exact caption the reviewer looked at and turned down, not a
+    // paraphrase — `copy` is the drafting agent's own `goodCopyOutput()` fixture.
+    expect(parsedDraft.copy.caption).toBe(copy.caption);
   }, 30000);
 
   it("still blocks intake when the client has no config, because there is no client to write for", async () => {
