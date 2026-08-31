@@ -31,9 +31,10 @@ export type ProviderPolicy = z.infer<typeof ProviderPolicySchema>;
  *                        (default) or directly, per `MODEL_PROVIDER`
  *                        (`create-model-router-from-env.ts`).
  * - `gemini`           — Google's own Gemini models. Reached via Agent
- *                        Platform/Vertex (ADC, default) or the direct
- *                        Gemini Developer API (`GEMINI_API_KEY`), per
- *                        `GEMINI_ROUTE`.
+ *                        Platform/Vertex (ADC, default) only as of AU59/
+ *                        SCRUM-358 — `GEMINI_ROUTE=direct` still parses but
+ *                        has no adapter behind it, since `GEMINI_API_KEY` is
+ *                        wired in neither prep nor prod.
  * - `model-garden`     — a third-party/open model served through Agent
  *                        Platform's own Model-as-a-Service (MaaS)
  *                        OpenAI-compatible endpoint (Llama, Mistral, and
@@ -42,7 +43,11 @@ export type ProviderPolicy = z.infer<typeof ProviderPolicySchema>;
  * - `openai-compatible` — anything reachable through an OpenAI-shaped
  *                        chat-completions endpoint that ISN'T Agent
  *                        Platform: the real OpenAI API, or a self-hosted
- *                        gateway (LiteLLM) fronting whatever it fronts.
+ *                        gateway (LiteLLM) fronting whatever it fronts. No
+ *                        longer wired from environment configuration as of
+ *                        AU59/SCRUM-358 (models are served through Vertex AI
+ *                        only) — still a valid value for a caller that
+ *                        builds and passes its own adapter directly.
  *
  * Absent (`undefined`) means `anthropic` — every step written before this
  * field existed keeps behaving exactly as it did.

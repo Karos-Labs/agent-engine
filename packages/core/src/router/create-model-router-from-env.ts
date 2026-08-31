@@ -182,6 +182,15 @@ function createAnthropicVendorAdapter(env: Record<string, string | undefined>): 
  * route/vendor distinction `ClaudeRoute` draws for Claude, scoped to Gemini:
  * a deployment can run Claude on Agent Platform and Gemini direct (or vice
  * versa) without either choice affecting the other.
+ *
+ * AU59 (SCRUM-358, Vertex-only model surface, Half A): the `"direct"` value
+ * is still accepted here — `resolveGeminiRoute` still parses it, and still
+ * throws on anything else — but `createGeminiVendorAdapter` below no longer
+ * has an adapter behind it. `GEMINI_API_KEY` is wired in neither prep nor
+ * prod. Keeping the parse (rather than deleting the value) means a
+ * deployment carrying `GEMINI_ROUTE=direct` from before this change gets an
+ * explicit "not configured" refusal at the point of use, never a silent
+ * reinterpretation as the Agent Platform route.
  */
 export type GeminiRoute = "agent-platform" | "direct";
 
@@ -195,28 +204,26 @@ export function resolveGeminiRoute(env: Record<string, string | undefined>): Gem
 
 /**
  * Builds the `gemini` vendor adapter, or `undefined` if nothing configures
- * it — Gemini is optional, exactly like the pre-existing
- * `OPENAI_COMPATIBLE_BASE_URL` opt-in this generalizes. A step whose
- * `modelPolicy.vendor` is `"gemini"` with no adapter wired fails loudly and
- * specifically at the point of use (`DefaultModelRouter`'s own error), not
- * here at startup — most deployments never touch Gemini, and shouldn't need
- * Gemini credentials just to boot.
+ * it — Gemini is optional. A step whose `modelPolicy.vendor` is `"gemini"`
+ * with no adapter wired fails loudly and specifically at the point of use
+ * (`DefaultModelRouter`'s own error), not here at startup — most deployments
+ * never touch Gemini, and shouldn't need Gemini credentials just to boot.
  *
- * Agent Platform route: ADC only, via `@google/genai`'s own
- * `googleAuthOptions` resolution (the SDK's default when `vertexai: true`
- * and no `apiKey` is given) — no key ever passed as an env var, same rule as
- * Claude's Agent Platform route. One client per resolved region, for the
- * same reason `AgentPlatformAdapter` keys Claude's clients that way.
+ * Agent Platform route (the only route with a live adapter, AU59/SCRUM-358):
+ * ADC only, via `@google/genai`'s own `googleAuthOptions` resolution (the
+ * SDK's default when `vertexai: true` and no `apiKey` is given) — no key
+ * ever passed as an env var, same rule as Claude's Agent Platform route. One
+ * client per resolved region, for the same reason `AgentPlatformAdapter`
+ * keys Claude's clients that way.
  */
 function createGeminiVendorAdapter(env: Record<string, string | undefined>): ModelAdapter | undefined {
-  const route = resolveGeminiRoute(env);
-
-  if (route === "direct") {
-    const apiKey = readEnv(env, "GEMINI_API_KEY");
-    if (!apiKey) return undefined;
-    const client = new GoogleGenAI({ apiKey });
-    return new GeminiAdapter({ client });
-  }
+  // AU59 (Vertex-only): the direct Gemini Developer API route is gone —
+  // GEMINI_API_KEY built a `GoogleGenAI({ apiKey })` client here; that
+  // construction is removed, not just gated differently. A deployment that
+  // explicitly asks for GEMINI_ROUTE=direct declines here rather than
+  // silently getting the Agent Platform route instead — the same
+  // never-a-silent-substitution rule `ClaudeRoute` follows for Claude.
+  if (resolveGeminiRoute(env) === "direct") return undefined;
 
   const projectId = readEnv(env, "GEMINI_VERTEX_PROJECT_ID", "GOOGLE_CLOUD_PROJECT");
   if (!projectId) return undefined;
@@ -286,47 +293,39 @@ function createModelGardenVendorAdapter(env: Record<string, string | undefined>)
 }
 
 /**
- * Builds the `openai-compatible` vendor adapter, or `undefined` if nothing
- * configures it: the real OpenAI API, or a self-hosted gateway (LiteLLM)
- * fronting whatever it fronts. Distinct from `model-garden` above even
- * though both share `OpenAICompatibleAdapter`'s wire mechanics — this one is
- * NOT Agent Platform and carries its own credential.
+ * AU59 (SCRUM-358, Vertex-only model surface, Half A): the `openai-compatible`
+ * vendor's env-driven auto-wiring (`createOpenAICompatibleVendorAdapter`,
+ * `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY`, `OPENAI_API_KEY`)
+ * is REMOVED. Nothing in prep or prod ever set any of the three variables and
+ * nothing routed to this vendor — models are served through Vertex AI only.
+ * `openai-compatible` stays a valid `ModelVendor` and `ModelRouterAdapters`
+ * key (`model-router.ts`) for a caller that constructs `DefaultModelRouter`
+ * directly with its own adapter; only the automatic build-from-environment
+ * path is gone. `createModelRouterFromEnv` never populates this vendor now —
+ * a step whose `modelPolicy.vendor` is `"openai-compatible"` fails loudly at
+ * the point of use (`DefaultModelRouter`'s own error), same as any other
+ * vendor nothing configured.
  */
-function createOpenAICompatibleVendorAdapter(env: Record<string, string | undefined>): ModelAdapter | undefined {
-  const baseURL = readEnv(env, "OPENAI_COMPATIBLE_BASE_URL");
-  if (!baseURL) return undefined;
-
-  // AU59: decline to register rather than build a client with a placeholder.
-  // `?? "unused"` produced an adapter that looked configured at wiring time and
-  // failed at CALL time — mid-run, inside a step, as a tooling_error naming an
-  // auth failure rather than a missing variable. Every other adapter here
-  // declines when its credential is absent; this one pretended.
-  //
-  // A gateway that genuinely needs no key (a local LiteLLM) can say so
-  // explicitly with OPENAI_COMPATIBLE_API_KEY=unused — the difference being
-  // that it is then somebody's decision rather than a default nobody chose.
-  const apiKey = readEnv(env, "OPENAI_COMPATIBLE_API_KEY", "OPENAI_API_KEY");
-  if (!apiKey) return undefined;
-  return new OpenAICompatibleAdapter(new OpenAI({ apiKey, baseURL }), "openai-compatible");
-}
 
 /**
  * Builds a real, working `ModelRouter` from environment configuration.
  *
  * Every `ModelPolicy` in this system resolves to a vendor (RFC-01 §5.4 +
  * `types/model-policy.ts`): `anthropic` by default (every step written
- * before vendor selection existed), or `gemini` / `model-garden` /
- * `openai-compatible` when a step's `modelPolicy.vendor` says so — set
- * directly in code, or overridden per step at the environment level via
- * `resolveModelPolicy` (`step-model-policy.ts`)'s `MODEL_STEP_<ID>_VENDOR`
- * / `MODEL_STEP_<ID>_MODEL` pair.
+ * before vendor selection existed), or `gemini` / `model-garden` when a
+ * step's `modelPolicy.vendor` says so — set directly in code, or overridden
+ * per step at the environment level via `resolveModelPolicy`
+ * (`step-model-policy.ts`)'s `MODEL_STEP_<ID>_VENDOR` / `MODEL_STEP_<ID>_MODEL`
+ * pair. `openai-compatible` remains a valid vendor value, but this function
+ * no longer wires one from the environment (AU59/SCRUM-358, Half A — see the
+ * doc comment above where `createOpenAICompatibleVendorAdapter` used to be).
  *
  * `anthropic` is the only vendor this function requires configuration for —
  * it throws if it can't build one, since every existing agent depends on it
- * regardless of tier. `gemini`, `model-garden`, and `openai-compatible` are
- * each built only if their own configuration is present; a step that
- * requests an unconfigured vendor gets a specific, actionable error from
- * `DefaultModelRouter` at the point of use, not a vague failure at startup.
+ * regardless of tier. `gemini` and `model-garden` are each built only if
+ * their own configuration is present; a step that requests an unconfigured
+ * vendor gets a specific, actionable error from `DefaultModelRouter` at the
+ * point of use, not a vague failure at startup.
  */
 export function createModelRouterFromEnv(options: CreateModelRouterFromEnvOptions = {}): ModelRouter {
   const env = options.env ?? process.env;
@@ -338,9 +337,6 @@ export function createModelRouterFromEnv(options: CreateModelRouterFromEnvOption
 
   const modelGarden = createModelGardenVendorAdapter(env);
   if (modelGarden) adapters["model-garden"] = modelGarden;
-
-  const openaiCompatible = createOpenAICompatibleVendorAdapter(env);
-  if (openaiCompatible) adapters["openai-compatible"] = openaiCompatible;
 
   return new DefaultModelRouter(adapters);
 }

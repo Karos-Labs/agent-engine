@@ -35,11 +35,16 @@ export interface ModelRouterAdapters {
 function describeMissingVendorAdapter(vendor: ModelVendor): string {
   switch (vendor) {
     case "gemini":
-      return 'no Gemini adapter is configured — set GEMINI_VERTEX_PROJECT_ID (or GOOGLE_CLOUD_PROJECT) for the Agent Platform route, or GEMINI_API_KEY for the direct Gemini API route';
+      return "no Gemini adapter is configured — set GEMINI_VERTEX_PROJECT_ID (or GOOGLE_CLOUD_PROJECT) for the Agent Platform route";
     case "model-garden":
       return "no Model Garden adapter is configured — set MODEL_GARDEN_PROJECT_ID (deliberately not GOOGLE_CLOUD_PROJECT — see create-model-router-from-env.ts) to reach Agent Platform's Model-as-a-Service endpoint";
     case "openai-compatible":
-      return "no OpenAI-compatible adapter is configured — set OPENAI_COMPATIBLE_BASE_URL";
+      // AU59 (SCRUM-358, Vertex-only model surface): createModelRouterFromEnv
+      // no longer wires this vendor from any environment variable — models
+      // are served through Vertex AI only. This case stays reachable only for
+      // a caller that constructs DefaultModelRouter directly without passing
+      // an "openai-compatible" adapter of its own.
+      return "no OpenAI-compatible adapter is configured — this router serves models through Vertex AI only (SCRUM-358); construct one directly and pass it into ModelRouterAdapters if this vendor is genuinely needed";
     case "anthropic":
       return "no Anthropic adapter is configured — this should be impossible, since it's the router's required default vendor";
   }

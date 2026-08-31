@@ -91,15 +91,17 @@ describe("createModelRouterFromEnv", () => {
     });
   });
 
-  it("still constructs successfully when an OPENAI_COMPATIBLE_BASE_URL is also configured", () => {
+  it("AU59: OPENAI_COMPATIBLE_BASE_URL/API_KEY no longer build an openai-compatible adapter — construction still succeeds, but the vendor stays unregistered", () => {
     const router = createModelRouterFromEnv({
       env: {
         GOOGLE_CLOUD_PROJECT: "karos-labs-prep",
         OPENAI_COMPATIBLE_BASE_URL: "https://litellm.internal.example.com",
         OPENAI_COMPATIBLE_API_KEY: "sk-gateway-test-key",
+        OPENAI_API_KEY: "sk-openai-test-key",
       },
     });
     expect(router).toBeInstanceOf(DefaultModelRouter);
+    expect(adapterFor(router, "openai-compatible")).toBeUndefined();
   });
 });
 
@@ -147,18 +149,21 @@ describe("createModelRouterFromEnv — gemini vendor adapter", () => {
     expect(adapterFor(router, "gemini")).toBeDefined();
   });
 
-  it("builds a gemini adapter via the direct sub-route when GEMINI_API_KEY is present", () => {
-    const router = createModelRouterFromEnv({
+  it("AU59: the direct sub-route no longer builds an adapter, GEMINI_API_KEY present or not — it has been removed, not just gated", () => {
+    // Before AU59 this would have built a GoogleGenAI({ apiKey }) client. Note
+    // anthropicBaseline's own GOOGLE_CLOUD_PROJECT would happily satisfy the
+    // agent-platform sub-route if createGeminiVendorAdapter silently fell back
+    // to it — the assertion is specifically that it does NOT, i.e. an explicit
+    // GEMINI_ROUTE=direct declines rather than silently substituting Vertex.
+    const withKey = createModelRouterFromEnv({
       env: { ...anthropicBaseline, GEMINI_ROUTE: "direct", GEMINI_API_KEY: "test-key" },
     });
-    expect(adapterFor(router, "gemini")).toBeDefined();
-  });
+    expect(adapterFor(withKey, "gemini")).toBeUndefined();
 
-  it("leaves the gemini adapter undefined on the direct sub-route when GEMINI_API_KEY is absent", () => {
-    const router = createModelRouterFromEnv({
+    const withoutKey = createModelRouterFromEnv({
       env: { ...anthropicBaseline, GEMINI_ROUTE: "direct" },
     });
-    expect(adapterFor(router, "gemini")).toBeUndefined();
+    expect(adapterFor(withoutKey, "gemini")).toBeUndefined();
   });
 
   it("router still builds fine with no gemini configuration at all, but a gemini-vendor call fails loudly and specifically", async () => {
