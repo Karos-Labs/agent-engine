@@ -73,6 +73,10 @@ const HAPPY_PATH_STEP_IDS = [
   "07d-dedupe-check-attempt-1",
   "07c-emit-slides-data-attempt-1",
   "08-render-carousel-attempt-1",
+  // Deterministic pre-checks (SCRUM-324/AU40) — logo presence/contrast and
+  // palette-within-kit — answered in code before the model is ever asked to
+  // grade composition/font-hierarchy/brand-asset-integration/colour-harmony.
+  "08a2-visual-qa-pre-checks-attempt-1",
   "08b-visual-qa-attempt-1",
   // Revision-scoped: `-r0` is the first review round. A `revise` decision
   // registers `-r1` after re-drafting.

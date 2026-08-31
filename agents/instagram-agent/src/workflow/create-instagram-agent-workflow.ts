@@ -21,11 +21,12 @@ import {
   templateFileName,
   type TemplateStore,
 } from "@agent-engine/tool-karos-templates";
-import { brandLogoDataUri, downloadBrandLogo, parseBrandLogoDataUri } from "@agent-engine/tool-karos-media";
+import { brandLogoDataUri, downloadBrandLogo, parseBrandLogoDataUri, type BrandLogoPlacement } from "@agent-engine/tool-karos-media";
 import { buildBrandHeadHtml, buildBrandLogoBodyHtml, deriveBrandRenderTokens, planBrandLogo } from "./brand-render-tokens.js";
 import { ARCHETYPE_TEMPLATE_FILES, assembleSlidesData, checkSlidesData, resolveLayout } from "./slides-data.js";
 import { checkCraftHygiene } from "./craft-hygiene.js";
 import { checkExpectedScript, languageGateText, runLanguageFluency, LANGUAGE_FLUENCY_STEP_ID, LANGUAGE_SCRIPT_STEP_ID } from "./language-gate.js";
+import { assessBrandAssetPresence, buildElevatedVisualQaCriteria, checkPaletteWithinKit } from "./visual-qa-pre-checks.js";
 import {
   BrandTokensSchema,
   type BrandTokens,
@@ -656,6 +657,30 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     };
 
     /**
+     * The one place this run decides whether a brand logo will render at all
+     * this attempt, and (AU38, SCRUM-322) where it goes and whether it
+     * survives this client's ground — from the mark's own decoded pixels
+     * against the ground token the slide will actually render on, never from
+     * a sentence in a prompt asking for a legible placement.
+     *
+     * Factored out of `brandFragments` (SCRUM-324/AU40) so the deterministic
+     * visual-QA pre-check (step 08a2 below) can read the SAME placement
+     * `brandFragments` itself renders from, rather than re-deriving it — the
+     * two must never be able to disagree about whether a logo shipped this
+     * attempt.
+     */
+    const brandLogoAssessment = async (): Promise<{ logoDataUri?: string; placement?: BrandLogoPlacement }> => {
+      if (brandKit === undefined) return {};
+      const logoDataUri = await ensureBrandLogoDataUri();
+      const download = logoDataUri !== undefined ? parseBrandLogoDataUri(logoDataUri) : undefined;
+      const placement =
+        download !== undefined
+          ? planBrandLogo(brandKit, download, { hasSeriesBadge: frozen.brandTokens.seriesBadge !== undefined })
+          : undefined;
+      return { ...(logoDataUri !== undefined ? { logoDataUri } : {}), ...(placement !== undefined ? { placement } : {}) };
+    };
+
+    /**
      * The fragments (head: font links + token sheet + badge variant; body:
      * the logo `<img>`) spliced into every rendered document. Re-derived
      * from the checkpointed `brandKit` on every call — the string work is
@@ -664,19 +689,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
      */
     const brandFragments = async (): Promise<{ head?: string; body?: string }> => {
       if (brandKit === undefined) return {};
-      const logoDataUri = await ensureBrandLogoDataUri();
-      // AU38 (SCRUM-322): WHERE the mark goes and WHETHER it survives this
-      // client's ground are decided here, by `planBrandLogo`, from the mark's
-      // own decoded pixels against the ground token the slide will actually
-      // render on — not by a sentence in a prompt asking for a legible
-      // placement. A plan whose decision is `omit` emits neither the rules
-      // nor the `<img>`: an illegible mark ships as nothing, never as a
-      // smudge, and never as a held run.
-      const download = logoDataUri !== undefined ? parseBrandLogoDataUri(logoDataUri) : undefined;
-      const placement =
-        download !== undefined
-          ? planBrandLogo(brandKit, download, { hasSeriesBadge: frozen.brandTokens.seriesBadge !== undefined })
-          : undefined;
+      const { logoDataUri, placement } = await brandLogoAssessment();
+      // A plan whose decision is `omit` emits neither the rules nor the
+      // `<img>`: an illegible mark ships as nothing, never as a smudge, and
+      // never as a held run.
       const showLogo = logoDataUri !== undefined && placement !== undefined && placement.decision !== "omit";
       return {
         head: buildBrandHeadHtml(brandKit, showLogo ? { logo: placement } : {}),
@@ -1883,15 +1899,63 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       const renderedAttempt = renderResolved.result as RenderCarouselResult;
       const slidesDataForQa = slidesDataResolved;
 
-      // ── 08b: post-render visual QA (Fix 2) — a text-proxy stand-in for real
-      //         pixel inspection (see InstagramVisualQaAgent's own doc
-      //         comment). A failure here `continue`s the SAME retry loop as
+      // ── 08a2: deterministic visual-QA pre-checks (SCRUM-324/AU40) —
+      //         code answers every question that HAS a factual answer,
+      //         before the model is ever asked to grade anything. See
+      //         `visual-qa-pre-checks.ts`'s own header for the full
+      //         rationale, including why "is the logo present" is a FACT fed
+      //         to the judge rather than a gate on the attempt (brand
+      //         furniture must never be able to hold a run — same invariant
+      //         `brandFragments`/`brand-logo.ts` state repeatedly), while
+      //         "are the palette tokens within the kit" genuinely gates and
+      //         short-circuits the model call entirely: an off-kit accent is
+      //         a real render defect, not an unreachable third-party asset. ──
+      const preChecks = await wf.step.code(rev(`08a2-visual-qa-pre-checks-attempt-${attempt}`), async () => {
+        const { placement } = await brandLogoAssessment();
+        const usedHexes = slidesDataForQa.slides
+          .map((s) => s.fields["accentColor"])
+          .filter((h): h is string => typeof h === "string");
+        return {
+          paletteGate: checkPaletteWithinKit(usedHexes, brandKit?.palette ?? []),
+          brandAsset: assessBrandAssetPresence({
+            configuredLogoUrl: brandKit?.logoUrl,
+            hasDownload: placement !== undefined,
+            placement,
+          }),
+        };
+      });
+
+      if (!preChecks.paletteGate.ok) {
+        // The whole cost claim this ticket has to prove: this attempt never
+        // reaches `qaAgent` at all — zero model calls for a defect code
+        // already knows about with an `includes()` check.
+        lastSelfCheckReason = `visual QA deterministic pre-check failed on attempt ${attempt} (no model call spent): ${preChecks.paletteGate.reason}`;
+        continue;
+      }
+
+      // ── 08b: post-render visual QA (Fix 2/AU40) — a text-proxy stand-in
+      //         for real pixel inspection (see InstagramVisualQaAgent's own
+      //         doc comment). Judges `check: "render"` rules from the frozen
+      //         config PLUS the elevated criteria this ticket adds
+      //         (composition richness, font hierarchy, brand-asset
+      //         integration, colour harmony) — every one of which the
+      //         08a2 pre-check has already stripped of its factual half, so
+      //         the model grades only the aesthetic residue code cannot
+      //         compute. A failure here `continue`s the SAME retry loop as
       //         step 07/07b above, matching carousel-agent-v2 SKILL.md step
       //         08's "a fail here is RETURN: 05, because it is the copy or
       //         the layout, not the code." ──
+      const elevatedCriteria = buildElevatedVisualQaCriteria({ logo: preChecks.brandAsset, kitPalette: brandKit?.palette ?? [] });
       const qaExec = await wf.step.agent(rev(`08b-visual-qa-attempt-${attempt}`), qaAgent, {
         slides: slidesDataForQa.slides.map((s) => ({ n: s.n, fields: s.fields, images: s.images })),
-        renderRules: renderRules.map((r) => ({ id: r.id, description: r.description })),
+        renderRules: [...renderRules.map((r) => ({ id: r.id, description: r.description })), ...elevatedCriteria],
+        // Facts the judge must not re-derive (per-criterion doc comments in
+        // `visual-qa-pre-checks.ts`) — present only when the corresponding
+        // elevated criterion above was actually included.
+        ...(preChecks.brandAsset.present
+          ? { brandAssetContext: { corner: preChecks.brandAsset.corner, scrimmed: preChecks.brandAsset.scrimmed } }
+          : {}),
+        ...(brandKit !== undefined && brandKit.palette.length > 0 ? { brandPalette: brandKit.palette } : {}),
       });
       if (qaExec.status === "tooling_error" || qaExec.status === "budget_exceeded") {
         throw new WorkflowToolingFailure(`visual QA step resolved to "${qaExec.status}" on attempt ${attempt}/${MAX_SELF_CHECK_ATTEMPTS}`);
