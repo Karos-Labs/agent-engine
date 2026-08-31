@@ -71,7 +71,12 @@ describe("Layer 3 tool registry — cross-cutting", () => {
     // former caller now goes through memory.appendFeedback/memory.readFeedback
     // above instead, the one real feedback pipeline. See createKarosLedgerTools's
     // own doc comment in packages/tools/karos-ledger/src/index.ts.)
-    expect(names.length).toBe(50);
+    // (client grew from 9 to 10, T-A8/SCRUM-238: client.getContextDoc reads C1's
+    // one-doc-per-file context projection (clients/<slug>/context/<docType>.json)
+    // — the read-only view over the nine v1 client/agent-profile document types,
+    // distinct from client.getKnowledge's older portal-sync bundle. See
+    // packages/tools/karos-client/src/get-context-doc.ts.)
+    expect(names.length).toBe(51);
     for (const prefix of expectedPrefixes) {
       expect(names.some((n) => n.startsWith(prefix))).toBe(true);
     }
