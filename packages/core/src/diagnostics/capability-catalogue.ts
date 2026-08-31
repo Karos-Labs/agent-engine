@@ -144,9 +144,12 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
     id: "seo-geo-ai-visibility-capture",
     title: "SEO & GEO AI-visibility capture — real per-engine answers for research.captureVisibility's 5 fixed engines (T-A3/SCRUM-237)",
     owner: "packages/tools/karos-research (research.captureVisibility, packages/tools/karos-research/src/capture-adapters)",
-    requires: [{ name: "PERPLEXITY_API_KEY", kind: "enhances" }],
+    requires: [
+      { name: "PERPLEXITY_API_KEY", kind: "enhances" },
+      { name: "GEMINI_API_KEY", kind: "enhances" },
+    ],
     whenAbsent:
-      "Perplexity's cells report UNAVAILABLE/no_adapter_wired, honestly, exactly like every other unconfigured engine — never a fabricated MEASURED/ESTIMATED answer. Claude/Gemini/ChatGPT/Copilot's own capture independently depends on ANTHROPIC_API_KEY/GEMINI_API_KEY/SCRAPPYCOCO_API_KEY (already rows above/below in this catalogue for other capabilities) rather than a new credential each.",
+      "Perplexity's and Gemini's cells report UNAVAILABLE/no_adapter_wired, honestly, exactly like every other unconfigured engine — never a fabricated MEASURED/ESTIMATED answer. Claude/ChatGPT/Copilot's own capture independently depends on ANTHROPIC_API_KEY/SCRAPPYCOCO_API_KEY, which are rows elsewhere in this catalogue for other capabilities, rather than a new credential each. GEMINI_API_KEY is carried on THIS row rather than reused from a model-routing row: AU59/SCRUM-358 removed the direct-Gemini model route and its row, so capture is now this variable's only reader.",
     rationale: "packages/tools/karos-research/src/capture-visibility.ts's own header comment — an engine with no adapter configured degrades per-engine, never all-or-nothing.",
   },
   {
@@ -345,18 +348,13 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
   },
   {
     id: "model-vendor-alternatives",
-    title: "Non-Anthropic model vendors (Gemini direct, Model Garden, OpenAI-compatible)",
+    title: "Non-Anthropic model vendors reached through Vertex AI (Gemini, Model Garden)",
     owner: "packages/core (createModelRouterFromEnv)",
-    requires: [
-      { name: "GEMINI_API_KEY", kind: "enhances" },
-      { name: "MODEL_GARDEN_PROJECT_ID", kind: "enhances" },
-      { name: "OPENAI_COMPATIBLE_BASE_URL", kind: "enhances" },
-      { name: "OPENAI_COMPATIBLE_API_KEY", kind: "enhances" },
-      { name: "OPENAI_API_KEY", kind: "enhances" },
-    ],
+    requires: [{ name: "MODEL_GARDEN_PROJECT_ID", kind: "enhances" }],
     whenAbsent:
-      "Those vendors are not built. A step whose modelPolicy names one fails loudly at the point of use naming the exact missing variable — which is correct, and is why this is not a silent degradation.",
-    rationale: "agent_vendor_switching.md: no agent sets a non-default vendor today, so none of these is needed until one does.",
+      "Model Garden is not built. A step whose modelPolicy names it fails loudly at the point of use naming the exact missing variable — which is correct, and is why this is not a silent degradation. (Gemini's own Agent Platform route needs no separate opt-in beyond GEMINI_VERTEX_PROJECT_ID / GOOGLE_CLOUD_PROJECT, already required elsewhere.)",
+    rationale:
+      "agent_vendor_switching.md: no agent sets a non-default vendor today, so this is not needed until one does. AU59/SCRUM-358 (Vertex-only model surface) removed the direct-Gemini and OpenAI-compatible routes outright, so they were dropped from this row rather than left as orphaned rows. Nothing reads OPENAI_COMPATIBLE_BASE_URL / OPENAI_COMPATIBLE_API_KEY / OPENAI_API_KEY any more. GEMINI_API_KEY is the exception: no MODEL route reads it, but T-A3/SCRUM-237 reintroduced it for Gemini Grounding visibility capture, so it is a live credential on the seo-geo-ai-visibility-capture row — not here.",
   },
 
   // ── Security: absences that remove a CHECK, not a feature ────────────────

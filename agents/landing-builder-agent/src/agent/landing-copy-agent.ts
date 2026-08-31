@@ -37,6 +37,10 @@ export class LandingCopyAgent extends BaseAgent<LandingCopyOutput> {
     allowedTools: [],
     outputSchema: LandingCopyOutputSchema,
     modelPolicy: resolveModelPolicy("landing-copy", { policy: "pinned", model: "claude-sonnet-4-6" }),
-    skillRef: "landing-copy@2",
+    // v3 (SCRUM-241/T-A9) documents `productInformation` — the client's own
+    // projected product-information context doc (C1) — telling the model to
+    // prefer its account of the product over what it would otherwise infer
+    // from `intake.md` alone. v2 stays frozen.
+    skillRef: "landing-copy@3",
   };
 }

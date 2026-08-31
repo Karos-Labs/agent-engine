@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { DegradedContextGroundingMarker } from "@agent-engine/workflow";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Style config + brand tokens (RFC-03 step 02 — "freeze the small files")
@@ -512,4 +513,6 @@ export interface InstagramAgentWorkflowResult {
   slideCount: number;
   renderedCount: number;
   deliverableId: string;
+  /** SCRUM-242 (T-A10) — present only when this run's branding-guidelines context doc was absent; a human reviewer must see this, not merely a system that fetched it. */
+  contextGrounding?: DegradedContextGroundingMarker;
 }

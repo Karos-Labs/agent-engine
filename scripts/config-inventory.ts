@@ -137,8 +137,19 @@ const READ_PATTERNS: RegExp[] = [
 ];
 /** Pattern 4: the name travels as a string argument into a factory. */
 const FACTORY_ARG = /\w*FromEnv\(\s*["']([A-Z][A-Z0-9_]{2,})["']/g;
-/** Pattern 3: a fallback chain — every name in the call counts as read. */
-const READ_ENV_CHAIN = /readEnv\(\s*env\s*,\s*((?:["'][A-Z][A-Z0-9_]+["']\s*,?\s*)+)\)/g;
+/**
+ * Pattern 3: a fallback chain — every name in the call counts as read.
+ *
+ * Matches the call by SHAPE (`<identifier>(env, "A", "B", ...)`), not by the
+ * literal name `readEnv`. `create-model-router-from-env.ts`'s `readRegion` is
+ * a thin wrapper around `readEnv` — `readRegion(env, "GEMINI_VERTEX_LOCATION",
+ * "CLOUD_ML_REGION", "VERTEX_AI_LOCATION")` — and a name-literal match missed
+ * both `GEMINI_VERTEX_LOCATION` and `MODEL_GARDEN_REGION`, the two names that
+ * flow through `readRegion` and nowhere else. Matching the shape instead of
+ * the name catches `readRegion` and any future same-shaped wrapper without
+ * needing another hardcoded function name.
+ */
+const READ_ENV_CHAIN = /\b[A-Za-z_$][\w$]*\(\s*env\s*,\s*((?:["'][A-Z][A-Z0-9_]+["']\s*,?\s*)+)\)/g;
 
 export interface Inventory {
   readByCode: Map<string, Set<string>>;

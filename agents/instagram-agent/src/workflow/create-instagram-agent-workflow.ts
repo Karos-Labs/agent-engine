@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentTool, AgentToolRegistry, GateResponse, ModelRouter, PromptStore, TemplateFeedback } from "@agent-engine/core";
-import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, toAgentContext } from "@agent-engine/workflow";
+import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, readContextDoc, enforceContextDocPolicy, toAgentContext } from "@agent-engine/workflow";
 import type { RenderCarouselInput, RenderCarouselResult } from "@agent-engine/tool-karos-publish";
 import { InstagramCopyAgent } from "../agent/instagram-copy-agent.js";
 import { InstagramImageVettingAgent } from "../agent/instagram-image-vetting-agent.js";
@@ -21,11 +21,12 @@ import {
   templateFileName,
   type TemplateStore,
 } from "@agent-engine/tool-karos-templates";
-import { brandLogoDataUri, downloadBrandLogo, parseBrandLogoDataUri } from "@agent-engine/tool-karos-media";
+import { brandLogoDataUri, downloadBrandLogo, parseBrandLogoDataUri, type BrandLogoPlacement } from "@agent-engine/tool-karos-media";
 import { buildBrandHeadHtml, buildBrandLogoBodyHtml, deriveBrandRenderTokens, planBrandLogo } from "./brand-render-tokens.js";
 import { ARCHETYPE_TEMPLATE_FILES, assembleSlidesData, checkSlidesData, resolveLayout } from "./slides-data.js";
 import { checkCraftHygiene } from "./craft-hygiene.js";
 import { checkExpectedScript, languageGateText, runLanguageFluency, LANGUAGE_FLUENCY_STEP_ID, LANGUAGE_SCRIPT_STEP_ID } from "./language-gate.js";
+import { assessBrandAssetPresence, buildElevatedVisualQaCriteria, checkPaletteWithinKit } from "./visual-qa-pre-checks.js";
 import {
   BrandTokensSchema,
   type BrandTokens,
@@ -167,6 +168,17 @@ async function persistReviewFeedback(
      * an already-registered row.
      */
     customArchetypesByTemplateId?: ReadonlyMap<string, SlideCustomArchetype> | undefined;
+    /**
+     * SCRUM-306 (AU23): this round's full draft, verbatim — attached to the
+     * feedback row only on `reject` (see `persistReviewFeedbackToMemory`'s
+     * doc for why: an approval already has a durable copy via
+     * `ledger.writeDeliverable`, and a revise round's draft is superseded by
+     * the next attempt). Serialized here rather than in the shared helper,
+     * same reason that helper takes `content` as a plain string rather than
+     * a generic `output: T` — Layer 1 makes no content judgments, so nothing
+     * shared knows how to turn a `DraftResult` into text.
+     */
+    content?: string | undefined;
   },
 ): Promise<void> {
   const note = input.response.feedback ?? input.response.reason;
@@ -183,6 +195,7 @@ async function persistReviewFeedback(
             note,
             revision: input.revision,
             runId: wf.runId,
+            ...(input.content !== undefined ? { content: input.content } : {}),
           },
           { ctx },
         ),
@@ -597,6 +610,40 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         return typeof language === "string" && language.trim().length > 0 ? language.trim() : null;
       })) ?? undefined;
 
+    // ── 02e: the client's projected branding-guidelines context doc (C1/SCRUM-209, T-A9) ──
+    //
+    // instagram-agent is one of two agents this ticket calls "the agents that
+    // read nothing" — before this step, nothing here ever called
+    // `client.getContextDoc`, so a client's own visual-identity guidance
+    // (logo/lockup rules, imagery do's and don'ts, palette usage beyond the
+    // bare `accentColor` hex `instagramBrandTokens` already carries) never
+    // reached the copy-writing prompt, even though this is a VISUAL post
+    // whose `visualNeed`s and archetype choices are exactly what such
+    // guidance is meant to steer. `branding-guidelines` (not `brand-voice`)
+    // is the deliberate choice here: voice/tone already reaches this prompt
+    // through `clientVoiceContext` (02b) and `client.getBrand`'s structured
+    // fields (02c/02d); what was missing is the client's stated visual
+    // identity rules, which is what `branding-guidelines` actually is.
+    //
+    // Best-effort and non-blocking, same as every other optional context
+    // read here (02b/04f): a client with no projected branding-guidelines
+    // doc yet drafts exactly as this workflow did before this step existed —
+    // T-A10, not this ticket, decides whether a MISSING doc should ever
+    // change that.
+    const brandingGuidelines = await readContextDoc(wf, tools, ctx, "branding-guidelines", "02e-load-branding-guidelines");
+
+    // ── 02f: SCRUM-242 (T-A10) — stop failing open. instagram-agent's row in the
+    // one shared policy table (CONTEXT_DOC_POLICY) is DEGRADED, not BLOCK: this is
+    // channel copy a human reviews before it ships, so the run still completes —
+    // but the marker `enforceContextDocPolicy` returns is what makes "this ran
+    // with zero real grounding" visible instead of indistinguishable from a
+    // genuinely grounded post (the ticket's own "worst of the three options").
+    // Threaded into the deliverable AND the workflow's own return value below —
+    // see those sites' own comments for why a step checkpoint alone isn't enough.
+    const contextGrounding = await wf.step.code("02f-enforce-context-doc-policy", () =>
+      enforceContextDocPolicy({ agentId: "instagram-agent", docs: { "branding-guidelines": brandingGuidelines } }),
+    );
+
     const brandFetch = options.fetchImpl ?? fetch;
     let cachedLogoDataUri: string | undefined;
     /**
@@ -634,6 +681,30 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     };
 
     /**
+     * The one place this run decides whether a brand logo will render at all
+     * this attempt, and (AU38, SCRUM-322) where it goes and whether it
+     * survives this client's ground — from the mark's own decoded pixels
+     * against the ground token the slide will actually render on, never from
+     * a sentence in a prompt asking for a legible placement.
+     *
+     * Factored out of `brandFragments` (SCRUM-324/AU40) so the deterministic
+     * visual-QA pre-check (step 08a2 below) can read the SAME placement
+     * `brandFragments` itself renders from, rather than re-deriving it — the
+     * two must never be able to disagree about whether a logo shipped this
+     * attempt.
+     */
+    const brandLogoAssessment = async (): Promise<{ logoDataUri?: string; placement?: BrandLogoPlacement }> => {
+      if (brandKit === undefined) return {};
+      const logoDataUri = await ensureBrandLogoDataUri();
+      const download = logoDataUri !== undefined ? parseBrandLogoDataUri(logoDataUri) : undefined;
+      const placement =
+        download !== undefined
+          ? planBrandLogo(brandKit, download, { hasSeriesBadge: frozen.brandTokens.seriesBadge !== undefined })
+          : undefined;
+      return { ...(logoDataUri !== undefined ? { logoDataUri } : {}), ...(placement !== undefined ? { placement } : {}) };
+    };
+
+    /**
      * The fragments (head: font links + token sheet + badge variant; body:
      * the logo `<img>`) spliced into every rendered document. Re-derived
      * from the checkpointed `brandKit` on every call — the string work is
@@ -642,19 +713,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
      */
     const brandFragments = async (): Promise<{ head?: string; body?: string }> => {
       if (brandKit === undefined) return {};
-      const logoDataUri = await ensureBrandLogoDataUri();
-      // AU38 (SCRUM-322): WHERE the mark goes and WHETHER it survives this
-      // client's ground are decided here, by `planBrandLogo`, from the mark's
-      // own decoded pixels against the ground token the slide will actually
-      // render on — not by a sentence in a prompt asking for a legible
-      // placement. A plan whose decision is `omit` emits neither the rules
-      // nor the `<img>`: an illegible mark ships as nothing, never as a
-      // smudge, and never as a held run.
-      const download = logoDataUri !== undefined ? parseBrandLogoDataUri(logoDataUri) : undefined;
-      const placement =
-        download !== undefined
-          ? planBrandLogo(brandKit, download, { hasSeriesBadge: frozen.brandTokens.seriesBadge !== undefined })
-          : undefined;
+      const { logoDataUri, placement } = await brandLogoAssessment();
+      // A plan whose decision is `omit` emits neither the rules nor the
+      // `<img>`: an illegible mark ships as nothing, never as a smudge, and
+      // never as a held run.
       const showLogo = logoDataUri !== undefined && placement !== undefined && placement.decision !== "omit";
       return {
         head: buildBrandHeadHtml(brandKit, showLogo ? { logo: placement } : {}),
@@ -1246,6 +1308,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // verbatim — this is where a language requirement like Geektime's
         // "Hebrew-language technology site" actually lives. See step 02b.
         ...(clientVoiceContext !== undefined ? { clientVoiceContext } : {}),
+        // The client's projected branding-guidelines context doc (C1,
+        // T-A9) — visual-identity rules distinct from the voice/tone
+        // `clientVoiceContext` already carries. See step 02e.
+        ...(brandingGuidelines !== undefined ? { brandingGuidelines } : {}),
         // The client's intel report, distilled to what steers copy (voice
         // rows, positioning, whitespace opportunities) — authoritative
         // client knowledge, read BEFORE external facts. See step 04f.
@@ -1857,15 +1923,63 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       const renderedAttempt = renderResolved.result as RenderCarouselResult;
       const slidesDataForQa = slidesDataResolved;
 
-      // ── 08b: post-render visual QA (Fix 2) — a text-proxy stand-in for real
-      //         pixel inspection (see InstagramVisualQaAgent's own doc
-      //         comment). A failure here `continue`s the SAME retry loop as
+      // ── 08a2: deterministic visual-QA pre-checks (SCRUM-324/AU40) —
+      //         code answers every question that HAS a factual answer,
+      //         before the model is ever asked to grade anything. See
+      //         `visual-qa-pre-checks.ts`'s own header for the full
+      //         rationale, including why "is the logo present" is a FACT fed
+      //         to the judge rather than a gate on the attempt (brand
+      //         furniture must never be able to hold a run — same invariant
+      //         `brandFragments`/`brand-logo.ts` state repeatedly), while
+      //         "are the palette tokens within the kit" genuinely gates and
+      //         short-circuits the model call entirely: an off-kit accent is
+      //         a real render defect, not an unreachable third-party asset. ──
+      const preChecks = await wf.step.code(rev(`08a2-visual-qa-pre-checks-attempt-${attempt}`), async () => {
+        const { placement } = await brandLogoAssessment();
+        const usedHexes = slidesDataForQa.slides
+          .map((s) => s.fields["accentColor"])
+          .filter((h): h is string => typeof h === "string");
+        return {
+          paletteGate: checkPaletteWithinKit(usedHexes, brandKit?.palette ?? []),
+          brandAsset: assessBrandAssetPresence({
+            configuredLogoUrl: brandKit?.logoUrl,
+            hasDownload: placement !== undefined,
+            placement,
+          }),
+        };
+      });
+
+      if (!preChecks.paletteGate.ok) {
+        // The whole cost claim this ticket has to prove: this attempt never
+        // reaches `qaAgent` at all — zero model calls for a defect code
+        // already knows about with an `includes()` check.
+        lastSelfCheckReason = `visual QA deterministic pre-check failed on attempt ${attempt} (no model call spent): ${preChecks.paletteGate.reason}`;
+        continue;
+      }
+
+      // ── 08b: post-render visual QA (Fix 2/AU40) — a text-proxy stand-in
+      //         for real pixel inspection (see InstagramVisualQaAgent's own
+      //         doc comment). Judges `check: "render"` rules from the frozen
+      //         config PLUS the elevated criteria this ticket adds
+      //         (composition richness, font hierarchy, brand-asset
+      //         integration, colour harmony) — every one of which the
+      //         08a2 pre-check has already stripped of its factual half, so
+      //         the model grades only the aesthetic residue code cannot
+      //         compute. A failure here `continue`s the SAME retry loop as
       //         step 07/07b above, matching carousel-agent-v2 SKILL.md step
       //         08's "a fail here is RETURN: 05, because it is the copy or
       //         the layout, not the code." ──
+      const elevatedCriteria = buildElevatedVisualQaCriteria({ logo: preChecks.brandAsset, kitPalette: brandKit?.palette ?? [] });
       const qaExec = await wf.step.agent(rev(`08b-visual-qa-attempt-${attempt}`), qaAgent, {
         slides: slidesDataForQa.slides.map((s) => ({ n: s.n, fields: s.fields, images: s.images })),
-        renderRules: renderRules.map((r) => ({ id: r.id, description: r.description })),
+        renderRules: [...renderRules.map((r) => ({ id: r.id, description: r.description })), ...elevatedCriteria],
+        // Facts the judge must not re-derive (per-criterion doc comments in
+        // `visual-qa-pre-checks.ts`) — present only when the corresponding
+        // elevated criterion above was actually included.
+        ...(preChecks.brandAsset.present
+          ? { brandAssetContext: { corner: preChecks.brandAsset.corner, scrimmed: preChecks.brandAsset.scrimmed } }
+          : {}),
+        ...(brandKit !== undefined && brandKit.palette.length > 0 ? { brandPalette: brandKit.palette } : {}),
       });
       if (qaExec.status === "tooling_error" || qaExec.status === "budget_exceeded") {
         throw new WorkflowToolingFailure(`visual QA step resolved to "${qaExec.status}" on attempt ${attempt}/${MAX_SELF_CHECK_ATTEMPTS}`);
@@ -1910,10 +2024,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // "the shorter hooks are working" is teaching the system something, and a
     // store that only remembers complaints learns a distorted version of what
     // a client wants.
-    // `runReviewCycle`'s `onDecision` receives the gate response but not the
-    // draft that earned it (see `packages/workflow/src/primitives/
-    // review-cycle.ts` — deliberately, Layer 1 knows nothing about carousels
-    // or templates). Captured here, in `attempt`, right before each round's
+    // `runReviewCycle`'s `onDecision` now also receives the round's raw
+    // `output` (SCRUM-306/AU23), but `templateFeedback` handling below needs
+    // the SLIDES specifically, keyed for `customArchetypesByTemplateId` — so
+    // this local capture stays rather than re-deriving that from `output` on
+    // every decision. Captured here, in `attempt`, right before each round's
     // draft is returned — safe because the cycle is a strict, single-
     // threaded loop (attempt -> buildGate -> gate -> onDecision, one round
     // fully resolves before the next begins), so `onDecision` always reads
@@ -2026,6 +2141,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           templateFeedback,
           templateStore: options.templateStore,
           customArchetypesByTemplateId,
+          // SCRUM-306 (AU23): `latestDraftForReview` is exactly what this
+          // round's reviewer looked at (see its own doc comment above, on
+          // why reading it here is safe) — only serialized on reject, for
+          // the same reason every other review-gated agent restricts this
+          // to reject.
+          content: response.decision === "reject" && latestDraftForReview !== undefined ? JSON.stringify(latestDraftForReview) : undefined,
         });
       },
     });
@@ -2189,6 +2310,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             caption,
             slides: slidesData.slides,
             rendered: rendered.rendered,
+            // SCRUM-242 (T-A10): the DEGRADED marker, on the actual persisted
+            // deliverable a reviewer looks at — see 02f's own comment.
+            ...(contextGrounding.decision === "degraded" ? { contextGrounding: contextGrounding.marker } : {}),
           },
         },
         { ctx },
@@ -2264,6 +2388,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       slideCount: slidesData.slides.length,
       renderedCount: rendered.rendered.length,
       deliverableId,
+      // SCRUM-242 (T-A10): same DEGRADED marker, on the workflow's own typed
+      // return value — see 02f's own comment.
+      ...(contextGrounding.decision === "degraded" ? { contextGrounding: contextGrounding.marker } : {}),
     };
   };
 }

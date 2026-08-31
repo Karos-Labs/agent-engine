@@ -78,7 +78,10 @@ const INTEL_REPORT_DRAFT_STEP_CONFIG: AgentStepConfig<IntelReportOutput> = {
   // `DEFAULT_INTEL_PROMPT`, adapted honestly for this run's lack of live
   // web-search/web-fetch tools (no "web-observed" claims — see the prompt's
   // own research note). Same version-bump discipline as `linkedin-craft@2`.
-  skillRef: "intel-report-craft@2",
+  // v3 (SCRUM-241/T-A9) adds §3, documenting `targetAudience` and
+  // `marketStrategy` — the client's own projected context docs (C1) — and
+  // renumbers §§3-11 to §§4-12 accordingly. v2 stays frozen.
+  skillRef: "intel-report-craft@3",
 };
 
 export interface IntelReportDraftAgentOptions {

@@ -19,6 +19,16 @@ const ALL_STEP_IDS = [
   "00-load-client-context",
   "01-research-pull",
   "01b-read-past-feedback",
+  // The client's projected target-audience and market-strategy context docs
+  // (T-A9), best-effort — see the workflow's own 01c/01d comment.
+  "01c-load-target-audience",
+  "01d-load-market-strategy",
+  // SCRUM-242 (T-A10): the shared BLOCK/DEGRADED policy check — a real step
+  // here (not just a pure function call) so its own outcome is checkpointed
+  // and visible the same way every other read is. `setupTestEnvironment()`'s
+  // default fixture keeps both context docs present, so this resolves "ok"
+  // and the run proceeds exactly as before this ticket.
+  "01e-enforce-context-doc-policy",
   "02-generate-report",
   "03-verify-numbers-sourced",
   // Revision-scoped: `-r0` is the first review round. A `revise` decision
@@ -217,5 +227,54 @@ describe("end-to-end: the Intel Report agent workflow (RFC-05 §3)", () => {
 
     const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
     expect(deliverables).toHaveLength(0);
+  });
+
+  // SCRUM-306 (AU23): the lost signal this ticket is about. Before this, a
+  // reject wrote only `reason` to `memory.appendFeedback` — the report ITSELF
+  // survived nowhere durable, only inside this run's own step checkpoints,
+  // which a future run for this client never reads. This is the
+  // write-then-read proof, same shape as the approval test above, but
+  // asserting the drafted report comes back BYTE-IDENTICAL (a truncated or
+  // re-serialized-with-different-key-order copy would still fail a strict
+  // string-equality check, which is deliberately what this asserts rather
+  // than a looser `toMatchObject`/`toEqual` on the parsed value alone).
+  it("persists the rejected report's content, byte-identical, alongside the rejection reason (AU23)", async () => {
+    const promptStore = makePromptStore();
+    const router = goodReportRouter();
+    const workflowFn = createIntelReportAgentWorkflow({ tools: env.tools, promptStore, router });
+
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+
+    await engine.run(workflowFn, params);
+    await engine.resolveGate(params.runId, "04-batch-review-r0", {
+      decision: "reject",
+      actor: "jane@karoslabs.com",
+      reason: "dimension scores look inflated this run",
+      at: new Date(2026, 7, 17).toISOString(),
+    });
+
+    const result = await engine.run(workflowFn, params);
+    expect(result.status).toBe("held");
+
+    const readOutcome = await env.tools["memory.readFeedback"]!.execute(
+      { productId: "intel-report-agent", limit: 10 },
+      { ctx: { ...params, runId: "verify", metadata: {} } },
+    );
+    expect(readOutcome.status).toBe("success");
+    if (readOutcome.status !== "success") throw new Error("unreachable");
+    const entries = (readOutcome.result as { entries: Array<{ decision: string; note: string; content?: string }> }).entries;
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.decision).toBe("reject");
+    expect(entries[0]?.note).toBe("dimension scores look inflated this run");
+
+    // The exact bytes `attempt` produced this round, not a paraphrase: the
+    // drafting fixture is `goodIntelReport()`, and `JSON.stringify` of it is
+    // exactly what the shared `onDecision` wiring serializes on reject.
+    expect(entries[0]?.content).toBe(JSON.stringify(goodIntelReport()));
+    // Reading it back the other way — parse, then deep-equal the fixture —
+    // proves round-tripping through the store didn't reorder keys, coerce a
+    // type, or drop a field either.
+    expect(JSON.parse(entries[0]!.content!)).toEqual(goodIntelReport());
   });
 });

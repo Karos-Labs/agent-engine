@@ -314,6 +314,20 @@ describe("tiktok-agent review cycle (runReviewCycle)", () => {
     expect(h.calls.filter((c) => c === "topics.release")).toHaveLength(1);
     expect(h.calls).not.toContain("topics.commit");
     expect(h.calls).not.toContain("ledger.writeDeliverable");
+
+    // SCRUM-306 (AU23): the clip's content used to be lost the moment the run
+    // held — never in `ledger.writeDeliverable` (asserted above it never
+    // ran), never anywhere else durable. It must now be on the SAME feedback
+    // row as the rejection reason, not a second sink.
+    expect(h.feedback).toHaveLength(1);
+    expect(h.feedback[0]).toMatchObject({ decision: "reject", note: "off-brand this week" });
+    const content = h.feedback[0]!["content"];
+    expect(typeof content).toBe("string");
+    const parsedDraft = JSON.parse(content as string) as { commentary: unknown; renderedPath: unknown; uploaded: unknown };
+    // The exact commentary the reviewer was shown and turned down — not a
+    // paraphrase of it.
+    expect(parsedDraft.commentary).toEqual(FIRST_COMMENTARY);
+    expect(typeof parsedDraft.renderedPath).toBe("string");
   }, 30000);
 
   it("holds at the revision ceiling rather than re-rendering indefinitely, and gives the moment back", async () => {

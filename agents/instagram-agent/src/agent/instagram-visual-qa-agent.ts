@@ -27,16 +27,29 @@ import { VisualQaOutputSchema, type VisualQaOutput } from "../workflow/types.js"
  * `allowedTools: []` — same reasoning as every other bounded agent in this
  * package: the workflow hand-assembles everything this step needs (the
  * rendered slides' fields/images, the frozen render-type rules) ahead of time.
+ *
+ * SCRUM-324 (AU40), `@2`: the workflow now also passes four ELEVATED
+ * criteria as ordinary `renderRules` entries — composition richness, font
+ * hierarchy, brand-asset integration, colour harmony (`visual-qa-pre-checks.ts`)
+ * — and, when relevant, `brandAssetContext`/`brandPalette` facts the model
+ * must treat as already-verified, never re-judge. Every factual half of
+ * those four criteria (is a logo present, is a hex in the kit, does contrast
+ * pass) is answered in code BEFORE this agent ever runs — a deterministic
+ * pre-check failure short-circuits the attempt without a model call at all
+ * (see `create-instagram-agent-workflow.ts`'s 08a2 step). This agent grades
+ * only the aesthetic residue: whether the structured data plausibly reads as
+ * rich/hierarchical/well-integrated/harmonious, not whether the raw facts
+ * are true.
  */
 export class InstagramVisualQaAgent extends BaseAgent<VisualQaOutput> {
   protected readonly config: AgentStepConfig<VisualQaOutput> = {
     id: "instagram-visual-qa",
     description:
-      "Judge a rendered carousel attempt's structured slide data (fields/images, never actual pixels) against the frozen style config's check:'render' rules, and report pass/fail with per-rule findings.",
+      "Judge a rendered carousel attempt's structured slide data (fields/images, never actual pixels) against the frozen style config's check:'render' rules plus the elevated composition/font-hierarchy/brand-asset-integration/colour-harmony criteria, and report pass/fail with per-rule findings.",
     allowedTools: [],
     outputSchema: VisualQaOutputSchema,
     // Pinned — matches every other agent in this package (RFC-02 §5).
     modelPolicy: resolveModelPolicy("instagram-visual-qa", { policy: "pinned", model: "claude-sonnet-4-6" }),
-    skillRef: "instagram-visual-qa@1",
+    skillRef: "instagram-visual-qa@2",
   };
 }

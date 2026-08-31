@@ -111,7 +111,7 @@ describe("DefaultModelRouter — vendor dispatch", () => {
 
     await expect(
       router.complete("classify this", OutputSchema, { policy: "commodity", model: "gpt-4o-mini", vendor: "openai-compatible" }),
-    ).rejects.toThrow(/OPENAI_COMPATIBLE_BASE_URL/);
+    ).rejects.toThrow(/Vertex AI only/);
   });
 
   it("completeAlias resolves the alias (always anthropic, per the Studio's own table) before dispatching", async () => {

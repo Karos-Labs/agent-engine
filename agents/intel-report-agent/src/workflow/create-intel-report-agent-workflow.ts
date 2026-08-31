@@ -9,6 +9,8 @@ import type {
 import { routeContextDocumentModel, type ContextDocumentRoutingOptions } from "@agent-engine/core";
 import {
   readLatestBrandVoice,
+  readContextDoc,
+  enforceContextDocPolicy,
   readRunDirection,
   runDirectionField,
   type WorkflowContext,
@@ -157,6 +159,41 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
     // perfectly well without it.
     const pastFeedback = await readPastFeedback(wf, tools, ctx, "01b-read-past-feedback");
 
+    // ── 01c/01d: the client's projected target-audience and market-strategy context docs (C1/SCRUM-209, T-A9) ──
+    //
+    // Two separate doc types, not one combined read, and each threaded into
+    // the draft prompt as its own named field: `targetAudience` steers WHO
+    // the report's positioning/growth analysis should be written for, and
+    // `marketStrategy` steers WHAT competitive lane the client says it is
+    // playing in — a report that only knew the competitor list (already read
+    // at 00-load-client-context) but not the client's own stated audience or
+    // strategy could rank a competitor's move as a threat or an opportunity
+    // in either direction depending on who is actually meant to read this
+    // report. Unlike `readLatestBrandVoice`, these ARE checkpointed
+    // (`wf.step.code` inside `readContextDoc`): a target-audience/
+    // market-strategy document is client-authored reference material, not
+    // something a reviewer edits mid-review the way a Brand Voice tweak
+    // prompts a revision — the "always latest" freshness concern that
+    // function's own doc comment describes does not apply here.
+    //
+    // Best-effort and non-blocking, same as every other optional context
+    // read in this workflow: a client with neither doc yet projected drafts
+    // exactly as this workflow did before this ticket.
+    const targetAudience = await readContextDoc(wf, tools, ctx, "target-audience", "01c-load-target-audience");
+    const marketStrategy = await readContextDoc(wf, tools, ctx, "market-strategy", "01d-load-market-strategy");
+
+    // ── 01e: SCRUM-242 (T-A10) — stop failing open. intel-report-agent's row in the
+    // one shared policy table (CONTEXT_DOC_POLICY) is BLOCK: this is a client-facing
+    // deliverable that names external parties (competitors), so drafting it with zero
+    // real grounding — generic analysis that reads exactly like a grounded report —
+    // is worse than not drafting it at all. `enforceContextDocPolicy` throws
+    // `WorkflowBlockedIntake` itself when EVERY context doc this agent reads is
+    // absent (not merely one of the two — see that function's own doc comment);
+    // nothing here branches on the decision, the shared table already made it.
+    await wf.step.code("01e-enforce-context-doc-policy", () =>
+      enforceContextDocPolicy({ agentId: "intel-report-agent", docs: { "target-audience": targetAudience, "market-strategy": marketStrategy } }),
+    );
+
     // ── 02-03: generate the report, then verify its numeric claims — one full drafting pass ──
     /**
      * One full drafting pass: generate the report, then verify its numbers
@@ -234,6 +271,10 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
         // when the client has no Brand Voice set, so a client without one
         // sends a byte-identical prompt to what it sent before.
         ...(brandVoice.voice !== undefined ? { brandVoice: brandVoice.voice } : {}),
+        // The client's projected target-audience and market-strategy
+        // context docs (T-A9), best-effort. See 01c/01d's own comment.
+        ...(targetAudience !== undefined ? { targetAudience } : {}),
+        ...(marketStrategy !== undefined ? { marketStrategy } : {}),
         competitors: clientContext.competitors,
         research: { query: research.query, result: research.result },
         // Two distinct steers, kept apart on purpose: `pastFeedback` is what
@@ -286,8 +327,21 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
         requiredRole: "account_manager",
         timeout: { duration: "24h", onTimeout: "hold" },
       }),
-      onDecision: async ({ revision, response }) => {
-        await persistReviewFeedbackToMemory(wf, tools, ctx, revision, response);
+      onDecision: async ({ revision, response, output }) => {
+        // SCRUM-306 (AU23): a reject's drafted content previously had nowhere
+        // durable to go — it lived only in this round's step checkpoints and
+        // was lost the moment the run held. Attached only on reject: an
+        // approval's content already has a durable copy via
+        // `ledger.writeDeliverable`, and a revise round's draft is superseded
+        // by the next attempt.
+        await persistReviewFeedbackToMemory(
+          wf,
+          tools,
+          ctx,
+          revision,
+          response,
+          response.decision === "reject" ? JSON.stringify(output) : undefined,
+        );
       },
     });
     const report = review.output;

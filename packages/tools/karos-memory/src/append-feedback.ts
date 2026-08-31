@@ -3,7 +3,8 @@ import type { IdempotentWriteResult, WorkspaceStoreLike } from "@agent-engine/to
 import { defineTool, success } from "@agent-engine/tool-common";
 
 // 1.0.1 (SCRUM-296/AU11): removed the redundant re-parse of already-validated input (both tools below share this constant).
-const TOOL_VERSION = "1.0.1";
+// 1.1.0 (SCRUM-306/AU23): added optional `content` — see its own field doc.
+const TOOL_VERSION = "1.1.0";
 
 export const AppendFeedbackInputSchema = z.object({
   feedbackId: z
@@ -19,6 +20,22 @@ export const AppendFeedbackInputSchema = z.object({
   note: z.string().min(1).describe("The reviewer's words. The whole point of the row."),
   revision: z.number().int().nonnegative().default(0).describe("Which revision round produced the output being judged."),
   runId: z.string().min(1).optional().describe("The run this came from, for tracing a preference back to what prompted it."),
+  // SCRUM-306 (AU23): the lost half of the signal. A reject (or any other
+  // decision) used to be recorded as `note` alone — why a reviewer said no —
+  // with the actual thing they said no TO surviving only in step checkpoints,
+  // never reaching this pipeline. `content` is that thing, when the caller
+  // has one to attach. No `.min()`/length cap and no trimming anywhere on the
+  // write path: this is stored and read back BYTE-IDENTICAL on purpose — a
+  // truncated or summarized copy of exactly the text a client rejected would
+  // defeat the reason it's captured at all. Optional because not every
+  // decision has drafted content worth a second copy (an approval's content
+  // already has a durable, full copy via `ledger.writeDeliverable`).
+  content: z
+    .string()
+    .optional()
+    .describe(
+      "The exact drafted content this decision judged, verbatim — not a summary or excerpt. Stored and read back byte-identical, with no length cap. Typically attached on `reject`, where the content would otherwise survive only in step checkpoints and never reach this pipeline.",
+    ),
 });
 export type AppendFeedbackInput = z.input<typeof AppendFeedbackInputSchema>;
 
@@ -45,7 +62,7 @@ export function createAppendFeedback(store: WorkspaceStoreLike) {
   return defineTool<AppendFeedbackInput, IdempotentWriteResult>({
     name: "memory.appendFeedback",
     description:
-      "Durable review feedback, per client — a person's verdict (approve/revise/reject) plus their note, written for every decision including approvals so the system learns what's working, not only what's wrong. Idempotent on feedbackId, so a replayed run appends one row.",
+      "Durable review feedback, per client — a person's verdict (approve/revise/reject) plus their note, written for every decision including approvals so the system learns what's working, not only what's wrong. Optionally carries the exact drafted content the decision judged (byte-identical, uncapped) — the WHAT alongside the note's WHY. Idempotent on feedbackId, so a replayed run appends one row.",
     version: TOOL_VERSION,
     inputSchema: AppendFeedbackInputSchema,
     async execute(input, { ctx }) {
@@ -58,6 +75,9 @@ export function createAppendFeedback(store: WorkspaceStoreLike) {
         note: input.note,
         revision: input.revision,
         ...(input.runId !== undefined ? { runId: input.runId } : {}),
+        // Verbatim, not re-trimmed/re-capped here or anywhere upstream — see
+        // the field's own schema doc for why byte-identical is the point.
+        ...(input.content !== undefined ? { content: input.content } : {}),
         at: Date.now(),
       });
       return success<IdempotentWriteResult>({ id: input.feedbackId, created });
@@ -87,6 +107,8 @@ export interface FeedbackEntry {
   note: string;
   revision: number;
   runId?: string;
+  /** The exact drafted content this decision judged, when one was attached. Byte-identical to what was written — see `AppendFeedbackInputSchema`'s `content` field. */
+  content?: string;
   at: number;
 }
 

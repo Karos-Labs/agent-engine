@@ -149,6 +149,7 @@ export function goodCraftVerdict() {
 export interface TestEnvironment {
   tmpRoot: string;
   landingConfig: LandingEngineConfig;
+  store: WorkspaceStore;
   tools: ReturnType<typeof createAllKarosTools>;
   cleanup: () => Promise<void>;
 }
@@ -159,8 +160,24 @@ export interface TestEnvironment {
 // placeholder is what let every content agent draft from nothing for months.
 // Tests still need deterministic offline data, so they opt in here; nothing in
 // `apps/` does.
-/** Sets up the real FORGE fixture as `templateRoot` (read-only) + an isolated bundle for one client, and merges karos-landing's tools into the full Layer 3 registry — the same pattern `agents/branded-shorts-agent` uses for `createKarosVideoTools()` (both are excluded from `createAllKarosTools(undefined, undefined, { scraper: createOfflineScraper() })`'s own default bundle). */
-export async function setupTestEnvironment(clientSlug: string): Promise<TestEnvironment> {
+/**
+ * Sets up the real FORGE fixture as `templateRoot` (read-only) + an isolated
+ * bundle for one client, and merges karos-landing's tools into the full
+ * Layer 3 registry — the same pattern `agents/branded-shorts-agent` uses for
+ * `createKarosVideoTools()` (both are excluded from
+ * `createAllKarosTools(undefined, undefined, { scraper: createOfflineScraper() })`'s
+ * own default bundle).
+ *
+ * `opts.withContextDocs` (default `true`, SCRUM-242/T-A10): landing-builder-agent's
+ * row in the shared CONTEXT_DOC_POLICY table is BLOCK, so every pre-existing
+ * test in this suite that doesn't care about grounding specifically (feedback
+ * rounds, gate behavior, rebuild mode) needs SOME product-information content
+ * on file or it now resolves to `blocked_intake` before ever drafting.
+ * `context-doc-grounding.test.ts`'s own BLOCK case passes `withContextDocs: false`
+ * to get genuine, total absence.
+ */
+export async function setupTestEnvironment(clientSlug: string, opts: { withContextDocs?: boolean } = {}): Promise<TestEnvironment> {
+  const withContextDocs = opts.withContextDocs ?? true;
   const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "landing-builder-agent-test-"));
   const engineClientsRoot = path.join(tmpRoot, "clients");
   const bundlesRoot = path.join(tmpRoot, "bundles");
@@ -173,6 +190,9 @@ export async function setupTestEnvironment(clientSlug: string): Promise<TestEnvi
   const landingConfig: LandingEngineConfig = { templateRoot: REAL_FORGE_FIXTURE_SITE, engineClientsRoot, bundlesRoot };
   const store = new WorkspaceStore(workspaceRoot);
   const tools = { ...createAllKarosTools(store, undefined, { scraper: createOfflineScraper() }), ...createKarosLandingTools(landingConfig) };
+  if (withContextDocs) {
+    await store.writeJson(clientSlug, ["context", "product-information"], { markdown: "Default test fixture: general product description for test coverage." });
+  }
 
-  return { tmpRoot, landingConfig, tools, cleanup: () => fs.rm(tmpRoot, { recursive: true, force: true }) };
+  return { tmpRoot, landingConfig, store, tools, cleanup: () => fs.rm(tmpRoot, { recursive: true, force: true }) };
 }

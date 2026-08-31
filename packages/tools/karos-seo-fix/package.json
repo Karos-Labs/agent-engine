@@ -1,0 +1,18 @@
+{
+  "name": "@agent-engine/tool-karos-seo-fix",
+  "private": true,
+  "version": "0.0.1",
+  "description": "SEO/GEO fix actuator (T-A17 / SCRUM-261) — dispatches a routed FiredRecommendation to a generic, per-fixAction artifact generator. Produces a reviewable artifact only; never writes to a client's live site and never holds a client CMS credential.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "pretest": "node ../../../scripts/check-dist-freshness.mjs",
+    "test": "npm run typecheck && vitest run"
+  },
+  "dependencies": {
+    "@agent-engine/tool-karos-seo-geo": "^0.0.1"
+  }
+}

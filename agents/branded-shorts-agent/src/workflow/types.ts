@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { DegradedContextGroundingMarker } from "@agent-engine/workflow";
 
 /**
  * The per-upload intake (SKILL.md's `assets/INTAKE-REQUEST.md`, RFC-06 §7).
@@ -215,4 +216,6 @@ export interface BrandedShortsWorkflowResult {
   graphicsAttempts: number;
   /** Non-fatal advisories carried forward from `build_short.py`'s stdout (e.g. caption-density) — surfaced here, never silently dropped (P0#3 audit finding). */
   renderWarnings: string[];
+  /** SCRUM-242 (T-A10) — present only when this run's branding-guidelines context doc was absent; a human reviewer must see this, not merely a system that fetched it. */
+  contextGrounding?: DegradedContextGroundingMarker;
 }

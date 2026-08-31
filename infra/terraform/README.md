@@ -92,9 +92,28 @@ never be applied unread against production).
 
 ### Step 2 — `plan`, read it, then `apply`
 
+**This is the drift check, and it is the one step this session could not
+run.** No GCP credentials and no network path out of this sandbox reach a
+real project — `terraform init`/`plan`/`apply` were never executed against
+`karoscmo-prep` or `karoscmo`, only reviewed by reading. The exact runnable
+sequence, unchanged from what a credentialed run needs, is:
+
 ```bash
+cd infra/terraform
+terraform init \
+  -backend-config="bucket=<a-state-bucket-you-choose>" \
+  -backend-config="prefix=agent-engine/prep"
+# repeat import commands from Step 1 for prep, then:
 terraform plan  -var-file=envs/prep.tfvars
 terraform apply -var-file=envs/prep.tfvars
+
+# separately, with prod's own state prefix:
+terraform init \
+  -backend-config="bucket=<a-state-bucket-you-choose>" \
+  -backend-config="prefix=agent-engine/prod"
+# repeat import commands from Step 1 for prod, then:
+terraform plan  -var-file=envs/prod.tfvars
+terraform apply -var-file=envs/prod.tfvars
 ```
 
 After a clean import, the plan for everything in the "already exists" rows
@@ -102,6 +121,52 @@ should show little or no change. The plan for `google_storage_bucket.workspace`,
 `google_pubsub_topic.run_jobs_dlq`, and `google_pubsub_subscription.run_jobs_dlq_pull`
 will show **create** — that is expected; those are the net-new resources
 this ticket adds.
+
+**Review checklist for whoever runs the two `plan`s above** — read the full
+output before `apply`, per environment, and do not apply anything that
+surprises you against this list:
+
+1. **Unexpected deletions.** Anything other than the net-new-create three
+   resources above showing `-` (destroy) or `-/+` (replace) is a stop-and-
+   investigate, not a proceed. A replace on `google_storage_bucket.media` or
+   `.artifacts` in particular would mean the import in Step 1 targeted the
+   wrong project/name and Terraform now believes the real bucket needs
+   recreating — never let that apply.
+2. **Resources present in reality but absent from state.** A clean `plan`
+   only tells you about resources this config *declares*; it says nothing
+   about a bucket, topic, or SA that exists in the project and isn't named
+   in any `.tf` file here. That is exactly the `karos-media-assets` and
+   `karoscmo-agent-artifacts` gap in the table above — `terraform plan`
+   will never surface them because Terraform doesn't know to look. Cross-
+   check independently, once credentials exist:
+   ```bash
+   gcloud storage buckets list --project=karoscmo --format='value(name)'
+   gcloud storage buckets list --project=karoscmo-prep --format='value(name)'
+   gcloud pubsub topics list --project=karoscmo
+   gcloud pubsub subscriptions list --project=karoscmo
+   ```
+   and diff the result against this file's declared resource names plus the
+   table above — anything on neither list is a new, undocumented finding,
+   not something this review has already covered.
+3. **Drifted IAM bindings.** `google_*_iam_member` resources are additive,
+   so `plan` will show `+` for a binding that is already granted by hand
+   under a different Terraform-invisible grant path (a group membership, a
+   broader project-level role that already covers it) — that shows as a
+   no-op `apply`, not a `plan` finding, so it will not raise itself. The
+   thing to actually check by hand: `gcloud projects get-iam-policy` /
+   `gcloud storage buckets get-iam-policy` / `gcloud pubsub topics
+   get-iam-policy` on each resource, and confirm no *extra* principal holds
+   a role this config doesn't grant — Terraform only reports what it
+   manages, so a stale hand-added grant (an ex-employee's account, a
+   debugging binding someone forgot to revoke) will not appear in `plan`
+   output at all and needs this separate, manual look.
+4. **The pull-subscription name.** Confirmed in Step 1 already, repeated
+   here because it's the one import most likely to silently create a
+   duplicate rather than failing loudly: if `run_jobs_subscription_name` in
+   either `envs/*.tfvars` does not match the live
+   `PREP_QUEUE_SUBSCRIPTION`/`PROD_QUEUE_SUBSCRIPTION` GitHub variable
+   exactly, `plan` will show a `create` for a subscription that already
+   exists under a different name, not an error.
 
 ### Step 3 — the workspace bucket migration this creates
 
@@ -156,6 +221,10 @@ it does not silently fall back to the old shared bucket.
 
 ## What is deliberately NOT in this config
 
+Hand-provisioned **on purpose**, with the reason written down — this is the
+good case, and the distinction from the next section is the entire point of
+this ticket:
+
 - **Cloud Run services themselves** — `cloudbuild.yaml` /
   `cloudbuild.promote.yaml` deploy those; duplicating that in Terraform
   would create two sources of truth for the same thing.
@@ -169,3 +238,29 @@ it does not silently fall back to the old shared bucket.
   this service — a one-time, already-documented manual step
   (`cloudbuild.yaml`'s header), not part of the buckets/topics/
   subscriptions/DLQs/IAM surface this ticket names.
+
+## Buckets that exist in production and are NOT in this config — the bad case
+
+The three buckets above (`media`, `artifacts`, `workspace`, times two
+environments) are every bucket this repo's own source — env vars,
+cloudbuild substitutions, test fixtures — names. A prior production-bucket
+audit (feeding SCRUM-376/AU74 and this ticket) found three buckets live in
+GCP that do not match that list one-for-one. Checked against this repo's
+source only (no `gcloud` access from here — see above), here is where each
+one actually stands, because "hand-provisioned and undocumented" is the
+failure mode this ticket exists to end, not something to wave through with
+the same shrug as the deliberate exclusions above:
+
+| Bucket | In this Terraform config? | Named by any env var in this repo? | Status |
+|---|---|---|---|
+| `karoscmo-prod-media-assets` | **Yes** — `google_storage_bucket.media` via `envs/prod.tfvars`' `media_bucket_name` | Yes — `GCS_MEDIA_BUCKET` (prod) | Accounted for. Not a gap. |
+| `karos-media-assets` | **No.** No `.tf` file, no `envs/*.tfvars` entry, no variable default names it. | **No.** Not `GCS_MEDIA_BUCKET`, not any other name in `.env.example`, `cloudbuild.yaml`, or `cloudbuild.promote.yaml`. | **Undecided, not deliberate.** This is the other half of AU74's "prod media split-brain" — two buckets that look like the same purpose, only one of which the running services and this IaC know about. This repo cannot tell you which one prod traffic is actually reading from today (that needs `gcloud storage buckets describe` / a live trace, both unavailable here) or whether it holds data nothing else can reach. **Do not add this to Terraform as a second `google_storage_bucket.media`-shaped resource and do not delete it** — either action pre-empts the AU74 decision about which bucket wins. It stays a named, open finding until that decision is made. |
+| `karoscmo-agent-artifacts` (no `-prep-`/`-prod-` in the name — distinct from `karoscmo-prep-agent-artifacts` and `karoscmo-prod-agent-artifacts`, both of which **are** declared above) | **No.** | **No.** Grep across `.env.example`, every `cloudbuild*.yaml`, and this Terraform tree turns up zero references to a bucket by this exact name. | **Orphaned, not deliberate.** 12,011 objects / 7.96 GiB by the same audit, with no running service's environment naming it — nothing currently reads it, writes it, or lists it in its startup config, as far as this repo's source can show. That is a stronger claim than "not yet documented": it means whatever put those objects there is not part of the codebase this repo can see (a deleted feature's leftover output, a manual `gsutil` upload, or a bucket from before the `-prep-`/`-prod-` naming convention existed are all consistent with what's visible from here, and this repo cannot distinguish between them). It needs a human decision — keep it (and if so, name what owns it and import it here), archive it, or delete it after confirming nothing depends on it — not a Terraform resource guessed into existence to make the list feel complete. |
+
+Put plainly: of the three, one is already fully described by this config,
+and two are hand-provisioned *silently* — nobody wrote down what they are
+for, so nobody can tell purposeful from forgotten. Adding them to `storage.tf`
+without that human decision would just convert "silently hand-provisioned"
+into "silently imported," which is not a fix. They are listed here,
+by name, so the next person does not have to re-run the audit to know they
+exist.
