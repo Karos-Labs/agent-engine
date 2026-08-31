@@ -345,18 +345,13 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
   },
   {
     id: "model-vendor-alternatives",
-    title: "Non-Anthropic model vendors (Gemini direct, Model Garden, OpenAI-compatible)",
+    title: "Non-Anthropic model vendors reached through Vertex AI (Gemini, Model Garden)",
     owner: "packages/core (createModelRouterFromEnv)",
-    requires: [
-      { name: "GEMINI_API_KEY", kind: "enhances" },
-      { name: "MODEL_GARDEN_PROJECT_ID", kind: "enhances" },
-      { name: "OPENAI_COMPATIBLE_BASE_URL", kind: "enhances" },
-      { name: "OPENAI_COMPATIBLE_API_KEY", kind: "enhances" },
-      { name: "OPENAI_API_KEY", kind: "enhances" },
-    ],
+    requires: [{ name: "MODEL_GARDEN_PROJECT_ID", kind: "enhances" }],
     whenAbsent:
-      "Those vendors are not built. A step whose modelPolicy names one fails loudly at the point of use naming the exact missing variable — which is correct, and is why this is not a silent degradation.",
-    rationale: "agent_vendor_switching.md: no agent sets a non-default vendor today, so none of these is needed until one does.",
+      "Model Garden is not built. A step whose modelPolicy names it fails loudly at the point of use naming the exact missing variable — which is correct, and is why this is not a silent degradation. (Gemini's own Agent Platform route needs no separate opt-in beyond GEMINI_VERTEX_PROJECT_ID / GOOGLE_CLOUD_PROJECT, already required elsewhere.)",
+    rationale:
+      "agent_vendor_switching.md: no agent sets a non-default vendor today, so this is not needed until one does. AU59/SCRUM-358 (Vertex-only model surface) removed the direct-Gemini (GEMINI_API_KEY) and OpenAI-compatible (OPENAI_COMPATIBLE_BASE_URL / OPENAI_COMPATIBLE_API_KEY / OPENAI_API_KEY) routes outright — nothing reads those five variables any more, so they were dropped from this row rather than left as orphaned rows.",
   },
 
   // ── Security: absences that remove a CHECK, not a feature ────────────────

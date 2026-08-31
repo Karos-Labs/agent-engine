@@ -67,6 +67,17 @@ describe("AU49: configuration inventory", () => {
     }
   });
 
+  it("sees names read only through a readEnv-shaped wrapper, not just readEnv itself", () => {
+    // create-model-router-from-env.ts's `readRegion` wraps `readEnv` and is
+    // the ONLY call site for GEMINI_VERTEX_LOCATION and MODEL_GARDEN_REGION —
+    // a detector keyed to the literal name `readEnv` misses both and reports
+    // them as merely "documented", which is a false demotion of a real read.
+    expect(inventory.readByCode).toContain("GEMINI_VERTEX_LOCATION");
+    expect(inventory.readByCode).toContain("MODEL_GARDEN_REGION");
+    expect(inventory.deltas.documentedButUnread).not.toContain("GEMINI_VERTEX_LOCATION");
+    expect(inventory.deltas.documentedButUnread).not.toContain("MODEL_GARDEN_REGION");
+  });
+
   it("distinguishes the deploy surfaces rather than merging them", () => {
     // deploy-http and deploy-worker are different services with different
     // variables; a file-level view hides that.
