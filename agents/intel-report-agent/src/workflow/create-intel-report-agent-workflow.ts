@@ -327,8 +327,21 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
         requiredRole: "account_manager",
         timeout: { duration: "24h", onTimeout: "hold" },
       }),
-      onDecision: async ({ revision, response }) => {
-        await persistReviewFeedbackToMemory(wf, tools, ctx, revision, response);
+      onDecision: async ({ revision, response, output }) => {
+        // SCRUM-306 (AU23): a reject's drafted content previously had nowhere
+        // durable to go — it lived only in this round's step checkpoints and
+        // was lost the moment the run held. Attached only on reject: an
+        // approval's content already has a durable copy via
+        // `ledger.writeDeliverable`, and a revise round's draft is superseded
+        // by the next attempt.
+        await persistReviewFeedbackToMemory(
+          wf,
+          tools,
+          ctx,
+          revision,
+          response,
+          response.decision === "reject" ? JSON.stringify(output) : undefined,
+        );
       },
     });
     const report = review.output;

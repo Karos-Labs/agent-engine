@@ -168,6 +168,17 @@ async function persistReviewFeedback(
      * an already-registered row.
      */
     customArchetypesByTemplateId?: ReadonlyMap<string, SlideCustomArchetype> | undefined;
+    /**
+     * SCRUM-306 (AU23): this round's full draft, verbatim — attached to the
+     * feedback row only on `reject` (see `persistReviewFeedbackToMemory`'s
+     * doc for why: an approval already has a durable copy via
+     * `ledger.writeDeliverable`, and a revise round's draft is superseded by
+     * the next attempt). Serialized here rather than in the shared helper,
+     * same reason that helper takes `content` as a plain string rather than
+     * a generic `output: T` — Layer 1 makes no content judgments, so nothing
+     * shared knows how to turn a `DraftResult` into text.
+     */
+    content?: string | undefined;
   },
 ): Promise<void> {
   const note = input.response.feedback ?? input.response.reason;
@@ -184,6 +195,7 @@ async function persistReviewFeedback(
             note,
             revision: input.revision,
             runId: wf.runId,
+            ...(input.content !== undefined ? { content: input.content } : {}),
           },
           { ctx },
         ),
@@ -2012,10 +2024,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // "the shorter hooks are working" is teaching the system something, and a
     // store that only remembers complaints learns a distorted version of what
     // a client wants.
-    // `runReviewCycle`'s `onDecision` receives the gate response but not the
-    // draft that earned it (see `packages/workflow/src/primitives/
-    // review-cycle.ts` — deliberately, Layer 1 knows nothing about carousels
-    // or templates). Captured here, in `attempt`, right before each round's
+    // `runReviewCycle`'s `onDecision` now also receives the round's raw
+    // `output` (SCRUM-306/AU23), but `templateFeedback` handling below needs
+    // the SLIDES specifically, keyed for `customArchetypesByTemplateId` — so
+    // this local capture stays rather than re-deriving that from `output` on
+    // every decision. Captured here, in `attempt`, right before each round's
     // draft is returned — safe because the cycle is a strict, single-
     // threaded loop (attempt -> buildGate -> gate -> onDecision, one round
     // fully resolves before the next begins), so `onDecision` always reads
@@ -2128,6 +2141,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           templateFeedback,
           templateStore: options.templateStore,
           customArchetypesByTemplateId,
+          // SCRUM-306 (AU23): `latestDraftForReview` is exactly what this
+          // round's reviewer looked at (see its own doc comment above, on
+          // why reading it here is safe) — only serialized on reject, for
+          // the same reason every other review-gated agent restricts this
+          // to reject.
+          content: response.decision === "reject" && latestDraftForReview !== undefined ? JSON.stringify(latestDraftForReview) : undefined,
         });
       },
     });

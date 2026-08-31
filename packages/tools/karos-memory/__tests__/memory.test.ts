@@ -257,6 +257,59 @@ describe("karos-memory", () => {
       expect(entries.find((e) => e.feedbackId === "fb_1")?.note).toBe("shorter hooks are working");
     });
 
+    // SCRUM-306 (AU23): `content` is the lost half of the signal — the exact
+    // drafted content a decision (typically a `reject`) was about, alongside
+    // the `note` explaining why. No `.min()`/length cap anywhere on this
+    // field (see `AppendFeedbackInputSchema`'s own doc), and this is the
+    // adversarial proof: a multi-line, unicode-bearing string with characters
+    // a naive excerpting/trimming pass would be tempted to mangle, asserted
+    // back with strict `toBe` (not `toContain`/`toMatchObject`) so a
+    // truncated or summarized copy fails this test.
+    it("persists content byte-identical — not trimmed, not truncated, not summarized (AU23)", async () => {
+      const rejectedDraft = JSON.stringify({
+        caption: "🚀 Limited time offer — act now!!! Don't miss out on savings up to 90%!!",
+        slides: ["line one\nline two", "  leading/trailing whitespace preserved  ", "emoji: 🎉🔥✨", "quote: \"nested\" and 'single'"],
+      });
+
+      await tools["memory.appendFeedback"]!.execute(
+        {
+          feedbackId: "fb_content_1",
+          productId: "blog-agent",
+          decision: "reject",
+          actor: "jane@karoslabs.com",
+          note: "too promotional",
+          revision: 0,
+          runId: "run_content_1",
+          content: rejectedDraft,
+        },
+        { ctx },
+      );
+
+      const outcome = await tools["memory.readFeedback"]!.execute({ productId: "blog-agent", limit: 10 }, { ctx });
+      expect(outcome.status).toBe("success");
+      if (outcome.status !== "success") throw new Error("unreachable");
+      const entries = (outcome.result as { entries: Array<{ feedbackId: string; note: string; content?: string }> }).entries;
+      const entry = entries.find((e) => e.feedbackId === "fb_content_1");
+      expect(entry?.note).toBe("too promotional");
+      // Byte-identical: strict equality, full length, no `.slice`/`.trim` anywhere upstream.
+      expect(entry?.content).toBe(rejectedDraft);
+      expect(entry?.content?.length).toBe(rejectedDraft.length);
+    });
+
+    it("omits `content` entirely when the caller doesn't attach one, rather than writing an empty/undefined placeholder", async () => {
+      await tools["memory.appendFeedback"]!.execute(
+        { feedbackId: "fb_no_content", productId: "blog-agent", decision: "approve", actor: "jane@karoslabs.com", note: "good" },
+        { ctx },
+      );
+      const outcome = await tools["memory.readFeedback"]!.execute({ productId: "blog-agent", limit: 10 }, { ctx });
+      expect(outcome.status).toBe("success");
+      if (outcome.status !== "success") throw new Error("unreachable");
+      const entries = (outcome.result as { entries: Array<{ feedbackId: string; content?: string }> }).entries;
+      const entry = entries.find((e) => e.feedbackId === "fb_no_content");
+      expect(entry).toBeDefined();
+      expect(entry && "content" in entry).toBe(false);
+    });
+
     it("filters by productId, so one client's other agents never see this agent's feedback", async () => {
       await tools["memory.appendFeedback"]!.execute(
         { feedbackId: "fb_blog", productId: "blog-agent", decision: "approve", actor: "jane@karoslabs.com", note: "blog note" },
