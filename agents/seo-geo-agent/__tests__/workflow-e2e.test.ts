@@ -46,8 +46,9 @@ describe("end-to-end: the 9-phase SEO & GEO agent workflow (RFC-04)", () => {
     const router = smartFakeRouter([goodFixDrafts(), goodNarrative()]);
     // Measured capture is required to reach "every phase" at all: with the real
     // stub every cell is UNAVAILABLE and the run correctly holds at 08a (AU26).
-    // The technical measurements are still all-unavailable, which is why the
-    // SEO/GEO readiness scores below remain 0 — only visibility is measured here.
+    // `setupTestEnvironment` wires `createOfflineScraper()` (see test-helpers.ts),
+    // which implements T-A1's crawl capabilities, so step 06 now derives a real
+    // (partial) subset of technical measurements too (T-A2/SCRUM-236).
     const workflowFn = createSeoGeoAgentWorkflow({ tools: withMeasuredCapture(env.tools), promptStore, router, autoApprove: true });
 
     const durableStore = new MemoryDurableStepStore();
@@ -57,8 +58,15 @@ describe("end-to-end: the 9-phase SEO & GEO agent workflow (RFC-04)", () => {
     expect(result.status).toBe("completed");
     if (result.status !== "completed") throw new Error("unreachable");
 
-    expect(result.output.seoScore).toBe(0); // every input is honestly "unavailable" — Phase 1 stand-in.
-    expect(result.output.geoReadinessScore).toBe(0);
+    // T-A2/SCRUM-236: step 06 now derives a real subset of measurements from
+    // `research.crawlTechnicalSeo`'s crawl of the offline fixture scraper
+    // (clean synthetic data: every page 200, no noindex, robots + sitemap
+    // both present) — no longer the flat 0 the Phase 1 stand-in produced.
+    // Both scores are still `partial` (`hashInputsIncomplete` below), since
+    // most inputs across both bucket sets remain honestly `unavailable` (no
+    // real Core Web Vitals/on-page/NLP/connector tooling yet).
+    expect(result.output.seoScore).toBeGreaterThan(0);
+    expect(result.output.geoReadinessScore).toBeGreaterThan(0);
     expect(result.output.hashInputsIncomplete).toBe(true);
     expect(result.output.firedRecommendationCount).toBeGreaterThan(0);
     expect(result.output.fixDraftCount).toBeGreaterThan(0);

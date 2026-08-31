@@ -4,7 +4,9 @@ import { createPull } from "./pull.js";
 import { createGetRuns } from "./get-runs.js";
 import { createWriteRun } from "./write-run.js";
 import { createCheckFreshness } from "./check-freshness.js";
-import { createCaptureVisibility, type CreditProbe } from "./capture-visibility.js";
+import { createCaptureVisibility, type CreditProbe, type EngineCaptureAdapter, type VisibilityEngine } from "./capture-visibility.js";
+import { createDefaultCaptureAdapters } from "./capture-adapters/index.js";
+import { createCrawlTechnicalSeo } from "./crawl-technical-seo.js";
 import { createScraperProvider, type ScraperProvider } from "@agent-engine/tool-karos-scraper";
 
 export * from "./runs.js";
@@ -13,6 +15,8 @@ export * from "./get-runs.js";
 export * from "./write-run.js";
 export * from "./check-freshness.js";
 export * from "./capture-visibility.js";
+export * from "./capture-adapters/index.js";
+export * from "./crawl-technical-seo.js";
 export * from "./payload.js";
 
 export interface KarosResearchToolsOptions {
@@ -28,6 +32,16 @@ export interface KarosResearchToolsOptions {
    * and supplies one. Tests pass a fake to exercise the 402 path.
    */
   visibilityCreditProbe?: CreditProbe;
+  /**
+   * Overrides `createDefaultCaptureAdapters`' env-derived per-engine adapter
+   * map (T-A3/SCRUM-237). Omitted (the default) derives real adapters from
+   * `options.env`/`process.env` (`PERPLEXITY_API_KEY`/`ANTHROPIC_API_KEY`/
+   * `GEMINI_API_KEY`/`SCRAPPYCOCO_API_KEY`) — an engine with no key present
+   * is simply absent, same "honest per call" rule as `scraper`. Tests pass a
+   * fake map; `null` forces every engine to the unconfigured path regardless
+   * of `process.env`.
+   */
+  visibilityAdapters?: Partial<Record<VisibilityEngine, EngineCaptureAdapter>> | null;
 }
 
 /**
@@ -47,14 +61,23 @@ export function createKarosResearchTools(
     ...(options.scraper !== undefined ? { provider: options.scraper } : {}),
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
   });
+  // `null` forces every engine to the unconfigured path regardless of
+  // `process.env` (same convention as `scraper: null` above); `undefined`
+  // (the default) derives real per-engine adapters from `options.env`/
+  // `process.env` — T-A3/SCRUM-237.
+  const visibilityAdapters =
+    options.visibilityAdapters === null
+      ? {}
+      : (options.visibilityAdapters ?? createDefaultCaptureAdapters({ ...(options.env ? { env: options.env } : {}), ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}) }));
   return {
     "research.pull": createPull(store, scraper),
     "research.getRuns": createGetRuns(store),
     "research.writeRun": createWriteRun(store),
     "research.checkFreshness": createCheckFreshness(store),
-    "research.captureVisibility": createCaptureVisibility(
-      store,
-      options.visibilityCreditProbe ? { creditProbe: options.visibilityCreditProbe } : {},
-    ),
+    "research.captureVisibility": createCaptureVisibility(store, {
+      ...(options.visibilityCreditProbe ? { creditProbe: options.visibilityCreditProbe } : {}),
+      adapters: visibilityAdapters,
+    }),
+    "research.crawlTechnicalSeo": createCrawlTechnicalSeo(scraper),
   };
 }

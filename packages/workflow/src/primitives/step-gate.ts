@@ -135,10 +135,63 @@ async function recordResolvedGateStep(runtime: WorkflowRuntime, stepId: string, 
 }
 
 /**
+ * Parses a `GateTimeout.duration` string ("1h", "24h", "7d", "30m", "45s")
+ * into milliseconds — the "Layer 1 adapter" parse `GateTimeoutSchema`'s own
+ * doc comment (`packages/core/src/types/gate.ts`) says `duration` is for:
+ * "parsed by the Layer 1 adapter, not this package." Deliberately a small,
+ * standalone copy rather than a new `packages/workflow` -> `tool-common`
+ * dependency for one regex (RFC-01 §4's package-independence convention,
+ * same rule `capture-visibility.ts`/`SeoGeoCaptureCell` already cite for
+ * their own duplicated shapes) — `@agent-engine/tool-common`'s
+ * `parseDurationMs` is the format this mirrors, not a shared implementation.
+ * Returns `undefined` for a string this can't parse, so a malformed
+ * `duration` degrades to "never timed out" (falls through to the normal
+ * awaiting-gate wait) rather than throwing and failing the whole run over a
+ * config typo.
+ */
+const GATE_DURATION_RE = /^(\d+)\s*(s|m|h|d)$/i;
+const GATE_DURATION_UNIT_MS: Record<string, number> = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
+function parseGateDurationMs(duration: string): number | undefined {
+  const match = GATE_DURATION_RE.exec(duration.trim());
+  if (!match) return undefined;
+  const amount = match[1];
+  const unit = match[2];
+  if (!amount || !unit) return undefined;
+  return Number(amount) * GATE_DURATION_UNIT_MS[unit.toLowerCase()]!;
+}
+
+/**
+ * The `actor` recorded on a `GateResponse` this primitive synthesizes itself
+ * (never a human) — distinct from `options.autoApprove`'s `"system"` actor
+ * (an explicit opt-out a caller chose at construction time) so a review never
+ * confuses "nobody looked at this by design" with "somebody was supposed to
+ * look and didn't in time."
+ */
+const GATE_TIMEOUT_ACTOR = "system:gate-timeout";
+
+/**
  * `step.gate(id, def)` (RFC-01 §8.1/§8.3): registers the gate on first call,
  * then throws `AwaitingGateSignal` until `WorkflowEngine.resolveGate` records
  * a response — at which point a later `run()` call replays up to this same
  * point and returns the response, letting the workflow continue.
+ *
+ * `def.timeout.onTimeout === "auto_approve"` (SCRUM-273/T-A20) is the one
+ * exception to "only a human resolves this": once `def.timeout.duration` has
+ * elapsed since the gate first opened with still no response, the NEXT call
+ * into this function synthesizes an `approve` decision itself — actor
+ * `GATE_TIMEOUT_ACTOR`, never a fabricated human — saves it as the gate's
+ * real response (so it is indistinguishable downstream from any other
+ * resolved gate: same checkpoint, same audit trail, and a genuine
+ * `WorkflowEngine.resolveGate` call arriving late now correctly 409s via
+ * `GateAlreadyResolvedError` instead of racing it), and returns it instead of
+ * throwing. This is deliberately lazy, not a background sweep: exactly like
+ * every other engine-level fact here, it is discovered the next time
+ * something touches this run (a resume call, a status poll that re-runs the
+ * workflow function) — consistent with "resuming a run means calling run()
+ * again" being this engine's only mechanism, with `runtime.now()` as the
+ * sole clock a test needs to control to prove it (no fake timers, no sleep).
+ * `"hold"`/`"escalate"` are unaffected — this function's behavior for them is
+ * unchanged from before this ticket.
  *
  * It also CHECKPOINTS ITSELF, in both states, which it did not used to do —
  * see `StepKindSchema`'s own note for what that absence cost. Registering
@@ -173,19 +226,42 @@ export async function runStepGate(runtime: WorkflowRuntime, id: string, def: Gat
     return existing.response;
   }
 
+  const record: GateRecord = existing ?? {
+    gateId,
+    runId: runtime.runId,
+    kind: def.kind,
+    payload: def.payload,
+    requiredRole: def.requiredRole,
+    timeout: def.timeout,
+    ...(runtime.slotId !== undefined ? { slotId: runtime.slotId } : {}),
+  };
   if (!existing) {
-    const record: GateRecord = {
-      gateId,
-      runId: runtime.runId,
-      kind: def.kind,
-      payload: def.payload,
-      requiredRole: def.requiredRole,
-      timeout: def.timeout,
-      ...(runtime.slotId !== undefined ? { slotId: runtime.slotId } : {}),
-    };
     await runtime.store.saveGate(record);
   }
 
-  await markStepRunning(runtime, stepId, "gate", await gateStepStartedAt(runtime, stepId));
+  // `startedAt` PRESERVED ACROSS REPLAYS (see `gateStepStartedAt`'s own doc
+  // comment) — computed once here and reused for both the timeout check
+  // below and the `markStepRunning` checkpoint, so the two never disagree
+  // about when this gate actually opened.
+  const startedAt = await gateStepStartedAt(runtime, stepId);
+
+  // `def.timeout?.` — optional-chained, not the `Gate` schema's own
+  // guarantee: `GateDefinition.timeout` is required by that schema, but at
+  // least one existing test in this suite exercises `step.gate` with a
+  // deliberately-incomplete definition cast through `as never` for an
+  // unrelated assertion (`run-input.test.ts`'s gate-pause case, testing input
+  // persistence, not timeouts). A missing `timeout` must degrade to "never
+  // auto-approves," the same as an unparseable `duration` below, not throw.
+  if (def.timeout?.onTimeout === "auto_approve") {
+    const durationMs = parseGateDurationMs(def.timeout.duration);
+    if (durationMs !== undefined && runtime.now() - startedAt >= durationMs) {
+      const response: GateResponse = { decision: "approve", actor: GATE_TIMEOUT_ACTOR, at: new Date(runtime.now()).toISOString() };
+      await runtime.store.saveGate({ ...record, response });
+      await recordResolvedGateStep(runtime, stepId, gateId, response);
+      return response;
+    }
+  }
+
+  await markStepRunning(runtime, stepId, "gate", startedAt);
   throw new AwaitingGateSignal(gateId);
 }

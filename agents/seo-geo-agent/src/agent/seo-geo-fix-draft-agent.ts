@@ -44,8 +44,13 @@ export type SeoGeoFixDraftOutput = z.infer<typeof SeoGeoFixDraftOutputSchema>;
  * `fixes` into one string first. The workflow's Phase 8 narrative step
  * already runs `gate.numbersSourced` explicitly (via `runGate`) against the
  * one place numeric claims actually reach the client in prose; this agent's
- * own craft policy (`seo-geo-fix-draft@1`) is the only enforcement here, same
+ * own craft policy (`seo-geo-fix-draft@2`) is the only enforcement here, same
  * as any bounded agent whose output isn't natural-language prose.
+ *
+ * v2 (T-A13/SCRUM-269): documents the workflow's newly-wired
+ * `clientAttachedReferences` input field (client-attached "reference"-role
+ * media metadata) and how this step may — and may not — use it. See
+ * `create-seo-geo-agent-workflow.ts`'s `referenceMaterialsField`.
  */
 export class SeoGeoFixDraftAgent extends BaseAgent<SeoGeoFixDraftOutput> {
   protected readonly config: AgentStepConfig<SeoGeoFixDraftOutput> = {
@@ -55,6 +60,6 @@ export class SeoGeoFixDraftAgent extends BaseAgent<SeoGeoFixDraftOutput> {
     outputSchema: SeoGeoFixDraftOutputSchema,
     // Pinned — same model pin as every other bounded craft step in this migration set (RFC-02 §5's convention).
     modelPolicy: resolveModelPolicy("seo-geo-fix-draft", { policy: "pinned", model: "claude-sonnet-4-6" }),
-    skillRef: "seo-geo-fix-draft@1",
+    skillRef: "seo-geo-fix-draft@2",
   };
 }

@@ -7,7 +7,7 @@ import { createKarosLedgerTools } from "@agent-engine/tool-karos-ledger";
 import { createKarosMemoryTools } from "@agent-engine/tool-karos-memory";
 import { createKarosPublishTools } from "@agent-engine/tool-karos-publish";
 import { createKarosReputationTools } from "@agent-engine/tool-karos-reputation";
-import { createKarosResearchTools, type CreditProbe } from "@agent-engine/tool-karos-research";
+import { createKarosResearchTools, type CreditProbe, type EngineCaptureAdapter, type VisibilityEngine } from "@agent-engine/tool-karos-research";
 import type { ScraperProvider } from "@agent-engine/tool-karos-scraper";
 import { createKarosSeoGeoTools } from "@agent-engine/tool-karos-seo-geo";
 import { createKarosTopicsTools } from "@agent-engine/tool-karos-topics";
@@ -123,6 +123,8 @@ export interface AllKarosToolsOptions {
   clientReportStore?: ClientReportStore;
   /** Injected pre-flight credit probe for `research.captureVisibility` (RFC-04 §5) — see `KarosResearchToolsOptions.visibilityCreditProbe`. Omitted means every cell probes `{ ok: true }`. */
   visibilityCreditProbe?: CreditProbe;
+  /** Overrides `research.captureVisibility`'s env-derived per-engine adapter map (T-A3/SCRUM-237) — see `KarosResearchToolsOptions.visibilityAdapters`. Omitted derives real adapters from `options.env`/`process.env`; tests pass a fake map. */
+  visibilityAdapters?: Partial<Record<VisibilityEngine, EngineCaptureAdapter>> | null;
 }
 
 export function createAllKarosTools(
@@ -142,6 +144,7 @@ export function createAllKarosTools(
       ...(options.env ? { env: options.env } : {}),
       ...(options.scraper !== undefined ? { scraper: options.scraper } : {}),
       ...(options.visibilityCreditProbe ? { visibilityCreditProbe: options.visibilityCreditProbe } : {}),
+      ...(options.visibilityAdapters !== undefined ? { visibilityAdapters: options.visibilityAdapters } : {}),
     }),
     ...createKarosSeoGeoTools(),
     ...createKarosTopicsTools(store),
