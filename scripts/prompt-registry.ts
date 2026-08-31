@@ -182,8 +182,8 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   { promptId: "reputation-extraction", agent: "reputation-agent", versions: ["1"], latestVersion: "1" },
   { promptId: "reputation-tag", agent: "reputation-agent", versions: ["1"], latestVersion: "1" },
   { promptId: "reputation-voice", agent: "reputation-agent", versions: ["1"], latestVersion: "1" },
-  { promptId: "seo-geo-fix-draft", agent: "seo-geo-agent", versions: ["1"], latestVersion: "1" },
-  { promptId: "seo-geo-narrative", agent: "seo-geo-agent", versions: ["1"], latestVersion: "1" },
+  { promptId: "seo-geo-fix-draft", agent: "seo-geo-agent", versions: ["1", "2"], latestVersion: "2" },
+  { promptId: "seo-geo-narrative", agent: "seo-geo-agent", versions: ["1", "2"], latestVersion: "2" },
   { promptId: "tiktok-commentary", agent: "tiktok-agent", versions: ["1", "2"], latestVersion: "2" },
   { promptId: "tiktok-moment", agent: "tiktok-agent", versions: ["1"], latestVersion: "1" },
   {

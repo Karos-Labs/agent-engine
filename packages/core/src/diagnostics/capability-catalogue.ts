@@ -141,6 +141,15 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
     shortfall: "no research source",
   },
   {
+    id: "seo-geo-ai-visibility-capture",
+    title: "SEO & GEO AI-visibility capture — real per-engine answers for research.captureVisibility's 5 fixed engines (T-A3/SCRUM-237)",
+    owner: "packages/tools/karos-research (research.captureVisibility, packages/tools/karos-research/src/capture-adapters)",
+    requires: [{ name: "PERPLEXITY_API_KEY", kind: "enhances" }],
+    whenAbsent:
+      "Perplexity's cells report UNAVAILABLE/no_adapter_wired, honestly, exactly like every other unconfigured engine — never a fabricated MEASURED/ESTIMATED answer. Claude/Gemini/ChatGPT/Copilot's own capture independently depends on ANTHROPIC_API_KEY/GEMINI_API_KEY/SCRAPPYCOCO_API_KEY (already rows above/below in this catalogue for other capabilities) rather than a new credential each.",
+    rationale: "packages/tools/karos-research/src/capture-visibility.ts's own header comment — an engine with no adapter configured degrades per-engine, never all-or-nothing.",
+  },
+  {
     id: "image-search-curated",
     title: "Curated stock photography (Unsplash, Pexels, Pixabay)",
     owner: "packages/tools/karos-media (media.findImages)",

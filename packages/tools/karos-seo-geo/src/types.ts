@@ -132,6 +132,14 @@ export interface SeoGeoCaptureCell {
   rawSha256?: string | undefined;
   /** Set only when `captureTier` is `UNAVAILABLE` because a pre-flight credit probe rejected this cell — see `tool-karos-research`'s `CaptureCell` for the full contract. */
   unavailableReason?: "credit_probe_402" | "no_adapter_wired" | undefined;
+  /**
+   * Gemini-only (T-A3/SCRUM-237): true when Google's AI Overview /
+   * Grounding-with-Google-Search equivalent genuinely did not render for this
+   * query at all — distinct from `brandMentioned: false`, which means an
+   * answer DID come back and simply never named the brand. See
+   * `tool-karos-research`'s `CaptureCell.aioAbsent` for the full contract.
+   */
+  aioAbsent?: boolean | undefined;
 }
 
 /** Which raw-count denominator a metric divides by. No longer a choice — see `VisibilityDenominatorDecision`. */

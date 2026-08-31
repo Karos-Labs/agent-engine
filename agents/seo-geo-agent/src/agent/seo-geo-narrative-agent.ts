@@ -20,6 +20,11 @@ export type SeoGeoNarrativeOutput = z.infer<typeof SeoGeoNarrativeOutputSchema>;
  * `gate.numbersSourced`-style check is "arguably more important here than
  * anywhere else in the whole agent portfolio, given the grade = measured
  * data only rule."
+ *
+ * v2 (T-A13/SCRUM-269): documents the workflow's newly-wired
+ * `clientAttachedReferences` input field (client-attached "reference"-role
+ * media metadata) and how this step may — and may not — use it. See
+ * `create-seo-geo-agent-workflow.ts`'s `referenceMaterialsField`.
  */
 export class SeoGeoNarrativeAgent extends BaseAgent<SeoGeoNarrativeOutput> {
   protected readonly config: AgentStepConfig<SeoGeoNarrativeOutput> = {
@@ -28,6 +33,6 @@ export class SeoGeoNarrativeAgent extends BaseAgent<SeoGeoNarrativeOutput> {
     allowedTools: [],
     outputSchema: SeoGeoNarrativeOutputSchema,
     modelPolicy: resolveModelPolicy("seo-geo-narrative", { policy: "pinned", model: "claude-sonnet-4-6" }),
-    skillRef: "seo-geo-narrative@1",
+    skillRef: "seo-geo-narrative@2",
   };
 }
