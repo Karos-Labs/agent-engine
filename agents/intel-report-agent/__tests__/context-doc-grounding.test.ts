@@ -102,21 +102,36 @@ describe("intel-report-agent grounding: target-audience and market-strategy (SCR
     expect(promptA).not.toContain("land-and-expand self-serve motion");
   });
 
-  it("completes normally when neither context doc has been projected for this client (not_available, never blocking)", async () => {
-    // Neither fixture written — both client.getContextDoc calls report not_available.
+  // SCRUM-242 (T-A10) superseded this case's old title and assertions
+  // ("completes normally ... never blocking") — that was T-A9's own,
+  // explicitly temporary behavior, called out in Batch 5's own doc: "a run
+  // with every context doc absent still completes (T-A10 is what changes
+  // that, not this ticket)." intel-report-agent's row in the shared
+  // CONTEXT_DOC_POLICY table is BLOCK, so a run with BOTH docs absent now
+  // resolves to `blocked_intake` before ever drafting — see
+  // `context-doc-policy-fixture.test.ts` for the required cross-agent
+  // assertion of this same behavior.
+  it("BLOCKs (blocked_intake) when neither context doc has been projected for this client (SCRUM-242/T-A10)", async () => {
+    // `beforeEach`'s env carries the default (present) fixtures `setupTestEnvironment()`
+    // writes for every OTHER test in this repo — replace it with the true-absence
+    // variant so both client.getContextDoc calls genuinely report not_available.
+    await env.cleanup();
+    env = await setupTestEnvironment({ withContextDocs: false });
     const router = goodReportRouter();
     const workflowFn = createIntelReportAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const result = await new WorkflowEngine(durableStore).run(workflowFn, params);
 
-    expect(result.status).toBe("completed");
+    expect(result.status).toBe("blocked_intake");
+    expect(result.status === "blocked_intake" ? result.reason : undefined).toContain("missing required context doc(s) [target-audience, market-strategy]");
+
     const audienceStep = await durableStore.getStep(params.runId, "01c-load-target-audience");
     const strategyStep = await durableStore.getStep(params.runId, "01d-load-market-strategy");
     expect(audienceStep?.output).toBeNull();
     expect(strategyStep?.output).toBeNull();
 
-    const prompt = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]![0] as string;
-    expect(prompt).not.toContain("targetAudience");
-    expect(prompt).not.toContain("marketStrategy");
+    // Blocked before ever drafting — the model is never called, so no cost is
+    // spent generating a report nobody should have gotten.
+    expect(router.complete).not.toHaveBeenCalled();
   });
 });

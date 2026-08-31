@@ -42,6 +42,12 @@ const HAPPY_PATH_STEP_IDS = [
   // T-A9), best-effort — visual-identity rules threaded into the copy
   // prompt alongside clientVoiceContext.
   "02e-load-branding-guidelines",
+  // SCRUM-242 (T-A10): the shared BLOCK/DEGRADED policy check — a real step
+  // here so its own outcome is checkpointed and visible. instagram-agent's
+  // row is DEGRADED; this happy-path fixture has no branding-guidelines
+  // projected, so the run still completes, now carrying a visible
+  // `contextGrounding` marker on its deliverable (see 02f's own comment).
+  "02f-enforce-context-doc-policy",
   "03-claim-topic",
   "04a-research-pull",
   "04b-research-extract-facts",

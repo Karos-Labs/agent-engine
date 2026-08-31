@@ -10,6 +10,7 @@ import { routeContextDocumentModel, type ContextDocumentRoutingOptions } from "@
 import {
   readLatestBrandVoice,
   readContextDoc,
+  enforceContextDocPolicy,
   readRunDirection,
   runDirectionField,
   type WorkflowContext,
@@ -180,6 +181,18 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
     // exactly as this workflow did before this ticket.
     const targetAudience = await readContextDoc(wf, tools, ctx, "target-audience", "01c-load-target-audience");
     const marketStrategy = await readContextDoc(wf, tools, ctx, "market-strategy", "01d-load-market-strategy");
+
+    // ── 01e: SCRUM-242 (T-A10) — stop failing open. intel-report-agent's row in the
+    // one shared policy table (CONTEXT_DOC_POLICY) is BLOCK: this is a client-facing
+    // deliverable that names external parties (competitors), so drafting it with zero
+    // real grounding — generic analysis that reads exactly like a grounded report —
+    // is worse than not drafting it at all. `enforceContextDocPolicy` throws
+    // `WorkflowBlockedIntake` itself when EVERY context doc this agent reads is
+    // absent (not merely one of the two — see that function's own doc comment);
+    // nothing here branches on the decision, the shared table already made it.
+    await wf.step.code("01e-enforce-context-doc-policy", () =>
+      enforceContextDocPolicy({ agentId: "intel-report-agent", docs: { "target-audience": targetAudience, "market-strategy": marketStrategy } }),
+    );
 
     // ── 02-03: generate the report, then verify its numeric claims — one full drafting pass ──
     /**

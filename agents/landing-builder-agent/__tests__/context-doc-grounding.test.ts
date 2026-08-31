@@ -78,19 +78,34 @@ describe("landing-builder-agent grounding: product-information (SCRUM-241/T-A9)"
     expect(copyPromptA).not.toContain("24/7 human coaching chat");
   });
 
-  it("builds normally when no product-information doc has been projected for this client (not_available, never blocking)", async () => {
-    // No fixture written — client.getContextDoc reports not_available.
+  // SCRUM-242 (T-A10) superseded this case's old title and assertions
+  // ("builds normally ... never blocking") — that was T-A9's own,
+  // explicitly temporary behavior, called out in Batch 5's own doc: "a run
+  // with every context doc absent still completes (T-A10 is what changes
+  // that, not this ticket)." landing-builder-agent's row in the shared
+  // CONTEXT_DOC_POLICY table is BLOCK, so a run with product-information
+  // absent now resolves to `blocked_intake` before ever drafting — see
+  // `context-doc-policy-fixture.test.ts` for the required cross-agent
+  // assertion of this same behavior.
+  it("BLOCKs (blocked_intake) when no product-information doc has been projected for this client (SCRUM-242/T-A10)", async () => {
+    // `beforeEach`'s env carries the default (present) fixture `setupTestEnvironment()`
+    // writes for every OTHER test in this repo — replace it with the true-absence
+    // variant so client.getContextDoc genuinely reports not_available.
+    await env.cleanup();
+    env = await setupTestEnvironment("forge", { withContextDocs: false });
     const router = spyRouter([goodCopy(), goodCompose(), goodCraftVerdict()]);
     const workflowFn = createLandingBuilderAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const result = await new WorkflowEngine(durableStore).run(workflowFn, { ...baseParams, runId: "run_forge_pi_absent" });
 
-    expect(result.status).toBe("completed");
+    expect(result.status).toBe("blocked_intake");
+    expect(result.status === "blocked_intake" ? result.reason : undefined).toContain("missing required context doc(s) [product-information]");
+
     const step = await durableStore.getStep("run_forge_pi_absent", "01b-load-product-information");
     expect(step?.output).toBeNull();
 
-    const calls = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls;
-    const copyPrompt = calls.map((c) => c[0] as string).find((p) => JSON.parse(p).stepId === "landing-copy")!;
-    expect(copyPrompt).not.toContain("productInformation");
+    // Blocked before ever drafting — the model is never called, so no cost is
+    // spent building a page nobody should have gotten.
+    expect(router.complete).not.toHaveBeenCalled();
   });
 });

@@ -1,7 +1,7 @@
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext, runTopicGuardrail, readRunDirection, runDirectionField, readContextDoc, toAgentContext, finalizeDeliverable } from "@agent-engine/workflow";
+import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext, runTopicGuardrail, readRunDirection, runDirectionField, readContextDoc, enforceContextDocPolicy, toAgentContext, finalizeDeliverable } from "@agent-engine/workflow";
 import { BrandProfileSchema, type BrandProfile, type TranscriptWord, type VideoTranscript } from "@agent-engine/tool-karos-video";
 import { BrandedShortsGraphicsAgent } from "../agent/branded-shorts-graphics-agent.js";
 import { BrandedShortsHighlightsAgent } from "../agent/branded-shorts-highlights-agent.js";
@@ -179,6 +179,16 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
     // branding-guidelines doc yet plans graphics exactly as this workflow
     // did before this step existed.
     const brandingGuidelines = await readContextDoc(wf, tools, ctx, "branding-guidelines", "02b-load-branding-guidelines");
+
+    // ── 02c: SCRUM-242 (T-A10) — stop failing open. branded-shorts-agent's row in
+    // the one shared policy table (CONTEXT_DOC_POLICY) is DEGRADED, not BLOCK,
+    // same reasoning as instagram-agent's own 02f: channel copy a human reviews
+    // before it ships. The marker is threaded into the deliverable AND the
+    // workflow's own return value below, not left to sit only in this step's
+    // checkpoint — see those sites' own comments.
+    const contextGrounding = await wf.step.code("02c-enforce-context-doc-policy", () =>
+      enforceContextDocPolicy({ agentId: "branded-shorts-agent", docs: { "branding-guidelines": brandingGuidelines } }),
+    );
 
     // ── 03: transcribe (ElevenLabs Scribe) ──
     const transcript: VideoTranscript = await wf.step.code("03-transcribe", async () => {
@@ -420,8 +430,16 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
         contentCuts: cutPlan.contentCuts,
         grade: colorGrade,
         renderWarnings: build!.warnings,
+        // SCRUM-242 (T-A10): the DEGRADED marker, on the actual persisted
+        // deliverable a reviewer looks at — see 02c's own comment.
+        ...(contextGrounding.decision === "degraded" ? { contextGrounding: contextGrounding.marker } : {}),
       },
-      snapshot: (deliverableId) => ({ outputPath: build!.outputPath, durationSeconds: build!.durationSeconds, deliverableId }),
+      snapshot: (deliverableId) => ({
+        outputPath: build!.outputPath,
+        durationSeconds: build!.durationSeconds,
+        deliverableId,
+        ...(contextGrounding.decision === "degraded" ? { contextGrounding: contextGrounding.marker } : {}),
+      }),
     });
 
     await wf.step.code("13-commit-and-record", async () => {
@@ -443,6 +461,9 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
       contentCutsDeclared: cutPlan.contentCuts.length,
       graphicsAttempts: graphicsAttemptsUsed,
       renderWarnings: build.warnings,
+      // SCRUM-242 (T-A10): same DEGRADED marker, on the workflow's own typed
+      // return value — see 02c's own comment.
+      ...(contextGrounding.decision === "degraded" ? { contextGrounding: contextGrounding.marker } : {}),
     };
   };
 }

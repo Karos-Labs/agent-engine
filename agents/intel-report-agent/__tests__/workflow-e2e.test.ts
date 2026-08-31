@@ -23,6 +23,12 @@ const ALL_STEP_IDS = [
   // (T-A9), best-effort — see the workflow's own 01c/01d comment.
   "01c-load-target-audience",
   "01d-load-market-strategy",
+  // SCRUM-242 (T-A10): the shared BLOCK/DEGRADED policy check — a real step
+  // here (not just a pure function call) so its own outcome is checkpointed
+  // and visible the same way every other read is. `setupTestEnvironment()`'s
+  // default fixture keeps both context docs present, so this resolves "ok"
+  // and the run proceeds exactly as before this ticket.
+  "01e-enforce-context-doc-policy",
   "02-generate-report",
   "03-verify-numbers-sourced",
   // Revision-scoped: `-r0` is the first review round. A `revise` decision

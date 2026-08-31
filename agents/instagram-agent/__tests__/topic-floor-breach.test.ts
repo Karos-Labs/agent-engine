@@ -49,6 +49,9 @@ describe("03-claim-topic: the topics catalog is the only dedup gate (RFC-03 §2.
       // The client's projected branding-guidelines context doc (T-A9),
       // best-effort — see that step's own comment in the workflow.
       "02e-load-branding-guidelines",
+      // The shared BLOCK/DEGRADED policy check (SCRUM-242/T-A10) — see that
+      // step's own comment in the workflow.
+      "02f-enforce-context-doc-policy",
       "03-claim-topic",
     ]);
 

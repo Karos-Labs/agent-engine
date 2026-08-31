@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext, runTopicGuardrail, readRunDirection, runDirectionField, readContextDoc, toAgentContext } from "@agent-engine/workflow";
+import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext, runTopicGuardrail, readRunDirection, runDirectionField, readContextDoc, enforceContextDocPolicy, toAgentContext } from "@agent-engine/workflow";
 import type { BrandJson, CarryForwardItem, LandingGateVerdict, LandingSection, ReadBundleResult } from "@agent-engine/tool-karos-landing";
 import { carryForwardLabel, CarryForwardPlacementFileSchema, resolveBrandLanguage } from "@agent-engine/tool-karos-landing";
 import { LandingCopyAgent, type LandingCopyOutput } from "../agent/landing-copy-agent.js";
@@ -144,6 +144,17 @@ export function createLandingBuilderAgentWorkflow(options: CreateLandingBuilderA
     // product-information doc yet builds exactly as this workflow did before
     // this step existed.
     const productInformation = await readContextDoc(wf, tools, ctx, "product-information", "01b-load-product-information");
+
+    // ── 01c: SCRUM-242 (T-A10) — stop failing open. landing-builder-agent's row
+    // in the one shared policy table (CONTEXT_DOC_POLICY) is BLOCK: this agent
+    // produces a published artefact, so shipping one built from zero real
+    // product-information grounding — indistinguishable from a genuinely
+    // grounded build — is worse than not building it. `enforceContextDocPolicy`
+    // throws `WorkflowBlockedIntake` itself when the doc is absent; nothing
+    // here branches on the decision.
+    await wf.step.code("01c-enforce-context-doc-policy", () =>
+      enforceContextDocPolicy({ agentId: "landing-builder-agent", docs: { "product-information": productInformation } }),
+    );
 
     let manifest: LandingSection[];
     let contentBySection: Record<string, unknown>;

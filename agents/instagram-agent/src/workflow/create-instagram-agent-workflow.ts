@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentTool, AgentToolRegistry, GateResponse, ModelRouter, PromptStore, TemplateFeedback } from "@agent-engine/core";
-import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, readContextDoc, toAgentContext } from "@agent-engine/workflow";
+import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, readContextDoc, enforceContextDocPolicy, toAgentContext } from "@agent-engine/workflow";
 import type { RenderCarouselInput, RenderCarouselResult } from "@agent-engine/tool-karos-publish";
 import { InstagramCopyAgent } from "../agent/instagram-copy-agent.js";
 import { InstagramImageVettingAgent } from "../agent/instagram-image-vetting-agent.js";
@@ -618,6 +618,18 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // T-A10, not this ticket, decides whether a MISSING doc should ever
     // change that.
     const brandingGuidelines = await readContextDoc(wf, tools, ctx, "branding-guidelines", "02e-load-branding-guidelines");
+
+    // ── 02f: SCRUM-242 (T-A10) — stop failing open. instagram-agent's row in the
+    // one shared policy table (CONTEXT_DOC_POLICY) is DEGRADED, not BLOCK: this is
+    // channel copy a human reviews before it ships, so the run still completes —
+    // but the marker `enforceContextDocPolicy` returns is what makes "this ran
+    // with zero real grounding" visible instead of indistinguishable from a
+    // genuinely grounded post (the ticket's own "worst of the three options").
+    // Threaded into the deliverable AND the workflow's own return value below —
+    // see those sites' own comments for why a step checkpoint alone isn't enough.
+    const contextGrounding = await wf.step.code("02f-enforce-context-doc-policy", () =>
+      enforceContextDocPolicy({ agentId: "instagram-agent", docs: { "branding-guidelines": brandingGuidelines } }),
+    );
 
     const brandFetch = options.fetchImpl ?? fetch;
     let cachedLogoDataUri: string | undefined;
@@ -2215,6 +2227,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             caption,
             slides: slidesData.slides,
             rendered: rendered.rendered,
+            // SCRUM-242 (T-A10): the DEGRADED marker, on the actual persisted
+            // deliverable a reviewer looks at — see 02f's own comment.
+            ...(contextGrounding.decision === "degraded" ? { contextGrounding: contextGrounding.marker } : {}),
           },
         },
         { ctx },
@@ -2290,6 +2305,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       slideCount: slidesData.slides.length,
       renderedCount: rendered.rendered.length,
       deliverableId,
+      // SCRUM-242 (T-A10): same DEGRADED marker, on the workflow's own typed
+      // return value — see 02f's own comment.
+      ...(contextGrounding.decision === "degraded" ? { contextGrounding: contextGrounding.marker } : {}),
     };
   };
 }
