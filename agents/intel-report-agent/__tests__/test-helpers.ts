@@ -128,8 +128,16 @@ export interface TestEnvironment {
   cleanup: () => Promise<void>;
 }
 
-export async function setupTestEnvironment(opts: { withProfile?: boolean } = {}): Promise<TestEnvironment> {
+export async function setupTestEnvironment(opts: { withProfile?: boolean; withContextDocs?: boolean } = {}): Promise<TestEnvironment> {
   const withProfile = opts.withProfile ?? true;
+  // Default ON, SCRUM-242 (T-A10): intel-report-agent's row in the shared
+  // CONTEXT_DOC_POLICY table is BLOCK, so every pre-existing test in this
+  // suite that doesn't care about grounding specifically (gate behavior,
+  // review cycles, model routing) needs SOME target-audience/market-strategy
+  // content on file or it now resolves to `blocked_intake` before ever
+  // drafting. `context-doc-grounding.test.ts`'s own BLOCK case passes
+  // `withContextDocs: false` to get genuine, total absence.
+  const withContextDocs = opts.withContextDocs ?? true;
   const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "intel-report-agent-test-"));
   const store = new WorkspaceStore(rootDir);
   // `createOfflineScraper()` is passed EXPLICITLY, because `research.pull` now
@@ -153,6 +161,10 @@ export async function setupTestEnvironment(opts: { withProfile?: boolean } = {})
   }
   await store.writeJson("acme", ["client", "brand"], { voice: "confident, no jargon", forbiddenTerms: ["guaranteed", "the best", "#1"] });
   await store.writeJson("acme", ["client", "competitors"], [{ name: "Rival Corp", website: "https://rivalcorp.example.com" }]);
+  if (withContextDocs) {
+    await store.writeJson("acme", ["context", "target-audience"], { markdown: "Default test fixture: general small-business technical buyers." });
+    await store.writeJson("acme", ["context", "market-strategy"], { markdown: "Default test fixture: general competitive positioning, no specific lane declared." });
+  }
 
   return {
     rootDir,

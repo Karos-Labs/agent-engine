@@ -9,6 +9,7 @@ import { createGetConfig } from "./get-config.js";
 import { createGetSubredditRules } from "./get-subreddit-rules.js";
 import { createGetStrategy } from "./get-strategy.js";
 import { createGetKnowledge } from "./get-knowledge.js";
+import { createGetContextDoc } from "./get-context-doc.js";
 
 export * from "./get-profile.js";
 export * from "./get-brand.js";
@@ -19,6 +20,7 @@ export * from "./get-config.js";
 export * from "./get-subreddit-rules.js";
 export * from "./get-strategy.js";
 export * from "./get-knowledge.js";
+export * from "./get-context-doc.js";
 
 /**
  * The `karos-client` MCP server's tool registry (RFC-01 §9.1/§9.2) — a
@@ -37,5 +39,6 @@ export function createKarosClientTools(store: WorkspaceStoreLike = createWorkspa
     "client.getSubredditRules": createGetSubredditRules(store),
     "client.getStrategy": createGetStrategy(store),
     "client.getKnowledge": createGetKnowledge(store),
+    "client.getContextDoc": createGetContextDoc(store),
   };
 }

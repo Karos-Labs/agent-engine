@@ -106,6 +106,11 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyOutput> {
     // as authoritative before external facts, and recentPosts (the shipped-
     // output dedup window this agent now writes back into on delivery) is a
     // hard do-not-repeat constraint. v8 stays frozen.
-    skillRef: "instagram-copy@9",
+    // Pinned to "10": v10 (SCRUM-241/T-A9) documents `brandingGuidelines` —
+    // the client's own projected branding-guidelines context doc (C1) — in
+    // §11, and tells the model it bears on `visualNeed`/archetype choice and
+    // outranks this guide's own generic instincts when the two conflict.
+    // v9 stays frozen.
+    skillRef: "instagram-copy@10",
   };
 }
