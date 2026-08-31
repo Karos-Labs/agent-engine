@@ -2,7 +2,16 @@ import type { EngineCaptureAdapter, EngineCaptureAdapterResult } from "../captur
 import { analyzeAnswer } from "./analyze-answer.js";
 
 const DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
-const DEFAULT_MODEL = "gemini-2.0-flash";
+// `gemini-2.5-flash`, not `gemini-2.0-flash`, and the reason is billing rather
+// than capability. `check-model-pricing.ts` (wired into `pretest`) hard-fails on
+// any model id named in source with no row in MODEL_PRICING, and 2.0-flash has
+// none — so with it here the whole test suite refuses to run. It cannot simply be
+// priced either: it is absent from ai.google.dev/gemini-api/docs/pricing entirely
+// (checked 2026-08-30), the same apparent-EOL state SCRUM-314 documented for
+// gemini-1.5-flash, and inventing a rate is precisely what that table exists to
+// prevent. 2.5-flash is priced from a checked source, is currently listed, and is
+// the id every other Gemini default in this repo already uses.
+const DEFAULT_MODEL = "gemini-2.5-flash";
 
 export interface GeminiAdapterOptions {
   apiKey: string;
