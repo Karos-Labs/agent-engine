@@ -240,7 +240,10 @@ describe("SCRUM-242 (T-A10) — structural: one policy table, one enforcement po
         } else if (entry.isFile() && (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx"))) {
           const text = fs.readFileSync(full, "utf8");
           if (/\bexport const CONTEXT_DOC_POLICY\b/.test(text)) {
-            matches.push(path.relative(REPO_ROOT, full));
+            // Normalised to forward slashes: path.relative yields backslashes on
+            // Windows, which made this assertion fail on a non-POSIX host even though
+            // the policy really was in exactly one file.
+            matches.push(path.relative(REPO_ROOT, full).split(path.sep).join("/"));
           }
         }
       }
