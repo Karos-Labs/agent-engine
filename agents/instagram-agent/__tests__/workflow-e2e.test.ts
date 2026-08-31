@@ -38,6 +38,10 @@ const HAPPY_PATH_STEP_IDS = [
   // language-compliance gate at 07e/07f. Present on every run; the gate
   // itself only appears when the value is non-empty, which it is not here.
   "02d-load-target-language",
+  // The client's projected branding-guidelines context doc (C1/SCRUM-209,
+  // T-A9), best-effort — visual-identity rules threaded into the copy
+  // prompt alongside clientVoiceContext.
+  "02e-load-branding-guidelines",
   "03-claim-topic",
   "04a-research-pull",
   "04b-research-extract-facts",

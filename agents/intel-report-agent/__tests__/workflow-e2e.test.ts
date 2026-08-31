@@ -19,6 +19,10 @@ const ALL_STEP_IDS = [
   "00-load-client-context",
   "01-research-pull",
   "01b-read-past-feedback",
+  // The client's projected target-audience and market-strategy context docs
+  // (T-A9), best-effort — see the workflow's own 01c/01d comment.
+  "01c-load-target-audience",
+  "01d-load-market-strategy",
   "02-generate-report",
   "03-verify-numbers-sourced",
   // Revision-scoped: `-r0` is the first review round. A `revise` decision

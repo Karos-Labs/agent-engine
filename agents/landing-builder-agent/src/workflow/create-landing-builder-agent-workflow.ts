@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext, runTopicGuardrail, readRunDirection, runDirectionField, toAgentContext } from "@agent-engine/workflow";
+import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext, runTopicGuardrail, readRunDirection, runDirectionField, readContextDoc, toAgentContext } from "@agent-engine/workflow";
 import type { BrandJson, CarryForwardItem, LandingGateVerdict, LandingSection, ReadBundleResult } from "@agent-engine/tool-karos-landing";
 import { carryForwardLabel, CarryForwardPlacementFileSchema, resolveBrandLanguage } from "@agent-engine/tool-karos-landing";
 import { LandingCopyAgent, type LandingCopyOutput } from "../agent/landing-copy-agent.js";
@@ -125,6 +125,26 @@ export function createLandingBuilderAgentWorkflow(options: CreateLandingBuilderA
       precedence: ["client brand guidelines", "brandLaw[]", "the merged taste lens", "the 9 reference sites (craft floor only)"],
     }));
 
+    // ── 01b: the client's projected product-information context doc (C1/SCRUM-209, T-A9) ──
+    //
+    // landing-builder-agent is one of two agents SCRUM-241 calls "the agents
+    // that read nothing" — before this step, nothing here ever called
+    // `client.getContextDoc`, or indeed `client.getBrand`: this workflow's
+    // only source of client facts was `intake.brand`/`intake.intakeMarkdown`,
+    // the ONE bundle a human assembled for onboarding. `product-information`
+    // is the deliberate choice of the nine v1 doc types: a landing page's
+    // copy IS a description of what the product does, for whom, and why —
+    // closer than `brand-voice` (tone, already covered by `brand.voice`/
+    // `brandLaw`) or `target-audience` (who, not what). Read once, outside
+    // the `isRebuild` branch, because both the fresh-build COPY call and a
+    // rebuild's touched-section re-copy draft the same kind of prose and
+    // both should see the same product facts.
+    //
+    // Best-effort and non-blocking: a client with no projected
+    // product-information doc yet builds exactly as this workflow did before
+    // this step existed.
+    const productInformation = await readContextDoc(wf, tools, ctx, "product-information", "01b-load-product-information");
+
     let manifest: LandingSection[];
     let contentBySection: Record<string, unknown>;
     let outOfScope: OutOfScopeItem[] = [];
@@ -150,6 +170,9 @@ export function createLandingBuilderAgentWorkflow(options: CreateLandingBuilderA
         brand,
         intakeMarkdown: intake.intakeMarkdown,
         resolvedLanguage: resolveBrandLanguage(brand),
+        // The client's projected product-information context doc (T-A9),
+        // best-effort. See 01b's own comment.
+        ...(productInformation !== undefined ? { productInformation } : {}),
       });
       if (copyResult.status !== "completed") throw new WorkflowToolingFailure(`landing-copy step resolved to "${copyResult.status}"`);
       const copyOutput = copyResult.finalOutput as LandingCopyOutput;
@@ -220,6 +243,9 @@ export function createLandingBuilderAgentWorkflow(options: CreateLandingBuilderA
           brand,
           intakeMarkdown: intake.intakeMarkdown,
           resolvedLanguage: resolveBrandLanguage(brand),
+          // The client's projected product-information context doc (T-A9),
+          // best-effort. See 01b's own comment.
+          ...(productInformation !== undefined ? { productInformation } : {}),
           feedbackDelta: {
             edits: classified.edits.filter((c) => touched.has(c.section)),
             additions: classified.additions,

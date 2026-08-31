@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentTool, AgentToolRegistry, GateResponse, ModelRouter, PromptStore, TemplateFeedback } from "@agent-engine/core";
-import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, toAgentContext } from "@agent-engine/workflow";
+import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, readContextDoc, toAgentContext } from "@agent-engine/workflow";
 import type { RenderCarouselInput, RenderCarouselResult } from "@agent-engine/tool-karos-publish";
 import { InstagramCopyAgent } from "../agent/instagram-copy-agent.js";
 import { InstagramImageVettingAgent } from "../agent/instagram-image-vetting-agent.js";
@@ -596,6 +596,28 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         const language = (brandOutcome.result as { language?: unknown }).language;
         return typeof language === "string" && language.trim().length > 0 ? language.trim() : null;
       })) ?? undefined;
+
+    // ── 02e: the client's projected branding-guidelines context doc (C1/SCRUM-209, T-A9) ──
+    //
+    // instagram-agent is one of two agents this ticket calls "the agents that
+    // read nothing" — before this step, nothing here ever called
+    // `client.getContextDoc`, so a client's own visual-identity guidance
+    // (logo/lockup rules, imagery do's and don'ts, palette usage beyond the
+    // bare `accentColor` hex `instagramBrandTokens` already carries) never
+    // reached the copy-writing prompt, even though this is a VISUAL post
+    // whose `visualNeed`s and archetype choices are exactly what such
+    // guidance is meant to steer. `branding-guidelines` (not `brand-voice`)
+    // is the deliberate choice here: voice/tone already reaches this prompt
+    // through `clientVoiceContext` (02b) and `client.getBrand`'s structured
+    // fields (02c/02d); what was missing is the client's stated visual
+    // identity rules, which is what `branding-guidelines` actually is.
+    //
+    // Best-effort and non-blocking, same as every other optional context
+    // read here (02b/04f): a client with no projected branding-guidelines
+    // doc yet drafts exactly as this workflow did before this step existed —
+    // T-A10, not this ticket, decides whether a MISSING doc should ever
+    // change that.
+    const brandingGuidelines = await readContextDoc(wf, tools, ctx, "branding-guidelines", "02e-load-branding-guidelines");
 
     const brandFetch = options.fetchImpl ?? fetch;
     let cachedLogoDataUri: string | undefined;
@@ -1246,6 +1268,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // verbatim — this is where a language requirement like Geektime's
         // "Hebrew-language technology site" actually lives. See step 02b.
         ...(clientVoiceContext !== undefined ? { clientVoiceContext } : {}),
+        // The client's projected branding-guidelines context doc (C1,
+        // T-A9) — visual-identity rules distinct from the voice/tone
+        // `clientVoiceContext` already carries. See step 02e.
+        ...(brandingGuidelines !== undefined ? { brandingGuidelines } : {}),
         // The client's intel report, distilled to what steers copy (voice
         // rows, positioning, whitespace opportunities) — authoritative
         // client knowledge, read BEFORE external facts. See step 04f.

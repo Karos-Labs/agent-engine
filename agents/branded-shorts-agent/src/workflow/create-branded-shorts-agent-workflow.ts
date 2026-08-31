@@ -1,7 +1,7 @@
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext, runTopicGuardrail, readRunDirection, runDirectionField, toAgentContext, finalizeDeliverable } from "@agent-engine/workflow";
+import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext, runTopicGuardrail, readRunDirection, runDirectionField, readContextDoc, toAgentContext, finalizeDeliverable } from "@agent-engine/workflow";
 import { BrandProfileSchema, type BrandProfile, type TranscriptWord, type VideoTranscript } from "@agent-engine/tool-karos-video";
 import { BrandedShortsGraphicsAgent } from "../agent/branded-shorts-graphics-agent.js";
 import { BrandedShortsHighlightsAgent } from "../agent/branded-shorts-highlights-agent.js";
@@ -158,6 +158,28 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
       return parsed.data;
     });
 
+    // ── 02b: the client's projected branding-guidelines context doc (C1/SCRUM-209, T-A9) ──
+    //
+    // branded-shorts-agent is one of two agents SCRUM-241 calls "the agents
+    // that read nothing" — before this step, nothing here ever called
+    // `client.getContextDoc`, or `client.getBrand` either: this workflow's
+    // only brand input is the video-specific `brand-profile.json`
+    // (colors/fonts for the render engine itself, read at step 02 above),
+    // never the karos-client BrandKit's richer, portal-authored context.
+    // `branding-guidelines` (not `brand-voice`) is the deliberate choice,
+    // same reasoning as instagram-agent's own 02e: this agent's one bounded
+    // judgment call that touches VISUAL design is the graphics/cutaway plan
+    // at step 08a, and branding-guidelines is a client's stated visual-
+    // identity rules (logo/lockup, imagery, palette usage) rather than
+    // tone-of-voice, which this pipeline has no prose-drafting step to apply
+    // to anyway (the highlights step at 06 selects moments from the client's
+    // OWN spoken words, it doesn't write new copy).
+    //
+    // Best-effort and non-blocking: a client with no projected
+    // branding-guidelines doc yet plans graphics exactly as this workflow
+    // did before this step existed.
+    const brandingGuidelines = await readContextDoc(wf, tools, ctx, "branding-guidelines", "02b-load-branding-guidelines");
+
     // ── 03: transcribe (ElevenLabs Scribe) ──
     const transcript: VideoTranscript = await wf.step.code("03-transcribe", async () => {
       const outcome = await tools["video.transcribe"]!.execute({ videoPath: intake.videoPath }, { ctx });
@@ -237,6 +259,9 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
         archetypes: brandResolve.approvedArchetypes,
         takeaway: intake.takeaway,
         targetLength: intake.targetLength,
+        // The client's projected branding-guidelines context doc (T-A9),
+        // best-effort. See 02b's own comment.
+        ...(brandingGuidelines !== undefined ? { brandingGuidelines } : {}),
         ...(priorFailureReason !== undefined ? { priorFailureReason } : {}),
       });
       if (planResult.status === "content_fail") {

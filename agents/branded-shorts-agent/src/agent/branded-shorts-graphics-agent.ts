@@ -37,6 +37,10 @@ export class BrandedShortsGraphicsAgent extends BaseAgent<GraphicsPlanOutput> {
     allowedTools: [],
     outputSchema: GraphicsPlanOutputSchema,
     modelPolicy: resolveModelPolicy("branded-shorts-graphics", { policy: "pinned", model: "claude-sonnet-4-6" }),
-    skillRef: "branded-shorts-graphics@1",
+    // v2 (SCRUM-241/T-A9) documents `brandingGuidelines` — the client's own
+    // projected branding-guidelines context doc (C1) — telling the model it
+    // bears on cutaway subject/composition choice within the still-mandatory
+    // approved-archetype vocabulary. v1 stays frozen.
+    skillRef: "branded-shorts-graphics@2",
   };
 }

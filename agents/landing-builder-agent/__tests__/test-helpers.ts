@@ -149,6 +149,7 @@ export function goodCraftVerdict() {
 export interface TestEnvironment {
   tmpRoot: string;
   landingConfig: LandingEngineConfig;
+  store: WorkspaceStore;
   tools: ReturnType<typeof createAllKarosTools>;
   cleanup: () => Promise<void>;
 }
@@ -174,5 +175,5 @@ export async function setupTestEnvironment(clientSlug: string): Promise<TestEnvi
   const store = new WorkspaceStore(workspaceRoot);
   const tools = { ...createAllKarosTools(store, undefined, { scraper: createOfflineScraper() }), ...createKarosLandingTools(landingConfig) };
 
-  return { tmpRoot, landingConfig, tools, cleanup: () => fs.rm(tmpRoot, { recursive: true, force: true }) };
+  return { tmpRoot, landingConfig, store, tools, cleanup: () => fs.rm(tmpRoot, { recursive: true, force: true }) };
 }

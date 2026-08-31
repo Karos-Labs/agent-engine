@@ -13,3 +13,6 @@ export * from "./primitives/history-dedup.js";
 // context-building primitive above is exported, and to keep the change to a
 // single new line.
 export * from "./primitives/brand-voice.js";
+// SCRUM-241 (T-A9): the shared `client.getContextDoc` read, appended the same
+// way brand-voice.js was.
+export * from "./primitives/context-doc.js";
