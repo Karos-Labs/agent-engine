@@ -22,8 +22,10 @@ export interface RouterCompleteOptions {
  * before vendor selection existed), so a router with no Anthropic adapter at
  * all could never serve a single existing agent. Every other vendor is
  * optional — wired only when `create-model-router-from-env.ts` finds enough
- * configuration to build it, exactly like the pre-existing
- * `OPENAI_COMPATIBLE_BASE_URL` opt-in this generalizes.
+ * configuration to build it (`gemini`, `model-garden`); `openai-compatible`
+ * is no longer wired from the environment at all as of AU59/SCRUM-358
+ * (Vertex-only model surface) and stays populated only if a caller builds
+ * and passes an adapter for it directly.
  */
 export interface ModelRouterAdapters {
   anthropic: ModelAdapter;
