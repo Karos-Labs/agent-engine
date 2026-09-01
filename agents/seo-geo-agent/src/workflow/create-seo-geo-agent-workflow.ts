@@ -779,6 +779,24 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
     // recommendations, the connector overlay), instead of holding the run and
     // forcing somebody to dispatch a fresh one that knows nothing about the
     // feedback. Every decision, approvals included, reaches client memory.
+    //
+    // SCRUM-389: this was the one seo-geo-agent gate T-A20/SCRUM-273 missed —
+    // its ticket text and the Batch 9 dispatch brief both described the agent
+    // as having two human gates, when the file (derived here, not assumed)
+    // has three: 03-prompt-set-review, 12-fix-generation-review, and this one.
+    // 16-batch-review sits immediately before `finalizeDeliverable`, so it is
+    // the gate actually holding the client-visible seo-geo-report — the two
+    // gates T-A20 already fixed are upstream of it. Brought in line with D3/
+    // SCRUM-279's same 1h/auto_approve trade its siblings already made.
+    //
+    // Worth stating plainly, because this is the gate where the trade bites
+    // hardest: after 1h with no human response, a seo-geo-report now SHIPS
+    // approved rather than staying held. That is a deliberate consequence of
+    // D3, not an oversight — the failure mode this trades into is "shipped
+    // without review", not "stuck forever", and D3 already judged that the
+    // latter (an onboarding client stuck for 24h) is worse. But unlike the
+    // upstream gates, this one gates the actual deliverable a client sees, so
+    // an hour of silence here now means the report goes out unreviewed.
     const review = await runReviewCycle(wf, {
       gateId: "16-batch-review",
       maxRevisions: MAX_REVISION_ROUNDS,
@@ -796,7 +814,7 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
           revision,
         },
         requiredRole: "account_manager",
-        timeout: { duration: "24h", onTimeout: "hold" },
+        timeout: { duration: "1h", onTimeout: "auto_approve" },
       }),
       onDecision: async ({ revision, response }) => {
         await persistReviewFeedbackToMemory(wf, tools, ctx, revision, response);
