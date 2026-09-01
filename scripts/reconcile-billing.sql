@@ -16,6 +16,43 @@
 -- Enabling the export is Tomer's action (SCRUM-361 comments 10362, 10367).
 --
 -- ============================================================================
+-- THE COMPANION QUERY IS SEPARATELY BLOCKED — ON A STALE PROD DEPLOY (SCRUM-375)
+-- ============================================================================
+-- The COMPANION query at the bottom needs no billing export at all, only
+-- `agent_runs_bi`, so it reads as the one runnable piece of this file. Ran
+-- against production for 2026-08-01..2026-09-01 on 2026-09-01: it returns zero
+-- rows. That is a true result and a useless one, and the reason is not in the
+-- query.
+--
+--   karoscmo.bi_telemetry.agent_runs_bi        2 rows total, $0.204084,
+--                                              BOTH servedByHop = NULL,
+--                                              both stamped 2026-08-27
+--   karoscmo-prep.bi_telemetry.agent_runs_bi   407 rows, 49 with servedByHop set
+--
+-- `servedByHop` / `servingAdapter` were added by commit 2a2e213 on 2026-08-28.
+-- Production's live revision, agent-engine-prod-00008-4lr, was deployed
+-- 2026-08-27T18:20 — it runs code written before the field existed and cannot
+-- populate it. Prep, redeployed 2026-09-01, populates it correctly, which is
+-- what proves the write path itself is sound.
+--
+-- Note this is NOT the `ignoreUnknownValues` silent-drop hazard described
+-- below: both columns DO exist on the production table (SCRUM-385's widening
+-- landed there). The schema is ahead of the deployed writer, not behind it.
+--
+-- So: the companion query cannot produce a delta until production is promoted
+-- past 2a2e213. As of 2026-09-01 prod runs ac3876b while main is at 5febc08 —
+-- 141 commits / 66 SCRUM tickets behind. Re-run this query after that promote,
+-- not before; a zero here today measures the deploy gap, not the Anthropic
+-- bill.
+--
+-- The remaining manual item is unchanged and genuinely manual: which Anthropic
+-- organisation owns the `anthropic-api-key` secret, and whether prep's
+-- same-named secret is the same org. Non-sensitive metadata only — each project
+-- holds a single enabled version, created 2026-07-06 (prod) and 2026-08-02
+-- (prep). Independently created, which is suggestive of two orgs and is not
+-- proof of it.
+--
+-- ============================================================================
 -- WHY THIS FILE SPLITS THE ENGINE SIDE IN TWO
 -- ============================================================================
 -- A Claude call served by the direct-Anthropic fallback hop is still recorded
@@ -229,6 +266,11 @@ ORDER BY day;
 -- in `karoscmo`), not by Google, and nothing on the board reconciles it today.
 -- Run this alongside STEP 3; there is no automated counterpart to compare it
 -- to, so the comparison is against the Anthropic Console for that org.
+--
+-- BEFORE RUNNING THIS: see "THE COMPANION QUERY IS SEPARATELY BLOCKED" in the
+-- header. Against production today it returns zero rows because prod's deployed
+-- revision predates the commit that writes `servedByHop`, not because there was
+-- no fallback-served spend. Prep is fine.
 --
 --   SELECT
 --     DATE(timestamp)        AS day,
