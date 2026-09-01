@@ -47,6 +47,22 @@ export const RunRecordSchema = z.object({
    */
   input: z.record(z.string(), z.unknown()).optional(),
   /**
+   * Studio's per-stage model override for THIS run (SCRUM-384 / AU34's
+   * sibling field), keyed by step id — see `RunWorkflowParams.stageModels`'s
+   * own doc comment for what it drives.
+   *
+   * Persisted for the identical reason `input` is: a run that pauses at a
+   * human gate resumes in a different process, and the post-gate half has to
+   * draft under the same per-stage model choice as the pre-gate half. Unlike
+   * `contentLanguage` (AU34/SCRUM-312), there is no external client-standing
+   * store to re-read this from at resume time -- it is a one-shot choice made
+   * for this run alone -- so the run record is the only place it can survive
+   * the gate. Before this field existed, `stageModels` reached the runtime
+   * for the first half only and was never written here, so the second half
+   * silently lost it (SCRUM-384).
+   */
+  stageModels: z.record(z.string(), z.string().min(1)).optional(),
+  /**
    * `failureReason`/`pendingGateId`/`reason` are `.nullable()` as well as
    * `.optional()`: every terminal (or re-entrant) transition in
    * `WorkflowEngine.run()` explicitly writes `null` into whichever of these

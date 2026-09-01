@@ -132,6 +132,14 @@ export class WorkflowEngine {
     // Same reasoning as budget above: a resume carries no brief of its own, so
     // the second half of a gated run would otherwise draft against nothing.
     const input = params.input ?? existingRun?.input ?? {};
+    // Same reasoning again, for Studio's per-stage model override (SCRUM-384):
+    // a resume that doesn't explicitly re-supply it must fall back to the run
+    // record's own copy, not to nothing. Before this, `stageModels` was never
+    // written into `newRun` below at all, so there was no record to fall back
+    // to — the post-gate half of every gated run silently reverted to each
+    // stage's compiled default the moment a human resolved the gate, with
+    // nothing in the trace saying so.
+    const stageModels = params.stageModels ?? existingRun?.stageModels;
 
     if (!existingRun) {
       const newRun: RunRecord = {
@@ -144,6 +152,7 @@ export class WorkflowEngine {
         updatedAt: this.now(),
         ...(budget !== undefined ? { budget } : {}),
         ...(Object.keys(input).length > 0 ? { input } : {}),
+        ...(stageModels !== undefined ? { stageModels } : {}),
       };
       await this.store.createRunIfNotExists(newRun);
     } else {
@@ -164,7 +173,7 @@ export class WorkflowEngine {
       productId: params.productId,
       runKind: params.runKind,
       input,
-      ...(params.stageModels !== undefined ? { stageModels: params.stageModels } : {}),
+      ...(stageModels !== undefined ? { stageModels } : {}),
       ...(params.contentLanguage !== undefined ? { contentLanguage: params.contentLanguage } : {}),
       store: this.store,
       now: this.now,
