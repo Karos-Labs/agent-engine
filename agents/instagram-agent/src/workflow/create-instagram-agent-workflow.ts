@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { readForbiddenTopics } from "@agent-engine/core";
-import type { AgentContext, AgentTool, AgentToolRegistry, GateResponse, ModelRouter, PromptStore, TemplateFeedback } from "@agent-engine/core";
+import type { AgentContext, AgentTool, AgentToolRegistry, GateResponse, ModelRouter, PromptStore, StyleEdit, TemplateFeedback } from "@agent-engine/core";
 import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, readContextDoc, enforceContextDocPolicy, toAgentContext } from "@agent-engine/workflow";
 import type { RenderCarouselInput, RenderCarouselResult } from "@agent-engine/tool-karos-publish";
 import { InstagramCopyAgent } from "../agent/instagram-copy-agent.js";
@@ -22,14 +22,16 @@ import {
   type TemplateStore,
 } from "@agent-engine/tool-karos-templates";
 import { brandLogoDataUri, downloadBrandLogo, parseBrandLogoDataUri, type BrandLogoPlacement } from "@agent-engine/tool-karos-media";
-import { buildBrandHeadHtml, buildBrandLogoBodyHtml, deriveBrandRenderTokens, planBrandLogo } from "./brand-render-tokens.js";
+import { buildBrandHeadHtml, buildBrandLogoBodyHtml, deriveBrandRenderTokens, planBrandLogo, type BrandRenderTokens } from "./brand-render-tokens.js";
 import { ARCHETYPE_TEMPLATE_FILES, assembleSlidesData, checkSlidesData, resolveLayout } from "./slides-data.js";
 import { checkCraftHygiene } from "./craft-hygiene.js";
 import { checkExpectedScript, languageGateText, runLanguageFluency, LANGUAGE_FLUENCY_STEP_ID, LANGUAGE_SCRIPT_STEP_ID } from "./language-gate.js";
 import { assessBrandAssetPresence, buildElevatedVisualQaCriteria, checkPaletteWithinKit } from "./visual-qa-pre-checks.js";
+import { parseStyleDirective, type StyleDirectiveResult, type StyleIntent, type StyleRefusal } from "./style-directive.js";
 import {
   BrandTokensSchema,
   type BrandTokens,
+  mergeStyleOverrides,
   ResearchOutputSchema,
   StyleConfigSchema,
   type ImageCandidate,
@@ -42,6 +44,7 @@ import {
   type InstagramTopicClaim,
   type ResearchOutput,
   type SlideCustomArchetype,
+  type StyleOverrides,
 } from "./types.js";
 
 /**
@@ -94,6 +97,86 @@ const MAX_REVISION_ROUNDS = 2;
  */
 export function customArchetypeTemplateId(clientSlug: string, archetypeId: string): string {
   return `${clientSlug}:${archetypeId}`;
+}
+
+/**
+ * IGSTYLE-3, §2.3 — the effective kit for ONE attempt: `baseline` (Layer 0,
+ * frozen at `02c-load-brand-kit`) with `learned` (Layer 1, the durable prior)
+ * and `directive` (Layer 2, this run's own binding instruction) merged on
+ * top, L2 winning (`mergeStyleOverrides`'s own last-wins contract).
+ *
+ * Pure and uncheckpointed on purpose: every input is already checkpointed
+ * (`rawBrand` at 02g, `baseline` at 02c, `learned` at 02h, `directive` inside
+ * `04g-style-directive`), so re-deriving this on every call is deterministic
+ * and free — no separate checkpoint boundary needed, and none of the
+ * "resuming an in-flight run replays an old-shape checkpoint" risk that
+ * justifies the actual checkpointed steps' own existence.
+ *
+ * Two refuse-to-guess exits, both taken before spending a re-derivation:
+ *
+ * 1. Nothing to apply (`rawBrand` absent AND both patches empty) — returns
+ *    `baseline` verbatim. The overwhelmingly common case (every revision-0
+ *    call, and any later round nobody asked to re-colour), and the one that
+ *    keeps revision 0 byte-identical to today.
+ * 2. Re-deriving would DROP the `--bg`/`--fg` pair `baseline` had — a
+ *    `StyleRefusal`, and the baseline kit ships instead. `deriveBrandRenderTokens`
+ *    already drops a ground/fg pair that fails the 4.5:1 floor rather than
+ *    shipping it broken; the bug this closes is what happens next — silently
+ *    losing color from a working slide because ONE directive/learned patch
+ *    turned out to be illegible is strictly worse than the run's original,
+ *    frozen colors. "Never silently discard" (§2.3) is enforced here, not
+ *    only inside `parseStyleDirective`.
+ */
+export function effectiveBrandKit(
+  rawBrand: unknown,
+  brandTokens: BrandTokens,
+  learned: StyleOverrides,
+  directive: StyleOverrides,
+  baseline: BrandRenderTokens | undefined,
+): { kit: BrandRenderTokens | undefined; refusals: StyleRefusal[] } {
+  const learnedEmpty = Object.keys(learned).length === 0;
+  const directiveEmpty = Object.keys(directive).length === 0;
+  if (rawBrand === undefined && learnedEmpty && directiveEmpty) {
+    return { kit: baseline, refusals: [] };
+  }
+
+  const merged = mergeStyleOverrides(brandTokens.renderTokens, learned, directive);
+  // `deriveBrandRenderTokens`'s own explicit-override ladder only treats
+  // ground/fg as an override AT ALL when BOTH are set (protecting its
+  // contrast-floor check, which needs a pair to measure) — otherwise it
+  // falls through to full re-derivation from `rawBrand`, silently discarding
+  // a directive that touched only one of the two. That is the overwhelmingly
+  // common real case ("make the text orange" says nothing about the
+  // background), so a single-role pick must not be lost: fill the untouched
+  // half from the CURRENT baseline's own resolved value before handing the
+  // pair to `deriveBrandRenderTokens`. `finalize` (in `style-directive.ts`)
+  // already checked the resulting pair against the contrast floor using
+  // this exact baseline as context, so this fill-in cannot smuggle in a pair
+  // that check would have refused.
+  const groundFgFilled: StyleOverrides = { ...merged };
+  if (merged.ground !== undefined && merged.fg === undefined && baseline?.cssVars["--fg"] !== undefined) {
+    groundFgFilled.fg = baseline.cssVars["--fg"];
+  }
+  if (merged.fg !== undefined && merged.ground === undefined && baseline?.cssVars["--bg"] !== undefined) {
+    groundFgFilled.ground = baseline.cssVars["--bg"];
+  }
+  const rederived = deriveBrandRenderTokens(rawBrand, { ...brandTokens, renderTokens: groundFgFilled });
+
+  const baselineHadPair = baseline?.cssVars["--bg"] !== undefined && baseline?.cssVars["--fg"] !== undefined;
+  const rederivedHasPair = rederived?.cssVars["--bg"] !== undefined && rederived?.cssVars["--fg"] !== undefined;
+  if (baselineHadPair && !rederivedHasPair) {
+    const refusal: StyleRefusal = {
+      role: "pair",
+      requested: `ground=${merged.ground ?? "(baseline)"} / fg=${merged.fg ?? "(baseline)"}`,
+      reason:
+        "re-deriving the brand kit with this round's merged style overrides dropped the ground/fg pair the baseline " +
+        "kit had (most likely the pair failed deriveBrandRenderTokens's own contrast floor) — falling back to the " +
+        "baseline kit rather than shipping this attempt with no ground/fg at all",
+    };
+    return { kit: baseline, refusals: [refusal] };
+  }
+
+  return { kit: rederived, refusals: [] };
 }
 
 /**
@@ -644,6 +727,93 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       enforceContextDocPolicy({ agentId: "instagram-agent", docs: { "branding-guidelines": brandingGuidelines } }),
     );
 
+    // ── 02g: the RAW brand kit (IGSTYLE-3, §2.3) ──
+    //
+    // `02c` above only ever kept `deriveBrandRenderTokens`'s OUTPUT. Applying a
+    // learned/directive style patch means re-deriving with a merged
+    // `renderTokens`, and re-deriving needs the raw `client.getBrand()` object
+    // 02c itself derived from — never checkpointed anywhere until now.
+    //
+    // A NEW step rather than a widened 02c, for the exact reason 02c/02d's own
+    // comments give: an in-flight run resuming across this deploy would replay
+    // an old-shape checkpoint into new-shape code. Named `02g` (not the spec
+    // draft's `02e`) because `02e`/`02f` were already taken by SCRUM-209/242's
+    // branding-guidelines/context-doc-policy steps by the time this ticket
+    // landed — same `?? undefined` JSON round-trip treatment as 02c/02d.
+    const rawBrand =
+      (await wf.step.code("02g-load-brand-kit-raw", async () => {
+        const brandOutcome = await tools["client.getBrand"]?.execute({}, { ctx });
+        return brandOutcome?.status === "success" ? brandOutcome.result : null;
+      })) ?? undefined;
+
+    // ── 02h: the learned style prior (IGSTYLE-3 stands up the shape; IGSTYLE-5 fills it in) ──
+    //
+    // Layer 1 of §2.2's three-layer resolution — a PRIOR distilled from this
+    // client's accumulated feedback, read once and frozen for the run so
+    // another run's write mid-flight can't change it under this one.
+    //
+    // Deliberately inert here: real distillation (`distillStylePreferences`,
+    // §2.6's recency-weighted voting) is IGSTYLE-4's own deliverable, in a
+    // different file this ticket does not touch (`packages/workflow/src/primitives/style-preferences.ts`),
+    // and IGSTYLE-3's job is Layer 2 — THIS run's own directive reaching the
+    // render, not the cross-run prior. Returning an always-empty patch here
+    // keeps `effectiveBrandKit` byte-identical to a world with no Layer 1 at
+    // all (an empty `learned` patch is invisible to `mergeStyleOverrides`),
+    // so revision 0 is genuinely unaffected — exactly the same "shape now,
+    // wire later" move IGSTYLE-1 made for `renderTokens.accent`. IGSTYLE-5 is
+    // what swaps this step's body for a real `memory.readFeedback` +
+    // `distillStylePreferences` call, once IGSTYLE-4 exists to call.
+    const learnedStyle: StyleOverrides = await wf.step.code(
+      "02h-learned-style-preferences",
+      (): StyleOverrides => ({}),
+    );
+
+    /**
+     * The brand kit THIS attempt actually renders with — `brandKit` (Layer 0,
+     * frozen at 02c) until `draftOnce` resolves a revision's own effective
+     * kit (§2.3's `effectiveBrandKit`) and reassigns it, at which point every
+     * consumer below (`brandLogoAssessment`, `brandFragments`, the palette/
+     * accent/handle reads inside `draftOnce`) sees the NEW kit on its very
+     * next call — the same "re-derive fresh every call, never cache across a
+     * revision" rule `ensureTemplatesOnDisk`'s own doc comment already
+     * requires for the on-disk template files.
+     *
+     * A plain mutable binding rather than a parameter threaded through every
+     * one of those closures: this whole workflow function replays
+     * deterministically from its checkpoints on every resume (`brandKit`
+     * itself is exactly this same pattern — a `const` derived from a
+     * checkpointed step), and the review cycle is a strict, single-threaded
+     * loop (`runReviewCycle`'s own doc comment: "attempt -> buildGate -> gate
+     * -> onDecision, one round fully resolves before the next begins") — so
+     * there is never a moment two revisions' effective kits are live at once.
+     * Reassigned once per revision inside `draftOnce`, never per attempt: the
+     * style directive is revision-scoped (`04g-style-directive`), not
+     * attempt-scoped, so every attempt within one revision correctly shares
+     * one effective kit.
+     */
+    let effectiveKit: BrandRenderTokens | undefined = brandKit;
+
+    /**
+     * IGSTYLE-3 — which kit `ensureTemplatesOnDisk` last actually wrote to
+     * disk, so a revision whose `effectiveKit` differs from round 0's forces
+     * a re-materialization even when the files are still physically PRESENT
+     * (the common case: the same Cloud Run instance handles every round of
+     * one run, so the 9qkTWlg7e9ZLiVIZUok4 "instance recycled" trigger never
+     * fires, but the CONTENT still has to change). Without this, a directive
+     * would resolve correctly at `04g-style-directive` and then silently
+     * never reach a single rendered pixel, because the presence check alone
+     * has no way to know the file on disk is stale rather than merely
+     * present — exactly the kind of silent loss this whole ticket exists to
+     * close.
+     *
+     * The sentinel (rather than starting at `undefined`) matters: `undefined`
+     * is itself a legal `effectiveKit` value (a brandless client), and this
+     * must force a materialization on the very first call regardless of
+     * whether that first kit happens to be `undefined`.
+     */
+    const NEVER_MATERIALIZED = Symbol("templates-never-materialized");
+    let templatesMaterializedForKit: BrandRenderTokens | undefined | typeof NEVER_MATERIALIZED = NEVER_MATERIALIZED;
+
     const brandFetch = options.fetchImpl ?? fetch;
     let cachedLogoDataUri: string | undefined;
     /**
@@ -656,7 +826,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
      * transient outage costs one attempt's logo, not the run's.
      */
     const ensureBrandLogoDataUri = async (): Promise<string | undefined> => {
-      if (brandKit?.logoUrl === undefined) return undefined;
+      if (effectiveKit?.logoUrl === undefined) return undefined;
       if (cachedLogoDataUri !== undefined) return cachedLogoDataUri;
       const cacheDir = path.resolve(options.repoRoot, ".media-cache", wf.runId, "brand");
       const cacheFile = path.join(cacheDir, "logo.datauri");
@@ -668,7 +838,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       } catch {
         // Not cached on this instance yet — fetch below.
       }
-      const download = await downloadBrandLogo(brandFetch, brandKit.logoUrl);
+      const download = await downloadBrandLogo(brandFetch, effectiveKit.logoUrl);
       if (download === undefined) return undefined;
       cachedLogoDataUri = brandLogoDataUri(download);
       try {
@@ -694,32 +864,38 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
      * attempt.
      */
     const brandLogoAssessment = async (): Promise<{ logoDataUri?: string; placement?: BrandLogoPlacement }> => {
-      if (brandKit === undefined) return {};
+      if (effectiveKit === undefined) return {};
       const logoDataUri = await ensureBrandLogoDataUri();
       const download = logoDataUri !== undefined ? parseBrandLogoDataUri(logoDataUri) : undefined;
+      // IGSTYLE-3: planned against `effectiveKit`, not the frozen 02c kit —
+      // change the ground and keep the old plan and you ship a black logo on
+      // a black slide. An illegible mark against the NEW ground is omitted
+      // exactly as it always was against the old one (`planBrandLogoPlacement`
+      // itself decides that); this just makes sure it is asked about the
+      // ground that will actually be under it.
       const placement =
         download !== undefined
-          ? planBrandLogo(brandKit, download, { hasSeriesBadge: frozen.brandTokens.seriesBadge !== undefined })
+          ? planBrandLogo(effectiveKit, download, { hasSeriesBadge: frozen.brandTokens.seriesBadge !== undefined })
           : undefined;
       return { ...(logoDataUri !== undefined ? { logoDataUri } : {}), ...(placement !== undefined ? { placement } : {}) };
     };
 
     /**
      * The fragments (head: font links + token sheet + badge variant; body:
-     * the logo `<img>`) spliced into every rendered document. Re-derived
-     * from the checkpointed `brandKit` on every call — the string work is
-     * pure, and the one piece of I/O (the logo fetch) degrades to "no logo
-     * this attempt" rather than ever failing a compose.
+     * the logo `<img>`) spliced into every rendered document. Re-derived from
+     * `effectiveKit` on every call (IGSTYLE-3 — was the frozen `brandKit`) —
+     * the string work is pure, and the one piece of I/O (the logo fetch)
+     * degrades to "no logo this attempt" rather than ever failing a compose.
      */
     const brandFragments = async (): Promise<{ head?: string; body?: string }> => {
-      if (brandKit === undefined) return {};
+      if (effectiveKit === undefined) return {};
       const { logoDataUri, placement } = await brandLogoAssessment();
       // A plan whose decision is `omit` emits neither the rules nor the
       // `<img>`: an illegible mark ships as nothing, never as a smudge, and
       // never as a held run.
       const showLogo = logoDataUri !== undefined && placement !== undefined && placement.decision !== "omit";
       return {
-        head: buildBrandHeadHtml(brandKit, showLogo ? { logo: placement } : {}),
+        head: buildBrandHeadHtml(effectiveKit, showLogo ? { logo: placement } : {}),
         ...(showLogo ? { body: buildBrandLogoBodyHtml(logoDataUri) } : {}),
       };
     };
@@ -1128,7 +1304,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               .catch(() => false),
           ),
         );
-        if (!allPresent.every(Boolean)) {
+        // IGSTYLE-3: re-materialize on a KIT change too, not only when a file
+        // is physically missing — see `templatesMaterializedForKit`'s own
+        // doc comment above.
+        if (!allPresent.every(Boolean) || templatesMaterializedForKit !== effectiveKit) {
           try {
             if (options.templateStore !== undefined) {
               const fragments = await brandFragments();
@@ -1147,9 +1326,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               // dependency, so this branch cannot even fail on an outage.
               await materializeBrandedClientDir();
             }
+            templatesMaterializedForKit = effectiveKit;
           } catch (error) {
             // Same fallback rule as 04c-resolve-templates itself: a registry
             // outage here degrades layout variety, it does not fail the run.
+            // `templatesMaterializedForKit` is deliberately NOT updated on
+            // failure, so the next call retries rather than believing a
+            // write that never happened.
             console.error("ensureTemplatesOnDisk: re-materialization failed, render will fall back to the client's own template", error);
           }
         }
@@ -1234,12 +1417,39 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // opportunities) and have their caption writer never see a word of it.
     const clientIntelContext = await readClientIntelContext(wf, tools, ctx, "04f-read-intel-context");
 
+    /**
+     * The reviewer's structured colour pick from the PREVIOUS round's gate
+     * response (IGSTYLE-3, §2.2 Layer 2) — `RevisionNote` (the shared,
+     * cross-agent primitive in `packages/workflow`) carries only
+     * `{revision, actor, at, feedback}`, deliberately never `edits`, so this
+     * is captured separately, in `onDecision` below, rather than by widening
+     * that shared shape for one agent's use. Read by `draftOnce` at the START
+     * of the NEXT round; always `undefined` for revision 0, since there is no
+     * previous round's response yet — which is exactly what keeps revision 0
+     * unaffected.
+     */
+    let latestStyleEdit: StyleEdit | undefined;
+
     /** What one drafting pass produces, once its own self-checks have passed. */
     interface DraftResult {
       copy: InstagramCopyOutput;
       selections: ImageSelection[];
       slidesData: RenderCarouselInput;
       rendered: RenderCarouselResult;
+      /**
+       * IGSTYLE-3, §2.3's "loud refusals" requirement — what THIS round's
+       * style-directive resolution did (`04g-style-directive`) plus any
+       * `effectiveBrandKit` pair-drop refusal, surfaced verbatim in the gate
+       * payload as `styleDirectiveOutcome`. `undefined` only when nothing was
+       * even attempted — no structured pick, no free-text feedback, no
+       * learned prior (the overwhelming majority of revision-0 rounds).
+       */
+      styleDirectiveOutcome?: {
+        source: StyleDirectiveResult["source"];
+        applied: string[];
+        intents: StyleIntent[];
+        refusals: StyleRefusal[];
+      };
     }
 
     /** Never prose — excluded from anything a human or the topic guardrail reads as text. */
@@ -1282,6 +1492,87 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       const rev = (id: string) => (revision === 0 ? id : `${id}-r${revision}`);
       /** The reviewer's accumulated change requests, as a directive for the copy agent. */
       const directive = revisionDirective(notes);
+
+      // ── 04g: this round's style directive (IGSTYLE-3, §2.2 Layer 2 — ACTIVE, binding within this run) ──
+      //
+      // Revision-scoped, not attempt-scoped: resolved once here, reused by
+      // every attempt in the loop below, exactly like `directive` above.
+      // Revision 0 always sees `latestStyleEdit === undefined` and
+      // `notes.length === 0`, so `parseStyleDirective` returns
+      // `{overrides:{}, source:"none"}` unconditionally with no special
+      // casing needed — byte-identical to a run before this ticket existed.
+      //
+      // The context this round's directive resolves AGAINST is Layer 0's own
+      // ground/fg/ring (`brandKit`, not `effectiveKit`) — a directive is
+      // always relative to the client's actual baseline kit, never to a
+      // PREVIOUS round's already-adjusted colours, so "darker" means "darker
+      // than the brand's real ground" in every round, not a runaway drift.
+      const latestFeedback = notes.length > 0 ? notes[notes.length - 1]!.feedback : undefined;
+      const styleDirectiveResult: StyleDirectiveResult = await wf.step.code(rev("04g-style-directive"), () =>
+        parseStyleDirective(
+          {
+            ...(latestStyleEdit !== undefined ? { style: latestStyleEdit } : {}),
+            ...(latestFeedback !== undefined ? { feedback: latestFeedback } : {}),
+          },
+          {
+            ...(brandKit?.cssVars["--bg"] !== undefined ? { ground: brandKit.cssVars["--bg"] } : {}),
+            ...(brandKit?.cssVars["--fg"] !== undefined ? { fg: brandKit.cssVars["--fg"] } : {}),
+            ring: brandKit?.palette ?? [],
+          },
+          { router: options.router },
+        ),
+      );
+
+      const { kit: revisionEffectiveKit, refusals: kitRefusals } = effectiveBrandKit(
+        rawBrand,
+        frozen.brandTokens,
+        learnedStyle,
+        styleDirectiveResult.overrides,
+        brandKit,
+      );
+      // Every consumer below this line — `brandFragments`, `brandLogoAssessment`,
+      // `ensureTemplatesOnDisk`, and every `effectiveKit?.X` read further down
+      // in this attempt loop — now sees THIS round's kit.
+      effectiveKit = revisionEffectiveKit;
+
+      const allStyleRefusals: StyleRefusal[] = [...styleDirectiveResult.refusals, ...kitRefusals];
+      // Loud refusals (§2.3, mandatory): a silently-dropped directive is
+      // indistinguishable from the original bug this whole ticket exists to
+      // fix. One ledger event per revision (not per refusal) — `eventId` has
+      // no per-role suffix, so a re-run that hits the identical refusal(s)
+      // again collapses to the SAME row via karos-ledger's own
+      // `(runId, eventId)` idempotency, exactly like SCRUM-393's
+      // contrast-below-floor warn.
+      if (allStyleRefusals.length > 0) {
+        await wf.step.code(rev("04g-style-directive-record-refusal"), async () => {
+          const summary = allStyleRefusals
+            .map(
+              (r) =>
+                `${r.role} "${r.requested}": ${r.reason}${r.contrastRatio !== undefined ? ` (measured ${r.contrastRatio.toFixed(2)}:1)` : ""}`,
+            )
+            .join("; ");
+          await tools["ledger.appendEvent"]?.execute(
+            {
+              runId: wf.runId,
+              eventId: `${wf.runId}__style-directive-refused-r${revision}`,
+              level: "warn",
+              message: `round ${revision}'s style directive was partially or fully refused: ${summary}`,
+            },
+            { ctx },
+          );
+          return null;
+        });
+      }
+
+      const styleDirectiveOutcome: DraftResult["styleDirectiveOutcome"] =
+        styleDirectiveResult.source !== "none" || allStyleRefusals.length > 0
+          ? {
+              source: styleDirectiveResult.source,
+              applied: [...styleDirectiveResult.applied],
+              intents: [...styleDirectiveResult.intents],
+              refusals: allStyleRefusals,
+            }
+          : undefined;
 
       let finalCopy: InstagramCopyOutput | undefined;
       let finalSelections: ImageSelection[] | undefined;
@@ -1850,8 +2141,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           availableTemplates,
           templateDirOverride: effectiveTemplateDir,
           validatedCustomArchetypeIds,
-          ...(brandKit?.brandAccent !== undefined ? { brandAccentFallback: brandKit.brandAccent } : {}),
-          ...(brandKit?.handle !== undefined ? { brandHandle: brandKit.handle } : {}),
+          ...(effectiveKit?.brandAccent !== undefined ? { brandAccentFallback: effectiveKit.brandAccent } : {}),
+          ...(effectiveKit?.handle !== undefined ? { brandHandle: effectiveKit.handle } : {}),
         }),
       );
 
@@ -1891,8 +2182,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             availableTemplates,
             templateDirOverride: effectiveTemplateDir,
             validatedCustomArchetypeIds,
-            ...(brandKit?.brandAccent !== undefined ? { brandAccentFallback: brandKit.brandAccent } : {}),
-          ...(brandKit?.handle !== undefined ? { brandHandle: brandKit.handle } : {}),
+            ...(effectiveKit?.brandAccent !== undefined ? { brandAccentFallback: effectiveKit.brandAccent } : {}),
+          ...(effectiveKit?.handle !== undefined ? { brandHandle: effectiveKit.handle } : {}),
           }),
         );
         copy = strippedCopy;
@@ -1940,10 +2231,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           .map((s) => s.fields["accentColor"])
           .filter((h): h is string => typeof h === "string");
         return {
-          paletteGate: checkPaletteWithinKit(usedHexes, brandKit?.palette ?? []),
+          paletteGate: checkPaletteWithinKit(usedHexes, effectiveKit?.palette ?? []),
           brandAsset: assessBrandAssetPresence({
-            configuredLogoUrl: brandKit?.logoUrl,
-            rejectedLogoUrlReason: brandKit?.rejectedLogoUrlReason,
+            configuredLogoUrl: effectiveKit?.logoUrl,
+            rejectedLogoUrlReason: effectiveKit?.rejectedLogoUrlReason,
             hasDownload: placement !== undefined,
             placement,
           }),
@@ -1970,7 +2261,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       //         step 07/07b above, matching carousel-agent-v2 SKILL.md step
       //         08's "a fail here is RETURN: 05, because it is the copy or
       //         the layout, not the code." ──
-      const elevatedCriteria = buildElevatedVisualQaCriteria({ logo: preChecks.brandAsset, kitPalette: brandKit?.palette ?? [] });
+      const elevatedCriteria = buildElevatedVisualQaCriteria({ logo: preChecks.brandAsset, kitPalette: effectiveKit?.palette ?? [] });
       const qaExec = await wf.step.agent(rev(`08b-visual-qa-attempt-${attempt}`), qaAgent, {
         slides: slidesDataForQa.slides.map((s) => ({ n: s.n, fields: s.fields, images: s.images })),
         renderRules: [...renderRules.map((r) => ({ id: r.id, description: r.description })), ...elevatedCriteria],
@@ -1980,7 +2271,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         ...(preChecks.brandAsset.present
           ? { brandAssetContext: { corner: preChecks.brandAsset.corner, scrimmed: preChecks.brandAsset.scrimmed } }
           : {}),
-        ...(brandKit !== undefined && brandKit.palette.length > 0 ? { brandPalette: brandKit.palette } : {}),
+        ...(effectiveKit !== undefined && effectiveKit.palette.length > 0 ? { brandPalette: effectiveKit.palette } : {}),
       });
       if (qaExec.status === "tooling_error" || qaExec.status === "budget_exceeded") {
         throw new WorkflowToolingFailure(`visual QA step resolved to "${qaExec.status}" on attempt ${attempt}/${MAX_SELF_CHECK_ATTEMPTS}`);
@@ -2009,7 +2300,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           `step 07's self-check never passed after ${MAX_SELF_CHECK_ATTEMPTS} attempt(s) (initial + ${MAX_SELF_CHECK_ATTEMPTS - 1} return(s) to step 05) — last reason: ${lastSelfCheckReason}`,
         );
       }
-      return { copy: finalCopy, selections: finalSelections, slidesData: finalSlidesData, rendered: finalRendered };
+      return {
+        copy: finalCopy,
+        selections: finalSelections,
+        slidesData: finalSlidesData,
+        rendered: finalRendered,
+        ...(styleDirectiveOutcome !== undefined ? { styleDirectiveOutcome } : {}),
+      };
     };
 
     // ── 09a: the universal approve / revise / reject cycle ──
@@ -2065,6 +2362,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           slideCount: draft.slidesData.slides.length,
           renderedCount: draft.rendered.rendered.length,
           revision,
+          // IGSTYLE-3, §2.3's "loud refusals" requirement — what THIS round's
+          // style-directive resolution did, including any refusal, so a
+          // silently-dropped colour instruction is never indistinguishable
+          // from one that simply wasn't asked for. Absent on the common case
+          // (nothing was attempted this round) rather than an empty object,
+          // matching every other optional gate-payload field's convention.
+          ...(draft.styleDirectiveOutcome !== undefined ? { styleDirectiveOutcome: draft.styleDirectiveOutcome } : {}),
           // The actual caption a reviewer approves alongside the images —
           // every other channel's gate payload has carried its drafted text
           // as `preview` since the review panel existed; a carousel's own
@@ -2131,6 +2435,18 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         timeout: { duration: "24h", onTimeout: "hold" },
       }),
       onDecision: async ({ revision, response, templateFeedback }) => {
+        // IGSTYLE-3, §2.2 Layer 2 — captured here (not via `notes`, which the
+        // shared `RevisionNote` shape deliberately never carries `edits` on)
+        // so the NEXT round's `draftOnce` reads exactly the structured pick
+        // THIS round's reviewer made. Only meaningful on `revise` — an
+        // `approve`'s `edits.style` is Phase 2's in-place-edit path (09c/09d
+        // below), not a directive for a future drafting round that will
+        // never happen. Safe to read/write here with no staleness risk for
+        // the same reason `latestDraftForReview` is (`runReviewCycle`'s own
+        // doc comment: "attempt -> buildGate -> gate -> onDecision, one round
+        // fully resolves before the next begins").
+        latestStyleEdit = response.decision === "revise" ? response.edits?.style : undefined;
+
         const customArchetypesByTemplateId = new Map(
           (latestDraftForReview?.copy.slides ?? [])
             .filter((s) => s.layout === "custom" && s.customArchetype)

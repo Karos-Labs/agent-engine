@@ -7,6 +7,8 @@ import {
   fakeRouterSequence,
   finalTurn,
   goodCopyOutput,
+  goodImageCandidatePool,
+  goodImageVettingOutput,
   goodResearchOutput,
   goodVisualQaOutput,
   makePromptStore,
@@ -210,6 +212,75 @@ describe("zero-held guarantee: a picture problem never costs the post", () => {
     // Slide 1 keeps its rescued image; the 429'd slides ship as type.
     expect(slidesData?.slides.find((s) => s.n === 1)?.images).toEqual({ hero: genPath });
     expect(slidesData?.slides.filter((s) => s.n !== 1).every((s) => Object.keys(s.images).length === 0)).toBe(true);
+  }, 30000);
+
+  // IGSTYLE-3, §2.3's own acceptance line: "a style-directive failure
+  // degrades, never holds." A picture is not the only thing that must never
+  // cost the post — a transient Vertex blip on the style-directive's Tier 2
+  // model call (04g-style-directive, only reached when the closed-vocabulary
+  // parser found nothing but the feedback still plausibly concerns style) is
+  // the same class of problem as a dead image provider: `runModelTier`
+  // degrades to `source: "none"` plus a refusal, and the round proceeds to
+  // its own gate exactly as if the reviewer had said nothing about colour.
+  it("reaches the next gate (never holds) when the style-directive's Tier 2 model call fails", async () => {
+    const copy = goodCopyOutput();
+    const draftTurns = () => [finalTurn(copy), finalTurn(goodImageVettingOutput()), finalTurn(goodVisualQaOutput())];
+    const router = fakeRouterSequence([
+      finalTurn(goodResearchOutput()),
+      ...draftTurns(),
+      // Tier 2 (04g-style-directive's model call) — a transient Vertex quota
+      // blip, the exact failure mode this file's own header names as the
+      // real cause of both prep-run holds. `runModelTier`'s own try/catch is
+      // what this test proves actually degrades rather than propagating.
+      () => {
+        throw new Error('style-directive model call failed: {"error":{"code":429,"status":"RESOURCE_EXHAUSTED"}}');
+      },
+      ...draftTurns(),
+    ]);
+
+    const workflowFn = createInstagramAgentWorkflow({
+      tools: tools(env, {}),
+      promptStore: makePromptStore(),
+      router,
+      repoRoot: env.repoRoot,
+      imageCandidatePool: goodImageCandidatePool(),
+    });
+
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+    const runId = "zero_held_style_directive_model_failure";
+
+    const r0 = await engine.run(workflowFn, { ...base, runId });
+    expect(r0.status).toBe("awaiting_gate");
+
+    await engine.resolveGate(runId, "09a-batch-review-r0", {
+      decision: "revise",
+      actor: "jane@karoslabs.com",
+      // Plausibly about style ("color") but nothing the closed-vocabulary
+      // parser's GROUND/FG/ACCENT/DARKER/LIGHTER words or an explicit hex
+      // would match — Tier 1 returns `source: "none"`, which is exactly what
+      // routes this round into Tier 2.
+      feedback: "the color scheme feels a bit off, can we adjust it",
+      at: new Date().toISOString(),
+    });
+
+    const r1 = await engine.run(workflowFn, { ...base, runId });
+
+    // The whole point: a model-call failure inside style-directive resolution
+    // must not hold, fail, or degrade THE RUN — the round still reaches its
+    // own gate, exactly as an unreadable-feedback round would.
+    expect(r1.status).toBe("awaiting_gate");
+
+    const steps = await durableStore.listSteps(runId);
+    const directiveStep = steps.find((s) => s.stepId === "04g-style-directive-r1");
+    const directiveOutput = directiveStep?.output as { source: string; overrides: Record<string, string>; refusals: Array<{ reason: string }> };
+    expect(directiveOutput.source).toBe("none");
+    expect(directiveOutput.overrides).toEqual({});
+    expect(directiveOutput.refusals).toHaveLength(1);
+    expect(directiveOutput.refusals[0]?.reason).toMatch(/style-directive model call failed/);
+
+    // Loud, not silent (§2.3): the degraded attempt still emits its ledger warn.
+    expect(steps.map((s) => s.stepId)).toContain("04g-style-directive-record-refusal-r1");
   }, 30000);
 
   // ── The boundary: holds that are NOT picture problems and must survive ──

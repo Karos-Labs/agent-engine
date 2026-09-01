@@ -486,8 +486,15 @@ export function deriveBrandRenderTokens(brand: unknown, brandTokens: BrandTokens
     fontFamilies.push(mono);
   }
 
-  // ── accent: extracted for assembleSlidesData's EXISTING channel, never a var ──
-  const brandAccent = asHex(b["accent"]) ?? asHex((b["colors"] as Record<string, unknown> | undefined)?.["primaryAccent"]);
+  // ── accent: explicit override (IGSTYLE-3) > client/brand.json > nothing ──
+  //
+  // `overrides.accent` was added at IGSTYLE-1 (see this file's `renderTokens`
+  // doc comment there) but deliberately left inert — this is the line that
+  // actually wires it in, completing the same "explicit override beats
+  // derivation" ladder every other field here already follows. Extracted for
+  // `assembleSlidesData`'s EXISTING accent channel; never emitted as a var.
+  const brandAccent =
+    asHex(overrides.accent) ?? asHex(b["accent"]) ?? asHex((b["colors"] as Record<string, unknown> | undefined)?.["primaryAccent"]);
 
   // ── palette ring: the accent, then whatever else the kit legibly ships ──
   // Deliberately NOT part of `hasAnything` below: the ring is built from the
