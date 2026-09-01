@@ -6,7 +6,7 @@
 // upstream JSON asset. Product-owner decision: `og_image` (a `FixAction` member since SCRUM-210)
 // had zero catalog records mapping to it — a routable fix the system could never fire. This one
 // record closes that gap; see `rec-routing-map.ts`'s "SEO-11" row for the routing rationale, and
-// `__tests__/routable-recommendation-contract.test.ts` for the "no unreachable FixAction" proof.
+// `__tests__/rec-routing-map.test.ts`'s "every FixAction member is reachable" block for the proof.
 export const recCatalogData = {
  "SEO-01": {
   "id": "SEO-01",
