@@ -30,6 +30,7 @@ import {
   REPRODUCIBILITY,
   SEO_BUCKETS,
   SEO_GEO_VISIBILITY_ENGINES,
+  VISIBILITY_DENOMINATOR_DECISION,
   type FiredRecommendation,
   type SeoGeoCaptureCell,
   type SeoGeoCaptureTier,
@@ -588,49 +589,47 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
         competitorRoster: frozen.competitorRoster,
       };
 
-      const nOutcome = await tools["seoGeo.score"]!.execute(
+      // SCRUM-390: this used to be two calls, one per denominator ("N" and
+      // "N_e") — a holdover from when RFC-04 §4 still described N vs N_e as
+      // a "BLOCKING scoring-model decision for Daniel". That decision is now
+      // CLOSED (AU28/SCRUM-319, frozen as `VISIBILITY_DENOMINATOR_DECISION`
+      // in `packages/tools/karos-seo-geo/src/visibility-metrics.ts`), and
+      // `computeVisibilityMetrics` no longer varies its output by the
+      // `denominator` parameter at all: per-engine rates always use `N_e`,
+      // the blended Index always uses `N`, and `denominator` survives only as
+      // a deprecated, purely-echoed field (`denominatorRequested`) kept so
+      // old callers still compile. Confirmed by reading
+      // `visibility-metrics.ts` and `visibility-index.ts` end to end, not
+      // assumed: neither function's actual computation branches on it. So
+      // the two calls always produced bit-identical `seoScore`, `geoReadiness`,
+      // `visibility` and `visibilityMetrics` results — one call now does the
+      // work of two, and the single result serves both `visibilityByN` and
+      // `visibilityByNe` below (still both present so nothing downstream that
+      // reads either field breaks; SCRUM-271/T-B16's portal mapper reads
+      // neither).
+      const scoreOutcome = await tools["seoGeo.score"]!.execute(
         {
           seoMeasurements: technicalPhase.seoMeasurements,
           geoReadinessMeasurements: technicalPhase.geoReadinessMeasurements,
-          visibility: { ...visibilityBase, denominator: "N" as const },
+          visibility: visibilityBase,
           hashInputs,
         },
         { ctx },
       );
-      if (nOutcome.status !== "success") {
-        throw new WorkflowToolingFailure(`seoGeo.score (denominator N) failed: ${nOutcome.status}`);
+      if (scoreOutcome.status !== "success") {
+        throw new WorkflowToolingFailure(`seoGeo.score failed: ${scoreOutcome.status}`);
       }
 
-      // RFC-04 §4: N vs N_e is a "BLOCKING scoring-model decision for Daniel" —
-      // both are computed from the exact same frozen capture-cell blob (never
-      // recaptured) so either definition reproduces once the decision lands,
-      // per the source skill's own dual-freeze requirement. Only the visibility
-      // metrics differ between the two calls; seoScore/geoReadiness never depend
-      // on the denominator choice.
-      const neOutcome = await tools["seoGeo.score"]!.execute(
-        {
-          seoMeasurements: technicalPhase.seoMeasurements,
-          geoReadinessMeasurements: technicalPhase.geoReadinessMeasurements,
-          visibility: { ...visibilityBase, denominator: "N_e" as const },
-          hashInputs,
-        },
-        { ctx },
-      );
-      if (neOutcome.status !== "success") {
-        throw new WorkflowToolingFailure(`seoGeo.score (denominator N_e) failed: ${neOutcome.status}`);
-      }
-
-      const nResult = nOutcome.result as SeoGeoScoreResult;
-      const neResult = neOutcome.result as SeoGeoScoreResult;
+      const scoreResult = scoreOutcome.result as SeoGeoScoreResult;
       const missingHashInputs = REPRODUCIBILITY.hash_inputs.filter((field) => !hashInputs[field]);
 
       return {
-        seoScore: nResult.seoScore,
-        geoReadiness: nResult.geoReadiness,
-        visibilityByN: nResult.visibility,
-        visibilityByNe: neResult.visibility,
-        inputsDigest: nResult.inputsDigest,
-        hashInputsIncomplete: nResult.hashInputsIncomplete,
+        seoScore: scoreResult.seoScore,
+        geoReadiness: scoreResult.geoReadiness,
+        visibilityByN: scoreResult.visibility,
+        visibilityByNe: scoreResult.visibility,
+        inputsDigest: scoreResult.inputsDigest,
+        hashInputsIncomplete: scoreResult.hashInputsIncomplete,
         missingHashInputs,
       };
     });
@@ -829,11 +828,10 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       visibility: {
         byN: scoring.visibilityByN,
         byNe: scoring.visibilityByNe,
-        denominatorDecision: {
-          status: "pending",
-          blockingOn: "Daniel — N vs N_e visibility denominator choice (RFC-04 §4)",
-          defaultUsedForCanonicalScore: "N",
-        },
+        // SCRUM-390: was a hardcoded "pending, blockingOn: Daniel" literal —
+        // a client-visible artefact advertising an open decision over an
+        // engine that had already resolved it. Reads the frozen record now.
+        denominatorDecision: VISIBILITY_DENOMINATOR_DECISION,
       },
       geoScoreModel: {
         weightsStatus: GEO_SCORE_MODEL.weights_status,
