@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentTool, AgentToolRegistry, GateResponse, ModelRouter, PromptStore, StyleEdit, TemplateFeedback } from "@agent-engine/core";
-import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, readContextDoc, enforceContextDocPolicy, toAgentContext } from "@agent-engine/workflow";
+import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, readContextDoc, enforceContextDocPolicy, toAgentContext, distillStylePreferences, type DistilledStyle, type FeedbackEntryLike } from "@agent-engine/workflow";
 import type { RenderCarouselInput, RenderCarouselResult } from "@agent-engine/tool-karos-publish";
 import { InstagramCopyAgent } from "../agent/instagram-copy-agent.js";
 import { InstagramImageVettingAgent } from "../agent/instagram-image-vetting-agent.js";
@@ -262,11 +262,34 @@ async function persistReviewFeedback(
      * shared knows how to turn a `DraftResult` into text.
      */
     content?: string | undefined;
+    /**
+     * IGSTYLE-5, §2.4 writer 1 — this round's resolved style directive
+     * (`DraftResult["styleDirectiveOutcome"]`, minus `refusals`, which
+     * `StylePreferenceSchema` deliberately has no room for — see that
+     * schema's own doc comment), so a future run's `distillStylePreferences`
+     * has real evidence to vote over. `undefined` on the overwhelming
+     * majority of rounds (nothing style-related was even attempted), exactly
+     * like `styleDirectiveOutcome` itself.
+     */
+    style?: { overrides: Record<string, string>; source: "structured" | "parsed" | "model"; intents: StyleIntent[]; applied: string[] } | undefined;
   },
 ): Promise<void> {
   const note = input.response.feedback ?? input.response.reason;
   const append = tools["memory.appendFeedback"];
-  if (note !== undefined && append !== undefined) {
+  // IGSTYLE-5 widens this gate from `note !== undefined` alone: a plain
+  // approve carries no `feedback`/`reason` text at all (there is nothing a
+  // person typed), but can still be the round that resolved a style
+  // directive — the SAME directive a `revise` round before it produced,
+  // carried forward because a revision's directive is resolved fresh every
+  // attempt from the accumulated notes (§2.2), not only on the round that
+  // first typed them. Without this widening, the overwhelmingly common
+  // "revise once, then approve" review shape would only ever persist ONE
+  // structured row (the revise round's), which rule 4's own threshold
+  // ("one parsed sentence does not suffice") deliberately treats as not
+  // enough evidence to learn from — the approve round's row is what a real
+  // review naturally supplies to clear it, exactly like "written for every
+  // decision including approvals" already promises for prose feedback.
+  if ((note !== undefined || input.style !== undefined) && append !== undefined) {
     try {
       await wf.step.code(`09a-record-feedback-r${input.revision}`, async () =>
         append.execute(
@@ -275,10 +298,14 @@ async function persistReviewFeedback(
             productId: wf.productId,
             decision: input.response.decision,
             actor: input.response.actor,
-            note,
+            // `AppendFeedbackInputSchema.note` requires non-empty text
+            // (`min(1)`) — a decision with structured style evidence and no
+            // typed note still needs SOME note to satisfy that.
+            note: note ?? `${input.response.decision} — no reviewer note this round (style directive carried over)`,
             revision: input.revision,
             runId: wf.runId,
             ...(input.content !== undefined ? { content: input.content } : {}),
+            ...(input.style !== undefined ? { style: input.style } : {}),
           },
           { ctx },
         ),
@@ -335,6 +362,39 @@ async function persistReviewFeedback(
       });
     } catch (error) {
       console.error(`persistReviewFeedback: could not record template feedback for "${entry.templateId}"`, error);
+    }
+
+    // IGSTYLE-5, §2.4 writer 2 — the registry write above teaches the
+    // template-quality system (a DIFFERENT store: `templateStore`, keyed by
+    // `archetypeId`, moving a single row's score). It has nothing to do with
+    // `distillStylePreferences`, which only ever reads `memory.feedback` rows
+    // keyed by `clientSlug`. Without this second, ADDITIONAL write, a
+    // reviewer's per-slide template note would never reach that store at
+    // all — "in addition to the registry write, which must not be replaced"
+    // is the acceptance line this satisfies. `scope: "template"` is what lets
+    // a later `memory.readFeedback` consumer (or a human) tell this row apart
+    // from an ordinary post-level decision.
+    if (append !== undefined) {
+      try {
+        await wf.step.code(`09a-template-feedback-r${input.revision}-s${entry.slide}-tpl`, async () =>
+          append.execute(
+            {
+              feedbackId: `${wf.runId}-r${input.revision}-s${entry.slide}-tpl`,
+              productId: wf.productId,
+              decision: entry.verdict === "approved" ? "approve" : "revise",
+              actor: input.response.actor,
+              note: entry.note,
+              revision: input.revision,
+              runId: wf.runId,
+              scope: "template",
+              slide: entry.slide,
+            },
+            { ctx },
+          ),
+        );
+      } catch (error) {
+        console.error(`persistReviewFeedback: could not record durable template feedback for "${entry.templateId}"`, error);
+      }
     }
   }
 }
@@ -746,27 +806,43 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         return brandOutcome?.status === "success" ? brandOutcome.result : null;
       })) ?? undefined;
 
-    // ── 02h: the learned style prior (IGSTYLE-3 stands up the shape; IGSTYLE-5 fills it in) ──
+    // ── 02h: the learned style prior (IGSTYLE-5) ──
     //
     // Layer 1 of §2.2's three-layer resolution — a PRIOR distilled from this
     // client's accumulated feedback, read once and frozen for the run so
-    // another run's write mid-flight can't change it under this one.
+    // another run's write mid-flight can't change it under this one (hence a
+    // single `wf.step.code` call outside `draftOnce` — every attempt inside
+    // the revision loop below sees the SAME frozen prior, never a re-read
+    // that could drift between round 0 and round 1 of the same run).
     //
-    // Deliberately inert here: real distillation (`distillStylePreferences`,
-    // §2.6's recency-weighted voting) is IGSTYLE-4's own deliverable, in a
-    // different file this ticket does not touch (`packages/workflow/src/primitives/style-preferences.ts`),
-    // and IGSTYLE-3's job is Layer 2 — THIS run's own directive reaching the
-    // render, not the cross-run prior. Returning an always-empty patch here
-    // keeps `effectiveBrandKit` byte-identical to a world with no Layer 1 at
-    // all (an empty `learned` patch is invisible to `mergeStyleOverrides`),
-    // so revision 0 is genuinely unaffected — exactly the same "shape now,
-    // wire later" move IGSTYLE-1 made for `renderTokens.accent`. IGSTYLE-5 is
-    // what swaps this step's body for a real `memory.readFeedback` +
-    // `distillStylePreferences` call, once IGSTYLE-4 exists to call.
-    const learnedStyle: StyleOverrides = await wf.step.code(
-      "02h-learned-style-preferences",
-      (): StyleOverrides => ({}),
-    );
+    // Best-effort and never blocking, same convention as `readPastFeedback`
+    // right below in the same source file this reads from
+    // (`packages/workflow/src/primitives/review-cycle.ts`): a memory read
+    // failing, or `memory.readFeedback` simply not being wired for this
+    // client, must not stop a run that can draft without a prior — it drafts
+    // exactly as it did before this ticket existed (an empty `learned` patch
+    // is invisible to `mergeStyleOverrides`).
+    const distilledStyle: DistilledStyle = await wf.step.code("02h-learned-style-preferences", async () => {
+      const read = tools["memory.readFeedback"];
+      if (read === undefined) return { overrides: {}, strength: {}, intents: [], evidence: [] };
+      try {
+        const outcome = await read.execute({ productId: wf.productId, limit: 50 }, { ctx });
+        if (outcome.status !== "success") return { overrides: {}, strength: {}, intents: [], evidence: [] };
+        const entries = (outcome.result as { entries: FeedbackEntryLike[] }).entries;
+        return distillStylePreferences(entries, { productId: wf.productId });
+      } catch (error) {
+        console.error(`02h-learned-style-preferences: could not read client style history for run ${wf.runId}, drafting without a prior`, error);
+        return { overrides: {}, strength: {}, intents: [], evidence: [] };
+      }
+    });
+    // `DistilledStyle["overrides"]` is a plain `Record<string, string>` keyed
+    // by role (never any key `StyleOverrides` doesn't also accept — see
+    // `distillStylePreferences`'s own role loop, which only ever considers
+    // "ground"/"fg"/"accent") — structurally exactly a `StyleOverrides`
+    // patch, just not spelled as one in that lower package (§ this file's
+    // import comment on why `packages/workflow` cannot import this agent's
+    // own types).
+    const learnedStyle: StyleOverrides = distilledStyle.overrides;
 
     /**
      * The brand kit THIS attempt actually renders with — `brandKit` (Layer 0,
@@ -1449,6 +1525,18 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         applied: string[];
         intents: StyleIntent[];
         refusals: StyleRefusal[];
+        /**
+         * IGSTYLE-5, §2.4 writer 1 — "carry the round's resolved `style`
+         * patch + `source`": this round's own `styleDirectiveResult.overrides`
+         * verbatim (never `effectiveBrandKit`'s re-derived/merged kit), so
+         * `persistReviewFeedback` below can hand it straight to
+         * `memory.appendFeedback`'s `style` field as future evidence for
+         * `distillStylePreferences` to vote over. Additive to the gate
+         * payload too — a reviewer seeing exactly which hex a refused pick
+         * resolved to, alongside the refusal, is strictly more informative
+         * than before.
+         */
+        overrides: StyleOverrides;
       };
     }
 
@@ -1571,6 +1659,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               applied: [...styleDirectiveResult.applied],
               intents: [...styleDirectiveResult.intents],
               refusals: allStyleRefusals,
+              overrides: { ...styleDirectiveResult.overrides },
             }
           : undefined;
 
@@ -2369,6 +2458,23 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // (nothing was attempted this round) rather than an empty object,
           // matching every other optional gate-payload field's convention.
           ...(draft.styleDirectiveOutcome !== undefined ? { styleDirectiveOutcome: draft.styleDirectiveOutcome } : {}),
+          // IGSTYLE-5, §2.4/§2.6 — the Layer-1 PRIOR this run drafted against
+          // (frozen at 02h, same object every round of this run), so a
+          // reviewer can see WHY revision 0 already leans a certain way with
+          // no human input yet given this run. Absent on the common case —
+          // no prior client history, or nothing in it cleared the evidence
+          // threshold — same convention as `styleDirectiveOutcome` just
+          // above.
+          ...(distilledStyle.evidence.length > 0
+            ? {
+                learnedStylePreferences: {
+                  overrides: distilledStyle.overrides,
+                  strength: distilledStyle.strength,
+                  intents: distilledStyle.intents,
+                  evidence: distilledStyle.evidence,
+                },
+              }
+            : {}),
           // The actual caption a reviewer approves alongside the images —
           // every other channel's gate payload has carried its drafted text
           // as `preview` since the review panel existed; a carousel's own
@@ -2452,6 +2558,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             .filter((s) => s.layout === "custom" && s.customArchetype)
             .map((s) => [customArchetypeTemplateId(wf.clientSlug, s.customArchetype!.archetypeId), s.customArchetype!] as const),
         );
+        // IGSTYLE-5, §2.4 writer 1 — pulled into a local first (rather than
+        // narrowed inline in the object literal below) because
+        // `latestDraftForReview` is a `let` captured across an `await`
+        // boundary in this closure: TypeScript does not carry a narrowing on
+        // `x.y.z` through that boundary, only on a local it can see is never
+        // reassigned.
+        const styleOutcome = latestDraftForReview?.styleDirectiveOutcome;
         await persistReviewFeedback(wf, tools, ctx, {
           revision,
           response,
@@ -2464,6 +2577,28 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // the same reason every other review-gated agent restricts this
           // to reject.
           content: response.decision === "reject" && latestDraftForReview !== undefined ? JSON.stringify(latestDraftForReview) : undefined,
+          // IGSTYLE-5, §2.4 writer 1 — this round's resolved style directive,
+          // verbatim off the draft the reviewer actually judged (never the
+          // merged/re-derived effective kit — see `styleDirectiveOutcome`'s
+          // own field doc). Undefined on the overwhelming majority of rounds,
+          // exactly like `styleDirectiveOutcome` itself: nothing style-related
+          // was even attempted.
+          style:
+            styleOutcome !== undefined && styleOutcome.source !== "none"
+              ? {
+                  // `StyleOverrides`' keys are all optional (`string |
+                  // undefined`) so it isn't structurally a `Record<string,
+                  // string>` — this drops any key that ended up unset rather
+                  // than writing an illegal `undefined` value into the
+                  // durable row.
+                  overrides: Object.fromEntries(
+                    Object.entries(styleOutcome.overrides).filter((entry): entry is [string, string] => entry[1] !== undefined),
+                  ),
+                  source: styleOutcome.source,
+                  intents: styleOutcome.intents,
+                  applied: styleOutcome.applied,
+                }
+              : undefined,
         });
       },
     });
@@ -2603,6 +2738,43 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           return { note };
         });
       }
+    }
+
+    // IGSTYLE-5, §2.4 writer 3 — `edits.style` is the reviewer's own color
+    // controls (Phase 2, IGSTYLE-1 §"Meaningful on approve AND revise"; the
+    // portal UI to submit it on approve is IGSTYLE-6's job, but the field is
+    // already a legal `GateResponse.edits.style` today). Deliberately its OWN
+    // step and its OWN `if`, independent of `hasReviewEdits` above: a reviewer
+    // who only adjusted colors — no caption or slide text touched — still
+    // must produce a durable, STRUCTURED row, not just prose, so a later
+    // run's `distillStylePreferences` has real hex evidence to vote over.
+    if (reviewEdits?.style !== undefined && Object.keys(reviewEdits.style).length > 0) {
+      const styleOverrides = Object.fromEntries(
+        Object.entries(reviewEdits.style).filter((entry): entry is [string, string] => entry[1] !== undefined),
+      );
+      await wf.step.code("09e-record-edit-feedback-style", async () => {
+        const note = `Reviewer set colors before approving: ${Object.entries(styleOverrides)
+          .map(([k, v]) => `${k} -> ${v}`)
+          .join("; ")}`;
+        try {
+          await tools["memory.appendFeedback"]?.execute(
+            {
+              feedbackId: `${wf.runId}-r${review.revision}-edits-style`,
+              productId: wf.productId,
+              decision: "approve",
+              actor: review.response.actor,
+              note,
+              revision: review.revision,
+              runId: wf.runId,
+              style: { overrides: styleOverrides, source: "structured", intents: [], applied: [] },
+            },
+            { ctx },
+          );
+        } catch (error) {
+          console.error("09e-record-edit-feedback-style: could not record the reviewer's color edits", error);
+        }
+        return { note };
+      });
     }
 
     // ── 09b: deliver + log — the count invariant is real and checked, not just documented ──

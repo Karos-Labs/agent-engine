@@ -85,6 +85,29 @@ export const DEFAULT_HALF_LIFE_DAYS = 45;
 /** Rule 4 — the accumulated weight a (role, value) candidate needs before it is promoted at all. */
 const PROMOTION_THRESHOLD = 1.0;
 
+/**
+ * Rounding tolerance for the threshold comparison — "one deliberate pick
+ * suffices" (rule 4's own words) means a SINGLE fresh `structured` row
+ * (weight `1.0 × recencyWeight`) promotes on its own, but
+ * `recencyWeight(ageMs, halfLifeDays)` (`Math.pow(0.5, ageDays /
+ * halfLifeDays)`) is strictly less than `1` for any `ageMs > 0` — a row read
+ * back even a second after it was written already carries something like
+ * `0.999999999...`, not exactly `1`. Comparing that raw value against `1.0`
+ * with a bare `<`/`>=` would make "one deliberate pick suffices" true only
+ * at literal time-zero, which is never how this actually gets called (`02h`
+ * always reads AFTER a prior run wrote, with real wall-clock time between
+ * the two). Rounding both sides to the same two decimal places this
+ * module's own `evidence` strings already report weight at
+ * (`candidate.weight.toFixed(2)`) keeps the promotion decision consistent
+ * with what a person reading that evidence actually sees — an evidence line
+ * that says "at 1.00" is, by construction, a promotion, never a near-miss —
+ * while still discarding any candidate that is genuinely, visibly short of
+ * the threshold (anything that would round down to `0.99` or below).
+ */
+function meetsThreshold(weight: number): boolean {
+  return Math.round(weight * 100) / 100 >= PROMOTION_THRESHOLD;
+}
+
 /** Rule 6 — `ReadFeedbackInputSchema`'s own ceiling (`packages/tools/karos-memory/src/append-feedback.ts`). Mirrored here as a defensive cap, not raised, so a caller that (mistakenly) hands this function more rows than that tool would ever return still gets a bounded vote. */
 const MAX_ROWS_CONSIDERED = 50;
 
@@ -200,7 +223,7 @@ export function distillStylePreferences(
     const rankedHexes = rankedEntries(hexCandidates);
 
     for (const [hex, candidate] of rankedHexes) {
-      if (candidate.weight < PROMOTION_THRESHOLD) {
+      if (!meetsThreshold(candidate.weight)) {
         evidence.push(
           `${role}: no candidate reached the ${PROMOTION_THRESHOLD.toFixed(1)} evidence threshold (best remaining "${hex}" at ${candidate.weight.toFixed(2)})`,
         );
@@ -239,7 +262,7 @@ export function distillStylePreferences(
     }
     const rankedIntents = rankedEntries(intentCandidates);
     const winningIntent = rankedIntents[0];
-    if (winningIntent !== undefined && winningIntent[1].weight >= PROMOTION_THRESHOLD) {
+    if (winningIntent !== undefined && meetsThreshold(winningIntent[1].weight)) {
       intents.push(winningIntent[1].intent);
     }
   }
