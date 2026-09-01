@@ -144,7 +144,27 @@ substitutions:
   # service's own URL, that is exactly the set Cloud Run IAM already
   # admitted. Flipping the flag without this would produce enforcement in
   # the logs and none in fact, which is worse than auth being off.
-  _AUTH_ALLOWED_SERVICE_ACCOUNTS: "680337539054-compute@developer.gserviceaccount.com"
+  #
+  # SCRUM-331: this value used to be the default compute SA and contradicted
+  # the comment above it. The compute SA holds `roles/run.invoker` on this
+  # service, but it is not the identity the portal PRESENTS -- the token's
+  # `email` claim is the CALLER'S RUNTIME service account, and prep's
+  # `karos-cmo` runs as `karos-cmo-prep@karoscmo-prep` (verified live:
+  # `gcloud run services describe karos-cmo --project=karoscmo-prep
+  # --region=us-central1 --format='value(spec.template.spec.serviceAccountName)'`).
+  # The invoker list and the runtime identity are different things; reading
+  # the first for the second is what produced the wrong value here. With the
+  # old value, flipping AUTH_ENABLED=true would have 401'd every dispatch at
+  # auth/service-identity.ts:162 -- enforcement that rejects the one caller it
+  # exists to admit.
+  #
+  # ONE ENTRY ONLY, structurally. `AUTH_ALLOWED_SERVICE_ACCOUNTS` is split on
+  # "," (wiring/auth.ts:23), but it is passed through `--set-env-vars=` below,
+  # which uses "," as ITS OWN delimiter between variables. A second entry does
+  # not produce a two-element allowlist -- it produces a malformed env-var
+  # list. Adding one requires switching that flag to gcloud's alternate-
+  # delimiter form (`--set-env-vars=^@^K1=a,b@K2=c`) in the same change.
+  _AUTH_ALLOWED_SERVICE_ACCOUNTS: "karos-cmo-prep@karoscmo-prep.iam.gserviceaccount.com"
 
 steps:
   # Layer cache. Each build starts on a fresh worker with an empty local
