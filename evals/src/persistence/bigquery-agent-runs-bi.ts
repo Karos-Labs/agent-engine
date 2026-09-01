@@ -78,7 +78,7 @@ function normalizeBigQueryRow(row: Record<string, unknown>): Record<string, unkn
   if (timestamp !== null && typeof timestamp === "object" && "value" in timestamp) {
     out["timestamp"] = String((timestamp as { value: unknown }).value);
   }
-  for (const numeric of ["inputTokens", "outputTokens", "costUsd", "durationMs"] as const) {
+  for (const numeric of ["inputTokens", "outputTokens", "costUsd", "durationMs", "evalScore"] as const) {
     const value = out[numeric];
     if (value !== null && value !== undefined && typeof value !== "number") out[numeric] = Number(value);
   }

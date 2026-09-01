@@ -42,6 +42,8 @@ export const AGENT_RUNS_BI_COLUMNS = [
   "durationMs",
   "status",
   "errorDetails",
+  "evalScore",
+  "evalRubricDetail",
   "timestamp",
   "operation",
   "servedByHop",
@@ -81,6 +83,10 @@ export const AgentRunsBiRowSchema = z
     durationMs: z.number().int().nonnegative(),
     status: z.string().min(1),
     errorDetails: NullableString,
+    /** NUMERIC in BigQuery — see SCRUM-385. Null on every row this package's own writer no longer nulls-then-fills; see `evalScoreToAgentRunsBiRow`. */
+    evalScore: z.number().nullable(),
+    /** STRING (JSON) in BigQuery — the payload `errorDetails` used to carry, moved to its own column by SCRUM-385. */
+    evalRubricDetail: NullableString,
     timestamp: IsoTimestamp,
     operation: NullableString,
     servedByHop: NullableString,
@@ -102,23 +108,32 @@ const DIMENSION_SCORES = Object.fromEntries(RUBRIC_DIMENSIONS.map((d) => [d, z.n
 };
 
 /**
- * What travels in `errorDetails`.
+ * What travels in `evalRubricDetail`.
  *
- * ## Why `errorDetails`, which is not an error
+ * ## History — this used to live in `errorDetails`, and that was the bug
  *
- * `agent_runs_bi` HAS NO SCORE COLUMN. SCRUM-308 is explicit that the eval
- * ladder must persist into this table and must not invent a new one, and of
- * its seventeen columns exactly one is free text: `errorDetails`, which the
- * engine writes `null` into on every row it has ever written. So the rubric
- * detail goes there, versioned, as JSON, and `status` carries the verdict in
- * a form a `GROUP BY` can read without parsing anything.
+ * `agent_runs_bi` had no score column when SCRUM-308 needed one. It was
+ * explicit that the eval ladder must persist into this table and must not
+ * invent a new one, and of its seventeen columns exactly one was free text:
+ * `errorDetails`, which the engine writes `null` into on every row it has
+ * ever written otherwise. So the rubric detail went there, versioned as JSON,
+ * with `status` carrying the verdict in a form a `GROUP BY` could read
+ * without parsing anything. That was a disclosed compromise at the time, and
+ * it was still wrong in the way disclosed compromises are: a reader who does
+ * not know about the encoding sees a populated `errorDetails` on an eval row
+ * and reasonably reads it as a failure. Any dashboard, alert, or ad-hoc query
+ * filtering on `errorDetails IS NOT NULL` was counting successful evals as
+ * errors.
  *
- * This is a compromise and is recorded as one — see the ticket report's
- * findings. The honest shape is a `score` column (or a sibling table); until
- * one exists, a reader who does not know about this encoding sees eval rows
- * with a populated `errorDetails` and could reasonably read them as failures.
- * `schema` is the first key so that anything parsing the column can tell an
- * eval payload from a real error string before it tries.
+ * SCRUM-385 gives the score and this detail their own columns —
+ * `agent_runs_bi.evalScore` (NUMERIC) and `agent_runs_bi.evalRubricDetail`
+ * (STRING, still this same versioned JSON shape) — and `evalScoreToAgentRunsBiRow`
+ * now writes `errorDetails: null`, same as every non-eval row. `schema`
+ * stays the first key: it is what lets `migrate-eval-score-column.ts`'s
+ * `isLegacyEncodedEvalRow` and `scripts/migrate-eval-score-column.sql`'s
+ * backfill recognize a row written under the old encoding before it is
+ * migrated, not because a reader still needs to tell this payload apart from
+ * a real error string in the same column.
  */
 export const PersistedEvalDetailSchema = z.object({
   schema: z.literal("eval-score/v1"),
@@ -179,7 +194,12 @@ export function evalScoreToAgentRunsBiRow(score: EvalScore): AgentRunsBiRow {
     costUsd: score.judge.costUsd,
     durationMs: score.judge.durationMs,
     status: evalRowStatus(score.verdict),
-    errorDetails: JSON.stringify(buildEvalDetail(score)),
+    // SCRUM-385: was `JSON.stringify(buildEvalDetail(score))` here, in the
+    // one column the table had. `errorDetails` now means what it means on
+    // every other row in the table: null, because nothing failed.
+    errorDetails: null,
+    evalScore: score.judge.overall,
+    evalRubricDetail: JSON.stringify(buildEvalDetail(score)),
     timestamp: score.startedAt,
     operation: EVAL_OPERATION,
     servedByHop: score.judge.servedByHop ?? null,
@@ -190,10 +210,10 @@ export function evalScoreToAgentRunsBiRow(score: EvalScore): AgentRunsBiRow {
   });
 }
 
-/** Reads the rubric detail back out of a row. Throws on a row whose `errorDetails` is not an eval payload. */
+/** Reads the rubric detail back out of a row. Throws on a row whose `evalRubricDetail` is not an eval payload. */
 export function parseEvalDetail(row: AgentRunsBiRow): PersistedEvalDetail {
-  if (row.errorDetails === null) {
-    throw new Error(`agent_runs_bi row ${row.runId} has no errorDetails payload — it is not an eval row`);
+  if (row.evalRubricDetail === null) {
+    throw new Error(`agent_runs_bi row ${row.runId} has no evalRubricDetail payload — it is not an eval row`);
   }
-  return PersistedEvalDetailSchema.parse(JSON.parse(row.errorDetails));
+  return PersistedEvalDetailSchema.parse(JSON.parse(row.evalRubricDetail));
 }

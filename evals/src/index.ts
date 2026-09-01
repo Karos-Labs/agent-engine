@@ -14,4 +14,5 @@ export * from "./persistence/agent-runs-bi-row.js";
 export * from "./persistence/sink.js";
 export * from "./persistence/in-memory-agent-runs-bi.js";
 export * from "./persistence/bigquery-agent-runs-bi.js";
+export * from "./persistence/migrate-eval-score-column.js";
 export * from "./production-sampling.js";
