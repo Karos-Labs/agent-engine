@@ -134,4 +134,54 @@ describe("intel-report-agent grounding: target-audience and market-strategy (SCR
     // spent generating a report nobody should have gotten.
     expect(router.complete).not.toHaveBeenCalled();
   });
+
+  // SCRUM-388 — the bootstrap deadlock. `dispatch-research-agents.ts`
+  // (karosCMO) dispatches THIS agent, during onboarding, specifically to
+  // PRODUCE target-audience/market-strategy — so the BLOCK case just above,
+  // proven against `runKind: "recurring"`, would otherwise also fire on the
+  // one run whose entire purpose is generating the documents it's checking
+  // for, and a fresh client could never get a first report. This block
+  // proves both halves of the fix: a `runKind: "setup"` run with the same
+  // total absence degrades (with a visible marker, not a throw) instead of
+  // blocking, and a `runKind: "recurring"` run — even one otherwise
+  // identical — still BLOCKs exactly as the test above already shows.
+  it("degrades (completes, with a visible marker) instead of BLOCKing when runKind is 'setup' and neither context doc has been projected (SCRUM-388 bootstrap exemption)", async () => {
+    await env.cleanup();
+    env = await setupTestEnvironment({ withContextDocs: false });
+    const router = goodReportRouter();
+    const workflowFn = createIntelReportAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router, autoApprove: true });
+    const durableStore = new MemoryDurableStepStore();
+    const setupParams = { ...params, runKind: "setup" as const };
+    const result = await new WorkflowEngine(durableStore).run(workflowFn, setupParams);
+
+    expect(result.status).toBe("completed");
+    if (result.status !== "completed") throw new Error("unreachable");
+
+    // The model WAS called this time — a bootstrap-exempted run still drafts
+    // and ships a real (if degraded) report, unlike the BLOCK case above.
+    expect(router.complete).toHaveBeenCalled();
+
+    // Visible on the workflow's own typed return value...
+    expect(result.output.contextGrounding).toEqual({
+      contextGroundingStatus: "degraded",
+      agentId: "intel-report-agent",
+      missingDocTypes: ["target-audience", "market-strategy"],
+      reason: expect.stringContaining("intel-report-agent: missing required context doc(s) [target-audience, market-strategy]"),
+    });
+    expect(result.output.contextGrounding?.reason).toContain('exempted from BLOCK because this is a runKind:"setup" run');
+
+    // ...AND on the actual PERSISTED deliverable a reviewer looks at, not
+    // merely an internal field nobody reads — same bar the DEGRADED agents'
+    // own SCRUM-242 fixture test holds instagram-agent/branded-shorts-agent to.
+    const deliverables = await env.store.listJson<{ deliverable?: { contextGrounding?: unknown } }>("acme", [
+      "ledger",
+      "deliverables",
+      setupParams.runId,
+      "_",
+    ]);
+    expect(deliverables).toHaveLength(1);
+    expect(deliverables[0]?.data.deliverable?.contextGrounding).toEqual(
+      expect.objectContaining({ contextGroundingStatus: "degraded", agentId: "intel-report-agent" }),
+    );
+  });
 });
