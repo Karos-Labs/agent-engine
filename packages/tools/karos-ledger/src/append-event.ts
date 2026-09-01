@@ -8,7 +8,10 @@ export const AppendEventInputSchema = z.object({
   // No existing TSDoc on these three fields to transcribe (SCRUM-293 flag) — synthesized from the tool's own doc comment and execute()'s usage.
   runId: z.string().min(1).describe("The run this event belongs to."),
   eventId: z.string().min(1).describe("Caller-minted idempotency key for this one event."),
-  level: z.enum(["info", "error", "success"]).describe("This event's severity/kind."),
+  // "warn" added by SCRUM-393 (IGSTYLE-8): a fact worth a human's attention
+  // without being an "error" (nothing failed) or a plain "info" (it's not
+  // routine) — the level `assessContrastFacts`'s below-floor events use.
+  level: z.enum(["info", "warn", "error", "success"]).describe("This event's severity/kind."),
   message: z.string().min(1).describe("The human-readable event text."),
 });
 export type AppendEventInput = z.infer<typeof AppendEventInputSchema>;

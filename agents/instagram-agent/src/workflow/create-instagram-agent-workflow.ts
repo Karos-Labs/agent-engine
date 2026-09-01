@@ -26,7 +26,13 @@ import { buildBrandHeadHtml, buildBrandLogoBodyHtml, deriveBrandRenderTokens, pl
 import { ARCHETYPE_TEMPLATE_FILES, assembleSlidesData, checkSlidesData, resolveLayout } from "./slides-data.js";
 import { checkCraftHygiene } from "./craft-hygiene.js";
 import { checkExpectedScript, languageGateText, runLanguageFluency, LANGUAGE_FLUENCY_STEP_ID, LANGUAGE_SCRIPT_STEP_ID } from "./language-gate.js";
-import { assessBrandAssetPresence, buildElevatedVisualQaCriteria, checkPaletteWithinKit } from "./visual-qa-pre-checks.js";
+import {
+  assessBrandAssetPresence,
+  assessContrastFacts,
+  buildElevatedVisualQaCriteria,
+  checkPaletteWithinKit,
+  type ContrastFact,
+} from "./visual-qa-pre-checks.js";
 import {
   BrandTokensSchema,
   type BrandTokens,
@@ -1240,6 +1246,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       selections: ImageSelection[];
       slidesData: RenderCarouselInput;
       rendered: RenderCarouselResult;
+      /** SCRUM-393 (IGSTYLE-8) — text and accent-on-ground contrast, reported as facts. Never gates. */
+      contrastFacts: ContrastFact[];
     }
 
     /** Never prose — excluded from anything a human or the topic guardrail reads as text. */
@@ -1287,6 +1295,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       let finalSelections: ImageSelection[] | undefined;
       let finalSlidesData: RenderCarouselInput | undefined;
       let finalRendered: RenderCarouselResult | undefined;
+      /** SCRUM-393 (IGSTYLE-8) — the winning attempt's contrast facts, carried into the gate payload. */
+      let finalContrastFacts: ContrastFact[] = [];
       let finalOutcomeOk = false;
       let lastSelfCheckReason = "no attempt completed";
       /** Set by a failed 07d similarity check, so the NEXT attempt's prompt names exactly which published post to move away from. */
@@ -1947,6 +1957,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             hasDownload: placement !== undefined,
             placement,
           }),
+          // SCRUM-393 (IGSTYLE-8): a FACT, never a gate — see
+          // `assessContrastFacts`'s own doc comment. Computed from the same
+          // `usedHexes` the palette gate above already derived, so "which
+          // accents are being judged" can't drift between the two.
+          contrastFacts: assessContrastFacts(brandKit, usedHexes),
         };
       });
 
@@ -1956,6 +1971,28 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // already knows about with an `includes()` check.
         lastSelfCheckReason = `visual QA deterministic pre-check failed on attempt ${attempt} (no model call spent): ${preChecks.paletteGate.reason}`;
         continue;
+      }
+
+      // SCRUM-393 (IGSTYLE-8): surface every sub-floor contrast fact as a
+      // ledger warn event — visible to a human without holding, degrading,
+      // or retrying this attempt. Real brand colors (a client's own coral
+      // accent on its own cream ground) can legitimately sit below the
+      // floor; the point is that nobody currently learns this at all.
+      const belowFloor = preChecks.contrastFacts.filter((f) => !f.pass);
+      if (belowFloor.length > 0) {
+        await wf.step.code(rev(`08a3-record-contrast-below-floor-attempt-${attempt}`), async () =>
+          tools["ledger.appendEvent"]?.execute(
+            {
+              runId: wf.runId,
+              eventId: `${wf.runId}__contrast-below-floor`,
+              level: "warn",
+              message: `attempt ${attempt}: ${belowFloor.length} contrast fact(s) below floor — ${belowFloor
+                .map((f) => `${f.label}: ${f.ratio.toFixed(2)}:1 (floor ${f.floor}:1)`)
+                .join("; ")}`,
+            },
+            { ctx },
+          ),
+        );
       }
 
       // ── 08b: post-render visual QA (Fix 2/AU40) — a text-proxy stand-in
@@ -2000,6 +2037,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       finalSelections = selections;
       finalSlidesData = slidesDataForQa;
       finalRendered = renderedAttempt;
+      finalContrastFacts = preChecks.contrastFacts;
       finalOutcomeOk = true;
       break;
     }
@@ -2009,7 +2047,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           `step 07's self-check never passed after ${MAX_SELF_CHECK_ATTEMPTS} attempt(s) (initial + ${MAX_SELF_CHECK_ATTEMPTS - 1} return(s) to step 05) — last reason: ${lastSelfCheckReason}`,
         );
       }
-      return { copy: finalCopy, selections: finalSelections, slidesData: finalSlidesData, rendered: finalRendered };
+      return {
+        copy: finalCopy,
+        selections: finalSelections,
+        slidesData: finalSlidesData,
+        rendered: finalRendered,
+        contrastFacts: finalContrastFacts,
+      };
     };
 
     // ── 09a: the universal approve / revise / reject cycle ──
@@ -2072,6 +2116,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // (including `accentColor`'s hex code) because no real caption
           // existed yet to show instead.
           preview: draft.copy.caption,
+          // SCRUM-393 (IGSTYLE-8): text and accent-on-ground contrast, as
+          // FACTS — for passes as well as failures, so a reviewer sees the
+          // good numbers too, not only a warning when something's wrong.
+          contrastFacts: draft.contrastFacts,
           // The editable projection (Phase 2 in-place review editing): the
           // caption plus each slide's PROSE fields — never the layout
           // metadata in NON_PROSE_FIELD_KEYS — so the reviewer can edit the
