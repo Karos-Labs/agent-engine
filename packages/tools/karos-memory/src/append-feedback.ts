@@ -4,7 +4,39 @@ import { defineTool, success } from "@agent-engine/tool-common";
 
 // 1.0.1 (SCRUM-296/AU11): removed the redundant re-parse of already-validated input (both tools below share this constant).
 // 1.1.0 (SCRUM-306/AU23): added optional `content` — see its own field doc.
-const TOOL_VERSION = "1.1.0";
+// 1.2.0 (IGSTYLE-4): added optional `style`/`scope`/`slide` — see their own
+// field docs below. The task spec calls for bumping to "1.1.0", written
+// before SCRUM-306/AU23 already claimed that version on `origin/main` for the
+// unrelated `content` field — the same kind of pre-existing-work collision
+// IGSTYLE-3 hit with its `02e`/`02f` step ids. Resolved the same way: bump
+// past the collision (1.2.0) rather than reuse a version this tool already
+// shipped under different content.
+const TOOL_VERSION = "1.2.0";
+
+export const StyleIntentSchema = z.object({
+  role: z.enum(["ground", "fg", "accent"]),
+  direction: z.enum(["darker", "lighter", "more-contrast", "hue"]),
+  hue: z.string().optional(),
+});
+
+/**
+ * IGSTYLE-4, §3 — a durable copy of one revision round's
+ * `StyleDirectiveResult` (`agents/instagram-agent/src/workflow/style-directive.ts`),
+ * shaped identically but defined locally rather than imported: this package
+ * sits below every agent in the dependency graph (agents depend on
+ * `karos-memory`, never the reverse), so it cannot import an agent's own
+ * type. `refusals` is deliberately NOT carried here — a refused pick is
+ * exactly the kind of "what was wrong" signal rule 1 (never learn from a
+ * `reject`) already excludes from voting; this schema only stores what a
+ * later run's distillation is meant to learn FROM.
+ */
+export const StylePreferenceSchema = z.object({
+  overrides: z.record(z.string(), z.string()),
+  source: z.enum(["structured", "parsed", "model"]),
+  intents: z.array(StyleIntentSchema).max(8).default([]),
+  applied: z.array(z.string()).max(12).default([]),
+});
+export type StylePreference = z.infer<typeof StylePreferenceSchema>;
 
 export const AppendFeedbackInputSchema = z.object({
   feedbackId: z
@@ -36,6 +68,23 @@ export const AppendFeedbackInputSchema = z.object({
     .describe(
       "The exact drafted content this decision judged, verbatim — not a summary or excerpt. Stored and read back byte-identical, with no length cap. Typically attached on `reject`, where the content would otherwise survive only in step checkpoints and never reach this pipeline.",
     ),
+  // IGSTYLE-4: the structured half of the signal `distillStylePreferences`
+  // (`@agent-engine/workflow`) votes over. Optional and additive — a caller
+  // (or an agent with no style directive at all) omits it exactly as today.
+  style: StylePreferenceSchema.optional().describe(
+    "This round's resolved style directive (IGSTYLE-2's StyleDirectiveResult, minus refusals), when this decision carried one — the evidence a later run's distillStylePreferences votes over.",
+  ),
+  // Defaulted, not optional-with-no-fallback: every NEW row gets an explicit
+  // scope so a reader never has to guess, while a MISSING scope on a row
+  // written before this field existed still reads back as "post" — see
+  // `createReadFeedback`'s own back-compat fill-in below, which is what
+  // actually carries that promise for rows already on disk (a schema default
+  // only ever applies to a fresh parse of NEW input, never to old JSON read
+  // straight off the store).
+  scope: z.enum(["post", "slide", "template", "style"]).default("post").describe(
+    "What this feedback is about: the whole post (default), one slide, a template choice, or a style-only pick. Distillation and template-critique rows use this to avoid mixing unrelated kinds of feedback together.",
+  ),
+  slide: z.number().int().positive().optional().describe("Which slide this feedback concerns, when scope is \"slide\"."),
 });
 export type AppendFeedbackInput = z.input<typeof AppendFeedbackInputSchema>;
 
@@ -62,7 +111,7 @@ export function createAppendFeedback(store: WorkspaceStoreLike) {
   return defineTool<AppendFeedbackInput, IdempotentWriteResult>({
     name: "memory.appendFeedback",
     description:
-      "Durable review feedback, per client — a person's verdict (approve/revise/reject) plus their note, written for every decision including approvals so the system learns what's working, not only what's wrong. Optionally carries the exact drafted content the decision judged (byte-identical, uncapped) — the WHAT alongside the note's WHY. Idempotent on feedbackId, so a replayed run appends one row.",
+      "Durable review feedback, per client — a person's verdict (approve/revise/reject) plus their note, written for every decision including approvals so the system learns what's working, not only what's wrong. Optionally carries the exact drafted content the decision judged (byte-identical, uncapped) — the WHAT alongside the note's WHY — and, since IGSTYLE-4, an optional resolved style pick plus a scope (post/slide/template/style) so distillStylePreferences can vote over style history without mixing in unrelated feedback. Idempotent on feedbackId, so a replayed run appends one row.",
     version: TOOL_VERSION,
     inputSchema: AppendFeedbackInputSchema,
     async execute(input, { ctx }) {
@@ -78,6 +127,13 @@ export function createAppendFeedback(store: WorkspaceStoreLike) {
         // Verbatim, not re-trimmed/re-capped here or anywhere upstream — see
         // the field's own schema doc for why byte-identical is the point.
         ...(input.content !== undefined ? { content: input.content } : {}),
+        // `scope` always has a value by the time execute() runs (zod applies
+        // its default during input validation, upstream of this function —
+        // same convention `ReadFeedbackInputSchema`'s own `limit` default
+        // already relies on), so it is always written explicitly on new rows.
+        scope: input.scope,
+        ...(input.slide !== undefined ? { slide: input.slide } : {}),
+        ...(input.style !== undefined ? { style: input.style } : {}),
         at: Date.now(),
       });
       return success<IdempotentWriteResult>({ id: input.feedbackId, created });
@@ -109,6 +165,19 @@ export interface FeedbackEntry {
   runId?: string;
   /** The exact drafted content this decision judged, when one was attached. Byte-identical to what was written — see `AppendFeedbackInputSchema`'s `content` field. */
   content?: string;
+  /**
+   * IGSTYLE-4. Always present on read, even for a pre-1.2.0 row that never
+   * wrote one — `createReadFeedback`'s execute() below fills in `"post"` for
+   * any row missing this key, which is what actually delivers the "a missing
+   * scope reads as post" backwards-compatibility promise; a zod `.default()`
+   * only applies to a fresh parse of new input, never to old JSON already on
+   * disk.
+   */
+  scope: "post" | "slide" | "template" | "style";
+  /** Which slide this feedback concerns, when `scope` is `"slide"`. */
+  slide?: number;
+  /** This round's resolved style directive, when one was attached. See `AppendFeedbackInputSchema`'s `style` field. */
+  style?: StylePreference;
   at: number;
 }
 
@@ -138,7 +207,12 @@ export function createReadFeedback(store: WorkspaceStoreLike) {
       // `listJson` returns `{id, data}` wrappers, so the row itself is `.data`.
       const rows = await store.listJson<FeedbackEntry>(ctx.clientSlug, ["memory", "feedback"]);
       const entries = rows
-        .map((r) => r.data)
+        // IGSTYLE-4 backwards compatibility: a row written before this field
+        // existed has no `scope` key at all — fill in `"post"` here, on read,
+        // rather than relying on a write-time default that a legacy row on
+        // disk never went through. Everything else about the row passes
+        // through unchanged ("readFeedback returns legacy rows unchanged").
+        .map((r) => ({ ...r.data, scope: r.data.scope ?? "post" }))
         .filter((r) => input.productId === undefined || r.productId === input.productId)
         .sort((a, b) => (b.at ?? 0) - (a.at ?? 0))
         .slice(0, input.limit);

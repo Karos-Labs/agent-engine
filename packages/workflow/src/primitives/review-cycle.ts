@@ -199,7 +199,27 @@ export const MAX_REVISION_ROUNDS = 2;
  * approval's content already lands in `ledger.writeDeliverable`; a `revise`
  * round's content is superseded by the next attempt, which sees the
  * reviewer's `feedback` text via `notes`/`revisionDirective`).
+ *
+ * ## `style`/`scope`/`slide` (IGSTYLE-4)
+ *
+ * Optional and additive, exactly like `content` above — every existing call
+ * site across every agent stays valid, unchanged, with `scope` defaulting to
+ * `"post"` at `memory.appendFeedback` itself. Structurally typed rather than
+ * imported from either `@agent-engine/tool-karos-memory` or an agent's own
+ * `style-directive.ts` (this package is Layer 1 and owns no tools — see this
+ * file's own header comment on why `persistReviewFeedbackToMemory` takes the
+ * tool registry as a parameter instead of importing anything). This ticket
+ * only extends the plumbing; wiring a REAL style pick through this parameter
+ * (rather than leaving it always `undefined`) is IGSTYLE-5's job, once
+ * `02h-learned-style-preferences` has a real prior to persist evidence for.
  */
+export interface PersistedStylePreference {
+  overrides: Readonly<Record<string, string>>;
+  source: "structured" | "parsed" | "model";
+  intents?: readonly { role: "ground" | "fg" | "accent"; direction: "darker" | "lighter" | "more-contrast" | "hue"; hue?: string }[];
+  applied?: readonly string[];
+}
+
 export async function persistReviewFeedbackToMemory(
   wf: WorkflowContext,
   tools: AgentToolRegistry,
@@ -207,6 +227,11 @@ export async function persistReviewFeedbackToMemory(
   revision: number,
   response: GateResponse,
   content?: string,
+  extra?: {
+    style?: PersistedStylePreference;
+    scope?: "post" | "slide" | "template" | "style";
+    slide?: number;
+  },
 ): Promise<void> {
   const note = response.feedback ?? response.reason;
   const append = tools["memory.appendFeedback"];
@@ -223,6 +248,9 @@ export async function persistReviewFeedbackToMemory(
           revision,
           runId: wf.runId,
           ...(content !== undefined ? { content } : {}),
+          ...(extra?.style !== undefined ? { style: extra.style } : {}),
+          ...(extra?.scope !== undefined ? { scope: extra.scope } : {}),
+          ...(extra?.slide !== undefined ? { slide: extra.slide } : {}),
         },
         { ctx },
       ),

@@ -5,6 +5,7 @@ export * from "./step-agent.js";
 export * from "./step-gate.js";
 export * from "./fanout.js";
 export * from "./review-cycle.js";
+export * from "./style-preferences.js";
 export * from "./agent-context.js";
 export * from "./run-gate.js";
 export * from "./finalize-deliverable.js";
