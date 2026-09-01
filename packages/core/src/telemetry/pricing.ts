@@ -252,6 +252,33 @@ export const UNIT_PRICING: Record<string, UnitPricing> = {
   // run's window (both response_code=200), and Google's published rate is
   // 1290 output tokens per image at $30/1M.
   "gemini-2.5-flash-image": { unit: "image", usdPerUnit: 0.039, source: "ai.google.dev/gemini-api/docs/pricing — 1290 output tokens/image at $30/1M (checked 2026-08-27)" },
+
+  // SCRUM-391: `media.ingestVisualPatterns`' vision-analysis step
+  // (`packages/tools/karos-media/src/visual-patterns.ts`) calls
+  // `gemini-2.5-flash` — a different id from `gemini-2.5-flash-image` above,
+  // and priced completely differently: `gemini-2.5-flash` is a general
+  // chat/vision model billed BY TOKEN (see `MODEL_PRICING["gemini-2.5-flash"]`
+  // above, $0.3/$2.5 per 1M, sourced against the same live pricing page), not
+  // a fixed per-image SKU. A flat per-call rate for this step would be an
+  // invented number — the prompt and image sizes vary per call, so the real
+  // cost does too — which is exactly what this table forbids. These two rows
+  // exist so the vision-analysis step can bill the REAL token counts Gemini's
+  // response reports (`usageMetadata.promptTokenCount` /
+  // `.candidatesTokenCount`) through the per-unit path, at the token's real
+  // price. Deliberately DERIVED from `MODEL_PRICING`, not independently
+  // re-verified, so the two tables cannot silently drift apart — a rate
+  // change to `gemini-2.5-flash` in `MODEL_PRICING` updates both call paths
+  // in one edit.
+  "gemini-2.5-flash-vision-analysis-input-token": {
+    unit: "input-token",
+    usdPerUnit: MODEL_PRICING["gemini-2.5-flash"]!.inputPer1M / 1_000_000,
+    source: "Derived from MODEL_PRICING[\"gemini-2.5-flash\"].inputPer1M (ai.google.dev/gemini-api/docs/pricing, checked 2026-08-29), expressed per-token instead of per-1M so a real captured promptTokenCount can be billed exactly.",
+  },
+  "gemini-2.5-flash-vision-analysis-output-token": {
+    unit: "output-token",
+    usdPerUnit: MODEL_PRICING["gemini-2.5-flash"]!.outputPer1M / 1_000_000,
+    source: "Derived from MODEL_PRICING[\"gemini-2.5-flash\"].outputPer1M (ai.google.dev/gemini-api/docs/pricing, checked 2026-08-29), expressed per-token instead of per-1M so a real captured candidatesTokenCount can be billed exactly.",
+  },
 };
 
 /**

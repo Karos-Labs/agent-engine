@@ -404,6 +404,14 @@ export interface VisionAnalysisClient {
         content?: { parts?: Array<{ text?: string }> } | undefined;
       }>;
       promptFeedback?: { blockReason?: string } | undefined;
+      /**
+       * SCRUM-391: the real per-call token counts, same field the model
+       * router's own `gemini-adapter.ts` reads off this same SDK's response
+       * shape. Absent (rather than zeroed) is a legitimate value from a fake
+       * client in a test that is not exercising cost — every real call
+       * reports it.
+       */
+      usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number } | undefined;
     }>;
   };
 }
@@ -697,12 +705,21 @@ export function createIngestVisualPatterns(options: IngestVisualPatternsOptions)
       }
 
       let responseText: string | undefined;
+      // SCRUM-391: the REAL token counts Gemini's own response reports —
+      // captured here (not estimated) so the usage reported below reflects
+      // what this exact call actually consumed. `?? 0` mirrors
+      // `router/adapters/gemini-adapter.ts`'s own handling of an absent
+      // `usageMetadata` (never throws over a missing usage field).
+      let promptTokens = 0;
+      let outputTokens = 0;
       try {
         const response = await visionClient.models.generateContent({
           model: visionModel,
           contents: [{ role: "user", parts }],
           config: { responseMimeType: "application/json" },
         });
+        promptTokens = response.usageMetadata?.promptTokenCount ?? 0;
+        outputTokens = response.usageMetadata?.candidatesTokenCount ?? 0;
         if (response.promptFeedback?.blockReason) {
           return contentFail(`media.ingestVisualPatterns: the vision model blocked the analysis (${response.promptFeedback.blockReason})`);
         }
@@ -775,13 +792,18 @@ export function createIngestVisualPatterns(options: IngestVisualPatternsOptions)
       // `packages/workflow/__tests__/cost-accuracy-golden.test.ts` exists to
       // enforce after two real image generations were costed at $0.000000.
       //
-      // `unit: "vision-analysis"` rather than `"image"` on purpose: the images
-      // here are CONSUMED, not produced, and `{model, unit: "image"}` in a cost
-      // report reads as "generated N images" — wrong, and it would look right.
-      // `UNIT_PRICING` has no row for this SKU today, which means the units are
-      // persisted and priced at $0 with a loud warning until a rate is verified
-      // — the same deliberate posture that table already documents for video.
-      // Inventing a per-analysis rate here is precisely what it forbids.
+      // SCRUM-391: this used to report a single synthetic `{unit:
+      // "vision-analysis", quantity: 1}` — one flat "unit" per call, priced at
+      // $0 because `UNIT_PRICING` had no row for that made-up SKU. But
+      // `gemini-2.5-flash` (unlike `gemini-2.5-flash-image`, a genuinely flat
+      // per-image SKU) is billed BY TOKEN, and prompt/image size varies call to
+      // call — so a flat per-call rate would have been an invented number, not
+      // a verified one. Reports the REAL captured `promptTokens`/`outputTokens`
+      // instead, against the two `gemini-2.5-flash-vision-analysis-*-token`
+      // rows in `UNIT_PRICING` (telemetry/pricing.ts), each derived from
+      // `MODEL_PRICING["gemini-2.5-flash"]`'s own sourced per-token rate — so
+      // this bills at the model's real, verified price, exactly, rather than
+      // an estimate.
       return success<IngestVisualPatternsResult>(
         {
           version,
@@ -792,7 +814,10 @@ export function createIngestVisualPatterns(options: IngestVisualPatternsOptions)
           accountsRead: permitted,
           profile,
         },
-        [{ model: visionModel, unit: "vision-analysis", quantity: 1 }],
+        [
+          { model: "gemini-2.5-flash-vision-analysis-input-token", unit: "input-token", quantity: promptTokens },
+          { model: "gemini-2.5-flash-vision-analysis-output-token", unit: "output-token", quantity: outputTokens },
+        ],
       );
     },
   });
