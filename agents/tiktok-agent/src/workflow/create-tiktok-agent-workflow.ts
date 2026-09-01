@@ -19,7 +19,9 @@ import {
   WorkflowBlockedIntake,
   WorkflowHeld,
   WorkflowToolingFailure,
+  checkOutputDedupe,
   dedupeDirective,
+  dedupeRetryDirective,
   persistReviewFeedbackToMemory,
   readClientIntelContext,
   readOutputHistoryForDedup,
@@ -70,6 +72,39 @@ export interface CreateTikTokAgentWorkflowOptions {
   /** Injectable for tests; the brand-logo download uses it. */
   fetchImpl?: typeof fetch;
 }
+
+/**
+ * How many commentary drafts the verified de-duplication check may cost —
+ * initial draft plus ONE redraft steer. SCRUM-381 (AU20 left this agent off
+ * its capability matrix by mistake — six agents were advisory, not five):
+ * `recentPosts` below was already a hard-sounding do-not-repeat directive in
+ * the drafting prompt, and nothing ever checked whether the model listened,
+ * so a lightly-reworded reissue passed every gate. This is the verification
+ * half, `checkOutputDedupe` scoring the same excerpt window against
+ * `evaluateDedupe`'s calibrated threshold, in the same place the other five
+ * migrated channel agents run their own check: inside the drafting pass, so a
+ * `similar` verdict costs the draft rather than reaching the reviewer at
+ * 11-clip-review unscored.
+ *
+ * Deliberately 2, not blog/reddit/x/linkedin/newsletter's 3 — this agent's
+ * economics are not theirs. Every attempt here is a `TikTokCommentaryAgent`
+ * call anchored to a real, run-specific transcript excerpt (`hookLine` +
+ * `clipText`, unique to whichever moment 03-select-moment picked this run),
+ * not a free choice of topic and angle the way a blog or X draft is — a
+ * near-duplicate here is far more often a stylistic echo (the same opening
+ * line, the same structure) than substantive repetition, and one steer
+ * quoting the offending prior post is enough to break that the overwhelming
+ * majority of the time. A genuine near-duplicate that survives a second
+ * attempt despite different grounding footage each time (the same guest
+ * making the same point across episodes, say) is a source-material problem
+ * no amount of rewriting fixes — better to ship it FLAGGED to the human at
+ * 11-clip-review after one redraft than spend a third model call chasing a
+ * fix wording cannot deliver. This budget only ever costs an extra text call:
+ * the expensive steps — 08-render's ffmpeg composite, 09-qa-gate's model
+ * call, the upload — run once per REVIEW round, after this loop has already
+ * settled, never once per dedupe attempt.
+ */
+const MAX_DEDUPE_ATTEMPTS = 2;
 
 /** The brand furniture the framed clip carries — every field beyond the two grounds optional, skipped when absent. */
 interface VideoBrand {
@@ -564,30 +599,72 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       // file holding the r1 clip.
       const workDir = revision === 0 ? baseWorkDir : path.join(baseWorkDir, `r${revision}`);
 
-      // ── 06: COMPOSE — the commentary layer (judgment) ──
-      const commentary: Commentary = await wf.step.code(rev("06-commentary"), async () => {
-        const agent = new TikTokCommentaryAgent({ router: options.router, tools, promptStore: options.promptStore });
-        const exec = await wf.step.agent(rev("06a-commentary"), agent, {
-          topic: intake.topic,
-          hookLine: moment.hookLine,
-          hookType: moment.hookType,
-          clipText: bounds.text,
-          ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
-          ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
-          // Two distinct steers, kept apart: `pastFeedback` is what this client
-          // has said across previous RUNS, `revisionRequest` is what a reviewer
-          // asked about THIS clip minutes ago.
-          ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
-          ...(directive !== undefined ? { revisionRequest: directive } : {}),
-        });
-        if (exec.status === "content_fail") {
-          throw new WorkflowHeld("commentary did not clear its own output validation");
+      // ── 06/06b: COMPOSE the commentary layer (judgment), then VERIFY it is
+      //           not a repeat before anything downstream sees it ──
+      //
+      // `recentPosts` above is ADVISORY: it asks the model not to repeat
+      // itself, and nothing ever checked whether it listened, so a lightly
+      // reworded reissue of a recently published clip's caption passed every
+      // gate below. 06b is the verification half — the same `checkOutputDedupe`
+      // primitive the other five migrated channel agents run, scoring the same
+      // excerpt window `outputHistory` was read from with `evaluateDedupe`'s
+      // calibrated trigram-Jaccard threshold. On a `similar` verdict the draft
+      // is redrafted with the offending post quoted into the prompt, bounded by
+      // `MAX_DEDUPE_ATTEMPTS`; on the final attempt it ships FLAGGED rather
+      // than held — the verdict stays checkpointed either way, and the human at
+      // 11-clip-review is never shown a caption that was not scored.
+      //
+      // The scored text is exactly `${caption}\n\n${about}` — the same
+      // concatenation 07-compliance checks and 13-commit-and-record writes
+      // back into the window, so every future run compares like with like.
+      const commentaryWithVerifiedDedupe = async (): Promise<Commentary> => {
+        /** Set by a failed 06b check, so the NEXT attempt's prompt names exactly which published post to move away from. */
+        let dedupeRetrySteer: string | undefined;
+        for (let attempt = 1; attempt <= MAX_DEDUPE_ATTEMPTS; attempt++) {
+          /** Attempt 1 keeps the ORIGINAL step ids, so a run that never repeats itself has a byte-identical trace to what it had before this check existed. */
+          const att = (id: string) => (attempt === 1 ? id : `${id}-attempt-${attempt}`);
+          const commentary: Commentary = await wf.step.code(rev(att("06-commentary")), async () => {
+            const agent = new TikTokCommentaryAgent({ router: options.router, tools, promptStore: options.promptStore });
+            const exec = await wf.step.agent(rev(att("06a-commentary")), agent, {
+              topic: intake.topic,
+              hookLine: moment.hookLine,
+              hookType: moment.hookType,
+              clipText: bounds.text,
+              ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
+              ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
+              ...(dedupeRetrySteer !== undefined ? { dedupeAvoid: dedupeRetrySteer } : {}),
+              // Two distinct steers, kept apart: `pastFeedback` is what this client
+              // has said across previous RUNS, `revisionRequest` is what a reviewer
+              // asked about THIS clip minutes ago.
+              ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
+              ...(directive !== undefined ? { revisionRequest: directive } : {}),
+            });
+            if (exec.status === "content_fail") {
+              throw new WorkflowHeld("commentary did not clear its own output validation");
+            }
+            if (exec.status !== "completed") {
+              throw new WorkflowToolingFailure(`commentary step resolved to "${exec.status}"`);
+            }
+            return exec.finalOutput as Commentary;
+          });
+
+          const dedupeVerdict = await checkOutputDedupe(
+            wf,
+            rev(att("06b-verify-not-duplicate")),
+            `${commentary.caption}\n\n${commentary.about}`,
+            outputHistory,
+          );
+          if (dedupeVerdict.status === "similar" && attempt < MAX_DEDUPE_ATTEMPTS) {
+            dedupeRetrySteer = dedupeRetryDirective(dedupeVerdict, outputHistory);
+            continue;
+          }
+          return commentary;
         }
-        if (exec.status !== "completed") {
-          throw new WorkflowToolingFailure(`commentary step resolved to "${exec.status}"`);
-        }
-        return exec.finalOutput as Commentary;
-      });
+        // Unreachable: the loop's last attempt always returns, because the
+        // `continue` above is guarded on `attempt < MAX_DEDUPE_ATTEMPTS`.
+        throw new WorkflowToolingFailure("the de-duplication redraft loop ended without a commentary draft");
+      };
+      const commentary: Commentary = await commentaryWithVerifiedDedupe();
 
       // ── 07: compliance pass ──
       await wf.step.code(rev("07-compliance"), async () => {
