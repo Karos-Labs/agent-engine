@@ -1,3 +1,4 @@
+import { HEX_COLOR } from "@agent-engine/core";
 import {
   planBrandLogoPlacement,
   readBrandLogoInk,
@@ -76,11 +77,10 @@ export interface BrandRenderTokens {
 export type BadgeStyle = "pill" | "brackets" | "underline" | "plain";
 const BADGE_STYLES: readonly BadgeStyle[] = ["pill", "brackets", "underline", "plain"];
 
-/**
- * Exactly 3/4/6/8 hex digits — `#12345` and `#1234567` are invalid CSS colors
- * and must not reach a stylesheet.
- */
-const HEX_COLOR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+// HEX_COLOR (IGSTYLE-1): imported from `@agent-engine/core` above — this
+// module used to define its own byte-identical copy; it now consumes the
+// single source of truth instead, so the render-time check and the
+// reviewer-input check (`StyleEditSchema`) can never drift apart.
 
 /**
  * Space/alphanumeric only — real Google-Fonts families are, and anything

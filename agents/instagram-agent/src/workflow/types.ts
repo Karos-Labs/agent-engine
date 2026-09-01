@@ -139,6 +139,21 @@ export const BrandTokensSchema = z.object({
       fg2: z.string().min(1).optional(),
       line: z.string().min(1).optional(),
       accentInk: z.string().min(1).optional(),
+      /**
+       * IGSTYLE-1. An override for the brand ACCENT itself — distinct from
+       * every other key here, which `deriveBrandRenderTokens` has always
+       * read from this object. `brandAccent` is derived only from
+       * `client/brand.json` today (`b["accent"]` /
+       * `b["colors"]["primaryAccent"]`); this is the field that gives a
+       * reviewer's or a learned preference's accent pick somewhere to live
+       * without touching that derivation. Added here (not wired into
+       * derivation yet) so `StyleOverrides` below can be typed as exactly
+       * the seven roles `StyleEditSchema` (`@agent-engine/core`) accepts —
+       * IGSTYLE-3 is what makes `deriveBrandRenderTokens` actually honor
+       * it; this ticket only defines and threads the shape ("no behaviour
+       * change").
+       */
+      accent: z.string().min(1).optional(),
       fontDisplay: z.string().min(1).optional(),
       fontBody: z.string().min(1).optional(),
       fontMono: z.string().min(1).optional(),
@@ -150,6 +165,41 @@ export const BrandTokensSchema = z.object({
   seriesBadge: z.string().min(1).max(48).optional(),
 });
 export type BrandTokens = z.infer<typeof BrandTokensSchema>;
+
+/**
+ * IGSTYLE-1. The wire shape Layers 1 (learned) and 2 (this run's directive)
+ * of style resolution both speak — deliberately typed as exactly what
+ * `client/brand.json`'s hand-authored escape hatch already accepts, so a
+ * layer's patch and a human's standing config override are
+ * indistinguishable to every downstream consumer
+ * (`deriveBrandRenderTokens`, `buildBrandHeadHtml`, `paletteForSlide`,
+ * `assembleSlidesData`). `NonNullable` because a "patch" with no keys set is
+ * `{}`, never `undefined` — see `mergeStyleOverrides`.
+ */
+export type StyleOverrides = NonNullable<BrandTokens["renderTokens"]>;
+
+/**
+ * Last-wins merge over DEFINED keys only — `undefined` in a later patch
+ * never erases a value an earlier patch set, so a caller can pass a
+ * partially-filled `StyleEditSchema` object (only the roles a reviewer
+ * actually picked) without it clobbering the rest of the merge.
+ *
+ * Order matters and is the caller's to get right — §2.2's architecture
+ * calls this as `mergeStyleOverrides(baseline.renderTokens, learned,
+ * directive)`, so Layer 2 (this run's active directive) is always passed
+ * LAST and therefore wins any key it sets, exactly as the architecture
+ * diagram's "L2 wins" requires.
+ */
+export function mergeStyleOverrides(...patches: ReadonlyArray<StyleOverrides | undefined>): StyleOverrides {
+  const merged: Record<string, string> = {};
+  for (const patch of patches) {
+    if (patch === undefined) continue;
+    for (const [key, value] of Object.entries(patch)) {
+      if (value !== undefined) merged[key] = value;
+    }
+  }
+  return merged as StyleOverrides;
+}
 
 /** What step 02 hands forward to every later step. */
 export interface InstagramFrozenConfig {

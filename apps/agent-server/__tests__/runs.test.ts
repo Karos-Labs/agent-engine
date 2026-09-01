@@ -213,6 +213,95 @@ describe("POST /api/v1/runs/start", () => {
   });
 });
 
+describe("POST /api/v1/runs/:runId/resume — edits.style (IGSTYLE-1)", () => {
+  let env: TestEnvironment;
+  let app: Application;
+
+  beforeEach(async () => {
+    env = await setupTestEnvironment();
+    app = createApp({ durableStore: env.durableStore, runtimeDeps: env.runtimeDeps, enqueueRunJob: inProcessEnqueue(env) });
+  });
+
+  afterEach(async () => {
+    await env.cleanup();
+  });
+
+  // The malformed-hex 400 happens at `ResumeRunRequestSchema.safeParse`, the
+  // very first line of the resume handler — BEFORE the run record is even
+  // looked up (see runs.ts:237). So this needs no real run at all: any
+  // runId reaches the same validation failure the same way.
+  it.each([
+    ["orange", "a named color, not a hex value"],
+    ["#12345", "5 hex digits — not a legal 3/4/6/8-digit CSS color"],
+    ["rgb(0,0,0)", "not hex syntax at all"],
+    ["", "empty string"],
+  ])("400s a resume whose edits.style has an invalid hex (%s: %s)", async (badHex) => {
+    const res = await request(app)
+      .post("/api/v1/runs/does-not-matter/resume")
+      .send({
+        gateId: "09a-batch-review-r0",
+        resolution: { decision: "approve", actor: "jane@karoslabs.com", edits: { style: { ground: badHex } } },
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid request body");
+  });
+
+  it.each(["#111", "#1a1a1a", "#1a1a1aff"])("accepts a resume whose edits.style has a legal hex (%s)", async (goodHex) => {
+    const res = await request(app)
+      .post("/api/v1/runs/does-not-matter/resume")
+      .send({
+        gateId: "09a-batch-review-r0",
+        resolution: { decision: "approve", actor: "jane@karoslabs.com", edits: { style: { ground: goodHex } } },
+      });
+    // 404 ("no run found"), not 400 — proves the body cleared schema
+    // validation and the request got as far as the run lookup.
+    expect(res.status).toBe(404);
+  });
+
+  it("carries edits.style through a real gate resume on approve, unmangled end to end", async () => {
+    const { startRes, body: started } = await startAndRead(app, { clientSlug: "acme", productId: "x-agent", runKind: "recurring", inputParams: {} });
+    expect(startRes.status).toBe(202);
+    expect(started.pendingGateId).toContain("15-batch-review-r0");
+    const { runId } = started;
+
+    const resumeRes = await request(app)
+      .post(`/api/v1/runs/${runId}/resume`)
+      .send({
+        gateId: "15-batch-review-r0",
+        resolution: { decision: "approve", actor: "jane@karoslabs.com", edits: { style: { ground: "#111111", accent: "#ff7a1a" } } },
+      });
+    // x-agent doesn't read `edits.style` (only instagram-agent does, from
+    // IGSTYLE-3 on) — this asserts the ROUTE and the shared GateResponseSchema
+    // accept and pass it through cleanly for ANY agent, not that x-agent acts
+    // on it.
+    expect(resumeRes.status).toBe(200);
+    expect(resumeRes.body.status).toBe("completed");
+  }, 60_000);
+
+  it("accepts edits.style on decision:'revise' too, not just 'approve' (§2.5's split of the approve-only rule)", async () => {
+    const { startRes, body: started } = await startAndRead(app, { clientSlug: "acme", productId: "x-agent", runKind: "recurring", inputParams: {} });
+    expect(startRes.status).toBe(202);
+    const { runId } = started;
+
+    const resumeRes = await request(app)
+      .post(`/api/v1/runs/${runId}/resume`)
+      .send({
+        gateId: "15-batch-review-r0",
+        resolution: {
+          decision: "revise",
+          actor: "jane@karoslabs.com",
+          feedback: "make the background darker",
+          edits: { style: { ground: "#111111" } },
+        },
+      });
+    // Not a 400: the schema accepts `style` on `revise` exactly as it does on
+    // `approve` — whatever x-agent (which implements no revision loop) does
+    // with the decision itself is a separate question from whether the
+    // ROUTE let the payload through.
+    expect(resumeRes.status).toBe(200);
+  }, 60_000);
+});
+
 describe("GET /api/v1/runs/:runId/status", () => {
   let env: TestEnvironment;
   let app: Application;

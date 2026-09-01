@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
-import { GateResponseSchema, loadClientContentLanguage, type AgentDefinitionStore } from "@agent-engine/core";
+import { GateResponseSchema, HEX_COLOR, loadClientContentLanguage, type AgentDefinitionStore } from "@agent-engine/core";
 import { describeError } from "@agent-engine/telemetry";
 import { GateAlreadyResolvedError, WorkflowConcurrentRunError, WorkflowEngine, type DurableStepStore } from "@agent-engine/workflow";
 import { buildRunReport } from "../report.js";
@@ -109,6 +109,26 @@ const ResumeRunRequestSchema = z.object({
               textAlign: z.enum(["start", "center", "end"]).optional(),
             }),
           )
+          .optional(),
+        /**
+         * IGSTYLE-1. Mirrored inline (that duplication is deliberate in this
+         * file, per `StartRunRequestSchema`'s own precedent) rather than
+         * imported, so this route's 400 on a malformed hex happens at THIS
+         * boundary — the real `StyleEditSchema` re-validates it again once
+         * spread into `GateResponseSchema.safeParse` below, so the two
+         * cannot silently diverge into "the route accepted it but the
+         * engine rejected it."
+         */
+        style: z
+          .object({
+            ground: z.string().regex(HEX_COLOR).optional(),
+            fg: z.string().regex(HEX_COLOR).optional(),
+            accent: z.string().regex(HEX_COLOR).optional(),
+            surface: z.string().regex(HEX_COLOR).optional(),
+            fg2: z.string().regex(HEX_COLOR).optional(),
+            line: z.string().regex(HEX_COLOR).optional(),
+            accentInk: z.string().regex(HEX_COLOR).optional(),
+          })
           .optional(),
       })
       .optional(),
