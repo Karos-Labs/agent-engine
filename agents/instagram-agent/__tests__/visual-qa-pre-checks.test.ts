@@ -65,17 +65,39 @@ describe("assessBrandAssetPresence — a fact, never a gate", () => {
     expect(fact.reason).toMatch(/no brand logoUrl configured/);
   });
 
-  it("names the gs:// dead end explicitly, rather than a bare 'logo absent'", () => {
+  // SCRUM-383: `rejectedLogoUrlReason` — computed upstream by
+  // `deriveBrandRenderTokens`, never re-derived here — names the gs:// dead
+  // end explicitly, rather than this function reporting a bare "logo
+  // absent" indistinguishable from "no logo configured at all." Checked
+  // ahead of `configuredLogoUrl`/`hasDownload`, matching that a rejected
+  // URL never reaches a download attempt in the first place.
+  it("names the gs:// dead end explicitly via rejectedLogoUrlReason, rather than a bare 'logo absent'", () => {
     const fact = assessBrandAssetPresence({
-      configuredLogoUrl: "gs://karos-brand-assets/acme/logo.svg",
+      configuredLogoUrl: undefined,
+      rejectedLogoUrlReason:
+        'brand logoUrl "gs://karos-brand-assets/acme/logo.svg" is a gs:// URL, not https:// — downloadBrandLogo ' +
+        "(@agent-engine/tool-karos-media) fetches only https:// URLs, so this logo is rejected here at derivation " +
+        "(SCRUM-383) rather than being passed through to fail silently downstream",
       hasDownload: false,
       placement: undefined,
     });
     expect(fact.present).toBe(false);
     if (fact.present) throw new Error("unreachable");
     expect(fact.reason).toContain("gs://karos-brand-assets/acme/logo.svg");
-    expect(fact.reason).toMatch(/https:\/\/ URLs/);
-    expect(fact.reason).toMatch(/silently refuses/);
+    expect(fact.reason).toMatch(/https:\/\//);
+    expect(fact.reason).toMatch(/rejected here at derivation/);
+  });
+
+  it("rejectedLogoUrlReason wins even if a stale configuredLogoUrl were also passed", () => {
+    const fact = assessBrandAssetPresence({
+      configuredLogoUrl: "gs://karos-brand-assets/acme/logo.svg",
+      rejectedLogoUrlReason: "brand logoUrl rejected for test purposes",
+      hasDownload: false,
+      placement: undefined,
+    });
+    expect(fact.present).toBe(false);
+    if (fact.present) throw new Error("unreachable");
+    expect(fact.reason).toBe("brand logoUrl rejected for test purposes");
   });
 
   it("reports a generic download failure for an https:// URL that just didn't come through", () => {

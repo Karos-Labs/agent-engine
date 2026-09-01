@@ -104,8 +104,34 @@ describe("deriveBrandRenderTokens: the derivation ladder", () => {
     expect(deriveBrandRenderTokens({ handle: "bad handle!" }, baseTokens)?.handle).toBeUndefined();
   });
 
-  it("accepts only https/gs logo urls", () => {
-    expect(deriveBrandRenderTokens({ logoUrl: "https://x.example/logo.png" }, baseTokens)?.logoUrl).toBeDefined();
+  it("accepts an https logo url and carries no rejection reason", () => {
+    const tokens = deriveBrandRenderTokens({ logoUrl: "https://x.example/logo.png" }, baseTokens);
+    expect(tokens?.logoUrl).toBe("https://x.example/logo.png");
+    expect(tokens?.rejectedLogoUrlReason).toBeUndefined();
+  });
+
+  // SCRUM-383: `deriveBrandRenderTokens` used to accept a `gs://` logoUrl and
+  // pass it straight through, while `downloadBrandLogo` refuses any
+  // non-https URL — so a gs:// logo silently rendered nothing, with no
+  // error and no diagnostic anywhere. The two functions must agree: this
+  // ticket picked "reject at derivation," so a gs:// url is never carried as
+  // `logoUrl` (never reaches `downloadBrandLogo` at all), and the rejection
+  // is reported — loudly, not silently — via `rejectedLogoUrlReason`, which
+  // is what lets a trace tell "logo configured but unreachable" apart from
+  // "no logo configured."
+  it("rejects a gs:// logo url rather than passing it through, and reports why (SCRUM-383)", () => {
+    const tokens = deriveBrandRenderTokens({ logoUrl: "gs://karos-brand-assets/acme/logo.svg" }, baseTokens);
+    expect(tokens?.logoUrl).toBeUndefined();
+    expect(tokens?.rejectedLogoUrlReason).toContain("gs://karos-brand-assets/acme/logo.svg");
+    expect(tokens?.rejectedLogoUrlReason).toMatch(/https:\/\//);
+  });
+
+  // Not this ticket's scope: a scheme that isn't a real-world BrandKit
+  // misconfiguration (`gs://`) keeps degrading exactly as it always has —
+  // silently dropped, as if no logoUrl were configured at all. Widening the
+  // loud-rejection treatment to every unrecognized scheme would be scope
+  // creep beyond what SCRUM-383 asks for.
+  it("silently drops a non-gs, non-https logo url, unchanged from before this ticket", () => {
     expect(deriveBrandRenderTokens({ logoUrl: "javascript:alert(1)" }, baseTokens)).toBeUndefined();
     expect(deriveBrandRenderTokens({ logoUrl: "file:///etc/passwd" }, baseTokens)).toBeUndefined();
   });
