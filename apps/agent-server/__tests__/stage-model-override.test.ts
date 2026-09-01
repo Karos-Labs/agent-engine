@@ -1,6 +1,10 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import request from "supertest";
+import type { Application } from "express";
 import { MemoryAgentDefinitionStore, type AgentDefinitionInput, type ModelRouter } from "@agent-engine/core";
+import { WorkflowEngine, type WorkflowContext } from "@agent-engine/workflow";
 import { startRunJob } from "../src/run-job.js";
+import { createApp } from "../src/app.js";
 import { setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 
 /**
@@ -179,5 +183,113 @@ describe("per-stage model selection", () => {
     expect(outcome.status).toBe("degraded");
     const runRecord = await env.durableStore.getRun(runId);
     expect(runRecord?.failureReason).toMatch(/catalogued under vendor "gemini"/);
+  });
+});
+
+/**
+ * SCRUM-384 — `POST /runs/:runId/resume` used to rebuild `engine.run`'s
+ * params from only the run record's four identity fields, so a gated run
+ * dispatched with a Studio `stageModels` override applied it to the pre-gate
+ * half and silently reverted every post-gate stage to its compiled default.
+ * No failure, no trace entry -- the run just completes on the wrong model,
+ * which is the same class of silence AU34/SCRUM-312 fixed for
+ * `contentLanguage` (see `beec4f5` and `RunWorkflowParams.stageModels`'s own
+ * doc comment: the client-config re-read that fixed `contentLanguage`
+ * doesn't apply here, since a per-run Studio pick has no external store to
+ * re-read from -- it has to survive on the run record itself, so this
+ * ticket's fix lives in `WorkflowEngine.run()`/`RunRecordSchema` rather than
+ * in this route).
+ *
+ * `buildDynamicWorkflow` emits no `wf.step.gate` call (no `AgentDefinition`
+ * stage kind is a gate today), so the paused state is seeded the same way
+ * `dynamic-run-resume.test.ts`'s `pauseAtGate` does: a synthetic gate-only
+ * workflow run directly through the real `WorkflowEngine`, under the same
+ * `productId` a real dynamic agent would use. What that leaves in the store
+ * -- an `awaiting_gate` run record carrying `stageModels` -- is exactly what
+ * `/resume` is being asked to handle; the two AI stages that then actually
+ * run on resume (`draft`, `polish`) are the real, unmodified
+ * `buildDynamicWorkflow`, reached through the real HTTP route.
+ */
+describe("per-stage model selection survives a gate resume (SCRUM-384)", () => {
+  const GATE_ID = "human-review";
+  const APPROVE = { gateId: GATE_ID, resolution: { decision: "approve" as const, actor: "tester" } };
+
+  let env: TestEnvironment;
+  let agentDefinitionStore: MemoryAgentDefinitionStore;
+
+  beforeEach(async () => {
+    env = await setupTestEnvironment();
+    agentDefinitionStore = new MemoryAgentDefinitionStore();
+    await agentDefinitionStore.upsert("two-stage-gated", twoStageAgent(), { expectExisting: false });
+  });
+
+  afterEach(async () => {
+    await env.cleanup();
+  });
+
+  async function pauseAtGate(runId: string, stageModels?: Record<string, string>): Promise<void> {
+    const engine = new WorkflowEngine(env.durableStore);
+    const result = await engine.run(
+      async (wf: WorkflowContext) => {
+        await wf.step.gate(GATE_ID, {
+          kind: "batch_review",
+          payload: { note: "review before polish" },
+          requiredRole: "account_manager",
+          timeout: { duration: "24h", onTimeout: "hold" },
+        });
+        return {};
+      },
+      {
+        runId,
+        clientSlug: "acme",
+        productId: "two-stage-gated",
+        runKind: "recurring",
+        ...(stageModels ? { stageModels } : {}),
+      },
+    );
+    if (result.status !== "awaiting_gate") throw new Error(`seed failed: expected awaiting_gate, got ${result.status}`);
+  }
+
+  it("resumes a gated run with the Studio override still in force on the post-gate stage", async () => {
+    const seen: Array<{ model: string; policy: string }> = [];
+    const app: Application = createApp({
+      durableStore: env.durableStore,
+      runtimeDeps: { ...env.runtimeDeps, router: recordingRouter(seen) },
+      agentDefinitionStore,
+    });
+
+    await pauseAtGate("run-sm-gate-resume", { polish: "claude-opus-4-8" });
+
+    const res = await request(app).post("/api/v1/runs/run-sm-gate-resume/resume").send(APPROVE);
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("completed");
+    // The claim under test, exactly: the post-gate stage ("polish") ran on the
+    // model Studio chose for it -- not the compiled default it would silently
+    // fall back to if `stageModels` were dropped across the gate. A test that
+    // only checked `res.status === 200` would still pass on the bug this
+    // ticket fixes, which is the point of asserting `seen` (what the router
+    // was actually called with), not just the HTTP outcome.
+    expect(seen.map((s) => s.model)).toEqual(["claude-sonnet-4-6", "claude-opus-4-8"]);
+    expect(seen[1]?.model, "post-gate stage must run on the Studio override, not the compiled default").toBe("claude-opus-4-8");
+  });
+
+  it("resumes with every stage's compiled default when no override was ever set", async () => {
+    // The control: confirms the harness itself (seeding, resume, recording
+    // router) reports the DEFAULT correctly when there is truly no override,
+    // so the override test above is trusted to mean what it says.
+    const seen: Array<{ model: string; policy: string }> = [];
+    const app: Application = createApp({
+      durableStore: env.durableStore,
+      runtimeDeps: { ...env.runtimeDeps, router: recordingRouter(seen) },
+      agentDefinitionStore,
+    });
+
+    await pauseAtGate("run-sm-gate-resume-default");
+
+    const res = await request(app).post("/api/v1/runs/run-sm-gate-resume-default/resume").send(APPROVE);
+
+    expect(res.status).toBe(200);
+    expect(seen.map((s) => s.model)).toEqual(["claude-sonnet-4-6", "claude-sonnet-4-6"]);
   });
 });
