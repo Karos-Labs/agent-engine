@@ -79,6 +79,28 @@ describe("agent_runs_bi round trip, against a fake bound to the engine's own ins
     expect(row.model).toBe("claude-opus-4-8");
     expect(row.inputTokens).toBe(1_200);
     expect(row.timestamp).toBe("2026-08-30T09:00:00.000Z");
+    // SCRUM-385: the score and its rubric detail have named columns now —
+    // and, the point of the ticket, `errorDetails` carries none of it.
+    expect(row.errorDetails).toBeNull();
+    expect(row.evalScore).toBe(5);
+    expect(typeof row.evalRubricDetail).toBe("string");
+  });
+
+  it("SCRUM-385: never writes the rubric JSON into errorDetails — that is the whole defect this ticket closes", async () => {
+    const table = new InMemoryAgentRunsBiTable(insertRowFields());
+    await table.insert([evalScoreToAgentRunsBiRow(await makeScore())]);
+    await table.insert([evalScoreToAgentRunsBiRow(await makeScore({ language: "en", text: "We looked at attendance data." }))]);
+
+    const rows = await table.query({ jobId: "suite-2026-08-30" });
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      // A dashboard/alert filtering on `errorDetails IS NOT NULL` must see
+      // NOTHING from the eval ladder, pass or fail — that is precisely the
+      // false-positive SCRUM-385 exists to close.
+      expect(row.errorDetails).toBeNull();
+      expect(row.evalScore).not.toBeNull();
+      expect(row.evalRubricDetail).not.toBeNull();
+    }
   });
 
   it("reads the rubric scores back out of the persisted row, not just the row's identity", async () => {
@@ -138,9 +160,9 @@ describe("the fake rejects rows the live table would not accept", () => {
   }
 
   it("refuses an unknown column — the drift `ignoreUnknownValues: true` silently swallows in production", async () => {
-    const row = { ...(await validRow()), evalScore: 4.5 } as unknown as AgentRunsBiRow;
+    const row = { ...(await validRow()), bogusColumn: 4.5 } as unknown as AgentRunsBiRow;
     await expect(table().insert([row])).rejects.toThrow(AgentRunsBiSchemaError);
-    await expect(table().insert([row])).rejects.toThrow(/no such field\(s\): evalScore/);
+    await expect(table().insert([row])).rejects.toThrow(/no such field\(s\): bogusColumn/);
   });
 
   it("refuses a row missing a column the engine writes", async () => {

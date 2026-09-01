@@ -135,6 +135,18 @@ async function insertAgentRunRow(attrs: CostAndTokenAttributes): Promise<void> {
           durationMs: attrs.durationMs,
           status: attrs.status,
           errorDetails: null,
+          // SCRUM-385: `evalScore` / `evalRubricDetail` exist for the eval
+          // ladder's rows (`evals/src/persistence/agent-runs-bi-row.ts`), not
+          // for this function's own step/tool telemetry — this call never
+          // grades anything, so both are always null here. They are declared
+          // on THIS literal, not only on the eval package's row shape,
+          // because `insertRowFields()` / `check-bq-insert-schema.ts` treats
+          // this object as the one true definition of the table's columns; a
+          // column only the eval package knew about would never be checked
+          // against the live table schema, which is exactly the class of bug
+          // that check exists to catch.
+          evalScore: null,
+          evalRubricDetail: null,
           timestamp: new Date().toISOString(),
           operation: attrs.operation ?? null,
           // `?? null` and not `?? "primary"`: the row must say what the engine
