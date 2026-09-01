@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { BRAND_LOGO_MAX_BYTES, brandLogoDataUri, downloadBrandLogo } from "../src/brand-logo.js";
 
 function fakeFetch(response: { ok?: boolean; contentType?: string; bytes?: Uint8Array; contentLength?: string }): typeof fetch {
@@ -30,6 +30,34 @@ describe("downloadBrandLogo", () => {
   it("refuses a non-https url outright", async () => {
     expect(await downloadBrandLogo(fakeFetch({ contentType: "image/png" }), "http://x.example/logo.png")).toBeUndefined();
     expect(await downloadBrandLogo(fakeFetch({ contentType: "image/png" }), "gs://bucket/logo.png")).toBeUndefined();
+  });
+
+  // SCRUM-383: this refusal used to be a bare `return undefined` on this
+  // function's first line — no diagnostic at all, indistinguishable from
+  // every other reason a download can fail. It must now emit SOMETHING,
+  // so a caller that reaches this function directly with an unfiltered URL
+  // (rather than going through `deriveBrandRenderTokens`, which rejects a
+  // gs:// URL before it gets here and reports why through its own trace)
+  // still leaves a trace of what happened, instead of silence.
+  describe("the non-https refusal (SCRUM-383)", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("emits a diagnostic rather than returning silently", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const result = await downloadBrandLogo(fakeFetch({ contentType: "image/png" }), "gs://bucket/logo.png");
+      expect(result).toBeUndefined();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]?.[0]).toContain("gs://bucket/logo.png");
+      expect(warn.mock.calls[0]?.[0]).toMatch(/https/i);
+    });
+
+    it("never warns for an accepted https:// url, even on a subsequent unrelated failure", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      await downloadBrandLogo(fakeFetch({ contentType: "text/html" }), "https://x.example/logo.png");
+      expect(warn).not.toHaveBeenCalled();
+    });
   });
 
   it("refuses a body over the size cap, whatever the header claimed", async () => {

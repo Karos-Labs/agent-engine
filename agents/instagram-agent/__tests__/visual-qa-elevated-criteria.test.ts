@@ -247,7 +247,12 @@ describe("08b-visual-qa: the elevated criteria sent to the model shrink to match
       output: { brandAsset: { present: boolean; reason?: string } };
     };
     expect(preCheck1.output.brandAsset.present).toBe(false);
+    // SCRUM-383: `deriveBrandRenderTokens` rejects the gs:// logoUrl at
+    // derivation (never reaching `downloadBrandLogo` at all) and reports
+    // why via `rejectedLogoUrlReason`, which this pre-check surfaces
+    // verbatim — loudly, not silently, which is the whole point of the fix.
     expect(preCheck1.output.brandAsset.reason).toContain("gs://karos-brand-assets/acme/logo.svg");
-    expect(preCheck1.output.brandAsset.reason).toMatch(/silently refuses/);
+    expect(preCheck1.output.brandAsset.reason).toMatch(/https:\/\//);
+    expect(preCheck1.output.brandAsset.reason).toMatch(/rejected here at derivation/);
   }, 60000);
 });

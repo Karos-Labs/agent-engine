@@ -33,9 +33,10 @@ function makeRec(overrides: Partial<SeoFixInput> & Pick<SeoFixInput, "recId" | "
 
 describe("dispatchSeoFix — one actuator per fixAction (SCRUM-261 acceptance)", () => {
   // Every non-`manual` FixAction is machine-appliable per the contract; `manual` is the advisory
-  // fallback. All nine get an artifact — including `og_image`, which the routing table never
-  // actually fires (see the "og_image is unreachable" test below) but which must still have a
-  // real actuator per the ticket's explicit instruction not to delete the member to make this tidy.
+  // fallback. All nine get an artifact — including `og_image`, which the routing table did not
+  // fire from any catalog row until SCRUM-382 added one ("SEO-11" — see the "og_image now fires
+  // from a real catalog row" test below) but which had to have a real actuator regardless, per
+  // T-A17/SCRUM-261's explicit instruction not to delete the member to make this tidy.
   const nonConnectActionKinds: ActionKind[] = KNOWN_ACTION_KINDS.filter((k) => k !== "connect");
 
   for (const fixAction of KNOWN_FIX_ACTIONS) {
@@ -129,11 +130,14 @@ describe("dispatchSeoFix — one actuator per fixAction (SCRUM-261 acceptance)",
   });
 });
 
-describe("dispatchSeoFix — generic across the real 75-row routing table (no recId branch anywhere)", () => {
+describe("dispatchSeoFix — generic across the real 76-row routing table (no recId branch anywhere)", () => {
   const routingEntries = Object.entries(REC_ROUTING) as Array<[string, (typeof REC_ROUTING)[keyof typeof REC_ROUTING]]>;
 
-  it("has 75 rows to run this proof against (fails loudly if the catalog size assumption drifts)", () => {
-    expect(routingEntries.length).toBe(75);
+  it("has 76 rows to run this proof against (fails loudly if the catalog size assumption drifts)", () => {
+    // SCRUM-382 added the 76th row ("SEO-11") on the karos-seo-geo side, to give `og_image` a
+    // real producer — see the "og_image is reachable" test below, which replaces this describe
+    // block's old "og_image is unreachable" one now that the premise has changed.
+    expect(routingEntries.length).toBe(76);
   });
 
   for (const [recId, routing] of routingEntries) {
@@ -160,16 +164,33 @@ describe("dispatchSeoFix — generic across the real 75-row routing table (no re
     });
   }
 
-  it("[known gap, T-A17/SCRUM-261 report] og_image fires from zero of the 75 catalog rows today — implemented anyway, per the ticket", () => {
-    // TS itself proves half of this: `routing.fixAction`'s inferred literal union (from the real
-    // `REC_ROUTING` table) has NO "og_image" member at all — widening through `FixAction` here is
-    // required only so the comparison compiles; it is not narrowing anything away.
+  it("[SCRUM-382 update, was: known gap / T-A17/SCRUM-261 report] og_image now fires from a real catalog row — SEO-11", () => {
+    // Until SCRUM-382, `routing.fixAction`'s inferred literal union (from the real `REC_ROUTING`
+    // table) had NO "og_image" member at all, and this test asserted exactly that gap — see git
+    // history for the original "expect(ogImageRows).toHaveLength(0)" version and its own comment:
+    // "If this ever fails, it means og_image finally has a producer upstream — delete this
+    // assertion (not the actuator) and add a real coverage test for whichever recId now routes to
+    // it." SCRUM-382 (agent-engine, karos-seo-geo side) is that upstream producer: it added
+    // "SEO-11" to `rec-catalog.data.ts`, mapped to `og_image` in `rec-routing-map.ts`. This is the
+    // real coverage test that comment called for. Nothing in this package (the actuator itself —
+    // `dispatch.ts`/`artifact-proposals.ts`/`types.ts`) changed; only this assertion did.
     const ogImageRows = routingEntries.filter(([, routing]) => (routing.fixAction as FixAction) === "og_image");
-    // If this ever fails, it means og_image finally has a producer upstream — delete this
-    // assertion (not the actuator) and add a real coverage test for whichever recId now routes to it.
-    expect(ogImageRows).toHaveLength(0);
-    // The actuator itself still works for it, proven independently in the block above.
-    const outcome = dispatchSeoFix(makeRec({ recId: "SYNTHETIC-OG-IMAGE", fixAction: "og_image", actionKind: "review_approve", owner: "karos_agent", engineProductId: "seo-geo-agent" }));
+    expect(ogImageRows).toHaveLength(1);
+    expect(ogImageRows.map(([recId]) => recId)).toEqual(["SEO-11"]);
+    // And the actuator that was already implemented for it actually dispatches this real row —
+    // not just a synthetic fixture, closing the loop end to end within this package's own scope.
+    const [, seo11Routing] = ogImageRows[0]!;
+    const outcome = dispatchSeoFix(
+      makeRec({
+        recId: "SEO-11",
+        fixAction: seo11Routing.fixAction,
+        actionKind: seo11Routing.actionKind,
+        owner: seo11Routing.owner,
+        ...("engineProductId" in seo11Routing && seo11Routing.engineProductId ? { engineProductId: seo11Routing.engineProductId } : {}),
+      }),
+    );
     expect(outcome.ok).toBe(true);
+    if (!outcome.ok) throw new Error("unreachable — asserted ok above");
+    expect(outcome.artifact.fixAction).toBe("og_image");
   });
 });

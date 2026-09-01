@@ -52,14 +52,24 @@ import type { SlidesDataSelfCheck } from "./types.js";
  * logos anyway. This module states that plainly rather than presenting an
  * inherited judgment call as settled law.
  *
- * A second live, named caveat: `gs://` brand logo URLs are a silent dead end
- * upstream — `deriveBrandRenderTokens` accepts a `gs://` logoUrl,
- * `downloadBrandLogo` (`@agent-engine/tool-karos-media`) refuses any
+ * A second, formerly-live caveat, closed by SCRUM-383: `gs://` brand logo
+ * URLs used to be a silent dead end upstream — `deriveBrandRenderTokens`
+ * accepted a `gs://` logoUrl and passed it straight through,
+ * `downloadBrandLogo` (`@agent-engine/tool-karos-media`) refused any
  * non-`https://` URL on its first line with NO diagnostic, so a client whose
- * portal-authored logoUrl is `gs://...` gets a silently absent logo on every
- * single run. `assessBrandAssetPresence` names this specific cause when it
- * is the cause, rather than reporting a bare "logo absent" that looks
- * identical to "no logo configured at all."
+ * portal-authored logoUrl was `gs://...` got a silently absent logo on
+ * every single run — indistinguishable from "no logo configured at all."
+ *
+ * `deriveBrandRenderTokens` now rejects a `gs://` logoUrl at derivation
+ * (the smaller of the ticket's two defensible fixes — this pipeline has no
+ * GCS signing client wired in anywhere to make resolving it to a fetchable
+ * https URL the safe choice) and reports why via `BrandRenderTokens`'s
+ * `rejectedLogoUrlReason`, which `assessBrandAssetPresence` below surfaces
+ * as ITS OWN distinct `present: false` reason — the exact same
+ * "unchecked"/"reason" vocabulary this whole pre-checks module already uses
+ * elsewhere, not a second parallel mechanism. `downloadBrandLogo`'s own
+ * bare refusal also now warns rather than returning silently, as defense in
+ * depth for any caller that reaches it directly with an unfiltered URL.
  */
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -127,9 +137,12 @@ export type BrandAssetFact =
  * `present: false` here is frequently the CORRECT, expected outcome (no
  * logoUrl configured at all).
  *
- * `hasDownload: false` with a `gs://` `configuredLogoUrl` names that specific
- * dead end explicitly (see this module's own header) rather than reporting a
- * bare "logo absent" indistinguishable from "no logo configured."
+ * `rejectedLogoUrlReason` (SCRUM-383) names a `gs://` dead end explicitly —
+ * `deriveBrandRenderTokens` computes it, at the source, when a configured
+ * logoUrl was rejected before a download was ever attempted — rather than
+ * this function reporting a bare "logo absent" indistinguishable from "no
+ * logo configured." Checked FIRST, ahead of `configuredLogoUrl`, because a
+ * rejected URL never reaches `hasDownload`/`placement` at all.
  *
  * A `placement` whose `decision === "omit"` folds in AU38's inherited
  * judgment-call contrast floor (`BRAND_LOGO_CONTRAST_FLOOR`) — carried here
@@ -138,25 +151,26 @@ export type BrandAssetFact =
  */
 export function assessBrandAssetPresence(input: {
   configuredLogoUrl: string | undefined;
+  /**
+   * Set when `deriveBrandRenderTokens` rejected a configured logoUrl outright
+   * (SCRUM-383, currently: a `gs://` URI) — `configuredLogoUrl` is `undefined`
+   * whenever this is set, since a rejected URL is never carried as `logoUrl`.
+   */
+  rejectedLogoUrlReason?: string | undefined;
   /** True iff the logo's bytes were actually downloaded and decoded this attempt (`parseBrandLogoDataUri` succeeded). */
   hasDownload: boolean;
   /** AU38's placement plan, computed from those bytes — `undefined` iff `hasDownload` is false. */
   placement: BrandLogoPlacement | undefined;
 }): BrandAssetFact {
+  if (input.rejectedLogoUrlReason !== undefined) {
+    return { present: false, reason: input.rejectedLogoUrlReason };
+  }
+
   if (input.configuredLogoUrl === undefined) {
     return { present: false, reason: "this client has no brand logoUrl configured — nothing to grade for brand-asset integration" };
   }
 
   if (!input.hasDownload) {
-    if (/^gs:\/\//i.test(input.configuredLogoUrl)) {
-      return {
-        present: false,
-        reason:
-          `brand logoUrl "${input.configuredLogoUrl}" is a gs:// URL — downloadBrandLogo (@agent-engine/tool-karos-media) ` +
-          `accepts only https:// URLs and silently refuses anything else with no diagnostic; this pre-check surfaces that ` +
-          `silent rejection rather than reporting a bare "logo absent"`,
-      };
-    }
     return {
       present: false,
       reason: `brand logoUrl "${input.configuredLogoUrl}" did not produce a usable download this attempt (bad status, wrong content-type, over the size cap, or a network error)`,

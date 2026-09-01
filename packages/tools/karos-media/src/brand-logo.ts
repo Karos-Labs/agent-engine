@@ -14,6 +14,17 @@
  * over the size cap, network error): a logo is brand furniture, and brand
  * furniture must never be able to hold a run — the caller composes the
  * document without it and the slide ships.
+ *
+ * The one exception to "just returns undefined": a non-`https://` URL
+ * (SCRUM-383). That used to be a bare, silent `return undefined` on this
+ * function's first line — indistinguishable from every other failure, and
+ * indistinguishable from "no logoUrl at all" once it propagated. Callers
+ * that derive a `logoUrl` themselves (`deriveBrandRenderTokens`, currently
+ * this module's only real caller upstream) reject a non-https URL before it
+ * ever reaches here and report why through their own trace; the `console.warn`
+ * below is the fallback diagnostic for any caller — present or future — that
+ * reaches this function directly with an unfiltered URL, so the refusal is
+ * never silent even when nothing upstream already reported it.
  */
 
 import zlib from "node:zlib";
@@ -34,7 +45,13 @@ export async function downloadBrandLogo(
   url: string,
   maxBytes: number = BRAND_LOGO_MAX_BYTES,
 ): Promise<BrandLogoDownload | undefined> {
-  if (!/^https:\/\//i.test(url)) return undefined;
+  if (!/^https:\/\//i.test(url)) {
+    console.warn(
+      `[karos-media.downloadBrandLogo] refusing non-https brand logo URL "${url}" — only https:// is ever fetched; ` +
+        "the caller proceeds without a logo rather than holding the run on brand furniture.",
+    );
+    return undefined;
+  }
   try {
     const response = await fetchImpl(url);
     if (!response.ok) return undefined;
