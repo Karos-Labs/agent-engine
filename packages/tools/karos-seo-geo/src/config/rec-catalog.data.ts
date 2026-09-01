@@ -1,6 +1,12 @@
 // Verbatim port of the legacy karos-agents lab-spec config (RFC-04 "port the scoring config as-is").
 // Source: karos-agents/products/onboarding/step-02-seo-geo/config/seo-geo-rec-catalog.json
 // DO NOT hand-edit values here — this is a byte-for-fidelity transcription of the JSON asset.
+//
+// EXCEPTION: "SEO-11" (SCRUM-382) is a deliberate, hand-authored addition, not part of the
+// upstream JSON asset. Product-owner decision: `og_image` (a `FixAction` member since SCRUM-210)
+// had zero catalog records mapping to it — a routable fix the system could never fire. This one
+// record closes that gap; see `rec-routing-map.ts`'s "SEO-11" row for the routing rationale, and
+// `__tests__/rec-routing-map.test.ts`'s "every FixAction member is reachable" block for the proof.
 export const recCatalogData = {
  "SEO-01": {
   "id": "SEO-01",
@@ -902,5 +908,17 @@ export const recCatalogData = {
   "product_ref": {"id": "a3", "folder": "seo-geo", "status": "live"},
   "source": "Chrome Lighthouse llms.txt audit (June 2026); Google \"fine to use llms.txt, no Search ranking benefit\" June 2026 — hygiene only",
   "lever": "GEO"
+ },
+ "SEO-11": {
+  "id": "SEO-11",
+  "recommendation": "Open Graph image present, valid, and sized for social/link-preview rendering",
+  "check": "og:image present (bool) AND resolves to a live, non-empty image (200) AND meets platform minimum (≥1200×630px, ~1.91:1 aspect) (pass/fail per key page).",
+  "impact": "medium",
+  "effort": "quick",
+  "delivery": "agent-direct",
+  "product": "agent",
+  "product_ref": {"id": "a3", "folder": "seo-geo", "status": "live"},
+  "source": "Open Graph protocol spec; Facebook Sharing Debugger + LinkedIn Post Inspector image guidance 2026",
+  "lever": "SEO"
  }
 };

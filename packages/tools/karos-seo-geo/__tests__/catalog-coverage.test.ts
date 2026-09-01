@@ -31,9 +31,12 @@ describe("rec-catalog vs scoring-config coverage (SCRUM-318's reconcile item, as
     // run measures. Reconciling them needs v2's catalog, which is unreachable from this
     // environment — so this pins the current number as a baseline for SCRUM-319/320.
     // If someone wires one up (or drops one), this fails and forces the count updated.
-    expect(coverage.catalogRecIds).toHaveLength(75);
-    expect(coverage.unscoredCatalogRecIds).toHaveLength(28);
+    // SCRUM-382 added "SEO-11" (og_image) to the catalog with no scoring-config input of its own,
+    // so both counts move by one over the pre-SCRUM-382 baseline (75 catalog / 28 unscored).
+    expect(coverage.catalogRecIds).toHaveLength(76);
+    expect(coverage.unscoredCatalogRecIds).toHaveLength(29);
     expect(coverage.unscoredCatalogRecIds).toContain("SEO-01");
+    expect(coverage.unscoredCatalogRecIds).toContain("SEO-11");
   });
 
   it("the recs that ARE scored can actually fire — the catalog is not inert end to end", () => {
