@@ -19,8 +19,10 @@ import {
 import { evaluateRecommendations } from "../src/recommend.js";
 
 /**
- * T-A4 / SCRUM-257's acceptance gate: the 75-row `rec_id -> routing` table in
+ * T-A4 / SCRUM-257's acceptance gate: the `rec_id -> routing` table in
  * `src/config/rec-routing-map.ts` must cover `rec-catalog.data.ts` exactly.
+ * Originally 75 rows; SCRUM-382 added the 76th ("SEO-11") so `og_image` has a
+ * real producer — see this file's "every FixAction member is reachable" block below.
  *
  * There are two independent guards on that, deliberately:
  *
@@ -63,12 +65,13 @@ const routedRecIds = Object.keys(REC_ROUTING);
 const rows = Object.entries(REC_ROUTING) as [string, RecRouting][];
 
 describe("rec-routing-map: catalog coverage (SCRUM-257 acceptance)", () => {
-  it("the catalog is 75 records, recounted here rather than assumed", () => {
+  it("the catalog is 76 records, recounted here rather than assumed", () => {
     // Independent recount at runtime, off the parsed module rather than off a
     // grep of the source: three prior rounds landed on 75 by three different
     // methods, and this pins the number in the same place the mapping lives.
-    expect(catalogRecIds).toHaveLength(75);
-    expect(new Set(catalogRecIds).size).toBe(75); // no duplicate keys silently collapsing
+    // SCRUM-382 added the 76th record ("SEO-11") to give `og_image` a real producer.
+    expect(catalogRecIds).toHaveLength(76);
+    expect(new Set(catalogRecIds).size).toBe(76); // no duplicate keys silently collapsing
     // Each record's own `id` field agrees with its key — otherwise a mapping
     // keyed by the object key could be routing a record that calls itself something else.
     for (const [key, record] of Object.entries(recCatalogData)) {
@@ -79,7 +82,7 @@ describe("rec-routing-map: catalog coverage (SCRUM-257 acceptance)", () => {
   it("every catalog record has a routing row — a new catalog row without a mapping fails here", () => {
     const unmapped = catalogRecIds.filter((id) => !(id in REC_ROUTING));
     expect(unmapped).toEqual([]);
-    expect(routedRecIds).toHaveLength(75);
+    expect(routedRecIds).toHaveLength(76);
   });
 
   it("every routing row names a real catalog record — no rows for rec_ids that no longer exist", () => {
@@ -267,5 +270,31 @@ describe("recommend.ts enrichment (the fields now leaving the engine)", () => {
 
   it("never emits targetPlatform, because no catalog record supplies one", () => {
     for (const rec of fired) expect("targetPlatform" in rec).toBe(false);
+  });
+});
+
+describe("rec-routing-map: every FixAction member is reachable (SCRUM-382 acceptance)", () => {
+  /**
+   * `FixAction` (`routable-recommendation-contract.ts`) advertises nine members. Before
+   * SCRUM-382, `og_image` had zero catalog rows routing to it: `KNOWN_FIX_ACTIONS` is a
+   * type-level union, and a member can sit in that union forever with no real-world
+   * producer — `tsc` has no way to see that, because the union is satisfied by the OTHER
+   * eight rows just fine. This is the runtime check that closes that blind spot: for every
+   * `FixAction` member, at least one live `REC_ROUTING` row must actually use it.
+   *
+   * This is deliberately independent of the coverage tests above (which only prove the two
+   * key sets — catalog ids and routed ids — match each other, never that every fixAction
+   * *value* the table is allowed to emit is actually emitted somewhere).
+   */
+  it("every KNOWN_FIX_ACTIONS member has at least one REC_ROUTING row that uses it", () => {
+    const usedFixActions = new Set(rows.map(([, r]) => r.fixAction));
+    const unreachable = KNOWN_FIX_ACTIONS.filter((action) => !usedFixActions.has(action));
+    expect(unreachable).toEqual([]);
+  });
+
+  it("og_image specifically has a real producer — the SCRUM-382 regression this ticket exists to close", () => {
+    const ogImageRows = rows.filter(([, r]) => r.fixAction === "og_image").map(([id]) => id);
+    expect(ogImageRows.length).toBeGreaterThan(0);
+    expect(ogImageRows).toContain("SEO-11");
   });
 });

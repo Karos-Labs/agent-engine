@@ -419,6 +419,13 @@ export const REC_ROUTING = {
   // 0 in any ranking score. The agent can generate one, but shipping a file that Google has said carries
   // no benefit is a judgement call the client should see before it lands.
   "GEO-40": { fixAction: "manual", actionKind: "review_approve", owner: "karos_agent", engineProductId: "seo-geo-agent" },
+
+  // SCRUM-382: the first (and, as of this row, only) catalog record that maps to `og_image` — see
+  // rec-catalog.data.ts's "SEO-11" header note for why this record exists at all. Same shape as its
+  // sibling meta-tag rows: a single `<meta property="og:image">` value the agent drafts off an
+  // existing site asset, diffed before it ships — the same "generated, cheap-to-undo tag value"
+  // reasoning SEO-02 (title) and SEO-06 (description) already use, so one_click follows their precedent.
+  "SEO-11": { fixAction: "og_image", actionKind: "one_click", owner: "karos_agent", engineProductId: "seo-geo-agent" },
 } as const satisfies Record<CatalogRecId, RecRouting>;
 
 /** Every `rec_id` this table routes. Identical to `CatalogRecId` by construction — the `satisfies` above is what makes that true. */
