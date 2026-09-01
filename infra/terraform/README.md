@@ -245,22 +245,33 @@ The three buckets above (`media`, `artifacts`, `workspace`, times two
 environments) are every bucket this repo's own source — env vars,
 cloudbuild substitutions, test fixtures — names. A prior production-bucket
 audit (feeding SCRUM-376/AU74 and this ticket) found three buckets live in
-GCP that do not match that list one-for-one. Checked against this repo's
-source only (no `gcloud` access from here — see above), here is where each
-one actually stands, because "hand-provisioned and undocumented" is the
-failure mode this ticket exists to end, not something to wave through with
-the same shrug as the deliberate exclusions above:
+GCP that do not match that list one-for-one.
+
+**Updated 2026-09-01 from a live read** (`gcloud` access was unavailable when
+this section was first written; it is available now, and two of the three rows
+below were wrong because of it). Both corrections have the same root cause: the
+original pass grepped *this repo's* source for a literal bucket name. That misses
+a bucket named by a **sibling repo**, and it misses one supplied through a
+**Secret Manager reference** rather than a literal `value:` env var. Neither
+bucket was ever unowned.
+
+Here is where each one actually stands, because "hand-provisioned and
+undocumented" is the failure mode this ticket exists to end, not something to
+wave through with the same shrug as the deliberate exclusions above:
 
 | Bucket | In this Terraform config? | Named by any env var in this repo? | Status |
 |---|---|---|---|
 | `karoscmo-prod-media-assets` | **Yes** — `google_storage_bucket.media` via `envs/prod.tfvars`' `media_bucket_name` | Yes — `GCS_MEDIA_BUCKET` (prod) | Accounted for. Not a gap. |
-| `karos-media-assets` | **No.** No `.tf` file, no `envs/*.tfvars` entry, no variable default names it. | **No.** Not `GCS_MEDIA_BUCKET`, not any other name in `.env.example`, `cloudbuild.yaml`, or `cloudbuild.promote.yaml`. | **Undecided, not deliberate.** This is the other half of AU74's "prod media split-brain" — two buckets that look like the same purpose, only one of which the running services and this IaC know about. This repo cannot tell you which one prod traffic is actually reading from today (that needs `gcloud storage buckets describe` / a live trace, both unavailable here) or whether it holds data nothing else can reach. **Do not add this to Terraform as a second `google_storage_bucket.media`-shaped resource and do not delete it** — either action pre-empts the AU74 decision about which bucket wins. It stays a named, open finding until that decision is made. |
-| `karoscmo-agent-artifacts` (no `-prep-`/`-prod-` in the name — distinct from `karoscmo-prep-agent-artifacts` and `karoscmo-prod-agent-artifacts`, both of which **are** declared above) | **No.** | **No.** Grep across `.env.example`, every `cloudbuild*.yaml`, and this Terraform tree turns up zero references to a bucket by this exact name. | **Orphaned, not deliberate.** 12,011 objects / 7.96 GiB by the same audit, with no running service's environment naming it — nothing currently reads it, writes it, or lists it in its startup config, as far as this repo's source can show. That is a stronger claim than "not yet documented": it means whatever put those objects there is not part of the codebase this repo can see (a deleted feature's leftover output, a manual `gsutil` upload, or a bucket from before the `-prep-`/`-prod-` naming convention existed are all consistent with what's visible from here, and this repo cannot distinguish between them). It needs a human decision — keep it (and if so, name what owns it and import it here), archive it, or delete it after confirming nothing depends on it — not a Terraform resource guessed into existence to make the list feel complete. |
+| `karos-media-assets` | **No.** No `.tf` file, no `envs/*.tfvars` entry, no variable default names it. | **Not in this repo — but named, live, by karosCMO.** It is the portal's own `_GCS_MEDIA_BUCKET` (`karosCMO/cloudbuild.yaml`, `karosCMO/cloudbuild.promote.yaml`), and production's `karos-cmo` Cloud Run service carries `GCS_MEDIA_BUCKET=karos-media-assets` today. | **Accounted for, and NOT the other half of a split-brain.** AU74 is resolved: this is the *portal's* media bucket and `karoscmo-prod-media-assets` is the *engine's*, and they are unrelated pipelines that collide only in the variable's name — the portal stores `clients/<id>/podcast-clips/` and `clients/<id>/run-attachments/` here (15 objects, 104 MiB), the engine stores `instagram/…` carousel renders there (8 objects). The portal never reads the engine's bucket at all (`materialize.ts` re-uploads deliverables fetched over https into Firebase Storage and skips bare `gs://` URIs). **Still do not add it to this Terraform config** — it belongs to karosCMO, not to agent-engine, and modelling another repo's bucket here would be the same "silently imported" mistake in a new direction. |
+| `karoscmo-agent-artifacts` (no `-prep-`/`-prod-` in the name — distinct from `karoscmo-prep-agent-artifacts` and `karoscmo-prod-agent-artifacts`, both of which **are** declared above) | **No.** | **Yes — through a Secret Manager reference, which is why the grep missed it.** `agent-service-api` and `agent-service-worker` (karoscmo, europe-west1) run with `ARTIFACT_STORE=gcs` and `AGENT_ARTIFACTS_BUCKET` bound to `secretKeyRef: agent-artifacts-bucket`; that secret's value is `karoscmo-agent-artifacts`. | **NOT orphaned. This is a live production artifact store — do not delete it.** The earlier "nothing names it" conclusion came from scanning literal env-var values, which cannot see a `secretKeyRef`. IAM corroborates ownership independently: `agent-service-sa@karoscmo` and `agent-runner-sa@karoscmo` both hold `roles/storage.objectAdmin` on it. Contents are `artifacts/<uuid>/` and `transcripts/<uuid>.jsonl` (the transcripts prefix alone is 1,351 objects); last write 2026-08-10. It is owned by **agent-service**, not by this repo, so it still does not belong in this Terraform config — but it is accounted for, and the human decision this row used to ask for has been answered. |
 
-Put plainly: of the three, one is already fully described by this config,
-and two are hand-provisioned *silently* — nobody wrote down what they are
-for, so nobody can tell purposeful from forgotten. Adding them to `storage.tf`
-without that human decision would just convert "silently hand-provisioned"
-into "silently imported," which is not a fix. They are listed here,
-by name, so the next person does not have to re-run the audit to know they
-exist.
+Put plainly, after the live read: all three are accounted for, and none of the
+three belongs in this config. One is declared here already; the other two are
+owned by sibling services (karosCMO and agent-service respectively) that name
+them in their own deploy configuration. Importing another repo's bucket into
+`storage.tf` would just convert "owned elsewhere" into "owned twice," which is
+not a fix. They stay listed here, by name and with the evidence, so the next
+person does not have to re-run the audit to know they exist — and so that no one
+acts on the previous version of this table, which invited deleting
+`karoscmo-agent-artifacts` "after confirming nothing depends on it" while two
+production services were actively depending on it.
