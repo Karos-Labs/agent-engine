@@ -30,6 +30,20 @@ export interface BrandRenderTokens {
   /** The brand accent, for `assembleSlidesData`'s existing accent channel — never emitted as a CSS var here. */
   brandAccent?: string;
   logoUrl?: string;
+  /**
+   * Set when `brand.logoUrl` WAS present but was rejected here at
+   * derivation because `downloadBrandLogo` (`@agent-engine/tool-karos-media`)
+   * will not fetch it — currently: a `gs://` URI (SCRUM-383). Never set
+   * together with `logoUrl`.
+   *
+   * This is what lets a trace tell "a logo was configured but rejected"
+   * apart from "no logo was configured at all" — both would otherwise
+   * collapse to `logoUrl === undefined`, which is exactly the silent dead
+   * end this ticket exists to close. See `assessBrandAssetPresence` in
+   * `visual-qa-pre-checks.ts`, which surfaces this as a distinct
+   * `present: false` reason rather than a bare "logo absent."
+   */
+  rejectedLogoUrlReason?: string;
   /** Normalized to exactly one leading `@`. */
   handle?: string;
   /** Which visual treatment the badge/eyebrow components use. Always present — `plain` is the no-signal default. */
@@ -481,11 +495,54 @@ export function deriveBrandRenderTokens(brand: unknown, brandTokens: BrandTokens
   // the thing that turns an otherwise-empty kit into a present one.
   const palette = buildAccentRing(brandAccent, kitAccentCandidates(b, brandTokens), ground, fg);
 
-  const logoUrl = (() => {
+  // ── logo: https:// only (SCRUM-383) ──
+  //
+  // `downloadBrandLogo` fetches nothing but https:// — it always has. This
+  // used to accept `gs://` here and pass it straight through as `logoUrl`,
+  // so it reached `downloadBrandLogo`, which refused it on its very first
+  // line with no diagnostic. The two functions disagreeing produced a
+  // silent dead end: a `gs://` logoUrl rendered no logo, no error, no held
+  // run — indistinguishable from a client with no logoUrl configured at
+  // all.
+  //
+  // Fixed here, at the source, rather than by teaching `downloadBrandLogo`
+  // to resolve `gs://` to a signed https URL: this pipeline has no GCS
+  // client or credentials wired into it anywhere (`brand-logo.ts`'s own
+  // header is explicit about adding no dependency for the logo path), and
+  // nothing today ever writes a raw `gs://` logoUrl into a BrandKit — GCS
+  // is served via signed https already (see the ticket). Agreeing the two
+  // functions and failing loudly is the smaller, dependency-free change,
+  // and it matches `videoBrand.logoUrl`'s derivation in tiktok-agent's own
+  // workflow, which already accepts only `https://` here.
+  //
+  // "Loudly" means `rejectedLogoUrlReason`, not a thrown error: a logo is
+  // brand furniture and must never be able to hold a run (the same
+  // invariant `brand-logo.ts` and this workflow's own `brandFragments`
+  // state repeatedly) — so the run still completes without a logo, exactly
+  // as it does for every other undownloadable logoUrl, but the REASON is
+  // now a real, attributable fact in the trace instead of silence.
+  //
+  // Deliberately scoped to `gs://` specifically, not every non-https
+  // scheme: a `javascript:`/`file://` value is not a real-world BrandKit
+  // misconfiguration this ticket is about, and it keeps failing the same
+  // way it always has (silently dropped, as if absent) rather than being
+  // widened into a new class of "loud" rejection this ticket never asked
+  // for.
+  let logoUrl: string | undefined;
+  let rejectedLogoUrlReason: string | undefined;
+  {
     const url = asString(b["logoUrl"]);
-    if (url === undefined) return undefined;
-    return /^https:\/\//i.test(url) || /^gs:\/\//i.test(url) ? url : undefined;
-  })();
+    if (url !== undefined) {
+      if (/^https:\/\//i.test(url)) {
+        logoUrl = url;
+      } else if (/^gs:\/\//i.test(url)) {
+        rejectedLogoUrlReason =
+          `brand logoUrl "${url}" is a gs:// URL, not https:// — downloadBrandLogo (@agent-engine/tool-karos-media) ` +
+          "fetches only https:// URLs, so this logo is rejected here at derivation (SCRUM-383) rather than being " +
+          "passed through to fail silently downstream";
+      }
+    }
+  }
 
   const handle = (() => {
     const raw = asString(b["handle"]);
@@ -503,6 +560,11 @@ export function deriveBrandRenderTokens(brand: unknown, brandTokens: BrandTokens
     fontFamilies.length > 0 ||
     brandAccent !== undefined ||
     logoUrl !== undefined ||
+    // A rejected gs:// logoUrl counts too — a client whose ENTIRE brand.json
+    // is a bad logoUrl still needs this function to return an object, or the
+    // rejection reason has nowhere to live and is lost exactly as silently
+    // as before this fix.
+    rejectedLogoUrlReason !== undefined ||
     handle !== undefined;
   if (!hasAnything) return undefined;
 
@@ -511,6 +573,7 @@ export function deriveBrandRenderTokens(brand: unknown, brandTokens: BrandTokens
     fontFamilies: [...new Set(fontFamilies)],
     ...(brandAccent !== undefined ? { brandAccent } : {}),
     ...(logoUrl !== undefined ? { logoUrl } : {}),
+    ...(rejectedLogoUrlReason !== undefined ? { rejectedLogoUrlReason } : {}),
     ...(handle !== undefined ? { handle } : {}),
     badgeStyle,
     palette,

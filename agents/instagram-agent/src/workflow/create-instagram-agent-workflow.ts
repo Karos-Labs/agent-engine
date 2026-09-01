@@ -1943,6 +1943,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           paletteGate: checkPaletteWithinKit(usedHexes, brandKit?.palette ?? []),
           brandAsset: assessBrandAssetPresence({
             configuredLogoUrl: brandKit?.logoUrl,
+            rejectedLogoUrlReason: brandKit?.rejectedLogoUrlReason,
             hasDownload: placement !== undefined,
             placement,
           }),
