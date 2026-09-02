@@ -108,7 +108,7 @@ right scope all four audited buckets grant both. The gate was failing for the wr
 | | Value | Where it is pinned |
 |---|---|---|
 | `agent-engine-prep` | **`true`** (live, verified on the service) | `cloudbuild.yaml`, literal |
-| `agent-engine-prod` | `false` | `cloudbuild.promote.yaml`, literal |
+| `agent-engine-prod` | **`true`** (live, revision `agent-engine-prod-00011-94v`) | `cloudbuild.promote.yaml`, literal |
 | both workers | *(absent, and correct)* | — |
 
 Pinned as literals, never substitutions, per both cloudbuilds' own instruction that the value must
@@ -220,7 +220,13 @@ into a loudly-failing one. Production's is empty, so the sync is simply off ther
 does not regress it — but the same grant will be needed for whichever SA the prod portal runs as
 before it can be turned on.
 
-**`AUTH_ENABLED=true` in production is not yet recorded here**, deliberately. The engine's HTTP
+**`AUTH_ENABLED=true` in production — CLOSED, 2026-09-02.** Live on
+`agent-engine-prod-00011-94v`, allowlist `karos-cmo-sa@karoscmo` matching the portal's live runtime
+identity. Post-flip sweep: zero 4xx on the engine, zero ERROR on the engine or the portal, portal
+still serving (`/` 307 → `/login` 200), the portal→engine reconcile path still 200, and the worker
+Ready on the same image (`agent-engine-prod-worker-00011-gvq`).
+
+**One honest limit on that verification.** The engine's HTTP
 surface is genuinely idle in both environments — dispatch goes over Pub/Sub, and the portal only
 calls the engine for gate resolution and unmaterialized-deliverable fetches. Two real reconcile
 calls (one prep, one prod) produced **no engine HTTP request at all**, because
