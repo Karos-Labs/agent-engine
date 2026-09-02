@@ -170,9 +170,39 @@ export function buildWorkflowForProduct(productId: ProductId, deps: AgentRuntime
       return createTikTokAgentWorkflow(deps);
     case "reputation-agent":
       return createReputationPulseWorkflow({ ...deps, store: deps.workspaceStore });
+    // ── The two research agents run unattended, by product decision ──
+    //
+    // Neither produces content that goes out under the client's name: they
+    // produce INTELLIGENCE the portal reads back (`intel-report-agent`'s
+    // deliverable IS the portal's `ClientReport`; `seo-geo-agent`'s is the
+    // client's SEO/GEO snapshot). Every other product here drafts something a
+    // human publishes, which is what their gates are for.
+    //
+    // `autoApprove` skips the gate and synthesizes an approval with
+    // `actor: "system"` — deliberately NOT a `timeout: { duration: "0s",
+    // onTimeout: "auto_approve" }`, which reaches the same decision by the
+    // other road and records it under `actor: "system:gate-timeout"`.
+    // `step-gate.ts` keeps those two actors distinct precisely so a reviewer
+    // can tell "nobody was meant to look at this" from "somebody was supposed
+    // to look and didn't in time", and only the first is true here. It also
+    // makes the approval instant rather than lazy: the timeout road only fires
+    // when something next touches the run, so a run with nothing polling it
+    // waits regardless of how short the duration is.
+    //
+    // What this changes per agent:
+    //   seo-geo-agent   — three gates that ALREADY auto-approved after 1h
+    //     (SCRUM-273/T-A20). Same outcome, no wait.
+    //   intel-report-agent — one gate at `24h`/`hold`, with no auto-approve at
+    //     all. This is the real change, and the fix for the gap SCRUM-274's
+    //     handoff flagged: the portal awaits this deliverable for 70 minutes
+    //     (`ONBOARDING_DELIVERABLE_TIMEOUT_MS` in karosCMO), so an unattended
+    //     Regenerate could only ever end in that timeout.
+    //
+    // That 70-minute ceiling stays where it is. It is no longer sized against
+    // a gate wait — it is now a plain "this run is stuck" bound.
     case "seo-geo-agent":
-      return createSeoGeoAgentWorkflow(deps);
+      return createSeoGeoAgentWorkflow({ ...deps, autoApprove: true });
     case "intel-report-agent":
-      return createIntelReportAgentWorkflow(deps);
+      return createIntelReportAgentWorkflow({ ...deps, autoApprove: true });
   }
 }

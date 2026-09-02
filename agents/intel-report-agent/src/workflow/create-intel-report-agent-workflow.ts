@@ -43,11 +43,19 @@ export interface CreateIntelReportAgentWorkflowOptions {
   router: ModelRouter;
   /**
    * Skips the human `batch_review` gate and records a synthetic
-   * `actor: "system"` approval instead — off by default, so a real run
-   * genuinely pauses at `awaiting_gate` until a human reviews it (RFC-01
-   * §8.3), exactly like every other agent in this repo. Intended for
-   * tests/demos/evals that need a synchronous happy path, never for
-   * production wiring.
+   * `actor: "system"` approval instead — off by default, so a run built
+   * without it genuinely pauses at `awaiting_gate` until a human reviews it
+   * (RFC-01 §8.3), exactly like every other agent in this repo.
+   *
+   * THIS AGENT'S PRODUCTION WIRING NOW PASSES IT, reversing what this comment
+   * used to say ("never for production wiring"). Two reasons, both specific to
+   * this agent: its deliverable is not published under a client's name — it IS
+   * the portal's `ClientReport` — and its gate was the one gate in this repo
+   * with no auto-approve at all (`24h`/`hold`), so an unattended run could
+   * only ever end at the portal's own 70-minute deliverable timeout. See
+   * `buildWorkflowForProduct` (`apps/agent-server/src/wiring/workflows.ts`)
+   * for the decision; the flag stays off by default so every test keeps the
+   * gated behaviour.
    */
   autoApprove?: boolean;
   /**

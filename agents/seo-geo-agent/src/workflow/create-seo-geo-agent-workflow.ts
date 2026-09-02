@@ -68,11 +68,20 @@ export interface CreateSeoGeoAgentWorkflowOptions {
   /**
    * Skips the step 03 (`prompt_set_review`) and step 12 (`fix_generation_review`)
    * human gates and records synthetic `actor: "system"` approvals instead —
-   * off by default, so a real run genuinely pauses at `awaiting_gate` at both
-   * points until a human reviews it (RFC-01 §8.3, RFC-04 §2's Phase 1 and
-   * Phase 7 gates). Intended for tests/demos/evals that need a synchronous
-   * happy path, never for production wiring — same opt-out pattern as
+   * off by default, so a run built without it genuinely pauses at
+   * `awaiting_gate` at both points until a human reviews it (RFC-01 §8.3,
+   * RFC-04 §2's Phase 1 and Phase 7 gates). Same opt-out pattern as
    * `linkedin-agent`'s `autoApprove`.
+   *
+   * THIS AGENT'S PRODUCTION WIRING NOW PASSES IT. That is a reversal of what
+   * this comment used to say ("never for production wiring"), and it is a
+   * product decision rather than a convenience: this agent produces
+   * intelligence the portal reads back, not content published under a
+   * client's name, so there is nothing here for an account manager to
+   * approve. See `buildWorkflowForProduct` (`apps/agent-server/src/wiring/
+   * workflows.ts`), which is the only place that decision is made and the
+   * only place it should be read from — the flag stays off by default so
+   * every other consumer, and every test, keeps the gated behaviour.
    */
   autoApprove?: boolean;
 }

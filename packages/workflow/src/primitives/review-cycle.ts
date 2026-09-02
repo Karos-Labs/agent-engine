@@ -57,7 +57,15 @@ export interface ReviewCycleOptions<T> {
   buildGate: (output: T, revision: number) => GateDefinition;
   /**
    * Skips the gate and synthesizes an approval. The same `autoApprove` escape
-   * hatch every agent here already has, for tests and evals.
+   * hatch every agent here already has.
+   *
+   * No longer only "for tests and evals": `seo-geo-agent` and
+   * `intel-report-agent` pass it in production, because neither publishes
+   * under a client's name and so neither has anything for a reviewer to
+   * approve (`buildWorkflowForProduct`). Worth knowing when reading the
+   * `actor: "system"` this writes — that actor now appears on real runs, and
+   * `step-gate.ts` keeps it distinct from `"system:gate-timeout"` for exactly
+   * that reason.
    */
   autoApprove?: boolean;
   /**
