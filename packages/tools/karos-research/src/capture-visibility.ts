@@ -6,8 +6,24 @@ import { latestRun, writeRunRecord, type RunRecord } from "./runs.js";
 
 const TOOL_VERSION = "1.0.0";
 
-/** The 5 fixed AI-visibility engines (RFC-04 Phase 3 — `seo-geo-capture-config.json` `engines[]`). */
-export const VISIBILITY_ENGINES = ["chatgpt", "perplexity", "gemini", "claude", "copilot"] as const;
+/**
+ * The ratified AI-visibility engines (SCRUM-396).
+ *
+ * Deliberately a second literal rather than an import: RFC-01 §4 keeps tool
+ * packages independent of each other, so `karos-research` cannot depend on
+ * `karos-seo-geo`. That independence is what made this list drift in the first
+ * place, so the two are pinned equal by a conformance test in the one workspace
+ * that legitimately sees both — `agents/seo-geo-agent`'s
+ * `visibility-engine-list.test.ts`. **Change one and that test fails; change
+ * both without reading `docs/decisions/SCRUM-396-visibility-engine-list.md`
+ * and you will re-make the mistake it records.**
+ *
+ * `aimode`/`google_aio` are accepted here so a cell can be captured and stored
+ * the moment an adapter exists; neither has one in this build, and
+ * `createDefaultCaptureAdapters` simply omits them, which this tool already
+ * reports as an honest `UNAVAILABLE`/`no_adapter_wired` cell.
+ */
+export const VISIBILITY_ENGINES = ["chatgpt", "perplexity", "gemini", "claude", "copilot", "aimode", "google_aio"] as const;
 export type VisibilityEngine = (typeof VISIBILITY_ENGINES)[number];
 
 export const CAPTURE_TIERS = ["MEASURED", "MEASURED_grounded", "ESTIMATED", "UNAVAILABLE"] as const;
@@ -17,7 +33,7 @@ export const CaptureVisibilityInputSchema = z.object({
   // promptId/promptText/engine/clientDomains/competitorRoster have no existing TSDoc to transcribe (SCRUM-293 flag) — synthesized from CaptureCell's usage and the tool's own doc comment.
   promptId: z.string().min(1).describe("Which prompt in the fixed capture matrix this cell is for."),
   promptText: z.string().min(1).describe("The exact prompt text sent to the AI-visibility engine."),
-  engine: z.enum(VISIBILITY_ENGINES).describe("Which of the 5 fixed AI-visibility engines this cell captures (chatgpt, perplexity, gemini, claude, copilot)."),
+  engine: z.enum(VISIBILITY_ENGINES).describe("Which ratified AI-visibility engine this cell captures (SCRUM-396: chatgpt, perplexity, gemini, claude, copilot, aimode, google_aio)."),
   clientDomains: z.array(z.string()).min(1).describe("The client's own domains, to detect whether/where the client's brand is mentioned or cited."),
   competitorRoster: z.array(z.string()).default([]).describe("Competitor brand ids to detect being named in the engine's answer."),
   /** Freshness window, same convention as `research.pull` — a cached cell inside this window is returned instead of re-capturing. */
@@ -225,7 +241,7 @@ export function createCaptureVisibility(store: WorkspaceStoreLike, options: Capt
   return defineTool<CaptureVisibilityInput, CaptureVisibilityResult>({
     name: "research.captureVisibility",
     description:
-      "Captures one (prompt x engine) AI-visibility cell, cached and freshness-enforced like research.pull. An engine with a real adapter configured (Perplexity/Claude/Gemini/ChatGPT/Copilot) captures for real; every other engine reports the honest Phase 1 stand-in, captureTier: \"UNAVAILABLE\", rather than a fabricated measurement.",
+      "Captures one (prompt x engine) AI-visibility cell, cached and freshness-enforced like research.pull. An engine with a real adapter configured (Perplexity/Claude/Gemini/ChatGPT/Copilot) captures for real; every other engine (Google AI Mode and AI Overview have no adapter in this build) reports the honest stand-in, captureTier: \"UNAVAILABLE\", rather than a fabricated measurement.",
     version: TOOL_VERSION,
     inputSchema: CaptureVisibilityInputSchema,
     async execute({ promptId, promptText, engine, clientDomains, competitorRoster, window }, { ctx }) {

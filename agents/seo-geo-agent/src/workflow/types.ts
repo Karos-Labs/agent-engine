@@ -2,9 +2,11 @@ import type {
   FiredRecommendation,
   ScoreBreakdown,
   SeoGeoCaptureCell,
+  SeoGeoVisibilityEngine,
   VisibilityDenominatorDecision,
   VisibilityIndexResult,
 } from "@agent-engine/tool-karos-seo-geo";
+import { SEO_GEO_VISIBILITY_ENGINE_DECISION } from "@agent-engine/tool-karos-seo-geo";
 
 /** Phase 0 (RFC-04 §2): the two intake fields whose absence blocks the run, same pattern as `linkedin-agent`'s step 00. */
 export interface SeoGeoIntakeConfig {
@@ -203,6 +205,18 @@ export interface SeoGeoReport {
     weightsStatus: string;
     computed: false;
     note: string;
+  };
+  /**
+   * SCRUM-396: which AI-visibility engines this run's numbers are about.
+   * `accepted` is the full ratified list (what a stored cell may claim);
+   * `captured` is the subset this run actually sent traffic to and the list
+   * `engineListHash` covers. Stated on the report so a renderer reads the
+   * engine count instead of hardcoding one.
+   */
+  engines: {
+    accepted: SeoGeoVisibilityEngine[];
+    captured: SeoGeoVisibilityEngine[];
+    decision: typeof SEO_GEO_VISIBILITY_ENGINE_DECISION;
   };
   connectorOverlay: SeoGeoConnectorOverlay;
   firedRecommendations: FiredRecommendation[];

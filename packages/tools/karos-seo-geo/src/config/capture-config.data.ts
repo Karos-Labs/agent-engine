@@ -1,6 +1,32 @@
 // Verbatim port of the legacy karos-agents lab-spec config (RFC-04 "port the scoring config as-is").
 // Source: karos-agents/products/onboarding/step-02-seo-geo/config/seo-geo-capture-config.json
 // DO NOT hand-edit values here — this is a byte-for-fidelity transcription of the JSON asset.
+//
+// ── SCRUM-396: PARTLY HISTORY. Read this before quoting anything below. ──
+//
+// This is the transcription of `geo-capture-v1.1`. Its provenance is the whole
+// point of the file, so nothing in it is edited — but v1.1 is no longer the
+// authority on the engine list, and three things below will mislead a reader
+// who takes them as current:
+//
+//   * `engines[]` (5 entries) — superseded by `SEO_GEO_VISIBILITY_ENGINES` in
+//     `../types.ts`, which is seven: v1.1 predates `aimode` and `google_aio`.
+//     The per-engine method/limits/cost notes here are still the best record of
+//     HOW each of those five is captured, and `claude`'s entry in particular is
+//     the costed first-party spec `capture-adapters/claude.ts` implements.
+//   * `presentation.hero_honesty`'s "across 5 engines" and
+//     `presentation.ranking_report`'s "add 5th engine column" — engine counts
+//     frozen at v1.1. Nothing renders these strings (they are design notes, not
+//     copy), and the report states its own engine list as of SCRUM-396, so a
+//     renderer has no reason to read a count from here. Do not start.
+//   * `presentation.measured_vs_estimated`'s per-engine tier roll-call — same
+//     vintage; `SEO_GEO_VISIBILITY_ENGINE_SPECS` is the current statement of
+//     which engines this build captures and why.
+//
+// The v2 skill did exactly this to its own predecessor doc rather than silently
+// rewriting it (`docs/SEO-GEO-V2-CAPTURE-CONTRACT.md`'s HISTORY banner). Same
+// treatment here, for the same reason: SCRUM-387 and SCRUM-396 were both caused
+// by someone building against a document's text instead of its current state.
 export const captureConfigData = {
   "version": "geo-capture-v1.1",
   "extends": "karos-geo-monitor Phase 1-2-5 (edge fn geo-monitor, monthly_geo cron)",
