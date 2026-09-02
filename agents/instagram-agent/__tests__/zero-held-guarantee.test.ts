@@ -356,4 +356,116 @@ describe("zero-held guarantee: a picture problem never costs the post", () => {
       await envNoConfig.cleanup();
     }
   }, 30000);
+
+  // ── SCRUM-393 (IGSTYLE-8): sub-floor contrast is a FACT, never a hold ──
+  //
+  // `sitti`'s real, live brand kit (Appendix D of the IGSTYLE spec): a
+  // coral accent (`#ff5b5f`) on a cream ground (`#fff8d6`), 2.8:1 —
+  // genuinely below `ACCENT_GROUND_CONTRAST_FLOOR` (3:1), and a genuine
+  // property of that brand's own colors, not a defect to invent a fix
+  // for. `buildAccentRing` already exempts the ring's anchor from being
+  // REFUSED for this; this test is the other half — that the anchor is
+  // still MEASURED and REPORTED, and that reporting it never costs the
+  // post.
+  it("completes normally on a real client's sub-floor accent, and warns exactly once instead of holding", async () => {
+    await env.store.writeJson("acme", ["client", "brand"], {
+      name: "sitti",
+      accent: "#ff5b5f",
+      colors: { neutralDark: "#8a3b42", neutralLight: "#fff8d6" },
+      dominantColors: [{ hex: "#fff8d6", dominanceRank: 1 }],
+    });
+
+    const copy = goodCopyOutput();
+    // Same dead-media shape as this file's other zero-held tests: every
+    // slide downgrades to typographic, so the router needs no image-vetting
+    // turn. This test's subject is the contrast fact, not image sourcing.
+    const registry = tools(env, {
+      "media.findImages": deadTool("media.findImages", { status: "not_available", reason: "no image-search provider is available" }),
+      "media.scrapeImages": deadTool("media.scrapeImages", { status: "not_available", reason: "no scraper configured" }),
+      "image.generate": deadTool("image.generate", { status: "content_fail", reason: "image.generate: produced nothing" }),
+    });
+    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), finalTurn(copy), finalTurn(goodVisualQaOutput())]);
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+    const runId = "zero_held_subfloor_contrast";
+    // No autoApprove here, deliberately: `runReviewCycle` skips `buildGate`
+    // entirely under autoApprove (`review-cycle.ts:119-124`), which would
+    // synthesize the approval WITHOUT ever computing the gate payload — this
+    // test needs the real gate payload to assert `contrastFacts` reached it.
+    const workflowFn = createInstagramAgentWorkflow({
+      tools: registry,
+      promptStore: makePromptStore(),
+      router,
+      repoRoot: env.repoRoot,
+    });
+    const awaiting = await engine.run(workflowFn, { ...base, runId });
+    expect(awaiting.status).toBe("awaiting_gate");
+
+    // The fact rides on the gate payload too — a reviewer sees the number,
+    // not just an ops-only ledger row (the ticket's own acceptance line: "a
+    // reviewer should see the good numbers too").
+    const gate = await durableStore.getGate(`${runId}__09a-batch-review-r0`);
+    const payload = gate?.payload as { contrastFacts?: Array<{ label: string; ratio: number; floor: number; pass: boolean }> };
+    const accentFact = payload.contrastFacts?.find((f) => f.label.includes("#ff5b5f"));
+    expect(accentFact?.pass).toBe(false);
+    expect(accentFact?.floor).toBe(3);
+    // The text pair (fg on bg) is well clear of ITS floor and reported too —
+    // "for passes as well as failures."
+    const textFact = payload.contrastFacts?.find((f) => f.label.includes("--fg"));
+    expect(textFact?.pass).toBe(true);
+
+    await engine.resolveGate(runId, "09a-batch-review-r0", {
+      decision: "approve",
+      actor: "jane@karoslabs.com",
+      at: new Date().toISOString(),
+    });
+    const result = await engine.run(workflowFn, { ...base, runId });
+
+    // The whole point: never held, never degraded, never retried over this.
+    expect(result.status).toBe("completed");
+
+    const events = await env.store.listJson("acme", ["ledger", "events", runId]);
+    const warnEvents = events.filter((e) => (e.data as { level: string }).level === "warn");
+    // Idempotent on (runId, eventId) — every attempt/revision that recomputes
+    // the same sub-floor fact overwrites the SAME row, so a run with several
+    // drafting attempts still emits exactly one warn, not one per attempt.
+    expect(warnEvents).toHaveLength(1);
+    expect(warnEvents[0]?.id).toBe(`${runId}__contrast-below-floor`);
+    const message = (warnEvents[0]!.data as { message: string }).message;
+    expect(message).toMatch(/accent #ff5b5f on ground/);
+    expect(message).toMatch(/floor 3:1/);
+  }, 30000);
+
+  it("emits no contrast warning at all for a client whose kit clears every floor", async () => {
+    await env.store.writeJson("acme", ["client", "brand"], {
+      name: "geektime-like-clean-kit",
+      accent: "#a5e82b",
+      colors: { neutralDark: "#272a35", neutralLight: "#f4f2ec" },
+      dominantColors: [{ hex: "#272a35", dominanceRank: 1 }],
+    });
+
+    const copy = goodCopyOutput();
+    const registry = tools(env, {
+      "media.findImages": deadTool("media.findImages", { status: "not_available", reason: "no image-search provider is available" }),
+      "media.scrapeImages": deadTool("media.scrapeImages", { status: "not_available", reason: "no scraper configured" }),
+      "image.generate": deadTool("image.generate", { status: "content_fail", reason: "image.generate: produced nothing" }),
+    });
+    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), finalTurn(copy), finalTurn(goodVisualQaOutput())]);
+    const durableStore = new MemoryDurableStepStore();
+    const runId = "zero_held_all_clear_contrast";
+    const result = await new WorkflowEngine(durableStore).run(
+      createInstagramAgentWorkflow({
+        tools: registry,
+        promptStore: makePromptStore(),
+        router,
+        repoRoot: env.repoRoot,
+        autoApprove: true,
+      }),
+      { ...base, runId },
+    );
+
+    expect(result.status).toBe("completed");
+    const events = await env.store.listJson("acme", ["ledger", "events", runId]);
+    expect(events.some((e) => (e.data as { level: string }).level === "warn")).toBe(false);
+  }, 30000);
 });

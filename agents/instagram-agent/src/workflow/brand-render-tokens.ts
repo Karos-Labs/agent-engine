@@ -152,8 +152,13 @@ function rgbDistance(a: string, b: string): number {
  * text — below it, the ground/fg pair is dropped ENTIRELY (never "fixed" by
  * nudging a color the client didn't pick): unreadable slides are the render-
  * domain version of an invented hex.
+ *
+ * Exported (SCRUM-393/IGSTYLE-8): `visual-qa-pre-checks.ts`'s
+ * `assessContrastFacts` reports against this exact floor rather than
+ * re-declaring the number, so the fact-reporting half and the
+ * gating/derivation half can never quietly drift apart.
  */
-const CONTRAST_FLOOR = 4.5;
+export const TEXT_CONTRAST_FLOOR = 4.5;
 
 /**
  * Decides which neutral is the ground (slide background) and which is the
@@ -237,8 +242,15 @@ const ACCENT_RING_MAX = 6;
  * the ANCHOR is exempt, because the anchor is the accent already shipping on
  * every slide today and dropping it would be a regression wearing a guard's
  * clothes, not a fix.
+ *
+ * Exported (SCRUM-393/IGSTYLE-8): `visual-qa-pre-checks.ts`'s
+ * `assessContrastFacts` reports every USED accent against this same floor —
+ * the anchor exemption above governs which colors are allowed INTO the
+ * ring, not whether a low-contrast anchor is worth telling a human about
+ * once it's there. See that ticket for why the anchor's exemption from
+ * gating must not also exempt it from being reported.
  */
-const ACCENT_GROUND_CONTRAST_FLOOR = 3;
+export const ACCENT_GROUND_CONTRAST_FLOOR = 3;
 
 /** `brand.colors` keys that name the ground/text furniture rather than an accent. */
 const NEUTRAL_COLOR_KEY = /neutral|background|ground|surface|text|ink|border|line/i;
@@ -450,7 +462,7 @@ export function deriveBrandRenderTokens(brand: unknown, brandTokens: BrandTokens
   }
   // The contrast floor applies to BOTH sources — it protects the explicit
   // path against a portal typo exactly as much as the derived one.
-  if (ground !== undefined && fg !== undefined && contrastRatio(ground, fg) < CONTRAST_FLOOR) {
+  if (ground !== undefined && fg !== undefined && contrastRatio(ground, fg) < TEXT_CONTRAST_FLOOR) {
     ground = undefined;
     fg = undefined;
   }
