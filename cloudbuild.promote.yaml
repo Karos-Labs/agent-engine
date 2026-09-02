@@ -89,7 +89,29 @@ substitutions:
   # service's own URL, that is exactly the set Cloud Run IAM already
   # admitted. Flipping the flag without this would produce enforcement in
   # the logs and none in fact, which is worse than auth being off.
-  _AUTH_ALLOWED_SERVICE_ACCOUNTS: "firebase-adminsdk-fbsvc@karoscmo.iam.gserviceaccount.com"
+  #
+  # RETARGETED 2026-09-02 (SCRUM-331 audit). This said
+  # `firebase-adminsdk-fbsvc@karoscmo` — correct for the portal's runtime
+  # identity when it was written, and wrong from the moment the portal is next
+  # promoted. karos-portal's own `cloudbuild.promote.yaml` carries
+  # `_RUNTIME_SERVICE_ACCOUNT: "karos-cmo-sa@karoscmo.iam.gserviceaccount.com"`
+  # as its DEFAULT, so the portal promotion PERFORMS AU58 / SCRUM-357 and moves
+  # the prod portal off `firebase-adminsdk-fbsvc`.
+  #
+  # Verified live before changing this: all 30 secrets the portal mounts
+  # already grant `karos-cmo-sa` (checked per secret — the project-level role
+  # list shows only aiplatform.user + logging.logWriter and is misleading), and
+  # it already holds run.invoker on this service. So that switch succeeds.
+  #
+  # Enforcement plus the old value would have 401'd every portal call the first
+  # time both promotions had run. This keeps this comment's own method — ONE
+  # entry, the LIVE runtime identity — by naming the identity the portal will
+  # actually have, rather than adding a second entry, which `--set-env-vars`
+  # cannot express without switching to the `^@^` delimiter form.
+  #
+  # What makes the transition safe: both promotions leave AUTH_ENABLED=false,
+  # so the window between them enforces nothing.
+  _AUTH_ALLOWED_SERVICE_ACCOUNTS: "karos-cmo-sa@karoscmo.iam.gserviceaccount.com"
 
 options:
   logging: CLOUD_LOGGING_ONLY
