@@ -4,7 +4,11 @@ import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, parseDurationMs, success } from "@agent-engine/tool-common";
 import { latestRun, writeRunRecord, type RunRecord } from "./runs.js";
 
-const TOOL_VERSION = "1.0.0";
+// 1.1.0 (SCRUM-396): the accepted engine set widened from five to seven
+// (`aimode`/`google_aio` added). A cell captured under 1.0.0 came from a tool
+// whose input enum would have REJECTED either of those engines, so the two are
+// genuinely different contracts and telemetry must be able to tell them apart.
+const TOOL_VERSION = "1.1.0";
 
 /**
  * The ratified AI-visibility engines (SCRUM-396).

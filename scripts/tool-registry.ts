@@ -48,13 +48,41 @@ export interface ToolVersionProblem {
 
 // `defineTool<Foo, Bar>({` or the bare `defineTool({` form (both appear in
 // this codebase — see `agents/*/src/tools/render-preview.ts` for the bare
-// form). Deliberately requires `name` immediately followed by `version` —
-// every real call site in this repo orders `DefineToolOptions` fields that
-// way (`name`, `version`, `inputSchema`, `execute`), matching the type's own
-// declared field order in `tool-factory.ts`.
-const CALL_SITE = /defineTool(?:<[\s\S]*?>)?\(\{\s*name:\s*"([^"]+)",\s*version:\s*(TOOL_VERSION|"([^"]*)")/g;
+// form).
+//
+// ## Why this regex is shaped the way it is (rewritten 2026-09-02)
+//
+// It used to require `version` IMMEDIATELY after `name`, on the stated
+// grounds that "every real call site in this repo orders `DefineToolOptions`
+// fields that way". **No call site in this repo orders them that way.** All 88
+// put `description` between the two, so this check matched nothing, saw zero
+// tools, and had never been able to fail since AU11 shipped — while printing
+// "every changed tool file that still declares a version bumped it" on every
+// run. Its own regression test passed because its fixtures wrote the adjacent
+// form the repo does not use.
+//
+// Found on 2026-09-02 while bumping `research.captureVisibility` for SCRUM-396:
+// the file changed, the version did not, and the gate that exists for exactly
+// that said nothing.
+//
+// Two things make it work now, and both are load-bearing:
+//
+//  * `version` may sit anywhere in the same object literal. The tempered
+//    `(?!defineTool\()` keeps the lazy scan inside ONE call, so a tool that
+//    declares no version cannot silently borrow the next tool's.
+//  * the version may be a quoted literal OR any identifier. Two tools in
+//    `karos-media/src/visual-patterns.ts` use `GET_TOOL_VERSION` /
+//    `INGEST_TOOL_VERSION` rather than the bare `TOOL_VERSION` this used to
+//    hardcode, and were invisible for that reason alone.
+//
+// `visible-to-this-check` is asserted against the REAL tree in
+// `apps/agent-server/__tests__/tool-version-drift.test.ts`, not just against
+// fixtures — a guard whose own premise is unchecked is how this one spent its
+// whole life green.
+const CALL_SITE = /defineTool(?:<[\s\S]*?>)?\(\{\s*name:\s*"([^"]+)"(?:(?!defineTool\()[\s\S])*?,\s*version:\s*(?:"([^"]*)"|([A-Za-z_$][\w$]*))/g;
 
-const VERSION_CONST = /const\s+TOOL_VERSION\s*=\s*"([^"]*)"/;
+/** Every `const <NAME> = "<value>"` in the file, so a `version:` naming one can be resolved. */
+const VERSION_CONSTS = /const\s+([A-Za-z_$][\w$]*)\s*=\s*"([^"]*)"/g;
 
 /**
  * Every `defineTool()` call site's declared name + resolved version, read
@@ -64,11 +92,17 @@ const VERSION_CONST = /const\s+TOOL_VERSION\s*=\s*"([^"]*)"/;
  * together today, and this check has no opinion on whether they should.
  */
 export function extractToolVersions(content: string): ToolVersionEntry[] {
+  const consts = new Map<string, string>();
+  for (const m of content.matchAll(VERSION_CONSTS)) consts.set(m[1]!, m[2]!);
+
   const entries: ToolVersionEntry[] = [];
-  const sharedConst = content.match(VERSION_CONST)?.[1];
   for (const m of content.matchAll(CALL_SITE)) {
     const toolName = m[1]!;
-    const version = m[3] !== undefined ? m[3] : sharedConst;
+    // A quoted literal wins; otherwise the identifier is resolved against the
+    // file's own consts. An identifier this file does not declare (imported
+    // from elsewhere, or computed) yields no entry rather than a wrong one —
+    // silence beats a version this check cannot actually see change.
+    const version = m[2] !== undefined ? m[2] : consts.get(m[3]!);
     if (version !== undefined) entries.push({ toolName, version });
   }
   return entries;
