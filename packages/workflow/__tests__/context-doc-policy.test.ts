@@ -95,3 +95,76 @@ describe("enforceContextDocPolicy (SCRUM-242/T-A10)", () => {
     }
   });
 });
+
+/**
+ * SCRUM-388 — the bootstrap deadlock, and `bootstrapExempt`.
+ *
+ * intel-report-agent's row is the one row this ticket flips to
+ * `bootstrapExempt: true` (see this module's own doc comment for the full
+ * account: onboarding dispatches this exact agent to PRODUCE the very docs
+ * its BLOCK row checks for). Every case below is against that same row —
+ * `runKind` is the ONLY thing that changes between them.
+ */
+describe("enforceContextDocPolicy — SCRUM-388 bootstrap exemption (bootstrapExempt)", () => {
+  it("a bootstrapExempt BLOCK row (intel-report-agent) degrades — with a visible marker, not a throw — on a runKind: 'setup' run when every doc is absent", () => {
+    const outcome = enforceContextDocPolicy({
+      agentId: "intel-report-agent",
+      docs: { "target-audience": undefined, "market-strategy": undefined },
+      runKind: "setup",
+    });
+    expect(outcome.decision).toBe("degraded");
+    if (outcome.decision !== "degraded") throw new Error("unreachable");
+    expect(outcome.marker).toEqual({
+      contextGroundingStatus: "degraded",
+      agentId: "intel-report-agent",
+      missingDocTypes: ["target-audience", "market-strategy"],
+      reason: expect.stringContaining("intel-report-agent: missing required context doc(s) [target-audience, market-strategy]"),
+    });
+    // The marker's own reason names the exemption explicitly — this is not
+    // indistinguishable from an ordinary DEGRADED row's marker.
+    expect(outcome.marker.reason).toContain('exempted from BLOCK because this is a runKind:"setup" run');
+  });
+
+  it("the same bootstrapExempt row still throws WorkflowBlockedIntake on a runKind: 'recurring' run — the exemption is scoped to bootstrap only", () => {
+    expect(() =>
+      enforceContextDocPolicy({
+        agentId: "intel-report-agent",
+        docs: { "target-audience": undefined, "market-strategy": undefined },
+        runKind: "recurring",
+      }),
+    ).toThrow(WorkflowBlockedIntake);
+  });
+
+  it("the same bootstrapExempt row still throws WorkflowBlockedIntake when runKind is omitted entirely — a caller that never passes wf.runKind gets the pre-SCRUM-388 behavior unchanged", () => {
+    expect(() =>
+      enforceContextDocPolicy({
+        agentId: "intel-report-agent",
+        docs: { "target-audience": undefined, "market-strategy": undefined },
+      }),
+    ).toThrow(WorkflowBlockedIntake);
+  });
+
+  it("a non-bootstrapExempt BLOCK row (landing-builder-agent) still throws on runKind: 'setup' — the exemption is per-row, not global to every BLOCK row on a setup run", () => {
+    expect(CONTEXT_DOC_POLICY["landing-builder-agent"]?.bootstrapExempt).toBeUndefined();
+    expect(() =>
+      enforceContextDocPolicy({
+        agentId: "landing-builder-agent",
+        docs: { "product-information": undefined },
+        runKind: "setup",
+      }),
+    ).toThrow(WorkflowBlockedIntake);
+  });
+
+  it("runKind has no effect on an already-DEGRADED row (instagram-agent) — 'setup' produces the same marker a recurring run would", () => {
+    const outcome = enforceContextDocPolicy({
+      agentId: "instagram-agent",
+      docs: { "branding-guidelines": undefined },
+      runKind: "setup",
+    });
+    expect(outcome.decision).toBe("degraded");
+    if (outcome.decision !== "degraded") throw new Error("unreachable");
+    // Not the bootstrap-exemption phrasing — this row was never a BLOCK to
+    // begin with, so nothing was exempted.
+    expect(outcome.marker.reason).not.toContain("exempted from BLOCK");
+  });
+});

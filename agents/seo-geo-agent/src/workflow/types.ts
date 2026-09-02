@@ -2,6 +2,7 @@ import type {
   FiredRecommendation,
   ScoreBreakdown,
   SeoGeoCaptureCell,
+  VisibilityDenominatorDecision,
   VisibilityIndexResult,
 } from "@agent-engine/tool-karos-seo-geo";
 
@@ -188,11 +189,15 @@ export interface SeoGeoReport {
   visibility: {
     byN: VisibilityIndexResult | null;
     byNe: VisibilityIndexResult | null;
-    denominatorDecision: {
-      status: "pending";
-      blockingOn: string;
-      defaultUsedForCanonicalScore: "N";
-    };
+    /**
+     * SCRUM-390: this used to be a hardcoded literal advertising an open
+     * decision ("pending", "blockingOn: Daniel...") over an engine that had
+     * already made it — AU28/SCRUM-319 resolved N vs N_e with data and froze
+     * the answer as `VISIBILITY_DENOMINATOR_DECISION` (status: "resolved").
+     * The report now reads the frozen record instead of repeating the stale
+     * literal.
+     */
+    denominatorDecision: VisibilityDenominatorDecision;
   };
   geoScoreModel: {
     weightsStatus: string;

@@ -7,12 +7,16 @@ import { goodFixDrafts, goodNarrative, makePromptStore, setupTestEnvironment, sm
 const params = { runId: "seo_geo_run_gated", clientSlug: "acme", productId: "seo-geo-agent", runKind: "recurring" as const };
 
 /**
- * RFC-04 §4 lists four decisions this migration must carry forward as
- * explicit, visible, typed state rather than silently resolving: the N vs
- * N_e visibility denominator, `geo_score_model`'s PROPOSED weights, the
- * GSC-credential-gated connectors, and `seo-geo-connectors-config-edits.txt`'s
- * NOT-applied edit. This suite asserts each one actually lands on the
- * persisted report, not just that the run completes.
+ * RFC-04 §4 originally listed four decisions this migration had to carry
+ * forward as explicit, visible, typed state rather than silently resolving:
+ * the N vs N_e visibility denominator, `geo_score_model`'s PROPOSED weights,
+ * the GSC-credential-gated connectors, and
+ * `seo-geo-connectors-config-edits.txt`'s NOT-applied edit. SCRUM-390: the
+ * first of those four is no longer open — AU28/SCRUM-319 resolved it with
+ * data and froze the answer as `VISIBILITY_DENOMINATOR_DECISION` (status:
+ * "resolved"). This suite now asserts the report reads that frozen record
+ * rather than repeating a stale "pending" literal; the other three gated
+ * decisions are still genuinely open and still assert as such.
  */
 describe("RFC-04 §4 gated decisions are surfaced, never silently resolved", () => {
   let env: TestEnvironment;
@@ -36,13 +40,21 @@ describe("RFC-04 §4 gated decisions are surfaced, never silently resolved", () 
     await env.cleanup();
   });
 
-  it("surfaces the N vs N_e visibility denominator as pending, with both values computed", () => {
-    expect(report.visibility.denominatorDecision.status).toBe("pending");
-    expect(report.visibility.denominatorDecision.blockingOn).toMatch(/Daniel/);
-    expect(report.visibility.denominatorDecision.defaultUsedForCanonicalScore).toBe("N");
-    // Both frozen from the exact same capture-cell blob — neither recomputed from scratch.
+  it("surfaces the N vs N_e visibility denominator as RESOLVED, reading the frozen record, with both values present", () => {
+    expect(report.visibility.denominatorDecision.status).toBe("resolved");
+    expect(report.visibility.denominatorDecision.perEngineRates).toBe("N_e");
+    expect(report.visibility.denominatorDecision.blendedIndex).toBe("N");
+    expect(report.visibility.denominatorDecision.bothAlwaysPrinted).toBe(true);
+    // Both fields still present (nothing downstream that reads either one
+    // breaks) — SCRUM-390 collapsed the two seoGeo.score calls into one,
+    // since the two denominators no longer produce different results, so
+    // both are now the SAME frozen result, not independently recomputed.
     expect(report.visibility.byN).not.toBeNull();
     expect(report.visibility.byNe).not.toBeNull();
+    // Structural equality, not reference equality: the report round-trips
+    // through JSON persistence (`env.store.readJson` above), which never
+    // preserves object identity.
+    expect(report.visibility.byN).toEqual(report.visibility.byNe);
   });
 
   it("surfaces geo_score_model as a PROPOSED, not-computed diagnostic", () => {

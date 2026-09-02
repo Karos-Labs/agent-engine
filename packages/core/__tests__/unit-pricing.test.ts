@@ -45,6 +45,49 @@ describe("per-unit pricing", () => {
   });
 });
 
+/**
+ * SCRUM-391: `media.ingestVisualPatterns`' vision-analysis step calls
+ * `gemini-2.5-flash`, which is priced BY TOKEN in `MODEL_PRICING` — a
+ * different id, and a different pricing shape, from the flat per-image
+ * `gemini-2.5-flash-image` SKU above. These two rows let that step bill the
+ * REAL token counts Gemini's response reports, derived from (not
+ * independently re-guessed against) `MODEL_PRICING`'s own sourced rate.
+ */
+describe("gemini-2.5-flash vision-analysis is priced per real token, derived from MODEL_PRICING", () => {
+  it("input and output token rows exist, sourced, and priced above zero", () => {
+    const input = UNIT_PRICING["gemini-2.5-flash-vision-analysis-input-token"];
+    const output = UNIT_PRICING["gemini-2.5-flash-vision-analysis-output-token"];
+    expect(input?.unit).toBe("input-token");
+    expect(output?.unit).toBe("output-token");
+    expect(input?.usdPerUnit).toBeGreaterThan(0);
+    expect(output?.usdPerUnit).toBeGreaterThan(0);
+  });
+
+  it("matches MODEL_PRICING[\"gemini-2.5-flash\"]'s own rate exactly, expressed per-token instead of per-1M — the two can never silently drift apart", () => {
+    const modelPricing = pricingForModel("gemini-2.5-flash");
+    expect(UNIT_PRICING["gemini-2.5-flash-vision-analysis-input-token"]?.usdPerUnit).toBeCloseTo(modelPricing.inputPer1M / 1_000_000, 12);
+    expect(UNIT_PRICING["gemini-2.5-flash-vision-analysis-output-token"]?.usdPerUnit).toBeCloseTo(modelPricing.outputPer1M / 1_000_000, 12);
+  });
+
+  it("a real captured (prompt, output) token pair bills at the real per-token rate, not a flat guessed amount", () => {
+    const cost = computeToolCostUsd([
+      { model: "gemini-2.5-flash-vision-analysis-input-token", unit: "input-token", quantity: 1200 },
+      { model: "gemini-2.5-flash-vision-analysis-output-token", unit: "output-token", quantity: 300 },
+    ]);
+    // 1200 * 0.3/1e6 + 300 * 2.5/1e6 = 0.00036 + 0.00075 = 0.00111
+    expect(cost).toBeCloseTo(0.00111, 6);
+    expect(cost).toBeGreaterThan(0);
+
+    // A longer call costs more — proving this is a real per-token computation,
+    // not a disguised flat per-call rate.
+    const longerCallCost = computeToolCostUsd([
+      { model: "gemini-2.5-flash-vision-analysis-input-token", unit: "input-token", quantity: 2400 },
+      { model: "gemini-2.5-flash-vision-analysis-output-token", unit: "output-token", quantity: 300 },
+    ]);
+    expect(longerCallCost).toBeGreaterThan(cost);
+  });
+});
+
 describe("extracting usage from what a step.code body returned", () => {
   const withUsage = (quantity: number): AgentToolOutcome<{ ok: true }> => ({
     status: "success",

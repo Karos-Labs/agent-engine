@@ -30,6 +30,7 @@ import {
   REPRODUCIBILITY,
   SEO_BUCKETS,
   SEO_GEO_VISIBILITY_ENGINES,
+  VISIBILITY_DENOMINATOR_DECISION,
   type FiredRecommendation,
   type SeoGeoCaptureCell,
   type SeoGeoCaptureTier,
@@ -588,49 +589,47 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
         competitorRoster: frozen.competitorRoster,
       };
 
-      const nOutcome = await tools["seoGeo.score"]!.execute(
+      // SCRUM-390: this used to be two calls, one per denominator ("N" and
+      // "N_e") — a holdover from when RFC-04 §4 still described N vs N_e as
+      // a "BLOCKING scoring-model decision for Daniel". That decision is now
+      // CLOSED (AU28/SCRUM-319, frozen as `VISIBILITY_DENOMINATOR_DECISION`
+      // in `packages/tools/karos-seo-geo/src/visibility-metrics.ts`), and
+      // `computeVisibilityMetrics` no longer varies its output by the
+      // `denominator` parameter at all: per-engine rates always use `N_e`,
+      // the blended Index always uses `N`, and `denominator` survives only as
+      // a deprecated, purely-echoed field (`denominatorRequested`) kept so
+      // old callers still compile. Confirmed by reading
+      // `visibility-metrics.ts` and `visibility-index.ts` end to end, not
+      // assumed: neither function's actual computation branches on it. So
+      // the two calls always produced bit-identical `seoScore`, `geoReadiness`,
+      // `visibility` and `visibilityMetrics` results — one call now does the
+      // work of two, and the single result serves both `visibilityByN` and
+      // `visibilityByNe` below (still both present so nothing downstream that
+      // reads either field breaks; SCRUM-271/T-B16's portal mapper reads
+      // neither).
+      const scoreOutcome = await tools["seoGeo.score"]!.execute(
         {
           seoMeasurements: technicalPhase.seoMeasurements,
           geoReadinessMeasurements: technicalPhase.geoReadinessMeasurements,
-          visibility: { ...visibilityBase, denominator: "N" as const },
+          visibility: visibilityBase,
           hashInputs,
         },
         { ctx },
       );
-      if (nOutcome.status !== "success") {
-        throw new WorkflowToolingFailure(`seoGeo.score (denominator N) failed: ${nOutcome.status}`);
+      if (scoreOutcome.status !== "success") {
+        throw new WorkflowToolingFailure(`seoGeo.score failed: ${scoreOutcome.status}`);
       }
 
-      // RFC-04 §4: N vs N_e is a "BLOCKING scoring-model decision for Daniel" —
-      // both are computed from the exact same frozen capture-cell blob (never
-      // recaptured) so either definition reproduces once the decision lands,
-      // per the source skill's own dual-freeze requirement. Only the visibility
-      // metrics differ between the two calls; seoScore/geoReadiness never depend
-      // on the denominator choice.
-      const neOutcome = await tools["seoGeo.score"]!.execute(
-        {
-          seoMeasurements: technicalPhase.seoMeasurements,
-          geoReadinessMeasurements: technicalPhase.geoReadinessMeasurements,
-          visibility: { ...visibilityBase, denominator: "N_e" as const },
-          hashInputs,
-        },
-        { ctx },
-      );
-      if (neOutcome.status !== "success") {
-        throw new WorkflowToolingFailure(`seoGeo.score (denominator N_e) failed: ${neOutcome.status}`);
-      }
-
-      const nResult = nOutcome.result as SeoGeoScoreResult;
-      const neResult = neOutcome.result as SeoGeoScoreResult;
+      const scoreResult = scoreOutcome.result as SeoGeoScoreResult;
       const missingHashInputs = REPRODUCIBILITY.hash_inputs.filter((field) => !hashInputs[field]);
 
       return {
-        seoScore: nResult.seoScore,
-        geoReadiness: nResult.geoReadiness,
-        visibilityByN: nResult.visibility,
-        visibilityByNe: neResult.visibility,
-        inputsDigest: nResult.inputsDigest,
-        hashInputsIncomplete: nResult.hashInputsIncomplete,
+        seoScore: scoreResult.seoScore,
+        geoReadiness: scoreResult.geoReadiness,
+        visibilityByN: scoreResult.visibility,
+        visibilityByNe: scoreResult.visibility,
+        inputsDigest: scoreResult.inputsDigest,
+        hashInputsIncomplete: scoreResult.hashInputsIncomplete,
         missingHashInputs,
       };
     });
@@ -779,6 +778,24 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
     // recommendations, the connector overlay), instead of holding the run and
     // forcing somebody to dispatch a fresh one that knows nothing about the
     // feedback. Every decision, approvals included, reaches client memory.
+    //
+    // SCRUM-389: this was the one seo-geo-agent gate T-A20/SCRUM-273 missed —
+    // its ticket text and the Batch 9 dispatch brief both described the agent
+    // as having two human gates, when the file (derived here, not assumed)
+    // has three: 03-prompt-set-review, 12-fix-generation-review, and this one.
+    // 16-batch-review sits immediately before `finalizeDeliverable`, so it is
+    // the gate actually holding the client-visible seo-geo-report — the two
+    // gates T-A20 already fixed are upstream of it. Brought in line with D3/
+    // SCRUM-279's same 1h/auto_approve trade its siblings already made.
+    //
+    // Worth stating plainly, because this is the gate where the trade bites
+    // hardest: after 1h with no human response, a seo-geo-report now SHIPS
+    // approved rather than staying held. That is a deliberate consequence of
+    // D3, not an oversight — the failure mode this trades into is "shipped
+    // without review", not "stuck forever", and D3 already judged that the
+    // latter (an onboarding client stuck for 24h) is worse. But unlike the
+    // upstream gates, this one gates the actual deliverable a client sees, so
+    // an hour of silence here now means the report goes out unreviewed.
     const review = await runReviewCycle(wf, {
       gateId: "16-batch-review",
       maxRevisions: MAX_REVISION_ROUNDS,
@@ -796,7 +813,7 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
           revision,
         },
         requiredRole: "account_manager",
-        timeout: { duration: "24h", onTimeout: "hold" },
+        timeout: { duration: "1h", onTimeout: "auto_approve" },
       }),
       onDecision: async ({ revision, response }) => {
         await persistReviewFeedbackToMemory(wf, tools, ctx, revision, response);
@@ -811,11 +828,10 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       visibility: {
         byN: scoring.visibilityByN,
         byNe: scoring.visibilityByNe,
-        denominatorDecision: {
-          status: "pending",
-          blockingOn: "Daniel — N vs N_e visibility denominator choice (RFC-04 §4)",
-          defaultUsedForCanonicalScore: "N",
-        },
+        // SCRUM-390: was a hardcoded "pending, blockingOn: Daniel" literal —
+        // a client-visible artefact advertising an open decision over an
+        // engine that had already resolved it. Reads the frozen record now.
+        denominatorDecision: VISIBILITY_DENOMINATOR_DECISION,
       },
       geoScoreModel: {
         weightsStatus: GEO_SCORE_MODEL.weights_status,

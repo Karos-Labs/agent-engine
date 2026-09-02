@@ -1,4 +1,5 @@
 import type { ClientBrand, ClientProfile, Competitor } from "@agent-engine/tools";
+import type { DegradedContextGroundingMarker } from "@agent-engine/workflow";
 
 /**
  * Step 00's output: the tenant context every later step reads from
@@ -39,4 +40,16 @@ export interface IntelReportAgentWorkflowResult {
   overallGrade: string;
   competitorCount: number;
   deliverableId: string;
+  /**
+   * SCRUM-242/SCRUM-388 (T-A10) — present when this run's target-audience and
+   * market-strategy context docs were both absent. Recurring runs never reach
+   * this: intel-report-agent's row is BLOCK, not DEGRADED, so a recurring run
+   * with zero grounding throws `WorkflowBlockedIntake` and never returns a
+   * result at all. This field is reachable only via SCRUM-388's bootstrap
+   * exemption — a `runKind: "setup"` run producing these documents for the
+   * first time degrades instead of blocking, and a human/the portal must see
+   * that this particular report is the ungrounded bootstrap one, not a
+   * silently-degraded recurring report.
+   */
+  contextGrounding?: DegradedContextGroundingMarker;
 }
