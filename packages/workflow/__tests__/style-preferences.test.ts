@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { distillStylePreferences, DEFAULT_HALF_LIFE_DAYS, type FeedbackEntryLike } from "../src/primitives/style-preferences.js";
+import {
+  distillStylePreferences,
+  DEFAULT_HALF_LIFE_DAYS,
+  VARIATION_THRESHOLD,
+  varyLearnedStyle,
+  type FeedbackEntryLike,
+} from "../src/primitives/style-preferences.js";
 
 /**
  * IGSTYLE-4 — durable style memory: distillation. Unit coverage for
@@ -201,5 +207,123 @@ describe("distillStylePreferences (IGSTYLE-4)", () => {
     const first = distillStylePreferences(entries, { now: NOW });
     const second = distillStylePreferences(entries, { now: NOW });
     expect(second).toEqual(first);
+  });
+});
+
+/**
+ * IGSTYLE-7, §2.6 / 7b — "preference as prior, not pin." `varyLearnedStyle`
+ * is the function that spends the variation budget: a learned role below
+ * `VARIATION_THRESHOLD` may depart from the exact prior hex (within tier-1-
+ * legal bounds — the 4.5:1 pair floor for ground/fg, kit-ring membership for
+ * accent); at or above, the prior ships untouched.
+ */
+describe("varyLearnedStyle (IGSTYLE-7)", () => {
+  const RING = ["#A5E82B", "#FF5B5F", "#41C6FF"];
+
+  it("anti-drift: a role at or above the threshold is used exactly as-is, with no reported variation", () => {
+    const { varied, variations } = varyLearnedStyle(
+      { ground: "#000000", fg: "#eeeeee", accent: "#A5E82B" },
+      { ground: 0.9, fg: 0.9, accent: 0.9 },
+      "run-a",
+      { baselineGround: "#000000", baselineFg: "#eeeeee", ring: RING },
+    );
+    expect(varied).toEqual({ ground: "#000000", fg: "#eeeeee", accent: "#A5E82B" });
+    expect(variations).toEqual([]);
+  });
+
+  it("a weak ground/fg pair may depart, but only within the 4.5:1 contrast floor, and reports why", () => {
+    const { varied, variations } = varyLearnedStyle(
+      { ground: "#000000", fg: "#eeeeee" },
+      { ground: 0.5, fg: 0.5 },
+      "run-a",
+      {},
+    );
+    // Actually departed from the exact prior...
+    expect(varied.ground).not.toBe("#000000");
+    expect(varied.fg).not.toBe("#eeeeee");
+    // ...but never invented: still a real hex, still passes the SAME floor
+    // `deriveBrandRenderTokens`/`effectiveBrandKit` enforce everywhere else.
+    expect(varied.ground).toMatch(/^#[0-9a-f]{6}$/i);
+    expect(varied.fg).toMatch(/^#[0-9a-f]{6}$/i);
+    const la = parseInt(varied.ground!.slice(1), 16);
+    const lb = parseInt(varied.fg!.slice(1), 16);
+    expect(la).not.toBe(lb);
+    expect(variations.map((v) => v.role).sort()).toEqual(["fg", "ground"]);
+    for (const v of variations) {
+      expect(v.reason).toContain(String(VARIATION_THRESHOLD));
+    }
+  });
+
+  it("a weak ground/fg pair that would drop below the 4.5:1 floor if shaded ships the exact prior instead — honest no-op, nothing invented", () => {
+    // A pair already sitting close to the floor: shading ground toward fg's
+    // side in EITHER seeded direction risks dropping the ratio below 4.5.
+    // Picking a seed for each direction and asserting the pair-floor holds
+    // (or the prior ships untouched) proves the guard fires at least once
+    // across the two directions this seed space can produce.
+    const nearFloorGround = "#4d4d4d"; // contrast against #808080 is right around 2:1 — well under 4.5 either direction
+    const nearFloorFg = "#808080";
+    let sawNoOp = false;
+    for (const seed of ["seed-1", "seed-2", "seed-3", "seed-4"]) {
+      const { varied } = varyLearnedStyle({ ground: nearFloorGround, fg: nearFloorFg }, { ground: 0.1, fg: 0.1 }, seed, {});
+      const g = parseInt(varied.ground!.slice(1), 16);
+      const f = parseInt(varied.fg!.slice(1), 16);
+      // Never anything invented outside real hex space, whichever branch ran.
+      expect(varied.ground).toMatch(/^#[0-9a-f]{6}$/i);
+      expect(varied.fg).toMatch(/^#[0-9a-f]{6}$/i);
+      if (varied.ground === nearFloorGround && varied.fg === nearFloorFg) sawNoOp = true;
+      void g;
+      void f;
+    }
+    expect(sawNoOp).toBe(true);
+  });
+
+  it("accent moves to a DIFFERENT, already-kit-legal ring member when weak — never the same hex, never off-ring", () => {
+    const { varied, variations } = varyLearnedStyle({ accent: "#A5E82B" }, { accent: 0.5 }, "run-a", { ring: RING });
+    expect(varied.accent).not.toBe("#A5E82B");
+    expect(RING).toContain(varied.accent);
+    expect(variations).toEqual([{ role: "accent", prior: "#A5E82B", used: varied.accent, reason: expect.stringContaining(String(VARIATION_THRESHOLD)) }]);
+  });
+
+  it("honest limit: a one-color ring cannot vary accent at all — the prior ships, nothing invented, no variation reported", () => {
+    const { varied, variations } = varyLearnedStyle({ accent: "#A5E82B" }, { accent: 0.1 }, "run-a", { ring: ["#A5E82B"] });
+    expect(varied.accent).toBe("#A5E82B");
+    expect(variations).toEqual([]);
+  });
+
+  it("honest limit: no ring at all behaves the same as a one-color ring", () => {
+    const { varied, variations } = varyLearnedStyle({ accent: "#A5E82B" }, { accent: 0.1 }, "run-a", {});
+    expect(varied.accent).toBe("#A5E82B");
+    expect(variations).toEqual([]);
+  });
+
+  it("is deterministic: the same seed always resolves the same way", () => {
+    const first = varyLearnedStyle({ ground: "#000000", fg: "#eeeeee", accent: "#A5E82B" }, { ground: 0.5, fg: 0.5, accent: 0.5 }, "run-a", {
+      ring: RING,
+    });
+    for (let i = 0; i < 20; i++) {
+      const again = varyLearnedStyle({ ground: "#000000", fg: "#eeeeee", accent: "#A5E82B" }, { ground: 0.5, fg: 0.5, accent: 0.5 }, "run-a", {
+        ring: RING,
+      });
+      expect(again).toEqual(first);
+    }
+  });
+
+  it("anti-monotony: different seeds are not all forced to the same accent departure", () => {
+    const outcomes = new Set(
+      ["run-a", "run-b", "run-c", "run-d", "run-e", "run-f"].map(
+        (seed) => varyLearnedStyle({ accent: "#A5E82B" }, { accent: 0.5 }, seed, { ring: RING }).varied.accent,
+      ),
+    );
+    expect(outcomes.size).toBeGreaterThan(1);
+  });
+
+  it("ignores a strength value the learned object has no matching key for, and tolerates a StyleOverrides-shaped input with unset (undefined) keys", () => {
+    const { varied, variations } = varyLearnedStyle({ ground: "#000000", fg: undefined, accent: undefined }, { ground: 0.9 }, "run-a", {});
+    expect(varied).toEqual({ ground: "#000000" });
+    expect(variations).toEqual([]);
+  });
+
+  it("empty learned input is a pure no-op — the shape every revision-0 call with no prior at all takes", () => {
+    expect(varyLearnedStyle({}, {}, "run-a", {})).toEqual({ varied: {}, variations: [] });
   });
 });

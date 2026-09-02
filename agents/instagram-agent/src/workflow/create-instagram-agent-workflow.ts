@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentTool, AgentToolRegistry, GateResponse, ModelRouter, PromptStore, StyleEdit, TemplateFeedback } from "@agent-engine/core";
-import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, readContextDoc, enforceContextDocPolicy, toAgentContext, distillStylePreferences, type DistilledStyle, type FeedbackEntryLike } from "@agent-engine/workflow";
+import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, readContextDoc, enforceContextDocPolicy, toAgentContext, distillStylePreferences, varyLearnedStyle, type DistilledStyle, type FeedbackEntryLike, type StyleVariationEntry } from "@agent-engine/workflow";
 import type { RenderCarouselInput, RenderCarouselResult } from "@agent-engine/tool-karos-publish";
 import { InstagramCopyAgent } from "../agent/instagram-copy-agent.js";
 import { InstagramImageVettingAgent } from "../agent/instagram-image-vetting-agent.js";
@@ -27,7 +27,7 @@ import { ARCHETYPE_TEMPLATE_FILES, assembleSlidesData, checkSlidesData, resolveL
 import { checkCraftHygiene } from "./craft-hygiene.js";
 import { checkExpectedScript, languageGateText, runLanguageFluency, LANGUAGE_FLUENCY_STEP_ID, LANGUAGE_SCRIPT_STEP_ID } from "./language-gate.js";
 import { assessBrandAssetPresence, buildElevatedVisualQaCriteria, checkPaletteWithinKit } from "./visual-qa-pre-checks.js";
-import { parseStyleDirective, type StyleDirectiveResult, type StyleIntent, type StyleRefusal } from "./style-directive.js";
+import { parseStyleDirective, applyIntents, type StyleDirectiveResult, type StyleIntent, type StyleRefusal } from "./style-directive.js";
 import {
   BrandTokensSchema,
   type BrandTokens,
@@ -1538,6 +1538,15 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
          */
         overrides: StyleOverrides;
       };
+      /**
+       * IGSTYLE-7, §7b/7c — every departure this round's variation budget (or
+       * an intent-only satisfaction) made from the raw learned prior
+       * (`distilledStyle.overrides`/`.intents`), for the gate payload's own
+       * `styleVariation`. Absent (never an empty array) when nothing
+       * departed — the overwhelming majority of rounds: every learned role at
+       * or above `VARIATION_THRESHOLD`, or no learned prior at all.
+       */
+      styleVariation?: StyleVariationEntry[];
     }
 
     /** Never prose — excluded from anything a human or the topic guardrail reads as text. */
@@ -1611,10 +1620,52 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         ),
       );
 
+      // ── IGSTYLE-7, §2.6 tier 2b: spend the variation budget on the LEARNED
+      // prior — never on THIS round's own active directive, which stays
+      // binding (`styleDirectiveResult.overrides` is untouched below and is
+      // still merged LAST inside `effectiveBrandKit`, so "in-run supremacy"
+      // holds structurally: an explicit directive always outranks whatever
+      // 7b/7c produce here, exactly as IGSTYLE-3 already guarantees). ──
+      const { varied: variedLearnedStyle, variations: budgetVariations } = varyLearnedStyle(learnedStyle, distilledStyle.strength, wf.runId, {
+        ...(brandKit?.cssVars["--bg"] !== undefined ? { baselineGround: brandKit.cssVars["--bg"] } : {}),
+        ...(brandKit?.cssVars["--fg"] !== undefined ? { baselineFg: brandKit.cssVars["--fg"] } : {}),
+        ring: brandKit?.palette ?? [],
+      });
+
+      // ── 7c: an intent survives even when its hex lost the distillation
+      // vote (`distillStylePreferences`'s own rule 10) — satisfy the
+      // DIRECTION against Layer 0's own baseline via the exact same
+      // `applyIntents` Tier 1/2 already use, never pinning the specific hex
+      // that lost. Only for roles 7b left untouched (a role already varied,
+      // or already promoted at full strength, has nothing left to satisfy). ──
+      const unsatisfiedIntents = distilledStyle.intents.filter((intent) => variedLearnedStyle[intent.role] === undefined);
+      const intentSatisfaction =
+        unsatisfiedIntents.length > 0
+          ? applyIntents(unsatisfiedIntents, {
+              ...(brandKit?.cssVars["--bg"] !== undefined ? { ground: brandKit.cssVars["--bg"] } : {}),
+              ...(brandKit?.cssVars["--fg"] !== undefined ? { fg: brandKit.cssVars["--fg"] } : {}),
+              ring: brandKit?.palette ?? [],
+            })
+          : { overrides: {}, applied: [], refusals: [] };
+      for (const [role, hex] of Object.entries(intentSatisfaction.overrides)) {
+        variedLearnedStyle[role] = hex;
+      }
+      const styleVariation: StyleVariationEntry[] = [
+        ...budgetVariations,
+        ...unsatisfiedIntents
+          .filter((intent) => intentSatisfaction.overrides[intent.role] !== undefined)
+          .map((intent) => ({
+            role: intent.role,
+            prior: `(no hex reached the evidence threshold for ${intent.role})`,
+            used: intentSatisfaction.overrides[intent.role]!,
+            reason: `distillation rule 10: the "${intent.direction}" intent survived even though no specific hex won the vote for ${intent.role} — satisfied the direction against baseline rather than pinning the losing hex`,
+          })),
+      ];
+
       const { kit: revisionEffectiveKit, refusals: kitRefusals } = effectiveBrandKit(
         rawBrand,
         frozen.brandTokens,
-        learnedStyle,
+        variedLearnedStyle as StyleOverrides,
         styleDirectiveResult.overrides,
         brandKit,
       );
@@ -2232,6 +2283,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           validatedCustomArchetypeIds,
           ...(effectiveKit?.brandAccent !== undefined ? { brandAccentFallback: effectiveKit.brandAccent } : {}),
           ...(effectiveKit?.handle !== undefined ? { brandHandle: effectiveKit.handle } : {}),
+          // IGSTYLE-7, §7a — wires `paletteForSlide`'s already-built, already-
+          // seeded rotation into the render path for the first time. Seeded
+          // from `wf.runId` per the ticket; a ring of length ≤ 1 (or absent)
+          // falls back to `brandAccentFallback` above for every slide.
+          accentRing: effectiveKit?.palette ?? [],
+          paletteSeed: wf.runId,
         }),
       );
 
@@ -2273,6 +2330,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             validatedCustomArchetypeIds,
             ...(effectiveKit?.brandAccent !== undefined ? { brandAccentFallback: effectiveKit.brandAccent } : {}),
           ...(effectiveKit?.handle !== undefined ? { brandHandle: effectiveKit.handle } : {}),
+            accentRing: effectiveKit?.palette ?? [],
+            paletteSeed: wf.runId,
           }),
         );
         copy = strippedCopy;
@@ -2395,6 +2454,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         slidesData: finalSlidesData,
         rendered: finalRendered,
         ...(styleDirectiveOutcome !== undefined ? { styleDirectiveOutcome } : {}),
+        ...(styleVariation.length > 0 ? { styleVariation } : {}),
       };
     };
 
@@ -2458,6 +2518,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // (nothing was attempted this round) rather than an empty object,
           // matching every other optional gate-payload field's convention.
           ...(draft.styleDirectiveOutcome !== undefined ? { styleDirectiveOutcome: draft.styleDirectiveOutcome } : {}),
+          // IGSTYLE-7, §7b/7c — every departure THIS round's variation budget
+          // (or an intent-only satisfaction) made from the raw learned prior
+          // below, so a reviewer can see not just WHAT was learned but
+          // whether/why this round's render actually varied from it. Absent
+          // on the common case — nothing departed — same convention as every
+          // other optional gate-payload field here.
+          ...(draft.styleVariation !== undefined ? { styleVariation: draft.styleVariation } : {}),
           // IGSTYLE-5, §2.4/§2.6 — the Layer-1 PRIOR this run drafted against
           // (frozen at 02h, same object every round of this run), so a
           // reviewer can see WHY revision 0 already leans a certain way with

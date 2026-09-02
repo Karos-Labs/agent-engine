@@ -18,6 +18,7 @@ import {
   type TestEnvironment,
 } from "./test-helpers.js";
 import { assembleSlidesData, buildListRows, resolveLayout } from "../src/workflow/slides-data.js";
+import { paletteForSlide } from "../src/workflow/brand-render-tokens.js";
 import { InstagramSlideCopySchema, type InstagramCopyOutput, type ImageSelection } from "../src/workflow/types.js";
 
 const CANVAS = { w: 1080, h: 1440, scale: 2, slides_min: 6, slides_max: 8 };
@@ -621,4 +622,117 @@ describe("template registry integration (Approach a)", () => {
     const rewritten = await fsp.readFile(pathMod.join(env.repoRoot, resolved!.templateDir, resolved!.files[0]!), "utf8");
     expect(rewritten.length).toBeGreaterThan(0);
   }, 60000);
+});
+
+/**
+ * IGSTYLE-7, §7a — "wire the rotation that already exists": `paletteForSlide`
+ * predates this ticket (AU39) but was called from nowhere in the render path
+ * — every slide got ONE shared `accentColor`. This is the wiring's own proof,
+ * at the level `assembleSlidesData` itself operates (no workflow/memory
+ * involved — see `preference-as-prior.test.ts` for the end-to-end version).
+ */
+describe("assembleSlidesData: per-slide accent rotation (IGSTYLE-7, §7a)", () => {
+  const RING = ["#A5E82B", "#FF5B5F", "#41C6FF"];
+  const BRAND_TOKENS = { templateDir: "fixtures/templates", slideTemplate: "slide.html" };
+
+  function sixSlideCopy(): InstagramCopyOutput {
+    return copyWith(Array.from({ length: 6 }, () => ({})));
+  }
+
+  function sixSelections(): ImageSelection[] {
+    return Array.from({ length: 6 }, (_, i) => ({
+      n: i + 1,
+      imagePath: `photos/n${i + 1}.jpg`,
+      reason: "matches",
+      license: "CC0",
+      rightsUsable: true,
+      watermarkFree: true,
+    }));
+  }
+
+  it("a slide's accent comes from the ring walk, matching paletteForSlide exactly, when the kit can rotate", () => {
+    const data = assembleSlidesData({
+      clientSlug: "acme",
+      postId: "post_1",
+      repoRoot: "/repo",
+      brandTokens: BRAND_TOKENS,
+      copy: sixSlideCopy(),
+      selections: sixSelections(),
+      canvas: CANVAS,
+      accentRing: RING,
+      paletteSeed: "run-xyz",
+    });
+    const expected = data.slides.map((s) => paletteForSlide({ palette: RING }, { index: s.n, seed: "run-xyz" })!.accent);
+    expect(data.slides.map((s) => s.fields["accentColor"])).toEqual(expected);
+    // Genuinely rotating, not coincidentally constant — the whole point of 7a.
+    expect(new Set(expected).size).toBeGreaterThan(1);
+    // Never off-kit — every value used is a real ring member.
+    for (const hex of expected) expect(RING).toContain(hex);
+  });
+
+  it("falls back to the existing accentColor param for EVERY slide when the ring cannot rotate (length <= 1) — a one-colour kit is unchanged", () => {
+    const data = assembleSlidesData({
+      clientSlug: "acme",
+      postId: "post_1",
+      repoRoot: "/repo",
+      brandTokens: BRAND_TOKENS,
+      copy: sixSlideCopy(),
+      selections: sixSelections(),
+      canvas: CANVAS,
+      brandAccentFallback: "#A5E82B",
+      accentRing: ["#A5E82B"],
+      paletteSeed: "run-xyz",
+    });
+    for (const s of data.slides) expect(s.fields["accentColor"]).toBe("#A5E82B");
+  });
+
+  it("falls back to the existing accentColor param for EVERY slide when no ring is passed at all — byte-identical to pre-IGSTYLE-7 callers", () => {
+    const data = assembleSlidesData({
+      clientSlug: "acme",
+      postId: "post_1",
+      repoRoot: "/repo",
+      brandTokens: BRAND_TOKENS,
+      copy: sixSlideCopy(),
+      selections: sixSelections(),
+      canvas: CANVAS,
+      brandAccentFallback: "#C0FFEE",
+    });
+    for (const s of data.slides) expect(s.fields["accentColor"]).toBe("#C0FFEE");
+  });
+
+  it("is deterministic: the same postId/copy/seed renders the identical per-slide accents twice", () => {
+    const build = () =>
+      assembleSlidesData({
+        clientSlug: "acme",
+        postId: "post_1",
+        repoRoot: "/repo",
+        brandTokens: BRAND_TOKENS,
+        copy: sixSlideCopy(),
+        selections: sixSelections(),
+        canvas: CANVAS,
+        accentRing: RING,
+        paletteSeed: "run-xyz",
+      });
+    const a = build().slides.map((s) => s.fields["accentColor"]);
+    const b = build().slides.map((s) => s.fields["accentColor"]);
+    expect(b).toEqual(a);
+  });
+
+  it("a different seed rotates the phase — two runs of the same kit needn't render identically", () => {
+    const build = (seed: string) =>
+      assembleSlidesData({
+        clientSlug: "acme",
+        postId: "post_1",
+        repoRoot: "/repo",
+        brandTokens: BRAND_TOKENS,
+        copy: sixSlideCopy(),
+        selections: sixSelections(),
+        canvas: CANVAS,
+        accentRing: RING,
+        paletteSeed: seed,
+      }).slides.map((s) => s.fields["accentColor"]);
+    const seeds = ["run-1", "run-2", "run-3", "run-4", "run-5"];
+    const outcomes = new Set(seeds.map((seed) => build(seed).join(",")));
+    expect(outcomes.size).toBeGreaterThan(1);
+  });
 });

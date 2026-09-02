@@ -2,6 +2,7 @@ import type { AgentContext, AgentToolRegistry, GateVerdict } from "@agent-engine
 import { WorkflowToolingFailure } from "@agent-engine/workflow";
 import type { RenderCarouselInput, Slide } from "@agent-engine/tool-karos-publish";
 import { templateFileName } from "@agent-engine/tool-karos-templates";
+import { paletteForSlide } from "./brand-render-tokens.js";
 import type {
   BrandTokens,
   ImageSelection,
@@ -489,6 +490,21 @@ export function assembleSlidesData(params: {
   brandHandle?: string | undefined;
   /** Reviewer typography per slide number (Phase 2 in-place edits). Absent slides keep the defaults. */
   slideStyleOverrides?: ReadonlyMap<number, SlideStyleOverride>;
+  /**
+   * IGSTYLE-7, §7a — the effective kit's accent ring (`BrandRenderTokens.palette`),
+   * wiring `paletteForSlide`'s already-seeded rotation into the render path for
+   * the first time. Absent, or a ring of length ≤ 1, falls back to
+   * `brandAccentFallback`/`brandTokens.accentColor` for EVERY slide exactly as
+   * before this ticket — a one-colour kit is unchanged.
+   */
+  accentRing?: string[] | undefined;
+  /**
+   * Seeds the ring walk (`paletteForSlide`'s own "SEEDED, NOT RANDOM" contract)
+   * — the run id, per §7a. Absent is treated as phase 0 (same as an empty
+   * seed), which only matters when `accentRing` actually has more than one
+   * member.
+   */
+  paletteSeed?: string | undefined;
 }): RenderCarouselInput {
   const selectionByN = new Map(params.selections.map((s) => [s.n, s]));
 
@@ -518,10 +534,20 @@ export function assembleSlidesData(params: {
     const { layout } = resolveLayout(slide, params.availableTemplates, usedLayouts, params.validatedCustomArchetypeIds);
     if (layout === "custom") usedLayouts.add(slide.customArchetype!.archetypeId);
     else if (layout !== "photo" && layout !== "text_only") usedLayouts.add(layout);
+    // IGSTYLE-7, §7a — a slide's accent comes from the ring walk rather than
+    // one shared `accentColor` whenever the kit can actually rotate.
+    // `rotates: false` (an empty or one-member ring) keeps every slide on the
+    // SAME existing `accentColor` fallback — a one-colour kit renders exactly
+    // as it did before this ticket, never a manufactured "variation."
+    const slidePalette =
+      params.accentRing !== undefined
+        ? paletteForSlide({ palette: params.accentRing }, { index: slide.n, ...(params.paletteSeed !== undefined ? { seed: params.paletteSeed } : {}) })
+        : undefined;
+    const slideAccentColor = slidePalette?.rotates === true ? slidePalette.accent : accentColor;
     const { fields, htmlFragments } = contentFor(
       layout,
       slide,
-      accentColor,
+      slideAccentColor,
       direction,
       {
         handle: params.brandHandle,

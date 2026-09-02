@@ -79,6 +79,183 @@ export interface DistilledStyle {
   evidence: string[];
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// IGSTYLE-7, §2.6 — "preference as prior, not pin": spending the variation
+// budget on a LOW-CONFIDENCE learned role, seeded (never random) so the same
+// run always resolves the same way twice and a different run may depart
+// differently.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** §2.6 / 7b — the strength floor below which a learned role is a weak enough prior to vary rather than reproduce verbatim. At or above, the prior is used as-is (a strong default). */
+export const VARIATION_THRESHOLD = 0.75;
+
+/** One reported departure from the raw learned prior — always paired with WHY, per the ticket's own "every departure in styleVariation" acceptance line. */
+export interface StyleVariationEntry {
+  role: "ground" | "fg" | "accent";
+  /** The learned prior's own value — `"(no hex reached the evidence threshold)"` for a 7c intent-only satisfaction, which has no losing hex to name. */
+  prior: string;
+  used: string;
+  reason: string;
+}
+
+/** What `varyLearnedStyle` resolves a ground/fg/accent candidate against — deliberately just hexes and a ring, never a live brand kit object (see this file's own header: this package sits below every agent and cannot import one). */
+export interface VariationContext {
+  /** Layer 0's own resolved ground/fg — what a shaded ground/fg candidate's pair-contrast is checked against when only one half of the pair is being varied this round. */
+  baselineGround?: string;
+  baselineFg?: string;
+  /** The kit's accent ring (`BrandRenderTokens.palette`) — accent variation only ever moves to ANOTHER ring member, never invents one (kit-boundedness is free by construction: the ring itself is already contrast-checked against the ground). */
+  ring?: readonly string[];
+}
+
+/** Local, minimal copy — see `style-directive.ts`'s own `relativeLuminance`/`contrastRatio` doc comment for why this package keeps its own rather than importing brand-render-tokens.ts's (or that file's) private ones: this package sits below every agent in the dependency graph. */
+function relativeLuminance(hex: string): number {
+  let h = hex.slice(1);
+  if (h.length === 3 || h.length === 4) h = [...h].map((c) => c + c).join("");
+  const channel = (i: number) => {
+    const v = parseInt(h.slice(i, i + 2), 16) / 255;
+    return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4);
+}
+
+function contrastRatioLocal(a: string, b: string): number {
+  const la = relativeLuminance(a);
+  const lb = relativeLuminance(b);
+  const [hi, lo] = la > lb ? [la, lb] : [lb, la];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/** Local copy of `style-directive.ts`'s own `shade` — same reasoning as `contrastRatioLocal` above. */
+function shade(hex: string, percent: number): string {
+  let h = hex.slice(1);
+  const hadShortAlpha = h.length === 4;
+  const hadLongAlpha = h.length === 8;
+  if (h.length === 3 || h.length === 4) h = [...h].map((c) => c + c).join("");
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  const alpha = hadShortAlpha || hadLongAlpha ? h.slice(6, 8) : "";
+  const p = percent / 100;
+  const adjust = (c: number): number => {
+    const next = p < 0 ? c * (1 + p) : c + (255 - c) * p;
+    return Math.max(0, Math.min(255, Math.round(next)));
+  };
+  const toHex = (c: number) => c.toString(16).padStart(2, "0");
+  return `#${toHex(adjust(r))}${toHex(adjust(g))}${toHex(adjust(b))}${alpha}`;
+}
+
+/** FNV-1a 32-bit — same algorithm `brand-render-tokens.ts`'s own seeded ring walk uses, duplicated here for the same "no cross-boundary import" reason as `shade`/`contrastRatioLocal` above. Pure: no clock, no randomness. */
+function fnv1a32(input: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+
+const VARIATION_SHADE_STEP_PERCENT = 12;
+const TEXT_CONTRAST_FLOOR = 4.5;
+
+/** Deterministic ±1, seeded per `(seed, role)` — which DIRECTION a weak ground/fg prior shades on this run. Different seeds may disagree; the same seed never does. */
+function shadeDirection(seed: string, role: string): 1 | -1 {
+  return fnv1a32(`${seed}:${role}:shade`) % 2 === 0 ? 1 : -1;
+}
+
+/**
+ * §2.6 / 7b+7c — spends the variation budget on the LEARNED prior only,
+ * never on this round's own active directive (the caller merges
+ * `styleDirectiveResult.overrides` in AFTER this function's output, last-wins,
+ * exactly as before IGSTYLE-7 — "in-run supremacy" holds structurally, not by
+ * special-casing here).
+ *
+ * - A role at or above `VARIATION_THRESHOLD` is used as-is (rule: "strong
+ *   default").
+ * - A role below it MAY depart: `ground`/`fg` shade `±VARIATION_SHADE_STEP_PERCENT`
+ *   in a seeded direction, kept only if the resulting pair still clears the
+ *   4.5:1 floor (checked jointly — contrast is a PAIR property); `accent`
+ *   moves to a DIFFERENT member of `context.ring` (seeded, never the same
+ *   member twice for one seed), which is kit-bounded by construction since
+ *   the ring itself is already contrast-checked against the ground
+ *   (`buildAccentRing`).
+ * - Nothing legal to vary to (no room in the pair, ring of length ≤ 1) is an
+ *   honest no-op: the prior ships unchanged, no colour is invented, and no
+ *   variation entry is reported for it (nothing departed).
+ *
+ * Pure and deterministic given the same `seed` — no clock, no RNG.
+ */
+export function varyLearnedStyle(
+  learned: Readonly<Record<string, string | undefined>>,
+  strength: Readonly<Record<string, number | undefined>>,
+  seed: string,
+  context: VariationContext = {},
+): { varied: Record<string, string>; variations: StyleVariationEntry[] } {
+  // Callers may hand this a `StyleOverrides`-shaped object (every field
+  // individually optional, per the wire contract) rather than a plain
+  // `Record<string,string>` — filter rather than widen `varied`'s own type,
+  // since every consumer downstream (`effectiveBrandKit`'s `learned`
+  // parameter included) expects a patch with only DEFINED keys, exactly like
+  // `mergeStyleOverrides`'s own "defined keys only" contract.
+  const varied: Record<string, string> = Object.fromEntries(Object.entries(learned).filter((entry): entry is [string, string] => entry[1] !== undefined));
+  const variations: StyleVariationEntry[] = [];
+
+  const isWeak = (role: string): boolean => (strength[role] ?? 1) < VARIATION_THRESHOLD;
+
+  // ── ground/fg: a joint pair decision, since contrast is a pair property ──
+  const priorGround = learned["ground"];
+  const priorFg = learned["fg"];
+  const groundWeak = priorGround !== undefined && isWeak("ground");
+  const fgWeak = priorFg !== undefined && isWeak("fg");
+  if (groundWeak || fgWeak) {
+    const candidateGround = groundWeak ? shade(priorGround!, shadeDirection(seed, "ground") * VARIATION_SHADE_STEP_PERCENT) : (priorGround ?? context.baselineGround);
+    const candidateFg = fgWeak ? shade(priorFg!, shadeDirection(seed, "fg") * VARIATION_SHADE_STEP_PERCENT) : (priorFg ?? context.baselineFg);
+    if (candidateGround !== undefined && candidateFg !== undefined && contrastRatioLocal(candidateGround, candidateFg) >= TEXT_CONTRAST_FLOOR) {
+      if (groundWeak && candidateGround !== priorGround) {
+        varied["ground"] = candidateGround;
+        variations.push({
+          role: "ground",
+          prior: priorGround!,
+          used: candidateGround,
+          reason: `strength ${(strength["ground"] ?? 1).toFixed(2)} is below the ${VARIATION_THRESHOLD} variation threshold — shaded within the 4.5:1 contrast floor rather than reproducing the exact prior hex`,
+        });
+      }
+      if (fgWeak && candidateFg !== priorFg) {
+        varied["fg"] = candidateFg;
+        variations.push({
+          role: "fg",
+          prior: priorFg!,
+          used: candidateFg,
+          reason: `strength ${(strength["fg"] ?? 1).toFixed(2)} is below the ${VARIATION_THRESHOLD} variation threshold — shaded within the 4.5:1 contrast floor rather than reproducing the exact prior hex`,
+        });
+      }
+    }
+    // else: the shaded pair would drop below the floor — honest no-op, both roles ship the exact prior, nothing invented.
+  }
+
+  // ── accent: move to a different, already-kit-legal ring member ──
+  const priorAccent = learned["accent"];
+  if (priorAccent !== undefined && isWeak("accent") && context.ring !== undefined && context.ring.length > 1) {
+    const ring = context.ring;
+    const priorIdx = ring.findIndex((h) => h.toLowerCase() === priorAccent.toLowerCase());
+    const baseIdx = priorIdx >= 0 ? priorIdx : 0;
+    const step = 1 + (fnv1a32(`${seed}:accent:step`) % (ring.length - 1)); // 1..ring.length-1 — never 0, always a genuine departure
+    const candidateIdx = (baseIdx + step) % ring.length;
+    const candidate = ring[candidateIdx]!;
+    if (candidate.toLowerCase() !== priorAccent.toLowerCase()) {
+      varied["accent"] = candidate;
+      variations.push({
+        role: "accent",
+        prior: priorAccent,
+        used: candidate,
+        reason: `strength ${(strength["accent"] ?? 1).toFixed(2)} is below the ${VARIATION_THRESHOLD} variation threshold — moved to another member of the brand kit's own accent ring`,
+      });
+    }
+  }
+  // else (ring absent, length <= 1, or accent not weak): honest no-op — nothing invented, see §2.6's "never manufacture colours to fill a ring".
+
+  return { varied, variations };
+}
+
 /** Rule 3's default half-life — a pick from ~6.5 weeks ago carries half the weight of one made today. */
 export const DEFAULT_HALF_LIFE_DAYS = 45;
 

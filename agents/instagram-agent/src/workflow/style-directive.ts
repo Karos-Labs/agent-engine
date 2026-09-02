@@ -312,8 +312,17 @@ function findColourWord(clause: string): string | undefined {
  * closed-vocabulary parser and Tier 2's model output, so a model-produced
  * intent is "re-validated through the same regex and kit-first rule" simply
  * by construction rather than by a second, easy-to-drift implementation.
+ *
+ * Exported for IGSTYLE-7, §2.6 rule 10 / 7c: `distillStylePreferences` votes
+ * a role's winning INTENT independently of its winning hex, so a later run
+ * can see a direction (e.g. "ground/darker") with no promoted hex to go with
+ * it — the hex lost the vote, but the direction survived. `create-instagram-
+ * agent-workflow.ts`'s `draftOnce` calls this SAME resolver (never a second,
+ * hand-rolled one) to satisfy that direction against Layer 0's own baseline,
+ * exactly as Tier 1/2 already do for this round's own directive — "any
+ * tier-1-legal value," never inventing the specific hex that lost.
  */
-function applyIntents(
+export function applyIntents(
   intents: readonly StyleIntent[],
   context: StyleDirectiveContext,
 ): { overrides: Partial<Record<"ground" | "fg" | "accent", string>>; applied: string[]; refusals: StyleRefusal[] } {
