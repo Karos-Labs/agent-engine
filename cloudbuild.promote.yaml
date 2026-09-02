@@ -73,9 +73,27 @@ substitutions:
   _PUBSUB_PUSH_AUDIENCE_URL: "https://agent-engine-prod-zc6vfwnzsq-ew.a.run.app/api/v1/queue/pubsub-push"
   # Service-identity authentication plumbing (AU1 / SCRUM-287, folded in per
   # AU2 / SCRUM-288) — see cloudbuild.yaml's own comment for the full
-  # reasoning. AUTH_ENABLED stays hardcoded false in --set-env-vars below,
-  # never a substitution — flipping it is SCRUM-331, blocked on SCRUM-330
-  # (the portal's fail-open metadata fetch).
+  # reasoning. AUTH_ENABLED is hardcoded in --set-env-vars below, never a
+  # substitution, so its value cannot arrive from outside this file.
+  #
+  # SCRUM-331 (AU48), 2026-09-02: production now runs with enforcement ON. The
+  # blocker named here — SCRUM-330, the portal's fail-open metadata fetch — was
+  # promoted to production in the same pass: the prod portal moved from
+  # `6a76387b` (2026-08-24, 118 commits behind, and verified NOT to contain the
+  # fix) to `0fef40aa`, which does.
+  #
+  # Checked live before flipping, not assumed: AUTH_AUDIENCE byte-identical to
+  # `status.url`; the allowlist below equal to the portal's live runtime
+  # identity (`karos-cmo-sa@karoscmo`, which the PORTAL promotion itself
+  # switched to — see that value's own note); that SA holding run.invoker on
+  # this service; and both prod surfaces Ready on this image with zero errors.
+  #
+  # Blast radius, measured rather than guessed: dispatch reaches the engine over
+  # Pub/Sub, not HTTP, so enforcement here covers only gate resolution and
+  # unmaterialized-deliverable fetches. Two real reconcile calls (prep and prod)
+  # produced no engine HTTP request at all. A misconfiguration therefore shows
+  # up as a 401 on a gate approval — user-triggered and immediately visible —
+  # not as a silent outage.
   _AUTH_AUDIENCE: "https://agent-engine-prod-zc6vfwnzsq-ew.a.run.app"
   # Who may call this service once AUTH_ENABLED is flipped. Established by
   # reading the LIVE runtime identity of every Cloud Run service in this
@@ -109,8 +127,10 @@ substitutions:
   # actually have, rather than adding a second entry, which `--set-env-vars`
   # cannot express without switching to the `^@^` delimiter form.
   #
-  # What makes the transition safe: both promotions leave AUTH_ENABLED=false,
-  # so the window between them enforces nothing.
+  # What made the transition safe: both promotions ran with AUTH_ENABLED=false,
+  # so the window between the portal switching identity and this value being
+  # retargeted enforced nothing. Enforcement was turned on only afterwards, as
+  # its own change — see AUTH_ENABLED's note above.
   _AUTH_ALLOWED_SERVICE_ACCOUNTS: "karos-cmo-sa@karoscmo.iam.gserviceaccount.com"
 
 options:
@@ -150,7 +170,7 @@ steps:
       - --no-allow-unauthenticated
       - --service-account=${_SERVICE_ACCOUNT}
       - --memory=2Gi
-      - --set-env-vars=GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},ANTHROPIC_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},CLOUD_ML_REGION=global,VERTEX_AI_LOCATION=${_REGION},GEMINI_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},PROMPT_STORE_DRIVER=firestore,QUEUE_PROVIDER=pubsub,QUEUE_TOPIC_RUN_JOBS=${_QUEUE_TOPIC_RUN_JOBS},PUBSUB_PROJECT_ID=${_PUBSUB_PROJECT_ID},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},GCS_ARTIFACTS_BUCKET=${_GCS_ARTIFACTS_BUCKET},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET},LANDING_ENGINE_TEMPLATE_ROOT=/app/packages/tools/karos-landing/assets/template,LANDING_ENGINE_ROOT=/tmp/landing-engine,INSTAGRAM_AGENT_REPO_ROOT=/app,PUBSUB_PUSH_AUDIENCE_URL=${_PUBSUB_PUSH_AUDIENCE_URL},AUTH_ENABLED=false,AUTH_AUDIENCE=${_AUTH_AUDIENCE},AUTH_ALLOWED_SERVICE_ACCOUNTS=${_AUTH_ALLOWED_SERVICE_ACCOUNTS}
+      - --set-env-vars=GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},ANTHROPIC_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},CLOUD_ML_REGION=global,VERTEX_AI_LOCATION=${_REGION},GEMINI_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},PROMPT_STORE_DRIVER=firestore,QUEUE_PROVIDER=pubsub,QUEUE_TOPIC_RUN_JOBS=${_QUEUE_TOPIC_RUN_JOBS},PUBSUB_PROJECT_ID=${_PUBSUB_PROJECT_ID},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},GCS_ARTIFACTS_BUCKET=${_GCS_ARTIFACTS_BUCKET},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET},LANDING_ENGINE_TEMPLATE_ROOT=/app/packages/tools/karos-landing/assets/template,LANDING_ENGINE_ROOT=/tmp/landing-engine,INSTAGRAM_AGENT_REPO_ROOT=/app,PUBSUB_PUSH_AUDIENCE_URL=${_PUBSUB_PUSH_AUDIENCE_URL},AUTH_ENABLED=true,AUTH_AUDIENCE=${_AUTH_AUDIENCE},AUTH_ALLOWED_SERVICE_ACCOUNTS=${_AUTH_ALLOWED_SERVICE_ACCOUNTS}
       - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest,SCRAPPYCOCO_API_KEY=${_SCRAPPYCOCO_API_KEY_SECRET}:latest
       # instagram-agent writes under `repoRoot` (INSTAGRAM_AGENT_REPO_ROOT=/app):
       # `.media-cache/<runId>/` from media.findImages, and

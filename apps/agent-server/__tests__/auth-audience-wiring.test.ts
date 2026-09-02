@@ -103,9 +103,10 @@ describe("AU2: the push audience must be the endpoint, not the service", () => {
    *
    * The safety property it existed for is kept and sharpened: the value must
    * still be a pinned literal in the file (never a `${...}` substitution, per
-   * both cloudbuilds' own comments), and production must still be `false`
-   * until the portal promotion carries SCRUM-330 there. An accidental flip of
-   * either environment fails here exactly as before.
+   * both cloudbuilds' own comments). Both environments now run with
+   * enforcement ON — prep first, then production once the portal promotion
+   * carried SCRUM-330 there. An accidental flip of either, or turning the
+   * literal into a substitution, fails here exactly as before.
    */
   it("cloudbuild.yaml (prep) has enforcement ON, pinned as a literal", () => {
     const text = read("cloudbuild.yaml");
@@ -116,16 +117,28 @@ describe("AU2: the push audience must be the endpoint, not the service", () => {
     expect(text).not.toMatch(/AUTH_ENABLED=\$\{/);
   });
 
-  it("cloudbuild.promote.yaml (production) stays OFF until SCRUM-330 is promoted there", () => {
-    // Verified 2026-09-02: prod's portal image predates SCRUM-330's fail-open
-    // fix, so enabling here first would turn a metadata blip into an
-    // intermittent 401 for every client. Flip this only after the portal
-    // promotion, and in this file rather than by hand — `--set-env-vars`
-    // REPLACES the environment on every deploy, so a manual flip reverts on
-    // the next promotion.
+  it("cloudbuild.promote.yaml (production) has enforcement ON, pinned as a literal", () => {
+    // This asserted `false` for the few hours between prep going ON and the
+    // portal promotion reaching production, because prod's portal image
+    // (`6a76387b`, 2026-08-24) predated SCRUM-330's fail-open fix and enabling
+    // first would have turned a metadata blip into an intermittent 401 for
+    // every client. The portal promotion carried `0fef40aa`, which contains
+    // it, so the condition this guarded is met and the assertion flips with it.
+    //
+    // The safety property is unchanged: a literal, never injectable, and never
+    // flipped by hand — `--set-env-vars` REPLACES the environment on every
+    // deploy, so a manual flip reverts on the next promotion.
     const text = read("cloudbuild.promote.yaml");
-    expect(text).toContain("AUTH_ENABLED=false");
-    expect(text).not.toContain("AUTH_ENABLED=true");
+    expect(text).toContain("AUTH_ENABLED=true");
+    // Prose in this file legitimately mentions the old value while explaining
+    // the transition, so the check is on the env-var assignment, not the file.
+    const deployArgs = text
+      .split("\n")
+      .map((line) => /^\s*-\s+--set-env-vars=(.*)/.exec(line.trim())?.[1])
+      .filter((v): v is string => v !== undefined);
+    for (const args of deployArgs) {
+      expect(args, "no deploy surface may ship AUTH_ENABLED=false").not.toContain("AUTH_ENABLED=false");
+    }
     expect(text).not.toMatch(/AUTH_ENABLED=\$\{/);
   });
 
