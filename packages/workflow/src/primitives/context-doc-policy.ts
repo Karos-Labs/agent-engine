@@ -1,3 +1,4 @@
+import type { RunKind } from "@agent-engine/core";
 import { WorkflowBlockedIntake } from "./signals.js";
 
 /**
@@ -72,6 +73,32 @@ import { WorkflowBlockedIntake } from "./signals.js";
  * Flipping a decision — say, promoting `instagram-agent` to BLOCK after a
  * real incident — is a one-line edit to one row in this table. No workflow
  * file changes.
+ *
+ * ## SCRUM-388 — the bootstrap deadlock, and `bootstrapExempt`
+ *
+ * T-A10 (this table) and T-B19 (onboarding) were each individually correct
+ * and each passed its own acceptance criteria, and the deadlock between them
+ * exists only because both merged, across two repos, in different batches —
+ * see this ticket's own report for the full account. In short:
+ * `intel-report-agent`'s BLOCK row is right for a RECURRING run — a client
+ * with documents shipping an ungrounded report is worse than shipping
+ * nothing. But onboarding dispatches this exact agent to PRODUCE
+ * `target-audience`/`market-strategy` in the first place — so a fresh
+ * client's very first run hard-blocks on documents that run exists to
+ * create, and no deliverable is ever produced.
+ *
+ * `bootstrapExempt: true` on a row means: a `"block"` decision does not
+ * throw for a `runKind: "setup"` run — it degrades instead, with the same
+ * visible marker a DEGRADED row produces, so the bootstrap report is
+ * generated but visibly, honestly marked as the ungrounded one it is.
+ * **Every recurring run still BLOCKs exactly as before** — this is an
+ * exemption for the run that is producing the grounding documents, not a
+ * weakening of the guarantee for every run after it. Grounding a report in
+ * documents it is itself generating would be circular; two things make
+ * shipping it anyway acceptable rather than merely convenient: it is
+ * necessarily the FIRST report a client ever sees (never a recurring one),
+ * and it still carries the degraded marker so nobody mistakes it for a
+ * grounded one.
  */
 export type ContextDocPolicyDecision = "block" | "degraded";
 
@@ -79,12 +106,27 @@ export interface ContextDocPolicyRow {
   decision: ContextDocPolicyDecision;
   /** Why this agent got this row. Surfaced verbatim in the BLOCK reason / DEGRADED marker — update this alongside the decision, not instead of it. */
   rationale: string;
+  /**
+   * SCRUM-388: only meaningful on a `"block"` row. When true, a
+   * `runKind: "setup"` run degrades (with a marker) instead of throwing —
+   * every OTHER `runKind` still BLOCKs. See this module's own doc comment,
+   * "SCRUM-388 — the bootstrap deadlock," for why this exists and why it is
+   * scoped to bootstrap only, not a general downgrade of the row's decision.
+   */
+  bootstrapExempt?: boolean;
 }
 
 export const CONTEXT_DOC_POLICY: Readonly<Record<string, ContextDocPolicyRow>> = {
   "intel-report-agent": {
     decision: "block",
     rationale: "output is a client-facing deliverable that names external parties (competitors) — ungrounded is worse than absent",
+    // SCRUM-388: bootstrap exemption. A fresh client's onboarding run
+    // dispatches this exact agent to PRODUCE target-audience/market-strategy —
+    // without this, BLOCK fires on the run that creates the documents it is
+    // checking for, and onboarding can never produce a first deliverable.
+    // Recurring runs are unaffected: BLOCK still fires for every run whose
+    // runKind is not "setup". See this module's doc comment.
+    bootstrapExempt: true,
   },
   "landing-builder-agent": {
     decision: "block",
@@ -130,11 +172,18 @@ export type ContextDocPolicyOutcome = { decision: "ok" } | { decision: "degraded
  * shape — the caller does no interpretation of its own before handing this
  * function the raw results.
  *
- * Throws {@link WorkflowBlockedIntake} directly for a `"block"` row (see
- * this module's own doc comment for why that, and not a return value, is
- * the right shape) — the caller never branches on the decision, it just
- * calls this and, for the two BLOCK agents, never sees the line after it
- * execute when context is genuinely absent.
+ * `runKind` (SCRUM-388) is optional — a caller that never needs the
+ * bootstrap exemption can omit it, and the behavior is identical to before
+ * this ticket: `undefined` never matches `"setup"`, so a row's
+ * `bootstrapExempt` can never fire without the caller explicitly passing its
+ * own `wf.runKind` through.
+ *
+ * Throws {@link WorkflowBlockedIntake} directly for a `"block"` row that is
+ * not bootstrap-exempted for this run (see this module's own doc comment for
+ * why that, and not a return value, is the right shape) — the caller never
+ * branches on the decision, it just calls this and, for a BLOCK agent on a
+ * recurring run, never sees the line after it execute when context is
+ * genuinely absent.
  *
  * Throws a plain `Error` if `agentId` has no row at all: a fifth agent
  * wired to this function without a policy decision is exactly the gap
@@ -142,7 +191,11 @@ export type ContextDocPolicyOutcome = { decision: "ok" } | { decision: "degraded
  * here is cheaper than silently defaulting to either BLOCK or DEGRADED for
  * an agent nobody actually decided on.
  */
-export function enforceContextDocPolicy(params: { agentId: string; docs: Record<string, string | undefined> }): ContextDocPolicyOutcome {
+export function enforceContextDocPolicy(params: {
+  agentId: string;
+  docs: Record<string, string | undefined>;
+  runKind?: RunKind;
+}): ContextDocPolicyOutcome {
   const row = CONTEXT_DOC_POLICY[params.agentId];
   if (!row) {
     throw new Error(
@@ -162,7 +215,12 @@ export function enforceContextDocPolicy(params: { agentId: string; docs: Record<
 
   const reason = `${params.agentId}: missing required context doc(s) [${missingDocTypes.join(", ")}] — ${row.rationale}`;
 
-  if (row.decision === "block") {
+  // SCRUM-388: bootstrap exemption. Only a "setup" run on a row explicitly
+  // marked bootstrapExempt degrades instead of blocking — every recurring
+  // run (and every non-exempt BLOCK row) throws exactly as before.
+  const bootstrapExempted = row.decision === "block" && row.bootstrapExempt === true && params.runKind === "setup";
+
+  if (row.decision === "block" && !bootstrapExempted) {
     throw new WorkflowBlockedIntake(reason);
   }
 
@@ -172,7 +230,9 @@ export function enforceContextDocPolicy(params: { agentId: string; docs: Record<
       contextGroundingStatus: "degraded",
       agentId: params.agentId,
       missingDocTypes,
-      reason,
+      reason: bootstrapExempted
+        ? `${reason} — exempted from BLOCK because this is a runKind:"setup" run producing these documents for the first time; report is degraded, not blocked`
+        : reason,
     },
   };
 }

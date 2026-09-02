@@ -188,10 +188,22 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
     // real grounding — generic analysis that reads exactly like a grounded report —
     // is worse than not drafting it at all. `enforceContextDocPolicy` throws
     // `WorkflowBlockedIntake` itself when EVERY context doc this agent reads is
-    // absent (not merely one of the two — see that function's own doc comment);
-    // nothing here branches on the decision, the shared table already made it.
-    await wf.step.code("01e-enforce-context-doc-policy", () =>
-      enforceContextDocPolicy({ agentId: "intel-report-agent", docs: { "target-audience": targetAudience, "market-strategy": marketStrategy } }),
+    // absent (not merely one of the two — see that function's own doc comment),
+    // UNLESS this is a `runKind: "setup"` run on this row's `bootstrapExempt`
+    // exemption (SCRUM-388): onboarding dispatches this exact agent to PRODUCE
+    // target-audience/market-strategy, so BLOCKing a run on documents it exists
+    // to create would deadlock a fresh client's very first report forever. Every
+    // recurring run still BLOCKs exactly as before — only `runKind` decides that,
+    // never anything specific to this call site. The outcome is captured (not
+    // discarded) because a bootstrap-exempted run must surface its DEGRADED
+    // marker wherever this report actually surfaces — see 06's deliverable spread
+    // and this function's own return value below.
+    const contextGrounding = await wf.step.code("01e-enforce-context-doc-policy", () =>
+      enforceContextDocPolicy({
+        agentId: "intel-report-agent",
+        docs: { "target-audience": targetAudience, "market-strategy": marketStrategy },
+        runKind: wf.runKind,
+      }),
     );
 
     // ── 02-03: generate the report, then verify its numeric claims — one full drafting pass ──
@@ -358,7 +370,13 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
       persistDeliverableStepId: "06-persist-deliverable",
       persistManifestStepId: "07-persist-manifest",
       kind: "intel-report",
-      deliverable: { ...report, ...writeOutcome },
+      deliverable: {
+        ...report,
+        ...writeOutcome,
+        // SCRUM-242/SCRUM-388 (T-A10): the DEGRADED marker, on the actual
+        // persisted deliverable a reviewer looks at — see 01e's own comment.
+        ...(contextGrounding.decision === "degraded" ? { contextGrounding: contextGrounding.marker } : {}),
+      },
       snapshot: (deliverableId) => ({ ...writeOutcome, deliverableId }),
     });
 
@@ -393,6 +411,9 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
       overallGrade: writeOutcome.overallGrade,
       competitorCount: writeOutcome.competitorCount,
       deliverableId,
+      // SCRUM-242/SCRUM-388 (T-A10): same DEGRADED marker, on the workflow's
+      // own typed return value — see 01e's own comment.
+      ...(contextGrounding.decision === "degraded" ? { contextGrounding: contextGrounding.marker } : {}),
     };
   };
 }
