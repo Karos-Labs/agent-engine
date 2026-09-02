@@ -378,7 +378,7 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
     whenAbsent:
       "Every route is reachable by anything that can invoke the Cloud Run service, with no application-layer identity check. Tenancy below the API stays structural, but the API itself performs no authorisation.",
     rationale:
-      "AUTH_ENABLED ships false on purpose (AU1 / SCRUM-287). Enabling it is SCRUM-331, blocked on SCRUM-330 (the portal's fail-open token fetch). AUTH_AUDIENCE is already wired so the flag can be flipped in one change.",
+      "AUTH_ENABLED shipped false on purpose (AU1 / SCRUM-287) while SCRUM-330 (the portal's fail-open token fetch) was outstanding. SCRUM-331 (AU48) turned it ON in PREP on 2026-09-02, once SCRUM-330 was merged and deployed there; the value is pinned in cloudbuild.yaml rather than injected, so it cannot arrive from outside that file. PRODUCTION stays false until the portal promotion carries SCRUM-330 there — enabling first would turn a metadata blip into an intermittent 401. The worker surface has no AUTH_* variables at all and needs none: it is a Pub/Sub PULL consumer with no inbound HTTP.",
     security: true,
   },
   {

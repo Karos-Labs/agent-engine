@@ -95,9 +95,52 @@ describe("AU2: the push audience must be the endpoint, not the service", () => {
     ).toBe(true);
   });
 
-  it.each(CLOUDBUILDS)("%s keeps AUTH_ENABLED false — flipping it is SCRUM-331", (file) => {
-    // Blocked on SCRUM-330 (the portal's fail-open token fetch): enabling
-    // before that lands turns a metadata blip into an intermittent portal 401.
-    expect(read(file)).toContain("AUTH_ENABLED=false");
+  /**
+   * SCRUM-331 (AU48), 2026-09-02 — this used to assert `AUTH_ENABLED=false` in
+   * BOTH cloudbuilds, with the note "flipping it is SCRUM-331". This is
+   * SCRUM-331, so the assertion is now the per-environment state that ticket
+   * established rather than a blanket false.
+   *
+   * The safety property it existed for is kept and sharpened: the value must
+   * still be a pinned literal in the file (never a `${...}` substitution, per
+   * both cloudbuilds' own comments), and production must still be `false`
+   * until the portal promotion carries SCRUM-330 there. An accidental flip of
+   * either environment fails here exactly as before.
+   */
+  it("cloudbuild.yaml (prep) has enforcement ON, pinned as a literal", () => {
+    const text = read("cloudbuild.yaml");
+    expect(text).toContain("AUTH_ENABLED=true");
+    expect(text).not.toContain("AUTH_ENABLED=false");
+    // Never injectable — a substitution would let the value arrive from
+    // outside the file, which is what the pinning decision exists to prevent.
+    expect(text).not.toMatch(/AUTH_ENABLED=\$\{/);
+  });
+
+  it("cloudbuild.promote.yaml (production) stays OFF until SCRUM-330 is promoted there", () => {
+    // Verified 2026-09-02: prod's portal image predates SCRUM-330's fail-open
+    // fix, so enabling here first would turn a metadata blip into an
+    // intermittent 401 for every client. Flip this only after the portal
+    // promotion, and in this file rather than by hand — `--set-env-vars`
+    // REPLACES the environment on every deploy, so a manual flip reverts on
+    // the next promotion.
+    const text = read("cloudbuild.promote.yaml");
+    expect(text).toContain("AUTH_ENABLED=false");
+    expect(text).not.toContain("AUTH_ENABLED=true");
+    expect(text).not.toMatch(/AUTH_ENABLED=\$\{/);
+  });
+
+  it("neither cloudbuild sets AUTH_ENABLED on the worker surface", () => {
+    // The worker is a Pub/Sub PULL consumer with no inbound HTTP (every
+    // subscription in both projects has an empty pushConfig), so there is
+    // nothing for it to authenticate. Setting the flag there would read as a
+    // safety it does not provide.
+    for (const file of CLOUDBUILDS) {
+      const deployArgs = read(file)
+        .split("\n")
+        .map((line) => /^\s*-\s+--set-env-vars=(.*)/.exec(line.trim())?.[1])
+        .filter((v): v is string => v !== undefined);
+      const withAuthFlag = deployArgs.filter((v) => v.includes("AUTH_ENABLED="));
+      expect(withAuthFlag.length, `${file} must set AUTH_ENABLED on exactly one (the HTTP) surface`).toBe(1);
+    }
   });
 });

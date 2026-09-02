@@ -123,14 +123,23 @@ substitutions:
   # vs the Pub/Sub-specific check in routes/queue.ts) and could legitimately
   # diverge later (e.g. a dedicated auth-only hostname).
   #
-  # AUTH_ENABLED IS HARDCODED false BELOW, IN THE --set-env-vars LIST, NOT
-  # HERE — deliberately not a substitution at all, so a substitution typo or
-  # omission can never silently enable enforcement. This wires AUTH_AUDIENCE
-  # so the flag CAN be flipped in a future, separate change (SCRUM-331) —
-  # flipping it is explicitly blocked on the portal's fail-open metadata
-  # fetch (SCRUM-330): enabling before that lands turns a silent metadata
-  # blip into an intermittent portal 401. Do not flip this substitution's
-  # sibling AUTH_ENABLED=false without that ticket closing first.
+  # AUTH_ENABLED IS HARDCODED BELOW, IN THE --set-env-vars LIST, NOT HERE —
+  # deliberately not a substitution at all, so its value can never arrive from
+  # outside this file. That decision is kept: SCRUM-331 flipped the pinned
+  # literal from `false` to `true` rather than making it injectable.
+  #
+  # SCRUM-331 (AU48), 2026-09-02: **prep now runs with enforcement ON.** The
+  # blocker named here — the portal's fail-open metadata fetch, SCRUM-330 —
+  # is merged and deployed to prep, so "enabling before that lands turns a
+  # silent metadata blip into an intermittent portal 401" no longer applies
+  # here. It still applies to PRODUCTION until the portal promotion lands
+  # there; see cloudbuild.promote.yaml, which stays `false` until then.
+  #
+  # Why the literal and not a `gcloud run services update`: every push to
+  # main redeploys prep through this file with `--set-env-vars`, which
+  # REPLACES the environment. A flag flipped by hand survives until the next
+  # merge and then silently reverts, which is worse than never flipping it —
+  # enforcement that comes and goes with unrelated commits.
   _AUTH_AUDIENCE: "https://agent-engine-prep-v6nerot2ba-uc.a.run.app"
   # Who may call this service once AUTH_ENABLED is flipped. Established by
   # reading the LIVE runtime identity of every Cloud Run service in this
@@ -164,6 +173,22 @@ substitutions:
   # not produce a two-element allowlist -- it produces a malformed env-var
   # list. Adding one requires switching that flag to gcloud's alternate-
   # delimiter form (`--set-env-vars=^@^K1=a,b@K2=c`) in the same change.
+  #
+  # AND ONE COUPLING TO KNOW ABOUT (SCRUM-331 audit, 2026-09-02). A dedicated
+  # portal runtime identity exists in BOTH projects — prep's `karos-cmo-prep`
+  # is already the portal's SA and is the value below, but production's
+  # `karos-cmo-sa@karoscmo` is NOT: the prod portal still runs as
+  # `firebase-adminsdk-fbsvc@karoscmo`, which is what the prod allowlist
+  # names. `karos-cmo-sa` was created and granted `run.invoker` for AU58 /
+  # SCRUM-357 and the switch was never made.
+  #
+  # So **AU58 must update this allowlist in the same change that switches the
+  # prod portal's service account**, or every engine call 401s the moment it
+  # lands. It was deliberately NOT pre-widened here: the value above is
+  # "the live runtime identity", per this comment's own method, and naming an
+  # identity nothing runs as would both break that method and — per the
+  # paragraph above — require the alternate-delimiter rewrite to express at
+  # all. Two entries is not a bigger string; it is a different flag syntax.
   _AUTH_ALLOWED_SERVICE_ACCOUNTS: "karos-cmo-prep@karoscmo-prep.iam.gserviceaccount.com"
 
 steps:
@@ -229,7 +254,7 @@ steps:
       - --no-allow-unauthenticated
       - --service-account=${_SERVICE_ACCOUNT}
       - --memory=2Gi
-      - --set-env-vars=GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},BQ_PROJECT_ID=${_BQ_PROJECT_ID},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},ANTHROPIC_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},CLOUD_ML_REGION=global,VERTEX_AI_LOCATION=${_REGION},GEMINI_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},PROMPT_STORE_DRIVER=firestore,QUEUE_PROVIDER=pubsub,QUEUE_TOPIC_RUN_JOBS=${_QUEUE_TOPIC_RUN_JOBS},PUBSUB_PROJECT_ID=${_PUBSUB_PROJECT_ID},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},GCS_ARTIFACTS_BUCKET=${_GCS_ARTIFACTS_BUCKET},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET},LANDING_ENGINE_TEMPLATE_ROOT=/app/packages/tools/karos-landing/assets/template,LANDING_ENGINE_ROOT=/tmp/landing-engine,INSTAGRAM_AGENT_REPO_ROOT=/app,PUBSUB_PUSH_AUDIENCE_URL=${_PUBSUB_PUSH_AUDIENCE_URL},AUTH_ENABLED=false,AUTH_AUDIENCE=${_AUTH_AUDIENCE},AUTH_ALLOWED_SERVICE_ACCOUNTS=${_AUTH_ALLOWED_SERVICE_ACCOUNTS}
+      - --set-env-vars=GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},BQ_PROJECT_ID=${_BQ_PROJECT_ID},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},ANTHROPIC_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},CLOUD_ML_REGION=global,VERTEX_AI_LOCATION=${_REGION},GEMINI_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},PROMPT_STORE_DRIVER=firestore,QUEUE_PROVIDER=pubsub,QUEUE_TOPIC_RUN_JOBS=${_QUEUE_TOPIC_RUN_JOBS},PUBSUB_PROJECT_ID=${_PUBSUB_PROJECT_ID},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},GCS_ARTIFACTS_BUCKET=${_GCS_ARTIFACTS_BUCKET},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET},LANDING_ENGINE_TEMPLATE_ROOT=/app/packages/tools/karos-landing/assets/template,LANDING_ENGINE_ROOT=/tmp/landing-engine,INSTAGRAM_AGENT_REPO_ROOT=/app,PUBSUB_PUSH_AUDIENCE_URL=${_PUBSUB_PUSH_AUDIENCE_URL},AUTH_ENABLED=true,AUTH_AUDIENCE=${_AUTH_AUDIENCE},AUTH_ALLOWED_SERVICE_ACCOUNTS=${_AUTH_ALLOWED_SERVICE_ACCOUNTS}
       - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest,UNSPLASH_ACCESS_KEY=${_UNSPLASH_ACCESS_KEY_SECRET}:latest,PEXELS_API_KEY=${_PEXELS_API_KEY_SECRET}:latest,PIXABAY_API_KEY=${_PIXABAY_API_KEY_SECRET}:latest,GOOGLE_PLACES_KEY=${_GOOGLE_PLACES_KEY_SECRET}:latest,SCRAPPYCOCO_API_KEY=${_SCRAPPYCOCO_API_KEY_SECRET}:latest
       # instagram-agent writes under `repoRoot` (INSTAGRAM_AGENT_REPO_ROOT=/app):
       # `.media-cache/<runId>/` from media.findImages, and
