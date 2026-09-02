@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { WorkspaceStore } from "@agent-engine/tool-common";
+import { computeToolCostUsd } from "@agent-engine/core";
 import { ScraperError, type ScrapedRecord, type ScraperProvider } from "@agent-engine/tool-karos-scraper";
 import {
   createKarosMediaTools,
@@ -68,8 +69,18 @@ function recordingScraper(posts: ScrapedRecord[], failWith?: Error) {
   return { historyCalls, scraper };
 }
 
-/** The vision model, stubbed the way `generate-image.test.ts` stubs `ImageGenerationClient`: a fake `models.generateContent`. */
-function recordingVision(responseText: string) {
+/**
+ * The vision model, stubbed the way `generate-image.test.ts` stubs
+ * `ImageGenerationClient`: a fake `models.generateContent`.
+ *
+ * `usage` defaults to a realistic (prompt, output) token pair — SCRUM-391:
+ * every real Gemini response reports `usageMetadata`, so the default reflects
+ * that rather than the absent case, which most tests are not exercising.
+ */
+function recordingVision(
+  responseText: string,
+  usage: { promptTokenCount?: number; candidatesTokenCount?: number } | null = { promptTokenCount: 1500, candidatesTokenCount: 350 },
+) {
   const calls: Array<{ model: string; textParts: string[]; imageParts: number }> = [];
   const client: VisionAnalysisClient = {
     models: {
@@ -80,7 +91,10 @@ function recordingVision(responseText: string) {
           textParts: parts.filter((p): p is { text: string } => "text" in p).map((p) => p.text),
           imageParts: parts.filter((p) => "inlineData" in p).length,
         });
-        return { candidates: [{ finishReason: "STOP", content: { parts: [{ text: responseText }] } }] };
+        return {
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: responseText }] } }],
+          ...(usage !== null ? { usageMetadata: usage } : {}),
+        };
       },
     },
   };
@@ -322,6 +336,58 @@ describe("media.ingestVisualPatterns — ingestion for a consenting client", () 
     expect(readResult.reference).toContain("warm interior light");
     expect(readResult.reference).toContain("full-bleed photo");
     expect(readResult.reference).toContain("has not been reviewed by a human yet");
+  });
+
+  /**
+   * SCRUM-391: this call used to report a synthetic `{unit: "vision-analysis",
+   * quantity: 1}` unit priced at $0 (no UNIT_PRICING row existed for that
+   * made-up SKU). It now reports the REAL token counts Gemini's response
+   * carries, billed at gemini-2.5-flash's real per-token rate — so the run's
+   * cost reflects what the call actually consumed, not zero, and not a
+   * flat guessed per-call rate either.
+   */
+  it("reports the real captured (prompt, output) token usage, priced above $0 and proportional to real consumption", async () => {
+    await store.writeJson("acme", ["client", "consent"], GRANTED);
+    const { scraper } = recordingScraper([post("p1", 900), post("p2", 400)]);
+    const { client } = recordingVision(ANALYSIS_JSON, { promptTokenCount: 1800, candidatesTokenCount: 420 });
+    const registry = tools({ scraper, visionClient: client });
+
+    const outcome = await registry["media.ingestVisualPatterns"]!.execute(
+      { accounts: [{ platform: "instagram", username: "acmecoffee" }], topPosts: 2 },
+      { ctx: CTX },
+    );
+
+    expect(outcome.status).toBe("success");
+    const usage = (outcome as { usage?: readonly { model: string; unit: string; quantity: number }[] }).usage;
+    expect(usage).toEqual([
+      { model: "gemini-2.5-flash-vision-analysis-input-token", unit: "input-token", quantity: 1800 },
+      { model: "gemini-2.5-flash-vision-analysis-output-token", unit: "output-token", quantity: 420 },
+    ]);
+
+    const cost = computeToolCostUsd(usage!);
+    expect(cost).toBeGreaterThan(0);
+    // 1800 * 0.3/1e6 + 420 * 2.5/1e6 = 0.00054 + 0.00105 = 0.00159
+    expect(cost).toBeCloseTo(0.00159, 6);
+  });
+
+  it("reports zero-quantity usage (not a fabricated flat unit) when the vision response carries no usageMetadata", async () => {
+    await store.writeJson("acme", ["client", "consent"], GRANTED);
+    const { scraper } = recordingScraper([post("p1", 900), post("p2", 400)]);
+    const { client } = recordingVision(ANALYSIS_JSON, null);
+    const registry = tools({ scraper, visionClient: client });
+
+    const outcome = await registry["media.ingestVisualPatterns"]!.execute(
+      { accounts: [{ platform: "instagram", username: "acmecoffee" }], topPosts: 2 },
+      { ctx: CTX },
+    );
+
+    expect(outcome.status).toBe("success");
+    const usage = (outcome as { usage?: readonly { model: string; unit: string; quantity: number }[] }).usage;
+    expect(usage).toEqual([
+      { model: "gemini-2.5-flash-vision-analysis-input-token", unit: "input-token", quantity: 0 },
+      { model: "gemini-2.5-flash-vision-analysis-output-token", unit: "output-token", quantity: 0 },
+    ]);
+    expect(computeToolCostUsd(usage!)).toBe(0);
   });
 
   it("appends a new version rather than overwriting, and can read an older one back", async () => {
