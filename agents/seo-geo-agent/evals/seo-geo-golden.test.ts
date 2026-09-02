@@ -17,7 +17,10 @@ describe("SEO & GEO agent golden run — structural assertions (RFC-01 §12 / RF
       expect(outcome.report).not.toBeNull();
       const report = outcome.report!;
 
-      expect(report.visibility.denominatorDecision.status).toBe("pending");
+      // SCRUM-390: the N vs N_e denominator is RESOLVED (AU28/SCRUM-319), not
+      // pending — the other three RFC-04 §4 gated decisions asserted below
+      // are still genuinely open.
+      expect(report.visibility.denominatorDecision.status).toBe("resolved");
       expect(report.geoScoreModel.computed).toBe(false);
       expect(report.connectorOverlay.connectors.every((c) => !c.connected)).toBe(true);
       expect(report.connectorOverlay.pendingConfigEdit.status).toBe("GATED_NOT_APPLIED");
