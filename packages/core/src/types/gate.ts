@@ -1,6 +1,21 @@
 import { z } from "zod";
 
 /**
+ * Exactly 3/4/6/8 hex digits — `#12345` and `#1234567` are invalid CSS colors
+ * and must not reach a stylesheet.
+ *
+ * IGSTYLE-1: the single source of truth for "is this string a legal hex
+ * color" across the whole system — `agents/instagram-agent/src/workflow/
+ * brand-render-tokens.ts` used to define its own byte-identical copy of this
+ * exact pattern; it now imports this one instead, so the render-time check
+ * and the reviewer-input check can never quietly drift apart. Lives here
+ * (not in the instagram agent) because `packages/core` has no dependency on
+ * any agent package, and `StyleEditSchema` below — the reviewer-facing gate
+ * contract — needs it regardless of which agent's colors it is validating.
+ */
+export const HEX_COLOR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+
+/**
  * The three verdict kinds every gate tool and every tool call resolve to,
  * everywhere in the system (RFC-01 §6): `content_fail` is real signal about
  * wrong/non-compliant content; `tooling_error` means something broke and must
@@ -125,6 +140,34 @@ export const SlideEditSchema = z.object({
 export type SlideEdit = z.infer<typeof SlideEditSchema>;
 
 /**
+ * A reviewer's structured color pick for the current run (IGSTYLE-1). The
+ * seven roles `agents/instagram-agent/src/workflow/brand-render-tokens.ts`'s
+ * `BrandRenderTokens` actually renders with: the six existing
+ * `BrandTokens["renderTokens"]` color keys (`ground`, `surface`, `fg`,
+ * `fg2`, `line`, `accentInk`) plus `accent` — the brand accent itself,
+ * which today is derived from `client/brand.json` outside `renderTokens`
+ * entirely; this schema is what gives a reviewer a way to override it for
+ * one run without touching that derivation.
+ *
+ * Every value validated against `HEX_COLOR` here, at the edge — never a
+ * bare `z.string()` the way the portal-authored `renderTokens` config
+ * fields are (a human typing a hex into a review panel gets a 400
+ * immediately; a config file gets `deriveBrandRenderTokens`'s own
+ * refuse-to-guess treatment instead, which is the right posture for each
+ * source).
+ */
+export const StyleEditSchema = z.object({
+  ground: z.string().regex(HEX_COLOR).optional(),
+  fg: z.string().regex(HEX_COLOR).optional(),
+  accent: z.string().regex(HEX_COLOR).optional(),
+  surface: z.string().regex(HEX_COLOR).optional(),
+  fg2: z.string().regex(HEX_COLOR).optional(),
+  line: z.string().regex(HEX_COLOR).optional(),
+  accentInk: z.string().regex(HEX_COLOR).optional(),
+});
+export type StyleEdit = z.infer<typeof StyleEditSchema>;
+
+/**
  * Everything a reviewer hand-changed before approving. Distinct from
  * `feedback` (words ABOUT the post, steering future drafts) — these are
  * changes TO the post, shipped as written. The reviewing workflow also
@@ -134,6 +177,15 @@ export type SlideEdit = z.infer<typeof SlideEditSchema>;
 export const ReviewEditsSchema = z.object({
   caption: z.string().min(1).max(2200).optional(),
   slides: z.array(SlideEditSchema).optional(),
+  /**
+   * IGSTYLE-1. Meaningful on `approve` AND `revise` (unlike `caption`/
+   * `slides`, which the surrounding `GateResponseSchema` doc comment marks
+   * approve-only) — a redraft supersedes hand-edited PROSE, but must not
+   * discard a color a person deliberately picked: that pick IS the
+   * instruction for the redraft. IGSTYLE-3 is what actually wires this
+   * into the render; this ticket only defines and threads the shape.
+   */
+  style: StyleEditSchema.optional(),
 });
 export type ReviewEdits = z.infer<typeof ReviewEditsSchema>;
 
@@ -196,7 +248,12 @@ export const GateResponseSchema = z
     feedback: z.string().min(1).optional(),
     /** Per-slide notes on the templates that rendered this output. */
     templateFeedback: z.array(TemplateFeedbackSchema).optional(),
-    /** In-place edits the reviewer made before approving — applied verbatim by the workflow. Meaningful on `approve` only (a redraft supersedes hand edits). */
+    /**
+     * In-place edits the reviewer made before approving — applied verbatim by
+     * the workflow. `caption`/`slides` are meaningful on `approve` only (a
+     * redraft supersedes hand edits); `edits.style` (IGSTYLE-1) is the
+     * exception — see its own doc comment on `ReviewEditsSchema`.
+     */
     edits: ReviewEditsSchema.optional(),
     /** ISO 8601 timestamp. */
     at: z.string().min(1),

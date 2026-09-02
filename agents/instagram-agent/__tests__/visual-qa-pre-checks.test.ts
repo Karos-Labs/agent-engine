@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { BrandLogoPlacement } from "@agent-engine/tool-karos-media";
+import { ACCENT_GROUND_CONTRAST_FLOOR, TEXT_CONTRAST_FLOOR, contrastRatio } from "../src/workflow/brand-render-tokens.js";
 import {
   BRAND_ASSET_INTEGRATION_CRITERION,
   COLOUR_HARMONY_CRITERION,
   COMPOSITION_RICHNESS_CRITERION,
   FONT_HIERARCHY_CRITERION,
   assessBrandAssetPresence,
+  assessContrastFacts,
   buildElevatedVisualQaCriteria,
   checkPaletteWithinKit,
 } from "../src/workflow/visual-qa-pre-checks.js";
@@ -175,5 +177,60 @@ describe("buildElevatedVisualQaCriteria — the model is only ever asked what co
     expect(criteria.map((c) => c.id).sort()).toEqual(
       [COMPOSITION_RICHNESS_CRITERION.id, FONT_HIERARCHY_CRITERION.id, BRAND_ASSET_INTEGRATION_CRITERION.id, COLOUR_HARMONY_CRITERION.id].sort(),
     );
+  });
+});
+
+describe("assessContrastFacts — SCRUM-393 (IGSTYLE-8): a fact, never a gate", () => {
+  // sitti's real, live brand kit (Appendix D of the IGSTYLE spec):
+  // #fff8d6 ground, #8a3b42 text (7.1:1, clears), #ff5b5f accent (2.8:1,
+  // below ACCENT_GROUND_CONTRAST_FLOOR).
+  const sittiKit = { cssVars: { "--bg": "#fff8d6", "--fg": "#8a3b42" } };
+
+  it("returns [] when the kit has no ground/fg pair at all — nothing derivable, nothing to report", () => {
+    expect(assessContrastFacts(undefined, ["#ff5b5f"])).toEqual([]);
+    expect(assessContrastFacts({ cssVars: {} }, ["#ff5b5f"])).toEqual([]);
+  });
+
+  it("reports the text (--fg on --bg) fact against TEXT_CONTRAST_FLOOR", () => {
+    const facts = assessContrastFacts(sittiKit, []);
+    const text = facts.find((f) => f.label === "text (--fg on --bg)");
+    expect(text).toBeDefined();
+    expect(text!.ratio).toBeCloseTo(contrastRatio("#8a3b42", "#fff8d6"), 5);
+    expect(text!.floor).toBe(TEXT_CONTRAST_FLOOR);
+    expect(text!.pass).toBe(true);
+  });
+
+  it("reports a real sub-floor accent as a FAILING fact — never throws, never gates", () => {
+    const facts = assessContrastFacts(sittiKit, ["#ff5b5f"]);
+    const accent = facts.find((f) => f.label === "accent #ff5b5f on ground");
+    expect(accent).toBeDefined();
+    expect(accent!.ratio).toBeCloseTo(contrastRatio("#ff5b5f", "#fff8d6"), 5);
+    expect(accent!.ratio).toBeLessThan(ACCENT_GROUND_CONTRAST_FLOOR);
+    expect(accent!.floor).toBe(ACCENT_GROUND_CONTRAST_FLOOR);
+    expect(accent!.pass).toBe(false);
+  });
+
+  it("reports a passing accent as a passing fact too — good numbers are reported, not just bad ones", () => {
+    // geektime's real kit: #272a35 ground, #a5e82b accent, 4.8:1 — clears.
+    const facts = assessContrastFacts({ cssVars: { "--bg": "#272a35", "--fg": "#f4f2ec" } }, ["#a5e82b"]);
+    const accent = facts.find((f) => f.label === "accent #a5e82b on ground");
+    expect(accent?.pass).toBe(true);
+  });
+
+  it("dedupes repeated accent hexes (case-insensitively) into one fact", () => {
+    const facts = assessContrastFacts(sittiKit, ["#FF5B5F", "#ff5b5f", "#ff5b5f"]);
+    expect(facts.filter((f) => f.label.startsWith("accent"))).toHaveLength(1);
+  });
+
+  it("still reports accent facts when there is a ground but no derivable text pair", () => {
+    const facts = assessContrastFacts({ cssVars: { "--bg": "#fff8d6" } }, ["#ff5b5f"]);
+    expect(facts.find((f) => f.label === "text (--fg on --bg)")).toBeUndefined();
+    expect(facts.find((f) => f.label === "accent #ff5b5f on ground")).toBeDefined();
+  });
+
+  it("reports one fact per distinct accent when a kit's ring is used across several slides", () => {
+    const facts = assessContrastFacts(sittiKit, ["#ff5b5f", "#111111"]);
+    const accentFacts = facts.filter((f) => f.label.startsWith("accent"));
+    expect(accentFacts.map((f) => f.label).sort()).toEqual(["accent #111111 on ground", "accent #ff5b5f on ground"]);
   });
 });

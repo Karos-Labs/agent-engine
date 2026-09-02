@@ -8,7 +8,14 @@ export const AppendEventInputSchema = z.object({
   // No existing TSDoc on these three fields to transcribe (SCRUM-293 flag) — synthesized from the tool's own doc comment and execute()'s usage.
   runId: z.string().min(1).describe("The run this event belongs to."),
   eventId: z.string().min(1).describe("Caller-minted idempotency key for this one event."),
-  level: z.enum(["info", "error", "success"]).describe("This event's severity/kind."),
+  // "warn" added by IGSTYLE-3/IGSTYLE-8 (agent-engine — the instagram-agent
+  // style-directive-refusal and contrast-below-floor ledger events, each on
+  // its own independent branch): a fact worth a reviewer's attention that
+  // does not rise to "error" (nothing failed; the run still completed) and
+  // is not "success" either. Purely additive — no existing exhaustive switch
+  // over this enum's members exists anywhere in this repo (checked before
+  // adding), so no other caller's behavior changes.
+  level: z.enum(["info", "warn", "error", "success"]).describe("This event's severity/kind."),
   message: z.string().min(1).describe("The human-readable event text."),
 });
 export type AppendEventInput = z.infer<typeof AppendEventInputSchema>;

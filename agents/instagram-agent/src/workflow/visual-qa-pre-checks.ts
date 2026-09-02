@@ -1,4 +1,5 @@
 import type { BrandLogoPlacement } from "@agent-engine/tool-karos-media";
+import { ACCENT_GROUND_CONTRAST_FLOOR, TEXT_CONTRAST_FLOOR, contrastRatio } from "./brand-render-tokens.js";
 import type { SlidesDataSelfCheck } from "./types.js";
 
 /**
@@ -116,7 +117,8 @@ export function checkPaletteWithinKit(usedHexes: readonly string[], kitPalette: 
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// 2. Brand-asset (logo) presence + AU38 contrast — a FACT, never a gate.
+// 2. Brand-asset (logo) presence + AU38 contrast, and (SCRUM-393/IGSTYLE-8)
+//    ground/fg + accent-on-ground contrast — all FACTS, never gates.
 // ─────────────────────────────────────────────────────────────────────────
 
 export type BrandAssetFact =
@@ -190,6 +192,77 @@ export function assessBrandAssetPresence(input: {
     scrimmed: input.placement.decision === "scrim",
     ...(input.placement.groundContrast !== undefined ? { groundContrast: input.placement.groundContrast } : {}),
   };
+}
+
+/**
+ * One measured WCAG contrast check, reported as a fact — the ratio, the
+ * floor it's judged against, and whether it cleared.
+ *
+ * SCRUM-393 (IGSTYLE-8). `buildAccentRing` (`brand-render-tokens.ts`)
+ * exempts only the ring's ANCHOR from `ACCENT_GROUND_CONTRAST_FLOOR` — on
+ * purpose, per that function's own comment: refusing a client's real,
+ * already-shipping accent would be worse than rendering it. But that
+ * exemption from GATING was silently doubling as an exemption from ever
+ * being MEASURED at all: two real clients (`sitti`, coral-on-cream at
+ * 2.8:1; `kindlyyours`, tan-on-white at 2.2:1) ship a low-contrast anchor
+ * and nothing anywhere says so. Both are genuine properties of those
+ * brands' own colors, not defects to silently override — so this reports
+ * them, exactly the way section 2 above reports a present-or-absent logo:
+ * a number for a human to see, never a verdict this pre-check enforces.
+ */
+export interface ContrastFact {
+  /** e.g. "text (--fg on --bg)" or "accent #f15151 on ground". */
+  label: string;
+  /** The measured WCAG ratio, 1..21. */
+  ratio: number;
+  /** The floor this pair is judged against — `TEXT_CONTRAST_FLOOR` or `ACCENT_GROUND_CONTRAST_FLOOR`. */
+  floor: number;
+  pass: boolean;
+}
+
+/**
+ * Every contrast fact worth reporting for this attempt: the ground/fg text
+ * pair (if the kit derived both), and every DISTINCT accent hex this
+ * attempt's render actually used against the ground (if the kit derived a
+ * ground at all) — deliberately the same `usedHexes` input
+ * `checkPaletteWithinKit` above already gates on, so "which accents are
+ * being judged" never drifts between the gate and this fact.
+ *
+ * Reports facts for BOTH passes and failures — "a reviewer should see the
+ * good numbers too" is the ticket's own acceptance line, and it is also
+ * what makes an all-clear client's empty-warnings silence legible as "we
+ * checked and it was fine" rather than "we didn't check."
+ *
+ * No `kit`/no `ground` still returns `[]` — the same refuse-to-guess rule
+ * every other check in this module follows: nothing derivable means
+ * nothing to report an opinion about, never a manufactured failure.
+ */
+export function assessContrastFacts(
+  kit: { cssVars: Record<string, string> } | undefined,
+  accentUsed: readonly string[],
+): ContrastFact[] {
+  const ground = kit?.cssVars["--bg"];
+  const fg = kit?.cssVars["--fg"];
+  const facts: ContrastFact[] = [];
+
+  if (ground !== undefined && fg !== undefined) {
+    const ratio = contrastRatio(fg, ground);
+    facts.push({ label: "text (--fg on --bg)", ratio, floor: TEXT_CONTRAST_FLOOR, pass: ratio >= TEXT_CONTRAST_FLOOR });
+  }
+
+  if (ground !== undefined) {
+    for (const hex of [...new Set(accentUsed.map((h) => h.toLowerCase()))]) {
+      const ratio = contrastRatio(hex, ground);
+      facts.push({
+        label: `accent ${hex} on ground`,
+        ratio,
+        floor: ACCENT_GROUND_CONTRAST_FLOOR,
+        pass: ratio >= ACCENT_GROUND_CONTRAST_FLOOR,
+      });
+    }
+  }
+
+  return facts;
 }
 
 // ─────────────────────────────────────────────────────────────────────────

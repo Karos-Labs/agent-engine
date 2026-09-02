@@ -2,6 +2,7 @@ import type { AgentContext, AgentToolRegistry, GateVerdict } from "@agent-engine
 import { WorkflowToolingFailure } from "@agent-engine/workflow";
 import type { RenderCarouselInput, Slide } from "@agent-engine/tool-karos-publish";
 import { templateFileName } from "@agent-engine/tool-karos-templates";
+import { contrastRatio, paletteForSlide } from "./brand-render-tokens.js";
 import type {
   BrandTokens,
   ImageSelection,
@@ -39,6 +40,252 @@ function templateForLayout(layout: InstagramSlideLayout, slide: InstagramSlideCo
 
 /** The five archetype template filenames, for a caller checking which of them a `templateDir` actually holds. */
 export const ARCHETYPE_TEMPLATE_FILES: readonly string[] = Object.values(LAYOUT_TEMPLATE_FILES);
+
+// ─────────────────────────────────────────────────────────────────────────
+// IGSTYLE-10, §10a/10b/10c/10e — smart template & palette variation.
+//
+// Two independent axes decide, per slide, whether it renders with the
+// client's PRIMARY ground/fg pairing (the common case) or an ALTERNATIVE one:
+//
+//   groundFg — swap which derived neutral is the ground. Safe for text
+//     legibility by construction (`contrastRatio` is symmetric — an inverted
+//     pair has EXACTLY the primary pair's text contrast), but can break the
+//     accent's OWN legibility against the new ground, so it is checked
+//     per slide against that slide's already-resolved accent (see
+//     `decideGroundFgInversion` below). Works for any client with a derived
+//     ground/fg pair — 7 of 7 real clients, per the ticket's own fleet audit.
+//
+//   accent — `paletteForSlide` (7a) already walks the ring every slide; nothing
+//     new is decided here, this section only REPORTS its `rotates` outcome
+//     into the same `variationPlan` shape, so a one-colour-ring client's
+//     "nothing to vary here" is as visible as the groundFg axis's own.
+//
+// Both axes are pure functions of (index, seed) — see `paletteForSlide`'s own
+// "SEEDED, NOT RANDOM" contract, which this generalises from a ring position
+// to a proportion.
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * The target share of slides that render with the ALTERNATIVE pairing rather
+ * than the client's primary one. 75/25 is the ticket's own stated ratio
+ * (§10b) — named so nobody mistakes it for a tunable knob at a call site.
+ */
+export const VARIATION_MIX = 0.25;
+
+/**
+ * (sqrt(5)-1)/2 — the golden ratio's conjugate, the real number classically
+ * used to build a low-discrepancy (Weyl/additive-recurrence) sequence: adding
+ * it modulo 1 on every step equidistributes over any window (so a long
+ * carousel's alternate rate converges on `VARIATION_MIX`) and, by the
+ * three-distance theorem, the gaps between any two "alternative" hits take
+ * only two nearby sizes — for a mix at or below 0.5 that rules out two
+ * alternates landing back to back, which is exactly §10b's "spread out, not a
+ * per-slide coin flip" requirement. `paletteForSlide`'s ring walk is a
+ * simpler case of the same idea (a seeded position per index); this
+ * generalises it to a seeded PROPORTION.
+ */
+const GOLDEN_RATIO_CONJUGATE = 0.6180339887498949;
+
+/**
+ * FNV-1a 32-bit — a byte-identical copy of `brand-render-tokens.ts`'s own
+ * private hash, duplicated rather than imported so this ticket's diff stays
+ * inside the files IGSTYLE-10 actually needs to touch (its own §2.1 file
+ * list does not include `brand-render-tokens.ts`). Pure, no clock, no
+ * randomness — the seed is the only input, same contract as the original.
+ */
+function fnv1a32ForVariation(input: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+
+/**
+ * Whether slide `index` draws the ALTERNATIVE pairing under the seeded
+ * low-discrepancy walk described above. A pure function of `(index, mix,
+ * seed)` — same seed and index always agree; a different seed (a different
+ * run) starts the walk at a different phase, so WHICH slides land in the
+ * mix varies across posts without ever varying within a re-render of the
+ * same one (determinism, acceptance criterion 2; cross-run variety,
+ * criterion 3).
+ */
+export function isVariationSlot(index: number, mix: number, seed: string): boolean {
+  if (mix <= 0) return false;
+  if (mix >= 1) return true;
+  const phase = seed.length > 0 ? fnv1a32ForVariation(seed) / 0x100000000 : 0;
+  const i = Number.isFinite(index) ? index : 0;
+  const position = (phase + i * GOLDEN_RATIO_CONJUGATE) % 1;
+  return position < mix;
+}
+
+/**
+ * The floor an accent must clear against whatever ground it actually renders
+ * on. A byte-identical copy of `brand-render-tokens.ts`'s own private
+ * `ACCENT_GROUND_CONTRAST_FLOOR` — duplicated for the same "stay inside
+ * IGSTYLE-10's own file list" reason as `fnv1a32ForVariation` above. §10c-2:
+ * this is the constraint that actually bites on inversion — flipping the
+ * ground changes accent contrast even though text contrast (checked by
+ * construction, see the module doc comment above) cannot regress.
+ */
+const INVERTED_ACCENT_GROUND_CONTRAST_FLOOR = 3;
+
+/**
+ * The suffix an inverted-variant template file carries, inserted before the
+ * extension. Exported so `create-instagram-agent-workflow.ts`'s own
+ * materialization step can recognise (and skip re-inverting) a file this
+ * naming already produced, without duplicating the literal string.
+ */
+export const INVERTED_TEMPLATE_SUFFIX = "-inv";
+
+/**
+ * The filename an archetype's ground/fg-INVERTED variant materializes as,
+ * sibling to the primary file in the same `templateDir` — `Slide.template`
+ * is a path resolved against ONE shared `templateDir` for the whole
+ * carousel (`publish.renderCarousel`'s own contract), so an inverted variant
+ * has to live beside the primary file, not in a different directory.
+ */
+export function invertedTemplateFileName(primaryFile: string): string {
+  const dot = primaryFile.lastIndexOf(".");
+  return dot === -1 ? `${primaryFile}${INVERTED_TEMPLATE_SUFFIX}` : `${primaryFile.slice(0, dot)}${INVERTED_TEMPLATE_SUFFIX}${primaryFile.slice(dot)}`;
+}
+
+/** §10a — this round's derived ground/fg pair, and whether variation is even on the table this round. */
+export interface GroundFgInversionConfig {
+  /** The effective kit's `--bg` — what an inverted slide's fg becomes. */
+  ground: string;
+  /** The effective kit's `--fg` — what an inverted slide's ground becomes. */
+  fg: string;
+  /**
+   * §10c-4 — true when THIS round's active reviewer directive (Layer 2)
+   * pinned any colour at all. Suppresses inversion entirely for the round:
+   * a person who just said "make it dark" must not get 25% light slides.
+   * Never suppresses the accent axis (7a) — that shipped, unconditional,
+   * before this ticket and IGSTYLE-10 does not revisit it.
+   */
+  directivePinned: boolean;
+}
+
+/** One axis's status for one slide, for the gate payload's `variationPlan` (§10e). */
+export interface VariationPlanEntry {
+  slide: number;
+  axis: "groundFg" | "accent";
+  used: boolean;
+  /** Present only when `used` is false AND there's a specific reason to name — never invented for the ordinary "nothing to report" case. */
+  reason?: "ring=1" | "accent-fails-inverted-ground" | "directive-pinned" | "no-ground-pair";
+}
+
+/** The accent one slide actually renders with, and whether that came from a genuine rotation — shared by `assembleSlidesData` and `buildVariationPlan` so the two can never disagree about what a slide's accent is. */
+function resolveSlideAccent(
+  index: number,
+  accentRing: string[] | undefined,
+  paletteSeed: string | undefined,
+  fallbackAccent: string,
+): { accent: string; rotates: boolean } {
+  const slidePalette =
+    accentRing !== undefined ? paletteForSlide({ palette: accentRing }, { index, ...(paletteSeed !== undefined ? { seed: paletteSeed } : {}) }) : undefined;
+  return slidePalette?.rotates === true ? { accent: slidePalette.accent, rotates: true } : { accent: fallbackAccent, rotates: false };
+}
+
+/**
+ * §10a/10c — whether slide `index` inverts its ground/fg pairing, and why
+ * not when it doesn't. The walk is seeded from `paletteSeed`, namespaced
+ * (`:groundFg`) so this axis's phase needn't coincide with the accent axis's
+ * own walk over the same seed.
+ */
+function decideGroundFgInversion(
+  index: number,
+  paletteSeed: string | undefined,
+  slideAccent: string,
+  config: GroundFgInversionConfig | undefined,
+): { used: boolean; reason?: VariationPlanEntry["reason"] } {
+  if (config === undefined) return { used: false, reason: "no-ground-pair" };
+  if (config.directivePinned) return { used: false, reason: "directive-pinned" };
+  // §10c-2: the constraint that actually bites — the accent must still clear
+  // the floor against what BECOMES the ground once inverted (today's fg).
+  // Checked BEFORE the walk (not after): the accent itself can vary per
+  // slide (7a's own ring walk), so whether inversion is even legal is a
+  // per-slide fact, and a slide whose accent genuinely can't clear the
+  // floor should say so regardless of whether the walk would have picked it
+  // — the walk deciding "not this slide's turn" is the only case honestly
+  // reported as no reason at all.
+  if (contrastRatio(slideAccent, config.fg) < INVERTED_ACCENT_GROUND_CONTRAST_FLOOR) {
+    return { used: false, reason: "accent-fails-inverted-ground" };
+  }
+  if (!isVariationSlot(index, VARIATION_MIX, `${paletteSeed ?? ""}:groundFg`)) return { used: false };
+  return { used: true };
+}
+
+/**
+ * The gate payload's own §10e report: which axis each slide used, and why
+ * not when it didn't. Deliberately standalone rather than folded into
+ * `assembleSlidesData`'s return value — `RenderCarouselInput` is
+ * `publish.renderCarousel`'s exact input contract (RFC-03 §1), not a place
+ * to smuggle reporting metadata — but built from the SAME pure per-slide
+ * decisions `assembleSlidesData` itself uses, so the two can never drift
+ * apart on what a slide actually rendered with.
+ */
+export function buildVariationPlan(params: {
+  slideNs: readonly number[];
+  accentRing?: string[] | undefined;
+  paletteSeed?: string | undefined;
+  /** The same fallback `assembleSlidesData` resolves to for a non-rotating slide. */
+  brandAccentFallback: string;
+  groundFgInversion?: GroundFgInversionConfig | undefined;
+}): VariationPlanEntry[] {
+  const plan: VariationPlanEntry[] = [];
+  for (const n of params.slideNs) {
+    const { accent, rotates } = resolveSlideAccent(n, params.accentRing, params.paletteSeed, params.brandAccentFallback);
+    plan.push({ slide: n, axis: "accent", used: rotates, ...(rotates ? {} : { reason: "ring=1" as const }) });
+
+    const groundFg = decideGroundFgInversion(n, params.paletteSeed, accent, params.groundFgInversion);
+    plan.push({ slide: n, axis: "groundFg", used: groundFg.used, ...(groundFg.reason !== undefined ? { reason: groundFg.reason } : {}) });
+  }
+  return plan;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// IGSTYLE-10, §10d — template/layout variation, drawing on the SAME
+// distribution as §10a/10b (`VARIATION_MIX`, the same low-discrepancy walk)
+// but applied to WHICH registry row an archetype renders through, reusing
+// the template registry's own `qualityScore` rather than inventing a
+// separate mechanism.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** The one field this axis needs from a `TemplateDefinition` row — kept minimal so this file doesn't need to import the registry's own type. */
+export interface TemplateScoreCandidate {
+  templateId: string;
+  qualityScore: number;
+}
+
+/**
+ * Which of an archetype's OTHER rows the variation budget may draw from:
+ * every candidate at or above the mean score of every row the registry
+ * offered for this archetype, excluding whichever row is already the
+ * primary (`resolveBest`'s own winner). A reviewer's down-score moves both
+ * the row's own score AND the mean it's compared against, but never lets a
+ * downgraded row back in just because the whole set fell with it — it must
+ * still clear the (possibly-lowered) bar on its own merits.
+ */
+export function eligibleAlternateTemplates(allCandidates: readonly TemplateScoreCandidate[], primaryTemplateId: string): TemplateScoreCandidate[] {
+  if (allCandidates.length === 0) return [];
+  const mean = allCandidates.reduce((sum, c) => sum + c.qualityScore, 0) / allCandidates.length;
+  return allCandidates.filter((c) => c.templateId !== primaryTemplateId && c.qualityScore >= mean);
+}
+
+/**
+ * Seeded pick among the eligible pool — deterministic, never random, same
+ * contract as every other seeded choice in this module. `undefined` when
+ * there is nothing eligible (a single-row archetype, or every other row
+ * already below the mean), which the caller reads as "this archetype has no
+ * alternative to offer" and keeps the primary row for every slide.
+ */
+export function pickAlternateTemplate(eligible: readonly TemplateScoreCandidate[], seed: string): TemplateScoreCandidate | undefined {
+  if (eligible.length === 0) return undefined;
+  const idx = fnv1a32ForVariation(`${seed}:template-alt`) % eligible.length;
+  return eligible[idx];
+}
 
 /**
  * Hebrew, Arabic, and their presentation-form/extended Unicode blocks — the
@@ -489,6 +736,29 @@ export function assembleSlidesData(params: {
   brandHandle?: string | undefined;
   /** Reviewer typography per slide number (Phase 2 in-place edits). Absent slides keep the defaults. */
   slideStyleOverrides?: ReadonlyMap<number, SlideStyleOverride>;
+  /**
+   * IGSTYLE-7, §7a — the effective kit's accent ring (`BrandRenderTokens.palette`),
+   * wiring `paletteForSlide`'s already-seeded rotation into the render path for
+   * the first time. Absent, or a ring of length ≤ 1, falls back to
+   * `brandAccentFallback`/`brandTokens.accentColor` for EVERY slide exactly as
+   * before this ticket — a one-colour kit is unchanged.
+   */
+  accentRing?: string[] | undefined;
+  /**
+   * Seeds the ring walk (`paletteForSlide`'s own "SEEDED, NOT RANDOM" contract)
+   * — the run id, per §7a. Absent is treated as phase 0 (same as an empty
+   * seed), which only matters when `accentRing` actually has more than one
+   * member.
+   */
+  paletteSeed?: string | undefined;
+  /**
+   * IGSTYLE-10, §10a — this round's ground/fg inversion axis. Absent means
+   * unavailable this round (no derived pair, or nothing to gate against) —
+   * every slide keeps the client's primary pairing, exactly as before this
+   * ticket. See `GroundFgInversionConfig`'s own doc comment for what
+   * suppresses it even when present.
+   */
+  groundFgInversion?: GroundFgInversionConfig | undefined;
 }): RenderCarouselInput {
   const selectionByN = new Map(params.selections.map((s) => [s.n, s]));
 
@@ -518,10 +788,16 @@ export function assembleSlidesData(params: {
     const { layout } = resolveLayout(slide, params.availableTemplates, usedLayouts, params.validatedCustomArchetypeIds);
     if (layout === "custom") usedLayouts.add(slide.customArchetype!.archetypeId);
     else if (layout !== "photo" && layout !== "text_only") usedLayouts.add(layout);
+    // IGSTYLE-7, §7a — a slide's accent comes from the ring walk rather than
+    // one shared `accentColor` whenever the kit can actually rotate.
+    // `rotates: false` (an empty or one-member ring) keeps every slide on the
+    // SAME existing `accentColor` fallback — a one-colour kit renders exactly
+    // as it did before this ticket, never a manufactured "variation."
+    const { accent: slideAccentColor } = resolveSlideAccent(slide.n, params.accentRing, params.paletteSeed, accentColor);
     const { fields, htmlFragments } = contentFor(
       layout,
       slide,
-      accentColor,
+      slideAccentColor,
       direction,
       {
         handle: params.brandHandle,
@@ -535,9 +811,15 @@ export function assembleSlidesData(params: {
     // reintroduce the "every slide needs a picture" coupling this set exists
     // to break.
     const imagePath = layout === "photo" ? (selection?.imagePath ?? undefined) : undefined;
+    const primaryTemplate = templateForLayout(layout, slide, params.brandTokens.slideTemplate);
+    // IGSTYLE-10, §10a/10c — this slide's ground/fg pairing: the inverted
+    // sibling file when the seeded walk lands here AND the accent still
+    // clears the floor against the ground that inversion would produce;
+    // the primary file (unchanged from before this ticket) otherwise.
+    const { used: inverted } = decideGroundFgInversion(slide.n, params.paletteSeed, slideAccentColor, params.groundFgInversion);
     return {
       n: slide.n,
-      template: templateForLayout(layout, slide, params.brandTokens.slideTemplate),
+      template: inverted ? invertedTemplateFileName(primaryTemplate) : primaryTemplate,
       fields,
       images: imagePath ? { hero: imagePath } : {},
       htmlFragments,

@@ -1,4 +1,6 @@
 import { describe, expect, it, vi, afterEach, beforeEach } from "vitest";
+import fsp from "node:fs/promises";
+import pathMod from "node:path";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import type { AgentToolRegistry } from "@agent-engine/core";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
@@ -83,5 +85,94 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
 
     const stepRecords = await durableStore.listSteps(params.runId);
     expect(stepRecords.every((s) => s.status === "completed")).toBe(true);
+  }, 60000);
+
+  /**
+   * IGSTYLE-3, §2.3's own acceptance line: "Resume determinism — extend
+   * resume-idempotency.test.ts". A revision round's `04g-style-directive`
+   * step must behave exactly like every other checkpointed step above — a
+   * resume that replays the workflow function from the top must not
+   * re-invoke a single tool or model call for a round that already reached
+   * its gate, and the round's materialized template must stay byte-identical.
+   *
+   * The one deliberate exception, called out by `ensureTemplatesOnDisk`'s own
+   * doc comment (this file's step above it): that function is NOT itself
+   * checkpointed — it re-verifies the template file is actually on THIS
+   * instance's disk on every attempt, on purpose, so a resume that lands on
+   * a different Cloud Run instance (whose disk never saw round 1's file at
+   * all) still gets it written. So this test does not assert "no filesystem
+   * write happened" — it asserts the two things IGSTYLE-3 actually promises:
+   * no tool/model call re-fires, and the file's CONTENT does not drift.
+   */
+  it("a resumed run past a style-directive revision does not re-invoke any tool/model call, and the materialized template stays byte-identical (IGSTYLE-3 resume determinism)", async () => {
+    const PLAIN_BRAND = {
+      name: "Plain Co",
+      colors: { neutralDark: "#17181C", neutralLight: "#F2F2F2" },
+      visualStyle: "Dark Mode",
+    };
+    await env.store.writeJson("acme", ["client", "brand"], PLAIN_BRAND);
+
+    const copy = goodCopyOutput();
+    const draftTurns = () => [finalTurn(copy), finalTurn(goodImageVettingOutput()), finalTurn(goodVisualQaOutput())];
+    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), ...draftTurns(), ...draftTurns()]);
+
+    const tools: AgentToolRegistry = { ...env.tools, "publish.renderCarousel": fakeRenderCarousel(env.tools["publish.renderCarousel"]!) };
+    const { spied, callCounts } = spyOnAllTools(tools);
+    const workflowFn = createInstagramAgentWorkflow({
+      tools: spied,
+      promptStore: makePromptStore(),
+      router,
+      repoRoot: env.repoRoot,
+      imageCandidatePool: goodImageCandidatePool(),
+    });
+
+    const runId = "instagram_run_resume_style_directive";
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+
+    const r0 = await engine.run(workflowFn, { ...params, runId });
+    expect(r0.status).toBe("awaiting_gate");
+
+    await engine.resolveGate(runId, "09a-batch-review-r0", {
+      decision: "revise",
+      actor: "jane@karoslabs.com",
+      feedback: "make the background darker and the text orange",
+      at: new Date().toISOString(),
+    });
+
+    const r1 = await engine.run(workflowFn, { ...params, runId });
+    expect(r1.status).toBe("awaiting_gate");
+    const countsAfterR1 = callCounts();
+    const completeCallsAfterR1 = (router.complete as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    const round1Html = await fsp.readFile(pathMod.join(env.repoRoot, ".template-cache", runId, "slide.html"), "utf8");
+    expect(round1Html).toContain("--fg: #FFA500;");
+
+    const stepsAfterR1 = await durableStore.listSteps(runId);
+    const directiveStepsAfterR1 = stepsAfterR1.filter((s) => s.stepId === "04g-style-directive-r1");
+    expect(directiveStepsAfterR1).toHaveLength(1);
+    expect(directiveStepsAfterR1[0]!.status).toBe("completed");
+
+    // Resume with NO new gate resolution — same unresolved gate, replayed
+    // from the top. Every checkpointed step up to and including
+    // `04g-style-directive-r1` must short-circuit: zero new tool calls, zero
+    // new model calls, and the SAME single completed step record (never a
+    // second row for the same id).
+    const r1Again = await engine.run(workflowFn, { ...params, runId });
+    expect(r1Again.status).toBe("awaiting_gate");
+
+    expect(callCounts()).toEqual(countsAfterR1);
+    expect((router.complete as ReturnType<typeof vi.fn>).mock.calls.length).toBe(completeCallsAfterR1);
+
+    const stepsAfterResume = await durableStore.listSteps(runId);
+    const directiveStepsAfterResume = stepsAfterResume.filter((s) => s.stepId === "04g-style-directive-r1");
+    expect(directiveStepsAfterResume).toHaveLength(1);
+    expect(directiveStepsAfterResume[0]!.output).toEqual(directiveStepsAfterR1[0]!.output);
+
+    // `ensureTemplatesOnDisk` is deliberately NOT checkpointed (re-verified
+    // every attempt for cross-instance resume safety) — it may re-run, but
+    // must reproduce the exact same bytes, never drift on a mere resume.
+    const round1HtmlAfterResume = await fsp.readFile(pathMod.join(env.repoRoot, ".template-cache", runId, "slide.html"), "utf8");
+    expect(round1HtmlAfterResume).toBe(round1Html);
   }, 60000);
 });
