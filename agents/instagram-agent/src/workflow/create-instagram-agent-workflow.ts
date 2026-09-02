@@ -23,7 +23,17 @@ import {
 } from "@agent-engine/tool-karos-templates";
 import { brandLogoDataUri, downloadBrandLogo, parseBrandLogoDataUri, type BrandLogoPlacement } from "@agent-engine/tool-karos-media";
 import { buildBrandHeadHtml, buildBrandLogoBodyHtml, deriveBrandRenderTokens, planBrandLogo, type BrandRenderTokens } from "./brand-render-tokens.js";
-import { ARCHETYPE_TEMPLATE_FILES, assembleSlidesData, checkSlidesData, resolveLayout } from "./slides-data.js";
+import {
+  ARCHETYPE_TEMPLATE_FILES,
+  assembleSlidesData,
+  buildVariationPlan,
+  checkSlidesData,
+  INVERTED_TEMPLATE_SUFFIX,
+  invertedTemplateFileName,
+  resolveLayout,
+  type GroundFgInversionConfig,
+  type VariationPlanEntry,
+} from "./slides-data.js";
 import { checkCraftHygiene } from "./craft-hygiene.js";
 import { checkExpectedScript, languageGateText, runLanguageFluency, LANGUAGE_FLUENCY_STEP_ID, LANGUAGE_SCRIPT_STEP_ID } from "./language-gate.js";
 import { assessBrandAssetPresence, buildElevatedVisualQaCriteria, checkPaletteWithinKit } from "./visual-qa-pre-checks.js";
@@ -1442,6 +1452,52 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           }
         }
       }
+
+      // ── IGSTYLE-10, §10a — materialize every archetype file's ground/fg-
+      // INVERTED sibling, so a slide `assembleSlidesData` points at the
+      // "-inv" filename finds it on disk. Written unconditionally, same
+      // as the custom-archetype block above: a few more KB of writes is
+      // cheap next to a failed run, and it keeps this in lockstep with
+      // whatever the primary materialization (registry, branded-copy, or
+      // custom-archetype) just wrote — including a custom archetype's own
+      // file, which is why this runs LAST, after both blocks above.
+      //
+      // Only possible when the effective kit actually derived a ground/fg
+      // pair — nothing to swap otherwise, §10a's own "a derivable neutral
+      // pair" requirement — and only when the renderer is pointed at a
+      // writable per-run directory rather than the client's own read-only
+      // `templateDir` (the no-registry, no-brand-kit floor, which also never
+      // derives a pair in the first place, so this is mostly
+      // belt-and-suspenders).
+      const invertGround = effectiveKit?.cssVars["--bg"];
+      const invertFg = effectiveKit?.cssVars["--fg"];
+      if (invertGround !== undefined && invertFg !== undefined && effectiveTemplateDir !== frozen.brandTokens.templateDir) {
+        const absDir = path.resolve(options.repoRoot, effectiveTemplateDir);
+        // Appended AFTER whatever `:root{}` the primary file's own materialization
+        // already spliced in — equal CSS specificity, later wins, the same rule
+        // `buildBrandHeadHtml`'s own doc comment already relies on.
+        const invertedHeadHtml = `<style>\n:root {\n  --bg: ${invertFg};\n  --fg: ${invertGround};\n}\n</style>`;
+        const isAlreadyInverted = (file: string): boolean => {
+          const dot = file.lastIndexOf(".");
+          const stem = dot === -1 ? file : file.slice(0, dot);
+          return stem.endsWith(INVERTED_TEMPLATE_SUFFIX);
+        };
+        try {
+          const htmlFiles = (await fs.readdir(absDir)).filter((f) => f.endsWith(".html") && !isAlreadyInverted(f));
+          for (const file of htmlFiles) {
+            const primary = await fs.readFile(path.join(absDir, file), "utf8");
+            const inverted = primary.includes("</head>") ? primary.replace("</head>", `${invertedHeadHtml}\n</head>`) : `${invertedHeadHtml}\n${primary}`;
+            await fs.writeFile(path.join(absDir, invertedTemplateFileName(file)), inverted, "utf8");
+          }
+        } catch (error) {
+          // Same "degrade, never fail the run" posture as every other write
+          // in this function: a slide that wanted the inverted variant and
+          // didn't get one falls through to `publish.renderCarousel`'s own
+          // missing-template tooling error, which is loud (a real trace
+          // entry), never a silently-wrong render.
+          console.error("ensureTemplatesOnDisk: writing ground/fg-inverted template variants failed", error);
+        }
+      }
     };
 
     // ── 05-08b: write copy -> vet images -> emit + self-check + craft-hygiene
@@ -1547,6 +1603,16 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        * or above `VARIATION_THRESHOLD`, or no learned prior at all.
        */
       styleVariation?: StyleVariationEntry[];
+      /**
+       * IGSTYLE-10, §10e — which axis each slide used this attempt, and why
+       * not when it didn't (`variationPlan`'s own doc comment in
+       * `slides-data.ts` names every reason string). Absent only when
+       * neither axis was even attempted — no accent ring AND no derived
+       * ground/fg pair, i.e. a client with no brand kit at all — matching
+       * every other optional gate-payload field's "absent, never empty"
+       * convention here.
+       */
+      variationPlan?: VariationPlanEntry[];
     }
 
     /** Never prose — excluded from anything a human or the topic guardrail reads as text. */
@@ -1673,6 +1739,23 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // `ensureTemplatesOnDisk`, and every `effectiveKit?.X` read further down
       // in this attempt loop — now sees THIS round's kit.
       effectiveKit = revisionEffectiveKit;
+
+      // ── IGSTYLE-10, §10a/10c-4 — this round's ground/fg inversion axis. ──
+      //
+      // Undefined (never attempted) when the effective kit derives no
+      // ground/fg pair at all — §10a's own "a derivable neutral pair"
+      // requirement. `directivePinned` reads THIS round's own resolved
+      // Layer-2 patch (`styleDirectiveResult.overrides`, never the merged/
+      // varied kit) — a reviewer who pinned so much as one colour this round
+      // must see every slide obey it, never 25% inverted against it.
+      const groundFgInversion: GroundFgInversionConfig | undefined =
+        effectiveKit?.cssVars["--bg"] !== undefined && effectiveKit.cssVars["--fg"] !== undefined
+          ? {
+              ground: effectiveKit.cssVars["--bg"],
+              fg: effectiveKit.cssVars["--fg"],
+              directivePinned: Object.keys(styleDirectiveResult.overrides).length > 0,
+            }
+          : undefined;
 
       const allStyleRefusals: StyleRefusal[] = [...styleDirectiveResult.refusals, ...kitRefusals];
       // Loud refusals (§2.3, mandatory): a silently-dropped directive is
@@ -2289,6 +2372,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // falls back to `brandAccentFallback` above for every slide.
           accentRing: effectiveKit?.palette ?? [],
           paletteSeed: wf.runId,
+          ...(groundFgInversion !== undefined ? { groundFgInversion } : {}),
         }),
       );
 
@@ -2332,6 +2416,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           ...(effectiveKit?.handle !== undefined ? { brandHandle: effectiveKit.handle } : {}),
             accentRing: effectiveKit?.palette ?? [],
             paletteSeed: wf.runId,
+            ...(groundFgInversion !== undefined ? { groundFgInversion } : {}),
           }),
         );
         copy = strippedCopy;
@@ -2448,6 +2533,23 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           `step 07's self-check never passed after ${MAX_SELF_CHECK_ATTEMPTS} attempt(s) (initial + ${MAX_SELF_CHECK_ATTEMPTS - 1} return(s) to step 05) — last reason: ${lastSelfCheckReason}`,
         );
       }
+      // IGSTYLE-10, §10e — reconstructed from the SAME pure per-slide
+      // decisions `assembleSlidesData` itself used to build `finalSlidesData`
+      // (`buildVariationPlan`'s own doc comment), so the report can never
+      // drift from what actually rendered. Gated on a brand kit existing at
+      // all — a client with neither an accent ring nor a derived ground/fg
+      // pair has nothing either axis could have done, so nothing is reported,
+      // matching every other optional field's "absent, not noise" convention.
+      const variationPlan =
+        effectiveKit !== undefined
+          ? buildVariationPlan({
+              slideNs: finalSlidesData.slides.map((s) => s.n),
+              accentRing: effectiveKit.palette,
+              paletteSeed: wf.runId,
+              brandAccentFallback: frozen.brandTokens.accentColor ?? effectiveKit.brandAccent ?? "#C4552F",
+              ...(groundFgInversion !== undefined ? { groundFgInversion } : {}),
+            })
+          : undefined;
       return {
         copy: finalCopy,
         selections: finalSelections,
@@ -2455,6 +2557,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         rendered: finalRendered,
         ...(styleDirectiveOutcome !== undefined ? { styleDirectiveOutcome } : {}),
         ...(styleVariation.length > 0 ? { styleVariation } : {}),
+        ...(variationPlan !== undefined && variationPlan.length > 0 ? { variationPlan } : {}),
       };
     };
 
@@ -2525,6 +2628,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // on the common case — nothing departed — same convention as every
           // other optional gate-payload field here.
           ...(draft.styleVariation !== undefined ? { styleVariation: draft.styleVariation } : {}),
+          // IGSTYLE-10, §10e — which axis each slide used this round, and why
+          // not when it didn't (`ring=1`, `accent-fails-inverted-ground`,
+          // `directive-pinned`, `no-ground-pair`) — the same "loud, never
+          // silent" rule as `styleDirectiveOutcome` above, applied to the
+          // 75/25 variation budget. Absent on the common case — no brand kit
+          // at all, so neither axis was even attempted.
+          ...(draft.variationPlan !== undefined ? { variationPlan: draft.variationPlan } : {}),
           // IGSTYLE-5, §2.4/§2.6 — the Layer-1 PRIOR this run drafted against
           // (frozen at 02h, same object every round of this run), so a
           // reviewer can see WHY revision 0 already leans a certain way with
