@@ -29,7 +29,9 @@ import {
   GEO_SCORE_MODEL,
   REPRODUCIBILITY,
   SEO_BUCKETS,
+  SEO_GEO_CAPTURE_ENGINES,
   SEO_GEO_VISIBILITY_ENGINES,
+  SEO_GEO_VISIBILITY_ENGINE_DECISION,
   VISIBILITY_DENOMINATOR_DECISION,
   type FiredRecommendation,
   type SeoGeoCaptureCell,
@@ -345,7 +347,13 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       // text across two languages would still mint different hashes.
       const promptSetHash = sha256Hex({ prompts: promptSetDraft.prompts, language: promptSetDraft.language });
       const competitorSetHash = sha256Hex([...promptSetDraft.competitorRoster].sort());
-      const engineListHash = sha256Hex(SEO_GEO_VISIBILITY_ENGINES);
+      // SCRUM-396: hashed over the CAPTURED engines, not the accepted ones.
+      // The two lists are different on purpose (see `SEO_GEO_CAPTURE_ENGINES`)
+      // and only the captured list determines the response set, so widening
+      // the accepted list to seven engines leaves this hash — and therefore
+      // every prior run's frozen record — untouched. The drift record below is
+      // what makes a real change to the captured list visible.
+      const engineListHash = sha256Hex(SEO_GEO_CAPTURE_ENGINES);
       // Phase 0's "category vocabulary" (RFC-04 §2) — the only gazetteer content
       // this environment can honestly derive yet, from the client's own industry.
       const gazetteerHash = sha256Hex({ industry: clientContext.profile["industry"] ?? null });
@@ -354,6 +362,27 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       const beliefs = beliefsOutcome.status === "success" ? (beliefsOutcome.result as { beliefs: Record<string, unknown> }).beliefs : {};
       const priorFrozen = beliefs["seoGeoFrozenPromptSet"] as { promptSetHash?: string } | undefined;
       const driftLogged = wf.runKind === "recurring" && priorFrozen?.promptSetHash !== undefined && priorFrozen.promptSetHash !== promptSetHash;
+      // SCRUM-396: the prompt set has logged its drift since RFC-04 §3/§4, but
+      // the engine list — the other half of the same reproducibility spine —
+      // could change the captured response set silently, because nothing
+      // recomputes `engineListHash` against the stored one. Checked here, beside
+      // the prompt set's own check and before either is overwritten, so the two
+      // halves cannot get out of step.
+      const priorEngineListHash = (beliefs["seoGeoFrozenEngineList"] as { engineListHash?: string } | undefined)?.engineListHash;
+      const engineListDriftLogged = wf.runKind === "recurring" && priorEngineListHash !== undefined && priorEngineListHash !== engineListHash;
+
+      if (engineListDriftLogged) {
+        // The v2 capture contract requires a source change to carry a drift
+        // event; a reader must never have to infer one by diffing two runs'
+        // hashes by hand.
+        await tools["memory.appendDecision"]!.execute(
+          {
+            decisionId: `${wf.runId}__engine_list_drift`,
+            summary: `SEO & GEO captured engine list changed on a recurring run (prior hash ${priorEngineListHash}, new hash ${engineListHash}; now [${SEO_GEO_CAPTURE_ENGINES.join(", ")}]) — logged per RFC-04 §3/§4 and SCRUM-396, never silent.`,
+          },
+          { ctx },
+        );
+      }
 
       if (driftLogged) {
         await tools["memory.appendDecision"]!.execute(
@@ -384,6 +413,14 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
               language: promptSetDraft.language,
               languageFallbackApplied: promptSetDraft.languageFallbackApplied,
               quotaShortfalls: promptSetDraft.quotaShortfalls,
+              frozenAt: new Date().toISOString(),
+            },
+            // SCRUM-396: frozen alongside the prompt set, in the SAME diff, so
+            // one recurring run cannot record a new prompt set and an old
+            // engine list (or vice versa) if the second write were to fail.
+            seoGeoFrozenEngineList: {
+              engineListHash,
+              capturedEngines: [...SEO_GEO_CAPTURE_ENGINES],
               frozenAt: new Date().toISOString(),
             },
           },
@@ -474,7 +511,12 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       promptText: string;
       engine: SeoGeoVisibilityEngine;
     }
-    const captureJobs: CaptureJob[] = frozen.prompts.flatMap((p) => SEO_GEO_VISIBILITY_ENGINES.map((engine) => ({ ...p, engine })));
+    // SCRUM-396: fanned out over the CAPTURED engines. `aimode`/`google_aio`
+    // are accepted by the schema but have no adapter in this build, and fanning
+    // out to an adapter-less engine would write a full column of honest-but-
+    // empty UNAVAILABLE cells every run — measuring nothing while lowering the
+    // coverage percentage the client actually feels.
+    const captureJobs: CaptureJob[] = frozen.prompts.flatMap((p) => SEO_GEO_CAPTURE_ENGINES.map((engine) => ({ ...p, engine })));
 
     const captureSlots = await wf.fanout(
       "07-capture-ai-visibility",
@@ -497,11 +539,11 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
         }
         return (outcome.result as { cell: Parameters<typeof toSeoGeoCell>[0] }).cell;
       },
-      // T-A3/SCRUM-237: 2 of the 5 engines (chatgpt/copilot) route through
-      // ScrappyCoco's CLI-driven browser-automation capability, which is the
-      // one of the 5 least able to tolerate a large concurrent burst — the
-      // source ticket's own "concurrency 3" instruction. Applied to the
-      // WHOLE capture fanout (all 5 engines' jobs are interleaved in
+      // T-A3/SCRUM-237: two of the captured engines (chatgpt/copilot) route
+      // through ScrappyCoco's CLI-driven browser-automation capability, which is
+      // the one least able to tolerate a large concurrent burst — the source
+      // ticket's own "concurrency 3" instruction. Applied to the WHOLE capture
+      // fanout (every captured engine's jobs are interleaved in
       // `captureJobs`) rather than only the ScrappyCoco-routed jobs, for
       // simplicity: a lower shared ceiling costs a real run some wall-clock
       // time, never correctness, and this fanout already isolates a single
@@ -838,6 +880,16 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
         computed: false,
         note:
           "geo-score-v3 is a PROPOSED diagnostic pending Ines's sign-off (RFC-04 §4) — never the canonical GEO number. Not computed against this run's variable-length prompt set: the model's own formula (karos-seo-geo/src/geo-score-model.ts) assumes a fixed 10-prompt capture set, and forcing this run's N-prompt data through a /10 divisor would silently misrepresent the diagnostic's own stated formula.",
+      },
+      // SCRUM-396: the report used to carry no engine list at all, so every
+      // renderer downstream had to hardcode a count — which is how the portal
+      // ended up with an "N of 5 engines" disclosure of its own. It is stated
+      // here now, derived from the ratified constant, so a client-facing engine
+      // count is read rather than guessed.
+      engines: {
+        accepted: [...SEO_GEO_VISIBILITY_ENGINES],
+        captured: [...SEO_GEO_CAPTURE_ENGINES],
+        decision: SEO_GEO_VISIBILITY_ENGINE_DECISION,
       },
       connectorOverlay,
       firedRecommendations: recommendations,

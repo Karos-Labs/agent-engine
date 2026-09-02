@@ -5,9 +5,119 @@
  * routing config — see `src/config/*.data.ts` for the verbatim source data.
  */
 
-/** One of the 5 fixed AI-visibility engines (`seo-geo-capture-config.json` `engines[]`). */
-export const SEO_GEO_VISIBILITY_ENGINES = ["chatgpt", "perplexity", "gemini", "claude", "copilot"] as const;
+/**
+ * The ratified AI-visibility engine list (SCRUM-396) — **the single source**
+ * every other engine list in this repo derives from. Do not re-list these keys
+ * anywhere; import this constant, or `SEO_GEO_CAPTURE_ENGINES` below.
+ *
+ * Seven engines, not five: `aimode` and `google_aio` are the two the v2 skill's
+ * only real measured run actually used and this constant was missing. The
+ * decision, its evidence and its date are recorded in
+ * `docs/decisions/SCRUM-396-visibility-engine-list.md` — read that before
+ * changing this list, because the previous reader changed it from the wrong
+ * document (the same failure mode as SCRUM-387).
+ *
+ * **`claude` is kept deliberately.** SCRUM-396 read the v2 skill as having
+ * dropped it; the v2 skill's own machine truth
+ * (`assets/config/seo-geo-v2-capture-config.json`) carries `claude` as engine
+ * seven with `enabled_by_default: false` and
+ * `status: "FUTURE ADD-ON, deliberately not built (Albert, 2026-08-19)"`. It is
+ * a recorded deferral, never a removal — and the reason it was deferred (v2's
+ * routed provider has no Claude endpoint) does not apply here, because this
+ * repo measures Claude first-party through `capture-adapters/claude.ts`.
+ *
+ * Ordering is load-bearing: `SEO_GEO_CAPTURE_ENGINES` is hashed into every
+ * frozen run record, so the captured engines keep their original order and the
+ * two new keys are appended. See that constant's own note.
+ */
+export const SEO_GEO_VISIBILITY_ENGINES = Object.freeze(["chatgpt", "perplexity", "gemini", "claude", "copilot", "aimode", "google_aio"] as const);
 export type SeoGeoVisibilityEngine = (typeof SEO_GEO_VISIBILITY_ENGINES)[number];
+
+/** One engine's ratified place in the list — why it is here, and whether this build actually captures it. */
+export interface SeoGeoVisibilityEngineSpec {
+  /** The engine's client-facing label, so a renderer never has to invent one from the key. */
+  readonly label: string;
+  /**
+   * Whether this engine is in the capture fan-out. `false` means the engine is
+   * accepted on read (its cells validate, its column can be stored) but this
+   * build sends it no traffic — the forward-compatible half of the list.
+   */
+  readonly captured: boolean;
+  /** Why `captured` is what it is, so the next reader does not re-derive it from a stale document. */
+  readonly note: string;
+}
+
+/**
+ * Per-engine ratification, keyed by engine so the typechecker enforces what a
+ * test can only observe: this is a `Record` over `SeoGeoVisibilityEngine`, so
+ * an engine added to the list above **cannot compile** without a spec here, and
+ * a spec for a non-engine cannot compile either. That is the anti-drift
+ * guarantee SCRUM-396 asked for, checked at build time rather than asserted.
+ */
+export const SEO_GEO_VISIBILITY_ENGINE_SPECS: Readonly<Record<SeoGeoVisibilityEngine, SeoGeoVisibilityEngineSpec>> = Object.freeze({
+  chatgpt: { label: "ChatGPT", captured: true, note: "Forced-`web_search` Responses API, or a ScrappyCoco route — `capture-adapters/scrappycoco-answer-engine.ts`." },
+  perplexity: { label: "Perplexity", captured: true, note: "First-party Sonar, native citations — `capture-adapters/perplexity.ts`." },
+  gemini: { label: "Google Gemini", captured: true, note: "Grounding-with-Google-Search, labelled MEASURED_grounded — `capture-adapters/gemini.ts`." },
+  claude: {
+    label: "Claude",
+    captured: true,
+    note:
+      "First-party Anthropic Messages + `web_search`, Haiku-class for capture and never the report model — `capture-adapters/claude.ts`. Kept, not dropped: v2 deferred this column only because its routed provider has no Claude endpoint, which is not this repo's situation.",
+  },
+  copilot: { label: "Microsoft Copilot", captured: true, note: "No consumer API; ScrappyCoco route or a tracker feed, ESTIMATED by default — `capture-adapters/scrappycoco-answer-engine.ts`." },
+  aimode: {
+    label: "Google AI Mode",
+    captured: false,
+    note:
+      "Added by SCRUM-396 and accepted on read, but NOT in the fan-out: this build has no AI-Mode adapter. Fanning out to an adapter-less engine would write a column of honest-but-empty UNAVAILABLE cells every run, which lowers the coverage percentage a client feels while measuring nothing. It joins the fan-out when an adapter lands — flip `captured` and add the adapter, no schema change.",
+  },
+  google_aio: {
+    label: "Google AI Overview",
+    captured: false,
+    note:
+      "Same as `aimode`: accepted on read, no adapter in this build, so out of the fan-out. Distinct from `gemini` on purpose — per the Ahrefs 540K-pair study the two Google surfaces agree ~86% of the time but cite the same URLs only 13.7% of the time, so neither substitutes for the other.",
+  },
+});
+
+/**
+ * The engines this build actually sends capture traffic to — the fan-out list,
+ * and the list hashed as `engineListHash` into every frozen run record.
+ *
+ * Derived, never re-listed. It is deliberately **not** the same as
+ * `SEO_GEO_VISIBILITY_ENGINES`: the wide list is what a stored cell may claim
+ * (so widening it breaks no persisted data and needs no read-compat path), and
+ * this narrow list is what a run measures.
+ *
+ * Because SCRUM-396 only *widened* the accepted list and left the captured set
+ * untouched, this array is byte-identical to the five-engine constant it
+ * replaces — so `engineListHash` does not change and no prior run's frozen
+ * record is invalidated. There is no version bump to make here. The moment this
+ * list does change, `04-freeze-prompt-set` logs an engine-list drift decision
+ * on recurring runs, exactly as it already does for the prompt set.
+ */
+export const SEO_GEO_CAPTURE_ENGINES: readonly SeoGeoVisibilityEngine[] = Object.freeze(
+  SEO_GEO_VISIBILITY_ENGINES.filter((engine) => SEO_GEO_VISIBILITY_ENGINE_SPECS[engine].captured),
+);
+
+/**
+ * SCRUM-396's ratification, recorded in code the way SCRUM-392 recorded
+ * `karos_tool` and AU28/SCRUM-319 recorded the N-vs-N_e answer — so the next
+ * reader inherits the decision instead of re-deriving it from whichever
+ * document they happen to open first.
+ */
+export const SEO_GEO_VISIBILITY_ENGINE_DECISION = Object.freeze({
+  status: "ratified",
+  decidedOn: "2026-09-02",
+  ticket: "SCRUM-396",
+  accepted: SEO_GEO_VISIBILITY_ENGINES,
+  captured: SEO_GEO_CAPTURE_ENGINES,
+  added: ["aimode", "google_aio"],
+  claudeKept: true,
+  authority: "karos-agents/products/building/seo-geo-agent-v2/assets/config/seo-geo-v2-capture-config.json (7 engines, `claude` enabled_by_default:false), paired with references/capture-contract.md (decided 2026-08-19, Albert)",
+  supersedes: "capture-config.data.ts `engines[]` (v1.1, 5 engines) and this repo's own five-key constant",
+  notAuthority: "docs/AUDIT-2026-08-25-architecture-optimization-plan.md §4c's per-engine table, which quotes docs/SEO-GEO-V2-CAPTURE-CONTRACT.md — a document its own banner marks HISTORY",
+  writeUp: "docs/decisions/SCRUM-396-visibility-engine-list.md",
+});
 
 /**
  * `capture_tier` enum (`seo-geo-capture-config.json`): how a (prompt, engine)

@@ -213,6 +213,33 @@ Notes:
 
 The v2 skill has **already run this evaluation** and encoded the verdict in `docs/SEO-GEO-V2-CAPTURE-CONTRACT.md` + `assets/config/scrappycoco-routes.json`: a **per-engine hybrid**, because no single approach covers all engines.
 
+> **⚠️ HISTORY — annotated 2026-09-02 (SCRUM-396). The table below is not an implementation spec.**
+>
+> The `docs/SEO-GEO-V2-CAPTURE-CONTRACT.md` this section quotes has since been
+> given a HISTORY banner by the v2 skill itself: *"Sections below describing the
+> old first-party-per-engine capture methods are HISTORY."* The current
+> authority is `references/capture-contract.md` (both decisions approved
+> 2026-08-19) plus the machine truth in
+> `assets/config/seo-geo-v2-capture-config.json`, and they changed the two
+> things this table is most likely to be read for:
+>
+> - **The tier test.** MEASURED is no longer granted by credential ownership. It
+>   is granted **per cell** by a four-condition evidence test (`raw_stored`,
+>   `route_match`, `answer_present`, `citations_recoverable`) under the renamed
+>   tier `MEASURED_routed`. So the "Tier label" column below is stale for every
+>   row, and `Copilot` in particular is no longer structurally estimated.
+> - **The engine list.** Seven engines, six enabled: `chatgpt`, `perplexity`,
+>   `gemini`, `copilot`, `aimode`, `google_aio`, with `claude` carried as
+>   `enabled_by_default: false` — a **documented deferral, not a removal**
+>   (v2's routed provider has no Claude endpoint; agent-engine's does, so
+>   agent-engine keeps the column). `google_aio` is measurable again: the DMCA-
+>   suit vendor named below is not the route v2 uses.
+>
+> agent-engine's own ratified list, and the reasoning, are in
+> `docs/decisions/SCRUM-396-visibility-engine-list.md` and
+> `packages/tools/karos-seo-geo/src/types.ts`. Read one of those, not this
+> table, before touching a capture adapter.
+
 | Engine | Method (v2 verdict) | Tier label | Cost/query |
 |---|---|---|---|
 | Perplexity | First-party Sonar API, native citations | MEASURED | ~$0.001–0.003 |
