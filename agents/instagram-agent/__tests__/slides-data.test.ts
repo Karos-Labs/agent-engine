@@ -17,7 +17,18 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
-import { assembleSlidesData, buildListRows, resolveLayout } from "../src/workflow/slides-data.js";
+import {
+  assembleSlidesData,
+  buildListRows,
+  buildVariationPlan,
+  eligibleAlternateTemplates,
+  invertedTemplateFileName,
+  isVariationSlot,
+  pickAlternateTemplate,
+  resolveLayout,
+  VARIATION_MIX,
+} from "../src/workflow/slides-data.js";
+import { paletteForSlide } from "../src/workflow/brand-render-tokens.js";
 import { InstagramSlideCopySchema, type InstagramCopyOutput, type ImageSelection } from "../src/workflow/types.js";
 
 const CANVAS = { w: 1080, h: 1440, scale: 2, slides_min: 6, slides_max: 8 };
@@ -621,4 +632,496 @@ describe("template registry integration (Approach a)", () => {
     const rewritten = await fsp.readFile(pathMod.join(env.repoRoot, resolved!.templateDir, resolved!.files[0]!), "utf8");
     expect(rewritten.length).toBeGreaterThan(0);
   }, 60000);
+});
+
+/**
+ * IGSTYLE-7, §7a — "wire the rotation that already exists": `paletteForSlide`
+ * predates this ticket (AU39) but was called from nowhere in the render path
+ * — every slide got ONE shared `accentColor`. This is the wiring's own proof,
+ * at the level `assembleSlidesData` itself operates (no workflow/memory
+ * involved — see `preference-as-prior.test.ts` for the end-to-end version).
+ */
+describe("assembleSlidesData: per-slide accent rotation (IGSTYLE-7, §7a)", () => {
+  const RING = ["#A5E82B", "#FF5B5F", "#41C6FF"];
+  const BRAND_TOKENS = { templateDir: "fixtures/templates", slideTemplate: "slide.html" };
+
+  function sixSlideCopy(): InstagramCopyOutput {
+    return copyWith(Array.from({ length: 6 }, () => ({})));
+  }
+
+  function sixSelections(): ImageSelection[] {
+    return Array.from({ length: 6 }, (_, i) => ({
+      n: i + 1,
+      imagePath: `photos/n${i + 1}.jpg`,
+      reason: "matches",
+      license: "CC0",
+      rightsUsable: true,
+      watermarkFree: true,
+    }));
+  }
+
+  it("a slide's accent comes from the ring walk, matching paletteForSlide exactly, when the kit can rotate", () => {
+    const data = assembleSlidesData({
+      clientSlug: "acme",
+      postId: "post_1",
+      repoRoot: "/repo",
+      brandTokens: BRAND_TOKENS,
+      copy: sixSlideCopy(),
+      selections: sixSelections(),
+      canvas: CANVAS,
+      accentRing: RING,
+      paletteSeed: "run-xyz",
+    });
+    const expected = data.slides.map((s) => paletteForSlide({ palette: RING }, { index: s.n, seed: "run-xyz" })!.accent);
+    expect(data.slides.map((s) => s.fields["accentColor"])).toEqual(expected);
+    // Genuinely rotating, not coincidentally constant — the whole point of 7a.
+    expect(new Set(expected).size).toBeGreaterThan(1);
+    // Never off-kit — every value used is a real ring member.
+    for (const hex of expected) expect(RING).toContain(hex);
+  });
+
+  it("falls back to the existing accentColor param for EVERY slide when the ring cannot rotate (length <= 1) — a one-colour kit is unchanged", () => {
+    const data = assembleSlidesData({
+      clientSlug: "acme",
+      postId: "post_1",
+      repoRoot: "/repo",
+      brandTokens: BRAND_TOKENS,
+      copy: sixSlideCopy(),
+      selections: sixSelections(),
+      canvas: CANVAS,
+      brandAccentFallback: "#A5E82B",
+      accentRing: ["#A5E82B"],
+      paletteSeed: "run-xyz",
+    });
+    for (const s of data.slides) expect(s.fields["accentColor"]).toBe("#A5E82B");
+  });
+
+  it("falls back to the existing accentColor param for EVERY slide when no ring is passed at all — byte-identical to pre-IGSTYLE-7 callers", () => {
+    const data = assembleSlidesData({
+      clientSlug: "acme",
+      postId: "post_1",
+      repoRoot: "/repo",
+      brandTokens: BRAND_TOKENS,
+      copy: sixSlideCopy(),
+      selections: sixSelections(),
+      canvas: CANVAS,
+      brandAccentFallback: "#C0FFEE",
+    });
+    for (const s of data.slides) expect(s.fields["accentColor"]).toBe("#C0FFEE");
+  });
+
+  it("is deterministic: the same postId/copy/seed renders the identical per-slide accents twice", () => {
+    const build = () =>
+      assembleSlidesData({
+        clientSlug: "acme",
+        postId: "post_1",
+        repoRoot: "/repo",
+        brandTokens: BRAND_TOKENS,
+        copy: sixSlideCopy(),
+        selections: sixSelections(),
+        canvas: CANVAS,
+        accentRing: RING,
+        paletteSeed: "run-xyz",
+      });
+    const a = build().slides.map((s) => s.fields["accentColor"]);
+    const b = build().slides.map((s) => s.fields["accentColor"]);
+    expect(b).toEqual(a);
+  });
+
+  it("a different seed rotates the phase — two runs of the same kit needn't render identically", () => {
+    const build = (seed: string) =>
+      assembleSlidesData({
+        clientSlug: "acme",
+        postId: "post_1",
+        repoRoot: "/repo",
+        brandTokens: BRAND_TOKENS,
+        copy: sixSlideCopy(),
+        selections: sixSelections(),
+        canvas: CANVAS,
+        accentRing: RING,
+        paletteSeed: seed,
+      }).slides.map((s) => s.fields["accentColor"]);
+    const seeds = ["run-1", "run-2", "run-3", "run-4", "run-5"];
+    const outcomes = new Set(seeds.map((seed) => build(seed).join(",")));
+    expect(outcomes.size).toBeGreaterThan(1);
+  });
+});
+
+/**
+ * IGSTYLE-10, §10a/10b/10c/10e — the 75/25 smart variation model. `isVariationSlot`
+ * and `buildVariationPlan` are tested directly (no workflow involved — the
+ * end-to-end materialization proof lives in `ground-fg-inversion.test.ts`),
+ * matching the same "pure function first, workflow second" split IGSTYLE-7's
+ * own test file already established.
+ */
+describe("isVariationSlot (IGSTYLE-10, §10b — the low-discrepancy walk)", () => {
+  it("lands within ±8 percentage points of VARIATION_MIX over a 40-slide window", () => {
+    for (const seed of ["run-1", "run-2", "run-abc", "post_xyz", "carousel-42"]) {
+      const hits = Array.from({ length: 40 }, (_, i) => isVariationSlot(i, VARIATION_MIX, seed));
+      const pct = (hits.filter(Boolean).length / 40) * 100;
+      expect(pct, `seed "${seed}" landed at ${pct}%`).toBeGreaterThanOrEqual(VARIATION_MIX * 100 - 8);
+      expect(pct, `seed "${seed}" landed at ${pct}%`).toBeLessThanOrEqual(VARIATION_MIX * 100 + 8);
+    }
+  });
+
+  it("never marks more than two consecutive slides as alternates", () => {
+    for (const seed of ["run-1", "run-2", "run-abc", "post_xyz", "carousel-42", "", "z"]) {
+      const hits = Array.from({ length: 60 }, (_, i) => isVariationSlot(i, VARIATION_MIX, seed));
+      let run = 0;
+      let maxRun = 0;
+      for (const hit of hits) {
+        run = hit ? run + 1 : 0;
+        maxRun = Math.max(maxRun, run);
+      }
+      expect(maxRun, `seed "${seed}"`).toBeLessThanOrEqual(2);
+    }
+  });
+
+  it("an 8-slide carousel lands near 2 alternates, spread out", () => {
+    for (const seed of ["a", "b", "c", "d", "e"]) {
+      const hits = Array.from({ length: 8 }, (_, i) => isVariationSlot(i, VARIATION_MIX, seed));
+      expect(hits.filter(Boolean).length, `seed "${seed}"`).toBeGreaterThanOrEqual(1);
+      expect(hits.filter(Boolean).length, `seed "${seed}"`).toBeLessThanOrEqual(3);
+    }
+  });
+
+  it("is deterministic across 100 iterations of the same seed", () => {
+    const seed = "determinism-check";
+    const first = Array.from({ length: 40 }, (_, i) => isVariationSlot(i, VARIATION_MIX, seed));
+    for (let iter = 0; iter < 100; iter++) {
+      const again = Array.from({ length: 40 }, (_, i) => isVariationSlot(i, VARIATION_MIX, seed));
+      expect(again).toEqual(first);
+    }
+  });
+
+  it("three different runIds produce three different variation plans", () => {
+    // Seeds chosen to actually disperse: two seeds differing only in a
+    // trailing digit can hash close enough to land on an identical 8-slot
+    // pattern (a real property of this seeded walk, not a bug — verified
+    // empirically for these three before writing this assertion).
+    const seeds = ["carousel-run-alpha", "post_9f21c-beta", "run:2026-09-02:gamma"];
+    const plans = seeds.map((seed) => Array.from({ length: 8 }, (_, i) => isVariationSlot(i, VARIATION_MIX, seed)).join(""));
+    expect(new Set(plans).size).toBe(3);
+  });
+
+  it("mix <= 0 never fires; mix >= 1 always fires", () => {
+    for (let i = 0; i < 10; i++) {
+      expect(isVariationSlot(i, 0, "any-seed")).toBe(false);
+      expect(isVariationSlot(i, 1, "any-seed")).toBe(true);
+    }
+  });
+});
+
+describe("assembleSlidesData: ground/fg inversion axis (IGSTYLE-10, §10a/10c)", () => {
+  const RING = ["#A5E82B", "#FF5B5F", "#41C6FF"];
+  const BRAND_TOKENS = { templateDir: "fixtures/templates", slideTemplate: "slide.html" };
+
+  function sixSlideCopy(): InstagramCopyOutput {
+    return copyWith(Array.from({ length: 6 }, () => ({})));
+  }
+  function sixSelections(): ImageSelection[] {
+    return Array.from({ length: 6 }, (_, i) => ({
+      n: i + 1,
+      imagePath: `photos/n${i + 1}.jpg`,
+      reason: "matches",
+      license: "CC0",
+      rightsUsable: true,
+      watermarkFree: true,
+    }));
+  }
+
+  it("some slides render through the inverted sibling file when a derived ground/fg pair is present and legal", () => {
+    const data = assembleSlidesData({
+      clientSlug: "acme",
+      postId: "post_1",
+      repoRoot: "/repo",
+      brandTokens: BRAND_TOKENS,
+      copy: sixSlideCopy(),
+      selections: sixSelections(),
+      canvas: CANVAS,
+      // #C4552F (the templates' own legacy default accent) clears the 3:1
+      // floor against BOTH the primary ground and what becomes the ground
+      // once inverted — chosen deliberately so this test isolates the walk,
+      // not the accent-contrast gate (see the accent-bound test below for that).
+      brandAccentFallback: "#C4552F",
+      groundFgInversion: { ground: "#17181C", fg: "#F4F2EC", directivePinned: false },
+      paletteSeed: "run-inv-1",
+    });
+    const templates = data.slides.map((s) => s.template);
+    expect(templates.some((t) => t === invertedTemplateFileName("slide.html"))).toBe(true);
+    expect(templates.some((t) => t === "slide.html")).toBe(true);
+    for (const t of templates) expect([`slide.html`, invertedTemplateFileName("slide.html")]).toContain(t);
+  });
+
+  it("never inverts when no groundFgInversion config is passed at all — byte-identical to before this ticket", () => {
+    const data = assembleSlidesData({
+      clientSlug: "acme",
+      postId: "post_1",
+      repoRoot: "/repo",
+      brandTokens: BRAND_TOKENS,
+      copy: sixSlideCopy(),
+      selections: sixSelections(),
+      canvas: CANVAS,
+      paletteSeed: "run-inv-1",
+    });
+    for (const s of data.slides) expect(s.template).toBe("slide.html");
+  });
+
+  it("§10c-4 directive supremacy: a directive-pinned round produces zero alternates, at any seed", () => {
+    for (const seed of ["run-inv-1", "run-inv-2", "run-inv-3", "run-inv-4"]) {
+      const data = assembleSlidesData({
+        clientSlug: "acme",
+        postId: "post_1",
+        repoRoot: "/repo",
+        brandTokens: BRAND_TOKENS,
+        copy: sixSlideCopy(),
+        selections: sixSelections(),
+        canvas: CANVAS,
+        brandAccentFallback: "#A5E82B",
+        groundFgInversion: { ground: "#17181C", fg: "#F4F2EC", directivePinned: true },
+        paletteSeed: seed,
+      });
+      for (const s of data.slides) expect(s.template, `seed ${seed}`).toBe("slide.html");
+    }
+  });
+
+  it("§10c-2 accent bound: refuses inversion when the accent fails the 3:1 floor against the inverted ground (thepitchbydeel's real palette)", () => {
+    // Appendix D's own fixture: ground #faf4ee / fg #1b1b1b / accent #5938b7.
+    // 7.19:1 on the primary ground, ~2.19:1 on the inverted one — well under
+    // the 3:1 accent floor, so every slide must keep the primary pairing
+    // regardless of what the walk would otherwise pick.
+    const data = assembleSlidesData({
+      clientSlug: "thepitchbydeel",
+      postId: "post_1",
+      repoRoot: "/repo",
+      brandTokens: BRAND_TOKENS,
+      copy: sixSlideCopy(),
+      selections: sixSelections(),
+      canvas: CANVAS,
+      brandAccentFallback: "#5938b7",
+      groundFgInversion: { ground: "#faf4ee", fg: "#1b1b1b", directivePinned: false },
+      paletteSeed: "run-inv-1",
+    });
+    for (const s of data.slides) expect(s.template).toBe("slide.html");
+  });
+
+  it("§10a one-colour ring: still varies via ground/fg inversion, independent of ring size", () => {
+    const data = assembleSlidesData({
+      clientSlug: "acme",
+      postId: "post_1",
+      repoRoot: "/repo",
+      brandTokens: BRAND_TOKENS,
+      copy: sixSlideCopy(),
+      selections: sixSelections(),
+      canvas: CANVAS,
+      brandAccentFallback: "#C4552F",
+      accentRing: ["#A5E82B"], // ring.length <= 1: the accent axis cannot rotate
+      groundFgInversion: { ground: "#17181C", fg: "#F4F2EC", directivePinned: false },
+      paletteSeed: "run-inv-1",
+    });
+    expect(data.slides.some((s) => s.template === invertedTemplateFileName("slide.html"))).toBe(true);
+  });
+
+  it("§10a inversion safety: the inverted pairing's text contrast equals the primary's exactly (contrastRatio's own symmetry, asserted rather than assumed)", () => {
+    const pairs: Array<[string, string]> = [
+      ["#17181C", "#F4F2EC"],
+      ["#faf4ee", "#1b1b1b"],
+      ["#000000", "#ffffff"],
+    ];
+    for (const [ground, fg] of pairs) {
+      // contrastRatio's own definition takes the max/min luminance regardless
+      // of argument order, so swapping the two arguments — exactly what an
+      // inversion does — cannot change the result.
+      const primary = contrastRatioForTest(ground, fg);
+      const inverted = contrastRatioForTest(fg, ground);
+      expect(inverted).toBe(primary);
+    }
+  });
+
+  it("§10a palette boundedness: an inverted slide's rendered pairing is exactly {fg, ground} swapped — never a synthesised colour", () => {
+    // decideGroundFgInversion never manufactures a value: it only ever swaps
+    // the two hexes it was given. Proven at the config level, since the
+    // rendered CSS var values themselves live in the materialized template
+    // file (see the end-to-end test for the on-disk proof) rather than in
+    // RenderCarouselInput's own schema.
+    const ground = "#17181C";
+    const fg = "#F4F2EC";
+    const data = assembleSlidesData({
+      clientSlug: "acme",
+      postId: "post_1",
+      repoRoot: "/repo",
+      brandTokens: BRAND_TOKENS,
+      copy: sixSlideCopy(),
+      selections: sixSelections(),
+      canvas: CANVAS,
+      brandAccentFallback: "#C4552F",
+      groundFgInversion: { ground, fg, directivePinned: false },
+      paletteSeed: "run-inv-1",
+    });
+    const invertedCount = data.slides.filter((s) => s.template === invertedTemplateFileName("slide.html")).length;
+    expect(invertedCount).toBeGreaterThan(0);
+    // No third file name ever appears — only the primary and its one inverted sibling.
+    for (const s of data.slides) expect(["slide.html", invertedTemplateFileName("slide.html")]).toContain(s.template);
+  });
+});
+
+/** A local, minimal copy — this file has no direct import of `contrastRatio` and shouldn't need one just for this one symmetry assertion. */
+function contrastRatioForTest(a: string, b: string): number {
+  const relLum = (hex: string): number => {
+    let h = hex.slice(1);
+    if (h.length === 3 || h.length === 4) h = [...h].map((c) => c + c).join("");
+    const channel = (i: number) => {
+      const v = parseInt(h.slice(i, i + 2), 16) / 255;
+      return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4);
+  };
+  const la = relLum(a);
+  const lb = relLum(b);
+  const [hi, lo] = la > lb ? [la, lb] : [lb, la];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+describe("buildVariationPlan (IGSTYLE-10, §10e — the gate payload's own report)", () => {
+  it("reports 'ring=1' for the accent axis and honest groundFg status when the ring cannot rotate", () => {
+    const plan = buildVariationPlan({
+      slideNs: [1, 2, 3, 4, 5, 6],
+      accentRing: ["#A5E82B"],
+      paletteSeed: "run-plan-1",
+      brandAccentFallback: "#C4552F",
+      groundFgInversion: { ground: "#17181C", fg: "#F4F2EC", directivePinned: false },
+    });
+    const accentEntries = plan.filter((e) => e.axis === "accent");
+    expect(accentEntries).toHaveLength(6);
+    for (const e of accentEntries) {
+      expect(e.used).toBe(false);
+      expect(e.reason).toBe("ring=1");
+    }
+    const groundFgEntries = plan.filter((e) => e.axis === "groundFg");
+    expect(groundFgEntries.some((e) => e.used)).toBe(true);
+  });
+
+  it("reports 'no-ground-pair' for every slide's groundFg axis when inversion is unavailable", () => {
+    const plan = buildVariationPlan({
+      slideNs: [1, 2, 3],
+      brandAccentFallback: "#A5E82B",
+    });
+    for (const e of plan.filter((e) => e.axis === "groundFg")) {
+      expect(e.used).toBe(false);
+      expect(e.reason).toBe("no-ground-pair");
+    }
+  });
+
+  it("reports 'directive-pinned' for every slide's groundFg axis when this round's directive pinned a colour", () => {
+    const plan = buildVariationPlan({
+      slideNs: [1, 2, 3, 4, 5, 6, 7, 8],
+      paletteSeed: "run-plan-2",
+      brandAccentFallback: "#A5E82B",
+      groundFgInversion: { ground: "#17181C", fg: "#F4F2EC", directivePinned: true },
+    });
+    for (const e of plan.filter((e) => e.axis === "groundFg")) {
+      expect(e.used).toBe(false);
+      expect(e.reason).toBe("directive-pinned");
+    }
+  });
+
+  it("reports 'accent-fails-inverted-ground' when the accent can't clear the floor on the flipped ground", () => {
+    const plan = buildVariationPlan({
+      slideNs: [1, 2, 3, 4, 5, 6],
+      paletteSeed: "run-plan-3",
+      brandAccentFallback: "#5938b7",
+      groundFgInversion: { ground: "#faf4ee", fg: "#1b1b1b", directivePinned: false },
+    });
+    for (const e of plan.filter((e) => e.axis === "groundFg")) {
+      expect(e.used).toBe(false);
+      expect(e.reason).toBe("accent-fails-inverted-ground");
+    }
+  });
+
+  it("agrees with assembleSlidesData's own template choice, slide for slide", () => {
+    const groundFgInversion = { ground: "#17181C", fg: "#F4F2EC", directivePinned: false };
+    const copy = copyWith(Array.from({ length: 8 }, () => ({})));
+    const selections: ImageSelection[] = Array.from({ length: 8 }, (_, i) => ({
+      n: i + 1,
+      imagePath: `photos/n${i + 1}.jpg`,
+      reason: "matches",
+      license: "CC0",
+      rightsUsable: true,
+      watermarkFree: true,
+    }));
+    const data = assembleSlidesData({
+      clientSlug: "acme",
+      postId: "post_1",
+      repoRoot: "/repo",
+      brandTokens: { templateDir: "fixtures/templates", slideTemplate: "slide.html" },
+      copy,
+      selections,
+      canvas: CANVAS,
+      brandAccentFallback: "#C4552F",
+      groundFgInversion,
+      paletteSeed: "run-plan-agree",
+    });
+    const plan = buildVariationPlan({
+      slideNs: data.slides.map((s) => s.n),
+      brandAccentFallback: "#C4552F",
+      groundFgInversion,
+      paletteSeed: "run-plan-agree",
+    });
+    expect(data.slides.some((s) => s.template === invertedTemplateFileName("slide.html"))).toBe(true);
+    for (const slide of data.slides) {
+      const wasInverted = slide.template === invertedTemplateFileName("slide.html");
+      const planEntry = plan.find((e) => e.slide === slide.n && e.axis === "groundFg")!;
+      expect(planEntry.used, `slide ${slide.n}`).toBe(wasInverted);
+    }
+  });
+});
+
+describe("eligibleAlternateTemplates / pickAlternateTemplate (IGSTYLE-10, §10d)", () => {
+  it("excludes the primary row and anything below the mean score", () => {
+    const candidates = [
+      { templateId: "primary", qualityScore: 90 },
+      { templateId: "alt-good", qualityScore: 70 },
+      { templateId: "alt-bad", qualityScore: 50 },
+    ];
+    // mean = (90+70+50)/3 = 70
+    const eligible = eligibleAlternateTemplates(candidates, "primary");
+    expect(eligible.map((c) => c.templateId)).toEqual(["alt-good"]);
+  });
+
+  it("a down-scored template never resurfaces through the variation budget, even after the mean itself drops", () => {
+    const before = [
+      { templateId: "primary", qualityScore: 90 },
+      { templateId: "b", qualityScore: 70 },
+      { templateId: "c", qualityScore: 50 },
+    ];
+    // c gets reviewer-down-scored from 50 to 20.
+    const after = [
+      { templateId: "primary", qualityScore: 90 },
+      { templateId: "b", qualityScore: 70 },
+      { templateId: "c", qualityScore: 20 },
+    ];
+    const eligibleBefore = eligibleAlternateTemplates(before, "primary").map((c) => c.templateId);
+    const eligibleAfter = eligibleAlternateTemplates(after, "primary").map((c) => c.templateId);
+    expect(eligibleAfter).not.toContain("c");
+    // b alone survives on both sides of the down-score -- c dropping the mean
+    // doesn't let itself back in, and doesn't accidentally exclude b either.
+    expect(eligibleBefore).toContain("b");
+    expect(eligibleAfter).toContain("b");
+  });
+
+  it("returns nothing eligible when every other row is a single, already-primary row", () => {
+    const candidates = [{ templateId: "primary", qualityScore: 90 }];
+    expect(eligibleAlternateTemplates(candidates, "primary")).toEqual([]);
+  });
+
+  it("pickAlternateTemplate is deterministic and returns undefined for an empty pool", () => {
+    const pool = [
+      { templateId: "b", qualityScore: 70 },
+      { templateId: "d", qualityScore: 75 },
+    ];
+    const a = pickAlternateTemplate(pool, "run-x");
+    const b = pickAlternateTemplate(pool, "run-x");
+    expect(a).toEqual(b);
+    expect(pickAlternateTemplate([], "run-x")).toBeUndefined();
+  });
 });

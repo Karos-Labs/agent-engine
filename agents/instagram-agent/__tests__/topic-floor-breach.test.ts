@@ -52,6 +52,10 @@ describe("03-claim-topic: the topics catalog is the only dedup gate (RFC-03 §2.
       // The shared BLOCK/DEGRADED policy check (SCRUM-242/T-A10) — see that
       // step's own comment in the workflow.
       "02f-enforce-context-doc-policy",
+      // IGSTYLE-3: the raw brand kit (for re-deriving with a style patch) and
+      // the (currently inert — IGSTYLE-5 fills it in) learned style prior.
+      "02g-load-brand-kit-raw",
+      "02h-learned-style-preferences",
       "03-claim-topic",
     ]);
 

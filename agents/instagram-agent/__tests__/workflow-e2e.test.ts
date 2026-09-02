@@ -48,6 +48,10 @@ const HAPPY_PATH_STEP_IDS = [
   // projected, so the run still completes, now carrying a visible
   // `contextGrounding` marker on its deliverable (see 02f's own comment).
   "02f-enforce-context-doc-policy",
+  // IGSTYLE-3: the raw brand object (re-derivation needs it, 02c only kept
+  // the derived output) and the learned style prior (inert until IGSTYLE-5).
+  "02g-load-brand-kit-raw",
+  "02h-learned-style-preferences",
   "03-claim-topic",
   "04a-research-pull",
   "04b-research-extract-facts",
@@ -64,6 +68,10 @@ const HAPPY_PATH_STEP_IDS = [
   "04e-read-output-history",
   // The client's intel report, distilled into drafting context.
   "04f-read-intel-context",
+  // IGSTYLE-3: this round's style directive (§2.2 Layer 2) — revision 0 with
+  // no structured pick and no feedback resolves to `{overrides:{}, source:"none"}`
+  // unconditionally, so no refusal-recording step follows it here.
+  "04g-style-directive",
   "05a-list-used-images",
   // Tier 0: the client's own uploads, resolved before any sourcing tier.
   "05z-attach-user-media",

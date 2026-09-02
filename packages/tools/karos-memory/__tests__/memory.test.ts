@@ -326,6 +326,104 @@ describe("karos-memory", () => {
       const entries = (outcome.result as { entries: Array<{ feedbackId: string }> }).entries;
       expect(entries.map((e) => e.feedbackId)).toEqual(["fb_blog"]);
     });
+
+    // IGSTYLE-4: `style`/`scope`/`slide` — additive fields for
+    // `distillStylePreferences` (`@agent-engine/workflow`) to vote over.
+    describe("style/scope/slide (IGSTYLE-4)", () => {
+      it("round-trips a resolved style pick byte-identical, scope defaulting to \"post\" when the caller doesn't set one", async () => {
+        await tools["memory.appendFeedback"]!.execute(
+          {
+            feedbackId: "fb_style_1",
+            productId: "blog-agent",
+            decision: "revise",
+            actor: "jane@karoslabs.com",
+            note: "make the background darker and the text orange",
+            style: {
+              overrides: { ground: "#141414", fg: "#FFA500" },
+              source: "parsed",
+              intents: [{ role: "ground", direction: "darker" }, { role: "fg", direction: "hue", hue: "orange" }],
+              applied: ["orange: no kit colour matched, used #FFA500 (not a brand colour)"],
+            },
+          },
+          { ctx },
+        );
+
+        const outcome = await tools["memory.readFeedback"]!.execute({ productId: "blog-agent", limit: 10 }, { ctx });
+        expect(outcome.status).toBe("success");
+        if (outcome.status !== "success") throw new Error("unreachable");
+        const entries = (outcome.result as { entries: Array<{ feedbackId: string; scope: string; style?: unknown }> }).entries;
+        const entry = entries.find((e) => e.feedbackId === "fb_style_1");
+        expect(entry?.scope).toBe("post");
+        expect(entry?.style).toEqual({
+          overrides: { ground: "#141414", fg: "#FFA500" },
+          source: "parsed",
+          intents: [{ role: "ground", direction: "darker" }, { role: "fg", direction: "hue", hue: "orange" }],
+          applied: ["orange: no kit colour matched, used #FFA500 (not a brand colour)"],
+        });
+      });
+
+      it("stores an explicit scope and slide when the caller sets them", async () => {
+        await tools["memory.appendFeedback"]!.execute(
+          {
+            feedbackId: "fb_scope_1",
+            productId: "blog-agent",
+            decision: "approve",
+            actor: "jane@karoslabs.com",
+            note: "slide 2's template works well",
+            scope: "template",
+            slide: 2,
+          },
+          { ctx },
+        );
+        const outcome = await tools["memory.readFeedback"]!.execute({ productId: "blog-agent", limit: 10 }, { ctx });
+        if (outcome.status !== "success") throw new Error("unreachable");
+        const entries = (outcome.result as { entries: Array<{ feedbackId: string; scope: string; slide?: number }> }).entries;
+        const entry = entries.find((e) => e.feedbackId === "fb_scope_1");
+        expect(entry?.scope).toBe("template");
+        expect(entry?.slide).toBe(2);
+      });
+
+      it("omits `style` entirely when the caller doesn't attach one, rather than writing an empty placeholder", async () => {
+        await tools["memory.appendFeedback"]!.execute(
+          { feedbackId: "fb_no_style", productId: "blog-agent", decision: "approve", actor: "jane@karoslabs.com", note: "good" },
+          { ctx },
+        );
+        const outcome = await tools["memory.readFeedback"]!.execute({ productId: "blog-agent", limit: 10 }, { ctx });
+        if (outcome.status !== "success") throw new Error("unreachable");
+        const entries = (outcome.result as { entries: Array<{ feedbackId: string }> }).entries;
+        const entry = entries.find((e) => e.feedbackId === "fb_no_style");
+        expect(entry).toBeDefined();
+        expect(entry && "style" in entry).toBe(false);
+      });
+
+      // Backwards compatibility is a hard requirement (IGSTYLE-4): a row
+      // written before this field existed has neither `style` nor `scope` at
+      // all — not `scope: undefined`, the key is simply absent. It must
+      // round-trip unchanged except for `scope` reading back as "post".
+      it("a legacy row (no style, no scope at all) round-trips unchanged, with scope read back as \"post\"", async () => {
+        await store.writeJson("acme", ["memory", "feedback", "fb_legacy_1"], {
+          feedbackId: "fb_legacy_1",
+          productId: "blog-agent",
+          decision: "approve",
+          actor: "jane@karoslabs.com",
+          note: "a pre-IGSTYLE-4 row",
+          revision: 0,
+          at: Date.now() - 1000,
+        });
+
+        const outcome = await tools["memory.readFeedback"]!.execute({ productId: "blog-agent", limit: 10 }, { ctx });
+        expect(outcome.status).toBe("success");
+        if (outcome.status !== "success") throw new Error("unreachable");
+        const entries = (
+          outcome.result as { entries: Array<{ feedbackId: string; note: string; scope: string; style?: unknown }> }
+        ).entries;
+        const entry = entries.find((e) => e.feedbackId === "fb_legacy_1");
+        expect(entry).toBeDefined();
+        expect(entry?.note).toBe("a pre-IGSTYLE-4 row");
+        expect(entry?.scope).toBe("post");
+        expect(entry && "style" in entry).toBe(false);
+      });
+    });
   });
 
   describe("memory.updateBeliefs", () => {
