@@ -86,6 +86,179 @@ board read, not a guess), and for each one new since this ledger's last update, 
 questions above or mark them explicitly unknown. AU50 stays open — that is what a standing ticket
 does.
 
+## Part 5 — SCRUM-331 (AU48) production promotion, 2026-09-02
+
+Recorded per the runbook's Stage E. Every row below was **read live**, not inferred from a board
+column. The pre-flight write-up, including three deploy-time landmines the runbook does not name, is
+`batch-15-handoff-2026-09-02/BATCH-16-PREFLIGHT-HALTED.md`.
+
+### 5.1 Project naming — the runbook is wrong throughout
+
+**Production is `karoscmo`, region `europe-west1`.** There is no `karoscmo-prod`; the only Karos
+projects are `karoscmo-prep`, `karoscmo`, `karos-cmo-dev`, `karos-ac05b`. Every command in the
+SCRUM-331 runbook carrying `--project=karoscmo-prod` fails on an unknown project, which is also
+proof the runbook had never been executed.
+
+Related: its 0.2 permission loop tests `storage.buckets.getIamPolicy`/`setIamPolicy` at **project**
+scope, where both come back MISSING and the gate exits 1. Bucket IAM is per bucket; tested at the
+right scope all four audited buckets grant both. The gate was failing for the wrong reason.
+
+### 5.2 AUTH_ENABLED — prep ON, production still OFF
+
+| | Value | Where it is pinned |
+|---|---|---|
+| `agent-engine-prep` | **`true`** (live, verified on the service) | `cloudbuild.yaml`, literal |
+| `agent-engine-prod` | `false` | `cloudbuild.promote.yaml`, literal |
+| both workers | *(absent, and correct)* | — |
+
+Pinned as literals, never substitutions, per both cloudbuilds' own instruction that the value must
+not be able to arrive from outside the file. **Not** flipped with `gcloud run services update` as
+the runbook says: both deploy paths use `--set-env-vars`, which REPLACES the environment, so a
+hand-flipped flag reverts on the next deploy — enforcement that comes and goes with unrelated
+commits.
+
+The worker surfaces have no `AUTH_*` variables and need none: every Pub/Sub subscription in both
+projects has an empty `pushConfig` (they are `-pull`), so there is no inbound HTTP to authenticate.
+The runbook's "deploy-http **and** deploy-worker" instruction is a no-op on the worker.
+
+### 5.3 AUTH_AUDIENCE and the allowlist — one already done, one retargeted
+
+`AUTH_AUDIENCE` in production was **already set and byte-identical** to `status.url`
+(`https://agent-engine-prod-zc6vfwnzsq-ew.a.run.app`). The runbook's "Not defined / Unset" row and
+its Stage C capture-and-set step were both stale; nothing to do.
+
+`AUTH_ALLOWED_SERVICE_ACCOUNTS` **changed**, and this was the find that mattered:
+
+- It named `firebase-adminsdk-fbsvc@karoscmo` — the prod portal's runtime identity at the time.
+- karos-portal's `cloudbuild.promote.yaml` carries
+  `_RUNTIME_SERVICE_ACCOUNT: karos-cmo-sa@karoscmo` as its **default**, and the promote workflow
+  passes only 8 substitutions — that is not one of them. **So the portal promotion performs AU58 /
+  SCRUM-357 as a side effect.** Confirmed after promoting: the prod portal now runs as
+  `karos-cmo-sa@karoscmo` (revision `karos-cmo-00159-t4f`).
+- Enforcement plus the old value would therefore have 401'd every portal call.
+
+Retargeted to `karos-cmo-sa@karoscmo` — one entry, the live runtime identity, keeping the file's own
+method. **Not** widened to two: the value travels through `--set-env-vars=`, whose own delimiter is
+`,`, so a second entry yields a malformed env-var list rather than a two-element allowlist. A test
+already enforces that. Two accounts would need gcloud's alternate-delimiter form.
+
+Verified before the change, because the obvious check misleads: `karos-cmo-sa`'s **project-level**
+roles are only `aiplatform.user` and `logging.logWriter`, which reads like an SA that cannot mount
+the portal's secrets. Checked **per secret** instead — all **30** mounted secrets already grant it,
+and it already held `run.invoker` on the engine. AU58's groundwork was complete; only the switch had
+never been made.
+
+### 5.4 Bucket mappings — audited, and one violation fixed
+
+| Service | Variable | Value |
+|---|---|---|
+| prod engine (before) | `GCS_WORKSPACE_BUCKET` | `karoscmo-prod-agent-artifacts` ← **same as artifacts** |
+| prod engine (after promotion) | `GCS_WORKSPACE_BUCKET` | `karoscmo-prod-agent-workspace` |
+| prod engine | `GCS_ARTIFACTS_BUCKET` | `karoscmo-prod-agent-artifacts` |
+| prod engine | `GCS_MEDIA_BUCKET` | `karoscmo-prod-media-assets` |
+| prod portal | `GCS_MEDIA_BUCKET` | `karos-media-assets` |
+| prod portal | `AGENT_ENGINE_WORKSPACE_BUCKET` | *(empty — see 5.6)* |
+
+Production had the workspace and the disposable-artifacts bucket **pointed at the same bucket**,
+which SCRUM-327 / decision 14 forbids: they "must never share a bucket, and therefore never share a
+lifecycle/retention policy."
+
+**And the promotion was armed to fix it destructively.** `PROD_GCS_WORKSPACE_BUCKET` was already set
+to `karoscmo-prod-agent-workspace` (2026-08-29) and `deploy-prod.yml` applies it — but that bucket
+was **empty** while the shared one held **47 objects of live workspace context for all seven
+clients**. Prep was migrated on 2026-08-29; prod's variable was set the same day and the data never
+moved, leaving it armed for four days. Promoting as written would have made every production client
+look to the engine like a client with no context.
+
+Migrated first: 47 objects copied artifacts → workspace, verified by **md5 of every object** (47/47
+present, 0 mismatches, 0 extra, 122,090 bytes both sides, per-client distribution identical —
+`karoslabs` 23, the other six 4 each). The source is untouched and remains the rollback.
+
+Media buckets confirmed **not** cross-wired, as the runbook asks: portal `karos-media-assets`,
+engine `karoscmo-prod-media-assets`.
+
+### 5.5 Buckets deleted
+
+`gs://karoscmo-prod-workspace` and `gs://karoscmo-prep-workspace` — both empty, both unreferenced by
+any config, both leftovers of the SCRUM-327 naming superseded by `*-agent-workspace`.
+
+Deliberately **kept**, because they hold data and deleting them is a retention decision:
+`karoscmo-agent-artifacts` (1000+ objects / 654 MB of legacy agent-service client outputs and
+ledgers), `karoscmo-firestore-migration` (18 objects — a production Firestore export, i.e. a
+backup), `karoscmo-agent-service-build-staging` (14 objects / 549 MB of Cloud Build provenance for
+the now-deleted agent-service).
+
+### 5.6 Two rows this pass opened rather than closed
+
+**The portal's workspace writer has no access to the workspace bucket.** Only `agent-engine-sa` holds
+`roles/storage.objectAdmin` on either `*-agent-workspace` bucket. The prep portal writes to
+`karoscmo-prep-agent-artifacts` with `roles/storage.objectCreator` — **create but not delete** — and
+`workspace-writer.ts` deletes by design so "anything deleted on this side disappears on the next tick
+rather than lingering." Observed live during this pass, from a real reconcile call:
+
+```
+error: karos-cmo-prep@karoscmo-prep.iam.gserviceaccount.com does not have
+       storage.objects.delete access to the Google Cloud Storage object.
+```
+
+repeated per client. So prep's knowledge sync is **failing today**, and it is writing to a bucket the
+engine does not read — the engine reads `karoscmo-prep-agent-workspace` (368 live objects, newest
+today) while the portal writes to `karoscmo-prep-agent-artifacts` (346 objects, frozen at
+2026-08-27, the split date). Two snapshots of the same clients.
+
+The fix is an IAM grant plus repointing the portal, in that order:
+
+```bash
+gcloud storage buckets add-iam-policy-binding gs://karoscmo-prep-agent-workspace \
+  --member=serviceAccount:karos-cmo-prep@karoscmo-prep.iam.gserviceaccount.com \
+  --role=roles/storage.objectAdmin --project=karoscmo-prep
+```
+
+then change `deploy-prep.yml`'s hardcoded fallback from `karoscmo-prep-agent-artifacts` to
+`karoscmo-prep-agent-workspace`. Repointing without the grant converts a silently-misdirected sync
+into a loudly-failing one. Production's is empty, so the sync is simply off there and this promotion
+does not regress it — but the same grant will be needed for whichever SA the prod portal runs as
+before it can be turned on.
+
+**`AUTH_ENABLED=true` in production is not yet recorded here**, deliberately. The engine's HTTP
+surface is genuinely idle in both environments — dispatch goes over Pub/Sub, and the portal only
+calls the engine for gate resolution and unmaterialized-deliverable fetches. Two real reconcile
+calls (one prep, one prod) produced **no engine HTTP request at all**, because
+`materializeAgentEngineDeliverable` returns before the fetch for a product with no materializer
+entry. That is reassuring for blast radius — 401s under enforcement would be confined to gate
+approvals and materialization, both user-triggered and immediately visible — but it means no
+*successful authenticated request* has been observed since enforcement went on. That observation is
+the last thing this row needs before it can be called closed.
+
+### 5.7 Default compute invoker (§3.1's decision) — answered by the facts
+
+- **Production: nothing to remove.** `agent-engine-prod`'s invoker list is
+  `firebase-adminsdk-fbsvc@karoscmo`, `karos-cmo-sa@karoscmo`, `user:hello@karoslabs.com` — no
+  default compute. The one prod service running as default compute is `landing-page`, and it is
+  already not an engine invoker.
+- **Prep: present and safe to remove.** `680337539054-compute@developer` is in
+  `agent-engine-prep`'s invoker list, and all four prep services run under dedicated service
+  accounts, so nothing depends on it. Not yet removed.
+
+### 5.8 Commits and promotions
+
+| Item | SHA / run |
+|---|---|
+| Batch 15 engine (SCRUM-396, SCRUM-234) | `3d6637f`, `9278630` |
+| AU11 drift-check fix (saw 0 of 88 tools) | `8cfc93d` |
+| Stage A — prep enforcement ON | `b9e5032` |
+| Prod allowlist retargeted to `karos-cmo-sa` | `ff20db2` |
+| Batch 15 portal (SCRUM-404, SCRUM-276) | karos-portal `0fef40aa` (PR #75) |
+| **Portal → production** | run `33676535725`, **success**; prod now `0fef40aa`, SA `karos-cmo-sa` |
+
+Portal production health after promotion: `/` 307 → `/login` 200, **zero 5xx** in the following ten
+minutes. SCRUM-330's fail-open fix is now in production, which is what unblocked SCRUM-331 there —
+prod's previous image `6a76387b` (2026-08-24, 118 commits behind) did not contain it.
+
+`cloudbuild.promote.yaml` does not rebuild: it re-tags the **prep-tagged image by SHA**, so
+production runs the byte-identical image prep ran. Promote the SHA verified in prep, never "latest
+main".
+
 ## Sources
 
 - `agent-engine/docs/AUDIT-2026-08-25-architecture-optimization-plan.md`
@@ -94,3 +267,5 @@ does.
 - `agent-engine`/`karosCMO` diffs for SCRUM-373 (GCS ADC migration), read directly
 - This round's own SCRUM-390 (Batch 12) and SCRUM-234 (Batch 12) findings
 - `BATCH-11-OPS-RUNBOOK.md` §7 (delivered Batch 10/11 handoff)
+- SCRUM-331 (AU48) pre-flight + execution, 2026-09-02 — every row in Part 5 read live from
+  Cloud Run, Cloud Storage, Secret Manager, Pub/Sub and Firestore in both projects
