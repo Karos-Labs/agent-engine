@@ -1,4 +1,5 @@
 import type { AgentToolRegistry } from "@agent-engine/core";
+import { GoogleAuth } from "google-auth-library";
 import type { WorkspaceStoreLike } from "@agent-engine/tools";
 import {
   createAllKarosTools,
@@ -11,6 +12,33 @@ import {
 } from "@agent-engine/tools";
 import { createServerMediaStore, createServerArchiveStore } from "./gcs-artifact-stores.js";
 import { createServerClientReportStore } from "./client-report-store.js";
+
+/**
+ * An ADC bearer-header resolver for the Vertex Gemini capture route.
+ *
+ * `GoogleAuth` is constructed lazily and once: building it is cheap but not
+ * free, and a deployment that never captures Gemini should not pay for it at
+ * import time. The library caches and refreshes the underlying token itself,
+ * so calling `getRequestHeaders()` per request is the documented way to do
+ * this rather than a hand-rolled expiry cache — same reasoning, and the same
+ * shape, as `createVertexModelGardenFetch` in `@agent-engine/core`.
+ *
+ * A failure to resolve credentials surfaces as that cell's capture error
+ * rather than as a boot failure: every other credentialed capability here is
+ * honest per call, and a server that refused to start because one of five
+ * visibility engines could not authenticate would be a worse trade.
+ */
+function createAdcAuthorize(): () => Promise<string> {
+  let auth: GoogleAuth | undefined;
+  return async () => {
+    auth ??= new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
+    const client = await auth.getClient();
+    const headers = await client.getRequestHeaders();
+    const bearer = headers.get("authorization");
+    if (!bearer) throw new Error("vertex gemini capture: ADC returned no authorization header");
+    return bearer;
+  };
+}
 
 /**
  * The full tools registry this server can dispatch against — every
@@ -49,7 +77,18 @@ export function createServerTools(workspaceStore: WorkspaceStoreLike, env: Recor
     // from SCRAPPYCOCO_API_KEY. Without it the bundle would read process.env
     // anyway, but passing it keeps this composition root the single place a
     // deployment's configuration enters the tool graph.
-    ...createAllKarosTools(workspaceStore, mediaStore, { env, ...(clientReportStore ? { clientReportStore } : {}) }),
+    ...createAllKarosTools(workspaceStore, mediaStore, {
+      env,
+      ...(clientReportStore ? { clientReportStore } : {}),
+      // Lets `research.captureVisibility` measure Gemini through Vertex when a
+      // deployment has Google credentials but no `GEMINI_API_KEY` — prep's
+      // exact situation, where a quarter of the visibility matrix reported
+      // `no_adapter_wired` on every run while `GEMINI_VERTEX_PROJECT_ID` sat
+      // configured on the same service. Resolved here, at the one composition
+      // root a deployment's configuration enters the tool graph, so the tool
+      // packages keep no `google-auth-library` dependency of their own.
+      vertexAuthorize: createAdcAuthorize(),
+    }),
     ...createKarosVideoTools({ env, ...(mediaStore ? { mediaStore } : {}) }),
     ...createKarosLandingTools(createLandingEngineConfigFromEnv({ env }), archiveStore, workspaceStore),
     // `mediaStore` doubles as Tier 0's gs:// reader: a client's upload lives in

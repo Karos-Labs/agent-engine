@@ -125,6 +125,8 @@ export interface AllKarosToolsOptions {
   visibilityCreditProbe?: CreditProbe;
   /** Overrides `research.captureVisibility`'s env-derived per-engine adapter map (T-A3/SCRUM-237) — see `KarosResearchToolsOptions.visibilityAdapters`. Omitted derives real adapters from `options.env`/`process.env`; tests pass a fake map. */
   visibilityAdapters?: Partial<Record<VisibilityEngine, EngineCaptureAdapter>> | null;
+  /** Resolves an ADC `Authorization` header, enabling Gemini capture through Vertex when no `GEMINI_API_KEY` is set — see `KarosResearchToolsOptions.vertexAuthorize`. */
+  vertexAuthorize?: () => Promise<string>;
 }
 
 export function createAllKarosTools(
@@ -145,6 +147,7 @@ export function createAllKarosTools(
       ...(options.scraper !== undefined ? { scraper: options.scraper } : {}),
       ...(options.visibilityCreditProbe ? { visibilityCreditProbe: options.visibilityCreditProbe } : {}),
       ...(options.visibilityAdapters !== undefined ? { visibilityAdapters: options.visibilityAdapters } : {}),
+      ...(options.vertexAuthorize ? { vertexAuthorize: options.vertexAuthorize } : {}),
     }),
     ...createKarosSeoGeoTools(),
     ...createKarosTopicsTools(store),

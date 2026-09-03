@@ -128,8 +128,8 @@ describe("research.captureVisibility wired with real per-engine adapters (T-A3/S
 
 describe("createDefaultCaptureAdapters: env-derived wiring (T-A3/SCRUM-237)", () => {
   it("wires only the engines whose credential is present in env", () => {
-    const adapters = createDefaultCaptureAdapters({ env: { PERPLEXITY_API_KEY: "pplx-1", ANTHROPIC_API_KEY: "", GEMINI_API_KEY: undefined, SCRAPPYCOCO_API_KEY: "sc-1" } });
-    expect(Object.keys(adapters).sort()).toEqual(["chatgpt", "copilot", "perplexity"]);
+    const adapters = createDefaultCaptureAdapters({ env: { PERPLEXITY_API_KEY: "pplx-1", ANTHROPIC_API_KEY: "", GEMINI_API_KEY: undefined, OPENAI_API_KEY: "sk-1" } });
+    expect(Object.keys(adapters).sort()).toEqual(["chatgpt", "perplexity"]);
   });
 
   it("wires nothing when no credentials are present", () => {
@@ -137,10 +137,76 @@ describe("createDefaultCaptureAdapters: env-derived wiring (T-A3/SCRUM-237)", ()
     expect(Object.keys(adapters)).toEqual([]);
   });
 
-  it("wires all 5 engines when every credential is present", () => {
+  it("wires every routable engine when each credential is present", () => {
+    // Four, not five. `copilot` has no first-party API and no working vendor
+    // route, so nothing wires it — see the ChatGPT block in capture-adapters.
     const adapters = createDefaultCaptureAdapters({
-      env: { PERPLEXITY_API_KEY: "p", ANTHROPIC_API_KEY: "a", GEMINI_API_KEY: "g", SCRAPPYCOCO_API_KEY: "s" },
+      env: { PERPLEXITY_API_KEY: "p", ANTHROPIC_API_KEY: "a", GEMINI_API_KEY: "g", OPENAI_API_KEY: "o" },
     });
-    expect(Object.keys(adapters).sort()).toEqual(["chatgpt", "claude", "copilot", "gemini", "perplexity"]);
+    expect(Object.keys(adapters).sort()).toEqual(["chatgpt", "claude", "gemini", "perplexity"]);
+  });
+
+  it("never wires ScrappyCoco for an answer engine, whatever the env says", () => {
+    // The route it used did not exist: ScrappyCoco's live /scrapers catalogue
+    // lists 52 web/social/filings capabilities and no `chatgpt`/`copilot`
+    // source, so every capture slot for those two threw and the workflow's
+    // `completedOutputs` dropped them — the engines silently vanished from the
+    // report rather than reporting UNAVAILABLE. The key stays in the
+    // environment for `research.pull`'s scraper, which is a real capability.
+    const adapters = createDefaultCaptureAdapters({ env: { SCRAPPYCOCO_API_KEY: "sc-1" } });
+    expect(Object.keys(adapters)).toEqual([]);
+  });
+
+  it("falls back to the Vertex route for Gemini when there is no GEMINI_API_KEY", () => {
+    // Prep's exact situation: no Gemini key, but a configured Vertex project
+    // and ADC on the service account. 25 of 125 cells reported
+    // `no_adapter_wired` every run for want of this.
+    const adapters = createDefaultCaptureAdapters({
+      env: { GEMINI_VERTEX_PROJECT_ID: "karoscmo-prep", VERTEX_AI_LOCATION: "us-central1" },
+      vertexAuthorize: async () => "Bearer test",
+    });
+    expect(Object.keys(adapters)).toEqual(["gemini"]);
+  });
+
+  it("prefers the direct key over the Vertex route when both are available", async () => {
+    // Both produce a `gemini` entry, so the key set proves nothing — assert on
+    // the host the adapter actually calls.
+    const calls: string[] = [];
+    const stub = stubFetch(calls);
+    const adapters = createDefaultCaptureAdapters({
+      env: { GEMINI_API_KEY: "g", GEMINI_VERTEX_PROJECT_ID: "karoscmo-prep" },
+      vertexAuthorize: async () => "Bearer test",
+      fetchImpl: stub,
+    });
+    await adapters.gemini!({ promptId: "p1", promptText: "who?", engine: "gemini" as const, clientDomains: ["x.com"], competitorRoster: [] });
+
+    expect(calls[0]).toContain("generativelanguage.googleapis.com");
+  });
+
+  it("calls the regional Vertex host, with the model in the path, when it falls back", async () => {
+    const calls: string[] = [];
+    const adapters = createDefaultCaptureAdapters({
+      env: { GEMINI_VERTEX_PROJECT_ID: "karoscmo-prep", VERTEX_AI_LOCATION: "us-central1" },
+      vertexAuthorize: async () => "Bearer test",
+      fetchImpl: stubFetch(calls),
+    });
+    await adapters.gemini!({ promptId: "p1", promptText: "who?", engine: "gemini" as const, clientDomains: ["x.com"], competitorRoster: [] });
+
+    expect(calls[0]).toContain("us-central1-aiplatform.googleapis.com");
+    expect(calls[0]).toContain("/projects/karoscmo-prep/locations/us-central1/publishers/google/models/");
+    expect(calls[0]).not.toContain("key=");
+  });
+
+  it("does not wire the Vertex route without an authorizer, however configured", () => {
+    const adapters = createDefaultCaptureAdapters({ env: { GEMINI_VERTEX_PROJECT_ID: "p" } });
+    expect(Object.keys(adapters)).toEqual([]);
   });
 });
+
+/** A fetch that records the URLs it was called with and answers emptily. */
+function stubFetch(calls: string[]): typeof fetch {
+  return (async (url: unknown) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({ candidates: [] }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as unknown as typeof fetch;
+}

@@ -55,7 +55,12 @@ export interface SeoGeoVisibilityEngineSpec {
  * guarantee SCRUM-396 asked for, checked at build time rather than asserted.
  */
 export const SEO_GEO_VISIBILITY_ENGINE_SPECS: Readonly<Record<SeoGeoVisibilityEngine, SeoGeoVisibilityEngineSpec>> = Object.freeze({
-  chatgpt: { label: "ChatGPT", captured: true, note: "Forced-`web_search` Responses API, or a ScrappyCoco route — `capture-adapters/scrappycoco-answer-engine.ts`." },
+  chatgpt: {
+    label: "ChatGPT",
+    captured: true,
+    note:
+      "OpenAI Responses API with the server-side `web_search` tool — `capture-adapters/openai-answer-engine.ts`. This is the API, not the ChatGPT product: retrieval, ranking and citations differ from what a person sees in the UI, and a client comparing the two will find differences. It replaced a ScrappyCoco route that never worked — that vendor's live catalogue has no answer-engine capability at all.",
+  },
   perplexity: { label: "Perplexity", captured: true, note: "First-party Sonar, native citations — `capture-adapters/perplexity.ts`." },
   gemini: { label: "Google Gemini", captured: true, note: "Grounding-with-Google-Search, labelled MEASURED_grounded — `capture-adapters/gemini.ts`." },
   claude: {
@@ -64,7 +69,12 @@ export const SEO_GEO_VISIBILITY_ENGINE_SPECS: Readonly<Record<SeoGeoVisibilityEn
     note:
       "First-party Anthropic Messages + `web_search`, Haiku-class for capture and never the report model — `capture-adapters/claude.ts`. Kept, not dropped: v2 deferred this column only because its routed provider has no Claude endpoint, which is not this repo's situation.",
   },
-  copilot: { label: "Microsoft Copilot", captured: true, note: "No consumer API; ScrappyCoco route or a tracker feed, ESTIMATED by default — `capture-adapters/scrappycoco-answer-engine.ts`." },
+  copilot: {
+    label: "Microsoft Copilot",
+    captured: false,
+    note:
+      "No consumer API, and no working vendor route: the ScrappyCoco adapter it used to name posted a capability that does not exist on that account (52 capabilities, all web/social/filings scraping, no answer engine). Out of the fan-out by the same rule as `aimode`/`google_aio` — fanning out to an adapter-less engine writes a column of empty cells every run, measuring nothing while lowering the coverage percentage a client feels. It was WORSE than that here: the adapter threw rather than returning UNAVAILABLE, and step 07's `completedOutputs` drops failed slots, so Copilot vanished from the report entirely instead of being reported as unmeasured. It rejoins the moment a real route exists — flip `captured` and add the adapter, no schema change.",
+  },
   aimode: {
     label: "Google AI Mode",
     captured: false,

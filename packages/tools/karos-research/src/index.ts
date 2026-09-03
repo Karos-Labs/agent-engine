@@ -36,12 +36,19 @@ export interface KarosResearchToolsOptions {
    * Overrides `createDefaultCaptureAdapters`' env-derived per-engine adapter
    * map (T-A3/SCRUM-237). Omitted (the default) derives real adapters from
    * `options.env`/`process.env` (`PERPLEXITY_API_KEY`/`ANTHROPIC_API_KEY`/
-   * `GEMINI_API_KEY`/`SCRAPPYCOCO_API_KEY`) — an engine with no key present
-   * is simply absent, same "honest per call" rule as `scraper`. Tests pass a
-   * fake map; `null` forces every engine to the unconfigured path regardless
-   * of `process.env`.
+   * `GEMINI_API_KEY`/`OPENAI_API_KEY`, plus the Vertex Gemini route when
+   * `vertexAuthorize` is supplied) — an engine with no credential is simply
+   * absent, same "honest per call" rule as `scraper`. Tests pass a fake map;
+   * `null` forces every engine to the unconfigured path regardless of
+   * `process.env`.
    */
   visibilityAdapters?: Partial<Record<VisibilityEngine, EngineCaptureAdapter>> | null;
+  /**
+   * Resolves an ADC `Authorization` header, enabling Gemini capture through
+   * Vertex when no `GEMINI_API_KEY` is configured. Passed straight through to
+   * `createDefaultCaptureAdapters`; ignored when `visibilityAdapters` is given.
+   */
+  vertexAuthorize?: () => Promise<string>;
 }
 
 /**
@@ -68,7 +75,12 @@ export function createKarosResearchTools(
   const visibilityAdapters =
     options.visibilityAdapters === null
       ? {}
-      : (options.visibilityAdapters ?? createDefaultCaptureAdapters({ ...(options.env ? { env: options.env } : {}), ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}) }));
+      : (options.visibilityAdapters ??
+        createDefaultCaptureAdapters({
+          ...(options.env ? { env: options.env } : {}),
+          ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+          ...(options.vertexAuthorize ? { vertexAuthorize: options.vertexAuthorize } : {}),
+        }));
   return {
     "research.pull": createPull(store, scraper),
     "research.getRuns": createGetRuns(store),

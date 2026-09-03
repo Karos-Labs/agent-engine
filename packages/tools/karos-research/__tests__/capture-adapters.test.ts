@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createPerplexityAdapter } from "../src/capture-adapters/perplexity.js";
 import { createClaudeAdapter } from "../src/capture-adapters/claude.js";
 import { createGeminiAdapter } from "../src/capture-adapters/gemini.js";
-import { createScrappyCocoAnswerEngineAdapter } from "../src/capture-adapters/scrappycoco-answer-engine.js";
+import { createOpenAiAnswerEngineAdapter } from "../src/capture-adapters/openai-answer-engine.js";
 
 const REQUEST = {
   promptId: "prompt_01",
@@ -123,29 +123,58 @@ describe("T-A3/SCRUM-237: real per-engine capture adapters, mocked at the HTTP b
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  it("ScrappyCoco answer-engine (chatgpt/copilot): posts to /scrapers/execute with the engine as `source`", async () => {
-    const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
-      expect(String(url)).toBe("https://api.scrappycoco.ai/api/v1/scrapers/execute");
+  it("ChatGPT via OpenAI Responses: gathers text and url_citation annotations across output items", async () => {
+    // `output` interleaves the `web_search_call` with the `message`, which is
+    // why the adapter flattens content blocks instead of reading output[0].
+    const fetchImpl = vi.fn(async (_url: unknown, init?: { headers?: Record<string, string>; body?: unknown }) => {
       const headers = init?.headers as Record<string, string>;
-      expect(headers["X-API-Key"]).toBe("sc-test");
-      const body = JSON.parse(String(init?.body)) as { source: string; capability: string; input: { query: string } };
-      expect(body.source).toBe("chatgpt");
-      expect(body.input.query).toBe(REQUEST.promptText);
+      expect(headers["authorization"]).toBe("Bearer sk-test");
+      const body = JSON.parse(String(init?.body)) as { model: string; input: string; tools: Array<{ type: string }> };
+      expect(body.input).toBe(REQUEST.promptText);
+      expect(body.tools).toEqual([{ type: "web_search" }]);
       return jsonResponse({
-        status: "completed",
-        records: [{ text: "Acme Corp shows up in several recommendations.", outputs: { citations: ["https://acme.example/"] } }],
+        output: [
+          { type: "web_search_call" },
+          {
+            type: "message",
+            content: [
+              {
+                type: "output_text",
+                text: "Acme Corp shows up in several recommendations.",
+                annotations: [{ type: "url_citation", url: "https://acme.example/" }],
+              },
+            ],
+          },
+        ],
       });
     });
-    const adapter = createScrappyCocoAnswerEngineAdapter("chatgpt", { apiKey: "sc-test", fetchImpl: fetchImpl as unknown as typeof fetch });
+    const adapter = createOpenAiAnswerEngineAdapter({ apiKey: "sk-test", fetchImpl: fetchImpl as unknown as typeof fetch });
     const result = await adapter({ ...REQUEST, engine: "chatgpt" });
-    expect(result.captureTier).toBe("MEASURED");
+
+    expect(result.captureTier).toBe("MEASURED_grounded");
     expect(result.brandMentioned).toBe(true);
     expect(result.brandCited).toBe(true);
   });
 
-  it("ScrappyCoco answer-engine: a real HTTP failure throws (tooling_error at the tool boundary), never a fabricated cell", async () => {
-    const fetchImpl = vi.fn(async () => new Response("", { status: 500 }));
-    const adapter = createScrappyCocoAnswerEngineAdapter("copilot", { apiKey: "sc-test", fetchImpl: fetchImpl as unknown as typeof fetch });
-    await expect(adapter({ ...REQUEST, engine: "copilot" })).rejects.toThrow(/returned 500/);
+  it("ChatGPT via OpenAI Responses: an ungrounded answer is MEASURED, not MEASURED_grounded", async () => {
+    // The same split gemini.ts makes, so the two grounded engines mean the
+    // same thing by the same word.
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({ output: [{ type: "message", content: [{ type: "output_text", text: "I am not sure." }] }] }),
+    );
+    const adapter = createOpenAiAnswerEngineAdapter({ apiKey: "sk-test", fetchImpl: fetchImpl as unknown as typeof fetch });
+    const result = await adapter({ ...REQUEST, engine: "chatgpt" });
+
+    expect(result.captureTier).toBe("MEASURED");
+    expect(result.brandCited).toBe(false);
+  });
+
+  it("ChatGPT via OpenAI Responses: a real HTTP failure throws and names the cause", async () => {
+    // The body matters: a 400 here is usually "this model does not support
+    // web_search", which the status alone hides.
+    const fetchImpl = vi.fn(async () => new Response('{"error":{"message":"tool web_search unsupported"}}', { status: 400 }));
+    const adapter = createOpenAiAnswerEngineAdapter({ apiKey: "sk-test", fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    await expect(adapter({ ...REQUEST, engine: "chatgpt" })).rejects.toThrow(/returned 400.*web_search unsupported/);
   });
 });
