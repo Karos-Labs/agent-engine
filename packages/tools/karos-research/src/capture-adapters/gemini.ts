@@ -42,7 +42,39 @@ export interface GeminiVertexAdapterOptions {
 }
 
 interface GeminiGroundingChunk {
-  web?: { uri?: string };
+  web?: { uri?: string; title?: string; domain?: string };
+}
+
+/** Looks like a bare hostname (`beomniscient.com`) rather than a page title. */
+const DOMAIN_LIKE = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i;
+
+/**
+ * The publisher a grounding chunk actually points at.
+ *
+ * `web.uri` is NOT the source. Verified against the live Vertex endpoint on
+ * 2026-09-03: every chunk's `uri` is a
+ * `vertexaisearch.cloud.google.com/grounding-api-redirect/...` wrapper, and the
+ * real publisher is carried separately in `web.domain` (`beomniscient.com`,
+ * `thekeenfolks.com`). Reading `uri` alone therefore hands `analyzeAnswer` a
+ * list of Google redirect hosts, and `brandCited` can never be true for any
+ * client on this route — a permanently, silently wrong "your brand is never
+ * cited" for every Gemini cell.
+ *
+ * `domain` first, then `title` ONLY when it is domain-shaped (the Developer
+ * API often puts a hostname there where Vertex populates `domain`; it can also
+ * hold a real page title, which is not a source), then the raw `uri` as a last
+ * resort so a payload carrying neither still contributes something.
+ * `analyzeAnswer.domainOf` parses a URL and falls back to the raw string, so a
+ * bare hostname matches correctly either way.
+ */
+function chunkSource(chunk: GeminiGroundingChunk): string | undefined {
+  const web = chunk.web;
+  if (!web) return undefined;
+  const domain = web.domain?.trim();
+  if (domain) return domain;
+  const title = web.title?.trim();
+  if (title && DOMAIN_LIKE.test(title)) return title;
+  return typeof web.uri === "string" && web.uri.trim() ? web.uri.trim() : undefined;
 }
 interface GeminiCandidate {
   content?: { parts?: Array<{ text?: string }> };
@@ -144,7 +176,7 @@ function toCaptureResult(
   const candidate = body.candidates?.[0];
   const text = (candidate?.content?.parts ?? []).map((p) => p.text ?? "").join("\n");
   const groundingChunks = candidate?.groundingMetadata?.groundingChunks ?? [];
-  const citationUrls = groundingChunks.map((c) => c.web?.uri).filter((url): url is string => typeof url === "string");
+  const citationUrls = groundingChunks.map(chunkSource).filter((url): url is string => url !== undefined);
   const aioAbsent = groundingChunks.length === 0;
 
   const analyzed = analyzeAnswer({ text, citationUrls, clientDomains, competitorRoster });

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createPerplexityAdapter } from "../src/capture-adapters/perplexity.js";
 import { createClaudeAdapter } from "../src/capture-adapters/claude.js";
-import { createGeminiAdapter } from "../src/capture-adapters/gemini.js";
+import { createGeminiAdapter, createGeminiVertexAdapter } from "../src/capture-adapters/gemini.js";
 import { createOpenAiAnswerEngineAdapter } from "../src/capture-adapters/openai-answer-engine.js";
 
 const REQUEST = {
@@ -121,6 +121,69 @@ describe("T-A3/SCRUM-237: real per-engine capture adapters, mocked at the HTTP b
     const adapter = createGeminiAdapter({ apiKey: "gem-test", fetchImpl: fetchImpl as unknown as typeof fetch });
     await adapter({ ...REQUEST, engine: "gemini" });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("Gemini: cites the real publisher, not Google's grounding redirect", async () => {
+    // The live Vertex response shape, verified 2026-09-03. Every `uri` is a
+    // vertexaisearch.cloud.google.com/grounding-api-redirect/... wrapper and
+    // the real publisher is in `domain`. Reading `uri` alone would hand
+    // analyzeAnswer a list of Google hosts, so `brandCited` could never be
+    // true for any client — a permanent, silent "your brand is never cited".
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({
+        candidates: [
+          {
+            content: { parts: [{ text: "Acme Corp is one option." }] },
+            groundingMetadata: {
+              groundingChunks: [
+                {
+                  web: {
+                    uri: "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHllhoV1yut",
+                    title: "acme.example",
+                    domain: "acme.example",
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+    const adapter = createGeminiVertexAdapter({
+      projectId: "karoscmo-prep",
+      location: "us-central1",
+      authorize: async () => "Bearer test",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const result = await adapter({ ...REQUEST, engine: "gemini" });
+
+    expect(result.captureTier).toBe("MEASURED_grounded");
+    expect(result.brandCited).toBe(true);
+    expect(result.citations.map((c) => c.domain)).toEqual(["acme.example"]);
+  });
+
+  it("Gemini: falls back to the uri when a chunk carries no domain or hostname title", async () => {
+    // A payload shape neither route promises must still contribute something
+    // rather than dropping the citation entirely.
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({
+        candidates: [
+          {
+            content: { parts: [{ text: "answer" }] },
+            groundingMetadata: { groundingChunks: [{ web: { uri: "https://real.example/page", title: "A Page Title" } }] },
+          },
+        ],
+      }),
+    );
+    const adapter = createGeminiVertexAdapter({
+      projectId: "p",
+      location: "us-central1",
+      authorize: async () => "Bearer test",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const result = await adapter({ ...REQUEST, engine: "gemini" });
+
+    expect(result.citations.map((c) => c.domain)).toEqual(["real.example"]);
   });
 
   it("ChatGPT via OpenAI Responses: gathers text and url_citation annotations across output items", async () => {
