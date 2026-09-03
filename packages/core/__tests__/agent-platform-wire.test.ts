@@ -33,19 +33,54 @@ describe("Agent Platform wire contract (real AnthropicVertex, faked fetch)", () 
       captured.url = String(url);
       captured.body = JSON.parse(init.body) as Record<string, unknown>;
       captured.authorization = new Headers(init.headers as Record<string, string>).get("authorization");
-      return new Response(
-        JSON.stringify({
-          id: "msg_1",
-          type: "message",
-          role: "assistant",
-          // Agent Platform echoes back its own @-dated spelling.
-          model: "claude-haiku-4-5@20251001",
-          content: [{ type: "tool_use", id: "t1", name: "emit_output", input: { body: "hi" } }],
-          stop_reason: "tool_use",
-          usage: { input_tokens: 12, output_tokens: 3, cache_creation_input_tokens: 900 },
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
+      // SSE, not a JSON body: the adapter streams every call now (see
+      // `MessagesApiAdapter.complete`), so the real SDK is parsing a real
+      // event stream here. That is the point of this file — a faked JSON
+      // response would prove the request shape while testing a code path
+      // production no longer takes, and the SDK rejects one outright
+      // ("request ended without sending any chunks").
+      //
+      // The events below assemble to exactly the message the non-streaming
+      // body used to return: same model spelling, same tool_use block, same
+      // usage. `input_tokens`/`cache_creation_input_tokens` arrive on
+      // `message_start` and `output_tokens` on `message_delta`, which is the
+      // wire's own split and worth reproducing rather than flattening.
+      const events: Array<[string, unknown]> = [
+        [
+          "message_start",
+          {
+            type: "message_start",
+            message: {
+              id: "msg_1",
+              type: "message",
+              role: "assistant",
+              // Agent Platform echoes back its own @-dated spelling.
+              model: "claude-haiku-4-5@20251001",
+              content: [],
+              stop_reason: null,
+              stop_sequence: null,
+              usage: { input_tokens: 12, output_tokens: 0, cache_creation_input_tokens: 900, cache_read_input_tokens: 0 },
+            },
+          },
+        ],
+        [
+          "content_block_start",
+          { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "t1", name: "emit_output", input: {} } },
+        ],
+        [
+          "content_block_delta",
+          { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '{"body":"hi"}' } },
+        ],
+        ["content_block_stop", { type: "content_block_stop", index: 0 }],
+        [
+          "message_delta",
+          { type: "message_delta", delta: { stop_reason: "tool_use", stop_sequence: null }, usage: { output_tokens: 3 } },
+        ],
+        ["message_stop", { type: "message_stop" }],
+      ];
+      const body = events.map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`).join("");
+
+      return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
     };
 
     // Stands in for ADC. `getRequestHeaders` is the only method the SDK's
@@ -107,6 +142,14 @@ describe("Agent Platform wire contract (real AnthropicVertex, faked fetch)", () 
     expect(tools[0]!.name).toBe("emit_output");
     expect(tools[0]!.input_schema.type).toBe("object");
     expect(captured.body!["tool_choice"]).toEqual({ type: "tool", name: "emit_output" });
+  });
+
+  it("asks Agent Platform to stream, which is what a 32k-maxTokens step requires", async () => {
+    // On the wire, not just in the adapter's arguments. `intel-report-agent`
+    // asks for 32k output tokens; without this field the SDK refuses to send
+    // the request at all, which is how every one of its runs failed in 4ms.
+    const { captured } = await callThrough("claude-haiku-4-5-20251001");
+    expect(captured.body!["stream"]).toBe(true);
   });
 
   it("parses the response and reports the canonical model id plus cache-write tokens", async () => {

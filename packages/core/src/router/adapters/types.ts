@@ -1,4 +1,4 @@
-import type { Message, MessageCreateParamsNonStreaming } from "@anthropic-ai/sdk/resources/messages";
+import type { Message, MessageCreateParamsNonStreaming, MessageCreateParamsStreaming } from "@anthropic-ai/sdk/resources/messages";
 import type { ZodSchema } from "../../types/agent-step.js";
 
 export interface CompletionRequest<TOutput> {
@@ -66,5 +66,22 @@ export interface ModelAdapter {
 export interface MessagesApiClient {
   messages: {
     create(body: MessageCreateParamsNonStreaming): Promise<Message>;
+    /**
+     * The streaming route, used in preference to `create` whenever a client
+     * provides one — which every real one does (both `Anthropic` and
+     * `AnthropicVertex` expose `messages.stream`).
+     *
+     * Optional ONLY so a hand-written test double may implement `create`
+     * alone; it is not an optional capability in production. The SDK refuses a
+     * non-streaming request outright, before sending anything, when
+     * `max_tokens` is high enough that the response could take more than ten
+     * minutes — `intel-report-agent` asks for 32k and so failed 100% of the
+     * time, in 4ms, for zero tokens and zero cost, with "Streaming is required
+     * for operations that may take longer than 10 minutes".
+     *
+     * `finalMessage()` resolves to the identical `Message` `create` returns,
+     * which is what lets one adapter body serve both.
+     */
+    stream?(body: MessageCreateParamsStreaming): { finalMessage(): Promise<Message> };
   };
 }

@@ -100,10 +100,34 @@ export class MessagesApiAdapter implements ModelAdapter {
     const client = this.resolveClient(req.model);
     const maxTokens = req.maxTokens ?? DEFAULT_MAX_TOKENS;
 
-    const response = await withRetry(
-      () => client.messages.create(this.buildRequest(req, providerModel, maxTokens, jsonSchema)),
-      this.retryOptions,
-    );
+    const request = this.buildRequest(req, providerModel, maxTokens, jsonSchema);
+
+    // STREAM WHENEVER THE CLIENT CAN, which in production is always.
+    //
+    // The SDK refuses a non-streaming request outright — client-side, before
+    // a byte leaves the process — once `max_tokens` is high enough that the
+    // response could run past ten minutes. `intel-report-agent` asks for 32k
+    // (`INTEL_REPORT_DRAFT_MAX_TOKENS`, sized deliberately in that agent's own
+    // comment), so every single one of its runs died in ~4ms for zero tokens
+    // and zero cost with "Streaming is required for operations that may take
+    // longer than 10 minutes" — a `tooling_error` that looked like a tool
+    // problem and was really this line.
+    //
+    // Streaming unconditionally rather than above some `max_tokens` threshold:
+    // the threshold is the SDK's, it is vendor- and model-dependent, and a
+    // copy of it here would be a second place to get it wrong. It also retires
+    // the same class of failure the portal already hit from the other side —
+    // see `karosCMO`'s deleted Phase A, which used `streamText` and not
+    // `generateText` because a long non-streaming turn blew undici's
+    // five-minute headers timeout.
+    //
+    // `finalMessage()` resolves to the same `Message` `create` returns, so
+    // everything below this line is unchanged and unaware.
+    const send = client.messages.stream
+      ? () => client.messages.stream!({ ...request, stream: true }).finalMessage()
+      : () => client.messages.create(request);
+
+    const response = await withRetry(send, this.retryOptions);
 
     // A truncated response is not a partial answer — the structured output is
     // cut mid-JSON and unparseable. Say so precisely instead of surfacing the
