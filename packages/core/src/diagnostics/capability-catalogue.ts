@@ -142,14 +142,15 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
   },
   {
     id: "seo-geo-ai-visibility-capture",
-    title: "SEO & GEO AI-visibility capture — real per-engine answers for research.captureVisibility's 5 fixed engines (T-A3/SCRUM-237)",
+    title: "SEO & GEO AI-visibility capture — real per-engine answers for research.captureVisibility's captured engines (T-A3/SCRUM-237)",
     owner: "packages/tools/karos-research (research.captureVisibility, packages/tools/karos-research/src/capture-adapters)",
     requires: [
       { name: "PERPLEXITY_API_KEY", kind: "enhances" },
       { name: "GEMINI_API_KEY", kind: "enhances" },
+      { name: "OPENAI_API_KEY", kind: "enhances" },
     ],
     whenAbsent:
-      "Perplexity's and Gemini's cells report UNAVAILABLE/no_adapter_wired, honestly, exactly like every other unconfigured engine — never a fabricated MEASURED/ESTIMATED answer. Claude/ChatGPT/Copilot's own capture independently depends on ANTHROPIC_API_KEY/SCRAPPYCOCO_API_KEY, which are rows elsewhere in this catalogue for other capabilities, rather than a new credential each. GEMINI_API_KEY is carried on THIS row rather than reused from a model-routing row: AU59/SCRUM-358 removed the direct-Gemini model route and its row, so capture is now this variable's only reader.",
+      "Each engine's cells report UNAVAILABLE/no_adapter_wired, honestly, exactly like every other unconfigured engine — never a fabricated MEASURED/ESTIMATED answer. Claude's capture independently depends on ANTHROPIC_API_KEY, a row elsewhere in this catalogue for another capability, rather than a new credential. GEMINI_API_KEY is carried on THIS row rather than reused from a model-routing row: AU59/SCRUM-358 removed the direct-Gemini model route and its row, so capture is now this variable's only reader — and absent it, Gemini falls back to the Vertex route on ADC, which needs no credential of its own and so has no entry here. OPENAI_API_KEY backs the ChatGPT column via the Responses API's web_search tool; it replaced a ScrappyCoco route that never worked, so SCRAPPYCOCO_API_KEY is no longer read by capture at all (it still backs research.pull's scraper, its own row). Copilot has no route in this build and is out of the fan-out entirely rather than wired to something that throws.",
     rationale: "packages/tools/karos-research/src/capture-visibility.ts's own header comment — an engine with no adapter configured degrades per-engine, never all-or-nothing.",
   },
   {
