@@ -71,9 +71,9 @@ export const SEO_GEO_VISIBILITY_ENGINE_SPECS: Readonly<Record<SeoGeoVisibilityEn
   },
   copilot: {
     label: "Microsoft Copilot",
-    captured: false,
+    captured: true,
     note:
-      "No consumer API, and no working vendor route: the ScrappyCoco adapter it used to name posted a capability that does not exist on that account (52 capabilities, all web/social/filings scraping, no answer engine). Out of the fan-out by the same rule as `aimode`/`google_aio` — fanning out to an adapter-less engine writes a column of empty cells every run, measuring nothing while lowering the coverage percentage a client feels. It was WORSE than that here: the adapter threw rather than returning UNAVAILABLE, and step 07's `completedOutputs` drops failed slots, so Copilot vanished from the report entirely instead of being reported as unmeasured. It rejoins the moment a real route exists — flip `captured` and add the adapter, no schema change.",
+      "No consumer API, and no working vendor route: the ScrappyCoco adapter it used to name posted a capability that does not exist on that account (52 capabilities, all web/social/filings scraping, no answer engine). That adapter is deleted, so Copilot now has NO adapter — which is exactly what `createCaptureVisibility` turns into an honest `UNAVAILABLE`/`no_adapter_wired` cell. Kept in the fan-out for that reason, unlike `aimode`/`google_aio`: those two were never promised, whereas Copilot is a ratified engine (SCRUM-396) a client is told is tracked, so reporting it as unmeasured is the truthful answer and dropping it would quietly flatter the coverage percentage by shrinking the denominator. Keeping it also leaves `engineListHash` untouched, so no prior run's frozen record is invalidated. What it must never go back to is the adapter that THREW: step 07's `completedOutputs` drops failed slots, so Copilot vanished from the report entirely rather than appearing as unmeasured — the failure that hid all of this.",
   },
   aimode: {
     label: "Google AI Mode",
