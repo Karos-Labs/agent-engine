@@ -192,9 +192,17 @@ describe("T-A3/SCRUM-237: real per-engine capture adapters, mocked at the HTTP b
     const fetchImpl = vi.fn(async (_url: unknown, init?: { headers?: Record<string, string>; body?: unknown }) => {
       const headers = init?.headers as Record<string, string>;
       expect(headers["authorization"]).toBe("Bearer sk-test");
-      const body = JSON.parse(String(init?.body)) as { model: string; input: string; tools: Array<{ type: string }> };
+      const body = JSON.parse(String(init?.body)) as {
+        model: string;
+        input: string;
+        tools: Array<{ type: string }>;
+        tool_choice: { type: string };
+      };
       expect(body.input).toBe(REQUEST.promptText);
       expect(body.tools).toEqual([{ type: "web_search" }]);
+      // Forced, not merely offered. Verified against the live API: unforced,
+      // the model answers from training data with no search and no citations.
+      expect(body.tool_choice).toEqual({ type: "web_search" });
       return jsonResponse({
         output: [
           { type: "web_search_call" },

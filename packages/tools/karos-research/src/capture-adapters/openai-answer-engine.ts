@@ -75,7 +75,22 @@ export function createOpenAiAnswerEngineAdapter(options: OpenAiAnswerEngineAdapt
     const response = await fetchImpl(`${baseUrl}${RESPONSES_PATH}`, {
       method: "POST",
       headers: { authorization: `Bearer ${options.apiKey}`, "content-type": "application/json" },
-      body: JSON.stringify({ model, input: promptText, tools: [{ type: "web_search" }] }),
+      // `tool_choice` is not optional decoration — VERIFIED against the live
+      // API on 2026-09-03. Offering the tool without forcing it, the model
+      // answered this exact prompt from training data: no `web_search_call` in
+      // `output`, zero `url_citation` annotations, 511 characters. Forced, the
+      // same prompt searched and returned 6090 characters with real publisher
+      // citations. Unforced, this adapter would measure the model's MEMORY of
+      // the web rather than what ChatGPT tells a person today, and
+      // `brandCited` would be false for every client on every cell — the same
+      // silent zero the ScrappyCoco route produced, arriving by a different
+      // road.
+      body: JSON.stringify({
+        model,
+        input: promptText,
+        tools: [{ type: "web_search" }],
+        tool_choice: { type: "web_search" },
+      }),
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) {
