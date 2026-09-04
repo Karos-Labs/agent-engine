@@ -87,6 +87,22 @@ export const RunRecordSchema = z.object({
    * existed, or one with no steps recorded yet.
    */
   currentStepId: z.string().nullable().optional(),
+  /**
+   * Which execution currently holds this run's lease — a random id minted per
+   * `WorkflowEngine.run()` call, not a machine or instance identity.
+   *
+   * Exists so a worker that has lost its lease can find out. `updatedAt` alone
+   * says a lease is alive; it cannot say whose. When a run is reclaimed after
+   * its lease expires, the reclaiming execution writes a new owner here, and
+   * the old execution's next heartbeat sees an id that is not its own and
+   * stands down instead of extending a lease it no longer holds.
+   *
+   * `undefined` on a run recorded before this field existed, and on any run
+   * whose execution predates it — both read as "no owner", which is treated as
+   * reclaimable rather than as a claim, since a run with no recorded owner is
+   * exactly the abandoned case this field was added to recover.
+   */
+  leaseOwner: z.string().nullable().optional(),
 });
 export type RunRecord = z.infer<typeof RunRecordSchema>;
 
@@ -281,6 +297,34 @@ export interface RunClaimResult {
 }
 
 /**
+ * Whether a `running` run's lease has expired, making it safe to reclaim.
+ *
+ * One definition, shared by both stores, because a lease rule that differs
+ * between the in-memory store the tests run against and the Firestore store
+ * production runs against is a rule nothing actually verifies.
+ *
+ * A run with NO `leaseOwner` is reclaimable on the same terms as an expired
+ * one rather than being treated as claimed: that is what a run recorded before
+ * this field existed looks like, and it is also exactly the abandoned shape the
+ * lease was added to recover. Refusing those would leave every run stranded
+ * before this change stranded forever.
+ *
+ * The lease is deliberately NOT a fence. A worker partitioned from Firestore
+ * long enough to lose its lease while still executing will keep executing, and
+ * a reclaiming worker will re-run whatever step the first one had in flight —
+ * duplicated spend on that step, not corruption, since every completed step is
+ * checkpointed by id and replays from its checkpoint rather than re-executing.
+ * `leaseOwner` narrows that window (the stale worker stands down at its next
+ * heartbeat) but does not close it; closing it needs a fencing token carried on
+ * every write, which is a much larger change than the outage that prompted this.
+ */
+export function isReclaimableRunning(run: RunRecord, reclaimRunningBefore: number | undefined): boolean {
+  if (reclaimRunningBefore === undefined) return false;
+  if (run.status !== "running") return false;
+  return run.updatedAt <= reclaimRunningBefore;
+}
+
+/**
  * The small internal interface every durable-workflow primitive is built
  * against (RFC-01 §8.4's "swap the adapter, not the workflow code" principle)
  * — `step.code`/`step.agent`/`step.gate`/`fanout` never talk to Firestore or
@@ -306,8 +350,25 @@ export interface DurableStepStore {
    * single-threaded event loop (no `await` between the read and the write).
    * Throws — never silently no-ops — if the run does not exist at all, the
    * same "caller bug, not a valid state" contract `updateRun` already has.
+   *
+   * `reclaimRunningBefore` is the LEASE. A `running` run is normally refused
+   * (an execution is in flight), but a `running` run whose `updatedAt` is at or
+   * before this timestamp is treated as abandoned and claimed anyway. Omit it
+   * and `running` is refused unconditionally, which is the behaviour every
+   * caller had before the lease existed.
+   *
+   * Why it is needed: on 2026-09-03 a deploy restarted the worker two minutes
+   * into two runs. Pub/Sub redelivered both messages, `claimRun` refused them
+   * because the status was still `running`, and both runs sat in `running`
+   * forever — `updatedAt` frozen at the second they were created, no worker
+   * owning them, and no path back. Any restart, deploy or scale-down did that.
    */
-  claimRun(runId: string, allowedFromStatuses: readonly RunStatus[], patch: Partial<Omit<RunRecord, "runId">>): Promise<RunClaimResult>;
+  claimRun(
+    runId: string,
+    allowedFromStatuses: readonly RunStatus[],
+    patch: Partial<Omit<RunRecord, "runId">>,
+    reclaimRunningBefore?: number,
+  ): Promise<RunClaimResult>;
 
   getStep(runId: string, stepId: string): Promise<StepRecord | undefined>;
   saveStep(runId: string, step: StepRecord): Promise<void>;

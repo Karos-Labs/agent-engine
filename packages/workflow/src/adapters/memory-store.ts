@@ -1,4 +1,5 @@
 import type { DurableStepStore, GateRecord, RunClaimResult, RunRecord, RunStatus, SlotRecord, StepRecord } from "./types.js";
+import { isReclaimableRunning } from "./types.js";
 
 function scopedKey(runId: string, id: string): string {
   return `${runId}::${id}`;
@@ -62,12 +63,17 @@ export class MemoryDurableStepStore implements DurableStepStore {
   // No `await` anywhere in this body — it runs to completion within one turn of the event
   // loop, so two "concurrent" callers can never interleave between the status check and the
   // write (see the interface doc comment).
-  async claimRun(runId: string, allowedFromStatuses: readonly RunStatus[], patch: Partial<Omit<RunRecord, "runId">>): Promise<RunClaimResult> {
+  async claimRun(
+    runId: string,
+    allowedFromStatuses: readonly RunStatus[],
+    patch: Partial<Omit<RunRecord, "runId">>,
+    reclaimRunningBefore?: number,
+  ): Promise<RunClaimResult> {
     const existing = this.runs.get(runId);
     if (!existing) {
       throw new Error(`MemoryDurableStepStore.claimRun: no run found for "${runId}"`);
     }
-    if (!allowedFromStatuses.includes(existing.status)) {
+    if (!allowedFromStatuses.includes(existing.status) && !isReclaimableRunning(existing, reclaimRunningBefore)) {
       return { claimed: false, run: existing };
     }
     const updated = { ...existing, ...patch };

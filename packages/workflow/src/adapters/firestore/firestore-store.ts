@@ -1,4 +1,5 @@
 import type { DurableStepStore, GateRecord, RunClaimResult, RunRecord, RunStatus, SlotRecord, StepRecord } from "../types.js";
+import { isReclaimableRunning } from "../types.js";
 import type { FirestoreCollectionRef, FirestoreDocumentRef, FirestoreLike } from "./firestore-types.js";
 import type { ArchiveStoreLike } from "./archive-types.js";
 
@@ -166,7 +167,12 @@ export class FirestoreDurableStepStore implements DurableStepStore {
     await this.runDoc(runId).set(sanitizeForFirestore(patch), { merge: true });
   }
 
-  async claimRun(runId: string, allowedFromStatuses: readonly RunStatus[], patch: Partial<Omit<RunRecord, "runId">>): Promise<RunClaimResult> {
+  async claimRun(
+    runId: string,
+    allowedFromStatuses: readonly RunStatus[],
+    patch: Partial<Omit<RunRecord, "runId">>,
+    reclaimRunningBefore?: number,
+  ): Promise<RunClaimResult> {
     return this.db.runTransaction(async (tx) => {
       const ref = this.runDoc(runId);
       const snap = await tx.get(ref);
@@ -174,7 +180,7 @@ export class FirestoreDurableStepStore implements DurableStepStore {
         throw new Error(`FirestoreDurableStepStore [database="${this.databaseId}"]: no run found for "${runId}"`);
       }
       const existing = snap.data() as RunRecord;
-      if (!allowedFromStatuses.includes(existing.status)) {
+      if (!allowedFromStatuses.includes(existing.status) && !isReclaimableRunning(existing, reclaimRunningBefore)) {
         return { claimed: false, run: existing };
       }
       const updated = { ...existing, ...patch };

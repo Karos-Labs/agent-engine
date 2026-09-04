@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { ModelRouter } from "@agent-engine/core";
 import type { WorkflowContext } from "../src/index.js";
 import {
+  RUN_LEASE_TTL_MS,
+  RUN_LEASE_HEARTBEAT_MS,
   GateAlreadyResolvedError,
   MemoryDurableStepStore,
   WorkflowBlockedIntake,
@@ -731,24 +733,170 @@ describe("network/logging hygiene: err.cause preservation (RFC-01 §16.4)", () =
 });
 
 describe("optimistic concurrency (a reliability audit finding)", () => {
-  it("rejects a second run() call while the first is genuinely mid-flight (status still 'running')", async () => {
-    const store = new MemoryDurableStepStore();
-    const engine = new WorkflowEngine(store);
+  const NOW = 1_700_000_000_000;
 
-    // Get a run into "running" and leave it there, standing in for a still-in-flight
-    // execution (or one that crashed without ever reaching a terminal status).
+  it("rejects a second run() call while the first is genuinely mid-flight (lease still live)", async () => {
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store, () => NOW);
+
+    // A run whose heartbeat is CURRENT: an execution really is in flight, and
+    // a second caller must not join it. This fixture used to carry
+    // `updatedAt: 0` and stand in for both this case and a crashed process —
+    // the two are no longer the same thing, which is the point of the lease,
+    // so they are now two tests with two fixtures.
     await store.createRunIfNotExists({
       runId: "run_1",
       clientSlug: "acme",
       productId: "linkedin",
       runKind: "recurring",
       status: "running",
-      createdAt: 0,
-      updatedAt: 0,
+      createdAt: NOW - 60_000,
+      updatedAt: NOW - 1_000,
+      leaseOwner: "the-live-execution",
     });
 
     const workflowFn = async (wf: WorkflowContext) => wf.step.code("noop", () => "done");
     await expect(engine.run(workflowFn, baseParams)).rejects.toThrow(WorkflowConcurrentRunError);
+  });
+
+  it("reclaims a 'running' run whose lease expired — the 2026-09-03 orphan", async () => {
+    // A deploy restarted the worker two minutes into two runs. Pub/Sub
+    // redelivered both messages, `claimRun` refused them because the status
+    // was still `running`, and both sat there forever — `updatedAt` frozen at
+    // the second they were created, no worker owning them, no path back. Any
+    // deploy, scale-down or instance recycle did that to whatever was in
+    // flight.
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store, () => NOW);
+
+    await store.createRunIfNotExists({
+      runId: "run_1",
+      clientSlug: "acme",
+      productId: "linkedin",
+      runKind: "recurring",
+      status: "running",
+      createdAt: NOW - RUN_LEASE_TTL_MS - 60_000,
+      updatedAt: NOW - RUN_LEASE_TTL_MS - 60_000,
+      leaseOwner: "the-worker-that-died",
+    });
+
+    const workflowFn = async (wf: WorkflowContext) => wf.step.code("noop", () => "done");
+    const result = await engine.run(workflowFn, baseParams);
+
+    expect(result.status).toBe("completed");
+    // The takeover is recorded, so the next execution can tell it inherited
+    // this run rather than started it.
+    const run = await store.getRun("run_1");
+    expect(run?.leaseOwner).not.toBe("the-worker-that-died");
+  });
+
+  it("holds the lease open right up to the TTL, and not a moment before", async () => {
+    // The boundary matters in one direction only: reclaiming too early robs a
+    // live execution of a run it is still paying for.
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store, () => NOW);
+
+    await store.createRunIfNotExists({
+      runId: "run_1",
+      clientSlug: "acme",
+      productId: "linkedin",
+      runKind: "recurring",
+      status: "running",
+      createdAt: NOW - RUN_LEASE_TTL_MS,
+      // One millisecond inside the lease.
+      updatedAt: NOW - RUN_LEASE_TTL_MS + 1,
+      leaseOwner: "still-alive",
+    });
+
+    const workflowFn = async (wf: WorkflowContext) => wf.step.code("noop", () => "done");
+    await expect(engine.run(workflowFn, baseParams)).rejects.toThrow(WorkflowConcurrentRunError);
+  });
+
+  it("renews the lease while a long step is still running", async () => {
+    // Without this, `updatedAt` never moves between the claim and the terminal
+    // write, every in-flight run looks exactly like an abandoned one, and the
+    // lease above would start robbing live executions instead of rescuing dead
+    // ones — turning a leak into a much worse bug.
+    vi.useFakeTimers();
+    try {
+      const store = new MemoryDurableStepStore();
+      let clock = NOW;
+      const engine = new WorkflowEngine(store, () => clock);
+
+      let release!: () => void;
+      const stepGate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const running = engine.run(async (wf: WorkflowContext) => wf.step.code("slow", async () => {
+        await stepGate;
+        return "done";
+      }), baseParams);
+
+      // Let the claim land and the step start.
+      await vi.advanceTimersByTimeAsync(0);
+      const atStart = await store.getRun("run_1");
+      expect(atStart?.status).toBe("running");
+
+      // Time passes inside a single long step — a 32k-token model call.
+      clock = NOW + RUN_LEASE_HEARTBEAT_MS;
+      await vi.advanceTimersByTimeAsync(RUN_LEASE_HEARTBEAT_MS);
+
+      const midRun = await store.getRun("run_1");
+      expect(midRun?.updatedAt).toBe(clock);
+
+      release();
+      await running;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops renewing once another execution has taken the run over", async () => {
+    // A worker partitioned long enough to lose its lease must not keep the run
+    // looking alive on behalf of the execution that replaced it.
+    vi.useFakeTimers();
+    try {
+      const store = new MemoryDurableStepStore();
+      let clock = NOW;
+      const engine = new WorkflowEngine(store, () => clock);
+
+      let release!: () => void;
+      const stepGate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const running = engine.run(async (wf: WorkflowContext) => wf.step.code("slow", async () => {
+        await stepGate;
+        return "done";
+      }), baseParams);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Somebody else reclaims it.
+      const stolenAt = NOW + 5;
+      await store.updateRun("run_1", { leaseOwner: "somebody-else", updatedAt: stolenAt });
+
+      clock = NOW + RUN_LEASE_HEARTBEAT_MS * 3;
+      await vi.advanceTimersByTimeAsync(RUN_LEASE_HEARTBEAT_MS * 3);
+
+      const after = await store.getRun("run_1");
+      expect(after?.updatedAt).toBe(stolenAt);
+      expect(after?.leaseOwner).toBe("somebody-else");
+
+      release();
+      await running;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("records a lease owner on a brand-new run, so the first execution is identifiable too", async () => {
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store, () => NOW);
+
+    await engine.run(async (wf: WorkflowContext) => wf.step.code("noop", () => "done"), baseParams);
+
+    const run = await store.getRun("run_1");
+    expect(typeof run?.leaseOwner).toBe("string");
+    expect(run?.leaseOwner).not.toBe("");
   });
 
   it("lets a second call proceed once the first genuinely finishes (claimed sequentially, not blocked forever)", async () => {

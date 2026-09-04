@@ -31,6 +31,30 @@ import {
  */
 const RESUMABLE_FROM_STATUSES: readonly RunStatus[] = ["awaiting_gate", "completed", "degraded", "failed", "held", "blocked_intake"];
 
+/**
+ * How long a `running` run may go without a heartbeat before another execution
+ * may take it over.
+ *
+ * The comment above says a `running` run is "either a genuine concurrent call,
+ * or a crashed process that never updated status — either way, not safe to
+ * silently re-enter". The first half of that stayed true; the second half was
+ * a permanent leak. On 2026-09-03 a deploy restarted the worker two minutes
+ * into two runs; Pub/Sub redelivered both messages, `claimRun` refused them as
+ * `already-running`, and both sat in `running` forever with `updatedAt` frozen
+ * at the second they were created. Every deploy, scale-down and instance
+ * recycle did that, silently, to whatever was in flight.
+ *
+ * Five minutes against a thirty-second heartbeat: ten consecutive missed
+ * heartbeats before a live execution can be robbed of its own run. The margin
+ * is deliberately lopsided because the two failure modes are not symmetric —
+ * reclaiming too eagerly re-runs a paid model step, while reclaiming too
+ * slowly only delays recovery of a run that is already dead.
+ */
+export const RUN_LEASE_TTL_MS = 5 * 60_000;
+
+/** How often a live execution renews its lease. Must stay well below the TTL. */
+export const RUN_LEASE_HEARTBEAT_MS = 30_000;
+
 /** Every optional `RunRecord` field a terminal (or re-entrant) transition must account for — see the doc comment on `terminalPatch`. */
 interface OptionalRunFields {
   pendingGateId: string | null;
@@ -122,6 +146,9 @@ export class WorkflowEngine {
   ) {}
 
   async run<T>(workflowFn: (wf: WorkflowContext) => Promise<T>, params: RunWorkflowParams): Promise<WorkflowRunResult<T>> {
+    // Minted per EXECUTION, not per run and not per machine: two executions of
+    // the same run must be distinguishable, which is the whole point.
+    const leaseOwner = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     const existingRun = await this.store.getRun(params.runId);
     // A resumed run keeps its originally-set budget ceiling unless this call explicitly
     // supplies a new one — previously, only params.budget was ever consulted here, so the
@@ -150,6 +177,7 @@ export class WorkflowEngine {
         status: "running",
         createdAt: this.now(),
         updatedAt: this.now(),
+        leaseOwner,
         ...(budget !== undefined ? { budget } : {}),
         ...(Object.keys(input).length > 0 ? { input } : {}),
         ...(stageModels !== undefined ? { stageModels } : {}),
@@ -161,9 +189,24 @@ export class WorkflowEngine {
       // run, must not both proceed past the same checkpoint. Only the caller that actually
       // wins this atomic transition continues; everyone else gets a distinct, catchable
       // error instead of silently double-executing.
-      const claim = await this.store.claimRun(params.runId, RESUMABLE_FROM_STATUSES, { status: "running", updatedAt: this.now() });
+      const claim = await this.store.claimRun(
+        params.runId,
+        RESUMABLE_FROM_STATUSES,
+        { status: "running", updatedAt: this.now(), leaseOwner },
+        // The lease. A `running` run whose heartbeat stopped this long ago is
+        // taken over rather than refused — see RUN_LEASE_TTL_MS.
+        this.now() - RUN_LEASE_TTL_MS,
+      );
       if (!claim.claimed) {
         throw new WorkflowConcurrentRunError(params.runId, claim.run.status, RESUMABLE_FROM_STATUSES);
+      }
+      if (claim.run.status === "running") {
+        // Worth saying out loud: this run was abandoned by a previous
+        // execution and has just been taken over. Silent recovery would hide
+        // exactly the restarts this lease exists to survive.
+        console.warn(
+          `workflow-engine: reclaimed abandoned run "${params.runId}" (no heartbeat for at least ${Math.round(RUN_LEASE_TTL_MS / 1000)}s; previous owner ${claim.run.leaseOwner ?? "unrecorded"})`,
+        );
       }
     }
 
@@ -191,7 +234,13 @@ export class WorkflowEngine {
     // call it explicitly: this method's own outcome switch never lets an
     // exception escape (every branch RETURNS a `WorkflowRunResult`), so
     // `runInSpan`'s automatic catch-and-mark-ERROR never fires here on its own.
-    return withWorkflowRunSpan({ runId: params.runId, clientSlug: params.clientSlug, productId: params.productId, runKind: params.runKind }, async (span, markOutcome) => {
+    // Renewed for as long as this execution is actually alive. Stopped in the
+    // `finally` below, so every exit — completed, failed, or paused at a gate —
+    // releases the lease immediately rather than leaving the run unclaimable
+    // for the rest of the TTL.
+    const heartbeat = this.startLeaseHeartbeat(params.runId, leaseOwner);
+    try {
+      return await withWorkflowRunSpan({ runId: params.runId, clientSlug: params.clientSlug, productId: params.productId, runKind: params.runKind }, async (span, markOutcome) => {
       try {
         const output = await workflowFn(wf);
         const totalCostUsd = await sumRunCost(this.store, params.runId);
@@ -252,7 +301,54 @@ export class WorkflowEngine {
         recordWorkflowRunMetric({ runKind: params.runKind, status: "degraded" });
         return { status: "degraded", runId: params.runId, output: null, failureReason, totalCostUsd };
       }
-    });
+      });
+    } finally {
+      heartbeat.stop();
+    }
+  }
+
+  /**
+   * Renews this execution's claim on the run every `RUN_LEASE_HEARTBEAT_MS`,
+   * so `claimRun`'s lease check can tell a live execution from an abandoned
+   * one. Without it `updatedAt` never moves between the claim and the terminal
+   * write, and every run in flight looks identical to a dead one.
+   *
+   * Three deliberate properties:
+   *
+   * - A FAILED HEARTBEAT IS NOT A FAILED RUN. A transient Firestore error must
+   *   not kill work that is otherwise fine; the lease simply ages, and the next
+   *   tick renews it. Only sustained failure — the case where this process
+   *   probably cannot finish anyway — lets the lease lapse.
+   * - IT STANDS DOWN WHEN IT NO LONGER OWNS THE RUN. If another execution has
+   *   reclaimed the lease, renewing `updatedAt` would let this process keep a
+   *   run alive that someone else is now executing, so it stops instead. This
+   *   narrows the double-execution window but does not close it: see
+   *   `isReclaimableRunning` for why a real fence is a larger change.
+   * - IT NEVER HOLDS THE PROCESS OPEN. `unref` matters for a worker that has
+   *   drained and wants to exit, and for tests: a run that finishes in
+   *   milliseconds never fires this at all.
+   */
+  private startLeaseHeartbeat(runId: string, leaseOwner: string): { stop: () => void } {
+    const timer = setInterval(() => {
+      void (async () => {
+        try {
+          const run = await this.store.getRun(runId);
+          if (!run || run.status !== "running") return;
+          if (run.leaseOwner && run.leaseOwner !== leaseOwner) {
+            console.warn(
+              `workflow-engine: run "${runId}" was reclaimed by another execution (owner "${run.leaseOwner}", this one "${leaseOwner}") — no longer renewing its lease`,
+            );
+            clearInterval(timer);
+            return;
+          }
+          await this.store.updateRun(runId, { updatedAt: this.now() });
+        } catch {
+          // Deliberately swallowed — see the doc comment above.
+        }
+      })();
+    }, RUN_LEASE_HEARTBEAT_MS);
+    timer.unref?.();
+    return { stop: () => clearInterval(timer) };
   }
 
   /**

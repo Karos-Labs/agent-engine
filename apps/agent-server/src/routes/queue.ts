@@ -137,15 +137,19 @@ export function createQueueRouter(deps: QueueRouterDeps): Router {
       res.status(500).json({ error: "run failed unexpectedly", message: outcome.message });
       return;
     }
-    // "conflict" only ever means this exact runId was already mid-flight —
-    // rare for a queue with no client-side retry pressure, but possible if
-    // Pub/Sub redelivers the same message a second time before the first
-    // delivery's ack has landed. 200 acks it either way: the other
-    // in-flight delivery owns the run.
-    res.status(200).json({
-      runId: outcome.runId,
-      status: outcome.outcome === "started" ? outcome.status : "already-running",
-    });
+    if (outcome.outcome === "conflict") {
+      // 5xx, NOT 200. "the other in-flight delivery owns the run" is true only
+      // while an owner exists. On 2026-09-03 a deploy killed the worker
+      // mid-run; the redelivery arrived 22 seconds later, inside the run's
+      // lease, so the claim was refused — and acking it discarded the only
+      // message that could ever have resumed the run. Redelivery converges:
+      // a genuinely live owner finishes and a later delivery replays from
+      // checkpoints as a no-op, while a dead one's lease lapses and the
+      // redelivery resumes the work.
+      res.status(503).json({ error: "run is already claimed", runId: outcome.runId, message: outcome.message });
+      return;
+    }
+    res.status(200).json({ runId: outcome.runId, status: outcome.status });
   });
 
   return router;

@@ -57,6 +57,33 @@ describe("POST /api/v1/queue/pubsub-push", () => {
       expect(res.body.status).toBe("awaiting_gate");
     });
 
+    it("returns 5xx for a run it cannot claim, so Pub/Sub redelivers instead of dropping it", async () => {
+      // 2026-09-03: a deploy killed the worker two minutes into a run. Pub/Sub
+      // redelivered 22 seconds later; the run's lease had not lapsed, so the
+      // claim was refused — and answering 200 threw away the only message that
+      // could ever have resumed it. The run sat in `running` forever.
+      //
+      // A live owner is not a reason to discard the message, only a reason to
+      // try again later: if the owner really is alive it finishes and a later
+      // delivery replays from checkpoints as a no-op, and if it is dead the
+      // lease lapses and the redelivery resumes the work.
+      await env.durableStore.createRunIfNotExists({
+        runId: "pubsub-claimed-msg",
+        clientSlug: "acme",
+        productId: "linkedin-agent",
+        runKind: "recurring",
+        status: "running",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        leaseOwner: "another-live-execution",
+      });
+
+      const res = await request(app).post(PUSH_PATH).send(envelope(validPayload, "claimed-msg"));
+
+      expect(res.status).toBeGreaterThanOrEqual(500);
+      expect(res.body.runId).toBe("pubsub-claimed-msg");
+    });
+
     it("returns 400 for a malformed envelope (missing message.data)", async () => {
       const res = await request(app)
         .post(PUSH_PATH)
