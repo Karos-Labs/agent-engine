@@ -573,12 +573,29 @@ describe("gate.subredditRules", () => {
 });
 
 describe("every gate registers with the expected toolVersion", () => {
+  /**
+   * The invariant worth holding is that a verdict reports the SAME version the
+   * tool declares — that is what makes a telemetry record traceable to the code
+   * that produced it.
+   *
+   * This used to also assert every gate was literally "1.0.0", which was true
+   * only until the first gate was ever bumped and had to break the moment one
+   * was. `gate.numbersSourced` reached 1.1.0 when it learned to verify a quoted
+   * range as a range; pinning the whole registry to one version would make
+   * every future bump look like a regression.
+   */
   it("carries a toolVersion in both the AgentTool and the GateVerdict", async () => {
     for (const [name, tool] of Object.entries(gates)) {
-      expect(tool.version).toBe("1.0.0");
+      expect(tool.version, `${name} declares no version`).toMatch(/^\d+\.\d+\.\d+$/);
       const verdict = await verdictOf(name, defaultArgsFor(name));
-      expect(verdict["toolVersion"]).toBe(tool.version);
+      expect(verdict["toolVersion"], `${name}'s verdict disagrees with its declared version`).toBe(tool.version);
     }
+  });
+
+  it("pins gate.numbersSourced at the range-aware version", async () => {
+    // Named explicitly so reverting the range fix without reverting the version
+    // — or the reverse — is caught here rather than in telemetry months later.
+    expect(gates["gate.numbersSourced"]!.version).toBe("1.1.0");
   });
 });
 

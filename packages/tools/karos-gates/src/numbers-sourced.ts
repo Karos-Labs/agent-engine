@@ -2,7 +2,13 @@ import { z } from "zod";
 import type { GateVerdict } from "@agent-engine/core";
 import { defineTool, success } from "@agent-engine/tool-common";
 
-const TOOL_VERSION = "1.0.0";
+// 1.1.0 — range-aware verification. A claim that is an endpoint of a range the
+// draft QUOTES is now checked as that whole range, so a report reproducing a
+// source's "$500-$2,000/month" verifies where it used to fail. Same verdicts on
+// every other input, and a bare endpoint asserted on its own still fails. A
+// minor bump rather than a patch because the verdict for a real class of drafts
+// genuinely changes, and telemetry has to be able to tell the two eras apart.
+const TOOL_VERSION = "1.1.0";
 
 /** Numeric-claim shapes that read as a factual assertion needing a source: percentages, currency, multipliers, magnitude words. */
 const NUMERIC_CLAIM_PATTERN = /(\d[\d,]*(?:\.\d+)?\s?%)|([$€£]\s?\d[\d,]*(?:\.\d+)?)|(\b\d+(?:\.\d+)?x\b)|(\b\d+(?:\.\d+)?\s?(?:million|billion|thousand)\b)/gi;
