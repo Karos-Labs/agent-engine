@@ -302,6 +302,77 @@ describe("gate.numbersSourced", () => {
     expect(verdict.verdict).toBe("content_fail");
   });
 
+  it("verifies a range the draft quotes faithfully, against the same range in the source", async () => {
+    // 2026-09-04: a fully-sourced Karos Labs report was held for five figures
+    // that were all present in its sources, every one as a range endpoint
+    // ($500-$2,000, $100-$500, $20-$200, $15-$115, 200-400%). Checking the
+    // endpoint alone could not tell a faithful quotation from a cherry-pick,
+    // and rejected both.
+    const verdict = await verdictOf("gate.numbersSourced", {
+      text: "Competitor pricing runs $500-$2,000/month across the category.",
+      sources: ["Market map: average revenue per customer: $500-$2,000/month. Implied ARR..."],
+    });
+    expect(verdict.verdict).toBe("pass");
+  });
+
+  it("verifies a range from its LEFT endpoint too, not just its right", async () => {
+    // The first cut of this fix widened leftward only, so a draft quoting
+    // "$100-$500/month" still failed when `$100` was the extracted claim —
+    // the range runs to its right. Two of the seven claims on the real held
+    // run were exactly this shape.
+    const verdict = await verdictOf("gate.numbersSourced", {
+      text: "General platforms serve these use cases at $100-$500/month.",
+      sources: ["Most are smaller deployments, $100-$500/month average."],
+    });
+    expect(verdict.verdict).toBe("pass");
+  });
+
+  it("does not widen across a neighbouring number into a range that no source contains", async () => {
+    // An unbounded walk outward from the claim swallows whatever is nearby:
+    // "in 2024, $100-$500" would widen to "2024,$100-$500", which appears in
+    // no source, silently un-verifying a figure that IS quoted exactly.
+    const verdict = await verdictOf("gate.numbersSourced", {
+      text: "In 2024, pricing ran $100-$500/month.",
+      sources: ["Most are smaller deployments, $100-$500/month average."],
+    });
+    expect(verdict.verdict).toBe("pass");
+  });
+
+  it("verifies a percentage range the same way", async () => {
+    const verdict = await verdictOf("gate.numbersSourced", {
+      text: "The category is growing 200-400% YoY.",
+      sources: ["...a small ($5b+ category) but growing 200-400% YoY off this base."],
+    });
+    expect(verdict.verdict).toBe("pass");
+  });
+
+  it("tolerates an en dash in the draft against a hyphen in the source", async () => {
+    const verdict = await verdictOf("gate.numbersSourced", {
+      text: "Pricing runs $15–$115/mo.",
+      sources: ["Frase | SEO content | $15-$115/mo | growth"],
+    });
+    expect(verdict.verdict).toBe("pass");
+  });
+
+  it("STILL fails a cherry-picked endpoint asserted as the value, even when the source has the range", async () => {
+    // The property the range fix must not cost: quoting "$500-$2,000" is
+    // sourced; asserting "customers pay $2,000" from that same source is not.
+    const verdict = await verdictOf("gate.numbersSourced", {
+      text: "Customers pay $2,000 per month.",
+      sources: ["Market map: average revenue per customer: $500-$2,000/month."],
+    });
+    expect(verdict.verdict).toBe("content_fail");
+    expect(verdict["evidence"]).toEqual(["$2,000"]);
+  });
+
+  it("STILL fails a range the sources do not contain at all", async () => {
+    const verdict = await verdictOf("gate.numbersSourced", {
+      text: "Competitor pricing runs $900-$3,500/month.",
+      sources: ["Market map: average revenue per customer: $500-$2,000/month."],
+    });
+    expect(verdict.verdict).toBe("content_fail");
+  });
+
   it("Phase 2.5 fix-batch regression: a source saying a range's upper bound ('15-20%') does not verify an isolated claim of that endpoint ('20%')", async () => {
     const verdict = await verdictOf("gate.numbersSourced", {
       text: "Revenue grew 20% year over year.",

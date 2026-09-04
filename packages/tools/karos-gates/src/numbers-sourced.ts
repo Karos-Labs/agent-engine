@@ -7,9 +7,9 @@ const TOOL_VERSION = "1.0.0";
 /** Numeric-claim shapes that read as a factual assertion needing a source: percentages, currency, multipliers, magnitude words. */
 const NUMERIC_CLAIM_PATTERN = /(\d[\d,]*(?:\.\d+)?\s?%)|([$€£]\s?\d[\d,]*(?:\.\d+)?)|(\b\d+(?:\.\d+)?x\b)|(\b\d+(?:\.\d+)?\s?(?:million|billion|thousand)\b)/gi;
 
-/** Collapses whitespace and case so "47 %" / "47%" / "47  %" all compare equal against source content. */
+/** Collapses whitespace and case so "47 %" / "47%" / "47  %" all compare equal against source content. Dash variants are folded to "-" so a draft quoting "$500–$2,000" matches a source writing "$500-$2,000". */
 function normalizeClaim(raw: string): string {
-  return raw.replace(/\s+/g, "").toLowerCase();
+  return raw.replace(/[‐-―]/g, "-").replace(/\s+/g, "").toLowerCase();
 }
 
 /** Escapes a normalized claim for literal use inside a `RegExp`. */
@@ -24,17 +24,77 @@ function escapeForRegex(raw: string): string {
  * `String.includes` treats "20%" as present inside "15-20%" (it is, as a
  * literal substring) and inside "145%" (ditto) — both false verifications a
  * careless or adversarial draft can exploit. A negative lookbehind rejects a
- * match immediately preceded by a digit, comma, period, or hyphen: that
- * covers both a range's upper bound ("15-20%") and simple digit-adjacency
- * ("145%" containing "45%"). It does NOT catch a written-out range using a
- * word instead of a hyphen (e.g. "grew from 15% to 20%") — normalizeClaim's
- * whitespace-stripping collapses "to 20%" to "to20%", so the character
- * immediately before "20%" is a letter, not a digit/hyphen; closing that gap
- * would need real tokenization, not a regex boundary, and is out of scope
- * for this fix.
+ * match immediately preceded by a digit, comma, period, or hyphen.
+ *
+ * A draft that QUOTES a range is handled before this is reached — see
+ * `rangeAroundClaim` — so the lookbehind's rejection of a leading hyphen now
+ * only bites the claim it was written for: an endpoint asserted on its own.
  */
 function exactClaimPattern(normalizedClaim: string): RegExp {
   return new RegExp(`(?<![\\d.,-])${escapeForRegex(normalizedClaim)}`);
+}
+
+/**
+ * The same containment check for a whole RANGE token, with a narrower guard.
+ *
+ * `exactClaimPattern` rejects a match preceded by a digit, comma, period or
+ * hyphen. Comma and hyphen are there to stop a bare endpoint being verified by
+ * a range ("15-20%" must not support "20%"), but they misfire on a range token
+ * because `normalizeClaim` strips whitespace and pulls ORDINARY PROSE
+ * PUNCTUATION flush against it: a source reading "smaller deployments,
+ * $100-$500/month" normalizes to "...deployments,$100-$500..." and the comma
+ * alone was enough to reject a range the source states verbatim.
+ *
+ * A range carries its own internal dash and both of its endpoints, so it
+ * cannot be the fragment of a larger number that guard exists to catch. Only a
+ * directly preceding digit could make it one, and that is what remains.
+ */
+function exactRangePattern(normalizedRange: string): RegExp {
+  return new RegExp(`(?<!\\d)${escapeForRegex(normalizedRange)}`);
+}
+
+/**
+ * A numeric range as it is written: two figures joined by a dash, either side
+ * optionally carrying a currency symbol or a percent sign. Bounded on purpose
+ * — an unbounded walk outward from the claim swallows neighbouring numbers
+ * ("in 2024, $100-$500" would widen to "2024,$100-$500", which appears in no
+ * source and would silently un-verify a claim that is in fact quoted exactly).
+ */
+const NUMERIC_RANGE_PATTERN = /[$€£]?\s?\d[\d,]*(?:\.\d+)?\s?%?\s*[-‐-―]\s*[$€£]?\s?\d[\d,]*(?:\.\d+)?\s?%?/g;
+
+/**
+ * The claim as the DRAFT presents it: a bare figure, or the whole range it is
+ * an endpoint of — either end.
+ *
+ * This is the difference between quoting a source and cherry-picking one, and
+ * only the draft can tell them apart. A draft writing "pricing runs
+ * $500-$2,000/month" against a source saying "average revenue per customer:
+ * $500-$2,000/month" is quoting it exactly; a draft writing "engagements at
+ * $2,000+/month" against that same source has taken the top of a range and
+ * asserted it as a threshold. Checking `$2,000` alone cannot tell those apart,
+ * and used to reject both — which held a fully-sourced Karos Labs report on
+ * 2026-09-04 over five figures that were every one of them present in its
+ * sources as range endpoints.
+ *
+ * BOTH ENDS MATTER. Widening only leftward still fails a draft quoting
+ * "$100-$500" when `$100` is the extracted claim, because the range runs to
+ * its right — which is exactly what the first version of this fix did.
+ *
+ * The isolated case is untouched: "revenue grew 20%" sits inside no range, so
+ * it is still checked as the bare "20%" that a source saying "15-20%" does not
+ * support.
+ */
+function rangeAroundClaim(text: string, claimStart: number, claimLength: number): string | undefined {
+  const claimEnd = claimStart + claimLength;
+  // A window wide enough for the longest realistic range, and no wider.
+  const windowStart = Math.max(0, claimStart - 40);
+  const window = text.slice(windowStart, claimEnd + 40);
+  for (const match of window.matchAll(NUMERIC_RANGE_PATTERN)) {
+    const absoluteStart = windowStart + match.index;
+    const absoluteEnd = absoluteStart + match[0].length;
+    if (absoluteStart <= claimStart && absoluteEnd >= claimEnd) return match[0];
+  }
+  return undefined;
 }
 
 export const NumbersSourcedInputSchema = z.object({
@@ -65,14 +125,25 @@ export const numbersSourced = defineTool<NumbersSourcedInput, GateVerdict>({
   version: TOOL_VERSION,
   inputSchema: NumbersSourcedInputSchema,
   async execute({ text, sources }) {
-    const claims = Array.from(text.matchAll(NUMERIC_CLAIM_PATTERN)).map((m) => m[0]);
+    const matches = Array.from(text.matchAll(NUMERIC_CLAIM_PATTERN));
+    const claims = matches.map((m) => m[0]);
 
     if (claims.length === 0) {
       return success<GateVerdict>({ verdict: "pass", evidence: ["no numeric claims found"], toolVersion: TOOL_VERSION });
     }
 
     const sourceBlob = normalizeClaim(sources.join(" "));
-    const unverifiedClaims = claims.filter((claim) => !exactClaimPattern(normalizeClaim(claim)).test(sourceBlob));
+    const unverifiedClaims = matches
+      .filter((match) => {
+        const claim = normalizeClaim(match[0]);
+        if (exactClaimPattern(claim).test(sourceBlob)) return false;
+        // Not present as a standalone figure — but the draft may be quoting a
+        // range, in which case the range is the claim. See `rangeAroundClaim`.
+        const range = rangeAroundClaim(text, match.index, match[0].length);
+        if (range === undefined) return true;
+        return !exactRangePattern(normalizeClaim(range)).test(sourceBlob);
+      })
+      .map((match) => match[0]);
 
     if (unverifiedClaims.length > 0) {
       return success<GateVerdict>({
