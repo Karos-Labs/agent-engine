@@ -86,6 +86,56 @@ describe("research.captureVisibility wired with real per-engine adapters (T-A3/S
     await fs.rm(rootDir, { recursive: true, force: true });
   });
 
+  it("does not let a REWORDED prompt inherit the previous question's answer", async () => {
+    // `promptId` is a slot number, not a question. Keyed on the slot alone, a
+    // prompt-set rewrite hands every new question the old question's cached
+    // answer for up to the full freshness window — a measurement OF SOMETHING
+    // ELSE, filed under a prompt nobody asked.
+    //
+    // This is not hypothetical: `prompt_11` went from "Which AI Digital
+    // Marketing brand is most often recommended by industry analysts?" to
+    // "What is Karos Labs, and what do they do?" — the rewrite that took Gemini
+    // from naming the client in 0 of 10 brand prompts to 5 of 5. Every one of
+    // those would have replayed the old category answer.
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "seo-geo-capture-test-"));
+    const store = new WorkspaceStore(rootDir);
+    const answers: string[] = [];
+    const adapter: EngineCaptureAdapter = async ({ promptText }) => {
+      answers.push(promptText);
+      return {
+        captureTier: "MEASURED",
+        brandMentioned: promptText.includes("Karos Labs"),
+        brandCited: false,
+        competitorsNamed: [],
+        citations: [],
+        mentionCounts: { client: promptText.includes("Karos Labs") ? 1 : 0 },
+        sentimentPerMention: [],
+        rawPayload: { promptText },
+      };
+    };
+    const tool = createCaptureVisibility(store, { adapters: { perplexity: adapter } });
+
+    const first = await tool.execute(
+      { ...BASE_INPUT, engine: "perplexity", promptId: "prompt_11", promptText: "Which brand do analysts recommend?" },
+      { ctx },
+    );
+    if (first.status !== "success") throw new Error("unreachable");
+    expect(first.result.cell.brandMentioned).toBe(false);
+
+    // Same slot, same freshness window, different question.
+    const second = await tool.execute(
+      { ...BASE_INPUT, engine: "perplexity", promptId: "prompt_11", promptText: "What is Karos Labs, and what do they do?" },
+      { ctx },
+    );
+    if (second.status !== "success") throw new Error("unreachable");
+
+    expect(second.result.fromCache).toBe(false);
+    expect(second.result.cell.brandMentioned).toBe(true);
+    expect(answers).toHaveLength(2);
+
+    await fs.rm(rootDir, { recursive: true, force: true });
+  });
+
   it("still serves a cached REAL measurement from cache — the freeze rule is untouched", async () => {
     // The narrow fix must not become "ignore the cache": a genuine measurement
     // stays frozen per cell, which is what makes a run reproducible.

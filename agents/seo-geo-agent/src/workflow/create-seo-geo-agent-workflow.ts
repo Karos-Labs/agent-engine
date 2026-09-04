@@ -296,7 +296,14 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       // template stand-in instead.
       const industry = (clientContext.profile["industry"] as string | undefined) ?? "this industry";
       const requestedLanguage = clientContext.profile["language"] as string | undefined;
-      const drafted = deriveDefaultPromptSet(industry, requestedLanguage);
+      // The brand as a person writes it, which the `brand` intent's five
+      // prompts name directly. Falls back to the slug only so a client with no
+      // profile name still produces a well-formed set — a slug is a poor thing
+      // to ask an engine about, but it is a real identifier, and five more
+      // category questions would be worse.
+      const brandName =
+        (typeof clientContext.profile["name"] === "string" && (clientContext.profile["name"] as string).trim()) || wf.clientSlug;
+      const drafted = deriveDefaultPromptSet(industry, requestedLanguage, brandName);
       const competitorRoster = clientContext.competitors.map((c) => c.name);
       return {
         prompts: drafted.prompts,

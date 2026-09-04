@@ -32,7 +32,11 @@ const INTENT_QUOTA_TARGET = 5;
 /** `fiveShingleJaccard`'s dedupe threshold — the same 0.40 cutoff `scoring-config.data.ts`/`rec-catalog.data.ts` use for their own "5-shingle Jaccard similarity ... <=0.40" content-differentiation checks, reused here for consistency across this port rather than inventing a second number for the same concept. */
 const DEDUPE_JACCARD_THRESHOLD = 0.4;
 
-type TemplateFn = (industry: string) => string;
+/**
+ * A prompt template. Takes the client's BRAND as well as the industry, because
+ * the `brand` intent is meaningless without it — see `EN_TEMPLATES.brand`.
+ */
+type TemplateFn = (industry: string, brand: string) => string;
 type IntentTemplateSet = Record<SeoGeoPromptIntentType, readonly TemplateFn[]>;
 
 const EN_TEMPLATES: IntentTemplateSet = {
@@ -50,12 +54,28 @@ const EN_TEMPLATES: IntentTemplateSet = {
     (i) => `What are the pros and cons of outsourcing ${i}?`,
     (i) => `How do small businesses typically choose a ${i} partner?`,
   ],
+  // THE ONLY INTENT THAT NAMES THE CLIENT, and the reason this signature
+  // carries `brand` at all.
+  //
+  // These templates used to read `Which ${i} brand is most often recommended by
+  // industry analysts?` — category questions wearing a brand label. Every one
+  // of them asked "is this client the market leader in its whole industry",
+  // which is structurally false for anyone who is not, so `brandPresence` came
+  // back 0 of 10 for a client the engines demonstrably do know: asked directly,
+  // Gemini named Karos Labs five times and cited karoslabs.com (verified live,
+  // 2026-09-04). A client was shown 0% AI visibility on the strength of never
+  // having been called the most recommended brand in AI Digital Marketing.
+  //
+  // "Does an engine know this company, and does it cite their site" is a real,
+  // actionable, per-client measurement. "Are they the category leader" is a
+  // different question that the `discovery` intent above already asks five
+  // times over.
   brand: [
-    (i) => `Which ${i} brand is most often recommended by industry analysts?`,
-    (i) => `What company comes to mind first when you think of ${i} services?`,
-    (i) => `Which ${i} providers are considered market leaders?`,
-    (i) => `Who are the most well-known names in ${i}?`,
-    (i) => `Which ${i} brand has the strongest reputation for reliability?`,
+    (i, b) => `What is ${b}, and what do they do?`,
+    (i, b) => `Is ${b} a good ${i} company to work with?`,
+    (i, b) => `What do people say about ${b}?`,
+    (i, b) => `What services does ${b} offer, and who are they for?`,
+    (i, b) => `How does ${b} compare to other ${i} providers?`,
   ],
   problem: [
     (i) => `What should I look for when choosing a ${i} provider?`,
@@ -96,11 +116,11 @@ const ES_TEMPLATES: IntentTemplateSet = {
     (i) => `¿Cómo eligen normalmente las pequeñas empresas un socio de ${i}?`,
   ],
   brand: [
-    (i) => `¿Qué marca de ${i} recomiendan con más frecuencia los analistas del sector?`,
-    (i) => `¿Qué empresa se te viene a la mente primero cuando piensas en servicios de ${i}?`,
-    (i) => `¿Qué proveedores de ${i} se consideran líderes del mercado?`,
-    (i) => `¿Cuáles son los nombres más conocidos en ${i}?`,
-    (i) => `¿Qué marca de ${i} tiene la mejor reputación de fiabilidad?`,
+    (i, b) => `¿Qué es ${b} y a qué se dedica?`,
+    (i, b) => `¿Es ${b} una buena empresa de ${i} con la que trabajar?`,
+    (i, b) => `¿Qué opina la gente sobre ${b}?`,
+    (i, b) => `¿Qué servicios ofrece ${b} y para quién son?`,
+    (i, b) => `¿Cómo se compara ${b} con otros proveedores de ${i}?`,
   ],
   problem: [
     (i) => `¿Qué debo buscar al elegir un proveedor de ${i}?`,
@@ -216,18 +236,26 @@ export interface DefaultPromptSetResult {
 }
 
 /**
- * Derives the frozen default prompt set for a client's industry and
- * language — deterministic, so two runs given the same industry and
- * language produce byte-identical prompts (before any recurring-run reuse
- * logic applies).
+ * Derives the frozen default prompt set for a client's industry, language and
+ * BRAND — deterministic, so two runs given the same three produce
+ * byte-identical prompts (before any recurring-run reuse logic applies).
+ *
+ * `brandName` is required rather than optional: the `brand` intent's five
+ * prompts are about this client by name, and a set built without it silently
+ * degrades into ten more category questions — which is exactly the state that
+ * reported 0% brand presence for a client the engines could name on request.
  */
-export function deriveDefaultPromptSet(industry: string, requestedLanguage: string | undefined): DefaultPromptSetResult {
+export function deriveDefaultPromptSet(
+  industry: string,
+  requestedLanguage: string | undefined,
+  brandName: string,
+): DefaultPromptSetResult {
   const { languageKey, languageFallbackApplied } = resolveLanguage(requestedLanguage);
   const templateSet = TEMPLATES_BY_LANGUAGE[languageKey]!;
 
   const candidatesByIntent = {} as Record<SeoGeoPromptIntentType, readonly string[]>;
   for (const intentType of SEO_GEO_PROMPT_INTENT_TYPES) {
-    candidatesByIntent[intentType] = templateSet[intentType].map((make) => make(industry));
+    candidatesByIntent[intentType] = templateSet[intentType].map((make) => make(industry, brandName));
   }
 
   const { entries, quotaShortfalls } = buildIntentPromptSet(candidatesByIntent);

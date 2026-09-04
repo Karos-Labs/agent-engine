@@ -8,7 +8,18 @@ import { latestRun, writeRunRecord, type RunRecord } from "./runs.js";
 // (`aimode`/`google_aio` added). A cell captured under 1.0.0 came from a tool
 // whose input enum would have REJECTED either of those engines, so the two are
 // genuinely different contracts and telemetry must be able to tell them apart.
-const TOOL_VERSION = "1.1.0";
+//
+// 1.2.0: three changes to what a cell MEANS, which is why this is not a patch.
+//   - `clientBrandName` joins the input, and mention detection matches on it.
+//     A 1.1.0 cell reporting `brandMentioned: false` for a multi-word brand was
+//     answering a question about a domain-derived token, not about the brand.
+//   - Cell identity gains the prompt TEXT (`jobFor`), so a reworded prompt no
+//     longer inherits the previous question's answer from its slot.
+//   - A `no_adapter_wired` cell is no longer served from cache once an adapter
+//     exists — that tier is a statement about configuration, not measurement.
+// Every one of those changes what a stored cell asserts, so a reader comparing
+// two runs has to be able to tell which contract produced which.
+const TOOL_VERSION = "1.2.0";
 
 /**
  * The ratified AI-visibility engines (SCRUM-396).
@@ -229,16 +240,38 @@ function buildUnavailableCell(
   };
 }
 
-function jobFor(engine: VisibilityEngine, promptId: string): string {
-  return `visibility.${engine}.${promptId}`;
+/**
+ * A cell's cache identity: the engine, the prompt SLOT, and the prompt TEXT.
+ *
+ * The text is load-bearing and was missing. `promptId` is a slot number
+ * (`prompt_11`), not a question — so when a prompt set's wording changes, the
+ * new question inherits the old question's cached answer for up to the full
+ * freshness window. That is not a stale measurement, it is a measurement OF
+ * SOMETHING ELSE, filed under a prompt nobody asked.
+ *
+ * It nearly landed: `prompt_11` was "Which AI Digital Marketing brand is most
+ * often recommended by industry analysts?" and became "What is Karos Labs, and
+ * what do they do?" — the brand-intent rewrite that took Gemini from naming the
+ * client in 0 of 10 brand prompts to 5 of 5. Keyed on the slot alone, every one
+ * of those new prompts would have replayed the old category answer and the fix
+ * would have looked like it changed nothing.
+ *
+ * Hashing the text rather than embedding it keeps the key short and stable;
+ * eight hex characters is ample to separate the prompts of one client's matrix.
+ * A reworded prompt simply misses cache and is captured for real, which is the
+ * correct behaviour and needs no migration or manual invalidation.
+ */
+function jobFor(engine: VisibilityEngine, promptId: string, promptText: string): string {
+  return `visibility.${engine}.${promptId}.${sha256Hex(promptText).slice(0, 8)}`;
 }
 
 /**
  * `research.captureVisibility` (RFC-04 Phase 3): one (prompt × engine) cell,
- * cached and freshness-enforced exactly like `research.pull` — cell
- * identity is `(engine, promptId)`, not the generic `job` string, since the
- * SEO/GEO capture matrix is fixed-shape (N prompts × 5 engines), not
- * free-form research queries.
+ * cached and freshness-enforced exactly like `research.pull` — cell identity
+ * is `(engine, promptId, promptText)`, not the generic `job` string, since the
+ * SEO/GEO capture matrix is fixed-shape (N prompts × 5 engines), not free-form
+ * research queries. The TEXT is part of that identity and not decoration: see
+ * `jobFor` for the reworded-prompt case it exists to stop.
  *
  * T-A3/SCRUM-237: a real `options.adapters[engine]` now performs a genuine
  * capture (Perplexity Sonar, Claude + `web_search`, Gemini Grounding with
@@ -258,7 +291,7 @@ export function createCaptureVisibility(store: WorkspaceStoreLike, options: Capt
     inputSchema: CaptureVisibilityInputSchema,
     async execute({ promptId, promptText, engine, clientDomains, competitorRoster, clientBrandName, window }, { ctx }) {
       const windowMs = parseDurationMs(window);
-      const job = jobFor(engine, promptId);
+      const job = jobFor(engine, promptId, promptText);
       const cached = await latestRun(store, ctx.clientSlug, job);
 
       if (cached) {

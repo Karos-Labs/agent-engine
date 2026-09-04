@@ -126,7 +126,7 @@ describe("buildIntentPromptSet — 5-shingle dedupe + per-intent quota (SCRUM-32
 
 describe("deriveDefaultPromptSet — language, intent locking, and NEUTRAL desired_outcome prefill (SCRUM-320 / AU29)", () => {
   it("drafts 20-35 prompts across exactly the 5 locked intent types, every one NEUTRAL-prefilled", () => {
-    const result = deriveDefaultPromptSet("B2B SaaS", "en");
+    const result = deriveDefaultPromptSet("B2B SaaS", "en", "Acme Corp");
     expect(result.prompts.length).toBeGreaterThanOrEqual(20);
     expect(result.prompts.length).toBeLessThanOrEqual(35);
     expect(result.language).toBe("en");
@@ -141,35 +141,84 @@ describe("deriveDefaultPromptSet — language, intent locking, and NEUTRAL desir
     }
   });
 
+  it("names the client in every brand-intent prompt, and in no other intent", () => {
+    // The defect this replaced: the `brand` templates took only the industry,
+    // so all five asked "is this client the category leader" — structurally
+    // false for anyone who is not one. Karos Labs was shown 0% brand presence
+    // while Gemini, asked directly, named them five times and cited their site.
+    const result = deriveDefaultPromptSet("AI Digital Marketing", "en", "Karos Labs");
+    const brandPrompts = result.prompts.filter((p) => p.intentType === "brand");
+    const otherPrompts = result.prompts.filter((p) => p.intentType !== "brand");
+
+    expect(brandPrompts.length).toBeGreaterThan(0);
+    for (const prompt of brandPrompts) {
+      expect(prompt.promptText, `brand prompt does not name the client: ${prompt.promptText}`).toContain("Karos Labs");
+    }
+    // A category question that happens to name the client would be measuring
+    // something else entirely — the whole point of the split is that the two
+    // intents ask different questions.
+    for (const prompt of otherPrompts) {
+      expect(prompt.promptText, `non-brand prompt names the client: ${prompt.promptText}`).not.toContain("Karos Labs");
+    }
+  });
+
+  it("names the client in Spanish brand prompts too", () => {
+    const result = deriveDefaultPromptSet("Marketing Digital", "es", "Karos Labs");
+    const brandPrompts = result.prompts.filter((p) => p.intentType === "brand");
+    expect(brandPrompts.length).toBeGreaterThan(0);
+    for (const prompt of brandPrompts) expect(prompt.promptText).toContain("Karos Labs");
+  });
+
+  it("produces a different prompt set for a different client in the same industry", () => {
+    // Before, two clients in one industry got byte-identical prompt sets — the
+    // set said nothing about either of them. `promptSetHash` is derived from
+    // these, so it could not distinguish them either.
+    const a = deriveDefaultPromptSet("AI Digital Marketing", "en", "Karos Labs");
+    const b = deriveDefaultPromptSet("AI Digital Marketing", "en", "Rival Co");
+    expect(a.prompts).not.toEqual(b.prompts);
+    expect(sha256Hex({ prompts: a.prompts, language: a.language })).not.toBe(
+      sha256Hex({ prompts: b.prompts, language: b.language }),
+    );
+  });
+
+  it("still deduplicates and fills every intent quota once brand prompts are client-specific", () => {
+    // The brand templates changed shape entirely; the 5-shingle dedupe runs
+    // across intents, so a rewrite could silently collide with `comparison`
+    // and leave the set short.
+    const result = deriveDefaultPromptSet("AI Digital Marketing", "en", "Karos Labs");
+    expect(result.quotaShortfalls).toEqual([]);
+    expect(result.prompts.length).toBeGreaterThanOrEqual(20);
+  });
+
   it("drafts in the client's language when supported (Spanish), with real Spanish text — not just a language label", () => {
-    const result = deriveDefaultPromptSet("B2B SaaS", "es");
+    const result = deriveDefaultPromptSet("B2B SaaS", "es", "Acme Corp");
     expect(result.language).toBe("es");
     expect(result.languageFallbackApplied).toBe(false);
     expect(result.prompts.every((p) => /[¿¡áéíóúñ]/i.test(p.promptText))).toBe(true);
   });
 
   it("falls back to English, honestly flagged, for an unsupported language rather than drafting nothing or fabricating translations", () => {
-    const result = deriveDefaultPromptSet("B2B SaaS", "de");
+    const result = deriveDefaultPromptSet("B2B SaaS", "de", "Acme Corp");
     expect(result.language).toBe("en");
     expect(result.languageFallbackApplied).toBe(true);
     expect(result.prompts.length).toBeGreaterThanOrEqual(20);
   });
 
   it("treats an unset language the same as an explicit 'en' request", () => {
-    const result = deriveDefaultPromptSet("B2B SaaS", undefined);
+    const result = deriveDefaultPromptSet("B2B SaaS", undefined, "Acme Corp");
     expect(result.language).toBe("en");
     expect(result.languageFallbackApplied).toBe(false);
   });
 
   it("is deterministic — same industry and language produce byte-identical prompts", () => {
-    const a = deriveDefaultPromptSet("Fintech", "en");
-    const b = deriveDefaultPromptSet("Fintech", "en");
+    const a = deriveDefaultPromptSet("Fintech", "en", "Acme Corp");
+    const b = deriveDefaultPromptSet("Fintech", "en", "Acme Corp");
     expect(a.prompts).toEqual(b.prompts);
   });
 
   it("promptSetHash (via sha256Hex over {prompts, language}) differs between languages even for the same industry", () => {
-    const en = deriveDefaultPromptSet("Fintech", "en");
-    const es = deriveDefaultPromptSet("Fintech", "es");
+    const en = deriveDefaultPromptSet("Fintech", "en", "Acme Corp");
+    const es = deriveDefaultPromptSet("Fintech", "es", "Acme Corp");
     const enHash = sha256Hex({ prompts: en.prompts, language: en.language });
     const esHash = sha256Hex({ prompts: es.prompts, language: es.language });
     expect(enHash).not.toBe(esHash);

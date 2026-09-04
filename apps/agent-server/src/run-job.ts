@@ -112,6 +112,35 @@ export type StartRunJobOutcome =
  * so an at-least-once redelivery can never double-run a job (see
  * `routes/queue.ts`).
  */
+/**
+ * Products whose drafting step legitimately runs longer than
+ * `DEFAULT_AGENT_STEP_TIMEOUT_MS`.
+ *
+ * That default is 10 minutes and is sized off VETTING steps — its own comment
+ * cites a ~182s image vet as the largest observed call. `intel-report-agent`'s
+ * `02-generate-report` is a different kind of step: one streamed turn producing
+ * the entire structured report against a 32,000-token ceiling
+ * (`INTEL_REPORT_DRAFT_MAX_TOKENS`, the fleet's largest), from a prompt
+ * carrying the client profile, brand kit, competitor list and six research
+ * documents. On 2026-09-04 it ran past ten minutes and the run was recorded as
+ * a tooling failure with nothing to show for the spend.
+ *
+ * Raised per product rather than globally: the 10-minute bound is right for
+ * every other step.agent call in the fleet, and loosening it everywhere to
+ * accommodate one outlier would remove a real guard from thirteen agents to
+ * help one. 25 minutes is generous headroom over the observed overrun while
+ * still bounding a genuinely wedged call, and sits well inside the portal's own
+ * 70-minute deliverable wait so a slow draft can never outlive the thing
+ * waiting for it.
+ */
+const AGENT_STEP_TIMEOUT_OVERRIDES_MS: Readonly<Record<string, number>> = {
+  "intel-report-agent": 25 * 60_000,
+};
+
+function agentStepTimeoutMsFor(productId: string): number | undefined {
+  return AGENT_STEP_TIMEOUT_OVERRIDES_MS[productId];
+}
+
 export async function startRunJob(request: RunJobRequest, runId: string, deps: StartRunJobDeps): Promise<StartRunJobOutcome> {
   const engine = new WorkflowEngine(deps.durableStore);
 
@@ -141,6 +170,9 @@ export async function startRunJob(request: RunJobRequest, runId: string, deps: S
       clientSlug: request.clientSlug,
       productId: request.productId,
       runKind: request.runKind,
+      ...(agentStepTimeoutMsFor(request.productId) !== undefined
+        ? { agentStepTimeoutMs: agentStepTimeoutMsFor(request.productId)! }
+        : {}),
       ...(request.input !== undefined ? { input: request.input } : {}),
       ...(request.stageModels !== undefined ? { stageModels: request.stageModels } : {}),
       ...(contentLanguage !== undefined ? { contentLanguage } : {}),
