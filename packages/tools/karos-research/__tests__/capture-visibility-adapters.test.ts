@@ -44,6 +44,79 @@ describe("research.captureVisibility wired with real per-engine adapters (T-A3/S
     await fs.rm(rootDir, { recursive: true, force: true });
   });
 
+  it("re-captures once an adapter exists, instead of serving a cached 'no_adapter_wired'", async () => {
+    // 2026-09-04, prep: a working Gemini adapter was deployed and changed
+    // nothing, because the previous day's run had cached 25
+    // `no_adapter_wired` cells and the freshness window is 30 days. The client
+    // saw the same coverage as before and the adapter sat unused for a month.
+    //
+    // A `no_adapter_wired` cell is a statement about THIS DEPLOYMENT'S
+    // CONFIGURATION, not about what an engine said. The freeze rule it was
+    // riding on ("capture_tier set at capture per cell and frozen; never
+    // silently upgraded") is about measurement conditions — and an engine that
+    // was never wired was never measured at all.
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "seo-geo-capture-test-"));
+    const store = new WorkspaceStore(rootDir);
+
+    // Day one: nothing wired for gemini.
+    const unwired = createCaptureVisibility(store, {});
+    const first = await unwired.execute({ ...BASE_INPUT, engine: "gemini" }, { ctx });
+    if (first.status !== "success") throw new Error("unreachable");
+    expect(first.result.cell.captureTier).toBe("UNAVAILABLE");
+    expect(first.result.cell.unavailableReason).toBe("no_adapter_wired");
+
+    // Day two, same 30-day window: the adapter now exists.
+    const geminiAdapter: EngineCaptureAdapter = async () => ({
+      captureTier: "MEASURED_grounded",
+      brandMentioned: true,
+      brandCited: false,
+      competitorsNamed: [],
+      citations: [],
+      mentionCounts: { client: 1 },
+      sentimentPerMention: [],
+      rawPayload: { real: true },
+    });
+    const wired = createCaptureVisibility(store, { adapters: { gemini: geminiAdapter } });
+    const second = await wired.execute({ ...BASE_INPUT, engine: "gemini" }, { ctx });
+    if (second.status !== "success") throw new Error("unreachable");
+
+    expect(second.result.fromCache).toBe(false);
+    expect(second.result.cell.captureTier).toBe("MEASURED_grounded");
+
+    await fs.rm(rootDir, { recursive: true, force: true });
+  });
+
+  it("still serves a cached REAL measurement from cache — the freeze rule is untouched", async () => {
+    // The narrow fix must not become "ignore the cache": a genuine measurement
+    // stays frozen per cell, which is what makes a run reproducible.
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "seo-geo-capture-test-"));
+    const store = new WorkspaceStore(rootDir);
+    let calls = 0;
+    const adapter: EngineCaptureAdapter = async () => {
+      calls += 1;
+      return {
+        captureTier: "MEASURED",
+        brandMentioned: true,
+        brandCited: false,
+        competitorsNamed: [],
+        citations: [],
+        mentionCounts: { client: 1 },
+        sentimentPerMention: [],
+        rawPayload: { call: calls },
+      };
+    };
+    const tool = createCaptureVisibility(store, { adapters: { perplexity: adapter } });
+
+    await tool.execute({ ...BASE_INPUT, engine: "perplexity" }, { ctx });
+    const second = await tool.execute({ ...BASE_INPUT, engine: "perplexity" }, { ctx });
+    if (second.status !== "success") throw new Error("unreachable");
+
+    expect(second.result.fromCache).toBe(true);
+    expect(calls).toBe(1);
+
+    await fs.rm(rootDir, { recursive: true, force: true });
+  });
+
   it("an engine with NO adapter configured still reports the honest UNAVAILABLE stand-in", async () => {
     const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "seo-geo-capture-test-"));
     const store = new WorkspaceStore(rootDir);

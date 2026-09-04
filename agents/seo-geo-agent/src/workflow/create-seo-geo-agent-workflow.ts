@@ -539,6 +539,16 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
             engine: job.engine,
             clientDomains: clientContext.clientDomains,
             competitorRoster: frozen.competitorRoster,
+            // The brand as a person writes it. Without it, mention detection
+            // falls back to a token derived from the domain — `karoslabs.com`
+            // becomes `karoslabs`, which never appears in an answer that says
+            // "Karos Labs", so every measured cell for every multi-word brand
+            // reported `brandMentioned: false` no matter what the engine said.
+            // `competitorRoster` above has always been display names; the
+            // client was the only entity matched by a mangled domain.
+            ...(typeof clientContext.profile["name"] === "string" && clientContext.profile["name"].trim()
+              ? { clientBrandName: (clientContext.profile["name"] as string).trim() }
+              : {}),
             window: "30d",
           },
           { ctx: slotAgentCtx },

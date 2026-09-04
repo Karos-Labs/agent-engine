@@ -32,7 +32,7 @@ export function createPerplexityAdapter(options: PerplexityAdapterOptions): Engi
   const model = options.model ?? DEFAULT_MODEL;
   const timeoutMs = options.timeoutMs ?? 60_000;
 
-  return async ({ promptText, clientDomains, competitorRoster }): Promise<EngineCaptureAdapterResult> => {
+  return async ({ promptText, clientDomains, competitorRoster, clientBrandName }): Promise<EngineCaptureAdapterResult> => {
     const response = await fetchImpl(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${options.apiKey}`, "Content-Type": "application/json" },
@@ -46,7 +46,7 @@ export function createPerplexityAdapter(options: PerplexityAdapterOptions): Engi
     const text = body.choices?.[0]?.message?.content ?? "";
     const citationUrls = Array.isArray(body.citations) ? body.citations : [];
 
-    const analyzed = analyzeAnswer({ text, citationUrls, clientDomains, competitorRoster });
+    const analyzed = analyzeAnswer({ text, citationUrls, clientDomains, competitorRoster, ...(clientBrandName ? { clientBrandName } : {}) });
     return { captureTier: "MEASURED", ...analyzed, rawPayload: body };
   };
 }

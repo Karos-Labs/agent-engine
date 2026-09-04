@@ -71,7 +71,7 @@ export function createOpenAiAnswerEngineAdapter(options: OpenAiAnswerEngineAdapt
   const model = options.model ?? DEFAULT_MODEL;
   const timeoutMs = options.timeoutMs ?? 120_000;
 
-  return async ({ promptText, clientDomains, competitorRoster }): Promise<EngineCaptureAdapterResult> => {
+  return async ({ promptText, clientDomains, competitorRoster, clientBrandName }): Promise<EngineCaptureAdapterResult> => {
     const response = await fetchImpl(`${baseUrl}${RESPONSES_PATH}`, {
       method: "POST",
       headers: { authorization: `Bearer ${options.apiKey}`, "content-type": "application/json" },
@@ -116,7 +116,7 @@ export function createOpenAiAnswerEngineAdapter(options: OpenAiAnswerEngineAdapt
       .map((a) => a.url)
       .filter((url): url is string => typeof url === "string");
 
-    const analyzed = analyzeAnswer({ text, citationUrls, clientDomains, competitorRoster });
+    const analyzed = analyzeAnswer({ text, citationUrls, clientDomains, competitorRoster, ...(clientBrandName ? { clientBrandName } : {}) });
     return {
       captureTier: citationUrls.length > 0 ? "MEASURED_grounded" : "MEASURED",
       ...analyzed,

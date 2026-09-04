@@ -104,7 +104,7 @@ export function createGeminiAdapter(options: GeminiAdapterOptions): EngineCaptur
   const model = options.model ?? DEFAULT_MODEL;
   const timeoutMs = options.timeoutMs ?? 60_000;
 
-  return async ({ promptText, clientDomains, competitorRoster }): Promise<EngineCaptureAdapterResult> => {
+  return async ({ promptText, clientDomains, competitorRoster, clientBrandName }): Promise<EngineCaptureAdapterResult> => {
     const response = await fetchImpl(`${baseUrl}/models/${model}:generateContent?key=${encodeURIComponent(options.apiKey)}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -115,7 +115,7 @@ export function createGeminiAdapter(options: GeminiAdapterOptions): EngineCaptur
       throw new Error(`gemini generateContent returned ${response.status}`);
     }
     const body = (await response.json()) as GeminiGenerateContentResponse;
-    return toCaptureResult(body, clientDomains, competitorRoster);
+    return toCaptureResult(body, clientDomains, competitorRoster, clientBrandName);
   };
 }
 
@@ -148,7 +148,7 @@ export function createGeminiVertexAdapter(options: GeminiVertexAdapterOptions): 
   const host = options.baseUrl ?? `https://${options.location}-aiplatform.googleapis.com/v1`;
   const url = `${host.replace(/\/+$/, "")}/projects/${options.projectId}/locations/${options.location}/publishers/google/models/${model}:generateContent`;
 
-  return async ({ promptText, clientDomains, competitorRoster }): Promise<EngineCaptureAdapterResult> => {
+  return async ({ promptText, clientDomains, competitorRoster, clientBrandName }): Promise<EngineCaptureAdapterResult> => {
     const response = await fetchImpl(url, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: await options.authorize() },
@@ -163,7 +163,7 @@ export function createGeminiVertexAdapter(options: GeminiVertexAdapterOptions): 
       throw new Error(`gemini (vertex) generateContent returned ${response.status}${detail ? `: ${detail.slice(0, 300)}` : ""}`);
     }
     const body = (await response.json()) as GeminiGenerateContentResponse;
-    return toCaptureResult(body, clientDomains, competitorRoster);
+    return toCaptureResult(body, clientDomains, competitorRoster, clientBrandName);
   };
 }
 
@@ -172,6 +172,7 @@ function toCaptureResult(
   body: GeminiGenerateContentResponse,
   clientDomains: readonly string[],
   competitorRoster: readonly string[],
+  clientBrandName: string | undefined,
 ): EngineCaptureAdapterResult {
   const candidate = body.candidates?.[0];
   const text = (candidate?.content?.parts ?? []).map((p) => p.text ?? "").join("\n");
@@ -179,6 +180,6 @@ function toCaptureResult(
   const citationUrls = groundingChunks.map(chunkSource).filter((url): url is string => url !== undefined);
   const aioAbsent = groundingChunks.length === 0;
 
-  const analyzed = analyzeAnswer({ text, citationUrls, clientDomains, competitorRoster });
+  const analyzed = analyzeAnswer({ text, citationUrls, clientDomains, competitorRoster, ...(clientBrandName ? { clientBrandName } : {}) });
   return { captureTier: aioAbsent ? "MEASURED" : "MEASURED_grounded", ...analyzed, aioAbsent, rawPayload: body };
 }

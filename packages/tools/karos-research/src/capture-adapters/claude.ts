@@ -53,7 +53,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): EngineCaptur
   const timeoutMs = options.timeoutMs ?? 60_000;
   const maxTokens = options.maxTokens ?? 1024;
 
-  return async ({ promptText, clientDomains, competitorRoster }): Promise<EngineCaptureAdapterResult> => {
+  return async ({ promptText, clientDomains, competitorRoster, clientBrandName }): Promise<EngineCaptureAdapterResult> => {
     const response = await fetchImpl(`${baseUrl}/v1/messages`, {
       method: "POST",
       headers: { "x-api-key": options.apiKey, "anthropic-version": ANTHROPIC_VERSION, "content-type": "application/json" },
@@ -76,7 +76,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): EngineCaptur
       .map((c) => c.url)
       .filter((url): url is string => typeof url === "string");
 
-    const analyzed = analyzeAnswer({ text, citationUrls, clientDomains, competitorRoster });
+    const analyzed = analyzeAnswer({ text, citationUrls, clientDomains, competitorRoster, ...(clientBrandName ? { clientBrandName } : {}) });
     // `web_search` was offered on every call; whether it was actually used is
     // exactly "did any citation come back" — a call that answered from the
     // model's own knowledge with zero searches is a real, honestly ungrounded

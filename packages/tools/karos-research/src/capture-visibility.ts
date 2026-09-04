@@ -40,6 +40,12 @@ export const CaptureVisibilityInputSchema = z.object({
   engine: z.enum(VISIBILITY_ENGINES).describe("Which ratified AI-visibility engine this cell captures (SCRUM-396: chatgpt, perplexity, gemini, claude, copilot, aimode, google_aio)."),
   clientDomains: z.array(z.string()).min(1).describe("The client's own domains, to detect whether/where the client's brand is mentioned or cited."),
   competitorRoster: z.array(z.string()).default([]).describe("Competitor brand ids to detect being named in the engine's answer."),
+  clientBrandName: z
+    .string()
+    .optional()
+    .describe(
+      "The client's brand as a person writes it (\"Karos Labs\"). Required for mention detection to work on any multi-word brand: matching is a literal substring test, and a domain-derived token (\"karoslabs\") never appears in an answer that says \"Karos Labs\".",
+    ),
   /** Freshness window, same convention as `research.pull` — a cached cell inside this window is returned instead of re-capturing. */
   window: z.string().min(1).describe("Freshness window, same convention as research.pull — a cached cell inside this window is returned instead of re-capturing."),
 });
@@ -105,6 +111,8 @@ export interface EngineCaptureRequest {
   engine: VisibilityEngine;
   clientDomains: readonly string[];
   competitorRoster: readonly string[];
+  /** The client's brand as written — see `AnalyzeAnswerInput.clientBrandName` for why a domain is not enough. */
+  clientBrandName?: string;
 }
 
 /**
@@ -248,14 +256,32 @@ export function createCaptureVisibility(store: WorkspaceStoreLike, options: Capt
       "Captures one (prompt x engine) AI-visibility cell, cached and freshness-enforced like research.pull. An engine with a real adapter configured (Perplexity/Claude/Gemini/ChatGPT/Copilot) captures for real; every other engine (Google AI Mode and AI Overview have no adapter in this build) reports the honest stand-in, captureTier: \"UNAVAILABLE\", rather than a fabricated measurement.",
     version: TOOL_VERSION,
     inputSchema: CaptureVisibilityInputSchema,
-    async execute({ promptId, promptText, engine, clientDomains, competitorRoster, window }, { ctx }) {
+    async execute({ promptId, promptText, engine, clientDomains, competitorRoster, clientBrandName, window }, { ctx }) {
       const windowMs = parseDurationMs(window);
       const job = jobFor(engine, promptId);
       const cached = await latestRun(store, ctx.clientSlug, job);
 
       if (cached) {
         const ageMs = Date.now() - cached.at;
-        if (ageMs <= windowMs) {
+        // A `no_adapter_wired` cell is a statement about THIS DEPLOYMENT'S
+        // CONFIGURATION, not about what an engine said — so it must not be
+        // served from cache once the adapter exists. The freeze rule below is
+        // about measurement conditions ("capture_tier set at capture per cell
+        // and frozen; never silently upgraded"), and an engine that was not
+        // wired was never measured at all.
+        //
+        // Wiring Gemini and ChatGPT and seeing nothing change is what this
+        // costs otherwise: on 2026-09-04 a run served 25 day-old
+        // `no_adapter_wired` Gemini cells from a 30-day window, so a working
+        // adapter sat unused and the client's coverage stayed exactly where it
+        // was. ChatGPT looked fixed only because its earlier cells had failed
+        // outright and left nothing to cache.
+        const cachedCell = cached.result as CaptureCell;
+        const supersededByNewAdapter =
+          cachedCell.captureTier === "UNAVAILABLE" &&
+          cachedCell.unavailableReason === "no_adapter_wired" &&
+          options.adapters?.[engine] !== undefined;
+        if (ageMs <= windowMs && !supersededByNewAdapter) {
           // Frozen per cell: a cache hit inside the freshness window returns
           // the EXACT stored record, `captureTier`/`rawSha256` included —
           // `capture_tier` is never silently upgraded (or downgraded) just
@@ -293,7 +319,7 @@ export function createCaptureVisibility(store: WorkspaceStoreLike, options: Capt
         // — RFC-01 §5.6: that distinction is exactly what let a broken
         // research pipeline read as "a topic with nothing to say" for
         // months (see `research.pull`'s own doc comment for the same rule).
-        const adapterResult = await adapter({ promptId, promptText, engine, clientDomains, competitorRoster });
+        const adapterResult = await adapter({ promptId, promptText, engine, clientDomains, competitorRoster, ...(clientBrandName ? { clientBrandName } : {}) });
         cell = {
           promptId,
           engine,

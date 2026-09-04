@@ -19,8 +19,27 @@ export interface AnalyzeAnswerInput {
   text: string;
   /** Citation URLs in the order the engine returned/cited them — ordinal is derived from this order, 1-based. */
   citationUrls: readonly string[];
-  /** The client's own domains (`research.captureVisibility`'s existing `clientDomains` input — no brand display name is carried by this tool's contract, so a domain-derived token is the honest signal this analyzer has). */
+  /** The client's own domains — used for CITATION matching, and as a last-resort mention token when no brand name is supplied. */
   clientDomains: readonly string[];
+  /**
+   * The client's brand as a person writes it: "Karos Labs", not "karoslabs".
+   *
+   * WITHOUT THIS, A MULTI-WORD BRAND CAN NEVER BE DETECTED. Mention matching
+   * is a literal case-insensitive substring test, and the only token this
+   * analyzer used to have was `brandTokenFromDomain(clientDomains[0])` — which
+   * turns `karoslabs.com` into `karoslabs`, a string that does not appear in
+   * the answer "Karos Labs is an AI marketing agency". Every measured cell for
+   * every such client reported `brandMentioned: false` regardless of what the
+   * engine actually said, and the client was shown 0% visibility.
+   *
+   * Competitors were never affected: `competitorRoster` has always been
+   * display names. The client was the only entity in this analyzer matched by
+   * a mangled domain.
+   *
+   * Optional because the tool's own contract cannot guarantee a name for every
+   * caller; absent, the domain token remains the fallback it always was.
+   */
+  clientBrandName?: string;
   /** Competitor DISPLAY NAMES (`competitorRoster`) — matched as literal case-insensitive substrings, same convention `prompt-set.ts`'s dedupe and the rest of this migration already use for "no NLP tool, so match on what the text actually says." */
   competitorRoster: readonly string[];
 }
@@ -82,10 +101,28 @@ function findAll(haystack: string, needle: string): { firstOffset?: number; coun
  * a mention that isn't a literal case-insensitive substring match.
  */
 export function analyzeAnswer(input: AnalyzeAnswerInput): AnalyzedMention {
-  const { text, citationUrls, clientDomains, competitorRoster } = input;
-  const brandToken = clientDomains.length > 0 ? brandTokenFromDomain(clientDomains[0]!) : "";
+  const { text, citationUrls, clientDomains, competitorRoster, clientBrandName } = input;
 
-  const brandMatch = brandToken ? findAll(text, brandToken) : { count: 0 };
+  // Every spelling of the client worth looking for, best first. The display
+  // name is the one an engine actually writes; the domain token stays as the
+  // fallback for a caller that supplies no name, and also catches the times an
+  // answer writes the bare domain instead of the brand.
+  const brandAliases = [clientBrandName?.trim(), clientDomains.length > 0 ? brandTokenFromDomain(clientDomains[0]!) : ""].filter(
+    (alias): alias is string => Boolean(alias),
+  );
+
+  // The FIRST alias that appears wins the offset, but the count is the best
+  // single alias's — not a sum, which would double-count an answer that writes
+  // "Karos Labs (karoslabs.com)".
+  const brandMatch = brandAliases
+    .map((alias) => findAll(text, alias))
+    .reduce<{ firstOffset?: number; count: number }>(
+      (best, match) => {
+        const firstOffset = [best.firstOffset, match.firstOffset].filter((o): o is number => o !== undefined).sort((a, b) => a - b)[0];
+        return { count: Math.max(best.count, match.count), ...(firstOffset !== undefined ? { firstOffset } : {}) };
+      },
+      { count: 0 },
+    );
   const mentionCounts: Record<string, number> = { client: brandMatch.count };
   const competitorsNamed: Array<{ brandId: string; charOffset: number }> = [];
   for (const name of competitorRoster) {

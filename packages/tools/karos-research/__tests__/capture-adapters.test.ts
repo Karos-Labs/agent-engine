@@ -186,6 +186,86 @@ describe("T-A3/SCRUM-237: real per-engine capture adapters, mocked at the HTTP b
     expect(result.citations.map((c) => c.domain)).toEqual(["real.example"]);
   });
 
+  it("detects a multi-word brand by its display name, not a mangled domain", async () => {
+    // 2026-09-04, prep, Karos Labs: 50 measured cells, `brandMentioned: false`
+    // on every one, and a client shown 0% visibility. The only token this
+    // analyzer had was `brandTokenFromDomain("karoslabs.com")` -> "karoslabs",
+    // and matching is a literal substring test — so an answer saying
+    // "Karos Labs" never matched. Competitors were fine throughout, because
+    // `competitorRoster` has always been display names.
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({
+        candidates: [
+          {
+            content: { parts: [{ text: "Karos Labs is an AI marketing agency worth a look." }] },
+            groundingMetadata: { groundingChunks: [] },
+          },
+        ],
+      }),
+    );
+    const adapter = createGeminiAdapter({ apiKey: "gem-test", fetchImpl: fetchImpl as unknown as typeof fetch });
+    const result = await adapter({
+      promptId: "p1",
+      promptText: "best AI marketing agencies",
+      engine: "gemini",
+      clientDomains: ["karoslabs.com"],
+      competitorRoster: [],
+      clientBrandName: "Karos Labs",
+    });
+
+    expect(result.brandMentioned).toBe(true);
+    expect(result.mentionCounts["client"]).toBe(1);
+  });
+
+  it("still falls back to the domain token when no brand name is supplied", async () => {
+    // The tool's contract cannot guarantee a name for every caller, and an
+    // answer that writes the bare domain is still a mention.
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({
+        candidates: [
+          { content: { parts: [{ text: "See karoslabs.com for details." }] }, groundingMetadata: { groundingChunks: [] } },
+        ],
+      }),
+    );
+    const adapter = createGeminiAdapter({ apiKey: "gem-test", fetchImpl: fetchImpl as unknown as typeof fetch });
+    const result = await adapter({
+      promptId: "p1",
+      promptText: "q",
+      engine: "gemini",
+      clientDomains: ["karoslabs.com"],
+      competitorRoster: [],
+    });
+
+    expect(result.brandMentioned).toBe(true);
+  });
+
+  it("counts a brand written both ways once, not twice", async () => {
+    // "Karos Labs (karoslabs.com)" is one mention. Summing the aliases would
+    // inflate every mention count on exactly the answers that name a brand
+    // most explicitly.
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({
+        candidates: [
+          {
+            content: { parts: [{ text: "Karos Labs (karoslabs.com) is one option." }] },
+            groundingMetadata: { groundingChunks: [] },
+          },
+        ],
+      }),
+    );
+    const adapter = createGeminiAdapter({ apiKey: "gem-test", fetchImpl: fetchImpl as unknown as typeof fetch });
+    const result = await adapter({
+      promptId: "p1",
+      promptText: "q",
+      engine: "gemini",
+      clientDomains: ["karoslabs.com"],
+      competitorRoster: [],
+      clientBrandName: "Karos Labs",
+    });
+
+    expect(result.mentionCounts["client"]).toBe(1);
+  });
+
   it("ChatGPT via OpenAI Responses: gathers text and url_citation annotations across output items", async () => {
     // `output` interleaves the `web_search_call` with the `message`, which is
     // why the adapter flattens content blocks instead of reading output[0].
