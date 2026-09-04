@@ -229,11 +229,16 @@ export interface PersistedClientCompetitor extends ClientCompetitor {
  * as a soft target (prompt guidance + a non-blocking code-level warning in
  * `write-report.ts`), deliberately NOT a Zod `.min(8)` schema floor — a
  * judgment call, documented here: reaching 8 REAL, verifiable competitors
- * requires genuine external research (the live web search/fetch legacy's
- * `researchCompetitive` runs), and this repo's Phase-1 `research.pull` is an
- * explicit, out-of-scope-for-this-fix, cached/deterministic stand-in with no
- * live search backend (see `create-intel-report-agent-workflow.ts`'s step
- * 01 comment). A hard schema minimum here would force the model to either
+ * requires genuine external research. This comment used to say `research.pull`
+ * was a "cached/deterministic stand-in with no live search backend" — that has
+ * not been true since it was wired to a real scraper, and the claim outlived
+ * the condition long enough to send a reader looking for a retrieval gap that
+ * had already been closed. It performs live search; six sources per intel run
+ * (`create-intel-report-agent-workflow.ts` step 01). The target still is not a
+ * schema floor, for the reason below rather than for want of retrieval: how
+ * many verifiable competitors a query surfaces is a property of the market and
+ * the query, not something a run can be compelled to produce. A hard schema
+ * minimum here would force the model to either
  * invent competitors to satisfy the count — directly violating Directive 1's
  * zero-fabrication rule and the "real, verifiable entity" requirement in
  * Output Quality Rule 2 — or hard-fail every run until real research exists.

@@ -30,6 +30,11 @@ const ALL_STEP_IDS = [
   // and the run proceeds exactly as before this ticket.
   "01e-enforce-context-doc-policy",
   "02-generate-report",
+  // The pre-gate self-correction pass. Always a step, even on a clean report:
+  // it asks the gate what it would reject and returns the draft untouched when
+  // the answer is nothing, so its presence in this list says the check ran —
+  // not that anything was rewritten.
+  "02b-ground-numeric-claims",
   "03-verify-numbers-sourced",
   // Revision-scoped: `-r0` is the first review round. A `revise` decision
   // registers `-r1` after re-generating.

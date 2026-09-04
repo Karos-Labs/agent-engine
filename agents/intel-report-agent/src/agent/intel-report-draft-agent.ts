@@ -81,7 +81,14 @@ const INTEL_REPORT_DRAFT_STEP_CONFIG: AgentStepConfig<IntelReportOutput> = {
   // v3 (SCRUM-241/T-A9) adds §3, documenting `targetAudience` and
   // `marketStrategy` — the client's own projected context docs (C1) — and
   // renumbers §§3-11 to §§4-12 accordingly. v2 stays frozen.
-  skillRef: "intel-report-craft@3",
+  // v4 adds three numeric-sourcing rules to the Output Quality Rules, each one
+  // a real failure observed on prep: quote a range WHOLE rather than presenting
+  // one end as a value or a threshold ("$2,000+/month" is not sourced by a
+  // source saying "$500-$2,000/month"); never present arithmetic on a sourced
+  // number — a midpoint, a sum, an annualized monthly figure — as sourced; and
+  // prefer the qualitative sentence when no figure is available, which is a
+  // real analytical claim rather than a retreat. v3 stays frozen.
+  skillRef: "intel-report-craft@4",
 };
 
 export interface IntelReportDraftAgentOptions {

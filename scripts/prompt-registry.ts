@@ -145,10 +145,20 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   { promptId: "instagram-research", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
   { promptId: "instagram-visual-qa", agent: "instagram-agent", versions: ["1", "2"], latestVersion: "2" },
   {
+    promptId: "intel-report-grounding",
+    agent: "intel-report-agent",
+    versions: ["1"],
+    latestVersion: "1",
+    // The pre-gate correction pass names the gate it exists to satisfy, so the
+    // hygiene check holds it to the same "never invent numbers" declaration the
+    // drafting prompt carries.
+    requires: { numbersSourced: true },
+  },
+  {
     promptId: "intel-report-craft",
     agent: "intel-report-agent",
-    versions: ["1", "2", "3"],
-    latestVersion: "3",
+    versions: ["1", "2", "3", "4"],
+    latestVersion: "4",
     requires: { numbersSourced: true },
   },
   { promptId: "landing-compose", agent: "landing-builder-agent", versions: ["1"], latestVersion: "1" },

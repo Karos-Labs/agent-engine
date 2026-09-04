@@ -34,6 +34,7 @@ import {
   INTEL_REPORT_DRAFT_MAX_TOKENS,
   INTEL_REPORT_DRAFT_MODEL_POLICY,
 } from "../agent/intel-report-draft-agent.js";
+import { IntelReportGroundingAgent } from "../agent/intel-report-grounding-agent.js";
 import type { IntelReportAgentWorkflowResult, IntelReportClientContext, IntelReportResearch } from "./types.js";
 
 export interface CreateIntelReportAgentWorkflowOptions {
@@ -80,16 +81,18 @@ export interface CreateIntelReportAgentWorkflowOptions {
  * numeric claim in the whole report against, in one call, rather than 7
  * separate gate calls per section.
  */
+const ANALYSIS_FIELDS = [
+  "contentAnalysis",
+  "conversionAnalysis",
+  "seoAnalysis",
+  "geoAnalysis",
+  "positioningAnalysis",
+  "brandAnalysis",
+  "growthAnalysis",
+] as const satisfies readonly (keyof IntelReportOutput)[];
+
 function concatenateAnalysisProse(report: IntelReportOutput): string {
-  return [
-    report.contentAnalysis,
-    report.conversionAnalysis,
-    report.seoAnalysis,
-    report.geoAnalysis,
-    report.positioningAnalysis,
-    report.brandAnalysis,
-    report.growthAnalysis,
-  ].join("\n\n");
+  return ANALYSIS_FIELDS.map((field) => report[field]).join("\n\n");
 }
 
 /**
@@ -153,7 +156,15 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
       // competitive scan at all, and a direction that replaced them would
       // quietly turn the report into something else.
       const query = runDirection.direction ? `${base} — focus: ${runDirection.direction}` : base;
-      const outcome = await tools["research.pull"]!.execute({ job: "intel-competitive-scan", query, window: "30d" }, { ctx });
+      // Six sources, not the tool's default four. Every numeric claim in the
+      // report has to trace back to something in here — `gate.numbersSourced`
+      // holds the whole run otherwise — so the evidence base is the binding
+      // constraint on how much of the report can say anything concrete. Six
+      // rather than the cap of ten because the payload is injected WHOLE into
+      // the drafting prompt (see `PullInputSchema.maxResults`): this is a token
+      // bill as much as a breadth setting, and this agent already carries the
+      // fleet's largest output ceiling.
+      const outcome = await tools["research.pull"]!.execute({ job: "intel-competitive-scan", query, window: "30d", maxResults: 6 }, { ctx });
       if (outcome.status !== "success") {
         throw new WorkflowToolingFailure(`research.pull failed: ${outcome.status}`);
       }
@@ -318,16 +329,57 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
       // judgment calls, never invented numbers to be caught here — this gate is about the
       // report's *prose* claims, e.g. "conversion rate improved 30%", not about the
       // dimension scores themselves). ──
+      const sources = [research.query, JSON.stringify(research.result)];
+
+      // ── 02b: self-correction, BEFORE the gate rather than instead of it ──
+      //
+      // A held run is a report nobody gets, and the usual cause is one sentence
+      // out of seven sections. This asks the gate what it would reject, and if
+      // anything comes back, hands those exact claims to a bounded correction
+      // pass: restate a range the source really states, or drop the figure and
+      // make the point qualitatively.
+      //
+      // It runs only when the gate would fail, so a clean report costs nothing.
+      // Its output goes through the real gate below unchanged, so it can improve
+      // a report's chances and can never wave one through — a correction that
+      // strips a figure badly, or introduces a new one, is held exactly as the
+      // original would have been.
+      const groundedReport = await wf.step.code(rev("02b-ground-numeric-claims"), async (): Promise<IntelReportOutput> => {
+        const preVerdict = await runGate(tools, "gate.numbersSourced", { text: concatenateAnalysisProse(report), sources }, ctx);
+        if (preVerdict.verdict !== "content_fail") return report;
+
+        const flaggedClaims = preVerdict.evidence ?? [];
+        const groundingAgent = new IntelReportGroundingAgent({ router: options.router, tools, promptStore: options.promptStore });
+        const corrected = await groundingAgent.run(ctx, {
+          flaggedClaims,
+          sections: Object.fromEntries(ANALYSIS_FIELDS.map((field) => [field, report[field]])),
+          sources,
+        });
+        // A correction pass that itself fails is not a reason to fail the run:
+        // the original report still goes to the gate and is held there with the
+        // same message it would have had. Losing the draft over a failed repair
+        // would be strictly worse than not attempting one.
+        if (corrected.status !== "completed" || !corrected.finalOutput) return report;
+
+        const output = corrected.finalOutput;
+        return { ...report, ...Object.fromEntries(ANALYSIS_FIELDS.map((field) => [field, output[field]])) };
+      });
+
+      // ── verify — every numeric claim across the 7 analysis sections must trace back
+      // to the research pull's own content (RFC-05 §5 / §3 step 4's "reconcile the
+      // score/grade discrepancy" note resolved: the model's dimension scores are real
+      // judgment calls, never invented numbers to be caught here — this gate is about the
+      // report's *prose* claims, e.g. "conversion rate improved 30%", not about the
+      // dimension scores themselves). ──
       await wf.step.code(rev("03-verify-numbers-sourced"), async () => {
-        const text = concatenateAnalysisProse(report);
-        const sources = [research.query, JSON.stringify(research.result)];
+        const text = concatenateAnalysisProse(groundedReport);
         const verdict = await runGate(tools, "gate.numbersSourced", { text, sources }, ctx);
         if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.numbersSourced: ${verdict.reason}`);
         if (verdict.verdict === "content_fail") throw new WorkflowHeld(`numbers not sourced: ${verdict.reason}`);
         return verdict;
       });
 
-      return report;
+      return groundedReport;
     };
 
     // ── The universal approve / revise / reject cycle ──
