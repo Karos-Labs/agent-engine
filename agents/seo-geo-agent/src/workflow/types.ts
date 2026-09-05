@@ -25,6 +25,17 @@ export interface SeoGeoClientContext {
   brand: Record<string, unknown>;
   config: Record<string, unknown>;
   competitors: SeoGeoCompetitor[];
+  /**
+   * Where `competitors` came from, so a reader of the run record can tell a
+   * measured zero from an unmeasurable one.
+   *
+   * `"none"` is the case that used to be invisible: every competitor metric
+   * this agent reports — roster share, "named first", per-competitor mention
+   * counts — is structurally zero with an empty roster, and that zero looks
+   * exactly like "no competitor was ever mentioned". They mean opposite things
+   * and a client is shown the same number for both.
+   */
+  competitorRosterSource: "client-curated" | "intel-report" | "none";
   /** At least one entry — `seoGeo.score`'s `visibility.clientDomains` requires `min(1)`; see `deriveClientDomain`. */
   clientDomains: string[];
 }
