@@ -79,15 +79,17 @@ export function goodChannelDraft(channel: CampaignChannel): unknown {
     case "linkedin": {
       const hook = "We looked at attendance data across our hybrid client base this quarter, and the pattern surprised us.";
       const body = "Teams with a fixed two-day in-office schedule reported fewer scheduling conflicts than teams with fully flexible policies.";
+      const takeaway = "A consistent weekly structure often beats total flexibility for operational clarity.";
       const callToAction = "If your team is still negotiating its hybrid policy week to week, a fixed anchor-day structure might be worth testing.";
       return {
         headline: "Anchor days cut scheduling friction",
         hook,
         body,
+        takeaway,
         hashtags: ["HybridWork", "FutureOfWork"],
         callToAction,
         targetAudience: "People leaders evaluating hybrid work policies",
-        text: `${hook}\n\n${body}\n\n${callToAction}`,
+        text: `${hook}\n\n${body}\n\n${takeaway}\n\n${callToAction}`,
         archetype: "industry-reaction",
       };
     }
@@ -266,8 +268,8 @@ export async function setupTestEnvironment(
 
 export function makeChannelRouters(): Record<CampaignChannel, ModelRouter> {
   return {
-    x: fakeRouterSequence([finalTurn(goodChannelDraft("x"))]),
-    linkedin: fakeRouterSequence([finalTurn(goodChannelDraft("linkedin"))]),
+    x: fakeRouterSequence([finalTurn(goodChannelDraft("x")), finalTurn(goodChannelDraft("x"))]),
+    linkedin: fakeRouterSequence([finalTurn(goodChannelDraft("linkedin")), finalTurn(goodChannelDraft("linkedin"))]),
     reddit: fakeRouterSequence([finalTurn(goodChannelDraft("reddit"))]),
     blog: fakeRouterSequence([finalTurn(goodChannelDraft("blog"))]),
     newsletter: fakeRouterSequence([finalTurn(goodChannelDraft("newsletter"))]),
