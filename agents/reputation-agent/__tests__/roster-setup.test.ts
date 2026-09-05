@@ -74,7 +74,9 @@ describe("00-roster-setup: runReputationRosterSetup", () => {
   });
 
   it("records a structured roster supplied on the run, plus the never-say locks and the intake as provenance", async () => {
-    await writeClientConfig(env.store, env.clientSlug, { reputationLocks: undefined, xHandle: "acme" });
+    // Written directly rather than through the helper, whose default is an EMPTY
+    // lock list: an empty list on file is a decision setup must not overwrite.
+    await env.store.writeJson(env.clientSlug, ["client", "config"], { reputationAutonomy: "approve-all", xHandle: "acme" });
     const roster = [manualExportLeg([], { listingId: "loc-1", listingLabel: "Main" })];
 
     const outcome = await runReputationRosterSetup(
@@ -206,7 +208,7 @@ describe("00-roster-setup inside the pulse", () => {
   it("a first run with no roster on file completes against the roster it recorded, and the next run finds it already configured", async () => {
     // No lock list on file either (the helper's default is an empty one), so the
     // run's never-say list is recorded rather than deferred to a standing decision.
-    await writeClientConfig(env.store, env.clientSlug, { reputationLocks: undefined });
+    await env.store.writeJson(env.clientSlug, ["client", "config"], { reputationAutonomy: "approve-all" });
     const respondId = "manual:loc-1:rev-1";
     const review = makeReview({
       review_id: respondId,

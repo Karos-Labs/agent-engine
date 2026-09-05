@@ -95,8 +95,8 @@ describe("checkpoint resume idempotency across the campaign gate (RFC-01 §8.1, 
     expect(callCounts()).toEqual(expectedCountsAfterResume);
     expect(campaignRouter.complete).toHaveBeenCalledTimes(1);
     for (const channel of ["x", "linkedin", "reddit", "blog", "newsletter"] as const) {
-      expect(channelRouters[channel].complete.mock.calls.length).toBeGreaterThanOrEqual(1);
-      expect(channelRouters[channel].complete.mock.calls.length).toBeLessThanOrEqual(expectedChannelTurns[channel]);
+      expect(vi.mocked(channelRouters[channel].complete).mock.calls.length).toBeGreaterThanOrEqual(1);
+      expect(vi.mocked(channelRouters[channel].complete).mock.calls.length).toBeLessThanOrEqual(expectedChannelTurns[channel]);
     }
 
     const stepRecords = await durableStore.listSteps(params.runId);
@@ -158,7 +158,7 @@ describe("checkpoint resume idempotency across the campaign gate (RFC-01 §8.1, 
     const second = await engine.run(workflowFn, params);
     expect(second.status).toBe("degraded");
 
-    const stepsAfterCrash = await durableStore.listSteps(runId);
+    const stepsAfterCrash = await durableStore.listSteps(runIdValue);
     const persistStep = stepsAfterCrash.find((s) => s.stepId === "14-persist-campaign-bundle");
     const commitStep = stepsAfterCrash.find((s) => s.stepId === "15-commit-and-record");
     expect(persistStep?.status).toBe("completed");
@@ -167,14 +167,14 @@ describe("checkpoint resume idempotency across the campaign gate (RFC-01 §8.1, 
     const countsAfterCrash = callCounts();
     expect(campaignRouter.complete).toHaveBeenCalledTimes(1);
 
-    const third = await engine.run(workflowFn, { ...params, runId });
+    const third = await engine.run(workflowFn, params);
     expect(third.status).toBe("completed");
 
     // Nothing before the crash point re-ran on the second resume either.
     expect(campaignRouter.complete).toHaveBeenCalledTimes(1);
     expect(callCounts()["ledger.writeDeliverable"]).toBe(countsAfterCrash["ledger.writeDeliverable"]);
 
-    const finalSteps = await durableStore.listSteps(runId);
+    const finalSteps = await durableStore.listSteps(runIdValue);
     expect(finalSteps.every((s) => s.status === "completed")).toBe(true);
   });
 });
