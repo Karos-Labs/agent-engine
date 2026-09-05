@@ -43,7 +43,7 @@ const expectedChannelTurns: Record<"x" | "linkedin" | "reddit" | "blog" | "newsl
   linkedin: 2,
   reddit: 1,
   blog: 1,
-  newsletter: 1,
+  newsletter: 3,
 };
 
 describe("end-to-end: the 16-step campaign orchestrator workflow (multi-channel fan-out)", () => {

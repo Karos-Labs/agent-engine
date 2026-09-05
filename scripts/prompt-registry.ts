@@ -186,6 +186,30 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
     structuredOutputFields: ["subject", "previewText", "intro", "callToAction", "signoff", "text"],
   },
   {
+    promptId: "newsletter-editor",
+    agent: "newsletter-agent",
+    versions: ["1"],
+    latestVersion: "1",
+    // A judgment step that reads a finished edition and returns a verdict with
+    // notes: it writes no client-facing prose and adds no facts, so neither the
+    // language directive nor the numbers pair applies. Its output fields are
+    // what the workflow acts on, so those are checked.
+    requires: { structuredOutput: true },
+    structuredOutputFields: ["verdict", "scores", "notes"],
+  },
+  {
+    promptId: "newsletter-plan",
+    agent: "newsletter-agent",
+    versions: ["1"],
+    latestVersion: "1",
+    // The edition plan: an internal brief for the writer, in English by
+    // design (it notes the edition's language for the writer instead), and
+    // it names no figures of its own (`specifics` are copied verbatim from
+    // the research), so the language directive and numbers pair do not apply.
+    requires: { structuredOutput: true },
+    structuredOutputFields: ["thesis", "lead", "quickHits", "oneThingToDo", "subjectLineDirection", "passedOn"],
+  },
+  {
     promptId: "reddit-channel-plan",
     agent: "reddit-agent",
     versions: ["1"],

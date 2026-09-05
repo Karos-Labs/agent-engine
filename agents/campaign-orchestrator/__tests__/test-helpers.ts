@@ -166,7 +166,7 @@ export function goodChannelDraft(channel: CampaignChannel): unknown {
       };
     }
     case "newsletter": {
-      const intro = "This week we're looking at what's actually working for engineering teams right now.";
+      const intro = "Here is what actually worked for engineering teams this week.";
       const sections = [
         { heading: "Structured onboarding cuts ramp time", body: "New-hire ramp time dropped sharply after a fixed four-day onboarding rollout." },
       ];
@@ -272,8 +272,32 @@ export function makeChannelRouters(): Record<CampaignChannel, ModelRouter> {
     linkedin: fakeRouterSequence([finalTurn(goodChannelDraft("linkedin")), finalTurn(goodChannelDraft("linkedin"))]),
     reddit: fakeRouterSequence([finalTurn(goodChannelDraft("reddit"))]),
     blog: fakeRouterSequence([finalTurn(goodChannelDraft("blog"))]),
-    newsletter: fakeRouterSequence([finalTurn(goodChannelDraft("newsletter"))]),
+    // Three turns since 2026-09-05: the edition plan, the draft, the editor's verdict.
+    newsletter: fakeRouterSequence([finalTurn(goodNewsletterPlan()), finalTurn(goodChannelDraft("newsletter")), finalTurn(approvingNewsletterEditorVerdict())]),
   };
+}
+
+/** The newsletter workflow's `08b-plan-edition` output (2026-09-05): decided before drafting, handed to the draft. */
+export function goodNewsletterPlan() {
+  return {
+    thesis: "Structured onboarding is quietly becoming the default for engineering teams that measure ramp time.",
+    lead: {
+      title: "structured engineering onboarding",
+      angle: "Why a fixed four-day structure beats a reading list, using the teams that measured it.",
+      specifics: ["a fixed four-day onboarding rollout"],
+      ourTake: "We think the structure matters more than the content of any single day.",
+      whyItMatters: "Engineering leaders are hiring again and ramp time is the first metric that slips.",
+    },
+    quickHits: [],
+    oneThingToDo: "Write down what a new hire ships by the end of day one, then work backwards.",
+    subjectLineDirection: "Lead with the ramp-time result, not the word onboarding.",
+    passedOn: [],
+  };
+}
+
+/** The newsletter editor's approving verdict (`15c-editor-verdict`), so the fixture edition ships first time. */
+export function approvingNewsletterEditorVerdict() {
+  return { verdict: "approve", scores: { specificity: 5, voice: 5, structure: 5, humanity: 5 }, notes: [] };
 }
 
 export function goodCampaignPlan() {

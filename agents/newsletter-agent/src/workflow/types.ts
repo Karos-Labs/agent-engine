@@ -31,11 +31,30 @@ export interface NewsletterSelectedCandidates {
   secondaryTopics: string[];
 }
 
+/**
+ * The editor's last word on the edition that shipped from one revision round
+ * (`15c-editor-verdict`), carried onto the review gate's payload, the
+ * persisted manifest and the workflow result so a reviewer sees what the
+ * editor thought rather than only what the writer wrote.
+ */
+export interface NewsletterEditorialOutcome {
+  verdict: "approve" | "revise";
+  scores: { specificity: number; voice: number; structure: number; humanity: number };
+  /** The editor's notes on the shipped draft: polish suggestions on `approve`, the unresolved problems on a flagged `revise`. */
+  notes: readonly string[];
+  /** How many drafting rounds this revision took before it shipped (1 = first draft cleared everything). */
+  rounds: number;
+  /** True when the edition shipped on the last round with the editor still asking for changes: the reviewer should read `notes` before approving. */
+  flagged: boolean;
+}
+
 export interface NewsletterAgentWorkflowResult {
   mainStory: string;
   theme: string;
   targetAudience: string;
   deliverableId: string;
+  /** The editor's verdict on the shipped draft; absent only when the run completed without reaching the editor (never, in practice). */
+  editorial?: NewsletterEditorialOutcome;
   /**
    * The same edition text this run's own `15-batch-review` gate showed a
    * human (or would have, had `autoApprove` not skipped it) — i.e.

@@ -20,7 +20,7 @@ const expectedChannelTurns: Record<"x" | "linkedin" | "reddit" | "blog" | "newsl
   linkedin: 2,
   reddit: 1,
   blog: 1,
-  newsletter: 1,
+  newsletter: 3,
 };
 
 /** Wraps every tool's `execute` in a spy so we can prove a resumed run never re-invokes an already-checkpointed step, across the entire nested 5-channel tree. */

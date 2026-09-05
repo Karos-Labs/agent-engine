@@ -38,6 +38,53 @@ export function finalTurn(output: unknown, opts: { model?: string; inputTokens?:
   });
 }
 
+/** The `08b-plan-edition` output every edition run needs before drafting (2026-09-05). */
+export function goodEditionPlan() {
+  return {
+    thesis: "Structured onboarding is quietly becoming the default for engineering teams that measure ramp time.",
+    lead: {
+      title: "structured engineering onboarding",
+      angle: "Why a fixed four-day structure beats a reading list, using the teams that measured it.",
+      specifics: ["a fixed four-day onboarding rollout"],
+      ourTake: "We think the structure matters more than the content of any single day.",
+      whyItMatters: "Engineering leaders are hiring again and ramp time is the first metric that slips.",
+    },
+    quickHits: [],
+    oneThingToDo: "Write down what a new hire ships by the end of day one, then work backwards.",
+    subjectLineDirection: "Lead with the ramp-time result, not the word onboarding.",
+    passedOn: [],
+  };
+}
+
+/** The editor's approving verdict (`15c-editor-verdict`). */
+export function approvingEditorVerdict(notes: string[] = []) {
+  return { verdict: "approve", scores: { specificity: 5, voice: 5, structure: 5, humanity: 5 }, notes };
+}
+
+/** The editor sending a draft back with notes. */
+export function revisingEditorVerdict(notes: string[]) {
+  return { verdict: "revise", scores: { specificity: 2, voice: 3, structure: 3, humanity: 2 }, notes };
+}
+
+/**
+ * The turns a run that clears every gate consumes, in order: the edition plan,
+ * the given draft turn(s) (more than one when the draft's own self-critique
+ * or the dedupe check costs an extra pass), then the editor's approval.
+ */
+export function editionRouter(draftTurns: Array<() => CompletionResult<unknown>>): ModelRouter {
+  return fakeRouterSequence([finalTurn(goodEditionPlan()), ...draftTurns, finalTurn(approvingEditorVerdict())]);
+}
+
+/**
+ * The turns a run whose draft never clears the deterministic gates consumes:
+ * the plan, then the failing draft once per editorial round (three), after
+ * which the run holds. The editor is never reached.
+ */
+export function heldEditionRouter(draftTurns: Array<() => CompletionResult<unknown>>): ModelRouter {
+  const last = draftTurns[draftTurns.length - 1]!;
+  return fakeRouterSequence([finalTurn(goodEditionPlan()), ...draftTurns, last, last]);
+}
+
 export interface TestEnvironment {
   rootDir: string;
   store: WorkspaceStore;

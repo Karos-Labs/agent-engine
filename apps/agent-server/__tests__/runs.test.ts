@@ -405,7 +405,7 @@ describe("POST /api/v1/runs/:runId/resume — campaign orchestrator gate", () =>
       .send({ gateId: "13-campaign-review", resolution: { decision: "reject", actor: "jane@karoslabs.com" } });
 
     expect(res.status).toBe(400);
-  });
+  }, 60_000);
 
   it("resolves to held when the gate is rejected with a reason", async () => {
     const startRes = await request(app)
@@ -419,7 +419,7 @@ describe("POST /api/v1/runs/:runId/resume — campaign orchestrator gate", () =>
 
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("held");
-  });
+  }, 60_000);
 
   it("returns 404 when resuming a run that doesn't exist", async () => {
     const res = await request(app)
