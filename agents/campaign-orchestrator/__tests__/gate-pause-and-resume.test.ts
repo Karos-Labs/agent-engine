@@ -175,6 +175,8 @@ describe("checkpoint resume idempotency across the campaign gate (RFC-01 §8.1, 
     expect(callCounts()["ledger.writeDeliverable"]).toBe(countsAfterCrash["ledger.writeDeliverable"]);
 
     const finalSteps = await durableStore.listSteps(runIdValue);
-    expect(finalSteps.every((s) => s.status === "completed")).toBe(true);
+    // Named, not a boolean: a failure here has to say WHICH step ended in what
+    // state, or the next reader is left with "expected false to be true".
+    expect(finalSteps.filter((s) => s.status !== "completed").map((s) => `${s.stepId}: ${s.status}${s.error ? ` (${s.error})` : ""}`)).toEqual([]);
   });
 });
