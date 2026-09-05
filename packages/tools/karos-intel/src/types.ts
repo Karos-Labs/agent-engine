@@ -301,6 +301,48 @@ export const ReportProfileExtrasSchema = z.object({
   reportStatus: z.string().optional().describe("This report's status label, as the portal's ClientReport.reportStatus."),
 });
 
+
+/**
+ * One buyer persona of the client's ICP blueprint — the structure legacy's
+ * "## Target Audience" section carried (karosCMO `brain.ts`, 2026-08) and
+ * this schema had acknowledged as "a real, acknowledged omission for a future
+ * revision" since v2 of the craft guide. Every field is prose or a list of
+ * short strings so the whole block reads as a document, and every field is
+ * optional inside the persona so the model writes what the evidence supports
+ * and omits what it does not (Zero Placeholder Rule) rather than padding.
+ */
+export const TargetAudiencePersonaSchema = z.object({
+  label: z.string().min(1).describe("The persona in one line: role title at company/customer type, e.g. 'VP Marketing at a Series B B2B SaaS company'."),
+  isPrimary: z.boolean().default(false).describe("True for the primary ICP; false for a secondary persona."),
+  firmographics: z.string().optional().describe("Company size band, revenue range, vertical, geography (B2C: age, income, lifestyle) — grounded, not assumed."),
+  role: z.string().optional().describe("Specific title(s) and where they sit in the buying committee: buyer, champion, influencer, or end user."),
+  painPoints: z.array(z.string()).default([]).describe("4-6 specific, functional problems this persona faces, each mapping to something the client addresses."),
+  successMetrics: z.array(z.string()).default([]).describe("The KPIs or outcomes this persona is judged on."),
+  incumbentTools: z.array(z.string()).default([]).describe("Named products, platforms or methods they use today — specific names, not category labels."),
+  incumbentShortfalls: z.array(z.string()).default([]).describe("Where those incumbents fall short in ways the client's offer addresses."),
+  switchingTriggers: z.array(z.string()).default([]).describe("Observable events that start an evaluation: contract cycles, growth milestones, failures, mandates."),
+  channels: z.array(z.string()).default([]).describe("Named platforms/formats where this persona consumes professional content, with the format that hooks them."),
+  trustBuilders: z.array(z.string()).default([]).describe("What makes this persona believe a claim: peer logos, certifications, third-party benchmarks, named case studies."),
+  vocabulary: z.array(z.string()).default([]).describe("Professional jargon and terms this persona uses — for copy to mirror."),
+  problemPhrases: z.array(z.string()).default([]).describe("Near-verbatim phrases they use to describe the problem when searching or complaining."),
+  outcomePhrases: z.array(z.string()).default([]).describe("The language of success — what they say they want, in their words."),
+  avoidPhrases: z.array(z.string()).default([]).describe("Terms that trigger scepticism or read as vendor-speak to this persona."),
+});
+export type TargetAudiencePersona = z.infer<typeof TargetAudiencePersonaSchema>;
+
+/**
+ * The client's ICP blueprint as this run could ground it. Optional at the top
+ * level — a run with no audience evidence writes nothing rather than inventing
+ * a persona — but when present it is what every downstream content agent
+ * reads for WHO it is writing to.
+ */
+export const TargetAudienceSchema = z.object({
+  summary: z.string().min(1).describe("Two to four sentences: who buys, why, and what the client's stated ICP is if the client stated one."),
+  personas: z.array(TargetAudiencePersonaSchema).min(1).describe("One or more labelled personas; the primary first."),
+  evidence: z.array(z.string()).default([]).describe("Where this came from, in the same source labels as the analysis prose: context-provided / training knowledge / industry pattern."),
+});
+export type TargetAudience = z.infer<typeof TargetAudienceSchema>;
+
 export const IntelReportOutputSchema = ReportProfileExtrasSchema.extend({
   /** The date the report describes, as the portal stores it (`ClientReport.reportDate`, a string). Defaulted at build time when the model omits it. */
   reportDate: z.string().optional().describe("The date the report describes, as the portal stores it (ClientReport.reportDate). Defaulted at build time when the model omits it."),
@@ -345,6 +387,9 @@ export const IntelReportOutputSchema = ReportProfileExtrasSchema.extend({
    * it unconditionally, unlike e.g. Customer Sentiment which is explicitly
    * conditional on data availability.
    */
+  targetAudience: TargetAudienceSchema.optional().describe(
+    "The client's ICP blueprint — personas, pains, incumbents, channels and vocabulary — grounded in the research and the client's own target-audience document when one was provided. Optional: omit entirely rather than invent an audience the evidence does not support.",
+  ),
   brandSynchronizationUpdate: z
     .string()
     .min(1)

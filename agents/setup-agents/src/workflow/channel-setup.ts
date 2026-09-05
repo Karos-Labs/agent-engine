@@ -60,10 +60,31 @@ export interface ChannelSetupOutcome {
   note: string;
 }
 
+/** The machine-readable half of a Reddit charter, as `client.getStrategy` hands it back. */
+export interface RedditCharterData {
+  /** Normalised `r/<name>` form. */
+  targetSubreddits: string[];
+  accountName?: string;
+  offLimitsTopics?: string[];
+  /** Words a thread worth replying to would contain. Written by the auto-derived path; a form may add them later. */
+  searchKeywords?: string[];
+  voiceNotes?: string;
+  disclosureLine?: string;
+  /**
+   * True when the engine derived this charter itself because the client had
+   * nothing on file. Such a charter is replaceable: a later run carrying a
+   * real setup form overwrites it, where a form-recorded charter is never
+   * overwritten by a drafting run.
+   */
+  autoDerived?: boolean;
+}
+
 /** Reddit's pre-flight also resolves the allowlist, which its intake check needs as data rather than prose. */
 export interface RedditChannelSetupOutcome extends ChannelSetupOutcome {
   /** Communities this client may post into, normalised. Empty when `not-supplied`. */
   targetSubreddits: string[];
+  /** The rest of the stored charter, when one exists (or was just written). */
+  charter?: RedditCharterData;
 }
 
 export interface ChannelSetupArgs {
@@ -204,25 +225,34 @@ export async function runLinkedInChannelSetup(args: ChannelSetupArgs): Promise<C
  */
 export async function runRedditChannelSetup(args: ChannelSetupArgs): Promise<RedditChannelSetupOutcome> {
   const existing = await readCharter(args, "reddit-agent", "config");
-  if (existing) {
+  const existingData = existing ? readRedditCharterData(existing.data) : undefined;
+
+  const parsed = RedditSetupInputSchema.safeParse(args.input);
+  // Normalised here rather than at read time so the stored document is the
+  // canonical form and every later reader sees the same strings.
+  const formSubreddits = parsed.success ? [...new Set(parsed.data.targetSubreddits.map(normalizeSubreddit).filter(Boolean))] : [];
+
+  // A charter on file wins over anything on the run — with ONE exception: a
+  // charter the engine derived for itself (`autoDerived`) is a placeholder
+  // for the form nobody had filled in yet, so the first run that does carry
+  // a filled form replaces it. A form-recorded charter is never overwritten
+  // here; a drafting run is not where a client's allowlist gets rewritten.
+  if (existing && !(existingData?.autoDerived === true && formSubreddits.length > 0)) {
     // The structured half, when the document has one. A charter written before
     // `data` existed still counts as configured — it just cannot hand the
     // intake check a list, which is exactly what that check's own fallback to
     // `client.getConfig` is for.
-    const stored = existing.data?.["targetSubreddits"];
-    const targetSubreddits = Array.isArray(stored)
-      ? stored.filter((s): s is string => typeof s === "string" && s.length > 0)
-      : [];
+    const targetSubreddits = existingData?.targetSubreddits ?? [];
     return {
       status: "already-configured",
       written: [],
       skipped: [],
       targetSubreddits,
-      note: `this client already has a Reddit charter on file${targetSubreddits.length > 0 ? ` (${targetSubreddits.length} communities)` : ""}`,
+      ...(existingData ? { charter: existingData } : {}),
+      note: `this client already has a Reddit charter on file${targetSubreddits.length > 0 ? ` (${targetSubreddits.length} communities${existingData?.autoDerived ? ", auto-derived" : ""})` : ""}`,
     };
   }
 
-  const parsed = RedditSetupInputSchema.safeParse(args.input);
   if (!parsed.success) {
     return {
       status: "not-supplied",
@@ -233,9 +263,7 @@ export async function runRedditChannelSetup(args: ChannelSetupArgs): Promise<Red
     };
   }
 
-  // Normalised here rather than at read time so the stored document is the
-  // canonical form and every later reader sees the same strings.
-  const targetSubreddits = [...new Set(parsed.data.targetSubreddits.map(normalizeSubreddit).filter(Boolean))];
+  const targetSubreddits = formSubreddits;
   if (targetSubreddits.length === 0) {
     return {
       status: "not-supplied",
@@ -260,6 +288,12 @@ export async function runRedditChannelSetup(args: ChannelSetupArgs): Promise<Red
     };
   }
 
+  const data: RedditCharterData = {
+    targetSubreddits,
+    ...(intake.accountName ? { accountName: intake.accountName } : {}),
+    ...(intake.offLimitsTopics.length > 0 ? { offLimitsTopics: intake.offLimitsTopics } : {}),
+    ...(intake.voiceNotes?.trim() ? { voiceNotes: intake.voiceNotes.trim() } : {}),
+  };
   const outcome = await save.execute(
     {
       agent: "reddit-agent",
@@ -267,12 +301,8 @@ export async function runRedditChannelSetup(args: ChannelSetupArgs): Promise<Red
       markdown: renderConfigDoc(args.clientSlug, intake),
       // Both halves, written together. The markdown is what a model reads; the
       // data is what `00-intake-check` compares against.
-      data: {
-        targetSubreddits,
-        ...(intake.accountName ? { accountName: intake.accountName } : {}),
-        ...(intake.offLimitsTopics.length > 0 ? { offLimitsTopics: intake.offLimitsTopics } : {}),
-      },
-      source: { form: "reddit-setup", runId: args.runId, inline: true },
+      data: { ...data },
+      source: { form: "reddit-setup", runId: args.runId, inline: true, ...(existingData?.autoDerived ? { replacedAutoDerived: true } : {}) },
     },
     { ctx: args.ctx },
   );
@@ -292,8 +322,186 @@ export async function runRedditChannelSetup(args: ChannelSetupArgs): Promise<Red
     written: ["strategy/reddit-agent/config"],
     skipped: [],
     targetSubreddits,
-    note: `recorded ${targetSubreddits.length} Reddit communities from this run's setup form`,
+    charter: data,
+    note: `recorded ${targetSubreddits.length} Reddit communities from this run's setup form${existingData?.autoDerived ? ", replacing the auto-derived charter" : ""}`,
   };
+}
+
+/** The structured half of a stored Reddit charter, read defensively — a document written before `data` existed has none. */
+function readRedditCharterData(data: Record<string, unknown> | undefined): RedditCharterData | undefined {
+  if (!data) return undefined;
+  const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((s): s is string => typeof s === "string" && s.length > 0) : []);
+  const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim().length > 0 ? v.trim() : undefined);
+  const targetSubreddits = strings(data["targetSubreddits"]);
+  const offLimitsTopics = strings(data["offLimitsTopics"]);
+  const searchKeywords = strings(data["searchKeywords"]);
+  return {
+    targetSubreddits,
+    ...(str(data["accountName"]) ? { accountName: str(data["accountName"])! } : {}),
+    ...(offLimitsTopics.length > 0 ? { offLimitsTopics } : {}),
+    ...(searchKeywords.length > 0 ? { searchKeywords } : {}),
+    ...(str(data["voiceNotes"]) ? { voiceNotes: str(data["voiceNotes"])! } : {}),
+    ...(str(data["disclosureLine"]) ? { disclosureLine: str(data["disclosureLine"])! } : {}),
+    ...(data["autoDerived"] === true ? { autoDerived: true } : {}),
+  };
+}
+
+/** What the engine decided for a client with no Reddit charter — see `recordRedditAutoCharter`. */
+export interface RedditAutoCharterInput {
+  targetSubreddits: { name: string; why: string }[];
+  searchKeywords: string[];
+  offLimitsTopics: string[];
+  voiceNotes: string;
+  disclosureLine: string;
+}
+
+/**
+ * Records an ENGINE-DERIVED Reddit charter for a client that has none.
+ *
+ * This is the one place a charter is written from something other than a
+ * person's form, and the document says so on every line that matters: the
+ * markdown carries an "auto-derived" banner, `data.autoDerived` is true, and
+ * `source.form` is `reddit-auto-setup`. `runRedditChannelSetup` treats such a
+ * charter as replaceable by the first real form, and only such a charter.
+ *
+ * Still code, still not a model: the deciding was done by the caller's
+ * planner step. This function only stores the decision, normalising the
+ * community names the same way the form path does so every later reader sees
+ * one spelling. It never overwrites a charter that already exists.
+ */
+export async function recordRedditAutoCharter(args: ChannelSetupArgs, plan: RedditAutoCharterInput): Promise<RedditChannelSetupOutcome> {
+  const existing = await readCharter(args, "reddit-agent", "config");
+  if (existing) {
+    const data = readRedditCharterData(existing.data);
+    return {
+      status: "already-configured",
+      written: [],
+      skipped: [],
+      targetSubreddits: data?.targetSubreddits ?? [],
+      ...(data ? { charter: data } : {}),
+      note: "a Reddit charter already exists; the auto-derived plan was not written",
+    };
+  }
+
+  const communities = plan.targetSubreddits
+    .map((c) => ({ ...c, name: normalizeSubreddit(c.name) }))
+    .filter((c, i, all) => c.name.length > 0 && all.findIndex((o) => o.name === c.name) === i);
+  const targetSubreddits = communities.map((c) => c.name);
+  if (targetSubreddits.length === 0) {
+    return { status: "not-supplied", written: [], skipped: [], targetSubreddits: [], note: "the auto-derived plan named no usable communities" };
+  }
+
+  const save = args.tools["intake.saveStrategy"];
+  if (!save) {
+    return {
+      status: "not-supplied",
+      written: [],
+      skipped: [],
+      targetSubreddits,
+      note: "an auto-derived Reddit charter was planned but intake.saveStrategy is not registered, so it could not be recorded",
+    };
+  }
+
+  const searchKeywords = [...new Set(plan.searchKeywords.map((k) => k.trim()).filter(Boolean))];
+  const data: RedditCharterData = {
+    targetSubreddits,
+    searchKeywords,
+    ...(plan.offLimitsTopics.length > 0 ? { offLimitsTopics: plan.offLimitsTopics } : {}),
+    voiceNotes: plan.voiceNotes.trim(),
+    disclosureLine: plan.disclosureLine.trim(),
+    autoDerived: true,
+  };
+  const lines = [
+    `# Reddit setup — ${args.clientSlug}`,
+    "",
+    "> AUTO-DERIVED by the engine from the client's profile, brand kit and knowledge base, because no Reddit setup form had been filled in.",
+    "> A filled setup form replaces this document on the next run.",
+    "> Draft-only: one run drafts ONE reply, and a human posts it from their own account.",
+    "",
+    "**Communities.**",
+    ...communities.map((c) => `- ${c.name} — ${c.why}`),
+    "",
+    "**Look for threads about.**",
+    ...searchKeywords.map((k) => `- ${k}`),
+    "",
+    "**Voice.**",
+    "",
+    data.voiceNotes!,
+    "",
+    `**Disclosure line.** ${data.disclosureLine}`,
+    "",
+  ];
+  if (data.offLimitsTopics && data.offLimitsTopics.length > 0) {
+    lines.push("**Never engage on.**", ...data.offLimitsTopics.map((t) => `- ${t}`), "");
+  }
+
+  const outcome = await save.execute(
+    {
+      agent: "reddit-agent",
+      key: "config",
+      markdown: lines.join("\n"),
+      data: { ...data },
+      source: { form: "reddit-auto-setup", runId: args.runId, inline: true },
+    },
+    { ctx: args.ctx },
+  );
+  if (outcome.status !== "success") {
+    return {
+      status: "not-supplied",
+      written: [],
+      skipped: [{ key: "config", reason: describe(outcome) }],
+      targetSubreddits,
+      charter: data,
+      note: `the auto-derived Reddit charter could not be stored: ${describe(outcome)}`,
+    };
+  }
+  return {
+    status: "recorded",
+    written: ["strategy/reddit-agent/config"],
+    skipped: [],
+    targetSubreddits,
+    charter: data,
+    note: `recorded an auto-derived Reddit charter with ${targetSubreddits.length} communities`,
+  };
+}
+
+/**
+ * Drops communities from an AUTO-DERIVED charter that Reddit itself says do
+ * not exist (a 404/403 on the community's feed), so a planner's wrong guess
+ * is corrected on the run that discovers it rather than re-scanned forever.
+ * A form-recorded charter is left alone: a person named those communities.
+ * Best-effort — a failed rewrite leaves the stored charter as it was, and a
+ * prune that would empty the list is refused (a charter with no communities
+ * is worse than one with a wrong one).
+ */
+export async function pruneAutoDerivedSubreddits(args: ChannelSetupArgs, missing: readonly string[]): Promise<{ pruned: string[]; remaining: string[] }> {
+  const existing = await readCharter(args, "reddit-agent", "config");
+  const data = existing ? readRedditCharterData(existing.data) : undefined;
+  if (!existing || !data || data.autoDerived !== true || missing.length === 0) {
+    return { pruned: [], remaining: data?.targetSubreddits ?? [] };
+  }
+  const gone = new Set(missing.map(normalizeSubreddit));
+  const remaining = data.targetSubreddits.filter((s) => !gone.has(s));
+  const pruned = data.targetSubreddits.filter((s) => gone.has(s));
+  if (pruned.length === 0 || remaining.length === 0) return { pruned: [], remaining: data.targetSubreddits };
+
+  const save = args.tools["intake.saveStrategy"];
+  if (!save) return { pruned: [], remaining: data.targetSubreddits };
+  const markdown = existing.markdown
+    .split("\n")
+    .filter((line) => !pruned.some((s) => line.startsWith(`- ${s} `) || line.trim() === `- ${s}`))
+    .join("\n");
+  const outcome = await save.execute(
+    {
+      agent: "reddit-agent",
+      key: "config",
+      markdown,
+      data: { ...data, targetSubreddits: remaining },
+      source: { form: "reddit-auto-setup", runId: args.runId, inline: true, prunedMissingCommunities: pruned },
+    },
+    { ctx: args.ctx },
+  );
+  return outcome.status === "success" ? { pruned, remaining } : { pruned: [], remaining: data.targetSubreddits };
 }
 
 /**

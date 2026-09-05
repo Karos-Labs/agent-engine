@@ -137,13 +137,13 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "instagram-copy",
     agent: "instagram-agent",
-    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"],
-    latestVersion: "10",
+    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"],
+    latestVersion: "11",
     requires: { languageDirective: true },
   },
   { promptId: "instagram-image-vet", agent: "instagram-agent", versions: ["1", "2"], latestVersion: "2" },
   { promptId: "instagram-research", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
-  { promptId: "instagram-visual-qa", agent: "instagram-agent", versions: ["1", "2"], latestVersion: "2" },
+  { promptId: "instagram-visual-qa", agent: "instagram-agent", versions: ["1", "2", "3"], latestVersion: "3" },
   {
     promptId: "intel-report-grounding",
     agent: "intel-report-agent",
@@ -157,8 +157,8 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "intel-report-craft",
     agent: "intel-report-agent",
-    versions: ["1", "2", "3", "4"],
-    latestVersion: "4",
+    versions: ["1", "2", "3", "4", "5"],
+    latestVersion: "5",
     requires: { numbersSourced: true },
   },
   // Landing Builder v2 (RFC-11). The blueprint decides every fact on the page
@@ -173,8 +173,8 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "linkedin-craft",
     agent: "linkedin-agent",
-    versions: ["1", "2", "3", "4"],
-    latestVersion: "4",
+    versions: ["1", "2", "3", "4", "5"],
+    latestVersion: "5",
     requires: { languageDirective: true, numbersSourced: true },
   },
   {
@@ -186,11 +186,31 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
     structuredOutputFields: ["subject", "previewText", "intro", "callToAction", "signoff", "text"],
   },
   {
+    promptId: "reddit-channel-plan",
+    agent: "reddit-agent",
+    versions: ["1"],
+    latestVersion: "1",
+    // A planning step, not client-facing prose: it decides communities and
+    // keywords, so neither the language directive nor the numbers pair applies.
+    requires: { structuredOutput: true },
+    structuredOutputFields: ["targetSubreddits", "searchKeywords", "offLimitsTopics", "voiceNotes", "disclosureLine"],
+  },
+  {
     promptId: "reddit-craft",
     agent: "reddit-agent",
-    versions: ["1", "2", "3", "4"],
-    latestVersion: "4",
-    requires: { languageDirective: true, numbersSourced: true },
+    versions: ["1", "2", "3", "4", "5"],
+    latestVersion: "5",
+    requires: { languageDirective: true, numbersSourced: true, structuredOutput: true },
+    structuredOutputFields: ["replyBody", "text", "targetThreadUrl", "targetThreadTitle", "targetSubreddit", "disclosureIncluded", "sourcesUsed"],
+  },
+  {
+    promptId: "reddit-scout",
+    agent: "reddit-agent",
+    versions: ["1"],
+    latestVersion: "1",
+    // Chooses a thread; produces no client-facing prose and no figures.
+    requires: { structuredOutput: true },
+    structuredOutputFields: ["selected", "passReason", "runnersUp", "angle", "whatToAdd", "requiresDisclosure"],
   },
   { promptId: "reputation-doctrine-gate", agent: "reputation-agent", versions: ["1"], latestVersion: "1" },
   { promptId: "reputation-draft", agent: "reputation-agent", versions: ["1"], latestVersion: "1" },
@@ -204,8 +224,8 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "x-craft",
     agent: "x-agent",
-    versions: ["1", "2", "3", "4"],
-    latestVersion: "4",
+    versions: ["1", "2", "3", "4", "5"],
+    latestVersion: "5",
     requires: { languageDirective: true, numbersSourced: true },
   },
 ];

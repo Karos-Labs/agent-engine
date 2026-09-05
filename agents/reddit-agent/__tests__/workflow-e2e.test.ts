@@ -18,40 +18,39 @@ import {
 
 const params = { runId: "reddit_run_1", clientSlug: "acme", productId: "reddit-agent", runKind: "recurring" as const };
 
-const ALL_22_STEP_IDS = [
+/**
+ * Every step a REQUESTED-thread run executes (a caller named the thread, so
+ * no scan and no scout). The scanned path adds `06-scout-thread` and, when a
+ * charter was auto-derived, `04a-plan-channel`/`04b-record-auto-charter`; see
+ * thread-discovery.test.ts and blocked-intake.test.ts for those.
+ */
+const REQUESTED_PATH_STEP_IDS = [
   "00-channel-setup",
-  "00-intake-check",
+  "00a-load-client-config",
   "01-load-client-context",
   "02-load-memory-shelf",
   "03-load-recent-decisions",
-  "04-research-pull",
-  // The read side of the feedback flywheel: what this client asked for on
-  // previous runs, injected into the drafting prompt.
-  "04e-read-past-feedback",
-  // The shipped-output window (dedup) and the client intel report, read
-  // once each — see history-dedup.ts in packages/workflow.
-  "read-output-history",
-  "read-intel-context",
-  "05-extract-candidate-summary",
-  "06-reserve-topic",
-  "07-select-candidate",
-  "08-select-target-thread",
+  "04-read-intel-context",
+  "04c-intake-check",
+  "04d-read-past-feedback",
+  "04e-read-output-history",
+  "05-discover-threads",
+  "07-select-target-thread",
+  // The thread itself — the poster's text and the existing replies — read
+  // live. Every version before this drafted from the title alone.
+  "08-fetch-thread",
   "09-check-thread-not-answered",
   "10-verify-subreddit-eligibility",
-  "11-determine-angle",
+  // Research runs FOR the chosen thread, after it is known, not before.
+  "11-research-pull",
+  "11a-determine-angle",
   "12-draft-reply",
-  // AU20: the VERIFIED half of de-duplication. `recentPosts` in the drafting
-  // prompt only asks the model not to repeat itself; 12a scores the finished
-  // draft against the same excerpt window, inside the drafting pass, so the
-  // reviewer is never shown a draft that was not measured.
   "12a-verify-not-duplicate",
   "13-verify-numbers-sourced",
   "14-verify-brand-compliance",
   "15-verify-no-placeholder",
   "16-verify-leak-check",
   "17-render-preview-check",
-  // Revision-scoped: `-r0` is the first review round. A `revise` decision
-  // registers `-r1` after re-drafting.
   "18-batch-review-r0",
   "19-persist-deliverable",
   "20-persist-manifest",
@@ -77,7 +76,7 @@ function goodDraftRouter() {
   return fakeRouterSequence([finalTurn(goodDraft())]);
 }
 
-describe("end-to-end: the 23-step Reddit agent reply-only workflow", () => {
+describe("end-to-end: the Reddit agent reply-only workflow, requested-thread path", () => {
   let env: TestEnvironment;
 
   beforeEach(async () => {
@@ -88,10 +87,10 @@ describe("end-to-end: the 23-step Reddit agent reply-only workflow", () => {
     await env.cleanup();
   });
 
-  it("executes all 23 steps and resolves to completed / domainOutcome: delivered (auto-approved gate)", async () => {
+  it("executes every step and resolves to completed / domainOutcome: delivered (auto-approved gate)", async () => {
     const promptStore = makePromptStore();
     const router = goodDraftRouter();
-    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+    const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore, router, autoApprove: true });
 
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
@@ -99,29 +98,38 @@ describe("end-to-end: the 23-step Reddit agent reply-only workflow", () => {
 
     expect(result.status).toBe("completed");
     if (result.status !== "completed") throw new Error("unreachable");
-    expect(result.output.topic).toBeTruthy();
+    expect(result.output.topic).toBe(DEFAULT_TARGET_THREAD_TITLE);
+    // The caller's URL, verbatim — it is their bookmark.
     expect(result.output.targetThreadUrl).toBe(DEFAULT_TARGET_THREAD_URL);
     expect(result.output.targetSubreddit).toBe("smallbusiness");
     expect(result.totalCostUsd).toBeGreaterThan(0);
 
     const stepRecords = await durableStore.listSteps(params.runId);
     const executedIds = stepRecords.map((s) => s.stepId).sort();
-    expect(executedIds).toEqual([...ALL_22_STEP_IDS].sort());
+    expect(executedIds).toEqual([...REQUESTED_PATH_STEP_IDS].sort());
     expect(stepRecords.every((s) => s.status === "completed")).toBe(true);
 
+    // No scan ran: the caller named the thread. Only the thread itself was read.
+    expect(env.redditRequests.filter((u) => u.includes("/new.rss"))).toEqual([]);
+    expect(env.redditRequests.some((u) => u.includes("/comments/abc123/.rss"))).toBe(true);
+
+    // The draft was handed the thread's own text and existing replies.
+    const calls = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    const draftPrompt = String(calls[0]![0]);
+    expect(draftPrompt).toContain("client response times slipped on Fridays");
+    expect(draftPrompt).toContain("meetings compress into the four days");
+
     // The deliverable really landed on the real file-backed WorkspaceStore, tenant-scoped.
-    const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
+    const deliverables = await env.store.listJson<{ deliverable: { charterSource: string; threadSource: string } }>("acme", ["ledger", "deliverables", params.runId, "_"]);
     expect(deliverables.map((d) => d.id)).toEqual(["reddit-reply"]);
+    expect(deliverables[0]!.data.deliverable.charterSource).toBe("client-config");
+    expect(deliverables[0]!.data.deliverable.threadSource).toBe("reddit-feed");
 
-    // The reserved topic was actually committed (consumed) at the final step, not left dangling.
-    const catalog = await env.store.readJson<Array<{ status: string }>>("acme", ["topics", "catalog"]);
-    expect(catalog?.some((t) => t.status === "committed")).toBe(true);
-
-    // The target thread URL is recorded so a future run's step 09 dedup check can find it.
+    // The target thread URL is recorded so a future run's dedup checks can find it.
     const decisions = await env.store.listJson("acme", ["memory", "products", params.productId, "decisions"]);
     expect(decisions.some((d) => (d.data as { summary: string }).summary.includes(DEFAULT_TARGET_THREAD_URL))).toBe(true);
 
-    const descriptors: DynamicAgentStepDescriptor[] = ALL_22_STEP_IDS.map((stepId) => ({
+    const descriptors: DynamicAgentStepDescriptor[] = REQUESTED_PATH_STEP_IDS.map((stepId) => ({
       stepId,
       label: stepId,
       type: stepId === "12-draft-reply" ? "ai" : "code",
@@ -146,7 +154,7 @@ describe("end-to-end: the 23-step Reddit agent reply-only workflow", () => {
   it("pauses at the human batch-review gate by default, then resumes to completed on approval (RFC-01 §8.3)", async () => {
     const promptStore = makePromptStore();
     const router = goodDraftRouter();
-    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore, router });
 
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
@@ -172,18 +180,12 @@ describe("end-to-end: the 23-step Reddit agent reply-only workflow", () => {
     const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
     expect(deliverables.map((d) => d.id)).toEqual(["reddit-reply"]);
 
-    // THE GATE IS A STEP RECORD TOO, now that `wf.step.gate` checkpoints
-    // itself (`kind: "gate"`) — so the full id list appears here, gate
-    // included, and this suite's own "N-step workflow" name is finally
-    // literally true. This assertion used to filter "18-batch-review" OUT,
-    // under a comment explaining that a gate never reaches `listSteps()`;
-    // that absence is exactly what made a real run's step sequence read
-    // straight past its human review step in the portal.
+    // The gate is a step record too (`kind: "gate"`), so the full id list
+    // appears here, gate included, and it carries the DECISION — the only
+    // place the run records that a human approved this and who they were.
     const stepRecords = await durableStore.listSteps(params.runId);
-    expect(stepRecords.map((s) => s.stepId).sort()).toEqual([...ALL_22_STEP_IDS].sort());
+    expect(stepRecords.map((s) => s.stepId).sort()).toEqual([...REQUESTED_PATH_STEP_IDS].sort());
     expect(stepRecords.every((s) => s.status === "completed")).toBe(true);
-    // And the checkpoint carries the DECISION, which is the only place the
-    // run records that a human approved this and who they were.
     const gateStep = stepRecords.find((s) => s.kind === "gate");
     expect(gateStep?.stepId).toBe("18-batch-review-r0");
     expect(gateStep?.output).toMatchObject({ decision: "approve", actor: "jane@karoslabs.com" });
@@ -192,7 +194,7 @@ describe("end-to-end: the 23-step Reddit agent reply-only workflow", () => {
   it("rejects the batch review with a reason -> held, and the deliverable never ships", async () => {
     const promptStore = makePromptStore();
     const router = goodDraftRouter();
-    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore, router });
 
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
@@ -208,30 +210,26 @@ describe("end-to-end: the 23-step Reddit agent reply-only workflow", () => {
     const result = await engine.run(workflowFn, params);
     expect(result.status).toBe("held");
     if (result.status !== "held") throw new Error("unreachable");
-    // `runReviewCycle` is generic across agents, so the wording is
-    // "review rejected" rather than anything channel-specific.
     expect(result.reason).toMatch(/review rejected/i);
 
     const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
     expect(deliverables).toHaveLength(0);
   });
 
-  it("holds the run when the client has no target thread candidate — a submission-only fallback is never fabricated", async () => {
-    const noThreadEnv = await setupTestEnvironment({ withTargetThread: false });
+  it("still drafts when the thread itself cannot be read: title only, and the draft is told so", async () => {
+    // The scan and everything else work; only this one thread's feed is refused.
+    const brokenEnv = await setupTestEnvironment({ reddit: { statusFor: (url) => (url.includes("/comments/abc123/.rss") ? 403 : undefined) } });
     const promptStore = makePromptStore();
-    const router = fakeRouterSequence([finalTurn(goodDraft())]);
-    const workflowFn = createRedditAgentWorkflow({ tools: noThreadEnv.tools, promptStore, router, autoApprove: true });
-    const durableStore = new MemoryDurableStepStore();
-    const engine = new WorkflowEngine(durableStore);
+    const router = goodDraftRouter();
+    const workflowFn = createRedditAgentWorkflow({ ...brokenEnv.workflowOptions, tools: brokenEnv.tools, promptStore, router, autoApprove: true });
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflowFn, { ...params, runId: "reddit_run_unreadable_thread" });
 
-    const result = await engine.run(workflowFn, { ...params, runId: "reddit_run_no_thread" });
-
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/no target thread available/i);
-    expect(router.complete).not.toHaveBeenCalled();
-
-    await noThreadEnv.cleanup();
+    expect(result.status).toBe("completed");
+    const calls = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    const draftPrompt = String(calls[0]![0]);
+    expect(draftPrompt).toContain("only its title is known");
+    expect(draftPrompt).toContain('"source":"unavailable"');
+    await brokenEnv.cleanup();
   });
 
   it("holds the run when requestedThreadUrl isn't a real reddit.com thread URL", async () => {
@@ -242,7 +240,7 @@ describe("end-to-end: the 23-step Reddit agent reply-only workflow", () => {
     });
     const promptStore = makePromptStore();
     const router = fakeRouterSequence([finalTurn(goodDraft())]);
-    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+    const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
@@ -252,5 +250,19 @@ describe("end-to-end: the 23-step Reddit agent reply-only workflow", () => {
     if (result.status !== "held") throw new Error("unreachable");
     expect(result.reason).toMatch(/doesn't look like a real reddit\.com thread URL/i);
     expect(router.complete).not.toHaveBeenCalled();
+  });
+
+  it("a thread URL typed into the run's own input outranks the one in client config", async () => {
+    const promptStore = makePromptStore();
+    const other = "https://www.reddit.com/r/smallbusiness/comments/def456/late_paying_clients/";
+    const router = fakeRouterSequence([finalTurn({ ...goodDraft(), targetThreadUrl: other, targetThreadTitle: "How do you handle late-paying clients without souring the relationship?" })]);
+    const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore, router, autoApprove: true });
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflowFn, { ...params, runId: "reddit_run_input_thread", input: { requestedThreadUrl: other } });
+
+    expect(result.status).toBe("completed");
+    if (result.status !== "completed") throw new Error("unreachable");
+    expect(result.output.targetThreadUrl).toBe(other);
+    // No title was supplied, so the thread's own title was read from Reddit.
+    expect(result.output.topic).toBe("How do you handle late-paying clients without souring the relationship?");
   });
 });

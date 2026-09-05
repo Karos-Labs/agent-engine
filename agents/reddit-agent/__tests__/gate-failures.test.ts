@@ -37,7 +37,7 @@ describe("content gate failures (RFC-02 §5 steps 13-17)", () => {
     const promptStore = makePromptStore();
     const replyBody = "Teams using anchor days saw scheduling conflicts fall 43% this quarter.";
     const router = fakeRouterSequence([finalTurn({ ...baseFields(), replyBody, text: replyBody })]);
-    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore, router });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
@@ -58,7 +58,7 @@ describe("content gate failures (RFC-02 §5 steps 13-17)", () => {
     const promptStore = makePromptStore();
     const replyBody = "This approach is guaranteed to work for every team, every time.";
     const router = fakeRouterSequence([finalTurn({ ...baseFields(), replyBody, text: replyBody })]);
-    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore, router });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
@@ -78,7 +78,7 @@ describe("content gate failures (RFC-02 §5 steps 13-17)", () => {
     const promptStore = makePromptStore();
     const replyBody = "Here's what worked for us: {{insert real number here}} once we tried it.";
     const router = fakeRouterSequence([finalTurn({ ...baseFields(), replyBody, text: replyBody })]);
-    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore, router });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
@@ -98,7 +98,7 @@ describe("content gate failures (RFC-02 §5 steps 13-17)", () => {
     const promptStore = makePromptStore();
     const replyBody = "Here's the config file we used: C:\\Users\\jane\\acme\\internal-config.json, worked great.";
     const router = fakeRouterSequence([finalTurn({ ...baseFields(), replyBody, text: replyBody })]);
-    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore, router });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
@@ -128,7 +128,7 @@ describe("content gate failures (RFC-02 §5 steps 13-17)", () => {
         text: "Trying a shorter version this time: has anyone else tried a similar schedule change?",
       }),
     ]);
-    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+    const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
@@ -153,7 +153,7 @@ describe("content gate failures (RFC-02 §5 steps 13-17)", () => {
     const router = fakeRouterSequence([
       finalTurn({ ...baseFields(), replyBody: overCommentLimitBody, text: overCommentLimitBody }),
     ]);
-    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+    const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
