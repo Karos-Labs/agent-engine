@@ -1,6 +1,6 @@
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentToolRegistry, GateResponse, ModelRouter, PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, type ResearchPullResult, readRunDirection, runDirectionField, type RevisionNote, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, toAgentContext, runGate, finalizeDeliverable, recordOutputExcerpt} from "@agent-engine/workflow";
+import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, researchDigestForDrafting, researchSourceTexts, type ResearchPullResult, readRunDirection, runDirectionField, type RevisionNote, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, toAgentContext, runGate, finalizeDeliverable, recordOutputExcerpt} from "@agent-engine/workflow";
 import { NewsletterDraftAgent, type NewsletterPostOutput } from "../agent/newsletter-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
 import type {
@@ -269,6 +269,14 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
     // every agent registry since the intel agent shipped, with zero
     // channel-agent callers until now.
     const clientIntelContext = await readClientIntelContext(wf, tools, ctx, "read-intel-context");
+    // The research itself, shaped for the drafting prompt: every fetched
+    // source's title, url, date and excerpt. Until 2026-09-05 the draft was
+    // handed `mainStory` (a headline) and nothing else, so a run with four
+    // real sources drafted from one title, guessed the rest, and linked every
+    // section to the outlet's homepage because it had never seen an article
+    // URL (prep job sp8ICAFLjKkYWb2DAh8R). A pure function of step 04's
+    // checkpointed output, so no step boundary of its own.
+    const researchDigest = researchDigestForDrafting(research);
 
 
     // ── 09-12: draft execution via NewsletterDraftAgent, with machine/claim/compliance gates ──
@@ -337,6 +345,7 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
           // "Hebrew-language technology site" actually lives.
           ...(clientVoiceContext !== undefined ? { clientVoiceContext } : {}),
           ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
+          ...(researchDigest !== undefined ? { research: researchDigest } : {}),
           ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
           ...(dedupeRetrySteer !== undefined ? { dedupeAvoid: dedupeRetrySteer } : {}),
           // Two distinct steers, kept apart on purpose: `pastFeedback` is what
@@ -397,7 +406,20 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
     const draft = composeCompliantDraft(authoredDraft, clientContext.brand);
 
     await wf.step.code(rev("11-verify-numbers-sourced"), async () => {
-      const sources = candidateSummary.hasNumericInsight ? [candidateSummary.sourceLabel] : [];
+      // What a figure in the edition may be traced to: the full text of every
+      // research document (the gate verifies against CONTENT, and a URL alone
+      // — which is all `sourceLabel` is — verifies nothing), the client's own
+      // intel report, and the topics the run was given (a catalog topic or a
+      // typed request is the client's own statement). Until 2026-09-05 this was
+      // `[sourceLabel]`, so every number a draft quoted faithfully from a real
+      // source was held anyway (prep job sp8ICAFLjKkYWb2DAh8R).
+      const sources = [
+        ...researchSourceTexts(research),
+        ...(clientIntelContext !== undefined ? [clientIntelContext] : []),
+        selected.mainStory,
+        ...selected.secondaryTopics,
+        ...(candidateSummary.hasNumericInsight ? [candidateSummary.sourceLabel] : []),
+      ];
       const verdict = await runGate(tools, "gate.numbersSourced", { text: draft.text, sources }, ctx);
       if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.numbersSourced: ${verdict.reason}`);
       if (verdict.verdict === "content_fail") throw new WorkflowHeld(`numbers not sourced: ${verdict.reason}`);

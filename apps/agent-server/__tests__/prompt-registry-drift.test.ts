@@ -186,7 +186,7 @@ describe("SCRUM-325: prompt registry and latest.md drift", { timeout: 120_000 },
   describe("per-prompt hygiene", () => {
     it("fails when AU31's language directive is stripped from a prompt declared to carry it", () => {
       const root = fixtureRoot((r) => {
-        for (const file of ["4.md", "latest.md"]) {
+        for (const file of ["5.md", "latest.md"]) {
           const p = promptFile(r, "newsletter-agent", "newsletter-craft", file);
           writeFileSync(p, readFileSync(p, "utf8").replaceAll("clientVoiceContext", "someOtherField"));
         }

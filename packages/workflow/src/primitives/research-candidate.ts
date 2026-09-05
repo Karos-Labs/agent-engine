@@ -150,3 +150,78 @@ export function extractResearchCandidate(pull: ResearchPullResult, options: Extr
     sourceLabel: (chosen.url ?? "").trim().length > 0 ? chosen.url!.trim() : `research run ${pull.runId}`,
   };
 }
+
+/**
+ * One research document as a DRAFTING agent receives it: the source's own
+ * headline, where it lives, when it ran, and enough of its text to write from.
+ *
+ * Distinct from `ResearchCandidate`, which is a routing decision (which story
+ * leads), not material. Until this existed the newsletter agent's drafting
+ * step was handed the candidate's TITLE and nothing else, so a run with four
+ * real sources drafted from one headline and had to guess the rest: it wrote
+ * "$1 billion in advertising revenue" from a headline that said exactly that
+ * and nothing more, linked every section to the outlet's homepage because it
+ * had never seen the article URL, and produced generalities where the source
+ * had specifics (prep job sp8ICAFLjKkYWb2DAh8R, 2026-09-05).
+ */
+export interface ResearchDigestEntry {
+  readonly title: string;
+  readonly url?: string;
+  readonly publishedAt?: string;
+  /** The document's text, whitespace-collapsed and cut to `maxExcerptChars`. Never the whole page. */
+  readonly excerpt: string;
+}
+
+export interface ResearchDigestOptions {
+  /** How many documents to hand the drafting step. Default 8. */
+  readonly maxDocuments?: number;
+  /** Per-document excerpt ceiling, in characters. Default 3000. */
+  readonly maxExcerptChars?: number;
+}
+
+const DIGEST_MAX_DOCUMENTS = 8;
+const DIGEST_MAX_EXCERPT_CHARS = 3_000;
+
+/**
+ * The research payload shaped for a drafting prompt, or `undefined` when the
+ * pull returned nothing usable, so a caller can spread it conditionally and a
+ * run without research keeps a byte-identical drafting input (the same
+ * contract `dedupeDirective` and `revisionDirective` keep).
+ */
+export function researchDigestForDrafting(pull: ResearchPullResult, options: ResearchDigestOptions = {}): ResearchDigestEntry[] | undefined {
+  const maxDocuments = options.maxDocuments ?? DIGEST_MAX_DOCUMENTS;
+  const maxExcerptChars = options.maxExcerptChars ?? DIGEST_MAX_EXCERPT_CHARS;
+  const entries: ResearchDigestEntry[] = [];
+  for (const d of pull.result?.documents ?? []) {
+    const title = (d.title ?? "").trim();
+    const excerpt = (d.content ?? "").replace(/[ \t]+/g, " ").replace(/\s*\n\s*/g, "\n").trim();
+    if (title.length === 0 && excerpt.length === 0) continue;
+    const url = (d.url ?? "").trim();
+    const publishedAt = (d.publishedAt ?? "").trim();
+    entries.push({
+      title: title.length > 0 ? title : url,
+      ...(url.length > 0 ? { url } : {}),
+      ...(publishedAt.length > 0 ? { publishedAt } : {}),
+      excerpt: excerpt.length > maxExcerptChars ? excerpt.slice(0, maxExcerptChars) : excerpt,
+    });
+    if (entries.length >= maxDocuments) break;
+  }
+  return entries.length > 0 ? entries : undefined;
+}
+
+/**
+ * Every research document's own text, one string per document, for
+ * `gate.numbersSourced`'s `sources`.
+ *
+ * The gate verifies a figure by looking for it in source CONTENT. Handing it
+ * a URL (what `ResearchCandidate.sourceLabel` is) verifies nothing: the
+ * figure is in the article, not in its address, so every number the draft
+ * quoted faithfully from a real source failed anyway. Full text, never the
+ * digest's truncated excerpt, so a figure late in a long article still
+ * verifies.
+ */
+export function researchSourceTexts(pull: ResearchPullResult): string[] {
+  return (pull.result?.documents ?? [])
+    .map((d) => [d.title, d.content].map((s) => (s ?? "").trim()).filter((s) => s.length > 0).join("\n"))
+    .filter((s) => s.length > 0);
+}

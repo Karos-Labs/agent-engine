@@ -175,8 +175,8 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "newsletter-craft",
     agent: "newsletter-agent",
-    versions: ["1", "2", "3", "4"],
-    latestVersion: "4",
+    versions: ["1", "2", "3", "4", "5"],
+    latestVersion: "5",
     requires: { languageDirective: true, numbersSourced: true, structuredOutput: true },
     structuredOutputFields: ["subject", "previewText", "intro", "callToAction", "signoff", "text"],
   },
