@@ -45,7 +45,7 @@ describe("Layer 3 tool registry — cross-cutting", () => {
   it("merges all ten servers' tools into one registry with no name collisions", () => {
     const expectedPrefixes = ["client.", "gate.", "intel.", "ledger.", "memory.", "publish.", "reputation.", "research.", "seoGeo.", "topics."];
     const names = Object.keys(tools);
-    // 10 client + 6 gates + 2 intel + 8 ledger + 7 memory + 4 publish + 3 reputation + 6 research + 2 seoGeo + 4 topics = 52
+    // 10 client + 6 gates + 2 intel + 8 ledger + 7 memory + 4 publish + 5 reputation + 6 research + 2 seoGeo + 4 topics = 54
     // (research grew from 5 to 6: research.crawlTechnicalSeo, T-A2/SCRUM-236 —
     // real robots.txt/sitemap.xml/HTTP-status crawl facts backing step 06's
     // technical-SEO measurements. See karos-research/src/crawl-technical-seo.ts.)
@@ -79,7 +79,7 @@ describe("Layer 3 tool registry — cross-cutting", () => {
     // — the read-only view over the nine v1 client/agent-profile document types,
     // distinct from client.getKnowledge's older portal-sync bundle. See
     // packages/tools/karos-client/src/get-context-doc.ts.)
-    expect(names.length).toBe(52);
+    expect(names.length).toBe(54);
     for (const prefix of expectedPrefixes) {
       expect(names.some((n) => n.startsWith(prefix))).toBe(true);
     }
