@@ -2,7 +2,7 @@
   "name": "@agent-engine/tool-karos-reputation",
   "private": true,
   "version": "0.0.1",
-  "description": "Reputation Agent (r2) deterministic triage engine, capture adapters, and doctrine gate — RFC-08. The model extracts, arithmetic routes.",
+  "description": "Reputation Agent (r2) deterministic triage engine, capture adapters, and doctrine gate \u00e2\u20ac\u201d RFC-08. The model extracts, arithmetic routes.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -15,6 +15,7 @@
   "dependencies": {
     "@agent-engine/core": "^0.0.1",
     "@agent-engine/tool-common": "^0.0.1",
+    "@agent-engine/tool-karos-connectors": "^0.0.1",
     "zod": "^4.4.3"
   }
 }

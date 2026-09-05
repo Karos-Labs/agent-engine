@@ -9,3 +9,4 @@ export * from "./draft-cycle.js";
 export * from "./publish-gbp-reply.js";
 export * from "./create-reputation-pulse-workflow.js";
 export * from "./create-reputation-analysis-workflow.js";
+export * from "./roster-setup.js";
