@@ -95,8 +95,8 @@ describe("checkpoint resume idempotency across the campaign gate (RFC-01 §8.1, 
     expect(callCounts()).toEqual(expectedCountsAfterResume);
     expect(campaignRouter.complete).toHaveBeenCalledTimes(1);
     for (const channel of ["x", "linkedin", "reddit", "blog", "newsletter"] as const) {
-      expect((channelRouters[channel].complete as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBeGreaterThanOrEqual(1);
-      expect((channelRouters[channel].complete as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBeLessThanOrEqual(expectedChannelTurns[channel]);
+      expect(vi.mocked(channelRouters[channel].complete).mock.calls.length).toBeGreaterThanOrEqual(1);
+      expect(vi.mocked(channelRouters[channel].complete).mock.calls.length).toBeLessThanOrEqual(expectedChannelTurns[channel]);
     }
 
     const stepRecords = await durableStore.listSteps(params.runId);

@@ -141,7 +141,7 @@ export function createAllKarosTools(
     ...createKarosLedgerTools(store),
     ...createKarosMemoryTools(store),
     ...createKarosPublishTools(store, mediaStore),
-    ...createKarosReputationTools(),
+    ...createKarosReputationTools({ ...(store ? { store } : {}), ...(options.env ? { env: options.env } : {}) }),
     ...createKarosResearchTools(store, {
       ...(options.env ? { env: options.env } : {}),
       ...(options.scraper !== undefined ? { scraper: options.scraper } : {}),
