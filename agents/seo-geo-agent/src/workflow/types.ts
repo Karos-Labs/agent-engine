@@ -79,6 +79,13 @@ export interface SeoGeoPromptSetDraft {
   prompts: SeoGeoPrompt[];
   competitorRoster: string[];
   source: "reused" | "drafted";
+  /** `PROMPT_TEMPLATE_VERSION` the prompts were drafted from — carried on a reused set from its frozen record. */
+  templateVersion: number;
+  /**
+   * Why a recurring run drafted fresh instead of reusing. Absent on a baseline
+   * run (drafting is simply what baselines do) and on a genuine reuse.
+   */
+  redraftReason?: "no_prior_frozen_set" | "template_version_changed";
   /** BCP-47-ish language tag the prompts were actually drafted in (e.g. "en", "es") — always the language ACTUALLY used, after any fallback. */
   language: string;
   /** True when the client's requested/profile language has no template set and this draft fell back to "en" — never silent (surfaced on the gate payload and frozen alongside the set). */
@@ -92,6 +99,7 @@ export interface SeoGeoFrozenSet {
   prompts: SeoGeoPrompt[];
   competitorRoster: string[];
   promptSetHash: string;
+  templateVersion: number;
   competitorSetHash: string;
   engineListHash: string;
   gazetteerHash: string;

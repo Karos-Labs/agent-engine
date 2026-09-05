@@ -157,8 +157,8 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "intel-report-craft",
     agent: "intel-report-agent",
-    versions: ["1", "2", "3", "4"],
-    latestVersion: "4",
+    versions: ["1", "2", "3", "4", "5"],
+    latestVersion: "5",
     requires: { numbersSourced: true },
   },
   { promptId: "landing-compose", agent: "landing-builder-agent", versions: ["1"], latestVersion: "1" },

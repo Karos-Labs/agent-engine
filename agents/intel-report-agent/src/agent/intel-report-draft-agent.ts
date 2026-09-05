@@ -88,7 +88,14 @@ const INTEL_REPORT_DRAFT_STEP_CONFIG: AgentStepConfig<IntelReportOutput> = {
   // number — a midpoint, a sum, an annualized monthly figure — as sourced; and
   // prefer the qualitative sentence when no figure is available, which is a
   // real analytical claim rather than a retreat. v3 stays frozen.
-  skillRef: "intel-report-craft@4",
+  // v5 (2026-09-05) adds §13 and the optional `targetAudience` output block —
+  // the ICP blueprint every guide since v2 had recorded as "a real,
+  // acknowledged omission for a future revision". The portal's
+  // `target-audience` context document, which every content agent reads for
+  // WHO it is writing to, was being composed from the prompt set alone (1.9K
+  // chars, no persona) because this report had nothing to say about the
+  // audience. v4 stays frozen.
+  skillRef: "intel-report-craft@5",
 };
 
 export interface IntelReportDraftAgentOptions {
