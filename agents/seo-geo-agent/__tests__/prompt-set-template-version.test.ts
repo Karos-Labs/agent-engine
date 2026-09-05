@@ -46,21 +46,23 @@ describe("prompt-set template versioning (RFC-04 §3 reuse, bounded by the templ
 
   /** A frozen record exactly as a run from BEFORE templates were versioned would have left it: v1 prompts, no `templateVersion`. */
   async function seedStaleFrozenSet() {
-    const stale = deriveDefaultPromptSet("B2B SaaS", "en", undefined);
+    // A v1 set predates the brand-name parameter; an empty name is what "no brand given" derives to.
+    const stale = deriveDefaultPromptSet("B2B SaaS", "en", "");
     // Sanity on the premise: v1-style prompts (no brand name given) never name the client.
     expect(stale.prompts.some((p) => p.promptText.includes("Acme Corp"))).toBe(false);
+    const staleHash = sha256Hex({ prompts: stale.prompts, language: "en" });
     await env.store.writeJson("acme", ["memory", "beliefs"], {
       seoGeoFrozenPromptSet: {
         prompts: stale.prompts,
         competitorRoster: ["Rivalco"],
-        promptSetHash: sha256Hex({ prompts: stale.prompts, language: "en" }),
+        promptSetHash: staleHash,
         language: "en",
         languageFallbackApplied: false,
         quotaShortfalls: [],
         frozenAt: "2026-08-20T00:00:00.000Z",
       },
     });
-    return stale.promptSetHash;
+    return staleHash;
   }
 
   it("redrafts on a recurring run when the frozen set predates the current templates", async () => {
