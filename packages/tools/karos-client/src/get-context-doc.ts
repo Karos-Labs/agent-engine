@@ -1,8 +1,11 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, notAvailable, success } from "@agent-engine/tool-common";
 
-const TOOL_VERSION = "1.0.0";
+// 1.1.0 - falls back to the portal's `knowledge/context-docs.json` mirror when
+// no C1 projection exists (2026-09-05). See `readFromKnowledgeMirror`.
+const TOOL_VERSION = "1.1.0";
 
 /**
  * Where a client's projected context document lives:
@@ -84,6 +87,60 @@ export interface ClientContextDoc {
  * This is the reader only. The writer (S-A14, projecting from Firestore into
  * this same path) is Shlomi's; do not build it here.
  */
+
+/** One row of the portal's `knowledge/context-docs.json` mirror — see karosCMO `knowledge-sync.ts`. */
+interface KnowledgeMirrorRow {
+  docType?: unknown;
+  tier?: unknown;
+  version?: unknown;
+  content?: unknown;
+}
+
+/**
+ * The C1 projection's writer (S-A14) has never shipped, so on every real
+ * deployment `clients/<slug>/context/<docType>.json` does not exist and this
+ * tool answered `not_available` for every document a client had painstakingly
+ * filled in. Found 2026-09-05 on prep: intel-report-agent's
+ * `01c-load-target-audience` and `01d-load-market-strategy` steps were both
+ * empty for a client whose portal held both documents, so every intel report
+ * ran "degraded" — the report that is supposed to be grounded in the client's
+ * own audience and strategy was grounded in neither.
+ *
+ * The portal DOES mirror the same documents to `knowledge/context-docs.json`
+ * (one file, all doc types, the condensed `client` tier when one exists —
+ * `client.getKnowledge` reads it). Reading that mirror when the projection is
+ * absent turns a silent omission into the document the client actually wrote.
+ * Provenance is honest about the route: `projectedBy: "knowledge-mirror"`, the
+ * mirror's own `version`/`tier`, and a content hash computed here.
+ *
+ * A present projection still wins — this is a fallback, not a replacement —
+ * so S-A14 can land without touching this file.
+ */
+async function readFromKnowledgeMirror(
+  store: WorkspaceStoreLike,
+  clientSlug: string,
+  docType: ContextDocType,
+): Promise<ClientContextDoc | null> {
+  const mirror = await store.readJson<{ syncedAt?: unknown; docs?: unknown }>(clientSlug, ["knowledge", "context-docs"]);
+  if (!mirror || !Array.isArray(mirror.docs)) return null;
+  const row = (mirror.docs as KnowledgeMirrorRow[]).find((d) => d && d.docType === docType);
+  if (!row || typeof row.content !== "string" || row.content.trim().length === 0) return null;
+
+  const markdown = row.content;
+  return {
+    docType,
+    markdown,
+    source: {
+      firestoreDocId: "knowledge-mirror",
+      docVersion: typeof row.version === "number" ? row.version : 0,
+      tier: typeof row.tier === "string" ? row.tier : "unknown",
+      projectedAt: typeof mirror.syncedAt === "string" ? mirror.syncedAt : new Date(0).toISOString(),
+      projectedBy: "knowledge-mirror",
+      contentHash: createHash("sha256").update(markdown, "utf8").digest("hex"),
+    },
+  };
+}
+
 export function createGetContextDoc(store: WorkspaceStoreLike) {
   return defineTool<GetContextDocInput, ClientContextDoc>({
     name: "client.getContextDoc",
@@ -98,8 +155,10 @@ export function createGetContextDoc(store: WorkspaceStoreLike) {
       }>(ctx.clientSlug, [SEGMENT, docType]);
 
       if (!doc) {
+        const mirrored = await readFromKnowledgeMirror(store, ctx.clientSlug, docType);
+        if (mirrored) return success<ClientContextDoc>(mirrored);
         return notAvailable<ClientContextDoc>(
-          `no ${docType} context document for client "${ctx.clientSlug}" — expected clients/${ctx.clientSlug}/${SEGMENT}/${docType}.json`,
+          `no ${docType} context document for client "${ctx.clientSlug}" — expected clients/${ctx.clientSlug}/${SEGMENT}/${docType}.json, and the knowledge mirror (knowledge/context-docs.json) has no row for it either`,
         );
       }
       if (typeof doc.markdown !== "string" || doc.markdown.trim().length === 0) {
