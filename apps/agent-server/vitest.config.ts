@@ -9,5 +9,9 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["__tests__/**/*.test.ts"],
+    // runs.test.ts drives whole workflows through the HTTP surface, including the five-channel
+    // campaign fan-out, which takes 4-6s on a loaded machine since the social agents gained their
+    // vision/trend/self-critique steps (PR #50/#52). 30s, like the other heavy suites.
+    testTimeout: 30000,
   },
 });
