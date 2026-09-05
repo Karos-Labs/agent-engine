@@ -161,10 +161,15 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
     latestVersion: "5",
     requires: { numbersSourced: true },
   },
-  { promptId: "landing-compose", agent: "landing-builder-agent", versions: ["1"], latestVersion: "1" },
-  { promptId: "landing-copy", agent: "landing-builder-agent", versions: ["1", "2", "3"], latestVersion: "3" },
-  { promptId: "landing-craft-verdict", agent: "landing-builder-agent", versions: ["1"], latestVersion: "1" },
-  { promptId: "landing-make", agent: "landing-builder-agent", versions: ["1"], latestVersion: "1" },
+  // Landing Builder v2 (RFC-11). The blueprint decides every fact on the page
+  // and the build/fix steps copy it verbatim, so all three carry the
+  // never-invent declaration; `landing.checkPage` is the validator that
+  // actually rejects an unsourced figure (it applies gate.numbersSourced's rule
+  // to the assembled HTML).
+  { promptId: "landing-blueprint", agent: "landing-builder-agent", versions: ["1"], latestVersion: "1", requires: { numbersSourced: true } },
+  { promptId: "landing-build", agent: "landing-builder-agent", versions: ["1"], latestVersion: "1", requires: { numbersSourced: true } },
+  { promptId: "landing-fix", agent: "landing-builder-agent", versions: ["1"], latestVersion: "1", requires: { numbersSourced: true } },
+  { promptId: "landing-craft-verdict", agent: "landing-builder-agent", versions: ["1", "2"], latestVersion: "2" },
   {
     promptId: "linkedin-craft",
     agent: "linkedin-agent",

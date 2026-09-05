@@ -282,16 +282,17 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
 
   // ── Landing builder ──────────────────────────────────────────────────────
   {
-    id: "landing-builder",
-    title: "Landing page building — the template kit a generated site is composed from",
-    owner: "packages/tools/karos-landing",
+    id: "landing-hosting",
+    title: "Landing page publishing — the Firebase Hosting project a client's page goes live on",
+    owner: "packages/tools/karos-landing (landing.deployPage)",
     requires: [
-      { name: "LANDING_ENGINE_TEMPLATE_ROOT", kind: "required" },
-      { name: "LANDING_ENGINE_ROOT", kind: "required" },
+      { name: "LANDING_HOSTING_PROJECT", kind: "required" },
+      { name: "LANDING_HOSTING_SITE_PREFIX", kind: "required" },
     ],
-    whenAbsent: "Every landing.* tool returns tooling_error, so landing-builder runs cannot start.",
-    rationale: "Both are set in cloudbuild.yaml and cloudbuild.promote.yaml for deploy-http and deploy-worker.",
-    shortfall: "no landing template kit",
+    whenAbsent:
+      "The page is still built, checked, rendered and archived to GCS, and the reviewer gets a 7-day signed URL to index.html instead of a live .web.app preview; approval then produces no public URL, so the deliverable carries only the GCS prefix.",
+    rationale: "Set in cloudbuild.yaml (prefix karos-prep-) and cloudbuild.promote.yaml (prefix karos-) for deploy-http and deploy-worker; the worker service account needs roles/firebasehosting.admin on that project.",
+    shortfall: "no live landing page URL",
   },
 
   // ── Persistence ──────────────────────────────────────────────────────────

@@ -1,198 +1,172 @@
-import { vi } from "vitest";
 import { fileURLToPath } from "node:url";
 import * as path from "node:path";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
-import { FilePromptStore, type CompletionResult, type ModelRouter } from "@agent-engine/core";
+import { FilePromptStore, type CompletionResult, type ModelRouter, type AgentToolRegistry, type ZodSchema } from "@agent-engine/core";
 import { createAllKarosTools, WorkspaceStore } from "@agent-engine/tools";
 import { createOfflineScraper } from "@agent-engine/tool-karos-scraper";
-import { createKarosLandingTools, type LandingEngineConfig } from "@agent-engine/tool-karos-landing";
+import { createKarosLandingTools, type RenderReport } from "@agent-engine/tool-karos-landing";
+import { MemoryArtifactStore, fakeHostingFetch, fakeToken, sampleBlueprint, sampleParts } from "../../../packages/tools/karos-landing/__tests__/fixtures.js";
+
+export { sampleBlueprint, sampleParts, MemoryArtifactStore };
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const PROMPTS_ROOT = path.join(HERE, "..", "prompts");
-
-/**
- * The REAL, ported FORGE fixture site — `packages/tools/karos-landing`'s own
- * copy of `karos-agents/products/live/landing-page/engine/fixtures/forge/site`
- * (real component prop names, real `content-schema.ts`, real `globals.css`
- * token contract, real `layout.tsx`). The Deep Parity Audit found the
- * previous test environment used a synthetic stub template hand-shaped to
- * match the generator's own (incorrect) assumptions, which meant every test
- * passed while hiding real breakage against the actual kit. Pointing
- * `templateRoot` directly at this real fixture (read-only — `landing.
- * copyTemplate` never writes into it) means these tests only stay green if
- * the generator's output is genuinely compatible with the real kit's
- * component signatures and content contract.
- */
-export const REAL_FORGE_FIXTURE_SITE = path.join(HERE, "..", "..", "..", "packages", "tools", "karos-landing", "__tests__", "fixtures", "forge", "site");
 
 export function makePromptStore(): FilePromptStore {
   return new FilePromptStore(PROMPTS_ROOT);
 }
 
-/** A `ModelRouter` that serves every bounded agent from one shared instance by matching the requested schema against a pool of candidate final outputs — mirrors `seo-geo-agent`'s `smartFakeRouter`. */
-export function smartFakeRouter(candidates: readonly unknown[]): ModelRouter {
-  return {
-    async complete(_prompt, schema, policy) {
+/**
+ * A router that answers each bounded agent by matching the requested schema
+ * against a pool of candidate outputs (the `seo-geo-agent` `smartFakeRouter`
+ * pattern), plus an ordered queue for the one schema two steps share: the
+ * craft verdict, so a test can make the first verdict fail and the re-check
+ * pass. Records every prompt so a test can assert what a step actually saw.
+ */
+export function landingFakeRouter(options: { blueprint?: unknown; parts?: unknown; fixedParts?: unknown; verdicts?: unknown[] } = {}) {
+  const verdicts = [...(options.verdicts ?? [{ verdict: "pass", evidence: ["clears the floor"], toolVersion: "test" }])];
+  const prompts: Array<{ stepId: string; prompt: string }> = [];
+  let partsServed = 0;
+  const router: ModelRouter = {
+    async complete(prompt: string, schema: ZodSchema<unknown>, policy) {
+      const stepId = /"stepId":"([^"]+)"/.exec(prompt)?.[1] ?? "?";
+      prompts.push({ stepId, prompt });
+      const serve = (output: unknown): CompletionResult<unknown> => ({
+        output: { type: "final", output },
+        modelUsed: policy.policy === "pinned" ? policy.model : "claude-haiku-4-5-20251001",
+        inputTokens: { cached: 0, uncached: 1000 },
+        outputTokens: 500,
+      });
+      const candidates: unknown[] = [];
+      if (stepId === "landing-blueprint") candidates.push(options.blueprint ?? sampleBlueprint());
+      if (stepId === "landing-build") candidates.push(options.parts ?? sampleParts());
+      if (stepId === "landing-fix") candidates.push(options.fixedParts ?? options.parts ?? sampleParts());
+      if (stepId === "landing-craft-verdict") candidates.push(verdicts.length > 1 ? verdicts.shift() : verdicts[0]);
+      if (stepId === "topic-guardrail" || /guardrail/.test(stepId)) candidates.push({ verdict: "pass", evidence: [], toolVersion: "test" });
       for (const candidate of candidates) {
         const parsed = schema.safeParse({ type: "final", output: candidate });
         if (parsed.success) {
-          return {
-            output: parsed.data,
-            modelUsed: policy.policy === "pinned" ? policy.model : "claude-haiku-4-5-20251001",
-            inputTokens: { cached: 0, uncached: 100 },
-            outputTokens: 30,
-          };
+          if (stepId === "landing-build") partsServed++;
+          return serve(candidate) as CompletionResult<unknown>;
         }
+        const first = parsed.error.issues[0];
+        throw new Error(`landingFakeRouter: candidate for ${stepId} does not match its schema: ${first?.path.join(".")}: ${first?.message}`);
       }
-      throw new Error("smartFakeRouter: no candidate output matches the requested schema");
+      throw new Error(`landingFakeRouter: no candidate for step "${stepId}"`);
     },
     async completeAlias() {
-      throw new Error("smartFakeRouter: completeAlias not used in these tests");
+      throw new Error("landingFakeRouter: completeAlias not used");
     },
   } as ModelRouter;
+  return { router, prompts, get buildsServed() { return partsServed; } };
 }
 
-export function fakeRouterSequence(turns: Array<() => CompletionResult<unknown>>): ModelRouter {
-  const queue = [...turns];
-  return {
-    complete: vi.fn(async () => {
-      const next = queue.shift();
-      if (!next) throw new Error("fakeRouterSequence: exhausted configured turns");
-      return next();
-    }),
-    completeAlias: vi.fn(async () => {
-      throw new Error("fakeRouterSequence: completeAlias not used in these tests");
-    }),
-  } as unknown as ModelRouter;
-}
-
-export function finalTurn(output: unknown, opts: { model?: string; inputTokens?: number; outputTokens?: number } = {}): () => CompletionResult<unknown> {
-  return () => ({
-    output: { type: "final", output },
-    modelUsed: opts.model ?? "claude-sonnet-4-6",
-    inputTokens: { cached: 0, uncached: opts.inputTokens ?? 100 },
-    outputTokens: opts.outputTokens ?? 30,
-  });
-}
-
-/** Matches the real FORGE fixture's own `brand.json` (colors, roles derived from its real `globals.css`/ENGINE-SPEC §12 ratio) closely enough that generated output can be gated/compiled against the real kit meaningfully. */
-export function forgeBrand(overrides: Record<string, unknown> = {}) {
-  return {
-    client: "forge",
-    company: "FORGE",
-    identity: { sector: "fitness", audience: "lifters", positioning: "train like an athlete", personality: "confident coach", mood: "bold/dark" },
-    tokens: {
-      colors: { ink: "#0B0B0C", "ink-2": "#15151A", bone: "#F2F0EC", "bone-2": "#C7C5BE", ember: "#FF4D00", "ember-2": "#FF7A33", steel: "#3A3D44", line: "#26262C" },
-      roles: { ground: "ink", ground2: "ink-2", fg: "bone", fg2: "bone-2", accent: "ember", accent2: "ember-2", muted: "steel", edge: "line" },
-    },
-    fonts: { display: "Clash Display", body: "Inter", mono: "JetBrains Mono" },
-    brandLaw: ["Second person, present tense."],
-    voice: { lang: "en-US", tone: "confident coach" },
-    carryForward: [{ type: "chatbot", what: "Coaching assistant (Coach), bottom-right launcher" }],
-    references: ["linear.app", "stripe.com/billing"],
-    ...overrides,
-  };
-}
-
-/**
- * A copy draft realistic enough to clear the real FORGE kit's structural
- * checks: required sections' fields match `content-schema.ts`'s real
- * interfaces closely, and the placed carry-forward item (`footer.assistant`)
- * genuinely embeds a `type: "chatbot"` tag — proving the gate's
- * placement-scoped completeness check passes when the capability really was
- * written into its claimed section, not merely claimed.
- */
-export function goodCopy() {
-  return {
-    lang: "en-US",
-    meta: { title: "FORGE · Train like an athlete, not a tourist", description: "An adaptive strength program built around you." },
-    sections: {
-      nav: { links: [{ label: "Pricing", href: "#pricing" }], primaryCta: { label: "Start free", href: "#pricing" } },
-      hero: {
-        eyebrow: "Strength & conditioning",
-        headline: "Train like an athlete, not a tourist",
-        sub: "FORGE builds your program from what you actually lifted.",
-        primaryCta: { label: "Start free", href: "#pricing" },
-        secondaryCta: { label: "See how it works", href: "#how" },
-      },
-      offering: {
-        eyebrow: "Pricing",
-        heading: "Start free.",
-        sub: "No card required.",
-        plans: [{ name: "Pro", price: "$29", cadence: "/mo", features: ["Adaptive programming"], cta: { label: "Go Pro", href: "#" } }],
-      },
-      footer: {
-        tagline: "Train like an athlete, not a tourist.",
-        primaryCta: { label: "Start free", href: "#pricing" },
-        columns: [{ heading: "Product", links: [{ label: "Pricing", href: "#pricing" }] }],
-        legal: "© 2026 FORGE.",
-        // The carry-forward placement's genuine evidence — a real sub-object, not a blind claim.
-        assistant: { type: "chatbot", label: "Coach" },
-      },
-    },
-    assumptions: [] as string[],
-  };
-}
-
-export function goodCompose() {
-  return {
-    manifest: ["nav", "hero", "offering", "footer"],
-    carryForwardPlacement: [{ what: "Coaching assistant (Coach), bottom-right launcher", section: "footer" }],
-  };
-}
-
-export function goodCraftVerdict() {
-  return { verdict: "pass", evidence: ["clears the craft floor"], toolVersion: "1.0.0" };
-}
+export const OLD_SITE_HTML = `<!doctype html><html lang="en"><head><title>Northwind · Your AI CMO</title><meta name="description" content="The AI-powered marketing team."></head><body>
+<header><nav><a href="/agents">Agents</a><a class="btn" href="https://cal.com/northwind">Book a call</a></nav></header>
+<main><h1>The AI CMO that moves 1st.</h1>
+<p>Twelve agents run in production today. The AI-powered marketing team that runs your strategy, content, and growth end to end, and never stops watching the market for the decisive moment.</p>
+<p>Point it at your brand. Give Northwind your site. It reads your brand, your voice, and your market in minutes with no setup and no briefing at all.</p>
+<p>It watches every channel and every signal around the clock. The instant something moves in your market, Northwind catches it and drafts the move.</p>
+<img src="/art/kairos.jpg" alt="Kairos, Time of Decision. Fresco by Francesco Salviati."></main></body></html>`;
 
 export interface TestEnvironment {
   tmpRoot: string;
-  landingConfig: LandingEngineConfig;
   store: WorkspaceStore;
-  tools: ReturnType<typeof createAllKarosTools>;
+  artifactStore: MemoryArtifactStore;
+  tools: AgentToolRegistry;
+  hostingCalls: Array<{ method: string; url: string }>;
   cleanup: () => Promise<void>;
 }
 
-// `createOfflineScraper()` is passed EXPLICITLY, because `research.pull` now
-// reports `not_available` without a real scraper rather than returning a
-// placeholder payload. That is deliberate (see karos-research/src/pull.ts): a
-// placeholder is what let every content agent draft from nothing for months.
-// Tests still need deterministic offline data, so they opt in here; nothing in
-// `apps/` does.
-/**
- * Sets up the real FORGE fixture as `templateRoot` (read-only) + an isolated
- * bundle for one client, and merges karos-landing's tools into the full
- * Layer 3 registry — the same pattern `agents/branded-shorts-agent` uses for
- * `createKarosVideoTools()` (both are excluded from
- * `createAllKarosTools(undefined, undefined, { scraper: createOfflineScraper() })`'s
- * own default bundle).
- *
- * `opts.withContextDocs` (default `true`, SCRUM-242/T-A10): landing-builder-agent's
- * row in the shared CONTEXT_DOC_POLICY table is BLOCK, so every pre-existing
- * test in this suite that doesn't care about grounding specifically (feedback
- * rounds, gate behavior, rebuild mode) needs SOME product-information content
- * on file or it now resolves to `blocked_intake` before ever drafting.
- * `context-doc-grounding.test.ts`'s own BLOCK case passes `withContextDocs: false`
- * to get genuine, total absence.
- */
-export async function setupTestEnvironment(clientSlug: string, opts: { withContextDocs?: boolean } = {}): Promise<TestEnvironment> {
-  const withContextDocs = opts.withContextDocs ?? true;
-  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "landing-builder-agent-test-"));
-  const engineClientsRoot = path.join(tmpRoot, "clients");
-  const bundlesRoot = path.join(tmpRoot, "bundles");
-  const workspaceRoot = path.join(tmpRoot, "workspace");
+export interface SetupOptions {
+  clientSlug?: string;
+  withProductInformation?: boolean;
+  withWebsite?: boolean;
+  withHosting?: boolean;
+  /** Replaces the real Chromium render with a canned report (default: a passing one with two screenshots). */
+  renderReport?: RenderReport | ((html: string) => RenderReport);
+  priorState?: { blueprint: unknown; parts: unknown };
+}
 
-  await fs.mkdir(path.join(bundlesRoot, clientSlug), { recursive: true });
-  await fs.writeFile(path.join(bundlesRoot, clientSlug, "brand.json"), JSON.stringify(forgeBrand({ client: clientSlug })));
-  await fs.writeFile(path.join(bundlesRoot, clientSlug, "intake.md"), "# Intake\nFORGE is a strength training app.\n");
+export function passingRender(): RenderReport {
+  const bp = (label: string, width: number, height: number) => ({
+    label,
+    width,
+    height,
+    consoleErrors: [],
+    failedRequests: [],
+    horizontalOverflow: false,
+    openerLuminance: 240,
+    pageHeight: 4200,
+    fontsLoaded: true,
+    missingFonts: [],
+    h1Count: 1,
+    brokenImages: 0,
+    minContrast: 7.2,
+    lowContrastSamples: [],
+    screenshot: { url: `https://signed.example/render-${label}.png`, gcsUri: `gs://test-bucket/render-${label}.png` },
+  });
+  return { breakpoints: [bp("mobile", 390, 844), bp("desktop", 1440, 900)], pass: true, violations: [] };
+}
 
-  const landingConfig: LandingEngineConfig = { templateRoot: REAL_FORGE_FIXTURE_SITE, engineClientsRoot, bundlesRoot };
-  const store = new WorkspaceStore(workspaceRoot);
-  const tools = { ...createAllKarosTools(store, undefined, { scraper: createOfflineScraper() }), ...createKarosLandingTools(landingConfig) };
-  if (withContextDocs) {
-    await store.writeJson(clientSlug, ["context", "product-information"], { markdown: "Default test fixture: general product description for test coverage." });
+export async function setupTestEnvironment(opts: SetupOptions = {}): Promise<TestEnvironment> {
+  const clientSlug = opts.clientSlug ?? "northwind";
+  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "landing-builder-v2-test-"));
+  const store = new WorkspaceStore(path.join(tmpRoot, "workspace"));
+  const artifactStore = new MemoryArtifactStore();
+
+  await store.writeJson(clientSlug, ["client", "profile"], {
+    name: "Northwind",
+    slug: clientSlug,
+    industry: "AI Digital Marketing",
+    description: "AI marketing agency",
+    ...(opts.withWebsite === false ? {} : { website: "https://northwind.example/" }),
+  });
+  await store.writeJson(clientSlug, ["client", "brand"], {
+    name: "Northwind",
+    accent: "#ff6b2c",
+    colors: { primaryAccent: "#ff6b2c", neutralDark: "#1a1a1a", neutralLight: "#f2f1ec" },
+    fonts: { heading: "Space Grotesk", body: "Inter" },
+    logoUrl: "https://firebasestorage.googleapis.com/v0/b/x/o/logo.png?alt=media",
+    guidelines: "## Brand voice\nClear, precise, no exclamation marks.",
+  });
+  await store.writeJson(clientSlug, ["client", "config"], { forbiddenTopics: [] });
+  if (opts.withProductInformation !== false) {
+    await store.writeJson(clientSlug, ["context", "product-information"], {
+      markdown: "## Overview\nNorthwind deploys a system of always-on AI agents. Twelve agents run in production today. Clients approve outputs.",
+      source: { firestoreDocId: "d1", docVersion: 1, tier: "internal", projectedAt: "2026-09-01T00:00:00Z", projectedBy: "test", contentHash: "x" },
+    });
+  }
+  if (opts.priorState) {
+    await store.writeJson(clientSlug, ["landing", "state"], { runId: "run_prior", publishedAt: "2026-09-01T00:00:00Z", blueprint: opts.priorState.blueprint, parts: opts.priorState.parts, liveUrl: "https://karos-northwind.web.app", versionName: "sites/karos-northwind/versions/v0" });
   }
 
-  return { tmpRoot, landingConfig, store, tools, cleanup: () => fs.rm(tmpRoot, { recursive: true, force: true }) };
+  const hosting = fakeHostingFetch();
+  const captureFetch: typeof fetch = async () => new Response(OLD_SITE_HTML, { status: 200, headers: { "content-type": "text/html" } });
+  const noBrowser = async () => null;
+
+  const landingTools = createKarosLandingTools(opts.withHosting === false ? {} : { hosting: { projectId: "karoscmo", sitePrefix: "karos-" } }, {
+    workspaceStore: store,
+    artifactStore,
+    capture: { fetchImpl: captureFetch, loadChromium: noBrowser },
+    render: { loadChromium: noBrowser },
+    deploy: { tokenProvider: fakeToken, fetchImpl: hosting.fetchImpl },
+  });
+  const renderReport = opts.renderReport ?? passingRender();
+  const fakeRender: AgentToolRegistry[string] = {
+    ...landingTools["landing.renderPage"]!,
+    async execute(args: unknown) {
+      const html = (args as { html: string }).html;
+      return { status: "success", result: typeof renderReport === "function" ? renderReport(html) : renderReport };
+    },
+  } as AgentToolRegistry[string];
+
+  const tools: AgentToolRegistry = {
+    ...createAllKarosTools(store, undefined, { scraper: createOfflineScraper() }),
+    ...landingTools,
+    "landing.renderPage": fakeRender,
+  };
+
+  return { tmpRoot, store, artifactStore, tools, hostingCalls: hosting.calls, cleanup: () => fs.rm(tmpRoot, { recursive: true, force: true }) };
 }
