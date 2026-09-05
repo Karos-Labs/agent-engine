@@ -181,11 +181,31 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
     structuredOutputFields: ["subject", "previewText", "intro", "callToAction", "signoff", "text"],
   },
   {
+    promptId: "reddit-channel-plan",
+    agent: "reddit-agent",
+    versions: ["1"],
+    latestVersion: "1",
+    // A planning step, not client-facing prose: it decides communities and
+    // keywords, so neither the language directive nor the numbers pair applies.
+    requires: { structuredOutput: true },
+    structuredOutputFields: ["targetSubreddits", "searchKeywords", "offLimitsTopics", "voiceNotes", "disclosureLine"],
+  },
+  {
     promptId: "reddit-craft",
     agent: "reddit-agent",
-    versions: ["1", "2", "3", "4"],
-    latestVersion: "4",
-    requires: { languageDirective: true, numbersSourced: true },
+    versions: ["1", "2", "3", "4", "5"],
+    latestVersion: "5",
+    requires: { languageDirective: true, numbersSourced: true, structuredOutput: true },
+    structuredOutputFields: ["replyBody", "text", "targetThreadUrl", "targetThreadTitle", "targetSubreddit", "disclosureIncluded", "sourcesUsed"],
+  },
+  {
+    promptId: "reddit-scout",
+    agent: "reddit-agent",
+    versions: ["1"],
+    latestVersion: "1",
+    // Chooses a thread; produces no client-facing prose and no figures.
+    requires: { structuredOutput: true },
+    structuredOutputFields: ["selected", "passReason", "runnersUp", "angle", "whatToAdd", "requiresDisclosure"],
   },
   { promptId: "reputation-doctrine-gate", agent: "reputation-agent", versions: ["1"], latestVersion: "1" },
   { promptId: "reputation-draft", agent: "reputation-agent", versions: ["1"], latestVersion: "1" },
