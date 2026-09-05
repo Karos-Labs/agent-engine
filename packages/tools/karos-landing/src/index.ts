@@ -1,82 +1,61 @@
 import type { AgentToolRegistry } from "@agent-engine/core";
 import type { GcsArtifactStoreLike, WorkspaceStoreLike } from "@agent-engine/tool-common";
 import type { LandingEngineConfig } from "./config.js";
-import { createReadBundle } from "./read-bundle/read-bundle-tool.js";
-import { createCopyTemplate } from "./copy-template/copy-template-tool.js";
-import { createWriteSiteFile } from "./write-file/write-file-tool.js";
-import { createReadSiteFile } from "./write-file/read-file-tool.js";
-import { createLandingGate } from "./gate/gate-tool.js";
-import { createRenderCheck } from "./render-check/render-check-tool.js";
-import { createUpdateBrandFeedback } from "./update-brand-feedback/update-brand-feedback-tool.js";
-import { createUploadSiteBundle } from "./upload-site-bundle/upload-site-bundle-tool.js";
-import { createRestoreSiteBundle } from "./site-staging/restore-site-bundle-tool.js";
-import { createStageSiteBundle } from "./site-staging/stage-site-bundle-tool.js";
+import { createCaptureSite, type CaptureSiteDeps } from "./capture/capture-site-tool.js";
+import { createCheckPage } from "./page/check-page.js";
+import { createRenderPage, type RenderPageDeps } from "./render/render-page-tool.js";
+import { createDeployPage, type DeployPageDeps } from "./hosting/deploy-page-tool.js";
+import { createUploadPage } from "./publish/upload-page-tool.js";
+import { createReadLandingIntake, createWriteLandingState } from "./state/intake-tools.js";
 
 export * from "./config.js";
-export * from "./create-landing-engine-config-from-env.js";
-export * from "./generated-paths.js";
 export * from "./types.js";
-export * from "./sandbox/site-sandbox.js";
-export * from "./read-bundle/read-bundle-tool.js";
-export * from "./copy-template/copy-template-tool.js";
-export * from "./write-file/write-file-tool.js";
-export * from "./write-file/read-file-tool.js";
-export * from "./gate/shared.js";
-export * from "./gate/carry-forward.js";
-export * from "./gate/gate-tool.js";
-export * from "./render-check/render-check-tool.js";
-export * from "./update-brand-feedback/update-brand-feedback-tool.js";
-export * from "./upload-site-bundle/upload-site-bundle-tool.js";
-export * from "./site-staging/manifest.js";
-export * from "./site-staging/stage-site-bundle-tool.js";
-export * from "./site-staging/restore-site-bundle-tool.js";
+export * from "./page/types.js";
+export * from "./page/assemble.js";
+export * from "./page/check-page.js";
+export * from "./capture/capture-site-tool.js";
+export * from "./render/render-page-tool.js";
+export * from "./hosting/firebase-hosting.js";
+export * from "./hosting/deploy-page-tool.js";
+export * from "./publish/upload-page-tool.js";
+export * from "./state/intake-tools.js";
+
+export interface KarosLandingToolDeps {
+  /** Screenshots, the archived page and its build record go here (`GCS_ARTIFACTS_BUCKET`). Without it: no screenshots, no archive, no `landing.uploadPage`. */
+  artifactStore?: GcsArtifactStoreLike;
+  /** The client workspace (`GCS_WORKSPACE_BUCKET`): optional hand-curated landing inputs and the published-build state. */
+  workspaceStore?: WorkspaceStoreLike;
+  /** Test seams. */
+  capture?: Pick<CaptureSiteDeps, "fetchImpl" | "loadChromium">;
+  render?: Pick<RenderPageDeps, "loadChromium">;
+  deploy?: DeployPageDeps;
+}
 
 /**
- * The Landing Builder (s6, RFC-07) tool registry. Every write-capable tool
- * here (`landing.copyTemplate`, `landing.writeSiteFile`) is bound at
- * construction time to `config`'s three roots — `templateRoot` (read-only),
- * `engineClientsRoot` (each client's `OUTPUT_PATH`), `bundlesRoot` (each
- * client's `INPUT_BUNDLE`) — never to a caller-supplied path, so the write
- * fence RFC-07 §4/§7 requires is structural, not conventional. `landing.gate`
- * is the deterministic Layer 1 floor (token drift/font fidelity/brand lint/
- * structure/carry-forward completeness); `landing.renderCheck` is the
- * Playwright render battery. The Layer 3 craft-verdict judgment pass is
- * deliberately NOT a tool here — RFC-07 §7 calls it "likely a bounded agent
- * step rather than a tool, since it is a judgment call" — it lives in
- * `agents/landing-builder-agent` as a `BaseAgent` subclass instead.
- */
-/**
- * `artifactStore`, when supplied (wire it via `GCS_ARTIFACTS_BUCKET` at your
- * composition root), registers `landing.uploadSiteBundle` — see that tool's
- * own doc comment for what it does and does not upload today. Omitted, this
- * package's behavior is exactly what it was before Task 1 (RFC-01's GCS
- * artifact store).
+ * The Landing Builder v2 tool registry (RFC-11). Everything the workflow
+ * needs beyond the shared `client.*`/`ledger.*` tools:
  *
- * `workspaceStore`, when supplied, makes `landing.readBundle` read a
- * client's `brand.json`/`intake.md` from there instead of local disk
- * (agent-engine#3's fix — see `read-bundle-tool.ts`'s own doc comment).
- * `apps/agent-server`'s real wiring always supplies one; omitting it keeps
- * this tool's original local-disk-only behavior, which is exactly what unit
- * tests still exercise.
+ * - `landing.readIntake` / `landing.writeState` — the client's optional
+ *   hand-curated inputs and the published-build state (workspace store).
+ * - `landing.captureSite` — the client's current site, for carry-forward.
+ * - `landing.checkPage` — the deterministic floor over the assembled HTML.
+ * - `landing.renderPage` — headless render: metrics + screenshots.
+ * - `landing.uploadPage` — archive to the artifacts bucket.
+ * - `landing.deployPage` — Firebase Hosting preview channel, then live.
+ *
+ * Tools whose backing service is not configured are NOT registered, rather
+ * than registered as stubs that answer politely with nothing: the workflow
+ * reads the registry to decide what it can promise the reviewer (a `.web.app`
+ * URL, a signed GCS URL, or only the checks).
  */
-export function createKarosLandingTools(config: LandingEngineConfig, artifactStore?: GcsArtifactStoreLike, workspaceStore?: WorkspaceStoreLike): AgentToolRegistry {
+export function createKarosLandingTools(config: LandingEngineConfig, deps: KarosLandingToolDeps = {}): AgentToolRegistry {
+  const { artifactStore, workspaceStore } = deps;
   return {
-    "landing.readBundle": createReadBundle(config, workspaceStore),
-    "landing.copyTemplate": createCopyTemplate(config),
-    "landing.writeSiteFile": createWriteSiteFile(config),
-    "landing.readSiteFile": createReadSiteFile(config),
-    "landing.gate": createLandingGate(config),
-    "landing.renderCheck": createRenderCheck(),
-    "landing.updateBrandFeedback": createUpdateBrandFeedback(config),
-    // All three need the artifact store, so they appear and disappear
-    // together: a deployment without GCS_ARTIFACTS_BUCKET keeps the exact
-    // pre-staging behaviour rather than half-enabling the gate-pause fix.
-    ...(artifactStore
-      ? {
-          "landing.uploadSiteBundle": createUploadSiteBundle(config, artifactStore),
-          "landing.stageSiteBundle": createStageSiteBundle(config, artifactStore),
-          "landing.restoreSiteBundle": createRestoreSiteBundle(config, artifactStore),
-        }
-      : {}),
+    "landing.captureSite": createCaptureSite({ ...(artifactStore ? { artifactStore } : {}), ...deps.capture }),
+    "landing.checkPage": createCheckPage(),
+    "landing.renderPage": createRenderPage({ ...(artifactStore ? { artifactStore } : {}), ...deps.render }),
+    ...(workspaceStore ? { "landing.readIntake": createReadLandingIntake(workspaceStore), "landing.writeState": createWriteLandingState(workspaceStore) } : {}),
+    ...(artifactStore ? { "landing.uploadPage": createUploadPage(artifactStore) } : {}),
+    ...(config.hosting ? { "landing.deployPage": createDeployPage(config.hosting, deps.deploy ?? {}) } : {}),
   };
 }

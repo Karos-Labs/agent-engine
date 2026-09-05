@@ -1,5 +1,7 @@
 # RFC-07: Migrating Landing Builder (product s6, Website Redesign)
 
+> **Superseded (2026-09-05) by [RFC-11](RFC-11-landing-builder-v2.md).** The template-kit engine this RFC ported (FORGE kit, nine-section taxonomy, `landing.gate`/`renderCheck`, the hand-seeded `brand.json`+`intake.md` bundle, the MODE=rebuild feedback protocol) was replaced by a blueprint → single-file build → check/render/verdict → Firebase Hosting pipeline. Kept for the history of the s6 catalog decision (§2) and the design choices v2 carried forward (§5).
+
 **Depends on:** RFC-01 (engine core), RFC-02 (migration recipe, §2)
 **Source material (read directly this session):** `karos-agents/products/live/landing-page/{ENGINE-SPEC.md,LANDING-PAGE-PRODUCT.md,landing-builder/SKILL.md,engine/{AGENT-INVOCATION.md,gate.mjs,FEEDBACK.md,README.md,INTAKE-REQUEST.md},docs/LANDING-PORT-PENDING.md}`, plus `karos-agents/catalog/products-catalog.json`'s `s6` entry, plus `karos-agents/products/live/landing-page/website-redesign/SKILL.md` and `LANDING-PAGE-PRODUCT.md` (headers only, to identify the older skill — not read in full).
 **Not registered in `customAgents` or Dynamic Agent Studio:** neither `landing-builder` nor its older sibling `website-redesign` has a `register-*.ts` script in `karosCMO/scripts/` — confirmed by the full scripts listing used across this whole session. Both exist only as `products-catalog.json` "menu" entries and karos-agents skills; **see §2 before assuming either is the live implementation.**

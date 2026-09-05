@@ -231,6 +231,30 @@ export const MODEL_CAPABILITIES: Readonly<Record<string, ModelCapabilities>> = {
     regions: GLOBAL,
   },
 
+  // Google's current frontier Pro model on Vertex (verified reachable on the
+  // `global` endpoint of karoscmo-prep, 2026-09-05, with a 1-token
+  // generateContent call). Pinned by landing-builder-agent's page-build step:
+  // the single-file HTML/CSS/JS build is the one step in this engine whose
+  // output is a whole front-end, and a 65k-token output window matters more
+  // there than anywhere else. Priced in `telemetry/pricing.ts`.
+  //
+  // Listed AFTER the 2.5 models on purpose: `recommendModelsForStep` and
+  // `selectModelForContentLanguage` both iterate this table in insertion
+  // order and keep the first of equals, so an entry placed above 2.5 Pro
+  // silently re-pointed every gemini-wired "multilingual-strong" pick to a
+  // preview model nobody asked for. Steps that want it pin it by id, as
+  // landing-build does.
+  "gemini-3.1-pro-preview": {
+    vendor: "gemini",
+    languageStrength: "multilingual-strong",
+    rtlSupport: "strong",
+    modality: ["text", "image", "audio", "video"],
+    contextWindowTokens: 1_000_000,
+    costTier: "standard",
+    structuredOutputReliability: "high",
+    regions: GLOBAL,
+  },
+
   // ── OpenAI-compatible ─────────────────────────────────────────────────
   "gpt-4o": {
     vendor: "openai-compatible",
