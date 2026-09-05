@@ -187,6 +187,11 @@ export async function setupTestEnvironment(
     rootDir,
     store,
     tools,
-    cleanup: () => fs.rm(rootDir, { recursive: true, force: true }),
+    // `maxRetries` for Windows: a directory whose files were being written
+    // when the test ended can still hold a handle for a few milliseconds, and
+    // `rm` then fails with ENOTEMPTY — which surfaces as a second, confusing
+    // failure on a test that had already failed for its own reason. Retrying
+    // costs nothing on a clean teardown.
+    cleanup: () => fs.rm(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }),
   };
 }

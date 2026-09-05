@@ -245,13 +245,60 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
     const clientContext = await wf.step.code("01-load-client-context", async (): Promise<SeoGeoClientContext> => {
       const competitorsOutcome = await tools["client.listCompetitors"]!.execute({}, { ctx });
       const configOutcome = await tools["client.getConfig"]!.execute({}, { ctx });
-      const competitors = competitorsOutcome.status === "success" ? (competitorsOutcome.result as Competitor[]) : [];
+      const curated = competitorsOutcome.status === "success" ? (competitorsOutcome.result as Competitor[]) : [];
+
+      // FALL BACK TO THE INTEL REPORT'S OWN ROSTER when the client has no
+      // curated list — which, for most clients, is always.
+      //
+      // These are two different files. `client.listCompetitors` reads
+      // `client/competitors`, the tenant's hand-curated list from onboarding;
+      // `intel.writeReport` writes `intel/competitors`, the roster the Intel
+      // Report discovered and merged. Nothing in this repo writes the former
+      // except tests, so a client who never hand-entered competitors had an
+      // empty roster here forever — and every competitor metric this agent
+      // produces (`rosterSharePct`, "named first", per-competitor mention
+      // counts) was structurally zero no matter how well the capture worked.
+      //
+      // Waiting for a running Intel Report would not have fixed that: the
+      // write path and the read path simply never met. What makes the two
+      // agents cohere is reading what the other one actually wrote — the most
+      // recent roster it persisted, which is exactly "the latest results" a
+      // fresh run leaves behind.
+      //
+      // Curated wins when present: a human who typed a competitor list meant
+      // it, and an agent's discovery should not silently overrule it.
+      let competitors = curated;
+      let competitorRosterSource: SeoGeoClientContext["competitorRosterSource"] = "client-curated";
+      if (competitors.length === 0) {
+        // Guarded rather than `!`-asserted, unlike the reads above: those are
+        // this agent's own required tools, while this one belongs to a
+        // different product. A registry assembled without it should lose the
+        // fallback, not the run.
+        const getReport = tools["intel.getReport"];
+        const reportOutcome = getReport ? await getReport.execute({}, { ctx }) : undefined;
+        const discovered =
+          reportOutcome?.status === "success"
+            ? ((reportOutcome.result as { competitors?: Array<{ company?: string }> }).competitors ?? [])
+            : [];
+        // `intel.writeReport` stores `company`; `Competitor` here is keyed on
+        // `name`. Rows with neither are dropped rather than carried as blanks.
+        const mapped = discovered
+          .map((row) => ({ name: typeof row.company === "string" ? row.company.trim() : "" }))
+          .filter((row): row is Competitor => row.name !== "");
+        if (mapped.length > 0) {
+          competitors = mapped;
+          competitorRosterSource = "intel-report";
+        } else {
+          competitorRosterSource = "none";
+        }
+      }
       const config = configOutcome.status === "success" ? (configOutcome.result as Record<string, unknown>) : {};
       return {
         profile: intake.profile,
         brand: intake.brand,
         config,
         competitors: competitors.map((c) => ({ name: c.name, ...(c.website !== undefined ? { website: c.website as string } : {}) })),
+        competitorRosterSource,
         clientDomains: [deriveClientDomain(intake.profile, wf.clientSlug)],
       };
     });
