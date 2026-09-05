@@ -78,18 +78,27 @@ describe("run direction reaches every agent that drafts anything", () => {
     const files = sourceFiles(packageDirFor(productId));
     const combined = files.map((f) => readFileSync(f, "utf8")).join("\n");
 
-    // `readRunDirection` (or `readRichRunInput`, which tiktok has used since
-    // before the wrapper existed) is how the field gets off the run input at
-    // all. Without it the value is simply dropped.
-    expect(combined, `${productId} never reads the run's typed direction`).toMatch(
-      /readRunDirection|readRichRunInput/,
+    // `readRunDirection` is how the brief gets off the run input at all.
+    //
+    // BOTH HALVES USED TO ADMIT AN ALTERNATIVE, and both alternatives were
+    // wrong. This accepted `readRichRunInput` "which tiktok has used since
+    // before the wrapper existed", and the spread check accepted a bare
+    // mention of `customPrompt` — so tiktok-agent satisfied a test named for
+    // this promise while its commentary step, the one that writes the caption
+    // a client reads, received no direction at all. A client's typed sentence
+    // reached it only by being force-promoted to the run's topic, with none of
+    // `looksLikeTopic`'s protection, and the structured brief (audience, tone,
+    // CTA, must-include, keywords) reached it never. An escape hatch in a
+    // coverage test is worth exactly as much as the promise it exempts.
+    expect(combined, `${productId} never reads the run's brief via readRunDirection`).toMatch(
+      /readRunDirection\(/,
     );
 
     // And reading it is not enough — it has to reach a step that writes. The
     // helper is what spreads it in, and it omits the key when nobody typed
     // anything, which is the behaviour every agent should share.
     expect(combined, `${productId} reads the direction but never passes it to a model step`).toMatch(
-      /runDirectionField\(|customPrompt/,
+      /runDirectionField\(/,
     );
   });
 

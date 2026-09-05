@@ -10,7 +10,6 @@ import {
   type GateVerdict,
   type ModelRouter,
   type PromptStore,
-  readRichRunInput,
   firstAsset,
 } from "@agent-engine/core";
 import {
@@ -26,7 +25,9 @@ import {
   readClientIntelContext,
   readOutputHistoryForDedup,
   readPastFeedback,
+  readRunDirection,
   revisionDirective,
+  runDirectionField,
   runReviewCycle,
   runTopicGuardrail,
   toAgentContext,
@@ -234,6 +235,11 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
     const ctx = toAgentContext(wf);
     const runInput = (wf.input ?? {}) as Record<string, unknown>;
 
+    // The run-scoped brief someone filled in on the portal — the typed
+    // direction, the structured intake fields, and any attached media —
+    // resolved once, the same way every other agent resolves it.
+    const runDirection = readRunDirection(wf.input);
+
     // ── 00: INTAKE — the client's clip settings, or nothing ──
     //
     // `forbiddenTopics` comes out of the SAME read as the clip settings, so
@@ -317,13 +323,19 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
     // ── 01: claim the topic — the source cascade below needs it (a web
     //        harvest searches by it, a generated plate is briefed by it) ──
     const claim = await wf.step.code("01-claim-topic", async (): Promise<{ topic: string; reservationKey?: string }> => {
-      const rich = readRichRunInput(runInput);
       // The typed direction wins over the catalog for the same reason an
       // explicit requestedTopic does: a person who wrote a sentence about what
       // they want has more information than the catalog row does.
-      const requestedTopic =
-        rich.customPrompt ?? (typeof runInput.requestedTopic === "string" ? runInput.requestedTopic.trim() : "");
-      if (requestedTopic) return { topic: requestedTopic };
+      //
+      // THROUGH THE SHARED PRIMITIVE, not a local read of `customPrompt`. The
+      // local version promoted ANY typed sentence to a topic, so "keep it
+      // shorter and skip the emoji" became the subject of the clip and got
+      // reserved in the catalog as one — the precise failure `looksLikeTopic`
+      // exists to prevent, and which every other agent has been spared since
+      // `readRunDirection` landed. It also means this agent now sees the rest
+      // of the client's brief (audience, tone, CTA, must-include, keywords),
+      // which the local read had no notion of at all.
+      if (runDirection.topicOverride) return { topic: runDirection.topicOverride };
 
       const tool = tools["topics.reserve"];
       if (!tool) throw new WorkflowToolingFailure(`no tool registered as "topics.reserve"`);
@@ -347,14 +359,13 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
     //         tier that cannot serve skips to the next with its reason kept,
     //         and only a fully dry cascade holds, naming every tier's outcome. ──
     const intake: TikTokIntake = await wf.step.code("01b-resolve-source", async (): Promise<TikTokIntake> => {
-      const rich = readRichRunInput(runInput);
       const tierOutcomes: string[] = [];
 
       // Tier 1 — footage attached to THIS run (or a hand-dispatched
       // sourcePath). The attachment is INGESTED rather than passed through:
       // its `uri` is a `gs://` object and `video.transcribe` does a plain
       // readFile on whatever it is handed.
-      const attached = firstAsset(rich.mediaAssets, "source");
+      const attached = firstAsset(runDirection.mediaAssets, "source");
       if (attached) {
         const sourcePath = await ingestSourceVideo(attached, options, tools, wf.runId, ctx);
         return { config, ...claim, sourcePath, sourceTier: "user-asset" };
@@ -481,6 +492,10 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       moment = await wf.step.code("03-select-moment", async () => {
         const agent = new TikTokMomentAgent({ router: options.router, tools, promptStore: options.promptStore });
         const exec = await wf.step.agent("03a-moment", agent, {
+          // Which moment to clip is exactly the kind of thing a client's
+          // direction speaks to ("the part where they talk about pricing"),
+          // and the topic alone cannot carry a style note or an audience.
+          ...runDirectionField(runDirection),
           topic: intake.topic,
           transcript: sentenceBoundedWords(words),
           durationMin: CLIP_DURATION_MIN_SECONDS,
@@ -626,6 +641,10 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           const commentary: Commentary = await wf.step.code(rev(att("06-commentary")), async () => {
             const agent = new TikTokCommentaryAgent({ router: options.router, tools, promptStore: options.promptStore });
             const exec = await wf.step.agent(rev(att("06a-commentary")), agent, {
+              // The step that writes the caption the client reads — the one
+              // place their direction and brief matter most, and the one that
+              // never saw either until now.
+              ...runDirectionField(runDirection),
               topic: intake.topic,
               hookLine: moment.hookLine,
               hookType: moment.hookType,
