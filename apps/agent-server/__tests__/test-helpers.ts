@@ -213,6 +213,8 @@ export function makeSharedPromptStore(): InMemoryPromptStore {
   store.setPrompt("newsletter-craft", "1", "Newsletter craft guidance.");
   store.setPrompt("newsletter-craft", "2", "Newsletter craft guidance.");
   store.setPrompt("newsletter-craft", "3", "Newsletter craft guidance.");
+  store.setPrompt("newsletter-craft", "4", "Newsletter craft guidance.");
+  store.setPrompt("newsletter-craft", "5", "Newsletter craft guidance.");
   store.setPrompt("campaign-craft", "1", "Campaign strategy guidance.");
   return store;
 }
