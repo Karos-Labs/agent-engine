@@ -5,6 +5,7 @@ import {
   type WorkflowContext,
   runTopicGuardrail,
   readRunDirection,
+  runDirectionField,
   readContextDoc,
   enforceContextDocPolicy,
   toAgentContext,
@@ -191,7 +192,6 @@ export function createLandingBuilderAgentWorkflow(options: CreateLandingBuilderA
     if (wf.runKind === "recurring" && !priorState) assumptions.push("a revision was requested but no published build state exists for this client: built fresh");
 
     const brief = {
-      ...(runDirection.direction ? { runDirection: runDirection.direction } : {}),
       pageGoal: readString(wf.input, "page_goal") ?? readString(wf.input, "pageGoal"),
       offer: runDirection.brief.offer ?? readString(wf.input, "offer"),
       requiredSections: readStringList(wf.input, "sections"),
@@ -208,6 +208,10 @@ export function createLandingBuilderAgentWorkflow(options: CreateLandingBuilderA
     // ── 03: BLUEPRINT ──
     const blueprintAgent = new LandingBlueprintAgent({ router: options.router, tools, promptStore: options.promptStore });
     const blueprintResult = await wf.step.agent("03-blueprint", blueprintAgent, {
+      // The run-scoped instruction someone typed in the portal, as every other
+      // drafting agent receives it (apps/agent-server's run-direction coverage
+      // test pins this): a fresh build reads it as direction, a revision as feedback.
+      ...runDirectionField(runDirection),
       company: intake.profile?.["name"] ?? intake.brandKit?.["name"] ?? wf.clientSlug,
       profile: intake.profile,
       brandKit: intake.brandKit,
