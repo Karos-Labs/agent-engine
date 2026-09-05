@@ -29,6 +29,28 @@ import { DESIRED_OUTCOME_NEUTRAL_PREFILL, SEO_GEO_PROMPT_INTENT_TYPES, type SeoG
  */
 const INTENT_QUOTA_TARGET = 5;
 
+/**
+ * The version of the TEMPLATES below, frozen into every prompt-set record.
+ *
+ * RFC-04 §3 makes a recurring run reuse the prior frozen prompt set "for trend
+ * comparability", which is right — and it was also how the 2026-09-05 fix that
+ * made the `brand` templates name the client (v2) failed to reach any client
+ * that had ever run before: step 02 reused the v1 set, none of whose 25 prompts
+ * mentioned the brand, and every engine reported 0% named mentions for a
+ * company they answer about perfectly well when asked by name. Comparability
+ * across a template change is not comparability, it is measuring the wrong
+ * thing consistently.
+ *
+ * Bump this whenever a template's WORDING changes. Step 02 then redrafts on
+ * the next run and step 04 logs the resulting prompt-set drift, exactly as it
+ * would for any other change to the set — the reuse rule stays, it just stops
+ * outliving the templates it was protecting.
+ *
+ *  1 — category-only templates (T-A3; the `brand` intent never named the brand)
+ *  2 — `brand` templates take the client's name (2026-09-05)
+ */
+export const PROMPT_TEMPLATE_VERSION = 2;
+
 /** `fiveShingleJaccard`'s dedupe threshold — the same 0.40 cutoff `scoring-config.data.ts`/`rec-catalog.data.ts` use for their own "5-shingle Jaccard similarity ... <=0.40" content-differentiation checks, reused here for consistency across this port rather than inventing a second number for the same concept. */
 const DEDUPE_JACCARD_THRESHOLD = 0.4;
 

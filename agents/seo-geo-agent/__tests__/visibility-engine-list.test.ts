@@ -45,9 +45,15 @@ describe("SCRUM-396: engineListHash", () => {
    * reproducibility bump: every prior run's record stops being comparable, so
    * update the literal only together with a decision record saying why.
    */
-  const FROZEN_HASH = "98881508eb5591f3f6b6d8db29bd12496f6e733c66512780e6d85ea3144b88dd";
+  // Four engines since 2026-09-05, when Copilot left the fan-out by product
+  // decision (SCRUM-396 decision record, "2026-09-05 addendum"). Until then this
+  // was T-A3's five-engine value, 98881508eb5591f3f6b6d8db29bd12496f6e733c66512780e6d85ea3144b88dd,
+  // which every frozen record written before that date carries;
+  // `04-freeze-prompt-set` logs the difference as engine-list drift on each
+  // client's next recurring run.
+  const FROZEN_HASH = "d0c4b2518a6626cf1e17dc75594da7294e12b5c845b1fc0eb4b31917e283e755";
 
-  it("is unchanged by SCRUM-396, so no prior run's frozen record is invalidated", () => {
+  it("hashes the four captured engines — Copilot's 2026-09-05 removal is the only change since T-A3", () => {
     expect(sha256Hex(SEO_GEO_CAPTURE_ENGINES)).toBe(FROZEN_HASH);
   });
 
