@@ -90,11 +90,11 @@ describe("media.inspectImages", () => {
     ]);
   });
 
-  it("refuses a path outside the media cache, and reports not_available with no vision backend", async () => {
+  it("refuses a path that escapes repoRoot or is not an image, and reports not_available with no vision backend", async () => {
     const tool = createKarosMediaTools({ env: {}, visionClient: visionClient({ images: [] }), generationClient: null })["media.inspectImages"]!;
-    const outcome = await tool.execute({ repoRoot, images: [{ ref: "x", path: "package.json" }] }, { ctx: CTX });
+    const outcome = await tool.execute({ repoRoot, images: [{ ref: "x", path: "../outside.png" }, { ref: "y", path: "notes.txt" }] }, { ctx: CTX });
     expect(outcome.status).toBe("content_fail");
-    if (outcome.status === "content_fail") expect(outcome.reason).toMatch(/not under \.media-cache/);
+    if (outcome.status === "content_fail") expect(outcome.reason).toMatch(/escapes repoRoot[\s\S]*unsupported image extension/);
 
     const none = createKarosMediaTools({ env: {}, visionClient: null, generationClient: null })["media.inspectImages"]!;
     const unavailable = await none.execute({ repoRoot, images: [{ ref: "a", path: ".media-cache/run_1/n1-a.png" }] }, { ctx: CTX });

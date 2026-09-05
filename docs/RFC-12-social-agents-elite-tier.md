@@ -100,6 +100,7 @@ Same spine as X with these differences:
 - **Trend scout on the fallback path** (03a–03c): when no catalog row and no request, the run pulls the field's news, scouts brand-fit candidates, rotates the mode on the shipped-post count, and researches the winner instead of the literal query `${industry} trends this week`.
 - **Vision on attached media** (05z): each upload is described and the description reaches the copy step (`attachedMedia`, §13) so slide N is written to the client's picture N; the vetting candidate carries the same description.
 - **Vision on the candidate pool** (05c): before the vetting judgment, every sourced candidate is read by the vision model; unusable / watermarked ones are dropped, the rest carry `[vision: …]` so the text-only vetting agent finally judges what is in frame.
+- **Vision on the rendered PNGs** (08a4): each rendered slide is read by the vision model and the readings reach the visual QA step as `renderedInspections` (prompt `instagram-visual-qa@3`), so overlap, cut-off text and near-empty slides are judged from pixels, not from the shape of the JSON.
 - **Models**: research extraction, image vetting and visual QA move to Gemini 2.5 Flash on Vertex; copy stays on Sonnet.
 
 ## 5. TikTok — verified, not edited
@@ -130,7 +131,7 @@ The Studio picks a model per stage by the step id below (`stageModels[stepId]`);
 | `instagram-copy` | client-facing copy | claude-sonnet-4-6 | keep | slide copy + deep caption |
 | `instagram-research` | extraction | gemini-2.5-flash | keep | read-and-list, structured output |
 | `instagram-image-vet` | QA over text | gemini-2.5-flash | keep | runs up to 3× per attempt across tiers |
-| `instagram-visual-qa` | QA over structured data | gemini-2.5-flash | keep; next step is a rendered-PNG vision pass via `media.inspectImages` | pass/fail with findings |
+| `instagram-visual-qa` | QA over structured data + rendered-PNG readings | gemini-2.5-flash | keep | pass/fail with findings; the PNG readings come from `media.inspectImages` (08a4) |
 | `guardrail` (topic) | classification | claude-haiku-4-5 | keep | unchanged |
 | `tiktok-topic-scout` | ranking | gemini-2.5-pro | Flash is enough for most clients | same job as the social scout |
 | `tiktok-script` / `tiktok-commentary` | copy | claude-sonnet-4-6 | keep | voice |
@@ -138,11 +139,11 @@ The Studio picks a model per stage by the step id below (`stageModels[stepId]`);
 
 Operational note: Claude on Vertex currently returns 429 on every model in prep and prod and fails over to the direct Anthropic key; Gemini on Vertex works. Moving extraction, vision and QA to Gemini therefore also moves them off the failing route.
 
-## 7. Portal follow-ups (karosCMO, not in this branch)
+## 7. Portal changes (karosCMO, companion PR `feat/social-agents-portal-fields`)
 
-1. `agentEngineProductAcceptsMediaAssets` returns `false` for `x-agent` and `linkedin-agent`, so the run dialog never paints the upload field for them. Both agents now consume `mediaAssets`; flip the predicate and its test.
-2. `toEngineRunInput` does not send `requestedFormat` or `requestedMode`; both are read off `wf.input` here. Add them to the dedicated-field table (the field-contract test enforces a row).
-3. The X materializer's `metaFields` already includes `mediaRefs`, now a staged https URL — the existing `rehostIfFetchable` path can re-host it into an asset image the way it does for carousel slides.
+1. `agentEngineProductAcceptsMediaAssets` now returns `true` for `x-agent` and `linkedin-agent`, so the run dialog paints the upload field for them; the helper text says the upload is optional for the text-first channels.
+2. New wire fields, read by the engine and rendered as dialog selects: `requestedMode` ("Kind of post": rotate / hot-news / deep-value / open-discussion) on the X draft and LinkedIn post dialogs; `requestedFormat` ("Instagram format": carousel / single / auto) on the social content system dialog. Both have `ENGINE_FIELD_CONTRACT` rows with engine-side evidence; `mediaAssets`' row now lists x-agent and linkedin-agent as readers.
+3. Still to do on the portal side: the X materializer's `metaFields` already carries `mediaRefs` (now a staged https URL) — re-hosting it into the asset's image the way carousel slides are re-hosted is a small follow-up in `materialize.ts`.
 
 ## 8. Verification
 

@@ -2712,11 +2712,56 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       //         step 07/07b above, matching carousel-agent-v2 SKILL.md step
       //         08's "a fail here is RETURN: 05, because it is the copy or
       //         the layout, not the code." ──
+      // ── 08a4: a vision model LOOKS at the rendered PNGs (2026-09) ──
+      //
+      // The QA agent has always judged from structured slide data and said so
+      // in its own prompt ("you do NOT see the actual rendered pixels"). With
+      // `media.inspectImages` in the registry it can: each rendered slide is
+      // described — legible text, quality grade, whether it reads as a
+      // finished slide — and the descriptions ride into the QA input as
+      // `renderedInspections`. Best-effort: no vision backend, or a failed
+      // call, leaves the QA exactly as it was.
+      const inspectRendered = tools["media.inspectImages"];
+      let renderedInspections: Array<Record<string, unknown>> = [];
+      if (inspectRendered !== undefined && renderedAttempt.rendered.length > 0) {
+        renderedInspections = await wf.step.code(rev(`08a4-inspect-rendered-attempt-${attempt}`), async (): Promise<Array<Record<string, unknown>>> => {
+          const images = renderedAttempt.rendered.slice(0, 12).flatMap((r): Array<{ ref: string; url?: string; path?: string }> => {
+            if (/^https?:\/\//i.test(r.path)) return [{ ref: `slide-${r.n}`, url: r.path }];
+            // The renderer writes a local file when no media store is
+            // configured; the vision tool takes it repo-relative and bounds-checks it.
+            const relative = path.isAbsolute(r.path) ? path.relative(options.repoRoot, r.path) : r.path;
+            if (relative.startsWith("..")) return [];
+            return [{ ref: `slide-${r.n}`, path: relative.replace(/\\/g, "/") }];
+          });
+          if (images.length === 0) return [];
+          const outcome = await inspectRendered.execute(
+            {
+              repoRoot: options.repoRoot,
+              images,
+              purpose: "candidate-vetting",
+              brief: "a finished Instagram slide as it will be published: every word legible, nothing overlapping or cut off, not near-empty, the photo (if any) not fighting the text",
+            },
+            { ctx },
+          );
+          if (outcome.status !== "success") return [];
+          return (outcome.result as { inspections: Array<Record<string, unknown>> }).inspections.map((i) => ({
+            n: Number(String(i["ref"]).split("-")[1]),
+            description: i["description"],
+            textInImage: i["textInImage"],
+            quality: i["quality"],
+            qualityReason: i["qualityReason"],
+            ...(i["fitScore"] !== undefined ? { fitScore: i["fitScore"], fitReason: i["fitReason"] } : {}),
+          }));
+        });
+      }
+
       const elevatedCriteria = buildElevatedVisualQaCriteria({ logo: preChecks.brandAsset, kitPalette: effectiveKit?.palette ?? [] });
       const qaExec = await wf.step.agent(rev(`08b-visual-qa-attempt-${attempt}`), qaAgent, {
         // The format (2026-09): a single-image post has no "closer" slide and
         // a rule written for an eight-slide carousel does not apply to it.
         format: copy.format,
+        // What a vision model saw in the actual PNGs, when one was available.
+        ...(renderedInspections.length > 0 ? { renderedInspections } : {}),
         slides: slidesDataForQa.slides.map((s) => ({ n: s.n, fields: s.fields, images: s.images })),
         renderRules: [...renderRules.map((r) => ({ id: r.id, description: r.description })), ...elevatedCriteria],
         // Facts the judge must not re-derive (per-criterion doc comments in

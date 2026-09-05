@@ -143,7 +143,7 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   },
   { promptId: "instagram-image-vet", agent: "instagram-agent", versions: ["1", "2"], latestVersion: "2" },
   { promptId: "instagram-research", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
-  { promptId: "instagram-visual-qa", agent: "instagram-agent", versions: ["1", "2"], latestVersion: "2" },
+  { promptId: "instagram-visual-qa", agent: "instagram-agent", versions: ["1", "2", "3"], latestVersion: "3" },
   {
     promptId: "intel-report-grounding",
     agent: "intel-report-agent",

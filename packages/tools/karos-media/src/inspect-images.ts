@@ -2,7 +2,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { defineTool, success, contentFail, toolingError, notAvailable } from "@agent-engine/tool-common";
-import { MEDIA_CACHE_PREFIX } from "./find-images.js";
 import { DEFAULT_VISION_MODEL, type VisionAnalysisClient, type VisionPart } from "./visual-patterns.js";
 
 // 1.0.0 — new: the first tool in this package that LOOKS at pixels on behalf
@@ -27,7 +26,7 @@ export const InspectImagesInputSchema = z.object({
     .array(
       z.object({
         ref: z.string().min(1).describe("Caller's own handle for this image, echoed back on its analysis so results can be matched without relying on order."),
-        path: z.string().min(1).optional().describe("Repo-relative path under .media-cache/, as every other media tool returns it."),
+        path: z.string().min(1).optional().describe("Repo-relative path inside repoRoot: a .media-cache/ candidate, a client upload, or a rendered slide PNG."),
         url: z.string().url().optional().describe("An https:// image URL, fetched directly. Exactly one of path/url is required."),
       }),
     )
@@ -159,10 +158,10 @@ async function readLocalImage(repoRoot: string, relative: string): Promise<{ dat
   if (abs !== rootResolved && !abs.startsWith(rootResolved + path.sep)) {
     return { error: "path escapes repoRoot" };
   }
-  const normalized = relative.replace(/\\/g, "/");
-  if (!normalized.startsWith(`${MEDIA_CACHE_PREFIX}/`)) {
-    return { error: `path is not under ${MEDIA_CACHE_PREFIX}/ — only media this pipeline downloaded is inspected` };
-  }
+  // Any image INSIDE repoRoot: a `.media-cache/` candidate, a client upload,
+  // or a rendered slide PNG in the renderer's outDir. The bounds check above
+  // is the guarantee; a narrower prefix rule would keep the vision step from
+  // ever seeing the pixels the carousel actually shipped.
   const mimeType = IMAGE_TYPES[path.extname(abs).toLowerCase()];
   if (mimeType === undefined) return { error: `unsupported image extension "${path.extname(abs)}"` };
   let bytes: Buffer;

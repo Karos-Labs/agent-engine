@@ -11,9 +11,9 @@ import { VisualQaOutputSchema, type VisualQaOutput } from "../workflow/types.js"
  * `fields`/`images` data (never actual pixels) plus the frozen style config's
  * `check: "render"` rules, and judges plausibility from what's actually
  * available. This is honestly weaker than real pixel inspection and is
- * documented as such rather than overclaiming. (A rendered-PNG vision pass
- * is the natural next step now that `media.inspectImages` exists; it is not
- * wired here yet.)
+ * documented as such rather than overclaiming. (Since 2026-09 the workflow's 08a4 step
+ * hands it `renderedInspections` — a vision model's reading of the actual
+ * PNGs — when a vision backend is configured.)
  *
  * A `pass: false` verdict is routed by the workflow into the SAME step-07
  * self-check retry loop already in place — visual QA failing is
@@ -49,6 +49,9 @@ export class InstagramVisualQaAgent extends BaseAgent<VisualQaOutput> {
     allowedTools: [],
     outputSchema: VisualQaOutputSchema,
     modelPolicy: resolveModelPolicy("instagram-visual-qa", { policy: "pinned", model: "gemini-2.5-flash", vendor: "gemini" }),
-    skillRef: "instagram-visual-qa@2",
+    // Pinned to "3" (2026-09): v3 adds §5, `renderedInspections` — what a
+    // vision model saw in the actual rendered PNGs, when the run had a vision
+    // backend — as evidence for the config's own render rules. v2 stays frozen.
+    skillRef: "instagram-visual-qa@3",
   };
 }
