@@ -2,7 +2,7 @@ import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { DEDUPE_SIMILARITY_THRESHOLD, similarity, type AgentContext } from "@agent-engine/core";
 import { createNewsletterAgentWorkflow } from "../src/workflow/create-newsletter-agent-workflow.js";
-import { fakeRouterSequence, finalTurn, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import { editionRouter, finalTurn, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 
 /**
  * AU20 (SCRUM-304): the acceptance criterion — a planted NEAR-duplicate is
@@ -91,7 +91,7 @@ describe("newsletter-agent verified de-duplication (AU20)", () => {
     const seedCtx: AgentContext = { runId: "prior-run", clientSlug: "acme", productId: "newsletter-agent", runKind: "recurring", metadata: {} };
     await env.tools["ledger.recordOutputExcerpt"]!.execute({ agentId: "newsletter-agent", runId: "prior-run", excerpt: PUBLISHED }, { ctx: seedCtx });
 
-    const router = fakeRouterSequence([
+    const router = editionRouter([
       draft(NEAR_DUPLICATE_SUBJECT, NEAR_DUPLICATE_BODY),
       draft(FRESH_SUBJECT, FRESH_BODY),
     ]);

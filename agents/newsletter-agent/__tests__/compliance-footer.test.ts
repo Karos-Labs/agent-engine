@@ -2,7 +2,7 @@ import { describe, expect, it, vi, afterEach, beforeEach } from "vitest";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import type { AgentToolRegistry } from "@agent-engine/core";
 import { createNewsletterAgentWorkflow } from "../src/workflow/create-newsletter-agent-workflow.js";
-import { fakeRouterSequence, finalTurn, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import { editionRouter, finalTurn, heldEditionRouter, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 
 /**
  * Migration-audit remediation: the Newsletter agent previously had no
@@ -48,14 +48,14 @@ describe("compliance footer + banned promise/hype-language remediation (RFC-02 Â
     await env.cleanup();
   });
 
-  it('a banned promise/hype phrase ("guaranteed returns") fails gate.brandCompliance at step 11 -> held, even with no forbiddenTerms configured', async () => {
+  it('a banned promise/hype phrase ("guaranteed returns") fails gate.brandCompliance at step 10 -> redrafted twice, then held, even with no forbiddenTerms configured', async () => {
     // Empty (but present) brand config -- isolates the always-on hype bank from the
     // client's own forbiddenTerms, which setupTestEnvironment's default brand includes.
     await env.store.writeJson("acme", ["client", "brand"], {});
 
     const promptStore = makePromptStore();
     const intro = "This strategy delivers guaranteed returns for every single subscriber.";
-    const router = fakeRouterSequence([finalTurn(draftWithIntro(intro))]);
+    const router = heldEditionRouter([finalTurn(draftWithIntro(intro))]);
     const workflowFn = createNewsletterAgentWorkflow({ tools: env.tools, promptStore, router });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
@@ -70,7 +70,7 @@ describe("compliance footer + banned promise/hype-language remediation (RFC-02 Â
     const stepRecords = await durableStore.listSteps("newsletter_run_hype_language");
     const ids = stepRecords.map((s) => s.stepId);
     expect(ids).toContain("10-verify-brand-compliance");
-    expect(ids).not.toContain("11-verify-numbers-sourced");
+    expect(ids).toContain("09-draft-post-round-3");
 
     const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", "newsletter_run_hype_language", "_"]);
     expect(deliverables).toHaveLength(0);
@@ -81,7 +81,7 @@ describe("compliance footer + banned promise/hype-language remediation (RFC-02 Â
     // that only trips the built-in "risk-free" hype phrase, not any client-configured term.
     const promptStore = makePromptStore();
     const intro = "Here's a completely risk-free way to plan your next sprint.";
-    const router = fakeRouterSequence([finalTurn(draftWithIntro(intro))]);
+    const router = heldEditionRouter([finalTurn(draftWithIntro(intro))]);
     const workflowFn = createNewsletterAgentWorkflow({ tools: env.tools, promptStore, router });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
@@ -104,7 +104,7 @@ describe("compliance footer + banned promise/hype-language remediation (RFC-02 Â
     const promptStore = makePromptStore();
     const intro = "Here's what actually worked for engineering teams this week.";
     const draft = draftWithIntro(intro);
-    const router = fakeRouterSequence([finalTurn(draft)]);
+    const router = editionRouter([finalTurn(draft)]);
 
     // Spy on gate.brandCompliance specifically to capture the exact args the workflow sends it.
     const brandComplianceSpy = vi.fn(env.tools["gate.brandCompliance"]!.execute.bind(env.tools["gate.brandCompliance"]));
@@ -146,7 +146,7 @@ describe("compliance footer + banned promise/hype-language remediation (RFC-02 Â
 
     const promptStore = makePromptStore();
     const intro = "Here's what actually worked for engineering teams this week.";
-    const router = fakeRouterSequence([finalTurn(draftWithIntro(intro))]);
+    const router = editionRouter([finalTurn(draftWithIntro(intro))]);
     const workflowFn = createNewsletterAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
@@ -181,7 +181,7 @@ describe("compliance footer + banned promise/hype-language remediation (RFC-02 Â
 
     const promptStore = makePromptStore();
     const intro = "Here's what actually worked for engineering teams this week.";
-    const router = fakeRouterSequence([finalTurn(draftWithIntro(intro))]);
+    const router = editionRouter([finalTurn(draftWithIntro(intro))]);
     const workflowFn = createNewsletterAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
@@ -215,7 +215,7 @@ describe("compliance footer + banned promise/hype-language remediation (RFC-02 Â
     const promptStore = makePromptStore();
     const intro = "Here's what actually worked for engineering teams this week.";
     const draft = draftWithIntro(intro);
-    const router = fakeRouterSequence([finalTurn(draft)]);
+    const router = editionRouter([finalTurn(draft)]);
     const workflowFn = createNewsletterAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);

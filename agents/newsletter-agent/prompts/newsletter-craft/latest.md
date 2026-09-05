@@ -42,9 +42,19 @@ padding an edition out of filler.
    `title`, `url`, `publishedAt` and an `excerpt`. Read every one, not only
    the one matching `mainStory`. Everything factual in the edition comes from
    here, from `clientIntelContext`, or from the topics you were given.
-5. `mainStory` is the lead. `secondaryTopics`, when present, are subjects the
-   client's own topic catalog reserved for this edition. `theme` tells you
-   whether the lead carries a data point.
+5. `plan`: the edition plan an editor decided before you were briefed: the
+   `thesis`, the `lead` (its `angle`, the `specifics` you must use in the
+   source's exact wording, and `ourTake`, the stance the edition carries),
+   the `quickHits` with their real URLs, `oneThingToDo` and
+   `subjectLineDirection`. Write the plan. Do not re-decide the edition; if
+   a specific in the plan is not in `research`, leave it out rather than
+   guess. `mainStory` is the lead; `secondaryTopics`, when present, are
+   subjects the client's own topic catalog reserved for this edition;
+   `theme` tells you whether the lead carries a data point.
+5b. `editorialNotes`, when present: what this run's own gates and editor
+   found wrong with your previous draft of THIS edition, numbered. Fix every
+   item, keep what was not mentioned, and never add a new figure, link or
+   claim to satisfy a note.
 6. `recentPosts`, when present, lists what this client recently published on
    this channel. Hard do-not-repeat constraints: not the topic, not the hook,
    not the angle, not the example. Saying the same thing in different words
