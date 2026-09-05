@@ -59,7 +59,7 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
     const promptStore = makePromptStore();
     const router = fakeRouterSequence([finalTurn(goodDraft())]);
     const { spied, callCounts } = spyOnAllTools(env.tools);
-    const workflowFn = createRedditAgentWorkflow({ tools: spied, promptStore, router, autoApprove: true });
+    const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: spied, promptStore, router, autoApprove: true });
 
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
@@ -113,7 +113,7 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
         }),
       },
     };
-    const workflowFn = createRedditAgentWorkflow({ tools: crashOnceTools, promptStore, router, autoApprove: true });
+    const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: crashOnceTools, promptStore, router, autoApprove: true });
 
     const runId = "reddit_run_resume_crash";
     const durableStore = new MemoryDurableStepStore();

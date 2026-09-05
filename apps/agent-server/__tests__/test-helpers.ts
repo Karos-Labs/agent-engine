@@ -207,6 +207,10 @@ export function makeSharedPromptStore(): InMemoryPromptStore {
   store.setPrompt("reddit-craft", "2", "Reddit craft guidance.");
   store.setPrompt("reddit-craft", "3", "Reddit craft guidance.");
   store.setPrompt("reddit-craft", "4", "Reddit craft guidance.");
+  store.setPrompt("reddit-craft", "5", "Reddit craft guidance.");
+  // reddit-agent's two judgment steps (auto-setup planner, thread scout).
+  store.setPrompt("reddit-channel-plan", "1", "Reddit channel planning guidance.");
+  store.setPrompt("reddit-scout", "1", "Reddit thread scouting guidance.");
   store.setPrompt("blog-craft", "1", "Blog craft guidance.");
   store.setPrompt("blog-craft", "2", "Blog craft guidance.");
   store.setPrompt("blog-craft", "3", "Blog craft guidance.");
@@ -285,7 +289,9 @@ export async function setupTestEnvironment(clientSlug = "acme"): Promise<TestEnv
     durableStore,
     // The SAME store `tools` was built over (SCRUM-328): the server's composition
     // roots thread one instance through both, and so must the test environment.
-    runtimeDeps: { tools, promptStore, router, workspaceStore: store },
+    // A fetch that answers 404 to everything: reddit-agent's thread read
+    // degrades to title-only instead of reaching reddit.com from a test.
+    runtimeDeps: { tools, promptStore, router, workspaceStore: store, publicFetch: async () => new Response("not found", { status: 404 }) },
     cleanup: () => fs.rm(rootDir, { recursive: true, force: true }),
   };
 }
