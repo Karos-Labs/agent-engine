@@ -520,6 +520,29 @@ describe("tiktok-agent clip pipeline", () => {
     expect(h.calls).not.toContain("video.transcribe");
   });
 
+  // ── "Only media I upload for this job" (mediaSource: "client", 2026-09-06) ──
+
+  it("client media only with no footage: refuses intake before the topic claim, naming the missing episode", async () => {
+    const h = stubTools({ harvestServes: true, generateServes: true });
+    const result = await run(h, "run-tt-client-only-empty", { mediaSource: "client", sourcePath: undefined });
+    expect(result.status).toBe("blocked_intake");
+    if (result.status !== "blocked_intake") throw new Error("unreachable");
+    expect(result.reason).toMatch(/client-provided media only, but no source video was attached/);
+    // Nothing downstream was touched: no reservation burned, no harvest, no generation, no transcript.
+    for (const tool of ["topics.reserve", "media.harvestVideo", "video.generateClip", "video.transcribe"]) {
+      expect(h.calls, tool).not.toContain(tool);
+    }
+  });
+
+  it("client media only with footage in hand: the user-asset tier serves and the run completes exactly as before", async () => {
+    const h = stubTools({ harvestServes: true, generateServes: true });
+    const result = await run(h, "run-tt-client-only-footage", { mediaSource: "client" });
+    expect(result.status).toBe("completed");
+    expect(h.deliverables[0]).toMatchObject({ sourceTier: "user-asset" });
+    expect(h.calls).not.toContain("media.harvestVideo");
+    expect(h.calls).not.toContain("video.generateClip");
+  }, 20_000);
+
   it("still takes a plain sourcePath, which needs no ingest at all", async () => {
     // The path every hand-rolled and scheduled dispatch uses. Adding the upload
     // surface must not have made repoRoot a requirement for it.

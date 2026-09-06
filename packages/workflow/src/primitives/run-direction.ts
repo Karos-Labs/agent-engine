@@ -1,4 +1,4 @@
-import { readRichRunInput, type MediaAsset } from "@agent-engine/core";
+import { readRichRunInput, type MediaAsset, type MediaSource } from "@agent-engine/core";
 
 /**
  * The run-scoped direction a person typed, resolved once per run.
@@ -82,6 +82,8 @@ export interface RunDirection {
    */
   topicOverride?: string;
   mediaAssets: readonly MediaAsset[];
+  /** Where this run's visuals may come from — see `MediaSource` in core. `"system"` unless the portal said otherwise. */
+  mediaSource: MediaSource;
   brief: RunBrief;
 }
 
@@ -221,6 +223,7 @@ export function readRunDirection(input: Readonly<Record<string, unknown>> | unde
     ...(direction ? { direction } : {}),
     ...(topicOverride ? { topicOverride } : {}),
     mediaAssets: rich.mediaAssets,
+    mediaSource: rich.mediaSource,
     brief,
   };
 }

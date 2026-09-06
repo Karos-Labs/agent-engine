@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { describeFetchFailure, fetchWithDeadline } from "./http.js";
+import { resolveGbpCredential, type GbpAccessTokenProvider } from "./gbp-credential.js";
 import type { Review } from "../triage/types.js";
 import { unavailableLeg } from "./tombstone.js";
 import type { CaptureLegOutcome, ReputationFetchImpl, GbpLegRequest } from "./types.js";
@@ -40,23 +41,27 @@ const GbpApiResponseSchema = z.object({
 
 /**
  * `capture_gbp` (capture.py): Google Business Profile API v4 reviews,
- * paginated. Requires Google-approved OAuth (`GOOGLE_BUSINESS_TOKEN`) —
- * until a client's credential lands, this leg reports `UNAVAILABLE` and the
- * caller falls back to the scrape leg or `manual_export` (ADAPTERS.md).
+ * paginated. Authenticates with `GOOGLE_BUSINESS_TOKEN` when set, else with a
+ * `business.manage` token the deployment's own identity mints (see
+ * gbp-credential.ts) — until one of the two can be had, this leg reports
+ * `UNAVAILABLE` and the caller falls back to the scrape leg or `manual_export`
+ * (ADAPTERS.md).
  */
 export async function captureGbp(
   req: GbpLegRequest,
   env: Readonly<Record<string, string | undefined>>,
   fetchImpl: ReputationFetchImpl,
+  accessToken?: GbpAccessTokenProvider,
 ): Promise<CaptureLegOutcome> {
   /** Every dead-leg exit from this adapter goes through here — ADAPTERS.md rule 1: a tombstone, never a silent zero. */
   const dead = (reason: string): CaptureLegOutcome =>
     unavailableLeg({ leg: "gbp", platform: "google", source: "gbp_api", listingId: req.listingId, listingLabel: req.listingLabel, reason });
 
-  const token = env["GOOGLE_BUSINESS_TOKEN"];
-  if (!token) {
-    return dead("missing env GOOGLE_BUSINESS_TOKEN");
+  const credential = await resolveGbpCredential(env, accessToken);
+  if (!credential.ok) {
+    return dead(credential.reason);
   }
+  const token = credential.token;
 
   const records: Review[] = [];
   let pageToken: string | undefined;

@@ -140,14 +140,53 @@ describe("reputation.discoverGbpLocations (enumerates an OWNED account, never se
     if (outcome.status !== "success") throw new Error("unreachable");
     expect(outcome.result).toEqual({
       account: "acct-1",
+      accounts: ["acct-1"],
+      credentialSource: "env",
       locations: [
-        { location: "loc-1", title: "Acme Cafe", placeId: "ChIJ-1", address: "1 Main St, Springfield, 12345", mapsUri: "https://maps.google.com/?cid=1" },
-        { location: "loc-2", title: "Acme Cafe Riverside" },
+        { account: "acct-1", location: "loc-1", title: "Acme Cafe", placeId: "ChIJ-1", address: "1 Main St, Springfield, 12345", mapsUri: "https://maps.google.com/?cid=1" },
+        { account: "acct-1", location: "loc-2", title: "Acme Cafe Riverside" },
       ],
     });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
     expect((init.headers as Record<string, string>)["Authorization"]).toBe("Bearer tok");
+  });
+
+  // 2026-09-06: no account id on file — the credential is asked what it manages.
+  it("with no account, enumerates every account the credential manages (via ADC when no env token) and reads each one's locations", async () => {
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.startsWith("https://mybusinessaccountmanagement.googleapis.com/v1/accounts")) {
+        return jsonResponse({ accounts: [{ name: "accounts/acct-1", accountName: "Acme" }, { name: "accounts/acct-2", accountName: "Acme Riverside" }] });
+      }
+      if (url.includes("/accounts/acct-1/locations")) return jsonResponse({ locations: [{ name: "locations/loc-1", title: "Acme Cafe" }] });
+      if (url.includes("/accounts/acct-2/locations")) return jsonResponse({ locations: [{ name: "locations/loc-9", title: "Acme Riverside" }] });
+      throw new Error(`unexpected url ${url}`);
+    });
+    const tool = createDiscoverGbpLocations({ env: {}, fetchImpl: fetchImpl as unknown as typeof fetch, gbpAccessToken: async () => "adc-tok" });
+    const outcome = await tool.execute({}, { ctx });
+    expect(outcome.status).toBe("success");
+    if (outcome.status !== "success") throw new Error("unreachable");
+    expect(outcome.result).toEqual({
+      account: "acct-1",
+      accounts: ["acct-1", "acct-2"],
+      credentialSource: "adc",
+      locations: [
+        { account: "acct-1", location: "loc-1", title: "Acme Cafe" },
+        { account: "acct-2", location: "loc-9", title: "Acme Riverside" },
+      ],
+    });
+    const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect((init.headers as Record<string, string>)["Authorization"]).toBe("Bearer adc-tok");
+  });
+
+  it("with no account and a credential that manages none, says exactly what a person has to do", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ accounts: [] }));
+    const tool = createDiscoverGbpLocations({ env: {}, fetchImpl: fetchImpl as unknown as typeof fetch, gbpAccessToken: async () => "adc-tok" });
+    const outcome = await tool.execute({}, { ctx });
+    expect(outcome.status).toBe("not_available");
+    if (outcome.status !== "not_available") throw new Error("unreachable");
+    expect(outcome.reason).toMatch(/its own service account\) manages no Google Business Profile account — add it as a manager/);
   });
 
   it("reports not_available with the connector's own reason when the account cannot be read", async () => {

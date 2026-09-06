@@ -1,4 +1,5 @@
 import { describe, expect, it, afterEach } from "vitest";
+import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createKarosVideoTools, type ProcessResult } from "@agent-engine/tool-karos-video";
@@ -103,6 +104,50 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
     const result = await engine.run(workflowFn, { ...params, runId: "branded_shorts_run_no_intake" });
 
     expect(result.status).toBe("blocked_intake");
+  });
+
+  // ── media attached to THIS run (mediaAssets / mediaSource, 2026-09-06) ──
+
+  it("with no standing intake, a source video attached to the run IS the footage, and the run's direction is the takeaway", async () => {
+    env = await setupTestEnvironment({ withIntake: false });
+    const videoPath = path.join(env.rootDir, "attached.mov");
+    await fs.writeFile(videoPath, "fake attached bytes", "utf8");
+    const promptStore = makePromptStore();
+    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan()]);
+    const workflowFn = createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+
+    const durableStore = new MemoryDurableStepStore();
+    const result = await new WorkflowEngine(durableStore).run(workflowFn, {
+      ...params,
+      runId: "branded_shorts_run_attached",
+      input: { mediaAssets: [{ uri: videoPath, role: "source", label: "attached.mov" }], customPrompt: "Founders should ship faster." },
+    });
+
+    expect(result.status).toBe("completed");
+    // The attached file, not a config path, is what the pipeline was pointed at,
+    // and the typed sentence became the takeaway the highlights are judged by.
+    const steps = await durableStore.listSteps("branded_shorts_run_attached");
+    const intake = steps.find((s) => s.stepId === "01-load-intake")?.output as { videoPath: string; takeaway: string; targetLength: string };
+    expect(intake).toMatchObject({ videoPath, takeaway: "Founders should ship faster.", targetLength: "client_choice" });
+  });
+
+  it("client media only with no video attached: refuses intake and says what to attach, even when a standing intake exists", async () => {
+    env = await setupTestEnvironment();
+    const promptStore = makePromptStore();
+    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan()]);
+    const workflowFn = createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflowFn, {
+      ...params,
+      runId: "branded_shorts_run_client_only_empty",
+      input: { mediaSource: "client" },
+    });
+
+    expect(result.status).toBe("blocked_intake");
+    if (result.status !== "blocked_intake") throw new Error("unreachable");
+    expect(result.reason).toMatch(/client-provided media only, but no source video was attached/);
+    // Nothing was transcribed, cut or rendered.
+    expect(env.runnerCalls).toEqual([]);
   });
 
   it("resolves to held, never rendering anything, when video.assetsCheck reports a zero-byte font (SCRUM-295 / AU10)", async () => {

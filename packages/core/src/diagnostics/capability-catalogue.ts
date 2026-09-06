@@ -285,11 +285,13 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
   {
     id: "reputation-capture",
     title: "Review capture from Google Business Profile — the credentialed review source",
-    owner: "packages/tools/karos-reputation (reputation.capture)",
-    requires: [{ name: "GOOGLE_BUSINESS_TOKEN", kind: "required" }],
+    owner: "packages/tools/karos-reputation (reputation.capture, reputation.discoverGbpLocations)",
+    requires: [{ name: "GOOGLE_BUSINESS_TOKEN", kind: "enhances" }],
     whenAbsent:
-      "No credentialed review source at all. The GBP leg writes an UNAVAILABLE tombstone instead of reviews, and the pulse runs on only the uncredentialed legs (App Store RSS, and whatever the client exports by hand) — so a client with no App Store presence gets a pulse with no reviews in it. The tombstone keeps that visible rather than letting it read as 'no reviews this month'.",
-    shortfall: "no credentialed review source",
+      "Since 2026-09-06 the GBP legs fall back to a business.manage token minted from the worker's own service account (Application Default Credentials, wired in apps/agent-server/src/wiring/tools.ts), so the variable is an override for a user token, not the only credential. That fallback reaches exactly the Business Profiles a person has added the service account to as a manager; for every other client the GBP leg writes an UNAVAILABLE tombstone naming that gap, and the pulse runs on only the uncredentialed legs (App Store RSS, and whatever the client exports by hand). The tombstone keeps that visible rather than letting it read as 'no reviews this month'.",
+    shortfall: "no Google reviews without profile access",
+    rationale:
+      "Decided 2026-09-06: no deployment ever carried GOOGLE_BUSINESS_TOKEN, so the leg was a guaranteed tombstone; the service account is the credential the engine already runs with, and adding it as a profile manager is a per-client step a person can do in Business Profile Manager.",
   },
 
   // ── Google first-party connectors (SEO/GEO Layer 1) ──────────────────────

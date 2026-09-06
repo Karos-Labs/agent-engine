@@ -839,6 +839,9 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
         sources: researchSources,
         postText: draft.text,
         art: artDirectionFromBrand(clientContext.brand),
+        // "Only media I upload": an attached picture still wins above; with
+        // none, the post ships as text and no tier is asked (2026-09-06).
+        clientMediaOnly: runDirection.mediaSource === "client",
       });
 
       // ── terminal topic guardrail ──

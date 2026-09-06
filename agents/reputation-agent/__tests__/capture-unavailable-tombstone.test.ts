@@ -91,11 +91,14 @@ describe("a dead capture leg reaches triage as an UNAVAILABLE tombstone, and is 
     expect(result.output.counts.noAction).toBe(1);
 
     // The leg-level fact, surfaced first-class rather than buried in a review row.
+    // The reason names the env token first (what every runbook greps for) and
+    // then the ADC fallback that this composition — no provider wired — lacks.
+    const noCredential = expect.stringMatching(/^missing env GOOGLE_BUSINESS_TOKEN, and no Application Default Credentials provider is wired/);
     expect(result.output.unavailableLegs).toEqual([
-      { leg: "gbp", status: "UNAVAILABLE", reviewCount: 0, reason: "missing env GOOGLE_BUSINESS_TOKEN" },
+      { leg: "gbp", status: "UNAVAILABLE", reviewCount: 0, reason: noCredential },
     ]);
     expect(result.output.captureLegs).toEqual([
-      { leg: "gbp", status: "UNAVAILABLE", reviewCount: 0, reason: "missing env GOOGLE_BUSINESS_TOKEN" },
+      { leg: "gbp", status: "UNAVAILABLE", reviewCount: 0, reason: noCredential },
       { leg: "manual_export", status: "ok", reviewCount: 1 },
     ]);
 

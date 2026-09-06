@@ -198,6 +198,7 @@ const PORTAL_WIRE_KEYS = [
 const HANDLED_ELSEWHERE: Record<string, string> = {
   customPrompt: "the typed instruction itself — becomes `direction`",
   mediaAssets: "parsed by readRichRunInput into `mediaAssets`",
+  mediaSource: "parsed by readRichRunInput into `mediaSource` — a mode switch every media agent reads structurally (client-only media), not prose for a model",
   requestedTopic: "becomes `topicOverride`, and is rendered by renderRunBrief's own parameter",
   requestedIdentityScope: "read off wf.input by linkedin-agent (RUN_SCOPED_KEYS)",
   requestedExecutiveName: "read off wf.input by linkedin-agent (RUN_SCOPED_KEYS)",
@@ -234,5 +235,24 @@ describe("every field the portal collects reaches the model", () => {
       expect(reason.length, `${key} is exempted with no reason given`).toBeGreaterThan(20);
       expect(PORTAL_WIRE_KEYS as readonly string[], `${key} is both in the brief and exempted`).not.toContain(key);
     }
+  });
+});
+
+describe("readRunDirection — where this run's visuals may come from (mediaSource, 2026-09-06)", () => {
+  it("defaults to system-managed media, so every run that predates the field behaves exactly as before", () => {
+    expect(readRunDirection({}).mediaSource).toBe("system");
+    expect(readRunDirection({ mediaAssets: [{ uri: "gs://b/a.png" }] }).mediaSource).toBe("system");
+  });
+
+  it("carries the client's choice through alongside the assets it governs", () => {
+    const d = readRunDirection({ mediaSource: "client", mediaAssets: [{ uri: "gs://b/a.png", role: "source" }] });
+    expect(d.mediaSource).toBe("client");
+    expect(d.mediaAssets).toHaveLength(1);
+  });
+
+  it("reads anything but the one non-default word as the default — never a third mode, never a failed run", () => {
+    expect(readRunDirection({ mediaSource: "CLIENT" }).mediaSource).toBe("system");
+    expect(readRunDirection({ mediaSource: "generate" }).mediaSource).toBe("system");
+    expect(readRunDirection({ mediaSource: 7 }).mediaSource).toBe("system");
   });
 });

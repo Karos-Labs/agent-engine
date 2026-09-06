@@ -149,7 +149,7 @@ const inspection = (ref: string, over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-async function runResolver(tools: AgentToolRegistry, brief: unknown, attached?: unknown) {
+async function runResolver(tools: AgentToolRegistry, brief: unknown, attached?: unknown, extra: { clientMediaOnly?: boolean } = {}) {
   const store = new MemoryDurableStepStore();
   const engine = new WorkflowEngine(store);
   const result = await engine.run(
@@ -162,6 +162,7 @@ async function runResolver(tools: AgentToolRegistry, brief: unknown, attached?: 
         attached: attached as never,
         sources: [{ url: "https://example.test/a", title: "A" }],
         postText: "the post",
+        ...extra,
       }),
     { runId: "run_1", clientSlug: "acme", productId: "x-agent", runKind: "recurring" },
   );
@@ -238,6 +239,37 @@ describe("resolveSocialMedia", () => {
     );
     expect(plan.status).toBe("attached");
     expect(plan.asset?.url).toBe("https://signed/up.png");
+    expect(calls).toEqual(["media.stageAsset"]);
+  });
+
+  // 2026-09-06: "Only media I upload for this job" from the portal.
+  it("client media only, nothing attached: ships text and asks NO tier, even for a photo brief with every tool registered", async () => {
+    const calls: string[] = [];
+    const tools: AgentToolRegistry = {
+      "media.screenshotPage": fakeTool("media.screenshotPage", calls, ok({ candidate: { path: ".media-cache/run_1/shot.png", description: "s", provider: "screenshot", licenseConfidence: "own" } })),
+      "media.harvestArticleImages": fakeTool("media.harvestArticleImages", calls, ok({ candidates: [], unmet: [] })),
+      "media.findImages": fakeTool("media.findImages", calls, ok({ candidates: [{ path: ".media-cache/run_1/stock.jpg", description: "s", provider: "unsplash", licenseConfidence: "blanket" }], unmet: [] })),
+      "image.generate": fakeTool("image.generate", calls, ok({ candidates: [{ path: ".media-cache/run_1/gen.png", description: "g", provider: "gemini-image", licenseConfidence: "generated" }], unmet: [], model: "m" })),
+    };
+    const plan = await runResolver(tools, { needsVisual: true, kind: "photo", query: "shipping yard at dawn", rationale: "a real scene" }, undefined, { clientMediaOnly: true });
+    expect(plan.status).toBe("none");
+    expect(plan.attempts).toEqual([expect.stringMatching(/^client media only/)]);
+    expect(calls).toEqual([]);
+  });
+
+  it("client media only, a picture attached: the attachment wins exactly as it always did", async () => {
+    const calls: string[] = [];
+    const tools: AgentToolRegistry = {
+      "media.findImages": fakeTool("media.findImages", calls, ok({ candidates: [] })),
+      "media.stageAsset": fakeTool("media.stageAsset", calls, ok({ url: "https://signed/up.png", gcsUri: "gs://b/up.png", contentType: "image/png", bytes: 1 })),
+    };
+    const plan = await runResolver(
+      tools,
+      { needsVisual: true, kind: "photo", query: "anything", rationale: "x" },
+      { analyses: [{ path: ".media-cache/run_1/n1-client0.png", description: "the client's photo", subjects: [], textInImage: [], mood: "", looksLikeScreenshot: false }] },
+      { clientMediaOnly: true },
+    );
+    expect(plan.status).toBe("attached");
     expect(calls).toEqual(["media.stageAsset"]);
   });
 });
