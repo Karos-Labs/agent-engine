@@ -150,6 +150,7 @@ describe("end-to-end: the reputation pulse workflow happy path (RFC-08 §5)", ()
     const executedIds = stepRecords.map((s) => s.stepId).sort();
     expect(executedIds).toEqual(
       [
+        "00-roster-setup",
         "01-open-pulse",
         "02-freeze-inputs",
         "03-capture",

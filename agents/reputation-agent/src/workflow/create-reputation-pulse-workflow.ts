@@ -12,6 +12,7 @@ import { claimPulseNumber, claimReview, releaseReviewClaim } from "./claims.js";
 import { type DraftCycleItem, type DraftFailureKind, applyClientLock, resolveCycleOutcome } from "./draft-cycle.js";
 import { evidencedBoolean } from "./evidence.js";
 import { parseReputationClientConfig } from "./intake.js";
+import { runReputationRosterSetup, type RosterSetupOutcome } from "./roster-setup.js";
 import { buildTriagePayload } from "./triage-envelope.js";
 import {
   appendLearningLog,
@@ -167,6 +168,20 @@ export function createReputationPulseWorkflow(options: CreateReputationPulseWork
     // direction says what matters about today's pulse.
     const runDirection = readRunDirection(wf.input);
 
+    // ── 00: roster setup — the pre-flight this agent runs for itself ──
+    //
+    // Nothing on the engine ever wrote `reputationRoster`, so every client's
+    // first pulse died at step 03. Now the run checks first: a client with a
+    // roster pays one config read; a run that arrived with the portal's intake
+    // (the surfaces the client named, an owned GBP account) resolves and
+    // records one here and pulses against it immediately. See roster-setup.ts
+    // for what resolves and what is refused as a guess. NOT blocking on its
+    // own: step 03 is where "nothing to capture" is decided, and it now quotes
+    // this step's note so the refusal names the cause.
+    const rosterSetup: RosterSetupOutcome = await wf.step.code("00-roster-setup", () =>
+      runReputationRosterSetup({ tools, ctx, runId: wf.runId, clientSlug: wf.clientSlug, input: wf.input ?? {} }),
+    );
+
     // ── 01: open the pulse — claim the pulse number, read the client's one-off steer ──
     const runClaim = await wf.step.code("01-open-pulse", async (): Promise<ReputationRunClaim> => {
       const configOutcome = await tools["client.getConfig"]!.execute({}, { ctx });
@@ -231,7 +246,7 @@ export function createReputationPulseWorkflow(options: CreateReputationPulseWork
     const captureLegs = await wf.step.code("03-capture", async (): Promise<CaptureLegOutcome[]> => {
       if (frozen.captureLegs.length === 0) {
         throw new WorkflowBlockedIntake(
-          `no reputation capture legs are configured for this client's roster${frozen.rosterConfigError ? ` (${frozen.rosterConfigError})` : ""} — nothing to capture this pulse`,
+          `no reputation capture legs are configured for this client's roster${frozen.rosterConfigError ? ` (${frozen.rosterConfigError})` : ""} — nothing to capture this pulse. Setup: ${rosterSetup.note}`,
         );
       }
       const outcome = await tools["reputation.capture"]!.execute({ legs: frozen.captureLegs }, { ctx });
@@ -788,6 +803,7 @@ export function createReputationPulseWorkflow(options: CreateReputationPulseWork
       flaggedCount: flagRows.length,
       captureLegs: captureLegStatuses,
       unavailableLegs,
+      rosterSetup: rosterSetup.status,
     };
   };
 }

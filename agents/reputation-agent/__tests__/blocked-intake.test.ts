@@ -33,7 +33,7 @@ describe("WorkflowBlockedIntake: missing/illegal client intake never reaches ste
     expect(router.complete).not.toHaveBeenCalled();
 
     const stepRecords = await durableStore.listSteps(params.runId);
-    expect(stepRecords.map((s) => s.stepId).sort()).toEqual(["01-open-pulse", "02-freeze-inputs", "03-capture"].sort());
+    expect(stepRecords.map((s) => s.stepId).sort()).toEqual(["00-roster-setup", "01-open-pulse", "02-freeze-inputs", "03-capture"].sort());
     expect(stepRecords.find((s) => s.stepId === "03-capture")?.status).toBe("failed");
   });
 
@@ -54,6 +54,6 @@ describe("WorkflowBlockedIntake: missing/illegal client intake never reaches ste
     expect(router.complete).not.toHaveBeenCalled();
 
     const stepRecords = await durableStore.listSteps("pulse_blocked_autonomy");
-    expect(stepRecords.map((s) => s.stepId).sort()).toEqual(["01-open-pulse", "02-freeze-inputs"].sort());
+    expect(stepRecords.map((s) => s.stepId).sort()).toEqual(["00-roster-setup", "01-open-pulse", "02-freeze-inputs"].sort());
   });
 });

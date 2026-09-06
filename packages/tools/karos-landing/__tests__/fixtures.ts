@@ -35,6 +35,18 @@ export function sampleBlueprint(overrides: Partial<PageBlueprint> = {}): PageBlu
 }
 
 /** Parts that clear `checkPage` against `sampleBlueprint()`. */
+/**
+ * The nav wordmark as an inline PNG (1x1), not a network URL. The blueprint's
+ * `assets[].url` above may stay a Firebase Storage address because nothing
+ * fetches it, but this `<img src>` is fetched by real Chromium in
+ * render-page.test.ts — and in CI that cross-origin request is refused
+ * (`net::ERR_BLOCKED_BY_ORB`), which the tool rightly reports as a failed
+ * request and a broken image. A rendering check must not depend on the
+ * network being kind; the tool's own broken-image probe already exempts `data:`.
+ */
+export const SAMPLE_LOGO_DATA_URI =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
 export function sampleParts(overrides: Partial<PageParts> = {}): PageParts {
   return {
     css: `
@@ -49,7 +61,7 @@ section,header,footer{padding:clamp(3rem,8vw,7rem) clamp(1rem,5vw,4rem);max-widt
 ol{display:grid;gap:2rem;padding:0;list-style:none}
 `,
     sections: [
-      { id: "nav", html: `<header id="nav"><a href="#hero"><img src="https://firebasestorage.googleapis.com/v0/b/x/o/logo.png?alt=media" alt="Northwind" width="120" height="32"></a><nav aria-label="Primary"><a href="#how-it-works">How it works</a><a class="btn" href="#contact">Book an intro call</a></nav></header>` },
+      { id: "nav", html: `<header id="nav"><a href="#hero"><img src="${SAMPLE_LOGO_DATA_URI}" alt="Northwind" width="120" height="32"></a><nav aria-label="Primary"><a href="#how-it-works">How it works</a><a class="btn" href="#contact">Book an intro call</a></nav></header>` },
       { id: "hero", html: `<section id="hero"><p class="eyebrow">AI marketing agents</p><h1>AI agents that draft your marketing on your brand rules</h1><p>Twelve agents run in production today. A person approves before anything ships.</p><a class="btn" href="#contact">Book an intro call</a></section>` },
       { id: "how-it-works", html: `<section id="how-it-works"><h2>How it works</h2><ol><li><span class="eyebrow">01</span> Point it at your brand</li><li><span class="eyebrow">02</span> It drafts</li><li><span class="eyebrow">03</span> You approve</li></ol></section>` },
       { id: "contact", html: `<section id="contact"><h2>Book an intro call</h2><a class="btn" href="#contact">Book an intro call</a></section>` },

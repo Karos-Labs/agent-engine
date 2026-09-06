@@ -9,9 +9,12 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["__tests__/**/*.test.ts", "evals/**/*.test.ts"],
-    // Each test here runs the full 5-channel fan-out (five real channel workflows with fake models).
-    // Since the social agents gained their vision/trend/self-critique steps (PR #50/#52) a run takes
-    // 4-6s on a loaded machine, right on vitest's 5s default, and which test times out is luck.
-    testTimeout: 30000,
+    // Every test here runs a real 5-channel fan-out over file-backed stores. Since
+    // 2026-09-05 the newsletter slot alone performs four research pulls, an edition
+    // plan, a draft, the editorial lint and an editor pass, and the whole tree sits
+    // past vitest's 5s default whenever the machine is under load. 60s matches the
+    // budget the newsletter and agent-server suites already give their own
+    // whole-workflow tests.
+    testTimeout: 60_000,
   },
 });

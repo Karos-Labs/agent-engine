@@ -146,6 +146,8 @@ export interface ReputationPulseWorkflowResult {
   captureLegs: ReputationCaptureLegStatus[];
   /** The subset of `captureLegs` a human must act on — empty on a clean pulse. */
   unavailableLegs: ReputationCaptureLegStatus[];
+  /** Which path the `00-roster-setup` pre-flight took — see `roster-setup.ts`. */
+  rosterSetup: "already-configured" | "recorded" | "not-supplied";
 }
 
 /** Layer 0-only capture summary the analysis workflow scaffold hands to its (stubbed) Layer 1-5 phases. */
