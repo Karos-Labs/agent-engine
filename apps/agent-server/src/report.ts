@@ -173,6 +173,7 @@ const NEWSLETTER_AGENT_STEP_IDS = [
   "15b-editorial-lint",
   "15c-editor-verdict",
   "16-batch-review-r0",
+  "17a-render-email",
   "17-persist-deliverable",
   "18-persist-manifest",
   "19-commit-and-record",

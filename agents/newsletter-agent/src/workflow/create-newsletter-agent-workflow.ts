@@ -35,6 +35,7 @@ import { NewsletterPlanAgent, type NewsletterEditionPlan } from "../agent/newsle
 import { NewsletterEditorAgent, type NewsletterEditorVerdict } from "../agent/newsletter-editor-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
 import { editorialLint, type EditorialLintResult } from "../tools/editorial-lint.js";
+import { renderNewsletterEmails } from "../tools/render-email.js";
 import type {
   NewsletterAgentWorkflowResult,
   NewsletterCandidateSummary,
@@ -790,12 +791,34 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
     const draft = review.output;
     const editorial = editorialByRevision.get(review.revision);
 
+    // ── 17a: the email itself — the same fields the reviewer approved, as a
+    //    standalone email-safe HTML document in both themes (2026-09-05). A
+    //    checkpointed code step so the masthead date is stamped once and a
+    //    resume re-reads the same bytes. `text` stays what the portal renders
+    //    on screen; `html`/`htmlDark` are what a customer pastes into their
+    //    email platform. ──
+    const email = await wf.step.code("17a-render-email", () => {
+      const rendered = renderNewsletterEmails({
+        draft,
+        brand: clientContext.brand,
+        profile: clientContext.profile,
+        issueDate: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }),
+      });
+      return {
+        html: rendered.light.html,
+        htmlDark: rendered.dark.html,
+        bytes: rendered.light.bytes,
+        gmailClipRisk: rendered.light.gmailClipRisk || rendered.dark.gmailClipRisk,
+        direction: rendered.light.direction,
+      };
+    });
+
     // ── 17-18: deliverable & manifest persistence ──
     const deliverableId = await finalizeDeliverable(wf, tools, ctx, {
       persistDeliverableStepId: "17-persist-deliverable",
       persistManifestStepId: "18-persist-manifest",
       kind: "newsletter-edition",
-      deliverable: draft,
+      deliverable: { ...draft, html: email.html, htmlDark: email.htmlDark },
       snapshot: (deliverableId) => ({
         mainStory: selected.mainStory,
         source: selected.source,
@@ -803,6 +826,8 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
         secondaryTopics: selected.secondaryTopics,
         planThesis: plan.thesis,
         researchQueries,
+        emailBytes: email.bytes,
+        gmailClipRisk: email.gmailClipRisk,
         ...(editorial !== undefined ? { editorial } : {}),
         deliverableId,
       }),

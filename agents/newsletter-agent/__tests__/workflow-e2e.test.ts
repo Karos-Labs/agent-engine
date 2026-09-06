@@ -52,6 +52,7 @@ const ALL_20_STEP_IDS = [
   // Revision-scoped: `-r0` is the first review round. A `revise` decision
   // registers `-r1` after re-drafting.
   "16-batch-review-r0",
+  "17a-render-email",
   "17-persist-deliverable",
   "18-persist-manifest",
   "19-commit-and-record",
@@ -87,7 +88,7 @@ function goodDraftRouter() {
   return editionRouter([finalTurn(goodDraft())]);
 }
 
-describe("end-to-end: the Newsletter agent workflow (28 first-pass steps)", () => {
+describe("end-to-end: the Newsletter agent workflow (29 first-pass steps)", () => {
   let env: TestEnvironment;
 
   beforeEach(async () => {
