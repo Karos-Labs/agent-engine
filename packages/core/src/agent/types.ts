@@ -24,7 +24,15 @@ export type TranscriptEntry =
    * blind — `reason` carries the schema complaint, `rawPayload` the excerpt of
    * what it actually sent.
    */
-  | { role: "malformed_turn"; reason: string; rawPayload: string };
+  | { role: "malformed_turn"; reason: string; rawPayload: string }
+  /**
+   * The loop's working turns are spent and no `final` came back. Pushed
+   * exactly once, immediately before the single commit turn that follows
+   * (`BaseAgent.runCommitTurn`), so the model knows its next answer has to be
+   * the output and that a tool call will be refused unexecuted. `maxTurns`
+   * names the ceiling it hit.
+   */
+  | { role: "turn_budget_exhausted"; maxTurns: number; instruction: string };
 
 /**
  * The platform-provided dependencies a `BaseAgent` step runs against.

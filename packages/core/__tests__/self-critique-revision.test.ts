@@ -131,6 +131,8 @@ describe("BaseAgent — a reviser may use tools", () => {
       toolCallTurn("render.preview"),
       toolCallTurn("render.preview"),
       toolCallTurn("render.preview"),
+      // The reviser's commit turn: one more tool call, refused.
+      toolCallTurn("render.preview"),
     ]);
     const runtime: BaseAgentRuntime = { router, tools: { "render.preview": render, "gate.test": gate } };
 
@@ -138,6 +140,28 @@ describe("BaseAgent — a reviser may use tools", () => {
 
     expect(result.status).toBe("budget_exceeded");
     expect(result.finalOutput).toBeNull();
+    // draft (1), gate (2), the two revision tool turns the shared budget still
+    // allowed (3, 4), then the refused commit turn: the third render call never ran.
+    expect(render.execute).toHaveBeenCalledTimes(2);
+    expect(result.steps).toHaveLength(5);
+  });
+
+  it("a final produced on the commit turn still goes through the self-critique gate", async () => {
+    const render = fakeTool("render.preview", async () => ({ status: "success", result: { withinLimit: true } }));
+    const gate = fakeTool("gate.test", async () => ({ status: "success", result: { verdict: "pass", evidence: [], toolVersion: "1.0.0" } }));
+    const { router } = fakeRouter([
+      toolCallTurn("render.preview"), // the one working turn
+      finalTurn({ body: "committed" }), // the commit turn
+    ]);
+    const runtime: BaseAgentRuntime = { router, tools: { "render.preview": render, "gate.test": gate } };
+
+    const result = await new MockAgent(runtime, config({ maxSteps: 1 })).run(ctx, {});
+
+    expect(result.status).toBe("completed");
+    expect(result.finalOutput).toEqual({ body: "committed" });
+    // working turn, commit turn, gate — the shortcut skipped no check.
+    expect(result.steps).toHaveLength(3);
+    expect(gate.execute).toHaveBeenCalledTimes(1);
   });
 
   it("still returns content_fail when the gate rejects the revised draft too", async () => {

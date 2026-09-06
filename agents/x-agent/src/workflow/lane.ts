@@ -85,8 +85,18 @@ export function parseLaneFromSummary(summary: string): Lane | undefined {
  * 3. **`preferred`** (the content mode's lanes, 2026-09) narrows step 2 to
  *    those lanes when at least one of them is not the prior lane; otherwise
  *    the whole menu applies as before.
+ * 4. **`excluded`** lanes are out of the rotation entirely — out of the
+ *    preferred set AND out of the whole-menu fallback, so narrowing to
+ *    nothing can never re-admit one. An explicit `requestedLane` (rule 1) is
+ *    not subject to it: the caller is stating a fact about the run, the
+ *    workflow is stating what the rotation may pick on its own.
  */
-export function selectLane(requestedLane: string | undefined, recentDecisions: readonly XRecentDecision[], preferred?: readonly Lane[]): Lane {
+export function selectLane(
+  requestedLane: string | undefined,
+  recentDecisions: readonly XRecentDecision[],
+  preferred?: readonly Lane[],
+  excluded: readonly Lane[] = [],
+): Lane {
   if (requestedLane !== undefined && isLane(requestedLane)) {
     return requestedLane;
   }
@@ -107,7 +117,7 @@ export function selectLane(requestedLane: string | undefined, recentDecisions: r
   };
   for (const d of dated) usageCount[d.lane]++;
 
-  const everything = LANE_LIST.filter((lane) => lane !== priorLane);
+  const everything = LANE_LIST.filter((lane) => lane !== priorLane && !excluded.includes(lane));
   const narrowed = preferred !== undefined ? everything.filter((lane) => preferred.includes(lane)) : [];
   const candidates = narrowed.length > 0 ? narrowed : everything;
   const ranked = candidates.slice().sort((a, b) => {
@@ -116,7 +126,9 @@ export function selectLane(requestedLane: string | undefined, recentDecisions: r
     return LANE_WEIGHT[b] - LANE_WEIGHT[a];
   });
 
-  return ranked[0] ?? LANE_LIST[0]!;
+  // Unreachable with six lanes, one prior and a short exclusion list, but the
+  // fallback must not be the one lane the caller just excluded.
+  return ranked[0] ?? LANE_LIST.find((lane) => !excluded.includes(lane)) ?? LANE_LIST[0]!;
 }
 
 /** Counts engagement-lane decisions recorded within `windowMs` of `now` — the mechanical half of the engagement lane's daily cap (x-craft.md §4). */
