@@ -29,6 +29,17 @@ const PROD_ENV: Record<string, string> = {
   AUTH_AUDIENCE: "https://agent-engine-prod.example.run.app",
   ANTHROPIC_API_KEY: "sk-x",
   SCRAPPYCOCO_API_KEY: "sc-x",
+  PERPLEXITY_API_KEY: "pplx-x",
+  ELEVENLABS_API_KEY: "el-x",
+  BQ_DATASET_ID: "bi_telemetry",
+  // Wired 2026-09-06 after checking karoscmo directly: the secrets had existed
+  // for a while, and only promote.yaml's comment still said they did not.
+  UNSPLASH_ACCESS_KEY: "un-x",
+  PEXELS_API_KEY: "px-x",
+  PIXABAY_API_KEY: "pb-x",
+  GOOGLE_PLACES_KEY: "gp-x",
+  OPENAI_API_KEY: "oa-x",
+  VIDEO_HARVEST_PROVIDER: "yt-dlp",
   // Not from cloudbuild: pinned by apps/agent-server/Dockerfile's ENV, so every
   // deployed service has it (video-engine-in-image.test.ts asserts the pin).
   BRANDED_SHORTS_ENGINE_DIR: "/app/packages/tools/karos-video/engine",
@@ -56,25 +67,23 @@ describe("AU55: the capability report", () => {
     }
   });
 
-  it("still reports venue photography DISABLED in prod, where the key does not exist yet", () => {
-    // AU56 decided to issue the key (option A) and wired PREP. Prod's key has
-    // not been created, so prod must still show the capability off — a
-    // decision about prep is not a decision about prod, and the report has to
-    // keep saying so until prod is actually wired.
+  it("reports venue photography ACTIVE in prod, now that its key is wired and not merely created", () => {
+    // AU56 decided to issue the key and wired PREP; prod stayed off because
+    // karoscmo had no such secret. It has one now, and promote.yaml mounts it,
+    // so the row has to follow the world rather than the decision's first half.
     const report = buildCapabilityReport(PROD_ENV);
-    const venue = report.capabilities.find((c) => c.id === "venue-photography");
-    expect(venue?.status).toBe("DISABLED");
-    expect(venue?.missing).toContain("GOOGLE_PLACES_KEY");
-    // EXPECTED now, because a written decision exists — this row is where the
-    // AU56 finding came from, and it sat UNEXPLAINED until that decision.
-    expect(venue?.decision).toBe("EXPECTED");
-  });
-
-  it("reports venue photography ACTIVE once the key is present, as prep now is", () => {
-    const report = buildCapabilityReport({ ...PROD_ENV, GOOGLE_PLACES_KEY: "places-key" });
     const venue = report.capabilities.find((c) => c.id === "venue-photography");
     expect(venue?.status).toBe("ACTIVE");
     expect(venue?.missing).toEqual([]);
+    expect(venue?.decision).toBe("EXPECTED");
+  });
+
+  it("goes back to DISABLED the moment the key is absent — the row tracks configuration, not history", () => {
+    const { GOOGLE_PLACES_KEY: _absent, ...withoutKey } = PROD_ENV;
+    const report = buildCapabilityReport(withoutKey);
+    const venue = report.capabilities.find((c) => c.id === "venue-photography");
+    expect(venue?.status).toBe("DISABLED");
+    expect(venue?.missing).toContain("GOOGLE_PLACES_KEY");
   });
 
   it("does not report an explicitly-disabled capability as ACTIVE", () => {
@@ -101,7 +110,10 @@ describe("AU55: the capability report", () => {
     });
 
     it("marks a run ESTIMATED when it ran on fallbacks, and says which", () => {
-      const note = describeRunCapabilities(["image-search-curated"], buildCapabilityReport(PROD_ENV));
+      // Built from an env MISSING the curated keys rather than from PROD_ENV:
+      // prod carries them now, so reusing it would assert nothing.
+      const { UNSPLASH_ACCESS_KEY: _u, PEXELS_API_KEY: _p, PIXABAY_API_KEY: _x, ...noCurated } = PROD_ENV;
+      const note = describeRunCapabilities(["image-search-curated"], buildCapabilityReport(noCurated));
       expect(note.tier).toBe("ESTIMATED");
       expect(note.degraded).toContain("image-search-curated");
       expect(note.notes[0]).toMatch(/UNSPLASH_ACCESS_KEY/);
@@ -156,14 +168,24 @@ describe("the capability-by-product work: the report answers at product level", 
     }
   });
 
-  it("says the sentence, in one line, for the case that prompted this — now that the engine exists, the sentence names the KEY", () => {
+  // The video line is CONFIGURED in both environments now — engine in the
+  // image, transcription key mounted — so these build the shortfall
+  // deliberately instead of borrowing a real environment's gap. That is the
+  // more honest shape anyway: the mechanism under test is "does a headline
+  // name what is missing", and a test that only passes while production is
+  // broken stops testing anything the day production is fixed.
+  const withoutTranscription = () => {
+    const { ELEVENLABS_API_KEY: _absent, ...rest } = PROD_ENV;
+    return rest;
+  };
+
+  it("says the sentence, in one line, for the case that prompted this", () => {
     // When this layer was written the headline read "render engine pending
-    // development (SCRUM-362)". The engine has since been vendored into the
-    // image (packages/tools/karos-video/engine), so the one thing standing
-    // between branded-shorts and a first render is the transcription key —
-    // and the headline must say exactly that, or someone reads "pending
-    // development" and does nothing while a key would have fixed it.
-    const shorts = productsOf(PROD_ENV).get("branded-shorts-agent")!;
+    // development (SCRUM-362)". The engine is vendored into the image now, so
+    // with only the key removed the headline must name the KEY — otherwise a
+    // reader sees "pending development" and does nothing while issuing a
+    // credential would have fixed it.
+    const shorts = productsOf(withoutTranscription()).get("branded-shorts-agent")!;
     expect(shorts.status).toBe("UNRUNNABLE");
     expect(shorts.headline).toContain("no transcription key");
     expect(shorts.headline).not.toContain("pending development");
@@ -171,21 +193,31 @@ describe("the capability-by-product work: the report answers at product level", 
 
   it("keeps the per-key detail underneath rather than replacing it", () => {
     // The rows are correct. They are just not the level anyone decides at.
-    const shorts = productsOf(PROD_ENV).get("branded-shorts-agent")!;
+    const shorts = productsOf(withoutTranscription()).get("branded-shorts-agent")!;
     expect(shorts.capabilities.map((c) => c.id)).toContain("video-engine");
     expect(shorts.capabilities.map((c) => c.id)).toContain("video-transcription");
     expect(shorts.blockedBy).toEqual(["video-transcription"]);
   });
 
   it("distinguishes 'nobody can configure this' from 'somebody must issue a key'", () => {
-    // The distinction that decides WHO acts. With the engine in the image,
-    // branded-shorts is a configuration gap (issue the key), not unbuilt work.
-    const products = productsOf(PROD_ENV);
-    expect(products.get("branded-shorts-agent")!.blockedReason).toBe("NOT_CONFIGURED");
-    expect(products.get("landing-builder-agent")!.blockedReason ?? "NOT_BLOCKED").not.toBe("PENDING_DEVELOPMENT");
+    // The distinction that decides WHO acts. With the engine in the image, a
+    // missing transcription key is a configuration gap (issue it), not
+    // unbuilt work — and nothing in the catalogue is unbuilt work any more.
+    expect(productsOf(withoutTranscription()).get("branded-shorts-agent")!.blockedReason).toBe("NOT_CONFIGURED");
+    expect(productsOf(PROD_ENV).get("landing-builder-agent")!.blockedReason ?? "NOT_BLOCKED").not.toBe("PENDING_DEVELOPMENT");
     // No catalogue row is PENDING_BUILD any more; the status still exists for
     // the next capability that is decided before it is built.
     expect(buildCapabilityReport(PROD_ENV).capabilities.some((c) => c.status === "PENDING_BUILD")).toBe(false);
+  });
+
+  it("reports every product RUNNABLE against production as it is actually configured today", () => {
+    // The payoff line, and the one that fails the day a real regression lands
+    // in the deploy config: with prod wired as of 2026-09-06 there is no
+    // UNRUNNABLE product left, and reputation is the only DEGRADED one (no
+    // credentialed review source — an open decision, not an oversight).
+    const products = buildCapabilityReport(PROD_ENV).products;
+    expect(products.filter((p) => p.status === "UNRUNNABLE").map((p) => p.productId)).toEqual([]);
+    expect(products.filter((p) => p.status === "DEGRADED").map((p) => p.productId)).toEqual(["reputation-agent"]);
   });
 
   it("reports branded-shorts UNRUNNABLE — NOT_CONFIGURED — outside the container, where the engine variable is unset", () => {
@@ -255,11 +287,10 @@ describe("the capability-by-product work: the report answers at product level", 
     // Until the video engine was vendored, branded-shorts was the one
     // PENDING_DEVELOPMENT product and this test pinned "a missing key outranks
     // scheduled work". No product is pending now, so the ordering that remains
-    // testable on real data is the next rule down: UNRUNNABLE (a key someone
-    // can issue today) sorts above DEGRADED and RUNNABLE.
-    // PROD_ENV as it is: the two video products are UNRUNNABLE on the missing
-    // transcription key; everything else runs, degraded or not.
-    const products = buildCapabilityReport(PROD_ENV).products;
+    // testable is the next rule down: UNRUNNABLE (a key someone can issue
+    // today) sorts above DEGRADED and RUNNABLE. Ordering needs an UNRUNNABLE
+    // to sort, and prod no longer has one — hence the constructed env.
+    const products = buildCapabilityReport(withoutTranscription()).products;
     expect(products.findIndex((p) => p.blockedReason === "PENDING_DEVELOPMENT")).toBe(-1);
     const lastUnrunnable = products.map((p) => p.status).lastIndexOf("UNRUNNABLE");
     const firstOther = products.findIndex((p) => p.status !== "UNRUNNABLE");

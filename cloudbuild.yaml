@@ -77,7 +77,8 @@ substitutions:
   # photo is of the right building and falls through to generic image
   # search — which it had been doing in every environment since it was
   # written, because this key was documented in .env.example and wired
-  # nowhere. prod is deliberately NOT wired yet: its key does not exist.
+  # nowhere. prod is wired too since 2026-09-06 (its key does exist, and
+  # answers findplacefromtext) — see cloudbuild.promote.yaml.
   _GOOGLE_PLACES_KEY_SECRET: google-places-key
   # The scraper backend research.pull and the visual pipeline's scrape tier
   # actually run on (karos-scraper/src/index.ts's createScraperProvider) —
@@ -97,8 +98,9 @@ substitutions:
   # research.pull's scraper). Absent, ChatGPT's cells report
   # UNAVAILABLE/no_adapter_wired like any other unconfigured engine.
   #
-  # prod is deliberately NOT wired: cloudbuild.promote.yaml is its own file and
-  # karoscmo's secret/IAM state is not this one's to assume.
+  # prod is wired too since 2026-09-06: cloudbuild.promote.yaml is still its own
+  # file and this one still assumes nothing about karoscmo's secret/IAM state —
+  # that state was checked directly before the line was added there.
   _OPENAI_API_KEY_SECRET: OPENAI_API_KEY
   # Word-level transcription (video.transcribe) AND the ElevenLabs voiceover
   # alternative (video.synthesizeVoice). The secret existed in karoscmo-prep

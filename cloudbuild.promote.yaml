@@ -48,28 +48,48 @@ substitutions:
   _BQ_DATASET_ID: "bi_telemetry"
   _ANTHROPIC_VERTEX_PROJECT_ID: ""
   _ANTHROPIC_API_KEY_SECRET: ""
-  # The scraper key, created in karoscmo alongside prep's. Unlike
-  # UNSPLASH_ACCESS_KEY (deliberately prep-only, since karoscmo has no such
-  # secret), this one exists in both projects, so wiring it here cannot break a
-  # manual promote.
-  #
-  # PEXELS_API_KEY / PIXABAY_API_KEY follow UNSPLASH_ACCESS_KEY, not this one:
-  # they are wired in `cloudbuild.yaml` (prep) only, because the secrets do not
-  # exist in karoscmo and `--set-secrets` naming a missing secret fails the
-  # deploy outright. Their absence costs production two of six image providers
-  # and nothing else — the keyless ones (openverse, wikimedia, ddg_images) and
-  # the generative tier are unaffected, and the zero-held guarantee holds
-  # regardless. Create the secrets in karoscmo and add them here to close it.
+  # The scraper key, created in karoscmo alongside prep's.
   _SCRAPPYCOCO_API_KEY_SECRET: scrappycoco-api-key
   _PERPLEXITY_API_KEY_SECRET: PERPLEXITY_API_KEY
+  # Curated stock photography, venue photography and the ChatGPT visibility
+  # column. These five were prep-only on the stated grounds that "the secrets
+  # do not exist in karoscmo and --set-secrets naming a missing secret fails
+  # the deploy outright" — the instruction attached to that was "create the
+  # secrets in karoscmo and add them here to close it".
+  #
+  # They exist. Verified 2026-09-06 against the prod project: every one of
+  # these secrets is present with an enabled version, and every one answers its
+  # own API — Unsplash/Pexels/Pixabay/OpenAI 200, and google-places-key 200
+  # from `maps/api/place/findplacefromtext` (the endpoint providers/google-places.ts
+  # actually calls; the newer places.googleapis.com is not enabled in either
+  # project and is not what this code uses). So the premise had expired and
+  # only the comment was still enforcing it, which cost production three of
+  # six image providers, the only place-verified photo source, and the ChatGPT
+  # column — silently, because a stale comment reads exactly like a decision.
+  #
+  # Checked against a real credential rather than assumed: elevenlabs-api-key
+  # was mounted in prep for weeks holding a key that 401'd, so "the secret
+  # exists" is not the same claim as "the capability works".
+  _UNSPLASH_ACCESS_KEY_SECRET: unsplash-access-key
+  _PEXELS_API_KEY_SECRET: pexels-api-key
+  _PIXABAY_API_KEY_SECRET: pixabay-api-key
+  _GOOGLE_PLACES_KEY_SECRET: google-places-key
+  _OPENAI_API_KEY_SECRET: OPENAI_API_KEY
   # Transcription (video.transcribe, ElevenLabs Scribe) — the one credential
-  # both video products cannot run without. Unlike UNSPLASH/PEXELS/PIXABAY
-  # above, this secret DOES exist in karoscmo (created 2026-08-28 alongside
-  # prep's), so naming it here cannot fail the deploy the way a missing secret
-  # would. prep has been wired since the tiktok smart-pipeline change; prod was
-  # the half that stayed unwired, which is what the video-transcription
-  # capability row said out loud until this line existed.
+  # both video products cannot run without. The secret exists in karoscmo
+  # (created 2026-08-28 alongside prep's), so naming it here cannot fail the
+  # deploy the way a missing secret would. prep has been wired since the tiktok
+  # smart-pipeline change; prod was the half that stayed unwired, which is what
+  # the video-transcription capability row said out loud until this line
+  # existed.
   _ELEVENLABS_API_KEY_SECRET: elevenlabs-api-key
+  # VIDEO_HARVEST_PROVIDER=yt-dlp is set inline on both services below, matching
+  # prep. It needs no secret — yt-dlp is installed in the image — and without it
+  # media.harvestVideo reports not_available, so a prod tiktok run skips from
+  # the client's own footage straight to generated b-roll and a client whose
+  # sourcePool is shows never gets a commentary clip. Whether a given show may
+  # be clipped stays a per-client rights question the product answers, exactly
+  # as it does in prep; this variable only decides whether the tool exists.
   _PUBSUB_PROJECT_ID: ""
   _QUEUE_SUBSCRIPTION_RUN_JOBS: ""
   # The topic /runs/start PUBLISHES to (AU66 / SCRUM-364). Its absence was
@@ -192,8 +212,8 @@ steps:
       - --no-allow-unauthenticated
       - --service-account=${_SERVICE_ACCOUNT}
       - --memory=2Gi
-      - --set-env-vars=GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},BQ_DATASET_ID=${_BQ_DATASET_ID},ANTHROPIC_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},CLOUD_ML_REGION=global,VERTEX_AI_LOCATION=${_REGION},GEMINI_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},PROMPT_STORE_DRIVER=firestore,QUEUE_PROVIDER=pubsub,QUEUE_TOPIC_RUN_JOBS=${_QUEUE_TOPIC_RUN_JOBS},PUBSUB_PROJECT_ID=${_PUBSUB_PROJECT_ID},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},GCS_ARTIFACTS_BUCKET=${_GCS_ARTIFACTS_BUCKET},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET},LANDING_HOSTING_PROJECT=${_LANDING_HOSTING_PROJECT},LANDING_HOSTING_SITE_PREFIX=${_LANDING_HOSTING_SITE_PREFIX},INSTAGRAM_AGENT_REPO_ROOT=/app,PUBSUB_PUSH_AUDIENCE_URL=${_PUBSUB_PUSH_AUDIENCE_URL},AUTH_ENABLED=true,AUTH_AUDIENCE=${_AUTH_AUDIENCE},AUTH_ALLOWED_SERVICE_ACCOUNTS=${_AUTH_ALLOWED_SERVICE_ACCOUNTS}
-      - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest,SCRAPPYCOCO_API_KEY=${_SCRAPPYCOCO_API_KEY_SECRET}:latest,PERPLEXITY_API_KEY=${_PERPLEXITY_API_KEY_SECRET}:latest,ELEVENLABS_API_KEY=${_ELEVENLABS_API_KEY_SECRET}:latest
+      - --set-env-vars=GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},BQ_DATASET_ID=${_BQ_DATASET_ID},ANTHROPIC_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},CLOUD_ML_REGION=global,VERTEX_AI_LOCATION=${_REGION},GEMINI_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},PROMPT_STORE_DRIVER=firestore,QUEUE_PROVIDER=pubsub,QUEUE_TOPIC_RUN_JOBS=${_QUEUE_TOPIC_RUN_JOBS},PUBSUB_PROJECT_ID=${_PUBSUB_PROJECT_ID},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},GCS_ARTIFACTS_BUCKET=${_GCS_ARTIFACTS_BUCKET},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET},LANDING_HOSTING_PROJECT=${_LANDING_HOSTING_PROJECT},LANDING_HOSTING_SITE_PREFIX=${_LANDING_HOSTING_SITE_PREFIX},INSTAGRAM_AGENT_REPO_ROOT=/app,VIDEO_HARVEST_PROVIDER=yt-dlp,PUBSUB_PUSH_AUDIENCE_URL=${_PUBSUB_PUSH_AUDIENCE_URL},AUTH_ENABLED=true,AUTH_AUDIENCE=${_AUTH_AUDIENCE},AUTH_ALLOWED_SERVICE_ACCOUNTS=${_AUTH_ALLOWED_SERVICE_ACCOUNTS}
+      - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest,SCRAPPYCOCO_API_KEY=${_SCRAPPYCOCO_API_KEY_SECRET}:latest,PERPLEXITY_API_KEY=${_PERPLEXITY_API_KEY_SECRET}:latest,ELEVENLABS_API_KEY=${_ELEVENLABS_API_KEY_SECRET}:latest,UNSPLASH_ACCESS_KEY=${_UNSPLASH_ACCESS_KEY_SECRET}:latest,PEXELS_API_KEY=${_PEXELS_API_KEY_SECRET}:latest,PIXABAY_API_KEY=${_PIXABAY_API_KEY_SECRET}:latest,GOOGLE_PLACES_KEY=${_GOOGLE_PLACES_KEY_SECRET}:latest,OPENAI_API_KEY=${_OPENAI_API_KEY_SECRET}:latest
       # instagram-agent writes under `repoRoot` (INSTAGRAM_AGENT_REPO_ROOT=/app):
       # `.media-cache/<runId>/` from media.findImages, and
       # `instagram-output/<client>/<postId>/` from publish.renderCarousel. The
@@ -232,8 +252,8 @@ steps:
       - --memory=2Gi
       - --min-instances=1
       - --no-cpu-throttling
-      - --set-env-vars=GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},BQ_DATASET_ID=${_BQ_DATASET_ID},ANTHROPIC_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},CLOUD_ML_REGION=global,VERTEX_AI_LOCATION=${_REGION},GEMINI_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},PROMPT_STORE_DRIVER=firestore,QUEUE_PROVIDER=pubsub,QUEUE_TOPIC_RUN_JOBS=${_QUEUE_TOPIC_RUN_JOBS},PUBSUB_PROJECT_ID=${_PUBSUB_PROJECT_ID},QUEUE_SUBSCRIPTION_RUN_JOBS=${_QUEUE_SUBSCRIPTION_RUN_JOBS},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},GCS_ARTIFACTS_BUCKET=${_GCS_ARTIFACTS_BUCKET},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET},LANDING_HOSTING_PROJECT=${_LANDING_HOSTING_PROJECT},LANDING_HOSTING_SITE_PREFIX=${_LANDING_HOSTING_SITE_PREFIX},INSTAGRAM_AGENT_REPO_ROOT=/app
-      - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest,SCRAPPYCOCO_API_KEY=${_SCRAPPYCOCO_API_KEY_SECRET}:latest,PERPLEXITY_API_KEY=${_PERPLEXITY_API_KEY_SECRET}:latest,ELEVENLABS_API_KEY=${_ELEVENLABS_API_KEY_SECRET}:latest
+      - --set-env-vars=GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},BQ_DATASET_ID=${_BQ_DATASET_ID},ANTHROPIC_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},CLOUD_ML_REGION=global,VERTEX_AI_LOCATION=${_REGION},GEMINI_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},PROMPT_STORE_DRIVER=firestore,QUEUE_PROVIDER=pubsub,QUEUE_TOPIC_RUN_JOBS=${_QUEUE_TOPIC_RUN_JOBS},PUBSUB_PROJECT_ID=${_PUBSUB_PROJECT_ID},QUEUE_SUBSCRIPTION_RUN_JOBS=${_QUEUE_SUBSCRIPTION_RUN_JOBS},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},GCS_ARTIFACTS_BUCKET=${_GCS_ARTIFACTS_BUCKET},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET},LANDING_HOSTING_PROJECT=${_LANDING_HOSTING_PROJECT},LANDING_HOSTING_SITE_PREFIX=${_LANDING_HOSTING_SITE_PREFIX},INSTAGRAM_AGENT_REPO_ROOT=/app,VIDEO_HARVEST_PROVIDER=yt-dlp
+      - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest,SCRAPPYCOCO_API_KEY=${_SCRAPPYCOCO_API_KEY_SECRET}:latest,PERPLEXITY_API_KEY=${_PERPLEXITY_API_KEY_SECRET}:latest,ELEVENLABS_API_KEY=${_ELEVENLABS_API_KEY_SECRET}:latest,UNSPLASH_ACCESS_KEY=${_UNSPLASH_ACCESS_KEY_SECRET}:latest,PEXELS_API_KEY=${_PEXELS_API_KEY_SECRET}:latest,PIXABAY_API_KEY=${_PIXABAY_API_KEY_SECRET}:latest,GOOGLE_PLACES_KEY=${_GOOGLE_PLACES_KEY_SECRET}:latest,OPENAI_API_KEY=${_OPENAI_API_KEY_SECRET}:latest
       # instagram-agent writes under `repoRoot` (INSTAGRAM_AGENT_REPO_ROOT=/app):
       # `.media-cache/<runId>/` from media.findImages, and
       # `instagram-output/<client>/<postId>/` from publish.renderCarousel. The

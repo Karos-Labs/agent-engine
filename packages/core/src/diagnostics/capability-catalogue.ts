@@ -165,7 +165,7 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
     whenAbsent:
       "Those providers do not register. Image sourcing still works from the keyless ones (Openverse, Wikimedia, DuckDuckGo) plus generation, but with a smaller pool and weaker licence tiers — keyless sources are 'attributable' or 'unknown' provenance, never 'blanket'.",
     rationale:
-      "cloudbuild.promote.yaml records these as deliberately prep-only: the secrets do not exist in the prod project and --set-secrets naming a missing secret fails the deploy.",
+      "Wired in BOTH cloudbuild files since 2026-09-06. They were prep-only while karoscmo genuinely had no such secrets, and the instruction attached to that state was to create them there and add the line — by the time anyone looked, the secrets existed and only the comment was still enforcing the old world. Verified 2026-09-06 against the prod project: each secret exists with an enabled version AND answers its own API (the elevenlabs-api-key incident — mounted for weeks in prep while returning 401 — is why presence alone is not the claim).",
     shortfall: "no curated stock photography",
   },
   {
@@ -187,7 +187,7 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
     // DISABLED. That is correct and intended, and the rationale here is what
     // keeps it EXPECTED rather than a fresh question.
     rationale:
-      "AU56 decided to issue the key. prep is wired (Secret Manager: google-places-key); prod's key is not created yet, so prod remains DISABLED until it is.",
+      "AU56 decided to issue the key; both environments are wired (Secret Manager: google-places-key), prod since 2026-09-06. Checked against `maps/api/place/findplacefromtext` — the endpoint providers/google-places.ts actually calls — not against places.googleapis.com, which is enabled in neither project and which this code does not use. Verified 2026-09-06 against the prod project: each secret exists with an enabled version AND answers its own API (the elevenlabs-api-key incident — mounted for weeks in prep while returning 401 — is why presence alone is not the claim).",
     shortfall: "no venue photography",
   },
   {
@@ -240,7 +240,8 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
     whenAbsent:
       "media.harvestVideo reports not_available and the tiktok cascade skips from the client's own footage straight to generated b-roll — a client with a sourcePool of shows but no uploaded episode never gets a commentary clip, only original shorts.",
     shortfall: "no footage harvest",
-    rationale: "Set to yt-dlp in cloudbuild.yaml for prep. The cookies file is optional and only needed when YouTube challenges the Cloud Run egress IP; absent, an affected download is a content_fail the cascade routes around.",
+    rationale:
+      "Set to yt-dlp in BOTH cloudbuild files (prod since 2026-09-06 — it needs no secret, since yt-dlp is installed in the image, and prod had simply never been given the line). The cookies file is optional and only needed when YouTube challenges the Cloud Run egress IP; absent, an affected download is a content_fail the cascade routes around. Whether a given show may be clipped stays a per-client rights question, which this variable does not answer.",
   },
   {
     id: "video-voiceover",
