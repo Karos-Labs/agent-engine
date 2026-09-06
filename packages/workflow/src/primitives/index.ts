@@ -9,3 +9,4 @@ export * from "./style-preferences.js";
 export * from "./agent-context.js";
 export * from "./run-gate.js";
 export * from "./finalize-deliverable.js";
+export * from "./agent-exhaustion.js";

@@ -104,6 +104,9 @@ describe("BaseAgent — maxSteps budget", () => {
       toolCallTurn("research.pull", { query: "1" }),
       toolCallTurn("research.pull", { query: "2" }),
       toolCallTurn("research.pull", { query: "3" }),
+      // The commit turn (see the describe below): still a tool call, so the
+      // model gets no output past its budget and the step ends as it always did.
+      toolCallTurn("research.pull", { query: "4" }),
     ]);
     const runtime: BaseAgentRuntime = { router, tools: { "research.pull": research } };
 
@@ -112,8 +115,100 @@ describe("BaseAgent — maxSteps budget", () => {
 
     expect(result.status).toBe("budget_exceeded");
     expect(result.finalOutput).toBeNull();
-    expect(result.steps).toHaveLength(3);
+    // Three working turns plus the one commit turn, all on the record.
+    expect(result.steps).toHaveLength(4);
+    // The fourth call was refused before execution: the ceiling is a ceiling.
     expect(research.execute).toHaveBeenCalledTimes(3);
+  });
+});
+
+/**
+ * The turn that follows an exhausted loop, and the budget note every turn now
+ * carries. Reproduces prep run pubsub-21699953559354996 (x-agent
+ * `10-draft-post`): eight working turns, seven of them passing lint on
+ * near-identical text, every Thought ending "run the gates, then output" —
+ * and no output, because a turn is one tool call OR a final, and the model
+ * was never told how many it had left.
+ */
+describe("BaseAgent — the commit turn after an exhausted loop", () => {
+  it("gives a loop that spent its working turns one more turn, and a final there completes the step", async () => {
+    const research = fakeTool("research.pull", async () => ({ status: "success", result: { hits: 1 } }));
+    const router = fakeRouter([
+      toolCallTurn("research.pull", { query: "1" }),
+      toolCallTurn("research.pull", { query: "2" }),
+      finalTurn({ body: "committed from what was already verified" }),
+    ]);
+    const runtime: BaseAgentRuntime = { router, tools: { "research.pull": research } };
+
+    const result = await new MockAgent(runtime, baseConfig({ maxSteps: 2 })).run(ctx, { topic: "x" });
+
+    expect(result.status).toBe("completed");
+    expect(result.finalOutput).toEqual({ body: "committed from what was already verified" });
+    expect(result.steps).toHaveLength(3);
+    expect(result.steps[2]?.stepIndex).toBe(2);
+    expect(research.execute).toHaveBeenCalledTimes(2);
+
+    // The commit turn is told, in the transcript and in the budget note, that
+    // the working turns are gone and only a final is accepted.
+    const commitPrompt = vi.mocked(router.complete).mock.calls[2]![0] as string;
+    expect(commitPrompt).toContain('"role":"turn_budget_exhausted"');
+    expect(commitPrompt).toContain('"maxTurns":2');
+    expect(commitPrompt).toContain('"remaining":0,"commit":true');
+    expect(commitPrompt).toContain("refused unexecuted");
+  });
+
+  it("refuses a tool call on the commit turn without executing it, and says so in the step's error", async () => {
+    const research = fakeTool("research.pull", async () => ({ status: "success", result: { hits: 1 } }));
+    const router = fakeRouter([toolCallTurn("research.pull", { query: "1" }), toolCallTurn("research.pull", { query: "one more, please" })]);
+    const runtime: BaseAgentRuntime = { router, tools: { "research.pull": research } };
+
+    const result = await new MockAgent(runtime, baseConfig({ maxSteps: 1 })).run(ctx, { topic: "x" });
+
+    expect(result.status).toBe("budget_exceeded");
+    expect(result.finalOutput).toBeNull();
+    expect(result.steps).toHaveLength(2);
+    expect(research.execute).toHaveBeenCalledTimes(1);
+    const refused = result.steps[1]!;
+    expect(refused.status).toBe("tooling_error");
+    expect(refused.toolCall?.name).toBe("research.pull");
+    expect(refused.toolCall?.toolVersion).toBe("commit-turn");
+    expect((refused.toolCall?.result as { refused: boolean }).refused).toBe(true);
+    // What `step.agent` promotes onto the checkpoint: a reader learns the
+    // model called a tool instead of finishing, not just that a budget ran out.
+    expect(refused.error).toMatch(/1-turn working budget .* called "research\.pull" instead — refused, not executed/);
+  });
+
+  it("does not spend a commit turn on a loop that was entered with nothing left", async () => {
+    // maxSteps 0 is not a real configuration (the schema requires a positive
+    // integer) but it is the one way to enter the loop with no allowance at
+    // all, which is the guard under test: no working turn, no commit turn,
+    // no model call.
+    const router = fakeRouter([finalTurn({ body: "must not be asked for" })]);
+    const runtime: BaseAgentRuntime = { router, tools: {} };
+
+    const result = await new MockAgent(runtime, baseConfig({ allowedTools: [], maxSteps: 0 })).run(ctx, {});
+
+    expect(result.status).toBe("budget_exceeded");
+    expect(result.steps).toHaveLength(0);
+    expect(router.complete).not.toHaveBeenCalled();
+  });
+
+  it("tells the model where every working turn sits in its budget", async () => {
+    const research = fakeTool("research.pull", async () => ({ status: "success", result: { hits: 1 } }));
+    const router = fakeRouter([toolCallTurn("research.pull", { query: "1" }), finalTurn({ body: "done" })]);
+    const runtime: BaseAgentRuntime = { router, tools: { "research.pull": research } };
+
+    await new MockAgent(runtime, baseConfig({ maxSteps: 3 })).run(ctx, { topic: "x" });
+
+    const prompts = vi.mocked(router.complete).mock.calls.map((call) => call[0] as string);
+    expect(prompts[0]).toContain('"turnBudget":{"turn":1,"maxTurns":3,"remaining":2,"commit":false');
+    expect(prompts[1]).toContain('"turnBudget":{"turn":2,"maxTurns":3,"remaining":1,"commit":false');
+    // The rule that names the observed failure: one tool call OR the final, never both.
+    expect(prompts[1]).toContain("never both");
+    // Uncached side only — the cached system block must not change per turn.
+    const systems = vi.mocked(router.complete).mock.calls.map((call) => (call[3] as { system?: string } | undefined)?.system ?? "");
+    expect(systems[0]).toBe(systems[1]);
+    expect(systems[0]).not.toContain("turnBudget");
   });
 });
 
@@ -407,14 +502,15 @@ describe("BaseAgent — recoverable model mistakes", () => {
 
   it("still exhausts maxSteps rather than looping forever on a model that never corrects itself", async () => {
     const gate = strictTool("gate.numbersSourced");
-    const router = fakeRouter(Array.from({ length: 3 }, () => toolCallTurn("gate.numbersSourced", { wrong: true })));
+    // Three working turns and the commit turn that follows them, all wrong.
+    const router = fakeRouter(Array.from({ length: 4 }, () => toolCallTurn("gate.numbersSourced", { wrong: true })));
     const runtime: BaseAgentRuntime = { router, tools: { "gate.numbersSourced": gate } };
 
     const agent = new MockAgent(runtime, baseConfig({ allowedTools: ["gate.numbersSourced"], maxSteps: 3 }));
     const result = await agent.run(ctx, {});
 
     expect(result.status).toBe("budget_exceeded");
-    expect(result.steps).toHaveLength(3);
+    expect(result.steps).toHaveLength(4);
     expect(gate.execute).not.toHaveBeenCalled();
   });
 

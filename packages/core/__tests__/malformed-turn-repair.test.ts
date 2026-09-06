@@ -224,7 +224,27 @@ describe("BaseAgent — malformed turn repair", () => {
     const result = await new MockAgent(runtimeFor(router), config({ maxSteps: 3, maxMalformedTurns: 99 })).run(ctx, { topic: "ai" });
 
     expect(result.status).toBe("budget_exceeded");
-    expect(complete).toHaveBeenCalledTimes(3);
+    // Three working turns, then the single commit turn — also malformed here,
+    // and NOT repaired: a commit turn is the last word, never the start of
+    // another repair cycle.
+    expect(complete).toHaveBeenCalledTimes(4);
+  });
+
+  it("does not repair a malformed commit turn", async () => {
+    const toolTurn = (): CompletionResult<unknown> => ({
+      output: { type: "tool_call", tool: "render.preview", args: {} },
+      modelUsed: "claude-sonnet-4-6",
+      inputTokens: { cached: 0, uncached: 100 },
+      outputTokens: 20,
+    });
+    const { router, complete } = fakeRouter([toolTurn, malformedTurn(), finalTurn({ body: "never asked for" })]);
+
+    const result = await new MockAgent(runtimeFor(router), config({ maxSteps: 1, maxMalformedTurns: 99 })).run(ctx, { topic: "ai" });
+
+    expect(result.status).toBe("budget_exceeded");
+    expect(complete).toHaveBeenCalledTimes(2);
+    expect(result.steps).toHaveLength(2);
+    expect(result.steps[1]!.error).toMatch(/malformed model turn/);
   });
 });
 

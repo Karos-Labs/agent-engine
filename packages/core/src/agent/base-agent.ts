@@ -32,13 +32,43 @@ type TurnOutcome<TOutput> =
   | { kind: "final"; telemetry: AgentStepTelemetry; output: TOutput }
   | { kind: "tooling_error"; telemetry: AgentStepTelemetry }
   /** The model answered, but in a shape the turn schema rejects — recoverable by re-prompting, unlike every other failure here. */
-  | { kind: "malformed_turn"; telemetry: AgentStepTelemetry; reason: string; rawPayload: string };
+  | { kind: "malformed_turn"; telemetry: AgentStepTelemetry; reason: string; rawPayload: string }
+  /** The commit turn (`runCommitTurn`) answered with a tool call instead of `final`. The tool was never executed — the working budget was already spent. */
+  | { kind: "commit_refused"; telemetry: AgentStepTelemetry };
 
 /** Step-scoped loop counters, shared by the draft phase and every revision so neither can reset the other's bound. */
 interface LoopState {
   stepIndex: number;
   malformedTurns: number;
 }
+
+/**
+ * Where a turn sits inside the step's `maxSteps` allowance, stated to the
+ * model on every turn (`buildTurnPrompt`).
+ *
+ * Until 2026-09 the model was never told. Prep run pubsub-21699953559354996
+ * (x-agent `10-draft-post`) spent all eight turns on `gate.lintPost` passes
+ * of near-identical text, each Thought ending "let me run the gates, then
+ * output" — a plan that needs two turns, announced on the last one, and the
+ * step ended `budget_exceeded` with a draft that had cleared the gate seven
+ * times discarded. `remaining` is what makes that plan visibly impossible
+ * before it is attempted.
+ */
+export interface TurnBudget {
+  /** 1-based index of this turn within the step. */
+  turn: number;
+  maxTurns: number;
+  /** Working turns left AFTER this one: 0 on the last working turn and on the commit turn. */
+  remaining: number;
+  /** True only for the single commit turn that follows an exhausted loop (`runCommitTurn`). */
+  commit: boolean;
+}
+
+const WORKING_TURN_RULE =
+  'A turn is exactly one tool call OR the final output, never both. Return {"type":"final"} while `remaining` still allows it — a tool call on the last working turn leaves no turn to return the result in.';
+const COMMIT_TURN_RULE =
+  'The working turns are spent. This turn MUST return {"type":"final"}, built from what the transcript has already verified. A tool call is refused unexecuted and the step ends with no output.';
+const COMMIT_TURN_INSTRUCTION = "Return the final output now, from what the transcript already verified. Do not call a tool.";
 
 /** How one pass of the ReAct loop ended. `budget_exceeded`/`tooling_error` map straight onto `AgentExecutionStatus`. */
 type LoopExit<TOutput> = { kind: "final"; output: TOutput } | { kind: "tooling_error" } | { kind: "budget_exceeded" };
@@ -127,13 +157,17 @@ export abstract class BaseAgent<TOutput> {
     maxSteps: number,
   ): Promise<LoopExit<TOutput>> {
     const maxMalformedTurns = this.config.maxMalformedTurns ?? 1;
+    let turnsThisPass = 0;
 
     while (loop.stepIndex < maxSteps) {
-      const turn = await this.runOneTurn(ctx, input, transcript, systemPrompt, loop.stepIndex);
+      const turn = await this.runOneTurn(ctx, input, transcript, systemPrompt, loop.stepIndex, this.turnBudget(loop.stepIndex, maxSteps, false));
       steps.push(turn.telemetry);
       loop.stepIndex++;
+      turnsThisPass++;
 
-      if (turn.kind === "tooling_error") {
+      // `commit_refused` cannot arise on a working turn (only a commit turn
+      // refuses a tool call); it is handled here so the union stays total.
+      if (turn.kind === "tooling_error" || turn.kind === "commit_refused") {
         return { kind: "tooling_error" };
       }
 
@@ -163,6 +197,60 @@ export abstract class BaseAgent<TOutput> {
       return { kind: "final", output: turn.output };
     }
 
+    // Entered with nothing left to spend (a revision pass after the draft
+    // used it all): no commit turn either. `resolveFinalOutput` already
+    // guards this case before calling in; this keeps the invariant local.
+    if (turnsThisPass === 0) {
+      return { kind: "budget_exceeded" };
+    }
+    return this.runCommitTurn(ctx, input, transcript, systemPrompt, steps, loop, maxSteps);
+  }
+
+  private turnBudget(stepIndex: number, maxSteps: number, commit: boolean): TurnBudget {
+    return { turn: stepIndex + 1, maxTurns: maxSteps, remaining: commit ? 0 : Math.max(0, maxSteps - stepIndex - 1), commit };
+  }
+
+  /**
+   * The one turn that follows an exhausted loop.
+   *
+   * A loop that ran out of working turns has, more often than not, already
+   * done the work: the observed failure (see `TurnBudget`) was seven passing
+   * lint verdicts on a draft the model never got round to returning. So the
+   * transcript is told the budget is spent, and the model is asked ONE more
+   * time — same schema on the wire, so nothing about the envelope changes —
+   * to return `final` from what it has already verified.
+   *
+   * Bounded by construction: exactly one commit turn per loop pass, never a
+   * repair turn after it. A tool call here is refused before execution (the
+   * budget is spent; that is the point) and the step resolves
+   * `budget_exceeded` exactly as it did before this turn existed, with the
+   * refused call recorded in telemetry so the step's `error` says what the
+   * model did instead of finishing. A `final` here still goes through the
+   * same self-critique gate as any other, so the shortcut cannot skip a check.
+   */
+  private async runCommitTurn(
+    ctx: AgentContext,
+    input: unknown,
+    transcript: TranscriptEntry[],
+    systemPrompt: string | undefined,
+    steps: AgentStepTelemetry[],
+    loop: LoopState,
+    maxSteps: number,
+  ): Promise<LoopExit<TOutput>> {
+    transcript.push({ role: "turn_budget_exhausted", maxTurns: maxSteps, instruction: COMMIT_TURN_INSTRUCTION });
+    const turn = await this.runOneTurn(ctx, input, transcript, systemPrompt, loop.stepIndex, this.turnBudget(loop.stepIndex, maxSteps, true));
+    steps.push(turn.telemetry);
+    loop.stepIndex++;
+
+    if (turn.kind === "final") {
+      return { kind: "final", output: turn.output };
+    }
+    if (turn.kind === "tooling_error") {
+      return { kind: "tooling_error" };
+    }
+    // `commit_refused`; `malformed_turn` (no repair turn after a commit turn);
+    // and `tool_call`, unreachable because a commit turn never executes one.
+    // The loop ended the way it would have without this turn.
     return { kind: "budget_exceeded" };
   }
 
@@ -197,12 +285,15 @@ export abstract class BaseAgent<TOutput> {
    * not the indentation, and `null, 2` was pure token waste on the uncached
    * side of the prompt.
    */
-  protected buildTurnPrompt(ctx: AgentContext, input: unknown, transcript: readonly TranscriptEntry[]): string {
+  protected buildTurnPrompt(ctx: AgentContext, input: unknown, transcript: readonly TranscriptEntry[], turnBudget?: TurnBudget): string {
     return JSON.stringify({
       stepId: this.config.id,
       description: this.config.description,
       context: { runId: ctx.runId, clientSlug: ctx.clientSlug, productId: ctx.productId, slotId: ctx.slotId },
       input,
+      // Uncached side on purpose: it changes every turn. A few dozen tokens
+      // against the turn it saves (see `TurnBudget`).
+      ...(turnBudget !== undefined ? { turnBudget: { ...turnBudget, rule: turnBudget.commit ? COMMIT_TURN_RULE : WORKING_TURN_RULE } } : {}),
       transcript: this.transcriptForPrompt(transcript),
     });
   }
@@ -442,9 +533,10 @@ export abstract class BaseAgent<TOutput> {
     transcript: TranscriptEntry[],
     systemPrompt: string | undefined,
     stepIndex: number,
+    turnBudget: TurnBudget,
   ): Promise<TurnOutcome<TOutput>> {
     const turnSchema = this.buildTurnSchema();
-    const prompt = this.buildTurnPrompt(ctx, input, transcript);
+    const prompt = this.buildTurnPrompt(ctx, input, transcript, turnBudget);
     // SCRUM-298: `system` is now unconditional — it always carries the
     // response contract + tool schemas (see `buildSystemPromptWithContract`),
     // not only when a `skillRef` resolved a craft-policy prompt.
@@ -523,6 +615,31 @@ export abstract class BaseAgent<TOutput> {
           durationMs,
           costUsd,
           status: "success",
+        },
+      };
+    }
+
+    // A commit turn (`runCommitTurn`) may only finish. Refused before any
+    // validation or execution: the working budget is spent, and running one
+    // more tool would be the exact overrun the ceiling exists to stop.
+    if (turnBudget.commit) {
+      const reason = `the ${turnBudget.maxTurns}-turn working budget was spent and this commit turn had to return the final output, but the model called "${turn.tool}" instead — refused, not executed`;
+      return {
+        kind: "commit_refused",
+        telemetry: {
+          stepIndex,
+          ...(turn.thought !== undefined ? { thought: turn.thought } : {}),
+          toolCall: { name: turn.tool, args: turn.args, result: { refused: true, reason }, toolVersion: "commit-turn" },
+          modelUsed: completion.modelUsed,
+          ...(completion.provenance && completion.provenance.hop !== "primary"
+            ? { servedBy: { hop: completion.provenance.hop, adapter: completion.provenance.servedBy, failedOver: [...completion.provenance.failedOver] } }
+            : {}),
+          inputTokens: completion.inputTokens,
+          outputTokens: completion.outputTokens,
+          durationMs,
+          costUsd,
+          status: "tooling_error",
+          error: reason,
         },
       };
     }

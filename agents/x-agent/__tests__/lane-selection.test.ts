@@ -53,6 +53,35 @@ describe("selectLane", () => {
     ];
     expect(selectLane(undefined, history)).toBe("build-in-public");
   });
+
+  // Prep run pubsub-21699953559354996: a deep-value week, prior lane pov, a
+  // scouted OpenAI story — and the rotation handed it build-in-public, the
+  // lane for the client's OWN ship. The draft spent all eight turns on that
+  // contradiction. The workflow now excludes the lane for an external topic.
+  describe("excluded lanes", () => {
+    const now = Date.now();
+    const priorPov: XRecentDecision[] = [
+      decision('Posted about "a" (lane: knowledge, angle: data-point)', now - 2000),
+      decision('Posted about "b" (lane: pov, angle: data-point)', now - 1000),
+    ];
+
+    it("an excluded lane is out of the rotation even when it is the least-used preferred lane", () => {
+      // Without the exclusion, build-in-public (0 uses) beats knowledge (1 use).
+      expect(selectLane(undefined, priorPov, ["knowledge", "build-in-public"])).toBe("build-in-public");
+      expect(selectLane(undefined, priorPov, ["knowledge", "build-in-public"], ["build-in-public"])).toBe("knowledge");
+    });
+
+    it("the exclusion holds when the preferred set narrows to nothing and the whole menu applies", () => {
+      const priorKnowledge = [decision('Posted about "a" (lane: knowledge, angle: data-point)', now)];
+      // preferred minus prior minus excluded is empty → whole menu, which must
+      // also not re-admit the excluded lane: pov is the next weight down.
+      expect(selectLane(undefined, priorKnowledge, ["knowledge", "build-in-public"], ["build-in-public"])).toBe("pov");
+    });
+
+    it("an explicit requestedLane is not subject to the exclusion", () => {
+      expect(selectLane("build-in-public", priorPov, ["knowledge"], ["build-in-public"])).toBe("build-in-public");
+    });
+  });
 });
 
 describe("countRecentEngagementPosts", () => {

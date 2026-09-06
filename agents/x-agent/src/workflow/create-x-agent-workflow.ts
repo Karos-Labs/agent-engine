@@ -21,6 +21,8 @@ import {
   dedupeDirective,
   checkOutputDedupe,
   dedupeRetryDirective,
+  describeAgentExhaustion,
+  commitDirectiveAfterExhaustion,
   readClientIntelContext,
   toAgentContext,
   runGate,
@@ -425,7 +427,15 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
     // run's content mode. `angle` is the scout's when a trend took the slot,
     // else the pre-existing two-value derivation.
     const laneSelection = await wf.step.code("08-select-lane", (): { lane: Lane; angle: string } => {
-      const lane = selectLane(intake.requestedLane, recentDecisions, LANES_FOR_MODE[modeSelection.mode]);
+      // A scouted trend or a research headline is someone else's news, and
+      // build-in-public is the client's OWN ship, decision or number (x-craft
+      // §2) — the lane cannot honestly carry an external topic, and the
+      // prompt forbids the draft from choosing another. Prep run
+      // pubsub-21699953559354996 spent all eight drafting turns on exactly
+      // that contradiction ("the lane says our ship; the topic is OpenAI's").
+      // Out of the ROTATION only: an explicit `requestedLane` still wins.
+      const externalTopic = selected.source === "trend" || selected.source === "research";
+      const lane = selectLane(intake.requestedLane, recentDecisions, LANES_FOR_MODE[modeSelection.mode], externalTopic ? ["build-in-public"] : []);
       const angle = selected.trend?.angle ?? (candidateSummary.hasNumericInsight ? "data-point" : "trend-observation");
       return { lane, angle };
     });
@@ -511,6 +521,8 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       const draftWithVerifiedDedupe = async (): Promise<XPostOutput> => {
         /** Set by a failed 10a check, so the NEXT attempt's prompt names exactly which published post to move away from. */
         let dedupeRetrySteer: string | undefined;
+        /** Set once, by a draft that ran out of turns: the next attempt is told what its predecessor did instead of finishing. */
+        let commitSteer: string | undefined;
         for (let attempt = 1; attempt <= MAX_DEDUPE_ATTEMPTS; attempt++) {
           /** Attempt 1 keeps the ORIGINAL step ids, so a run that never repeats itself has a byte-identical trace to what it had before this check existed. */
           const att = (id: string) => (attempt === 1 ? id : `${id}-attempt-${attempt}`);
@@ -537,6 +549,7 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
             ...(attachedForDrafting !== undefined ? { attachedMedia: attachedForDrafting } : {}),
             ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
             ...(dedupeRetrySteer !== undefined ? { dedupeAvoid: dedupeRetrySteer } : {}),
+            ...(commitSteer !== undefined ? { commitDirective: commitSteer } : {}),
             // Omitted rather than passed as null when absent: an explicit
             // "accountCharter: null" in the payload invites the model to remark on
             // its absence instead of simply working without one.
@@ -550,6 +563,22 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
 
           if (draftResult.status === "content_fail") {
             throw new WorkflowHeld(`draft did not clear its own self-critique gate: ${draftResult.status}`);
+          }
+          // A loop that hit its turn ceiling did not malfunction (`step.agent`'s
+          // own taxonomy), so it is not a `WorkflowToolingFailure` — which is
+          // what prep job viPcZ66rMVWk6HmiQImc became: a `failed` run over a
+          // draft that had passed lint seven times and was never returned.
+          // The engine's commit turn now catches most of these inside the
+          // step; when it does not, the draft is re-attempted ONCE, told what
+          // the first attempt did instead of finishing, and a second
+          // exhaustion holds the run with that same account as its reason.
+          if (draftResult.status === "budget_exceeded") {
+            const diagnosis = describeAgentExhaustion(draftResult);
+            if (commitSteer === undefined && attempt < MAX_DEDUPE_ATTEMPTS) {
+              commitSteer = commitDirectiveAfterExhaustion(diagnosis);
+              continue;
+            }
+            throw new WorkflowHeld(`draft ran out of turns without returning a post: ${diagnosis}`);
           }
           if (draftResult.status !== "completed") {
             throw new WorkflowToolingFailure(`draft step resolved to "${draftResult.status}"`);
