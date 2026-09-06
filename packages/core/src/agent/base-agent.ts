@@ -470,12 +470,32 @@ export abstract class BaseAgent<TOutput> {
    * (RFC-01 §5.5, §14 DoD: "enforces allowedTools narrowing"). When a step
    * declares no tools at all, the union drops the `tool_call` variant
    * entirely — the model can only ever produce a final output.
+   *
+   * In that no-tool case `type` is also allowed to be ABSENT. It is pure
+   * ceremony there — `"final"` is the only legal value, so a payload without
+   * it is not ambiguous — and the Messages API tool it rides on is not
+   * strict, so a required-but-omitted field reaches the adapter anyway. Two
+   * prep runs on 2026-09-06 died exactly that way (newsletter-agent
+   * `08b-plan-edition` pubsub-21704528309949843 and landing-builder-agent
+   * `03-blueprint` pubsub-21702006224861156, both `claude-opus-4-8` on a
+   * ~28k-token prompt): a complete, valid `output` returned as `{"output":…}`,
+   * rejected for the missing discriminator, then rejected again on the repair
+   * turn, and the run failed having spent $1.18 on two correct plans. The
+   * `.default("final")` is what `runOneTurn`'s `turn.type === "final"` check
+   * sees, so nothing downstream learns the field was ever missing. Tool-bearing
+   * steps keep the strict discriminated union — there an absent `type` really
+   * is ambiguous, and the repair turn is the right answer.
    */
   private buildTurnSchema(): ZodSchema<ReActTurn<TOutput>> {
-    const finalVariant = z.object({ type: z.literal("final"), thought: z.string().optional(), output: this.config.outputSchema });
     if (this.config.allowedTools.length === 0) {
-      return finalVariant as unknown as ZodSchema<ReActTurn<TOutput>>;
+      const bareFinal = z.object({
+        type: z.literal("final").default("final"),
+        thought: z.string().optional(),
+        output: this.config.outputSchema,
+      });
+      return bareFinal as unknown as ZodSchema<ReActTurn<TOutput>>;
     }
+    const finalVariant = z.object({ type: z.literal("final"), thought: z.string().optional(), output: this.config.outputSchema });
     const toolVariant = z.object({
       type: z.literal("tool_call"),
       thought: z.string().optional(),

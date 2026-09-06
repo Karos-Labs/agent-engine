@@ -10,6 +10,8 @@ import {
   type CompletionResult,
   type ModelRouter,
 } from "../src/index.js";
+import { toRootObjectJsonSchema } from "../src/router/adapters/root-object-schema.js";
+import { parseStructuredOutput } from "../src/router/adapters/structured-output.js";
 
 /**
  * The repair path for a model turn that comes back complete but shaped wrong.
@@ -299,5 +301,77 @@ describe("BaseAgent — response contract in the system prompt", () => {
     expect(system).toContain("Return the turn object itself, at the root.");
     expect(system).not.toContain('{\\"turn\\": <turn-object>}');
     expect(system).not.toContain("tool_call");
+  });
+});
+
+/**
+ * A router that validates the model's raw payload exactly the way
+ * `MessagesApiAdapter` does — `toRootObjectJsonSchema` on the way out,
+ * `parseStructuredOutput` on the way back — so these cases exercise the real
+ * turn schema `BaseAgent.buildTurnSchema()` hands the adapter, not a fake
+ * router's opinion of it. Every other router in this file skips validation.
+ */
+function parsingRouter(payloads: unknown[]) {
+  const queue = [...payloads];
+  const wireSchemas: Array<Record<string, unknown>> = [];
+  const complete = vi.fn(async (_prompt: string, schema: unknown) => {
+    const { schema: json, wrapped } = toRootObjectJsonSchema(schema as never);
+    wireSchemas.push(json);
+    const raw = queue.shift();
+    if (raw === undefined) throw new Error("parsingRouter: exhausted configured payloads");
+    const output = parseStructuredOutput(schema as never, raw, wrapped, { providerId: "anthropic", model: "claude-opus-4-8", usage: USAGE });
+    return { output, ...USAGE } as CompletionResult<unknown>;
+  });
+  return { wireSchemas, router: { complete, completeAlias: vi.fn() } as unknown as ModelRouter };
+}
+
+describe("BaseAgent — a no-tool step accepts the bare output when the model drops `type`", () => {
+  // prep 2026-09-06: newsletter-agent 08b-plan-edition (pubsub-21704528309949843)
+  // and landing-builder-agent 03-blueprint (pubsub-21702006224861156). Both
+  // no-tool steps, both claude-opus-4-8 on a ~28k-token prompt, both returned
+  // a complete valid `output` as `{"output":{…}}` — twice each, since the
+  // repair turn repeated the omission — and both runs failed on it.
+  it("completes on the first turn instead of burning the repair budget", async () => {
+    const { router, wireSchemas } = parsingRouter([{ output: { body: "the plan, minus its envelope" } }]);
+
+    const result = await new MockAgent(runtimeFor(router), config({ allowedTools: [] })).run(ctx, { topic: "ai" });
+
+    expect(result.status).toBe("completed");
+    expect(result.finalOutput).toEqual({ body: "the plan, minus its envelope" });
+    expect(result.steps).toHaveLength(1);
+    expect(result.steps[0]!.status).toBe("success");
+    // The wire schema still names the discriminator (zod renders a defaulted
+    // field as required-with-default), so a model that does send it is not
+    // contradicted — it just isn't the run's single point of failure any more.
+    const typeProp = (wireSchemas[0]!["properties"] as Record<string, Record<string, unknown>>)["type"];
+    expect(typeProp?.["const"]).toBe("final");
+    expect(typeProp?.["default"]).toBe("final");
+  });
+
+  it("still takes a payload that carries the envelope", async () => {
+    const { router } = parsingRouter([{ type: "final", thought: "done", output: { body: "with envelope" } }]);
+
+    const result = await new MockAgent(runtimeFor(router), config({ allowedTools: [] })).run(ctx, { topic: "ai" });
+
+    expect(result.status).toBe("completed");
+    expect(result.finalOutput).toEqual({ body: "with envelope" });
+    expect(result.steps[0]!.thought).toBe("done");
+  });
+
+  // With tools in play an absent `type` is genuinely ambiguous (final or
+  // tool_call?), so that step keeps the discriminated union and the repair turn.
+  it("keeps demanding the discriminator on a tool-bearing step", async () => {
+    const { router, wireSchemas } = parsingRouter([
+      { turn: { output: { body: "no type, tools available" } } },
+      { turn: { type: "final", output: { body: "repaired" } } },
+    ]);
+
+    const result = await new MockAgent(runtimeFor(router), config()).run(ctx, { topic: "ai" });
+
+    expect(result.status).toBe("completed");
+    expect(result.finalOutput).toEqual({ body: "repaired" });
+    expect(result.steps.map((s) => s.status)).toEqual(["tooling_error", "success"]);
+    expect(result.steps[0]!.error).toMatch(/malformed model turn/);
+    expect(wireSchemas[0]!["required"]).toEqual(["turn"]);
   });
 });
