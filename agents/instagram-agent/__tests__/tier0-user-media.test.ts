@@ -193,8 +193,9 @@ describe("instagram Tier 0: client-supplied media", () => {
     expect(result.reason).toMatch(/client-provided media only, but no images were attached/);
     expect(result.reason).toMatch(/let the agent source them/);
     expect(calls).toEqual([]);
-    // No copy step ran: the refusal is at Tier 0, ahead of every model call.
-    expect(steps.some((s) => s.stepId.startsWith("05-copy"))).toBe(false);
+    // The refusal is the FIRST step: no auto-setup, no topic claim, no research
+    // pull, no copy — nothing was spent on a carousel that could not be made.
+    expect(steps.map((s) => s.stepId)).toEqual(["00a-check-media-source"]);
   });
 
   it("client media only, two images attached: places them and asks NO harvester, scraper or generator for the rest", async () => {

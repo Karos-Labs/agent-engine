@@ -50,16 +50,28 @@ export const MAX_THREAD_PARTS = 7;
 export const XPostOutputSchema = z.object({
   text: z.string().min(1),
   mainPostText: z.string().min(1),
-  /** Set only when a link is relevant to this post (x-craft.md §5) — the link itself must never appear in `text`/`mainPostText`. */
-  firstReplyUrl: z.string().url().optional(),
+  /**
+   * Set only when a link is relevant to this post (x-craft.md §5) — the link
+   * itself must never appear in `text`/`mainPostText`.
+   *
+   * `""` is accepted on this and the two engagement-only fields below and read
+   * as "not set": told a field is "only meaningful when lane === engagement",
+   * claude-sonnet-4-6 fills it with an empty string on every other lane rather
+   * than omitting it (prep run pubsub-21483237815948874, 2026-09-07, a knowledge
+   * post: `targetPostHandle: ""`, `targetPostUrl: ""` → two schema violations,
+   * the repair turn repeated them, the step resolved to tooling_error at $0.34).
+   * A plain union keeps the JSON schema the router hands the model simple; the
+   * workflow treats an empty value as absent wherever it reads one.
+   */
+  firstReplyUrl: z.string().url().or(z.literal("")).optional(),
   hook: z.string().min(1),
   angle: z.string().min(1),
   lane: LaneSchema,
   targetHandle: z.string().min(1),
   /** Only meaningful when `lane === "engagement"`: the roster account this reply/quote is aimed at (x-craft.md §4, lanes.md lane 6). Not roster-validated here — see the workflow's own caps-only gap note. */
-  targetPostHandle: z.string().min(1).optional(),
+  targetPostHandle: z.string().optional(),
   /** Only meaningful when `lane === "engagement"`: the specific post URL being replied to or quoted. */
-  targetPostUrl: z.string().url().optional(),
+  targetPostUrl: z.string().url().or(z.literal("")).optional(),
   mediaRefs: z.array(z.string()).default([]),
   /** Continuation parts 2..N of a thread, in order. Empty for a single post. Part 1 is `text`. */
   thread: z.array(z.string().min(1)).max(MAX_THREAD_PARTS - 1).default([]),

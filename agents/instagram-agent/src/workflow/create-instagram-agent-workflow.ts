@@ -560,6 +560,23 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // the direction steers copy, and the attachments become Tier 0 below.
     const runDirection = readRunDirection(wf.input);
 
+    // ── 00a: "Only media I upload for this job" with nothing uploaded ──
+    //
+    // Refused FIRST, before auto-setup, the topic claim and the research pull
+    // spend a reservation and several model calls on a carousel that cannot be
+    // made: a client-only run with no attachments has no pictures for its photo
+    // slides and no permission to source any. 05z below keeps the same check as
+    // a belt for a caller that reaches it another way.
+    await wf.step.code("00a-check-media-source", () => {
+      const attached = runDirection.mediaAssets.filter((a) => a.role === "source" || a.role === "reference").length;
+      if (runDirection.mediaSource === "client" && attached === 0) {
+        throw new WorkflowBlockedIntake(
+          "this run was set to client-provided media only, but no images were attached — attach the pictures for the slides, or let the agent source them",
+        );
+      }
+      return { mediaSource: runDirection.mediaSource, attached };
+    });
+
     // ── 00-auto-setup: onboard this client inline, rather than requiring
     // somebody to have dispatched a separate setup agent first ──
     //

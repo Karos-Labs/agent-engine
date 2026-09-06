@@ -23,6 +23,8 @@ const params = { runId: "instagram_run_1", clientSlug: "acme", productId: "insta
 
 const HAPPY_PATH_STEP_IDS = [
   // Inline onboarding, ahead of the run proper.
+  // 2026-09-06: the media-source pre-flight ("only what I upload" with nothing uploaded) refuses before anything is spent.
+  "00a-check-media-source",
   "00-auto-setup",
   "01-open-run",
   "02-freeze-style-config",

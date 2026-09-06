@@ -795,7 +795,8 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
           contentMode: modeSelection.mode,
           preview: draft.text,
           ...(draft.thread.length > 0 ? { thread: draft.thread } : {}),
-          ...(draft.firstReplyUrl !== undefined ? { firstReplyUrl: draft.firstReplyUrl } : {}),
+          // Truthiness, not `!== undefined`: the draft schema accepts "" as "no link" (see XPostOutputSchema).
+          ...(draft.firstReplyUrl ? { firstReplyUrl: draft.firstReplyUrl } : {}),
           ...mediaForDeliverable(draft.mediaPlan),
           ...(selected.trend !== undefined ? { trend: { whyNow: selected.trend.whyNow, brandFitReason: selected.trend.brandFitReason, sourceUrls: selected.trend.sourceUrls } } : {}),
           revision,
