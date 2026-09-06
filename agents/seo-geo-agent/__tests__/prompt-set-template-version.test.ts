@@ -47,8 +47,12 @@ describe("prompt-set template versioning (RFC-04 §3 reuse, bounded by the templ
   /** A frozen record exactly as a run from BEFORE templates were versioned would have left it: v1 prompts, no `templateVersion`. */
   async function seedStaleFrozenSet() {
     const stale = deriveDefaultPromptSet("B2B SaaS", "en", "Acme Corp");
+    // v1 named the client in NO intent: neither `brand` (fixed in v2) nor
+    // `navigational` (fixed in v3), so both are scrubbed here.
     const stalePrompts = stale.prompts.map((p) =>
-      p.intentType === "brand" ? { ...p, promptText: p.promptText.replaceAll("Acme Corp", "the brand") } : p,
+      p.intentType === "brand" || p.intentType === "navigational"
+        ? { ...p, promptText: p.promptText.replaceAll("Acme Corp", "the brand") }
+        : p,
     );
     // Sanity on the premise: v1-style prompts (no brand name given) never name the client.
     expect(stalePrompts.some((p) => p.promptText.includes("Acme Corp"))).toBe(false);
