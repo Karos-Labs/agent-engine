@@ -227,6 +227,13 @@ export interface ResolveSocialMediaOptions {
   postText: string;
   /** Art direction for the generative tier, from the client's brand tokens. */
   art?: { aesthetic?: string; lighting?: string; palette?: string[]; accentColor?: string; mood?: string } | undefined;
+  /**
+   * `RunDirection.mediaSource === "client"`: the run may use ONLY what the
+   * client attached. Tier 0 still wins when there is one; with nothing attached
+   * the post ships as text and no screenshot, harvest, stock or generation tier
+   * is so much as asked. Default false — the full cascade.
+   */
+  clientMediaOnly?: boolean;
 }
 
 /** Minimum vision fit score for a sourced candidate to be chosen. */
@@ -303,6 +310,16 @@ export async function resolveSocialMedia(
         { path: attached.path, description: attached.description, provider: "client-upload", licenseConfidence: "client-supplied" },
         "attached",
       );
+    }
+
+    // ── Client-provided media only: nothing attached means text ──
+    if (options.clientMediaOnly) {
+      attempts.push("client media only: this run may use only what the client attached, and nothing was — no tier was asked");
+      return {
+        status: "none",
+        rationale: "the run was set to client-provided media only and no picture was attached, so the post ships as text",
+        attempts,
+      };
     }
 
     const brief = options.brief;

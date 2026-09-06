@@ -418,6 +418,22 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
     const explicitSourcePath = typeof runInput.sourcePath === "string" && runInput.sourcePath.trim().length > 0 ? runInput.sourcePath.trim() : undefined;
     const footageProvided = attached !== undefined || explicitSourcePath !== undefined;
 
+    // ── 01a: "Only media I upload for this job" (RunDirection.mediaSource) ──
+    //
+    // With footage in hand the user-asset tier below wins and nothing else is
+    // touched, exactly as before. Without it there is nothing this run may
+    // clip: the owned-footage, web-harvest and generated tiers are all
+    // sourcing, and a video has no typographic fallback. Refused here, before
+    // the topic claim spends a reservation or a model call.
+    await wf.step.code("01a-check-media-source", () => {
+      if (runDirection.mediaSource === "client" && !footageProvided) {
+        throw new WorkflowBlockedIntake(
+          "this run was set to client-provided media only, but no source video was attached — attach the episode to clip, or let the agent find or generate footage",
+        );
+      }
+      return { mediaSource: runDirection.mediaSource, footageProvided };
+    });
+
     interface TopicClaim {
       topic: string;
       topicSource: TopicSource;

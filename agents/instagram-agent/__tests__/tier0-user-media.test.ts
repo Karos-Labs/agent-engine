@@ -86,9 +86,9 @@ describe("instagram Tier 0: client-supplied media", () => {
       repoRoot: env.repoRoot,
       autoApprove: true,
     });
-    await new WorkflowEngine(store).run(workflowFn, { ...params, input });
+    const result = await new WorkflowEngine(store).run(workflowFn, { ...params, input });
     const steps = await store.listSteps(params.runId);
-    return { steps, copy };
+    return { steps, copy, result };
   }
 
   it("turns each attachment into an ingested, repo-relative candidate marked client-supplied", async () => {
@@ -178,5 +178,59 @@ describe("instagram Tier 0: client-supplied media", () => {
     const tier0 = steps.find((s) => s.stepId === "05z-attach-user-media");
     expect(tier0).toBeDefined();
     expect((tier0?.output as { attached: number }).attached).toBe(0);
+  });
+
+  // ── "Only media I upload for this job" (mediaSource: "client", 2026-09-06) ──
+
+  it("client media only, nothing attached: refuses intake before copy is paid for, naming both ways out", async () => {
+    const calls: string[] = [];
+    const { result, steps } = await run(
+      { mediaSource: "client" },
+      { "media.findImages": recordingFindImages({}), "media.ingestAssets": stubIngestAssets(() => { calls.push("ingest"); }) },
+    );
+    expect(result.status).toBe("blocked_intake");
+    if (result.status !== "blocked_intake") throw new Error("unreachable");
+    expect(result.reason).toMatch(/client-provided media only, but no images were attached/);
+    expect(result.reason).toMatch(/let the agent source them/);
+    expect(calls).toEqual([]);
+    // No copy step ran: the refusal is at Tier 0, ahead of every model call.
+    expect(steps.some((s) => s.stepId.startsWith("05-copy"))).toBe(false);
+  });
+
+  it("client media only, two images attached: places them and asks NO harvester, scraper or generator for the rest", async () => {
+    const calls: string[] = [];
+    const never = (name: string): AgentTool =>
+      ({
+        name,
+        version: "1.0.0",
+        inputSchema: { parse: (v: unknown) => v } as never,
+        async execute() {
+          calls.push(name);
+          return { status: "content_fail", reason: "must not be asked" };
+        },
+      }) as unknown as AgentTool;
+    const { steps } = await run(
+      { mediaSource: "client", mediaAssets: [{ uri: "gs://bucket/a.jpg" }, { uri: "gs://bucket/b.jpg" }] },
+      {
+        "media.ingestAssets": stubIngestAssets(),
+        "media.findImages": never("media.findImages"),
+        "media.scrapeImages": never("media.scrapeImages"),
+        "image.generate": never("image.generate"),
+      },
+    );
+    const tier0 = steps.find((s) => s.stepId === "05z-attach-user-media")?.output as { slots: number[] };
+    expect(tier0.slots).toEqual([1, 2]);
+    expect(calls).toEqual([]);
+    expect(steps.some((s) => /05b-source-images|06[bd]-(scrape|generate)-images/.test(s.stepId))).toBe(false);
+  });
+
+  it("system-managed media (the default) still sources for the slides the client did not cover — nothing changed for the untouched dialog", async () => {
+    const seen: { needs?: Array<{ n: number }> } = {};
+    await run(
+      { mediaSource: "system", mediaAssets: [{ uri: "gs://bucket/a.jpg" }] },
+      { "media.findImages": recordingFindImages(seen), "media.ingestAssets": stubIngestAssets() },
+    );
+    expect((seen.needs?.length ?? 0)).toBeGreaterThan(0);
+    expect(seen.needs?.map((n) => n.n)).not.toContain(1);
   });
 });

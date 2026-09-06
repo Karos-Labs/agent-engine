@@ -127,6 +127,14 @@ export interface AllKarosToolsOptions {
   visibilityAdapters?: Partial<Record<VisibilityEngine, EngineCaptureAdapter>> | null;
   /** Resolves an ADC `Authorization` header, enabling Gemini capture through Vertex when no `GEMINI_API_KEY` is set — see `KarosResearchToolsOptions.vertexAuthorize`. */
   vertexAuthorize?: () => Promise<string>;
+  /**
+   * Mints a Google Business Profile access token (scope `business.manage`)
+   * from the deployment's own identity, so `reputation.capture`'s gbp leg and
+   * `reputation.discoverGbpLocations` work without a pasted
+   * `GOOGLE_BUSINESS_TOKEN` — see karos-reputation's gbp-credential.ts. Omitted
+   * (tests, a laptop with no ADC) means the env token is the only credential.
+   */
+  gbpAccessToken?: () => Promise<string | undefined>;
 }
 
 export function createAllKarosTools(
@@ -141,7 +149,11 @@ export function createAllKarosTools(
     ...createKarosLedgerTools(store),
     ...createKarosMemoryTools(store),
     ...createKarosPublishTools(store, mediaStore),
-    ...createKarosReputationTools({ ...(store ? { store } : {}), ...(options.env ? { env: options.env } : {}) }),
+    ...createKarosReputationTools({
+      ...(store ? { store } : {}),
+      ...(options.env ? { env: options.env } : {}),
+      ...(options.gbpAccessToken ? { gbpAccessToken: options.gbpAccessToken } : {}),
+    }),
     ...createKarosResearchTools(store, {
       ...(options.env ? { env: options.env } : {}),
       ...(options.scraper !== undefined ? { scraper: options.scraper } : {}),

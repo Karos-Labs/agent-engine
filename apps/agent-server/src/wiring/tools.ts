@@ -2,6 +2,7 @@ import type { AgentToolRegistry } from "@agent-engine/core";
 import { GoogleAuth } from "google-auth-library";
 import type { WorkspaceStoreLike } from "@agent-engine/tools";
 import {
+  GBP_OAUTH_SCOPE,
   createAllKarosTools,
   createKarosVideoTools,
   createKarosLandingTools,
@@ -37,6 +38,24 @@ function createAdcAuthorize(): () => Promise<string> {
     const bearer = headers.get("authorization");
     if (!bearer) throw new Error("vertex gemini capture: ADC returned no authorization header");
     return bearer;
+  };
+}
+
+/**
+ * An ADC access-token minter in ONE named scope, for the Google APIs that do
+ * not accept `cloud-platform`: Business Profile wants `business.manage`, and
+ * a token minted for the wrong scope is a 403 that reads like "not a manager".
+ * Same lazy, cached `GoogleAuth` as above; a failure is the caller's to state
+ * per call (karos-reputation turns it into the leg's tombstone reason), never
+ * a boot failure.
+ */
+function createAdcAccessToken(scope: string): () => Promise<string | undefined> {
+  let auth: GoogleAuth | undefined;
+  return async () => {
+    auth ??= new GoogleAuth({ scopes: [scope] });
+    const client = await auth.getClient();
+    const token = await client.getAccessToken();
+    return token.token ?? undefined;
   };
 }
 
@@ -88,6 +107,12 @@ export function createServerTools(workspaceStore: WorkspaceStoreLike, env: Recor
       // root a deployment's configuration enters the tool graph, so the tool
       // packages keep no `google-auth-library` dependency of their own.
       vertexAuthorize: createAdcAuthorize(),
+      // The Google Business Profile legs (reputation-agent) authenticate as
+      // this service account when no GOOGLE_BUSINESS_TOKEN is set — neither
+      // prep nor prod ever had one, so every Google review leg was a
+      // guaranteed tombstone. Works for the profiles a person has added the
+      // service account to as a manager; the leg says so when they have not.
+      gbpAccessToken: createAdcAccessToken(GBP_OAUTH_SCOPE),
     }),
     // `synthesizeVoice.authorize` is the same ADC bearer the Gemini capture
     // route uses, minted here for the same reason: Google Cloud Text-to-Speech

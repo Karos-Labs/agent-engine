@@ -1277,8 +1277,20 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // Slides are assigned by upload order: the first attachment to slide 1, the
     // second to slide 2. A rule someone can predict from the order they
     // uploaded in, rather than a model deciding which of their photos "fits".
+    // "Only media I upload for this job" (RunDirection.mediaSource, 2026-09-06):
+    // Tier 0 is the ONLY tier. 05b's harvesters and the 06b-06e rescue tiers are
+    // skipped below, and a photo slide the client did not cover takes the same
+    // typographic downgrade path as any other unsourced slide. A carousel has
+    // no text fallback for ALL of its slides though, so a client-only run with
+    // nothing attached is refused here, before copy is paid for.
+    const clientMediaOnly = runDirection.mediaSource === "client";
     const tier0Pool = await wf.step.code("05z-attach-user-media", async () => {
       const usable = runDirection.mediaAssets.filter((a) => a.role === "source" || a.role === "reference");
+      if (clientMediaOnly && usable.length === 0) {
+        throw new WorkflowBlockedIntake(
+          "this run was set to client-provided media only, but no images were attached — attach the pictures for the slides, or let the agent source them",
+        );
+      }
       const ingest = tools["media.ingestAssets"];
       if (usable.length === 0 || ingest === undefined) {
         return { candidates: [] as ImageCandidate[], slots: [] as number[], attached: usable.length, note: usable.length === 0 ? "no attachments on this run" : "media.ingestAssets is not registered" };
@@ -2077,7 +2089,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // consistent with what `assembleSlidesData` will actually render.
       const photoSlideNs = new Set(copy.slides.filter((s) => resolveLayout(s, availableTemplates).layout === "photo").map((s) => s.n));
       const slidesNeedingSource = copy.slides.filter((s) => photoSlideNs.has(s.n) && !tier0Slots.has(s.n));
-      if (imageCandidatePool.length === 0 && slidesNeedingSource.length > 0 && findImages !== undefined) {
+      if (clientMediaOnly && slidesNeedingSource.length > 0) {
+        // Recorded in the sourcing layer's own words, so the downgrade below
+        // says "the client asked for no sourcing", not "nothing qualified".
+        sourcingReason = `client-provided media only: ${slidesNeedingSource.length} photo slide(s) the client did not cover were not sourced or generated`;
+      }
+      if (imageCandidatePool.length === 0 && slidesNeedingSource.length > 0 && findImages !== undefined && !clientMediaOnly) {
         const sourced = await wf.step.code(rev(`05b-source-images-attempt-${attempt}`), async () =>
           findImages.execute(
             {
@@ -2328,7 +2345,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       let tierIndex = 0;
       for (const tier of rescueTiers) {
         tierIndex += 1;
-        if (unfillable.length === 0 || tier.tool === undefined) continue;
+        // Client-only runs never scrape or generate: the gaps stay gaps and
+        // take the downgrade path with the sourcing reason recorded above.
+        if (clientMediaOnly || unfillable.length === 0 || tier.tool === undefined) continue;
 
         const gaps: ImageGap[] = unfillable
           .map((u) => ({ n: u.n, prompt: copy.slides.find((sl) => sl.n === u.n)?.visualNeed }))

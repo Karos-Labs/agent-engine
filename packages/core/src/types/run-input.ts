@@ -38,6 +38,27 @@ export const MediaAssetSchema = z.object({
 export type MediaAsset = z.infer<typeof MediaAssetSchema>;
 
 /**
+ * Where a media agent's visuals come from, chosen per run in the portal
+ * (`media_source` in the run dialog, 2026-09-06).
+ *
+ *   `system` — the default, and exactly the behaviour before this field
+ *              existed: whatever the client attached is used first, and the
+ *              agent's own pipeline (stock, screenshots, harvests, owned
+ *              footage, generation) fills what they did not supply.
+ *   `client` — ONLY what the client attached to this run is used. No tier that
+ *              sources, scrapes, harvests or generates a visual may run. The
+ *              text-first channels ship as text when nothing was attached; a
+ *              carousel or video agent has nothing to make and refuses intake.
+ *
+ * Read off the run through `readRichRunInput` like the assets it governs, so
+ * every agent gets the same two words with the same meaning.
+ */
+export const MEDIA_SOURCES = ["system", "client"] as const;
+export const MediaSourceSchema = z.enum(MEDIA_SOURCES);
+export type MediaSource = z.infer<typeof MediaSourceSchema>;
+export const DEFAULT_MEDIA_SOURCE: MediaSource = "system";
+
+/**
  * The run-scoped direction a person typed, and the media they attached.
  *
  * Both optional, and that is the contract rather than an oversight: a run with
@@ -50,6 +71,7 @@ export type MediaAsset = z.infer<typeof MediaAssetSchema>;
 export const RichRunInputSchema = z.object({
   customPrompt: z.string().min(1).optional(),
   mediaAssets: z.array(MediaAssetSchema).default([]),
+  mediaSource: MediaSourceSchema.default(DEFAULT_MEDIA_SOURCE),
 });
 export type RichRunInput = z.infer<typeof RichRunInputSchema>;
 
@@ -72,7 +94,15 @@ export function readRichRunInput(input: Readonly<Record<string, unknown>> | unde
       if (parsed.success) assets.push(parsed.data);
     }
   }
-  return { ...(prompt ? { customPrompt: prompt } : {}), mediaAssets: assets };
+  // Anything but the one non-default word is the default: an unknown value
+  // must never read as a third mode nobody defined, and must never fail a run.
+  const mediaSource: MediaSource = raw.mediaSource === "client" ? "client" : DEFAULT_MEDIA_SOURCE;
+  return { ...(prompt ? { customPrompt: prompt } : {}), mediaAssets: assets, mediaSource };
+}
+
+/** True when this run may use ONLY the media the client attached — no sourcing, harvesting or generation tier may run. */
+export function clientMediaOnly(input: Pick<RichRunInput, "mediaSource">): boolean {
+  return input.mediaSource === "client";
 }
 
 /** The first asset in a given role, which is what a single-source agent wants. */

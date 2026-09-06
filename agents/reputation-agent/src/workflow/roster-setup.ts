@@ -32,10 +32,12 @@ import { parseReputationClientConfig } from "./intake.js";
  *  - A structured `reputationRoster` on the run input is taken as-is (an
  *    operator or a portal that already knows the ids).
  *  - An App Store URL carries its own app id, so it resolves without a lookup.
- *  - A Google surface resolves ONLY through the account the client owns
- *    (`gbpAccountId` in client config or on the run): the account's locations
- *    are enumerated, never searched for by name. No account, no Google leg,
- *    and the reason says so.
+ *  - A Google surface resolves ONLY through an account the client owns: the
+ *    one named in `gbpAccountId` (client config or the run), or — since
+ *    2026-09-06 — every account the deployment's Google credential MANAGES,
+ *    which for the engine's service account is exactly the profiles a person
+ *    added it to. Locations are enumerated, never searched for by name. No
+ *    account either way, no Google leg, and the reason says so.
  *  - Every other surface (Yelp, Trustpilot, TripAdvisor, ...) has no capture
  *    adapter yet; it is recorded as skipped with that reason rather than
  *    silently dropped, because the client named it and will look for it.
@@ -237,53 +239,56 @@ export async function runReputationRosterSetup(args: RosterSetupArgs): Promise<R
     }
   }
 
-  // Google resolves through the OWNED account, whether the client named Google
-  // as a surface or only left the account id in config. Both are the client
-  // telling us the listing is theirs; neither is a search.
+  // Google resolves through an OWNED account: the one the client named in
+  // config or on the run, or — with none named — every account the
+  // deployment's Google credential manages (a service account sees only the
+  // profiles a person added it to, so this is ownership, not a search). Tried
+  // when the client named Google, when an account id is on file, and as the one
+  // automatic discovery this setup can do when the run carried nothing at all.
   const gbpAccount = readString(config["gbpAccountId"]) ?? readString(input[ROSTER_SETUP_INPUT_KEYS.gbpAccount]);
-  if (googleSeeds.length > 0 || (gbpAccount && seeds.length === 0 && rosterRaw === undefined)) {
+  const nothingNamed = seeds.length === 0 && rosterRaw === undefined;
+  if (googleSeeds.length > 0 || gbpAccount !== undefined || nothingNamed) {
     const seedLabel = googleSeeds[0] ?? "Google Business Profile";
-    if (!gbpAccount) {
-      skipped.push({
-        seed: seedLabel,
-        reason: "no Google Business Profile account id on file (client config gbpAccountId) — listings are enumerated from the owned account, never searched for by name",
-      });
+    const discover = tools["reputation.discoverGbpLocations"];
+    if (!discover) {
+      skipped.push({ seed: seedLabel, reason: "reputation.discoverGbpLocations is not registered, so the owned account's listings could not be enumerated" });
     } else {
-      const discover = tools["reputation.discoverGbpLocations"];
-      if (!discover) {
-        skipped.push({ seed: seedLabel, reason: "reputation.discoverGbpLocations is not registered, so the account's listings could not be enumerated" });
+      const outcome = await discover.execute(gbpAccount !== undefined ? { account: gbpAccount } : {}, { ctx });
+      if (outcome.status !== "success") {
+        const reason = "reason" in outcome && typeof outcome.reason === "string" ? outcome.reason : outcome.status;
+        skipped.push({ seed: seedLabel, reason });
       } else {
-        const outcome = await discover.execute({ account: gbpAccount }, { ctx });
-        if (outcome.status !== "success") {
-          const reason = "reason" in outcome && typeof outcome.reason === "string" ? outcome.reason : outcome.status;
-          skipped.push({ seed: seedLabel, reason });
+        const { account, accounts, locations } = outcome.result as DiscoverGbpLocationsResult;
+        const accountLabel =
+          gbpAccount !== undefined || !Array.isArray(accounts) || accounts.length <= 1
+            ? `account "${account}"`
+            : `${accounts.length} managed accounts (${accounts.join(", ")})`;
+        if (locations.length === 0) {
+          skipped.push({ seed: seedLabel, reason: `Google Business Profile ${accountLabel} has no locations` });
         } else {
-          const { account, locations } = outcome.result as DiscoverGbpLocationsResult;
-          if (locations.length === 0) {
-            skipped.push({ seed: seedLabel, reason: `Google Business Profile account "${account}" has no locations` });
-          } else {
-            for (const location of locations) {
-              add({
-                leg: "gbp",
-                listingId: `gbp:${location.location}`,
-                listingLabel: location.address ? `${location.title} — ${location.address}` : location.title,
-                inRoster: true,
-                account,
-                location: location.location,
-              });
-            }
-            resolvedFrom.push(`Google Business Profile account "${account}" → ${locations.length} location(s)`);
+          for (const location of locations) {
+            add({
+              leg: "gbp",
+              listingId: `gbp:${location.location}`,
+              listingLabel: location.address ? `${location.title} — ${location.address}` : location.title,
+              inRoster: true,
+              // Per-location since multi-account discovery; the top-level
+              // `account` is what a single-account read (or an older tool
+              // build) reports.
+              account: typeof location.account === "string" && location.account.length > 0 ? location.account : account,
+              location: location.location,
+            });
           }
+          resolvedFrom.push(`Google Business Profile ${accountLabel} → ${locations.length} location(s)`);
         }
       }
     }
   }
 
   if (legs.size === 0) {
-    const note =
-      seeds.length === 0 && rosterRaw === undefined && !gbpAccount
-        ? "no roster on file and this run named no review surfaces — the reputation intake's \"where people review you\" is what this resolves from"
-        : `no roster on file and none of the named surfaces resolved to a listing: ${describeSkipped(skipped)}`;
+    const note = nothingNamed
+      ? `no roster on file and this run named no review surfaces — the reputation intake's "where people review you" is what this resolves from${skipped.length > 0 ? `; automatic Google Business Profile discovery: ${describeSkipped(skipped)}` : ""}`
+      : `no roster on file and none of the named surfaces resolved to a listing: ${describeSkipped(skipped)}`;
     return { status: "not-supplied", legCount: 0, resolvedFrom, skipped, written: [], note };
   }
 

@@ -14,7 +14,36 @@ describe("captureGbp (mocked Google-approved OAuth contract)", () => {
     const outcome = await captureGbp(baseReq, {}, fetchImpl as unknown as typeof fetch);
     expect(outcome.leg).toBe("gbp");
     expect(outcome.status).toBe("UNAVAILABLE");
-    expect(outcome.reason).toBe("missing env GOOGLE_BUSINESS_TOKEN");
+    expect(outcome.reason).toMatch(/^missing env GOOGLE_BUSINESS_TOKEN, and no Application Default Credentials provider is wired/);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  // 2026-09-06: the env token is an override; the deployment's own identity is
+  // the credential every worker actually has.
+  it("mints a business.manage token from the ADC provider when GOOGLE_BUSINESS_TOKEN is unset, and sends it as the bearer", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ reviews: [] }));
+    const outcome = await captureGbp(baseReq, {}, fetchImpl as unknown as typeof fetch, async () => "adc-token");
+    expect(outcome.status).toBe("ok");
+    const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect((init.headers as Record<string, string>)["Authorization"]).toBe("Bearer adc-token");
+  });
+
+  it("prefers a pasted GOOGLE_BUSINESS_TOKEN over the ADC provider, and never calls the provider then", async () => {
+    const provider = vi.fn(async () => "adc-token");
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ reviews: [] }));
+    await captureGbp(baseReq, { GOOGLE_BUSINESS_TOKEN: "user-token" }, fetchImpl as unknown as typeof fetch, provider);
+    expect(provider).not.toHaveBeenCalled();
+    const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect((init.headers as Record<string, string>)["Authorization"]).toBe("Bearer user-token");
+  });
+
+  it("turns an ADC failure into the leg's tombstone reason instead of throwing past the capture loop", async () => {
+    const fetchImpl = vi.fn();
+    const outcome = await captureGbp(baseReq, {}, fetchImpl as unknown as typeof fetch, async () => {
+      throw new Error("Could not load the default credentials");
+    });
+    expect(outcome.status).toBe("UNAVAILABLE");
+    expect(outcome.reason).toMatch(/^missing env GOOGLE_BUSINESS_TOKEN, and Application Default Credentials could not mint .* \(Could not load the default credentials\)$/);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 

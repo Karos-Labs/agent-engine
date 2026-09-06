@@ -1,6 +1,7 @@
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
+import { firstAsset } from "@agent-engine/core";
 import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext, runTopicGuardrail, readRunDirection, runDirectionField, readContextDoc, enforceContextDocPolicy, toAgentContext, finalizeDeliverable } from "@agent-engine/workflow";
 import { BrandProfileSchema, type BrandProfile, type TranscriptWord, type VideoTranscript } from "@agent-engine/tool-karos-video";
 import { BrandedShortsGraphicsAgent } from "../agent/branded-shorts-graphics-agent.js";
@@ -147,10 +148,18 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
     // It reaches the two editorial steps — which moments to highlight, and what
     // the graphics say. It does NOT reach the cut planner: those bounds come
     // from the transcript deterministically, which is what makes a cut
-    // reviewable, and `mediaAssets` is unread here because this agent takes its
-    // footage from the per-upload `brandedShortsIntake`, not from a run
-    // attachment.
+    // reviewable.
+    //
+    // `mediaAssets` (2026-09-06): a source video attached to THIS run is the
+    // footage, whatever the standing `brandedShortsIntake` says — that is how a
+    // client hands over a recording from the portal without an operator editing
+    // client config first. `mediaSource === "client"` additionally switches
+    // off the one generative tier this agent has (image.generate cutaway
+    // plates), so the short is built from the client's footage and their own
+    // stills library and nothing else.
     const runDirection = readRunDirection(wf.input);
+    const attachedVideo = firstAsset(runDirection.mediaAssets, "source");
+    const clientMediaOnly = runDirection.mediaSource === "client";
 
     // ── 00: brand resolve — refuse to run without a locked style + brand profile on file ──
     const brandResolve = await wf.step.code("00-brand-resolve", async () => {
@@ -199,6 +208,33 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
 
     // ── 01: per-upload intake (RFC-06 §7 / assets/INTAKE-REQUEST.md) ──
     const intake: BrandedShortsIntake = await wf.step.code("01-load-intake", () => {
+      if (attachedVideo !== undefined) {
+        // The attachment is the footage. The rest of the intake comes from the
+        // standing config where it exists, and the run's own direction stands
+        // in for the takeaway where it does not — a short has to leave the
+        // viewer with something, and the person who attached the video and
+        // typed a sentence has said what.
+        const standing =
+          typeof brandResolve.intakeRaw === "object" && brandResolve.intakeRaw !== null ? (brandResolve.intakeRaw as Record<string, unknown>) : {};
+        const hasTakeaway = typeof standing["takeaway"] === "string" && (standing["takeaway"] as string).trim().length > 0;
+        const merged = BrandedShortsIntakeSchema.safeParse({
+          targetLength: "client_choice",
+          ...standing,
+          videoPath: attachedVideo.uri,
+          ...(!hasTakeaway && runDirection.direction ? { takeaway: runDirection.direction } : {}),
+        });
+        if (!merged.success) {
+          throw new WorkflowBlockedIntake(
+            `a source video was attached to this run but the intake around it is incomplete (${merged.error.message}) — say in the run's direction what the short should leave the viewer with`,
+          );
+        }
+        return merged.data;
+      }
+      if (clientMediaOnly) {
+        throw new WorkflowBlockedIntake(
+          "this run was set to client-provided media only, but no source video was attached — attach the talking-head footage this short is cut from",
+        );
+      }
       const parsed = BrandedShortsIntakeSchema.safeParse(brandResolve.intakeRaw);
       if (!parsed.success) {
         throw new WorkflowBlockedIntake(`no valid per-upload intake for this run (brandedShortsIntake): ${parsed.error.message}`);
@@ -422,8 +458,9 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
     // (P1#5 audit fix: either proxy can mask genuine over/undercounting in either direction).
     const allowCutawayCount = totalRetainedDuration(cutPlan.segments) < CUTAWAY_COUNT_RUNTIME_FLOOR_S;
     // A plate is a billed generation through karos-media's `image.generate`;
-    // on a deployment without it the agent is told so and plans none.
-    const plateGenerationAvailable = tools["image.generate"] !== undefined;
+    // on a deployment without it — or on a run the client set to their own
+    // media only — the agent is told so and plans none.
+    const plateGenerationAvailable = tools["image.generate"] !== undefined && !clientMediaOnly;
     const graphicsAgent = new BrandedShortsGraphicsAgent({ router: options.router, tools, promptStore: options.promptStore });
     let priorFailureReason: string | undefined;
     let build: { outputPath: string; durationSeconds: number | null; plan: GraphicsPlanOutput; warnings: string[] } | undefined;
