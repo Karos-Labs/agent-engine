@@ -26,7 +26,7 @@ describe("planToOverlays / planToCutaways", () => {
 
   it("matches make_motion_repertoire.template.py's documented convention (overlays/anim-<name>/%04d.png) so graphic_qa.py finds real frames", () => {
     const overlays = planToOverlays(plan, workDir);
-    expect(overlays).toEqual([{ file: path.join(workDir, "edit", "overlays", "anim-growth_chart-0", "0000.png"), start: 1.0, end: 3.0 }]);
+    expect(overlays).toEqual([{ file: path.join(workDir, "edit", "overlays", "anim-growth_chart-0", "%04d.png"), start: 1.0, end: 3.0, archetype: "Growth Chart" }]);
   });
 
   it("disambiguates two overlays sharing the same archetype with distinct directories", () => {
@@ -38,8 +38,21 @@ describe("planToOverlays / planToCutaways", () => {
       cutaways: [],
     };
     const overlays = planToOverlays(twoOfSame, workDir);
-    expect(overlays[0]!.file).toBe(path.join(workDir, "edit", "overlays", "anim-growth_chart-0", "0000.png"));
-    expect(overlays[1]!.file).toBe(path.join(workDir, "edit", "overlays", "anim-growth_chart-1", "0000.png"));
+    expect(overlays[0]!.file).toBe(path.join(workDir, "edit", "overlays", "anim-growth_chart-0", "%04d.png"));
+    expect(overlays[1]!.file).toBe(path.join(workDir, "edit", "overlays", "anim-growth_chart-1", "%04d.png"));
+  });
+
+  it("resolves a burst's library stills against the profile directory and a plate to its generated file when given", () => {
+    const withAssets: GraphicsPlanOutput = {
+      overlays: [],
+      cutaways: [
+        { kind: "burst", start: 4.0, end: 5.2, wordSrcStart: 3.9, phrase: "the launch event", stills: ["library/a.jpg", "library/b.jpg", "library/c.jpg"] },
+        { kind: "plate", start: 6.0, end: 7.0, wordSrcStart: 5.9, phrase: "the product shot" },
+      ],
+    };
+    const cutaways = planToCutaways(withAssets, workDir, { libraryRoot: "/clients/acme/brand", plateFiles: { 1: "/tmp/run-1/.media-cache/r/n2-gen0.png" } });
+    expect(cutaways[0]!.stills).toEqual(["a.jpg", "b.jpg", "c.jpg"].map((f) => path.join("/clients/acme/brand", "library", f)));
+    expect(cutaways[1]!.file).toBe("/tmp/run-1/.media-cache/r/n2-gen0.png");
   });
 
   it("expands a burst into `stillCount` still paths and a plate into a single `file`", () => {
@@ -79,6 +92,8 @@ describe("assembleJob", () => {
     expect(job.output).toBe(paths.outputPath);
     expect(job.edit_dir).toBe(path.join(workDir, "edit"));
     expect(job.grade).toBe("auto");
+    // SKILL.md step 2: auto-centred framing by default — without a crop the engine emits no scale at all.
+    expect(job.crop).toBe("auto");
     expect(job.segments).toEqual([[0, 10]]);
     expect(job.highlight_starts).toEqual([2.5]);
     expect(job.overlays).toEqual([]);

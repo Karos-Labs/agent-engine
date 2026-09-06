@@ -223,10 +223,10 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
     owner: "packages/tools/karos-video (video.transcribe)",
     requires: [{ name: "ELEVENLABS_API_KEY", kind: "required" }],
     whenAbsent:
-      "video.transcribe reports not_available: a tiktok commentary clip cannot plan a cut (the run holds at 02-transcribe), and an original short's voiceover captions fall back to per-beat timing instead of word timing. branded-shorts runs cannot plan a cut either, though those still wait on the render engine (SCRUM-362).",
+      "video.transcribe reports not_available: a tiktok commentary clip cannot plan a cut (the run holds at 02-transcribe), and an original short's voiceover captions fall back to per-beat timing instead of word timing. branded-shorts cannot plan a cut either — and since its render engine now ships inside the image (video-engine, below), this key is the last thing between that product and a first real render rather than one blocker behind another.",
     shortfall: "no transcription key",
     rationale:
-      "Wired in cloudbuild.yaml (--set-secrets ELEVENLABS_API_KEY=elevenlabs-api-key) since the tiktok smart-pipeline change. The secret had existed in karoscmo-prep for weeks while mounted nowhere — every prep tiktok run died at 02-transcribe, verified 2026-09-05. Prod (karoscmo) has the secret too; cloudbuild.promote.yaml still needs the same line.",
+      "Wired in cloudbuild.yaml (--set-secrets ELEVENLABS_API_KEY=elevenlabs-api-key) since the tiktok smart-pipeline change, and in cloudbuild.promote.yaml since 2026-09-06 — the secret exists in karoscmo as well, which is what that line requires. Two silent failures preceded this, in the same place: the secret sat in karoscmo-prep for weeks MOUNTED NOWHERE (every prep tiktok run died at 02-transcribe, verified 2026-09-05), and once mounted it held a key ElevenLabs rejected with 401 (verified against /v1/user/subscription on 2026-09-06, then replaced as version 2 in both projects). A mounted secret is not a working credential, and neither absence announced itself — which is this catalogue's whole subject.",
   },
   {
     id: "video-harvest",
@@ -271,15 +271,13 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
   {
     id: "video-engine",
     title: "Video rendering and its craft gates (cut, brand, graphics, colour)",
-    owner: "packages/tools/karos-video",
+    owner: "packages/tools/karos-video (engine/ — vendored from karos-agents' branded-shorts product)",
     requires: [{ name: "BRANDED_SHORTS_ENGINE_DIR", kind: "required" }],
     whenAbsent:
-      "Every video.* gate returns tooling_error naming the missing engine checkout, and a branded-shorts or tiktok run fails rather than shipping unchecked footage (AU8 made this a real tooling_error outcome rather than a success carrying an error verdict). Pointing the variable at a directory would not change this: there is no engine to point it at.",
-    shortfall: "render engine pending development",
-    pendingBuild: {
-      ticket: "SCRUM-362",
-      summary: "render engine pending development",
-    },
+      "Every video.* gate returns tooling_error naming the missing engine directory, and a branded-shorts or tiktok run fails rather than shipping unchecked footage (AU8 made this a real tooling_error outcome rather than a success carrying an error verdict). Absent only OUTSIDE the container: the engine ships inside the image at packages/tools/karos-video/engine and apps/agent-server/Dockerfile pins this variable at that path, so a deployed service always has it — a local checkout has to point it at the same directory.",
+    shortfall: "no render engine",
+    rationale:
+      "SPEC-AU63 option A, decided 2026-09-06: the engine (SCRUM-362) is vendored in-repo and pinned by the Dockerfile's ENV, never injected per deploy — apps/agent-server/__tests__/video-engine-in-image.test.ts asserts every script the adapters name is in the build context.",
   },
 
   // ── Reputation ───────────────────────────────────────────────────────────
@@ -390,7 +388,8 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
       { name: "BQ_DATASET_ID", kind: "enhances" },
     ],
     whenAbsent: "Per-step cost rows are not written. Spend becomes invisible per client and per agent.",
-    rationale: "BQ_PROJECT_ID is set in cloudbuild.yaml; prod falls back to GOOGLE_CLOUD_PROJECT, which is correct for that project.",
+    rationale:
+      "BQ_PROJECT_ID is set in cloudbuild.yaml; prod falls back to GOOGLE_CLOUD_PROJECT, which is correct for that project. BQ_DATASET_ID is pinned to bi_telemetry in both cloudbuild files, so the dataset half of the address is stated in the deploy config rather than inherited from bigquery-client.ts's default.",
   },
 
   // ── Model routing ────────────────────────────────────────────────────────

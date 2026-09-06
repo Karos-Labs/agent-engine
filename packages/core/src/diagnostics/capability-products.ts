@@ -8,7 +8,9 @@
  * decision anyone actually makes. Four reasonable-looking rows —
  * `video-transcription` DISABLED, `video-engine` DISABLED, and two adjacent
  * media rows DEGRADED — never added up, on the page, to the sentence that
- * mattered:
+ * mattered (as it read when this file was written; the engine has since been
+ * vendored, so the same product now reads "UNRUNNABLE — no transcription key",
+ * which is the point: the headline changed because the world did):
  *
  *   branded-shorts-agent: UNRUNNABLE — render engine pending development
  *

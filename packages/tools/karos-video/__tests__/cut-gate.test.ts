@@ -27,7 +27,7 @@ describe("video.cutGate", () => {
 
   it("adds --verbose when requested", async () => {
     const { runner, calls } = fakeRunner({ stdout: "CUT GATE: PASS (1 segments, 0 cuts, 2.00s from a 2.00s window)", stderr: "", exitCode: 0 });
-    const tool = createCutGate({ runner, engineDir: "/engine" });
+    const tool = createCutGate({ runner, engineDir: "/engine", pythonBin: "python3" });
     await tool.execute({ jobPath: "job.json", transcriptPath: "t.json", verbose: true }, { ctx });
     expect(calls[0]!.args).toContain("--verbose");
   });
@@ -39,7 +39,7 @@ describe("video.cutGate", () => {
       "  - HONESTY: cut 3.00-3.40s removes content, not filler: 'and honestly'. Either keep it, or declare it in job['content_cuts'] with a reason.",
     ].join("\n");
     const { runner } = fakeRunner({ stdout, stderr: "", exitCode: 1 });
-    const tool = createCutGate({ runner, engineDir: "/engine" });
+    const tool = createCutGate({ runner, engineDir: "/engine", pythonBin: "python3" });
     const outcome = await tool.execute({ jobPath: "job.json", transcriptPath: "t.json", verbose: false }, { ctx });
 
     if (outcome.status !== "success") throw new Error("unreachable");
@@ -54,7 +54,7 @@ describe("video.cutGate", () => {
 
   it("maps a non-zero exit with no parseable report to tooling_error, never content_fail", async () => {
     const { runner } = fakeRunner({ stdout: "", stderr: "Traceback (most recent call last):\nKeyError: 'words'", exitCode: 1 });
-    const tool = createCutGate({ runner, engineDir: "/engine" });
+    const tool = createCutGate({ runner, engineDir: "/engine", pythonBin: "python3" });
     const outcome = await tool.execute({ jobPath: "job.json", transcriptPath: "t.json", verbose: false }, { ctx });
 
     // AU8: a broken engine/ffprobe run is a tooling_error OUTCOME, never a

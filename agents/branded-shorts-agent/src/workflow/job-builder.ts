@@ -25,6 +25,8 @@ export interface RunPaths {
   transcriptPath: string;
   jobPath: string;
   outputPath: string;
+  /** `build_short.py --until base`'s output: the graded, concatenated footage timeline `graphic_qa.py` gates overlays against. */
+  basePath: string;
 }
 
 export function resolveRunPaths(workDir: string): RunPaths {
@@ -34,6 +36,7 @@ export function resolveRunPaths(workDir: string): RunPaths {
     transcriptPath: path.join(workDir, "transcript.json"),
     jobPath: path.join(workDir, "job.json"),
     outputPath: path.join(workDir, "edit", "final.mp4"),
+    basePath: path.join(workDir, "edit", "base.mp4"),
   };
 }
 
@@ -46,42 +49,52 @@ function slug(name: string): string {
 }
 
 /**
- * A representative frame inside the sequence directory `graphic_qa.py`
- * globs (`seq_dir = (jdir / ov["file"]).parent; frames =
- * sorted(seq_dir.glob("*.png"))`, `graphic_qa.py:43-45`). Generating the
- * actual PNG sequence is `make_motion_repertoire.py`'s job — a per-client
- * script RFC-06 §5 lists as out of this migration's six-script scope — but
- * the DIRECTORY this plans against must still match where that generator
- * actually writes, or `graphic_qa.py` finds nothing and every real run fails
- * with "NO FRAMES FOUND" regardless of how good the plan was (P0#2 audit
- * finding). `make_motion_repertoire.template.py`'s own header states the
- * real convention verbatim: "Every graphic renders to
- * overlays/anim-<name>/%04d.png at 30fps." Editing artifacts otherwise all
- * live under `edit/` (`build_short.py`'s own docstring examples —
- * `edit/transcripts/...`, `edit/animations/...`), so `overlays/` is treated
- * as nested under the run's edit dir here; this placement (edit/overlays vs.
- * a job-root-level overlays/) is the one part of the convention
- * `make_motion_repertoire.template.py`'s comment doesn't pin down and
- * `build_short.py` itself was not read in full to confirm (RFC-06 §5) — an
- * index suffix is appended to `anim-<name>` (not in the template's literal
- * string) only to keep two overlays sharing one archetype from colliding.
+ * The frame-sequence PATTERN inside the directory `render_overlays.py` writes
+ * and `graphic_qa.py` globs (`seq_dir = (jdir / ov["file"]).parent`).
+ *
+ * `make_motion_repertoire.template.py`'s own header states the convention
+ * verbatim: "Every graphic renders to overlays/anim-<name>/%04d.png at
+ * 30fps." The `%04d` is load-bearing on BOTH consumers: `build_short.py`
+ * treats a `file` containing `%` as an image sequence (time-shifted,
+ * animated) and anything else as one static PNG, and `graphic_qa.py` used
+ * to skip non-`%` overlays entirely. An earlier version of this function
+ * wrote `0000.png` here, so every planned graphic would have been
+ * composited as a frozen first frame AND excused from the graphics gate —
+ * two silent failures from one wrong filename.
+ *
+ * Editing artifacts otherwise all live under `edit/` (`build_short.py`'s own
+ * docstring examples), so `overlays/` sits under the run's edit dir; the
+ * index suffix on `anim-<name>` keeps two overlays sharing one archetype
+ * from colliding. `archetype` and `label` ride along for the renderer.
  */
 export function planToOverlays(plan: GraphicsPlanOutput, workDir: string): Overlay[] {
   return plan.overlays.map((o, i) => ({
-    file: path.join(workDir, "edit", "overlays", `anim-${slug(o.archetype)}-${i}`, "0000.png"),
+    file: path.join(workDir, "edit", "overlays", `anim-${slug(o.archetype)}-${i}`, "%04d.png"),
     start: o.start,
     end: o.end,
+    archetype: o.archetype,
+    ...(o.label !== undefined ? { label: o.label } : {}),
     ...(o.x !== undefined ? { x: o.x } : {}),
     ...(o.y !== undefined ? { y: o.y } : {}),
   }));
 }
 
-export function planToCutaways(plan: GraphicsPlanOutput, workDir: string): Cutaway[] {
+export interface PlanToCutawaysOptions {
+  /** Per-cutaway-index absolute path of the generated plate (from `image.generate`). A plate with no entry keeps the default `edit/cutaway/<i>/plate.png` location. */
+  plateFiles?: Readonly<Record<number, string>>;
+  /** Root the plan's library-relative `stills[]` resolve against — the directory holding the client's `brand-profile.json`. */
+  libraryRoot?: string;
+}
+
+export function planToCutaways(plan: GraphicsPlanOutput, workDir: string, options: PlanToCutawaysOptions = {}): Cutaway[] {
   return plan.cutaways.map((c, i) => {
     if (c.kind === "burst") {
-      const count = c.stillCount ?? 4;
+      const stills =
+        c.stills && c.stills.length > 0
+          ? c.stills.map((s) => (options.libraryRoot !== undefined ? path.join(options.libraryRoot, s) : s))
+          : Array.from({ length: c.stillCount ?? 4 }, (_, s) => path.join(workDir, "edit", "burst", `${i}_${s}.png`));
       return {
-        stills: Array.from({ length: count }, (_, s) => path.join(workDir, "edit", "burst", `${i}_${s}.png`)),
+        stills,
         start: c.start,
         end: c.end,
         word_src_start: c.wordSrcStart,
@@ -89,7 +102,7 @@ export function planToCutaways(plan: GraphicsPlanOutput, workDir: string): Cutaw
       };
     }
     return {
-      file: path.join(workDir, "edit", "cutaway", String(i), "plate.png"),
+      file: options.plateFiles?.[i] ?? path.join(workDir, "edit", "cutaway", String(i), "plate.png"),
       start: c.start,
       end: c.end,
       word_src_start: c.wordSrcStart,
@@ -108,7 +121,21 @@ export interface AssembleJobParams {
   plan: GraphicsPlanOutput;
   canvasScale?: number;
   fps?: number;
+  /**
+   * Framing. Defaults to `"auto"` — SKILL.md step 2's "Auto-center framing
+   * (crop:"auto", face detection on decoded frames)": `build_short.py`
+   * detects the face and derives a 9:16 crop centred on it, then scales to
+   * the canvas. Without ANY crop the engine emits no scale filter at all, so
+   * a landscape or 4K source would be composited at its native geometry
+   * under 1080-wide captions.
+   */
   crop?: string;
+  /** Intake Q8: replaces the endcard eyebrow text for this run only. */
+  endcardOverride?: string;
+  /** Intake Q7: per-run ASR spelling fixes, merged over the profile's by the engine. */
+  corrections?: Record<string, string>;
+  plateFiles?: Readonly<Record<number, string>>;
+  libraryRoot?: string;
 }
 
 /** Assembles `build_short.py`'s job spec (its own docstring) from every upstream stage's output. */
@@ -118,7 +145,7 @@ export function assembleJob(params: AssembleJobParams): VideoJob {
     transcript: params.paths.transcriptPath,
     edit_dir: path.join(params.paths.workDir, "edit"),
     output: params.paths.outputPath,
-    ...(params.crop !== undefined ? { crop: params.crop } : {}),
+    crop: params.crop ?? "auto",
     grade: params.grade,
     ...(params.fps !== undefined ? { fps: params.fps } : {}),
     ...(params.canvasScale !== undefined ? { canvas_scale: params.canvasScale } : {}),
@@ -126,6 +153,11 @@ export function assembleJob(params: AssembleJobParams): VideoJob {
     content_cuts: params.contentCuts,
     highlight_starts: params.highlightStarts,
     overlays: planToOverlays(params.plan, params.paths.workDir),
-    cutaways: planToCutaways(params.plan, params.paths.workDir),
+    cutaways: planToCutaways(params.plan, params.paths.workDir, {
+      ...(params.plateFiles !== undefined ? { plateFiles: params.plateFiles } : {}),
+      ...(params.libraryRoot !== undefined ? { libraryRoot: params.libraryRoot } : {}),
+    }),
+    ...(params.corrections !== undefined && Object.keys(params.corrections).length > 0 ? { corrections: params.corrections } : {}),
+    ...(params.endcardOverride !== undefined ? { endcard_override: params.endcardOverride } : {}),
   });
 }

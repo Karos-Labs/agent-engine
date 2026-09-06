@@ -74,6 +74,18 @@ export const BrandedShortsClientConfigSchema = z.object({
    * profile does.
    */
   brandedShortsApprovedArchetypes: z.array(z.string().min(1)).min(1).optional(),
+  /**
+   * A `.zip`/`.tar.gz` of the client's branded-shorts asset folder —
+   * `brand-profile.json` at its root plus every font/mark it references by
+   * relative path, and optionally `library/index.json` (real stills for burst
+   * cutaways). A local path or a `gs://` URI in the media bucket;
+   * `video.materializeInputs` unpacks it into the run's work directory and the
+   * profile inside it becomes this run's `brandedShortsProfilePath`. This is
+   * how per-client brand assets reach a Cloud Run instance, where nothing is on
+   * local disk when a run starts; a laptop or a test can keep pointing
+   * `brandedShortsProfilePath` at a local file instead.
+   */
+  brandedShortsAssetBundle: z.string().min(1).optional(),
   /** A local scratch directory for this run's job/profile/transcript intermediates — real files the Python engine opens directly (RFC-06 §3/§4's "adapter, never infra": the WorkspaceStore's abstract JSON store is not where ffmpeg/PIL read from). Defaults to a per-run temp directory. */
   brandedShortsWorkDir: z.string().min(1).optional(),
 });
@@ -138,6 +150,8 @@ export const GraphicOverlayPlanSchema = z.object({
   illustrates: z.string().min(1),
   x: z.union([z.literal("center"), z.number()]).optional(),
   y: z.number().optional(),
+  /** For the text-bearing archetypes (callout, clock): the payoff word(s), QUOTED from the transcript — `render_overlays.py` sets it in the client's display face. Short: it is a graphic, not a caption. */
+  label: z.string().min(1).max(32).optional(),
 });
 export type GraphicOverlayPlan = z.infer<typeof GraphicOverlayPlanSchema>;
 
@@ -150,6 +164,21 @@ export const CutawayPlanSchema = z.object({
   /** THE RELEVANCE LAW's justification (PLAYBOOK §4d point 1) — what the cutaway illustrates and why. */
   phrase: z.string().min(1),
   stillCount: z.number().int().min(3).max(6).optional(),
+  /**
+   * `kind: "burst"` only: 3-6 `file` values copied VERBATIM from the
+   * `assetLibrary` given in the input — the client's own cleared, treated real
+   * photos (PLAYBOOK §4d.1/.7). A burst is never invented: with no library
+   * there are no bursts, and `validateGraphicsPlan` rejects one that names a
+   * still the library does not hold.
+   */
+  stills: z.array(z.string().min(1)).min(3).max(6).optional(),
+  /**
+   * `kind: "plate"` only: the generation brief for the single plate, written
+   * against docs/CUTAWAY-IMAGE-PROMPTS.md (one clear subject, specific,
+   * cinematic, believable, no clichés, no text). Absent, the `phrase` itself
+   * is used — which is usually too literal (Rule 10).
+   */
+  prompt: z.string().min(1).max(600).optional(),
 });
 export type CutawayPlan = z.infer<typeof CutawayPlanSchema>;
 
@@ -205,6 +234,56 @@ export function validateGraphicsPlanArchetypes(plan: GraphicsPlanOutput, allowed
   }
   return violations;
 }
+
+export interface GraphicsPlanValidationContext {
+  approvedArchetypes: readonly string[];
+  /** `file` values of the client's `library/index.json` — empty when they have no asset library. */
+  libraryFiles: readonly string[];
+  /** Whether `image.generate` is registered and configured on this deployment. */
+  plateGenerationAvailable: boolean;
+}
+
+/**
+ * Every mechanical check a plan can fail BEFORE a render cycle is spent on
+ * it, in one place: the closed archetype vocabulary (above), a burst that
+ * names no stills or stills the library does not hold, and a plate on a
+ * deployment that cannot generate one. One human-readable violation per
+ * defect, fed back into the same remedy loop as a gate failure — the agent
+ * fixes exactly that and keeps the rest of the plan.
+ */
+export function validateGraphicsPlan(plan: GraphicsPlanOutput, ctx: GraphicsPlanValidationContext): string[] {
+  const violations = validateGraphicsPlanArchetypes(plan, ctx.approvedArchetypes);
+  const library = new Set(ctx.libraryFiles);
+  plan.cutaways.forEach((c, i) => {
+    const tag = `cutaway[${i}] ("${c.phrase}")`;
+    if (c.kind === "burst") {
+      if (!c.stills || c.stills.length === 0) {
+        violations.push(
+          library.size === 0
+            ? `${tag} is a burst, but this client has no asset library — a burst is 3-6 real photos from assetLibrary, so plan a plate here (or nothing) instead`
+            : `${tag} is a burst but names no stills — pick 3-6 \`file\` values verbatim from assetLibrary`,
+        );
+      } else {
+        const unknown = c.stills.filter((s) => !library.has(s));
+        if (unknown.length > 0) violations.push(`${tag} names stills that are not in this client's asset library: ${unknown.join(", ")}`);
+      }
+    } else if (!ctx.plateGenerationAvailable) {
+      violations.push(`${tag} is a plate, but this deployment cannot generate plates (image.generate is not configured) — use a burst from assetLibrary or drop it`);
+    }
+  });
+  return violations;
+}
+
+/** One entry of a client's `library/index.json` (`<profile dir>/library/index.json`): a cleared, brand-treated real still and what it shows. */
+export const AssetLibraryStillSchema = z.object({
+  /** Relative to the profile's directory, e.g. `library/openai-logo.png`. This exact string is what a plan's `stills[]` must carry. */
+  file: z.string().min(1),
+  /** What the still shows, in the words a transcript would use — the RELEVANCE LAW's matching key. */
+  subjects: z.array(z.string().min(1)).min(1),
+  credit: z.string().optional(),
+});
+export type AssetLibraryStill = z.infer<typeof AssetLibraryStillSchema>;
+export const AssetLibraryIndexSchema = z.object({ stills: z.array(AssetLibraryStillSchema).default([]) }).passthrough();
 
 export interface BrandedShortsWorkflowResult {
   outputPath: string;

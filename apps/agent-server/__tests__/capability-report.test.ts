@@ -29,6 +29,9 @@ const PROD_ENV: Record<string, string> = {
   AUTH_AUDIENCE: "https://agent-engine-prod.example.run.app",
   ANTHROPIC_API_KEY: "sk-x",
   SCRAPPYCOCO_API_KEY: "sc-x",
+  // Not from cloudbuild: pinned by apps/agent-server/Dockerfile's ENV, so every
+  // deployed service has it (video-engine-in-image.test.ts asserts the pin).
+  BRANDED_SHORTS_ENGINE_DIR: "/app/packages/tools/karos-video/engine",
 };
 
 describe("AU55: the capability report", () => {
@@ -153,11 +156,17 @@ describe("the capability-by-product work: the report answers at product level", 
     }
   });
 
-  it("says the sentence, in one line, for the case that prompted this", () => {
+  it("says the sentence, in one line, for the case that prompted this — now that the engine exists, the sentence names the KEY", () => {
+    // When this layer was written the headline read "render engine pending
+    // development (SCRUM-362)". The engine has since been vendored into the
+    // image (packages/tools/karos-video/engine), so the one thing standing
+    // between branded-shorts and a first render is the transcription key —
+    // and the headline must say exactly that, or someone reads "pending
+    // development" and does nothing while a key would have fixed it.
     const shorts = productsOf(PROD_ENV).get("branded-shorts-agent")!;
     expect(shorts.status).toBe("UNRUNNABLE");
-    expect(shorts.headline).toContain("render engine pending development");
-    expect(shorts.headline).toContain("SCRUM-362");
+    expect(shorts.headline).toContain("no transcription key");
+    expect(shorts.headline).not.toContain("pending development");
   });
 
   it("keeps the per-key detail underneath rather than replacing it", () => {
@@ -165,37 +174,39 @@ describe("the capability-by-product work: the report answers at product level", 
     const shorts = productsOf(PROD_ENV).get("branded-shorts-agent")!;
     expect(shorts.capabilities.map((c) => c.id)).toContain("video-engine");
     expect(shorts.capabilities.map((c) => c.id)).toContain("video-transcription");
-    expect(shorts.blockedBy).toContain("video-engine");
+    expect(shorts.blockedBy).toEqual(["video-transcription"]);
   });
 
   it("distinguishes 'nobody can configure this' from 'somebody must issue a key'", () => {
-    // The distinction that decides WHO acts. Sending someone to buy an
-    // ElevenLabs key to fix branded-shorts would be wasted money and a wasted
-    // week, which is exactly what the old report invited.
+    // The distinction that decides WHO acts. With the engine in the image,
+    // branded-shorts is a configuration gap (issue the key), not unbuilt work.
     const products = productsOf(PROD_ENV);
-    expect(products.get("branded-shorts-agent")!.blockedReason).toBe("PENDING_DEVELOPMENT");
+    expect(products.get("branded-shorts-agent")!.blockedReason).toBe("NOT_CONFIGURED");
     expect(products.get("landing-builder-agent")!.blockedReason ?? "NOT_BLOCKED").not.toBe("PENDING_DEVELOPMENT");
+    // No catalogue row is PENDING_BUILD any more; the status still exists for
+    // the next capability that is decided before it is built.
+    expect(buildCapabilityReport(PROD_ENV).capabilities.some((c) => c.status === "PENDING_BUILD")).toBe(false);
   });
 
-  it("stays PENDING_DEVELOPMENT even when a key is ALSO missing", () => {
-    // branded-shorts is blocked by BOTH an unbuilt engine and an absent
-    // transcription key. Reporting NOT_CONFIGURED would send someone to issue
-    // a key that changes nothing — the exact confusion 2c exists to prevent.
-    const shorts = productsOf(PROD_ENV).get("branded-shorts-agent")!;
-    expect(shorts.blockedBy).toEqual(expect.arrayContaining(["video-engine", "video-transcription"]));
-    expect(shorts.blockedReason).toBe("PENDING_DEVELOPMENT");
-    expect(shorts.headline, "the headline must not mention the key, which is not the blocker that matters").not.toContain(
-      "transcription",
-    );
+  it("reports branded-shorts UNRUNNABLE — NOT_CONFIGURED — outside the container, where the engine variable is unset", () => {
+    // A laptop or a test environment without BRANDED_SHORTS_ENGINE_DIR has no
+    // engine; that is a configuration gap named by its variable, never a
+    // 'pending development' that would tell the reader nothing can be done.
+    const { BRANDED_SHORTS_ENGINE_DIR: _unset, ...withoutEngine } = PROD_ENV;
+    const shorts = productsOf({ ...withoutEngine, ELEVENLABS_API_KEY: "el-x" }).get("branded-shorts-agent")!;
+    expect(shorts.status).toBe("UNRUNNABLE");
+    expect(shorts.blockedBy).toEqual(["video-engine"]);
+    expect(shorts.blockedReason).toBe("NOT_CONFIGURED");
+    expect(shorts.headline).toContain("no render engine");
   });
 
-  it("REFUSES to call branded-shorts runnable even with every key it names present", () => {
-    // The load-bearing assertion, and the one PENDING_BUILD exists for. Under
-    // the old three-status model this env produced ACTIVE rows and a runnable
-    // product, because status only ever described configuration.
-    const products = productsOf({ ...PROD_ENV, ELEVENLABS_API_KEY: "el-x", BRANDED_SHORTS_ENGINE_DIR: "/opt/engine" });
-    expect(products.get("branded-shorts-agent")!.status).toBe("UNRUNNABLE");
-    expect(products.get("branded-shorts-agent")!.blockedReason).toBe("PENDING_DEVELOPMENT");
+  it("calls branded-shorts RUNNABLE once the transcription key is present alongside the shipped engine", () => {
+    // The inverse of the assertion this test used to make ("REFUSES to call
+    // branded-shorts runnable even with every key present"): that refusal was
+    // correct while the engine did not exist and is wrong now that it does.
+    const products = productsOf({ ...PROD_ENV, ELEVENLABS_API_KEY: "el-x" });
+    expect(products.get("branded-shorts-agent")!.status).not.toBe("UNRUNNABLE");
+    expect(products.get("branded-shorts-agent")!.blockedReason).toBeUndefined();
   });
 
   it("reports a product RUNNABLE when everything it requires is satisfied", () => {
@@ -240,13 +251,20 @@ describe("the capability-by-product work: the report answers at product level", 
     }
   });
 
-  it("sorts what a person can fix above what is already on a board", () => {
-    const products = buildCapabilityReport({ ...PROD_ENV, PROMPT_STORE_DRIVER: "" }).products;
-    const notConfigured = products.findIndex((p) => p.blockedReason === "NOT_CONFIGURED");
-    const pending = products.findIndex((p) => p.blockedReason === "PENDING_DEVELOPMENT");
-    expect(notConfigured).toBeGreaterThanOrEqual(0);
-    expect(pending).toBeGreaterThanOrEqual(0);
-    expect(notConfigured, "a missing key outranks scheduled work — one of them can be fixed today").toBeLessThan(pending);
+  it("sorts what a person can fix above what merely degrades, and nothing is on a board any more", () => {
+    // Until the video engine was vendored, branded-shorts was the one
+    // PENDING_DEVELOPMENT product and this test pinned "a missing key outranks
+    // scheduled work". No product is pending now, so the ordering that remains
+    // testable on real data is the next rule down: UNRUNNABLE (a key someone
+    // can issue today) sorts above DEGRADED and RUNNABLE.
+    // PROD_ENV as it is: the two video products are UNRUNNABLE on the missing
+    // transcription key; everything else runs, degraded or not.
+    const products = buildCapabilityReport(PROD_ENV).products;
+    expect(products.findIndex((p) => p.blockedReason === "PENDING_DEVELOPMENT")).toBe(-1);
+    const lastUnrunnable = products.map((p) => p.status).lastIndexOf("UNRUNNABLE");
+    const firstOther = products.findIndex((p) => p.status !== "UNRUNNABLE");
+    expect(lastUnrunnable).toBeGreaterThanOrEqual(0);
+    expect(firstOther).toBeGreaterThan(lastUnrunnable);
   });
 });
 
@@ -270,15 +288,19 @@ describe("the capability-by-product work: UNEXPLAINED keeps meaning exactly one 
     }
   });
 
-  it("says outright what an absent transcription key costs each video product — a held tiktok clip, and a branded-shorts line still behind its engine", () => {
-    // The row used to say "wiring this alone fixes nothing" because no
-    // renderer existed. tiktok-agent's pure-ffmpeg pipeline changed that: the
-    // key is now load-bearing for a real product, and the row has to say so
-    // rather than keep the old disclaimer — while still not overclaiming for
-    // branded-shorts, whose engine (SCRUM-362) is unbuilt.
+  it("says outright what an absent transcription key costs each video product — now that the engine no longer hides behind it", () => {
+    // Two rewrites, both correct in their moment. The row first said "wiring
+    // this alone fixes nothing" (no renderer existed); tiktok's pure-ffmpeg
+    // pipeline made the key load-bearing for a real product; and vendoring the
+    // branded-shorts engine removed the second blocker, so the row must no
+    // longer send a reader away from the one thing that helps.
     const transcription = CAPABILITY_CATALOGUE.find((c) => c.id === "video-transcription")!;
     expect(transcription.whenAbsent).toMatch(/02-transcribe/);
     expect(transcription.whenAbsent).toMatch(/per-beat timing/);
-    expect(transcription.whenAbsent).toMatch(/SCRUM-362/);
+    expect(transcription.whenAbsent).toMatch(/branded-shorts/);
+    expect(transcription.whenAbsent, "the engine ships now — nothing waits on SCRUM-362").not.toMatch(/SCRUM-362/);
+    // The 401 is recorded where the next person will look: a mounted secret is
+    // not a working credential, and this row is the only place that says so.
+    expect(transcription.rationale).toMatch(/401/);
   });
 });

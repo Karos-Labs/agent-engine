@@ -30,18 +30,64 @@ describe("video.selfEvalGate", () => {
     ]);
   });
 
-  it("passes and honestly flags the checks it does not yet implement", async () => {
-    const { runner } = fakeRunner({
+  it("with no engine directory, passes on the tags alone and says the engine's whole-file checks did not run", async () => {
+    const { runner, calls } = fakeRunner({
       stdout: ffprobeJson({ color_space: "bt709", color_transfer: "bt709", color_primaries: "bt709", color_range: "tv" }),
       stderr: "",
       exitCode: 0,
     });
-    const tool = createSelfEvalGate({ runner });
+    const tool = createSelfEvalGate({ runner, env: {} });
     const outcome = await tool.execute({ videoPath: "/edit/final.mp4", renderWarnings: [] }, { ctx });
 
     if (outcome.status !== "success") throw new Error("unreachable");
     if (outcome.result.verdict !== "pass") throw new Error("expected a pass verdict");
-    expect(outcome.result.evidence.join(" ")).toContain("not yet implemented");
+    expect(outcome.result.evidence.join(" ")).toContain("did not run");
+    expect(calls).toHaveLength(1); // ffprobe only — nothing spawned python
+  });
+
+  it("with an engine directory, runs self_eval.py after the tag check and merges its evidence into a pass", async () => {
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const runner = async (command: string, args: string[]) => {
+      calls.push({ command, args });
+      if (command === "ffprobe") {
+        return { stdout: ffprobeJson({ color_space: "bt709", color_transfer: "bt709", color_primaries: "bt709", color_range: "tv" }), stderr: "", exitCode: 0 };
+      }
+      return { stdout: "  sdr tags ok\n  flash scan 400 frames, 0 spikes\nSELF-EVAL GATE: PASS (13.30s)", stderr: "", exitCode: 0 };
+    };
+    const tool = createSelfEvalGate({ runner, engineDir: "/engine", ffprobeBin: "ffprobe" });
+    const outcome = await tool.execute({ videoPath: "/edit/final.mp4", renderWarnings: [], profilePath: "/p.json", jobPath: "/j.json" }, { ctx });
+
+    expect(calls[1]!.args).toEqual(["/engine/self_eval.py", "--video", "/edit/final.mp4", "--profile", "/p.json", "--job", "/j.json"]);
+    if (outcome.status !== "success") throw new Error("unreachable");
+    if (outcome.result.verdict !== "pass") throw new Error(`expected a pass verdict, got ${outcome.result.verdict}`);
+    expect(outcome.result.evidence).toContain("SELF-EVAL GATE: PASS (13.30s)");
+  });
+
+  it("with an engine directory, a self_eval.py FAIL is a content_fail carrying its bullets even when the tags are clean", async () => {
+    const runner = async (command: string) => {
+      if (command === "ffprobe") {
+        return { stdout: ffprobeJson({ color_space: "bt709", color_transfer: "bt709", color_primaries: "bt709", color_range: "tv" }), stderr: "", exitCode: 0 };
+      }
+      return { stdout: "SELF-EVAL GATE: FAIL (1)\n  - FLASH: 1 single-frame luma spike(s) that revert within 3 frames at 4.20s", stderr: "", exitCode: 1 };
+    };
+    const tool = createSelfEvalGate({ runner, engineDir: "/engine", ffprobeBin: "ffprobe" });
+    const outcome = await tool.execute({ videoPath: "/edit/final.mp4", renderWarnings: [] }, { ctx });
+
+    if (outcome.status !== "success") throw new Error("unreachable");
+    if (outcome.result.verdict !== "content_fail") throw new Error(`expected a content_fail verdict, got ${outcome.result.verdict}`);
+    expect(outcome.result.reason).toContain("FLASH");
+  });
+
+  it("with an engine directory, a self_eval.py crash (no parseable report) is a tooling_error, never a content judgment", async () => {
+    const runner = async (command: string) => {
+      if (command === "ffprobe") {
+        return { stdout: ffprobeJson({ color_space: "bt709", color_transfer: "bt709", color_primaries: "bt709", color_range: "tv" }), stderr: "", exitCode: 0 };
+      }
+      return { stdout: "", stderr: "Traceback (most recent call last):\nModuleNotFoundError: No module named 'numpy'", exitCode: 1 };
+    };
+    const tool = createSelfEvalGate({ runner, engineDir: "/engine", ffprobeBin: "ffprobe" });
+    const outcome = await tool.execute({ videoPath: "/edit/final.mp4", renderWarnings: [] }, { ctx });
+    expect(outcome.status).toBe("tooling_error");
   });
 
   it("content_fails the HLG-orange-renders-as-red bug: HDR tags surviving onto the finished file", async () => {

@@ -129,7 +129,15 @@ export function happyPathResponses(finalMp4Path: string): Record<string, Process
     "cut_check.py": { stdout: "CUT GATE: PASS (1 segments, 0 cuts, 5.00s from a 5.00s window)", stderr: "", exitCode: 0 },
     "graphic_qa.py": { stdout: "", stderr: "", exitCode: 0 },
     "cutaway_check.py": { stdout: "CUTAWAY GATE: PASS (0 cutaways, 0 graphics, no conflicts)", stderr: "", exitCode: 0 },
-    "build_short.py": { stdout: `done: ${finalMp4Path}  duration=12.34s  (side-data clean)\n`, stderr: "", exitCode: 0 },
+    // One canned response serves both stages: `--until base` parses the `base:` line, the full build the `done:` line.
+    "build_short.py": {
+      stdout: `base: ${path.join(path.dirname(finalMp4Path), "base.mp4")}\ndone: ${finalMp4Path}  duration=12.34s  (side-data clean)\n`,
+      stderr: "",
+      exitCode: 0,
+    },
+    "render_overlays.py": { stdout: "OVERLAYS: PASS (0 rendered)", stderr: "", exitCode: 0 },
+    "self_eval.py": { stdout: "  sdr tags ok\nSELF-EVAL GATE: PASS (12.34s)", stderr: "", exitCode: 0 },
+    "unpack_bundle.py": { stdout: "unpacked 3 files -> /work/brand", stderr: "", exitCode: 0 },
     ffprobe: { stdout: goodFfprobeStreamJson(), stderr: "", exitCode: 0 },
   };
 }

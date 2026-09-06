@@ -5,7 +5,7 @@ import { ctx, fakeRunner } from "./test-helpers.js";
 describe("video.assetsCheck", () => {
   it("builds the exact brand_assets_check.py CLI contract", async () => {
     const { runner, calls } = fakeRunner({ stdout: "12/12 asset paths resolve and open\nBRAND ASSETS: PASS", stderr: "", exitCode: 0 });
-    const tool = createAssetsCheck({ runner, engineDir: "/engine" });
+    const tool = createAssetsCheck({ runner, engineDir: "/engine", pythonBin: "python3" });
     await tool.execute({ profilePath: "/clients/acme/brand-profile.json" }, { ctx });
 
     expect(calls).toEqual([{ command: "python3", args: ["/engine/brand_assets_check.py", "--profile", "/clients/acme/brand-profile.json"] }]);
@@ -20,7 +20,7 @@ describe("video.assetsCheck", () => {
       "  - MISSING   brand/logos/wordmark.svg  (referenced by endcard.wordmark)",
     ].join("\n");
     const { runner } = fakeRunner({ stdout, stderr: "", exitCode: 1 });
-    const tool = createAssetsCheck({ runner, engineDir: "/engine" });
+    const tool = createAssetsCheck({ runner, engineDir: "/engine", pythonBin: "python3" });
     const outcome = await tool.execute({ profilePath: "/p.json" }, { ctx });
 
     if (outcome.status !== "success") throw new Error("unreachable");
@@ -40,7 +40,7 @@ describe("video.assetsCheck", () => {
       "BRAND ASSETS: PASS",
     ].join("\n");
     const { runner } = fakeRunner({ stdout, stderr: "", exitCode: 0 });
-    const tool = createAssetsCheck({ runner, engineDir: "/engine" });
+    const tool = createAssetsCheck({ runner, engineDir: "/engine", pythonBin: "python3" });
     const outcome = await tool.execute({ profilePath: "/p.json" }, { ctx });
 
     if (outcome.status !== "success") throw new Error("unreachable");
@@ -58,7 +58,7 @@ describe("video.assetsCheck", () => {
       "  - MISSING   brand/logos/wordmark.svg  (referenced by endcard.wordmark)",
     ].join("\n");
     const { runner } = fakeRunner({ stdout, stderr: "", exitCode: 1 });
-    const tool = createAssetsCheck({ runner, engineDir: "/engine" });
+    const tool = createAssetsCheck({ runner, engineDir: "/engine", pythonBin: "python3" });
     const outcome = await tool.execute({ profilePath: "/p.json" }, { ctx });
 
     if (outcome.status !== "success") throw new Error("unreachable");

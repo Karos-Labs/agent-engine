@@ -130,7 +130,7 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
     requires: { languageDirective: true, numbersSourced: true, structuredOutput: true },
     structuredOutputFields: ["bodyMarkdown", "slug", "excerpt", "estimatedReadMinutes", "faqItems"],
   },
-  { promptId: "branded-shorts-graphics", agent: "branded-shorts-agent", versions: ["1", "2"], latestVersion: "2" },
+  { promptId: "branded-shorts-graphics", agent: "branded-shorts-agent", versions: ["1", "2", "3"], latestVersion: "3" },
   { promptId: "branded-shorts-highlights", agent: "branded-shorts-agent", versions: ["1"], latestVersion: "1" },
   { promptId: "branded-shorts-style-exploration", agent: "branded-shorts-agent", versions: ["1"], latestVersion: "1" },
   { promptId: "campaign-craft", agent: "campaign-orchestrator", versions: ["1"], latestVersion: "1" },

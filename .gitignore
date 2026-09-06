@@ -38,3 +38,7 @@ instagram-output/
 .next/
 .turbo/
 .cache/
+
+# Python bytecode caches (packages/tools/karos-video/engine, its test fixtures)
+__pycache__/
+*.pyc

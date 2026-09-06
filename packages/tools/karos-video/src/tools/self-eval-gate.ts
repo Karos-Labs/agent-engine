@@ -1,32 +1,29 @@
 import { z } from "zod";
 import type { GateVerdict } from "@agent-engine/core";
 import { defineTool, success, toolingError } from "@agent-engine/tool-common";
-import { resolveRuntime, type KarosVideoToolOptions } from "../config.js";
+import { resolveEngineScript, resolveRuntime, type KarosVideoToolOptions } from "../config.js";
+import { toGateVerdictFromBullets } from "../gate-helpers.js";
 
-const TOOL_VERSION = "1.0.0";
+const TOOL_VERSION = "1.1.0";
+const SCRIPT_NAME = "self_eval.py";
 
 export const SelfEvalGateInputSchema = z.object({
-  // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from execute()'s usage.
-  videoPath: z.string().min(1).describe("Path to the finished, rendered video file to run the post-encode bitstream color-tag check against."),
-  /**
-   * Non-fatal advisories carried forward from `video.render`'s stdout (e.g.
-   * `build_short.py`'s caption-density warning, PLAYBOOK §2) — folded into
-   * this gate's own evidence, on both `pass` and `content_fail`, so they
-   * reach the same audit trail the pipeline's actual QA gate produces
-   * instead of being silently dropped once `video.render`'s result is
-   * otherwise consumed. Never turned into a `content_fail` on its own:
-   * `build_short.py` itself treats this as advisory, not fatal.
-   */
+  videoPath: z.string().min(1).describe("Path to the finished, rendered video file to run the post-encode checks against."),
   renderWarnings: z
     .array(z.string())
     .default([])
     .describe(
       "Non-fatal advisories carried forward from video.render's stdout (e.g. build_short.py's caption-density warning, PLAYBOOK §2) — folded into this gate's own evidence, on both pass and content_fail, never turned into a content_fail on its own.",
     ),
+  profilePath: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("The client's brand-profile.json — enables self_eval.py's post-encode accent-hue check (the brand accent must still sit at its own hue on the finished file) and the duration-parity check."),
+  jobPath: z.string().min(1).optional().describe("The job that produced the file — tells self_eval.py where every overlay sits (accent check) and what the kept runtime should be (duration parity)."),
 });
 export type SelfEvalGateInput = z.infer<typeof SelfEvalGateInputSchema>;
 
-/** `build_short.py`'s own `SDR_TAGS`/`SETPARAMS` constants — every encode must carry exactly these bitstream tags. */
 const EXPECTED = { colorSpace: "bt709", colorPrimaries: "bt709", colorTransfer: "bt709", colorRange: "tv" } as const;
 
 interface FfprobeStream {
@@ -37,33 +34,37 @@ interface FfprobeStream {
 }
 
 /**
- * `video.selfEvalGate` (RFC-06 §2 stage 7 / SKILL.md step 7 / PLAYBOOK §6).
+ * `video.selfEvalGate` (PLAYBOOK §6, "before anyone sees the output").
  *
- * PARTIAL IMPLEMENTATION, honestly reported as such (evidence always names
- * what ran): none of the six checked-in engine scripts implement a
- * `self_eval.py` (confirmed by listing `assets/engine/`), so there is no
- * existing CLI contract to wrap for the frame-sampling, saturation-sanity,
- * whole-video flash-scan, or worst-case caption-legibility checks PLAYBOOK
- * §6 describes as running "engine, every build." This tool implements the
- * one check that IS fully specified and independently verifiable from the
- * finished file alone — the post-encode bitstream color-tag check
- * (`build_short.py`'s own `SDR_TAGS`/`SETPARAMS`, the direct fix for the
- * "orange renders as red" HLG bug, Lola 2026-07-06) — via `ffprobe`, and
- * reports the remaining PLAYBOOK §6 checks as not-yet-implemented in its
- * evidence rather than silently claiming full coverage.
+ * Two layers, both on the FINISHED file:
+ *
+ *   1. Here, via ffprobe: the post-encode SDR bitstream colour tags
+ *      (`build_short.py`'s SDR_TAGS/SETPARAMS — the "orange renders as red"
+ *      HLG fix). Kept in TypeScript so a deployment with no engine checkout
+ *      still gets this much, exactly as before 1.1.0.
+ *   2. Via `engine/self_eval.py`, when an engine directory is configured:
+ *      the side-data check, the whole-video flash scan, the post-encode
+ *      accent-hue check at every overlay, and duration parity. 1.0.0 reported
+ *      these honestly as "not yet implemented"; 1.1.0 implements them, and
+ *      the evidence names what ran. Caption legibility is deliberately NOT
+ *      re-measured here: `build_short.py` already measures it twice on the
+ *      real frames and fails its own exit on an emphasis-layer miss.
+ *
+ * A content problem from either layer is a `content_fail` carrying both
+ * layers' evidence; a broken ffprobe or a crashed script is a `tooling_error`.
  */
 export function createSelfEvalGate(options: KarosVideoToolOptions = {}) {
   const runtime = resolveRuntime(options);
-  const NOT_YET_IMPLEMENTED =
-    "NOTE: saturation-sanity, whole-video flash-scan, and caption-legibility checks (PLAYBOOK §6) are not yet implemented — this gate currently verifies post-encode SDR bitstream color tags only";
+  const ENGINE_ABSENT_NOTE =
+    "NOTE: no engine directory configured (BRANDED_SHORTS_ENGINE_DIR), so self_eval.py's flash-scan, accent-hue, side-data and duration checks did not run — this gate verified the SDR bitstream colour tags only";
 
   return defineTool<SelfEvalGateInput, GateVerdict>({
     name: "video.selfEvalGate",
     description:
-      "PARTIAL IMPLEMENTATION, honestly reported as such: verifies the finished file's post-encode SDR bitstream color tags (build_short.py's SDR_TAGS/SETPARAMS, the 'orange renders as red' HLG fix) via ffprobe. The other PLAYBOOK §6 checks (saturation-sanity, flash-scan, caption-legibility) are not yet implemented and are reported as such in this gate's evidence rather than silently claimed as covered.",
+      "Post-encode checks on the finished file: SDR bitstream colour tags via ffprobe (the 'orange renders as red' HLG fix), plus — through the engine's self_eval.py — HDR side-data, a whole-video flash scan (a luma spike reverting within 3 frames), the accent-hue check at every overlay, and duration parity against the job. Any miss is a content_fail carrying every layer's evidence.",
     version: TOOL_VERSION,
     inputSchema: SelfEvalGateInputSchema,
-    async execute({ videoPath, renderWarnings }) {
+    async execute({ videoPath, renderWarnings, profilePath, jobPath }) {
       const carriedWarnings = renderWarnings.map((w) => `build warning: ${w}`);
       const args = [
         "-v",
@@ -102,18 +103,38 @@ export function createSelfEvalGate(options: KarosVideoToolOptions = {}) {
         mismatches.push(`color_transfer=${stream.color_transfer ?? "(unset)"} (expected ${EXPECTED.colorTransfer})`);
       if (stream.color_range !== EXPECTED.colorRange) mismatches.push(`color_range=${stream.color_range ?? "(unset)"} (expected ${EXPECTED.colorRange})`);
 
-      if (mismatches.length > 0) {
+      // Layer 2: the engine's whole-file checks, when there is an engine to run them.
+      // Without one, the note rides on a PASS only — a content_fail on the tags
+      // already says everything that verdict needs to say.
+      const script = resolveEngineScript(runtime, SCRIPT_NAME);
+      let engineEvidence: string[] = script.ok ? [] : [ENGINE_ABSENT_NOTE];
+      let engineFailures: string[] = [];
+      if (script.ok) {
+        const engineArgs = [script.path, "--video", videoPath, ...(profilePath ? ["--profile", profilePath] : []), ...(jobPath ? ["--job", jobPath] : [])];
+        const verdict = toGateVerdictFromBullets(await runtime.runner(runtime.pythonBin, engineArgs), SCRIPT_NAME, TOOL_VERSION);
+        if (verdict.verdict === "tooling_error") {
+          return toolingError(verdict.reason ?? `${SCRIPT_NAME} failed without a reason`);
+        }
+        engineEvidence = verdict.evidence;
+        if (verdict.verdict === "content_fail") engineFailures = verdict.evidence.filter((e) => !e.startsWith("WARNING"));
+      }
+
+      if (mismatches.length > 0 || engineFailures.length > 0) {
+        const reasons = [
+          ...(mismatches.length > 0 ? [`finished video is missing explicit SDR bitstream tags — a player may render tonemapped orange as HDR red: ${mismatches.join("; ")}`] : []),
+          ...engineFailures,
+        ];
         return success<GateVerdict>({
           verdict: "content_fail",
-          evidence: [...mismatches, ...carriedWarnings],
-          reason: `finished video is missing explicit SDR bitstream tags — a player may render tonemapped orange as HDR red: ${mismatches.join("; ")}`,
+          evidence: [...mismatches, ...(script.ok ? engineEvidence : []), ...carriedWarnings],
+          reason: reasons.join("; "),
           toolVersion: TOOL_VERSION,
         });
       }
 
       return success<GateVerdict>({
         verdict: "pass",
-        evidence: [`post-encode SDR tags confirmed: ${JSON.stringify(EXPECTED)}`, NOT_YET_IMPLEMENTED, ...carriedWarnings],
+        evidence: [`post-encode SDR tags confirmed: ${JSON.stringify(EXPECTED)}`, ...engineEvidence, ...carriedWarnings],
         toolVersion: TOOL_VERSION,
       });
     },

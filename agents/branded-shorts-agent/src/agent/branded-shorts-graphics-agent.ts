@@ -41,6 +41,6 @@ export class BrandedShortsGraphicsAgent extends BaseAgent<GraphicsPlanOutput> {
     // projected branding-guidelines context doc (C1) — telling the model it
     // bears on cutaway subject/composition choice within the still-mandatory
     // approved-archetype vocabulary. v1 stays frozen.
-    skillRef: "branded-shorts-graphics@2",
+    skillRef: "branded-shorts-graphics@3",
   };
 }

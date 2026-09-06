@@ -15,11 +15,13 @@
 #            installer for Debian/Ubuntu, and karos-landing's render-check
 #            gate + karos-publish's renderCarousel both launch a real
 #            Chromium (see their own "playwright": "1.53.0" dependency).
-#            Also installs the Python 3 + opencv-python-headless + ffmpeg
-#            runtime @agent-engine/tool-karos-video's adapters shell out to
-#            (BRANDED_SHORTS_ENGINE_DIR still has to point at a real engine
-#            checkout for those calls to do anything — unset, they degrade to
-#            a per-call tooling_error, never a crash; see wiring/tools.ts).
+#            Also installs the Python 3 + numpy/Pillow/opencv-python-headless
+#            + ffmpeg runtime @agent-engine/tool-karos-video's adapters shell
+#            out to, and pins BRANDED_SHORTS_ENGINE_DIR at the engine that
+#            ships INSIDE this image (packages/tools/karos-video/engine — the
+#            RFC-06 §3 vendoring decision, made as SPEC-AU63 option A). Unset
+#            it and every video.* call degrades to a per-call tooling_error,
+#            never a crash; see wiring/tools.ts.
 #
 # Runs BOTH Cloud Run targets from the same image — the HTTP server
 # (default CMD, below) and the Pub/Sub pull consumer (deploy with
@@ -68,6 +70,11 @@ FROM node:22-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
+# The engine's Python runtime (packages/tools/karos-video/engine/README.md):
+# numpy + Pillow are what every gate and the renderer import; opencv is the
+# face detector behind `crop: "auto"`, pinned <5 because v5 dropped the
+# CascadeClassifier it uses. Pillow was MISSING here before the engine was
+# vendored — every caption render would have died on `import PIL`.
 # opencv-python-headless has no GUI/X11 deps, unlike full opencv-python —
 # appropriate for a headless container. `--break-system-packages`: Debian
 # bookworm's PEP 668 guard against pip clobbering the system Python install
@@ -84,7 +91,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 \
       python3-pip \
       ffmpeg \
-    && pip3 install --no-cache-dir --break-system-packages opencv-python-headless yt-dlp \
+    && pip3 install --no-cache-dir --break-system-packages \
+      "numpy>=1.26,<3" \
+      "pillow>=10,<13" \
+      "opencv-python-headless>=4.8,<5" \
+      yt-dlp \
     && rm -rf /var/lib/apt/lists/*
 
 # node_modules: pruned to production dependencies only (see builder stage).
@@ -136,6 +147,15 @@ COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/agents ./agents
 COPY --from=builder /app/apps/agent-server/package.json ./apps/agent-server/package.json
 COPY --from=builder /app/apps/agent-server/dist ./apps/agent-server/dist
+
+# The Branded Shorts engine ships inside this image, under the packages tree
+# copied just above (packages/tools/karos-video/engine — see its README for
+# provenance). Pinned here, unconditionally, rather than injected per deploy:
+# the engine and the adapters that call it are ONE build artifact, and a
+# deploy config cannot point at a different engine than the image carries.
+# `apps/agent-server/__tests__/video-engine-in-image.test.ts` checks that
+# every script the adapters name exists at this path in the build context.
+ENV BRANDED_SHORTS_ENGINE_DIR=/app/packages/tools/karos-video/engine
 
 # Cloud Run sets PORT itself; the server also defaults to 8080 if it's ever unset.
 ENV PORT=8080

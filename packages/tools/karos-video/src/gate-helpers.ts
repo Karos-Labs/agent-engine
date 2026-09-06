@@ -56,18 +56,25 @@ function warnLines(stdout: string): string[] {
 
 /**
  * Maps a completed run of `cut_check.py` / `cutaway_check.py` /
- * `brand_assets_check.py` onto a `GateVerdict` (RFC-01 §6). Exit 0 is always
- * a pass; a non-zero exit WITH parseable `- reason` bullets is a real
- * `content_fail`; a non-zero exit with nothing parseable (a traceback, a
- * missing dependency) is a `tooling_error` — a broken script run is never
- * reinterpreted as content signal. `WARN` lines (only `brand_assets_check.py`
- * emits them today) are appended to evidence regardless of which branch fires.
+ * `brand_assets_check.py` / `render_overlays.py` / `self_eval.py` onto a
+ * `GateVerdict` (RFC-01 §6). Exit 0 is always a pass; a non-zero exit WITH
+ * parseable `- reason` bullets is a real `content_fail`; a non-zero exit with
+ * nothing parseable (a traceback, a missing dependency) is a `tooling_error` —
+ * a broken script run is never reinterpreted as content signal. `WARN` lines
+ * (`brand_assets_check.py` and `self_eval.py` emit them) are appended to
+ * evidence regardless of which branch fires.
+ *
+ * The summary line each script prints on success (`CUT GATE: PASS (...)`,
+ * `BRAND ASSETS: PASS`, `OVERLAYS: PASS (n rendered)`, `SELF-EVAL GATE:
+ * PASS (...)`) becomes the first piece of evidence — it carries the numbers a
+ * reviewer wants without opening the run. A script that prints none still
+ * passes on exit 0, with the script's name standing in.
  */
 export function toGateVerdictFromBullets(result: ProcessResult, scriptName: string, toolVersion: string): GateVerdict {
   const evidence = bulletLines(result.stdout);
   const warnings = warnLines(result.stdout);
   if (result.exitCode === 0) {
-    const summary = nonEmptyLines(result.stdout).find((line) => /GATE:\s*PASS|ASSETS:\s*PASS/i.test(line));
+    const summary = nonEmptyLines(result.stdout).find((line) => /GATE:\s*PASS|ASSETS:\s*PASS|OVERLAYS:\s*PASS/i.test(line));
     const base = summary ? [summary] : [`${scriptName}: PASS`];
     return { verdict: "pass", evidence: [...base, ...warnings], toolVersion };
   }

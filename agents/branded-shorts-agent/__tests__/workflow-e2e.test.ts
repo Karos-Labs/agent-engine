@@ -49,7 +49,13 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
 
     // Every gate script was actually invoked with the engine directory + expected flags.
     const scriptsInvoked = env.runnerCalls.map((c) => path.basename(c.args[0] ?? c.command));
-    expect(scriptsInvoked).toEqual(expect.arrayContaining(["cut_check.py", "build_short.py", "cutaway_check.py"]));
+    expect(scriptsInvoked).toEqual(expect.arrayContaining(["cut_check.py", "build_short.py", "render_overlays.py", "graphic_qa.py", "cutaway_check.py", "self_eval.py"]));
+    // The graphics gate judges overlays over the footage timeline (base.mp4), never the finished composite.
+    const graphicsGate = env.runnerCalls.find((c) => path.basename(c.args[0] ?? "") === "graphic_qa.py")!;
+    expect(graphicsGate.args[graphicsGate.args.indexOf("--video") + 1]).toBe(path.join(env.workDir, "edit", "base.mp4"));
+    // base first (once), then the single full composite.
+    const buildStages = env.runnerCalls.filter((c) => path.basename(c.args[0] ?? "") === "build_short.py").map((c) => (c.args.includes("--until") ? "base" : "full"));
+    expect(buildStages).toEqual(["base", "full"]);
 
     const deliverables = await env.store.listJson(env.clientSlug, ["ledger", "deliverables", params.runId, "_"]);
     expect(deliverables.map((d) => d.id)).toEqual(["branded-shorts-video"]);
@@ -127,8 +133,9 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
     expect(result.reason).toContain("Spectral-SemiBold.ttf");
 
     // The failure must be caught before spending a transcribe/render cycle on
-    // assets already known to be broken — video.assetsCheck runs at step 00a,
-    // before intake (01) or the brand profile load (02).
+    // assets already known to be broken — video.assetsCheck runs at step 01c,
+    // right after the inputs are materialised and before the brand profile
+    // load (02) or the transcript (03).
     const scriptsInvoked = env.runnerCalls.map((c) => path.basename(c.args[0] ?? c.command));
     expect(scriptsInvoked).toEqual(["brand_assets_check.py"]);
   });
@@ -219,9 +226,11 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
     expect(result.output.overlayCount).toBe(1);
 
     // "Sparkle Burst" isn't in DEFAULT_APPROVED_ARCHETYPES — the workflow must reject it
-    // before ever calling build_short.py, not discover the problem via a failed gate.
-    const buildCalls = env.runnerCalls.filter((c) => path.basename(c.args[0] ?? "") === "build_short.py");
-    expect(buildCalls).toHaveLength(1);
+    // before ever spending a full composite on it, not discover the problem via a failed gate.
+    // (The one `--until base` call at 07b is the footage timeline the gates need; it happens
+    // once per run, before any plan exists, and is not a render of a plan.)
+    const fullBuilds = env.runnerCalls.filter((c) => path.basename(c.args[0] ?? "") === "build_short.py" && !c.args.includes("--until"));
+    expect(fullBuilds).toHaveLength(1);
 
     const stepIds = (await durableStore.listSteps("branded_shorts_run_bad_archetype")).map((s) => s.stepId);
     expect(stepIds).toContain("08a2-validate-archetypes-attempt-1");
@@ -246,7 +255,8 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
     expect(result.status).toBe("held");
     if (result.status !== "held") throw new Error("unreachable");
     expect(result.reason).toContain("Confetti Pop");
-    expect(env.runnerCalls.filter((c) => path.basename(c.args[0] ?? "") === "build_short.py")).toHaveLength(0);
+    // No full composite was ever rendered; only 07b's plan-independent base timeline.
+    expect(env.runnerCalls.filter((c) => path.basename(c.args[0] ?? "") === "build_short.py" && !c.args.includes("--until"))).toHaveLength(0);
   });
 
   it("surfaces build_short.py's caption-density warning in the final result, never silently dropping it (P0#3)", async () => {
@@ -254,6 +264,7 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
       ...happyPathResponses(finalMp4Path),
       "build_short.py": {
         stdout: [
+          `base: ${path.join(path.dirname(finalMp4Path), "base.mp4")}`,
           "  caption density WARNING: 3+ consecutive chunks without an emphasis word around cap_04 — v2 rule wants the second font every few words",
           `done: ${finalMp4Path}  duration=12.34s  (side-data clean)`,
         ].join("\n"),

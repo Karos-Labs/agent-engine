@@ -40,7 +40,17 @@ export const BrandProfileSchema = z
   .object({
     // No existing TSDoc on this field to transcribe (SCRUM-293 flag) — synthesized from the schema's own doc comment.
     color: BrandColorPaletteSchema.describe("The client's brand color palette (brand-profile.json's color block) — the subset every gate script reads."),
-    video_grade: z.string().min(1).optional().describe("PLAYBOOK §4b: a locked grade override; absent means \"auto\"."),
+    /**
+     * PLAYBOOK §4b: a locked grade override; absent means `"auto"`. Either a
+     * bare ffmpeg filter string or the engine's own `{ filter }` object (the
+     * shape every real client profile carries, e.g. `{"name": "karos-natural-v1",
+     * "filter": "vibrance=intensity=0.15"}`) — `video.colorGrade` resolves both
+     * to the filter string `build_short.py` reads.
+     */
+    video_grade: z
+      .union([z.string().min(1), z.object({ filter: z.string().min(1) }).passthrough()])
+      .optional()
+      .describe("PLAYBOOK §4b: a locked grade override — an ffmpeg filter string, or the engine's {filter} object; absent means \"auto\"."),
     video_captions_v2: z.record(z.string(), z.unknown()).optional().describe("PLAYBOOK §2: a profile without this block does not build (v2-only)."),
   })
   .passthrough();
@@ -59,11 +69,16 @@ export type ContentCut = z.infer<typeof ContentCutSchema>;
 /** A motion-graphic overlay window (`build_short.py`/`graphic_qa.py`/`cutaway_check.py`'s `overlays[]`). */
 export const OverlaySchema = z
   .object({
+    /** The frame-sequence pattern (`.../anim-<slug>-<i>/%04d.png`) `render_overlays.py` writes and `build_short.py`/`graphic_qa.py` read. */
     file: z.string().min(1),
     start: z.number().nonnegative(),
     end: z.number().positive(),
     x: z.union([z.literal("center"), z.number()]).optional(),
     y: z.number().optional(),
+    /** The approved archetype this overlay renders (`render_overlays.py`'s registry); falls back to the directory slug when absent. */
+    archetype: z.string().min(1).optional(),
+    /** Text for the text-bearing archetypes (clock, callout) — the payoff word, quoted from the transcript. */
+    label: z.string().min(1).optional(),
   })
   .passthrough();
 export type Overlay = z.infer<typeof OverlaySchema>;
@@ -119,6 +134,10 @@ export const VideoJobSchema = z
     highlight_starts: z.array(z.number().nonnegative()).default([]),
     overlays: z.array(OverlaySchema).default([]),
     cutaways: z.array(CutawaySchema).default([]),
+    /** Per-run ASR spelling fixes (intake Q7's spoken names), merged over the profile's own `corrections` by `build_short.py`. */
+    corrections: z.record(z.string(), z.string()).optional(),
+    /** Intake Q8: replaces the profile endcard's eyebrow text for this run only. */
+    endcard_override: z.string().min(1).optional(),
   })
   .passthrough();
 export type VideoJob = z.infer<typeof VideoJobSchema>;

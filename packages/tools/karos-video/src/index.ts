@@ -7,6 +7,8 @@ import { createCutGate } from "./tools/cut-gate.js";
 import { createCutawayGate } from "./tools/cutaway-gate.js";
 import { createGraphicsGate } from "./tools/graphics-gate.js";
 import { createRender } from "./tools/render.js";
+import { createRenderOverlays } from "./tools/render-overlays.js";
+import { createMaterializeInputs } from "./tools/materialize-inputs.js";
 import { createCutClip, createBrandFrame } from "./tools/clip-compose.js";
 import { createComposeSequence } from "./tools/compose-sequence.js";
 import { createReadJsonFile } from "./tools/read-json-file.js";
@@ -28,6 +30,8 @@ export * from "./tools/cutaway-gate.js";
 export * from "./tools/graphics-gate.js";
 export * from "./tools/read-json-file.js";
 export * from "./tools/render.js";
+export * from "./tools/render-overlays.js";
+export * from "./tools/materialize-inputs.js";
 export * from "./tools/clip-compose.js";
 export * from "./tools/compose-sequence.js";
 export * from "./tools/self-eval-gate.js";
@@ -71,6 +75,12 @@ export function createKarosVideoTools(options: CreateKarosVideoToolsOptions = {}
     "video.cutawayGate": createCutawayGate(options),
     "video.colorGrade": createColorGrade(),
     "video.render": createRender(options),
+    "video.renderOverlays": createRenderOverlays(options),
+    // The media store doubles as the gs:// reader for a run's inputs (the
+    // client's upload and their brand asset bundle live in the same bucket the
+    // deliverables go to) — one credential for one job, same reasoning as
+    // karos-media's Tier 0 `objectReader`.
+    "video.materializeInputs": createMaterializeInputs({ ...options, ...(options.mediaStore ? { objectReader: options.mediaStore } : {}) }),
     "video.cutClip": createCutClip(options),
     "video.brandFrame": createBrandFrame(options),
     "video.composeSequence": createComposeSequence(options),
