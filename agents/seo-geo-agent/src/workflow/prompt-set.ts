@@ -48,8 +48,11 @@ const INTENT_QUOTA_TARGET = 5;
  *
  *  1 — category-only templates (T-A3; the `brand` intent never named the brand)
  *  2 — `brand` templates take the client's name (2026-09-05)
+ *  3 — `navigational` templates take it too: the portal groups navigational
+ *      with brand as "buyers asking about you by name", and v2's navigational
+ *      prompts ("near me", pricing models, trends) named nobody (2026-09-06)
  */
-export const PROMPT_TEMPLATE_VERSION = 2;
+export const PROMPT_TEMPLATE_VERSION = 3;
 
 /** `fiveShingleJaccard`'s dedupe threshold — the same 0.40 cutoff `scoring-config.data.ts`/`rec-catalog.data.ts` use for their own "5-shingle Jaccard similarity ... <=0.40" content-differentiation checks, reused here for consistency across this port rather than inventing a second number for the same concept. */
 const DEDUPE_JACCARD_THRESHOLD = 0.4;
@@ -106,12 +109,16 @@ const EN_TEMPLATES: IntentTemplateSet = {
     (i) => `What are common pricing models in the ${i} industry?`,
     (i) => `What certifications or standards matter in the ${i} industry?`,
   ],
+  // Navigational = a buyer LOOKING FOR THIS BRAND'S SITE (the portal files it
+  // under "When buyers ask about you by name" together with `brand`). Until v3
+  // these were category questions — "near me", pricing models, industry trends
+  // — that named nobody, so they sat under that heading with no name in them.
   navigational: [
-    (i) => `How do I find a good ${i} provider near me?`,
-    (i) => `What does a good onboarding process look like for ${i} services?`,
-    (i) => `How do ${i} providers typically price their services?`,
-    (i) => `What trends are shaping the ${i} industry in 2026?`,
-    (i) => `How has the ${i} industry changed recently?`,
+    (i, b) => `What is ${b}'s official website?`,
+    (i, b) => `How do I contact ${b} or book a call with them?`,
+    (i, b) => `Where can I see ${b}'s pricing and packages?`,
+    (i, b) => `Does ${b} publish case studies or client results?`,
+    (i, b) => `Where is ${b} based, and who is behind the company?`,
   ],
 };
 
@@ -152,11 +159,11 @@ const ES_TEMPLATES: IntentTemplateSet = {
     (i) => `¿Qué certificaciones o estándares importan en la industria de ${i}?`,
   ],
   navigational: [
-    (i) => `¿Cómo encuentro un buen proveedor de ${i} cerca de mí?`,
-    (i) => `¿Cómo es un buen proceso de incorporación para servicios de ${i}?`,
-    (i) => `¿Cómo suelen fijar los precios los proveedores de ${i}?`,
-    (i) => `¿Qué tendencias están marcando la industria de ${i} en 2026?`,
-    (i) => `¿Cómo ha cambiado recientemente la industria de ${i}?`,
+    (i, b) => `¿Cuál es el sitio web oficial de ${b}?`,
+    (i, b) => `¿Cómo contacto a ${b} o reservo una llamada con ellos?`,
+    (i, b) => `¿Dónde puedo ver los precios y paquetes de ${b}?`,
+    (i, b) => `¿${b} publica casos de éxito o resultados de clientes?`,
+    (i, b) => `¿Dónde está ${b} y quién está detrás de la empresa?`,
   ],
 };
 

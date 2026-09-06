@@ -141,14 +141,18 @@ describe("deriveDefaultPromptSet — language, intent locking, and NEUTRAL desir
     }
   });
 
-  it("names the client in every brand-intent prompt, and in no other intent", () => {
+  it("names the client in every branded-intent prompt (brand, navigational), and in no category intent", () => {
     // The defect this replaced: the `brand` templates took only the industry,
     // so all five asked "is this client the category leader" — structurally
     // false for anyone who is not one. Karos Labs was shown 0% brand presence
     // while Gemini, asked directly, named them five times and cited their site.
+    // v3 (2026-09-06) extended the rule to `navigational`: the portal files it
+    // with `brand` under "When buyers ask about you by name", and its templates
+    // ("near me", pricing models, trends) had named nobody.
+    const BRANDED = new Set(["brand", "navigational"]);
     const result = deriveDefaultPromptSet("AI Digital Marketing", "en", "Karos Labs");
-    const brandPrompts = result.prompts.filter((p) => p.intentType === "brand");
-    const otherPrompts = result.prompts.filter((p) => p.intentType !== "brand");
+    const brandPrompts = result.prompts.filter((p) => BRANDED.has(p.intentType));
+    const otherPrompts = result.prompts.filter((p) => !BRANDED.has(p.intentType));
 
     expect(brandPrompts.length).toBeGreaterThan(0);
     for (const prompt of brandPrompts) {
