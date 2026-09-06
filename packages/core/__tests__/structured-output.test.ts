@@ -47,24 +47,44 @@ describe("parseStructuredOutput — the failures that killed real runs", () => {
   // prep run pubsub-21532935275023108 (x-agent, 10-draft-post): the model
   // returned its output object with no envelope, and the discriminated union
   // rejected it with "Invalid discriminator value. Expected 'tool_call' | 'final'".
-  it("classifies a bare output object with no `type` as a repairable validation error carrying the payload and usage", () => {
+  // That used to cost a repair turn; the envelope is now put back
+  // deterministically (see normalizeTurnEnvelope) and the output validated.
+  it("accepts a bare output object with no `type` by wrapping it as a final turn", () => {
     const raw = { turn: { text: "AI marketing this quarter…", mainPostText: "AI marketing this quarter…" } };
+    const out = parseStructuredOutput(turnSchema, raw, true, ctx);
+    expect(out).toEqual({ type: "final", output: { text: "AI marketing this quarter…" } });
+  });
 
+  // prep run pubsub-21702006224861156 (landing-blueprint, claude-opus-4-8): a
+  // complete `output` under a `type` that was not "final", twice in a row,
+  // $2.24 and a failed job for one string.
+  it("accepts a complete output under a wrong or missing `type`, keeping the thought", () => {
+    const objectRoot = z.object({ type: z.literal("final"), thought: z.string().optional(), output: z.object({ text: z.string() }) });
+    expect(parseStructuredOutput(objectRoot, { thought: "plan", type: "blueprint", output: { text: "hi" } }, false, ctx)).toEqual({ type: "final", thought: "plan", output: { text: "hi" } });
+    expect(parseStructuredOutput(objectRoot, { output: { text: "hi" } }, false, ctx)).toEqual({ type: "final", output: { text: "hi" } });
+  });
+
+  it("still fails a final turn whose output itself is wrong, and a bare payload that matches nothing", () => {
+    const objectRoot = z.object({ type: z.literal("final"), output: z.object({ text: z.string() }) });
+    expect(() => parseStructuredOutput(objectRoot, { type: "final", output: { wrong: 1 } }, false, ctx)).toThrow(StructuredOutputValidationError);
     const err = (() => {
       try {
-        parseStructuredOutput(turnSchema, raw, true, ctx);
+        parseStructuredOutput(objectRoot, { unrelated: 1 }, false, ctx);
         return undefined;
       } catch (e) {
         return e;
       }
     })();
-
     expect(err).toBeInstanceOf(StructuredOutputValidationError);
     const validationError = err as StructuredOutputValidationError;
     expect(validationError.message).toMatch(/malformed structured output.*did not match the step's turn schema/s);
-    expect(validationError.message).toContain("invalid_union");
-    expect(validationError.rawPayloadExcerpt).toContain("AI marketing this quarter");
+    expect(validationError.rawPayloadExcerpt).toContain("unrelated");
     expect(validationError.usage).toEqual(ctx.usage);
+  });
+
+  it("never rewrites a tool call: a disallowed tool name stays a validation error", () => {
+    expect(() => parseStructuredOutput(turnSchema, { turn: { type: "tool_call", tool: "not.allowed", args: {} } }, true, ctx)).toThrow(StructuredOutputValidationError);
+    expect(() => parseStructuredOutput(turnSchema, { turn: { type: "call", tool: "render.preview", args: {} } }, true, ctx)).toThrow(StructuredOutputValidationError);
   });
 
   // prep run pubsub-21066167120415191 (linkedin-agent, 09-draft-post): the

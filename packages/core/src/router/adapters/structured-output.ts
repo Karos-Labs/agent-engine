@@ -107,13 +107,60 @@ export function parseStructuredOutput<TOutput>(
   try {
     return schema.parse(unwrapped);
   } catch (err) {
-    if (err instanceof ZodError) {
-      // `ZodError.message` is already the serialized issue list; naming the
-      // issues explicitly keeps the string stable if that ever changes.
-      throw failure(`it did not match the step's turn schema: ${JSON.stringify(err.issues)}`, err);
+    if (!(err instanceof ZodError)) throw err;
+    // One deterministic second look before this becomes a paid repair turn.
+    const normalized = normalizeTurnEnvelope(unwrapped);
+    if (normalized !== undefined) {
+      const retry = schema.safeParse(normalized);
+      if (retry.success) {
+        console.warn(`[structured-output] ${providerId}/${model}: accepted a turn after normalizing its envelope (${describeEnvelopeFix(unwrapped)})`);
+        return retry.data;
+      }
     }
-    throw err;
+    // `ZodError.message` is already the serialized issue list; naming the
+    // issues explicitly keeps the string stable if that ever changes.
+    throw failure(`it did not match the step's turn schema: ${JSON.stringify(err.issues)}`, err);
   }
+}
+
+/**
+ * The two envelope mistakes real runs keep making, fixed deterministically
+ * instead of through a repair turn that re-bills the whole prompt:
+ *
+ * 1. The model wrote a `"type"` that is not `"final"` (or none at all) around
+ *    an otherwise complete `output`. Prep run pubsub-21702006224861156
+ *    (landing-blueprint on claude-opus-4-8) did exactly this twice in a row,
+ *    with a 41k-token prompt and a 7k-token, perfectly good blueprint each
+ *    time: $2.24 and a failed job for one string.
+ * 2. The model returned the output object bare, with no envelope. Prep run
+ *    pubsub-21532935275023108 (x-agent, 10-draft-post).
+ *
+ * A `tool_call`, or anything carrying `tool`/`args`, is left alone: a tool
+ * call has its own shape and a wrong tool name must keep failing loudly
+ * (allowedTools narrowing). A payload that already says `type: "final"` is
+ * left alone too: its failure is inside `output` and only the model can fix
+ * that. Returns `undefined` when there is nothing to normalize.
+ */
+export function normalizeTurnEnvelope(payload: unknown): Record<string, unknown> | undefined {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return undefined;
+  const record = payload as Record<string, unknown>;
+  const type = record["type"];
+  if (type === "tool_call" || "tool" in record || "args" in record) return undefined;
+  const output = record["output"];
+  if (typeof output === "object" && output !== null) {
+    return type === "final" ? undefined : { ...record, type: "final" };
+  }
+  const { thought, type: _type, ...rest } = record;
+  if (Object.keys(rest).length === 0) return undefined;
+  return { type: "final", ...(typeof thought === "string" ? { thought } : {}), output: rest };
+}
+
+function describeEnvelopeFix(payload: unknown): string {
+  const record = payload as Record<string, unknown>;
+  if (typeof record["output"] === "object" && record["output"] !== null) {
+    return `"type" was ${JSON.stringify(record["type"]) ?? "absent"}, set to "final"`;
+  }
+  return `bare output with keys [${Object.keys(record).filter((k) => k !== "thought" && k !== "type").join(", ")}] wrapped as a final turn`;
 }
 
 /**
