@@ -86,6 +86,7 @@ export interface KarosMediaToolsOptions {
    * explicitly, tests pass a fake.
    */
   videoQaClient?: VisionAnalysisClient | null;
+  /**
    * The GCS media store `media.stageAsset` uploads a chosen image through so
    * a LinkedIn/X deliverable can carry a URL a reviewer (and the portal) can
    * open. The same store `publish.renderCarousel` already writes its PNGs to;
