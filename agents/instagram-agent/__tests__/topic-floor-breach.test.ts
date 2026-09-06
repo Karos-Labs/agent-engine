@@ -38,6 +38,7 @@ describe("03-claim-topic: the topics catalog is the only dedup gate (RFC-03 §2.
     // 00-auto-setup runs first; with no declared industry it seeds nothing, so
     // the breach below is reached exactly as it was before that step existed.
     expect(stepRecords.map((s) => s.stepId)).toEqual([
+      "00a-check-media-source",
       "00-auto-setup",
       "01-open-run",
       "02-freeze-style-config",
