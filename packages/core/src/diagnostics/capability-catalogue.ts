@@ -210,9 +210,50 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
     owner: "packages/tools/karos-video (video.transcribe)",
     requires: [{ name: "ELEVENLABS_API_KEY", kind: "required" }],
     whenAbsent:
-      "video.transcribe reports not_available, so branded-shorts and tiktok runs cannot plan a cut at all. WIRING THIS ALONE PRODUCES NOTHING: the transcript feeds a renderer that does not exist yet (video-engine, SCRUM-362), so a run with a transcription key and no engine gets further before failing and ships exactly as much video as it does today — none. Fixing this is not fixing video.",
+      "video.transcribe reports not_available: a tiktok commentary clip cannot plan a cut (the run holds at 02-transcribe), and an original short's voiceover captions fall back to per-beat timing instead of word timing. branded-shorts runs cannot plan a cut either, though those still wait on the render engine (SCRUM-362).",
     shortfall: "no transcription key",
-    rationale: "Decided: the key is to be placed in Secret Manager, then wired (the per-unit cost work — shipped without a Jira ticket round). Absent today because the secret does not exist in either project yet — verified, not assumed.",
+    rationale:
+      "Wired in cloudbuild.yaml (--set-secrets ELEVENLABS_API_KEY=elevenlabs-api-key) since the tiktok smart-pipeline change. The secret had existed in karoscmo-prep for weeks while mounted nowhere — every prep tiktok run died at 02-transcribe, verified 2026-09-05. Prod (karoscmo) has the secret too; cloudbuild.promote.yaml still needs the same line.",
+  },
+  {
+    id: "video-harvest",
+    title: "Footage harvest — clipping an episode of a show the client holds rights to, found by topic",
+    owner: "packages/tools/karos-media (media.harvestVideo, providers/yt-dlp-harvest.ts)",
+    requires: [
+      { name: "VIDEO_HARVEST_PROVIDER", kind: "required" },
+      { name: "YT_DLP_COOKIES_FILE", kind: "enhances" },
+      { name: "YT_DLP_BIN", kind: "enhances" },
+    ],
+    whenAbsent:
+      "media.harvestVideo reports not_available and the tiktok cascade skips from the client's own footage straight to generated b-roll — a client with a sourcePool of shows but no uploaded episode never gets a commentary clip, only original shorts.",
+    shortfall: "no footage harvest",
+    rationale: "Set to yt-dlp in cloudbuild.yaml for prep. The cookies file is optional and only needed when YouTube challenges the Cloud Run egress IP; absent, an affected download is a content_fail the cascade routes around.",
+  },
+  {
+    id: "video-voiceover",
+    title: "Voiceover — a spoken narration for an original short",
+    owner: "packages/tools/karos-video (video.synthesizeVoice)",
+    requires: [
+      { name: "GOOGLE_CLOUD_PROJECT", kind: "alternative" },
+      { name: "ELEVENLABS_API_KEY", kind: "alternative" },
+    ],
+    whenAbsent:
+      "video.synthesizeVoice reports not_available. An original short whose script (or client config) wants a voice holds; one that runs silent is unaffected.",
+    shortfall: "no voiceover",
+    rationale: "Google Cloud Text-to-Speech authenticates with the server's own ADC (the composition root passes `authorize`), so every deployed environment has it; ElevenLabs is the alternative and the fallback.",
+  },
+  {
+    id: "video-visual-qa",
+    title: "Visual QA — a vision model watches the finished clip before a human does",
+    owner: "packages/tools/karos-media (video.visualQaGate)",
+    requires: [
+      { name: "GEMINI_VERTEX_PROJECT_ID", kind: "alternative" },
+      { name: "GOOGLE_CLOUD_PROJECT", kind: "alternative" },
+      { name: "VIDEO_QA_MODEL", kind: "enhances" },
+    ],
+    whenAbsent: "The gate reports not_available and the tiktok run records the clip as proceeding to the human gate UNREVIEWED — never as passed.",
+    shortfall: "no visual QA",
+    rationale: "Satisfied by GOOGLE_CLOUD_PROJECT, which every deployed environment sets. VIDEO_QA_MODEL only swaps the model (default gemini-2.5-flash).",
   },
   {
     id: "video-engine",

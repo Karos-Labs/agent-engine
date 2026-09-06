@@ -73,11 +73,18 @@ ENV NODE_ENV=production
 # bookworm's PEP 668 guard against pip clobbering the system Python install
 # doesn't apply here — this container has no other Python consumer to
 # conflict with.
+#
+# yt-dlp backs `media.harvestVideo` (tiktok-agent's rights-restricted footage
+# harvest, `VIDEO_HARVEST_PROVIDER=yt-dlp`). Installed from pip, not apt:
+# Debian's package lags YouTube's extractor changes by months and a stale
+# yt-dlp fails every download, which the tool reports as content_fail and the
+# cascade then routes around — silently degrading to generated footage. pip
+# gets the current release at build time; rebuild the image to refresh it.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 \
       python3-pip \
       ffmpeg \
-    && pip3 install --no-cache-dir --break-system-packages opencv-python-headless \
+    && pip3 install --no-cache-dir --break-system-packages opencv-python-headless yt-dlp \
     && rm -rf /var/lib/apt/lists/*
 
 # node_modules: pruned to production dependencies only (see builder stage).

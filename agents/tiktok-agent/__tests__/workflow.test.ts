@@ -8,8 +8,10 @@ import { FilePromptStore, type AgentToolRegistry, type CompletionResult, type Mo
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import {
   BrandFrameInputSchema,
+  ComposeSequenceInputSchema,
   CutClipInputSchema,
   SelfEvalGateInputSchema,
+  SynthesizeVoiceInputSchema,
   TranscribeInputSchema,
   UploadDeliverableInputSchema,
 } from "@agent-engine/tool-karos-video";
@@ -17,6 +19,7 @@ import {
   BRAND_LOGO_CONTRAST_FLOOR,
   GenerateVideoInputSchema,
   HarvestVideoInputSchema,
+  VisualQaGateInputSchema,
   contrastRatio,
 } from "@agent-engine/tool-karos-media";
 import { createTikTokAgentWorkflow } from "../src/workflow/create-tiktok-agent-workflow.js";
@@ -56,6 +59,21 @@ const GOOD_COMMENTARY = {
   sourceCredit: "Jane Doe on The Show ep. 12",
 };
 
+/** A three-beat original short, silent by the model's own call — so the voice tools are not needed to complete it. */
+const GOOD_SCRIPT = {
+  hook: "Nobody tells you the first hire is the one you fire.",
+  beats: [
+    { narration: "Nobody tells you the first hire is the one you fire.", onScreenText: "The first hire is a bet", visualBrief: "Empty office at dawn, one desk lamp on, slow push-in across a row of dark monitors.", seconds: 4 as const },
+    { narration: "You hire for the company you have, and by month six it is a different company.", onScreenText: "Month six changes everything", visualBrief: "Whiteboard being wiped clean, marker residue catching window light, handheld drift.", seconds: 6 as const },
+    { narration: "So write the role for the company you are becoming, not the one you are.", onScreenText: "Hire for who you're becoming", visualBrief: "City street at blue hour, storefront lights coming on one by one, wide static frame.", seconds: 6 as const },
+  ],
+  caption: "The first hire is a bet on a company that will not exist in six months. Hire for the one you're becoming.",
+  about: "An original short arguing founders should write early roles for the company they are turning into.",
+  voiceover: false,
+  voiceoverRationale: "Three blunt claims that land as on-screen text; a voice would slow them down.",
+  language: "en-US",
+};
+
 /** Serves each bounded agent by matching the requested schema against a pool. */
 function smartFakeRouter(candidates: readonly unknown[]): ModelRouter {
   return {
@@ -91,6 +109,10 @@ interface StubOptions {
   generateServes?: boolean;
   /** Register `video.uploadDeliverable` (a media store is configured). */
   withUpload?: boolean;
+  /** Register `video.synthesizeVoice` (a TTS provider is configured). */
+  withVoice?: boolean;
+  /** Register `video.visualQaGate`; `"fail"` makes it send the clip back. */
+  withVisualQa?: boolean | "fail";
 }
 
 /** Records every tool call so a test can assert what did and did not happen. */
@@ -148,6 +170,17 @@ function stubTools(opts: StubOptions = {}): Harness {
       BrandFrameInputSchema,
     ),
     "video.selfEvalGate": tool("video.selfEvalGate", () => ok(pass("video.selfEvalGate")), SelfEvalGateInputSchema),
+    // The original-short assembler, validated against the REAL input schema
+    // like every other video stub — a plate list with the wrong shape fails
+    // here, not in production.
+    "video.composeSequence": tool(
+      "video.composeSequence",
+      (args) => {
+        const input = args as { outputPath: string; clips: unknown[]; voiceoverPath?: string };
+        return ok({ outputPath: input.outputPath, durationSeconds: 24, clipsUsed: input.clips.length, hasVoiceover: input.voiceoverPath !== undefined });
+      },
+      ComposeSequenceInputSchema,
+    ),
     "gate.lintPost": tool("gate.lintPost", () => ok(pass("gate.lintPost"))),
     "gate.brandCompliance": tool("gate.brandCompliance", () => ok(pass("gate.brandCompliance"))),
     "gate.noPlaceholder": tool("gate.noPlaceholder", () => ok(pass("gate.noPlaceholder"))),
@@ -171,11 +204,33 @@ function stubTools(opts: StubOptions = {}): Harness {
   if (opts.generateServes !== undefined) {
     tools["video.generateClip"] = tool(
       "video.generateClip",
-      () =>
+      (args) =>
         opts.generateServes
-          ? ok({ path: ".media-cache/run/generated-clip.mp4", model: "veo-2.0-generate-001" })
+          ? ok({
+              path: `.media-cache/run/${(args as { outputName?: string }).outputName ?? "generated-clip"}.mp4`,
+              model: "veo-3.1-generate-001",
+              resolution: "1080p",
+              durationSeconds: (args as { durationSeconds?: number }).durationSeconds ?? 8,
+            })
           : { status: "not_available" as const, reason: "no Vertex project configured" },
       GenerateVideoInputSchema,
+    );
+  }
+  if (opts.withVoice) {
+    tools["video.synthesizeVoice"] = tool(
+      "video.synthesizeVoice",
+      (args) => ok({ outputPath: (args as { outputPath: string }).outputPath, provider: "google", voice: "en-US-Chirp3-HD-Charon", charCount: 120, durationSeconds: 14.2 }),
+      SynthesizeVoiceInputSchema,
+    );
+  }
+  if (opts.withVisualQa) {
+    tools["video.visualQaGate"] = tool(
+      "video.visualQaGate",
+      () =>
+        opts.withVisualQa === "fail"
+          ? ok({ verdict: "content_fail" as const, evidence: ["looksAiGenerated: obviously"], reason: "the clip obviously looks AI-generated", toolVersion: "1.0.0" })
+          : ok({ verdict: "pass" as const, evidence: ["overallScore: 9"], toolVersion: "1.0.0" }),
+      VisualQaGateInputSchema,
     );
   }
   if (opts.withUpload) {
@@ -242,22 +297,59 @@ describe("tiktok-agent clip pipeline", () => {
     expect(h.deliverables[0]).toMatchObject({ sourceTier: "user-asset" });
   });
 
-  it("blocks intake when the client has no clip config, rather than clipping anything it likes", async () => {
-    // Which shows a client may draw on is a rights decision someone makes.
+  it("runs a client with no tiktokClips block at all when footage was handed to it — the block gates other people's shows, not the client's own recording", async () => {
     const h = stubTools({ config: {} });
     const result = await run(h, "run-tt-noconfig");
+
+    expect(result.status).toBe("completed");
+    expect(h.deliverables[0]).toMatchObject({ sourceTier: "user-asset" });
+  });
+
+  it("still blocks intake on a tiktokClips block that is present but does not parse — someone wrote settings and got them wrong", async () => {
+    const h = stubTools({ config: { tiktokClips: { sourcePool: "not-a-list", mode: "sideways" } } });
+    const result = await run(h, "run-tt-badconfig");
 
     expect(result.status).toBe("blocked_intake");
     expect(h.calls).not.toContain("video.cutClip");
   });
 
-  it("holds rather than lowering the bar when the catalog has no candidate", async () => {
-    // The legacy rule: a run with no candidate "logs that fact and exits
-    // cleanly. It never lowers the bar to ship something."
+  it("never clips anyone else's footage for a client with no sourcePool: the harvest tier is not even allowed to search", async () => {
+    // Which shows a client may draw on is a rights decision someone makes;
+    // without one the cascade skips the harvest and goes to an original short.
+    const h = stubTools({ config: {}, harvestServes: true, generateServes: true });
+    const result = await run(h, "run-tt-nopool", { sourcePath: undefined }, [GOOD_SCRIPT, GOOD_COMMENTARY], os.tmpdir());
+
+    expect(result.status).toBe("completed");
+    expect(h.calls).not.toContain("media.harvestVideo");
+    expect(h.deliverables[0]).toMatchObject({ sourceTier: "generated", format: "original-short" });
+  }, 20_000);
+
+  it("with footage in hand, an empty catalog is a missing hint, not a missing subject: the topic is named from the recording", async () => {
     const h = stubTools({ reserveFails: true });
-    const result = await run(h, "run-tt-nocandidate");
+    const result = await run(h, "run-tt-nocandidate-footage", {}, [{ ...GOOD_MOMENT, topicLabel: "why the margin call was the real story" }, GOOD_COMMENTARY]);
+
+    expect(result.status).toBe("completed");
+    if (result.status !== "completed") throw new Error("unreachable");
+    const output = result.output as { topic: string; topicSource: string };
+    expect(output.topicSource).toBe("footage");
+    expect(output.topic).toBe("why the margin call was the real story");
+    // Nothing was reserved, so nothing is committed or released — and no
+    // research was run to invent a subject the footage already had.
+    expect(h.calls).not.toContain("topics.commit");
+    expect(h.calls).not.toContain("research.pull");
+  });
+
+  it("holds rather than lowering the bar when the catalog has no candidate, no footage was given, and discovery has nothing to work from", async () => {
+    // The legacy rule: a run with no candidate "logs that fact and exits
+    // cleanly. It never lowers the bar to ship something." No research tool,
+    // no intel, no profile: discovery cannot honestly propose anything.
+    const h = stubTools({ reserveFails: true, harvestServes: true });
+    const result = await run(h, "run-tt-nocandidate", { sourcePath: undefined }, [GOOD_MOMENT, GOOD_COMMENTARY], os.tmpdir());
 
     expect(result.status).toBe("held");
+    if (result.status !== "held") throw new Error("unreachable");
+    expect(result.reason).toContain("discovery could not seed it");
+    expect(h.calls).not.toContain("media.harvestVideo");
     expect(h.calls).not.toContain("video.cutClip");
   });
 
@@ -484,31 +576,55 @@ describe("tiered source cascade", () => {
     expect(h.deliverables[0]).toMatchObject({ sourceTier: "owned-footage" });
   }, 20_000);
 
-  it("Tier 2b: falls through to a web harvest when the pool holds no footage URIs", async () => {
+  it("Tier 2b: falls through to a web harvest when the pool holds no footage URIs, confined to the shows in the pool", async () => {
     const h = stubTools({ harvestServes: true });
+    let harvestArgs: Record<string, unknown> | undefined;
+    const original = (h.tools as unknown as Record<string, { execute: (a: never, c: never) => unknown }>)["media.harvestVideo"]!;
+    (h.tools as unknown as Record<string, unknown>)["media.harvestVideo"] = {
+      ...original,
+      async execute(args: never, callCtx: never) {
+        harvestArgs = HarvestVideoInputSchema.parse(args) as unknown as Record<string, unknown>;
+        return original.execute(args, callCtx);
+      },
+    };
     const result = await run(h, "run-tt-harvest", { sourcePath: undefined }, [GOOD_MOMENT, GOOD_COMMENTARY], REPO_ROOT);
 
     expect(result.status).toBe("completed");
     expect(h.calls).toContain("media.harvestVideo");
-    expect(h.deliverables[0]).toMatchObject({ sourceTier: "web-harvest" });
+    // The rights scope travels with the query: only the pool's shows.
+    expect(harvestArgs!["allowedSources"]).toEqual(["The Show"]);
+    expect(h.deliverables[0]).toMatchObject({ sourceTier: "web-harvest", sourceContext: { url: "https://example.com/talk" } });
   }, 20_000);
 
-  it("Tier 3: a generated plate skips transcription and the cut entirely — the commentary carries the message", async () => {
+  it("Tier 3: nothing to clip becomes an original short — a script, one generated plate per beat, no transcript, no cut", async () => {
     const h = stubTools({ harvestServes: false, generateServes: true });
-    const result = await run(h, "run-tt-generated", { sourcePath: undefined }, [GOOD_COMMENTARY], REPO_ROOT);
+    const result = await run(h, "run-tt-generated", { sourcePath: undefined }, [GOOD_SCRIPT, GOOD_COMMENTARY], REPO_ROOT);
 
     expect(result.status).toBe("completed");
-    // No speech: nothing to transcribe, no moment agent, no cut. The plate IS
-    // the clip, and it still goes through the branded frame and the QA gate.
+    if (result.status !== "completed") throw new Error("unreachable");
+    // No speech to mine: nothing to transcribe, no moment agent, no cut. The
+    // plates are assembled, framed and gated like any other clip.
     expect(h.calls).not.toContain("video.transcribe");
     expect(h.calls).not.toContain("video.cutClip");
+    expect(h.calls.filter((c) => c === "video.generateClip")).toHaveLength(GOOD_SCRIPT.beats.length);
+    expect(h.calls).toContain("video.composeSequence");
     expect(h.calls).toContain("video.brandFrame");
     expect(h.calls).toContain("video.selfEvalGate");
-    expect(h.deliverables[0]).toMatchObject({ sourceTier: "generated" });
+    // The script said "silent", the client's config said "auto": no voice.
+    expect(h.calls).not.toContain("video.synthesizeVoice");
+    const output = result.output as { format: string; voiceover: boolean; script?: { beats: unknown[] } };
+    expect(output.format).toBe("original-short");
+    expect(output.voiceover).toBe(false);
+    expect(output.script?.beats).toHaveLength(3);
+    expect(h.deliverables[0]).toMatchObject({ sourceTier: "generated", format: "original-short", voiceover: false });
+    // An original short has no one else's words in it, so no source credit.
+    expect(h.deliverables[0]).not.toHaveProperty("sourceCredit");
   }, 20_000);
 
   it("holds honestly when every tier is dry, naming each tier's outcome, and releases the moment", async () => {
-    const h = stubTools({ harvestServes: false, generateServes: false });
+    // Harvest answers empty and generation is not wired at all: the cascade
+    // has nowhere left to go.
+    const h = stubTools({ harvestServes: false });
     const result = await run(h, "run-tt-dry", { sourcePath: undefined }, [GOOD_MOMENT, GOOD_COMMENTARY], REPO_ROOT);
 
     expect(result.status).toBe("held");
@@ -519,6 +635,44 @@ describe("tiered source cascade", () => {
     // The moment goes back — a dry cascade must not burn it.
     expect(h.calls).toContain("topics.release");
   });
+
+  it("holds and releases the topic when the generator is wired but declines every beat", async () => {
+    const h = stubTools({ harvestServes: false, generateServes: false });
+    const result = await run(h, "run-tt-veo-down", { sourcePath: undefined }, [GOOD_SCRIPT, GOOD_COMMENTARY], REPO_ROOT);
+
+    expect(result.status).toBe("held");
+    if (result.status !== "held") throw new Error("unreachable");
+    expect(result.reason).toContain("b-roll for beat 1 could not be generated");
+    expect(h.calls).toContain("topics.release");
+    expect(h.calls).not.toContain("ledger.writeDeliverable");
+  }, 20_000);
+
+  it("mode \"commentary\" never generates: with no footage the run holds instead of making an original short", async () => {
+    const h = stubTools({
+      config: { tiktokClips: { mode: "commentary", sourcePool: ["The Show"], guestWatchlist: [], narrowing: [] } },
+      harvestServes: false,
+      generateServes: true,
+    });
+    const result = await run(h, "run-tt-commentary-only", { sourcePath: undefined }, [GOOD_SCRIPT, GOOD_COMMENTARY], REPO_ROOT);
+
+    expect(result.status).toBe("held");
+    if (result.status !== "held") throw new Error("unreachable");
+    expect(result.reason).toContain("generated: disabled");
+    expect(h.calls).not.toContain("video.generateClip");
+  });
+
+  it("mode \"original\" never touches anyone else's footage: no harvest, straight to a scripted short", async () => {
+    const h = stubTools({
+      config: { tiktokClips: { mode: "original", sourcePool: ["The Show"], guestWatchlist: [], narrowing: [] } },
+      harvestServes: true,
+      generateServes: true,
+    });
+    const result = await run(h, "run-tt-original-only", { sourcePath: undefined }, [GOOD_SCRIPT, GOOD_COMMENTARY], REPO_ROOT);
+
+    expect(result.status).toBe("completed");
+    expect(h.calls).not.toContain("media.harvestVideo");
+    expect(h.deliverables[0]).toMatchObject({ format: "original-short" });
+  }, 20_000);
 
   it("holds with every tier named even when the video tiers are not wired at all", async () => {
     // No repoRoot, no harvest/generate tools: the pre-cascade deployment shape.

@@ -39,8 +39,10 @@ import { ScraperError, type ScrapedRecord, type ScraperProvider, type SocialPlat
  */
 
 // 1.0.0 — new in SCRUM-321 (AU37).
-const INGEST_TOOL_VERSION = "1.0.0";
-const GET_TOOL_VERSION = "1.0.0";
+// 1.0.1 — `VisionPart` grew a `fileData` branch and `stripCodeFence` became
+// shared with `video.visualQaGate`; neither tool's own behaviour changed.
+const INGEST_TOOL_VERSION = "1.0.1";
+const GET_TOOL_VERSION = "1.0.1";
 
 /** Where a client's versioned visual-pattern profiles live, as `WorkspaceStoreLike` segments. */
 export const VISUAL_PATTERNS_SEGMENTS = ["client", "visual-patterns"] as const;
@@ -383,8 +385,16 @@ export function engagementScore(engagement: ScrapedRecord["engagement"]): number
 // The vision step
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** One part of a multimodal request — text, or an image the caller has already fetched. */
-export type VisionPart = { readonly text: string } | { readonly inlineData: { readonly data: string; readonly mimeType: string } };
+/**
+ * One part of a multimodal request — text, media the caller has already
+ * fetched as base64, or (for `video.visualQaGate`) a `gs://` object Vertex
+ * reads itself. `fileData` is the only way to review a clip over the inline
+ * request ceiling without proxying its bytes through this process.
+ */
+export type VisionPart =
+  | { readonly text: string }
+  | { readonly inlineData: { readonly data: string; readonly mimeType: string } }
+  | { readonly fileData: { readonly fileUri: string; readonly mimeType: string } };
 
 /**
  * The vision call, narrowed to what this tool uses, so the package does not
@@ -449,7 +459,8 @@ const ANALYSIS_INSTRUCTIONS = [
   "Use `low` confidence rather than dropping a pattern you are unsure of — a reviewer can delete it, but cannot recover one you never wrote down.",
 ].join("\n");
 
-function stripCodeFence(text: string): string {
+/** Gemini wraps JSON in ```json fences often enough, even with `responseMimeType` set, that every JSON-parsing caller here goes through this first. Shared with `visual-qa-gate.ts`. */
+export function stripCodeFence(text: string): string {
   const trimmed = text.trim();
   const fenced = /^```(?:json)?\s*\n([\s\S]*?)\n?```$/.exec(trimmed);
   return fenced?.[1]?.trim() ?? trimmed;

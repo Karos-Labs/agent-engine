@@ -5,7 +5,9 @@ import { defineTool, success, toolingError } from "@agent-engine/tool-common";
 import { resolveRuntime, type KarosVideoToolOptions } from "../config.js";
 import { assertNoTraversalOrNul, assertWithinTenantWorkRoot } from "../sandbox.js";
 
-const TOOL_VERSION = "1.0.0";
+// 1.0.1 — `probeDuration`/`assertToolPath` exported for `video.composeSequence`
+// and `video.synthesizeVoice`; the two tools here behave exactly as before.
+const TOOL_VERSION = "1.0.1";
 
 /**
  * The pure-ffmpeg clip pipeline: `video.cutClip` and `video.brandFrame`.
@@ -185,8 +187,15 @@ export function buildBrandFrameFilter(input: BrandFrameInput): string {
   return `${base}[framed];${logoChain};[framed][logo]overlay=48:${Math.round(bar / 2)}-h/2[out]`;
 }
 
-/** ffprobe duration of a finished file — the same probe `selfEvalGate` trusts. */
-async function probeDuration(runtime: ReturnType<typeof resolveRuntime>, filePath: string): Promise<number | null> {
+/**
+ * ffprobe duration of a finished file — the same probe `selfEvalGate` trusts.
+ * Exported (not duplicated) for `video.synthesizeVoice` and
+ * `video.composeSequence`, so every ffmpeg-family tool reports the same
+ * notion of "how long is this file". Returns `null` on a non-zero exit or
+ * unparseable JSON; a REJECTED runner (binary missing) still throws, because
+ * that is a deployment fault the caller must decide how to classify.
+ */
+export async function probeDuration(runtime: ReturnType<typeof resolveRuntime>, filePath: string): Promise<number | null> {
   const result = await runtime.runner(runtime.ffprobeBin, [
     "-v",
     "error",
@@ -206,7 +215,14 @@ async function probeDuration(runtime: ReturnType<typeof resolveRuntime>, filePat
   }
 }
 
-async function assertToolPath(runtime: ReturnType<typeof resolveRuntime>, clientSlug: string, candidate: string, what: string): Promise<void> {
+/**
+ * The tenant sandbox every path argument to an ffmpeg-family tool passes
+ * through: confined to `<workRoot>/<clientSlug>/` when a work root is
+ * configured, traversal/NUL-hardened regardless. Exported so the sequence
+ * composer and the voice synthesizer apply exactly the rule `video.cutClip`
+ * does — one sandbox, not three near-copies that drift.
+ */
+export async function assertToolPath(runtime: ReturnType<typeof resolveRuntime>, clientSlug: string, candidate: string, what: string): Promise<void> {
   if (runtime.workRoot) {
     await assertWithinTenantWorkRoot(runtime.workRoot, clientSlug, candidate, what);
   } else {

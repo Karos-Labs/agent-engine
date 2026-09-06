@@ -315,3 +315,23 @@ Implement `ImageSearchProvider` (`src/providers.ts`), register it in
 `buildProviderRegistry`, and name it in the routes it suits. A provider
 registered but absent from every built-in chain is still appended to each
 chain's tail, so an explicit registration is never silently unreachable.
+
+## Video: the clip cascade (`tiktok-agent`)
+
+Four tiers again, for footage instead of stills, all registered
+unconditionally and each honest about being unconfigured:
+
+| Tier | Tool | What it is | Unconfigured |
+|---|---|---|---|
+| 1 | `media.ingestAssets` (`kind: "video"`) | the episode the client attached to the run, or their own footage URIs from `tiktokClips.sourcePool` | a `gs://` upload is reported unmet without a media store |
+| 2b | `media.harvestVideo` | an episode of a show the client holds clipping rights to, found by topic and downloaded with **yt-dlp** — `VIDEO_HARVEST_PROVIDER=yt-dlp` (`src/providers/yt-dlp-harvest.ts`) | `not_available`; the cascade moves on |
+| 3 | `video.generateClip` | a **Veo 3.1** b-roll plate per script beat (`VIDEO_GEN_MODEL` to swap; `resolution`, `generateAudio`, `allowPeople`, `outputName` per call), billed per second against `UNIT_PRICING` | `not_available` without a Vertex project |
+| QA | `video.visualQaGate` | **Gemini 2.5 Flash watches the finished MP4** — hook timing, caption presence/legibility/sync, rendering artefacts, brand frame, how AI-made it looks — and returns a `GateVerdict` (`VIDEO_QA_MODEL` to swap) | `not_available`; the workflow records the clip as proceeding to the human gate *unreviewed*, never as passed |
+
+Rights are an input to the harvest, not a hope: `allowedSources` (the
+client's `sourcePool` show names) travels with every query, the yt-dlp
+provider searches per source and drops any hit whose uploader/channel/title
+is not that source, and an empty `allowedSources` is a refusal — the provider
+never searches the open web unrestricted. The tool re-verifies whatever the
+provider wrote (inside the run cache dir, non-empty, under `maxBytes`, a video
+extension) before it hands the path downstream.

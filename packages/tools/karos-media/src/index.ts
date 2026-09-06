@@ -6,9 +6,11 @@ import { createFindImages, FindImagesInputSchema } from "./find-images.js";
 import { createGenerateImage, type ImageGenerationClient } from "./generate-image.js";
 import { createGenerateVideo, type VideoGenerationClient } from "./generate-video.js";
 import { createHarvestVideo, type VideoHarvestProvider } from "./harvest-video.js";
+import { createYtDlpHarvestProvider } from "./providers/yt-dlp-harvest.js";
 import { createScrapeImages } from "./scrape-images.js";
 import { createIngestAssets, type ObjectReader } from "./ingest-assets.js";
 import { createGetVisualPatterns, createIngestVisualPatterns, type VisionAnalysisClient } from "./visual-patterns.js";
+import { createVisualQaGate } from "./visual-qa-gate.js";
 import { createScraperProvider, type ScraperProvider } from "@agent-engine/tool-karos-scraper";
 import type { ImageSearchProvider } from "./providers.js";
 import { buildProviderRegistry, createImageSource, singleProviderSource, type ImageSource } from "./routing.js";
@@ -24,7 +26,12 @@ export * from "./quality.js";
 export * from "./brand-logo.js";
 export * from "./generate-video.js";
 export * from "./harvest-video.js";
+// Types only: `createDefaultProcessRunner` stays package-private because
+// `@agent-engine/tools`' barrel `export *`s this package next to karos-video,
+// which exports a runner factory of the same name (TS2308 on the barrel).
+export type { ProcessResultLike, ProcessRunnerLike } from "./process-runner.js";
 export * from "./visual-patterns.js";
+export * from "./visual-qa-gate.js";
 
 export interface KarosMediaToolsOptions {
   env?: Record<string, string | undefined>;
@@ -35,7 +42,11 @@ export interface KarosMediaToolsOptions {
   fetchImpl?: typeof fetch;
   /** Overrides the env-derived generation client. Tests pass a fake; `null` disables generation explicitly. */
   generationClient?: ImageGenerationClient | null;
-  /** A video-harvest backend (Tier 2b). None exists in-repo yet; tests inject one. */
+  /**
+   * A video-harvest backend (Tier 2b). Overrides the env-derived one — with
+   * `VIDEO_HARVEST_PROVIDER=yt-dlp` the deployment gets
+   * `createYtDlpHarvestProvider({ env })`; tests inject a fake here instead.
+   */
   videoHarvestProvider?: VideoHarvestProvider | undefined;
   /** Overrides the env-derived VIDEO generation client (`video.generateClip`). Tests pass a fake; `null` disables it explicitly. */
   videoGenerationClient?: VideoGenerationClient | null;
@@ -60,6 +71,13 @@ export interface KarosMediaToolsOptions {
   visionClient?: VisionAnalysisClient | null;
   /** SCRUM-321 (AU37). Overrides the vision model id. No env var: the default is a priced, in-catalogue model. */
   visionModel?: string;
+  /**
+   * The vision model `video.visualQaGate` watches finished clips with.
+   * Mirrors `visionClient`: defaults to the same Vertex credential (and to
+   * `visionClient` itself when one is injected), `null` disables it
+   * explicitly, tests pass a fake.
+   */
+  videoQaClient?: VisionAnalysisClient | null;
 }
 
 /**
@@ -100,7 +118,8 @@ export function createKarosMediaTools(options: KarosMediaToolsOptions = {}): Age
         name: "media.findImages",
         description:
           "Stub registered when this deployment supplied an empty provider source: always reports not_available rather than searching, since no image-search provider is configured.",
-        version: "1.0.0",
+        // 1.0.1: this file gained the video harvest/QA wiring around the stub; the stub itself is unchanged.
+        version: "1.0.1",
         inputSchema: FindImagesInputSchema,
         async execute() {
           return notAvailable(
@@ -127,6 +146,17 @@ export function createKarosMediaTools(options: KarosMediaToolsOptions = {}): Age
         (createImageGenerationClientFromEnv(options.env ?? process.env) as unknown as VisionAnalysisClient | undefined));
   const visualPatternStore = options.store ?? createWorkspaceStore();
 
+  // The QA gate looks through the same eyes as the pattern analysis unless a
+  // deployment says otherwise — `null` switches the gate off without touching
+  // the analysis, an injected client fakes it in tests.
+  const videoQaClient: VisionAnalysisClient | undefined =
+    options.videoQaClient === null ? undefined : (options.videoQaClient ?? visionClient);
+
+  // Tier 2b's backend: an injected provider (tests) beats the env switch.
+  const env = options.env ?? process.env;
+  const videoHarvestProvider: VideoHarvestProvider | undefined =
+    options.videoHarvestProvider ?? (env["VIDEO_HARVEST_PROVIDER"]?.trim() === "yt-dlp" ? createYtDlpHarvestProvider({ env }) : undefined);
+
   return {
     // ── Tier 0: media the client attached to this run ──
     "media.ingestAssets": createIngestAssets({
@@ -152,10 +182,11 @@ export function createKarosMediaTools(options: KarosMediaToolsOptions = {}): Age
           : (options.generationClient ?? createImageGenerationClientFromEnv(options.env ?? process.env)),
       ...(readImageModel(options.env ?? process.env) ? { model: readImageModel(options.env ?? process.env)! } : {}),
     }),
-    // ── Video Tier 2b: contextual web harvest. A seam awaiting a real
-    // backend; not_available until one is wired, so the cascade skips it.
+    // ── Video Tier 2b: contextual harvest from the shows the client may
+    // clip. yt-dlp behind `VIDEO_HARVEST_PROVIDER=yt-dlp`; not_available
+    // otherwise, so the cascade skips it rather than holding.
     "media.harvestVideo": createHarvestVideo({
-      ...(options.videoHarvestProvider !== undefined ? { provider: options.videoHarvestProvider } : {}),
+      ...(videoHarvestProvider !== undefined ? { provider: videoHarvestProvider } : {}),
       ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
     }),
     // ── Video Tier 3: Veo generation, the clip cascade's last resort. Same
@@ -183,11 +214,23 @@ export function createKarosMediaTools(options: KarosMediaToolsOptions = {}): Age
       ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
     }),
     "media.getVisualPatterns": createGetVisualPatterns(visualPatternStore),
+    // ── The finished clip, watched before the human sees it. Same Vertex
+    // credential as everything above; not_available without one, so the
+    // pipeline proceeds to the human gate unreviewed rather than holding.
+    "video.visualQaGate": createVisualQaGate({
+      ...(videoQaClient ? { client: videoQaClient } : {}),
+      ...(readVideoQaModel(env) ? { model: readVideoQaModel(env)! } : {}),
+    }),
   };
 }
 
 function readVideoModel(env: Record<string, string | undefined>): string | undefined {
   const value = env["VIDEO_GEN_MODEL"]?.trim();
+  return value && value.length > 0 ? value : undefined;
+}
+
+function readVideoQaModel(env: Record<string, string | undefined>): string | undefined {
+  const value = env["VIDEO_QA_MODEL"]?.trim();
   return value && value.length > 0 ? value : undefined;
 }
 

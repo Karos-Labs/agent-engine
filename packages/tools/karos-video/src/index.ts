@@ -8,8 +8,10 @@ import { createCutawayGate } from "./tools/cutaway-gate.js";
 import { createGraphicsGate } from "./tools/graphics-gate.js";
 import { createRender } from "./tools/render.js";
 import { createCutClip, createBrandFrame } from "./tools/clip-compose.js";
+import { createComposeSequence } from "./tools/compose-sequence.js";
 import { createReadJsonFile } from "./tools/read-json-file.js";
 import { createSelfEvalGate } from "./tools/self-eval-gate.js";
+import { createSynthesizeVoice, type CreateSynthesizeVoiceOptions } from "./tools/synthesize-voice.js";
 import { createTranscribe, type CreateTranscribeOptions } from "./tools/transcribe.js";
 import { createUploadDeliverable } from "./tools/upload-deliverable.js";
 import { createWriteJsonFile } from "./tools/write-json-file.js";
@@ -27,13 +29,23 @@ export * from "./tools/graphics-gate.js";
 export * from "./tools/read-json-file.js";
 export * from "./tools/render.js";
 export * from "./tools/clip-compose.js";
+export * from "./tools/compose-sequence.js";
 export * from "./tools/self-eval-gate.js";
+export * from "./tools/synthesize-voice.js";
 export * from "./tools/transcribe.js";
 export * from "./tools/upload-deliverable.js";
 export * from "./tools/write-json-file.js";
 
 export interface CreateKarosVideoToolsOptions extends KarosVideoToolOptions {
   transcribe?: CreateTranscribeOptions;
+  /**
+   * Per-tool options for `video.synthesizeVoice`, merged OVER the shared
+   * options (`runner`/`ffprobeBin`/`env`/`workRoot` still flow in from the
+   * top level). The composition root passes `authorize` here — the bearer
+   * minter for Google Cloud TTS — because only it knows which service
+   * account / ADC to mint from; this package never reads a credential.
+   */
+  synthesizeVoice?: CreateSynthesizeVoiceOptions;
   /**
    * Wire this (via `GCS_MEDIA_BUCKET` at your composition root) to register
    * `video.uploadDeliverable`. Omitted, this package's behavior is exactly
@@ -61,6 +73,8 @@ export function createKarosVideoTools(options: CreateKarosVideoToolsOptions = {}
     "video.render": createRender(options),
     "video.cutClip": createCutClip(options),
     "video.brandFrame": createBrandFrame(options),
+    "video.composeSequence": createComposeSequence(options),
+    "video.synthesizeVoice": createSynthesizeVoice({ ...options, ...options.synthesizeVoice }),
     "video.selfEvalGate": createSelfEvalGate(options),
     "video.transcribe": createTranscribe({ ...(options.env !== undefined ? { env: options.env } : {}), ...options.transcribe }),
     "video.writeJsonFile": createWriteJsonFile(options),

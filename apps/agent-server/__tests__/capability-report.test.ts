@@ -270,8 +270,15 @@ describe("the capability-by-product work: UNEXPLAINED keeps meaning exactly one 
     }
   });
 
-  it("says outright that wiring transcription alone fixes nothing", () => {
+  it("says outright what an absent transcription key costs each video product — a held tiktok clip, and a branded-shorts line still behind its engine", () => {
+    // The row used to say "wiring this alone fixes nothing" because no
+    // renderer existed. tiktok-agent's pure-ffmpeg pipeline changed that: the
+    // key is now load-bearing for a real product, and the row has to say so
+    // rather than keep the old disclaimer — while still not overclaiming for
+    // branded-shorts, whose engine (SCRUM-362) is unbuilt.
     const transcription = CAPABILITY_CATALOGUE.find((c) => c.id === "video-transcription")!;
-    expect(transcription.whenAbsent).toMatch(/renderer that does not exist|Fixing this is not fixing video/i);
+    expect(transcription.whenAbsent).toMatch(/02-transcribe/);
+    expect(transcription.whenAbsent).toMatch(/per-beat timing/);
+    expect(transcription.whenAbsent).toMatch(/SCRUM-362/);
   });
 });

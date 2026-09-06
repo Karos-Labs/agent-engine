@@ -144,12 +144,14 @@ describe("SCRUM-325: prompt registry and latest.md drift", { timeout: 120_000 },
   it("injects a prompt version present on disk but absent from the registry and fails", () => {
     const root = fixtureRoot((r) => {
       const dir = path.dirname(promptFile(r, "tiktok-agent", "tiktok-moment", "latest.md"));
-      cpSync(path.join(dir, "1.md"), path.join(dir, "2.md"));
+      // The registry declares versions 1 and 2 of this prompt; 3 is the one
+      // nobody declared.
+      cpSync(path.join(dir, "1.md"), path.join(dir, "3.md"));
     });
     const { result, exitCode } = runCheck(root);
     const mismatch = result.problems.filter((p) => p.kind === "registry-version-mismatch" && p.promptId === "tiktok-moment");
     expect(mismatch).toHaveLength(1);
-    expect(mismatch[0]!.detail).toContain("present but undeclared: 2");
+    expect(mismatch[0]!.detail).toContain("present but undeclared: 3");
     expect(exitCode).toBe(1);
   });
 
