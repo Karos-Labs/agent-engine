@@ -23,3 +23,6 @@ export * from "./primitives/context-doc-policy.js";
 // the shared media resolver for the text-first channels. Appended the same way.
 export * from "./primitives/social-trend-scout.js";
 export * from "./primitives/social-media.js";
+// 2026-09: what the client already said on EVERY channel, including their own
+// accounts — the cross-channel anti-repetition memory. Appended the same way.
+export * from "./primitives/cross-channel-history.js";

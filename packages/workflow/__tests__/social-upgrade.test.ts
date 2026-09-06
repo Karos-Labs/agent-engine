@@ -76,6 +76,7 @@ describe("selectTrendCandidate", () => {
     headline: "h",
     mode: "deep-value",
     brandFit: 4,
+    interest: 3,
     brandFitReason: "r",
     angle: "a",
     hook: "k",

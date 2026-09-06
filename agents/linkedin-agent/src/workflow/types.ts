@@ -11,6 +11,8 @@ export interface LinkedInIntakeConfig {
   trendQueries?: string[];
   /** `"always"` lets a fresh, high-brand-fit trend take the slot over a planned catalog row; default `"fallback"` runs the scout only when the catalog is empty. */
   trendJacking: "fallback" | "always";
+  /** The client's standing config as read, so the cross-channel history read can derive their own social accounts from it. */
+  rawConfig: Record<string, unknown>;
 }
 
 /** The two posting identities the legacy system supported (RFC-01 §9's "two-paths" design) — which voice a run drafts in. */

@@ -240,6 +240,39 @@ describe("x-agent 2026-09 upgrade", () => {
     expect(md).toContain("## Avenue 1 · Knowledge");
   });
 
+  it("the dedupe corpus is CROSS-CHANNEL: a post LinkedIn shipped is caught when X drafts the same thing", async () => {
+    // What linkedin-agent already delivered for this client — recorded under
+    // ITS agent id, which the X agent never read before 2026-09.
+    const seedCtx = { runId: "li-prior", clientSlug: "acme", productId: "linkedin-agent", runKind: "recurring" as const, metadata: {} };
+    const published = "Four day week trials keep spreading across mid sized teams. Internal data shows output held steady while sick days fell. The real trade off is scheduling, not productivity.";
+    await env.tools["ledger.recordOutputExcerpt"]!.execute({ agentId: "linkedin-agent", runId: "li-prior", excerpt: published }, { ctx: seedCtx });
+
+    const nearDuplicate = "The real trade off here is scheduling, not productivity. Fresh internal data shows output held steady while sick days fell. Four day week trials keep spreading among mid sized teams.";
+    const fresh = "Hiring managers keep asking us how to interview for judgement rather than trivia. Our answer is boring: give the candidate a real ticket from last week.";
+    const router = fakeRouterSequence([finalTurn(goodPost({ text: nearDuplicate, mainPostText: nearDuplicate })), finalTurn(goodPost({ text: fresh, mainPostText: fresh }))]);
+    const store = new MemoryDurableStepStore();
+    const workflowFn = createXAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router, autoApprove: true });
+    const result = await new WorkflowEngine(store).run(workflowFn, { ...baseParams, runId: "x_xchannel_1" });
+    expect(result.status).toBe("completed");
+    if (result.status !== "completed") throw new Error("unreachable");
+
+    // The LinkedIn post was the offender, the X draft was redrafted, the fresh one shipped.
+    const verdict = (await store.getStep("x_xchannel_1", "10a-verify-not-duplicate"))?.output as { status: string; mostSimilarRunId?: string };
+    expect(verdict.status).toBe("similar");
+    expect(verdict.mostSimilarRunId).toBe("li-prior");
+    expect(result.output.preview).toBe(fresh);
+
+    // And the writer was told, with the channel named, before it drafted.
+    const firstInput = draftInputOf(router, 0);
+    expect(String(firstInput["recentPosts"])).toContain("across EVERY channel");
+    expect(String(firstInput["recentPosts"])).toContain("[LinkedIn (drafted by us)");
+    // The client's own X account (xHandle in config) was read too — the offline
+    // scraper's synthetic posts appear under the account label.
+    expect(String(firstInput["recentPosts"])).toContain("[X (the client's own account)");
+    const ids = (await store.listSteps("x_xchannel_1")).map((s) => s.stepId);
+    expect(ids).toContain("read-cross-channel-history");
+  });
+
   it("with no media tools and no brief, the media step records `none` and the post ships as text", async () => {
     const router = fakeRouterSequence([finalTurn(goodPost())]);
     const store = new MemoryDurableStepStore();

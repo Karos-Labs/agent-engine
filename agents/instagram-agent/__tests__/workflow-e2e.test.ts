@@ -65,7 +65,9 @@ const HAPPY_PATH_STEP_IDS = [
   "04d-read-past-feedback",
   // The anti-repetition read: what this agent already shipped for this
   // client (the same excerpt window 09b writes back into).
-  "04e-read-output-history",
+  // 2026-09: the client's own accounts, then every channel's shipped output.
+  "04e0-load-social-accounts",
+  "04e-read-cross-channel-history",
   // The client's intel report, distilled into drafting context.
   "04f-read-intel-context",
   // 2026-09: the post format — a request, the client's setting, or the auto

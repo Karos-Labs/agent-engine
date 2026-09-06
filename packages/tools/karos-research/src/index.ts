@@ -1,6 +1,7 @@
 import type { AgentToolRegistry } from "@agent-engine/core";
 import { createWorkspaceStore, type WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { createPull } from "./pull.js";
+import { createSocialHistory } from "./social-history.js";
 import { createGetRuns } from "./get-runs.js";
 import { createWriteRun } from "./write-run.js";
 import { createCheckFreshness } from "./check-freshness.js";
@@ -11,6 +12,7 @@ import { createScraperProvider, type ScraperProvider } from "@agent-engine/tool-
 
 export * from "./runs.js";
 export * from "./pull.js";
+export * from "./social-history.js";
 export * from "./get-runs.js";
 export * from "./write-run.js";
 export * from "./check-freshness.js";
@@ -83,6 +85,9 @@ export function createKarosResearchTools(
         }));
   return {
     "research.pull": createPull(store, scraper),
+    // 2026-09: the client's own recent posts, cached per account set, for the
+    // cross-channel anti-repetition read every content agent now does.
+    "research.socialHistory": createSocialHistory(store, scraper),
     "research.getRuns": createGetRuns(store),
     "research.writeRun": createWriteRun(store),
     "research.checkFreshness": createCheckFreshness(store),
