@@ -89,7 +89,12 @@ export function createServerTools(workspaceStore: WorkspaceStoreLike, env: Recor
       // packages keep no `google-auth-library` dependency of their own.
       vertexAuthorize: createAdcAuthorize(),
     }),
-    ...createKarosVideoTools({ env, ...(mediaStore ? { mediaStore } : {}) }),
+    // `synthesizeVoice.authorize` is the same ADC bearer the Gemini capture
+    // route uses, minted here for the same reason: Google Cloud Text-to-Speech
+    // (the tiktok-agent's voiceover) authenticates with the service account
+    // this server already runs as, and the tool package should hold a header
+    // minter, never a credential. ElevenLabs stays the env-keyed alternative.
+    ...createKarosVideoTools({ env, ...(mediaStore ? { mediaStore } : {}), synthesizeVoice: { authorize: createAdcAuthorize() } }),
     // Landing Builder v2 (RFC-11): screenshots + the archived page go to the
     // artifacts bucket, the client's optional hand-curated inputs and the
     // published-build state live in the workspace, and Firebase Hosting is
@@ -98,6 +103,7 @@ export function createServerTools(workspaceStore: WorkspaceStoreLike, env: Recor
       ...(archiveStore ? { artifactStore: archiveStore } : {}),
       workspaceStore,
     }),
+
     // `mediaStore` doubles as Tier 0's gs:// reader: a client's upload lives in
     // the same bucket the deliverables do, and giving the media tools a second
     // GCS client for one read would be two credentials for one job. It is also

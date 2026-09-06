@@ -4,7 +4,10 @@ import { z } from "zod";
 import { defineTool, success, contentFail, notAvailable, toolingError } from "@agent-engine/tool-common";
 import { MEDIA_CACHE_PREFIX } from "./find-images.js";
 
-const TOOL_VERSION = "1.0.0";
+// 1.1.0: Veo 3.1 by default, priced per second at last; resolution/audio/
+// people/negative-prompt controls; `outputName` so several plates can share
+// one run dir.
+const TOOL_VERSION = "1.1.0";
 
 /**
  * `video.generateClip` — Tier 3 of the clip pipeline's sourcing cascade:
@@ -17,16 +20,28 @@ const TOOL_VERSION = "1.0.0";
  * The brief is constrained the same way `image.generate`'s is, for the same
  * reason: the branded frame (`video.brandFrame`) composites bars, captions,
  * a header and a logo ON TOP of this plate, so generated text or logos
- * underneath would collide with the real ones.
+ * underneath would collide with the real ones. A caller's `negativePrompt`
+ * is merged with that built-in list, never substituted for it.
  */
 
 export const GenerateVideoInputSchema = z.object({
-  // No existing TSDoc on these two fields to transcribe (SCRUM-293 flag) — synthesized from find-images.ts's identical fields and this file's own doc comment.
   repoRoot: z.string().min(1).describe("Bounds root. The written clip path is relative to this and provably inside it."),
   runId: z.string().min(1).describe("Namespaces the cache directory, exactly as media.findImages does."),
   brief: z.string().min(1).max(1200).describe("What the plate should show — a scene, not a message."),
   durationSeconds: z.number().int().min(4).max(8).default(8).describe("Veo generates short clips; the pipeline loops/cuts as needed."),
   aspectRatio: z.enum(["9:16", "16:9"]).default("9:16").describe("The generated clip's aspect ratio."),
+  resolution: z.enum(["720p", "1080p"]).default("1080p").describe("Output resolution. Priced per second by resolution on the Fast tier."),
+  generateAudio: z.boolean().default(true).describe("Veo's native ambient sound; the composer ducks it under a voiceover."),
+  allowPeople: z
+    .boolean()
+    .default(false)
+    .describe("Permit adult people in the plate (Veo `personGeneration: allow_adult`). Off by default: a B-roll plate rarely needs a face, and a generated one is the fastest way to look AI-made."),
+  negativePrompt: z.string().max(400).optional().describe("Things the plate must NOT contain, merged with the built-in no-text/no-logo list."),
+  outputName: z
+    .string()
+    .regex(/^[a-z0-9-]+$/)
+    .default("generated-clip")
+    .describe("File stem inside the run cache (`<outputName>.mp4`), so a caller can generate several plates into one run dir."),
 });
 export type GenerateVideoInput = z.infer<typeof GenerateVideoInputSchema>;
 
@@ -34,6 +49,8 @@ export interface GenerateVideoResult {
   /** Repo-relative, forward-slashed — the same contract every media tier's candidates use. */
   path: string;
   model: string;
+  resolution: "720p" | "1080p";
+  durationSeconds: number;
 }
 
 /**
@@ -70,7 +87,7 @@ function isRetryableGenerationError(message: string): boolean {
 
 export interface GenerateVideoOptions {
   client?: VideoGenerationClient | undefined;
-  /** Model override. Default favors a 9:16-capable Veo generation. */
+  /** Model override (`VIDEO_GEN_MODEL`). Default is the priced Veo 3.1 Standard id. */
   model?: string | undefined;
   /** Injectable for tests. */
   sleepImpl?: (ms: number) => Promise<void>;
@@ -81,7 +98,24 @@ export interface GenerateVideoOptions {
   fetchImpl?: typeof fetch;
 }
 
-export const DEFAULT_VIDEO_MODEL = "veo-2.0-generate-001";
+export const DEFAULT_VIDEO_MODEL = "veo-3.1-generate-001";
+
+/**
+ * The `UNIT_PRICING` SKU a generation bills against. Veo 3.1 Standard is one
+ * rate at both resolutions, so its row is the bare model id; the Fast tier
+ * is priced per resolution, so its rows carry a `:<resolution>` suffix and
+ * the SKU must too. Any other id is reported as-is — an unpriced id then
+ * fails `check:pricing`, which is the intended way to notice a model swap
+ * that nobody priced.
+ */
+export function videoGenerationSku(model: string, resolution: "720p" | "1080p"): string {
+  if (model === DEFAULT_VIDEO_MODEL) return model;
+  if (model.includes("fast")) return `${model}:${resolution}`;
+  return model;
+}
+
+/** What the frame composites over the plate, so the plate must not already contain it. */
+const BUILT_IN_NEGATIVE_PROMPT = "text, words, lettering, captions, subtitles, logos, watermarks, borders, letterboxing";
 
 const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -96,7 +130,7 @@ export function createGenerateVideo(options: GenerateVideoOptions = {}) {
   return defineTool<GenerateVideoInput, GenerateVideoResult>({
     name: "video.generateClip",
     description:
-      "Tier 3 of the clip pipeline's sourcing cascade: generates a short B-roll plate via Veo for when a run has no user-attached episode (Tier 1) and no harvestable footage (Tier 2). Reports not_available when unconfigured; retries the same transient quota/availability shape image.generate does.",
+      "Tier 3 of the clip pipeline's sourcing cascade: generates a short B-roll plate via Veo 3.1 for when a run has no user-attached episode (Tier 1) and no harvestable footage (Tier 2). Reports not_available when unconfigured; retries the same transient quota/availability shape image.generate does; bills per generated second.",
     version: TOOL_VERSION,
     inputSchema: GenerateVideoInputSchema,
     async execute(input) {
@@ -119,6 +153,9 @@ export function createGenerateVideo(options: GenerateVideoOptions = {}) {
         `${input.brief}. Cinematic b-roll, natural motion, realistic lighting. ` +
         `No text, no words, no lettering, no captions, no logos, no watermarks, no borders — ` +
         `branded framing and captions are composited on top of this footage separately.`;
+      const negativePrompt = input.negativePrompt?.trim()
+        ? `${BUILT_IN_NEGATIVE_PROMPT}, ${input.negativePrompt.trim()}`
+        : BUILT_IN_NEGATIVE_PROMPT;
 
       let operation: VideoGenerationOperation | undefined;
       let lastError: Error | undefined;
@@ -131,7 +168,10 @@ export function createGenerateVideo(options: GenerateVideoOptions = {}) {
               numberOfVideos: 1,
               durationSeconds: input.durationSeconds,
               aspectRatio: input.aspectRatio,
-              personGeneration: "dont_allow",
+              resolution: input.resolution,
+              generateAudio: input.generateAudio,
+              personGeneration: input.allowPeople ? "allow_adult" : "dont_allow",
+              negativePrompt,
             },
           });
           break;
@@ -171,7 +211,8 @@ export function createGenerateVideo(options: GenerateVideoOptions = {}) {
         return contentFail("video.generateClip: generation completed with no video in the response");
       }
 
-      const outFile = path.join(absDir, "generated-clip.mp4");
+      const fileName = `${input.outputName}.mp4`;
+      const outFile = path.join(absDir, fileName);
       if (video.videoBytes) {
         await fs.writeFile(outFile, Buffer.from(video.videoBytes, "base64"));
       } else {
@@ -185,19 +226,15 @@ export function createGenerateVideo(options: GenerateVideoOptions = {}) {
         await fs.writeFile(outFile, Buffer.from(await response.arrayBuffer()));
       }
 
-      // the per-unit cost work — shipped without a Jira ticket: video is billed PER SECOND, and this is the case the
-      // per-unit dimension was designed around rather than retrofitted to.
-      //
-      // `model` has no UNIT_PRICING row today and that is deliberate, not an
-      // oversight: no per-second rate for this exact id could be verified
-      // against a page actually read. So this records the seconds and costs
-      // them at $0, loudly — the units are persisted, so the run becomes
-      // reconcilable the moment a rate exists. Reporting nothing at all would
-      // be the old behaviour, and the old behaviour is what made a $0.00 step
-      // indistinguishable from a free one.
-      return success<GenerateVideoResult>({ path: `${relDir}/generated-clip.mp4`, model }, [
-        { model, unit: "second", quantity: input.durationSeconds },
-      ]);
+      // Video is billed PER SECOND — the case the per-unit usage dimension was
+      // designed around. The Veo 3.1 rows exist in `UNIT_PRICING` (read off
+      // the pricing page, not guessed), so this is a real cost now, not the
+      // $0-with-units placeholder it was under the Veo 2 id. Quantity is the
+      // requested duration: Veo returns exactly the seconds asked for.
+      return success<GenerateVideoResult>(
+        { path: `${relDir}/${fileName}`, model, resolution: input.resolution, durationSeconds: input.durationSeconds },
+        [{ model: videoGenerationSku(model, input.resolution), unit: "second", quantity: input.durationSeconds }],
+      );
     },
   });
 }

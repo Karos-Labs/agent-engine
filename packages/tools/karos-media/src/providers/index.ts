@@ -5,3 +5,4 @@ export { createOpenverseProvider } from "./openverse.js";
 export { createWikimediaProvider } from "./wikimedia.js";
 export { createDdgImagesProvider } from "./ddg-images.js";
 export { createGooglePlacesProvider } from "./google-places.js";
+export * from "./yt-dlp-harvest.js";

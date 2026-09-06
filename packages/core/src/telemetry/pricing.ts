@@ -281,18 +281,75 @@ export const UNIT_PRICING: Record<string, UnitPricing> = {
     usdPerUnit: MODEL_PRICING["gemini-2.5-flash"]!.outputPer1M / 1_000_000,
     source: "Derived from MODEL_PRICING[\"gemini-2.5-flash\"].outputPer1M (ai.google.dev/gemini-api/docs/pricing, checked 2026-08-29), expressed per-token instead of per-1M so a real captured candidatesTokenCount can be billed exactly.",
   },
+
+  // `video.visualQaGate` (packages/tools/karos-media/src/visual-qa-gate.ts)
+  // watches the FINISHED clip with `gemini-2.5-flash` and is billed by token
+  // exactly like the vision-analysis rows above — same model, same derivation,
+  // a distinct SKU id so a run's cost report can tell "read the client's old
+  // posts" apart from "QA'd the clip we just rendered".
+  "gemini-2.5-flash-video-qa-input-token": {
+    unit: "input-token",
+    usdPerUnit: MODEL_PRICING["gemini-2.5-flash"]!.inputPer1M / 1_000_000,
+    source: "Derived from MODEL_PRICING[\"gemini-2.5-flash\"].inputPer1M (ai.google.dev/gemini-api/docs/pricing, checked 2026-09-05), per-token so the captured promptTokenCount (video frames included) bills exactly.",
+  },
+  "gemini-2.5-flash-video-qa-output-token": {
+    unit: "output-token",
+    usdPerUnit: MODEL_PRICING["gemini-2.5-flash"]!.outputPer1M / 1_000_000,
+    source: "Derived from MODEL_PRICING[\"gemini-2.5-flash\"].outputPer1M (ai.google.dev/gemini-api/docs/pricing, checked 2026-09-05), per-token so the captured candidatesTokenCount bills exactly.",
+  },
+
+  // ── Video generation (Veo 3.1), billed PER SECOND of generated video ──
+  //
+  // The first `unit: "second"` rows. The note that used to sit below this
+  // table ("no video row yet, on purpose") held until a rate could be read
+  // off a page rather than guessed; ai.google.dev/gemini-api/docs/pricing
+  // (checked 2026-09-05) now lists Veo 3.1 explicitly: Standard "video with
+  // audio price (default): $0.40 (720p and 1080p)", Fast "$0.10 (720p)
+  // $0.12 (1080p)". The Fast tier is priced per resolution, so
+  // `video.generateClip` reports the SKU WITH the resolution suffix for it;
+  // Standard is one rate at both resolutions and needs no suffix. 4K is not
+  // offered to the clip pipeline and has no row.
+  "veo-3.1-generate-001": {
+    unit: "second",
+    usdPerUnit: 0.4,
+    source: "ai.google.dev/gemini-api/docs/pricing — Veo 3.1 Standard, video with audio, $0.40/s at 720p and 1080p (checked 2026-09-05)",
+  },
+  "veo-3.1-fast-generate-001:720p": {
+    unit: "second",
+    usdPerUnit: 0.1,
+    source: "ai.google.dev/gemini-api/docs/pricing — Veo 3.1 Fast, video with audio, $0.10/s at 720p (checked 2026-09-05)",
+  },
+  "veo-3.1-fast-generate-001:1080p": {
+    unit: "second",
+    usdPerUnit: 0.12,
+    source: "ai.google.dev/gemini-api/docs/pricing — Veo 3.1 Fast, video with audio, $0.12/s at 1080p (checked 2026-09-05)",
+  },
+
+  // ── Voiceover (text-to-speech), billed PER CHARACTER of input text ──
+  //
+  // `video.synthesizeVoice` (packages/tools/karos-video/src/tools/synthesize-voice.ts)
+  // reports `text.length` against whichever provider actually answered.
+  "google-tts-chirp3-hd": {
+    unit: "character",
+    usdPerUnit: 0.00003,
+    source:
+      "cloud.google.com/text-to-speech/pricing — Chirp 3: HD voices, $30 per 1M characters. The Google page renders past the fetch limit; the figure was confirmed against two independent listings of that page (texttolab.com/blog/google-cloud-tts-pricing, costbench.com/software/ai-voice-tools/google-cloud-text-to-speech) on 2026-09-05. Re-read the primary page before relying on this for an invoice.",
+  },
+  "elevenlabs-tts-multilingual-v2": {
+    unit: "character",
+    usdPerUnit: 0.0001,
+    source: "elevenlabs.io/pricing/api — Text to Speech, v2 Multilingual, $0.10 per 1K characters (checked 2026-09-05)",
+  },
 };
 
 /**
- * NOTE ON VIDEO. `unit: "second"` is a first-class case in this design and has
- * NO ROW YET, on purpose. The video engine is unbuilt (SCRUM-362) and no video
- * model's rate has been verified against a published page or a metered call.
- *
- * That absence is the correct state and it is not silent: wiring a video model
- * without adding its row here fails `check-model-pricing`, which is precisely
- * the outcome wanted. Guessing a per-second rate now would produce a number
- * that looks right and is not, and would remove the only signal that would
- * have caught it.
+ * NOTE ON VIDEO. `unit: "second"` rows exist above for Veo 3.1 only, each
+ * sourced to the line on the pricing page it came from. `veo-2.0-generate-001`
+ * — the pre-2026-09 default — remains unpriced and on
+ * `scripts/check-model-pricing.ts`'s pending list: its rate was never read off
+ * a page, and nothing routes to it any more. A NEW video model still fails
+ * `check-model-pricing` until its own row lands here, which is the outcome
+ * wanted: a plausible guessed per-second rate is worse than a loud missing one.
  */
 
 /** The unit price for a SKU. Throws rather than defaulting — see `UNIT_PRICING`. */

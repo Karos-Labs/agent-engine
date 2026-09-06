@@ -24,12 +24,14 @@ export class TikTokCommentaryAgent extends BaseAgent<Commentary> {
       "Write the client's own take on this clipped moment: the caption (context, counterpoint, why it matters), a plain 1-3 sentence description for the client, and the source credit naming the speaker, episode and show. Use the client's voice rules. Add no claim the clip itself does not support.",
     allowedTools: ["client.getVoiceRules", "client.getBrand", "client.getStrategy"],
     outputSchema: CommentarySchema,
-    modelPolicy: resolveModelPolicy("tiktok-commentary", { policy: "pinned", model: "claude-sonnet-4-6" }),
-    // Pinned to "2": v2 adds the client-knowledge-and-recent-posts section
-    // — clientIntelContext (the client's intel report, distilled) is read as
-    // authoritative, and recentPosts (the shipped-output dedup window the
-    // workflow now writes back into on delivery) is a hard do-not-repeat
-    // constraint. v1 stays frozen.
-    skillRef: "tiktok-commentary@2",
+    // Client-facing copy in the client's language: a Hebrew-language brand
+    // kit re-points this at the same vendor's strongest multilingual/RTL
+    // model (AU34), the way every other drafting step in the fleet is.
+    modelPolicy: resolveModelPolicy("tiktok-commentary", { policy: "pinned", model: "claude-sonnet-4-6", contentLanguageSensitive: true }),
+    // Pinned to "3": v3 adds `sourceContext` — the real title/channel/URL of
+    // harvested or attached footage — so the source credit names what the
+    // footage actually is instead of a plausible-sounding episode. v2 added
+    // the client-knowledge-and-recent-posts section. v1/v2 stay frozen.
+    skillRef: "tiktok-commentary@3",
   };
 }

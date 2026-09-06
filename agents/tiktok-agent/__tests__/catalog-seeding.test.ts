@@ -245,17 +245,22 @@ describe("00b-seed-catalog: real rows actually reach the commentary-clip catalog
     expect(clipRows).toHaveLength(6);
   });
 
-  it("holds honestly, seeding nothing, when the client's guestWatchlist is empty", async () => {
+  it("seeds nothing when the client's guestWatchlist is empty — and, with footage in hand, clips it anyway on a topic named from the recording", async () => {
     env = await setupEnv();
     const config = {
       tiktokClips: { sourcePool: ["The Show"], guestWatchlist: [], narrowing: [] },
     };
     const tools = buildTools(env.store, config);
 
-    const result = await runWorkflow(tools, "run-tt-no-watchlist", "unused");
+    const result = await runWorkflow(tools, "run-tt-no-watchlist", "The Show, the episode the client uploaded");
 
-    expect(result.status).toBe("held");
-    // No fabricated row landed in the catalog on this client's behalf.
+    // The run does not hold: a client who handed us an episode wants a clip
+    // from it, and the empty lane is a missing hint, not a missing subject.
+    expect(result.status).toBe("completed");
+    if (result.status !== "completed") throw new Error("unreachable");
+    expect((result.output as { topicSource: string }).topicSource).toBe("footage");
+    // And still: no fabricated row landed in the catalog on this client's
+    // behalf — the lane is exactly as empty as the client left it.
     const catalog = await env.store.readJson<unknown[]>("acme", ["topics", "catalog"]);
     expect(catalog ?? []).toHaveLength(0);
   });
