@@ -140,18 +140,29 @@ const BLOG_AGENT_STEP_IDS = [
   "18-commit-and-record",
 ] as const;
 
-/** Newsletter's own shape — the hype-language scan (10) and the footer-injection structural check (12) are distinct steps so the scan never sees the platform's own injected compliance footer (Phase 2.5 Batch 1.3's self-tripping-bug fix). */
+/**
+ * Newsletter's own shape — the hype-language scan (10) and the footer-injection
+ * structural check (12) are distinct steps so the scan never sees the
+ * platform's own injected compliance footer (Phase 2.5 Batch 1.3's
+ * self-tripping-bug fix). 2026-09-05 added the research plan (04), the edition
+ * plan (08b, an AI step), the editorial lint (15b) and the editor verdict
+ * (15c, an AI step). A second or third drafting round within a revision
+ * carries a `-round-N` suffix and, like `-r1`, has no descriptor on this
+ * fixed-list path.
+ */
 const NEWSLETTER_AGENT_STEP_IDS = [
   "00-intake-check",
   "01-load-client-context",
   "02-load-memory-shelf",
   "03-load-recent-decisions",
+  "04-plan-research",
   "04-research-pull",
   "04e-read-past-feedback",
   "05-extract-candidate-summary",
   "06-reserve-topics",
   "07-select-candidates",
   "08-determine-edition-theme",
+  "08b-plan-edition",
   "09-draft-post",
   "10-verify-brand-compliance",
   "11-verify-numbers-sourced",
@@ -159,6 +170,8 @@ const NEWSLETTER_AGENT_STEP_IDS = [
   "13-verify-no-placeholder",
   "14-verify-no-leak",
   "15-render-preview-check",
+  "15b-editorial-lint",
+  "15c-editor-verdict",
   "16-batch-review-r0",
   "17-persist-deliverable",
   "18-persist-manifest",

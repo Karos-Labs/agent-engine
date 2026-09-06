@@ -163,8 +163,31 @@ export function goodBlogDraft() {
   };
 }
 
+/** The edition plan the newsletter workflow's `08b-plan-edition` step expects before any drafting (2026-09-05). */
+export function goodNewsletterPlan() {
+  return {
+    thesis: "Structured onboarding is quietly becoming the default for engineering teams that measure ramp time.",
+    lead: {
+      title: "structured engineering onboarding",
+      angle: "Why a fixed four-day structure beats a reading list, using the teams that measured it.",
+      specifics: ["a fixed four-day onboarding rollout"],
+      ourTake: "We think the structure matters more than the content of any single day.",
+      whyItMatters: "Engineering leaders are hiring again and ramp time is the first metric that slips.",
+    },
+    quickHits: [],
+    oneThingToDo: "Write down what a new hire ships by the end of day one, then work backwards.",
+    subjectLineDirection: "Lead with the ramp-time result, not the word onboarding.",
+    passedOn: [],
+  };
+}
+
+/** The editor's approving verdict (`15c-editor-verdict`), so a fixture edition ships first time. */
+export function approvingNewsletterEditorVerdict() {
+  return { verdict: "approve", scores: { specificity: 5, voice: 5, structure: 5, humanity: 5 }, notes: [] };
+}
+
 export function goodNewsletterDraft() {
-  const intro = "This week we're looking at what's actually working for engineering teams right now.";
+  const intro = "Here is what actually worked for engineering teams this week.";
   const sections = [
     { heading: "Structured onboarding cuts ramp time", body: "New-hire ramp time dropped sharply after a fixed four-day onboarding rollout." },
   ];
@@ -224,6 +247,9 @@ export function makeSharedPromptStore(): InMemoryPromptStore {
   store.setPrompt("newsletter-craft", "3", "Newsletter craft guidance.");
   store.setPrompt("newsletter-craft", "4", "Newsletter craft guidance.");
   store.setPrompt("newsletter-craft", "5", "Newsletter craft guidance.");
+  // newsletter-agent's two judgment steps (edition plan, editor verdict).
+  store.setPrompt("newsletter-plan", "1", "Newsletter edition planning guidance.");
+  store.setPrompt("newsletter-editor", "1", "Newsletter editor guidance.");
   store.setPrompt("campaign-craft", "1", "Campaign strategy guidance.");
   return store;
 }
@@ -285,7 +311,9 @@ export async function setupTestEnvironment(clientSlug = "acme"): Promise<TestEnv
     goodLinkedInDraft(),
     goodRedditDraft(),
     goodBlogDraft(),
+    goodNewsletterPlan(),
     goodNewsletterDraft(),
+    approvingNewsletterEditorVerdict(),
   ]);
 
   return {

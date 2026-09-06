@@ -6,7 +6,7 @@ import {
   type DynamicAgentStepDescriptor,
 } from "@agent-engine/workflow";
 import { createNewsletterAgentWorkflow } from "../src/workflow/create-newsletter-agent-workflow.js";
-import { fakeRouterSequence, finalTurn, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import { editionRouter, finalTurn, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 
 const params = { runId: "newsletter_run_1", clientSlug: "acme", productId: "newsletter-agent", runKind: "recurring" as const };
 
@@ -15,6 +15,9 @@ const ALL_20_STEP_IDS = [
   "01-load-client-context",
   "02-load-memory-shelf",
   "03-load-recent-decisions",
+  // 2026-09-05: research asks several questions (the industry digest, the
+  // audience's own question, the reserved topics), merged into one payload.
+  "04-plan-research",
   "04-research-pull",
   // The read side of the feedback flywheel: what this client asked for on
   // previous runs, injected into the drafting prompt.
@@ -27,6 +30,8 @@ const ALL_20_STEP_IDS = [
   "06-reserve-topics",
   "07-select-candidates",
   "08-determine-edition-theme",
+  // 2026-09-05: the edition plan, decided before any prose (an AI step).
+  "08b-plan-edition",
   "09-draft-post",
   // AU20: the VERIFIED half of de-duplication. `recentPosts` in the drafting
   // prompt only asks the model not to repeat itself; 09a scores the finished
@@ -39,6 +44,11 @@ const ALL_20_STEP_IDS = [
   "13-verify-no-placeholder",
   "14-verify-no-leak",
   "15-render-preview-check",
+  // 2026-09-05: the deterministic editorial lint (links, tells, headings) and
+  // the editor's verdict (an AI step). A failed gate or a `revise` verdict
+  // redrafts under `-round-N` ids; a first-time-clean run has none.
+  "15b-editorial-lint",
+  "15c-editor-verdict",
   // Revision-scoped: `-r0` is the first review round. A `revise` decision
   // registers `-r1` after re-drafting.
   "16-batch-review-r0",
@@ -48,7 +58,7 @@ const ALL_20_STEP_IDS = [
 ];
 
 function goodDraft() {
-  const intro = "This week we're looking at what's actually working for engineering teams right now.";
+  const intro = "Here is what actually worked for engineering teams this week, measured rather than felt.";
   // No numeric claims: sources is always [] in production today (research.pull
   // is a Phase-1 stand-in), and gate.numbersSourced now cross-checks the exact
   // figure against source content rather than accepting a bare citation marker.
@@ -74,10 +84,10 @@ function goodDraft() {
 }
 
 function goodDraftRouter() {
-  return fakeRouterSequence([finalTurn(goodDraft())]);
+  return editionRouter([finalTurn(goodDraft())]);
 }
 
-describe("end-to-end: the 20-step Newsletter agent workflow", () => {
+describe("end-to-end: the Newsletter agent workflow (28 first-pass steps)", () => {
   let env: TestEnvironment;
 
   beforeEach(async () => {
@@ -88,7 +98,7 @@ describe("end-to-end: the 20-step Newsletter agent workflow", () => {
     await env.cleanup();
   });
 
-  it("executes all 20 steps and resolves to completed / domainOutcome: delivered (auto-approved gate)", async () => {
+  it("executes every step and resolves to completed / domainOutcome: delivered (auto-approved gate)", async () => {
     const promptStore = makePromptStore();
     const router = goodDraftRouter();
     const workflowFn = createNewsletterAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
@@ -166,7 +176,7 @@ describe("end-to-end: the 20-step Newsletter agent workflow", () => {
 
     const second = await engine.run(workflowFn, params);
     expect(second.status).toBe("completed");
-    expect(router.complete).toHaveBeenCalledTimes(1);
+    expect(router.complete).toHaveBeenCalledTimes(3);
 
     const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
     expect(deliverables.map((d) => d.id)).toEqual(["newsletter-edition"]);

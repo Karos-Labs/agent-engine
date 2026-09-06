@@ -2,7 +2,7 @@ import { describe, expect, it, vi, afterEach, beforeEach } from "vitest";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import type { AgentToolRegistry } from "@agent-engine/core";
 import { createNewsletterAgentWorkflow } from "../src/workflow/create-newsletter-agent-workflow.js";
-import { fakeRouterSequence, finalTurn, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import { editionRouter, finalTurn, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 
 const params = { runId: "newsletter_run_resume", clientSlug: "acme", productId: "newsletter-agent", runKind: "recurring" as const };
 
@@ -22,7 +22,7 @@ function spyOnAllTools(tools: AgentToolRegistry): { spied: AgentToolRegistry; ca
 }
 
 function goodDraft() {
-  const intro = "This week we're looking at what's actually working for engineering teams right now.";
+  const intro = "Here is what actually worked for engineering teams this week, measured rather than felt.";
   const sections = [
     { heading: "Structured onboarding cuts ramp time", body: "New-hire ramp time dropped sharply after a fixed four-day onboarding rollout." },
   ];
@@ -53,7 +53,7 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
 
   it("re-running engine.run() with the same runId does not re-execute any already-completed step", async () => {
     const promptStore = makePromptStore();
-    const router = fakeRouterSequence([finalTurn(goodDraft())]);
+    const router = editionRouter([finalTurn(goodDraft())]);
     const { spied, callCounts } = spyOnAllTools(env.tools);
     const workflowFn = createNewsletterAgentWorkflow({ tools: spied, promptStore, router, autoApprove: true });
 
@@ -63,7 +63,7 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
     const first = await engine.run(workflowFn, params);
     expect(first.status).toBe("completed");
     const countsAfterFirst = callCounts();
-    expect(router.complete).toHaveBeenCalledTimes(1);
+    expect(router.complete).toHaveBeenCalledTimes(3);
     expect(Object.values(countsAfterFirst).some((n) => n > 0)).toBe(true);
 
     const second = await engine.run(workflowFn, params);
@@ -72,17 +72,17 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
     expect(second.output).toEqual(first.output);
 
     // Nothing ran again: the router turn, and every tool call, stayed at their first-run counts.
-    expect(router.complete).toHaveBeenCalledTimes(1);
+    expect(router.complete).toHaveBeenCalledTimes(3);
     expect(callCounts()).toEqual(countsAfterFirst);
 
     const stepRecords = await durableStore.listSteps(params.runId);
-    expect(stepRecords).toHaveLength(24); // AU20 added the verified-dedupe step
+    expect(stepRecords).toHaveLength(28); // AU20 added the verified-dedupe step; 2026-09-05 added the research plan, edition plan, editorial lint and editor verdict
     expect(stepRecords.every((s) => s.status === "completed")).toBe(true);
   });
 
   it("resumes correctly after a mid-run crash: earlier steps aren't redone, the run still reaches completed", async () => {
     const promptStore = makePromptStore();
-    const router = fakeRouterSequence([finalTurn(goodDraft())]);
+    const router = editionRouter([finalTurn(goodDraft())]);
     const { spied, callCounts } = spyOnAllTools(env.tools);
 
     // A wrapper that throws once persistence starts (after step 17), simulating a crash
@@ -127,18 +127,18 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
     expect(step18?.status).toBe("failed");
 
     const draftCallCountAfterCrash = callCounts()["ledger.writeDeliverable"];
-    expect(router.complete).toHaveBeenCalledTimes(1);
+    expect(router.complete).toHaveBeenCalledTimes(3);
 
     const second = await engine.run(workflowFn, { ...params, runId });
     expect(second.status).toBe("completed");
 
     // The draft/persist step from before the crash was NOT redone; only the steps
     // after the crash point ran on resume.
-    expect(router.complete).toHaveBeenCalledTimes(1);
+    expect(router.complete).toHaveBeenCalledTimes(3);
     expect(callCounts()["ledger.writeDeliverable"]).toBe(draftCallCountAfterCrash);
 
     const finalSteps = await durableStore.listSteps(runId);
-    expect(finalSteps).toHaveLength(24); // AU20 added the verified-dedupe step
+    expect(finalSteps).toHaveLength(28); // AU20 added the verified-dedupe step; 2026-09-05 added the research plan, edition plan, editorial lint and editor verdict
     expect(finalSteps.every((s) => s.status === "completed")).toBe(true);
   });
 });
