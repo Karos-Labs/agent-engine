@@ -71,9 +71,9 @@ export const SEO_GEO_VISIBILITY_ENGINE_SPECS: Readonly<Record<SeoGeoVisibilityEn
   },
   copilot: {
     label: "Microsoft Copilot",
-    captured: true,
+    captured: false,
     note:
-      "No consumer API, and no working vendor route: the ScrappyCoco adapter it used to name posted a capability that does not exist on that account (52 capabilities, all web/social/filings scraping, no answer engine). That adapter is deleted, so Copilot now has NO adapter — which is exactly what `createCaptureVisibility` turns into an honest `UNAVAILABLE`/`no_adapter_wired` cell. Kept in the fan-out for that reason, unlike `aimode`/`google_aio`: those two were never promised, whereas Copilot is a ratified engine (SCRUM-396) a client is told is tracked, so reporting it as unmeasured is the truthful answer and dropping it would quietly flatter the coverage percentage by shrinking the denominator. Keeping it also leaves `engineListHash` untouched, so no prior run's frozen record is invalidated. What it must never go back to is the adapter that THREW: step 07's `completedOutputs` drops failed slots, so Copilot vanished from the report entirely rather than appearing as unmeasured — the failure that hid all of this.",
+      "Accepted but NOT captured, by product decision on 2026-09-05: Copilot has no consumer API and no vendor route this account will be given (the ScrappyCoco capability it once named does not exist on the account — 52 capabilities, all web/social/filings scraping, no answer engine — and the owner has said no other route will be added). Until then it was kept in the fan-out so its column showed as an honest UNAVAILABLE rather than vanishing; the owner's call is that a column that can never be measured is noise in the coverage denominator, not honesty. Dropping it from the fan-out changes `engineListHash` — deliberately, logged as engine-list drift by `04-freeze-prompt-set` on every client's next recurring run. It stays in the accepted vocabulary so historical cells and frozen records still parse. Flip `captured` back and add an adapter if a route ever appears.",
   },
   aimode: {
     label: "Google AI Mode",

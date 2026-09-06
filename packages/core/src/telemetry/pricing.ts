@@ -44,6 +44,8 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   "gpt-4o": { inputPer1M: 2.5, outputPer1M: 10.0 },
   "gemini-2.5-flash": { inputPer1M: 0.3, outputPer1M: 2.5 },
   "gemini-2.5-pro": { inputPer1M: 1.25, outputPer1M: 10.0 },
+  // ai.google.dev/gemini-api/docs/pricing, "Gemini 3.1 Pro Preview", prompts <= 200k tokens (checked 2026-09-05).
+  "gemini-3.1-pro-preview": { inputPer1M: 2.0, outputPer1M: 12.0 },
   // Anthropic's next dateless generation (see
   // `router/adapters/agent-platform-model-ids.ts`'s doc comment — "dateless
   // ids are, from the 4.6 generation on, themselves pinned snapshots"). Not yet

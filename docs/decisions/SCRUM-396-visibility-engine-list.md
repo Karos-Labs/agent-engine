@@ -162,3 +162,27 @@ the keys, and it fails if:
 `SEO_GEO_VISIBILITY_ENGINE_SPECS` is a `Record<SeoGeoVisibilityEngine, …>`, so the
 *typechecker* — not a test — refuses an engine with no spec and a spec with no
 engine.
+
+## 2026-09-05 addendum — Copilot leaves the fan-out
+
+**Decision (product owner, 2026-09-05):** Microsoft Copilot is no longer
+captured. It stays in the accepted vocabulary (`SEO_GEO_VISIBILITY_ENGINES`,
+still seven) so every historical cell and frozen record parses, but
+`SEO_GEO_VISIBILITY_ENGINE_SPECS.copilot.captured` is now `false`, so
+`SEO_GEO_CAPTURE_ENGINES` is four engines: `chatgpt, perplexity, gemini, claude`.
+
+**Why.** Copilot has no consumer API. The ScrappyCoco capability the adapter
+once named does not exist on the account (52 capabilities, none an answer
+engine), and the owner has said no other route will be added. Until now it
+was kept in the fan-out so its column showed as an honest `UNAVAILABLE`
+rather than vanishing; the owner's call is that a column that can never be
+measured is noise in the coverage denominator, not honesty.
+
+**What changes.** `engineListHash` moves from
+`98881508eb5591f3f6b6d8db29bd12496f6e733c66512780e6d85ea3144b88dd` (five
+engines, T-A3) to
+`d0c4b2518a6626cf1e17dc75594da7294e12b5c845b1fc0eb4b31917e283e755` (four).
+Every client's next recurring run logs this as engine-list drift via
+`04-freeze-prompt-set`, exactly the mechanism this document said would fire
+"the moment this list does change". Reverse by flipping `captured` back and
+wiring an adapter; nothing else needs to move.

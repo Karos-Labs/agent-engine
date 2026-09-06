@@ -45,7 +45,7 @@ import { SeoGeoFixDraftAgent } from "../agent/seo-geo-fix-draft-agent.js";
 import { SeoGeoNarrativeAgent } from "../agent/seo-geo-narrative-agent.js";
 import { buildConnectorOverlay } from "./connector-overlay.js";
 import { buildTechnicalMeasurements } from "./measurements.js";
-import { deriveDefaultPromptSet, sha256Hex } from "./prompt-set.js";
+import { PROMPT_TEMPLATE_VERSION, deriveDefaultPromptSet, sha256Hex } from "./prompt-set.js";
 import type {
   SeoGeoAgentWorkflowResult,
   SeoGeoClientContext,
@@ -312,6 +312,8 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
             prompts: SeoGeoPromptSetDraft["prompts"];
             competitorRoster: string[];
             promptSetHash: string;
+            /** Absent on records frozen before templates were versioned — read as v1. */
+            templateVersion?: number;
             language?: string;
             languageFallbackApplied?: boolean;
             quotaShortfalls?: string[];
@@ -322,11 +324,20 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       // comparability"; only a baseline run drafts fresh. Changing the set on a
       // recurring run is a logged drift event, never silent — handled in step 04
       // once the human gate (step 03) has actually approved whatever this step proposes.
-      if (wf.runKind === "recurring" && priorFrozen) {
+      //
+      // Reuse stops at a template change. A frozen set drafted from older
+      // templates is not the same measurement continued, it is the old
+      // measurement repeated: the v1 `brand` templates never named the client,
+      // so every client that had run once kept scoring 0% named mentions after
+      // v2 fixed that — the reuse rule was preserving the bug. A record frozen
+      // before templates were versioned carries no version and is read as v1.
+      const priorTemplateVersion = priorFrozen?.templateVersion ?? 1;
+      if (wf.runKind === "recurring" && priorFrozen && priorTemplateVersion === PROMPT_TEMPLATE_VERSION) {
         return {
           prompts: priorFrozen.prompts,
           competitorRoster: priorFrozen.competitorRoster,
           source: "reused",
+          templateVersion: priorTemplateVersion,
           // `?? "en"` covers only a belief record written before this field
           // existed — every record frozen by THIS version of step 04 always
           // carries `language` (SCRUM-320: the bug this port fixes was step 04
@@ -356,6 +367,12 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
         prompts: drafted.prompts,
         competitorRoster,
         source: "drafted",
+        templateVersion: PROMPT_TEMPLATE_VERSION,
+        // Named so the drift record step 04 writes can say WHY a recurring run
+        // redrafted, rather than leaving a reader to infer it from a hash.
+        ...(wf.runKind === "recurring"
+          ? { redraftReason: priorFrozen ? ("template_version_changed" as const) : ("no_prior_frozen_set" as const) }
+          : {}),
         language: drafted.language,
         languageFallbackApplied: drafted.languageFallbackApplied,
         quotaShortfalls: drafted.quotaShortfalls,
@@ -451,7 +468,12 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
         await tools["memory.appendDecision"]!.execute(
           {
             decisionId: `${wf.runId}__prompt_set_drift`,
-            summary: `SEO & GEO prompt set changed on a recurring run (prior hash ${priorFrozen!.promptSetHash}, new hash ${promptSetHash}) — logged per RFC-04 §3/§4, never silent.`,
+            summary:
+              `SEO & GEO prompt set changed on a recurring run (prior hash ${priorFrozen!.promptSetHash}, new hash ${promptSetHash})` +
+              (promptSetDraft.redraftReason === "template_version_changed"
+                ? ` — redrafted because the prompt templates moved to v${promptSetDraft.templateVersion}; the prior set was frozen from older templates, so reusing it would have repeated the old measurement rather than continued it`
+                : "") +
+              ` — logged per RFC-04 §3/§4, never silent.`,
           },
           { ctx },
         );
@@ -473,6 +495,7 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
               prompts: promptSetDraft.prompts,
               competitorRoster: promptSetDraft.competitorRoster,
               promptSetHash,
+              templateVersion: promptSetDraft.templateVersion,
               language: promptSetDraft.language,
               languageFallbackApplied: promptSetDraft.languageFallbackApplied,
               quotaShortfalls: promptSetDraft.quotaShortfalls,
@@ -495,6 +518,7 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
         prompts: promptSetDraft.prompts,
         competitorRoster: promptSetDraft.competitorRoster,
         promptSetHash,
+        templateVersion: promptSetDraft.templateVersion,
         competitorSetHash,
         engineListHash,
         gazetteerHash,

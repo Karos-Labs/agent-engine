@@ -79,15 +79,17 @@ export function goodChannelDraft(channel: CampaignChannel): unknown {
     case "linkedin": {
       const hook = "We looked at attendance data across our hybrid client base this quarter, and the pattern surprised us.";
       const body = "Teams with a fixed two-day in-office schedule reported fewer scheduling conflicts than teams with fully flexible policies.";
+      const takeaway = "A consistent weekly structure often beats total flexibility for operational clarity.";
       const callToAction = "If your team is still negotiating its hybrid policy week to week, a fixed anchor-day structure might be worth testing.";
       return {
         headline: "Anchor days cut scheduling friction",
         hook,
         body,
+        takeaway,
         hashtags: ["HybridWork", "FutureOfWork"],
         callToAction,
         targetAudience: "People leaders evaluating hybrid work policies",
-        text: `${hook}\n\n${body}\n\n${callToAction}`,
+        text: `${hook}\n\n${body}\n\n${takeaway}\n\n${callToAction}`,
         archetype: "industry-reaction",
       };
     }
@@ -164,7 +166,7 @@ export function goodChannelDraft(channel: CampaignChannel): unknown {
       };
     }
     case "newsletter": {
-      const intro = "This week we're looking at what's actually working for engineering teams right now.";
+      const intro = "Here is what actually worked for engineering teams this week.";
       const sections = [
         { heading: "Structured onboarding cuts ramp time", body: "New-hire ramp time dropped sharply after a fixed four-day onboarding rollout." },
       ];
@@ -264,14 +266,109 @@ export async function setupTestEnvironment(
   };
 }
 
+/**
+ * A router that answers by SCHEMA, not by position: for each `.complete()` it
+ * returns the first candidate that parses against the agent's requested
+ * output schema. Same idea as reputation-agent's `smartFakeRouter`.
+ *
+ * Why the channel slots need this rather than `fakeRouterSequence`: which
+ * agent steps a channel runs is NOT fixed. The five channels claim topics from
+ * one shared pool concurrently, and a channel that comes away with none takes
+ * its fallback path — x/linkedin's `07a-trend-scout` (`wantsScout` in
+ * create-linkedin-agent-workflow.ts) — before drafting. A positional sequence
+ * then hands the scout a DRAFT payload, which fails the scout's schema and
+ * checkpoints that slot step as `content_fail`; the slot still drafts, the run
+ * still completes, and the "every step completed" assertions fail on whichever
+ * run the claim order happened to go that way (1 in ~5 locally; the same
+ * flake on main). Answering by schema makes the scout's turn and the draft's
+ * turn each get their own well-formed output regardless of order.
+ *
+ * `complete` stays a `vi.fn` so tests can still read `.mock.calls`.
+ */
+export function fakeRouterBySchema(candidates: readonly unknown[]): ModelRouter {
+  let calls = 0;
+  return {
+    complete: vi.fn(async (prompt: string, schema: { safeParse: (value: unknown) => { success: boolean; data?: unknown } }) => {
+      calls += 1;
+      // A router that never exhausts would let a looping caller spin until the
+      // test timeout says nothing useful; fail fast and name the caller instead.
+      if (calls > 60) throw new Error(`fakeRouterBySchema: ${calls} turns on one channel — a caller is looping. Prompt head: ${prompt.slice(0, 400)}`);
+      for (const candidate of candidates) {
+        const parsed = schema.safeParse({ type: "final", output: candidate });
+        if (parsed.success) {
+          return {
+            output: parsed.data,
+            // The same fixed model `finalTurn` reports, whatever the policy asked
+            // for: workflow-e2e pins the draft step's recorded model to it.
+            modelUsed: "claude-sonnet-4-6",
+            inputTokens: { cached: 0, uncached: 100 },
+            outputTokens: 30,
+          };
+        }
+      }
+      throw new Error("fakeRouterBySchema: no candidate output matches the requested schema");
+    }),
+    completeAlias: vi.fn(async () => {
+      throw new Error("fakeRouterBySchema: completeAlias not used in these tests");
+    }),
+  } as unknown as ModelRouter;
+}
+
+/** A well-formed `TrendScoutOutput` (packages/workflow/src/primitives/social-trend-scout.ts) with one on-brand candidate, so a channel that takes the scout path drafts from it rather than failing the step. */
+export function goodTrendScout(channel: CampaignChannel): unknown {
+  return {
+    candidates: [
+      {
+        topic: "four-day work weeks",
+        headline: "More mid-size B2B teams are piloting four-day weeks this quarter",
+        mode: "hot-news",
+        brandFit: 4,
+        brandFitReason: "Team operations is one of the client's content pillars.",
+        angle: `What the pilots changed about onboarding cadence, for a ${channel} audience.`,
+        hook: "More teams are testing 4-day weeks this quarter.",
+        whyNow: "Several pilots published results this month.",
+        sourceUrls: [],
+        hasNumbers: false,
+        mediaHint: "none",
+      },
+    ],
+    skipped: [],
+    notes: "one candidate cleared brand fit",
+  };
+}
+
 export function makeChannelRouters(): Record<CampaignChannel, ModelRouter> {
   return {
-    x: fakeRouterSequence([finalTurn(goodChannelDraft("x"))]),
-    linkedin: fakeRouterSequence([finalTurn(goodChannelDraft("linkedin"))]),
-    reddit: fakeRouterSequence([finalTurn(goodChannelDraft("reddit"))]),
-    blog: fakeRouterSequence([finalTurn(goodChannelDraft("blog"))]),
-    newsletter: fakeRouterSequence([finalTurn(goodChannelDraft("newsletter"))]),
+    x: fakeRouterBySchema([goodChannelDraft("x"), goodTrendScout("x")]),
+    linkedin: fakeRouterBySchema([goodChannelDraft("linkedin"), goodTrendScout("linkedin")]),
+    reddit: fakeRouterBySchema([goodChannelDraft("reddit")]),
+    blog: fakeRouterBySchema([goodChannelDraft("blog")]),
+    // Three schemas since 2026-09-05: the edition plan, the draft, the editor's verdict.
+    newsletter: fakeRouterBySchema([goodNewsletterPlan(), goodChannelDraft("newsletter"), approvingNewsletterEditorVerdict()]),
   };
+}
+
+/** The newsletter workflow's `08b-plan-edition` output (2026-09-05): decided before drafting, handed to the draft. */
+export function goodNewsletterPlan() {
+  return {
+    thesis: "Structured onboarding is quietly becoming the default for engineering teams that measure ramp time.",
+    lead: {
+      title: "structured engineering onboarding",
+      angle: "Why a fixed four-day structure beats a reading list, using the teams that measured it.",
+      specifics: ["a fixed four-day onboarding rollout"],
+      ourTake: "We think the structure matters more than the content of any single day.",
+      whyItMatters: "Engineering leaders are hiring again and ramp time is the first metric that slips.",
+    },
+    quickHits: [],
+    oneThingToDo: "Write down what a new hire ships by the end of day one, then work backwards.",
+    subjectLineDirection: "Lead with the ramp-time result, not the word onboarding.",
+    passedOn: [],
+  };
+}
+
+/** The newsletter editor's approving verdict (`15c-editor-verdict`), so the fixture edition ships first time. */
+export function approvingNewsletterEditorVerdict() {
+  return { verdict: "approve", scores: { specificity: 5, voice: 5, structure: 5, humanity: 5 }, notes: [] };
 }
 
 export function goodCampaignPlan() {

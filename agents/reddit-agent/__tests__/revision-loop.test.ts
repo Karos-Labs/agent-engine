@@ -50,7 +50,7 @@ describe("reddit-agent revision loop", () => {
 
   it("re-drafts with the reviewer's feedback, then delivers on approval", async () => {
     const router = fakeRouterSequence([draft(FIRST), draft(REVISED)]);
-    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router });
+    const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore: makePromptStore(), router });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
@@ -82,18 +82,19 @@ describe("reddit-agent revision loop", () => {
     expect(ids).toContain("12-draft-reply");
     expect(ids).toContain("12-draft-reply-r1");
     expect(ids).toContain("13-verify-numbers-sourced-r1");
-    // Everything upstream — including thread selection and the merged
+    // Everything upstream — including thread selection, the thread read, research and the merged
     // channel-setup pre-flight — kept its id and was reused, which is why the
     // revision is in-run rather than a fresh run against a different thread.
     expect(ids.filter((i) => i === "00-channel-setup")).toHaveLength(1);
-    expect(ids.filter((i) => i === "08-select-target-thread")).toHaveLength(1);
-    expect(ids).not.toContain("08-select-target-thread-r1");
-    expect(ids).not.toContain("06-reserve-topic-r1");
+    expect(ids.filter((i) => i === "07-select-target-thread")).toHaveLength(1);
+    expect(ids).not.toContain("07-select-target-thread-r1");
+    expect(ids).not.toContain("08-fetch-thread-r1");
+    expect(ids).not.toContain("11-research-pull-r1");
   }, 60000);
 
   it("saves the reviewer's words to client memory, on a revision and on an approval alike", async () => {
     const router = fakeRouterSequence([draft(FIRST)]);
-    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router });
+    const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore: makePromptStore(), router });
     const engine = new WorkflowEngine(new MemoryDurableStepStore());
     const runId = "reddit_rev_memory";
 
@@ -119,7 +120,7 @@ describe("reddit-agent revision loop", () => {
 
   it("still holds on an outright rejection, because the gate exists to be able to say no", async () => {
     const router = fakeRouterSequence([draft(FIRST)]);
-    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router });
+    const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore: makePromptStore(), router });
     const engine = new WorkflowEngine(new MemoryDurableStepStore());
     const runId = "reddit_rev_reject";
 

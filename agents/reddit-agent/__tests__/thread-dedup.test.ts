@@ -52,7 +52,7 @@ describe("thread-level dedup (workflow step 09 — memory.read scope=\"decisions
     );
 
     const router = fakeRouterSequence([finalTurn(goodDraft())]);
-    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+    const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
@@ -81,7 +81,7 @@ describe("thread-level dedup (workflow step 09 — memory.read scope=\"decisions
     );
 
     const router = fakeRouterSequence([finalTurn(goodDraft())]);
-    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+    const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
@@ -93,7 +93,7 @@ describe("thread-level dedup (workflow step 09 — memory.read scope=\"decisions
   it("running the same run twice (resume) never double-holds on its own already-recorded decision", async () => {
     const promptStore = makePromptStore();
     const router = fakeRouterSequence([finalTurn(goodDraft())]);
-    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+    const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 

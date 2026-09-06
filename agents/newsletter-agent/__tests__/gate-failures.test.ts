@@ -1,7 +1,7 @@
 import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createNewsletterAgentWorkflow } from "../src/workflow/create-newsletter-agent-workflow.js";
-import { fakeRouterSequence, finalTurn, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import { editionRouter, finalTurn, heldEditionRouter, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 
 const baseParams = { clientSlug: "acme", productId: "newsletter-agent", runKind: "recurring" as const };
 
@@ -24,10 +24,10 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
     await env.cleanup();
   });
 
-  it("an unsourced numeric claim fails gate.numbersSourced at step 11 -> held", async () => {
+  it("an unsourced numeric claim fails gate.numbersSourced at step 11 -> redrafted with the reason, twice, then held", async () => {
     const promptStore = makePromptStore();
     const intro = "Teams using anchor days saw scheduling conflicts fall 43% this quarter.";
-    const router = fakeRouterSequence([
+    const router = heldEditionRouter([
       finalTurn({
         ...baseFields(),
         subjectLine: "A reasonable subject line",
@@ -45,19 +45,37 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
     expect(result.status).toBe("held");
     if (result.status !== "held") throw new Error("unreachable");
     expect(result.reason).toMatch(/numbers not sourced/i);
+    expect(result.reason).toContain("43%");
 
+    // 2026-09-05: a failed content gate is a NOTE to the next draft, not a
+    // hold. The run drafted three times (plan + 3 drafts = 4 router turns),
+    // every gate ran on every round, and only the last round held.
+    expect(router.complete).toHaveBeenCalledTimes(4);
     const stepRecords = await durableStore.listSteps("newsletter_run_gate_numbers");
     const ids = stepRecords.map((s) => s.stepId);
     expect(ids).toContain("09-draft-post");
     expect(ids).toContain("10-verify-brand-compliance");
     expect(ids).toContain("11-verify-numbers-sourced");
-    expect(ids).not.toContain("12-verify-compliance-footer");
+    expect(ids).toContain("12-verify-compliance-footer");
+    expect(ids).toContain("09-draft-post-round-2");
+    expect(ids).toContain("11-verify-numbers-sourced-round-3");
+    expect(ids).not.toContain("15c-editor-verdict");
+
+    // The redraft was TOLD what was wrong: the second drafting prompt carries
+    // the gate's own reason, naming the figure.
+    const calls = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    const secondDraftPrompt = String(calls[2]![0]);
+    expect(secondDraftPrompt).toContain("editorialNotes");
+    expect(secondDraftPrompt).toContain("numbers not sourced");
+    expect(secondDraftPrompt).toContain("43%");
+    // ...and the first one did not (nothing had failed yet).
+    expect(String(calls[1]![0])).not.toContain("editorialNotes");
   });
 
-  it("a forbidden brand term fails gate.brandCompliance at step 10 -> held", async () => {
+  it("a forbidden brand term fails gate.brandCompliance at step 10 -> redrafted, then held", async () => {
     const promptStore = makePromptStore();
     const intro = "This approach is guaranteed to work for every team, every time.";
-    const router = fakeRouterSequence([
+    const router = heldEditionRouter([
       finalTurn({
         ...baseFields(),
         subjectLine: "A reasonable subject line",
@@ -79,7 +97,9 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
     const stepRecords = await durableStore.listSteps("newsletter_run_gate_brand");
     const ids = stepRecords.map((s) => s.stepId);
     expect(ids).toContain("10-verify-brand-compliance");
-    expect(ids).not.toContain("11-verify-numbers-sourced");
+    // Every gate still runs on a failing round, so one redraft fixes everything at once.
+    expect(ids).toContain("11-verify-numbers-sourced");
+    expect(ids).toContain("10-verify-brand-compliance-round-3");
   });
 
   it("an over-limit first draft triggers a single self-critique revision, then completes", async () => {
@@ -88,7 +108,7 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
     // No `platform` field on either turn's output — NewsletterDraftAgent's own
     // `gateArgs: {platform: "newsletter"}` is what pins gate.lintPost to the
     // 10000-char limit here, not something the model has to remember to include.
-    const router = fakeRouterSequence([
+    const router = editionRouter([
       finalTurn({
         ...baseFields(),
         subjectLine: "A reasonable subject line",
@@ -110,7 +130,8 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
 
     const result = await engine.run(workflowFn, { ...baseParams, runId: "newsletter_run_gate_revision" });
 
-    expect(router.complete).toHaveBeenCalledTimes(2);
+    // Plan, the over-limit draft, its self-critique redraft, the editor.
+    expect(router.complete).toHaveBeenCalledTimes(4);
     expect(result.status).toBe("completed");
     if (result.status !== "completed") throw new Error("unreachable");
     expect(result.output.mainStory).toBeTruthy();
@@ -123,7 +144,7 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
     const promptStore = makePromptStore();
     const tooLongSubject = "This subject line is way too long for an inbox. ".repeat(3); // > 70 chars
     const intro = "A short, reasonable intro.";
-    const router = fakeRouterSequence([
+    const router = heldEditionRouter([
       finalTurn({
         ...baseFields(),
         subjectLine: tooLongSubject,
@@ -147,7 +168,7 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
     const promptStore = makePromptStore();
     const tooLongPreview = "This preview text is going to run on for quite a while, well past what any inbox client would actually render for a subscriber. ".repeat(2);
     const intro = "A short, reasonable intro.";
-    const router = fakeRouterSequence([
+    const router = heldEditionRouter([
       finalTurn({
         ...baseFields(),
         subjectLine: "A reasonable subject line",

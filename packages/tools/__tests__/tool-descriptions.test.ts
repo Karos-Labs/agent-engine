@@ -45,7 +45,7 @@ function buildFullRegistry(rootDir: string): AgentToolRegistry {
     // `createAllKarosTools()` (see its own doc comment) but part of the real
     // server registry every deployed agent dispatches against.
     ...createKarosVideoTools({}),
-    ...createKarosLandingTools(createLandingEngineConfigFromEnv({ env: {} }), undefined, store),
+    ...createKarosLandingTools(createLandingEngineConfigFromEnv({ env: {} }), { workspaceStore: store }),
     ...createKarosMediaTools({}),
     ...createKarosIntakeTools(store),
   };
@@ -114,7 +114,7 @@ describe("Layer 3 tool registry — every tool advertises itself (SCRUM-293 / AU
   });
 
   it("names a representative sample by name, so a future regression names the tool, not just a count", () => {
-    for (const name of ["client.getBrand", "gate.numbersSourced", "video.render", "landing.gate", "media.findImages", "intake.saveStrategy"]) {
+    for (const name of ["client.getBrand", "gate.numbersSourced", "video.render", "landing.checkPage", "media.findImages", "intake.saveStrategy"]) {
       const tool = tools[name];
       expect(tool, `expected "${name}" to be registered`).toBeDefined();
       expect(tool!.description.length).toBeGreaterThan(0);

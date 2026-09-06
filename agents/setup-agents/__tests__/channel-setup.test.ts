@@ -6,7 +6,7 @@ import type { AgentContext, AgentToolRegistry } from "@agent-engine/core";
 import { WorkspaceStore } from "@agent-engine/tool-common";
 import { createKarosClientTools } from "@agent-engine/tool-karos-client";
 import { createKarosIntakeTools } from "@agent-engine/tool-karos-intake";
-import { runLinkedInChannelSetup, runRedditChannelSetup } from "../src/index.js";
+import { pruneAutoDerivedSubreddits, recordRedditAutoCharter, runLinkedInChannelSetup, runRedditChannelSetup } from "../src/index.js";
 
 /**
  * Channel setup, now a pre-flight the drafting agents run for themselves.
@@ -251,5 +251,95 @@ describe("reddit channel setup", () => {
     await reddit({ targetSubreddits: ["r/test"] });
 
     expect((await readStrategy("reddit-agent"))!.markdown).toBe("migrated account voice");
+  });
+});
+
+describe("reddit auto-derived charter", () => {
+  const plan = {
+    targetSubreddits: [
+      { name: "r/Marketing", why: "practitioners ask the questions the client answers for a living" },
+      { name: "smallbusiness", why: "owners ask about operations" },
+      { name: "marketing", why: "duplicate spelling, must collapse" },
+    ],
+    searchKeywords: ["agency pricing", "GEO", "agency pricing"],
+    offLimitsTopics: ["competitor comparisons"],
+    voiceNotes: "First person, specific, no pitch.",
+    disclosureLine: "Disclosure: I work at Acme.",
+  };
+  // Built per call: `store` is replaced in beforeEach, so binding tools once at
+  // describe time would point every test at the previous store.
+  const args = () => ({ tools: tools(), ctx: { ...CTX, productId: "reddit-agent" }, runId: "run-auto", clientSlug: "acme", input: {} });
+
+  it("records the plan as a charter that says, in data and in prose, that the engine derived it", async () => {
+    const outcome = await recordRedditAutoCharter(args(), plan);
+
+    expect(outcome.status).toBe("recorded");
+    expect(outcome.targetSubreddits).toEqual(["r/marketing", "r/smallbusiness"]);
+    const stored = await store.readJson<{ markdown: string; data: Record<string, unknown>; source: Record<string, unknown> }>("acme", ["strategy", "reddit-agent", "config"]);
+    expect(stored?.data).toMatchObject({
+      targetSubreddits: ["r/marketing", "r/smallbusiness"],
+      searchKeywords: ["agency pricing", "GEO"],
+      offLimitsTopics: ["competitor comparisons"],
+      disclosureLine: "Disclosure: I work at Acme.",
+      autoDerived: true,
+    });
+    expect(stored?.markdown).toContain("AUTO-DERIVED");
+    expect(stored?.markdown).toContain("competitor comparisons");
+    expect(stored?.source["form"]).toBe("reddit-auto-setup");
+  });
+
+  it("the next run reads the auto-derived charter back as configured, with its keywords", async () => {
+    await recordRedditAutoCharter(args(), plan);
+    const next = await reddit({});
+
+    expect(next.status).toBe("already-configured");
+    expect(next.targetSubreddits).toEqual(["r/marketing", "r/smallbusiness"]);
+    expect(next.charter?.autoDerived).toBe(true);
+    expect(next.charter?.searchKeywords).toEqual(["agency pricing", "GEO"]);
+    expect(next.note).toContain("auto-derived");
+  });
+
+  it("a filled setup form replaces an auto-derived charter — and only an auto-derived one", async () => {
+    await recordRedditAutoCharter(args(), plan);
+    const replaced = await reddit({ targetSubreddits: ["r/startups"], offLimitsTopics: ["politics"] });
+
+    expect(replaced.status).toBe("recorded");
+    expect(replaced.note).toContain("replacing the auto-derived charter");
+    const stored = await store.readJson<{ data: Record<string, unknown>; source: Record<string, unknown> }>("acme", ["strategy", "reddit-agent", "config"]);
+    expect(stored?.data["targetSubreddits"]).toEqual(["r/startups"]);
+    expect(stored?.data["autoDerived"]).toBeUndefined();
+    expect(stored?.source["replacedAutoDerived"]).toBe(true);
+
+    // Now form-recorded: a later form does NOT overwrite it (the existing rule).
+    const again = await reddit({ targetSubreddits: ["r/somewhere-else"] });
+    expect(again.status).toBe("already-configured");
+    expect(again.targetSubreddits).toEqual(["r/startups"]);
+  });
+
+  it("never overwrites an existing charter with an auto-derived plan", async () => {
+    await reddit({ targetSubreddits: ["r/handpicked"] });
+    const outcome = await recordRedditAutoCharter(args(), plan);
+
+    expect(outcome.status).toBe("already-configured");
+    expect(outcome.targetSubreddits).toEqual(["r/handpicked"]);
+  });
+
+  it("prunes a community Reddit says does not exist from an auto-derived charter, but never empties it and never touches a form's", async () => {
+    await recordRedditAutoCharter(args(), plan);
+    const pruned = await pruneAutoDerivedSubreddits(args(), ["marketing"]);
+    expect(pruned).toEqual({ pruned: ["r/marketing"], remaining: ["r/smallbusiness"] });
+    const stored = await store.readJson<{ markdown: string; data: Record<string, unknown> }>("acme", ["strategy", "reddit-agent", "config"]);
+    expect(stored?.data["targetSubreddits"]).toEqual(["r/smallbusiness"]);
+    expect(stored?.data["autoDerived"]).toBe(true);
+    expect(stored?.markdown).not.toContain("- r/marketing ");
+
+    // Refuses to prune the last one.
+    const refused = await pruneAutoDerivedSubreddits(args(), ["smallbusiness"]);
+    expect(refused).toEqual({ pruned: [], remaining: ["r/smallbusiness"] });
+
+    // A form-recorded charter is a person's decision; it is left alone.
+    await store.writeJson("acme", ["strategy", "reddit-agent", "config"], { markdown: "- r/typed", data: { targetSubreddits: ["r/typed", "r/gone"] } });
+    const untouched = await pruneAutoDerivedSubreddits(args(), ["gone"]);
+    expect(untouched).toEqual({ pruned: [], remaining: ["r/typed", "r/gone"] });
   });
 });

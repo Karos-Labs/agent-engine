@@ -103,9 +103,15 @@ export class NewsletterDraftAgent extends BaseAgent<NewsletterPostOutput> {
     //   schema growing, set above (not below) today's default so this can never
     //   regress an edition that was truncating for another reason.
     maxTokens: 20_000,
-    // Pinned — RFC-02 §5: claude-sonnet-4-6 today, claude-sonnet-5 is an
-    // equally acceptable pin once available; never a fallback for a pinned step.
-    modelPolicy: resolveModelPolicy("newsletter-draft", { policy: "pinned", model: "claude-sonnet-4-6" }),
+    // Pinned — RFC-02 §5 pinned claude-sonnet-4-6. Moved to claude-opus-4-8
+    // (2026-09-05) with newsletter-craft@5: the edition is the one deliverable
+    // a subscriber reads end to end, and the sonnet drafts read as generated
+    // (verdict sentences, "not X. It is Y." reframes, symmetrical sections)
+    // even with the tells listed in the prompt. Opus 4.8 is the strongest
+    // model the router's MODEL_CAPABILITIES catalog carries today; a stronger
+    // pin is welcome once it has a catalog row. Never a fallback for a pinned
+    // step. A client's MODEL_STEP_NEWSLETTER_DRAFT_MODEL override still wins.
+    modelPolicy: resolveModelPolicy("newsletter-draft", { policy: "pinned", model: "claude-opus-4-8" }),
     // Pinned to "2": v2 adds a language check to §2 (Voice) against
     // `clientVoiceContext` (the client's own profile description +
     // voice-rules guidelines) — nothing before it ever forwarded `profile`
@@ -121,7 +127,17 @@ export class NewsletterDraftAgent extends BaseAgent<NewsletterPostOutput> {
     // as authoritative before external facts, and recentPosts (the shipped-
     // output dedup window this agent now writes back into on delivery) is a
     // hard do-not-repeat constraint. v2 stays frozen.
-    skillRef: "newsletter-craft@3",
+    // Pinned to "5" (2026-09-05): v5 is a rewrite of the craft policy around
+    // reading as a person rather than a summary bot — a named list of the
+    // machine-writing tells the sonnet drafts kept producing, the shape of a
+    // modern edition (a developed lead, three to five quick hits with real
+    // links, one thing to do), markdown in `text` (the portal renders it), and
+    // the new `research` input (every fetched source's title/url/excerpt, which
+    // the draft never received before — prep job sp8ICAFLjKkYWb2DAh8R drafted
+    // from one headline and linked every section to a homepage). v4 was never
+    // pinned by any agent (it was latest.md's uncommitted signoff/footer
+    // change, snapshotted); v3 stays frozen.
+    skillRef: "newsletter-craft@5",
     selfCritique: { gateTool: "gate.lintPost", maxRevisions: 1, gateArgs: { platform: "newsletter" } },
   };
 }

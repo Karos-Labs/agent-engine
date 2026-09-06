@@ -2,7 +2,7 @@
   "name": "@agent-engine/tool-karos-landing",
   "private": true,
   "version": "0.0.1",
-  "description": "Landing Builder (s6, RFC-07) sandboxed tooling — template copy, a write-fenced site writer, the Layer 1 deterministic gate (token drift/font fidelity/brand lint/structure/carry-forward), and the Layer 2 Playwright render check. `engine/template/` is read-only; every write is structurally bounded to one client's `OUTPUT_PATH/site`.",
+  "description": "The Landing Builder v2 tool layer (RFC-11): capture the client's current site, deterministic page checks, headless render + screenshots, GCS archive, and Firebase Hosting deploy (preview channel -> live).",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -14,8 +14,8 @@
   },
   "dependencies": {
     "@agent-engine/core": "^0.0.1",
-    "@agent-engine/dynamic-sandbox": "^0.0.1",
     "@agent-engine/tool-common": "^0.0.1",
+    "google-auth-library": "^10.9.1",
     "playwright": "1.53.0",
     "zod": "^4.4.3"
   }

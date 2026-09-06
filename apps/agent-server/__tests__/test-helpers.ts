@@ -74,14 +74,17 @@ export function goodLinkedInDraft() {
   const hook = "We looked at attendance data across our hybrid client base this quarter, and the pattern surprised us.";
   const body = "Teams with a fixed two-day in-office schedule reported fewer scheduling conflicts than teams with fully flexible policies.";
   const callToAction = "If your team is still negotiating its hybrid policy week to week, a fixed anchor-day structure might be worth testing.";
+  // linkedin-craft@5 (2026-09): `takeaway` is required and expected in `text`.
+  const takeaway = "Predictability, not enforcement, is what made the schedule stick.";
   return {
     headline: "Anchor days cut scheduling friction",
     hook,
     body,
+    takeaway,
     hashtags: ["HybridWork", "FutureOfWork"],
     callToAction,
     targetAudience: "People leaders evaluating hybrid work policies",
-    text: `${hook}\n\n${body}\n\n${callToAction}`,
+    text: `${hook}\n\n${body}\n\n${takeaway}\n\n${callToAction}`,
     archetype: "industry-reaction",
   };
 }
@@ -160,8 +163,31 @@ export function goodBlogDraft() {
   };
 }
 
+/** The edition plan the newsletter workflow's `08b-plan-edition` step expects before any drafting (2026-09-05). */
+export function goodNewsletterPlan() {
+  return {
+    thesis: "Structured onboarding is quietly becoming the default for engineering teams that measure ramp time.",
+    lead: {
+      title: "structured engineering onboarding",
+      angle: "Why a fixed four-day structure beats a reading list, using the teams that measured it.",
+      specifics: ["a fixed four-day onboarding rollout"],
+      ourTake: "We think the structure matters more than the content of any single day.",
+      whyItMatters: "Engineering leaders are hiring again and ramp time is the first metric that slips.",
+    },
+    quickHits: [],
+    oneThingToDo: "Write down what a new hire ships by the end of day one, then work backwards.",
+    subjectLineDirection: "Lead with the ramp-time result, not the word onboarding.",
+    passedOn: [],
+  };
+}
+
+/** The editor's approving verdict (`15c-editor-verdict`), so a fixture edition ships first time. */
+export function approvingNewsletterEditorVerdict() {
+  return { verdict: "approve", scores: { specificity: 5, voice: 5, structure: 5, humanity: 5 }, notes: [] };
+}
+
 export function goodNewsletterDraft() {
-  const intro = "This week we're looking at what's actually working for engineering teams right now.";
+  const intro = "Here is what actually worked for engineering teams this week.";
   const sections = [
     { heading: "Structured onboarding cuts ramp time", body: "New-hire ramp time dropped sharply after a fixed four-day onboarding rollout." },
   ];
@@ -199,20 +225,31 @@ export function makeSharedPromptStore(): InMemoryPromptStore {
   store.setPrompt("x-craft", "2", "X craft guidance.");
   store.setPrompt("x-craft", "3", "X craft guidance.");
   store.setPrompt("x-craft", "4", "X craft guidance.");
+  store.setPrompt("x-craft", "5", "X craft guidance.");
   store.setPrompt("linkedin-craft", "1", "LinkedIn craft guidance.");
   store.setPrompt("linkedin-craft", "2", "LinkedIn craft guidance.");
   store.setPrompt("linkedin-craft", "3", "LinkedIn craft guidance.");
   store.setPrompt("linkedin-craft", "4", "LinkedIn craft guidance.");
+  store.setPrompt("linkedin-craft", "5", "LinkedIn craft guidance.");
   store.setPrompt("reddit-craft", "1", "Reddit craft guidance.");
   store.setPrompt("reddit-craft", "2", "Reddit craft guidance.");
   store.setPrompt("reddit-craft", "3", "Reddit craft guidance.");
   store.setPrompt("reddit-craft", "4", "Reddit craft guidance.");
+  store.setPrompt("reddit-craft", "5", "Reddit craft guidance.");
+  // reddit-agent's two judgment steps (auto-setup planner, thread scout).
+  store.setPrompt("reddit-channel-plan", "1", "Reddit channel planning guidance.");
+  store.setPrompt("reddit-scout", "1", "Reddit thread scouting guidance.");
   store.setPrompt("blog-craft", "1", "Blog craft guidance.");
   store.setPrompt("blog-craft", "2", "Blog craft guidance.");
   store.setPrompt("blog-craft", "3", "Blog craft guidance.");
   store.setPrompt("newsletter-craft", "1", "Newsletter craft guidance.");
   store.setPrompt("newsletter-craft", "2", "Newsletter craft guidance.");
   store.setPrompt("newsletter-craft", "3", "Newsletter craft guidance.");
+  store.setPrompt("newsletter-craft", "4", "Newsletter craft guidance.");
+  store.setPrompt("newsletter-craft", "5", "Newsletter craft guidance.");
+  // newsletter-agent's two judgment steps (edition plan, editor verdict).
+  store.setPrompt("newsletter-plan", "1", "Newsletter edition planning guidance.");
+  store.setPrompt("newsletter-editor", "1", "Newsletter editor guidance.");
   store.setPrompt("campaign-craft", "1", "Campaign strategy guidance.");
   return store;
 }
@@ -274,7 +311,9 @@ export async function setupTestEnvironment(clientSlug = "acme"): Promise<TestEnv
     goodLinkedInDraft(),
     goodRedditDraft(),
     goodBlogDraft(),
+    goodNewsletterPlan(),
     goodNewsletterDraft(),
+    approvingNewsletterEditorVerdict(),
   ]);
 
   return {
@@ -283,7 +322,9 @@ export async function setupTestEnvironment(clientSlug = "acme"): Promise<TestEnv
     durableStore,
     // The SAME store `tools` was built over (SCRUM-328): the server's composition
     // roots thread one instance through both, and so must the test environment.
-    runtimeDeps: { tools, promptStore, router, workspaceStore: store },
+    // A fetch that answers 404 to everything: reddit-agent's thread read
+    // degrades to title-only instead of reaching reddit.com from a test.
+    runtimeDeps: { tools, promptStore, router, workspaceStore: store, publicFetch: async () => new Response("not found", { status: 404 }) },
     cleanup: () => fs.rm(rootDir, { recursive: true, force: true }),
   };
 }

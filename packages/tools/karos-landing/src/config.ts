@@ -1,16 +1,43 @@
+import type { LandingHostingConfig } from "./hosting/deploy-page-tool.js";
+
 /**
- * The three roots every `karos-landing` tool is bound to at construction
- * time (RFC-07 §7) — never accepted as a tool argument, so a model can never
- * point a run at an arbitrary filesystem location (the same "tenant is
- * structural, never a raw argument" rule `enforceWriteFence`/`WorkspaceStore`
- * already apply to `clientSlug` — this repo's Layer 3 packages extend it to
- * every root a tool can touch).
+ * Deployment-level configuration for the Landing Builder v2 tools. Only
+ * Hosting needs any: the page is built in memory, checked in memory, rendered
+ * from a string, and archived to the artifact store, so v1's three filesystem
+ * roots (template / clients / bundles) are gone with the template kit.
  */
 export interface LandingEngineConfig {
-  /** `engine/template/` — the canonical, read-only FORGE-proven kit (ENGINE-SPEC §13). Never a write target. */
-  templateRoot: string;
-  /** `engine/clients/` — each client's build output lives at `<engineClientsRoot>/<clientSlug>/site` (AGENT-INVOCATION.md §2's `OUTPUT_PATH`). */
-  engineClientsRoot: string;
-  /** Root holding each client's assembled input bundle (AGENT-INVOCATION.md §1) at `<bundlesRoot>/<clientSlug>` — `brand.json` + `intake.md` + `assets/` + `oldSite/`. */
-  bundlesRoot: string;
+  /** Firebase Hosting target; `undefined` means "not configured", and `landing.deployPage` is then simply not registered. */
+  hosting?: LandingHostingConfig;
+}
+
+function readEnv(env: Record<string, string | undefined>, ...names: string[]): string | undefined {
+  for (const name of names) {
+    const value = env[name];
+    if (value !== undefined && value.length > 0) return value;
+  }
+  return undefined;
+}
+
+/**
+ * `LANDING_HOSTING_PROJECT` names the Firebase project that owns the Hosting
+ * sites (`karoscmo`, the one Firebase project this account has; prep and
+ * prod both deploy there). `LANDING_HOSTING_SITE_PREFIX` keeps their sites
+ * apart (`karos-prep-` vs `karos-`). Unset project => no Hosting: the run
+ * still builds, checks, renders and archives, and the reviewer gets the
+ * signed GCS URL instead of a `.web.app` one.
+ */
+export function createLandingEngineConfigFromEnv(options: { env?: Record<string, string | undefined> } = {}): LandingEngineConfig {
+  const env = options.env ?? process.env;
+  const projectId = readEnv(env, "LANDING_HOSTING_PROJECT");
+  if (!projectId) return {};
+  const ttlRaw = readEnv(env, "LANDING_HOSTING_PREVIEW_TTL_SECONDS");
+  const ttl = ttlRaw ? Number(ttlRaw) : undefined;
+  return {
+    hosting: {
+      projectId,
+      sitePrefix: readEnv(env, "LANDING_HOSTING_SITE_PREFIX") ?? "karos-",
+      ...(ttl && Number.isFinite(ttl) && ttl > 0 ? { previewTtlSeconds: ttl } : {}),
+    },
+  };
 }

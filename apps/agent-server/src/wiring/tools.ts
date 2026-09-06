@@ -49,7 +49,7 @@ function createAdcAuthorize(): () => Promise<string> {
  * dispatchable at all (RFC-06/07); harmless to merge in unconditionally for
  * every other product, since `video.*`/`landing.*` tools degrade to a
  * per-call `tooling_error` — never a construction-time throw — when their
- * own env vars (`BRANDED_SHORTS_ENGINE_DIR`, `LANDING_ENGINE_*_ROOT`) aren't
+ * own env vars (`BRANDED_SHORTS_ENGINE_DIR`, `LANDING_HOSTING_PROJECT`) aren't
  * set, exactly like every other env-configured tool in this codebase.
  *
  * `media.*` is merged in on the same terms, though it no longer needs a
@@ -62,7 +62,7 @@ function createAdcAuthorize(): () => Promise<string> {
  * `mediaStore`/`archiveStore` (Task 1/Task 2, RFC-01's GCS media/artifact
  * store) are `undefined` unless `GCS_MEDIA_BUCKET`/`GCS_ARTIFACTS_BUCKET`
  * are set — every affected tool (`publish.renderCarousel`,
- * `video.uploadDeliverable`, `landing.uploadSiteBundle`) then keeps its
+ * `video.uploadDeliverable`, `landing.uploadPage`) then keeps its
  * exact pre-GCS local-only behavior.
  */
 export function createServerTools(workspaceStore: WorkspaceStoreLike, env: Record<string, string | undefined> = process.env): AgentToolRegistry {
@@ -95,11 +95,22 @@ export function createServerTools(workspaceStore: WorkspaceStoreLike, env: Recor
     // this server already runs as, and the tool package should hold a header
     // minter, never a credential. ElevenLabs stays the env-keyed alternative.
     ...createKarosVideoTools({ env, ...(mediaStore ? { mediaStore } : {}), synthesizeVoice: { authorize: createAdcAuthorize() } }),
-    ...createKarosLandingTools(createLandingEngineConfigFromEnv({ env }), archiveStore, workspaceStore),
+    // Landing Builder v2 (RFC-11): screenshots + the archived page go to the
+    // artifacts bucket, the client's optional hand-curated inputs and the
+    // published-build state live in the workspace, and Firebase Hosting is
+    // configured through `LANDING_HOSTING_PROJECT`/`LANDING_HOSTING_SITE_PREFIX`.
+    ...createKarosLandingTools(createLandingEngineConfigFromEnv({ env }), {
+      ...(archiveStore ? { artifactStore: archiveStore } : {}),
+      workspaceStore,
+    }),
+
     // `mediaStore` doubles as Tier 0's gs:// reader: a client's upload lives in
     // the same bucket the deliverables do, and giving the media tools a second
-    // GCS client for one read would be two credentials for one job.
-    ...createKarosMediaTools({ env, ...(mediaStore ? { objectReader: mediaStore } : {}) }),
+    // GCS client for one read would be two credentials for one job. It is also
+    // (2026-09) where `media.stageAsset` uploads a chosen X/LinkedIn image so
+    // the deliverable carries a URL the portal can re-host — the same store
+    // `publish.renderCarousel` already writes its PNGs to.
+    ...createKarosMediaTools({ env, ...(mediaStore ? { objectReader: mediaStore, mediaStore } : {}) }),
     // The write side of a client's setup documents. Merged in for every
     // product because the registry is shared, but only the setup workflows
     // name it in a step -- a drafting agent that never calls it cannot

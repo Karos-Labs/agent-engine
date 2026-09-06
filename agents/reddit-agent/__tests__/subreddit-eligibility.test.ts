@@ -52,7 +52,7 @@ describe("Reddit subreddit-rules gate (RFC-02 §5 migration audit, Reddit P0)", 
     await env.store.writeJson("acme", ["client", "subreddit-rules"], { smallbusiness: { offLimits: true } });
     const promptStore = makePromptStore();
     const router = fakeRouterSequence([finalTurn(goodDraft())]);
-    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore, router });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
@@ -74,7 +74,7 @@ describe("Reddit subreddit-rules gate (RFC-02 §5 migration audit, Reddit P0)", 
     await env.store.writeJson("acme", ["client", "subreddit-rules"], { smallbusiness: { aiContentBanned: true } });
     const promptStore = makePromptStore();
     const router = fakeRouterSequence([finalTurn(goodDraft())]);
-    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore, router });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
@@ -92,7 +92,7 @@ describe("Reddit subreddit-rules gate (RFC-02 §5 migration audit, Reddit P0)", 
     });
     const promptStore = makePromptStore();
     const router = fakeRouterSequence([finalTurn(goodDraft())]);
-    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore, router });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
@@ -111,7 +111,7 @@ describe("Reddit subreddit-rules gate (RFC-02 §5 migration audit, Reddit P0)", 
     });
     const promptStore = makePromptStore();
     const router = fakeRouterSequence([finalTurn(disclosedDraft())]);
-    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+    const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
@@ -123,7 +123,7 @@ describe("Reddit subreddit-rules gate (RFC-02 §5 migration audit, Reddit P0)", 
   it("passes the pre-draft eligibility check with no subreddit rules configured at all (unconfigured, not blocked)", async () => {
     const promptStore = makePromptStore();
     const router = fakeRouterSequence([finalTurn(goodDraft())]);
-    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+    const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
@@ -143,7 +143,7 @@ describe("Reddit subreddit-rules gate (RFC-02 §5 migration audit, Reddit P0)", 
       });
       const promptStore = makePromptStore();
       const router = fakeRouterSequence([finalTurn(disclosedDraft())]);
-      const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+      const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore, router, autoApprove: true });
       const durableStore = new MemoryDurableStepStore();
       const engine = new WorkflowEngine(durableStore);
 
@@ -160,7 +160,7 @@ describe("Reddit subreddit-rules gate (RFC-02 §5 migration audit, Reddit P0)", 
       });
       const promptStore = makePromptStore();
       const router = fakeRouterSequence([finalTurn(goodDraft())]); // disclosureIncluded: false — no mention attempted
-      const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+      const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore, router, autoApprove: true });
       const durableStore = new MemoryDurableStepStore();
       const engine = new WorkflowEngine(durableStore);
 
@@ -181,7 +181,7 @@ describe("Reddit subreddit-rules gate (RFC-02 §5 migration audit, Reddit P0)", 
       });
       const promptStore = makePromptStore();
       const router = fakeRouterSequence([finalTurn(disclosedDraft())]);
-      const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+      const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore, router, autoApprove: true });
       const durableStore = new MemoryDurableStepStore();
       const engine = new WorkflowEngine(durableStore);
 
@@ -204,7 +204,7 @@ describe("Reddit subreddit-rules gate (RFC-02 §5 migration audit, Reddit P0)", 
       });
       const promptStore = makePromptStore();
       const router = fakeRouterSequence([finalTurn(disclosedDraft())]);
-      const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+      const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore, router, autoApprove: true });
       const durableStore = new MemoryDurableStepStore();
       const engine = new WorkflowEngine(durableStore);
 

@@ -87,17 +87,19 @@ describe("T-A3/SCRUM-237: a real per-engine adapter's aioAbsent flag survives to
       expect(cell.aioAbsent).toBeUndefined();
     }
 
-    // The other 3 engines (chatgpt/copilot/claude) had no adapter configured
+    // The other 2 captured engines (chatgpt/claude) had no adapter configured
     // — `setupTestEnvironment`'s default `null` still applies to them — so
     // they're honestly UNAVAILABLE, distinct from both of the above.
     //
-    // Copilot's presence here is the point, not an accident: it has no route
-    // in this build (its old ScrappyCoco adapter called a capability that does
-    // not exist on that vendor), and an adapter-less engine must report
-    // UNAVAILABLE rather than disappear. The deleted adapter THREW instead,
-    // and step 07's `completedOutputs` drops failed slots — so Copilot was
-    // absent from the report entirely, which is how this went unnoticed.
+    // Copilot is absent here on purpose, and the assertion below pins that it
+    // is absent EVERYWHERE, not merely non-UNAVAILABLE: since 2026-09-05 it is
+    // accepted but not captured (SCRUM-396 decision record, "2026-09-05
+    // addendum"), so the fan-out never produces a Copilot cell of any tier.
+    // Before that date it was kept in the fan-out precisely so it would show
+    // as UNAVAILABLE rather than vanish — the owner's later call was that a
+    // column that can never be measured is noise in the coverage denominator.
     const unavailableEngines = new Set(visibilityCapture.cells.filter((c) => c.captureTier === "UNAVAILABLE").map((c) => c.engine));
-    expect([...unavailableEngines].sort()).toEqual(["chatgpt", "claude", "copilot"]);
+    expect([...unavailableEngines].sort()).toEqual(["chatgpt", "claude"]);
+    expect(visibilityCapture.cells.some((c) => c.engine === "copilot")).toBe(false);
   });
 });

@@ -144,3 +144,57 @@ describe("client.getContextDoc", () => {
     expect(outcome.status).toBe("not_available");
   });
 });
+
+describe("client.getContextDoc — knowledge-mirror fallback (2026-09-05)", () => {
+  const MIRROR = {
+    syncedAt: "2026-09-05T13:00:00.000Z",
+    docs: [
+      { docType: "target-audience", tier: "client", version: 3, content: "# Target Audience\nSenior CMOs at mid-market B2B." },
+      { docType: "market-strategy", tier: "internal", version: 1, content: "   " },
+    ],
+  };
+
+  it("serves the portal's mirrored document when no C1 projection exists", async () => {
+    // The prep failure: no `context/<docType>.json` anywhere, because S-A14 never
+    // shipped — yet the client had written the document and the portal had
+    // mirrored it. Answering not_available here is what left every intel
+    // report ungrounded in its own client's audience.
+    const tools = createKarosClientTools(storeWith({ "karoslabs/knowledge/context-docs": MIRROR }));
+    const outcome = await tools["client.getContextDoc"]!.execute({ docType: "target-audience" }, { ctx: CTX });
+
+    expect(outcome.status).toBe("success");
+    const result = (outcome as { result: ClientContextDoc }).result;
+    expect(result.markdown).toBe("# Target Audience\nSenior CMOs at mid-market B2B.");
+    expect(result.source.projectedBy).toBe("knowledge-mirror");
+    expect(result.source.tier).toBe("client");
+    expect(result.source.docVersion).toBe(3);
+    expect(result.source.projectedAt).toBe("2026-09-05T13:00:00.000Z");
+    expect(result.source.contentHash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("prefers a present projection over the mirror", async () => {
+    // A fallback, not a replacement — S-A14 can land without touching this.
+    const tools = createKarosClientTools(
+      storeWith({
+        "karoslabs/context/target-audience": { markdown: "# From the projection", source: FULL_SOURCE },
+        "karoslabs/knowledge/context-docs": MIRROR,
+      }),
+    );
+    const outcome = await tools["client.getContextDoc"]!.execute({ docType: "target-audience" }, { ctx: CTX });
+    expect((outcome as { result: ClientContextDoc }).result.markdown).toBe("# From the projection");
+    expect((outcome as { result: ClientContextDoc }).result.source.projectedBy).toBe(FULL_SOURCE.projectedBy);
+  });
+
+  it("treats a blank mirrored row as absent rather than as an empty document", async () => {
+    const tools = createKarosClientTools(storeWith({ "karoslabs/knowledge/context-docs": MIRROR }));
+    const outcome = await tools["client.getContextDoc"]!.execute({ docType: "market-strategy" }, { ctx: CTX });
+    expect(outcome.status).toBe("not_available");
+  });
+
+  it("still reports not_available, naming both places it looked, when neither exists", async () => {
+    const tools = createKarosClientTools(storeWith({}));
+    const outcome = await tools["client.getContextDoc"]!.execute({ docType: "brand-voice" }, { ctx: CTX });
+    expect(outcome.status).toBe("not_available");
+    expect((outcome as { reason: string }).reason).toContain("knowledge mirror");
+  });
+});

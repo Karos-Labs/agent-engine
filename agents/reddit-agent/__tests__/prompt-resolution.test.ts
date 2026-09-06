@@ -46,7 +46,7 @@ describe("PromptStore resolution (RFC-01 §16.1)", () => {
 
     await agent.run(ctx, {});
 
-    const expectedPrompt = readFileSync(path.join(PROMPTS_ROOT, "reddit-craft", "4.md"), "utf8");
+    const expectedPrompt = readFileSync(path.join(PROMPTS_ROOT, "reddit-craft", "5.md"), "utf8");
     // SCRUM-298: `system` now also carries the response contract, appended
     // after the resolved skill body — assert the prefix, not exact equality.
     const call = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!;
@@ -82,20 +82,20 @@ describe("zero hardcoded prompts (RFC-01 §16.1)", () => {
     return files;
   }
 
-  // Distinctive phrases from prompts/reddit-craft/4.md — if any of these appear
+  // Distinctive phrases from prompts/reddit-craft/5.md — if any of these appear
   // in TypeScript source, the craft content has been duplicated as a literal
   // instead of living only in the markdown file resolved via PromptStore.
   const CRAFT_CONTENT_MARKERS = [
     "Redditors can tell a marketing reply from a real one within a sentence",
-    "That was wrong. A thread to reply to has already been selected for you",
-    "never invent a plausible-sounding statistic",
+    "Read the thread before anything else",
+    "`gate.numbersSourced` rejects an unsourced figure",
     "No competitor names, ever, even neutrally.",
   ];
 
   it("sanity check: the markers really do appear in the prompt file (so the negative check below is meaningful)", () => {
-    const promptContent = readFileSync(path.join(PROMPTS_ROOT, "reddit-craft", "4.md"), "utf8");
+    const promptContent = readFileSync(path.join(PROMPTS_ROOT, "reddit-craft", "5.md"), "utf8");
     for (const marker of CRAFT_CONTENT_MARKERS) {
-      expect(promptContent.includes(marker), `expected "${marker}" to actually be in reddit-craft/4.md`).toBe(true);
+      expect(promptContent.includes(marker), `expected "${marker}" to actually be in reddit-craft/5.md`).toBe(true);
     }
   });
 
@@ -113,6 +113,6 @@ describe("zero hardcoded prompts (RFC-01 §16.1)", () => {
 
   it("RedditDraftAgent's config carries a skillRef, not an inline system prompt field", () => {
     const configSource = readFileSync(path.join(SRC_ROOT, "agent", "reddit-draft-agent.ts"), "utf8");
-    expect(configSource).toMatch(/skillRef:\s*"reddit-craft@4"/);
+    expect(configSource).toMatch(/skillRef:\s*"reddit-craft@5"/);
   });
 });

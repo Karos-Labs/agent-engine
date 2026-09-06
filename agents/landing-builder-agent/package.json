@@ -2,7 +2,7 @@
   "name": "@agent-engine/agent-landing-builder",
   "private": true,
   "version": "0.0.1",
-  "description": "The Landing Builder agent (s6, RFC-07) \u2014 the 7-phase INTAKE -> REFERENCE -> COPY -> COMPOSE -> MAKE -> GATE -> OUTPUT pipeline that turns one client's brand contract + intake facts into a standalone Next.js site, built on the sandboxed karos-landing tooling (template copy, write-fenced site writer, three-layer gate) plus a mandatory human review gate before delivery.",
+  "description": "The Landing Builder agent v2 (RFC-11): intake from everything the engine already knows about the client (brand kit, context docs, the captured current site, the portal brief) -> an Opus blueprint of every design and copy decision -> a Gemini 3.1 Pro single-file HTML build -> deterministic check + headless render + craft verdict with one fix pass -> Firebase Hosting preview for the human gate -> the same version promoted live on approval.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -15,7 +15,6 @@
   "dependencies": {
     "@agent-engine/core": "^0.0.1",
     "@agent-engine/tool-common": "^0.0.1",
-    "@agent-engine/tool-karos-gates": "^0.0.1",
     "@agent-engine/tool-karos-landing": "^0.0.1",
     "@agent-engine/tool-karos-scraper": "^0.0.1",
     "@agent-engine/tools": "^0.0.1",

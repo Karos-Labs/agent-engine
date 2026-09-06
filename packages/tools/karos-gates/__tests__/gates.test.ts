@@ -398,6 +398,54 @@ describe("gate.numbersSourced", () => {
     });
     expect(verdict.verdict).toBe("pass");
   });
+
+  // 1.2.0 — prep job sp8ICAFLjKkYWb2DAh8R (2026-09-05): a newsletter quoting
+  // its source's "$1 billion" verbatim was held with the reason "figure does
+  // not appear in any attached source: $1, $1". The currency alternative
+  // stopped at the space and extracted "$1", a figure the draft never made.
+  it("extracts a currency amount together with its magnitude word, never the bare amount", async () => {
+    const verdict = await verdictOf("gate.numbersSourced", {
+      text: "ChatGPT has crossed $1 billion in advertising revenue.",
+      sources: [],
+    });
+    expect(verdict.verdict).toBe("content_fail");
+    expect(verdict.evidence).toEqual(["$1 billion"]);
+  });
+
+  it("verifies a currency amount with a magnitude word against a source that writes it the same way", async () => {
+    const verdict = await verdictOf("gate.numbersSourced", {
+      text: "ChatGPT has crossed $1 billion in advertising revenue.",
+      sources: ["ChatGPT Ads has reached $1 billion in annualised revenue run rate, OpenAI announced on Monday."],
+    });
+    expect(verdict.verdict).toBe("pass");
+  });
+
+  it("verifies '$1 billion' against a source that abbreviates it as '$1B' or '$1bn'", async () => {
+    for (const source of ["OpenAI: ChatGPT ads hit $1B run rate", "ChatGPT ads pass the $1bn mark"]) {
+      const verdict = await verdictOf("gate.numbersSourced", {
+        text: "ChatGPT has crossed $1 billion in advertising revenue.",
+        sources: [source],
+      });
+      expect(verdict.verdict, source).toBe("pass");
+    }
+  });
+
+  it("still fails a currency amount whose magnitude the source does not support", async () => {
+    const verdict = await verdictOf("gate.numbersSourced", {
+      text: "ChatGPT has crossed $1 billion in advertising revenue.",
+      sources: ["OpenAI is on the path to its $2.5 billion target for the year."],
+    });
+    expect(verdict.verdict).toBe("content_fail");
+  });
+
+  it("does not read the first letter of the next word as a magnitude suffix", async () => {
+    // "$10 monthly" is the claim "$10", not "$10m".
+    const verdict = await verdictOf("gate.numbersSourced", {
+      text: "Plans start at $10 monthly.",
+      sources: ["Pricing: plans start at $10 per month."],
+    });
+    expect(verdict.verdict).toBe("pass");
+  });
 });
 
 describe("gate.subredditRules", () => {
@@ -592,10 +640,10 @@ describe("every gate registers with the expected toolVersion", () => {
     }
   });
 
-  it("pins gate.numbersSourced at the range-aware version", async () => {
+  it("pins gate.numbersSourced at the magnitude-aware version", async () => {
     // Named explicitly so reverting the range fix without reverting the version
     // — or the reverse — is caught here rather than in telemetry months later.
-    expect(gates["gate.numbersSourced"]!.version).toBe("1.1.0");
+    expect(gates["gate.numbersSourced"]!.version).toBe("1.2.0");
   });
 });
 

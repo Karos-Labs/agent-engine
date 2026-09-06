@@ -8,14 +8,53 @@ import { defineTool, success } from "@agent-engine/tool-common";
 // every other input, and a bare endpoint asserted on its own still fails. A
 // minor bump rather than a patch because the verdict for a real class of drafts
 // genuinely changes, and telemetry has to be able to tell the two eras apart.
-const TOOL_VERSION = "1.1.0";
+//
+// 1.2.0 — a currency amount carries its magnitude word. "$1 billion" used to
+// be extracted as the claim "$1": the currency alternative stopped at the
+// space, and the magnitude alternative never got a turn because the match had
+// already consumed the digit. The verdict then named a figure ("$1") that
+// appeared nowhere in the draft, and a fully-sourced Karos Labs newsletter was
+// held on it (prep job sp8ICAFLjKkYWb2DAh8R, 2026-09-05). Magnitudes are also
+// folded to one spelling on both sides ("$1 billion" / "$1B" / "$1bn" all
+// compare as "$1b"), so a draft quoting a source's figure in words is not
+// failed because the source abbreviated it. Minor bump, same reasoning as 1.1.0.
+const TOOL_VERSION = "1.2.0";
 
-/** Numeric-claim shapes that read as a factual assertion needing a source: percentages, currency, multipliers, magnitude words. */
-const NUMERIC_CLAIM_PATTERN = /(\d[\d,]*(?:\.\d+)?\s?%)|([$€£]\s?\d[\d,]*(?:\.\d+)?)|(\b\d+(?:\.\d+)?x\b)|(\b\d+(?:\.\d+)?\s?(?:million|billion|thousand)\b)/gi;
+/** A magnitude suffix that belongs to the figure in front of it: written out, or the common abbreviations. */
+const MAGNITUDE_SUFFIX = "(?:trillion|billion|million|thousand|tn|bn|mn|[kmbt])";
 
-/** Collapses whitespace and case so "47 %" / "47%" / "47  %" all compare equal against source content. Dash variants are folded to "-" so a draft quoting "$500–$2,000" matches a source writing "$500-$2,000". */
+/**
+ * Numeric-claim shapes that read as a factual assertion needing a source:
+ * percentages, currency (with any magnitude word attached, so "$1 billion" is
+ * one claim, not "$1"), multipliers, magnitude words.
+ */
+const NUMERIC_CLAIM_PATTERN = new RegExp(
+  [
+    String.raw`(\d[\d,]*(?:\.\d+)?\s?%)`,
+    String.raw`([$€£]\s?\d[\d,]*(?:\.\d+)?(?:\s?${MAGNITUDE_SUFFIX}\b)?)`,
+    String.raw`(\b\d+(?:\.\d+)?x\b)`,
+    String.raw`(\b\d+(?:\.\d+)?\s?(?:trillion|billion|million|thousand)\b)`,
+  ].join("|"),
+  "gi",
+);
+
+/**
+ * Collapses whitespace and case so "47 %" / "47%" / "47  %" all compare equal
+ * against source content. Dash variants are folded to "-" so a draft quoting
+ * "$500–$2,000" matches a source writing "$500-$2,000". Magnitude words are
+ * folded to their one-letter abbreviation BEFORE whitespace is removed (the
+ * `\b` after the word still means something at that point), so "$1 billion",
+ * "$1 bn" and "$1B" all normalize to "$1b".
+ */
 function normalizeClaim(raw: string): string {
-  return raw.replace(/[‐-―]/g, "-").replace(/\s+/g, "").toLowerCase();
+  return raw
+    .toLowerCase()
+    .replace(/(\d)\s?(?:trillion|tn)\b/g, "$1t")
+    .replace(/(\d)\s?(?:billion|bn)\b/g, "$1b")
+    .replace(/(\d)\s?(?:million|mn)\b/g, "$1m")
+    .replace(/(\d)\s?thousand\b/g, "$1k")
+    .replace(/[‐-―]/g, "-")
+    .replace(/\s+/g, "");
 }
 
 /** Escapes a normalized claim for literal use inside a `RegExp`. */

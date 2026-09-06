@@ -48,7 +48,7 @@ import {
 } from "../../../agents/intel-report-agent/__tests__/test-helpers.js";
 
 import { createLandingBuilderAgentWorkflow } from "../../../agents/landing-builder-agent/src/workflow/create-landing-builder-agent-workflow.js";
-import { smartFakeRouter as landingSmartFakeRouter, makePromptStore as makeLandingPromptStore, setupTestEnvironment as setupLandingEnv } from "../../../agents/landing-builder-agent/__tests__/test-helpers.js";
+import { landingFakeRouter, makePromptStore as makeLandingPromptStore, setupTestEnvironment as setupLandingEnv } from "../../../agents/landing-builder-agent/__tests__/test-helpers.js";
 
 /**
  * SCRUM-242 (T-A10) — the ticket's own required test: "A fixture run with
@@ -85,10 +85,14 @@ describe("SCRUM-242 (T-A10) — one fixture, all four grounded agents, every con
     }
 
     // ── landing-builder-agent: BLOCK ──
-    const landingEnv = await setupLandingEnv("forge", { withContextDocs: false });
+    // Landing Builder v2 (RFC-11 §2.2) has a second grounding source, the
+    // client's own live site, so the BLOCK fires only when THAT is absent too:
+    // no product-information document AND no website to capture.
+    const landingEnv = await setupLandingEnv({ clientSlug: "forge", withProductInformation: false, withWebsite: false });
     try {
       const landingParams = { runId: "fixture_landing", clientSlug: "forge", productId: "s6", runKind: "setup" as const };
-      const landingRouter = landingSmartFakeRouter([]); // never called — see the assertion below
+      const landingFake = landingFakeRouter(); // never called — see the assertion below
+      const landingRouter = landingFake.router;
       const landingWorkflowFn = createLandingBuilderAgentWorkflow({ tools: landingEnv.tools, promptStore: makeLandingPromptStore(), router: landingRouter, autoApprove: true });
       const landingResult = await new WorkflowEngine(new MemoryDurableStepStore()).run(landingWorkflowFn, landingParams);
 
@@ -96,6 +100,7 @@ describe("SCRUM-242 (T-A10) — one fixture, all four grounded agents, every con
       if (landingResult.status !== "blocked_intake") throw new Error("unreachable");
       expect(landingResult.reason).toContain("landing-builder-agent: missing required context doc(s) [product-information]");
       expect(landingResult.reason).toContain("published artefact");
+      expect(landingFake.prompts).toHaveLength(0);
     } finally {
       await landingEnv.cleanup();
     }

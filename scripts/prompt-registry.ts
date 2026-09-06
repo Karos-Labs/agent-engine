@@ -137,13 +137,13 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "instagram-copy",
     agent: "instagram-agent",
-    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"],
-    latestVersion: "10",
+    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"],
+    latestVersion: "11",
     requires: { languageDirective: true },
   },
   { promptId: "instagram-image-vet", agent: "instagram-agent", versions: ["1", "2"], latestVersion: "2" },
   { promptId: "instagram-research", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
-  { promptId: "instagram-visual-qa", agent: "instagram-agent", versions: ["1", "2"], latestVersion: "2" },
+  { promptId: "instagram-visual-qa", agent: "instagram-agent", versions: ["1", "2", "3"], latestVersion: "3" },
   {
     promptId: "intel-report-grounding",
     agent: "intel-report-agent",
@@ -157,35 +157,84 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "intel-report-craft",
     agent: "intel-report-agent",
-    versions: ["1", "2", "3", "4"],
-    latestVersion: "4",
+    versions: ["1", "2", "3", "4", "5"],
+    latestVersion: "5",
     requires: { numbersSourced: true },
   },
-  { promptId: "landing-compose", agent: "landing-builder-agent", versions: ["1"], latestVersion: "1" },
-  { promptId: "landing-copy", agent: "landing-builder-agent", versions: ["1", "2", "3"], latestVersion: "3" },
-  { promptId: "landing-craft-verdict", agent: "landing-builder-agent", versions: ["1"], latestVersion: "1" },
-  { promptId: "landing-make", agent: "landing-builder-agent", versions: ["1"], latestVersion: "1" },
+  // Landing Builder v2 (RFC-11). The blueprint decides every fact on the page
+  // and the build/fix steps copy it verbatim, so all three carry the
+  // never-invent declaration; `landing.checkPage` is the validator that
+  // actually rejects an unsourced figure (it applies gate.numbersSourced's rule
+  // to the assembled HTML).
+  { promptId: "landing-blueprint", agent: "landing-builder-agent", versions: ["1"], latestVersion: "1", requires: { numbersSourced: true } },
+  { promptId: "landing-build", agent: "landing-builder-agent", versions: ["1"], latestVersion: "1", requires: { numbersSourced: true } },
+  { promptId: "landing-fix", agent: "landing-builder-agent", versions: ["1"], latestVersion: "1", requires: { numbersSourced: true } },
+  { promptId: "landing-craft-verdict", agent: "landing-builder-agent", versions: ["1", "2"], latestVersion: "2" },
   {
     promptId: "linkedin-craft",
     agent: "linkedin-agent",
-    versions: ["1", "2", "3", "4"],
-    latestVersion: "4",
+    versions: ["1", "2", "3", "4", "5"],
+    latestVersion: "5",
     requires: { languageDirective: true, numbersSourced: true },
   },
   {
     promptId: "newsletter-craft",
     agent: "newsletter-agent",
-    versions: ["1", "2", "3", "4"],
-    latestVersion: "4",
+    versions: ["1", "2", "3", "4", "5"],
+    latestVersion: "5",
     requires: { languageDirective: true, numbersSourced: true, structuredOutput: true },
     structuredOutputFields: ["subject", "previewText", "intro", "callToAction", "signoff", "text"],
   },
   {
+    promptId: "newsletter-editor",
+    agent: "newsletter-agent",
+    versions: ["1"],
+    latestVersion: "1",
+    // A judgment step that reads a finished edition and returns a verdict with
+    // notes: it writes no client-facing prose and adds no facts, so neither the
+    // language directive nor the numbers pair applies. Its output fields are
+    // what the workflow acts on, so those are checked.
+    requires: { structuredOutput: true },
+    structuredOutputFields: ["verdict", "scores", "notes"],
+  },
+  {
+    promptId: "newsletter-plan",
+    agent: "newsletter-agent",
+    versions: ["1"],
+    latestVersion: "1",
+    // The edition plan: an internal brief for the writer, in English by
+    // design (it notes the edition's language for the writer instead), and
+    // it names no figures of its own (`specifics` are copied verbatim from
+    // the research), so the language directive and numbers pair do not apply.
+    requires: { structuredOutput: true },
+    structuredOutputFields: ["thesis", "lead", "quickHits", "oneThingToDo", "subjectLineDirection", "passedOn"],
+  },
+  {
+    promptId: "reddit-channel-plan",
+    agent: "reddit-agent",
+    versions: ["1"],
+    latestVersion: "1",
+    // A planning step, not client-facing prose: it decides communities and
+    // keywords, so neither the language directive nor the numbers pair applies.
+    requires: { structuredOutput: true },
+    structuredOutputFields: ["targetSubreddits", "searchKeywords", "offLimitsTopics", "voiceNotes", "disclosureLine"],
+  },
+  {
     promptId: "reddit-craft",
     agent: "reddit-agent",
-    versions: ["1", "2", "3", "4"],
-    latestVersion: "4",
-    requires: { languageDirective: true, numbersSourced: true },
+    versions: ["1", "2", "3", "4", "5"],
+    latestVersion: "5",
+    requires: { languageDirective: true, numbersSourced: true, structuredOutput: true },
+    structuredOutputFields: ["replyBody", "text", "targetThreadUrl", "targetThreadTitle", "targetSubreddit", "disclosureIncluded", "sourcesUsed"],
+  },
+  {
+    promptId: "reddit-scout",
+    agent: "reddit-agent",
+    versions: ["1"],
+    latestVersion: "1",
+    // Chooses a thread; produces no client-facing prose and no figures.
+    requires: { structuredOutput: true },
+    structuredOutputFields: ["selected", "passReason", "runnersUp", "angle", "whatToAdd", "requiresDisclosure"],
   },
   { promptId: "reputation-doctrine-gate", agent: "reputation-agent", versions: ["1"], latestVersion: "1" },
   { promptId: "reputation-draft", agent: "reputation-agent", versions: ["1"], latestVersion: "1" },
@@ -222,8 +271,8 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "x-craft",
     agent: "x-agent",
-    versions: ["1", "2", "3", "4"],
-    latestVersion: "4",
+    versions: ["1", "2", "3", "4", "5"],
+    latestVersion: "5",
     requires: { languageDirective: true, numbersSourced: true },
   },
 ];

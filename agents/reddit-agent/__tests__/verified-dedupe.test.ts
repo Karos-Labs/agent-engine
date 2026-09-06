@@ -76,7 +76,7 @@ describe("reddit-agent verified de-duplication (AU20)", () => {
     await env.tools["ledger.recordOutputExcerpt"]!.execute({ agentId: "reddit-agent", runId: "prior-run", excerpt: PUBLISHED }, { ctx: seedCtx });
 
     const router = fakeRouterSequence([draft(NEAR_DUPLICATE), draft(FRESH)]);
-    const workflowFn = createRedditAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router, autoApprove: true });
+    const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore: makePromptStore(), router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 

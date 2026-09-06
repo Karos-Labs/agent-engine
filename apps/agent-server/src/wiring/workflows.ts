@@ -1,6 +1,7 @@
 import type { AgentToolRegistry, ModelRouter, PromptStore } from "@agent-engine/core";
 import type { WorkflowContext } from "@agent-engine/workflow";
 import type { WorkspaceStoreLike } from "@agent-engine/tools";
+import type { CaptureFetch } from "@agent-engine/tool-common";
 import { createXAgentWorkflow } from "@agent-engine/agent-x";
 import type { TemplateStore } from "@agent-engine/tool-karos-templates";
 import { createInstagramAgentWorkflow } from "@agent-engine/agent-instagram";
@@ -100,6 +101,19 @@ export interface AgentRuntimeDeps {
    * registry existed.
    */
   templateStore?: TemplateStore;
+  /**
+   * The fetch an agent uses to read PUBLIC, unauthenticated endpoints that
+   * are not behind a `karos-*` tool — today only `reddit-agent`'s thread
+   * discovery, which reads Reddit's Atom feeds. Optional: a deployment leaves
+   * it undefined and gets the global fetch; a test passes a stub so a workflow
+   * run never reaches the network from a test process.
+   *
+   * Named distinctly from the `fetchImpl` option instagram-agent and
+   * tiktok-agent already accept (a wider `typeof fetch` for their own media
+   * downloads): `deps` is spread into those factories whole, so a shared name
+   * would hand them a fetch typed for a different job.
+   */
+  publicFetch?: CaptureFetch;
 }
 
 export type WorkflowFn = (wf: WorkflowContext) => Promise<unknown>;
@@ -149,7 +163,7 @@ export function buildWorkflowForProduct(productId: ProductId, deps: AgentRuntime
     case "linkedin-agent":
       return createLinkedInAgentWorkflow(deps);
     case "reddit-agent":
-      return createRedditAgentWorkflow(deps);
+      return createRedditAgentWorkflow({ ...deps, ...(deps.publicFetch ? { redditFetch: deps.publicFetch } : {}) });
     case "blog-agent":
       return createBlogAgentWorkflow(deps);
     case "newsletter-agent":

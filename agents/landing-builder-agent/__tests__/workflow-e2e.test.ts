@@ -1,249 +1,224 @@
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { promises as fs } from "node:fs";
-import * as path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
+import type { RunKind } from "@agent-engine/core";
+import type { PageBlueprint, PageParts } from "@agent-engine/tool-karos-landing";
 import { createLandingBuilderAgentWorkflow } from "../src/workflow/create-landing-builder-agent-workflow.js";
-import { setupTestEnvironment, smartFakeRouter, makePromptStore, goodCopy, goodCompose, goodCraftVerdict, REAL_FORGE_FIXTURE_SITE, type TestEnvironment } from "./test-helpers.js";
+import type { LandingBuilderWorkflowResult } from "../src/workflow/types.js";
+import { landingFakeRouter, makePromptStore, passingRender, sampleBlueprint, sampleParts, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 
-/** Parses a real component file's own prop destructuring (`export function Hero({ hero }: { hero: HeroContent })`) so a test can assert the generator uses the SAME prop name, instead of hand-copying the expectation and risking it drifting from the real kit. */
-async function declaredPropName(componentFile: string): Promise<string> {
-  const source = await fs.readFile(path.join(REAL_FORGE_FIXTURE_SITE, "src", "components", componentFile), "utf8");
-  const match = /export function \w+\(\{\s*(\w+)/.exec(source);
-  if (!match) throw new Error(`could not find a destructured prop in ${componentFile}`);
-  return match[1]!;
+const params: { runId: string; clientSlug: string; productId: string; runKind: RunKind } = { runId: "landing_run_1", clientSlug: "northwind", productId: "landing-builder-agent", runKind: "setup" };
+
+async function runToCompletion(env: TestEnvironment, router: ReturnType<typeof landingFakeRouter>["router"], overrides: Partial<typeof params> & { input?: Record<string, unknown> } = {}) {
+  const workflowFn = createLandingBuilderAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router, autoApprove: true });
+  const durableStore = new MemoryDurableStepStore();
+  const engine = new WorkflowEngine(durableStore);
+  const result = await engine.run(workflowFn, { ...params, ...overrides });
+  return { result, durableStore };
 }
 
-/**
- * A dependency-free structural syntax check: every `(`/`[`/`{` in `source`
- * must close, in order, with its matching `)`/`]`/`}`, correctly skipping
- * over string/template-literal contents (including `${...}` interpolation,
- * which re-enters code and needs its own brace counting) and comments so a
- * bracket character inside a string is never mistaken for real syntax. This
- * doesn't replace a real parser (it can't catch every possible syntax
- * error), but it reliably catches the failure mode string-templated code
- * generation is actually prone to: a bad interpolation leaving mismatched
- * braces — exactly the class of bug this generator's own template literals
- * could introduce.
- */
-function assertBalancedSyntax(source: string, fileName: string): void {
-  const stack: string[] = [];
-  const closerFor: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
-  const n = source.length;
-  let i = 0;
-
-  function skipString(quote: string): void {
-    i++;
-    while (i < n && source[i] !== quote) {
-      if (source[i] === "\\") i++;
-      i++;
-    }
-    i++;
-  }
-
-  function skipTemplateLiteral(): void {
-    i++; // opening `
-    while (i < n) {
-      if (source[i] === "\\") {
-        i += 2;
-        continue;
-      }
-      if (source[i] === "`") {
-        i++;
-        return;
-      }
-      if (source[i] === "$" && source[i + 1] === "{") {
-        i += 2;
-        let depth = 1;
-        while (i < n && depth > 0) {
-          if (source[i] === "{") depth++;
-          else if (source[i] === "}") depth--;
-          else if (source[i] === "`") {
-            skipTemplateLiteral();
-            continue;
-          } else if (source[i] === '"') {
-            skipString('"');
-            continue;
-          } else if (source[i] === "'") {
-            skipString("'");
-            continue;
-          }
-          i++;
-        }
-        continue;
-      }
-      i++;
-    }
-  }
-
-  while (i < n) {
-    const c = source[i];
-    if (c === "/" && source[i + 1] === "/") {
-      while (i < n && source[i] !== "\n") i++;
-      continue;
-    }
-    if (c === "/" && source[i + 1] === "*") {
-      i += 2;
-      while (i < n && !(source[i] === "*" && source[i + 1] === "/")) i++;
-      i += 2;
-      continue;
-    }
-    if (c === '"') {
-      skipString('"');
-      continue;
-    }
-    if (c === "'") {
-      skipString("'");
-      continue;
-    }
-    if (c === "`") {
-      skipTemplateLiteral();
-      continue;
-    }
-    if (c === "(" || c === "[" || c === "{") {
-      stack.push(c);
-      i++;
-      continue;
-    }
-    if (c === ")" || c === "]" || c === "}") {
-      const top = stack.pop();
-      if (top !== closerFor[c]) {
-        throw new Error(`${fileName}: unbalanced "${c}" at offset ${i} (expected to close "${top ?? "<nothing open>"}"))`);
-      }
-      i++;
-      continue;
-    }
-    i++;
-  }
-
-  if (stack.length > 0) {
-    throw new Error(`${fileName}: ${stack.length} unclosed bracket(s) — first unclosed is "${stack[0]}"`);
-  }
-}
-
-describe("landing-builder-agent workflow: MODE=build happy path", () => {
+describe("landing-builder-agent v2: fresh build, end to end", () => {
   let env: TestEnvironment;
+  afterEach(() => env.cleanup());
 
-  beforeEach(async () => {
-    env = await setupTestEnvironment("forge");
-  });
+  it("grounds the blueprint in the brand kit, the context docs and the captured current site, then builds, checks, renders, deploys a preview, and promotes it live on approval", async () => {
+    env = await setupTestEnvironment();
+    const fake = landingFakeRouter();
+    const { result, durableStore } = await runToCompletion(env, fake.router);
 
-  afterEach(async () => {
-    await env.cleanup();
-  });
-
-  const baseParams = { clientSlug: "forge", productId: "s6", runKind: "setup" as const };
-
-  it("pauses at the mandatory human review gate, then completes as status:ok once approved", async () => {
-    const runId = "run_forge_build_1";
-    const workflowFn = createLandingBuilderAgentWorkflow({
-      tools: env.tools,
-      promptStore: makePromptStore(),
-      router: smartFakeRouter([goodCopy(), goodCompose(), goodCraftVerdict()]),
-    });
-    const engine = new WorkflowEngine(new MemoryDurableStepStore());
-
-    const first = await engine.run(workflowFn, { ...baseParams, runId });
-    expect(first.status).toBe("awaiting_gate");
-    if (first.status !== "awaiting_gate") throw new Error("unreachable");
-    expect(first.pendingGateId).toContain("08-human-review");
-
-    await engine.resolveGate(runId, "08-human-review", { decision: "approve", actor: "jane@karoslabs.com", at: new Date().toISOString() });
-
-    const second = await engine.run(workflowFn, { ...baseParams, runId });
-    expect(second.status).toBe("completed");
-    if (second.status !== "completed") throw new Error("unreachable");
-    expect(second.output.status).toBe("ok");
-    expect(second.output.gate).toBe("pass");
-    expect(second.output.client).toBe("forge");
-    expect(second.output.assumptions.some((a) => a.includes("render check skipped"))).toBe(true);
-
-    const siteRoot = path.join(env.landingConfig.engineClientsRoot, "forge", "site");
-    const globalsCss = await fs.readFile(path.join(siteRoot, "src", "app", "globals.css"), "utf8");
-    expect(globalsCss).toContain("#FF4D00");
-    expect(globalsCss.trim().startsWith('@import "tailwindcss";')).toBe(true);
-
-    const contentSource = await fs.readFile(path.join(siteRoot, "src", "content", "generated.ts"), "utf8");
-    expect(contentSource).toContain('import type { LandingContent } from "@/lib/content-schema";');
-    assertBalancedSyntax(contentSource, "generated.ts");
-    const contentMatch = /=\s*(\{[\s\S]*\});/.exec(contentSource);
-    const content = JSON.parse(contentMatch![1]!);
-    expect(content.hero.headline).toContain("athlete");
-
-    // Cross-checked against the real components' own declared prop names — not a hand-copied
-    // expectation that could silently drift from the real kit (the exact P0 the Deep Parity Audit
-    // found: every component was passed a uniform `data` prop regardless of what it actually
-    // declares).
-    const pageTsx = await fs.readFile(path.join(siteRoot, "src", "app", "page.tsx"), "utf8");
-    assertBalancedSyntax(pageTsx, "page.tsx");
-    for (const [componentFile, componentTag] of [
-      ["hero.tsx", "Hero"],
-      ["site-nav.tsx", "SiteNav"],
-      ["site-footer.tsx", "SiteFooter"],
-    ] as const) {
-      const prop = await declaredPropName(componentFile);
-      expect(pageTsx).toContain(`<${componentTag} ${prop}={content.`);
-    }
-
-    // layout.tsx was patched with this client's real title/description, not left as the
-    // template's own placeholder metadata.
-    const layoutTsx = await fs.readFile(path.join(siteRoot, "src", "app", "layout.tsx"), "utf8");
-    expect(layoutTsx).toContain("FORGE · Train like an athlete, not a tourist");
-    expect(layoutTsx).toContain("An adaptive strength program built around you.");
-    expect(layoutTsx).toContain('lang="en-US"');
-  });
-
-  it("resolves to held when the human reviewer rejects", async () => {
-    const runId = "run_forge_build_reject";
-    const workflowFn = createLandingBuilderAgentWorkflow({
-      tools: env.tools,
-      promptStore: makePromptStore(),
-      router: smartFakeRouter([goodCopy(), goodCompose(), goodCraftVerdict()]),
-    });
-    const engine = new WorkflowEngine(new MemoryDurableStepStore());
-
-    await engine.run(workflowFn, { ...baseParams, runId });
-    await engine.resolveGate(runId, "08-human-review", { decision: "reject", actor: "jane@karoslabs.com", reason: "hero copy is off-brand", at: new Date().toISOString() });
-    const second = await engine.run(workflowFn, { ...baseParams, runId });
-    expect(second.status).toBe("held");
-  });
-
-  it("autoApprove:true skips the human gate and completes in one run", async () => {
-    const runId = "run_forge_build_autoapprove";
-    const workflowFn = createLandingBuilderAgentWorkflow({
-      tools: env.tools,
-      promptStore: makePromptStore(),
-      router: smartFakeRouter([goodCopy(), goodCompose(), goodCraftVerdict()]),
-      autoApprove: true,
-    });
-    const engine = new WorkflowEngine(new MemoryDurableStepStore());
-    const result = await engine.run(workflowFn, { ...baseParams, runId });
     expect(result.status).toBe("completed");
+    if (result.status !== "completed") throw new Error(`unexpected ${result.status}: ${"reason" in result ? result.reason : ""}`);
+    const out = result.output as LandingBuilderWorkflowResult;
+    expect(out.status).toBe("ok");
+    expect(out.gate).toBe("pass");
+    expect(out.craftVerdict).toBe("pass");
+    expect(out.fixed).toBe(false);
+    expect(out.oldSite).toBe("fetch");
+    expect(out.previewUrl).toMatch(/^https:\/\/karos-northwind--run-[0-9a-f]{10}\.web\.app$/);
+    expect(out.liveUrl).toBe("https://karos-northwind.web.app");
+    expect(out.gcsPrefix).toBe("gs://test-bucket/landing/northwind/landing_run_1/");
+    expect(out.screenshots.map((s) => s.label)).toEqual(["mobile", "desktop"]);
+    expect(out.deliverableId).toBeTruthy();
+
+    // What the blueprint step actually saw: brand kit, product-information, the old site's copy and CTA, the brief.
+    const blueprintPrompt = fake.prompts.find((p) => p.stepId === "landing-blueprint")!.prompt;
+    expect(blueprintPrompt).toContain('"display":"Space Grotesk"'.replace('"display"', '"heading"'));
+    expect(blueprintPrompt).toContain("Northwind deploys a system of always-on AI agents");
+    expect(blueprintPrompt).toContain("The AI CMO that moves 1st.");
+    expect(blueprintPrompt).toContain("Book a call");
+    expect(blueprintPrompt).not.toContain("screenshots"); // links the model cannot open are stripped
+
+    // The archived page is the assembled document, not a source tree.
+    const html = env.artifactStore.objects.get("landing/northwind/landing_run_1/index.html")!.toString("utf8");
+    expect(html).toContain("<!doctype html>");
+    expect(html).toContain('<html lang="en-US" dir="ltr">');
+    expect(html).toContain("<title>Northwind: AI marketing agents that draft on your brand rules</title>");
+    expect(env.artifactStore.objects.has("landing/northwind/landing_run_1/blueprint.json")).toBe(true);
+
+    // Hosting: one version deployed for the preview, the SAME version released live.
+    const releases = env.hostingCalls.filter((c) => /\/releases\?versionName=/.test(c.url)).map((c) => c.url);
+    expect(releases).toHaveLength(2);
+    expect(releases[1]).toContain("/channels/live/releases?versionName=sites%2Fkaros-northwind%2Fversions%2Fv1");
+    expect(env.hostingCalls.filter((c) => /\/versions$/.test(c.url))).toHaveLength(1);
+
+    // The published state is what a revision starts from.
+    const state = await env.store.readJson<{ runId: string; liveUrl: string }>("northwind", ["landing", "state"]);
+    expect(state?.runId).toBe("landing_run_1");
+    expect(state?.liveUrl).toBe("https://karos-northwind.web.app");
+
+    const steps = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
+    expect(steps).toEqual(expect.arrayContaining(["00-intake", "02-capture-site", "02b-grounding-policy", "03-blueprint", "04-build", "05-assemble", "06-check", "07-render", "08-craft-verdict", "10-upload", "11-deploy-preview", "12-human-review", "13-deploy-live", "14-write-state", "15-persist-deliverable"]));
+    expect(steps).not.toContain("09-fix");
   });
 
-  it("resolves to needs_human when the craft verdict fails", async () => {
-    const runId = "run_forge_build_craft_fail";
-    const workflowFn = createLandingBuilderAgentWorkflow({
-      tools: env.tools,
-      promptStore: makePromptStore(),
-      router: smartFakeRouter([goodCopy(), goodCompose(), { verdict: "content_fail", evidence: ["no signature moment"], reason: "the page has no real signature moment", toolVersion: "1.0.0" }]),
-      autoApprove: true,
-    });
-    const engine = new WorkflowEngine(new MemoryDurableStepStore());
-    const result = await engine.run(workflowFn, { ...baseParams, runId });
+  it("runs exactly one fix pass when the floor fails, re-checks, and holds the page for a human when it still fails", async () => {
+    env = await setupTestEnvironment();
+    const broken: PageParts = sampleParts();
+    broken.sections[1]!.html = broken.sections[1]!.html.replace("Twelve agents run in production today.", "Trusted by 400+ teams.");
+    // The fix returns the same broken parts: the second gate must fail too, and there is no third attempt.
+    const fake = landingFakeRouter({ parts: broken, fixedParts: broken });
+    const { result, durableStore } = await runToCompletion(env, fake.router);
+
     expect(result.status).toBe("completed");
     if (result.status !== "completed") throw new Error("unreachable");
-    expect(result.output.status).toBe("needs_human");
+    const out = result.output as LandingBuilderWorkflowResult;
+    expect(out.status).toBe("needs_human");
+    expect(out.gate).toBe("fail");
+    expect(out.fixed).toBe(true);
+    expect(out.craftVerdict).toBe("skipped"); // the judgment pass never runs on a page that failed the floor
+
+    const fixPrompt = fake.prompts.find((p) => p.stepId === "landing-fix")!.prompt;
+    expect(fixPrompt).toContain("400+");
+    expect(fixPrompt).toContain("numbers-sourced");
+
+    const steps = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
+    expect(steps).toContain("09-fix");
+    expect(steps).toContain("06-check-after-fix");
+    expect(steps.filter((s) => s.startsWith("09-fix"))).toHaveLength(1);
+    // Still delivered: a held page is a deliverable the reviewer decides on, not a lost run.
+    expect(out.deliverableId).toBeTruthy();
+    expect(out.previewUrl).toBeTruthy();
   });
 
-  it("blocks intake when the client has no brand.json/intake.md bundle yet", async () => {
-    const runId = "run_no_bundle";
-    const workflowFn = createLandingBuilderAgentWorkflow({
-      tools: env.tools,
-      promptStore: makePromptStore(),
-      router: smartFakeRouter([goodCopy(), goodCompose(), goodCraftVerdict()]),
+  it("a failing craft verdict triggers the fix pass and a second verdict; a pass on re-check ships as ok", async () => {
+    env = await setupTestEnvironment();
+    const fake = landingFakeRouter({
+      verdicts: [
+        { verdict: "content_fail", evidence: [], reason: "how-it-works: the numbered sequence is three equal cards", toolVersion: "test" },
+        { verdict: "pass", evidence: ["signature moment implemented"], toolVersion: "test" },
+      ],
     });
-    const engine = new WorkflowEngine(new MemoryDurableStepStore());
-    const result = await engine.run(workflowFn, { clientSlug: "nobody", productId: "s6", runKind: "setup", runId });
+    const { result, durableStore } = await runToCompletion(env, fake.router);
+    if (result.status !== "completed") throw new Error("unreachable");
+    const out = result.output as LandingBuilderWorkflowResult;
+    expect(out.status).toBe("ok");
+    expect(out.fixed).toBe(true);
+    expect(out.craftVerdict).toBe("pass");
+    const steps = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
+    expect(steps).toEqual(expect.arrayContaining(["08-craft-verdict", "09-fix", "08-craft-verdict-after-fix"]));
+    expect(fake.prompts.find((p) => p.stepId === "landing-fix")!.prompt).toContain("three equal cards");
+  });
+
+  it("a render failure (overflow, low contrast) is a floor failure with the same one-fix rule", async () => {
+    let calls = 0;
+    env = await setupTestEnvironment({
+      renderReport: () => {
+        calls++;
+        if (calls === 1) {
+          const bad = passingRender();
+          bad.pass = false;
+          bad.violations = ["@mobile: horizontal overflow", '@mobile: low text contrast: p "Low contrast" 3.10:1'];
+          return bad;
+        }
+        return passingRender();
+      },
+    });
+    const fake = landingFakeRouter();
+    const { result } = await runToCompletion(env, fake.router);
+    if (result.status !== "completed") throw new Error("unreachable");
+    const out = result.output as LandingBuilderWorkflowResult;
+    expect(out.status).toBe("ok");
+    expect(out.fixed).toBe(true);
+    expect(fake.prompts.find((p) => p.stepId === "landing-fix")!.prompt).toContain("horizontal overflow");
+  });
+
+  it("without Hosting configured the run still completes with the archived page, and says so", async () => {
+    env = await setupTestEnvironment({ withHosting: false });
+    const { result } = await runToCompletion(env, landingFakeRouter().router);
+    if (result.status !== "completed") throw new Error("unreachable");
+    const out = result.output as LandingBuilderWorkflowResult;
+    expect(out.status).toBe("ok");
+    expect(out.previewUrl).toBeUndefined();
+    expect(out.liveUrl).toBeUndefined();
+    expect(out.gcsPrefix).toBeTruthy();
+    expect(out.assumptions.some((a) => /Firebase Hosting is not configured/.test(a))).toBe(true);
+  });
+
+  it("pauses at the landing_craft_review gate with the preview URL and screenshots in the payload when autoApprove is off", async () => {
+    env = await setupTestEnvironment();
+    const workflowFn = createLandingBuilderAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router: landingFakeRouter().router });
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+    const paused = await engine.run(workflowFn, params);
+    expect(paused.status).toBe("awaiting_gate");
+    if (paused.status !== "awaiting_gate") throw new Error("unreachable");
+    const gate = await durableStore.getGate(paused.pendingGateId);
+    expect(gate?.kind).toBe("landing_craft_review");
+    const payload = gate?.payload as Record<string, unknown>;
+    expect(payload["previewUrl"]).toMatch(/\.web\.app$/);
+    expect(payload["images"]).toEqual([
+      { n: 1, url: "https://signed.example/render-mobile.png", label: "mobile" },
+      { n: 2, url: "https://signed.example/render-desktop.png", label: "desktop" },
+    ]);
+    expect(payload["status"]).toBe("ok");
+    expect(payload["title"]).toBe("Northwind: AI marketing agents that draft on your brand rules");
+    // Nothing went live before the person said yes.
+    expect(env.hostingCalls.some((c) => /\/channels\/live\/releases/.test(c.url))).toBe(false);
+  });
+});
+
+describe("landing-builder-agent v2: grounding and revision", () => {
+  let env: TestEnvironment;
+  afterEach(() => env.cleanup());
+
+  it("blocks (blocked_intake) only when there is neither a product-information document nor a current site to ground in", async () => {
+    env = await setupTestEnvironment({ withProductInformation: false, withWebsite: false });
+    const fake = landingFakeRouter();
+    const { result, durableStore } = await runToCompletion(env, fake.router);
     expect(result.status).toBe("blocked_intake");
+    if (result.status !== "blocked_intake") throw new Error("unreachable");
+    expect(result.reason).toMatch(/product-information/);
+    expect(fake.prompts).toHaveLength(0);
+    expect((await durableStore.listSteps(params.runId)).map((s) => s.stepId)).toContain("02b-grounding-policy");
+  });
+
+  it("proceeds without a product-information document when the current site was captured, and records the degraded grounding", async () => {
+    env = await setupTestEnvironment({ withProductInformation: false });
+    const { result } = await runToCompletion(env, landingFakeRouter().router);
+    if (result.status !== "completed") throw new Error(`unexpected ${result.status}`);
+    const out = result.output as LandingBuilderWorkflowResult;
+    expect(out.status).toBe("ok");
+    expect(out.assumptions.some((a) => /no product-information document/.test(a))).toBe(true);
+  });
+
+  it("a recurring run revises the published build: the prior blueprint and parts reach the model with the feedback, and a run with no prior state builds fresh", async () => {
+    const prior: PageBlueprint = sampleBlueprint({ pov: "PRIOR POV MARKER" });
+    env = await setupTestEnvironment({ priorState: { blueprint: prior, parts: sampleParts() } });
+    const fake = landingFakeRouter();
+    const { result } = await runToCompletion(env, fake.router, { runKind: "recurring", input: { customPrompt: "Make the hero headline shorter" } });
+    if (result.status !== "completed") throw new Error(`unexpected ${result.status}`);
+    expect((result.output as LandingBuilderWorkflowResult).revision).toBe(true);
+    const blueprintPrompt = fake.prompts.find((p) => p.stepId === "landing-blueprint")!.prompt;
+    expect(blueprintPrompt).toContain("PRIOR POV MARKER");
+    expect(blueprintPrompt).toContain("Make the hero headline shorter");
+    expect(fake.prompts.find((p) => p.stepId === "landing-build")!.prompt).toContain("priorParts");
+
+    await env.cleanup();
+    env = await setupTestEnvironment();
+    const fresh = landingFakeRouter();
+    const { result: freshResult } = await runToCompletion(env, fresh.router, { runKind: "recurring" });
+    if (freshResult.status !== "completed") throw new Error("unreachable");
+    const out = freshResult.output as LandingBuilderWorkflowResult;
+    expect(out.revision).toBe(false);
+    expect(out.assumptions.some((a) => /no published build state/.test(a))).toBe(true);
   });
 });

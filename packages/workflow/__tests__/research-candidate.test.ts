@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractResearchCandidate, hasCitableFigure, type ResearchPullResult } from "../src/index.js";
+import { extractResearchCandidate, hasCitableFigure, researchDigestForDrafting, researchSourceTexts, type ResearchPullResult } from "../src/index.js";
 
 /**
  * `extractResearchCandidate` — the one implementation five publishing agents
@@ -128,5 +128,72 @@ describe("extractResearchCandidate", () => {
   it("handles a payload with no result envelope at all", () => {
     const bare = { runId: "r", query: "q", fromCache: false } as ResearchPullResult;
     expect(extractResearchCandidate(bare).candidateTopic).toBe("q");
+  });
+});
+
+describe("researchDigestForDrafting", () => {
+  // The newsletter agent's drafting step used to receive the candidate's
+  // TITLE and nothing else (prep job sp8ICAFLjKkYWb2DAh8R): four real
+  // sources fetched, one headline drafted from, every link pointing at a
+  // homepage. This is the material the draft was missing.
+  it("hands the drafting step every document's title, url, date and text", () => {
+    const digest = researchDigestForDrafting(
+      pull([
+        { title: "Week in review", url: "https://example.com/week", content: "ChatGPT Ads reached $1 billion.", publishedAt: "2026-09-01" },
+        { title: "September trends", url: "https://example.com/sept", content: "Google migrates campaigns to AI Max." },
+      ]),
+    );
+    expect(digest).toEqual([
+      { title: "Week in review", url: "https://example.com/week", publishedAt: "2026-09-01", excerpt: "ChatGPT Ads reached $1 billion." },
+      { title: "September trends", url: "https://example.com/sept", excerpt: "Google migrates campaigns to AI Max." },
+    ]);
+  });
+
+  it("is undefined when the pull returned nothing, so a run without research keeps its drafting input unchanged", () => {
+    expect(researchDigestForDrafting(pull([]))).toBeUndefined();
+    expect(researchDigestForDrafting({ runId: "r", query: "q", fromCache: false } as ResearchPullResult)).toBeUndefined();
+    expect(researchDigestForDrafting(pull([{ title: "  ", content: "" }]))).toBeUndefined();
+  });
+
+  it("caps the document count and the per-document excerpt", () => {
+    const docs = Array.from({ length: 12 }, (_, i) => ({ title: `Doc ${i}`, content: "x".repeat(5_000) }));
+    const digest = researchDigestForDrafting(pull(docs), { maxDocuments: 3, maxExcerptChars: 100 })!;
+    expect(digest).toHaveLength(3);
+    for (const entry of digest) expect(entry.excerpt).toHaveLength(100);
+    expect(researchDigestForDrafting(pull(docs))).toHaveLength(8);
+  });
+
+  it("collapses runs of whitespace but keeps paragraph breaks", () => {
+    const [entry] = researchDigestForDrafting(pull([{ title: "T", content: "one   two \n\n   three" }]))!;
+    expect(entry!.excerpt).toBe("one two\nthree");
+  });
+
+  it("uses the url as the title when a document has text but no headline", () => {
+    const [entry] = researchDigestForDrafting(pull([{ url: "https://example.com/untitled", content: "some text" }]))!;
+    expect(entry!.title).toBe("https://example.com/untitled");
+  });
+});
+
+describe("researchSourceTexts", () => {
+  it("returns each document's full title and content, for gate.numbersSourced", () => {
+    const sources = researchSourceTexts(
+      pull([
+        { title: "Week in review", url: "https://example.com/week", content: "ChatGPT Ads reached $1 billion." },
+        { title: "No body", url: "https://example.com/empty" },
+        { content: "Body only." },
+        { title: "   " },
+      ]),
+    );
+    expect(sources).toEqual(["Week in review\nChatGPT Ads reached $1 billion.", "No body", "Body only."]);
+  });
+
+  it("never truncates, unlike the drafting digest", () => {
+    const long = "y".repeat(20_000);
+    expect(researchSourceTexts(pull([{ title: "T", content: long }]))[0]).toBe(`T\n${long}`);
+  });
+
+  it("is empty for a payload with no documents", () => {
+    expect(researchSourceTexts(pull([]))).toEqual([]);
+    expect(researchSourceTexts({ runId: "r", query: "q", fromCache: false } as ResearchPullResult)).toEqual([]);
   });
 });
