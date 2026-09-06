@@ -254,6 +254,8 @@ export const TrendCandidateSchema = z.object({
   mode: ContentModeSchema,
   /** 1 (no honest connection to the client) to 5 (the client's core domain, and its audience would expect it to speak). */
   brandFit: z.number().int().min(1).max(5),
+  /** 1 (nobody would stop scrolling) to 5 (a busy practitioner stops and reads). Ties on brand fit are broken by this. */
+  interest: z.number().int().min(1).max(5).default(3),
   /** The bridge: why this client, specifically, has standing to post about this. */
   brandFitReason: z.string().min(1),
   /** The client's take, distinct from the headline. */
@@ -323,6 +325,8 @@ export function buildTrendScoutSystemPrompt(channel: TrendScoutInput["channel"])
     "  2 or 1 — no genuine connection. Put these under `skipped` with the reason; do not manufacture a bridge.",
     "A story about a famous company is not on-brand just because it is famous. A story IS on-brand when it touches what the client sells, who they sell to, or the field they publish about.",
     "",
+    "INTEREST is the second judgment. Score 1-5: would a busy practitioner in this client's audience stop scrolling for it? Specific, surprising, consequential stories score high; another generic think-piece scores low, however on-brand. Prefer variety: if the client's recent posts lean one way, favour candidates that open a different subject or format.",
+    "",
     "MODE. Tag each candidate with the kind of post it suits:",
     "  hot-news — a dated event from the last days: a launch, a funding round, an acquisition, a report, a regulation. Fresh or not at all; read the dates.",
     "  deep-value — a durable, useful insight the documents support: how something works, what a number means, what practitioners get wrong.",
@@ -331,7 +335,7 @@ export function buildTrendScoutSystemPrompt(channel: TrendScoutInput["channel"])
     "",
     "For each candidate also write: `angle` (the client's take, not the headline restated), `hook` (a first line a stranger would stop for, in the client's language — read `clientVoiceContext` for a stated or implied language and write hooks in it), `whyNow`, `hasNumbers` (true only when the excerpt carries a citable figure), and `mediaHint`: screenshot (the source page itself is the visual), photo (a real, photographable subject), data (a chart or figure), or none.",
     "",
-    "Never propose anything under `forbiddenTopics`, and never propose a subject, angle or hook that overlaps `recentPosts` — saying the same thing in different words is a repeat.",
+    "Never propose anything under `forbiddenTopics`, and never propose a subject, angle or hook that overlaps `recentPosts` — saying the same thing in different words is a repeat. `recentPosts` spans EVERY channel the client publishes on, including their own accounts: a subject one channel covered is covered for this one too.",
     "Answer with the structured output only.",
   ].join("\n");
 }
@@ -423,6 +427,7 @@ export function selectTrendCandidate(candidates: readonly TrendCandidate[], mode
   const eligible = candidates.filter((c) => c.brandFit >= minFit && !overlaps(c.topic, avoid) && !overlaps(c.headline, avoid));
   const rank = (a: TrendCandidate, b: TrendCandidate) => {
     if (b.brandFit !== a.brandFit) return b.brandFit - a.brandFit;
+    if (b.interest !== a.interest) return b.interest - a.interest;
     if (a.hasNumbers !== b.hasNumbers) return a.hasNumbers ? -1 : 1;
     return (b.publishedAt ?? "").localeCompare(a.publishedAt ?? "");
   };
@@ -441,6 +446,7 @@ export function trendCandidateForDrafting(candidate: TrendCandidate): Record<str
     hook: candidate.hook,
     whyNow: candidate.whyNow,
     brandFitReason: candidate.brandFitReason,
+    interest: candidate.interest,
     sourceUrls: candidate.sourceUrls,
     ...(candidate.publishedAt !== undefined ? { publishedAt: candidate.publishedAt } : {}),
     mediaHint: candidate.mediaHint,

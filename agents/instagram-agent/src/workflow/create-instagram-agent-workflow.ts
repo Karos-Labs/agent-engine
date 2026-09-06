@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentTool, AgentToolRegistry, GateResponse, ModelRouter, PromptStore, StyleEdit, TemplateFeedback } from "@agent-engine/core";
-import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, readContextDoc, enforceContextDocPolicy, toAgentContext, distillStylePreferences, varyLearnedStyle, buildTrendQueries, pullTrendResearch, runTrendScout, researchDigestForScout, selectTrendCandidate, trendCandidateForDrafting, CONTENT_MODES, type DistilledStyle, type FeedbackEntryLike, type StyleVariationEntry } from "@agent-engine/workflow";
+import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField, buildClientVoiceContext, readCrossChannelHistory, crossChannelDirective, crossChannelAvoidTopics, socialAccountsFromClient, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, readContextDoc, enforceContextDocPolicy, toAgentContext, distillStylePreferences, varyLearnedStyle, buildTrendQueries, pullTrendResearch, runTrendScout, researchDigestForScout, selectTrendCandidate, trendCandidateForDrafting, CONTENT_MODES, type DistilledStyle, type FeedbackEntryLike, type StyleVariationEntry } from "@agent-engine/workflow";
 import type { InstagramFormat, InstagramTopicClaim as InstagramTopicClaimShape } from "./types.js";
 import type { RenderCarouselInput, RenderCarouselResult } from "@agent-engine/tool-karos-publish";
 import { InstagramCopyAgent } from "../agent/instagram-copy-agent.js";
@@ -1120,16 +1120,28 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       );
     });
 
-    // ── 04e: what this agent already SHIPPED for this client ──
+    // ── 04e: what this client already PUBLISHED — on every channel ──
     //
-    // The anti-repetition read: the rolling excerpt window this run's own
-    // deliver step (09b) writes back into. Read once, used three times — as a
-    // hard do-not-repeat directive in the copy prompt, as the corpus the
-    // post-draft similarity check (07d) scores against, and (2026-09) as the
-    // list the trend scout must steer clear of. Read HERE, before the topic is
-    // final, for that third use.
-    const outputHistory = await readOutputHistoryForDedup(wf, tools, ctx, "instagram-agent", "04e-read-output-history");
-    const recentPostsDirective = dedupeDirective(outputHistory);
+    // The anti-repetition read, cross-channel since 2026-09: every channel
+    // agent's excerpt ledger (not only this one's) plus the client's own
+    // accounts, read from the handles in their config and brand kit. Used
+    // three times — as a hard do-not-repeat directive in the copy prompt, as
+    // the corpus the post-draft similarity check (07d) scores against, and as
+    // the list the trend scout must steer clear of. Read HERE, before the
+    // topic is final, for that third use.
+    const socialAccounts = await wf.step.code("04e0-load-social-accounts", async () => {
+      const configOutcome = await tools["client.getConfig"]!.execute({}, { ctx });
+      const brandOutcome = await tools["client.getBrand"]!.execute({}, { ctx });
+      return socialAccountsFromClient(
+        configOutcome.status === "success" ? (configOutcome.result as Record<string, unknown>) : undefined,
+        brandOutcome.status === "success" ? (brandOutcome.result as Record<string, unknown>) : undefined,
+      );
+    });
+    const crossChannel = await readCrossChannelHistory(wf, tools, ctx, { stepId: "04e-read-cross-channel-history", socialAccounts });
+    const outputHistory = crossChannel.entries;
+    /** This agent's OWN shipped posts — what the format and mode rotations count on. */
+    const ownShippedCount = crossChannel.entries.filter((e) => e.channel === "instagram-agent").length;
+    const recentPostsDirective = crossChannelDirective(crossChannel);
 
     // ── 04f: the client's own intel report and knowledge base, as authoritative drafting context ──
     //
@@ -1184,8 +1196,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       if (scout !== undefined) {
         // This agent keeps no decision log, so the content mode rotates on the
         // count of shipped posts: hot news, deep value, open discussion, in turn.
-        const mode = CONTENT_MODES[outputHistory.length % CONTENT_MODES.length]!;
-        const avoidTopics = outputHistory.map((h) => h.excerpt.split("\n").find((l) => l.trim().length > 0) ?? "").filter((l) => l.length > 0);
+        const mode = CONTENT_MODES[ownShippedCount % CONTENT_MODES.length]!;
+        const avoidTopics = crossChannelAvoidTopics(crossChannel);
         const trend = selectTrendCandidate(scout.candidates, mode, { avoidTopics });
         if (trend !== undefined) topicClaim = { topic: trend.topic, source: "trend", trend };
       }
@@ -1199,7 +1211,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     const format = await wf.step.code("04h-select-format", (): { format: InstagramFormat; source: string } => {
       const requested = runClaim.requestedFormat;
       if (requested === "single" || requested === "carousel") return { format: requested, source: "requested" };
-      if (requested === "auto") return { format: outputHistory.length % 3 === 2 ? "single" : "carousel", source: "rotation" };
+      if (requested === "auto") return { format: ownShippedCount % 3 === 2 ? "single" : "carousel", source: "rotation" };
       return { format: "carousel", source: "default" };
     });
 

@@ -19,8 +19,10 @@ import {
   revisionDirective,
   runReviewCycle,
   buildClientVoiceContext,
-  readOutputHistoryForDedup,
-  dedupeDirective,
+  readCrossChannelHistory,
+  crossChannelDirective,
+  crossChannelAvoidTopics,
+  socialAccountsFromClient,
   checkOutputDedupe,
   dedupeRetryDirective,
   readClientIntelContext,
@@ -352,6 +354,9 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
         ...(requestedMode !== undefined ? { requestedMode } : {}),
         ...(trendQueries ? { trendQueries } : {}),
         trendJacking: config["trendJacking"] === "always" ? "always" : "fallback",
+        // Kept for the cross-channel history read, which derives the client's
+        // own social accounts (xHandle, socialAccounts, …) from it.
+        rawConfig: config,
       };
     });
 
@@ -507,12 +512,16 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
     //    and best-effort — a memory read failing must not stop a run that
     //    can draft perfectly well without it.
     const pastFeedback = await readPastFeedback(wf, tools, ctx, "04e-read-past-feedback");
-    // The anti-repetition read: what this agent already SHIPPED for this
-    // client (the excerpt window the commit step below writes back into),
-    // formatted as a hard do-not-repeat directive for the draft. Read before
-    // the scout, which must not propose what the client just published.
-    const outputHistory = await readOutputHistoryForDedup(wf, tools, ctx, "linkedin-agent", "read-output-history");
-    const recentPostsDirective = dedupeDirective(outputHistory);
+    // The anti-repetition read — CROSS-CHANNEL (2026-09): what this client
+    // already published on EVERY channel we draft for and on their own
+    // accounts, so a story X told yesterday is not retold here as new. Read
+    // before the scout, which must not propose what the client just published.
+    const crossChannel = await readCrossChannelHistory(wf, tools, ctx, {
+      stepId: "read-cross-channel-history",
+      socialAccounts: socialAccountsFromClient(intake.rawConfig, clientContext.brand),
+    });
+    const outputHistory = crossChannel.entries;
+    const recentPostsDirective = crossChannelDirective(crossChannel);
     // The client intel report AND knowledge base, distilled to what steers
     // copy — the client knowledge this platform holds, read by the scout and
     // the draft alike.
@@ -561,7 +570,10 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
       if (clientContext.requestedTopic) {
         return { topic: clientContext.requestedTopic, source: "requested" };
       }
-      const trend = scout !== undefined ? selectTrendCandidate(scout.candidates, modeSelection.mode, { avoidTopics: recentDecisions.summaries }) : undefined;
+      const trend =
+        scout !== undefined
+          ? selectTrendCandidate(scout.candidates, modeSelection.mode, { avoidTopics: [...recentDecisions.summaries, ...crossChannelAvoidTopics(crossChannel)] })
+          : undefined;
       if (trend !== undefined && intake.trendJacking === "always" && trend.brandFit >= 4 && reservation.topics.length > 0) {
         return { topic: trend.topic, source: "trend", trend };
       }

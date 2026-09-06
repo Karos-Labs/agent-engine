@@ -22,7 +22,7 @@ const ALL_19_STEP_IDS = [
   "04e-read-past-feedback",
   // The shipped-output window (dedup) and the client intel report, read
   // once each — see history-dedup.ts in packages/workflow.
-  "read-output-history",
+  "read-cross-channel-history",
   "read-intel-context",
   "05-extract-candidate-summary",
   "06-reserve-topic",

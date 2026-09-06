@@ -17,8 +17,10 @@ import {
   readRunDirection,
   runDirectionField,
   buildClientVoiceContext,
-  readOutputHistoryForDedup,
-  dedupeDirective,
+  readCrossChannelHistory,
+  crossChannelDirective,
+  crossChannelAvoidTopics,
+  socialAccountsFromClient,
   checkOutputDedupe,
   dedupeRetryDirective,
   readClientIntelContext,
@@ -329,14 +331,20 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
     // best-effort: it lands in a drafting prompt, and a memory read failing
     // must not stop a run that can draft perfectly well without it.
     const pastFeedback = await readPastFeedback(wf, tools, ctx, "04e-read-past-feedback");
-    // The anti-repetition read: what this agent already SHIPPED for this
-    // client (the excerpt window the commit step below writes back into),
-    // formatted as a hard do-not-repeat directive for the draft. Distinct
-    // from pastFeedback (what a person SAID about past drafts) the same way
-    // decisions are distinct from feedback. Read before the scout, which
-    // must not propose what the client just published.
-    const outputHistory = await readOutputHistoryForDedup(wf, tools, ctx, "x-agent", "read-output-history");
-    const recentPostsDirective = dedupeDirective(outputHistory);
+    // The anti-repetition read — CROSS-CHANNEL (2026-09): what this client
+    // already published on EVERY channel we draft for (each agent's excerpt
+    // ledger) and on their own accounts (`research.socialHistory`, read from
+    // the handles in their config). A launch LinkedIn covered on Tuesday is
+    // covered; this run must not tell it again on X. Distinct from
+    // pastFeedback (what a person SAID about past drafts) the same way
+    // decisions are distinct from feedback. Read before the scout, which must
+    // not propose what the client just published anywhere.
+    const crossChannel = await readCrossChannelHistory(wf, tools, ctx, {
+      stepId: "read-cross-channel-history",
+      socialAccounts: socialAccountsFromClient(intake as Record<string, unknown>, clientContext.brand),
+    });
+    const outputHistory = crossChannel.entries;
+    const recentPostsDirective = crossChannelDirective(crossChannel);
     // The client intel report AND knowledge base, distilled to what steers
     // copy (voice rows, positioning, whitespace, meeting notes) — the client
     // knowledge this platform holds, read by the scout and the draft alike.
@@ -400,7 +408,9 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       if (intake.requestedTopic) {
         return { topic: intake.requestedTopic, source: "requested" };
       }
-      const avoidTopics = recentDecisions.map((d) => d.summary);
+      // Subjects already covered: this agent's own decisions AND what every
+      // other channel (and the client's own accounts) published lately.
+      const avoidTopics = [...recentDecisions.map((d) => d.summary), ...crossChannelAvoidTopics(crossChannel)];
       const trend = scout !== undefined ? selectTrendCandidate(scout.candidates, modeSelection.mode, { avoidTopics }) : undefined;
       // With `trendJacking: "always"` a fresh, high-fit story outranks the
       // planned row; otherwise the catalog keeps its slot.

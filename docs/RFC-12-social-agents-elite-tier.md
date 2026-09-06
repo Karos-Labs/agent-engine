@@ -54,6 +54,15 @@ Every sourced candidate is vision-judged against the brief when the tool is avai
 
 When the scout runs: only where the old code fell back to "first headline with a digit" — no typed topic, no configured topic, empty catalog. A planned catalog row still wins by default; `trendJacking: "always"` in client config lets a fresh brand-fit ≥ 4 story preempt it.
 
+### 1.4 Cross-channel topic memory — `packages/workflow/src/primitives/cross-channel-history.ts` (2026-09-06)
+
+Anti-repetition was per agent: X compared a draft against X's own last 25 posts, LinkedIn against LinkedIn's, and neither knew what the other shipped that morning, or what the client posted from their phone. Now every channel agent reads ONE memory before it picks a subject:
+
+- every channel agent's excerpt ledger (`ledger.listOutputExcerpts` for x, linkedin, instagram, tiktok, blog, newsletter, reddit), not only its own;
+- the client's own recent posts on the accounts derived from their config (`xHandle`, `socialAccounts`, the brand kit's Instagram `handle`, `tiktokHandle`) via the new `research.socialHistory` tool (ScrappyCoco, cached 6h per account set so the day's runs share one scrape).
+
+The memory feeds three places: the drafting prompt's `recentPosts` directive (every line labelled with its channel and date), the trend scout's `recentPosts` and the candidate selector's avoid-list, and the verified dedupe corpus (`checkOutputDedupe`), so a LinkedIn post shipped on Tuesday now costs an X draft on the same story a redraft. The scout also scores `interest` (1–5, "would a busy practitioner stop scrolling") and prefers variety against the recent mix; ties on brand fit are broken by interest. Step ids: `read-cross-channel-history` (X, LinkedIn), `04e0-load-social-accounts` + `04e-read-cross-channel-history` (Instagram). Best-effort throughout: a missing scraper or ledger narrows the memory and is recorded as a note, never a hold.
+
 ## 2. X agent — updated flow
 
 ```
@@ -143,7 +152,7 @@ Operational note: Claude on Vertex currently returns 429 on every model in prep 
 
 1. `agentEngineProductAcceptsMediaAssets` now returns `true` for `x-agent` and `linkedin-agent`, so the run dialog paints the upload field for them; the helper text says the upload is optional for the text-first channels.
 2. New wire fields, read by the engine and rendered as dialog selects: `requestedMode` ("Kind of post": rotate / hot-news / deep-value / open-discussion) on the X draft and LinkedIn post dialogs; `requestedFormat` ("Instagram format": carousel / single / auto) on the social content system dialog. Both have `ENGINE_FIELD_CONTRACT` rows with engine-side evidence; `mediaAssets`' row now lists x-agent and linkedin-agent as readers.
-3. Still to do on the portal side: the X materializer's `metaFields` already carries `mediaRefs` (now a staged https URL) — re-hosting it into the asset's image the way carousel slides are re-hosted is a small follow-up in `materialize.ts`.
+3. `materialize.ts` re-hosts the X/LinkedIn deliverable's `media.url` into the asset's `imageUrl` and `meta.artifacts` (the LinkedIn reader's attach list), and carries `media`, `mediaStatus`, `mediaRationale`, `contentMode`, `takeaway` and `thread` in `meta`. Prep job eIruxfiBhYTFHgfXKWK5 is the case that found it: the run staged a TechCrunch screenshot and the review card showed no picture.
 
 ## 8. Verification
 
