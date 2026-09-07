@@ -20,6 +20,11 @@ const NON_FANOUT_STEP_IDS = [
   "12-fix-generation-review",
   "13-draft-fixes",
   "14-draft-narrative",
+  // The pre-gate self-correction pass. Always a step, even on a clean summary:
+  // it asks the gate what it would reject and returns the draft untouched when
+  // the answer is nothing — its presence says the check ran, not that anything
+  // was rewritten.
+  "14b-ground-narrative-numbers",
   "15-verify-narrative-numbers",
   // Revision-scoped: `-r0` is the first review round. A `revise` decision
   // registers `-r1` after re-drafting the fixes/narrative.

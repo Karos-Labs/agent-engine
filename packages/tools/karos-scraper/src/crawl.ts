@@ -247,26 +247,38 @@ export async function fetchSitemapViaFetch(url: string, fetchImpl: typeof fetch,
     return { ...parsed, entries: parsed.entries.slice(0, limit) };
   }
 
-  // Which children to follow when the index is bigger than the cap. CMSs list
-  // post sitemaps oldest first and newest LAST (`post-sitemap.xml`,
-  // `post-sitemap2.xml`, …), so the first N children of a 15-year-old news
-  // site are its 2010 archive: the first prep audit of exactly such a site read
-  // 500 URLs and found "0 modified in the last six months", which was a
-  // statement about which files were read, not about the site. Keep the first
-  // child (usually the static pages: home, about, contact) and fill the rest
-  // from the end, where the current content lives.
+  // Which children to follow when the index is bigger than the cap: the ones
+  // the index itself marks as most recently modified. A 15-year-old news site's
+  // index lists 136 children — `post-sitemap.xml` … `post-sitemap60.xml`, then
+  // tag, category and event sitemaps — and the first prep audit of exactly such
+  // a site read 500 URLs from the first five and found "0 modified in the last
+  // six months", a statement about which files were read, not about the site.
+  // Children without a `<lastmod>` keep their document order after the dated
+  // ones. The first child is always kept: it is usually the static pages
+  // (home, about, contact) the entity checks want.
+  const dated = childSitemapLastmods(result.body);
   const all = parsed.childSitemaps;
-  const children =
-    all.length <= MAX_SITEMAP_INDEX_CHILDREN
-      ? all
-      : [...new Set([all[0]!, ...all.slice(-(MAX_SITEMAP_INDEX_CHILDREN - 1))])];
+  const byRecency = [...all].sort((a, b) => (Date.parse(dated.get(b) ?? "") || 0) - (Date.parse(dated.get(a) ?? "") || 0));
+  const children = all.length <= MAX_SITEMAP_INDEX_CHILDREN ? all : [...new Set([all[0]!, ...byRecency])].slice(0, MAX_SITEMAP_INDEX_CHILDREN);
   const merged: SitemapEntry[] = [];
   for (const childUrl of children) {
-    if (merged.length >= limit) break;
-    const child = await fetchSitemapViaFetch(childUrl, fetchImpl, timeoutMs, limit - merged.length).catch(() => undefined);
+    const child = await fetchSitemapViaFetch(childUrl, fetchImpl, timeoutMs, limit).catch(() => undefined);
     if (child) merged.push(...child.entries);
   }
+  // Newest entries first, so a `limit` cut keeps the current content rather than whichever child happened to be read first.
+  merged.sort((a, b) => (Date.parse(b.lastModified ?? "") || 0) - (Date.parse(a.lastModified ?? "") || 0));
   return { url, status: parsed.status, entries: merged.slice(0, limit), childSitemaps: parsed.childSitemaps };
+}
+
+/** `<lastmod>` per child of a `<sitemapindex>`, keyed by the child's `<loc>`. */
+function childSitemapLastmods(xml: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const block of xml.matchAll(/<sitemap>([\s\S]*?)<\/sitemap>/gi)) {
+    const loc = block[1]!.match(/<loc>\s*([^<\s]+)\s*<\/loc>/i);
+    const lastmod = block[1]!.match(/<lastmod>\s*([^<\s]+)\s*<\/lastmod>/i);
+    if (loc && lastmod) out.set(loc[1]!.trim(), lastmod[1]!.trim());
+  }
+  return out;
 }
 
 const HREF_RE = /<a\s[^>]*href=["']([^"'#]+)["']/gi;

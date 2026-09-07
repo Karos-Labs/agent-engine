@@ -210,6 +210,11 @@ function buildNarrativeSources(scoring: SeoGeoScoringResult, firedCount: number,
     `${scoring.geoReadiness.score}%`,
     `${Math.round(scoring.seoScore.dataCoveragePct)}%`,
     `${Math.round(scoring.geoReadiness.dataCoveragePct)}%`,
+    // The uncovered share is the workflow's own number too — "78% measured"
+    // and "22% still pending" are the same fact, and a summary that says the
+    // second should not be held for it.
+    `${100 - Math.round(scoring.seoScore.dataCoveragePct)}%`,
+    `${100 - Math.round(scoring.geoReadiness.dataCoveragePct)}%`,
     `${firedCount}`,
     // The measured-basis figures and the measured facts are the workflow's own
     // numbers too — the narrative may quote them, and only them.
@@ -1074,7 +1079,7 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
 
       // ── narrative drafting — the report's one prose step (RFC-04 §2 Phase 8) ──
       const narrativeAgent = new SeoGeoNarrativeAgent({ router: options.router, tools, promptStore: options.promptStore });
-      const narrativeResult = await wf.step.agent(rev("14-draft-narrative"), narrativeAgent, {
+      const narrativeInput = {
         ...runDirectionField(runDirection),
         ...referenceMaterialsField(runDirection),
         seoScore: scoring.seoScore.score,
@@ -1091,18 +1096,43 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
         // lines is also in the gate's sources.
         measuredFacts: technicalPhase.measuredFacts.slice(0, 10),
         ...(directive !== undefined ? { revisionRequest: directive } : {}),
-      });
+      };
+      const narrativeResult = await wf.step.agent(rev("14-draft-narrative"), narrativeAgent, narrativeInput);
       if (narrativeResult.status === "content_fail") {
         throw new WorkflowHeld(`narrative did not clear its own output validation: ${narrativeResult.status}`);
       }
       if (narrativeResult.status !== "completed") {
         throw new WorkflowToolingFailure(`narrative step resolved to "${narrativeResult.status}"`);
       }
-      const narrative = narrativeResult.finalOutput!;
+      let narrative = narrativeResult.finalOutput!;
+      const sources = buildNarrativeSources(scoring, recommendations.length, technicalPhase.measuredFacts);
+
+      // ── 14b: self-correction BEFORE the gate, never instead of it ──
+      //
+      // A held run is a report nobody gets, and the usual cause is one figure
+      // the model derived rather than quoted: the first prep run on a real
+      // client held on "the remaining 22% of GEO checks" — 100 minus a
+      // coverage of 78, arithmetic the gate correctly refuses. Ask the gate
+      // what it would reject, and if anything comes back hand exactly those
+      // claims to one redraft. The real gate below still runs on the result,
+      // so this can only improve a summary's chances, never wave one through.
+      // Same shape as intel-report-agent's 02b.
+      narrative = await wf.step.code(rev("14b-ground-narrative-numbers"), async () => {
+        const preVerdict = await runGate(tools, "gate.numbersSourced", { text: narrative.summary, sources }, ctx);
+        if (preVerdict.verdict !== "content_fail") return narrative;
+        const flagged = (preVerdict.evidence ?? []).map(String);
+        const redraft = await narrativeAgent.run(ctx, {
+          ...narrativeInput,
+          revisionRequest:
+            `Your previous summary used figures that do not appear in your input and were rejected: ${flagged.length > 0 ? flagged.join(", ") : preVerdict.reason ?? "unknown"}. ` +
+            "Remove each of them or restate the point with a figure exactly as given in your input (never a difference, sum or percentage you computed yourself). Keep everything else.",
+        });
+        if (redraft.status !== "completed" || !redraft.finalOutput) return narrative;
+        return redraft.finalOutput;
+      });
 
       // ── gate the narrative against fabricated numbers (RFC-04 §2 Phase 8's own recommendation) ──
       await wf.step.code(rev("15-verify-narrative-numbers"), async () => {
-        const sources = buildNarrativeSources(scoring, recommendations.length, technicalPhase.measuredFacts);
         const verdict = await runGate(tools, "gate.numbersSourced", { text: narrative.summary, sources }, ctx);
         if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.numbersSourced: ${verdict.reason}`);
         if (verdict.verdict === "content_fail") throw new WorkflowHeld(`narrative numbers not sourced: ${verdict.reason}`);
