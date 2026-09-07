@@ -1,4 +1,4 @@
-import { computeToolCostUsd, extractToolUsage } from "@agent-engine/core";
+import { computeToolCostUsd, extractToolUsage, mergeToolUsage, runInToolUsageScope, type ToolUnitUsage } from "@agent-engine/core";
 import { describeError, recordWorkflowStepMetric, withWorkflowStepSpan } from "@agent-engine/telemetry";
 import { isCheckpointedStepStatus, type StepRecord } from "../adapters/types.js";
 // AU67's translation, shared with `fanout` since AU68 (SCRUM-366) — see that module.
@@ -36,8 +36,12 @@ export async function runStepCode<T>(runtime: WorkflowRuntime, id: string, fn: (
     async (_span, markOutcome) => {
       const startedAt = runtime.now();
       await markStepRunning(runtime, stepId, "code", startedAt);
+      // Every tool the body calls records its per-unit usage here, whatever
+      // the body returns (see `tool-usage-scope.ts`); the return-value read
+      // below is merged in for tools that ran outside the scope.
+      const consumed: ToolUnitUsage[] = [];
       try {
-        const output = await fn();
+        const output = await runInToolUsageScope(consumed, fn);
         const completedAt = runtime.now();
         // the per-unit cost work — shipped without a Jira ticket. This used to be the literal constant 0, and that was the
         // whole of the ~14% understatement a measured Instagram run carried:
@@ -48,7 +52,7 @@ export async function runStepCode<T>(runtime: WorkflowRuntime, id: string, fn: (
         // Shape-driven rather than opt-in, deliberately: see `extractToolUsage`.
         // A step whose body is ordinary computation still records 0, which is
         // now a measurement rather than an assumption.
-        const unitUsage = extractToolUsage(output);
+        const unitUsage = mergeToolUsage(consumed, extractToolUsage(output));
         const status = statusFromOutcome(output);
         const record: StepRecord = {
           stepId,
@@ -94,10 +98,12 @@ export async function runStepCode<T>(runtime: WorkflowRuntime, id: string, fn: (
           kind: "code",
           status: "failed",
           output: null,
-          // A thrown step produced no outcome to read units from. Distinct from
-          // a `content_fail`/`not_available` outcome, which returns normally
-          // above and correctly carries no `usage` either.
-          costUsd: 0,
+          // A thrown step has no return value to read units from, but the
+          // tools it called before throwing were still paid for — a plate
+          // generated and then a `WorkflowHeld` over the next one is the
+          // common shape — so the scope's record is what it is billed.
+          costUsd: computeToolCostUsd(consumed),
+          ...(consumed.length > 0 ? { unitUsage: consumed.map((u) => ({ ...u })) } : {}),
           durationMs: completedAt - startedAt,
           startedAt,
           completedAt,

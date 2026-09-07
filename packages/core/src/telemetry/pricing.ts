@@ -18,20 +18,40 @@ export interface ModelPricing {
 export const CACHE_READ_DISCOUNT = 0.1;
 
 /**
+ * A 5-minute prompt-cache WRITE bills at 1.25x the base input price
+ * (platform.claude.com/docs/en/about-claude/pricing, "Prompt caching",
+ * checked 2026-09-08). `TokenUsage.cacheWrite` counts those tokens; they are
+ * ALSO inside `uncached` (billed once at the base rate there), so only the
+ * premium is added here. Every Claude request this engine makes sets
+ * `cache_control: { type: "ephemeral" }` on the system prompt and tool list
+ * (see `MessagesApiAdapter`), so every first turn of a step pays it.
+ */
+export const CACHE_WRITE_PREMIUM = 0.25;
+
+/**
  * USD per 1M tokens, cross-referenced against
  * `karosCMO/src/lib/models/usage-log.ts`'s `MODEL_PRICING` so a step's cost
  * here matches what the same call would cost through the portal's own
  * ledger. Update alongside that table when vendor pricing changes.
  */
 export const MODEL_PRICING: Record<string, ModelPricing> = {
-  "claude-opus-4-8": { inputPer1M: 15.0, outputPer1M: 75.0 },
-  "claude-opus-4-7": { inputPer1M: 15.0, outputPer1M: 75.0 },
+  // Anthropic's own price list, platform.claude.com/docs/en/about-claude/pricing,
+  // read 2026-09-08. Until that day this table carried Opus 4.8/4.7 at
+  // $15/$75 (the retired Opus 4.1 rate: every Opus step was reported at 3x
+  // its real cost, and the newsletter's "$5.70" run was really ~$1.90) and
+  // Haiku 4.5 at $0.80/$4 (Haiku 3.5's rate: understated by 20%). Claude on
+  // Vertex (the `vertex` route) lists the same per-token prices on its global
+  // endpoint, which is the one this engine calls; a regional endpoint would
+  // add 10%. Keep karosCMO's `MODEL_PRICING_BY_VENDOR` and the middleware's
+  // `seed_models.py` on the same numbers.
+  "claude-opus-4-8": { inputPer1M: 5.0, outputPer1M: 25.0 },
+  "claude-opus-4-7": { inputPer1M: 5.0, outputPer1M: 25.0 },
   "claude-sonnet-4-6": { inputPer1M: 3.0, outputPer1M: 15.0 },
-  "claude-haiku-4-5-20251001": { inputPer1M: 0.8, outputPer1M: 4.0 },
+  "claude-haiku-4-5-20251001": { inputPer1M: 1.0, outputPer1M: 5.0 },
   // Undated base ids: the fallback target of `pricingForModel`, and the
   // spelling Agent Platform uses verbatim for the 4.6-and-later generation
   // (where a dateless id is itself a pinned snapshot, not a moving pointer).
-  "claude-haiku-4-5": { inputPer1M: 0.8, outputPer1M: 4.0 },
+  "claude-haiku-4-5": { inputPer1M: 1.0, outputPer1M: 5.0 },
   "claude-3-5-sonnet-20241022": { inputPer1M: 3.0, outputPer1M: 15.0 },
   // v2 refresh (Oct 2024) — same published pricing as the original 3.5 Sonnet
   // above, but a distinct model id, so `pricingForModel`'s undated-fallback
@@ -46,19 +66,17 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   "gemini-2.5-pro": { inputPer1M: 1.25, outputPer1M: 10.0 },
   // ai.google.dev/gemini-api/docs/pricing, "Gemini 3.1 Pro Preview", prompts <= 200k tokens (checked 2026-09-05).
   "gemini-3.1-pro-preview": { inputPer1M: 2.0, outputPer1M: 12.0 },
-  // Anthropic's next dateless generation (see
+  // Anthropic's dateless 5 generation (see
   // `router/adapters/agent-platform-model-ids.ts`'s doc comment — "dateless
-  // ids are, from the 4.6 generation on, themselves pinned snapshots"). Not yet
-  // GA anywhere in this codebase — no agent's `modelPolicy.model` names either
-  // one today — but `assertModelPriced` refuses an unpriced id at SELECTION
-  // time, so a step retargeted at one via `MODEL_STEP_<ID>_MODEL` the day it
-  // ships would be refused outright with no route to a number at all. Priced at
-  // the current top-of-tier Opus/Sonnet rate as a PLACEHOLDER, not a published
-  // vendor number; replace with the real published rate (and cross-check
-  // karosCMO's own `MODEL_PRICING`) the moment Anthropic GAs either model — do
-  // not assume this placeholder is still correct. (SCRUM-314/AU36)
-  "claude-opus-5": { inputPer1M: 15.0, outputPer1M: 75.0 },
-  "claude-sonnet-5": { inputPer1M: 3.0, outputPer1M: 15.0 },
+  // ids are, from the 4.6 generation on, themselves pinned snapshots"). No
+  // agent's `modelPolicy.model` names either one today, but `assertModelPriced`
+  // refuses an unpriced id at SELECTION time, so a step retargeted at one via
+  // `MODEL_STEP_<ID>_MODEL` needs a row to exist at all. Published rates
+  // (platform.claude.com/docs/en/about-claude/pricing, 2026-09-08): Opus 5 is
+  // $5/$25, and Sonnet 5's launch price of $2/$10 is now its standard price —
+  // these replaced the $15/$75 and $3/$15 placeholders that stood here before.
+  "claude-opus-5": { inputPer1M: 5.0, outputPer1M: 25.0 },
+  "claude-sonnet-5": { inputPer1M: 2.0, outputPer1M: 10.0 },
 
   // Google's own Gemini Developer API pricing page (ai.google.dev/gemini-api/docs/pricing,
   // checked 2026-08-29) no longer lists this model at all — Gemini 1.5 Flash
@@ -198,12 +216,20 @@ function roundCostUsd(raw: number): number {
   return Math.round(raw * 1_000_000) / 1_000_000;
 }
 
-/** Computes one step's cost from its cached/uncached input split and output tokens. */
+/**
+ * Computes one step's cost from its cached/uncached input split and output
+ * tokens. `inputTokens.cacheWrite` (a subset of `uncached`, see `TokenUsage`)
+ * adds only the cache-write premium on top of the base rate it already paid.
+ */
 export function computeStepCostUsd(modelName: string, inputTokens: TokenUsage, outputTokens: number): number {
   const pricing = pricingForModel(modelName);
   const cachedRate = pricing.cachedInputPer1M ?? pricing.inputPer1M * CACHE_READ_DISCOUNT;
+  const cacheWritePremium = (inputTokens.cacheWrite ?? 0) * pricing.inputPer1M * CACHE_WRITE_PREMIUM;
   const raw =
-    (inputTokens.uncached * pricing.inputPer1M + inputTokens.cached * cachedRate + outputTokens * pricing.outputPer1M) /
+    (inputTokens.uncached * pricing.inputPer1M +
+      inputTokens.cached * cachedRate +
+      cacheWritePremium +
+      outputTokens * pricing.outputPer1M) /
     1_000_000;
   return roundCostUsd(raw);
 }
@@ -427,6 +453,36 @@ export function extractToolUsage(output: unknown): readonly ToolUnitUsage[] {
     (u): u is ToolUnitUsage =>
       typeof u === "object" && u !== null && typeof (u as ToolUnitUsage).model === "string" && typeof (u as ToolUnitUsage).quantity === "number",
   );
+}
+
+/**
+ * The usage a step actually consumed: what its tools reported while it ran
+ * (`collected`, from the tool-usage scope) plus whatever `extractToolUsage`
+ * read off its return value, WITHOUT counting the same entry twice.
+ *
+ * Both roads carry the very same `ToolUnitUsage` objects — `defineTool`
+ * records the array the tool returned, and a step body that returns the
+ * outcome hands that same array back — so identity, not shape, is the
+ * dedupe: two genuinely separate 8-second plates are two entries, one plate
+ * seen on both roads is one.
+ *
+ * Why both roads at all: the scope catches every tool call regardless of
+ * what the body returns, which is what fixed the TikTok run that reported
+ * $0.13 for five Veo plates, a voiceover and a video QA pass (~$13 of media
+ * it made and then threw the outcomes away, returning file paths). The
+ * return-value road is kept for a tool executed OUTSIDE the scope — a tool
+ * not built with `defineTool`, or one whose outcome was produced elsewhere
+ * and returned from this step.
+ */
+export function mergeToolUsage(collected: readonly ToolUnitUsage[], extracted: readonly ToolUnitUsage[]): ToolUnitUsage[] {
+  const seen = new Set<ToolUnitUsage>(collected);
+  const merged = [...collected];
+  for (const entry of extracted) {
+    if (seen.has(entry)) continue;
+    seen.add(entry);
+    merged.push(entry);
+  }
+  return merged;
 }
 
 export interface TelemetryTotals {

@@ -96,6 +96,13 @@ export interface AgentStepConfig<TOutput> {
 export const TokenUsageSchema = z.object({
   cached: z.number().int().nonnegative(),
   uncached: z.number().int().nonnegative(),
+  /**
+   * Prompt-cache WRITE tokens, a subset of `uncached` (they are billed at the
+   * base input rate there, plus the 1.25x write premium `computeStepCostUsd`
+   * adds from this count). Optional so every persisted record from before
+   * 2026-09-08 still parses; `cached + uncached` remains the total input.
+   */
+  cacheWrite: z.number().int().nonnegative().optional(),
 });
 export type TokenUsage = z.infer<typeof TokenUsageSchema>;
 
