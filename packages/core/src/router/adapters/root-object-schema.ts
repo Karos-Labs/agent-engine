@@ -99,46 +99,106 @@ export function normalizeJsonString(value: unknown): unknown {
   return typeof parsed === "object" && parsed !== null ? parsed : value;
 }
 
-/** `JSON.parse`, then once more with raw control characters inside string literals escaped. */
+/**
+ * `JSON.parse`, then once more after `repairLooseJson`, then once more on the
+ * first balanced `{...}` the text contains (a model that appended prose after
+ * the object). `undefined` when nothing parses.
+ */
 export function parseJsonLeniently(text: string): unknown {
   try {
     return JSON.parse(text);
   } catch {
-    // fall through to the repaired attempt
+    // fall through to the repaired attempts
   }
+  const repaired = repairLooseJson(text);
   try {
-    return JSON.parse(escapeControlCharactersInStrings(text));
+    return JSON.parse(repaired);
+  } catch {
+    // fall through
+  }
+  const balanced = firstBalancedObject(repaired);
+  if (balanced === undefined) return undefined;
+  try {
+    return JSON.parse(balanced);
   } catch {
     return undefined;
   }
 }
 
-function escapeControlCharactersInStrings(text: string): string {
+/**
+ * The two mistakes a model makes when it hand-serializes an object INSIDE a
+ * string, fixed by walking the text with a quote tracker:
+ *
+ * 1. Raw control characters inside a string literal (a real line break where
+ *    `\n` was owed). Escaped in place.
+ * 2. An unescaped `"` inside a string literal (a quoted title in a paragraph
+ *    the model already had to double-escape, and did not, once, 6,000
+ *    characters in). A `"` met inside a string closes it only when the next
+ *    non-blank character is structural (`,` `}` `]` `:`) or the text ends;
+ *    otherwise it is content and is escaped. Prep runs pubsub-21498863468155660
+ *    (newsletter, `output` quoted, every round) and pubsub-21496486967745987
+ *    (linkedin, the whole `turn` quoted) were both rejected by JSON.parse for
+ *    exactly this, after the control-character pass alone had shipped.
+ *
+ * Structural whitespace and everything outside strings is left untouched, so
+ * valid JSON round-trips unchanged.
+ */
+export function repairLooseJson(text: string): string {
   let out = "";
   let inString = false;
   for (let i = 0; i < text.length; i++) {
     const ch = text[i]!;
-    if (inString) {
-      if (ch === "\\") {
-        out += ch + (text[i + 1] ?? "");
-        i++;
-        continue;
-      }
-      if (ch === '"') {
-        inString = false;
-        out += ch;
-        continue;
-      }
-      const code = ch.charCodeAt(0);
-      if (code < 0x20) {
-        out += code === 0x0a ? "\\n" : code === 0x0d ? "\\r" : code === 0x09 ? "\\t" : `\\u${code.toString(16).padStart(4, "0")}`;
-        continue;
-      }
+    if (!inString) {
+      if (ch === '"') inString = true;
       out += ch;
       continue;
     }
-    if (ch === '"') inString = true;
+    if (ch === "\\") {
+      out += ch + (text[i + 1] ?? "");
+      i++;
+      continue;
+    }
+    if (ch === '"') {
+      let j = i + 1;
+      while (j < text.length && (text[j] === " " || text[j] === "\n" || text[j] === "\r" || text[j] === "\t")) j++;
+      const next = text[j];
+      if (next === undefined || next === "," || next === "}" || next === "]" || next === ":") {
+        inString = false;
+        out += ch;
+      } else {
+        out += '\\"';
+      }
+      continue;
+    }
+    const code = ch.charCodeAt(0);
+    if (code < 0x20) {
+      out += code === 0x0a ? "\\n" : code === 0x0d ? "\\r" : code === 0x09 ? "\\t" : `\\u${code.toString(16).padStart(4, "0")}`;
+      continue;
+    }
     out += ch;
   }
   return out;
+}
+
+/** The first `{ ... }` with balanced braces outside string literals, or `undefined`. */
+function firstBalancedObject(text: string): string | undefined {
+  const start = text.indexOf("{");
+  if (start < 0) return undefined;
+  let depth = 0;
+  let inString = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]!;
+    if (inString) {
+      if (ch === "\\") i++;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return undefined;
 }

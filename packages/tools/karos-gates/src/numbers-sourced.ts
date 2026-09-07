@@ -29,7 +29,13 @@ import { defineTool, success } from "@agent-engine/tool-common";
 // endpoint asserted as the value ("CPA rose 34%") still fails as before. Prep
 // run pubsub-21753432816018912 spent two editorial rounds ($3.50) on exactly
 // these two shapes.
-const TOOL_VERSION = "1.3.0";
+//
+// 1.4.0 — a NEGATIVE figure in the source ("keyword stuffing hurts at -9%",
+// "-30.3% for rank-1 pages") is not the upper endpoint of a range, but the
+// leading-hyphen guard read it as one and failed a draft quoting it exactly
+// (prep run pubsub-21498863468155660, two more $1.70 rounds). The guard now
+// rejects a hyphen only when a figure sits on its other side.
+const TOOL_VERSION = "1.4.0";
 
 /** A magnitude suffix that belongs to the figure in front of it: written out, or the common abbreviations. */
 const MAGNITUDE_SUFFIX = "(?:trillion|billion|million|thousand|tn|bn|mn|[kmbt])";
@@ -88,7 +94,13 @@ function escapeForRegex(raw: string): string {
  * only bites the claim it was written for: an endpoint asserted on its own.
  */
 function exactClaimPattern(normalizedClaim: string): RegExp {
-  return new RegExp(`(?<![\\d.,-])${escapeForRegex(normalizedClaim)}`);
+  // A hyphen right before the claim rejects it only when the hyphen itself
+  // follows a figure ("15-20%", "$500-$2,000"): that is a range. A hyphen after
+  // a letter or nothing is a minus sign ("hurtsat-9%" once whitespace is
+  // stripped), and the draft quoting "-9%" is quoting the source.
+  // The magnitude letters count only after a digit ("$1b-$2b"): "hurtsat-9%"
+  // ends in a plain letter t and is a minus sign.
+  return new RegExp(`(?<![\\d.,])(?<![\\d%x$€£]-)(?<!\\d[kmbt]-)${escapeForRegex(normalizedClaim)}`);
 }
 
 /**
