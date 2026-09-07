@@ -288,15 +288,21 @@ describe("original short: script → plates → voice → captions → sequence 
     expect(h.generateArgs[2]!["allowPeople"]).toBe(false);
   }, 20_000);
 
-  it("holds and releases the topic when the visual QA gate sends the clip back", async () => {
+  it("ships a clip the visual QA gate dislikes FLAGGED with the model's reason, never held (prep run pubsub-21756184831102737)", async () => {
+    // Until 2026-09-07 a content_fail here held the run. Gemini scored a
+    // finished, in-brand short 6/10 for "unnatural movement in plant growth
+    // animation", a taste call on generated b-roll that the reviewer at
+    // 11-clip-review exists to make and was never shown.
     const h = stubTools({ qa: "fail" });
     const result = await run(h, "run-os-qa-fail");
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toContain("warped hands");
-    expect(h.calls).toContain("topics.release");
-    expect(h.calls).not.toContain("ledger.writeDeliverable");
+    expect(result.status).toBe("completed");
+    expect(h.calls).toContain("video.visualQaGate");
+    expect(h.calls).toContain("ledger.writeDeliverable");
+    expect(h.calls).not.toContain("topics.release");
+    const shipped = h.deliverables[0] as { visualQa?: { passed: boolean; reason?: string } };
+    expect(shipped.visualQa?.passed).toBe(false);
+    expect(shipped.visualQa?.reason).toContain("warped hands");
   }, 20_000);
 
   it("proceeds to the human gate unreviewed — recorded, not pretended — when no visual QA gate is registered", async () => {

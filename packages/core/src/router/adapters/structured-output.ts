@@ -1,6 +1,6 @@
 import { ZodError } from "zod";
 import type { TokenUsage, ZodSchema } from "../../types/agent-step.js";
-import { unwrapRootPayload } from "./root-object-schema.js";
+import { normalizeJsonString, unwrapRootPayload } from "./root-object-schema.js";
 
 /**
  * How much of the model's raw payload is echoed into telemetry and into the
@@ -99,7 +99,7 @@ export function parseStructuredOutput<TOutput>(
 
   let unwrapped: unknown;
   try {
-    unwrapped = unwrapRootPayload(rawPayload, wrapped);
+    unwrapped = repairStringifiedFields(unwrapRootPayload(rawPayload, wrapped));
   } catch (err) {
     throw failure(err instanceof Error ? err.message : String(err), err);
   }
@@ -114,6 +114,36 @@ export function parseStructuredOutput<TOutput>(
     }
     throw err;
   }
+}
+
+/**
+ * The model's other stringification: the envelope is a real object, but the
+ * `output` (or a tool call's `args`) inside it is the JSON of an object in
+ * quotes. `{"thought": "...", "output": "{\"subjectLine\": ...}"}`.
+ *
+ * Observed on every round of prep run pubsub-21753432816018912
+ * (newsletter-agent, claude-opus-4-8, no-tool step): the model wrote the
+ * edition correctly, quoted it, failed the schema on "expected object,
+ * received string", and the repair turn re-billed a 46k-token prompt to write
+ * the same edition again. Three rounds of that were $5.47 and a failed run.
+ * The declared schema says `output` is an object, so a string that parses to
+ * one is an encoding quirk, not data, and is unquoted here for free. A string
+ * that is not JSON, or that parses to something other than an object, is
+ * left alone so a genuinely string-valued field still reaches the schema
+ * as-is and fails with the right message.
+ */
+export function repairStringifiedFields(payload: unknown): unknown {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return payload;
+  const record = payload as Record<string, unknown>;
+  let repaired: Record<string, unknown> | undefined;
+  for (const key of ["output", "args"] as const) {
+    const value = record[key];
+    if (typeof value !== "string") continue;
+    const parsed = normalizeJsonString(value);
+    if (parsed === value) continue;
+    repaired = { ...(repaired ?? record), [key]: parsed };
+  }
+  return repaired ?? payload;
 }
 
 /**

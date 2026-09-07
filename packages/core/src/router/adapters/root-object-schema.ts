@@ -76,12 +76,69 @@ export function unwrapRootPayload(raw: unknown, wrapped: boolean): unknown {
   return normalizeJsonString((raw as Record<string, unknown>)[WRAPPED_ROOT_PROPERTY]);
 }
 
-function normalizeJsonString(value: unknown): unknown {
+/**
+ * A string the model meant as an object, parsed back to one; anything else
+ * is returned untouched.
+ *
+ * Two observed shapes. The common one is valid JSON in quotes. The second is
+ * the same thing with RAW newlines inside its string values: the model wrote
+ * a multi-paragraph `text` field, then serialized the whole object as a
+ * string without escaping the line breaks it had just written (prep run
+ * pubsub-21711702970427669, x-agent, two turns in a row). `JSON.parse`
+ * rejects a raw control character inside a string literal, so the payload
+ * used to fall through as a string, fail the schema with "expected object,
+ * received string", and cost a repair turn that repeated the mistake. The
+ * lenient pass escapes control characters that sit INSIDE a string literal
+ * (tracked by walking the quotes) and leaves structural whitespace alone.
+ */
+export function normalizeJsonString(value: unknown): unknown {
   if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return value;
+  const parsed = parseJsonLeniently(trimmed);
+  return typeof parsed === "object" && parsed !== null ? parsed : value;
+}
+
+/** `JSON.parse`, then once more with raw control characters inside string literals escaped. */
+export function parseJsonLeniently(text: string): unknown {
   try {
-    const parsed: unknown = JSON.parse(value);
-    return typeof parsed === "object" && parsed !== null ? parsed : value;
+    return JSON.parse(text);
   } catch {
-    return value;
+    // fall through to the repaired attempt
   }
+  try {
+    return JSON.parse(escapeControlCharactersInStrings(text));
+  } catch {
+    return undefined;
+  }
+}
+
+function escapeControlCharactersInStrings(text: string): string {
+  let out = "";
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (inString) {
+      if (ch === "\\") {
+        out += ch + (text[i + 1] ?? "");
+        i++;
+        continue;
+      }
+      if (ch === '"') {
+        inString = false;
+        out += ch;
+        continue;
+      }
+      const code = ch.charCodeAt(0);
+      if (code < 0x20) {
+        out += code === 0x0a ? "\\n" : code === 0x0d ? "\\r" : code === 0x09 ? "\\t" : `\\u${code.toString(16).padStart(4, "0")}`;
+        continue;
+      }
+      out += ch;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    out += ch;
+  }
+  return out;
 }
