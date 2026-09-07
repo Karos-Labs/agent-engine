@@ -6,7 +6,8 @@ import { ScraperError, type ScraperProvider, type SitemapEntry } from "@agent-en
 import { extractPageSignals, type PageSignals } from "./html-signals.js";
 import { latestRunForQuery, writeRunRecord, type RunRecord } from "./runs.js";
 
-const TOOL_VERSION = "1.0.0";
+// 1.0.1: archive/listing pages (tag, category, author, pagination) sample last, so the audited eight are content pages.
+const TOOL_VERSION = "1.0.1";
 
 /** The one job name every on-page audit records under, so a later run can find the previous snapshot for the body-change comparison. */
 export const ON_PAGE_AUDIT_JOB = "on-page-audit";
@@ -65,6 +66,22 @@ export interface AuditOnPageResult {
 
 const ENTITY_PAGE_RE = /\/(about|about-us|company|who-we-are|our-story|team|אודות|עלינו|quienes-somos|sobre|a-propos)(\/|$|\.)/i;
 const PRIORITY_PAGE_RE = /\/(contact|pricing|prices|plans|services|products?|solutions|features|faq|צור-קשר|מחירים|שירותים)(\/|$|\.)/i;
+/**
+ * Archive/listing pages — tag, category, author and paginated indexes. Real
+ * URLs, legitimately in a sitemap, but not the pages a reader lands on or an
+ * answer engine quotes: a tag page has no byline, no capsule and a 12-character
+ * title, and a sample of eight of them says nothing about the site's articles.
+ * On a news site whose freshest sitemap entries are its tag pages, the first
+ * newest-first audit sampled exactly those and every on-page input collapsed.
+ * They stay eligible, at the back of the queue.
+ */
+const ARCHIVE_PAGE_RE = /\/(tag|tags|category|categories|topic|topics|author|authors|page\/\d+|feed|search|תגית|קטגוריה|נושא)(\/|$|\.)/i;
+
+/** Is this a tag/category/author/paginated listing rather than a content page? Exported for tests. */
+export function isArchivePageUrl(url: string): boolean {
+  const path = decodedPath(url);
+  return path !== undefined && ARCHIVE_PAGE_RE.test(path);
+}
 
 /** The URL's path with percent-encoding undone, so a Hebrew `/אודות` matches the same way `/about` does. */
 function decodedPath(url: string): string | undefined {
@@ -115,7 +132,13 @@ export function chooseAuditUrls(seedUrl: string, candidateUrls: readonly string[
     const path = decodedPath(u);
     return path !== undefined && PRIORITY_PAGE_RE.test(path);
   };
-  const ordered = [...unique.filter(isEntityPageUrl), ...unique.filter((u) => !isEntityPageUrl(u) && isPriority(u)), ...unique.filter((u) => !isEntityPageUrl(u) && !isPriority(u))];
+  const rest = unique.filter((u) => !isEntityPageUrl(u) && !isPriority(u));
+  const ordered = [
+    ...unique.filter(isEntityPageUrl),
+    ...unique.filter((u) => !isEntityPageUrl(u) && isPriority(u)),
+    ...rest.filter((u) => !isArchivePageUrl(u)),
+    ...rest.filter(isArchivePageUrl),
+  ];
   for (const u of ordered) {
     if (chosen.length >= limit) break;
     chosen.push(u);

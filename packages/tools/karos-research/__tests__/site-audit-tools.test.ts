@@ -5,7 +5,7 @@ import * as path from "node:path";
 import type { AgentContext } from "@agent-engine/core";
 import { WorkspaceStore } from "@agent-engine/tool-common";
 import { createOfflineScraper, type ScraperProvider } from "@agent-engine/tool-karos-scraper";
-import { chooseAuditUrls, createAuditOnPage, isEntityPageUrl, summariseSitemapFreshness, type OnPageAuditSnapshot } from "../src/audit-on-page.js";
+import { chooseAuditUrls, createAuditOnPage, isArchivePageUrl, isEntityPageUrl, summariseSitemapFreshness, type OnPageAuditSnapshot } from "../src/audit-on-page.js";
 import { createFetchCoreWebVitals, parsePageSpeedResponse } from "../src/core-web-vitals.js";
 import { createLookupEntity, summariseWikidataEntity, type EntitySnapshot } from "../src/entity-lookup.js";
 
@@ -96,6 +96,12 @@ describe("research.auditOnPage", () => {
       4,
     );
     expect(chosen).toEqual(["https://acme.example/", "https://acme.example/about", "https://acme.example/pricing", "https://acme.example/blog/post-1"]);
+    // Tag/category/author listings go to the back: a sample of them says nothing about the site's articles.
+    const withArchives = chooseAuditUrls("https://acme.example/", ["https://acme.example/tag/ai", "https://acme.example/category/news", "https://acme.example/2026/09/a-real-article", "https://acme.example/תגית/סייבר"], 3);
+    expect(withArchives).toEqual(["https://acme.example/", "https://acme.example/2026/09/a-real-article", "https://acme.example/tag/ai"]);
+    expect(isArchivePageUrl("https://acme.example/author/dana")).toBe(true);
+    expect(isArchivePageUrl("https://acme.example/page/3")).toBe(true);
+    expect(isArchivePageUrl("https://acme.example/2026/09/a-real-article")).toBe(false);
     expect(isEntityPageUrl("https://acme.example/about-us")).toBe(true);
     expect(isEntityPageUrl("https://acme.example/אודות")).toBe(true);
     expect(isEntityPageUrl("https://acme.example/blog/about-time")).toBe(false);
