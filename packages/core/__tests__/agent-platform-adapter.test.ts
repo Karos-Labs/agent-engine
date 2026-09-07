@@ -98,14 +98,14 @@ describe("AgentPlatformAdapter", () => {
     expect(result.modelUsed).toBe("claude-haiku-4-5-20251001");
     // The bug this guards: an un-normalized id misses MODEL_PRICING and falls
     // back to Sonnet's $3/$15 silently — 3.75x Haiku's real input rate.
-    expect(pricingForModel(result.modelUsed).inputPer1M).toBe(0.8);
+    expect(pricingForModel(result.modelUsed).inputPer1M).toBe(1.0);
   });
 
   it("prices a Haiku run as Haiku even if a provider-spelled id reaches the cost calculator directly", () => {
     const asHaiku = computeStepCostUsd("claude-haiku-4-5@20251001", { cached: 0, uncached: 1_000_000 }, 0);
     const asCanonical = computeStepCostUsd("claude-haiku-4-5-20251001", { cached: 0, uncached: 1_000_000 }, 0);
     expect(asHaiku).toBe(asCanonical);
-    expect(asHaiku).toBe(0.8);
+    expect(asHaiku).toBe(1.0);
   });
 
   it("reports the provider id, not Anthropic's, so telemetry can tell the two routes apart", () => {
@@ -195,7 +195,9 @@ describe("prompt caching", () => {
 
     // `input_tokens` excludes both cache reads and cache writes; reading it
     // alone would report 10 input tokens for a 4,010-token billed request.
-    expect(result.inputTokens).toEqual({ cached: 0, uncached: 4_010 });
+    // The write count also travels separately (2026-09-08) so the 1.25x
+    // premium can be billed — see `computeStepCostUsd`.
+    expect(result.inputTokens).toEqual({ cached: 0, uncached: 4_010, cacheWrite: 4_000 });
   });
 
   it("keeps reporting cache reads separately, so the 90% read discount still lands", async () => {

@@ -104,8 +104,8 @@ describe("runRubricJudge", () => {
       fakeJudgeRouter([judgeTurn(flatScores(4), { model: "claude-opus-4-8", inputTokensUncached: 1_000_000, outputTokens: 1_000_000 })]),
       ENGLISH_CASE,
     );
-    // claude-opus-4-8: $15/1M in, $75/1M out.
-    expect(result.costUsd).toBe(90);
+    // claude-opus-4-8: $5/1M in, $25/1M out (Anthropic's published rate, 2026-09-08).
+    expect(result.costUsd).toBe(30);
     expect(result.modelUsed).toBe("claude-opus-4-8");
   });
 
