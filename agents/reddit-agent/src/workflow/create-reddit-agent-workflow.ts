@@ -35,6 +35,7 @@ import {
   runGate,
   finalizeDeliverable,
   recordOutputExcerpt,
+  runAgentStepWithCommitSteer,
 } from "@agent-engine/workflow";
 import { RedditDraftAgent } from "../agent/reddit-draft-agent.js";
 import { RedditChannelPlannerAgent } from "../agent/reddit-channel-planner-agent.js";
@@ -97,6 +98,8 @@ export interface CreateRedditAgentWorkflowOptions {
  * that de-duplication flags and steers, it does not hold a run.
  */
 const MAX_DEDUPE_ATTEMPTS = 3;
+/** Reddit's comment ceiling, the same figure `render.preview` (step 17) enforces. */
+const REDDIT_COMMENT_LIMIT = 10_000;
 
 /** Threads older than this are not worth replying to: nobody is reading them any more. */
 const THREAD_MAX_AGE_DAYS = 7;
@@ -642,9 +645,16 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
       // ── 12/12a: draft, then VERIFY it is not a repeat, before anything else ──
       const draftWithVerifiedDedupe = async () => {
         let dedupeRetrySteer: string | undefined;
+        /** Set once, by a reply over Reddit's comment limit: the next attempt is told by how much. */
+        let lengthSteer: string | undefined;
         for (let attempt = 1; attempt <= MAX_DEDUPE_ATTEMPTS; attempt++) {
           const att = (id: string) => (attempt === 1 ? id : `${id}-attempt-${attempt}`);
-          const draftResult = await wf.step.agent(rev(att("12-draft-reply")), draftAgent, {
+          // A draft that runs out of turns is redrafted once with a commit
+          // directive, then held; never a tooling failure (see
+          // `runAgentStepWithCommitSteer`). Opus with four tools and a
+          // self-critique gate is the profile most likely to re-gate itself
+          // into the ceiling.
+          const draftResult = await runAgentStepWithCommitSteer(wf, rev(att("12-draft-reply")), draftAgent, {
             ...runDirectionField(runDirection),
             topic,
             angle,
@@ -680,9 +690,10 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
             ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
             ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
             ...(dedupeRetrySteer !== undefined ? { dedupeAvoid: dedupeRetrySteer } : {}),
+            ...(lengthSteer !== undefined ? { lengthDirective: lengthSteer } : {}),
             ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
             ...(directive !== undefined ? { revisionRequest: directive } : {}),
-          });
+          }, "the reply draft");
 
           if (draftResult.status === "content_fail") {
             throw new WorkflowHeld(`draft did not clear its own self-critique gate: ${draftResult.status}`);
@@ -691,6 +702,16 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
             throw new WorkflowToolingFailure(`draft step resolved to "${draftResult.status}"`);
           }
           const candidate = draftResult.finalOutput!;
+
+          // Reddit's comment limit, checked INSIDE the loop the way x-agent
+          // checks its 280: one redraft told the exact overrun, before the
+          // deterministic 17-render-preview-check holds on it.
+          if (candidate.text.length > REDDIT_COMMENT_LIMIT && lengthSteer === undefined && attempt < MAX_DEDUPE_ATTEMPTS) {
+            lengthSteer =
+              `Your previous reply was ${candidate.text.length} characters; Reddit's comment limit is ${REDDIT_COMMENT_LIMIT}. ` +
+              "Cut it to well under the limit without dropping the sourced specifics, and return the complete reply again.";
+            continue;
+          }
 
           const dedupeVerdict = await checkOutputDedupe(wf, rev(att("12a-verify-not-duplicate")), candidate.text, outputHistory);
           if (dedupeVerdict.status === "similar" && attempt < MAX_DEDUPE_ATTEMPTS) {
@@ -796,7 +817,7 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
           revision,
         },
         requiredRole: "account_manager",
-        timeout: { duration: "24h", onTimeout: "hold" },
+        timeout: { duration: "1h", onTimeout: "auto_approve" },
       }),
       onDecision: async ({ revision, response, output }) => {
         await persistReviewFeedbackToMemory(wf, tools, ctx, revision, response, response.decision === "reject" ? JSON.stringify(output) : undefined);

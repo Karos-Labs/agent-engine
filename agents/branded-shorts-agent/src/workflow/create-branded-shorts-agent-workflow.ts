@@ -672,7 +672,7 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
             ...(brandResolve.setupNotes.length > 0 ? { setupNotes: brandResolve.setupNotes, flagged: true } : {}),
           },
           requiredRole: "account_manager",
-          timeout: { duration: "24h", onTimeout: "hold" },
+          timeout: { duration: "1h", onTimeout: "auto_approve" },
         });
     if (deliveryDecision.decision !== "approve") {
       throw new WorkflowHeld(`delivery rejected: ${deliveryDecision.reason ?? "no reason given"}`);

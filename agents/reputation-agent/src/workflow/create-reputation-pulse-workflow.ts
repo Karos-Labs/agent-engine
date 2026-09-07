@@ -686,7 +686,7 @@ export function createReputationPulseWorkflow(options: CreateReputationPulseWork
             crisisFired: triageResult.crisis.fired,
           },
           requiredRole: "account_manager",
-          timeout: { duration: "24h", onTimeout: "hold" },
+          timeout: { duration: "1h", onTimeout: "auto_approve" },
         });
     if (approveAllDecision.decision !== "approve") {
       // A rejection here means a human looked at the batch and said no —

@@ -26,6 +26,18 @@ export interface FirestoreQuerySnapshot {
 export interface FirestoreCollectionRef {
   doc(id: string): FirestoreDocumentRef;
   get(): Promise<FirestoreQuerySnapshot>;
+  /**
+   * Equality filter, the one query `listRunsByStatus` needs. Optional in the
+   * type because the test fake predates it and a store must still work
+   * against a client that cannot filter (it falls back to reading the
+   * collection and filtering in memory); the real Admin SDK always has it.
+   */
+  where?(field: string, op: "==", value: unknown): FirestoreQuery;
+}
+
+export interface FirestoreQuery {
+  limit(n: number): FirestoreQuery;
+  get(): Promise<FirestoreQuerySnapshot>;
 }
 
 /**

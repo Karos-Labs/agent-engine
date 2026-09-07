@@ -470,7 +470,7 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
         kind: "batch_review",
         payload: { runId: wf.runId, topic: selected.topic, angle, preview: draft.text, revision },
         requiredRole: "account_manager",
-        timeout: { duration: "24h", onTimeout: "hold" },
+        timeout: { duration: "1h", onTimeout: "auto_approve" },
       }),
       onDecision: async ({ revision, response, output }) => {
         // SCRUM-306 (AU23): a reject's drafted content previously had nowhere

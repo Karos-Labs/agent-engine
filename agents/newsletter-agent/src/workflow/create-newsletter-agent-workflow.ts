@@ -566,13 +566,23 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
         // requiredDisclaimer is deliberately omitted here: the footer that satisfies
         // it hasn't been injected yet, and its presence is verified structurally at
         // step 12 instead, not by re-running this hype-scanning gate against it.
-        await wf.step.code(id("10-verify-brand-compliance"), async () => {
+        // Every gate below RETURNS its verdict and the problem list is built
+        // from the returned values, outside the step closures. A closure only
+        // runs the first time: on a resume (after the human gate at 16
+        // resolves, or a worker restart) `wf.step.code` replays the checkpointed
+        // return value without calling the body, so a `problem(...)` inside the
+        // body was silently skipped. Round 1 then read as clean, the loop
+        // stopped there, ran the editor under a never-checkpointed round-1 id
+        // (a fresh opus call) and shipped the round-1 draft that had failed its
+        // gates. Prep run pubsub-21498863468155660 (three rounds, awaiting the
+        // gate) would have done exactly that on approval.
+        const brandVerdict = await wf.step.code(id("10-verify-brand-compliance"), async () => {
           const forbiddenTerms = clientContext.brand["forbiddenTerms"] as string[] | undefined;
           const verdict = await runGate(tools, "gate.brandCompliance", { text: authoredDraft.text, forbiddenTerms: forbiddenTerms ?? [] }, ctx);
           if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.brandCompliance: ${verdict.reason}`);
-          if (verdict.verdict === "content_fail") problem(`brand compliance failed: ${verdict.reason}`);
           return verdict;
         });
+        if (brandVerdict.verdict === "content_fail") problem(`brand compliance failed: ${brandVerdict.reason}`);
 
         // Force-inject the client's locked compliance footer (disclaimer, company
         // address, unsubscribe link) onto the model's own draft — never the model's
@@ -583,7 +593,7 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
         // boundary.
         const draft = composeCompliantDraft(authoredDraft, clientContext.brand);
 
-        await wf.step.code(id("11-verify-numbers-sourced"), async () => {
+        const numbersVerdict = await wf.step.code(id("11-verify-numbers-sourced"), async () => {
           // What a figure in the edition may be traced to: the full text of every
           // research document (the gate verifies against CONTENT, and a URL alone
           // verifies nothing), the client's own intel report, and the topics the
@@ -598,13 +608,13 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
           ];
           const verdict = await runGate(tools, "gate.numbersSourced", { text: draft.text, sources }, ctx);
           if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.numbersSourced: ${verdict.reason}`);
-          if (verdict.verdict === "content_fail") {
-            problem(
-              `numbers not sourced: ${verdict.reason}. Each of these figures must be quoted exactly as a research source or the client's own material writes it, or replaced with a qualitative description.`,
-            );
-          }
           return verdict;
         });
+        if (numbersVerdict.verdict === "content_fail") {
+          problem(
+            `numbers not sourced: ${numbersVerdict.reason}. Each of these figures must be quoted exactly as a research source or the client's own material writes it, or replaced with a qualitative description.`,
+          );
+        }
 
         // Structural backstop, not a re-run of the hype-scanning gate: confirms the
         // footer this workflow itself just composed actually landed in the final
@@ -629,32 +639,31 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
         // The shipped artifact's placeholder/leak pair — an unresolved placeholder
         // or a leaked credential/internal term is a redraft note like any other
         // content problem, and a hold on the last round.
-        await wf.step.code(id("13-verify-no-placeholder"), async () => {
+        const placeholderVerdict = await wf.step.code(id("13-verify-no-placeholder"), async () => {
           const verdict = await runGate(tools, "gate.noPlaceholder", { text: draft.text }, ctx);
           if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.noPlaceholder: ${verdict.reason}`);
-          if (verdict.verdict === "content_fail") problem(`unresolved placeholder: ${verdict.reason}`);
           return verdict;
         });
+        if (placeholderVerdict.verdict === "content_fail") problem(`unresolved placeholder: ${placeholderVerdict.reason}`);
 
-        await wf.step.code(id("14-verify-no-leak"), async () => {
+        const leakVerdict = await wf.step.code(id("14-verify-no-leak"), async () => {
           const verdict = await runGate(tools, "gate.leakCheck", { text: draft.text }, ctx);
           if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.leakCheck: ${verdict.reason}`);
-          if (verdict.verdict === "content_fail") problem(`leak check failed: ${verdict.reason}`);
           return verdict;
         });
+        if (leakVerdict.verdict === "content_fail") problem(`leak check failed: ${leakVerdict.reason}`);
 
-        await wf.step.code(id("15-render-preview-check"), async () => {
+        const preview = await wf.step.code(id("15-render-preview-check"), async () => {
           const outcome = await tools["render.preview"]!.execute(
             { subjectLine: draft.subjectLine, previewText: draft.previewText, text: draft.text },
             { ctx },
           );
           if (outcome.status !== "success") throw new WorkflowToolingFailure(`render.preview failed: ${outcome.status}`);
-          const preview = outcome.result as RenderPreviewResult;
-          if (!preview.subjectLineWithinLimit) problem(`subject line exceeds the 70-character limit (${preview.subjectLineCharacterCount} chars)`);
-          if (!preview.previewTextWithinLimit) problem(`preview text exceeds the 140-character limit (${preview.previewTextCharacterCount} chars)`);
-          if (!preview.bodyWithinLimit) problem(`edition exceeds the 10000-character body limit (${preview.bodyCharacterCount} chars)`);
-          return preview;
+          return outcome.result as RenderPreviewResult;
         });
+        if (!preview.subjectLineWithinLimit) problem(`subject line exceeds the 70-character limit (${preview.subjectLineCharacterCount} chars)`);
+        if (!preview.previewTextWithinLimit) problem(`preview text exceeds the 140-character limit (${preview.previewTextCharacterCount} chars)`);
+        if (!preview.bodyWithinLimit) problem(`edition exceeds the 10000-character body limit (${preview.bodyCharacterCount} chars)`);
 
         // ── 15b: the deterministic half of the editorial pass ──
         const lint = await wf.step.code(id("15b-editorial-lint"), async (): Promise<EditorialLintResult> => {
@@ -671,10 +680,9 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
             { ctx },
           );
           if (outcome.status !== "success") throw new WorkflowToolingFailure(`newsletter.editorialLint failed: ${outcome.status}`);
-          const result = outcome.result as EditorialLintResult;
-          for (const item of result.evidence) problem(`editorial lint: ${item}`);
-          return result;
+          return outcome.result as EditorialLintResult;
         });
+        for (const item of lint.evidence) problem(`editorial lint: ${item}`);
 
         if (problems.length > 0) {
           if (round < MAX_EDITORIAL_ROUNDS) {
@@ -769,7 +777,7 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
           ...(editorialByRevision.has(revision) ? { editorial: editorialByRevision.get(revision) } : {}),
         },
         requiredRole: "account_manager",
-        timeout: { duration: "24h", onTimeout: "hold" },
+        timeout: { duration: "1h", onTimeout: "auto_approve" },
       }),
       onDecision: async ({ revision, response, output }) => {
         // SCRUM-306 (AU23): a reject's drafted content previously had nowhere

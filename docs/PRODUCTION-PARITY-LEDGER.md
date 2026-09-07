@@ -265,6 +265,54 @@ prod's previous image `6a76387b` (2026-08-24, 118 commits behind) did not contai
 production runs the byte-identical image prep ran. Promote the SHA verified in prep, never "latest
 main".
 
+## Part 6 — 2026-09-08 audit: cost accuracy, one-hour auto-approve, TikTok frame
+
+Read live from prep Firestore (`karoscmo`/`prep`) and both projects' Cloud Run env on 2026-09-08.
+
+### 6.1 Every reported cost was wrong in one of two directions — fixed in code, nothing to promote by hand
+
+| Finding | Where it was | Fix | Parity note |
+|---|---|---|---|
+| Opus 4.8 / 4.7 priced at $15/$75 (the retired Opus 4.1 rate): every Opus step reported at **3x** its real cost | engine `MODEL_PRICING`, portal `MODEL_PRICING_BY_VENDOR` | Both tables now carry Anthropic's published $5/$25; Haiku 4.5 $0.80/$4 → $1/$5; Opus 5 / Sonnet 5 placeholders → $5/$25 and $2/$10 | The middleware's `seed_models.py` already had the right numbers, and the **prep** catalog was seeded with them on 2026-09-04. The **production** catalog (`(default)` db, `models` collection) has 6 rows with **no prices at all** — run `scripts/seed_models.py` against `karoscmo` after the middleware promote. |
+| Per-unit media usage never reached the run total: `04p-plate-N` (Veo, $0.40/s), `05-voiceover` (TTS), `10b-visual-qa` (Gemini) all recorded `costUsd: 0` because `runStepCode` only read usage off a step's **return value** and these steps return paths/verdicts. Run `pubsub-21496478605357221` reported **$0.13** for ~$13 of media. | engine `step-code.ts`, `step-agent.ts` | `defineTool` now records every success outcome's usage into an `AsyncLocalStorage` scope the step primitives open (`tool-usage-scope.ts`); agent steps add tool units to their token cost | The portal reads `run.totalCostUsd` and charges `ceil(usd x 20)` credits from it, so TikTok original shorts will now bill ~$13–16 each instead of ~$0.15. **Tell the client-facing side before promoting.** |
+| Prompt-cache writes billed at 1x instead of 1.25x | engine `messages-api-adapter.ts` | `TokenUsage.cacheWrite` + `CACHE_WRITE_PREMIUM` | none |
+
+### 6.2 "Approve itself within the hour" needs one scheduler job per environment
+
+Every review gate is now `timeout: { duration: "1h", onTimeout: "auto_approve" }` (was `24h`/`hold`; the
+campaign orchestrator was `48h`/`escalate`; the branded-shorts style lock was `7d`/`hold` and now locks the
+agent's first proposal on timeout). The engine resolves that timeout **lazily** — only when something calls
+`run()` on the waiting run — and nothing did unless a person opened the job page. New route:
+`POST /api/v1/maintenance/sweep-gate-timeouts` (service-authenticated, cross-tenant, mounted before the
+tenant-assertion middleware). It must be **called** on a schedule:
+
+| Env | Q1/Q2 (IAM) | Q5 (naming) | State |
+|---|---|---|---|
+| prep (`karoscmo-prep`, us-central1) | caller SA must be in the engine's `AUTH_ALLOWED_SERVICE_ACCOUNTS` (today: `karos-cmo-prep@karoscmo-prep.iam.gserviceaccount.com`) and hold `run.invoker` on `agent-engine-prep` | job `agent-engine-gate-sweep` | **Cloud Scheduler API not enabled in the project.** `gcloud services enable cloudscheduler.googleapis.com --project karoscmo-prep`, then the `jobs create http` below. |
+| prod (`karoscmo`, europe-west1) | caller SA `karos-cmo-sa@karoscmo.iam.gserviceaccount.com` (already allow-listed) | job `agent-engine-gate-sweep` | Route exists only after the engine promote (prod is 80+ commits behind main). Create the job paused; resume after promote. |
+
+```
+gcloud scheduler jobs create http agent-engine-gate-sweep --project <project> --location <region> \
+  --schedule "*/10 * * * *" --http-method POST --attempt-deadline 1800s \
+  --uri https://<engine-url>/api/v1/maintenance/sweep-gate-timeouts \
+  --oidc-service-account-email <allow-listed SA> --oidc-token-audience https://<engine-url>
+```
+
+Also still true after this pass: the portal's own `/api/agent-engine/reconcile` route is called by **no**
+scheduler in either environment (prod's four jobs target `run-scheduled`, `runway`, `intel-report-schedule`,
+`scheduler`), so a run that completes while nobody is looking is mirrored into `jobs` only on the next page
+render. A second job on that route would close it; not done in this pass.
+
+### 6.3 TikTok frame
+
+`video.brandFrame` 1.1.0: captions are styled and held above the bottom bar (libass's default margin had
+put them across the `@handle`), each beat's `onScreenText` is a title card in the upper third, and the top
+bar shows the client's company name when no series header is configured. `video.generateClip` 1.2.0 asks
+for documentary realism and names the generator's tells in its negative prompt. The server image now
+installs `fonts-liberation` and `fonts-dejavu-core` for the named caption font — a **Docker rebuild**, so
+the prep deploy after this merge is the first render with the new fonts.
+
+
 ## Sources
 
 - `agent-engine/docs/AUDIT-2026-08-25-architecture-optimization-plan.md`

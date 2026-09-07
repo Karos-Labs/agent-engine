@@ -362,7 +362,7 @@ export function createLandingBuilderAgentWorkflow(options: CreateLandingBuilderA
             revision,
           },
           requiredRole: "account_manager",
-          timeout: { duration: "24h", onTimeout: "hold" },
+          timeout: { duration: "1h", onTimeout: "auto_approve" },
         });
     if (reviewDecision.decision !== "approve") {
       throw new WorkflowHeld(`landing craft review rejected: ${reviewDecision.reason ?? "no reason given"}`);

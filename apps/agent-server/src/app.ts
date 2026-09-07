@@ -6,6 +6,7 @@ import { createDeliverablesRouter } from "./routes/deliverables.js";
 import { createDiagnosticsRouter } from "./routes/diagnostics.js";
 import { createDocsRouter } from "./routes/docs.js";
 import { createHealthRouter } from "./routes/health.js";
+import { createMaintenanceRouter } from "./routes/maintenance.js";
 import { createQueueRouter, type VerifyPushIdToken } from "./routes/queue.js";
 import { createRunsRouter, type RunsRouterDeps } from "./routes/runs.js";
 import { createServiceIdentityMiddleware, type ServiceIdentityConfig } from "./auth/service-identity.js";
@@ -14,6 +15,8 @@ import { createTenantAssertionMiddleware, type TenantAssertionConfig } from "./a
 
 export interface CreateAppDeps extends RunsRouterDeps {
   durableStore: DurableStepStore;
+  /** Epoch-ms clock for the gate-timeout sweep (and the engine it resumes with). Tests age a gate through it. */
+  clock?: () => number;
   /** See `routes/queue.ts`'s `QueueRouterDeps` — all optional, so an app built with none of this still boots (the push route just 500s if ever hit, same as any other unconfigured-dependency mistake). */
   queuePushAudienceUrl?: string;
   verifyPushIdToken?: VerifyPushIdToken;
@@ -87,6 +90,11 @@ export function createApp(deps: CreateAppDeps): Application {
   if (deps.auth) {
     app.use(createServiceIdentityMiddleware(deps.auth));
   }
+
+  // Service-authenticated (above) but NOT tenant-scoped: the gate-timeout
+  // sweep works across every client's runs, so it sits before the
+  // tenant-assertion middleware — see `createMaintenanceRouter`.
+  app.use(createMaintenanceRouter({ ...runsDeps, ...(deps.clock !== undefined ? { clock: deps.clock } : {}) }));
 
   // Layered on top of "who is the caller" (AU1, immediately above): "which
   // tenant is this specific request for" (AU46 / SCRUM-329). Mounted after
