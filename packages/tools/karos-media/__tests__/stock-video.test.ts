@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { createFindStockClip, pickPortraitFile, rankStockVideos } from "../src/stock-video.js";
+import { createFindStockClip, FindStockClipInputSchema, pickPortraitFile, rankStockVideos } from "../src/stock-video.js";
 
 const ctx = { ctx: { runId: "r", clientSlug: "acme", productId: "tiktok-agent", runKind: "recurring" } } as never;
 
@@ -39,7 +39,7 @@ function fakeFetch(pages: Record<string, unknown>, clipBytes = 1024): { fetch: t
 
 describe("video.findStockClip", () => {
   it("is not_available without an API key, never a throw", async () => {
-    const outcome = await createFindStockClip({}).execute({ repoRoot: os.tmpdir(), runId: "r1", query: "office desk" }, ctx);
+    const outcome = await createFindStockClip({}).execute(FindStockClipInputSchema.parse({ repoRoot: os.tmpdir(), runId: "r1", query: "office desk" }), ctx);
     expect(outcome.status).toBe("not_available");
   });
 
@@ -57,7 +57,7 @@ describe("video.findStockClip", () => {
         },
       });
       const outcome = await createFindStockClip({ apiKey: "key-123", fetchImpl: f.fetch }).execute(
-        { repoRoot, runId: "run-a", query: "empty office desk night", minDurationSeconds: 6, outputName: "plate-1" },
+        FindStockClipInputSchema.parse({ repoRoot, runId: "run-a", query: "empty office desk night", minDurationSeconds: 6, outputName: "plate-1" }),
         ctx,
       );
       expect(outcome.status).toBe("success");
@@ -79,7 +79,7 @@ describe("video.findStockClip", () => {
     try {
       const f = fakeFetch({ "city street rain": { videos: [video(7, 8, 1080, 1920, [{ w: 1080, h: 1920 }]), video(8, 10, 1080, 1920, [{ w: 1080, h: 1920 }])] } });
       const outcome = await createFindStockClip({ apiKey: "key-123", fetchImpl: f.fetch }).execute(
-        { repoRoot, runId: "run-b", query: "city street rain", minDurationSeconds: 4, excludeIds: [7] },
+        FindStockClipInputSchema.parse({ repoRoot, runId: "run-b", query: "city street rain", minDurationSeconds: 4, excludeIds: [7] }),
         ctx,
       );
       expect(outcome.status === "success" && outcome.result.pexelsId).toBe(8);
@@ -93,7 +93,7 @@ describe("video.findStockClip", () => {
     try {
       const f = fakeFetch({});
       const outcome = await createFindStockClip({ apiKey: "key-123", fetchImpl: f.fetch }).execute(
-        { repoRoot, runId: "run-c", query: "worn leather wallet receipts", minDurationSeconds: 4 },
+        FindStockClipInputSchema.parse({ repoRoot, runId: "run-c", query: "worn leather wallet receipts", minDurationSeconds: 4 }),
         ctx,
       );
       expect(outcome.status).toBe("content_fail");
@@ -106,7 +106,7 @@ describe("video.findStockClip", () => {
 
   it("refuses a runId that escapes the repo root", async () => {
     const f = fakeFetch({});
-    const outcome = await createFindStockClip({ apiKey: "key-123", fetchImpl: f.fetch }).execute({ repoRoot: os.tmpdir(), runId: "../../escape", query: "office" }, ctx);
+    const outcome = await createFindStockClip({ apiKey: "key-123", fetchImpl: f.fetch }).execute(FindStockClipInputSchema.parse({ repoRoot: os.tmpdir(), runId: "../../escape", query: "office" }), ctx);
     expect(outcome.status).toBe("tooling_error");
   });
 
