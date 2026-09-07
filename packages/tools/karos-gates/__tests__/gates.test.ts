@@ -357,6 +357,13 @@ describe("gate.numbersSourced", () => {
     expect((await verdictOf("gate.numbersSourced", { text: "Revenue grew 20%.", sources: ["revenue grew 15-20% last year"] })).verdict).toBe("content_fail");
   });
 
+  it("verifies a dollar figure against a source that writes the currency as USD (prep run pubsub-21500057884542573)", async () => {
+    const source = ["The market grows from USD 28.9 billion in 2026 and is forecast to reach USD 78 billion by 2031 at 21.97% CAGR."];
+    expect((await verdictOf("gate.numbersSourced", { text: "The market is projected to reach $78 billion by 2031, a 21.97% CAGR.", sources: source })).verdict).toBe("pass");
+    expect((await verdictOf("gate.numbersSourced", { text: "The market reaches USD 78 billion by 2031.", sources: ["forecast to reach $78B by 2031"] })).verdict).toBe("pass");
+    expect((await verdictOf("gate.numbersSourced", { text: "The market reaches $79 billion by 2031.", sources: source })).verdict).toBe("content_fail");
+  });
+
   it("STILL fails that endpoint when the draft asserts it as the value, not as a bound", async () => {
     const source = ["Schema markup lifts citations 2.6-3.4x in the accounts we measured."];
     const verdict = await verdictOf("gate.numbersSourced", { text: "Schema markup lifts citations 3.4x.", sources: source });
@@ -711,10 +718,10 @@ describe("every gate registers with the expected toolVersion", () => {
     }
   });
 
-  it("pins gate.numbersSourced at the negative-figure-aware version", async () => {
+  it("pins gate.numbersSourced at the currency-code-aware version", async () => {
     // Named explicitly so reverting the range fix without reverting the version
     // — or the reverse — is caught here rather than in telemetry months later.
-    expect(gates["gate.numbersSourced"]!.version).toBe("1.4.0");
+    expect(gates["gate.numbersSourced"]!.version).toBe("1.5.0");
   });
 });
 
