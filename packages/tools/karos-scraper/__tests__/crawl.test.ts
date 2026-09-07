@@ -166,6 +166,27 @@ describe("fetchSitemap", () => {
     const bounded = await provider(fetchImpl).fetchSitemap!("https://example.com/sitemap.xml", { limit: 1 });
     expect(bounded!.entries).toHaveLength(1);
   });
+
+  it("follows the most recently modified children of a large index and returns the newest entries first", async () => {
+    // Eight children: the index marks c7 and c8 as current, c1 (the static pages) is undated, the rest are archive.
+    const child = (n: number, lastmod?: string) => `<sitemap><loc>https://example.com/c${n}.xml</loc>${lastmod ? `<lastmod>${lastmod}</lastmod>` : ""}</sitemap>`;
+    const routes: Record<string, { body: string }> = {
+      "https://example.com/sitemap.xml": {
+        body: `<sitemapindex>${child(1)}${child(2, "2010-01-01")}${child(3, "2011-01-01")}${child(4, "2012-01-01")}${child(5, "2013-01-01")}${child(6, "2014-01-01")}${child(7, "2026-09-07")}${child(8, "2026-09-01")}</sitemapindex>`,
+      },
+    };
+    for (let n = 1; n <= 8; n++) {
+      const year = n === 1 ? "2020" : n === 7 ? "2026" : n === 8 ? "2026" : `${2008 + n}`;
+      routes[`https://example.com/c${n}.xml`] = { body: `<urlset><url><loc>https://example.com/p${n}</loc><lastmod>${year}-06-01</lastmod></url></urlset>` };
+    }
+    const { fetchImpl, calls } = routedFetch(routes);
+    const result = await provider(fetchImpl).fetchSitemap!("https://example.com/sitemap.xml", { limit: 3 });
+    // Five children fetched at most: the first, then the four newest by the index's own lastmod.
+    const fetched = calls.map((c) => c.url).filter((u) => /\/c\d\.xml$/.test(u)).sort();
+    expect(fetched).toEqual(["https://example.com/c1.xml", "https://example.com/c6.xml", "https://example.com/c7.xml", "https://example.com/c8.xml", "https://example.com/c5.xml"].sort());
+    // And the cut keeps the newest entries, not the first child read.
+    expect(result!.entries.map((e) => e.url)).toEqual(["https://example.com/p7", "https://example.com/p8", "https://example.com/p1"]);
+  });
 });
 
 describe("crawlSite", () => {
