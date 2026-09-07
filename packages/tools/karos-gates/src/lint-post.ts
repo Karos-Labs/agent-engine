@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { GateVerdict } from "@agent-engine/core";
 import { defineTool, success } from "@agent-engine/tool-common";
 
-const TOOL_VERSION = "1.0.0";
+const TOOL_VERSION = "1.1.0";
 
 /**
  * Em dash, en dash, and a literal double ASCII hyphen (the typed stand-in for
