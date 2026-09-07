@@ -19,7 +19,14 @@ import {
 // 1.1.0 (2026-09-06): the gbp leg falls back to the deployment's ADC when
 // GOOGLE_BUSINESS_TOKEN is unset (gbp-credential.ts) — a leg that was a
 // guaranteed tombstone on every deployment can now capture.
-const TOOL_VERSION = "1.1.0";
+// 1.2.0 (2026-09-07): that variable, once actually set, held a REFRESH token,
+// which is now exchanged rather than sent as a bearer — and a failed exchange
+// falls through to the 1.1.0 ADC path instead of overriding it with a 401.
+// Bumped although check:tool-versions did not ask: the change lives in
+// gbp-credential.ts, which declares no tool, so the derived check cannot see
+// it — and a leg that would have 401'd and now authenticates is exactly the
+// difference this version exists to make legible in telemetry.
+const TOOL_VERSION = "1.2.0";
 
 export interface CreateReputationCaptureOptions {
   /** Defaults to `process.env` — injectable so a workflow (or a test) can supply credentials without mutating the real process environment. */

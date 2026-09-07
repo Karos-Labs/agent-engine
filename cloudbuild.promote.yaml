@@ -83,6 +83,24 @@ substitutions:
   # the video-transcription capability row said out loud until this line
   # existed.
   _ELEVENLABS_API_KEY_SECRET: elevenlabs-api-key
+  # The OAuth app a Google grant was issued to. connectors.googleDataSync needs
+  # it to mint a per-client access token (karos-connectors/src/access-token.ts,
+  # and google-connectors-oauth lists both as REQUIRED), and since 2026-09-07
+  # reputation's GBP leg needs it too whenever GOOGLE_BUSINESS_TOKEN holds a
+  # refresh token rather than an access token — which is what was pasted.
+  #
+  # These arrived CROSSED between the projects: prep held karoscmo's app and
+  # prod held karoscmo-prep's, so every exchange returned unauthorized_client
+  # while both secrets looked present and correctly named. Corrected by testing
+  # each refresh token against each client; each project now holds its own app.
+  # Presence is not pairing.
+  _GOOGLE_OAUTH_CLIENT_ID_SECRET: GOOGLE_OAUTH_CLIENT_ID
+  _GOOGLE_OAUTH_CLIENT_SECRET_SECRET: GOOGLE_OAUTH_CLIENT_SECRET
+  # The pasted user grant for Google Business Profile. An OVERRIDE, not the
+  # credential: absent, the GBP legs mint a business.manage token from the
+  # worker's own identity (gbp-credential.ts). Wired because it exists now, and
+  # safe to wire because an unusable value falls through to that same ADC path.
+  _GOOGLE_BUSINESS_TOKEN_SECRET: GOOGLE_BUSINESS_TOKEN
   # VIDEO_HARVEST_PROVIDER=yt-dlp is set inline on both services below, matching
   # prep. It needs no secret — yt-dlp is installed in the image — and without it
   # media.harvestVideo reports not_available, so a prod tiktok run skips from
@@ -213,7 +231,7 @@ steps:
       - --service-account=${_SERVICE_ACCOUNT}
       - --memory=2Gi
       - --set-env-vars=GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},BQ_DATASET_ID=${_BQ_DATASET_ID},ANTHROPIC_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},CLOUD_ML_REGION=global,VERTEX_AI_LOCATION=${_REGION},GEMINI_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},PROMPT_STORE_DRIVER=firestore,QUEUE_PROVIDER=pubsub,QUEUE_TOPIC_RUN_JOBS=${_QUEUE_TOPIC_RUN_JOBS},PUBSUB_PROJECT_ID=${_PUBSUB_PROJECT_ID},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},GCS_ARTIFACTS_BUCKET=${_GCS_ARTIFACTS_BUCKET},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET},LANDING_HOSTING_PROJECT=${_LANDING_HOSTING_PROJECT},LANDING_HOSTING_SITE_PREFIX=${_LANDING_HOSTING_SITE_PREFIX},INSTAGRAM_AGENT_REPO_ROOT=/app,VIDEO_HARVEST_PROVIDER=yt-dlp,PUBSUB_PUSH_AUDIENCE_URL=${_PUBSUB_PUSH_AUDIENCE_URL},AUTH_ENABLED=true,AUTH_AUDIENCE=${_AUTH_AUDIENCE},AUTH_ALLOWED_SERVICE_ACCOUNTS=${_AUTH_ALLOWED_SERVICE_ACCOUNTS}
-      - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest,SCRAPPYCOCO_API_KEY=${_SCRAPPYCOCO_API_KEY_SECRET}:latest,PERPLEXITY_API_KEY=${_PERPLEXITY_API_KEY_SECRET}:latest,ELEVENLABS_API_KEY=${_ELEVENLABS_API_KEY_SECRET}:latest,UNSPLASH_ACCESS_KEY=${_UNSPLASH_ACCESS_KEY_SECRET}:latest,PEXELS_API_KEY=${_PEXELS_API_KEY_SECRET}:latest,PIXABAY_API_KEY=${_PIXABAY_API_KEY_SECRET}:latest,GOOGLE_PLACES_KEY=${_GOOGLE_PLACES_KEY_SECRET}:latest,OPENAI_API_KEY=${_OPENAI_API_KEY_SECRET}:latest
+      - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest,SCRAPPYCOCO_API_KEY=${_SCRAPPYCOCO_API_KEY_SECRET}:latest,PERPLEXITY_API_KEY=${_PERPLEXITY_API_KEY_SECRET}:latest,ELEVENLABS_API_KEY=${_ELEVENLABS_API_KEY_SECRET}:latest,UNSPLASH_ACCESS_KEY=${_UNSPLASH_ACCESS_KEY_SECRET}:latest,PEXELS_API_KEY=${_PEXELS_API_KEY_SECRET}:latest,PIXABAY_API_KEY=${_PIXABAY_API_KEY_SECRET}:latest,GOOGLE_PLACES_KEY=${_GOOGLE_PLACES_KEY_SECRET}:latest,OPENAI_API_KEY=${_OPENAI_API_KEY_SECRET}:latest,GOOGLE_BUSINESS_TOKEN=${_GOOGLE_BUSINESS_TOKEN_SECRET}:latest,GOOGLE_OAUTH_CLIENT_ID=${_GOOGLE_OAUTH_CLIENT_ID_SECRET}:latest,GOOGLE_OAUTH_CLIENT_SECRET=${_GOOGLE_OAUTH_CLIENT_SECRET_SECRET}:latest
       # instagram-agent writes under `repoRoot` (INSTAGRAM_AGENT_REPO_ROOT=/app):
       # `.media-cache/<runId>/` from media.findImages, and
       # `instagram-output/<client>/<postId>/` from publish.renderCarousel. The
@@ -253,7 +271,7 @@ steps:
       - --min-instances=1
       - --no-cpu-throttling
       - --set-env-vars=GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},BQ_DATASET_ID=${_BQ_DATASET_ID},ANTHROPIC_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},CLOUD_ML_REGION=global,VERTEX_AI_LOCATION=${_REGION},GEMINI_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},PROMPT_STORE_DRIVER=firestore,QUEUE_PROVIDER=pubsub,QUEUE_TOPIC_RUN_JOBS=${_QUEUE_TOPIC_RUN_JOBS},PUBSUB_PROJECT_ID=${_PUBSUB_PROJECT_ID},QUEUE_SUBSCRIPTION_RUN_JOBS=${_QUEUE_SUBSCRIPTION_RUN_JOBS},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},GCS_ARTIFACTS_BUCKET=${_GCS_ARTIFACTS_BUCKET},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET},LANDING_HOSTING_PROJECT=${_LANDING_HOSTING_PROJECT},LANDING_HOSTING_SITE_PREFIX=${_LANDING_HOSTING_SITE_PREFIX},INSTAGRAM_AGENT_REPO_ROOT=/app,VIDEO_HARVEST_PROVIDER=yt-dlp
-      - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest,SCRAPPYCOCO_API_KEY=${_SCRAPPYCOCO_API_KEY_SECRET}:latest,PERPLEXITY_API_KEY=${_PERPLEXITY_API_KEY_SECRET}:latest,ELEVENLABS_API_KEY=${_ELEVENLABS_API_KEY_SECRET}:latest,UNSPLASH_ACCESS_KEY=${_UNSPLASH_ACCESS_KEY_SECRET}:latest,PEXELS_API_KEY=${_PEXELS_API_KEY_SECRET}:latest,PIXABAY_API_KEY=${_PIXABAY_API_KEY_SECRET}:latest,GOOGLE_PLACES_KEY=${_GOOGLE_PLACES_KEY_SECRET}:latest,OPENAI_API_KEY=${_OPENAI_API_KEY_SECRET}:latest
+      - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest,SCRAPPYCOCO_API_KEY=${_SCRAPPYCOCO_API_KEY_SECRET}:latest,PERPLEXITY_API_KEY=${_PERPLEXITY_API_KEY_SECRET}:latest,ELEVENLABS_API_KEY=${_ELEVENLABS_API_KEY_SECRET}:latest,UNSPLASH_ACCESS_KEY=${_UNSPLASH_ACCESS_KEY_SECRET}:latest,PEXELS_API_KEY=${_PEXELS_API_KEY_SECRET}:latest,PIXABAY_API_KEY=${_PIXABAY_API_KEY_SECRET}:latest,GOOGLE_PLACES_KEY=${_GOOGLE_PLACES_KEY_SECRET}:latest,OPENAI_API_KEY=${_OPENAI_API_KEY_SECRET}:latest,GOOGLE_BUSINESS_TOKEN=${_GOOGLE_BUSINESS_TOKEN_SECRET}:latest,GOOGLE_OAUTH_CLIENT_ID=${_GOOGLE_OAUTH_CLIENT_ID_SECRET}:latest,GOOGLE_OAUTH_CLIENT_SECRET=${_GOOGLE_OAUTH_CLIENT_SECRET_SECRET}:latest
       # instagram-agent writes under `repoRoot` (INSTAGRAM_AGENT_REPO_ROOT=/app):
       # `.media-cache/<runId>/` from media.findImages, and
       # `instagram-output/<client>/<postId>/` from publish.renderCarousel. The

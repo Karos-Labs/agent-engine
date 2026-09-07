@@ -2,7 +2,7 @@ import { z } from "zod";
 import { defineTool, notAvailable, success } from "@agent-engine/tool-common";
 import { accountsLocationsList, type GbpLocation } from "@agent-engine/tool-karos-connectors";
 import { describeFetchFailure, fetchWithDeadline } from "../capture/http.js";
-import { resolveGbpCredential, type GbpAccessTokenProvider } from "../capture/gbp-credential.js";
+import { resolveGbpCredential, type GbpAccessTokenProvider, type GbpExchangeFetch } from "../capture/gbp-credential.js";
 import type { ReputationFetchImpl } from "../capture/types.js";
 
 // 1.1.0 (2026-09-06): `account` became optional — with none, the credential is
@@ -10,7 +10,12 @@ import type { ReputationFetchImpl } from "../capture/types.js";
 // enumerated; the credential itself now falls back to the deployment's ADC.
 // Additive to the result (`accounts`, per-location `account`), so a caller
 // that supplied an account reads the same shape it always did.
-const TOOL_VERSION = "1.1.0";
+// 1.2.0 (2026-09-07): a GOOGLE_BUSINESS_TOKEN holding a REFRESH token is
+// exchanged before use instead of being sent as a bearer, and an exchange that
+// cannot be made falls through to ADC rather than failing. `credentialSource`
+// gains "env-exchanged" — additive again, but it is the value that says the
+// read depended on GOOGLE_OAUTH_CLIENT_ID/SECRET.
+const TOOL_VERSION = "1.2.0";
 
 /** Locations are paged; a real account has a handful, and this cap is only there so a runaway `nextPageToken` cannot loop a setup step forever. */
 const MAX_PAGES = 10;
@@ -46,8 +51,14 @@ export interface DiscoverGbpLocationsResult {
   /** Every account enumerated, bare ids. One entry when `account` was supplied. */
   accounts: string[];
   locations: DiscoveredGbpLocation[];
-  /** Which credential served this read — for the trace, so "it worked on prep" says with what. */
-  credentialSource: "env" | "adc";
+  /**
+   * Which credential served this read — for the trace, so "it worked on prep"
+   * says with what. `env-exchanged` is the pasted user grant when it arrived as
+   * a REFRESH token and had to be exchanged first; worth distinguishing from a
+   * pasted access token, because it is the only one of the three that depends
+   * on GOOGLE_OAUTH_CLIENT_ID/SECRET still being right.
+   */
+  credentialSource: "env" | "env-exchanged" | "adc";
 }
 
 export interface CreateDiscoverGbpLocationsOptions {
@@ -151,7 +162,7 @@ export function createDiscoverGbpLocations(options: CreateDiscoverGbpLocationsOp
     version: TOOL_VERSION,
     inputSchema: DiscoverGbpLocationsInputSchema,
     async execute({ account }) {
-      const credential = await resolveGbpCredential(env, options.gbpAccessToken);
+      const credential = await resolveGbpCredential(env, options.gbpAccessToken, fetchImpl as unknown as GbpExchangeFetch);
       if (!credential.ok) {
         return notAvailable<DiscoverGbpLocationsResult>(`${credential.reason} — the Google Business Profile listings cannot be enumerated (or captured) until a credential lands`);
       }

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { describeFetchFailure, fetchWithDeadline } from "./http.js";
-import { resolveGbpCredential, type GbpAccessTokenProvider } from "./gbp-credential.js";
+import { resolveGbpCredential, type GbpAccessTokenProvider, type GbpExchangeFetch } from "./gbp-credential.js";
 import type { Review } from "../triage/types.js";
 import { unavailableLeg } from "./tombstone.js";
 import type { CaptureLegOutcome, ReputationFetchImpl, GbpLegRequest } from "./types.js";
@@ -57,7 +57,7 @@ export async function captureGbp(
   const dead = (reason: string): CaptureLegOutcome =>
     unavailableLeg({ leg: "gbp", platform: "google", source: "gbp_api", listingId: req.listingId, listingLabel: req.listingLabel, reason });
 
-  const credential = await resolveGbpCredential(env, accessToken);
+  const credential = await resolveGbpCredential(env, accessToken, fetchImpl as unknown as GbpExchangeFetch);
   if (!credential.ok) {
     return dead(credential.reason);
   }
