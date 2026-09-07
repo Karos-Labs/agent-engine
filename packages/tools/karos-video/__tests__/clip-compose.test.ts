@@ -77,6 +77,13 @@ describe("buildBrandFrameFilter", () => {
     expect(filter).not.toContain("[framed]"); // no logo → single chain
   });
 
+  it("letterboxes by default and fills-and-crops on fit: cover", () => {
+    expect(buildBrandFrameFilter(base)).toContain("scale=1080:1520:force_original_aspect_ratio=decrease,pad=1080:1520:");
+    const cover = buildBrandFrameFilter({ ...base, fit: "cover" });
+    expect(cover).toContain("scale=1080:1520:force_original_aspect_ratio=increase,crop=1080:1520,pad=1080:1520:");
+    expect(cover).toContain("pad=1080:1920:0:200:color=0x17181C");
+  });
+
   it("routes through an overlay chain when a logo is present", () => {
     const filter = buildBrandFrameFilter({ ...base, brand: { ...base.brand, logoPath: "logo.png" } });
     expect(filter).toContain("[1:v]scale=-1:110[logo]");

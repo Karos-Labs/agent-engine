@@ -11,7 +11,9 @@ import { assertNoTraversalOrNul, assertWithinTenantWorkRoot } from "../sandbox.j
 // at libass's default bottom margin, straight across the @handle); timed
 // title-card `overlays` (a beat's on-screen line) render in the upper third;
 // the caption font/size/outline are explicit instead of the renderer's defaults.
-const TOOL_VERSION = "1.1.0";
+// 1.1.1 — `fit: "cover"` scales the clip to FILL the picture area and crops the
+// overflow (for portrait plates), where the default `contain` letterboxes it.
+const TOOL_VERSION = "1.1.1";
 
 /**
  * The pure-ffmpeg clip pipeline: `video.cutClip` and `video.brandFrame`.
@@ -173,6 +175,12 @@ export const BrandFrameInputSchema = z.object({
   outputPath: z.string().min(1).describe("Path to write the finished, branded clip to."),
   brand: BrandFrameBrandSchema.describe("The brand inputs to composite — everything optional except the ground color the bars are painted in."),
   srtPath: z.string().min(1).optional().describe("SRT file to burn as captions. Absent means no captions."),
+  fit: z
+    .enum(["contain", "cover"])
+    .default("contain")
+    .describe(
+      "How the clip meets the picture area between the bars. `contain` (default) scales it to fit and letterboxes the rest in the ground colour — right for a client's 16:9 podcast frame, whose faces a crop would cut. `cover` scales it to fill and crops the overflow — right for a portrait plate, which otherwise sits between two dark side bars.",
+    ),
   captionStyle: BrandFrameCaptionStyleSchema.default(() => BrandFrameCaptionStyleSchema.parse({})).describe("Caption font, size, outline and clearance above the bottom bar."),
   overlays: z
     .array(BrandFrameOverlaySchema)
@@ -219,13 +227,16 @@ export function buildBrandFrameFilter(input: BrandFrameInput, overlayFiles: read
   const hasLogo = input.brand.logoPath !== undefined;
   const fontName = input.captionStyle.fontName;
 
+  // `contain`: scale to fit the region between the bars and letterbox the
+  // rest in the ground colour. `cover`: scale to fill it and crop the
+  // overflow, centred. Either way the second pad IS the top and bottom
+  // bars, always painted, whatever else is absent.
+  const fitChain =
+    input.fit === "cover"
+      ? `scale=${w}:${inner}:force_original_aspect_ratio=increase,crop=${w}:${inner},`
+      : `scale=${w}:${inner}:force_original_aspect_ratio=decrease,`;
   const filters: string[] = [
-    // Scale into the region between the bars, pad in the brand ground, then
-    // pad again to the full canvas with a top offset — that second pad IS
-    // the top and bottom bars, always painted, whatever else is absent.
-    `scale=${w}:${inner}:force_original_aspect_ratio=decrease,` +
-      `pad=${w}:${inner}:(ow-iw)/2:(oh-ih)/2:color=${ground},` +
-      `pad=${w}:${h}:0:${bar}:color=${ground},format=yuv420p`,
+    fitChain + `pad=${w}:${inner}:(ow-iw)/2:(oh-ih)/2:color=${ground},` + `pad=${w}:${h}:0:${bar}:color=${ground},format=yuv420p`,
   ];
 
   if (input.brand.accent !== undefined) {

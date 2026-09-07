@@ -125,6 +125,38 @@ const MAX_DEDUPE_ATTEMPTS = 2;
  * lints and 13-commit-and-record writes back into the dedupe window, so every
  * later comparison is against what actually shipped.
  */
+/** Where one beat's plate came from — carried to the reviewer and the deliverable. */
+export type PlateSource = "stock" | "generated";
+
+interface PlateResult {
+  path: string;
+  source: PlateSource;
+  /** The library id, so later beats in the same run never reuse the clip. */
+  stockId?: number;
+  sourceUrl?: string;
+}
+
+/**
+ * A stock-library query derived from a `visualBrief`, for a script written
+ * before beats carried `stockQuery` (prompt v3 and earlier): the brief's
+ * first clause, minus camera and light words, first four content words.
+ */
+const BRIEF_FILLER = new Set([
+  "a", "an", "the", "of", "on", "in", "at", "to", "from", "with", "and", "as", "by", "into", "across", "over", "through", "one", "single",
+  "shot", "wide", "close", "tight", "static", "overhead", "slow", "push-in", "pull-back", "pan", "left", "right", "reveal", "drift", "handheld",
+  "light", "lighting", "soft", "natural", "sidelight", "dusk", "dawn", "blue", "hour", "casting", "catching", "camera", "frame", "motion", "gently",
+]);
+export function stockQueryFromBrief(brief: string): string {
+  const clause = brief.split(/[.,;:]/)[0] ?? brief;
+  const words = clause
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !BRIEF_FILLER.has(w));
+  const picked = words.slice(0, 4);
+  return picked.length >= 2 ? picked.join(" ") : clause.trim().split(/\s+/).slice(0, 4).join(" ");
+}
+
 export function normalizeScriptDashes(script: ShortScript): ShortScript {
   return {
     ...script,
@@ -924,12 +956,14 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       workDir: string,
       srtPath: string | undefined,
       overlays: readonly TitleCard[] = [],
+      fit: "contain" | "cover" = "contain",
     ): Promise<{ outputPath: string; durationSeconds: number | null }> => {
       const { logoPath, logoScrim } = await prepareLogo(workDir);
       const frameOutcome = await tools["video.brandFrame"]?.execute(
         {
           videoPath: clipPath,
           outputPath: path.join(workDir, "clip-framed.mp4"),
+          fit,
           ...(overlays.length > 0 ? { overlays } : {}),
           brand: {
             ground: videoBrand.ground,
@@ -971,6 +1005,8 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
        * the gate is not registered in the deployment.
        */
       visualQa?: { passed: boolean; reason?: string; evidence: string[] };
+      /** Per beat, where the b-roll came from — so a reviewer knows which plates are real footage. Original shorts only. */
+      plateSources?: PlateSource[];
     }
 
     /**
@@ -1207,9 +1243,33 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       //         Footage nobody asked to change is the one expensive thing
       //         here, and a `reject` (a fresh run) is the path to new footage. ──
       const plates: string[] = [];
+      const plateSources: PlateSource[] = [];
+      const usedStockIds: number[] = [];
       for (let i = 0; i < script.beats.length; i++) {
         const beat = script.beats[i]!;
-        const plate = await wf.step.code(`04p-plate-${i + 1}`, async (): Promise<string> => {
+        const plate = await wf.step.code(`04p-plate-${i + 1}`, async (): Promise<PlateResult> => {
+          // Tier 2c first: a real clip from the stock library, when the
+          // deployment has one and the client has not asked for generated
+          // footage only. Real footage is what a viewer trusts, and it costs
+          // nothing where Veo costs $0.40 a second — the visual QA on the last
+          // all-generated short (2026-09-08) read "obviously AI-generated".
+          const stock = tools["video.findStockClip"];
+          if (config.footageSource !== "generated" && stock !== undefined) {
+            const query = beat.stockQuery ?? stockQueryFromBrief(beat.visualBrief);
+            const found = await stock.execute(
+              { repoRoot, runId: wf.runId, query, minDurationSeconds: beat.seconds, excludeIds: [...usedStockIds], outputName: `plate-${i + 1}` },
+              { ctx },
+            );
+            if (found.status === "success") {
+              const result = found.result as { path: string; pexelsId: number; sourceUrl: string };
+              return { path: path.resolve(repoRoot, result.path), source: "stock", stockId: result.pexelsId, sourceUrl: result.sourceUrl };
+            }
+            if (config.footageSource === "stock") {
+              throw new WorkflowHeld(
+                `no stock footage for beat ${i + 1} ("${query}") and this client's footageSource is "stock" (${found.status}${"reason" in found ? `: ${found.reason}` : ""})`,
+              );
+            }
+          }
           const generate = tools["video.generateClip"]!;
           const request = {
             repoRoot,
@@ -1232,9 +1292,11 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           if (outcome.status !== "success") {
             throw new WorkflowHeld(`b-roll for beat ${i + 1} could not be generated (${outcome.status}${"reason" in outcome ? `: ${outcome.reason}` : ""})`);
           }
-          return path.resolve(repoRoot, (outcome.result as { path: string }).path);
+          return { path: path.resolve(repoRoot, (outcome.result as { path: string }).path), source: "generated" };
         });
-        plates.push(plate);
+        plates.push(plate.path);
+        plateSources.push(plate.source);
+        if (plate.stockId !== undefined) usedStockIds.push(plate.stockId);
       }
 
       // ── 05: VOICE — the narration spoken, then TIMED by transcribing the
@@ -1331,13 +1393,17 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
               })
             : [];
 
-        return brandFrame(sequence.outputPath, workDir, srtPath, titleCards);
+        // Plates are portrait: fill the picture area edge to edge rather than
+        // letterboxing a 9:16 clip inside a 9:12.7 region (the 2026-09-08
+        // render had dark side bars either side of every plate).
+        return brandFrame(sequence.outputPath, workDir, srtPath, titleCards, "cover");
       });
 
       return finishDraft(rev, revision, {
         commentary: { caption: script.caption, about: script.about },
         script,
         voiceover,
+        plateSources,
         renderedPath: rendered.outputPath,
         durationSeconds: rendered.durationSeconds ?? script.beats.reduce((a, b) => a + b.seconds, 0),
         hookLine: script.hook,
@@ -1464,6 +1530,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         durationSeconds: draft.durationSeconds,
         uploaded,
         hookLine: draft.hookLine,
+        ...(draft.plateSources !== undefined ? { plateSources: draft.plateSources } : {}),
         ...(visualQa.skipped ? {} : { visualQa: { passed: visualQa.passed, ...(visualQa.reason !== undefined ? { reason: visualQa.reason } : {}), evidence: visualQa.evidence } }),
       };
     };
@@ -1503,6 +1570,8 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           // The visual QA model's read, so a flagged clip arrives with the
           // reason beside the play button instead of as a held run.
           ...(draft.visualQa !== undefined ? { visualQa: draft.visualQa, flagged: !draft.visualQa.passed } : {}),
+          // Which plates are real footage and which were generated.
+          ...(draft.plateSources !== undefined ? { plateSources: draft.plateSources } : {}),
         },
         requiredRole: "account_manager",
         timeout: { duration: "1h", onTimeout: "auto_approve" },
@@ -1566,6 +1635,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
             // The visual QA model's read, persisted with what shipped so the
             // portal can show a flagged clip as flagged after the fact.
             ...(review.output.visualQa !== undefined ? { visualQa: review.output.visualQa } : {}),
+            ...(review.output.plateSources !== undefined ? { plateSources: review.output.plateSources } : {}),
             hookType: moment.hookType,
             startSeconds: bounds.startSeconds,
             endSeconds: bounds.endSeconds,

@@ -82,6 +82,13 @@ export const TikTokClipConfigSchema = z.object({
   voiceName: z.string().min(1).optional(),
   /** Whether generated b-roll may contain people. Off by default: faces are where generated footage most often looks generated. */
   allowPeopleInGeneratedFootage: z.boolean().default(false),
+  /**
+   * Where an original short's b-roll comes from. `auto` (default) tries the
+   * stock library per beat and generates only what it cannot find; `stock`
+   * holds a beat nothing real matches instead of generating; `generated`
+   * skips the library — for a client whose world no library has.
+   */
+  footageSource: z.enum(["auto", "stock", "generated"]).default("auto"),
 });
 export type TikTokClipConfig = z.infer<typeof TikTokClipConfigSchema>;
 
@@ -203,6 +210,12 @@ export const ScriptBeatSchema = z.object({
   onScreenText: z.string().min(1).max(80),
   /** What the b-roll shows: a concrete scene, lighting, motion. No text, no logos, no brand names. */
   visualBrief: z.string().min(10).max(600),
+  /**
+   * 2 to 5 plain English nouns the stock-footage library is searched with
+   * FIRST (`empty office desk night`); the `visualBrief` goes to the generator
+   * only when nothing real matches. Optional so a v3-era script still parses.
+   */
+  stockQuery: z.string().min(2).max(60).optional(),
   /** How long this beat holds on screen. */
   seconds: z.union([z.literal(4), z.literal(6), z.literal(8)]),
 });

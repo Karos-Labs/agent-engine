@@ -7,7 +7,7 @@ import type { ZodType } from "zod";
 import { FilePromptStore, type AgentToolRegistry, type CompletionResult, type ModelRouter } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { BrandFrameInputSchema, ComposeSequenceInputSchema, SelfEvalGateInputSchema, SynthesizeVoiceInputSchema, TranscribeInputSchema } from "@agent-engine/tool-karos-video";
-import { GenerateVideoInputSchema, VisualQaGateInputSchema } from "@agent-engine/tool-karos-media";
+import { FindStockClipInputSchema, GenerateVideoInputSchema, VisualQaGateInputSchema } from "@agent-engine/tool-karos-media";
 import { createTikTokAgentWorkflow } from "../src/workflow/create-tiktok-agent-workflow.js";
 
 /**
@@ -65,6 +65,7 @@ interface Harness {
   tools: AgentToolRegistry;
   calls: string[];
   generateArgs: Array<Record<string, unknown>>;
+  stockArgs: Array<Record<string, unknown>>;
   composeArgs: Array<Record<string, unknown>>;
   voiceArgs: Array<Record<string, unknown>>;
   transcribedPaths: string[];
@@ -73,9 +74,12 @@ interface Harness {
   deliverables: Array<Record<string, unknown>>;
 }
 
-function stubTools(opts: { voiceoverPolicy?: "auto" | "always" | "never"; transcribeVoice?: boolean; qa?: "pass" | "fail" | "none"; declinePlate?: number } = {}): Harness {
+function stubTools(
+  opts: { voiceoverPolicy?: "auto" | "always" | "never"; transcribeVoice?: boolean; qa?: "pass" | "fail" | "none"; declinePlate?: number; stock?: "hit" | "miss" | "hit-then-miss" } = {},
+): Harness {
   const calls: string[] = [];
   const generateArgs: Array<Record<string, unknown>> = [];
+  const stockArgs: Array<Record<string, unknown>> = [];
   const composeArgs: Array<Record<string, unknown>> = [];
   const voiceArgs: Array<Record<string, unknown>> = [];
   const transcribedPaths: string[] = [];
@@ -164,6 +168,22 @@ function stubTools(opts: { voiceoverPolicy?: "auto" | "always" | "never"; transc
     }),
     "memory.appendDecision": tool("memory.appendDecision", () => ok({ id: "dec-1" })),
   };
+  if (opts.stock !== undefined) {
+    let stockCalls = 0;
+    tools["video.findStockClip"] = tool(
+      "video.findStockClip",
+      (args) => {
+        const input = args as { outputName: string; query: string; excludeIds: number[] };
+        stockArgs.push(input as unknown as Record<string, unknown>);
+        stockCalls += 1;
+        if (opts.stock === "miss" || (opts.stock === "hit-then-miss" && stockCalls > 1)) {
+          return { status: "content_fail" as const, reason: `no portrait clip matched "${input.query}"` };
+        }
+        return ok({ path: `.media-cache/run/${input.outputName}.mp4`, pexelsId: 1000 + stockCalls, durationSeconds: 9, width: 1080, height: 1920, sourceUrl: `https://www.pexels.com/video/${1000 + stockCalls}/`, photographer: "Someone", license: "Pexels", query: input.query });
+      },
+      FindStockClipInputSchema,
+    );
+  }
   if ((opts.qa ?? "pass") !== "none") {
     tools["video.visualQaGate"] = tool(
       "video.visualQaGate",
@@ -176,7 +196,7 @@ function stubTools(opts: { voiceoverPolicy?: "auto" | "always" | "never"; transc
       VisualQaGateInputSchema,
     );
   }
-  return { tools: tools as unknown as AgentToolRegistry, calls, generateArgs, composeArgs, voiceArgs, transcribedPaths, frameArgs, qaArgs, deliverables };
+  return { tools: tools as unknown as AgentToolRegistry, calls, generateArgs, stockArgs, composeArgs, voiceArgs, transcribedPaths, frameArgs, qaArgs, deliverables };
 }
 
 async function run(h: Harness, runId: string, turns: unknown[] = [VOICED_SCRIPT]) {
@@ -312,4 +332,42 @@ describe("original short: script → plates → voice → captions → sequence 
     expect(result.status).toBe("completed");
     expect(h.calls).not.toContain("video.visualQaGate");
   }, 20_000);
+});
+
+describe("original short: real footage before generated footage (2026-09-08)", () => {
+  it("takes every plate from the stock library when it answers, never calls Veo, excludes clips already used, and fills the frame", async () => {
+    const h = stubTools({ stock: "hit" });
+    const result = await run(h, "run-os-stock");
+    expect(result.status).toBe("completed");
+
+    expect(h.calls).not.toContain("video.generateClip");
+    expect(h.stockArgs.map((a) => a["outputName"])).toEqual(["plate-1", "plate-2", "plate-3"]);
+    // Each beat's own query (derived from its brief here — the v4 prompt writes `stockQuery` itself).
+    expect(String(h.stockArgs[0]!["query"])).toContain("office");
+    // The third search excludes the two clips already taken.
+    expect(h.stockArgs[2]!["excludeIds"]).toEqual([1001, 1002]);
+    // Portrait plates fill the picture area instead of sitting between side bars.
+    expect(h.frameArgs[0]!["fit"]).toBe("cover");
+    // The reviewer is told which plates are real.
+    const deliverable = h.deliverables[0] as { plateSources?: string[] };
+    expect(deliverable.plateSources).toEqual(["stock", "stock", "stock"]);
+  });
+
+  it("falls through to Veo for the beats the library cannot serve, beat by beat", async () => {
+    const h = stubTools({ stock: "hit-then-miss" });
+    const result = await run(h, "run-os-stock-partial");
+    expect(result.status).toBe("completed");
+
+    expect(h.stockArgs).toHaveLength(3);
+    expect(h.generateArgs.map((a) => a["outputName"])).toEqual(["plate-2", "plate-3"]);
+    expect((h.deliverables[0] as { plateSources?: string[] }).plateSources).toEqual(["stock", "generated", "generated"]);
+  });
+
+  it("generates everything, exactly as before, when no stock tier is registered", async () => {
+    const h = stubTools();
+    const result = await run(h, "run-os-no-stock");
+    expect(result.status).toBe("completed");
+    expect(h.generateArgs).toHaveLength(3);
+    expect((h.deliverables[0] as { plateSources?: string[] }).plateSources).toEqual(["generated", "generated", "generated"]);
+  });
 });
