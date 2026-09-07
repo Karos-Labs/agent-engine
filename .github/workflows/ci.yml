@@ -1,0 +1,18 @@
+# PR-level CI. `quality.yml` is `workflow_call` only and was invoked solely by
+# `deploy-prep.yml` on a push to main, so a pull request got no type-check or
+# test run until after it merged, when a red run blocked the prep deploy rather
+# than the merge. This makes the same job run on every PR.
+name: CI
+
+on:
+  pull_request:
+    branches: [main, master]
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    uses: ./.github/workflows/quality.yml
+    secrets: inherit

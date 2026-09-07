@@ -33,7 +33,8 @@ export interface CampaignTopicPool {
 export interface CampaignChannelResult {
   slotId: string;
   channel: CampaignChannel;
-  status: "completed" | "failed";
+  /** `held`: the channel's own workflow held on a content gate; its `reason` travels to the campaign reviewer instead of holding the campaign. */
+  status: "completed" | "failed" | "held";
   deliverableId?: string;
   reason?: string;
   /**

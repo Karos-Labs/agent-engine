@@ -150,9 +150,11 @@ describe("content gate failures (RFC-02 §5 steps 13-17)", () => {
     // ceiling — so this trips ONLY the workflow-level render check, proving the
     // two limits are genuinely distinct rather than the same number twice.
     const overCommentLimitBody = "A genuinely long real reply with real specifics, repeated many times over. ".repeat(150); // ~11400 chars
-    const router = fakeRouterSequence([
-      finalTurn({ ...baseFields(), replyBody: overCommentLimitBody, text: overCommentLimitBody }),
-    ]);
+    // Two identical over-limit drafts: since 2026-09-07 the draft loop steers ONE
+    // redraft with the exact overrun (`lengthDirective`) before step 17 gets to
+    // hold, so a model that ignores the steer is what reaches the backstop.
+    const overLimit = finalTurn({ ...baseFields(), replyBody: overCommentLimitBody, text: overCommentLimitBody });
+    const router = fakeRouterSequence([overLimit, overLimit]);
     const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
@@ -162,7 +164,10 @@ describe("content gate failures (RFC-02 §5 steps 13-17)", () => {
     expect(result.status).toBe("held");
     if (result.status !== "held") throw new Error("unreachable");
     expect(result.reason).toMatch(/exceeds Reddit's 10000-character comment limit/i);
-    // Only one model call: gate.lintPost's self-critique never objected to this length.
-    expect(router.complete).toHaveBeenCalledTimes(1);
+    // Two model calls: the original and the one length-steered redraft.
+    // gate.lintPost's self-critique never objected to this length either time.
+    expect(router.complete).toHaveBeenCalledTimes(2);
+    const lengthSteered = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[1]![0] as string;
+    expect(lengthSteered).toContain("lengthDirective");
   });
 });
