@@ -95,7 +95,13 @@ const INTEL_REPORT_DRAFT_STEP_CONFIG: AgentStepConfig<IntelReportOutput> = {
   // WHO it is writing to, was being composed from the prompt set alone (1.9K
   // chars, no persona) because this report had nothing to say about the
   // audience. v4 stays frozen.
-  skillRef: "intel-report-craft@5",
+  // v6 (2026-09-07) rewrites the evidence note and the scoring rule for the four
+  // evidence blocks the workflow now gathers (siteAudit, clientResearch,
+  // competitorSites, seoGeoSnapshot): every dimension score carries a `rationale`
+  // naming its evidence, and the "score 50-65 when uncertain" reflex that landed
+  // every report in the same mid-60s band is replaced by "score what the evidence
+  // shows, and say so". v5 stays frozen.
+  skillRef: "intel-report-craft@6",
 };
 
 export interface IntelReportDraftAgentOptions {

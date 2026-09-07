@@ -29,6 +29,15 @@ const ALL_STEP_IDS = [
   // default fixture keeps both context docs present, so this resolves "ok"
   // and the run proceeds exactly as before this ticket.
   "01e-enforce-context-doc-policy",
+  // The four evidence reads (2026-09-07): the client's own site fetched and
+  // read, live research about the client by name, competitor homepages, and
+  // the sibling SEO & GEO agent's latest measured snapshot from client memory.
+  // Each is best-effort and always a step — a read that finds nothing
+  // checkpoints `null` rather than skipping, so its absence is visible.
+  "01f-audit-client-site",
+  "01g-research-client",
+  "01h-audit-competitor-sites",
+  "01i-load-seo-geo-snapshot",
   "02-generate-report",
   // The pre-gate self-correction pass. Always a step, even on a clean report:
   // it asks the gate what it would reject and returns the draft untouched when

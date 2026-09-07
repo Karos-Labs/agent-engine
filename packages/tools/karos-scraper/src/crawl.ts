@@ -3,6 +3,7 @@ import type {
   CrawlOptions,
   CrawlPage,
   PageStatus,
+  RawHtmlPage,
   RobotsInfo,
   RobotsRuleGroup,
   SiteCrawlResult,
@@ -37,6 +38,49 @@ async function getText(url: string, fetchImpl: typeof fetch, timeoutMs: number):
   }
   const body = await response.text();
   return { status: response.status, body };
+}
+
+/** Bytes of HTML kept per page. Title, meta, headings, JSON-LD and the main body all live well inside this; what it cuts is trailing script/footer bulk. */
+export const MAX_HTML_BYTES = 1_500_000;
+
+/**
+ * Plain GET of one page's HTML with status, final URL and headers — the fetch
+ * behind `research.auditOnPage`. Follows redirects (a homepage that 301s to
+ * `www.` is still one page) and sends a browser-like `Accept` so a server that
+ * varies on it returns markup rather than JSON. A non-HTML body (a PDF in the
+ * sitemap, an image) comes back `undefined` rather than being parsed as a page
+ * with no title.
+ */
+export async function fetchHtmlViaFetch(url: string, fetchImpl: typeof fetch, timeoutMs: number): Promise<RawHtmlPage | undefined> {
+  let response: Response;
+  try {
+    response = await fetchImpl(url, {
+      method: "GET",
+      redirect: "follow",
+      headers: {
+        accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+        "accept-language": "*",
+        "user-agent": "Mozilla/5.0 (compatible; KarosAuditBot/1.0; +https://karoslabs.com)",
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (error) {
+    throw new ScraperError(`crawl html fetch of ${url} failed: ${(error as Error).message}`);
+  }
+  const headers: Record<string, string> = {};
+  response.headers.forEach((value, key) => {
+    headers[key.toLowerCase()] = value;
+  });
+  const contentType = headers["content-type"] ?? "";
+  if (contentType && !/html|xml|text\/plain/i.test(contentType)) return undefined;
+  const body = await response.text();
+  return {
+    url,
+    finalUrl: response.url && response.url.length > 0 ? response.url : url,
+    status: response.status,
+    headers,
+    html: body.length > MAX_HTML_BYTES ? body.slice(0, MAX_HTML_BYTES) : body,
+  };
 }
 
 /** HEAD, falling back to GET when a server 405/501s a HEAD it will happily answer as GET. */

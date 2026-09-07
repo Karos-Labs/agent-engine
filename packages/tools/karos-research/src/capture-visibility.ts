@@ -19,7 +19,13 @@ import { latestRun, writeRunRecord, type RunRecord } from "./runs.js";
 //     exists — that tier is a statement about configuration, not measurement.
 // Every one of those changes what a stored cell asserts, so a reader comparing
 // two runs has to be able to tell which contract produced which.
-const TOOL_VERSION = "1.2.0";
+//
+// 1.3.0: `clientBrandAliases` joins the input. A brand written one way in its
+//   profile is written other ways by an engine answering in the client's own
+//   language ("Geektime" / "גיקטיים"), and a cell that only knew the Latin
+//   spelling reported `brandMentioned: false` for every Hebrew answer that
+//   named the client. Aliases change what "mentioned" means for such a cell.
+const TOOL_VERSION = "1.3.0";
 
 /**
  * The ratified AI-visibility engines (SCRUM-396).
@@ -57,6 +63,11 @@ export const CaptureVisibilityInputSchema = z.object({
     .describe(
       "The client's brand as a person writes it (\"Karos Labs\"). Required for mention detection to work on any multi-word brand: matching is a literal substring test, and a domain-derived token (\"karoslabs\") never appears in an answer that says \"Karos Labs\".",
     ),
+  clientBrandAliases: z
+    .array(z.string().min(1))
+    .max(8)
+    .optional()
+    .describe("Other spellings an engine may use for the client — a native-script name, a transliteration, a former name. Each is matched the same way as clientBrandName."),
   /** Freshness window, same convention as `research.pull` — a cached cell inside this window is returned instead of re-capturing. */
   window: z.string().min(1).describe("Freshness window, same convention as research.pull — a cached cell inside this window is returned instead of re-capturing."),
 });
@@ -124,6 +135,8 @@ export interface EngineCaptureRequest {
   competitorRoster: readonly string[];
   /** The client's brand as written — see `AnalyzeAnswerInput.clientBrandName` for why a domain is not enough. */
   clientBrandName?: string;
+  /** Other spellings of the brand, matched alongside `clientBrandName`. */
+  clientBrandAliases?: readonly string[];
 }
 
 /**
@@ -289,7 +302,7 @@ export function createCaptureVisibility(store: WorkspaceStoreLike, options: Capt
       "Captures one (prompt x engine) AI-visibility cell, cached and freshness-enforced like research.pull. An engine with a real adapter configured (Perplexity/Claude/Gemini/ChatGPT/Copilot) captures for real; every other engine (Google AI Mode and AI Overview have no adapter in this build) reports the honest stand-in, captureTier: \"UNAVAILABLE\", rather than a fabricated measurement.",
     version: TOOL_VERSION,
     inputSchema: CaptureVisibilityInputSchema,
-    async execute({ promptId, promptText, engine, clientDomains, competitorRoster, clientBrandName, window }, { ctx }) {
+    async execute({ promptId, promptText, engine, clientDomains, competitorRoster, clientBrandName, clientBrandAliases, window }, { ctx }) {
       const windowMs = parseDurationMs(window);
       const job = jobFor(engine, promptId, promptText);
       const cached = await latestRun(store, ctx.clientSlug, job);
@@ -352,7 +365,15 @@ export function createCaptureVisibility(store: WorkspaceStoreLike, options: Capt
         // — RFC-01 §5.6: that distinction is exactly what let a broken
         // research pipeline read as "a topic with nothing to say" for
         // months (see `research.pull`'s own doc comment for the same rule).
-        const adapterResult = await adapter({ promptId, promptText, engine, clientDomains, competitorRoster, ...(clientBrandName ? { clientBrandName } : {}) });
+        const adapterResult = await adapter({
+          promptId,
+          promptText,
+          engine,
+          clientDomains,
+          competitorRoster,
+          ...(clientBrandName ? { clientBrandName } : {}),
+          ...(clientBrandAliases && clientBrandAliases.length > 0 ? { clientBrandAliases } : {}),
+        });
         cell = {
           promptId,
           engine,

@@ -141,6 +141,15 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
     shortfall: "no research source",
   },
   {
+    id: "seo-geo-core-web-vitals",
+    title: "SEO & GEO Core Web Vitals — real-user p75 LCP/INP/CLS through Google PageSpeed Insights (research.fetchCoreWebVitals)",
+    owner: "packages/tools/karos-research (research.fetchCoreWebVitals, packages/tools/karos-research/src/core-web-vitals.ts)",
+    requires: [{ name: "PSI_API_KEY", kind: "enhances" }],
+    whenAbsent:
+      "The tool still tries PageSpeed once on the shared anonymous quota, which exhausts within a day of normal use; a 429 then reports not_available and the technical_cwv bucket's three p75 inputs (25 of the SEO score's 100 points) stay honestly unavailable rather than estimated from a lab run. Prep already carries the key as Secret Manager `psi-api-key`, restricted to pagespeedonline + chromeuxreport.",
+    rationale: "scoring-config.data.ts's technical_cwv bucket measures p75 field data by name; only CrUX supplies it, and PageSpeed Insights is CrUX's keyed public front door.",
+  },
+  {
     id: "seo-geo-ai-visibility-capture",
     title: "SEO & GEO AI-visibility capture — real per-engine answers for research.captureVisibility's captured engines (T-A3/SCRUM-237)",
     owner: "packages/tools/karos-research (research.captureVisibility, packages/tools/karos-research/src/capture-adapters)",

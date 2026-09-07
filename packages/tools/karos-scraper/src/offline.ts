@@ -1,6 +1,7 @@
 import type {
   CrawlOptions,
   PageStatus,
+  RawHtmlPage,
   RawPage,
   RobotsInfo,
   ScrapedRecord,
@@ -89,6 +90,43 @@ export function createOfflineScraper(options: { documentsPerQuery?: number } = {
 
     async fetchStatus(url: string): Promise<PageStatus | undefined> {
       return { url, status: 200, ok: true, headers: { "content-type": "text/html; charset=offline-fixture" } };
+    },
+
+    async fetchHtml(url: string): Promise<RawHtmlPage | undefined> {
+      // A well-formed, self-labelled page so an on-page audit run against this
+      // fixture measures real structure (title, description, one H1, sectioned
+      // H2s, JSON-LD, links) without pretending to be a real site.
+      const origin = new URL(url).origin;
+      const jsonLd = JSON.stringify({
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        "@id": `${origin}/#org`,
+        name: "Acme Corp",
+        url: origin,
+        sameAs: [],
+        dateModified: "2026-01-01T00:00:00.000Z",
+      });
+      const filler = (sentence: string, times: number) => Array.from({ length: times }, () => sentence).join(" ");
+      const html = [
+        '<!doctype html><html lang="en"><head>',
+        '<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
+        "<title>Offline fixture page for SEO audits - Acme</title>",
+        '<meta name="description" content="SYNTHETIC TEST DATA: a deterministic fixture page used by the offline scraper so on-page audits have real structure to measure, never a real site.">',
+        `<link rel="canonical" href="${url}">`,
+        '<meta property="article:modified_time" content="2026-01-01T00:00:00.000Z">',
+        '<meta name="author" content="Offline Fixture">',
+        `<script type="application/ld+json">${jsonLd}</script>`,
+        "</head><body><main>",
+        "<h1>Offline fixture page</h1>",
+        "<p>Acme Corp is a synthetic test company used by the offline scraper fixture. This opening paragraph gives the page a short self-contained answer so extractability checks have something real to measure, and it is deliberately kept between forty and sixty words long for exactly that reason.</p>",
+        "<h2>What does this fixture measure?</h2>",
+        `<p>${filler("It measures headings, word counts, internal links and structured data in a deterministic way, with 3 sample figures like 42% to count.", 9)}</p>`,
+        "<h2>Why is it synthetic?</h2>",
+        `<p>${filler("Because a test must never depend on the network, we generate this body offline every time.", 11)} According to the fixture author, "this page is synthetic". <a href="${origin}/offline-page-0">internal</a> <a href="${origin}/offline-page-1">another</a> <a href="${origin}/about">about</a> <a href="https://example.org/source">source</a> <a href="https://example.com/study">study</a> <a href="https://example.net/report">report</a></p>`,
+        `<img src="${origin}/fixture.png" alt="fixture image">`,
+        "</main></body></html>",
+      ].join("");
+      return { url, finalUrl: url, status: 200, headers: { "content-type": "text/html; charset=offline-fixture" }, html };
     },
 
     async fetchRobots(url: string): Promise<RobotsInfo | undefined> {

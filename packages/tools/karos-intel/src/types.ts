@@ -26,6 +26,14 @@ export const DimensionScoreSchema = z.object({
   dimension: z.enum(DIMENSION_KEYS as [DimensionKey, ...DimensionKey[]]),
   /** The model's real judgment call, 0-100 — this stays an LLM assessment; only the weighted roll-up below is computed deterministically. */
   score: z.number().min(0).max(100),
+  /**
+   * One or two sentences naming the evidence the score rests on — a measured
+   * fact from the site audit, a figure from the SEO/GEO snapshot, a page the
+   * audit read. Optional so older drafts still validate; the v6 craft guide
+   * asks for it on every dimension, because a score with no stated evidence
+   * is the "conservative 50-65" reflex this field exists to end.
+   */
+  rationale: z.string().optional(),
 });
 export type DimensionScore = z.infer<typeof DimensionScoreSchema>;
 
@@ -417,6 +425,8 @@ export interface PersistedDimensionScore {
   dimension: string;
   weight: number;
   score: number;
+  /** The model's stated evidence for this score (v6+), when it gave one. */
+  rationale?: string;
 }
 
 /**

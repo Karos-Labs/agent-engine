@@ -40,24 +40,29 @@ import {
 } from "@agent-engine/tool-karos-seo-geo";
 import type { SeoGeoScoreResult } from "@agent-engine/tool-karos-seo-geo";
 import type { SeoGeoRecommendResult } from "@agent-engine/tool-karos-seo-geo";
-import type { Competitor, TechnicalSeoSnapshot } from "@agent-engine/tools";
+import type { Competitor, CoreWebVitalsSnapshot, EntitySnapshot, OnPageAuditSnapshot, TechnicalSeoSnapshot } from "@agent-engine/tools";
 import { SeoGeoFixDraftAgent } from "../agent/seo-geo-fix-draft-agent.js";
 import { SeoGeoNarrativeAgent } from "../agent/seo-geo-narrative-agent.js";
+import { SeoGeoPromptSetAgent } from "../agent/seo-geo-prompt-set-agent.js";
 import { buildConnectorOverlay } from "./connector-overlay.js";
-import { buildTechnicalMeasurements } from "./measurements.js";
-import { PROMPT_TEMPLATE_VERSION, deriveDefaultPromptSet, sha256Hex } from "./prompt-set.js";
-import type {
-  SeoGeoAgentWorkflowResult,
-  SeoGeoClientContext,
-  SeoGeoCrawlAspectResult,
-  SeoGeoFixDraft,
-  SeoGeoFrozenSet,
-  SeoGeoIntakeConfig,
-  SeoGeoPromptSetDraft,
-  SeoGeoReport,
-  SeoGeoScoringResult,
-  SeoGeoTechnicalPhaseResult,
-  SeoGeoVisibilityCapture,
+import { buildTechnicalMeasurements, describeMeasuredFacts, type MeasurementSources } from "./measurements.js";
+import { PROMPT_TEMPLATE_VERSION, buildIntentPromptSet, deriveDefaultPromptSet, sha256Hex } from "./prompt-set.js";
+import {
+  DESIRED_OUTCOME_NEUTRAL_PREFILL,
+  SEO_GEO_PROMPT_INTENT_TYPES,
+  type SeoGeoAgentWorkflowResult,
+  type SeoGeoClientContext,
+  type SeoGeoCrawlAspectResult,
+  type SeoGeoFixDraft,
+  type SeoGeoFrozenSet,
+  type SeoGeoIntakeConfig,
+  type SeoGeoPrompt,
+  type SeoGeoPromptIntentType,
+  type SeoGeoPromptSetDraft,
+  type SeoGeoReport,
+  type SeoGeoScoringResult,
+  type SeoGeoTechnicalPhaseResult,
+  type SeoGeoVisibilityCapture,
 } from "./types.js";
 
 export interface CreateSeoGeoAgentWorkflowOptions {
@@ -84,24 +89,46 @@ export interface CreateSeoGeoAgentWorkflowOptions {
    * every other consumer, and every test, keeps the gated behaviour.
    */
   autoApprove?: boolean;
+  /**
+   * How a FRESH prompt set is drafted (a reused frozen set is never
+   * redrafted either way). `"agent"` runs `SeoGeoPromptSetAgent` — one bounded
+   * turn that writes the buyer's questions in the buyer's language and market
+   * and names the brand's aliases and real competitors — and falls back to the
+   * templates if that turn fails. `"templates"` (the default) is the
+   * deterministic industry-string set, kept as the default so every test's
+   * fake router keeps its exact turn count; the production wiring passes
+   * `"agent"` (see `buildWorkflowForProduct`).
+   */
+  promptDrafter?: "agent" | "templates";
 }
 
 /**
- * The 4 parallel technical-SEO sub-checks RFC-04 §2 Phase 2 describes
- * (`process/phase-1-technical-seo.md`'s technical infra / on-page /
- * performance-CWV / keyword+content-gaps sub-agents). Modeled as a
- * `wf.fanout`, not 4 separate bounded `BaseAgent`s: the source skill's
- * sub-agents do real judgment over real crawl data, and `technical-infra`
- * (T-A2/SCRUM-236) now has exactly that — `research.crawlTechnicalSeo`'s real
- * robots.txt/sitemap.xml/HTTP-status facts — but the other three still have
- * no real tool behind them (on-page content parsing, Core Web Vitals RUM,
- * keyword/content-gap NLP), so fanning out over plain `research.pull` calls
- * for those three still proves the wiring end-to-end without a bounded agent
- * fabricating "CONFIRMED/LIKELY/HYPOTHESIS" findings against no real
- * evidence (see `measurements.ts`'s header comment for exactly which inputs
- * this environment can and cannot honestly measure today).
+ * The 4 parallel Phase 2 measurement reads (RFC-04 §2), each backed by a real
+ * tool and each independent of the others so a failure in one never costs
+ * the rest (RFC-01 §5.5):
+ *
+ *  - `technical-infra`  — `research.crawlTechnicalSeo`: robots.txt, sitemap,
+ *    per-page HTTP status and `x-robots-tag` (T-A2/SCRUM-236).
+ *  - `on-page`          — `research.auditOnPage`: the pages themselves —
+ *    titles, descriptions, headings and their sections, schema, dates,
+ *    bylines, links, media, `/llms.txt`, sitemap cadence.
+ *  - `performance-cwv`  — `research.fetchCoreWebVitals`: real-user CrUX p75
+ *    LCP/INP/CLS through PageSpeed Insights.
+ *  - `entity-offsite`   — `research.lookupEntity`: the brand's Wikidata item
+ *    and Wikipedia standing.
+ *
+ * The fourth slot used to be `keyword-content-gaps`, a `research.pull` web
+ * search for the bare domain string that bought nothing any measurement read;
+ * the on-page and performance slots were the same kind of placeholder. Those
+ * three slots are why every SEO score capped at ~30 and every GEO-Readiness
+ * score at ~19 regardless of the site: only `technical-infra` fed a real
+ * measurement, so 70-80% of each score's weight was permanently unavailable
+ * and, under `grade_data_only_rule`, permanently zero.
  */
-const TECHNICAL_SEO_ASPECTS = ["technical-infra", "on-page", "performance-cwv", "keyword-content-gaps"] as const;
+const TECHNICAL_SEO_ASPECTS = ["technical-infra", "on-page", "performance-cwv", "entity-offsite"] as const;
+
+/** Every prompt set, agent-drafted or templated, is trimmed to this many per intent type — the quota RFC-04 §2 Phase 1 says is "enforced". */
+const PROMPT_QUOTA_PER_INTENT = 5;
 
 /** Filters a `wf.fanout` result down to the completed slots' outputs — failed slots (RFC-01 §5.5 isolation) are simply excluded, never crash the run. */
 function completedOutputs<T>(slots: readonly SlotOutcome<T>[]): T[] {
@@ -175,7 +202,7 @@ function toSeoGeoCell(cell: {
 }
 
 /** Numeric strings the Phase 8 narrative's `gate.numbersSourced` check will accept — every one is a value the workflow itself already computed, never something the narrative agent could have invented. */
-function buildNarrativeSources(scoring: SeoGeoScoringResult, firedCount: number): string[] {
+function buildNarrativeSources(scoring: SeoGeoScoringResult, firedCount: number, measuredFacts: readonly string[] = []): string[] {
   const sources: string[] = [
     `${scoring.seoScore.score}`,
     `${scoring.seoScore.score}%`,
@@ -184,6 +211,11 @@ function buildNarrativeSources(scoring: SeoGeoScoringResult, firedCount: number)
     `${Math.round(scoring.seoScore.dataCoveragePct)}%`,
     `${Math.round(scoring.geoReadiness.dataCoveragePct)}%`,
     `${firedCount}`,
+    // The measured-basis figures and the measured facts are the workflow's own
+    // numbers too — the narrative may quote them, and only them.
+    ...(scoring.seoScore.measuredBasisScore !== null ? [`${scoring.seoScore.measuredBasisScore}`, `${scoring.seoScore.measuredBasisScore}%`] : []),
+    ...(scoring.geoReadiness.measuredBasisScore !== null ? [`${scoring.geoReadiness.measuredBasisScore}`, `${scoring.geoReadiness.measuredBasisScore}%`] : []),
+    ...measuredFacts,
   ];
   if (scoring.visibilityByN) {
     sources.push(`${scoring.visibilityByN.index}`, `${scoring.visibilityByN.index}%`);
@@ -304,7 +336,7 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
     });
 
     // ── 02: draft (or reuse) the prompt set — RFC-04 §3's only mode-specific step ──
-    const promptSetDraft = await wf.step.code("02-draft-prompt-set", async (): Promise<SeoGeoPromptSetDraft> => {
+    const templateDraft = await wf.step.code("02-draft-prompt-set", async (): Promise<SeoGeoPromptSetDraft> => {
       const beliefsOutcome = await tools["memory.read"]!.execute({ scope: "beliefs" }, { ctx });
       const beliefs = beliefsOutcome.status === "success" ? (beliefsOutcome.result as { beliefs: Record<string, unknown> }).beliefs : {};
       const priorFrozen = beliefs["seoGeoFrozenPromptSet"] as
@@ -317,6 +349,9 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
             language?: string;
             languageFallbackApplied?: boolean;
             quotaShortfalls?: string[];
+            drafter?: "agent" | "templates";
+            brandAliases?: string[];
+            marketSummary?: string;
           }
         | undefined;
 
@@ -345,13 +380,16 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
           language: priorFrozen.language ?? "en",
           languageFallbackApplied: priorFrozen.languageFallbackApplied ?? false,
           quotaShortfalls: priorFrozen.quotaShortfalls ?? [],
+          drafter: priorFrozen.drafter ?? "templates",
+          brandAliases: priorFrozen.brandAliases ?? [],
+          ...(priorFrozen.marketSummary ? { marketSummary: priorFrozen.marketSummary } : {}),
         };
       }
 
-      // No real prompt-authoring UI/judgment source exists in this repo yet
-      // (RFC-04 §2 Phase 1 calls for genuine bounded-agent drafting) — see
-      // `prompt-set.ts`'s header comment for why this is a deterministic
-      // template stand-in instead.
+      // The deterministic template set. When `options.promptDrafter` is
+      // `"agent"`, step 02a below redrafts this in the buyer's own language and
+      // market and step 02b replaces it; the templates stay the fallback the
+      // run can always stand on.
       const industry = (clientContext.profile["industry"] as string | undefined) ?? "this industry";
       const requestedLanguage = clientContext.profile["language"] as string | undefined;
       // The brand as a person writes it, which the `brand` intent's five
@@ -376,8 +414,88 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
         language: drafted.language,
         languageFallbackApplied: drafted.languageFallbackApplied,
         quotaShortfalls: drafted.quotaShortfalls,
+        drafter: "templates",
+        brandAliases: [],
       };
     });
+
+    // ── 02a/02b: redraft in the buyer's language and market (RFC-04 §2 Phase 1 as written) ──
+    //
+    // Only for a FRESH set and only when the production wiring asked for it:
+    // a reused frozen set is the same measurement continued, and a template
+    // set is what every test's fake router already counts on. The agent's
+    // output goes through the same quota/dedupe the templates do, and any
+    // failure — a malformed turn, a schema miss, a tooling error — keeps the
+    // template draft and records why, so drafting judgment can only ever
+    // improve the set, never leave the run without one.
+    let promptSetDraft: SeoGeoPromptSetDraft = templateDraft;
+    if (templateDraft.source === "drafted" && options.promptDrafter === "agent") {
+      const promptSetAgent = new SeoGeoPromptSetAgent({ router: options.router, tools, promptStore: options.promptStore });
+      const knownCompetitors = clientContext.competitors.map((c) => ({ name: c.name, ...(c.website ? { website: c.website } : {}) }));
+      const agentResult = await wf.step.agent("02a-draft-prompt-set-agent", promptSetAgent, {
+        brandName: (typeof clientContext.profile["name"] === "string" && (clientContext.profile["name"] as string).trim()) || wf.clientSlug,
+        industry: clientContext.profile["industry"] ?? null,
+        description: clientContext.profile["description"] ?? null,
+        website: clientContext.profile["website"] ?? null,
+        domains: clientContext.clientDomains,
+        profileLanguage: clientContext.profile["language"] ?? null,
+        // The kit's prose carries the client's own words for who they are and
+        // who they serve — the best market evidence a profile usually has.
+        brandGuidelines: typeof clientContext.brand["guidelines"] === "string" ? (clientContext.brand["guidelines"] as string).slice(0, 4000) : null,
+        knownCompetitors,
+        quotaPerIntent: PROMPT_QUOTA_PER_INTENT,
+        intentTypes: [...SEO_GEO_PROMPT_INTENT_TYPES],
+        templateExamples: templateDraft.prompts.slice(0, 6).map((p) => ({ intentType: p.intentType, promptText: p.promptText })),
+      });
+
+      promptSetDraft = await wf.step.code("02b-finalize-prompt-set", (): SeoGeoPromptSetDraft => {
+        if (agentResult.status !== "completed" || !agentResult.finalOutput) {
+          return { ...templateDraft, drafterFallbackReason: `prompt-set agent resolved to "${agentResult.status}"; kept the template set` };
+        }
+        const output = agentResult.finalOutput;
+        const candidatesByIntent = {} as Record<SeoGeoPromptIntentType, readonly string[]>;
+        for (const intentType of SEO_GEO_PROMPT_INTENT_TYPES) {
+          candidatesByIntent[intentType] = output.prompts.filter((p) => p.intentType === intentType).map((p) => p.promptText.trim()).filter(Boolean);
+        }
+        const built = buildIntentPromptSet(candidatesByIntent, PROMPT_QUOTA_PER_INTENT);
+        // A set missing a whole intent type is not a usable measurement — the
+        // templates, which always cover all five, win over a partial agent draft.
+        const coveredIntents = new Set(built.entries.map((e) => e.intentType));
+        if (coveredIntents.size < SEO_GEO_PROMPT_INTENT_TYPES.length) {
+          return {
+            ...templateDraft,
+            drafterFallbackReason: `prompt-set agent covered ${coveredIntents.size} of ${SEO_GEO_PROMPT_INTENT_TYPES.length} intent types; kept the template set`,
+          };
+        }
+        const prompts: SeoGeoPrompt[] = built.entries.map((entry, index) => ({
+          promptId: `prompt_${String(index + 1).padStart(2, "0")}`,
+          promptText: entry.promptText,
+          intentType: entry.intentType,
+          desiredOutcome: DESIRED_OUTCOME_NEUTRAL_PREFILL,
+        }));
+        // Curated competitors win (a human typed them); otherwise the agent's
+        // real roster, which is exactly the "no roster at all" case step 01
+        // reported as `competitorRosterSource: "none"` for most clients.
+        const curated = clientContext.competitorRosterSource === "client-curated" ? clientContext.competitors.map((c) => c.name) : [];
+        const brandName = (typeof clientContext.profile["name"] === "string" ? (clientContext.profile["name"] as string).trim() : "") || wf.clientSlug;
+        const agentRoster = output.competitors.map((c) => c.name.trim()).filter((n) => n && n.toLowerCase() !== brandName.toLowerCase());
+        const competitorRoster = [...new Set(curated.length > 0 ? [...curated, ...agentRoster] : agentRoster.length > 0 ? agentRoster : templateDraft.competitorRoster)];
+        const brandAliases = [...new Set(output.brandAliases.map((a) => a.trim()).filter((a) => a && a.toLowerCase() !== brandName.toLowerCase()))].slice(0, 6);
+        return {
+          prompts,
+          competitorRoster,
+          source: "drafted",
+          templateVersion: PROMPT_TEMPLATE_VERSION,
+          ...(templateDraft.redraftReason ? { redraftReason: templateDraft.redraftReason } : {}),
+          language: output.language.trim().toLowerCase() || templateDraft.language,
+          languageFallbackApplied: false,
+          quotaShortfalls: built.quotaShortfalls,
+          drafter: "agent",
+          brandAliases,
+          marketSummary: output.marketSummary,
+        };
+      });
+    }
 
     // ── 03: human gate — nothing spends AI-visibility capture budget without sign-off ──
     const promptSetDecision: GateResponse = options.autoApprove
@@ -499,6 +617,13 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
               language: promptSetDraft.language,
               languageFallbackApplied: promptSetDraft.languageFallbackApplied,
               quotaShortfalls: promptSetDraft.quotaShortfalls,
+              // Who drafted the set and how the brand is spelled travel with
+              // it: a reused set has to detect mentions the same way the run
+              // that froze it did, or a recurring run silently changes what
+              // "mentioned" means.
+              drafter: promptSetDraft.drafter,
+              brandAliases: promptSetDraft.brandAliases,
+              ...(promptSetDraft.marketSummary ? { marketSummary: promptSetDraft.marketSummary } : {}),
               frozenAt: new Date().toISOString(),
             },
             // SCRUM-396: frozen alongside the prompt set, in the SAME diff, so
@@ -526,30 +651,30 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
         language: promptSetDraft.language,
         languageFallbackApplied: promptSetDraft.languageFallbackApplied,
         quotaShortfalls: promptSetDraft.quotaShortfalls,
+        drafter: promptSetDraft.drafter,
+        brandAliases: promptSetDraft.brandAliases,
+        ...(promptSetDraft.marketSummary ? { marketSummary: promptSetDraft.marketSummary } : {}),
       };
     });
 
-    // ── 05: crawl + technical SEO — 4 parallel sub-checks (RFC-04 §2 Phase 2), fanned out ──
+    // ── 05: the four measurement reads (RFC-04 §2 Phase 2), fanned out ──
     //
-    // Only "technical-infra" has a real tool behind it today
-    // (`research.crawlTechnicalSeo`, T-A2/SCRUM-236 — wiring T-A1's crawl
-    // capabilities up as a tool for the first time). The other 3
-    // (`on-page`/`performance-cwv`/`keyword-content-gaps`) still call
-    // `research.pull`, exactly as before this ticket: on-page content
-    // parsing, Core Web Vitals RUM, and keyword/content-gap NLP have no real
-    // tool in this environment yet, so there is nothing honest for those
-    // three to derive beyond what `research.pull` already did. Every aspect
-    // still fans out and checkpoints independently (RFC-01 §5.5 isolation) —
-    // a crawl failure never blocks the other three.
+    // See `TECHNICAL_SEO_ASPECTS`. `technical-infra` keeps its original
+    // contract (a failed crawl fails its slot, which `completedOutputs` then
+    // excludes). The three new reads complete their slot even when the tool
+    // reports `not_available` — with the reason on the result instead of a
+    // snapshot — so the report can say exactly which inputs stayed unavailable
+    // and why, rather than a silently missing slot.
     const crawlSlots = await wf.fanout(
       "05-crawl-technical-seo",
       TECHNICAL_SEO_ASPECTS,
       async (aspect, slotCtx): Promise<SeoGeoCrawlAspectResult> => {
         const slotAgentCtx = toAgentContext(slotCtx);
         const domain = clientContext.clientDomains[0] ?? wf.clientSlug;
+        const seedUrl = typeof clientContext.profile["website"] === "string" && /^https?:\/\//i.test(clientContext.profile["website"] as string) ? (clientContext.profile["website"] as string) : `https://${domain}`;
 
         if (aspect === "technical-infra") {
-          const outcome = await tools["research.crawlTechnicalSeo"]!.execute({ seedUrl: `https://${domain}`, limit: 10 }, { ctx: slotAgentCtx });
+          const outcome = await tools["research.crawlTechnicalSeo"]!.execute({ seedUrl, limit: 12 }, { ctx: slotAgentCtx });
           if (outcome.status !== "success") {
             throw new WorkflowToolingFailure(`research.crawlTechnicalSeo (${aspect}) failed: ${outcome.status}`);
           }
@@ -557,38 +682,105 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
           return { aspect, runId: result.runId, fromCache: false, technicalSnapshot: result.snapshot };
         }
 
-        // Hyphenated, not colon-separated: `research.pull`'s `job` string is used
-        // directly as a `WorkspaceStore` path segment (see
-        // `karos-research/src/runs.ts`'s `runSegments`), and `:` is an invalid
-        // Windows path character outside a drive letter — this bit a first
-        // draft of this step with an `ENOENT` on `mkdir`.
-        const outcome = await tools["research.pull"]!.execute({ job: `seo-crawl-${aspect}`, query: domain, window: "30d" }, { ctx: slotAgentCtx });
-        if (outcome.status !== "success") {
-          throw new WorkflowToolingFailure(`research.pull (${aspect}) failed: ${outcome.status}`);
+        const unavailable = (status: string, reason?: string): SeoGeoCrawlAspectResult => ({
+          aspect,
+          runId: `${aspect}-${status}`,
+          fromCache: false,
+          unavailableReason: reason ? `${status}: ${reason}` : status,
+        });
+        const reasonOf = (outcome: { status: string; reason?: string }): string | undefined => ("reason" in outcome && typeof outcome.reason === "string" ? outcome.reason : undefined);
+
+        if (aspect === "on-page") {
+          const tool = tools["research.auditOnPage"];
+          if (!tool) return unavailable("not_available", "research.auditOnPage is not in this registry");
+          const outcome = await tool.execute({ seedUrl, limit: 8 }, { ctx: slotAgentCtx });
+          if (outcome.status !== "success") return unavailable(outcome.status, reasonOf(outcome as { status: string; reason?: string }));
+          const result = outcome.result as { runId: string; snapshot: OnPageAuditSnapshot; fromCache: boolean };
+          return { aspect, runId: result.runId, fromCache: result.fromCache, onPageSnapshot: result.snapshot };
         }
-        const result = outcome.result as { runId: string; fromCache: boolean };
-        return { aspect, runId: result.runId, fromCache: result.fromCache };
+
+        if (aspect === "performance-cwv") {
+          const tool = tools["research.fetchCoreWebVitals"];
+          if (!tool) return unavailable("not_available", "research.fetchCoreWebVitals is not in this registry");
+          const outcome = await tool.execute({ url: seedUrl, strategy: "mobile" }, { ctx: slotAgentCtx });
+          if (outcome.status !== "success") return unavailable(outcome.status, reasonOf(outcome as { status: string; reason?: string }));
+          const result = outcome.result as { runId: string; snapshot: CoreWebVitalsSnapshot; fromCache: boolean };
+          return { aspect, runId: result.runId, fromCache: result.fromCache, coreWebVitals: result.snapshot };
+        }
+
+        // entity-offsite
+        const tool = tools["research.lookupEntity"];
+        if (!tool) return unavailable("not_available", "research.lookupEntity is not in this registry");
+        const brandName = (typeof clientContext.profile["name"] === "string" && (clientContext.profile["name"] as string).trim()) || wf.clientSlug;
+        const outcome = await tool.execute(
+          {
+            brandName,
+            aliases: frozen.brandAliases,
+            clientDomains: clientContext.clientDomains,
+            preferredLanguages: [...new Set([frozen.language.split("-")[0]!, "en"])],
+          },
+          { ctx: slotAgentCtx },
+        );
+        if (outcome.status !== "success") return unavailable(outcome.status, reasonOf(outcome as { status: string; reason?: string }));
+        const result = outcome.result as { runId: string; snapshot: EntitySnapshot; fromCache: boolean };
+        return { aspect, runId: result.runId, fromCache: result.fromCache, entity: result.snapshot };
       },
     );
 
-    // ── 06: derive SEO/GEO-Readiness measurements from the crawl phase ──
-    const technicalPhase = await wf.step.code("06-derive-technical-measurements", (): SeoGeoTechnicalPhaseResult => {
+    // ── 06: derive SEO/GEO-Readiness measurements from every snapshot this run has ──
+    const technicalPhase = await wf.step.code("06-derive-technical-measurements", async (): Promise<SeoGeoTechnicalPhaseResult> => {
       const completedAspects = completedOutputs(crawlSlots);
       const crawlSnapshotHash = sha256Hex(
         [...completedAspects].sort((a, b) => a.aspect.localeCompare(b.aspect)).map((a) => ({ aspect: a.aspect, runId: a.runId })),
       );
-      // "technical-infra" is the only aspect carrying a real snapshot today
-      // (see step 05's own comment) — `find` rather than assuming array
-      // position, since a failed technical-infra slot is simply excluded by
-      // `completedOutputs` (RFC-01 §5.5), leaving `technicalSnapshot`
-      // `undefined` and every derived measurement honestly `unavailable`.
-      const technicalSnapshot = completedAspects.find((a) => a.aspect === "technical-infra")?.technicalSnapshot;
+      // `find` rather than array position: a failed slot is simply excluded by
+      // `completedOutputs` (RFC-01 §5.5), and an unavailable read carries its
+      // reason instead of a snapshot.
+      const byAspect = (name: (typeof TECHNICAL_SEO_ASPECTS)[number]) => completedAspects.find((a) => a.aspect === name);
+      const sources: MeasurementSources = {
+        technical: byAspect("technical-infra")?.technicalSnapshot,
+        onPage: byAspect("on-page")?.onPageSnapshot,
+        coreWebVitals: byAspect("performance-cwv")?.coreWebVitals,
+        entity: byAspect("entity-offsite")?.entity,
+      };
+      const measurementSources: SeoGeoTechnicalPhaseResult["measurementSources"] = {
+        technical: sources.technical ? "measured" : (byAspect("technical-infra") ? "unavailable" : "slot_failed"),
+        onPage: sources.onPage ? "measured" : (byAspect("on-page")?.unavailableReason ?? "slot_failed"),
+        coreWebVitals: sources.coreWebVitals?.field ? "crux-field" : sources.coreWebVitals ? "lab-only" : (byAspect("performance-cwv")?.unavailableReason ?? "slot_failed"),
+        entity: sources.entity ? (sources.entity.match === "official-website" ? "wikidata-matched" : "wikidata-no-match") : (byAspect("entity-offsite")?.unavailableReason ?? "slot_failed"),
+      };
+
+      // A measurement SOURCE change is logged like prompt-set drift, never
+      // silent: the day Core Web Vitals go from unavailable to real-user field
+      // data, every SEO score moves for a reason that has nothing to do with the
+      // site, and a reader of the trend has to be able to see that.
+      const beliefsOutcome = await tools["memory.read"]!.execute({ scope: "beliefs" }, { ctx });
+      const beliefs = beliefsOutcome.status === "success" ? (beliefsOutcome.result as { beliefs: Record<string, unknown> }).beliefs : {};
+      const prior = beliefs["seoGeoMeasurementSources"] as Partial<SeoGeoTechnicalPhaseResult["measurementSources"]> | undefined;
+      const summarise = (m: Partial<SeoGeoTechnicalPhaseResult["measurementSources"]> | undefined) =>
+        m ? `technical=${m.technical ?? "?"}, onPage=${m.onPage ?? "?"}, coreWebVitals=${m.coreWebVitals ?? "?"}, entity=${m.entity ?? "?"}` : "none";
+      const changed = prior !== undefined && summarise(prior) !== summarise(measurementSources);
+      if (changed) {
+        await tools["memory.appendDecision"]!.execute(
+          {
+            decisionId: `${wf.runId}__measurement_source_change`,
+            summary: `SEO & GEO measurement sources changed on this run (prior ${summarise(prior)}; now ${summarise(measurementSources)}) — scores move with the source, so this is logged per client, never silent.`,
+          },
+          { ctx },
+        );
+      }
+      if (prior === undefined || changed) {
+        await tools["memory.updateBeliefs"]!.execute({ diff: { seoGeoMeasurementSources: { ...measurementSources, recordedAt: new Date().toISOString() } } }, { ctx });
+      }
+
       return {
-        seoMeasurements: buildTechnicalMeasurements(SEO_BUCKETS, technicalSnapshot),
-        geoReadinessMeasurements: buildTechnicalMeasurements(GEO_READINESS_BUCKETS, technicalSnapshot),
+        seoMeasurements: buildTechnicalMeasurements(SEO_BUCKETS, sources),
+        geoReadinessMeasurements: buildTechnicalMeasurements(GEO_READINESS_BUCKETS, sources),
         crawlSnapshotHash,
         aspectsAttempted: crawlSlots.length,
         aspectsCompleted: completedAspects.length,
+        measurementSources,
+        measuredFacts: describeMeasuredFacts(sources),
       };
     });
 
@@ -627,6 +819,10 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
             ...(typeof clientContext.profile["name"] === "string" && clientContext.profile["name"].trim()
               ? { clientBrandName: (clientContext.profile["name"] as string).trim() }
               : {}),
+            // The other spellings the frozen set carries (native script, a
+            // transliteration) — an engine answering in the buyer's language
+            // writes the brand the way that language does.
+            ...(frozen.brandAliases.length > 0 ? { clientBrandAliases: frozen.brandAliases } : {}),
             window: "30d",
           },
           { ctx: slotAgentCtx },
@@ -883,11 +1079,17 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
         ...referenceMaterialsField(runDirection),
         seoScore: scoring.seoScore.score,
         seoDataCoveragePct: Math.round(scoring.seoScore.dataCoveragePct),
+        seoMeasuredBasisScore: scoring.seoScore.measuredBasisScore,
         geoReadinessScore: scoring.geoReadiness.score,
         geoDataCoveragePct: Math.round(scoring.geoReadiness.dataCoveragePct),
+        geoMeasuredBasisScore: scoring.geoReadiness.measuredBasisScore,
         visibilityIndex: scoring.visibilityByN?.index ?? null,
         firedRecommendationCount: recommendations.length,
         topFiredRecommendations: recommendations.slice(0, 3).map((r) => ({ recId: r.recId, recommendation: r.recommendation, fireState: r.fireState })),
+        // What was actually observed, so the summary can say something about
+        // the site rather than only about the audit. Every number in these
+        // lines is also in the gate's sources.
+        measuredFacts: technicalPhase.measuredFacts.slice(0, 10),
         ...(directive !== undefined ? { revisionRequest: directive } : {}),
       });
       if (narrativeResult.status === "content_fail") {
@@ -900,7 +1102,7 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
 
       // ── gate the narrative against fabricated numbers (RFC-04 §2 Phase 8's own recommendation) ──
       await wf.step.code(rev("15-verify-narrative-numbers"), async () => {
-        const sources = buildNarrativeSources(scoring, recommendations.length);
+        const sources = buildNarrativeSources(scoring, recommendations.length, technicalPhase.measuredFacts);
         const verdict = await runGate(tools, "gate.numbersSourced", { text: narrative.summary, sources }, ctx);
         if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.numbersSourced: ${verdict.reason}`);
         if (verdict.verdict === "content_fail") throw new WorkflowHeld(`narrative numbers not sourced: ${verdict.reason}`);
@@ -992,6 +1194,12 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       firedRecommendations: recommendations,
       fixDrafts,
       narrative: narrativeSummary,
+      // The observed facts and where each family of inputs came from — so a
+      // reader can tell "the site failed this check" from "this check could
+      // not run", and the portal can show the site's real standing next to
+      // the coverage it was measured at.
+      measuredFacts: technicalPhase.measuredFacts,
+      measurementSources: technicalPhase.measurementSources,
       reproducibility: {
         inputsDigest: scoring.inputsDigest,
         hashInputsIncomplete: scoring.hashInputsIncomplete,
@@ -1000,8 +1208,13 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       promptSet: {
         prompts: frozen.prompts,
         source: promptSetDraft.source,
+        drafter: frozen.drafter,
         promptSetHash: frozen.promptSetHash,
         competitorSetHash: frozen.competitorSetHash,
+        competitorRoster: frozen.competitorRoster,
+        brandAliases: frozen.brandAliases,
+        ...(frozen.marketSummary ? { marketSummary: frozen.marketSummary } : {}),
+        ...(promptSetDraft.drafterFallbackReason ? { drafterFallbackReason: promptSetDraft.drafterFallbackReason } : {}),
         language: frozen.language,
         languageFallbackApplied: frozen.languageFallbackApplied,
         quotaShortfalls: frozen.quotaShortfalls,
@@ -1017,7 +1230,11 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       deliverable: report,
       snapshot: (deliverableId) => ({
         seoScore: scoring.seoScore.score,
+        seoDataCoveragePct: Math.round(scoring.seoScore.dataCoveragePct),
+        seoMeasuredBasisScore: scoring.seoScore.measuredBasisScore,
         geoReadinessScore: scoring.geoReadiness.score,
+        geoDataCoveragePct: Math.round(scoring.geoReadiness.dataCoveragePct),
+        geoMeasuredBasisScore: scoring.geoReadiness.measuredBasisScore,
         visibilityIndexN: scoring.visibilityByN?.index ?? null,
         firedRecommendationCount: recommendations.length,
         deliverableId,
@@ -1030,10 +1247,43 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
     // feedback pipeline (AU22: this step used to also call the now-retired
     // `ledger.feedbackAppend`, a write-only log nothing ever read). ──
     await wf.step.code("20-commit-and-record", async () => {
+      // The compact cross-agent handoff: `intel-report-agent` reads this
+      // belief (its `01i-load-seo-geo-snapshot` step) so its SEO and GEO
+      // dimensions are judged from this run's measured facts and scores
+      // instead of from a web search about the category. Client memory is
+      // the one place both agents already meet (the frozen prompt set lives
+      // here too); RFC-05's rule that the two workflows never import each
+      // other still holds.
+      await tools["memory.updateBeliefs"]!.execute(
+        {
+          diff: {
+            seoGeoLatestSnapshot: {
+              runId: wf.runId,
+              recordedAt: new Date().toISOString(),
+              seoScore: scoring.seoScore.score,
+              seoDataCoveragePct: Math.round(scoring.seoScore.dataCoveragePct),
+              seoMeasuredBasisScore: scoring.seoScore.measuredBasisScore,
+              geoReadinessScore: scoring.geoReadiness.score,
+              geoDataCoveragePct: Math.round(scoring.geoReadiness.dataCoveragePct),
+              geoMeasuredBasisScore: scoring.geoReadiness.measuredBasisScore,
+              visibilityIndex: scoring.visibilityByN?.index ?? null,
+              measuredFacts: technicalPhase.measuredFacts,
+              measurementSources: technicalPhase.measurementSources,
+              topFiredRecommendations: recommendations.slice(0, 8).map((r) => ({ recId: r.recId, recommendation: r.recommendation, fireState: r.fireState, impact: r.impact })),
+              promptSetLanguage: frozen.language,
+              competitorRoster: frozen.competitorRoster,
+            },
+          },
+        },
+        { ctx },
+      );
       await tools["memory.appendDecision"]!.execute(
         {
           decisionId: `${wf.runId}__decision`,
-          summary: `SEO & GEO run scored SEO=${scoring.seoScore.score} GEO-Readiness=${scoring.geoReadiness.score} (partial=${scoring.seoScore.partial || scoring.geoReadiness.partial}); ${recommendations.length} recommendation(s) fired.`,
+          summary:
+            `SEO & GEO run scored SEO=${scoring.seoScore.score} (${Math.round(scoring.seoScore.dataCoveragePct)}% measured; ${scoring.seoScore.measuredBasisScore ?? "n/a"} on measured checks) ` +
+            `GEO-Readiness=${scoring.geoReadiness.score} (${Math.round(scoring.geoReadiness.dataCoveragePct)}% measured; ${scoring.geoReadiness.measuredBasisScore ?? "n/a"} on measured checks); ` +
+            `${recommendations.length} recommendation(s) fired.`,
         },
         { ctx },
       );
@@ -1041,7 +1291,11 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
 
     return {
       seoScore: scoring.seoScore.score,
+      seoDataCoveragePct: Math.round(scoring.seoScore.dataCoveragePct),
+      seoMeasuredBasisScore: scoring.seoScore.measuredBasisScore,
       geoReadinessScore: scoring.geoReadiness.score,
+      geoDataCoveragePct: Math.round(scoring.geoReadiness.dataCoveragePct),
+      geoMeasuredBasisScore: scoring.geoReadiness.measuredBasisScore,
       visibilityIndexN: scoring.visibilityByN?.index ?? null,
       visibilityIndexNe: scoring.visibilityByNe?.index ?? null,
       firedRecommendationCount: recommendations.length,

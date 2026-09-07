@@ -40,6 +40,13 @@ export interface AnalyzeAnswerInput {
    * caller; absent, the domain token remains the fallback it always was.
    */
   clientBrandName?: string;
+  /**
+   * Other spellings of the client — a native-script name ("גיקטיים"), a
+   * transliteration, a former name. An engine answering in the client's own
+   * language writes the brand the way that language does, and a Latin-only
+   * alias list reported `brandMentioned: false` on every such answer.
+   */
+  clientBrandAliases?: readonly string[];
   /** Competitor DISPLAY NAMES (`competitorRoster`) — matched as literal case-insensitive substrings, same convention `prompt-set.ts`'s dedupe and the rest of this migration already use for "no NLP tool, so match on what the text actually says." */
   competitorRoster: readonly string[];
 }
@@ -101,13 +108,14 @@ function findAll(haystack: string, needle: string): { firstOffset?: number; coun
  * a mention that isn't a literal case-insensitive substring match.
  */
 export function analyzeAnswer(input: AnalyzeAnswerInput): AnalyzedMention {
-  const { text, citationUrls, clientDomains, competitorRoster, clientBrandName } = input;
+  const { text, citationUrls, clientDomains, competitorRoster, clientBrandName, clientBrandAliases = [] } = input;
 
   // Every spelling of the client worth looking for, best first. The display
-  // name is the one an engine actually writes; the domain token stays as the
-  // fallback for a caller that supplies no name, and also catches the times an
-  // answer writes the bare domain instead of the brand.
-  const brandAliases = [clientBrandName?.trim(), clientDomains.length > 0 ? brandTokenFromDomain(clientDomains[0]!) : ""].filter(
+  // name is the one an engine actually writes; the caller's aliases cover the
+  // other ways it gets written (native script, transliteration); the domain
+  // token stays as the fallback for a caller that supplies no name, and also
+  // catches the times an answer writes the bare domain instead of the brand.
+  const brandAliases = [clientBrandName?.trim(), ...clientBrandAliases.map((a) => a.trim()), clientDomains.length > 0 ? brandTokenFromDomain(clientDomains[0]!) : ""].filter(
     (alias): alias is string => Boolean(alias),
   );
 

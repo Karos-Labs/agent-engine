@@ -27,7 +27,8 @@ import {
   revisionDirective,
   runReviewCycle,
 } from "@agent-engine/workflow";
-import type { ClientBrand, ClientProfile, Competitor } from "@agent-engine/tools";
+import type { ClientBrand, ClientProfile, Competitor, OnPageAuditSnapshot, PageSignals, TechnicalSeoSnapshot } from "@agent-engine/tools";
+import { isPathDisallowed } from "@agent-engine/tool-karos-scraper";
 import type { IntelReportOutput } from "@agent-engine/tool-karos-intel";
 import {
   IntelReportDraftAgent,
@@ -35,7 +36,84 @@ import {
   INTEL_REPORT_DRAFT_MODEL_POLICY,
 } from "../agent/intel-report-draft-agent.js";
 import { IntelReportGroundingAgent } from "../agent/intel-report-grounding-agent.js";
-import type { IntelReportAgentWorkflowResult, IntelReportClientContext, IntelReportResearch } from "./types.js";
+import type {
+  IntelReportAgentWorkflowResult,
+  IntelReportAuditedPage,
+  IntelReportClientContext,
+  IntelReportClientResearch,
+  IntelReportCompetitorSite,
+  IntelReportResearch,
+  IntelReportSeoGeoSnapshot,
+  IntelReportSiteAudit,
+} from "./types.js";
+
+/** The AI/search crawlers whose root access the SEO/GEO config checks (GEO-01) — repeated here rather than imported: RFC-05 §2 keeps this workflow free of `@agent-engine/tool-karos-seo-geo`. */
+const AI_CRAWLERS = ["OAI-SearchBot", "PerplexityBot", "ClaudeBot", "Googlebot", "Bingbot"] as const;
+
+/** A `PageSignals` page compacted to what a drafting prompt should read: the words on the page and the facts about its markup, not the markup. */
+function compactPage(page: PageSignals): IntelReportAuditedPage {
+  const h1 = page.headings.find((h) => h.level === 1)?.text;
+  return {
+    url: page.finalUrl,
+    ...(page.title ? { title: page.title } : {}),
+    ...(page.metaDescription ? { metaDescription: page.metaDescription } : {}),
+    ...(h1 ? { h1 } : {}),
+    headings: page.headings.filter((h) => h.level === 2 || h.level === 3).map((h) => h.text).slice(0, 12),
+    wordCount: page.wordCount,
+    ...(page.dateModified ? { dateModified: page.dateModified } : {}),
+    authorByline: page.authorByline,
+    schemaTypes: page.jsonLd.types.slice(0, 8),
+    internalLinkCount: page.internalLinkCount,
+    externalDomains: page.externalDomains.slice(0, 8),
+    images: page.images,
+    excerpt: page.excerpt.slice(0, 600),
+  };
+}
+
+/** Builds step 01f's compact site audit from the two real reads. Pure, so the shape is testable without a network. */
+export function summariseSiteAudit(seedUrl: string, onPage: OnPageAuditSnapshot | undefined, technical: TechnicalSeoSnapshot | undefined): IntelReportSiteAudit | null {
+  const pages = (onPage?.pages ?? []).filter((p) => p.status === 200);
+  if (pages.length === 0 && !technical) return null;
+  const jsonLdTypes = [...new Set(pages.flatMap((p) => p.jsonLd.types))].slice(0, 12);
+  const robotsBlocks = technical?.robots ? AI_CRAWLERS.filter((bot) => isPathDisallowed(technical.robots!, "/", bot)) : [];
+  const reachable = technical ? { ok: technical.pages.filter((p) => p.status === 200).length, checked: technical.pages.length } : undefined;
+  const site: IntelReportSiteAudit["site"] = {
+    https: pages.length > 0 ? pages.every((p) => p.https) : /^https:/i.test(seedUrl),
+    llmsTxtPresent: onPage?.llmsTxt.present ?? false,
+    jsonLdTypes,
+    pagesWithDateModified: pages.filter((p) => p.dateModified).length,
+    pagesWithSingleH1: pages.filter((p) => p.h1Count === 1).length,
+    pagesWithMetaDescription: pages.filter((p) => p.metaDescription).length,
+    ...(reachable ? { reachable } : {}),
+    robotsBlocks,
+    ...(onPage?.sitemap ? { sitemapEntries: onPage.sitemap.entryCount } : {}),
+    ...(onPage?.sitemap?.newestLastmod ? { sitemapNewestLastmod: onPage.sitemap.newestLastmod } : {}),
+    ...(onPage?.sitemap?.maxGapDaysTrailing6mo !== undefined ? { longestPublishingGapDays: onPage.sitemap.maxGapDaysTrailing6mo } : {}),
+  };
+  const facts: string[] = [];
+  if (reachable) facts.push(`${reachable.ok} of ${reachable.checked} crawled URLs answered HTTP 200.`);
+  if (technical?.robots) facts.push(robotsBlocks.length === 0 ? "robots.txt allows every major AI and search crawler at the root." : `robots.txt disallows ${robotsBlocks.join(", ")} at the root.`);
+  if (pages.length > 0) {
+    facts.push(`${pages.length} pages audited: ${site.pagesWithSingleH1} with a single H1, ${site.pagesWithMetaDescription} with a meta description, ${site.pagesWithDateModified} declaring a modified date.`);
+    facts.push(jsonLdTypes.length > 0 ? `Structured data present: ${jsonLdTypes.join(", ")}.` : "No JSON-LD structured data on the audited pages.");
+    facts.push(site.llmsTxtPresent ? "An /llms.txt file is published." : "No /llms.txt file is published.");
+    const withBylines = pages.filter((p) => p.authorByline).length;
+    facts.push(`${withBylines} of ${pages.length} audited pages carry an author byline.`);
+  }
+  if (onPage?.sitemap) {
+    facts.push(`The sitemap lists ${onPage.sitemap.truncated ? "at least " : ""}${onPage.sitemap.entryCount} URLs${onPage.sitemap.entriesTrailing6mo > 0 ? `, ${onPage.sitemap.entriesTrailing6mo} modified in the last six months` : ""}${site.longestPublishingGapDays !== undefined ? `; the longest publishing gap in that window is ${site.longestPublishingGapDays} days` : ""}.`);
+  }
+  return { seedUrl, pagesAudited: pages.length, pages: pages.map(compactPage), site, facts };
+}
+
+function hostOf(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  try {
+    return new URL(/^https?:\/\//i.test(url) ? url : `https://${url}`).hostname.replace(/^www\./i, "");
+  } catch {
+    return undefined;
+  }
+}
 
 export interface CreateIntelReportAgentWorkflowOptions {
   /** The base Layer 3 registry (karos-client/research/intel/gates/ledger) — this workflow adds nothing of its own on top. */
@@ -225,6 +303,105 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
       }),
     );
 
+    // ── 01f-01i: the evidence this report used to be written without ──
+    //
+    // Until these four steps existed the drafting prompt saw the profile, the
+    // brand kit, the competitor list and six web-search results about the
+    // CATEGORY — and not one page of the client's own site, nothing about the
+    // client by name, nothing a competitor's site actually says, and none of
+    // the SEO/GEO measurements the sibling agent takes. Every "the homepage
+    // does X" was training-knowledge guesswork, and the craft guide's
+    // "score 50-65 when uncertain" rule made every report land in the same
+    // mid-60s band regardless of the company. Each read below is best-effort
+    // and checkpointed on its own: a site that cannot be fetched costs the
+    // report that evidence, never the run.
+    const website = typeof clientContext.profile["website"] === "string" ? (clientContext.profile["website"] as string).trim() : undefined;
+    const seedUrl = website ? (/^https?:\/\//i.test(website) ? website : `https://${website}`) : undefined;
+
+    const siteAudit = await wf.step.code("01f-audit-client-site", async (): Promise<IntelReportSiteAudit | null> => {
+      if (!seedUrl) return null;
+      const audit = tools["research.auditOnPage"];
+      const crawl = tools["research.crawlTechnicalSeo"];
+      try {
+        const [auditOutcome, crawlOutcome] = await Promise.all([
+          audit ? audit.execute({ seedUrl, limit: 8, window: "3d" }, { ctx }) : Promise.resolve(undefined),
+          crawl ? crawl.execute({ seedUrl, limit: 12 }, { ctx }) : Promise.resolve(undefined),
+        ]);
+        const onPage = auditOutcome?.status === "success" ? (auditOutcome.result as { snapshot: OnPageAuditSnapshot }).snapshot : undefined;
+        const technical = crawlOutcome?.status === "success" ? (crawlOutcome.result as { snapshot: TechnicalSeoSnapshot }).snapshot : undefined;
+        return summariseSiteAudit(seedUrl, onPage, technical);
+      } catch (error) {
+        console.error("01f-audit-client-site: could not audit the client's site, drafting without it", error);
+        return null;
+      }
+    });
+
+    const clientResearch = await wf.step.code("01g-research-client", async (): Promise<IntelReportClientResearch | null> => {
+      const name = typeof clientContext.profile["name"] === "string" ? (clientContext.profile["name"] as string).trim() : "";
+      if (!name) return null;
+      const industry = typeof clientContext.profile["industry"] === "string" ? (clientContext.profile["industry"] as string) : "";
+      const domain = hostOf(seedUrl);
+      // The client by NAME, not the category: news, reviews, rankings and
+      // mentions of this company are what the brand, growth and positioning
+      // sections need and what the category scan structurally never returns.
+      const query = [`"${name}"`, industry, domain].filter(Boolean).join(" ");
+      try {
+        const outcome = await tools["research.pull"]!.execute({ job: "intel-client-scan", query, window: "30d", maxResults: 5 }, { ctx });
+        if (outcome.status !== "success") return null;
+        const result = outcome.result as { runId: string; query: string; result: unknown; fromCache: boolean };
+        return { runId: result.runId, query: result.query, result: result.result, fromCache: result.fromCache };
+      } catch (error) {
+        console.error("01g-research-client: client-scan research failed, drafting without it", error);
+        return null;
+      }
+    });
+
+    const competitorSites = await wf.step.code("01h-audit-competitor-sites", async (): Promise<IntelReportCompetitorSite[] | null> => {
+      const audit = tools["research.auditOnPage"];
+      if (!audit) return null;
+      // Curated competitors first, then the roster the last report discovered
+      // (a Regenerate knows what the previous run found), five sites at most.
+      const candidates = new Map<string, string>();
+      for (const c of clientContext.competitors) if (typeof c.website === "string" && c.website) candidates.set(c.name, c.website);
+      const getReport = tools["intel.getReport"];
+      if (getReport && candidates.size < 5) {
+        const reportOutcome = await getReport.execute({}, { ctx });
+        const discovered = reportOutcome.status === "success" ? ((reportOutcome.result as { competitors?: Array<{ company?: string; url?: string }> }).competitors ?? []) : [];
+        for (const row of discovered) if (typeof row.company === "string" && typeof row.url === "string" && row.url && !candidates.has(row.company)) candidates.set(row.company, row.url);
+      }
+      const targets = [...candidates.entries()].slice(0, 5);
+      const sites: IntelReportCompetitorSite[] = [];
+      for (const [name, url] of targets) {
+        const target = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+        try {
+          const outcome = await audit.execute({ seedUrl: target, limit: 1, window: "7d" }, { ctx });
+          if (outcome.status !== "success") continue;
+          const page = (outcome.result as { snapshot: OnPageAuditSnapshot }).snapshot.pages.find((p) => p.status === 200);
+          if (page) sites.push({ name, page: compactPage(page) });
+        } catch (error) {
+          console.error(`01h-audit-competitor-sites: could not fetch ${name} (${target}), skipping`, error);
+        }
+      }
+      return sites.length > 0 ? sites : null;
+    });
+
+    const seoGeoSnapshot = await wf.step.code("01i-load-seo-geo-snapshot", async (): Promise<IntelReportSeoGeoSnapshot | null> => {
+      // Written by seo-geo-agent's final step into client memory — the one
+      // place the two agents meet without importing each other (RFC-05 §2).
+      // Absent on a client's very first onboarding (the two run in parallel),
+      // present on every Regenerate after.
+      try {
+        const outcome = await tools["memory.read"]!.execute({ scope: "beliefs" }, { ctx });
+        if (outcome.status !== "success") return null;
+        const beliefs = (outcome.result as { beliefs?: Record<string, unknown> }).beliefs ?? {};
+        const snapshot = beliefs["seoGeoLatestSnapshot"];
+        return snapshot && typeof snapshot === "object" && !Array.isArray(snapshot) ? (snapshot as IntelReportSeoGeoSnapshot) : null;
+      } catch (error) {
+        console.error("01i-load-seo-geo-snapshot: could not read client memory, drafting without it", error);
+        return null;
+      }
+    });
+
     // ── 02-03: generate the report, then verify its numeric claims — one full drafting pass ──
     /**
      * One full drafting pass: generate the report, then verify its numbers
@@ -277,8 +454,9 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
       const route = routeContextDocumentModel(
         INTEL_REPORT_DRAFT_MODEL_POLICY,
         {
-          competitorCount: clientContext.competitors.length,
-          evidenceChars: JSON.stringify(research.result ?? null).length,
+          competitorCount: Math.max(clientContext.competitors.length, competitorSites?.length ?? 0),
+          // Every evidence block the draft reads counts toward the fit decision, not just the category scan.
+          evidenceChars: JSON.stringify([research.result ?? null, siteAudit, clientResearch?.result ?? null, competitorSites, seoGeoSnapshot]).length,
           clientContextChars: JSON.stringify({ profile: clientContext.profile, brand: brandVoice.brand }).length,
           steerCount:
             (runDirection.direction ? 1 : 0) + (directive !== undefined ? 1 : 0) + pastFeedback.length,
@@ -308,6 +486,13 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
         ...(marketStrategy !== undefined ? { marketStrategy } : {}),
         competitors: clientContext.competitors,
         research: { query: research.query, result: research.result },
+        // The evidence steps 01f-01i gathered, each under its own name so the
+        // craft guide can say which dimension each one grounds. Omitted when
+        // absent, so a run that could fetch nothing sends the prompt it always did.
+        ...(siteAudit ? { siteAudit } : {}),
+        ...(clientResearch ? { clientResearch: { query: clientResearch.query, result: clientResearch.result } } : {}),
+        ...(competitorSites ? { competitorSites } : {}),
+        ...(seoGeoSnapshot ? { seoGeoSnapshot } : {}),
         // Two distinct steers, kept apart on purpose: `pastFeedback` is what
         // this client has said across previous RUNS, `revisionRequest` is what
         // a reviewer asked about THIS report minutes ago.
@@ -329,7 +514,16 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
       // judgment calls, never invented numbers to be caught here — this gate is about the
       // report's *prose* claims, e.g. "conversion rate improved 30%", not about the
       // dimension scores themselves). ──
-      const sources = [research.query, JSON.stringify(research.result)];
+      // Every evidence block is a source: a figure the site audit measured or
+      // the SEO/GEO snapshot scored is as citable as one a web page stated.
+      const sources = [
+        research.query,
+        JSON.stringify(research.result),
+        ...(siteAudit ? [JSON.stringify(siteAudit)] : []),
+        ...(clientResearch ? [clientResearch.query, JSON.stringify(clientResearch.result)] : []),
+        ...(competitorSites ? [JSON.stringify(competitorSites)] : []),
+        ...(seoGeoSnapshot ? [JSON.stringify(seoGeoSnapshot)] : []),
+      ];
 
       // ── 02b: self-correction, BEFORE the gate rather than instead of it ──
       //

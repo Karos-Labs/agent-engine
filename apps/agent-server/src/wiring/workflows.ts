@@ -215,7 +215,13 @@ export function buildWorkflowForProduct(productId: ProductId, deps: AgentRuntime
     // That 70-minute ceiling stays where it is. It is no longer sized against
     // a gate wait — it is now a plain "this run is stuck" bound.
     case "seo-geo-agent":
-      return createSeoGeoAgentWorkflow({ ...deps, autoApprove: true });
+      // `promptDrafter: "agent"`: production prompt sets are written by
+      // `SeoGeoPromptSetAgent` in the buyer's language and market (RFC-04 §2
+      // Phase 1 as the source skill described it), with the industry-string
+      // templates as the fallback. The option stays off by default so every
+      // test's fake router keeps its exact turn count — see the workflow's
+      // own option doc.
+      return createSeoGeoAgentWorkflow({ ...deps, autoApprove: true, promptDrafter: "agent" });
     case "intel-report-agent":
       return createIntelReportAgentWorkflow({ ...deps, autoApprove: true });
   }

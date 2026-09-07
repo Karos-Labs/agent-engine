@@ -210,6 +210,19 @@ export interface BucketSubtotal {
 export interface ScoreBreakdown {
   /** `round_half_up` applied once to the 0-100 total (unmeasured inputs contribute 0 points, per `grade_data_only_rule`). */
   score: number;
+  /**
+   * The same points over the MEASURED weight only, 0-100 — what the site
+   * scored on the checks that actually ran. `null` when nothing was measured.
+   *
+   * Never a replacement for `score`: `grade_data_only_rule` says a grade "is
+   * issued only over the inputs with real data" and that the uncovered weight
+   * is shown as pending, and `score` alone cannot express both halves — a
+   * site that passed every one of the checks covering 30% of the weight reads
+   * as "30", indistinguishable from a site that failed most of a fully
+   * measured audit. This number and `dataCoveragePct` together are that
+   * sentence; the client-facing rule is to always show them side by side.
+   */
+  measuredBasisScore: number | null;
   weightTotal: number;
   dataCoveragePct: number;
   /** True whenever `dataCoveragePct < 100` — mirrors `grade_data_only_rule`'s "labelled partial until coverage is complete". */

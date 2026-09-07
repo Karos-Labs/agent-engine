@@ -8,6 +8,9 @@ import { createCheckFreshness } from "./check-freshness.js";
 import { createCaptureVisibility, type CreditProbe, type EngineCaptureAdapter, type VisibilityEngine } from "./capture-visibility.js";
 import { createDefaultCaptureAdapters } from "./capture-adapters/index.js";
 import { createCrawlTechnicalSeo } from "./crawl-technical-seo.js";
+import { createAuditOnPage } from "./audit-on-page.js";
+import { createFetchCoreWebVitals } from "./core-web-vitals.js";
+import { createLookupEntity } from "./entity-lookup.js";
 import { createScraperProvider, type ScraperProvider } from "@agent-engine/tool-karos-scraper";
 
 export * from "./runs.js";
@@ -19,6 +22,10 @@ export * from "./check-freshness.js";
 export * from "./capture-visibility.js";
 export * from "./capture-adapters/index.js";
 export * from "./crawl-technical-seo.js";
+export * from "./audit-on-page.js";
+export * from "./core-web-vitals.js";
+export * from "./entity-lookup.js";
+export * from "./html-signals.js";
 export * from "./payload.js";
 
 export interface KarosResearchToolsOptions {
@@ -96,5 +103,16 @@ export function createKarosResearchTools(
       adapters: visibilityAdapters,
     }),
     "research.crawlTechnicalSeo": createCrawlTechnicalSeo(scraper),
+    // The three reads that turned most of the SEO/GEO scoring config from
+    // permanently "unavailable" into measured: on-page markup (plain GET),
+    // Core Web Vitals (PageSpeed/CrUX) and the brand's Wikidata/Wikipedia
+    // standing. Each is honest per call — no scraper, no key, no quota means
+    // `not_available`, never a placeholder.
+    "research.auditOnPage": createAuditOnPage(store, scraper),
+    "research.fetchCoreWebVitals": createFetchCoreWebVitals(store, {
+      ...(options.env ? { env: options.env } : {}),
+      ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    }),
+    "research.lookupEntity": createLookupEntity(store, { ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}) }),
   };
 }
