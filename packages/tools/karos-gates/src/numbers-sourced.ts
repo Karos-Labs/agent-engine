@@ -35,7 +35,12 @@ import { defineTool, success } from "@agent-engine/tool-common";
 // leading-hyphen guard read it as one and failed a draft quoting it exactly
 // (prep run pubsub-21498863468155660, two more $1.70 rounds). The guard now
 // rejects a hyphen only when a figure sits on its other side.
-const TOOL_VERSION = "1.4.0";
+//
+// 1.5.0 — a currency written as its ISO code ("USD 78 billion", how market
+// reports and many trade sources print it) verifies a draft's "$78 billion".
+// The code is folded to the symbol on both sides. Prep run
+// pubsub-21500057884542573 (blog-agent, 2026-09-07) held on exactly that.
+const TOOL_VERSION = "1.5.0";
 
 /** A magnitude suffix that belongs to the figure in front of it: written out, or the common abbreviations. */
 const MAGNITUDE_SUFFIX = "(?:trillion|billion|million|thousand|tn|bn|mn|[kmbt])";
@@ -48,7 +53,7 @@ const MAGNITUDE_SUFFIX = "(?:trillion|billion|million|thousand|tn|bn|mn|[kmbt])"
 const NUMERIC_CLAIM_PATTERN = new RegExp(
   [
     String.raw`(\d[\d,]*(?:\.\d+)?\s?%)`,
-    String.raw`([$€£]\s?\d[\d,]*(?:\.\d+)?(?:\s?${MAGNITUDE_SUFFIX}\b)?)`,
+    String.raw`((?:[$€£]|\busd|\beur|\bgbp)\s?\d[\d,]*(?:\.\d+)?(?:\s?${MAGNITUDE_SUFFIX}\b)?)`,
     String.raw`(\b\d+(?:\.\d+)?\s?(?:x\b|×))`,
     String.raw`(\b\d+(?:\.\d+)?\s?(?:trillion|billion|million|thousand)\b)`,
   ].join("|"),
@@ -67,6 +72,9 @@ function normalizeClaim(raw: string): string {
   return raw
     .toLowerCase()
     .replace(/×/g, "x")
+    .replace(/\busd\s?(?=\d)/g, "$")
+    .replace(/\beur\s?(?=\d)/g, "€")
+    .replace(/\bgbp\s?(?=\d)/g, "£")
     .replace(/(\d)\s?(?:trillion|tn)\b/g, "$1t")
     .replace(/(\d)\s?(?:billion|bn)\b/g, "$1b")
     .replace(/(\d)\s?(?:million|mn)\b/g, "$1m")
