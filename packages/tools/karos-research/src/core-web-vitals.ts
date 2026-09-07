@@ -161,7 +161,7 @@ export function parsePageSpeedResponse(url: string, strategy: "mobile" | "deskto
 export function createFetchCoreWebVitals(store: WorkspaceStoreLike, options: CoreWebVitalsToolOptions = {}) {
   const env = options.env ?? process.env;
   const fetchImpl = options.fetchImpl ?? fetch;
-  const timeoutMs = options.timeoutMs ?? 90_000;
+  const timeoutMs = options.timeoutMs ?? 150_000;
   return defineTool<FetchCoreWebVitalsInput, FetchCoreWebVitalsResult>({
     name: "research.fetchCoreWebVitals",
     description:
@@ -187,11 +187,24 @@ export function createFetchCoreWebVitals(store: WorkspaceStoreLike, options: Cor
       params.append("category", "SEO");
       if (apiKey) params.set("key", apiKey);
 
-      let response: Response;
-      try {
-        response = await fetchImpl(`${PSI_ENDPOINT}?${params.toString()}`, { method: "GET", signal: AbortSignal.timeout(timeoutMs) });
-      } catch (error) {
-        return toolingError(`research.fetchCoreWebVitals: PageSpeed request failed: ${(error as Error).message}`);
+      // PageSpeed runs a full Lighthouse pass on Google's side before answering,
+      // which on a heavy news homepage routinely takes 60-120s; the first prep
+      // run against a real client hit the old 90s ceiling. One retry on a
+      // timeout/abort: the second attempt usually lands because PageSpeed
+      // caches the Lighthouse result it had already started computing.
+      let response: Response | undefined;
+      let lastError: unknown;
+      for (let attempt = 0; attempt < 2 && !response; attempt++) {
+        try {
+          response = await fetchImpl(`${PSI_ENDPOINT}?${params.toString()}`, { method: "GET", signal: AbortSignal.timeout(timeoutMs) });
+        } catch (error) {
+          lastError = error;
+          const name = (error as { name?: string }).name ?? "";
+          if (!/Timeout|Abort/i.test(name) && !/timeout|aborted/i.test((error as Error).message ?? "")) break;
+        }
+      }
+      if (!response) {
+        return toolingError(`research.fetchCoreWebVitals: PageSpeed request failed: ${(lastError as Error)?.message ?? String(lastError)}`);
       }
       if (response.status === 429 || response.status === 403) {
         return notAvailable(
