@@ -18,7 +18,18 @@ import { defineTool, success } from "@agent-engine/tool-common";
 // folded to one spelling on both sides ("$1 billion" / "$1B" / "$1bn" all
 // compare as "$1b"), so a draft quoting a source's figure in words is not
 // failed because the source abbreviated it. Minor bump, same reasoning as 1.1.0.
-const TOOL_VERSION = "1.2.0";
+//
+// 1.3.0 — two more ways a faithful draft was failed. A multiplier written with
+// the multiplication sign ("3.2×", how aidiscovery.club and many trade sources
+// print it) was neither extracted as a claim nor matched against a draft's
+// "3.2x": the sign is folded to "x" on both sides now. And a draft that states
+// a source range's endpoint AS A BOUND ("up to 3.4x", "as much as 34%", "at
+// least $500") is quoting the range honestly, not cherry-picking it, and now
+// verifies when the source carries the range with that endpoint; a bare
+// endpoint asserted as the value ("CPA rose 34%") still fails as before. Prep
+// run pubsub-21753432816018912 spent two editorial rounds ($3.50) on exactly
+// these two shapes.
+const TOOL_VERSION = "1.3.0";
 
 /** A magnitude suffix that belongs to the figure in front of it: written out, or the common abbreviations. */
 const MAGNITUDE_SUFFIX = "(?:trillion|billion|million|thousand|tn|bn|mn|[kmbt])";
@@ -32,7 +43,7 @@ const NUMERIC_CLAIM_PATTERN = new RegExp(
   [
     String.raw`(\d[\d,]*(?:\.\d+)?\s?%)`,
     String.raw`([$€£]\s?\d[\d,]*(?:\.\d+)?(?:\s?${MAGNITUDE_SUFFIX}\b)?)`,
-    String.raw`(\b\d+(?:\.\d+)?x\b)`,
+    String.raw`(\b\d+(?:\.\d+)?\s?(?:x\b|×))`,
     String.raw`(\b\d+(?:\.\d+)?\s?(?:trillion|billion|million|thousand)\b)`,
   ].join("|"),
   "gi",
@@ -49,6 +60,7 @@ const NUMERIC_CLAIM_PATTERN = new RegExp(
 function normalizeClaim(raw: string): string {
   return raw
     .toLowerCase()
+    .replace(/×/g, "x")
     .replace(/(\d)\s?(?:trillion|tn)\b/g, "$1t")
     .replace(/(\d)\s?(?:billion|bn)\b/g, "$1b")
     .replace(/(\d)\s?(?:million|mn)\b/g, "$1m")
@@ -105,7 +117,39 @@ function exactRangePattern(normalizedRange: string): RegExp {
  * ("in 2024, $100-$500" would widen to "2024,$100-$500", which appears in no
  * source and would silently un-verify a claim that is in fact quoted exactly).
  */
-const NUMERIC_RANGE_PATTERN = /[$€£]?\s?\d[\d,]*(?:\.\d+)?\s?%?\s*[-‐-―]\s*[$€£]?\s?\d[\d,]*(?:\.\d+)?\s?%?/g;
+const NUMERIC_RANGE_PATTERN = /[$€£]?\s?\d[\d,]*(?:\.\d+)?\s?(?:%|x\b|×)?\s*[-‐-―]\s*[$€£]?\s?\d[\d,]*(?:\.\d+)?\s?(?:%|x\b|×)?/g;
+
+/**
+ * The words that make a figure a BOUND rather than a value: "up to 34%",
+ * "as much as 3.4x", "at least $500", "as low as 12%". A draft writing one of
+ * these against a source range ("2.6-3.4x", "$500-$2,000") is reporting the
+ * range's edge as an edge, which is exactly what the range says; it is the
+ * bare "CPA rose 34%" against "up to 34%" that misstates a ceiling as a
+ * result. Checked on the text immediately before the claim.
+ */
+const BOUND_PHRASE_BEFORE_CLAIM = /(?:up\s+to|as\s+(?:much|many|high|low|little)\s+as|at\s+(?:least|most)|no\s+(?:more|less)\s+than|a\s+maximum\s+of|a\s+minimum\s+of|from|to|between|and|or)\s*$/i;
+
+/**
+ * Whether `sourceBlob` carries a range whose upper or lower endpoint is the
+ * normalized claim: the claim, preceded or followed by a dash and another
+ * figure, with no digit running into it on the far side.
+ */
+function sourceHasRangeEndpoint(normalizedClaim: string, sourceBlob: string): boolean {
+  // A range states its unit once, on the far end: "2.6-3.4x" means 2.6x to
+  // 3.4x, "$500-$2,000" repeats the currency, "12-34%" does not repeat the
+  // percent. So the claim's unit may be absent from the endpoint it matches
+  // when the other endpoint carries it.
+  const parts = /^([$€£]?)(\d[\d,]*(?:\.\d+)?)(%|x|[kmbt])?$/.exec(normalizedClaim);
+  if (!parts) return false;
+  const [, currency, number, unit] = parts;
+  const cur = escapeForRegex(currency ?? "");
+  const num = escapeForRegex(number!);
+  const unitPattern = unit ? escapeForRegex(unit) : "";
+  const anyFigure = String.raw`[$€£]?\d[\d,]*(?:\.\d+)?(?:%|x|[kmbt])?`;
+  const upper = new RegExp(`(?<![\\d.,])${anyFigure}-${cur}${num}${unitPattern}(?![\\d.,])`);
+  const lower = new RegExp(`(?<![\\d.,-])${cur}${num}(?:${unitPattern})?-[$€£]?\\d[\\d,]*(?:\\.\\d+)?${unitPattern || "(?:%|x|[kmbt])?"}`);
+  return upper.test(sourceBlob) || lower.test(sourceBlob);
+}
 
 /**
  * The claim as the DRAFT presents it: a bare figure, or the whole range it is
@@ -185,8 +229,13 @@ export const numbersSourced = defineTool<NumbersSourcedInput, GateVerdict>({
         // Not present as a standalone figure — but the draft may be quoting a
         // range, in which case the range is the claim. See `rangeAroundClaim`.
         const range = rangeAroundClaim(text, match.index, match[0].length);
-        if (range === undefined) return true;
-        return !exactRangePattern(normalizeClaim(range)).test(sourceBlob);
+        if (range !== undefined) return !exactRangePattern(normalizeClaim(range)).test(sourceBlob);
+        // Not a range in the draft either. One more honest shape: the draft
+        // states the figure as a bound ("up to 3.4x") and the source has it as
+        // an endpoint of a range ("2.6-3.4x").
+        const before = text.slice(Math.max(0, match.index - 24), match.index);
+        if (BOUND_PHRASE_BEFORE_CLAIM.test(before)) return !sourceHasRangeEndpoint(claim, sourceBlob);
+        return true;
       })
       .map((match) => match[0]);
 

@@ -943,6 +943,13 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       uploaded: { gcsUri: string; signedUrl?: string } | null;
       /** The hook a viewer meets first — the moment's line, or the script's. */
       hookLine: string;
+      /**
+       * What the visual QA model said about the finished clip. A `content_fail`
+       * here no longer holds the run: it ships to the human at 11-clip-review
+       * FLAGGED with the model's reason, and the person decides. Absent when
+       * the gate is not registered in the deployment.
+       */
+      visualQa?: { passed: boolean; reason?: string; evidence: string[] };
     }
 
     /**
@@ -1356,10 +1363,16 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       // ── 10b: the visual QA — a model WATCHES the finished clip and says
       //         whether a person would post it: captions legible and in sync,
       //         no generation artifacts, the brand frame intact, and whether
-      //         it reads as generated. Blocking on content_fail; a deployment
-      //         without the gate records that it was skipped rather than
-      //         pretending it passed. ──
-      await wf.step.code(rev("10b-visual-qa"), async () => {
+      //         it reads as generated. ADVISORY since 2026-09-07: a
+      //         content_fail is carried to the reviewer as a flag with the
+      //         model's reason, never a hold. Prep run pubsub-21756184831102737
+      //         held a finished, in-brand original short because Gemini scored
+      //         it 6/10 ("unnatural movement in plant growth animation"), a
+      //         taste call on generated b-roll that the person at 11-clip-review
+      //         is there to make and was never shown. A deployment without the
+      //         gate records that it was skipped rather than pretending it
+      //         passed. ──
+      const visualQa = await wf.step.code(rev("10b-visual-qa"), async (): Promise<{ skipped: true; note: string } | { skipped: false; passed: boolean; reason?: string; evidence: string[] }> => {
         const gate = tools["video.visualQaGate"];
         if (gate === undefined) return { skipped: true, note: "video.visualQaGate is not registered in this deployment" };
         const outcome = await gate.execute(
@@ -1382,8 +1395,11 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         if (outcome.status !== "success") throw new WorkflowToolingFailure(`video.visualQaGate: ${outcome.status}${"reason" in outcome ? ` (${outcome.reason})` : ""}`);
         const verdict = outcome.result as GateVerdict;
         if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`video.visualQaGate: ${verdict.reason}`);
-        if (verdict.verdict === "content_fail") throw new WorkflowHeld(`video.visualQaGate failed: ${verdict.reason}`);
-        return { skipped: false, evidence: verdict.evidence };
+        if (verdict.verdict === "content_fail") {
+          console.warn(`${rev("10b-visual-qa")}: visual QA flagged the clip, shipping to review flagged rather than held: ${verdict.reason}`);
+          return { skipped: false, passed: false, reason: verdict.reason, evidence: verdict.evidence };
+        }
+        return { skipped: false, passed: true, evidence: verdict.evidence };
       });
 
       // ── 10: terminal topic guardrail ──
@@ -1415,6 +1431,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         durationSeconds: draft.durationSeconds,
         uploaded,
         hookLine: draft.hookLine,
+        ...(visualQa.skipped ? {} : { visualQa: { passed: visualQa.passed, ...(visualQa.reason !== undefined ? { reason: visualQa.reason } : {}), evidence: visualQa.evidence } }),
       };
     };
 
@@ -1450,6 +1467,9 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           // The reviewer's actual preview — a signed URL they can watch.
           ...(draft.uploaded?.signedUrl !== undefined ? { videoUrl: draft.uploaded.signedUrl } : {}),
           ...(draft.uploaded !== null ? { gcsUri: draft.uploaded.gcsUri } : {}),
+          // The visual QA model's read, so a flagged clip arrives with the
+          // reason beside the play button instead of as a held run.
+          ...(draft.visualQa !== undefined ? { visualQa: draft.visualQa, flagged: !draft.visualQa.passed } : {}),
         },
         requiredRole: "account_manager",
         timeout: { duration: "24h", onTimeout: "hold" },
@@ -1510,6 +1530,9 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
             ...(copy.sourceCredit !== undefined ? { sourceCredit: copy.sourceCredit } : {}),
             ...(intake.sourceContext ? { sourceContext: intake.sourceContext } : {}),
             hookLine: review.output.hookLine,
+            // The visual QA model's read, persisted with what shipped so the
+            // portal can show a flagged clip as flagged after the fact.
+            ...(review.output.visualQa !== undefined ? { visualQa: review.output.visualQa } : {}),
             hookType: moment.hookType,
             startSeconds: bounds.startSeconds,
             endSeconds: bounds.endSeconds,

@@ -126,6 +126,7 @@ export function scriptedRunner(byKey: Record<string, ProcessResult>): { runner: 
 export function happyPathResponses(finalMp4Path: string): Record<string, ProcessResult> {
   return {
     "brand_assets_check.py": { stdout: "3/3 asset paths resolve and open\nBRAND ASSETS: PASS", stderr: "", exitCode: 0 },
+    "derive_mark.py": { stdout: "MARK: PASS 512x512 glyph", stderr: "", exitCode: 0 },
     "cut_check.py": { stdout: "CUT GATE: PASS (1 segments, 0 cuts, 5.00s from a 5.00s window)", stderr: "", exitCode: 0 },
     "graphic_qa.py": { stdout: "", stderr: "", exitCode: 0 },
     "cutaway_check.py": { stdout: "CUTAWAY GATE: PASS (0 cutaways, 0 graphics, no conflicts)", stderr: "", exitCode: 0 },
@@ -151,6 +152,26 @@ export function fakeElevenLabsFetch(): typeof fetch {
     { text: "works", start: 1.8, end: 2.2, type: "word" },
   ];
   return vi.fn(async () => new Response(JSON.stringify({ words }), { status: 200 })) as unknown as typeof fetch;
+}
+
+/**
+ * A fetch that plays Google Fonts (a css2 response naming a .ttf, then the
+ * font bytes) and a brand logo (a PNG-signed byte string) for the derived
+ * brand setup, so no test reaches the network. The "font" is not a real TTF;
+ * every engine call that would open it is scripted anyway.
+ */
+export function fakeFontAndLogoFetch(): typeof fetch {
+  const ttf = new Uint8Array(4096).fill(0x41);
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...new Array(2048).fill(0)]);
+  return vi.fn(async (input: string | URL | Request) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url.startsWith("https://fonts.googleapis.com/css2")) {
+      const weight = /wght@(\d+)/.exec(url)?.[1] ?? "400";
+      return new Response(`@font-face { font-family: 'Inter'; font-weight: ${weight}; src: url(https://fonts.gstatic.com/s/inter/v13/inter-${weight}.ttf) format('truetype'); }`, { status: 200 });
+    }
+    if (url.startsWith("https://fonts.gstatic.com/")) return new Response(ttf, { status: 200, headers: { "content-type": "font/ttf" } });
+    return new Response(png, { status: 200, headers: { "content-type": "image/png" } });
+  }) as unknown as typeof fetch;
 }
 
 const CLIENT_SLUG = "acme";

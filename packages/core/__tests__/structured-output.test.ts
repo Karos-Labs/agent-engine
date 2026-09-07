@@ -158,3 +158,41 @@ describe("excerptRawPayload", () => {
     expect(() => excerptRawPayload(circular)).not.toThrow();
   });
 });
+
+describe("parseStructuredOutput — the stringified `output`, repaired for free", () => {
+  const objectRoot = z.object({ type: z.literal("final").default("final"), thought: z.string().optional(), output: z.object({ text: z.string(), n: z.number() }) });
+
+  // prep run pubsub-21753432816018912 (newsletter-agent, claude-opus-4-8, a
+  // no-tool step): on every editorial round the model wrote the edition
+  // correctly and quoted it — `"output": "{\"subjectLine\": ..."` — then paid
+  // a 46k-token repair turn to write it again. $5.47 and a failed run.
+  it("unquotes an `output` the model serialized as a JSON string", () => {
+    const out = parseStructuredOutput(objectRoot, { thought: "done", output: JSON.stringify({ text: "hi", n: 1 }) }, false, ctx);
+    expect(out).toEqual({ type: "final", thought: "done", output: { text: "hi", n: 1 } });
+  });
+
+  it("unquotes a stringified `output` inside a wrapped turn too", () => {
+    const out = parseStructuredOutput(turnSchema, { turn: { type: "final", output: JSON.stringify({ text: "hi" }) } }, true, ctx);
+    expect(out).toEqual({ type: "final", output: { text: "hi" } });
+  });
+
+  // prep run pubsub-21711702970427669 (x-agent, claude-sonnet-4-6): the whole
+  // turn as a string, with the post's line breaks left raw inside the quoted
+  // JSON — which JSON.parse rejects, so the pre-existing unquoting never fired.
+  it("parses a stringified turn whose string values carry raw line breaks", () => {
+    const raw = '{"type":"final","output":{"text":"Line one.\nLine two.\n\nLine four."}}';
+    expect(() => JSON.parse(raw)).toThrow();
+    const out = parseStructuredOutput(turnSchema, { turn: raw }, true, ctx);
+    expect(out).toEqual({ type: "final", output: { text: "Line one.\nLine two.\n\nLine four." } });
+  });
+
+  it("leaves a string `output` alone when it is not the JSON of an object, so the schema still names the real mistake", () => {
+    expect(() => parseStructuredOutput(objectRoot, { output: "just prose" }, false, ctx)).toThrow(StructuredOutputValidationError);
+    expect(() => parseStructuredOutput(objectRoot, { output: JSON.stringify([1, 2]) }, false, ctx)).toThrow(StructuredOutputValidationError);
+  });
+
+  it("unquotes a tool call's stringified `args` the same way", () => {
+    const out = parseStructuredOutput(turnSchema, { turn: { type: "tool_call", tool: "render.preview", args: JSON.stringify({ text: "x" }) } }, true, ctx);
+    expect(out).toEqual({ type: "tool_call", tool: "render.preview", args: { text: "x" } });
+  });
+});

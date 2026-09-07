@@ -8,6 +8,7 @@ import { BrandedShortsGraphicsAgent } from "../agent/branded-shorts-graphics-age
 import { BrandedShortsHighlightsAgent } from "../agent/branded-shorts-highlights-agent.js";
 import { deriveCutSegments, totalRetainedDuration } from "./cut-planner.js";
 import { assembleJob, resolveRunPaths, type RunPaths } from "./job-builder.js";
+import { deriveBrandSetup, type ResolveFontsOptions } from "./derive-brand-setup.js";
 import {
   AssetLibraryIndexSchema,
   BrandedShortsClientConfigSchema,
@@ -38,6 +39,14 @@ export interface CreateBrandedShortsAgentWorkflowOptions {
    * agent's `autoApprove`; tests only.
    */
   autoApprove?: boolean;
+  /**
+   * The fetch a derived brand profile downloads fonts and the logo with (see
+   * `derive-brand-setup.ts`). Defaults to the global `fetch`; tests inject a
+   * fake so no run ever reaches Google Fonts or a real logo URL.
+   */
+  fetchImpl?: typeof fetch;
+  /** Test seam for `resolveBrandFonts`' system-face fallback. */
+  fontOptions?: ResolveFontsOptions;
 }
 
 
@@ -161,46 +170,81 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
     const attachedVideo = firstAsset(runDirection.mediaAssets, "source");
     const clientMediaOnly = runDirection.mediaSource === "client";
 
-    // ── 00: brand resolve — refuse to run without a locked style + brand profile on file ──
+    // ── 00: brand resolve — the locked style and brand profile on file, or
+    //        the same things DERIVED from the client's brand kit ──
+    //
+    // Until 2026-09-07 this step refused to run unless an operator had put a
+    // brand-profile.json (with font files and an alpha-masked mark beside it),
+    // a graphics-language.md and an approved-archetype list on the client's
+    // config by hand, and unless Style Exploration had been run and locked.
+    // Every karoslabs run on prep since 2026-09-05 was `blocked_intake` on
+    // exactly that, while the client's brand kit held everything those files
+    // are built from. Anything an operator DID configure still wins; what is
+    // missing is derived (`derive-brand-setup.ts`), named in `setupNotes`, and
+    // shown to the reviewer at 10-delivery-review. The run blocks only when
+    // the kit itself cannot support a profile (no colour, no obtainable font).
     const brandResolve = await wf.step.code("00-brand-resolve", async () => {
       const beliefsOutcome = await tools["memory.read"]!.execute({ scope: "beliefs" }, { ctx });
       const beliefs = beliefsOutcome.status === "success" ? (beliefsOutcome.result as { beliefs: Record<string, unknown> }).beliefs : {};
-      if (!beliefs["brandedShortsLockedStyle"]) {
-        throw new WorkflowBlockedIntake("no locked brand style for this client — run the Style Exploration onboarding workflow first (SKILL.md step 0)");
-      }
+      const lockedStyle = beliefs["brandedShortsLockedStyle"];
 
       const configOutcome = await tools["client.getConfig"]!.execute({}, { ctx });
       const rawConfig = configOutcome.status === "success" ? (configOutcome.result as Record<string, unknown>) : {};
       const config = BrandedShortsClientConfigSchema.safeParse(rawConfig).success
         ? BrandedShortsClientConfigSchema.parse(rawConfig)
         : BrandedShortsClientConfigSchema.parse({});
-      if ((!config.brandedShortsProfilePath && !config.brandedShortsAssetBundle) || !config.brandedShortsGraphicsLanguage) {
-        throw new WorkflowBlockedIntake(
-          "client has a locked style but no brandedShortsProfilePath (or brandedShortsAssetBundle) / brandedShortsGraphicsLanguage on file yet",
-        );
-      }
-      if (!config.brandedShortsApprovedArchetypes || config.brandedShortsApprovedArchetypes.length === 0) {
-        // P0#1 audit fix: without this, nothing constrains the graphics agent to a closed
-        // vocabulary at all, so its absence blocks the run exactly like a missing brand profile.
-        throw new WorkflowBlockedIntake("client has a locked style but no brandedShortsApprovedArchetypes on file yet (their make_motion_repertoire.py repertoire, structured)");
-      }
 
       const workDir = config.brandedShortsWorkDir ?? path.join(os.tmpdir(), "branded-shorts", wf.runId);
+      const configured = {
+        profile: Boolean(config.brandedShortsProfilePath || config.brandedShortsAssetBundle),
+        graphicsLanguage: Boolean(config.brandedShortsGraphicsLanguage),
+        archetypes: Boolean(config.brandedShortsApprovedArchetypes && config.brandedShortsApprovedArchetypes.length > 0),
+      };
+      const lockedIsCandidate = typeof lockedStyle === "object" && lockedStyle !== null && typeof (lockedStyle as { name?: unknown }).name === "string";
+
+      let derived: Awaited<ReturnType<typeof deriveBrandSetup>> | undefined;
+      if (!configured.profile || !configured.graphicsLanguage || !configured.archetypes || !lockedIsCandidate) {
+        const brandOutcome = await tools["client.getBrand"]?.execute({}, { ctx });
+        const brand = brandOutcome?.status === "success" ? (brandOutcome.result as Record<string, unknown>) : {};
+        derived = await deriveBrandSetup({
+          brand,
+          lockedStyle,
+          workDir,
+          tools,
+          ctx,
+          ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+          ...(options.fontOptions ? { fontOptions: options.fontOptions } : {}),
+          needProfile: !configured.profile,
+        });
+        if (!derived.ok) {
+          throw new WorkflowBlockedIntake(`branded-shorts setup is incomplete and could not be derived from the brand kit: ${derived.reason}`);
+        }
+      }
+      const setup = derived?.ok ? derived.setup : undefined;
+
       // The locked style's own words become the plate generator's art
       // direction (CUTAWAY-IMAGE-PROMPTS production rule 5: "the client's
       // locked style governs palette, ground and light language in every
       // prompt") — read here, where the style is already in hand.
-      const locked = beliefs["brandedShortsLockedStyle"] as Record<string, unknown>;
+      const style = (lockedIsCandidate ? lockedStyle : setup?.style) as Record<string, unknown>;
       const lockedStyleNotes = ["description", "paletteUsage", "graphicsDirection"]
-        .map((k) => locked[k])
+        .map((k) => style[k])
         .filter((v): v is string => typeof v === "string" && v.length > 0)
         .join(" ");
+      const setupNotes: string[] = [
+        ...(setup?.notes ?? []),
+        ...(setup && !configured.profile ? ["brand profile derived from the brand kit (no brandedShortsProfilePath / brandedShortsAssetBundle on file)"] : []),
+        ...(setup && !configured.graphicsLanguage ? ["graphics language derived from the style and the brand kit (no brandedShortsGraphicsLanguage on file)"] : []),
+        ...(setup && !configured.archetypes ? [`approved archetypes defaulted to the render engine's registry: ${setup.approvedArchetypes.join(", ")}`] : []),
+      ];
       return {
-        profilePath: config.brandedShortsProfilePath,
-        assetBundle: config.brandedShortsAssetBundle,
+        profilePath: configured.profile ? config.brandedShortsProfilePath : setup!.profilePath!,
+        assetBundle: configured.profile ? config.brandedShortsAssetBundle : undefined,
         lockedStyleNotes,
-        graphicsLanguage: config.brandedShortsGraphicsLanguage,
-        approvedArchetypes: config.brandedShortsApprovedArchetypes,
+        styleSource: lockedIsCandidate ? ("locked" as const) : ("derived" as const),
+        graphicsLanguage: configured.graphicsLanguage ? config.brandedShortsGraphicsLanguage! : setup!.graphicsLanguage,
+        approvedArchetypes: configured.archetypes ? config.brandedShortsApprovedArchetypes! : setup!.approvedArchetypes,
+        setupNotes,
         intakeRaw: config.brandedShortsIntake,
         paths: resolveRunPaths(workDir),
       };
@@ -622,6 +666,10 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
             overlayCount: build.plan.overlays.length,
             cutawayCount: build.plan.cutaways.length,
             renderWarnings: build.warnings,
+            // What this run assumed instead of being told, so a video built on
+            // a derived profile or an unlocked style is reviewed as exactly that.
+            styleSource: brandResolve.styleSource,
+            ...(brandResolve.setupNotes.length > 0 ? { setupNotes: brandResolve.setupNotes, flagged: true } : {}),
           },
           requiredRole: "account_manager",
           timeout: { duration: "24h", onTimeout: "hold" },

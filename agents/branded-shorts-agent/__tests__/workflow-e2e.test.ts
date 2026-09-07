@@ -8,6 +8,7 @@ import { createOfflineScraper } from "@agent-engine/tool-karos-scraper";
 import { createBrandedShortsAgentWorkflow } from "../src/workflow/create-branded-shorts-agent-workflow.js";
 import {
   fakeElevenLabsFetch,
+  fakeFontAndLogoFetch,
   fakeRouterSequence,
   finalTurn,
   goodGraphicsPlan,
@@ -78,19 +79,68 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
     expect(result.status).toBe("awaiting_gate");
   });
 
-  it("resolves to blocked_intake when the client has no locked brand style on file", async () => {
+  it("runs on a DERIVED default style when the client has no locked brand style on file, and tells the reviewer", async () => {
+    // Until 2026-09-07 this was blocked_intake ("run Style Exploration first").
+    // The profile and graphics language are still configured here, so only the
+    // style is derived, from the brand kit, and named in the review payload.
     env = await setupTestEnvironment({ withLockedStyle: false });
+    await env.store.writeJson(env.clientSlug, ["client", "brand"], { palette: { accent: "#FF6B2C" }, fonts: ["Spectral"], visualStyle: "Minimalist" });
     const promptStore = makePromptStore();
     const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan()]);
-    const workflowFn = createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+    const workflowFn = createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore, router, fetchImpl: fakeFontAndLogoFetch() });
 
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
-    const result = await engine.run(workflowFn, { ...params, runId: "branded_shorts_run_no_style" });
+    const result = await engine.run(workflowFn, { ...params, runId: "branded_shorts_run_derived_style" });
 
-    expect(result.status).toBe("blocked_intake");
-    if (result.status !== "blocked_intake") throw new Error("unreachable");
-    expect(result.reason).toContain("Style Exploration");
+    expect(result.status).toBe("awaiting_gate");
+    const gate = await durableStore.getGate("branded_shorts_run_derived_style__10-delivery-review");
+    expect(gate).toBeDefined();
+    expect(gate!.payload).toMatchObject({ styleSource: "derived", flagged: true });
+    expect((gate!.payload as { setupNotes: string[] }).setupNotes.join(" ")).toContain("no style was ever locked");
+  });
+
+  it("derives the whole setup (profile, fonts, mark, graphics language, archetypes) from the brand kit when nothing is configured", async () => {
+    // What every karoslabs run on prep hit since 2026-09-05: a locked style,
+    // no brandedShortsProfilePath / GraphicsLanguage / ApprovedArchetypes.
+    env = await setupTestEnvironment({
+      withProfileAndGraphicsLanguage: false,
+      responses: (finalMp4Path) => ({ ...happyPathResponses(finalMp4Path), "derive_mark.py": { stdout: "MARK: PASS 640x480 derived_alpha", stderr: "", exitCode: 0 } }),
+    });
+    // No profile on file, so `video.assetsCheck` and friends run against the derived one.
+    await env.store.writeJson(env.clientSlug, ["client", "brand"], {
+      name: "Karos Labs",
+      handle: "karoslabs",
+      accent: "#d95f2b",
+      colors: { neutralDark: "#242429", neutralLight: "#ff6b2c", primaryAccent: "#d95f2b" },
+      fonts: { body: "Inter", heading: "Inter" },
+      logoUrl: "https://example.test/logo.png",
+      visualStyle: "Minimalist",
+    });
+    // The intake needs the work dir the derived profile lands in; the helper
+    // only sets it alongside the profile it is no longer writing.
+    const config = (await env.store.readJson<Record<string, unknown>>(env.clientSlug, ["client", "config"])) ?? {};
+    await env.store.writeJson(env.clientSlug, ["client", "config"], { ...config, brandedShortsWorkDir: env.workDir });
+    const promptStore = makePromptStore();
+    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan()]);
+    const workflowFn = createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true, fetchImpl: fakeFontAndLogoFetch() });
+
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+    const result = await engine.run(workflowFn, { ...params, runId: "branded_shorts_run_derived_setup" });
+
+    expect(result.status).toBe("completed");
+    const profilePath = path.join(env.workDir, "brand", "brand-profile.json");
+    const profile = JSON.parse(await fs.readFile(profilePath, "utf8")) as { color: Record<string, string>; video_captions_v2: { emphasis: { font_file: string } }; endcard: { logo_file: string; eyebrow_text: string } };
+    expect(profile.color).toMatchObject({ accent: "#d95f2b", ink: "#242429", background: "#242429" });
+    // The kit's "neutralLight" is orange, not a light neutral: the engine's paper stands in.
+    expect(profile.color.foreground).toBe("#f5f5f5");
+    expect(profile.video_captions_v2.emphasis.font_file).toBe("fonts/Inter-700.ttf");
+    expect(profile.endcard).toMatchObject({ logo_file: "marks/mark.png", eyebrow_text: "@karoslabs" });
+    await expect(fs.stat(path.join(env.workDir, "brand", "fonts", "Inter-700.ttf"))).resolves.toBeTruthy();
+    // The engine was asked to key the flattened logo, from the downloaded bytes.
+    const markCall = env.runnerCalls.find((c) => c.args.some((a) => a.endsWith("derive_mark.py")));
+    expect(markCall?.args).toContain("--source");
   });
 
   it("resolves to blocked_intake when there is no per-upload intake for this run", async () => {

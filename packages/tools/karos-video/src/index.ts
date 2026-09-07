@@ -1,6 +1,7 @@
 import type { GcsArtifactStoreLike } from "@agent-engine/tool-common";
 import type { KarosVideoToolOptions } from "./config.js";
 import { createAssetsCheck } from "./tools/assets-check.js";
+import { createDeriveMark } from "./tools/derive-mark.js";
 import { createBrandGate } from "./tools/brand-gate.js";
 import { createColorGrade } from "./tools/color-grade.js";
 import { createCutGate } from "./tools/cut-gate.js";
@@ -23,6 +24,7 @@ export * from "./config.js";
 export * from "./process/runner.js";
 export * from "./gate-helpers.js";
 export * from "./tools/assets-check.js";
+export * from "./tools/derive-mark.js";
 export * from "./tools/brand-gate.js";
 export * from "./tools/color-grade.js";
 export * from "./tools/cut-gate.js";
@@ -69,6 +71,7 @@ export interface CreateKarosVideoToolsOptions extends KarosVideoToolOptions {
 export function createKarosVideoTools(options: CreateKarosVideoToolsOptions = {}) {
   return {
     "video.assetsCheck": createAssetsCheck(options),
+    "video.deriveMark": createDeriveMark(options),
     "video.cutGate": createCutGate(options),
     "video.brandGate": createBrandGate(options),
     "video.graphicsGate": createGraphicsGate(options),

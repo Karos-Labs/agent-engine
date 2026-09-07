@@ -332,6 +332,35 @@ describe("gate.numbersSourced", () => {
     expect(verdict.verdict).toBe("content_fail");
   });
 
+  // prep run pubsub-21753432816018912 (newsletter-agent) burned two $1.75
+  // editorial rounds on these two shapes.
+  it("treats a multiplier written with the multiplication sign as the same figure as one written with an x", async () => {
+    const withSign = await verdictOf("gate.numbersSourced", { text: "Fresh content earns 3.2x more citations.", sources: ["Content updated within 30 days earned 3.2× more citations."] });
+    expect(withSign.verdict).toBe("pass");
+    const draftWithSign = await verdictOf("gate.numbersSourced", { text: "Fresh content earns 3.2× more citations.", sources: ["earned 3.2x more citations"] });
+    expect(draftWithSign.verdict).toBe("pass");
+    const unsourced = await verdictOf("gate.numbersSourced", { text: "Fresh content earns 3.2× more citations.", sources: ["earned 2.1x more citations"] });
+    expect(unsourced.verdict).toBe("content_fail");
+  });
+
+  it("verifies a range endpoint the draft states AS A BOUND against a source that carries the range", async () => {
+    const source = ["Schema markup lifts citations 2.6-3.4x in the accounts we measured; CPA rose 12-34% in saturated categories."];
+    expect((await verdictOf("gate.numbersSourced", { text: "Schema markup lifts citations by up to 3.4x.", sources: source })).verdict).toBe("pass");
+    expect((await verdictOf("gate.numbersSourced", { text: "CPA rose as much as 34% in saturated categories.", sources: source })).verdict).toBe("pass");
+    expect((await verdictOf("gate.numbersSourced", { text: "Schema markup lifts citations by at least 2.6x.", sources: source })).verdict).toBe("pass");
+  });
+
+  it("STILL fails that endpoint when the draft asserts it as the value, not as a bound", async () => {
+    const source = ["Schema markup lifts citations 2.6-3.4x in the accounts we measured."];
+    const verdict = await verdictOf("gate.numbersSourced", { text: "Schema markup lifts citations 3.4x.", sources: source });
+    expect(verdict.verdict).toBe("content_fail");
+  });
+
+  it("does not let a bound phrase verify a figure the source range does not end on", async () => {
+    const verdict = await verdictOf("gate.numbersSourced", { text: "Lifts citations by up to 3.9x.", sources: ["lifts citations 2.6-3.4x"] });
+    expect(verdict.verdict).toBe("content_fail");
+  });
+
   it("fails a dollar-figure claim with no source", async () => {
     const verdict = await verdictOf("gate.numbersSourced", { text: "We raised $1.2 million in funding." });
     expect(verdict.verdict).toBe("content_fail");
@@ -675,10 +704,10 @@ describe("every gate registers with the expected toolVersion", () => {
     }
   });
 
-  it("pins gate.numbersSourced at the magnitude-aware version", async () => {
+  it("pins gate.numbersSourced at the bound-and-multiplication-sign-aware version", async () => {
     // Named explicitly so reverting the range fix without reverting the version
     // — or the reverse — is caught here rather than in telemetry months later.
-    expect(gates["gate.numbersSourced"]!.version).toBe("1.2.0");
+    expect(gates["gate.numbersSourced"]!.version).toBe("1.3.0");
   });
 });
 
