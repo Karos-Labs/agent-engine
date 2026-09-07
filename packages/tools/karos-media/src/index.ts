@@ -5,6 +5,7 @@ import { z } from "zod";
 import { createFindImages, FindImagesInputSchema } from "./find-images.js";
 import { createGenerateImage, type ImageGenerationClient } from "./generate-image.js";
 import { createGenerateVideo, type VideoGenerationClient } from "./generate-video.js";
+import { createFindStockClip } from "./stock-video.js";
 import { createHarvestVideo, type VideoHarvestProvider } from "./harvest-video.js";
 import { createYtDlpHarvestProvider } from "./providers/yt-dlp-harvest.js";
 import { createScrapeImages } from "./scrape-images.js";
@@ -29,6 +30,7 @@ export * from "./routing.js";
 export * from "./quality.js";
 export * from "./brand-logo.js";
 export * from "./generate-video.js";
+export * from "./stock-video.js";
 export * from "./harvest-video.js";
 // Types only: `createDefaultProcessRunner` stays package-private because
 // `@agent-engine/tools`' barrel `export *`s this package next to karos-video,
@@ -208,6 +210,13 @@ export function createKarosMediaTools(options: KarosMediaToolsOptions = {}): Age
     // otherwise, so the cascade skips it rather than holding.
     "media.harvestVideo": createHarvestVideo({
       ...(videoHarvestProvider !== undefined ? { provider: videoHarvestProvider } : {}),
+      ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    }),
+    // ── Video Tier 2c: real portrait footage from Pexels' free video
+    // library, tried BEFORE generation for an original short (2026-09-08).
+    // not_available without PEXELS_API_KEY, so the cascade skips it.
+    "video.findStockClip": createFindStockClip({
+      apiKey: (options.env ?? process.env)["PEXELS_API_KEY"],
       ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
     }),
     // ── Video Tier 3: Veo generation, the clip cascade's last resort. Same
