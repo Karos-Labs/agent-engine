@@ -247,6 +247,7 @@ export function makeSharedPromptStore(): InMemoryPromptStore {
   store.setPrompt("newsletter-craft", "3", "Newsletter craft guidance.");
   store.setPrompt("newsletter-craft", "4", "Newsletter craft guidance.");
   store.setPrompt("newsletter-craft", "5", "Newsletter craft guidance.");
+  store.setPrompt("newsletter-craft", "6", "Newsletter craft guidance.");
   // newsletter-agent's two judgment steps (edition plan, editor verdict).
   store.setPrompt("newsletter-plan", "1", "Newsletter edition planning guidance.");
   store.setPrompt("newsletter-editor", "1", "Newsletter editor guidance.");

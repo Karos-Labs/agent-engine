@@ -4,8 +4,8 @@ import type { AgentTool } from "@agent-engine/core";
 
 const TOOL_VERSION = "1.0.0";
 
-/** X's actual character limit for a standard post. */
-const X_CHARACTER_LIMIT = 280;
+/** X's actual character limit for a standard post. Exported so the workflow's in-loop length steer counts the way this tool does. */
+export const X_CHARACTER_LIMIT = 280;
 /** Roughly what's visible above the "Show more" fold on a typical timeline card. */
 const X_FOLD_CHARACTERS = 120;
 

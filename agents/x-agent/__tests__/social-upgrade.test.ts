@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import type { AgentTool, AgentToolRegistry } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
-import { createXAgentWorkflow } from "../src/workflow/create-x-agent-workflow.js";
+import { createXAgentWorkflow, describeLengthOverrun } from "../src/workflow/create-x-agent-workflow.js";
 import { renderXDraftsMarkdown } from "../src/workflow/render-drafts-markdown.js";
 import { fakeRouterSequence, finalTurn, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 
@@ -211,14 +211,50 @@ describe("x-agent 2026-09 upgrade", () => {
     expect(deliverables[0]!.data.deliverable.thread).toEqual(thread);
   });
 
-  it("holds a thread whose part exceeds the X limit, before review", async () => {
-    const router = fakeRouterSequence([finalTurn(goodPost({ thread: ["x".repeat(300)] }))]);
+  it("an over-limit thread part is fixed by the draft's own self-critique, not held (prep run pubsub-21720543781218757)", async () => {
+    // Turn 1: part 2 is 283 characters, the exact shape that held the prep run.
+    // `gate.lintPost` now lints every part, so the step's self-critique fails,
+    // names "thread part 2", and turn 2 is the revision that shortens it.
+    const over = "x".repeat(283);
+    const fixed = "Part two, short enough this time.";
+    const router = fakeRouterSequence([finalTurn(goodPost({ thread: [over] })), finalTurn(goodPost({ thread: [fixed] }))]);
+    const store = new MemoryDurableStepStore();
+    const workflowFn = createXAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router, autoApprove: true });
+    const result = await new WorkflowEngine(store).run(workflowFn, { ...baseParams, runId: "x_thread_2a" });
+    expect(result.status).toBe("completed");
+    if (result.status !== "completed") throw new Error("unreachable");
+    expect(router.complete).toHaveBeenCalledTimes(2);
+    const draftStep = (await store.listSteps("x_thread_2a")).find((s) => s.stepId === "10-draft-post");
+    const gateTurns = (draftStep?.output as { steps: Array<{ toolCall?: { name: string; result: { reason?: string } } }> }).steps.filter((t) => t.toolCall?.name === "gate.lintPost");
+    expect(gateTurns[0]!.toolCall!.result.reason).toBe("thread part 2: text exceeds the x length limit (280 characters)");
+    expect(gateTurns[1]!.toolCall!.result.reason).toBeUndefined();
+  });
+
+  it("a model that keeps returning an over-limit part is steered once more by the workflow and only then held, before review", async () => {
+    // Self-critique allows two revisions (three turns), then the workflow's
+    // own length steer re-attempts the draft once (three more turns), and only
+    // a model that ignores all of it reaches the deterministic 13b hold.
+    const stubborn = finalTurn(goodPost({ thread: ["x".repeat(300)] }));
+    const router = fakeRouterSequence(Array.from({ length: 6 }, () => stubborn));
     const store = new MemoryDurableStepStore();
     const workflowFn = createXAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router });
     const result = await new WorkflowEngine(store).run(workflowFn, { ...baseParams, runId: "x_thread_2" });
     expect(result.status).toBe("held");
     if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/thread part 2 exceeds/);
+    // The self-critique verdict is the hold reason now: the step itself
+    // refuses to return a draft its gate rejected, which is the earlier and
+    // more specific of the two checks.
+    expect(result.reason).toMatch(/self-critique/);
+    expect(router.complete).toHaveBeenCalledTimes(3);
+  });
+
+  it("describeLengthOverrun names every over-limit post the way render.preview counts, and is silent when all fit", () => {
+    expect(describeLengthOverrun({ text: "fits", thread: ["also fits"] })).toBeUndefined();
+    const steer = describeLengthOverrun({ text: "x".repeat(281), thread: ["fits", "y".repeat(283)] });
+    expect(steer).toContain("part 1 (text) is 281 characters");
+    expect(steer).toContain("thread part 3 is 283 characters");
+    expect(steer).not.toContain("thread part 2");
+    expect(steer).toContain("at most 280 characters");
   });
 
   it("holds a thread for an account whose charter forbids threads (xAllowThreads: false)", async () => {

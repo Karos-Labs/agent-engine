@@ -80,7 +80,19 @@ export class NewsletterDraftAgent extends BaseAgent<NewsletterPostOutput> {
   protected readonly config: AgentStepConfig<NewsletterPostOutput> = {
     id: "newsletter-draft",
     description: "Draft a single newsletter edition for the selected main story and secondary sections.",
-    allowedTools: ["render.preview", "gate.lintPost", "gate.numbersSourced", "gate.brandCompliance"],
+    // No tools (2026-09-07). Until then the draft could call `render.preview`
+    // and the three content gates itself, and every real run did: write, lint,
+    // check numbers, check brand, return. Five opus turns on a ~45k-token
+    // prompt, each re-billing it, and each an extra chance to malform the
+    // envelope. Prep run pubsub-21722862925955345 spent $4.29 on exactly that
+    // and then failed on the fifth turn's envelope, twice. The workflow
+    // already runs every one of those gates deterministically right after this
+    // step (10 to 15b) and feeds the findings into the next editorial round,
+    // so the tools bought nothing a redraft note does not. One turn now:
+    // ~$0.85 instead of ~$4, and the no-tool turn schema, which is the one
+    // that tolerates a dropped `type` discriminator. `gate.lintPost` still
+    // runs as self-critique below, in code, at zero token cost.
+    allowedTools: [],
     outputSchema: NewsletterPostOutputSchema,
     // SCRUM-291 (AU14) — the third of this ticket's three named agents
     // (AUDIT-2026-08-25 §3.2 ranks it below intel-report and blog, not risk-free).
@@ -137,7 +149,10 @@ export class NewsletterDraftAgent extends BaseAgent<NewsletterPostOutput> {
     // from one headline and linked every section to a homepage). v4 was never
     // pinned by any agent (it was latest.md's uncommitted signoff/footer
     // change, snapshotted); v3 stays frozen.
-    skillRef: "newsletter-craft@5",
+    // Pinned to "6" (2026-09-07): v6 is v5 with the gates described as what
+    // runs AFTER the draft returns rather than as tools to call, matching the
+    // tool-less step above. Every craft rule is unchanged. v5 stays frozen.
+    skillRef: "newsletter-craft@6",
     selfCritique: { gateTool: "gate.lintPost", maxRevisions: 1, gateArgs: { platform: "newsletter" } },
   };
 }

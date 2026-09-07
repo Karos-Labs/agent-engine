@@ -150,6 +150,22 @@ export const LintPostInputSchema = z.object({
     .array(z.string())
     .default([])
     .describe("Client-specific banned phrases, checked case-insensitively on top of the built-in AI-cliche bank."),
+  /**
+   * Continuation posts of a thread (parts 2..N), each its own post on the
+   * platform and so each held to the SAME length limit and anti-tell rules as
+   * `text`. Prep run pubsub-21720543781218757 (x-agent) held on "thread part 3
+   * exceeds the X character limit (283 chars)": the draft step's self-critique
+   * had linted `text` alone, so the model never heard about the part that was
+   * over, and the deterministic check downstream had nothing left to do but
+   * hold. A failing part is named by its position in the thread (part 1 is
+   * `text`), so the feedback tells the model exactly which post to shorten.
+   */
+  parts: z
+    .array(z.string())
+    .default([])
+    .describe(
+      "Optional continuation posts (thread parts 2..N). Each is checked against the same platform length limit and anti-AI-tell rules as `text`; a failure names the part (part 1 is `text`).",
+    ),
 });
 export type LintPostInput = z.infer<typeof LintPostInputSchema>;
 
@@ -160,77 +176,109 @@ export const lintPost = defineTool<LintPostInput, GateVerdict>({
     "Basic hygiene (non-empty, within the platform's length limit, no unresolved markdown link syntax) plus a mechanical anti-AI-tell check.",
   version: TOOL_VERSION,
   inputSchema: LintPostInputSchema,
-  async execute({ text, platform, checkAntiSlop, maxExclamationMarks, bannedPhrases }) {
-    const trimmed = text.trim();
-    if (trimmed.length === 0) {
-      return success<GateVerdict>({
-        verdict: "content_fail",
-        evidence: [],
-        reason: "text is empty",
-        toolVersion: TOOL_VERSION,
-      });
-    }
-
-    const limit = PLATFORM_MAX_LENGTH[platform] ?? PLATFORM_MAX_LENGTH.generic!;
-    if (text.length > limit) {
-      return success<GateVerdict>({
-        verdict: "content_fail",
-        evidence: [`length ${text.length} exceeds the ${platform} limit of ${limit}`],
-        reason: `text exceeds the ${platform} length limit (${limit} characters)`,
-        toolVersion: TOOL_VERSION,
-      });
-    }
-
-    const unresolvedLinkMatch = /\[[^\]]+\]\(\s*\)/.exec(text);
-    if (unresolvedLinkMatch) {
-      return success<GateVerdict>({
-        verdict: "content_fail",
-        evidence: [unresolvedLinkMatch[0]],
-        reason: "text contains an unresolved markdown link (empty href)",
-        toolVersion: TOOL_VERSION,
-      });
-    }
-
-    if (checkAntiSlop) {
-      const sanitized = stripAntiSlopExemptions(text);
-
-      const dashMatch = DASH_PATTERN.exec(sanitized);
-      if (dashMatch) {
+  async execute({ text, platform, checkAntiSlop, maxExclamationMarks, bannedPhrases, parts }) {
+    const options = { platform, checkAntiSlop, maxExclamationMarks, bannedPhrases };
+    const main = lintOne(text, options);
+    if (main.verdict !== "pass") return success<GateVerdict>(main);
+    for (const [index, part] of parts.entries()) {
+      const verdict = lintOne(part, options);
+      if (verdict.verdict === "content_fail") {
+        const label = `thread part ${index + 2}`;
         return success<GateVerdict>({
-          verdict: "content_fail",
-          evidence: [`banned dash "${dashMatch[0]}"`],
-          reason: "text contains a banned em dash, en dash, or double hyphen: the single most-cited AI writing tell",
-          toolVersion: TOOL_VERSION,
+          ...verdict,
+          evidence: verdict.evidence.map((e) => `${label}: ${e}`),
+          reason: `${label}: ${verdict.reason}`,
         });
       }
-
-      const exclamationCount = (sanitized.match(/!/g) ?? []).length;
-      if (exclamationCount > maxExclamationMarks) {
-        return success<GateVerdict>({
-          verdict: "content_fail",
-          evidence: [`${exclamationCount} exclamation mark(s), limit is ${maxExclamationMarks}`],
-          reason: `text has ${exclamationCount} exclamation mark(s), exceeding the limit of ${maxExclamationMarks}`,
-          toolVersion: TOOL_VERSION,
-        });
-      }
-
-      const lower = text.toLowerCase();
-      const allBannedPhrases = [...DEFAULT_BANNED_PHRASES, ...bannedPhrases];
-      const matchedPhrases = allBannedPhrases.filter((phrase) => phrase.length > 0 && lower.includes(phrase.toLowerCase()));
-      if (matchedPhrases.length > 0) {
-        return success<GateVerdict>({
-          verdict: "content_fail",
-          evidence: matchedPhrases,
-          reason: `text contains a banned AI-cliche phrase: ${matchedPhrases.join(", ")}`,
-          toolVersion: TOOL_VERSION,
-        });
-      }
+      // `lintOne` never returns tooling_error today; if it ever does, the part label is not worth losing the verdict over.
+      if (verdict.verdict !== "pass") return success<GateVerdict>(verdict);
     }
-
     return success<GateVerdict>({
       verdict: "pass",
-      evidence: [`within the ${platform} length limit (${text.length}/${limit})`],
+      evidence: [`within the ${platform} length limit (${text.length}/${PLATFORM_MAX_LENGTH[platform] ?? PLATFORM_MAX_LENGTH.generic!})`, ...(parts.length > 0 ? [`${parts.length} thread part(s) also within the limit`] : [])],
       toolVersion: TOOL_VERSION,
     });
   },
 });
+
+interface LintOptions {
+  platform: LintPostInput["platform"];
+  checkAntiSlop: boolean;
+  maxExclamationMarks: number;
+  bannedPhrases: string[];
+}
+
+/** The lint rules for ONE post's worth of text. `execute` runs it over `text` and then over every thread part. */
+function lintOne(text: string, { platform, checkAntiSlop, maxExclamationMarks, bannedPhrases }: LintOptions): GateVerdict {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) {
+    return {
+      verdict: "content_fail",
+      evidence: [],
+      reason: "text is empty",
+      toolVersion: TOOL_VERSION,
+    };
+  }
+
+  const limit = PLATFORM_MAX_LENGTH[platform] ?? PLATFORM_MAX_LENGTH.generic!;
+  if (text.length > limit) {
+    return {
+      verdict: "content_fail",
+      evidence: [`length ${text.length} exceeds the ${platform} limit of ${limit}`],
+      reason: `text exceeds the ${platform} length limit (${limit} characters)`,
+      toolVersion: TOOL_VERSION,
+    };
+  }
+
+  const unresolvedLinkMatch = /\[[^\]]+\]\(\s*\)/.exec(text);
+  if (unresolvedLinkMatch) {
+    return {
+      verdict: "content_fail",
+      evidence: [unresolvedLinkMatch[0]],
+      reason: "text contains an unresolved markdown link (empty href)",
+      toolVersion: TOOL_VERSION,
+    };
+  }
+
+  if (checkAntiSlop) {
+    const sanitized = stripAntiSlopExemptions(text);
+
+    const dashMatch = DASH_PATTERN.exec(sanitized);
+    if (dashMatch) {
+      return {
+        verdict: "content_fail",
+        evidence: [`banned dash "${dashMatch[0]}"`],
+        reason: "text contains a banned em dash, en dash, or double hyphen: the single most-cited AI writing tell",
+        toolVersion: TOOL_VERSION,
+      };
+    }
+
+    const exclamationCount = (sanitized.match(/!/g) ?? []).length;
+    if (exclamationCount > maxExclamationMarks) {
+      return {
+        verdict: "content_fail",
+        evidence: [`${exclamationCount} exclamation mark(s), limit is ${maxExclamationMarks}`],
+        reason: `text has ${exclamationCount} exclamation mark(s), exceeding the limit of ${maxExclamationMarks}`,
+        toolVersion: TOOL_VERSION,
+      };
+    }
+
+    const lower = text.toLowerCase();
+    const allBannedPhrases = [...DEFAULT_BANNED_PHRASES, ...bannedPhrases];
+    const matchedPhrases = allBannedPhrases.filter((phrase) => phrase.length > 0 && lower.includes(phrase.toLowerCase()));
+    if (matchedPhrases.length > 0) {
+      return {
+        verdict: "content_fail",
+        evidence: matchedPhrases,
+        reason: `text contains a banned AI-cliche phrase: ${matchedPhrases.join(", ")}`,
+        toolVersion: TOOL_VERSION,
+      };
+    }
+  }
+
+  return {
+    verdict: "pass",
+    evidence: [`within the ${platform} length limit (${text.length}/${limit})`],
+    toolVersion: TOOL_VERSION,
+  };
+}

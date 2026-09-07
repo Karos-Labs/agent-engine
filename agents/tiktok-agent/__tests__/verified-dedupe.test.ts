@@ -94,7 +94,7 @@ interface Harness {
 function stubTools(): Harness {
   const outputHistory: Array<{ runId: string; excerpt: string }> = [{ runId: "prior-run", excerpt: PUBLISHED_TEXT }];
   const ok = (result: unknown) => ({ status: "success" as const, result });
-  const pass = () => ({ verdict: "pass" as const, reason: "" });
+  const pass = () => ({ verdict: "pass" as const, evidence: [], toolVersion: "1.0.0" });
 
   const tool = (name: string, run: (args: never) => unknown, schema?: ZodType) => ({
     name,

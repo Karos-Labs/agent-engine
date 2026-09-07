@@ -48,7 +48,7 @@ import {
   type TrendScoutOutput,
 } from "@agent-engine/workflow";
 import { MAX_THREAD_PARTS, XDraftAgent, type Lane, type XPostOutput } from "../agent/x-draft-agent.js";
-import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
+import { renderPreview, X_CHARACTER_LIMIT, type RenderPreviewResult } from "../tools/render-preview.js";
 import { renderXDraftsMarkdown } from "./render-drafts-markdown.js";
 import { countRecentEngagementPosts, ENGAGEMENT_DAILY_CAP, LANES_FOR_MODE, selectLane } from "./lane.js";
 import type {
@@ -99,6 +99,26 @@ const BARE_URL_PATTERN = /https?:\/\//i;
  * that de-duplication flags and steers, it does not hold a run.
  */
 const MAX_DEDUPE_ATTEMPTS = 3;
+
+/**
+ * Names every post in a draft that is over X's limit, as the steer for one
+ * in-loop redraft, or `undefined` when the whole draft fits. Plain
+ * `String.length`, exactly what `render.preview` (steps 13b and 14) counts,
+ * so a draft this passes cannot then be held there for length.
+ */
+export function describeLengthOverrun(draft: Pick<XPostOutput, "text" | "thread">): string | undefined {
+  const over: string[] = [];
+  if (draft.text.length > X_CHARACTER_LIMIT) over.push(`part 1 (text) is ${draft.text.length} characters`);
+  draft.thread.forEach((part, index) => {
+    if (part.length > X_CHARACTER_LIMIT) over.push(`thread part ${index + 2} is ${part.length} characters`);
+  });
+  if (over.length === 0) return undefined;
+  return (
+    `Your previous draft was over X's ${X_CHARACTER_LIMIT}-character limit: ${over.join("; ")}. ` +
+    `Every post, part 1 and each thread part, must be at most ${X_CHARACTER_LIMIT} characters; aim under 260. ` +
+    "Shorten only the over-limit part(s), keep the sourced specifics and everything else as it was, and return the complete draft again."
+  );
+}
 
 /** The draft plus the media the run resolved for it — what the review gate shows and the deliverable persists. */
 type XDraftWithMedia = XPostOutput & { mediaPlan: SocialMediaPlan };
@@ -533,6 +553,8 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
         let dedupeRetrySteer: string | undefined;
         /** Set once, by a draft that ran out of turns: the next attempt is told what its predecessor did instead of finishing. */
         let commitSteer: string | undefined;
+        /** Set once, by a draft with a part over X's limit: the next attempt is told exactly which part and by how much. */
+        let lengthSteer: string | undefined;
         for (let attempt = 1; attempt <= MAX_DEDUPE_ATTEMPTS; attempt++) {
           /** Attempt 1 keeps the ORIGINAL step ids, so a run that never repeats itself has a byte-identical trace to what it had before this check existed. */
           const att = (id: string) => (attempt === 1 ? id : `${id}-attempt-${attempt}`);
@@ -560,6 +582,7 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
             ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
             ...(dedupeRetrySteer !== undefined ? { dedupeAvoid: dedupeRetrySteer } : {}),
             ...(commitSteer !== undefined ? { commitDirective: commitSteer } : {}),
+            ...(lengthSteer !== undefined ? { lengthDirective: lengthSteer } : {}),
             // Omitted rather than passed as null when absent: an explicit
             // "accountCharter: null" in the payload invites the model to remark on
             // its absence instead of simply working without one.
@@ -607,6 +630,21 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
           // is exactly what step 13's link-placement check (and everything
           // downstream) now sees.
           const candidate: XPostOutput = { ...draftResult.finalOutput!, mainPostText: draftResult.finalOutput!.text };
+
+          // The length check, INSIDE the loop, before the draft is scored or
+          // gated. Steps 13b/14 below still verify with `render.preview` and
+          // hold; they are the record. But a hold there used to be the first
+          // time anyone told the model a part was over (prep run
+          // pubsub-21720543781218757: "thread part 3 exceeds the X character
+          // limit (283 chars)", a finished, sourced thread thrown away over
+          // three characters). Counted the way `render.preview` counts, so the
+          // steer and the backstop can never disagree. One redraft, then the
+          // backstop holds as before.
+          const overrun = describeLengthOverrun(candidate);
+          if (overrun !== undefined && lengthSteer === undefined && attempt < MAX_DEDUPE_ATTEMPTS) {
+            lengthSteer = overrun;
+            continue;
+          }
 
           const dedupeVerdict = await checkOutputDedupe(wf, rev(att("10a-verify-not-duplicate")), fullText(candidate), outputHistory);
           if (dedupeVerdict.status === "similar" && attempt < MAX_DEDUPE_ATTEMPTS) {
