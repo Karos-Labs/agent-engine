@@ -125,7 +125,7 @@ function buildTools(store: WorkspaceStore, opts: { research?: "serves" | "not_av
   const calls: string[] = [];
   const researchArgs: Array<Record<string, unknown>> = [];
   const ok = (result: unknown) => ({ status: "success" as const, result });
-  const pass = { verdict: "pass" as const, reason: "" };
+  const pass = { verdict: "pass" as const, evidence: [], toolVersion: "1.0.0" };
   const tool = (name: string, run: (args: never) => unknown) => ({
     name,
     version: "1.0.0",

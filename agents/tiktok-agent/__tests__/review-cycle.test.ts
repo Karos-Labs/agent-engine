@@ -63,7 +63,7 @@ const FIRST_COMMENTARY = {
 };
 
 const REVISED_COMMENTARY = {
-  caption: "The number holds up, the takeaway does not — here's why. Via Jane Doe on The Show ep. 12.",
+  caption: "The number holds up, the takeaway does not, here's why. Via Jane Doe on The Show ep. 12.",
   about: "A shorter, punchier take on the same disagreement, per the reviewer's note.",
   sourceCredit: "Jane Doe on The Show ep. 12",
 };
@@ -121,7 +121,11 @@ function stubTools(opts: { forbiddenTopics?: string[] } = {}): Harness {
   const feedback: Array<Record<string, unknown>> = [];
   const uploadedPaths: string[] = [];
   const ok = (result: unknown) => ({ status: "success" as const, result });
-  const pass = { verdict: "pass" as const, reason: "" };
+  // A REAL gate verdict carries `evidence` and `toolVersion` (GateVerdictSchema);
+  // the script and commentary steps now self-critique against `gate.lintPost`
+  // through BaseAgent, which validates the verdict strictly, so a stub that
+  // omitted them read as a malformed gate and degraded every run.
+  const pass = { verdict: "pass" as const, evidence: [], toolVersion: "1.0.0" };
 
   const tool = (name: string, run: (args: never) => unknown, schema?: ZodType) => ({
     name,

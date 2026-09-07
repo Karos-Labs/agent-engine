@@ -129,8 +129,8 @@ function stubTools(opts: StubOptions = {}): Harness {
   const ok = (result: unknown) => ({ status: "success" as const, result });
   const pass = (name: string) =>
     opts.failingGate === name
-      ? { verdict: "content_fail" as const, reason: `${name} said no` }
-      : { verdict: "pass" as const, reason: "" };
+      ? { verdict: "content_fail" as const, evidence: [], reason: `${name} said no`, toolVersion: "1.0.0" }
+      : { verdict: "pass" as const, evidence: [], toolVersion: "1.0.0" };
 
   const tool = (name: string, run: (args: never) => unknown, schema?: ZodType) => ({
     name,

@@ -32,6 +32,20 @@ export class TikTokCommentaryAgent extends BaseAgent<Commentary> {
     // harvested or attached footage — so the source credit names what the
     // footage actually is instead of a plausible-sounding episode. v2 added
     // the client-knowledge-and-recent-posts section. v1/v2 stay frozen.
-    skillRef: "tiktok-commentary@3",
+    // Pinned to "4" (2026-09-07): v4 names the mechanical tells the lint gate
+    // rejects (dashes, exclamation marks, the cliche bank) and drops every em
+    // dash from its own text, for the same reason tiktok-script@2 did. v3
+    // stays frozen.
+    skillRef: "tiktok-commentary@4",
+    // The lint 07-compliance runs on the caption and about, run first on the
+    // model's own output so a tell is a revision here, not a held run there.
+    selfCritique: {
+      gateTool: "gate.lintPost",
+      maxRevisions: 2,
+      gateArgs: { platform: "generic" },
+      gateInput: (draft) => ({
+        text: [draft.caption, draft.about].filter((p): p is string => typeof p === "string" && p.trim().length > 0).join("\n\n"),
+      }),
+    },
   };
 }

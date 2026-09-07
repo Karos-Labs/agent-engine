@@ -146,8 +146,22 @@ export class XDraftAgent extends BaseAgent<XPostOutput> {
     skillRef: "x-craft@5",
     selfCritique: {
       gateTool: "gate.lintPost",
-      maxRevisions: 1,
+      // Two revisions, not one: the second is what turns "thread part 3 is
+      // 283 characters" into a shortened part instead of a held run. Each
+      // revision is one more sonnet turn, a few cents against a re-dispatch.
+      maxRevisions: 2,
       gateArgs: { platform: "x", bannedPhrases: X_SPECIFIC_BANNED_PHRASES },
+      // Part 1 AND every thread part go to the gate. Until 2026-09 the gate
+      // saw `text` alone, so a thread part over 280 characters passed the
+      // model's own check and held the run at the deterministic 13b step
+      // (prep run pubsub-21720543781218757, "thread part 3 exceeds the X
+      // character limit (283 chars)") with the model never told which part.
+      // Read defensively: this is the model's raw turn output, before the
+      // schema's defaults apply, so `thread` may be absent or malformed.
+      gateInput: (draft) => ({
+        text: typeof draft.text === "string" ? draft.text : "",
+        parts: Array.isArray(draft.thread) ? draft.thread.filter((part): part is string => typeof part === "string") : [],
+      }),
     },
   };
 }

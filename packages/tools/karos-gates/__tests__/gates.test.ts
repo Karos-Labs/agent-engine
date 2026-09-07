@@ -60,6 +60,41 @@ describe("gate.lintPost", () => {
     expect(verdict.verdict).toBe("content_fail");
   });
 
+  describe("thread parts", () => {
+    // Prep run pubsub-21720543781218757: the x-agent draft's self-critique
+    // linted `text` alone, a 283-character thread part passed it, and the run
+    // held downstream with the model never told which part was over.
+    it("passes when text and every part are within the limit", async () => {
+      const verdict = await verdictOf("gate.lintPost", { text: "Part one.", parts: ["Part two.", "Part three."], platform: "x" });
+      expect(verdict.verdict).toBe("pass");
+      expect(verdict.evidence).toContain("2 thread part(s) also within the limit");
+    });
+
+    it("fails on an over-limit part and names it, counting part 1 as `text`", async () => {
+      const verdict = await verdictOf("gate.lintPost", { text: "Part one.", parts: ["Part two.", "x".repeat(283)], platform: "x" });
+      expect(verdict.verdict).toBe("content_fail");
+      expect(verdict.reason).toBe("thread part 3: text exceeds the x length limit (280 characters)");
+      expect(verdict.evidence).toEqual(["thread part 3: length 283 exceeds the x limit of 280"]);
+    });
+
+    it("holds every part to the same anti-tell rules as text", async () => {
+      const verdict = await verdictOf("gate.lintPost", { text: "Clean part one.", parts: ["Part two — with a dash."], platform: "x" });
+      expect(verdict.verdict).toBe("content_fail");
+      expect(verdict.reason).toMatch(/^thread part 2: text contains a banned em dash/);
+    });
+
+    it("reports text's own failure first, before looking at any part", async () => {
+      const verdict = await verdictOf("gate.lintPost", { text: "We shipped it!", parts: ["x".repeat(300)], platform: "x" });
+      expect(verdict.verdict).toBe("content_fail");
+      expect(verdict.reason).toMatch(/exclamation mark/);
+    });
+
+    it("changes nothing for callers that never send parts", async () => {
+      const verdict = await verdictOf("gate.lintPost", { text: "A perfectly reasonable post.", platform: "x" });
+      expect(verdict.evidence).toEqual(["within the x length limit (28/280)"]);
+    });
+  });
+
   it("fails text containing an em dash", async () => {
     const verdict = await verdictOf("gate.lintPost", { text: "We shipped it — faster than expected." });
     expect(verdict.verdict).toBe("content_fail");

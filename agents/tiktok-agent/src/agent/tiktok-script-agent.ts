@@ -2,6 +2,26 @@ import { BaseAgent, resolveModelPolicy, type AgentStepConfig } from "@agent-engi
 import { ShortScriptSchema, type ShortScript } from "../workflow/types.js";
 
 /**
+ * Every word of a script a viewer hears or reads, joined for the lint gate:
+ * the caption and about, the hook, and each beat's narration and on-screen
+ * text. The same text 07-compliance checks after this step, so the model
+ * hears about a tell while it can still fix it. Read defensively: this is the
+ * raw turn output, before the schema validates it.
+ */
+export function scriptLintText(draft: Partial<ShortScript> | null | undefined): string {
+  if (!draft || typeof draft !== "object") return "";
+  const parts: unknown[] = [draft.caption, draft.about, draft.hook];
+  if (Array.isArray(draft.beats)) {
+    for (const beat of draft.beats) {
+      if (beat && typeof beat === "object") {
+        parts.push((beat as { narration?: unknown }).narration, (beat as { onScreenText?: unknown }).onScreenText);
+      }
+    }
+  }
+  return parts.filter((p): p is string => typeof p === "string" && p.trim().length > 0).join("\n\n");
+}
+
+/**
  * The script of an ORIGINAL short (step 03 on the generated path): what is
  * said, what is shown, and what the footage under it looks like, beat by beat.
  *
@@ -35,6 +55,23 @@ export class TikTokScriptAgent extends BaseAgent<ShortScript> {
     allowedTools: ["client.getVoiceRules", "client.getBrand", "client.getStrategy"],
     outputSchema: ShortScriptSchema,
     modelPolicy: resolveModelPolicy("tiktok-script", { policy: "pinned", model: "claude-sonnet-4-6", contentLanguageSensitive: true }),
-    skillRef: "tiktok-script@1",
+    // Pinned to "2" (2026-09-07): v2 states the mechanical tells the lint gate
+    // rejects (dashes, exclamation marks, the cliche bank) and is itself
+    // written without a single em dash, because a model imitates the register
+    // of its instructions and v1 used dozens while banning none. Prep run
+    // pubsub-21711047251391287 held at 07-compliance on one em dash in a
+    // beat's narration that nothing had ever asked this step to avoid. v1
+    // stays frozen.
+    skillRef: "tiktok-script@2",
+    // The same lint 07-compliance runs afterwards, run FIRST on the model's
+    // own output so a tell comes back as feedback it can act on rather than
+    // as a held run. Two revisions: the first fix is usually enough, the
+    // second is cheap insurance against fixing one dash and writing another.
+    selfCritique: {
+      gateTool: "gate.lintPost",
+      maxRevisions: 2,
+      gateArgs: { platform: "generic" },
+      gateInput: (draft) => ({ text: scriptLintText(draft) }),
+    },
   };
 }

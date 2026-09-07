@@ -180,8 +180,8 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "newsletter-craft",
     agent: "newsletter-agent",
-    versions: ["1", "2", "3", "4", "5"],
-    latestVersion: "5",
+    versions: ["1", "2", "3", "4", "5", "6"],
+    latestVersion: "6",
     requires: { languageDirective: true, numbersSourced: true, structuredOutput: true },
     structuredOutputFields: ["subject", "previewText", "intro", "callToAction", "signoff", "text"],
   },
@@ -246,8 +246,8 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "tiktok-commentary",
     agent: "tiktok-agent",
-    versions: ["1", "2", "3"],
-    latestVersion: "3",
+    versions: ["1", "2", "3", "4"],
+    latestVersion: "4",
     requires: { languageDirective: true, structuredOutput: true },
     structuredOutputFields: ["caption", "about", "sourceCredit"],
   },
@@ -255,8 +255,8 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "tiktok-script",
     agent: "tiktok-agent",
-    versions: ["1"],
-    latestVersion: "1",
+    versions: ["1", "2"],
+    latestVersion: "2",
     requires: { languageDirective: true, structuredOutput: true },
     structuredOutputFields: ["hook", "beats", "narration", "onScreenText", "visualBrief", "seconds", "caption", "about", "voiceover", "voiceoverRationale", "language"],
   },

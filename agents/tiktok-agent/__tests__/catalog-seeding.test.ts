@@ -94,7 +94,7 @@ async function setupEnv(): Promise<Env> {
 /** Builds a full tool registry: REAL topics.* (backed by `store`), everything else stubbed. */
 function buildTools(store: WorkspaceStore, config: unknown): AgentToolRegistry {
   const ok = (result: unknown) => ({ status: "success" as const, result });
-  const pass = { verdict: "pass" as const, reason: "" };
+  const pass = { verdict: "pass" as const, evidence: [], toolVersion: "1.0.0" };
   const tool = (name: string, run: (args: never) => unknown) => ({
     name,
     version: "1.0.0",

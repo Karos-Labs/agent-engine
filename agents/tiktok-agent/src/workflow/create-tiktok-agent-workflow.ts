@@ -36,6 +36,7 @@ import {
   type RevisionNote,
   type WorkflowContext,
 } from "@agent-engine/workflow";
+import { normalizeBannedDashes } from "@agent-engine/tool-common";
 import { TikTokCommentaryAgent } from "../agent/tiktok-commentary-agent.js";
 import { TikTokMomentAgent } from "../agent/tiktok-moment-agent.js";
 import { TikTokScriptAgent } from "../agent/tiktok-script-agent.js";
@@ -113,6 +114,38 @@ export interface CreateTikTokAgentWorkflowOptions {
  * this loop has already settled, never once per dedupe attempt.
  */
 const MAX_DEDUPE_ATTEMPTS = 2;
+
+/**
+ * Prep run pubsub-21711047251391287 went from a finished script to a held run
+ * on a single em dash in one beat's narration. The script and commentary
+ * steps now self-critique against `gate.lintPost`, so a dash is normally a
+ * revision inside the step; these two are the deterministic backstop for the
+ * one that still gets through, applied to exactly the fields 07-compliance
+ * lints and 13-commit-and-record writes back into the dedupe window, so every
+ * later comparison is against what actually shipped.
+ */
+export function normalizeScriptDashes(script: ShortScript): ShortScript {
+  return {
+    ...script,
+    hook: normalizeBannedDashes(script.hook),
+    caption: normalizeBannedDashes(script.caption),
+    about: normalizeBannedDashes(script.about),
+    beats: script.beats.map((beat) => ({
+      ...beat,
+      narration: normalizeBannedDashes(beat.narration),
+      onScreenText: normalizeBannedDashes(beat.onScreenText),
+    })),
+  };
+}
+
+/** `sourceCredit` is normalised with the caption it must appear in, so the 07-compliance containment check compares like with like. */
+export function normalizeCommentaryDashes(commentary: Commentary): Commentary {
+  return {
+    caption: normalizeBannedDashes(commentary.caption),
+    about: normalizeBannedDashes(commentary.about),
+    sourceCredit: normalizeBannedDashes(commentary.sourceCredit),
+  };
+}
 
 /** Every plate a generated short is built from stays on screen at least this long — under it a cut reads as a glitch. */
 const MIN_PLATE_HOLD_SECONDS = 2;
@@ -1011,7 +1044,11 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
             if (exec.status !== "completed") {
               throw new WorkflowToolingFailure(`commentary step resolved to "${exec.status}"`);
             }
-            return exec.finalOutput as Commentary;
+            // The one mechanical tell repaired in code before anything scores
+            // or gates the text (see `normalizeBannedDashes`): the agent has
+            // already self-critiqued against the lint gate, this is the
+            // backstop that makes a stray dash a comma instead of a held run.
+            return normalizeCommentaryDashes(exec.finalOutput as Commentary);
           }),
         (c) => `${c.caption}\n\n${c.about}`,
       );
@@ -1119,7 +1156,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
             if (exec.status !== "completed") {
               throw new WorkflowToolingFailure(`script step resolved to "${exec.status}"`);
             }
-            return ShortScriptSchema.parse(exec.finalOutput);
+            return normalizeScriptDashes(ShortScriptSchema.parse(exec.finalOutput));
           }),
         (s) => `${s.caption}\n\n${s.about}`,
       );

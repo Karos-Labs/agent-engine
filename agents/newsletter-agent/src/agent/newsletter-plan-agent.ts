@@ -67,9 +67,14 @@ export class NewsletterPlanAgent extends BaseAgent<NewsletterEditionPlan> {
     // full research digest; 8_000 is generous headroom for `passedOn` on a
     // wide pull, well under any model's ceiling.
     maxTokens: 8_000,
-    // Opus, same as the draft: selection is where taste matters most, and a
-    // cheaper planner hands a stronger writer a weaker edition.
-    modelPolicy: resolveModelPolicy("newsletter-plan", { policy: "pinned", model: "claude-opus-4-8" }),
+    // Sonnet (2026-09-07; opus from 2026-09-05 until then). The plan is a
+    // structured selection over a ~30k-token research digest: which story
+    // leads, which quick hits earn a place, what to leave out. Measured on
+    // prep, the opus plan cost $0.64 to $0.72 per run against ~$0.13 on
+    // sonnet, a third of the whole edition's price, for a step whose output
+    // the opus draft and the opus editor both re-judge anyway. The prose,
+    // where the model tier is audible, stays on opus.
+    modelPolicy: resolveModelPolicy("newsletter-plan", { policy: "pinned", model: "claude-sonnet-4-6" }),
     skillRef: "newsletter-plan@1",
   };
 }
