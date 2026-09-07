@@ -4,7 +4,8 @@ import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, notAvailable, parseDurationMs, success, toolingError } from "@agent-engine/tool-common";
 import { latestRunForQuery, writeRunRecord, type RunRecord } from "./runs.js";
 
-const TOOL_VERSION = "1.0.0";
+// 1.0.1: 150s ceiling and one retry on a PageSpeed timeout — the first prep run lost its field data at 90s.
+const TOOL_VERSION = "1.0.1";
 const JOB = "core-web-vitals";
 const PSI_ENDPOINT = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed";
 
