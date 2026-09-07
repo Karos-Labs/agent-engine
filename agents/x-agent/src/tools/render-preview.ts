@@ -2,7 +2,7 @@ import { z } from "zod";
 import { checkLength, defineTool, success, truncateAtFold, truncateToLimit } from "@agent-engine/tool-common";
 import type { AgentTool } from "@agent-engine/core";
 
-const TOOL_VERSION = "1.0.0";
+const TOOL_VERSION = "1.0.1";
 
 /** X's actual character limit for a standard post. Exported so the workflow's in-loop length steer counts the way this tool does. */
 export const X_CHARACTER_LIMIT = 280;
