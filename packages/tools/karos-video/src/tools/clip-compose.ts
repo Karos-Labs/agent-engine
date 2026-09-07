@@ -7,7 +7,11 @@ import { assertNoTraversalOrNul, assertWithinTenantWorkRoot } from "../sandbox.j
 
 // 1.0.1 — `probeDuration`/`assertToolPath` exported for `video.composeSequence`
 // and `video.synthesizeVoice`; the two tools here behave exactly as before.
-const TOOL_VERSION = "1.0.1";
+// 1.1.0 — captions are styled and kept ABOVE the bottom bar (they used to burn
+// at libass's default bottom margin, straight across the @handle); timed
+// title-card `overlays` (a beat's on-screen line) render in the upper third;
+// the caption font/size/outline are explicit instead of the renderer's defaults.
+const TOOL_VERSION = "1.1.0";
 
 /**
  * The pure-ffmpeg clip pipeline: `video.cutClip` and `video.brandFrame`.
@@ -44,6 +48,40 @@ export function sanitizeOverlayText(text: string): string {
 /** `#RRGGBB` → ffmpeg's `0xRRGGBB`. */
 export function hexToFfmpeg(hex: string): string {
   return `0x${hex.slice(1)}`;
+}
+
+/**
+ * A path inside a filtergraph option: forward slashes always (the
+ * subtitles/drawtext parsers read backslashes as escapes even on Windows), and
+ * the drive colon escaped so it is not read as the next option.
+ */
+export function filterPath(p: string): string {
+  return p.replace(/\\/g, "/").replace(/:/g, "\\:");
+}
+
+/**
+ * Wraps an on-screen line for `drawtext`, which never wraps on its own: at
+ * most `maxChars` per line (a word longer than that stands alone), at most
+ * three lines. Eight words at ~87px on a 1080-wide canvas is two lines; the
+ * script prompt caps the line at eight words, so three is the ceiling, not
+ * the norm.
+ */
+export function wrapOverlayText(text: string, maxChars = 22): string {
+  const words = text.replace(/[\u0000-\u001f\u007f]/g, " ").trim().split(/\s+/).filter((w) => w.length > 0);
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    if (current.length === 0) {
+      current = word;
+    } else if (current.length + 1 + word.length <= maxChars) {
+      current = `${current} ${word}`;
+    } else {
+      lines.push(current);
+      current = word;
+    }
+  }
+  if (current.length > 0) lines.push(current);
+  return lines.slice(0, 3).join("\n");
 }
 
 /** Breathing room between the mark and the edge of its legibility plate, in output pixels. */
@@ -106,12 +144,41 @@ export const BrandFrameBrandSchema = z.object({
 });
 export type BrandFrameBrand = z.infer<typeof BrandFrameBrandSchema>;
 
+/**
+ * How burned captions look. Sizes are libass SCRIPT units: ffmpeg converts an
+ * SRT to a 384x288 ASS script and libass scales it to the canvas, so on a
+ * 1920-high frame one unit is ~6.7px and `fontSize: 13` is ~87px — the size
+ * a phone-native caption is read at arm's length. `MarginV` is derived from
+ * the bar height so the block always sits in the picture, never on the bar.
+ */
+export const BrandFrameCaptionStyleSchema = z.object({
+  fontName: z.string().min(1).default("Liberation Sans").describe("fontconfig family; the server image ships Liberation and DejaVu."),
+  fontSize: z.number().int().positive().default(13).describe("libass script units (~6.7px each on a 1920 canvas)."),
+  outline: z.number().nonnegative().default(2.5).describe("Outline width in script units; black, for legibility over any footage."),
+  gapAboveBarPx: z.number().int().nonnegative().default(56).describe("Canvas pixels between the caption block and the top of the bottom bar."),
+});
+export type BrandFrameCaptionStyle = z.infer<typeof BrandFrameCaptionStyleSchema>;
+
+/** A timed title card: the beat's on-screen line, shown in the upper third while the captions run below. */
+export const BrandFrameOverlaySchema = z.object({
+  text: z.string().min(1).max(96).describe("The line to show. Wrapped onto up to three lines by the tool."),
+  start: z.number().nonnegative().describe("Seconds into the clip the card appears."),
+  end: z.number().positive().describe("Seconds into the clip the card disappears."),
+});
+export type BrandFrameOverlay = z.infer<typeof BrandFrameOverlaySchema>;
+
 export const BrandFrameInputSchema = z.object({
   // No existing TSDoc on these two fields to transcribe (SCRUM-293 flag) — synthesized from execute()'s usage.
   videoPath: z.string().min(1).describe("Path to the source clip to composite the branded frame onto."),
   outputPath: z.string().min(1).describe("Path to write the finished, branded clip to."),
   brand: BrandFrameBrandSchema.describe("The brand inputs to composite — everything optional except the ground color the bars are painted in."),
   srtPath: z.string().min(1).optional().describe("SRT file to burn as captions. Absent means no captions."),
+  captionStyle: BrandFrameCaptionStyleSchema.default(() => BrandFrameCaptionStyleSchema.parse({})).describe("Caption font, size, outline and clearance above the bottom bar."),
+  overlays: z
+    .array(BrandFrameOverlaySchema)
+    .max(8)
+    .default([])
+    .describe("Timed title cards in the upper third of the picture — a beat's on-screen line while its narration is captioned below. Empty means none."),
   canvas: z
     .object({ w: z.number().int().positive(), h: z.number().int().positive() })
     .default(() => ({ w: 1080, h: 1920 }))
@@ -120,19 +187,37 @@ export const BrandFrameInputSchema = z.object({
 });
 export type BrandFrameInput = z.infer<typeof BrandFrameInputSchema>;
 
+/** An overlay whose text has already been written to a file — what the filter graph actually references. */
+export interface BrandFrameOverlayFile {
+  textfile: string;
+  start: number;
+  end: number;
+}
+
+/** The libass `force_style` for the captions: bold white, black outline, centred, held clear of the bottom bar. */
+export function captionForceStyle(style: BrandFrameCaptionStyle, canvasH: number, barHeight: number): string {
+  const marginV = Math.round(((barHeight + style.gapAboveBarPx) * 288) / canvasH);
+  return (
+    `FontName=${style.fontName},FontSize=${style.fontSize},Bold=1,` +
+    `PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&H00000000,BorderStyle=1,Outline=${style.outline},Shadow=0,` +
+    `Alignment=2,MarginV=${marginV},MarginL=48,MarginR=48,WrapStyle=0`
+  );
+}
+
 /**
  * Builds the single `-filter_complex` graph — exported pure so the exact
  * graph is unit-tested without ffmpeg. The video is scaled into the region
  * between the bars, padded in the brand ground, then text/logo/captions
  * composite on top.
  */
-export function buildBrandFrameFilter(input: BrandFrameInput): string {
+export function buildBrandFrameFilter(input: BrandFrameInput, overlayFiles: readonly BrandFrameOverlayFile[] = []): string {
   const { w, h } = input.canvas;
   const bar = input.barHeight;
   const inner = h - 2 * bar;
   const ground = hexToFfmpeg(input.brand.ground);
   const fg = hexToFfmpeg(input.brand.fg);
   const hasLogo = input.brand.logoPath !== undefined;
+  const fontName = input.captionStyle.fontName;
 
   const filters: string[] = [
     // Scale into the region between the bars, pad in the brand ground, then
@@ -160,11 +245,26 @@ export function buildBrandFrameFilter(input: BrandFrameInput): string {
       filters.push(`drawtext=text='${text}':fontcolor=${fg}:fontsize=36:x=(w-text_w)/2:y=${h - bar}+${Math.round(bar / 2)}-text_h/2`);
     }
   }
+  // Title cards: the beat's on-screen line, boxed in the brand ground, in the
+  // upper third of the PICTURE (below the top bar), each shown for its beat.
+  // Above the captions on purpose — the two never share a zone, which is the
+  // overlap a reviewer saw on the 2026-09-07 render (captions across text).
+  if (overlayFiles.length > 0) {
+    const fontSize = Math.round(h * 0.032);
+    const y = bar + Math.round(inner * 0.07);
+    for (const overlay of overlayFiles) {
+      filters.push(
+        `drawtext=textfile='${filterPath(overlay.textfile)}':font='${fontName}':fontcolor=${fg}:fontsize=${fontSize}:line_spacing=10:` +
+          `box=1:boxcolor=${ground}@0.72:boxborderw=22:x=(w-text_w)/2:y=${y}:enable='between(t,${overlay.start},${overlay.end})'`,
+      );
+    }
+  }
   if (input.srtPath !== undefined) {
     // Forward slashes always: the subtitles filter parses backslashes as
     // escapes even on Windows, and Linux (production) only ever sees them.
-    const srt = input.srtPath.replace(/\\/g, "/").replace(/:/g, "\\:");
-    filters.push(`subtitles='${srt}'`);
+    // `force_style` is what keeps the block off the bottom bar: libass's own
+    // default margin put captions exactly where the @handle is drawn.
+    filters.push(`subtitles='${filterPath(input.srtPath)}':force_style='${captionForceStyle(input.captionStyle, h, bar)}'`);
   }
 
   const base = `[0:v]${filters.filter((f) => f.length > 0).join(",")}`;
@@ -328,9 +428,21 @@ export function createBrandFrame(options: KarosVideoToolOptions = {}) {
         if (!readable) input = { ...input, srtPath: undefined };
       }
       const effective: BrandFrameInput = { ...input, brand };
-      await fs.mkdir(path.dirname(path.resolve(input.outputPath)), { recursive: true });
+      const outDir = path.dirname(path.resolve(input.outputPath));
+      await fs.mkdir(outDir, { recursive: true });
 
-      const filter = buildBrandFrameFilter(effective);
+      // drawtext reads its text from a file so nothing in a beat's line (a
+      // quote, a colon, a percent sign) has to survive filtergraph escaping.
+      const overlayFiles: BrandFrameOverlayFile[] = [];
+      for (const [i, overlay] of effective.overlays.entries()) {
+        const wrapped = wrapOverlayText(overlay.text);
+        if (wrapped.length === 0 || overlay.end <= overlay.start) continue;
+        const textfile = path.join(outDir, `overlay-${i + 1}.txt`);
+        await fs.writeFile(textfile, wrapped, "utf8");
+        overlayFiles.push({ textfile, start: overlay.start, end: overlay.end });
+      }
+
+      const filter = buildBrandFrameFilter(effective, overlayFiles);
       const args = [
         "-y",
         "-i",
@@ -377,6 +489,7 @@ export function createBrandFrame(options: KarosVideoToolOptions = {}) {
         ...(brand.logoPath !== undefined ? ["logo"] : []),
         ...(brand.logoPath !== undefined && brand.logoScrim !== undefined ? ["logo-scrim"] : []),
         ...(effective.srtPath !== undefined ? ["captions"] : []),
+        ...(overlayFiles.length > 0 ? ["overlays"] : []),
       ];
       return success<BrandFrameResult>({
         outputPath: effective.outputPath,

@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
+import { promises as fs } from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { AgentContext } from "@agent-engine/core";
 import {
   BrandFrameInputSchema,
   buildBrandFrameFilter,
+  BrandFrameCaptionStyleSchema,
+  captionForceStyle,
+  wrapOverlayText,
   buildSrt,
   createBrandFrame,
   createCutClip,
@@ -95,9 +101,32 @@ describe("buildBrandFrameFilter", () => {
     expect(buildBrandFrameFilter({ ...base, brand: { ...base.brand, logoScrim: "#FFFFFF" } })).not.toContain("pad=iw");
   });
 
-  it("burns captions when an srt is given, with colon-escaped forward-slash paths", () => {
+  it("burns captions when an srt is given, with colon-escaped forward-slash paths, styled and held above the bottom bar", () => {
     const filter = buildBrandFrameFilter({ ...base, srtPath: "C:\\work\\clip.srt" });
-    expect(filter).toContain("subtitles='C\\:/work/clip.srt'");
+    expect(filter).toContain("subtitles='C\\:/work/clip.srt':force_style='FontName=Liberation Sans,FontSize=13,Bold=1,");
+    // 200px bar + 56px gap on a 1920 canvas = 38 libass units: the block ends
+    // in the picture, not across the @handle (libass's default put it there).
+    expect(filter).toContain("Alignment=2,MarginV=38,");
+    expect(captionForceStyle(BrandFrameCaptionStyleSchema.parse({}), 1920, 200)).toContain("MarginV=38");
+  });
+
+  it("draws each timed title card in the upper third, boxed in the ground colour, from a text file", () => {
+    const filter = buildBrandFrameFilter(base, [
+      { textfile: "C:\\work\\overlay-1.txt", start: 0, end: 5.5 },
+      { textfile: "C:\\work\\overlay-2.txt", start: 5.5, end: 11 },
+    ]);
+    expect(filter).toContain("drawtext=textfile='C\\:/work/overlay-1.txt':font='Liberation Sans':fontcolor=0xF4F2EC:fontsize=61:");
+    expect(filter).toContain("box=1:boxcolor=0x17181C@0.72:boxborderw=22:x=(w-text_w)/2:y=306:enable='between(t,0,5.5)'");
+    expect(filter).toContain("enable='between(t,5.5,11)'");
+    // The cards are drawn BEFORE the captions burn, so the two never share a zone.
+    expect(filter.indexOf("drawtext=textfile")).toBeLessThan(filter.indexOf("subtitles=") === -1 ? Infinity : filter.indexOf("subtitles="));
+  });
+
+  it("wraps an on-screen line for drawtext, which never wraps by itself", () => {
+    expect(wrapOverlayText("Stop paying for clicks that never convert")).toBe("Stop paying for clicks\nthat never convert");
+    expect(wrapOverlayText("Short")).toBe("Short");
+    expect(wrapOverlayText("  spaced   out\tline ")).toBe("spaced out line");
+    expect(wrapOverlayText("one two three four five six seven eight nine ten eleven twelve thirteen").split("\n")).toHaveLength(3);
   });
 
   it("a bare ground with nothing else still frames — brand furniture is optional, bars are not", () => {
@@ -153,6 +182,35 @@ describe("video.brandFrame", () => {
     // And ffmpeg was invoked WITHOUT a second input.
     const ffmpeg = calls.find((c) => c.bin === "ffmpeg")!;
     expect(ffmpeg.args.filter((a) => a === "-i")).toHaveLength(1);
+  });
+
+  it("writes each overlay's wrapped text to a file next to the output and references it from the graph", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "brand-frame-"));
+    try {
+      const calls: Array<{ bin: string; args: string[] }> = [];
+      const tool = createBrandFrame({ runner: fakeRunner(calls), env: {} });
+      const outcome = await tool.execute(
+        BrandFrameInputSchema.parse({
+          videoPath: path.join(dir, "clip.mp4"),
+          outputPath: path.join(dir, "framed.mp4"),
+          brand: { ground: "#17181C", fg: "#F4F2EC" },
+          overlays: [
+            { text: "Stop paying for clicks that never convert", start: 0, end: 6 },
+            { text: "   ", start: 6, end: 9 }, // nothing to show: skipped, not an empty card
+          ],
+        }),
+        { ctx },
+      );
+      expect(outcome.status).toBe("success");
+      expect((outcome as { result: { applied: string[] } }).result.applied).toContain("overlays");
+      expect(await fs.readFile(path.join(dir, "overlay-1.txt"), "utf8")).toBe("Stop paying for clicks\nthat never convert");
+      const ffmpeg = calls.find((c) => c.bin === "ffmpeg")!;
+      const graph = ffmpeg.args[ffmpeg.args.indexOf("-filter_complex") + 1]!;
+      expect(graph).toContain("overlay-1.txt");
+      expect(graph).not.toContain("overlay-2.txt");
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("reports which elements composited", async () => {

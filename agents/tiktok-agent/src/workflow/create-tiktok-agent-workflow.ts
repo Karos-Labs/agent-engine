@@ -29,6 +29,7 @@ import {
   readPastFeedback,
   readRunDirection,
   revisionDirective,
+  runAgentStepWithCommitSteer,
   runDirectionField,
   runReviewCycle,
   runTopicGuardrail,
@@ -868,7 +869,14 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           ? { accent: (asHex(brand["accent"]) ?? asHex(colors["primaryAccent"]))! }
           : {}),
         ...(rawHandle.length > 0 && /^@?[A-Za-z0-9._]{1,40}$/.test(rawHandle) ? { handle: `@${rawHandle.replace(/^@+/, "")}` } : {}),
-        ...(config.seriesHeader !== undefined ? { seriesHeader: config.seriesHeader } : {}),
+        // The top bar names the client: a configured series header when the
+        // client runs a series, else the company's own name (product rule
+        // 2026-09-08). Absent both, the bar stays bare rather than inventing one.
+        ...(config.seriesHeader !== undefined
+          ? { seriesHeader: config.seriesHeader }
+          : profile.name !== undefined && profile.name.trim().length > 0
+            ? { seriesHeader: profile.name.trim().slice(0, 60) }
+            : {}),
         ...(logoUrl !== undefined ? { logoUrl } : {}),
         ...(language !== undefined ? { language } : {}),
       };
@@ -903,13 +911,26 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       return { logoPath, ...(placement.scrim?.color !== undefined ? { logoScrim: placement.scrim.color } : {}) };
     };
 
-    /** The branded 9:16 frame around a finished cut or sequence — bars, header, handle, logo, captions. */
-    const brandFrame = async (clipPath: string, workDir: string, srtPath: string | undefined): Promise<{ outputPath: string; durationSeconds: number | null }> => {
+    /** A beat's on-screen line, shown as a title card in the upper third of the picture while its narration is captioned below. */
+    interface TitleCard {
+      text: string;
+      start: number;
+      end: number;
+    }
+
+    /** The branded 9:16 frame around a finished cut or sequence — bars, header, handle, logo, captions, title cards. */
+    const brandFrame = async (
+      clipPath: string,
+      workDir: string,
+      srtPath: string | undefined,
+      overlays: readonly TitleCard[] = [],
+    ): Promise<{ outputPath: string; durationSeconds: number | null }> => {
       const { logoPath, logoScrim } = await prepareLogo(workDir);
       const frameOutcome = await tools["video.brandFrame"]?.execute(
         {
           videoPath: clipPath,
           outputPath: path.join(workDir, "clip-framed.mp4"),
+          ...(overlays.length > 0 ? { overlays } : {}),
           brand: {
             ground: videoBrand.ground,
             fg: videoBrand.fg,
@@ -1025,7 +1046,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         (stepId, dedupeAvoid) =>
           wf.step.code(stepId, async () => {
             const agent = new TikTokCommentaryAgent({ router: options.router, tools, promptStore: options.promptStore });
-            const exec = await wf.step.agent(`${stepId.replace("06-commentary", "06a-commentary")}`, agent, {
+            const exec = await runAgentStepWithCommitSteer(wf, `${stepId.replace("06-commentary", "06a-commentary")}`, agent, {
               // The step that writes the caption the client reads — the one
               // place their direction and brief matter most.
               ...runDirectionField(runDirection),
@@ -1044,7 +1065,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
               // asked about THIS clip minutes ago.
               ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
               ...(directive !== undefined ? { revisionRequest: directive } : {}),
-            });
+            }, "the commentary");
             if (exec.status === "content_fail") {
               throw new WorkflowHeld("commentary did not clear its own output validation");
             }
@@ -1143,7 +1164,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         (stepId, dedupeAvoid) =>
           wf.step.code(stepId, async () => {
             const agent = new TikTokScriptAgent({ router: options.router, tools, promptStore: options.promptStore });
-            const exec = await wf.step.agent(stepId.replace("03s-script", "03u-script"), agent, {
+            const exec = await runAgentStepWithCommitSteer(wf, stepId.replace("03s-script", "03u-script"), agent, {
               ...runDirectionField(runDirection),
               topic,
               ...(intake.discovered ? { topicBrief: intake.discovered } : {}),
@@ -1156,7 +1177,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
               voiceoverPolicy: config.voiceover,
               allowPeople: config.allowPeopleInGeneratedFootage,
               ...(config.voiceLanguage ?? videoBrand.language ? { contentLanguage: config.voiceLanguage ?? videoBrand.language } : {}),
-            });
+            }, "the script");
             if (exec.status === "content_fail") {
               throw new WorkflowHeld("the script did not clear its own output validation");
             }
@@ -1298,7 +1319,19 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         }
         const sequence = composed.result as { outputPath: string; durationSeconds: number | null };
 
-        return brandFrame(sequence.outputPath, workDir, srtPath);
+        // With a voice, the captions are the spoken words and each beat's
+        // `onScreenText` becomes a title card above them for the beat's
+        // duration — two zones, never one over the other. Silent, the
+        // on-screen text IS the caption (built above) and no card repeats it.
+        const titleCards: TitleCard[] =
+          voice && voice.words.length > 0
+            ? script.beats.map((b, i) => {
+                const start = i === 0 ? 0 : boundaries[i - 1]!;
+                return { text: b.onScreenText, start, end: Math.max(start + 0.5, boundaries[i]! - 0.05) };
+              })
+            : [];
+
+        return brandFrame(sequence.outputPath, workDir, srtPath, titleCards);
       });
 
       return finishDraft(rev, revision, {
@@ -1472,7 +1505,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           ...(draft.visualQa !== undefined ? { visualQa: draft.visualQa, flagged: !draft.visualQa.passed } : {}),
         },
         requiredRole: "account_manager",
-        timeout: { duration: "24h", onTimeout: "hold" },
+        timeout: { duration: "1h", onTimeout: "auto_approve" },
       }),
       onDecision: async ({ revision, response, output }) => {
         // SCRUM-306 (AU23): a reject's drafted content previously had nowhere
