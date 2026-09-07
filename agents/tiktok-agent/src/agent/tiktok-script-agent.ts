@@ -62,7 +62,7 @@ export class TikTokScriptAgent extends BaseAgent<ShortScript> {
     // pubsub-21711047251391287 held at 07-compliance on one em dash in a
     // beat's narration that nothing had ever asked this step to avoid. v1
     // stays frozen.
-    skillRef: "tiktok-script@2",
+    skillRef: "tiktok-script@3",
     // The same lint 07-compliance runs afterwards, run FIRST on the model's
     // own output so a tell comes back as feedback it can act on rather than
     // as a held run. Two revisions: the first fix is usually enough, the

@@ -29,117 +29,15 @@ import type { ProductId } from "./wiring/workflows.js";
 // fixed-list path — see this file's own note (line ~137) that these five are
 // the last holdouts still on a hand-authored shape rather than
 // `discoveredDescriptors`.
-const X_AGENT_STEP_IDS = [
-  "00-intake-check",
-  "01-load-client-context",
-  "02-load-memory-shelf",
-  "03-load-recent-decisions",
-  "04-research-pull",
-  "04e-read-past-feedback",
-  "05-extract-candidate-summary",
-  "06-reserve-topic",
-  "07-select-candidate",
-  "08-select-lane",
-  "09-check-engagement-cap",
-  "10-draft-post",
-  "11-verify-numbers-sourced",
-  "12-verify-brand-compliance",
-  "13-verify-link-placement",
-  "14-render-preview-check",
-  // AU13: these run INSIDE the revision loop, before the gate — matching every
-  // sibling channel agent. They used to run after `15-batch-review`, which made
-  // a post-approval leak unrevisable.
-  "14c-verify-no-placeholder",
-  "14d-verify-no-leak",
-  "15-batch-review-r0",
-  "18-persist-deliverable",
-  "19-persist-manifest",
-  "20-commit-and-record",
-] as const;
-
 // `00-channel-setup` (2026-08): the pre-flight linkedin-agent now runs for
 // itself in place of the old standalone `linkedin-setup-agent` product — see
 // `agents/setup-agents/src/workflow/channel-setup.ts`.
-const LINKEDIN_AGENT_STEP_IDS = [
-  "00-channel-setup",
-  "00-intake-check",
-  "01-load-client-context",
-  "02-load-memory-shelf",
-  "03-load-recent-decisions",
-  "04-research-pull",
-  "04e-read-past-feedback",
-  "05-extract-candidate-summary",
-  "06-reserve-topic",
-  "07-select-candidate",
-  "08-determine-archetype",
-  "09-draft-post",
-  "10-verify-numbers-sourced",
-  "11-verify-brand-compliance",
-  "12-render-preview-check",
-  "13-verify-no-placeholder",
-  "14-verify-no-leak",
-  "15-batch-review-r0",
-  "16-persist-deliverable",
-  "17-persist-manifest",
-  "18-commit-and-record",
-] as const;
-
 /**
  * Reddit's own shape — the longest of the five: a pre-draft thread-selection/eligibility run (steps 08-11) precedes drafting a reply, never an original post (Phase 2.5 Batch 2.1's reply-only restoration).
  *
  * `00-channel-setup` (2026-08): the pre-flight reddit-agent now runs for
  * itself in place of the old standalone `reddit-setup-agent` product.
  */
-const REDDIT_AGENT_STEP_IDS = [
-  "00-channel-setup",
-  "00-intake-check",
-  "01-load-client-context",
-  "02-load-memory-shelf",
-  "03-load-recent-decisions",
-  "04-research-pull",
-  "04e-read-past-feedback",
-  "05-extract-candidate-summary",
-  "06-reserve-topic",
-  "07-select-candidate",
-  "08-select-target-thread",
-  "09-check-thread-not-answered",
-  "10-verify-subreddit-eligibility",
-  "11-determine-angle",
-  "12-draft-reply",
-  "13-verify-numbers-sourced",
-  "14-verify-brand-compliance",
-  "15-verify-no-placeholder",
-  "16-verify-leak-check",
-  "17-render-preview-check",
-  "18-batch-review-r0",
-  "19-persist-deliverable",
-  "20-persist-manifest",
-  "21-commit-and-record",
-] as const;
-
-const BLOG_AGENT_STEP_IDS = [
-  "00-intake-check",
-  "01-load-client-context",
-  "02-load-memory-shelf",
-  "03-load-recent-decisions",
-  "04-research-pull",
-  "04e-read-past-feedback",
-  "05-extract-candidate-summary",
-  "06-reserve-topic",
-  "07-select-candidate",
-  "08-determine-angle",
-  "09-draft-post",
-  "10-verify-numbers-sourced",
-  "11-verify-brand-compliance",
-  "12-render-preview-check",
-  "13-verify-no-placeholder",
-  "14-verify-no-leak",
-  "15-batch-review-r0",
-  "16-persist-deliverable",
-  "17-persist-manifest",
-  "18-commit-and-record",
-] as const;
-
 /**
  * Newsletter's own shape — the hype-language scan (10) and the footer-injection
  * structural check (12) are distinct steps so the scan never sees the
@@ -150,35 +48,6 @@ const BLOG_AGENT_STEP_IDS = [
  * carries a `-round-N` suffix and, like `-r1`, has no descriptor on this
  * fixed-list path.
  */
-const NEWSLETTER_AGENT_STEP_IDS = [
-  "00-intake-check",
-  "01-load-client-context",
-  "02-load-memory-shelf",
-  "03-load-recent-decisions",
-  "04-plan-research",
-  "04-research-pull",
-  "04e-read-past-feedback",
-  "05-extract-candidate-summary",
-  "06-reserve-topics",
-  "07-select-candidates",
-  "08-determine-edition-theme",
-  "08b-plan-edition",
-  "09-draft-post",
-  "10-verify-brand-compliance",
-  "11-verify-numbers-sourced",
-  "12-verify-compliance-footer",
-  "13-verify-no-placeholder",
-  "14-verify-no-leak",
-  "15-render-preview-check",
-  "15b-editorial-lint",
-  "15c-editor-verdict",
-  "16-batch-review-r0",
-  "17a-render-email",
-  "17-persist-deliverable",
-  "18-persist-manifest",
-  "19-commit-and-record",
-] as const;
-
 /** The five original channel agents, still on their own hand-authored fixed step shape below — every product wired in afterward uses `discoveredDescriptors` instead (see its own doc comment for why). */
 const ORIGINAL_CHANNEL_PRODUCT_IDS = ["x-agent", "linkedin-agent", "reddit-agent", "blog-agent", "newsletter-agent"] as const;
 type OriginalChannelProductId = (typeof ORIGINAL_CHANNEL_PRODUCT_IDS)[number];
@@ -353,21 +222,6 @@ const CAMPAIGN_ORCHESTRATOR_STEP_IDS = [
   "15-commit-and-record",
 ] as const;
 
-function channelAgentDescriptors(productId: OriginalChannelProductId): DynamicAgentStepDescriptor[] {
-  const stepIds: readonly string[] =
-    productId === "reddit-agent"
-      ? REDDIT_AGENT_STEP_IDS
-      : productId === "linkedin-agent"
-        ? LINKEDIN_AGENT_STEP_IDS
-        : productId === "blog-agent"
-          ? BLOG_AGENT_STEP_IDS
-          : productId === "newsletter-agent"
-            ? NEWSLETTER_AGENT_STEP_IDS
-            : X_AGENT_STEP_IDS;
-  const draftStepId = DRAFT_STEP_ID_BY_PRODUCT[productId];
-  return stepIds.map((stepId) => ({ stepId, label: stepId, type: stepId === draftStepId ? "ai" : "code" }));
-}
-
 /**
  * Builds each fan-out slot's descriptors from what actually ran, not a fixed
  * assumption — since Phase 2.5 Batch 2 gave each channel its own step shape,
@@ -427,7 +281,15 @@ export async function buildRunReport(
     );
   } else if (isOriginalChannelProduct(productId)) {
     gateStepRecords = await resolvedGateStepRecords(durableStore, runId, [GATE_STEP_ID_BY_PRODUCT[productId]], recordedStepIds);
-    descriptors = channelAgentDescriptors(productId);
+    // 2026-09-07: the five original channels join the discovered path too.
+    // Their hand-authored `*_STEP_IDS` lists had drifted from the workflows
+    // (reddit's named six steps that no longer exist and missed the ten that
+    // do; x's missed the trend scout, the content-mode select, the thread
+    // check and the media steps), so every held or failed run reported
+    // phantom `step did not run` failures ahead of its real steps and the
+    // portal painted everything after the first phantom as skipped. A
+    // descriptor per RECORD can never describe a step that did not run.
+    descriptors = discoveredDescriptors([...stepRecords, ...gateStepRecords]);
   } else {
     // Any other product id — one of the five newly-wired fixed agents, or (Task 2) a
     // dynamic agent's own agentId, which has no entry here at all: dynamic agents built by

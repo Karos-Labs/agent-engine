@@ -2031,13 +2031,16 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
         ...(directive !== undefined ? { revisionRequest: directive } : {}),
       });
-      if (copyExec.status === "tooling_error" || copyExec.status === "budget_exceeded") {
+      if (copyExec.status === "tooling_error") {
         throw new WorkflowToolingFailure(`copy step resolved to "${copyExec.status}" on attempt ${attempt}/${MAX_SELF_CHECK_ATTEMPTS}`);
       }
       if (copyExec.status !== "completed") {
-        // A malformed draft (failed its own output schema) gets the same
-        // "return to 05" remedy as a step-07 self-check failure below.
-        lastSelfCheckReason = `copy draft failed its own output validation on attempt ${attempt}`;
+        // A malformed draft (failed its own output schema) or a draft that ran
+        // out of turns gets the same "return to 05" remedy as a step-07
+        // self-check failure below. `budget_exceeded` was a tooling failure
+        // here until 2026-09-07: a designed ceiling reported as a fault, with
+        // two attempts still unspent.
+        lastSelfCheckReason = `copy draft ${copyExec.status === "budget_exceeded" ? "ran out of turns" : "failed its own output validation"} on attempt ${attempt}`;
         continue;
       }
       // `let`, not `const`: reassigned once below if a slide survives every
@@ -2271,7 +2274,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           candidatePool: attemptPool,
           usedImages,
         });
-        if (imageExec.status === "tooling_error" || imageExec.status === "budget_exceeded") {
+        if (imageExec.status === "tooling_error") {
           throw new WorkflowToolingFailure(`image vetting step resolved to "${imageExec.status}" on attempt ${attempt}/${MAX_SELF_CHECK_ATTEMPTS}`);
         }
         if (imageExec.status !== "completed") {
@@ -2820,7 +2823,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           : {}),
         ...(effectiveKit !== undefined && effectiveKit.palette.length > 0 ? { brandPalette: effectiveKit.palette } : {}),
       });
-      if (qaExec.status === "tooling_error" || qaExec.status === "budget_exceeded") {
+      if (qaExec.status === "tooling_error") {
         throw new WorkflowToolingFailure(`visual QA step resolved to "${qaExec.status}" on attempt ${attempt}/${MAX_SELF_CHECK_ATTEMPTS}`);
       }
       if (qaExec.status !== "completed") {
@@ -3035,7 +3038,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           })(),
         },
         requiredRole: "account_manager",
-        timeout: { duration: "24h", onTimeout: "hold" },
+        timeout: { duration: "1h", onTimeout: "auto_approve" },
       }),
       onDecision: async ({ revision, response, templateFeedback }) => {
         // IGSTYLE-3, §2.2 Layer 2 — captured here (not via `notes`, which the

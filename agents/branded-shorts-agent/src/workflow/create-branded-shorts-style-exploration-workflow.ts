@@ -1,5 +1,5 @@
 import type { AgentContext, AgentToolRegistry, ModelRouter, PromptStore } from "@agent-engine/core";
-import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext, toAgentContext } from "@agent-engine/workflow";
+import { GATE_TIMEOUT_ACTOR, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext, toAgentContext } from "@agent-engine/workflow";
 import { BrandedShortsStyleExplorationAgent } from "../agent/branded-shorts-style-exploration-agent.js";
 import { styleTokenFidelityGate } from "./style-token-fidelity-gate.js";
 import type { StyleCandidate, StyleExplorationWorkflowResult } from "./types.js";
@@ -74,14 +74,19 @@ export function createBrandedShortsStyleExplorationWorkflow(options: CreateBrand
           kind: "style_exploration_lock",
           payload: { runId: wf.runId, candidates },
           requiredRole: "account_manager",
-          timeout: { duration: "7d", onTimeout: "hold" },
+          timeout: { duration: "1h", onTimeout: "auto_approve" },
         });
 
     if (decision.decision !== "approve") {
       throw new WorkflowHeld(`style exploration rejected: ${decision.reason ?? "no reason given"}`);
     }
 
-    const lockedName = decision.reason?.trim();
+    // A person names the candidate in `reason`. The one approval that names
+    // nothing is the engine's own timeout (nobody answered within the hour,
+    // product rule 2026-09-08: every review approves itself after 1h), and
+    // that locks the agent's first proposal, which is the one it put forward
+    // as the best fit.
+    const lockedName = decision.reason?.trim() || (decision.actor === GATE_TIMEOUT_ACTOR ? candidates[0]!.name : undefined);
     const locked = candidates.find((c) => c.name === lockedName);
     if (!locked) {
       throw new WorkflowToolingFailure(

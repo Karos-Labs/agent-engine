@@ -82,7 +82,10 @@ describe("POST /api/v1/runs/start", () => {
     expect(resumeRes.status).toBe(200);
     expect(resumeRes.body.status).toBe("completed");
     expect(resumeRes.body.report.domainOutcome).toBe("delivered");
-    expect(resumeRes.body.report.steps).toHaveLength(22);
+    // Every step the run actually recorded, since 2026-09-07 the report is
+    // built from records rather than a hand-authored list that had drifted
+    // (it named 22 steps; the workflow runs 27 on this path, gate included).
+    expect(resumeRes.body.report.steps).toHaveLength(27);
     // Phase 2.5 fix-batch regression check: a genuinely completed/delivered
     // run's own review-gate step must report as done/approved, never as
     // "failed: step did not run" (the report-serializer gate-status bug).

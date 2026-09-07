@@ -7,7 +7,12 @@ import { MEDIA_CACHE_PREFIX } from "./find-images.js";
 // 1.1.0: Veo 3.1 by default, priced per second at last; resolution/audio/
 // people/negative-prompt controls; `outputName` so several plates can share
 // one run dir.
-const TOOL_VERSION = "1.1.0";
+// 1.2.0: the prompt asks for documentary realism (real camera, available
+// light, normal speed, worn materials) instead of "cinematic", and the
+// built-in negative prompt names the generator's tells (CGI look, slow
+// motion, lens flare, neon, warped hands). A reviewer's verdict on the
+// 2026-09-07 render: "looks very AI".
+const TOOL_VERSION = "1.2.0";
 
 /**
  * `video.generateClip` — Tier 3 of the clip pipeline's sourcing cascade:
@@ -114,8 +119,25 @@ export function videoGenerationSku(model: string, resolution: "720p" | "1080p"):
   return model;
 }
 
-/** What the frame composites over the plate, so the plate must not already contain it. */
-const BUILT_IN_NEGATIVE_PROMPT = "text, words, lettering, captions, subtitles, logos, watermarks, borders, letterboxing";
+/**
+ * What the frame composites over the plate, so the plate must not already
+ * contain it — plus the generator's own tells, the things a viewer reads as
+ * "AI" before they can say why.
+ */
+const BUILT_IN_NEGATIVE_PROMPT =
+  "text, words, lettering, captions, subtitles, logos, watermarks, borders, letterboxing, " +
+  "CGI, 3D render, cartoon, illustration, animation, glossy commercial look, oversaturated colors, slow motion, " +
+  "lens flare, neon glow, morphing, warped hands, extra fingers, distorted faces, surreal";
+
+/**
+ * The house style every plate is asked for. "Cinematic" (the previous
+ * wording) is the default register of every video generator and reads as
+ * generated: perfect light, slow motion, glossy surfaces. Documentary realism
+ * is the opposite set of choices, and the ones a phone-native viewer trusts.
+ */
+const REALISM_DIRECTIVE =
+  "Documentary realism: filmed on a real camera with a 35mm lens, handheld or on a slow slider, natural available light, " +
+  "true-to-life colour, real materials with wear and texture, ordinary motion at normal speed. Not a commercial, not glossy, no slow motion, no CGI.";
 
 const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -150,7 +172,7 @@ export function createGenerateVideo(options: GenerateVideoOptions = {}) {
       await fs.mkdir(absDir, { recursive: true });
 
       const prompt =
-        `${input.brief}. Cinematic b-roll, natural motion, realistic lighting. ` +
+        `${input.brief}. ${REALISM_DIRECTIVE} ` +
         `No text, no words, no lettering, no captions, no logos, no watermarks, no borders — ` +
         `branded framing and captions are composited on top of this footage separately.`;
       const negativePrompt = input.negativePrompt?.trim()

@@ -1,4 +1,5 @@
 export * from "./tool.js";
+export * from "./tool-usage-scope.js";
 export * from "./types.js";
 export * from "./write-fence.js";
 export * from "./prompt-store.js";

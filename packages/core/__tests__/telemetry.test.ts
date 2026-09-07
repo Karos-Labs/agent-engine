@@ -34,9 +34,9 @@ describe("computeStepCostUsd", () => {
 
   it("still resolves the two id-translation fallbacks (canonical @-date, undated base) before giving up", () => {
     // Agent Platform's own spelling of a dated Haiku snapshot.
-    expect(pricingForModel("claude-haiku-4-5@20251001").inputPer1M).toBe(0.8);
+    expect(pricingForModel("claude-haiku-4-5@20251001").inputPer1M).toBe(1.0);
     // A dated id whose exact row is missing but whose undated base is priced.
-    expect(pricingForModel("claude-haiku-4-5-20301231").inputPer1M).toBe(0.8);
+    expect(pricingForModel("claude-haiku-4-5-20301231").inputPer1M).toBe(1.0);
   });
 
   it("prices the previously-missing rows: Opus 5, Sonnet 5, and the Gemini tertiary-fallback default", () => {
@@ -46,8 +46,28 @@ describe("computeStepCostUsd", () => {
     // so it must resolve to its own real row rather than the Sonnet-rate default.
     expect(() => pricingForModel("gemini-1.5-flash")).not.toThrow();
     expect(pricingForModel("gemini-1.5-flash")).toEqual({ inputPer1M: 0.075, outputPer1M: 0.3 });
-    expect(pricingForModel("claude-opus-5")).toEqual({ inputPer1M: 15.0, outputPer1M: 75.0 });
-    expect(pricingForModel("claude-sonnet-5")).toEqual({ inputPer1M: 3.0, outputPer1M: 15.0 });
+    expect(pricingForModel("claude-opus-5")).toEqual({ inputPer1M: 5.0, outputPer1M: 25.0 });
+    expect(pricingForModel("claude-sonnet-5")).toEqual({ inputPer1M: 2.0, outputPer1M: 10.0 });
+  });
+
+  it("prices the current Claude generation at Anthropic's published list (2026-09-08), not the retired Opus 4.1 / Haiku 3.5 rates it carried", () => {
+    // Opus 4.8 at $15/$75 reported every Opus step at 3x its real cost;
+    // Haiku 4.5 at $0.80/$4 understated by 20%. Both were the previous
+    // generation's numbers left in place.
+    expect(pricingForModel("claude-opus-4-8")).toEqual({ inputPer1M: 5.0, outputPer1M: 25.0 });
+    expect(pricingForModel("claude-opus-4-7")).toEqual({ inputPer1M: 5.0, outputPer1M: 25.0 });
+    expect(pricingForModel("claude-sonnet-4-6")).toEqual({ inputPer1M: 3.0, outputPer1M: 15.0 });
+    expect(pricingForModel("claude-haiku-4-5-20251001")).toEqual({ inputPer1M: 1.0, outputPer1M: 5.0 });
+    expect(pricingForModel("claude-haiku-4-5")).toEqual({ inputPer1M: 1.0, outputPer1M: 5.0 });
+  });
+
+  it("bills a prompt-cache write at the 1.25x premium on top of the base rate the same tokens already paid inside `uncached`", () => {
+    // 1M uncached (of which 400k were cache writes) + 0 cached + 0 output on Sonnet:
+    //   base   1,000,000 x $3   = $3.00
+    //   premium  400,000 x $3 x 0.25 = $0.30
+    expect(computeStepCostUsd("claude-sonnet-4-6", { cached: 0, uncached: 1_000_000, cacheWrite: 400_000 }, 0)).toBe(3.3);
+    // Records from before the field existed still price exactly as they did.
+    expect(computeStepCostUsd("claude-sonnet-4-6", { cached: 0, uncached: 1_000_000 }, 0)).toBe(3.0);
   });
 
   it("prices the Vertex/Agent-Platform Gemini models already wired through GeminiAdapter", () => {

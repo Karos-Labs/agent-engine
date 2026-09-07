@@ -89,9 +89,14 @@ describe("video.generateClip", () => {
     await createGenerateVideo({ client, sleepImpl: async () => {} }).execute(input(repoRoot, "r3", "a whiteboard session", { negativePrompt: "crowds" }), { ctx: {} as never });
     expect(calls[0]!.prompt).toContain("No text, no words");
     expect(calls[0]!.prompt).toContain("no logos, no watermarks");
+    // 1.2.0: the register is documentary, never "cinematic" — the generator's own default look.
+    expect(calls[0]!.prompt).toContain("Documentary realism");
+    expect(calls[0]!.prompt).not.toMatch(/cinematic/i);
     const negative = calls[0]!.config!["negativePrompt"] as string;
     expect(negative).toContain("logos");
     expect(negative).toContain("watermarks");
+    expect(negative).toContain("CGI");
+    expect(negative).toContain("slow motion");
     expect(negative.endsWith(", crowds")).toBe(true);
     await fs.rm(repoRoot, { recursive: true, force: true });
   });

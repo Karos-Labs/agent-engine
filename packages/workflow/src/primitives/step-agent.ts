@@ -1,4 +1,4 @@
-import type { AgentContext, AgentExecutionResult, AgentExecutionStatus, BaseAgent } from "@agent-engine/core";
+import { computeToolCostUsd, runInToolUsageScope, type AgentContext, type AgentExecutionResult, type AgentExecutionStatus, type BaseAgent, type ToolUnitUsage } from "@agent-engine/core";
 import { recordCostAndTokens, recordWorkflowStepMetric, withWorkflowStepSpan } from "@agent-engine/telemetry";
 import type { StepRecord } from "../adapters/types.js";
 import type { WorkflowRuntime } from "./context.js";
@@ -212,7 +212,14 @@ export async function runStepAgent<TOutput>(
       const startedAt = runtime.now();
       await markStepRunning(runtime, stepId, "agent", startedAt);
       const timeoutMs = runtime.agentStepTimeoutMs ?? DEFAULT_AGENT_STEP_TIMEOUT_MS;
-      const result = await withStepTimeout(agent.run(ctx, input), stepId, timeoutMs, abortController);
+      // Tools the agent calls inside its ReAct loop (image.generate,
+      // video.visualQaGate, a self-critique gate that spends Gemini tokens)
+      // bill per unit, and `result.totalCostUsd` only ever counted the
+      // model's tokens — see `tool-usage-scope.ts`.
+      const consumed: ToolUnitUsage[] = [];
+      const result = await runInToolUsageScope(consumed, () => withStepTimeout(agent.run(ctx, input), stepId, timeoutMs, abortController));
+      const toolCostUsd = computeToolCostUsd(consumed);
+      const costUsd = Math.round((result.totalCostUsd + toolCostUsd) * 1_000_000) / 1_000_000;
       const completedAt = runtime.now();
 
       // AgentExecutionResult.totalTokens.input is already the cached+uncached sum
@@ -238,7 +245,7 @@ export async function runStepAgent<TOutput>(
         // models (ModelRouter's choice) — the last turn's model is the most
         // representative single value for one BigQuery row per agent run.
         model: result.steps.at(-1)?.modelUsed ?? "unknown",
-        costUsd: result.totalCostUsd,
+        costUsd,
         inputTokensCached,
         inputTokensUncached,
         outputTokens: result.totalTokens.output,
@@ -286,7 +293,8 @@ export async function runStepAgent<TOutput>(
         // resume is unchanged — see `isCheckpointedStepStatus`.
         status: stepStatusFromAgentStatus(result.status),
         output: result,
-        costUsd: result.totalCostUsd,
+        costUsd,
+        ...(consumed.length > 0 ? { unitUsage: consumed.map((u) => ({ ...u })) } : {}),
         durationMs: completedAt - startedAt,
         startedAt,
         completedAt,

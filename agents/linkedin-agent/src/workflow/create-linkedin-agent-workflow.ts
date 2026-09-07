@@ -882,7 +882,7 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
           revision,
         },
         requiredRole: "account_manager",
-        timeout: { duration: "24h", onTimeout: "hold" },
+        timeout: { duration: "1h", onTimeout: "auto_approve" },
       }),
       onDecision: async ({ revision, response, output }) => {
         // SCRUM-306 (AU23): a reject's drafted content previously had nowhere

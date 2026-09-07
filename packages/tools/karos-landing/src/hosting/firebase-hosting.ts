@@ -2,6 +2,17 @@ import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 
 /**
+ * Deadlines on the two network calls that publish a page. Neither had one:
+ * a Firebase Hosting API call or a file upload that never answered left the
+ * run `running` forever, because these run inside `wf.step.code`, which has
+ * no step timeout of its own (only `step.agent` does). 60s is generous for a
+ * JSON API call; 5 minutes covers a large single-file page upload.
+ */
+const HOSTING_REQUEST_TIMEOUT_MS = 60_000;
+const HOSTING_UPLOAD_TIMEOUT_MS = 300_000;
+
+
+/**
  * A minimal Firebase Hosting REST client (v1beta1), enough to publish one
  * static page per client with nothing but ADC.
  *
@@ -77,6 +88,7 @@ export class FirebaseHostingClient {
   private async request<T>(method: string, path: string, body?: unknown, extraHeaders: Record<string, string> = {}): Promise<T> {
     const token = await this.options.token.getAccessToken();
     const res = await this.fetchImpl(`${this.baseUrl}${path}`, {
+      signal: AbortSignal.timeout(HOSTING_REQUEST_TIMEOUT_MS),
       method,
       headers: {
         authorization: `Bearer ${token}`,
@@ -135,6 +147,7 @@ export class FirebaseHostingClient {
       if (!entry) throw new Error(`firebase hosting asked for hash ${hash} that no local file produced`);
       const token = await this.options.token.getAccessToken();
       const res = await this.fetchImpl(`${populate.uploadUrl}/${hash}`, {
+        signal: AbortSignal.timeout(HOSTING_UPLOAD_TIMEOUT_MS),
         method: "POST",
         headers: { authorization: `Bearer ${token}`, "content-type": "application/octet-stream", "x-goog-user-project": this.options.projectId },
         body: new Uint8Array(entry.body),

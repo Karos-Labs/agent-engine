@@ -157,7 +157,7 @@ describe("Agent Platform wire contract (real AnthropicVertex, faked fetch)", () 
 
     expect(result.output).toEqual({ body: "hi" });
     expect(result.modelUsed).toBe("claude-haiku-4-5-20251001");
-    expect(result.inputTokens).toEqual({ cached: 0, uncached: 912 });
+    expect(result.inputTokens).toEqual({ cached: 0, uncached: 912, cacheWrite: 900 });
     expect(result.outputTokens).toBe(3);
   });
 

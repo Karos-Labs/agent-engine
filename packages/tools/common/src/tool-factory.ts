@@ -1,4 +1,4 @@
-import type { AgentTool, AgentToolCallContext, AgentToolOutcome, ZodSchema } from "@agent-engine/core";
+import { recordToolUsage, type AgentTool, type AgentToolCallContext, type AgentToolOutcome, type ZodSchema } from "@agent-engine/core";
 import { describeError, recordToolCallMetric, withToolCallSpan } from "@agent-engine/telemetry";
 import { toolingError } from "./errors.js";
 
@@ -56,6 +56,13 @@ export function defineTool<TArgs, TResult>(options: DefineToolOptions<TArgs, TRe
             const outcome = await options.execute(parsed.data, context);
             span.setAttribute("outcome_status", outcome.status);
             recordToolCallMetric({ toolName: options.name, status: outcome.status });
+            // Per-unit usage (Veo seconds, TTS characters, QA tokens) goes to
+            // the step that is running, whatever that step returns — see
+            // `tool-usage-scope.ts` for the run this fixed. Only a `success`
+            // carries usage; a declined or broken call consumed nothing billable.
+            if (outcome.status === "success" && outcome.usage !== undefined && outcome.usage.length > 0) {
+              recordToolUsage(outcome.usage);
+            }
             // AU42/SCRUM-326 — same defect as `runStepCode`/`runStepAgent`: a
             // tool reports `tooling_error` by RETURNING it (RFC-01 §6), so
             // without this the span stayed `OK` for the exact case

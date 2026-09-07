@@ -150,12 +150,11 @@ export class MessagesApiAdapter implements ModelAdapter {
     const usage = response.usage;
 
     // `input_tokens` counts neither cache reads nor cache *writes*. Cache
-    // writes are real, billed input tokens (at a premium over the base rate),
-    // so folding them into `uncached` under-reports their cost slightly —
-    // dropping them, which is what happens if you read `input_tokens` alone,
-    // under-reports it by 100%. `TokenUsage` has two fields, not three, and
-    // widening it reaches every persisted `AgentStepTelemetry` record; the
-    // approximation is the deliberate trade until it's worth that migration.
+    // writes are real, billed input tokens at 1.25x the base rate: they are
+    // folded into `uncached` (base rate) AND reported as `cacheWrite`, from
+    // which `computeStepCostUsd` adds the premium. Until 2026-09-08 only the
+    // fold happened, and every step's first turn understated its input by
+    // the premium on its whole system prompt and tool list.
     const cacheWriteTokens = usage.cache_creation_input_tokens ?? 0;
 
     // Resolved before the payload is validated, not after, so a malformed turn
@@ -170,6 +169,7 @@ export class MessagesApiAdapter implements ModelAdapter {
       inputTokens: {
         cached: usage.cache_read_input_tokens ?? 0,
         uncached: usage.input_tokens + cacheWriteTokens,
+        ...(cacheWriteTokens > 0 ? { cacheWrite: cacheWriteTokens } : {}),
       },
       outputTokens: usage.output_tokens,
     };

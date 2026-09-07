@@ -151,7 +151,7 @@ async function recordResolvedGateStep(runtime: WorkflowRuntime, stepId: string, 
  */
 const GATE_DURATION_RE = /^(\d+)\s*(s|m|h|d)$/i;
 const GATE_DURATION_UNIT_MS: Record<string, number> = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
-function parseGateDurationMs(duration: string): number | undefined {
+export function parseGateDurationMs(duration: string): number | undefined {
   const match = GATE_DURATION_RE.exec(duration.trim());
   if (!match) return undefined;
   const amount = match[1];
@@ -167,7 +167,7 @@ function parseGateDurationMs(duration: string): number | undefined {
  * confuses "nobody looked at this by design" with "somebody was supposed to
  * look and didn't in time."
  */
-const GATE_TIMEOUT_ACTOR = "system:gate-timeout";
+export const GATE_TIMEOUT_ACTOR = "system:gate-timeout";
 
 /**
  * `step.gate(id, def)` (RFC-01 §8.1/§8.3): registers the gate on first call,

@@ -591,7 +591,7 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
         kind: "batch_review",
         payload: { runId: wf.runId, dimensionScores: report.dimensionScores, swot: report.swot, revision },
         requiredRole: "account_manager",
-        timeout: { duration: "24h", onTimeout: "hold" },
+        timeout: { duration: "1h", onTimeout: "auto_approve" },
       }),
       onDecision: async ({ revision, response, output }) => {
         // SCRUM-306 (AU23): a reject's drafted content previously had nowhere

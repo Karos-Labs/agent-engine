@@ -1,4 +1,6 @@
-import type { AgentExecutionResult, AgentStepTelemetry } from "@agent-engine/core";
+import type { AgentExecutionResult, AgentStepTelemetry, BaseAgent } from "@agent-engine/core";
+import type { WorkflowContext } from "./context.js";
+import { WorkflowHeld } from "./signals.js";
 
 /**
  * What a `step.agent` result that ended without output actually did, in one
@@ -58,4 +60,38 @@ export function commitDirectiveAfterExhaustion(diagnosis: string): string {
     "Do not re-check text that has already passed, and do not draft alternates. " +
     "The lane and content mode you were given are settled: write the most honest post that fits them rather than deliberating about the fit."
   );
+}
+
+/**
+ * `wf.step.agent`, plus the one redraft x-agent already gives its draft step
+ * (`create-x-agent-workflow.ts`, `commitSteer`) when the model runs out of
+ * turns: the step is re-run ONCE under `<id>-commit` with
+ * `commitDirectiveAfterExhaustion` naming what the first attempt did instead
+ * of finishing, and only a second exhaustion becomes a `WorkflowHeld` with that
+ * account as its reason. Never a `WorkflowToolingFailure`: a loop that hit its
+ * turn ceiling did not malfunction (`step.agent`'s own taxonomy), and a `failed`
+ * run over a draft that had passed its gates seven times was exactly the shape
+ * prep job viPcZ66rMVWk6HmiQImc took before x-agent grew this. Every other
+ * drafting workflow (reddit, tiktok, ...) threw straight through until
+ * 2026-09-07; they call this now.
+ *
+ * `content_fail` and `tooling_error` are returned untouched for the caller to
+ * classify: the first is the self-critique loop doing its job, the second a
+ * fault a redraft cannot fix.
+ */
+export async function runAgentStepWithCommitSteer<TOutput>(
+  wf: WorkflowContext,
+  id: string,
+  agent: BaseAgent<TOutput>,
+  input: Record<string, unknown>,
+  what: string,
+): Promise<AgentExecutionResult<TOutput>> {
+  const first = await wf.step.agent(id, agent, input);
+  if (first.status !== "budget_exceeded") return first;
+  const diagnosis = describeAgentExhaustion(first);
+  const second = await wf.step.agent(`${id}-commit`, agent, { ...input, commitDirective: commitDirectiveAfterExhaustion(diagnosis) });
+  if (second.status === "budget_exceeded") {
+    throw new WorkflowHeld(`${what} ran out of turns without returning, twice: ${describeAgentExhaustion(second)}`);
+  }
+  return second;
 }

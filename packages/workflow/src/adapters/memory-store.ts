@@ -43,6 +43,13 @@ export class MemoryDurableStepStore implements DurableStepStore {
     return this.runs.get(runId);
   }
 
+  async listRunsByStatus(status: RunStatus, limit: number): Promise<RunRecord[]> {
+    return [...this.runs.values()]
+      .filter((run) => run.status === status)
+      .sort((a, b) => a.updatedAt - b.updatedAt)
+      .slice(0, limit);
+  }
+
   async createRunIfNotExists(run: RunRecord): Promise<RunRecord> {
     const existing = this.runs.get(run.runId);
     if (existing) {

@@ -67,7 +67,32 @@ export interface CreateCampaignWorkflowOptions {
 
 
 /** Dispatches to the right channel's own, already-proven `createXAgentWorkflow()`-style factory — every channel's own 17-step workflow runs unmodified (with its own per-channel gate auto-approved), just inside this slot. */
-async function runChannelSlot(
+type ChannelSlotOutput = { status: "completed"; deliverableId: string; preview: string } | { status: "held"; reason: string };
+
+/**
+ * One channel's whole workflow, run in-process inside a fan-out slot.
+ *
+ * A channel's `WorkflowHeld` is caught HERE and returned as that slot's
+ * outcome. `wf.fanout` treats `WorkflowHeld` as a run-level signal and
+ * re-throws it (packages/workflow `fanout.ts`, `RUN_LEVEL_SIGNALS`), so until
+ * 2026-09-07 one channel's numbers-gate hold held the entire campaign, with the
+ * other four channels' finished deliverables never reaching the reviewer,
+ * while a channel's `WorkflowToolingFailure` was tolerated as a `failed` slot.
+ * A content hold is the least severe of the two, and now the least
+ * consequential: the reviewer at 13-campaign-review sees the held channel's
+ * reason beside the ones that shipped.
+ */
+async function runChannelSlot(channel: CampaignChannel, channelOptions: ChannelRuntimeOptions, wf: WorkflowContext): Promise<ChannelSlotOutput> {
+  try {
+    const result = await runChannelWorkflow(channel, channelOptions, wf);
+    return { status: "completed", ...result };
+  } catch (err) {
+    if (err instanceof WorkflowHeld) return { status: "held", reason: err.message };
+    throw err;
+  }
+}
+
+async function runChannelWorkflow(
   channel: CampaignChannel,
   channelOptions: ChannelRuntimeOptions,
   wf: WorkflowContext,
@@ -277,6 +302,10 @@ export function createCampaignWorkflow(options: CreateCampaignWorkflowOptions) {
       return plan.channelSlots.map((slot, index) => {
         const outcome = slotOutcomes[index]!;
         if (outcome.status === "completed") {
+          const output = outcome.output;
+          if (output.status === "held") {
+            return { slotId: slot.slotId, channel: slot.channel, status: "held", reason: output.reason };
+          }
           // `preview` is the SCRUM-302/AU18 fix: the exact text that channel's
           // own (auto-approved, never-shown) gate would have carried, folded
           // in here so `13-campaign-review` is a real review of what five
@@ -285,8 +314,8 @@ export function createCampaignWorkflow(options: CreateCampaignWorkflowOptions) {
             slotId: slot.slotId,
             channel: slot.channel,
             status: "completed",
-            deliverableId: outcome.output.deliverableId,
-            preview: outcome.output.preview,
+            deliverableId: output.deliverableId,
+            preview: output.preview,
           };
         }
         return { slotId: slot.slotId, channel: slot.channel, status: "failed", reason: outcome.reason };
@@ -304,7 +333,7 @@ export function createCampaignWorkflow(options: CreateCampaignWorkflowOptions) {
       kind: "campaign_review",
       payload: { campaignName: plan.campaignName, theme: plan.theme, channelResults },
       requiredRole: "account_manager",
-      timeout: { duration: "48h", onTimeout: "escalate" },
+      timeout: { duration: "1h", onTimeout: "auto_approve" },
     });
     if (decision.decision !== "approve") {
       throw new WorkflowHeld(`campaign rejected: ${decision.reason ?? "no reason given"}`);

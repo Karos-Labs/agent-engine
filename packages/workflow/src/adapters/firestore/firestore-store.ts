@@ -147,6 +147,19 @@ export class FirestoreDurableStepStore implements DurableStepStore {
     return snap.exists ? (snap.data() as RunRecord) : undefined;
   }
 
+  async listRunsByStatus(status: RunStatus, limit: number): Promise<RunRecord[]> {
+    const runs = this.db.collection("agentEngineRuns");
+    // A single-field equality filter needs no composite index. The fallback
+    // (no `where` on the client) reads the whole collection; only the test
+    // fake takes that road.
+    const snap = runs.where !== undefined ? await runs.where("status", "==", status).limit(limit).get() : await runs.get();
+    return snap.docs
+      .map((doc) => doc.data() as RunRecord)
+      .filter((run) => run.status === status)
+      .sort((a, b) => a.updatedAt - b.updatedAt)
+      .slice(0, limit);
+  }
+
   async createRunIfNotExists(run: RunRecord): Promise<RunRecord> {
     const existing = await this.getRun(run.runId);
     if (existing) {

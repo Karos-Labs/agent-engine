@@ -380,4 +380,16 @@ export interface DurableStepStore {
 
   getGate(gateId: string): Promise<GateRecord | undefined>;
   saveGate(gate: GateRecord): Promise<void>;
+
+  /**
+   * Runs currently in `status`, oldest-touched first, at most `limit`.
+   *
+   * Added 2026-09-08 for the gate-timeout sweep (`POST
+   * /api/v1/maintenance/sweep-gate-timeouts`): a gate's `auto_approve`
+   * timeout is discovered lazily, the next time something calls `run()` on
+   * that run (see `runStepGate`), and until the sweep nothing did unless a
+   * person opened the job page. The sweep is the one caller that needs to
+   * find "every run waiting at a gate" without knowing their ids.
+   */
+  listRunsByStatus(status: RunStatus, limit: number): Promise<RunRecord[]>;
 }
