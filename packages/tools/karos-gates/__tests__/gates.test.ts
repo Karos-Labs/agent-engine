@@ -350,6 +350,13 @@ describe("gate.numbersSourced", () => {
     expect((await verdictOf("gate.numbersSourced", { text: "Schema markup lifts citations by at least 2.6x.", sources: source })).verdict).toBe("pass");
   });
 
+  it("verifies a negative figure the source states with a minus sign (prep run pubsub-21498863468155660)", async () => {
+    const source = ["Quotations lift visibility +41%, statistics +33%, while keyword stuffing hurts at -9%. Rank-1 pages saw -30.3% from the same change."];
+    expect((await verdictOf("gate.numbersSourced", { text: "Keyword stuffing hurts at -9%, and rank-1 pages lost 30.3%.", sources: source })).verdict).toBe("pass");
+    // The range rule is untouched: a source "15-20%" still does not support a bare "20%".
+    expect((await verdictOf("gate.numbersSourced", { text: "Revenue grew 20%.", sources: ["revenue grew 15-20% last year"] })).verdict).toBe("content_fail");
+  });
+
   it("STILL fails that endpoint when the draft asserts it as the value, not as a bound", async () => {
     const source = ["Schema markup lifts citations 2.6-3.4x in the accounts we measured."];
     const verdict = await verdictOf("gate.numbersSourced", { text: "Schema markup lifts citations 3.4x.", sources: source });
@@ -704,10 +711,10 @@ describe("every gate registers with the expected toolVersion", () => {
     }
   });
 
-  it("pins gate.numbersSourced at the bound-and-multiplication-sign-aware version", async () => {
+  it("pins gate.numbersSourced at the negative-figure-aware version", async () => {
     // Named explicitly so reverting the range fix without reverting the version
     // — or the reverse — is caught here rather than in telemetry months later.
-    expect(gates["gate.numbersSourced"]!.version).toBe("1.3.0");
+    expect(gates["gate.numbersSourced"]!.version).toBe("1.4.0");
   });
 });
 

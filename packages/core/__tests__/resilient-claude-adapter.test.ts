@@ -54,6 +54,16 @@ describe("ResilientClaudeAdapter", () => {
     expect(result.output).toEqual({ text: "secondary:claude-sonnet-4-6" });
   });
 
+  it("falls over on the direct API's 400 'credit balance is too low', which is the transport being unavailable, not the request being wrong (prep run pubsub-21498775487463728)", async () => {
+    const primary = fakeAdapter("primary", async () => {
+      throw httpError(400, '{"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."}}');
+    });
+    const secondary = fakeAdapter("secondary", async (req) => okResult("secondary", req.model));
+    const adapter = new ResilientClaudeAdapter({ primary, secondary });
+    const result = await adapter.complete(baseReq);
+    expect(result.output).toEqual({ text: "secondary:claude-sonnet-4-6" });
+  });
+
   it("does NOT fall over on a non-failover-worthy error (e.g. a 400) — propagates it as-is", async () => {
     const primary = fakeAdapter("primary", async () => {
       throw httpError(400, "bad request");

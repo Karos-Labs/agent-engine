@@ -186,6 +186,23 @@ describe("parseStructuredOutput — the stringified `output`, repaired for free"
     expect(out).toEqual({ type: "final", output: { text: "Line one.\nLine two.\n\nLine four." } });
   });
 
+  // prep runs pubsub-21498863468155660 / pubsub-21496486967745987: the
+  // control-character pass alone shipped, and both still failed, because the
+  // hand-serialized JSON carried ONE unescaped quote thousands of characters
+  // in ("the paper "GEO: Generative Engine Optimization" was presented").
+  it("parses a stringified output whose string values carry an unescaped quote", () => {
+    const raw = '{"text": "The paper "GEO: Generative Engine Optimization" was presented at KDD 2024.", "n": 2}';
+    expect(() => JSON.parse(raw)).toThrow();
+    const out = parseStructuredOutput(objectRoot, { output: raw }, false, ctx);
+    expect(out.output).toEqual({ text: 'The paper "GEO: Generative Engine Optimization" was presented at KDD 2024.', n: 2 });
+  });
+
+  it("parses a stringified turn with trailing prose after the object", () => {
+    const raw = `${JSON.stringify({ type: "final", output: { text: "hi" } })}\n\nReturned as requested.`;
+    const out = parseStructuredOutput(turnSchema, { turn: raw }, true, ctx);
+    expect(out).toEqual({ type: "final", output: { text: "hi" } });
+  });
+
   it("leaves a string `output` alone when it is not the JSON of an object, so the schema still names the real mistake", () => {
     expect(() => parseStructuredOutput(objectRoot, { output: "just prose" }, false, ctx)).toThrow(StructuredOutputValidationError);
     expect(() => parseStructuredOutput(objectRoot, { output: JSON.stringify([1, 2]) }, false, ctx)).toThrow(StructuredOutputValidationError);

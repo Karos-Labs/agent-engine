@@ -13,7 +13,16 @@ import type { CompletionRequest, CompletionResult, ModelAdapter } from "./types.
  */
 function isFailoverWorthy(err: unknown): boolean {
   const status = extractHttpStatus(err);
-  return status === 429 || status === 404;
+  if (status === 429 || status === 404) return true;
+  // The direct Anthropic API with no prepaid credit left answers 400
+  // `invalid_request_error: Your credit balance is too low to access the
+  // Anthropic API`. That is the transport being unavailable, not the request
+  // being wrong: the same request on another route can succeed, and did not
+  // get the chance on prep run pubsub-21498775487463728 (blog-agent, 2026-09-07),
+  // which failed a finished draft on its final turn instead of reaching the
+  // Gemini tertiary. Matched on the message because the status is the generic
+  // 400 a genuinely bad request also carries.
+  return status === 400 && /credit balance is too low/i.test(err instanceof Error ? err.message : String(err));
 }
 
 /**
