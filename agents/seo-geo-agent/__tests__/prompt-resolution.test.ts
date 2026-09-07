@@ -40,6 +40,24 @@ describe("PromptStore resolution (RFC-01 §16.1)", () => {
     expect(resolved).toContain("clientAttachedReferences");
   });
 
+  it("resolves 'seo-geo-narrative@3' to the real prompts/seo-geo-narrative/3.md file content", async () => {
+    const promptStore = makePromptStore();
+    const resolved = await promptStore.getPrompt("seo-geo-narrative", "3");
+    expect(resolved).toContain("never invent a number");
+    // v3's reason to exist: the summary states coverage and the measured-basis figure next to every score.
+    expect(resolved).toContain("MeasuredBasisScore");
+    expect(resolved).toContain("measuredFacts");
+  });
+
+  it("resolves 'seo-geo-prompt-set@1' to the real prompts/seo-geo-prompt-set/1.md file content", async () => {
+    const promptStore = makePromptStore();
+    const resolved = await promptStore.getPrompt("seo-geo-prompt-set", "1");
+    // The five locked intent types and the two brand-independent ones must be named for the drafter to honour them.
+    for (const intent of ["discovery", "comparison", "problem", "brand", "navigational"]) expect(resolved).toContain(`\`${intent}\``);
+    expect(resolved).toContain("brandAliases");
+    expect(resolved).toContain("Never invent a company");
+  });
+
   it("SeoGeoFixDraftAgent actually passes the resolved prompt content as the system prompt at runtime", async () => {
     const promptStore = makePromptStore();
     const router = fakeRouterSequence([finalTurn(goodFixDrafts())]);
@@ -65,8 +83,8 @@ describe("PromptStore resolution (RFC-01 §16.1)", () => {
 
     await agent.run(ctx, { seoScore: 0 });
 
-    // The agent is pinned to `seo-geo-narrative@2` (T-A13/SCRUM-269).
-    const expectedPrompt = readFileSync(path.join(PROMPTS_ROOT, "seo-geo-narrative", "2.md"), "utf8");
+    // The agent is pinned to `seo-geo-narrative@3` (measured-basis score + measured facts, 2026-09-07).
+    const expectedPrompt = readFileSync(path.join(PROMPTS_ROOT, "seo-geo-narrative", "3.md"), "utf8");
     // SCRUM-298: `system` now also carries the response contract, appended
     // after the resolved skill body — assert the prefix, not exact equality.
     const call = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!;

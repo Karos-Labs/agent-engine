@@ -51,8 +51,15 @@ const INTENT_QUOTA_TARGET = 5;
  *  3 — `navigational` templates take it too: the portal groups navigational
  *      with brand as "buyers asking about you by name", and v2's navigational
  *      prompts ("near me", pricing models, trends) named nobody (2026-09-06)
+ *  4 — production sets are drafted by `SeoGeoPromptSetAgent` in the buyer's
+ *      language and market, with brand aliases and a real competitor roster
+ *      (2026-09-07). The templates below are the fallback. Bumped so every
+ *      client frozen on the English industry-string set redrafts once: a
+ *      Hebrew-market news site measured on "best Technology news & media
+ *      companies to work with in 2026" scored 0% category visibility on a
+ *      question none of its readers ask.
  */
-export const PROMPT_TEMPLATE_VERSION = 3;
+export const PROMPT_TEMPLATE_VERSION = 4;
 
 /** `fiveShingleJaccard`'s dedupe threshold — the same 0.40 cutoff `scoring-config.data.ts`/`rec-catalog.data.ts` use for their own "5-shingle Jaccard similarity ... <=0.40" content-differentiation checks, reused here for consistency across this port rather than inventing a second number for the same concept. */
 const DEDUPE_JACCARD_THRESHOLD = 0.4;

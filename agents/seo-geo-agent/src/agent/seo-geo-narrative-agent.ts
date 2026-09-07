@@ -33,6 +33,6 @@ export class SeoGeoNarrativeAgent extends BaseAgent<SeoGeoNarrativeOutput> {
     allowedTools: [],
     outputSchema: SeoGeoNarrativeOutputSchema,
     modelPolicy: resolveModelPolicy("seo-geo-narrative", { policy: "pinned", model: "claude-sonnet-4-6" }),
-    skillRef: "seo-geo-narrative@2",
+    skillRef: "seo-geo-narrative@3",
   };
 }

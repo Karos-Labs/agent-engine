@@ -112,6 +112,22 @@ export interface PageStatus {
 }
 
 /**
+ * One page's raw HTML plus the response facts an on-page audit needs — the
+ * plain-`fetch` counterpart of `PageStatus` that also keeps the body. Public,
+ * unauthenticated markup: no vendor capability is billed for it.
+ */
+export interface RawHtmlPage {
+  readonly url: string;
+  /** Final URL after redirects (equals `url` when none happened). */
+  readonly finalUrl: string;
+  readonly status: number;
+  /** Header names lower-cased. */
+  readonly headers: Readonly<Record<string, string>>;
+  /** The response body, capped by the fetcher: a page is audited from its head and main content, not its trailing script bulk. */
+  readonly html: string;
+}
+
+/**
  * One robots.txt rule block, already resolved to a single user-agent.
  *
  * A robots.txt group that lists several `User-agent:` lines above one shared
@@ -212,6 +228,13 @@ export interface ScraperProvider {
 
   /** HTTP status + headers for one URL, via HEAD (falling back to GET when a server rejects HEAD). No vendor billing: this is a plain fetch, not a ScrappyCoco execution. */
   fetchStatus?(url: string, options?: ScrapeOptions): Promise<PageStatus | undefined>;
+
+  /**
+   * Raw HTML for one URL via plain GET (no vendor billing), for the on-page
+   * audit (`research.auditOnPage`) that parses titles, headings, schema and
+   * body text itself. `undefined` when the response carried no HTML body.
+   */
+  fetchHtml?(url: string, options?: ScrapeOptions): Promise<RawHtmlPage | undefined>;
 
   /** robots.txt for the URL's origin, parsed into per-agent rule groups plus any `Sitemap:` lines. */
   fetchRobots?(url: string, options?: ScrapeOptions): Promise<RobotsInfo | undefined>;

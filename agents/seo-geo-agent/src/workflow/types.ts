@@ -92,6 +92,18 @@ export interface SeoGeoPromptSetDraft {
   languageFallbackApplied: boolean;
   /** Per-intent-type shortfalls against the enforced quota (RFC-04 §2 Phase 1's "Per-intent-type quota enforced"), e.g. after 5-shingle dedupe removed a near-duplicate with nothing to backfill it — never silently padded with a fabricated prompt to hit the count. Empty when every intent type met its quota. */
   quotaShortfalls: string[];
+  /**
+   * Who wrote the prompts: `SeoGeoPromptSetAgent` (the buyer's questions in
+   * the buyer's language and market) or the deterministic industry-string
+   * templates. A reused set carries whatever drafted it originally.
+   */
+  drafter: "agent" | "templates";
+  /** Other spellings of the brand an engine may use (native script, transliteration). Empty for a template set. */
+  brandAliases: string[];
+  /** The agent's own reading of who buys and where — carried so a reviewer at the gate can judge the set against it. */
+  marketSummary?: string;
+  /** Present when the agent was asked to draft but its output could not be used and the templates were kept — the run says so rather than passing the templates off as a drafted set. */
+  drafterFallbackReason?: string;
 }
 
 /** What step 04 freezes after the gate approves — the reproducibility-spine fields RFC-04 §2 Phase 1 calls for. */
@@ -108,29 +120,46 @@ export interface SeoGeoFrozenSet {
   language: string;
   languageFallbackApplied: boolean;
   quotaShortfalls: string[];
+  drafter: "agent" | "templates";
+  brandAliases: string[];
+  marketSummary?: string;
+}
+
+/** How each measurement family was sourced this run — a reader tells "the check failed" from "the check could not run" by this, not by the score. */
+export interface SeoGeoMeasurementSources {
+  /** `measured`, `unavailable`, or `slot_failed`. */
+  technical: string;
+  /** `measured`, or the tool's own unavailable/tooling reason, or `slot_failed`. */
+  onPage: string;
+  /** `crux-field` (real-user p75 data), `lab-only` (PageSpeed ran but Chrome has no field data for this origin), or the reason it could not run. */
+  coreWebVitals: string;
+  /** `wikidata-matched`, `wikidata-no-match`, or the reason it could not run. */
+  entity: string;
 }
 
 export interface SeoGeoCrawlAspectResult {
   aspect: string;
   runId: string;
   fromCache: boolean;
-  /**
-   * Present only for the `"technical-infra"` aspect (T-A2/SCRUM-236): the
-   * real, HTTP-derived crawl facts `research.crawlTechnicalSeo` returned —
-   * `undefined` either because this isn't that aspect, or because no scraper
-   * capable of crawling is configured (`not_available`, never a placeholder).
-   */
+  /** `"technical-infra"` only (T-A2/SCRUM-236): `research.crawlTechnicalSeo`'s real robots/sitemap/HTTP-status facts. */
   technicalSnapshot?: import("@agent-engine/tools").TechnicalSeoSnapshot;
+  /** `"on-page"` only: `research.auditOnPage`'s parsed pages, `/llms.txt` and sitemap cadence. */
+  onPageSnapshot?: import("@agent-engine/tools").OnPageAuditSnapshot;
+  /** `"performance-cwv"` only: `research.fetchCoreWebVitals`'s CrUX field data and Lighthouse lab run. */
+  coreWebVitals?: import("@agent-engine/tools").CoreWebVitalsSnapshot;
+  /** `"entity-offsite"` only: `research.lookupEntity`'s Wikidata/Wikipedia standing. */
+  entity?: import("@agent-engine/tools").EntitySnapshot;
+  /** Set when the read completed its slot without a snapshot — the tool's status and reason, so the report can name why an input stayed unavailable. */
+  unavailableReason?: string;
 }
 
 /**
- * Phase 2's output. Most inputs still honestly report `coverage:
- * "unavailable"` (no real Core Web Vitals tool, on-page content parser, or
- * keyword/content-gap NLP classifier exists in this environment) — but a
- * real subset (`measurements.ts`'s `buildTechnicalMeasurements`) is now
- * genuinely `coverage: "measured"` from `technicalSnapshot`'s real crawl
- * facts (T-A2/SCRUM-236), where before this ticket EVERY input was
- * unconditionally unavailable regardless of what step 05 actually crawled.
+ * Phase 2's output: the measurement sets `evaluateScoreFamily` scores,
+ * built from every snapshot the four reads produced. Inputs none of them
+ * can honestly answer (connector-backed Search Console / Bing / Brave reads,
+ * NER, sentiment, backlink exports, review feeds, the frozen top-10 shingle
+ * comparison) stay `coverage: "unavailable"`; `measurementSources` and
+ * `measuredFacts` say what did run and what it saw.
  */
 export interface SeoGeoTechnicalPhaseResult {
   seoMeasurements: Record<string, import("@agent-engine/tool-karos-seo-geo").InputMeasurement>;
@@ -138,6 +167,9 @@ export interface SeoGeoTechnicalPhaseResult {
   crawlSnapshotHash: string;
   aspectsAttempted: number;
   aspectsCompleted: number;
+  measurementSources: SeoGeoMeasurementSources;
+  /** Plain-language observations behind the inputs (`describeMeasuredFacts`) — quotable by the narrative, and every figure in them is a gate source. */
+  measuredFacts: string[];
 }
 
 export interface SeoGeoVisibilityCapture {
@@ -241,6 +273,9 @@ export interface SeoGeoReport {
   firedRecommendations: FiredRecommendation[];
   fixDrafts: SeoGeoFixDraft[];
   narrative: string;
+  /** What the four reads actually observed about the site — see `SeoGeoTechnicalPhaseResult.measuredFacts`. */
+  measuredFacts: string[];
+  measurementSources: SeoGeoMeasurementSources;
   reproducibility: {
     inputsDigest: string;
     hashInputsIncomplete: boolean;
@@ -249,8 +284,14 @@ export interface SeoGeoReport {
   promptSet: {
     prompts: SeoGeoPrompt[];
     source: "reused" | "drafted";
+    drafter: "agent" | "templates";
     promptSetHash: string;
     competitorSetHash: string;
+    /** The locked roster every competitor metric is scoped to — stated on the report so a zero can be read against the names it was measured over. */
+    competitorRoster: string[];
+    brandAliases: string[];
+    marketSummary?: string;
+    drafterFallbackReason?: string;
     /** The language this frozen set's prompts were actually drafted in — must reflect the client's language on every run, baseline and recurring alike (SCRUM-320: a recurring run silently reporting "en" for a client whose frozen prompts are Spanish is the exact regression this field guards against). */
     language: string;
     languageFallbackApplied: boolean;
@@ -261,7 +302,12 @@ export interface SeoGeoReport {
 
 export interface SeoGeoAgentWorkflowResult {
   seoScore: number;
+  seoDataCoveragePct: number;
+  /** The SEO points over the measured weight only (`ScoreBreakdown.measuredBasisScore`); `null` when nothing was measured. */
+  seoMeasuredBasisScore: number | null;
   geoReadinessScore: number;
+  geoDataCoveragePct: number;
+  geoMeasuredBasisScore: number | null;
   visibilityIndexN: number | null;
   visibilityIndexNe: number | null;
   firedRecommendationCount: number;

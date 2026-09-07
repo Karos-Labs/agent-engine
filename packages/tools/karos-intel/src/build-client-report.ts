@@ -43,7 +43,7 @@ export function withDimensionWeights(scores: IntelReportOutput["dimensionScores"
     if (typeof weight !== "number") {
       throw new ClientReportShapeError(`dimension "${s.dimension}" has no weight in DIMENSION_WEIGHTS`);
     }
-    return { dimension: s.dimension, weight, score: s.score };
+    return { dimension: s.dimension, weight, score: s.score, ...(s.rationale ? { rationale: s.rationale } : {}) };
   });
 }
 

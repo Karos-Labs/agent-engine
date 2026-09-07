@@ -77,6 +77,25 @@ describe("evaluateScoreFamily against the real seo-geo-scoring-config.json bucke
     expect(result.score).toBe(0);
     expect(result.dataCoveragePct).toBe(0);
     expect(result.partial).toBe(true);
+    // Nothing measured means no measured-basis figure either — never a fabricated 0 or 100.
+    expect(result.measuredBasisScore).toBeNull();
+  });
+
+  it("measuredBasisScore is the points over the MEASURED weight only — a site that passed everything the audit could see reads as 100 there, next to a low coverage-weighted score", () => {
+    // Only the eligibility bucket measured (30 of the SEO score's 100 points on its four real inputs), all passing.
+    const measurements = perfectMeasurements(SEO_BUCKETS);
+    for (const key of listInputKeys(SEO_BUCKETS)) {
+      if (key.bucket !== "eligibility" || key.recId === "GEO-01") measurements[key.inputKey] = { ...measurements[key.inputKey]!, coverage: "unavailable" };
+    }
+    const result = evaluateScoreFamily(SEO_BUCKETS, measurements);
+    expect(result.score).toBe(30);
+    expect(Math.round(result.dataCoveragePct)).toBe(30);
+    expect(result.measuredBasisScore).toBe(100);
+    // Half the measured inputs failing: the basis score follows the measured points, the headline score stays weight-bound.
+    measurements["eligibility[0]"] = { data: { kind: "ratio", value: 0 }, coverage: "measured" };
+    const half = evaluateScoreFamily(SEO_BUCKETS, measurements);
+    expect(half.score).toBe(20);
+    expect(half.measuredBasisScore).toBe(Math.round((20 / 30) * 100));
   });
 
   it("an estimated/unavailable measurement scores 0 for that input and is excluded from the coverage numerator, but the input's weight still counts in the denominator", () => {

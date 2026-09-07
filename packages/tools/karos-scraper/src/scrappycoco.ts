@@ -2,6 +2,7 @@ import {
   ScraperError,
   type CrawlOptions,
   type PageStatus,
+  type RawHtmlPage,
   type RawPage,
   type RobotsInfo,
   type ScrapeOptions,
@@ -13,7 +14,7 @@ import {
   type SocialHistoryRequest,
   type SocialPlatform,
 } from "./provider.js";
-import { crawlSiteViaFetch, fetchPageStatus, fetchRobotsViaFetch, fetchSitemapViaFetch } from "./crawl.js";
+import { crawlSiteViaFetch, fetchHtmlViaFetch, fetchPageStatus, fetchRobotsViaFetch, fetchSitemapViaFetch } from "./crawl.js";
 
 /** Verified live against the account before this was written. */
 const DEFAULT_BASE_URL = "https://api.scrappycoco.ai/api/v1";
@@ -277,6 +278,10 @@ export function createScrappyCocoScraper(options: ScrappyCocoOptions): ScraperPr
 
     async fetchStatus(url: string, opts: ScrapeOptions = {}): Promise<PageStatus | undefined> {
       return fetchPageStatus(url, fetchImpl, opts.timeoutMs ?? defaultTimeoutMs);
+    },
+
+    async fetchHtml(url: string, opts: ScrapeOptions = {}): Promise<RawHtmlPage | undefined> {
+      return fetchHtmlViaFetch(url, fetchImpl, opts.timeoutMs ?? defaultTimeoutMs);
     },
 
     async fetchRobots(url: string, opts: ScrapeOptions = {}): Promise<RobotsInfo | undefined> {

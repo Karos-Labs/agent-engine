@@ -103,6 +103,9 @@ export function evaluateScoreFamily(buckets: readonly ScoringBucketConfig[], mea
 
   return {
     score: roundHalfUp(totalPoints),
+    // Points only ever come from measured inputs (an unmeasured one scores 0
+    // above), so this is exactly "how much of what we measured passed".
+    measuredBasisScore: measuredWeight > 0 ? roundHalfUp((totalPoints / measuredWeight) * 100) : null,
     weightTotal,
     dataCoveragePct,
     partial: dataCoveragePct < 100,
