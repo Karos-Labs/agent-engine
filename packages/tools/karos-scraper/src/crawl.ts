@@ -247,7 +247,19 @@ export async function fetchSitemapViaFetch(url: string, fetchImpl: typeof fetch,
     return { ...parsed, entries: parsed.entries.slice(0, limit) };
   }
 
-  const children = parsed.childSitemaps.slice(0, MAX_SITEMAP_INDEX_CHILDREN);
+  // Which children to follow when the index is bigger than the cap. CMSs list
+  // post sitemaps oldest first and newest LAST (`post-sitemap.xml`,
+  // `post-sitemap2.xml`, …), so the first N children of a 15-year-old news
+  // site are its 2010 archive: the first prep audit of exactly such a site read
+  // 500 URLs and found "0 modified in the last six months", which was a
+  // statement about which files were read, not about the site. Keep the first
+  // child (usually the static pages: home, about, contact) and fill the rest
+  // from the end, where the current content lives.
+  const all = parsed.childSitemaps;
+  const children =
+    all.length <= MAX_SITEMAP_INDEX_CHILDREN
+      ? all
+      : [...new Set([all[0]!, ...all.slice(-(MAX_SITEMAP_INDEX_CHILDREN - 1))])];
   const merged: SitemapEntry[] = [];
   for (const childUrl of children) {
     if (merged.length >= limit) break;
