@@ -1406,7 +1406,11 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         plateSources,
         renderedPath: rendered.outputPath,
         durationSeconds: rendered.durationSeconds ?? script.beats.reduce((a, b) => a + b.seconds, 0),
-        hookLine: script.hook,
+        // What the viewer actually meets first is beat 1's narration; the
+        // script's `hook` field is the same line when the model follows its
+        // prompt, and when it does not, judging the render against a line
+        // nobody hears (as the 2026-09-08 visual QA did) is the wrong test.
+        hookLine: script.beats[0]?.narration ?? script.hook,
         guardrailText: [script.caption, script.about, ...script.beats.map((b) => b.narration)].join("\n\n"),
         captionsExpected: true,
       });
