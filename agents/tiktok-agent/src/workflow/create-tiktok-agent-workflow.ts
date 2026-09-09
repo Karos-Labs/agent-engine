@@ -377,6 +377,58 @@ function normalizeTopic(topic: string): string {
  */
 const CANDIDATE_CONTAINMENT_THRESHOLD = 0.6;
 
+/**
+ * The angles this week's research is pulled from, one per discovery run,
+ * rotating with the size of the lane (2026-09-09). Under a single fixed
+ * query ("what is being debated this week") prep's scout read the same eight
+ * documents on every run for two days and proposed the same seven
+ * candidates. A different lens returns different documents, and a different
+ * pillar each time keeps a multi-pillar client from living in one of them.
+ */
+export const DISCOVERY_LENSES = [
+  "what is being debated this week",
+  "the numbers, reports and studies published this week",
+  "what buyers and practitioners are asking and complaining about right now",
+  "regulation, platform and policy changes this week",
+  "myths and received wisdom being challenged this week",
+  "case studies and real results published this week",
+] as const;
+
+const TOPIC_STOP_WORDS = new Set([
+  "the", "a", "an", "of", "for", "to", "in", "on", "and", "or", "is", "are", "was", "were", "has", "have", "been", "will", "your", "you", "their", "our", "we", "they",
+  "why", "what", "how", "not", "now", "this", "that", "it", "its", "with", "as", "at", "by", "from", "be", "new", "just", "more", "most", "into", "about",
+]);
+
+/** Salient word tokens of a catalog-row-sized string, for near-duplicate detection between topics. */
+function topicTokens(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s]/gu, " ")
+      .split(/\s+/)
+      .filter((w) => w.length > 1 && !TOPIC_STOP_WORDS.has(w)),
+  );
+}
+
+/**
+ * Whether two topic rows are the same idea in different words: enough
+ * salient words in common that a viewer would call it the same short.
+ * "The rise of Generative Engine Optimization as a new marketing discipline"
+ * and "Introducing Generative Engine Optimization (GEO)" share three salient
+ * words and most of the shorter one; "AI marketing budget cuts" and "AI
+ * marketing ethics" share two and are different subjects. Exported for the test.
+ */
+export function nearDuplicateTopic(a: string, b: string): boolean {
+  const ta = topicTokens(a);
+  const tb = topicTokens(b);
+  if (ta.size === 0 || tb.size === 0) return false;
+  let shared = 0;
+  for (const w of ta) if (tb.has(w)) shared++;
+  const union = ta.size + tb.size - shared;
+  const containment = shared / Math.min(ta.size, tb.size);
+  return shared / union >= 0.6 || (shared >= 3 && containment >= 0.6) || (shared >= 4 && containment >= 0.5);
+}
+
 /** True when `text` is mostly already inside one of the client's published excerpts. */
 function repeatsPublished(text: string, history: readonly { excerpt: string }[]): boolean {
   const own = shingles(text);
@@ -694,6 +746,19 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           return { candidates: [], seeded: 0, notes: ["topics.topUp is not registered; discovered topics would have nowhere to land"] };
         }
 
+        // What the lane already holds — made, waiting, or proposed before —
+        // read first: it rotates the research lens and pillar, goes to the
+        // scout as a hard do-not-repeat, and drops what comes back anyway.
+        const alreadyInCatalog: string[] = await (async () => {
+          const list = tools["topics.list"];
+          if (list === undefined) return [];
+          const outcome = await list.execute({ lane: CLIP_LANE }, { ctx });
+          if (outcome.status !== "success") return [];
+          return (outcome.result as { rows: Array<{ topic: string }> }).rows.map((r) => r.topic);
+        })();
+        const rotation = alreadyInCatalog.length;
+        const researchLens = DISCOVERY_LENSES[rotation % DISCOVERY_LENSES.length]!;
+
         interface ResearchDoc {
           title: string;
           url: string;
@@ -707,8 +772,12 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         } else if (profile.industry === undefined) {
           notes.push("client profile declares no industry, so there was no honest research query to run");
         } else {
-          const pillars = intakeConfig.contentPillars.slice(0, 4);
-          const query = pillars.length > 0 ? `${profile.industry}: ${pillars.join(", ")} — what is being debated this week` : `${profile.industry} news, debates and shifts this week`;
+          // One pillar per discovery, rotating, rather than all of them in one
+          // query: a search engine answers "A, B, C, D this week" with the
+          // same generic A-and-B page every time.
+          const pillars = intakeConfig.contentPillars;
+          const pillar = pillars.length > 0 ? pillars[rotation % pillars.length]! : undefined;
+          const query = pillar !== undefined ? `${profile.industry}: ${pillar} — ${researchLens}` : `${profile.industry} — ${researchLens}`;
           const pulled = await research.execute(
             { job: "tiktok-topic-discovery", query, window: "24h", maxResults: 8, historyAgentId: "tiktok-agent" },
             { ctx },
@@ -743,6 +812,8 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           researchDocuments,
           ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
           ...(plainSourceNames(config).length > 0 ? { sourcePool: plainSourceNames(config) } : {}),
+          ...(alreadyInCatalog.length > 0 ? { alreadyInCatalog: alreadyInCatalog.slice(-40) } : {}),
+          researchLens,
           mode: config.mode,
         });
         if (exec.status === "content_fail") {
@@ -760,9 +831,17 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         const excluded = new Set(config.narrowing.map(normalizeTopic));
         const candidates: TopicCandidate[] = [];
         let droppedAsRepeats = 0;
+        let droppedAsCatalogRepeats = 0;
         for (const raw of proposed.candidates) {
           const candidate: TopicCandidate = { ...raw, evidenceUrls: raw.evidenceUrls.filter((u) => knownUrls.has(u)) };
           if (excluded.has(normalizeTopic(candidate.topic))) continue;
+          // The same idea in new words is the same row. `topics.topUp` only
+          // knows the exact string, so this is where a re-proposed topic is
+          // caught — against the lane AND against what this run already kept.
+          if ([...alreadyInCatalog, ...candidates.map((c) => c.topic)].some((existing) => nearDuplicateTopic(candidate.topic, existing))) {
+            droppedAsCatalogRepeats += 1;
+            continue;
+          }
           // Two reads of "is this a repeat": the fleet's calibrated Jaccard
           // verdict, and a containment check sized for a short candidate
           // against a long caption (see `repeatsPublished`). Either drops it.
@@ -775,6 +854,8 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           candidates.push(candidate);
         }
         if (droppedAsRepeats > 0) notes.push(`${droppedAsRepeats} candidate(s) dropped as too close to what the client recently published`);
+        if (droppedAsCatalogRepeats > 0) notes.push(`${droppedAsCatalogRepeats} candidate(s) dropped as the same idea as a topic already in the lane`);
+        notes.push(`research lens: ${researchLens}`);
         if (candidates.length === 0) {
           notes.push("every proposed candidate was excluded or a repeat");
           return { candidates: [], seeded: 0, notes };

@@ -7,7 +7,7 @@ import { FilePromptStore, type AgentToolRegistry, type CompletionResult, type Mo
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { WorkspaceStore } from "@agent-engine/tool-common";
 import { createKarosTopicsTools } from "@agent-engine/tool-karos-topics";
-import { createTikTokAgentWorkflow } from "../src/workflow/create-tiktok-agent-workflow.js";
+import { DISCOVERY_LENSES, createTikTokAgentWorkflow, nearDuplicateTopic } from "../src/workflow/create-tiktok-agent-workflow.js";
 import { CLIP_LANE } from "../src/workflow/types.js";
 
 /**
@@ -56,9 +56,10 @@ const SCOUT_OUTPUT = {
   rationale: "Both research documents point at smaller, later, more disciplined early-stage company building.",
 };
 
-/** What a scout proposes the FOLLOWING week — fresh topics, so the lane can grow past the floor again. */
+/** What a scout proposes the FOLLOWING week — fresh topics, so the lane can grow past the floor again. One is the first week's "Seed rounds are shrinking" in new words: code drops it. */
 const SCOUT_OUTPUT_WEEK_2 = {
   candidates: [
+    { topic: "Why shrinking seed rounds are good news for founders", angle: "Smaller rounds force focus, again.", hook: "Your round shrank. Good news.", format: "original-short", whyNow: "Seed rounds shrank 30% (news.example/seed-rounds).", evidenceUrls: ["https://news.example/seed-rounds"], voiceoverRecommended: true },
     { topic: "Demo day is the wrong finish line", angle: "The real test is the Monday after.", hook: "Demo day is not the finish line.", format: "original-short", whyNow: "Smaller rounds mean demo day buys less (news.example/seed-rounds).", evidenceUrls: ["https://news.example/seed-rounds"], voiceoverRecommended: true },
     { topic: "Your cofounder agreement is a hiring document", angle: "Roles drift; write them down.", hook: "Your cofounder is your first hire.", format: "original-short", whyNow: "Founders are hiring later, so cofounders do more (news.example/hiring-later).", evidenceUrls: ["https://news.example/hiring-later"], voiceoverRecommended: false },
     { topic: "Bridge rounds are the new seed", angle: "Plan for two raises, not one.", hook: "Your seed round is a bridge now.", format: "original-short", whyNow: "Seed rounds shrank 30% (news.example/seed-rounds).", evidenceUrls: ["https://news.example/seed-rounds"], voiceoverRecommended: false },
@@ -83,9 +84,13 @@ const GOOD_SCRIPT = {
   language: "en-US",
 };
 
+/** Every prompt the scout and writer were shown, so a test can see what the scout was told about the lane. */
+const seenPrompts: string[] = [];
+
 function smartFakeRouter(candidates: readonly unknown[]): ModelRouter {
   return {
-    async complete(_prompt, schema, policy) {
+    async complete(prompt, schema, policy) {
+      seenPrompts.push(prompt);
       for (const candidate of candidates) {
         const parsed = schema.safeParse({ type: "final", output: candidate });
         if (parsed.success) {
@@ -182,6 +187,17 @@ async function runWorkflow(h: Harness, runId: string, candidates: unknown[] = [S
   return new WorkflowEngine(new MemoryDurableStepStore()).run(workflow, { ...PARAMS, runId, input: {} });
 }
 
+describe("nearDuplicateTopic", () => {
+  it("catches the same idea in new words and lets different subjects through", () => {
+    expect(nearDuplicateTopic("The rise of Generative Engine Optimization as a new marketing discipline", "Introducing Generative Engine Optimization (GEO)")).toBe(true);
+    expect(nearDuplicateTopic("Why marketers are losing control of their Google Ad campaigns", "Google's AI Max has taken control of your brand's ad campaigns")).toBe(true);
+    expect(nearDuplicateTopic("Seed rounds are shrinking and that is good for you", "Why shrinking seed rounds are good news for founders")).toBe(true);
+    expect(nearDuplicateTopic("The risk of using GenAI for efficiency without proving ROI", "The AI marketing ethics conversation is missing the point")).toBe(false);
+    expect(nearDuplicateTopic("Bridge rounds are the new seed", "Seed rounds are shrinking and that is good for you")).toBe(false);
+    expect(nearDuplicateTopic("Demo day is the wrong finish line", "Pitch decks are getting shorter")).toBe(false);
+  });
+});
+
 describe("01c-discover-topics: an empty lane with no footage and no direction is filled from research, not held (and not invented)", () => {
   let env: Env;
   afterEach(async () => {
@@ -238,10 +254,21 @@ describe("01c-discover-topics: an empty lane with no footage and no direction is
     expect(new Set(topics).size).toBe(3);
     expect((second.output as { topicSource: string }).topicSource).toBe("reserved");
     expect((third.output as { topicSource: string }).topicSource).toBe("discovered");
-    // Research ran for run a and run c only.
+    // Research ran for run a and run c only, and through a DIFFERENT lens the
+    // second time: the lane had seven rows, so the query rotated.
     expect(h.researchArgs).toHaveLength(2);
+    expect(String(h.researchArgs[0]!["query"])).toContain(DISCOVERY_LENSES[0]);
+    expect(String(h.researchArgs[1]!["query"])).toContain(DISCOVERY_LENSES[7 % DISCOVERY_LENSES.length]);
+    expect(h.researchArgs[0]!["query"]).not.toBe(h.researchArgs[1]!["query"]);
+    // Run c's scout was told what the lane already held.
+    const scoutPromptC = seenPrompts.filter((p) => p.includes("alreadyInCatalog")).pop();
+    expect(scoutPromptC).toBeDefined();
+    expect(scoutPromptC).toContain("Seed rounds are shrinking and that is good for you");
+    expect(scoutPromptC).toContain(DISCOVERY_LENSES[7 % DISCOVERY_LENSES.length]);
+    // The re-worded repeat of week one's topic was dropped by code, so 7 + 6, not 7 + 7.
     const catalog = await env.store.readJson<Array<{ topic: string; lane: string; status: string }>>("acme", ["topics", "catalog"]);
     const rows = catalog!.filter((r) => r.lane === CLIP_LANE);
+    expect(rows.map((r) => r.topic)).not.toContain("Why shrinking seed rounds are good news for founders");
     expect(rows).toHaveLength(13);
     expect(rows.filter((r) => r.status === "committed")).toHaveLength(3);
     expect(rows.filter((r) => r.status === "available")).toHaveLength(10);
