@@ -157,6 +157,34 @@ function unitPriceUsd(sku: string): number {
 const NARRATION_CHARS_PER_SECOND = 14;
 
 /**
+ * A beat this long or longer is cut as TWO shots when the library can serve
+ * two (2026-09-09): a six-second hold on one clip is the pace of a
+ * documentary, and a vertical short changes picture every two to four
+ * seconds. The second shot answers the same query with the first clip
+ * excluded, so the beat stays on subject and never repeats a frame.
+ */
+const TWO_SHOT_BEAT_SECONDS = 6;
+/** The second shot of a beat may be shorter than the beat: it only has to cover half the hold. */
+const SECOND_SHOT_MIN_SECONDS = 3;
+
+/**
+ * The caption/furniture font for a language. The server image ships Noto
+ * (`fonts-noto-core`), and libass falls back per glyph through fontconfig
+ * anyway; naming the script's own face keeps the primary text from being
+ * assembled out of fallback glyphs. Latin and everything unlisted keep the
+ * frame's default.
+ */
+export function captionFontFor(language: string | undefined): string | undefined {
+  const tag = (language ?? "").toLowerCase();
+  if (tag.startsWith("he") || tag.startsWith("iw") || tag.startsWith("yi")) return "Noto Sans Hebrew";
+  if (tag.startsWith("ar") || tag.startsWith("fa") || tag.startsWith("ur")) return "Noto Sans Arabic";
+  if (tag.startsWith("ja")) return "Noto Sans CJK JP";
+  if (tag.startsWith("ko")) return "Noto Sans CJK KR";
+  if (tag.startsWith("zh")) return "Noto Sans CJK SC";
+  return undefined;
+}
+
+/**
  * How many times a script that prices over the ceiling is sent back to the
  * writer with the numbers before the deterministic fallback takes over.
  * Two: the first re-plan almost always lands (fewer beats, silent), the
@@ -1087,6 +1115,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       srtPath: string | undefined,
       overlays: readonly TitleCard[] = [],
       fit: "contain" | "cover" = "contain",
+      captionFontName?: string,
     ): Promise<{ outputPath: string; durationSeconds: number | null }> => {
       const { logoPath, logoScrim } = await prepareLogo(workDir);
       const frameOutcome = await tools["video.brandFrame"]?.execute(
@@ -1095,6 +1124,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           outputPath: path.join(workDir, "clip-framed.mp4"),
           fit,
           ...(overlays.length > 0 ? { overlays } : {}),
+          ...(captionFontName !== undefined ? { captionStyle: { fontName: captionFontName } } : {}),
           brand: {
             ground: videoBrand.ground,
             fg: videoBrand.fg,
@@ -1303,7 +1333,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           await fs.writeFile(srtPath, srt, "utf8");
         }
 
-        return brandFrame(clipPath, workDir, srtPath);
+        return brandFrame(clipPath, workDir, srtPath, [], "contain", captionFontFor(videoBrand.language));
       });
 
       return finishDraft(rev, revision, {
@@ -1444,14 +1474,37 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       // called "obviously AI-generated", against a product rule of two
       // dollars a short. `footageSource: "stock"` holds instead of taking
       // the still.
-      const plates: string[] = [];
+      /** One beat's footage: one shot, or two when the beat is long and the library had two clips for it. */
+      interface BeatPlates {
+        shots: PlateResult[];
+      }
+      const beatPlates: BeatPlates[] = [];
       const plateSources: PlateSource[] = [];
       const usedStockIds: number[] = [];
       for (let i = 0; i < script.beats.length; i++) {
         const beat = script.beats[i]!;
-        const plate = await wf.step.code(`04p-plate-${i + 1}`, async (): Promise<PlateResult> => {
+        const plate = await wf.step.code(`04p-plate-${i + 1}`, async (): Promise<BeatPlates> => {
           const query = beat.stockQuery ?? stockQueryFromBrief(beat.visualBrief);
           const misses: string[] = [];
+          // What the library is asked to judge each candidate against: the
+          // scene the script wanted and the words the viewer will hear over it.
+          const relevance = { brief: beat.visualBrief, narration: beat.narration };
+          const taken: number[] = [...usedStockIds];
+          /** A stock search for this beat, with the run's used ids excluded. */
+          const searchStock = async (attemptQuery: string, minDurationSeconds: number, outputName: string) => {
+            const stock = tools["video.findStockClip"]!;
+            const found = await stock.execute({ repoRoot, runId: wf.runId, query: attemptQuery, minDurationSeconds, excludeIds: [...taken], outputName, relevance }, { ctx });
+            if (found.status !== "success") return { ok: false as const, note: `stock "${attemptQuery}": ${found.status}${"reason" in found ? ` (${found.reason})` : ""}` };
+            const result = found.result as { path: string; pexelsId: number; sourceUrl: string };
+            taken.push(result.pexelsId);
+            return { ok: true as const, plate: { path: path.resolve(repoRoot, result.path), source: "stock" as const, stockId: result.pexelsId, sourceUrl: result.sourceUrl } };
+          };
+          /** The second shot of a long beat: same query, the first clip excluded, half the length. Optional: a miss leaves one shot. */
+          const withSecondShot = async (first: PlateResult): Promise<BeatPlates> => {
+            if (beat.seconds < TWO_SHOT_BEAT_SECONDS || tools["video.findStockClip"] === undefined) return { shots: [first] };
+            const second = await searchStock(query, SECOND_SHOT_MIN_SECONDS, `plate-${i + 1}-b`);
+            return { shots: second.ok ? [first, second.plate] : [first] };
+          };
           // A still is a purchase. It is off the table when the plan said
           // stock only, when the client said stock only, or when the run has
           // already reached its ceiling: in every one of those cases the beat
@@ -1459,8 +1512,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           // serve is the one honest hold left.
           const stillsHere = stillsAllowed && config.footageSource !== "stock" && (await wf.costSoFarUsd()) < costCapUsd;
 
-          const stock = tools["video.findStockClip"];
-          if (stock === undefined) {
+          if (tools["video.findStockClip"] === undefined) {
             misses.push("stock: video.findStockClip is not registered");
           } else {
             // The beat's own query first; without a still to fall back on,
@@ -1470,15 +1522,9 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
               ? [query]
               : [...new Set([query, stockQueryFromBrief(beat.visualBrief), GENERIC_STOCK_QUERIES[i % GENERIC_STOCK_QUERIES.length]!, GENERIC_STOCK_QUERIES[(i + 1) % GENERIC_STOCK_QUERIES.length]!])];
             for (const attemptQuery of ladder) {
-              const found = await stock.execute(
-                { repoRoot, runId: wf.runId, query: attemptQuery, minDurationSeconds: beat.seconds, excludeIds: [...usedStockIds], outputName: `plate-${i + 1}` },
-                { ctx },
-              );
-              if (found.status === "success") {
-                const result = found.result as { path: string; pexelsId: number; sourceUrl: string };
-                return { path: path.resolve(repoRoot, result.path), source: "stock", stockId: result.pexelsId, sourceUrl: result.sourceUrl };
-              }
-              misses.push(`stock "${attemptQuery}": ${found.status}${"reason" in found ? ` (${found.reason})` : ""}`);
+              const found = await searchStock(attemptQuery, beat.seconds, `plate-${i + 1}`);
+              if (found.ok) return withSecondShot(found.plate);
+              misses.push(found.note);
             }
           }
           if (!stillsHere) {
@@ -1524,11 +1570,13 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           if (clip.status !== "success") {
             throw new WorkflowToolingFailure(`video.stillToClip failed for beat ${i + 1}: ${clip.status}${"reason" in clip ? ` (${clip.reason})` : ""}`);
           }
-          return { path: (clip.result as { outputPath: string }).outputPath, source: "still" };
+          return { shots: [{ path: (clip.result as { outputPath: string }).outputPath, source: "still" }] };
         });
-        plates.push(plate.path);
-        plateSources.push(plate.source);
-        if (plate.stockId !== undefined) usedStockIds.push(plate.stockId);
+        beatPlates.push(plate);
+        for (const shot of plate.shots) {
+          plateSources.push(shot.source);
+          if (shot.stockId !== undefined) usedStockIds.push(shot.stockId);
+        }
       }
 
       // ── 05: VOICE — the narration spoken, then TIMED by transcribing the
@@ -1552,7 +1600,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         }
         const outputPath = path.join(workDir, "voiceover.mp3");
         const outcome = await synth.execute(
-          { text: narration, outputPath, language, ...(config.voiceName ? { voice: config.voiceName } : {}) },
+          { text: narration, outputPath, language, ...(config.voiceName ? { voice: config.voiceName } : {}), ...(config.voiceSpeakingRate !== undefined ? { speakingRate: config.voiceSpeakingRate } : {}) },
           { ctx },
         );
         if (outcome.status !== "success") {
@@ -1612,7 +1660,14 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         if (compose === undefined) throw new WorkflowToolingFailure("video.composeSequence is not registered — an original short cannot be assembled");
         const composed = await compose.execute(
           {
-            clips: plates.slice(0, script.beats.length).map((p, i) => ({ path: p, holdSeconds: Number(holds[i]!.toFixed(2)) })),
+            // A long beat with two shots cuts halfway through its hold; one
+            // whose hold ended up too short for two legible shots (a voice
+            // that rushed the line) keeps its first shot alone.
+            clips: beatPlates.slice(0, script.beats.length).flatMap((beatPlate, i) => {
+              const hold = holds[i]!;
+              const shots = beatPlate.shots.length === 2 && hold >= 2 * MIN_PLATE_HOLD_SECONDS ? beatPlate.shots : beatPlate.shots.slice(0, 1);
+              return shots.map((shot) => ({ path: shot.path, holdSeconds: Number((hold / shots.length).toFixed(2)) }));
+            }),
             outputPath: path.join(workDir, "sequence.mp4"),
             ...(voice ? { voiceoverPath: voice.path } : {}),
           },
@@ -1638,7 +1693,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         // Plates are portrait: fill the picture area edge to edge rather than
         // letterboxing a 9:16 clip inside a 9:12.7 region (the 2026-09-08
         // render had dark side bars either side of every plate).
-        return brandFrame(sequence.outputPath, workDir, srtPath, titleCards, "cover");
+        return brandFrame(sequence.outputPath, workDir, srtPath, titleCards, "cover", captionFontFor(language));
       });
 
       return finishDraft(rev, revision, {

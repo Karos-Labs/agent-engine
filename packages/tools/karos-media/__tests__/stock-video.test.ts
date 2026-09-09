@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { createFindStockClip, FindStockClipInputSchema, pickPortraitFile, rankStockVideos } from "../src/stock-video.js";
+import { buildRelevancePrompt, createFindStockClip, FindStockClipInputSchema, pickPortraitFile, rankStockVideos } from "../src/stock-video.js";
+import type { VisionAnalysisClient } from "../src/visual-patterns.js";
 
 const ctx = { ctx: { runId: "r", clientSlug: "acme", productId: "tiktok-agent", runKind: "recurring" } } as never;
 
@@ -13,6 +14,7 @@ function video(id: number, duration: number, w: number, h: number, files: Array<
     width: w,
     height: h,
     url: `https://www.pexels.com/video/${id}/`,
+    image: `https://images.pexels.com/videos/${id}/poster.jpeg`,
     user: { name: "Someone" },
     video_files: files.map((f, i) => ({ id: id * 10 + i, quality: f.h >= 1080 ? "hd" : "sd", file_type: f.type ?? "video/mp4", width: f.w, height: f.h, link: `https://videos.pexels.com/${id}-${f.h}.mp4` })),
   };
@@ -31,11 +33,144 @@ function fakeFetch(pages: Record<string, unknown>, clipBytes = 1024): { fetch: t
       const body = pages[q] ?? { videos: [] };
       return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
     }
+    if (url.hostname === "images.pexels.com") {
+      return new Response(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), { status: 200, headers: { "content-type": "image/jpeg" } });
+    }
     downloads.push(url.toString());
     return new Response(new Uint8Array(clipBytes), { status: 200, headers: { "content-length": String(clipBytes) } });
   }) as typeof fetch;
   return { fetch: impl, searches, downloads };
 }
+
+/** A vision client that answers with the given scores per ref and records what it was shown. */
+function fakeVision(scores: Record<string, number>, opts: { fail?: boolean } = {}): { client: VisionAnalysisClient; prompts: string[]; imagesShown: number[] } {
+  const prompts: string[] = [];
+  const imagesShown: number[] = [];
+  const client: VisionAnalysisClient = {
+    models: {
+      async generateContent(request) {
+        const parts = request.contents[0]!.parts;
+        prompts.push(parts.filter((p): p is { text: string } => "text" in p).map((p) => p.text).join("\n"));
+        imagesShown.push(parts.filter((p) => "inlineData" in p).length);
+        if (opts.fail) throw new Error("vision backend down");
+        const refs = [...(prompts[prompts.length - 1]!.match(/Candidate ref: (c\d+)/g) ?? [])].map((m) => m.replace("Candidate ref: ", ""));
+        return {
+          candidates: [{ content: { parts: [{ text: JSON.stringify({ scores: refs.map((ref) => ({ ref, score: scores[ref] ?? 1, reason: `${ref} looks ${scores[ref] ?? 1}` })) }) }] } }],
+          usageMetadata: { promptTokenCount: 2100, candidatesTokenCount: 90 },
+        };
+      },
+    },
+  };
+  return { client, prompts, imagesShown };
+}
+
+describe("video.findStockClip relevance (2026-09-09)", () => {
+  const pool = {
+    "empty conference stage": {
+      videos: [
+        video(11, 9, 1080, 1920, [{ w: 1080, h: 1920 }]), // shortest: the guitarist
+        video(12, 14, 1080, 1920, [{ w: 1080, h: 1920 }]), // the actual empty stage
+        video(13, 20, 1080, 1920, [{ w: 1080, h: 1920 }]),
+      ],
+    },
+  };
+
+  it("shows the vision model the candidates' poster frames with the narration, downloads the best FIT rather than the shortest, and bills the tokens", async () => {
+    const repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), "stock-rel-"));
+    try {
+      const f = fakeFetch(pool);
+      const vision = fakeVision({ c11: 2, c12: 9, c13: 6 });
+      const outcome = await createFindStockClip({ apiKey: "key-123", fetchImpl: f.fetch, visionClient: vision.client }).execute(
+        FindStockClipInputSchema.parse({
+          repoRoot,
+          runId: "run-rel",
+          query: "empty conference stage",
+          minDurationSeconds: 6,
+          relevance: { brief: "Wide shot of an empty grand-hall stage, rows of vacant chairs", narration: "We give our winner one million dollars." },
+        }),
+        ctx,
+      );
+      expect(outcome.status).toBe("success");
+      if (outcome.status !== "success") throw new Error("unreachable");
+      expect(outcome.result.pexelsId).toBe(12);
+      expect(outcome.result.relevanceScore).toBe(9);
+      expect(outcome.result.relevanceNote).toBe("c12 looks 9");
+      expect(outcome.result.candidatesConsidered).toBe(3);
+      expect(vision.imagesShown).toEqual([3]);
+      expect(vision.prompts[0]).toContain('What is said over this shot: "We give our winner one million dollars."');
+      expect(outcome.usage).toEqual([
+        { model: "gemini-2.5-flash-vision-analysis-input-token", unit: "input-token", quantity: 2100 },
+        { model: "gemini-2.5-flash-vision-analysis-output-token", unit: "output-token", quantity: 90 },
+      ]);
+      expect(f.downloads).toEqual(["https://videos.pexels.com/12-1920.mp4"]);
+    } finally {
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("nothing over the floor on the precise query moves on to the broader one; nothing anywhere is a content_fail that says the clips did not fit", async () => {
+    const repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), "stock-rel-"));
+    try {
+      const f = fakeFetch({ ...pool, "empty conference": { videos: [video(21, 8, 1080, 1920, [{ w: 1080, h: 1920 }])] } });
+      const vision = fakeVision({ c11: 2, c12: 3, c13: 1, c21: 8 });
+      const outcome = await createFindStockClip({ apiKey: "key-123", fetchImpl: f.fetch, visionClient: vision.client }).execute(
+        FindStockClipInputSchema.parse({ repoRoot, runId: "run-rel2", query: "empty conference stage", minDurationSeconds: 6, relevance: { brief: "an empty stage", narration: "a line" } }),
+        ctx,
+      );
+      expect(outcome.status).toBe("success");
+      if (outcome.status !== "success") throw new Error("unreachable");
+      expect(outcome.result.pexelsId).toBe(21);
+      expect(outcome.result.query).toBe("empty conference");
+      expect(f.searches).toEqual(["empty conference stage", "empty conference"]);
+
+      const none = fakeVision({ c11: 2, c12: 3, c13: 1, c21: 2 });
+      const miss = await createFindStockClip({ apiKey: "key-123", fetchImpl: fakeFetch({ ...pool, "empty conference": { videos: [video(21, 8, 1080, 1920, [{ w: 1080, h: 1920 }])] } }).fetch, visionClient: none.client }).execute(
+        FindStockClipInputSchema.parse({ repoRoot, runId: "run-rel3", query: "empty conference stage", minDurationSeconds: 6, relevance: { brief: "an empty stage", narration: "a line" } }),
+        ctx,
+      );
+      expect(miss.status).toBe("content_fail");
+      if (miss.status !== "content_fail") throw new Error("unreachable");
+      expect(miss.reason).toContain("none fit the beat");
+    } finally {
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("degrades to shortest-first, with a note, when there is no vision backend or the scoring call fails", async () => {
+    const repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), "stock-rel-"));
+    try {
+      const noBackend = await createFindStockClip({ apiKey: "key-123", fetchImpl: fakeFetch(pool).fetch }).execute(
+        FindStockClipInputSchema.parse({ repoRoot, runId: "run-rel4", query: "empty conference stage", minDurationSeconds: 6, relevance: { brief: "b", narration: "n" } }),
+        ctx,
+      );
+      expect(noBackend.status).toBe("success");
+      if (noBackend.status !== "success") throw new Error("unreachable");
+      expect(noBackend.result.pexelsId).toBe(11);
+      expect(noBackend.result.relevanceNote).toContain("no vision backend");
+      expect(noBackend.usage).toBeUndefined();
+
+      const broken = fakeVision({}, { fail: true });
+      const failed = await createFindStockClip({ apiKey: "key-123", fetchImpl: fakeFetch(pool).fetch, visionClient: broken.client }).execute(
+        FindStockClipInputSchema.parse({ repoRoot, runId: "run-rel5", query: "empty conference stage", minDurationSeconds: 6, relevance: { brief: "b", narration: "n" } }),
+        ctx,
+      );
+      expect(failed.status).toBe("success");
+      if (failed.status !== "success") throw new Error("unreachable");
+      expect(failed.result.pexelsId).toBe(11);
+      expect(failed.result.relevanceNote).toContain("relevance scoring failed");
+    } finally {
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("the prompt names the narration, the brief and every ref, and asks for JSON scores", () => {
+    const prompt = buildRelevancePrompt({ brief: "a stage", narration: "a line" }, ["c1", "c2"]);
+    expect(prompt).toContain("a stage");
+    expect(prompt).toContain('"a line"');
+    expect(prompt).toContain("Candidate refs, in order: c1, c2.");
+    expect(prompt).toContain('"scores"');
+  });
+});
 
 describe("video.findStockClip", () => {
   it("is not_available without an API key, never a throw", async () => {

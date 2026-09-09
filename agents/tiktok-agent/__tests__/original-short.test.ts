@@ -90,6 +90,8 @@ function stubTools(
     still?: boolean;
     /** The client's own ceiling on a run, in USD. */
     maxRunCostUsd?: number;
+    /** The client's content language (BCP-47); default en-GB. */
+    voiceLanguage?: string;
   } = {},
 ): Harness {
   const calls: string[] = [];
@@ -121,8 +123,9 @@ function stubTools(
         tiktokClips: {
           mode: "original",
           voiceover: opts.voiceoverPolicy ?? "auto",
-          voiceLanguage: "en-GB",
+          voiceLanguage: opts.voiceLanguage ?? "en-GB",
           voiceName: "en-GB-Chirp3-HD-Charon",
+          voiceSpeakingRate: 1.1,
           sourcePool: [],
           guestWatchlist: [],
           narrowing: [],
@@ -261,17 +264,23 @@ describe("original short: script → plates → voice → captions → sequence 
     expect(output.voiceover).toBe(true);
     expect(output.format).toBe("original-short");
 
-    // One stock plate per beat, into distinct files, each at least the beat's own length. Nothing generated.
-    expect(h.stockArgs.map((a) => a["outputName"])).toEqual(["plate-1", "plate-2", "plate-3"]);
-    expect(h.stockArgs.map((a) => a["minDurationSeconds"])).toEqual([4, 6, 6]);
+    // One stock plate per beat, and a SECOND shot for each beat of six
+    // seconds or more (same query, first clip excluded, half the length), so
+    // the picture changes every few seconds. Nothing generated.
+    expect(h.stockArgs.map((a) => a["outputName"])).toEqual(["plate-1", "plate-2", "plate-2-b", "plate-3", "plate-3-b"]);
+    expect(h.stockArgs.map((a) => a["minDurationSeconds"])).toEqual([4, 6, 3, 6, 3]);
+    expect(h.stockArgs[2]!["excludeIds"]).toEqual([1001, 1002]);
+    // Every search carries what the library should judge a candidate against.
+    expect(h.stockArgs[0]!["relevance"]).toEqual({ brief: VOICED_SCRIPT.beats[0]!.visualBrief, narration: VOICED_SCRIPT.beats[0]!.narration });
     expect(h.imageArgs).toHaveLength(0);
     expect(h.calls).not.toContain("video.generateClip");
 
-    // The voice: the whole narration, in the client's configured language and
-    // voice — not the script's guess and not the brand kit's.
+    // The voice: the whole narration, in the client's configured language,
+    // voice and tempo — not the script's guess and not the brand kit's.
     expect(h.voiceArgs).toHaveLength(1);
     expect(h.voiceArgs[0]!["language"]).toBe("en-GB");
     expect(h.voiceArgs[0]!["voice"]).toBe("en-GB-Chirp3-HD-Charon");
+    expect(h.voiceArgs[0]!["speakingRate"]).toBe(1.1);
     expect(String(h.voiceArgs[0]!["text"])).toContain("Nobody tells you the first hire");
     expect(String(h.voiceArgs[0]!["text"])).toContain("write the role for the company");
 
@@ -295,14 +304,16 @@ describe("original short: script → plates → voice → captions → sequence 
 
     // The sequence covers the voice: holds sum to voice + tail, each ≥ 2s,
     // proportional to how much each beat says.
+    // Beat 2 says the most, so its hold (~6s) is long enough to cut in two;
+    // beat 3's hold (~3.5s) is not, so its second shot is left unused.
     const compose = h.composeArgs[0]!;
     const clips = compose["clips"] as Array<{ path: string; holdSeconds: number }>;
-    expect(clips).toHaveLength(3);
-    expect(clips.map((c) => path.basename(c.path))).toEqual(["plate-1.mp4", "plate-2.mp4", "plate-3.mp4"]);
+    expect(clips.map((c) => path.basename(c.path))).toEqual(["plate-1.mp4", "plate-2.mp4", "plate-2-b.mp4", "plate-3.mp4"]);
     const total = clips.reduce((sum, c) => sum + c.holdSeconds, 0);
     expect(total).toBeCloseTo(13.1 + 0.4, 1);
     expect(clips.every((c) => c.holdSeconds >= 2)).toBe(true);
-    expect(clips[1]!.holdSeconds).toBeGreaterThan(clips[0]!.holdSeconds);
+    expect(clips[1]!.holdSeconds + clips[2]!.holdSeconds).toBeGreaterThan(clips[0]!.holdSeconds);
+    expect(clips[1]!.holdSeconds).toBeCloseTo(clips[2]!.holdSeconds, 2);
     expect(compose["voiceoverPath"]).toMatch(/voiceover\.mp3$/);
 
     // The visual QA watched the framed file with the right expectations.
@@ -313,7 +324,9 @@ describe("original short: script → plates → voice → captions → sequence 
     expect(expectations["captionsExpected"]).toBe(true);
     expect(expectations["hookLine"]).toBe(VOICED_SCRIPT.hook);
 
-    expect(h.deliverables[0]).toMatchObject({ format: "original-short", voiceover: true, sourceTier: "stock", plateSources: ["stock", "stock", "stock"], maxCostUsd: 2 });
+    expect(h.deliverables[0]).toMatchObject({ format: "original-short", voiceover: true, sourceTier: "stock", plateSources: ["stock", "stock", "stock", "stock", "stock"], maxCostUsd: 2 });
+    // Latin captions keep the frame's default font.
+    expect(h.frameArgs[0]!["captionStyle"]).toBeUndefined();
     expect(h.calls).toContain("topics.commit");
   }, 20_000);
 
@@ -325,7 +338,8 @@ describe("original short: script → plates → voice → captions → sequence 
     expect(h.calls).not.toContain("video.synthesizeVoice");
     expect(h.calls).not.toContain("video.transcribe");
     const clips = h.composeArgs[0]!["clips"] as Array<{ holdSeconds: number }>;
-    expect(clips.map((c) => c.holdSeconds)).toEqual([4, 6, 6]);
+    // Silent: the script's own seconds stand, and each six-second beat is two three-second shots.
+    expect(clips.map((c) => c.holdSeconds)).toEqual([4, 3, 3, 3, 3]);
     expect(h.composeArgs[0]!["voiceoverPath"]).toBeUndefined();
     const srt = await fs.readFile(h.frameArgs[0]!["srtPath"] as string, "utf8");
     expect(srt).toContain("The first hire is a bet");
@@ -362,8 +376,8 @@ describe("original short: script → plates → voice → captions → sequence 
     expect(prompts[1]).toContain("budgetFeedback");
     expect(prompts[1]).toMatch(/priced at \$0\.1\d against a \$0\.14 ceiling/);
     expect(prompts[1]).toContain("lands under $0.11");
-    // The cheaper plan is the one that shipped, stills still permitted, nothing held.
-    expect(h.stockArgs).toHaveLength(3);
+    // The cheaper plan is the one that shipped, stills still permitted, nothing held (three beats, two of them long enough for a second shot).
+    expect(h.stockArgs).toHaveLength(5);
     expect(h.calls).not.toContain("video.synthesizeVoice");
     expect(h.deliverables[0]).toMatchObject({ budgetPlan: "replan", replans: 1, voiceover: false, maxCostUsd: 0.14 });
     expect(h.calls).not.toContain("topics.release");
@@ -383,7 +397,7 @@ describe("original short: script → plates → voice → captions → sequence 
     expect(h.imageArgs).toHaveLength(0);
     // Under a five-cent ceiling the voice ($0.02) plus QA fits once stills are gone, so it keeps its voice.
     expect(h.calls).toContain("video.synthesizeVoice");
-    expect(h.deliverables[0]).toMatchObject({ budgetPlan: "stock-only", replans: 2, plateSources: ["stock", "stock", "stock"], voiceover: true });
+    expect(h.deliverables[0]).toMatchObject({ budgetPlan: "stock-only", replans: 2, plateSources: ["stock", "stock", "stock", "stock", "stock"], voiceover: true });
     expect(h.calls).not.toContain("topics.release");
   }, 20_000);
 
@@ -459,16 +473,16 @@ describe("original short: real footage, then a still, never generated video (202
 
     expect(h.calls).not.toContain("video.generateClip");
     expect(h.imageArgs).toHaveLength(0);
-    expect(h.stockArgs.map((a) => a["outputName"])).toEqual(["plate-1", "plate-2", "plate-3"]);
+    expect(h.stockArgs.map((a) => a["outputName"])).toEqual(["plate-1", "plate-2", "plate-2-b", "plate-3", "plate-3-b"]);
     // Each beat's own query (derived from its brief here — the v4 prompt writes `stockQuery` itself).
     expect(String(h.stockArgs[0]!["query"])).toContain("office");
-    // The third search excludes the two clips already taken.
-    expect(h.stockArgs[2]!["excludeIds"]).toEqual([1001, 1002]);
+    // Every later search excludes every clip already taken, second shots included.
+    expect(h.stockArgs[3]!["excludeIds"]).toEqual([1001, 1002, 1003]);
     // Portrait plates fill the picture area instead of sitting between side bars.
     expect(h.frameArgs[0]!["fit"]).toBe("cover");
     // The reviewer is told which plates are real.
     const deliverable = h.deliverables[0] as { plateSources?: string[] };
-    expect(deliverable.plateSources).toEqual(["stock", "stock", "stock"]);
+    expect(deliverable.plateSources).toEqual(["stock", "stock", "stock", "stock", "stock"]);
   });
 
   it("falls through to a generated STILL with a slow push-in for the beats the library cannot serve, beat by beat", async () => {
@@ -490,6 +504,14 @@ describe("original short: real footage, then a still, never generated video (202
     expect(h.stillArgs.map((a) => a["move"])).toEqual(["pull-back", "push-in"]);
     expect((h.deliverables[0] as { plateSources?: string[] }).plateSources).toEqual(["stock", "still", "still"]);
   });
+
+  it("a Hebrew client's captions and furniture are set in a Hebrew face, so the frame is not assembled from fallback glyphs", async () => {
+    const h = stubTools({ voiceLanguage: "he-IL" });
+    const result = await run(h, "run-os-hebrew");
+    expect(result.status).toBe("completed");
+    expect(h.voiceArgs[0]!["language"]).toBe("he-IL");
+    expect(h.frameArgs[0]!["captionStyle"]).toEqual({ fontName: "Noto Sans Hebrew" });
+  }, 20_000);
 
   it("with no stock library registered the original short is not available at all: the run holds at sourcing, naming the missing key", async () => {
     const h = stubTools({ stock: "none" });

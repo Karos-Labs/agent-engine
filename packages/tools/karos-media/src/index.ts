@@ -218,6 +218,10 @@ export function createKarosMediaTools(options: KarosMediaToolsOptions = {}): Age
     "video.findStockClip": createFindStockClip({
       apiKey: (options.env ?? process.env)["PEXELS_API_KEY"],
       ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+      // The same vision credential `media.inspectImages` uses, so a beat's
+      // candidates can be scored against its narration at no new key.
+      ...(visionClient ? { visionClient } : {}),
+      ...(options.visionModel ? { visionModel: options.visionModel } : {}),
     }),
     // ── Video Tier 3: Veo generation, the clip cascade's last resort. Same
     // registered-always / not_available-when-unconfigured contract as
