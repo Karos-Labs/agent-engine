@@ -366,6 +366,20 @@ export const UNIT_PRICING: Record<string, UnitPricing> = {
     usdPerUnit: 0.0001,
     source: "elevenlabs.io/pricing/api — Text to Speech, v2 Multilingual, $0.10 per 1K characters (checked 2026-09-05)",
   },
+
+  // ── Transcription (speech-to-text), billed PER SECOND of audio ──
+  //
+  // `video.transcribe` (packages/tools/karos-video/src/tools/transcribe.ts)
+  // reports the ffprobe'd duration of the file it uploaded. Until 2026-09-09
+  // it reported nothing, so every TikTok run's two Scribe calls (the source
+  // episode, then the voiceover for caption timing) were invisible in
+  // `totalCostUsd`. $0.22 per hour of audio = $0.0000611 per second.
+  "elevenlabs-scribe": {
+    unit: "second",
+    usdPerUnit: 0.22 / 3600,
+    source:
+      "elevenlabs.io/pricing/api — Speech to Text, Scribe, $0.22 per hour of audio (checked 2026-09-09; the page lists the Scribe v2 rate, the tool sends model_id scribe_v1, which the page no longer prices separately — re-read before relying on this for an invoice)",
+  },
 };
 
 /**

@@ -52,7 +52,7 @@ export const VisualQaExpectationsSchema = z.object({
   language: z.string().optional().describe("BCP-47 language the captions/voiceover should be in."),
   format: z
     .enum(["commentary-clip", "original-short"])
-    .describe("Which pipeline produced it. Any rendering artefact fails an `original-short` (generated plates); a `commentary-clip` tolerates source-footage quirks."),
+    .describe("Which pipeline produced it. An `original-short` is stock footage and stills under a voice; a `commentary-clip` is cut from licensed source footage. Since 2026-09-09 neither is judged for generation artefacts as a hard rule: an artefact lowers the score and is reported in evidence."),
 });
 export type VisualQaExpectations = z.infer<typeof VisualQaExpectationsSchema>;
 
@@ -115,8 +115,10 @@ function buildReviewPrompt(expectations: VisualQaExpectations): string {
     "",
     "What this clip is supposed to be:",
     `- Topic: ${expectations.topic}`,
-    `- Format: ${expectations.format === "original-short" ? "an original short built on generated footage — any visible rendering artefact is disqualifying" : "a commentary clip cut from licensed source footage — judge the edit, not the source's own production quality"}`,
-    expectations.hookLine !== undefined ? `- Hook line that must land within the first two seconds: "${expectations.hookLine}"` : "- The hook must land within the first two seconds.",
+    `- Format: ${expectations.format === "original-short" ? "an original short: real stock footage and photographs under a voiceover, one shot per beat. Real footage is the intent, not a defect. Judge whether each shot fits what is being said at that moment; footage unrelated to the narration is the main failure to look for." : "a commentary clip cut from licensed source footage — judge the edit, not the source's own production quality"}`,
+    expectations.hookLine !== undefined
+      ? `- The opening line: "${expectations.hookLine}". hookLandsInFirstTwoSeconds is true when this line has STARTED (spoken or on screen) within the first two seconds; it does not have to finish by then.`
+      : "- The hook must have started (spoken or on screen) within the first two seconds.",
     `- Burned-in captions expected: ${expectations.captionsExpected ? "yes" : "no"}`,
     `- Voiceover expected: ${expectations.voiceoverExpected ? "yes" : "no"}`,
     expectations.language !== undefined ? `- Language of captions/speech: ${expectations.language}` : undefined,
@@ -167,9 +169,6 @@ export function visualQaFailures(report: VisualQaReport, input: Pick<VisualQaGat
   }
   if (input.expectations.captionsExpected && !report.captions.present) {
     reasons.push("captions were expected but none are present");
-  }
-  if (input.expectations.format === "original-short" && report.artifacts.length > 0) {
-    reasons.push(`rendering artefacts on an original short: ${report.artifacts.join("; ")}`);
   }
   return reasons;
 }

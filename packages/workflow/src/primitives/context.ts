@@ -82,6 +82,24 @@ export interface WorkflowContext {
    */
   input: Readonly<Record<string, unknown>>;
 
+  /**
+   * The run's cost ceiling, when the dispatcher set one (`WorkflowBudget`).
+   * Exposed so a workflow can size its OWN plan against it before spending —
+   * a script with five beats that would each buy footage is a different
+   * decision under a $2 ceiling than under none — rather than discovering the
+   * ceiling only when `step.code`/`step.agent` refuse the next step.
+   */
+  budget?: WorkflowBudget;
+
+  /**
+   * What this run has spent so far, in USD, summed over every checkpointed
+   * step (the same `sumRunCost` the budget check uses, so the two never
+   * disagree). Cheap: one `listSteps` read. Lets a workflow write an honest
+   * "spent so far / estimated total" onto a gate payload instead of leaving
+   * the reviewer to find the number after the fact.
+   */
+  costSoFarUsd(): Promise<number>;
+
   step: {
     /** A deterministic, checkpointed function call. Re-running an already-completed `id` returns the checkpointed output without calling `fn` again. */
     code<T>(id: string, fn: () => T | Promise<T>): Promise<T>;
@@ -163,6 +181,8 @@ export function buildWorkflowContext(runtime: WorkflowRuntime): WorkflowContext 
     runKind: runtime.runKind,
     input: runtime.input,
     ...(runtime.slotId !== undefined ? { slotId: runtime.slotId } : {}),
+    ...(runtime.budget !== undefined ? { budget: runtime.budget } : {}),
+    costSoFarUsd: () => sumRunCost(runtime.store, runtime.runId),
     step: {
       code: (id, fn) => runStepCode(runtime, id, fn),
       agent: (id, agent, input) => runStepAgent(runtime, id, agent, input),

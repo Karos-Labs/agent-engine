@@ -51,7 +51,7 @@ export class TikTokScriptAgent extends BaseAgent<ShortScript> {
   protected readonly config: AgentStepConfig<ShortScript> = {
     id: "tiktok-script",
     description:
-      "Write a 3-5 beat script for an original vertical short on the given topic: a cold-open hook, per-beat narration (≤30 words), on-screen text (≤8 words), a concrete visual brief for generated b-roll (a scene — no text, no logos), and the post caption. Use the client's voice rules. Decide whether this piece wants a voiceover and say why. Add no claim the brief does not support.",
+      "Write a 3-5 beat script for an original vertical short on the given topic: a cold-open hook, per-beat narration (≤30 words), on-screen text (≤8 words), a stock-footage search query and a concrete visual brief per beat (a scene — no text, no logos), and the post caption. Use the client's voice rules. Decide whether this piece wants a voiceover and say why. Add no claim the brief does not support.",
     allowedTools: ["client.getVoiceRules", "client.getBrand", "client.getStrategy"],
     outputSchema: ShortScriptSchema,
     modelPolicy: resolveModelPolicy("tiktok-script", { policy: "pinned", model: "claude-sonnet-4-6", contentLanguageSensitive: true }),
@@ -62,7 +62,13 @@ export class TikTokScriptAgent extends BaseAgent<ShortScript> {
     // pubsub-21711047251391287 held at 07-compliance on one em dash in a
     // beat's narration that nothing had ever asked this step to avoid. v1
     // stays frozen.
-    skillRef: "tiktok-script@4",
+    // Pinned to "5" (2026-09-09): generated video is gone from the pipeline.
+    // v5 makes `stockQuery` the primary visual instruction and reframes
+    // `visualBrief` as the brief for a PHOTOGRAPH (the still-with-push-in
+    // fallback), names beat 1's on-screen text as the one title card, and
+    // bans the sales CTA beat the 2026-09-08 scripts kept appending. v4 stays
+    // frozen.
+    skillRef: "tiktok-script@5",
     // The same lint 07-compliance runs afterwards, run FIRST on the model's
     // own output so a tell comes back as feedback it can act on rather than
     // as a held run. Two revisions: the first fix is usually enough, the
