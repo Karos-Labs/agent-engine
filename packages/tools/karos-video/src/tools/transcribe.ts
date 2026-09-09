@@ -1,10 +1,16 @@
 import { z } from "zod";
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
+import type { ToolUnitUsage } from "@agent-engine/core";
 import { defineTool, notAvailable, success, toolingError } from "@agent-engine/tool-common";
+import { resolveRuntime, type KarosVideoToolOptions } from "../config.js";
 import { VideoTranscriptSchema, type VideoTranscript } from "../types.js";
+import { probeDuration } from "./clip-compose.js";
 
-const TOOL_VERSION = "1.0.0";
+/** 1.1.0 (2026-09-09): reports per-second usage against `elevenlabs-scribe` so a transcription is billed like every other media purchase. */
+const TOOL_VERSION = "1.1.0";
+/** The `UNIT_PRICING` row this tool bills against, unit `second`. */
+export const ELEVENLABS_SCRIBE_SKU = "elevenlabs-scribe";
 const ELEVENLABS_ENDPOINT = "https://api.elevenlabs.io/v1/speech-to-text";
 
 /**
@@ -30,7 +36,7 @@ export const TranscribeInputSchema = z.object({
 });
 export type TranscribeInput = z.infer<typeof TranscribeInputSchema>;
 
-export interface CreateTranscribeOptions {
+export interface CreateTranscribeOptions extends KarosVideoToolOptions {
   /** Overrides the request deadline. Exists so a test can bound it in milliseconds rather than minutes. */
   timeoutMs?: number;
   fetchImpl?: TranscribeFetchImpl;
@@ -85,6 +91,7 @@ export function createTranscribe(options: CreateTranscribeOptions = {}) {
   const env = options.env ?? process.env;
   const readFileImpl = options.readFileImpl ?? ((path: string) => readFile(path));
   const timeoutMs = options.timeoutMs ?? TRANSCRIBE_TIMEOUT_MS;
+  const runtime = resolveRuntime(options);
 
   return defineTool<TranscribeInput, VideoTranscript>({
     name: "video.transcribe",
@@ -99,6 +106,10 @@ export function createTranscribe(options: CreateTranscribeOptions = {}) {
       }
 
       const bytes = await readFileImpl(videoPath);
+      // Measured BEFORE the upload so a vendor failure still leaves the file's
+      // length known; a probe failure (ffprobe absent, odd container) is not a
+      // transcription failure: the call is simply unbilled, and says so.
+      const audioSeconds = await probeDuration(runtime, videoPath).catch(() => null);
       const form = new FormData();
       form.append("model_id", "scribe_v1");
       // `Buffer`'s backing `ArrayBufferLike` isn't assignable to `BlobPart` under
@@ -137,7 +148,9 @@ export function createTranscribe(options: CreateTranscribeOptions = {}) {
       if (!parsed.success) {
         return toolingError(`ElevenLabs response did not match the expected transcript shape: ${parsed.error.message}`);
       }
-      return success<VideoTranscript>(parsed.data);
+      const usage: ToolUnitUsage[] = audioSeconds !== null && audioSeconds > 0 ? [{ model: ELEVENLABS_SCRIBE_SKU, unit: "second", quantity: audioSeconds }] : [];
+      if (usage.length === 0) console.warn(`video.transcribe: could not probe the duration of ${basename(videoPath)}; this Scribe call is unbilled`);
+      return success<VideoTranscript>(parsed.data, usage);
     },
   });
 }

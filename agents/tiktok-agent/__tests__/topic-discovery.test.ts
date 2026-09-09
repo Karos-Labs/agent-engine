@@ -146,7 +146,10 @@ function buildTools(store: WorkspaceStore, opts: { research?: "serves" | "not_av
     ...createKarosTopicsTools(store),
     "ledger.listOutputExcerpts": tool("ledger.listOutputExcerpts", () => ok({ entries: published })),
     "ledger.recordOutputExcerpt": tool("ledger.recordOutputExcerpt", () => ok({ recorded: true, total: 1 })),
-    "video.generateClip": tool("video.generateClip", (args) => ok({ path: `.media-cache/run/${(args as { outputName: string }).outputName}.mp4`, model: "veo-3.1-generate-001", resolution: "1080p", durationSeconds: 6 })),
+    "video.findStockClip": tool("video.findStockClip", (args) => {
+      const input = args as { outputName: string; query: string };
+      return ok({ path: `.media-cache/run/${input.outputName}.mp4`, pexelsId: 1, durationSeconds: 9, width: 1080, height: 1920, sourceUrl: "https://www.pexels.com/video/1/", photographer: "Someone", license: "Pexels", query: input.query });
+    }),
     "video.composeSequence": tool("video.composeSequence", (args) => ok({ outputPath: (args as { outputPath: string }).outputPath, durationSeconds: 16, clipsUsed: 3, hasVoiceover: false })),
     "video.brandFrame": tool("video.brandFrame", (args) => ok({ outputPath: (args as { outputPath: string }).outputPath, durationSeconds: 16, applied: ["bars", "captions"] })),
     "video.selfEvalGate": tool("video.selfEvalGate", () => ok(pass)),
@@ -272,7 +275,7 @@ describe("01c-discover-topics: an empty lane with no footage and no direction is
     expect(result.reason).toContain("discovery could not seed it");
     expect(result.reason).toContain("research for discovery was unusable");
     // The scout never ran, and the lane is still empty.
-    expect(h.calls).not.toContain("video.generateClip");
+    expect(h.calls).not.toContain("video.findStockClip");
     const catalog = await env.store.readJson<unknown[]>("acme", ["topics", "catalog"]);
     expect(catalog ?? []).toHaveLength(0);
   });

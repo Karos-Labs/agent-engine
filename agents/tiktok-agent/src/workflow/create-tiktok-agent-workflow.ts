@@ -4,6 +4,7 @@ import path from "node:path";
 import { buildSrt } from "@agent-engine/tool-karos-video";
 import { downloadBrandLogo, planBrandLogoPlacement, readBrandLogoInk } from "@agent-engine/tool-karos-media";
 import {
+  UNIT_PRICING,
   evaluateDedupe,
   readForbiddenTopics,
   shingles,
@@ -43,11 +44,13 @@ import { TikTokMomentAgent } from "../agent/tiktok-moment-agent.js";
 import { TikTokScriptAgent } from "../agent/tiktok-script-agent.js";
 import { TikTokTopicScoutAgent } from "../agent/tiktok-topic-scout-agent.js";
 import { boundsFromTranscript, sentenceBoundedWords, type TranscriptWordLike } from "./clip-bounds.js";
+import { buildScriptCaptions } from "./captions.js";
 import {
   CLIP_DURATION_MAX_SECONDS,
   CLIP_DURATION_MIN_SECONDS,
   CLIP_LANE,
   DEFAULT_CLIP_CONFIG,
+  MAX_RUN_COST_USD,
   MomentSelectionSchema,
   ShortScriptSchema,
   TikTokClipConfigSchema,
@@ -62,6 +65,7 @@ import {
   type TikTokIntake,
   type TopicCandidate,
   type TopicSource,
+  VISUAL_QA_ESTIMATE_USD,
 } from "./types.js";
 
 export interface CreateTikTokAgentWorkflowOptions {
@@ -125,8 +129,14 @@ const MAX_DEDUPE_ATTEMPTS = 2;
  * lints and 13-commit-and-record writes back into the dedupe window, so every
  * later comparison is against what actually shipped.
  */
-/** Where one beat's plate came from — carried to the reviewer and the deliverable. */
-export type PlateSource = "stock" | "generated";
+/**
+ * Where one beat's plate came from — carried to the reviewer and the
+ * deliverable. `stock` is a real library clip; `still` is a generated
+ * photograph held with a slow push-in. There is no `generated` video any
+ * more (2026-09-09): the product rule is a short under two dollars, and one
+ * generated clip cost more than that on its own.
+ */
+export type PlateSource = "stock" | "still";
 
 interface PlateResult {
   path: string;
@@ -134,6 +144,106 @@ interface PlateResult {
   /** The library id, so later beats in the same run never reuse the clip. */
   stockId?: number;
   sourceUrl?: string;
+}
+
+/** A `UNIT_PRICING` rate, or a tooling failure: an estimate built on a missing row would be a guess with a decimal point. */
+function unitPriceUsd(sku: string): number {
+  const row = UNIT_PRICING[sku];
+  if (row === undefined) throw new WorkflowToolingFailure(`cannot estimate this run's cost: no UNIT_PRICING row for "${sku}"`);
+  return row.usdPerUnit;
+}
+
+/** Spoken English runs ~14 characters a second at a narrator's pace; used only to size the transcription estimate. */
+const NARRATION_CHARS_PER_SECOND = 14;
+
+/**
+ * How many times a script that prices over the ceiling is sent back to the
+ * writer with the numbers before the deterministic fallback takes over.
+ * Two: the first re-plan almost always lands (fewer beats, silent), the
+ * second is insurance; after that the run stops asking and simply buys
+ * nothing more (stock footage only, then silent).
+ */
+const MAX_BUDGET_REPLANS = 2;
+
+/** A re-plan is asked to land comfortably under the ceiling, not to graze it: three quarters of the cap. */
+const REPLAN_TARGET_SHARE = 0.75;
+
+/**
+ * Where the plan's cost landed, carried to the gate payload and the
+ * deliverable so a reviewer can see HOW the short was kept under the
+ * ceiling, never as a failure the client meets.
+ */
+export type BudgetPlan = "original" | "replan" | "stock-only" | "stock-only-silent";
+
+/**
+ * Library queries any stock library answers, for the deterministic
+ * fallback (`stock-only`): a beat whose own query and brief-derived query
+ * both miss still gets a real, free plate rather than a still or a hold.
+ * Neutral scenes with no people, rotated by beat so a short does not repeat one.
+ */
+const GENERIC_STOCK_QUERIES = ["city street", "office desk window", "hands typing keyboard", "clouds sky", "rain on window", "coffee cup table"] as const;
+
+export interface CostEstimate {
+  estimatedTotalUsd: number;
+  costCapUsd: number;
+  breakdown: { spentSoFarUsd: number; voiceUsd: number; transcribeUsd: number; stillsWorstCaseUsd: number; visualQaUsd: number; stockUsd: 0 };
+}
+
+/**
+ * The whole downstream plan priced from the same `UNIT_PRICING` rows the
+ * tools bill against, at the worst case (every beat a still when stills are
+ * allowed, the dearer TTS vendor), on top of what the run has already spent.
+ */
+export function estimateOriginalShortCost(input: {
+  spentSoFarUsd: number;
+  narrationChars: number;
+  beats: number;
+  voiceover: boolean;
+  stillsAllowed: boolean;
+  visualQaRegistered: boolean;
+  costCapUsd: number;
+}): CostEstimate {
+  const round = (n: number) => Math.round(n * 1_000_000) / 1_000_000;
+  const voiceUsd = input.voiceover ? input.narrationChars * unitPriceUsd("elevenlabs-tts-multilingual-v2") : 0;
+  const transcribeUsd = input.voiceover ? (input.narrationChars / NARRATION_CHARS_PER_SECOND) * unitPriceUsd("elevenlabs-scribe") : 0;
+  const stillsWorstCaseUsd = input.stillsAllowed ? input.beats * unitPriceUsd("gemini-2.5-flash-image") : 0;
+  const visualQaUsd = input.visualQaRegistered ? VISUAL_QA_ESTIMATE_USD : 0;
+  return {
+    estimatedTotalUsd: round(input.spentSoFarUsd + voiceUsd + transcribeUsd + stillsWorstCaseUsd + visualQaUsd),
+    costCapUsd: input.costCapUsd,
+    breakdown: {
+      spentSoFarUsd: round(input.spentSoFarUsd),
+      voiceUsd: round(voiceUsd),
+      transcribeUsd: round(transcribeUsd),
+      stillsWorstCaseUsd: round(stillsWorstCaseUsd),
+      visualQaUsd: round(visualQaUsd),
+      stockUsd: 0,
+    },
+  };
+}
+
+/** The note the writer gets with a plan that priced over the ceiling: the numbers, the target, and the levers it actually has. */
+export function budgetFeedbackFor(estimate: CostEstimate, targetUsd: number, beats: number, narrationWords: number): string {
+  const b = estimate.breakdown;
+  return (
+    `The previous plan is priced at $${estimate.estimatedTotalUsd.toFixed(2)} against a $${estimate.costCapUsd.toFixed(2)} ceiling for this short ` +
+    `(already spent on writing $${b.spentSoFarUsd.toFixed(2)}; voiceover $${b.voiceUsd.toFixed(2)}; up to $${b.stillsWorstCaseUsd.toFixed(2)} for a generated photograph on each of ${beats} beats the library cannot serve; QA $${b.visualQaUsd.toFixed(2)}). ` +
+    `Re-plan so the whole short lands under $${targetUsd.toFixed(2)}: fewer beats (each beat is one library search and, at worst, one paid photograph), ` +
+    `shorter narration (now ${narrationWords} words; the voice is billed per character), stock queries a library certainly holds (places, weather, ordinary objects, a texture) so no photograph is needed, ` +
+    `and consider running silent with strong on-screen text. Keep the message; cut the cost.`
+  );
+}
+
+/** The photograph brief the still tier sends to `image.generate`: the beat's scene, as a photograph, with the things that read as generated ruled out. */
+export function stillBrief(visualBrief: string, allowPeople: boolean): string {
+  return [
+    visualBrief.trim().replace(/\s+/g, " "),
+    "A documentary photograph, not an illustration or a render: natural light, real textures, ordinary lens, nothing glossy.",
+    "No text, no signs, no logos, no screens with writing, no documents.",
+    allowPeople ? "" : "No people.",
+  ]
+    .filter((s) => s.length > 0)
+    .join(" ");
 }
 
 /**
@@ -263,7 +373,7 @@ function plainSourceNames(config: TikTokClipConfig): string[] {
  *
  *     INTAKE -> SEED -> CLAIM-topic -> FIND-source ->
  *       (footage)  TRANSCRIBE -> PICK-moment -> CUT -> COMPOSE-commentary -> RENDER
- *       (nothing)  SCRIPT -> GENERATE-plates -> VOICE -> RENDER
+ *       (nothing)  SCRIPT -> ESTIMATE-cost -> FIND-plates (stock, else a still) -> VOICE -> RENDER
  *     -> QA -> [approve] -> QUEUE -> LOG
  *
  * One run, one clip — the same unit every other migrated channel agent uses.
@@ -295,8 +405,21 @@ function plainSourceNames(config: TikTokClipConfig): string[] {
  *
  * Attached upload -> the client's own footage URIs in `sourcePool` -> a web
  * harvest restricted to the shows named in `sourcePool` (never the open web)
- * -> generated b-roll. `mode: "commentary"` stops before generation and holds;
- * `mode: "original"` never touches anyone else's footage.
+ * -> an original short over STOCK footage, a generated still for a beat no
+ * library has. Generated video is not a tier (2026-09-09): a short must cost
+ * under two dollars, and one Veo plate cost more than that. `mode:
+ * "commentary"` stops before the original short and holds; `mode: "original"`
+ * never touches anyone else's footage.
+ *
+ * ## What it may cost
+ *
+ * `MAX_RUN_COST_USD` ($2), or the client's lower `maxRunCostUsd`. Never a
+ * failure the client meets: `03v-estimate-cost` prices the whole plan before
+ * the first plate is bought, a plan over the ceiling goes back to the writer
+ * with the numbers (up to `MAX_BUDGET_REPLANS` times), and after that a
+ * deterministic rule buys nothing more (stock only, then silent). At the
+ * ceiling mid-run a still, the voice and the QA call are skipped, not bought.
+ * The dispatcher's `WorkflowBudget` is the engine-level backstop under all of it.
  *
  * ## Where the judgment is
  *
@@ -739,17 +862,17 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         }
       }
 
-      // Tier 3 — an original short over generated b-roll. The only tier that
-      // can answer any topic on demand, and the one `mode: "commentary"`
-      // forbids. Nothing is generated HERE: the plates are made per beat once
-      // the script exists, because a plate is a scene from a script, not a
-      // picture of a topic.
+      // Tier 3 — an original short over stock footage (a generated still for
+      // a beat no library has). The only tier that can answer any topic on
+      // demand, and the one `mode: "commentary"` forbids. Nothing is fetched
+      // HERE: the plates are found per beat once the script exists, because a
+      // plate is a scene from a script, not a picture of a topic.
       if (config.mode === "commentary") {
-        tierOutcomes.push("generated: disabled — mode is \"commentary\"");
-      } else if (tools["video.generateClip"] === undefined || options.repoRoot === undefined) {
-        tierOutcomes.push("generated: not wired in this deployment");
+        tierOutcomes.push("stock: disabled — mode is \"commentary\"");
+      } else if (tools["video.findStockClip"] === undefined || options.repoRoot === undefined) {
+        tierOutcomes.push(`stock: not wired in this deployment (${options.repoRoot === undefined ? "no repoRoot configured" : "video.findStockClip is not registered — set PEXELS_API_KEY"})`);
       } else {
-        return { ...base, sourceTier: "generated" };
+        return { ...base, sourceTier: "stock" };
       }
 
       // Every tier dry. A video post has no typographic fallback — this hold
@@ -760,7 +883,14 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       throw new WorkflowHeld(`no source footage from any tier — ${tierOutcomes.join("; ")}`);
     });
 
-    const format: ClipFormat = intake.sourceTier === "generated" ? "original-short" : "commentary-clip";
+    const format: ClipFormat = intake.sourceTier === "stock" ? "original-short" : "commentary-clip";
+
+    /**
+     * The run's cost ceiling: the product rule, lowered (never raised) by the
+     * client's own `maxRunCostUsd`, and by a dispatcher budget tighter than both.
+     */
+    const costCapUsd = Math.min(MAX_RUN_COST_USD, config.maxRunCostUsd ?? MAX_RUN_COST_USD, wf.budget?.maxTotalCostUsd ?? MAX_RUN_COST_USD);
+
 
     /**
      * Hands a reservation back so a failed run does not burn the topic.
@@ -797,8 +927,8 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
     let moment: MomentSelection;
     let bounds: ClipPlan;
 
-    if (intake.sourceTier === "generated") {
-      // A generated short has no speech to mine and no moment to pick. The
+    if (intake.sourceTier === "stock") {
+      // An original short has no speech to mine and no moment to pick. The
       // script step (inside `produceClip`, so a reviewer's note can rewrite
       // it) carries the whole message; this placeholder keeps the deliverable
       // shape every consumer already reads.
@@ -807,7 +937,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         endSeconds: CLIP_DURATION_MIN_SECONDS,
         hookLine: intake.topic,
         hookType: "sharp-one-liner" as const,
-        rationale: "original short — no transcript exists to pick a moment from; the script carries the message over generated b-roll",
+        rationale: "original short — no transcript exists to pick a moment from; the script carries the message over stock footage",
       }));
       bounds = { startSeconds: 0, endSeconds: 0, words: [], text: "", needsCut: false };
     } else {
@@ -1007,6 +1137,14 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       visualQa?: { passed: boolean; reason?: string; evidence: string[] };
       /** Per beat, where the b-roll came from — so a reviewer knows which plates are real footage. Original shorts only. */
       plateSources?: PlateSource[];
+      /** What the run had spent when this draft reached the gate, so the reviewer sees the number beside the play button. */
+      costSoFarUsd: number;
+      /** The pre-purchase estimate for the whole run (original shorts only), so the reviewer can see how the actual compares. */
+      estimatedCostUsd?: number;
+      /** How the plan was kept under the ceiling (original shorts only): as written, re-planned, or by the deterministic stock-only fallback. */
+      budgetPlan?: BudgetPlan;
+      /** How many times the script went back to the writer over cost. */
+      replans?: number;
     }
 
     /**
@@ -1191,108 +1329,202 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       const workDir = revision === 0 ? baseWorkDir : path.join(baseWorkDir, `r${revision}`);
       const repoRoot = options.repoRoot!;
 
-      // ── 03s: SCRIPT (judgment) — then the same verified dedupe the
-      //         commentary layer gets, on the caption + about that ship ──
-      const script = await draftWithVerifiedDedupe<ShortScript>(
-        rev,
-        "03s-script",
-        "03t-verify-not-duplicate",
-        (stepId, dedupeAvoid) =>
-          wf.step.code(stepId, async () => {
-            const agent = new TikTokScriptAgent({ router: options.router, tools, promptStore: options.promptStore });
-            const exec = await runAgentStepWithCommitSteer(wf, stepId.replace("03s-script", "03u-script"), agent, {
-              ...runDirectionField(runDirection),
-              topic,
-              ...(intake.discovered ? { topicBrief: intake.discovered } : {}),
-              clientProfile: profile,
-              ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
-              ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
-              ...(dedupeAvoid !== undefined ? { dedupeAvoid } : {}),
-              ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
-              ...(directive !== undefined ? { revisionRequest: directive } : {}),
-              voiceoverPolicy: config.voiceover,
-              allowPeople: config.allowPeopleInGeneratedFootage,
-              ...(config.voiceLanguage ?? videoBrand.language ? { contentLanguage: config.voiceLanguage ?? videoBrand.language } : {}),
-            }, "the script");
-            if (exec.status === "content_fail") {
-              throw new WorkflowHeld("the script did not clear its own output validation");
-            }
-            if (exec.status !== "completed") {
-              throw new WorkflowToolingFailure(`script step resolved to "${exec.status}"`);
-            }
-            return normalizeScriptDashes(ShortScriptSchema.parse(exec.finalOutput));
-          }),
-        (s) => `${s.caption}\n\n${s.about}`,
-      );
-      // The client's config outranks the model's per-piece call; on `auto`
-      // the model decided and said why.
-      const voiceover = config.voiceover === "always" ? true : config.voiceover === "never" ? false : script.voiceover;
+      // ── 03s → 07 → 03v: SCRIPT, compliance, ESTIMATE — as a RE-PLAN LOOP ──
+      //
+      // Everything downstream of the script costs money: a voice, its
+      // transcription, a still for any beat the library cannot serve, the QA
+      // model watching the result. The plan is priced from the same
+      // `UNIT_PRICING` rows the tools bill against, at the worst case, on
+      // top of what the run has already spent, BEFORE anything is bought.
+      //
+      // A plan that prices over the ceiling is not a failure and not a hold
+      // (2026-09-09, product rule): the client sees one continuous run that
+      // ends in a finished clip. The script goes back to the writer with the
+      // numbers and the levers (`budgetFeedback`), up to `MAX_BUDGET_REPLANS`
+      // times. If the writer still cannot land it, a deterministic rule takes
+      // over and simply buys nothing more: stock footage only (no stills),
+      // and if even that does not fit, silent. Remaining cost is then the QA
+      // call alone, so the ceiling is met by construction.
+      //
+      // Step ids carry `-replan-N` for the second and third attempts so every
+      // draft, its dedupe verdict and its estimate stay in the trace.
+      const drafted = await (async (): Promise<{ script: ShortScript; voiceover: boolean; stillsAllowed: boolean; estimate: CostEstimate; replans: number; budgetPlan: BudgetPlan }> => {
+        const replanTargetUsd = Math.round(costCapUsd * REPLAN_TARGET_SHARE * 100) / 100;
+        const visualQaRegistered = tools["video.visualQaGate"] !== undefined;
+        let budgetFeedback: string | undefined;
+        for (let attempt = 0; ; attempt++) {
+          const planRev = (id: string) => rev(attempt === 0 ? id : `${id}-replan-${attempt}`);
+          const feedback = budgetFeedback;
+          const script = await draftWithVerifiedDedupe<ShortScript>(
+            planRev,
+            "03s-script",
+            "03t-verify-not-duplicate",
+            (stepId, dedupeAvoid) =>
+              wf.step.code(stepId, async () => {
+                const agent = new TikTokScriptAgent({ router: options.router, tools, promptStore: options.promptStore });
+                const exec = await runAgentStepWithCommitSteer(wf, stepId.replace("03s-script", "03u-script"), agent, {
+                  ...runDirectionField(runDirection),
+                  topic,
+                  ...(intake.discovered ? { topicBrief: intake.discovered } : {}),
+                  clientProfile: profile,
+                  ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
+                  ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
+                  ...(dedupeAvoid !== undefined ? { dedupeAvoid } : {}),
+                  ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
+                  ...(directive !== undefined ? { revisionRequest: directive } : {}),
+                  ...(feedback !== undefined ? { budgetFeedback: feedback } : {}),
+                  voiceoverPolicy: config.voiceover,
+                  allowPeople: config.allowPeopleInGeneratedFootage,
+                  ...(config.voiceLanguage ?? videoBrand.language ? { contentLanguage: config.voiceLanguage ?? videoBrand.language } : {}),
+                }, "the script");
+                if (exec.status === "content_fail") {
+                  throw new WorkflowHeld("the script did not clear its own output validation");
+                }
+                if (exec.status !== "completed") {
+                  throw new WorkflowToolingFailure(`script step resolved to "${exec.status}"`);
+                }
+                return normalizeScriptDashes(ShortScriptSchema.parse(exec.finalOutput));
+              }),
+            (s) => `${s.caption}\n\n${s.about}`,
+          );
+          // The client's config outranks the model's per-piece call; on `auto`
+          // the model decided and said why.
+          const voiceover = config.voiceover === "always" ? true : config.voiceover === "never" ? false : script.voiceover;
 
-      // ── 07: compliance pass — the caption and about, plus every line the
-      //        viewer will hear or read, because on-screen words are
-      //        published words too ──
-      await wf.step.code(rev("07-compliance"), async () => {
-        await runTextGates([script.caption, script.about, ...script.beats.flatMap((b) => [b.narration, b.onScreenText])].join("\n\n"));
-      });
+          // ── 07: compliance pass — the caption and about, plus every line the
+          //        viewer will hear or read, because on-screen words are
+          //        published words too ──
+          await wf.step.code(planRev("07-compliance"), async () => {
+            await runTextGates([script.caption, script.about, ...script.beats.flatMap((b) => [b.narration, b.onScreenText])].join("\n\n"));
+          });
 
-      // ── 04p: GENERATE the plates, one per beat. Step ids carry NO revision
+          const narrationChars = script.beats.reduce((n, b) => n + b.narration.trim().length, 0);
+          const narrationWords = script.beats.reduce((n, b) => n + b.narration.trim().split(/\s+/).length, 0);
+          const estimate = await wf.step.code(planRev("03v-estimate-cost"), async () =>
+            estimateOriginalShortCost({ spentSoFarUsd: await wf.costSoFarUsd(), narrationChars, beats: script.beats.length, voiceover, stillsAllowed: true, visualQaRegistered, costCapUsd }),
+          );
+          if (estimate.estimatedTotalUsd <= costCapUsd) {
+            return { script, voiceover, stillsAllowed: true, estimate, replans: attempt, budgetPlan: attempt === 0 ? "original" : "replan" };
+          }
+          if (attempt < MAX_BUDGET_REPLANS) {
+            budgetFeedback = budgetFeedbackFor(estimate, replanTargetUsd, script.beats.length, narrationWords);
+            continue;
+          }
+
+          // ── 03w: the deterministic fallback. No more asking: stock only,
+          //         and silent if stock only still does not fit. ──
+          return wf.step.code(planRev("03w-budget-fallback"), async () => {
+            const spentSoFarUsd = await wf.costSoFarUsd();
+            let plan: BudgetPlan = "stock-only";
+            let finalVoice = voiceover;
+            let fallback = estimateOriginalShortCost({ spentSoFarUsd, narrationChars, beats: script.beats.length, voiceover: finalVoice, stillsAllowed: false, visualQaRegistered, costCapUsd });
+            if (fallback.estimatedTotalUsd > costCapUsd && finalVoice) {
+              finalVoice = false;
+              plan = "stock-only-silent";
+              fallback = estimateOriginalShortCost({ spentSoFarUsd, narrationChars, beats: script.beats.length, voiceover: false, stillsAllowed: false, visualQaRegistered, costCapUsd });
+            }
+            console.warn(`03w-budget-fallback: two re-plans still priced over $${costCapUsd.toFixed(2)}; continuing as ${plan} at an estimated $${fallback.estimatedTotalUsd.toFixed(2)}`);
+            return { script, voiceover: finalVoice, stillsAllowed: false, estimate: fallback, replans: attempt, budgetPlan: plan };
+          });
+        }
+      })();
+      const { script, voiceover, stillsAllowed, estimate, replans, budgetPlan } = drafted;
+
+      // ── 04p: FIND the plates, one per beat. Step ids carry NO revision
       //         suffix on purpose: a reviewer's note changes the words, and
-      //         footage already made for beat 3 is reused for the revised
-      //         beat 3 rather than paid for again. A revision with MORE beats
-      //         generates only the extra ones; one with fewer uses a subset.
-      //         Footage nobody asked to change is the one expensive thing
-      //         here, and a `reject` (a fresh run) is the path to new footage. ──
+      //         footage already found for beat 3 is reused for the revised
+      //         beat 3 rather than fetched again. A revision with MORE beats
+      //         finds only the extra ones; one with fewer uses a subset. ──
+      //
+      // Two tiers, in order. A real clip from the stock library first: real
+      // footage is what a viewer trusts, and it costs nothing. Then a
+      // generated PHOTOGRAPH ($0.04) held with a slow push-in, for the beat
+      // no library has. Never generated video: the four prep runs of
+      // 2026-09-07/08 each paid ~$13 for Veo plates that the visual QA
+      // called "obviously AI-generated", against a product rule of two
+      // dollars a short. `footageSource: "stock"` holds instead of taking
+      // the still.
       const plates: string[] = [];
       const plateSources: PlateSource[] = [];
       const usedStockIds: number[] = [];
       for (let i = 0; i < script.beats.length; i++) {
         const beat = script.beats[i]!;
         const plate = await wf.step.code(`04p-plate-${i + 1}`, async (): Promise<PlateResult> => {
-          // Tier 2c first: a real clip from the stock library, when the
-          // deployment has one and the client has not asked for generated
-          // footage only. Real footage is what a viewer trusts, and it costs
-          // nothing where Veo costs $0.40 a second — the visual QA on the last
-          // all-generated short (2026-09-08) read "obviously AI-generated".
+          const query = beat.stockQuery ?? stockQueryFromBrief(beat.visualBrief);
+          const misses: string[] = [];
+          // A still is a purchase. It is off the table when the plan said
+          // stock only, when the client said stock only, or when the run has
+          // already reached its ceiling: in every one of those cases the beat
+          // walks the free ladder below instead, and a beat nothing free can
+          // serve is the one honest hold left.
+          const stillsHere = stillsAllowed && config.footageSource !== "stock" && (await wf.costSoFarUsd()) < costCapUsd;
+
           const stock = tools["video.findStockClip"];
-          if (config.footageSource !== "generated" && stock !== undefined) {
-            const query = beat.stockQuery ?? stockQueryFromBrief(beat.visualBrief);
-            const found = await stock.execute(
-              { repoRoot, runId: wf.runId, query, minDurationSeconds: beat.seconds, excludeIds: [...usedStockIds], outputName: `plate-${i + 1}` },
-              { ctx },
-            );
-            if (found.status === "success") {
-              const result = found.result as { path: string; pexelsId: number; sourceUrl: string };
-              return { path: path.resolve(repoRoot, result.path), source: "stock", stockId: result.pexelsId, sourceUrl: result.sourceUrl };
-            }
-            if (config.footageSource === "stock") {
-              throw new WorkflowHeld(
-                `no stock footage for beat ${i + 1} ("${query}") and this client's footageSource is "stock" (${found.status}${"reason" in found ? `: ${found.reason}` : ""})`,
+          if (stock === undefined) {
+            misses.push("stock: video.findStockClip is not registered");
+          } else {
+            // The beat's own query first; without a still to fall back on,
+            // the brief-derived query and then a generic scene every library
+            // holds, so "free only" still means a real plate.
+            const ladder = stillsHere
+              ? [query]
+              : [...new Set([query, stockQueryFromBrief(beat.visualBrief), GENERIC_STOCK_QUERIES[i % GENERIC_STOCK_QUERIES.length]!, GENERIC_STOCK_QUERIES[(i + 1) % GENERIC_STOCK_QUERIES.length]!])];
+            for (const attemptQuery of ladder) {
+              const found = await stock.execute(
+                { repoRoot, runId: wf.runId, query: attemptQuery, minDurationSeconds: beat.seconds, excludeIds: [...usedStockIds], outputName: `plate-${i + 1}` },
+                { ctx },
               );
+              if (found.status === "success") {
+                const result = found.result as { path: string; pexelsId: number; sourceUrl: string };
+                return { path: path.resolve(repoRoot, result.path), source: "stock", stockId: result.pexelsId, sourceUrl: result.sourceUrl };
+              }
+              misses.push(`stock "${attemptQuery}": ${found.status}${"reason" in found ? ` (${found.reason})` : ""}`);
             }
           }
-          const generate = tools["video.generateClip"]!;
-          const request = {
-            repoRoot,
-            runId: wf.runId,
-            brief: beat.visualBrief,
-            durationSeconds: beat.seconds,
-            aspectRatio: "9:16" as const,
-            outputName: `plate-${i + 1}`,
-            allowPeople: config.allowPeopleInGeneratedFootage,
-          };
-          let outcome = await generate.execute(request, { ctx });
-          if (outcome.status === "content_fail") {
-            // A declined scene gets ONE plainer retake before the run gives up
-            // on it — the model refused the picture, not the topic.
-            outcome = await generate.execute(
-              { ...request, brief: `${beat.visualBrief}. Wide establishing shot, no people, calm natural light.`, allowPeople: false },
-              { ctx },
+          if (!stillsHere) {
+            const why = config.footageSource === "stock" ? 'this client\'s footageSource is "stock"' : !stillsAllowed ? `the plan is ${budgetPlan}` : "the run has reached its cost ceiling";
+            throw new WorkflowHeld(`no free footage for beat ${i + 1} and no still may be bought (${why}): ${misses.join("; ")}`);
+          }
+
+          const generateImage = tools["image.generate"];
+          const stillToClip = tools["video.stillToClip"];
+          if (generateImage === undefined || stillToClip === undefined) {
+            throw new WorkflowHeld(
+              `no footage for beat ${i + 1} ("${query}"): ${misses.join("; ")}; and the still tier is not wired (${generateImage === undefined ? "image.generate" : "video.stillToClip"} is not registered)`,
             );
           }
-          if (outcome.status !== "success") {
-            throw new WorkflowHeld(`b-roll for beat ${i + 1} could not be generated (${outcome.status}${"reason" in outcome ? `: ${outcome.reason}` : ""})`);
+          const image = await generateImage.execute(
+            {
+              repoRoot,
+              runId: wf.runId,
+              needs: [{ n: i + 1, prompt: stillBrief(beat.visualBrief, config.allowPeopleInGeneratedFootage) }],
+              perNeed: 1,
+              aspectRatio: "9:16",
+              art: { aesthetic: "documentary photograph", lighting: "natural light", mood: "calm, observational" },
+            },
+            { ctx },
+          );
+          if (image.status !== "success") {
+            throw new WorkflowHeld(`no footage for beat ${i + 1} ("${query}"): ${misses.join("; ")}; still: ${image.status}${"reason" in image ? ` (${image.reason})` : ""}`);
           }
-          return { path: path.resolve(repoRoot, (outcome.result as { path: string }).path), source: "generated" };
+          const generated = image.result as { candidates: Array<{ path: string }>; unmet: Array<{ n: number; reason: string }> };
+          const candidate = generated.candidates[0];
+          if (candidate === undefined) {
+            throw new WorkflowHeld(`no footage for beat ${i + 1} ("${query}"): ${misses.join("; ")}; still: ${generated.unmet[0]?.reason ?? "the image model produced nothing"}`);
+          }
+          const clip = await stillToClip.execute(
+            {
+              imagePath: path.resolve(repoRoot, candidate.path),
+              outputPath: path.join(baseWorkDir, `plate-${i + 1}-still.mp4`),
+              durationSeconds: beat.seconds,
+              move: i % 2 === 0 ? "push-in" : "pull-back",
+            },
+            { ctx },
+          );
+          if (clip.status !== "success") {
+            throw new WorkflowToolingFailure(`video.stillToClip failed for beat ${i + 1}: ${clip.status}${"reason" in clip ? ` (${clip.reason})` : ""}`);
+          }
+          return { path: (clip.result as { outputPath: string }).outputPath, source: "still" };
         });
         plates.push(plate.path);
         plateSources.push(plate.source);
@@ -1306,6 +1538,13 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       const language = config.voiceLanguage ?? videoBrand.language ?? script.language;
       const voice = await wf.step.code(rev("05-voiceover"), async (): Promise<{ path: string; durationSeconds: number | null; words: TranscriptWordLike[]; notes: string[] } | null> => {
         if (!voiceover) return null;
+        if ((await wf.costSoFarUsd()) >= costCapUsd) {
+          // The plan was priced to fit, so this is the belt to its braces: at
+          // the ceiling the short runs silent (captions carry the words)
+          // rather than buying a voice, and never fails for it.
+          console.warn("05-voiceover: the run has reached its cost ceiling; running silent instead of buying a voice");
+          return null;
+        }
         await fs.mkdir(workDir, { recursive: true });
         const synth = tools["video.synthesizeVoice"];
         if (synth === undefined) {
@@ -1349,14 +1588,17 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         }
         const boundaries = holds.reduce<number[]>((acc, h) => [...acc, (acc[acc.length - 1] ?? 0) + h], []);
 
-        // Captions: from the voice's real word timings when we have them,
-        // else the on-screen text per beat, held for the beat.
+        // Captions: the SCRIPT's words, timed by the voice's transcript
+        // (see `captions.ts`: the recognizer is the clock, never the text, so
+        // "karoslabs.com" is never burned as "Kairoslabs.com" and a cue ends
+        // where the phrase does). Without a timed voice, the on-screen text
+        // per beat, held for the beat.
         const cues =
           voice && voice.words.length > 0
-            ? buildSrt(
-                voice.words.map((w) => ({ word: w.text, start: w.start, end: w.end })),
-                0,
-                3,
+            ? buildScriptCaptions(
+                script.beats.map((b) => b.narration),
+                voice.words.map((w) => ({ text: w.text, start: w.start, end: w.end })),
+                voice.durationSeconds ?? undefined,
               )
             : buildSrt(
                 script.beats.map((b, i) => ({ word: b.onScreenText, start: i === 0 ? 0 : boundaries[i - 1]!, end: boundaries[i]! - 0.05 })),
@@ -1381,16 +1623,16 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         }
         const sequence = composed.result as { outputPath: string; durationSeconds: number | null };
 
-        // With a voice, the captions are the spoken words and each beat's
-        // `onScreenText` becomes a title card above them for the beat's
-        // duration — two zones, never one over the other. Silent, the
-        // on-screen text IS the caption (built above) and no card repeats it.
+        // With a voice, the captions are the spoken words and ONE title card
+        // sits above them: beat 1's on-screen text, for the whole first beat.
+        // That card is the visual hook a stranger reads before they hear a
+        // word. The 2026-09-08 renders carded every beat and the visual QA
+        // read it as "multiple, conflicting captioning styles"; a viewer
+        // reads one line at a time. Silent, the on-screen text IS the caption
+        // (built above) and no card repeats it.
         const titleCards: TitleCard[] =
-          voice && voice.words.length > 0
-            ? script.beats.map((b, i) => {
-                const start = i === 0 ? 0 : boundaries[i - 1]!;
-                return { text: b.onScreenText, start, end: Math.max(start + 0.5, boundaries[i]! - 0.05) };
-              })
+          voice && voice.words.length > 0 && script.beats[0] !== undefined
+            ? [{ text: script.beats[0].onScreenText, start: 0, end: Math.max(0.5, Math.min(boundaries[0]!, 4) - 0.05) }]
             : [];
 
         // Plates are portrait: fill the picture area edge to edge rather than
@@ -1402,8 +1644,11 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       return finishDraft(rev, revision, {
         commentary: { caption: script.caption, about: script.about },
         script,
-        voiceover,
+        // What actually shipped: a voice skipped at the ceiling is a silent short.
+        voiceover: voice !== null,
         plateSources,
+        budgetPlan,
+        replans,
         renderedPath: rendered.outputPath,
         durationSeconds: rendered.durationSeconds ?? script.beats.reduce((a, b) => a + b.seconds, 0),
         // What the viewer actually meets first is beat 1's narration; the
@@ -1413,6 +1658,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         hookLine: script.beats[0]?.narration ?? script.hook,
         guardrailText: [script.caption, script.about, ...script.beats.map((b) => b.narration)].join("\n\n"),
         captionsExpected: true,
+        estimatedCostUsd: estimate.estimatedTotalUsd,
       });
     };
 
@@ -1424,7 +1670,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
     const finishDraft = async (
       rev: (id: string) => string,
       revision: number,
-      draft: Omit<ClipDraft, "uploaded"> & { guardrailText: string; captionsExpected: boolean },
+      draft: Omit<ClipDraft, "uploaded" | "costSoFarUsd"> & { guardrailText: string; captionsExpected: boolean },
     ): Promise<ClipDraft> => {
       const { renderedPath } = draft;
 
@@ -1478,6 +1724,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       const visualQa = await wf.step.code(rev("10b-visual-qa"), async (): Promise<{ skipped: true; note: string } | { skipped: false; passed: boolean; reason?: string; evidence: string[] }> => {
         const gate = tools["video.visualQaGate"];
         if (gate === undefined) return { skipped: true, note: "video.visualQaGate is not registered in this deployment" };
+        if ((await wf.costSoFarUsd()) >= costCapUsd) return { skipped: true, note: "skipped: the run has reached its cost ceiling; the reviewer judges the clip unaided" };
         const outcome = await gate.execute(
           {
             videoPath: renderedPath,
@@ -1526,6 +1773,10 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         revision === 0 ? undefined : `-r${revision}`,
       );
 
+      // Read AFTER the QA model has billed itself, so the number beside the
+      // play button is what this clip actually cost to bring to the reviewer.
+      const costSoFarUsd = Math.round((await wf.costSoFarUsd()) * 1_000_000) / 1_000_000;
+
       return {
         commentary: draft.commentary,
         ...(draft.script ? { script: draft.script } : {}),
@@ -1534,6 +1785,10 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         durationSeconds: draft.durationSeconds,
         uploaded,
         hookLine: draft.hookLine,
+        costSoFarUsd,
+        ...(draft.estimatedCostUsd !== undefined ? { estimatedCostUsd: draft.estimatedCostUsd } : {}),
+        ...(draft.budgetPlan !== undefined ? { budgetPlan: draft.budgetPlan } : {}),
+        ...(draft.replans !== undefined ? { replans: draft.replans } : {}),
         ...(draft.plateSources !== undefined ? { plateSources: draft.plateSources } : {}),
         ...(visualQa.skipped ? {} : { visualQa: { passed: visualQa.passed, ...(visualQa.reason !== undefined ? { reason: visualQa.reason } : {}), evidence: visualQa.evidence } }),
       };
@@ -1574,11 +1829,22 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           // The visual QA model's read, so a flagged clip arrives with the
           // reason beside the play button instead of as a held run.
           ...(draft.visualQa !== undefined ? { visualQa: draft.visualQa, flagged: !draft.visualQa.passed } : {}),
-          // Which plates are real footage and which were generated.
+          // Which plates are real footage and which are generated stills.
           ...(draft.plateSources !== undefined ? { plateSources: draft.plateSources } : {}),
+          // What it cost to get here, what the plan was priced at, and the
+          // ceiling — beside the play button, not in a separate report.
+          costSoFarUsd: draft.costSoFarUsd,
+          ...(draft.estimatedCostUsd !== undefined ? { estimatedCostUsd: draft.estimatedCostUsd } : {}),
+          maxCostUsd: costCapUsd,
+          ...(draft.budgetPlan !== undefined ? { budgetPlan: draft.budgetPlan } : {}),
+          ...(draft.replans !== undefined ? { replans: draft.replans } : {}),
         },
         requiredRole: "account_manager",
-        timeout: { duration: "1h", onTimeout: "auto_approve" },
+        // An unanswered gate approves itself after an hour ONLY for a clip the
+        // visual QA passed. Two prep clips scored 3/10 shipped on 2026-09-08
+        // by `system:gate-timeout` after seven hours with nobody watching; a
+        // flagged clip now waits for a person, however long that takes.
+        timeout: { duration: "1h", onTimeout: draft.visualQa !== undefined && !draft.visualQa.passed ? "hold" : "auto_approve" },
       }),
       onDecision: async ({ revision, response, output }) => {
         // SCRUM-306 (AU23): a reject's drafted content previously had nowhere
@@ -1640,6 +1906,11 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
             // portal can show a flagged clip as flagged after the fact.
             ...(review.output.visualQa !== undefined ? { visualQa: review.output.visualQa } : {}),
             ...(review.output.plateSources !== undefined ? { plateSources: review.output.plateSources } : {}),
+            costSoFarUsd: review.output.costSoFarUsd,
+            ...(review.output.estimatedCostUsd !== undefined ? { estimatedCostUsd: review.output.estimatedCostUsd } : {}),
+            maxCostUsd: costCapUsd,
+            ...(review.output.budgetPlan !== undefined ? { budgetPlan: review.output.budgetPlan } : {}),
+            ...(review.output.replans !== undefined ? { replans: review.output.replans } : {}),
             hookType: moment.hookType,
             startSeconds: bounds.startSeconds,
             endSeconds: bounds.endSeconds,

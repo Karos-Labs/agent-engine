@@ -6,16 +6,18 @@ import { promises as fs } from "node:fs";
 import type { ZodType } from "zod";
 import { FilePromptStore, type AgentToolRegistry, type CompletionResult, type ModelRouter } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
-import { BrandFrameInputSchema, ComposeSequenceInputSchema, SelfEvalGateInputSchema, SynthesizeVoiceInputSchema, TranscribeInputSchema } from "@agent-engine/tool-karos-video";
-import { FindStockClipInputSchema, GenerateVideoInputSchema, VisualQaGateInputSchema } from "@agent-engine/tool-karos-media";
+import { BrandFrameInputSchema, ComposeSequenceInputSchema, SelfEvalGateInputSchema, StillToClipInputSchema, SynthesizeVoiceInputSchema, TranscribeInputSchema } from "@agent-engine/tool-karos-video";
+import { FindStockClipInputSchema, GenerateImageInputSchema, VisualQaGateInputSchema } from "@agent-engine/tool-karos-media";
 import { createTikTokAgentWorkflow } from "../src/workflow/create-tiktok-agent-workflow.js";
 
 /**
  * The ORIGINAL-SHORT production pass in detail: the voiceover decision, the
- * plate-per-beat generation, captions timed from the voice's own words, the
- * hold arithmetic that stretches the plates to cover the speech, and the
- * visual QA gate watching the result. Every video stub validates against the
- * REAL tool schema, so a request shape the tools would reject fails here.
+ * plate-per-beat sourcing (stock first, a generated still second, never
+ * generated video), the pre-purchase cost estimate and ceiling, the SCRIPT's
+ * words captioned on the voice's timings, the hold arithmetic that stretches
+ * the plates to cover the speech, and the visual QA gate watching the result.
+ * Every video stub validates against the REAL tool schema, so a request shape
+ * the tools would reject fails here.
  */
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -42,10 +44,12 @@ function voiceWords(): Array<{ type: string; text: string; start: number; end: n
   return text.split(/\s+/).map((word, i) => ({ type: "word", text: word, start: i * 0.43, end: i * 0.43 + 0.4 }));
 }
 
-function sequentialFakeRouter(candidates: readonly unknown[]): ModelRouter {
+/** A router that answers from a queue and records every prompt it was shown, so a test can see what the writer was told. */
+function sequentialFakeRouter(candidates: readonly unknown[], prompts: string[] = []): ModelRouter {
   const queue = [...candidates];
   return {
-    async complete(_prompt, _schema, policy) {
+    async complete(prompt, _schema, policy) {
+      prompts.push(typeof prompt === "string" ? prompt : JSON.stringify(prompt));
       const next = queue.shift();
       if (next === undefined) throw new Error("sequentialFakeRouter: exhausted configured turns");
       return {
@@ -64,7 +68,8 @@ function sequentialFakeRouter(candidates: readonly unknown[]): ModelRouter {
 interface Harness {
   tools: AgentToolRegistry;
   calls: string[];
-  generateArgs: Array<Record<string, unknown>>;
+  imageArgs: Array<Record<string, unknown>>;
+  stillArgs: Array<Record<string, unknown>>;
   stockArgs: Array<Record<string, unknown>>;
   composeArgs: Array<Record<string, unknown>>;
   voiceArgs: Array<Record<string, unknown>>;
@@ -75,10 +80,21 @@ interface Harness {
 }
 
 function stubTools(
-  opts: { voiceoverPolicy?: "auto" | "always" | "never"; transcribeVoice?: boolean; qa?: "pass" | "fail" | "none"; declinePlate?: number; stock?: "hit" | "miss" | "hit-then-miss" } = {},
+  opts: {
+    voiceoverPolicy?: "auto" | "always" | "never";
+    transcribeVoice?: boolean;
+    qa?: "pass" | "fail" | "none";
+    /** How the stock library answers. Default `hit`; `none` leaves it unregistered. */
+    stock?: "hit" | "miss" | "hit-then-miss" | "none";
+    /** Whether the still tier (image.generate + video.stillToClip) is registered. Default true. */
+    still?: boolean;
+    /** The client's own ceiling on a run, in USD. */
+    maxRunCostUsd?: number;
+  } = {},
 ): Harness {
   const calls: string[] = [];
-  const generateArgs: Array<Record<string, unknown>> = [];
+  const imageArgs: Array<Record<string, unknown>> = [];
+  const stillArgs: Array<Record<string, unknown>> = [];
   const stockArgs: Array<Record<string, unknown>> = [];
   const composeArgs: Array<Record<string, unknown>> = [];
   const voiceArgs: Array<Record<string, unknown>> = [];
@@ -99,10 +115,20 @@ function stubTools(
     },
   });
 
-  let plateCalls = 0;
   const tools: Record<string, unknown> = {
     "client.getConfig": tool("client.getConfig", () =>
-      ok({ tiktokClips: { mode: "original", voiceover: opts.voiceoverPolicy ?? "auto", voiceLanguage: "en-GB", voiceName: "en-GB-Chirp3-HD-Charon", sourcePool: [], guestWatchlist: [], narrowing: [] } }),
+      ok({
+        tiktokClips: {
+          mode: "original",
+          voiceover: opts.voiceoverPolicy ?? "auto",
+          voiceLanguage: "en-GB",
+          voiceName: "en-GB-Chirp3-HD-Charon",
+          sourcePool: [],
+          guestWatchlist: [],
+          narrowing: [],
+          ...(opts.maxRunCostUsd !== undefined ? { maxRunCostUsd: opts.maxRunCostUsd } : {}),
+        },
+      }),
     ),
     "client.getProfile": tool("client.getProfile", () => ok({ name: "Acme", industry: "founder programs" })),
     "client.getVoiceRules": tool("client.getVoiceRules", () => ok({ tone: "direct" })),
@@ -111,19 +137,6 @@ function stubTools(
     "topics.reserve": tool("topics.reserve", () => ok({ reservationKey: "res-1", topics: ["the first hire"] })),
     "topics.commit": tool("topics.commit", () => ok({ committed: true })),
     "topics.release": tool("topics.release", () => ok({ released: true })),
-    "video.generateClip": tool(
-      "video.generateClip",
-      (args) => {
-        const input = args as { outputName: string; durationSeconds: number };
-        generateArgs.push(input as unknown as Record<string, unknown>);
-        plateCalls += 1;
-        if (opts.declinePlate !== undefined && plateCalls === opts.declinePlate) {
-          return { status: "content_fail" as const, reason: "safety: the scene was declined" };
-        }
-        return ok({ path: `.media-cache/run/${input.outputName}.mp4`, model: "veo-3.1-generate-001", resolution: "1080p", durationSeconds: input.durationSeconds });
-      },
-      GenerateVideoInputSchema,
-    ),
     "video.synthesizeVoice": tool(
       "video.synthesizeVoice",
       (args) => {
@@ -168,7 +181,7 @@ function stubTools(
     }),
     "memory.appendDecision": tool("memory.appendDecision", () => ok({ id: "dec-1" })),
   };
-  if (opts.stock !== undefined) {
+  if ((opts.stock ?? "hit") !== "none") {
     let stockCalls = 0;
     tools["video.findStockClip"] = tool(
       "video.findStockClip",
@@ -184,6 +197,26 @@ function stubTools(
       FindStockClipInputSchema,
     );
   }
+  if (opts.still !== false) {
+    tools["image.generate"] = tool(
+      "image.generate",
+      (args) => {
+        const input = args as { needs: Array<{ n: number; prompt: string }> };
+        imageArgs.push(input as unknown as Record<string, unknown>);
+        return ok({ candidates: input.needs.map((need) => ({ path: `.media-cache/run/n${need.n}-gen1.png`, description: "generated", provider: "gemini", licenseConfidence: "generated" })), unmet: [], model: "gemini-2.5-flash-image" });
+      },
+      GenerateImageInputSchema,
+    );
+    tools["video.stillToClip"] = tool(
+      "video.stillToClip",
+      (args) => {
+        const input = args as { outputPath: string; durationSeconds: number };
+        stillArgs.push(input as unknown as Record<string, unknown>);
+        return ok({ outputPath: input.outputPath, durationSeconds: input.durationSeconds });
+      },
+      StillToClipInputSchema,
+    );
+  }
   if ((opts.qa ?? "pass") !== "none") {
     tools["video.visualQaGate"] = tool(
       "video.visualQaGate",
@@ -196,14 +229,21 @@ function stubTools(
       VisualQaGateInputSchema,
     );
   }
-  return { tools: tools as unknown as AgentToolRegistry, calls, generateArgs, stockArgs, composeArgs, voiceArgs, transcribedPaths, frameArgs, qaArgs, deliverables };
+  return { tools: tools as unknown as AgentToolRegistry, calls, imageArgs, stillArgs, stockArgs, composeArgs, voiceArgs, transcribedPaths, frameArgs, qaArgs, deliverables };
 }
 
-async function run(h: Harness, runId: string, turns: unknown[] = [VOICED_SCRIPT]) {
+/** A silent version of the script (the schema's three-beat floor stands): what a writer told to cut cost would hand back. */
+const CHEAP_SCRIPT = {
+  ...VOICED_SCRIPT,
+  voiceover: false,
+  voiceoverRationale: "Re-planned for cost: three blunt claims read better silent.",
+};
+
+async function run(h: Harness, runId: string, turns: unknown[] = [VOICED_SCRIPT], prompts: string[] = []) {
   const workflow = createTikTokAgentWorkflow({
     tools: h.tools,
     promptStore: new FilePromptStore(PROMPTS_ROOT),
-    router: sequentialFakeRouter(turns),
+    router: sequentialFakeRouter(turns, prompts),
     autoApprove: true,
     repoRoot: os.tmpdir(),
   });
@@ -211,7 +251,7 @@ async function run(h: Harness, runId: string, turns: unknown[] = [VOICED_SCRIPT]
 }
 
 describe("original short: script → plates → voice → captions → sequence → frame → QA", () => {
-  it("voices the script when the model asks for it, times the captions from the voice's own words, and stretches the plates to cover the speech", async () => {
+  it("voices the script when the model asks for it, captions the SCRIPT's words on the voice's timings, and stretches the plates to cover the speech", async () => {
     const h = stubTools();
     const result = await run(h, "run-os-voiced");
 
@@ -221,10 +261,11 @@ describe("original short: script → plates → voice → captions → sequence 
     expect(output.voiceover).toBe(true);
     expect(output.format).toBe("original-short");
 
-    // One plate per beat, into distinct files, each the beat's own length.
-    expect(h.generateArgs.map((a) => a["outputName"])).toEqual(["plate-1", "plate-2", "plate-3"]);
-    expect(h.generateArgs.map((a) => a["durationSeconds"])).toEqual([4, 6, 6]);
-    expect(h.generateArgs.every((a) => a["aspectRatio"] === "9:16")).toBe(true);
+    // One stock plate per beat, into distinct files, each at least the beat's own length. Nothing generated.
+    expect(h.stockArgs.map((a) => a["outputName"])).toEqual(["plate-1", "plate-2", "plate-3"]);
+    expect(h.stockArgs.map((a) => a["minDurationSeconds"])).toEqual([4, 6, 6]);
+    expect(h.imageArgs).toHaveLength(0);
+    expect(h.calls).not.toContain("video.generateClip");
 
     // The voice: the whole narration, in the client's configured language and
     // voice — not the script's guess and not the brand kit's.
@@ -238,13 +279,19 @@ describe("original short: script → plates → voice → captions → sequence 
     expect(h.transcribedPaths).toHaveLength(1);
     expect(h.transcribedPaths[0]).toMatch(/voiceover\.mp3$/);
 
-    // The captions came from those word timings, clip-relative from zero.
+    // The captions are the script's words on those timings, clip-relative
+    // from zero, cut at phrase boundaries (four words, or the end of a
+    // sentence) rather than wherever a counter landed.
     const srtPath = h.frameArgs[0]!["srtPath"] as string;
     const srt = await fs.readFile(srtPath, "utf8");
     expect(srt.startsWith("1\n00:00:00,000 --> ")).toBe(true);
-    // Three words a cue — phrases, not a strobing single word.
-    expect(srt).toContain("Nobody tells you");
-    expect(srt).toContain("the first hire");
+    expect(srt).toContain("Nobody tells you the");
+    expect(srt).toContain("one you fire.");
+    expect(srt).toContain("becoming.");
+    // One title card, beat 1's on-screen line, for the first beat only.
+    const overlays = h.frameArgs[0]!["overlays"] as Array<{ text: string; start: number }>;
+    expect(overlays).toHaveLength(1);
+    expect(overlays[0]).toMatchObject({ text: "The first hire is a bet", start: 0 });
 
     // The sequence covers the voice: holds sum to voice + tail, each ≥ 2s,
     // proportional to how much each beat says.
@@ -266,7 +313,7 @@ describe("original short: script → plates → voice → captions → sequence 
     expect(expectations["captionsExpected"]).toBe(true);
     expect(expectations["hookLine"]).toBe(VOICED_SCRIPT.hook);
 
-    expect(h.deliverables[0]).toMatchObject({ format: "original-short", voiceover: true, sourceTier: "generated" });
+    expect(h.deliverables[0]).toMatchObject({ format: "original-short", voiceover: true, sourceTier: "stock", plateSources: ["stock", "stock", "stock"], maxCostUsd: 2 });
     expect(h.calls).toContain("topics.commit");
   }, 20_000);
 
@@ -297,15 +344,85 @@ describe("original short: script → plates → voice → captions → sequence 
     expect(srt).not.toContain("Nobody tells you the first");
   }, 20_000);
 
-  it("gives a declined scene ONE plainer retake before holding", async () => {
-    const h = stubTools({ declinePlate: 2 });
-    const result = await run(h, "run-os-retake");
+  it("a plan priced over the ceiling goes back to the writer with the numbers, and the cheaper plan ships (one continuous run, no hold)", async () => {
+    // Three voiced beats with three worst-case stills price at about $0.15;
+    // a fourteen-cent ceiling cannot hold that, but the same three beats
+    // silent ($0.12 of stills at worst, plus QA) can. The writer is handed
+    // the breakdown and the target, answers with the silent script, and the
+    // run carries on.
+    const h = stubTools({ maxRunCostUsd: 0.14 });
+    const prompts: string[] = [];
+    const result = await run(h, "run-os-replan", [VOICED_SCRIPT, CHEAP_SCRIPT], prompts);
+
+    if (result.status !== "completed") throw new Error(`unexpected ${result.status}: ${JSON.stringify(result)}`);
+    expect(result.status).toBe("completed");
+    // Two drafts: the original and one re-plan.
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]).not.toContain("budgetFeedback");
+    expect(prompts[1]).toContain("budgetFeedback");
+    expect(prompts[1]).toMatch(/priced at \$0\.1\d against a \$0\.14 ceiling/);
+    expect(prompts[1]).toContain("lands under $0.11");
+    // The cheaper plan is the one that shipped, stills still permitted, nothing held.
+    expect(h.stockArgs).toHaveLength(3);
+    expect(h.calls).not.toContain("video.synthesizeVoice");
+    expect(h.deliverables[0]).toMatchObject({ budgetPlan: "replan", replans: 1, voiceover: false, maxCostUsd: 0.14 });
+    expect(h.calls).not.toContain("topics.release");
+  }, 20_000);
+
+  it("after two re-plans that still price over the ceiling, a deterministic rule takes over: stock only, and the run still ships", async () => {
+    // The writer keeps handing back the same expensive plan. Nobody is asked a
+    // third time: stills are off the table, the beats take free stock, and
+    // the client meets a finished clip, never a budget error.
+    const h = stubTools({ maxRunCostUsd: 0.05 });
+    const prompts: string[] = [];
+    const result = await run(h, "run-os-fallback", [VOICED_SCRIPT, VOICED_SCRIPT, VOICED_SCRIPT], prompts);
 
     expect(result.status).toBe("completed");
-    // Beat 2 was declined once, retaken once (4 generate calls for 3 beats).
-    expect(h.generateArgs).toHaveLength(4);
-    expect(String(h.generateArgs[2]!["brief"])).toContain("Wide establishing shot");
-    expect(h.generateArgs[2]!["allowPeople"]).toBe(false);
+    expect(prompts).toHaveLength(3);
+    expect(prompts[2]).toContain("budgetFeedback");
+    expect(h.imageArgs).toHaveLength(0);
+    // Under a five-cent ceiling the voice ($0.02) plus QA fits once stills are gone, so it keeps its voice.
+    expect(h.calls).toContain("video.synthesizeVoice");
+    expect(h.deliverables[0]).toMatchObject({ budgetPlan: "stock-only", replans: 2, plateSources: ["stock", "stock", "stock"], voiceover: true });
+    expect(h.calls).not.toContain("topics.release");
+  }, 20_000);
+
+  it("stock only, silent, when even the voice does not fit: the captions carry the words and the run ships", async () => {
+    const h = stubTools({ maxRunCostUsd: 0.02 });
+    const result = await run(h, "run-os-fallback-silent", [VOICED_SCRIPT, VOICED_SCRIPT, VOICED_SCRIPT]);
+
+    expect(result.status).toBe("completed");
+    expect(h.imageArgs).toHaveLength(0);
+    expect(h.calls).not.toContain("video.synthesizeVoice");
+    expect(h.deliverables[0]).toMatchObject({ budgetPlan: "stock-only-silent", replans: 2, voiceover: false });
+    const srt = await fs.readFile(h.frameArgs[0]!["srtPath"] as string, "utf8");
+    expect(srt).toContain("The first hire is a bet");
+  }, 20_000);
+
+  it("in stock-only mode a beat the library misses walks a free ladder (brief-derived query, then a generic scene) instead of buying a still", async () => {
+    const h = stubTools({ maxRunCostUsd: 0.05, stock: "hit-then-miss" });
+    // `hit-then-miss` answers the first search only; the ladder then tries
+    // three more queries per beat and every one misses, so the honest
+    // outcome is a hold naming what was tried, with nothing bought.
+    const result = await run(h, "run-os-fallback-ladder", [VOICED_SCRIPT, VOICED_SCRIPT, VOICED_SCRIPT]);
+    expect(result.status).toBe("held");
+    if (result.status !== "held") throw new Error("unreachable");
+    expect(result.reason).toContain("no free footage for beat 2");
+    expect(result.reason).toContain("the plan is stock-only");
+    expect(h.imageArgs).toHaveLength(0);
+    // Beat 1 hit on its own query; beat 2 tried its query (here the brief-derived one, so the two coincide) and two generic scenes.
+    expect(h.stockArgs.map((a) => a["outputName"])).toEqual(["plate-1", "plate-2", "plate-2", "plate-2"]);
+    expect(h.stockArgs.slice(1).map((a) => a["query"])).toContain("hands typing keyboard");
+  }, 20_000);
+
+  it("a client's ceiling can lower the product's two dollars but never raise it", async () => {
+    const h = stubTools({ maxRunCostUsd: 1 });
+    const result = await run(h, "run-os-client-cap");
+    expect(result.status).toBe("completed");
+    expect(h.deliverables[0]).toMatchObject({ maxCostUsd: 1 });
+    // The schema refuses a ceiling above the product rule outright.
+    const { TikTokClipConfigSchema } = await import("../src/workflow/types.js");
+    expect(TikTokClipConfigSchema.safeParse({ maxRunCostUsd: 5 }).success).toBe(false);
   }, 20_000);
 
   it("ships a clip the visual QA gate dislikes FLAGGED with the model's reason, never held (prep run pubsub-21756184831102737)", async () => {
@@ -334,13 +451,14 @@ describe("original short: script → plates → voice → captions → sequence 
   }, 20_000);
 });
 
-describe("original short: real footage before generated footage (2026-09-08)", () => {
-  it("takes every plate from the stock library when it answers, never calls Veo, excludes clips already used, and fills the frame", async () => {
+describe("original short: real footage, then a still, never generated video (2026-09-09)", () => {
+  it("takes every plate from the stock library when it answers, excludes clips already used, and fills the frame", async () => {
     const h = stubTools({ stock: "hit" });
     const result = await run(h, "run-os-stock");
     expect(result.status).toBe("completed");
 
     expect(h.calls).not.toContain("video.generateClip");
+    expect(h.imageArgs).toHaveLength(0);
     expect(h.stockArgs.map((a) => a["outputName"])).toEqual(["plate-1", "plate-2", "plate-3"]);
     // Each beat's own query (derived from its brief here — the v4 prompt writes `stockQuery` itself).
     expect(String(h.stockArgs[0]!["query"])).toContain("office");
@@ -353,21 +471,52 @@ describe("original short: real footage before generated footage (2026-09-08)", (
     expect(deliverable.plateSources).toEqual(["stock", "stock", "stock"]);
   });
 
-  it("falls through to Veo for the beats the library cannot serve, beat by beat", async () => {
+  it("falls through to a generated STILL with a slow push-in for the beats the library cannot serve, beat by beat", async () => {
     const h = stubTools({ stock: "hit-then-miss" });
     const result = await run(h, "run-os-stock-partial");
     expect(result.status).toBe("completed");
 
     expect(h.stockArgs).toHaveLength(3);
-    expect(h.generateArgs.map((a) => a["outputName"])).toEqual(["plate-2", "plate-3"]);
-    expect((h.deliverables[0] as { plateSources?: string[] }).plateSources).toEqual(["stock", "generated", "generated"]);
+    // One photograph per missed beat, portrait, briefed as a photograph with the generated tells ruled out.
+    expect(h.imageArgs).toHaveLength(2);
+    expect(h.imageArgs.every((a) => a["aspectRatio"] === "9:16")).toBe(true);
+    const needs = h.imageArgs.map((a) => (a["needs"] as Array<{ n: number; prompt: string }>)[0]!);
+    expect(needs.map((n) => n.n)).toEqual([2, 3]);
+    expect(needs[0]!.prompt).toContain("Whiteboard being wiped clean");
+    expect(needs[0]!.prompt).toContain("documentary photograph");
+    expect(needs[0]!.prompt).toContain("No people.");
+    // Each still is held for its beat's seconds, alternating the move.
+    expect(h.stillArgs.map((a) => a["durationSeconds"])).toEqual([6, 6]);
+    expect(h.stillArgs.map((a) => a["move"])).toEqual(["pull-back", "push-in"]);
+    expect((h.deliverables[0] as { plateSources?: string[] }).plateSources).toEqual(["stock", "still", "still"]);
   });
 
-  it("generates everything, exactly as before, when no stock tier is registered", async () => {
-    const h = stubTools();
+  it("with no stock library registered the original short is not available at all: the run holds at sourcing, naming the missing key", async () => {
+    const h = stubTools({ stock: "none" });
     const result = await run(h, "run-os-no-stock");
-    expect(result.status).toBe("completed");
-    expect(h.generateArgs).toHaveLength(3);
-    expect((h.deliverables[0] as { plateSources?: string[] }).plateSources).toEqual(["generated", "generated", "generated"]);
+    expect(result.status).toBe("held");
+    if (result.status !== "held") throw new Error("unreachable");
+    expect(result.reason).toContain("video.findStockClip is not registered");
+    expect(h.imageArgs).toHaveLength(0);
+    expect(h.calls).not.toContain("video.synthesizeVoice");
+  });
+
+  it("holds a beat the library cannot serve when the client asked for stock only, instead of taking a still", async () => {
+    const h = stubTools({ stock: "miss" });
+    h.tools["client.getConfig"] = {
+      name: "client.getConfig",
+      version: "1.0.0",
+      inputSchema: { safeParse: (v: unknown) => ({ success: true as const, data: v }) },
+      async execute() {
+        return { status: "success" as const, result: { tiktokClips: { mode: "original", footageSource: "stock", voiceover: "never", sourcePool: [], guestWatchlist: [], narrowing: [] } } };
+      },
+    } as unknown as AgentToolRegistry[string];
+    const result = await run(h, "run-os-stock-only-miss");
+    expect(result.status).toBe("held");
+    if (result.status !== "held") throw new Error("unreachable");
+    expect(result.reason).toContain('footageSource is "stock"');
+    expect(h.imageArgs).toHaveLength(0);
+    // The free ladder was walked before giving up: the beat's query (the brief-derived one for this v3-shaped script) and two generic scenes.
+    expect(h.stockArgs.filter((a) => a["outputName"] === "plate-1")).toHaveLength(3);
   });
 });

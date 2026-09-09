@@ -554,6 +554,38 @@ describe("run-level outcome classification (RFC-01 §6)", () => {
     expect(result.status === "failed" ? result.failureReason : "").toMatch(/budget ceiling exceeded/);
   });
 
+  it("enforces the same ceiling before a step.code, and exposes the running total and the budget to the workflow (2026-09-09)", async () => {
+    // Every media purchase in the fleet happens inside a `step.code` body, so
+    // a ceiling that only guarded `step.agent` never met the steps that spend.
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+    const expensiveAgent = makeSimpleAgent(
+      DraftOutputSchema,
+      fakeRouterAlwaysFinal({ body: "x" }, { inputTokens: 1_000_000, outputTokens: 1_000_000 }),
+    );
+    const seen: { budget: number | undefined; before: number | undefined; after: number | undefined; codeRan: boolean } = { budget: undefined, before: undefined, after: undefined, codeRan: false };
+
+    const workflowFn = async (wf: WorkflowContext) => {
+      seen.budget = wf.budget?.maxTotalCostUsd;
+      seen.before = await wf.costSoFarUsd();
+      await wf.step.agent("draft1", expensiveAgent, {});
+      seen.after = await wf.costSoFarUsd();
+      await wf.step.code("buy-footage", () => {
+        seen.codeRan = true;
+        return { bought: true };
+      });
+      return "done";
+    };
+
+    const result = await engine.run(workflowFn, { ...baseParams, budget: { maxTotalCostUsd: 0.001 } });
+    expect(result.status).toBe("failed");
+    expect(result.status === "failed" ? result.failureReason : "").toMatch(/budget ceiling exceeded/);
+    expect(seen.codeRan).toBe(false);
+    expect(seen.budget).toBe(0.001);
+    expect(seen.before).toBe(0);
+    expect(seen.after).toBeGreaterThan(0.001);
+  });
+
   it("resolves to 'failed' when workflow code explicitly throws WorkflowContentFailure off a content_fail result", async () => {
     const store = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(store);

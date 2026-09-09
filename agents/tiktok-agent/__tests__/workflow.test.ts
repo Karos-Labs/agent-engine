@@ -17,7 +17,7 @@ import {
 } from "@agent-engine/tool-karos-video";
 import {
   BRAND_LOGO_CONTRAST_FLOOR,
-  GenerateVideoInputSchema,
+  FindStockClipInputSchema,
   HarvestVideoInputSchema,
   VisualQaGateInputSchema,
   contrastRatio,
@@ -105,8 +105,8 @@ interface StubOptions {
   forbiddenTopics?: string[];
   /** Register `media.harvestVideo` answering success (Tier 2b serves). */
   harvestServes?: boolean;
-  /** Register `video.generateClip` answering success (Tier 3 serves). */
-  generateServes?: boolean;
+  /** Register `video.findStockClip` answering success (Tier 3, the original short over stock footage, serves). `false` registers it answering not_available. */
+  stockServes?: boolean;
   /** Register `video.uploadDeliverable` (a media store is configured). */
   withUpload?: boolean;
   /** Register `video.synthesizeVoice` (a TTS provider is configured). */
@@ -201,19 +201,18 @@ function stubTools(opts: StubOptions = {}): Harness {
       HarvestVideoInputSchema,
     );
   }
-  if (opts.generateServes !== undefined) {
-    tools["video.generateClip"] = tool(
-      "video.generateClip",
-      (args) =>
-        opts.generateServes
-          ? ok({
-              path: `.media-cache/run/${(args as { outputName?: string }).outputName ?? "generated-clip"}.mp4`,
-              model: "veo-3.1-generate-001",
-              resolution: "1080p",
-              durationSeconds: (args as { durationSeconds?: number }).durationSeconds ?? 8,
-            })
-          : { status: "not_available" as const, reason: "no Vertex project configured" },
-      GenerateVideoInputSchema,
+  if (opts.stockServes !== undefined) {
+    let stockCalls = 0;
+    tools["video.findStockClip"] = tool(
+      "video.findStockClip",
+      (args) => {
+        const input = args as { outputName: string; query: string };
+        stockCalls += 1;
+        return opts.stockServes
+          ? ok({ path: `.media-cache/run/${input.outputName}.mp4`, pexelsId: 1000 + stockCalls, durationSeconds: 9, width: 1080, height: 1920, sourceUrl: `https://www.pexels.com/video/${1000 + stockCalls}/`, photographer: "Someone", license: "Pexels", query: input.query })
+          : { status: "not_available" as const, reason: "PEXELS_API_KEY is not set" };
+      },
+      FindStockClipInputSchema,
     );
   }
   if (opts.withVoice) {
@@ -316,12 +315,12 @@ describe("tiktok-agent clip pipeline", () => {
   it("never clips anyone else's footage for a client with no sourcePool: the harvest tier is not even allowed to search", async () => {
     // Which shows a client may draw on is a rights decision someone makes;
     // without one the cascade skips the harvest and goes to an original short.
-    const h = stubTools({ config: {}, harvestServes: true, generateServes: true });
+    const h = stubTools({ config: {}, harvestServes: true, stockServes: true });
     const result = await run(h, "run-tt-nopool", { sourcePath: undefined }, [GOOD_SCRIPT, GOOD_COMMENTARY], os.tmpdir());
 
     expect(result.status).toBe("completed");
     expect(h.calls).not.toContain("media.harvestVideo");
-    expect(h.deliverables[0]).toMatchObject({ sourceTier: "generated", format: "original-short" });
+    expect(h.deliverables[0]).toMatchObject({ sourceTier: "stock", format: "original-short" });
   }, 20_000);
 
   it("with footage in hand, an empty catalog is a missing hint, not a missing subject: the topic is named from the recording", async () => {
@@ -523,24 +522,24 @@ describe("tiktok-agent clip pipeline", () => {
   // ── "Only media I upload for this job" (mediaSource: "client", 2026-09-06) ──
 
   it("client media only with no footage: refuses intake before the topic claim, naming the missing episode", async () => {
-    const h = stubTools({ harvestServes: true, generateServes: true });
+    const h = stubTools({ harvestServes: true, stockServes: true });
     const result = await run(h, "run-tt-client-only-empty", { mediaSource: "client", sourcePath: undefined });
     expect(result.status).toBe("blocked_intake");
     if (result.status !== "blocked_intake") throw new Error("unreachable");
     expect(result.reason).toMatch(/client-provided media only, but no source video was attached/);
     // Nothing downstream was touched: no reservation burned, no harvest, no generation, no transcript.
-    for (const tool of ["topics.reserve", "media.harvestVideo", "video.generateClip", "video.transcribe"]) {
+    for (const tool of ["topics.reserve", "media.harvestVideo", "video.findStockClip", "video.transcribe"]) {
       expect(h.calls, tool).not.toContain(tool);
     }
   });
 
   it("client media only with footage in hand: the user-asset tier serves and the run completes exactly as before", async () => {
-    const h = stubTools({ harvestServes: true, generateServes: true });
+    const h = stubTools({ harvestServes: true, stockServes: true });
     const result = await run(h, "run-tt-client-only-footage", { mediaSource: "client" });
     expect(result.status).toBe("completed");
     expect(h.deliverables[0]).toMatchObject({ sourceTier: "user-asset" });
     expect(h.calls).not.toContain("media.harvestVideo");
-    expect(h.calls).not.toContain("video.generateClip");
+    expect(h.calls).not.toContain("video.findStockClip");
   }, 20_000);
 
   it("still takes a plain sourcePath, which needs no ingest at all", async () => {
@@ -619,9 +618,9 @@ describe("tiered source cascade", () => {
     expect(h.deliverables[0]).toMatchObject({ sourceTier: "web-harvest", sourceContext: { url: "https://example.com/talk" } });
   }, 20_000);
 
-  it("Tier 3: nothing to clip becomes an original short — a script, one generated plate per beat, no transcript, no cut", async () => {
-    const h = stubTools({ harvestServes: false, generateServes: true });
-    const result = await run(h, "run-tt-generated", { sourcePath: undefined }, [GOOD_SCRIPT, GOOD_COMMENTARY], REPO_ROOT);
+  it("Tier 3: nothing to clip becomes an original short — a script, one stock plate per beat, no transcript, no cut", async () => {
+    const h = stubTools({ harvestServes: false, stockServes: true });
+    const result = await run(h, "run-tt-stock", { sourcePath: undefined }, [GOOD_SCRIPT, GOOD_COMMENTARY], REPO_ROOT);
 
     expect(result.status).toBe("completed");
     if (result.status !== "completed") throw new Error("unreachable");
@@ -629,7 +628,7 @@ describe("tiered source cascade", () => {
     // plates are assembled, framed and gated like any other clip.
     expect(h.calls).not.toContain("video.transcribe");
     expect(h.calls).not.toContain("video.cutClip");
-    expect(h.calls.filter((c) => c === "video.generateClip")).toHaveLength(GOOD_SCRIPT.beats.length);
+    expect(h.calls.filter((c) => c === "video.findStockClip")).toHaveLength(GOOD_SCRIPT.beats.length);
     expect(h.calls).toContain("video.composeSequence");
     expect(h.calls).toContain("video.brandFrame");
     expect(h.calls).toContain("video.selfEvalGate");
@@ -639,33 +638,38 @@ describe("tiered source cascade", () => {
     expect(output.format).toBe("original-short");
     expect(output.voiceover).toBe(false);
     expect(output.script?.beats).toHaveLength(3);
-    expect(h.deliverables[0]).toMatchObject({ sourceTier: "generated", format: "original-short", voiceover: false });
+    expect(h.deliverables[0]).toMatchObject({ sourceTier: "stock", format: "original-short", voiceover: false });
+    // The cost facts travel with the deliverable: what it cost, what the plan was priced at, and the ceiling.
+    expect(typeof (h.deliverables[0] as { costSoFarUsd?: unknown }).costSoFarUsd).toBe("number");
+    expect(typeof (h.deliverables[0] as { estimatedCostUsd?: unknown }).estimatedCostUsd).toBe("number");
+    expect(h.deliverables[0]).toMatchObject({ maxCostUsd: 2 });
     // An original short has no one else's words in it, so no source credit.
     expect(h.deliverables[0]).not.toHaveProperty("sourceCredit");
   }, 20_000);
 
   it("holds honestly when every tier is dry, naming each tier's outcome, and releases the moment", async () => {
-    // Harvest answers empty and generation is not wired at all: the cascade
-    // has nowhere left to go.
+    // Harvest answers empty and the stock library is not wired at all: the
+    // cascade has nowhere left to go.
     const h = stubTools({ harvestServes: false });
     const result = await run(h, "run-tt-dry", { sourcePath: undefined }, [GOOD_MOMENT, GOOD_COMMENTARY], REPO_ROOT);
 
     expect(result.status).toBe("held");
     if (result.status !== "held") throw new Error("unreachable");
-    for (const tier of ["user-asset", "owned-footage", "web-harvest", "generated"]) {
+    for (const tier of ["user-asset", "owned-footage", "web-harvest", "stock"]) {
       expect(result.reason).toContain(tier);
     }
     // The moment goes back — a dry cascade must not burn it.
     expect(h.calls).toContain("topics.release");
   });
 
-  it("holds and releases the topic when the generator is wired but declines every beat", async () => {
-    const h = stubTools({ harvestServes: false, generateServes: false });
-    const result = await run(h, "run-tt-veo-down", { sourcePath: undefined }, [GOOD_SCRIPT, GOOD_COMMENTARY], REPO_ROOT);
+  it("holds and releases the topic when the stock library is wired but cannot serve a beat and no still tier is registered", async () => {
+    const h = stubTools({ harvestServes: false, stockServes: false });
+    const result = await run(h, "run-tt-stock-down", { sourcePath: undefined }, [GOOD_SCRIPT, GOOD_COMMENTARY], REPO_ROOT);
 
     expect(result.status).toBe("held");
     if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toContain("b-roll for beat 1 could not be generated");
+    expect(result.reason).toContain("no footage for beat 1");
+    expect(result.reason).toContain("image.generate is not registered");
     expect(h.calls).toContain("topics.release");
     expect(h.calls).not.toContain("ledger.writeDeliverable");
   }, 20_000);
@@ -674,21 +678,21 @@ describe("tiered source cascade", () => {
     const h = stubTools({
       config: { tiktokClips: { mode: "commentary", sourcePool: ["The Show"], guestWatchlist: [], narrowing: [] } },
       harvestServes: false,
-      generateServes: true,
+      stockServes: true,
     });
     const result = await run(h, "run-tt-commentary-only", { sourcePath: undefined }, [GOOD_SCRIPT, GOOD_COMMENTARY], REPO_ROOT);
 
     expect(result.status).toBe("held");
     if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toContain("generated: disabled");
-    expect(h.calls).not.toContain("video.generateClip");
+    expect(result.reason).toContain("stock: disabled");
+    expect(h.calls).not.toContain("video.findStockClip");
   });
 
   it("mode \"original\" never touches anyone else's footage: no harvest, straight to a scripted short", async () => {
     const h = stubTools({
       config: { tiktokClips: { mode: "original", sourcePool: ["The Show"], guestWatchlist: [], narrowing: [] } },
       harvestServes: true,
-      generateServes: true,
+      stockServes: true,
     });
     const result = await run(h, "run-tt-original-only", { sourcePath: undefined }, [GOOD_SCRIPT, GOOD_COMMENTARY], REPO_ROOT);
 
@@ -705,7 +709,7 @@ describe("tiered source cascade", () => {
     expect(result.status).toBe("held");
     if (result.status !== "held") throw new Error("unreachable");
     expect(result.reason).toContain("web-harvest: not wired");
-    expect(result.reason).toContain("generated: not wired");
+    expect(result.reason).toContain("stock: not wired");
   });
 });
 

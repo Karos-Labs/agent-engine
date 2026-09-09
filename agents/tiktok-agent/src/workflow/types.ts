@@ -83,20 +83,45 @@ export const TikTokClipConfigSchema = z.object({
   /** Whether generated b-roll may contain people. Off by default: faces are where generated footage most often looks generated. */
   allowPeopleInGeneratedFootage: z.boolean().default(false),
   /**
-   * Where an original short's b-roll comes from. `auto` (default) tries the
-   * stock library per beat and generates only what it cannot find; `stock`
-   * holds a beat nothing real matches instead of generating; `generated`
-   * skips the library — for a client whose world no library has.
+   * Where an original short's b-roll comes from. Since 2026-09-09 every beat
+   * is real stock footage first and a generated STILL (a photograph with a
+   * slow push-in, $0.04) when no library has the scene. Generated VIDEO is no
+   * longer a tier at all: a short must cost under two dollars, and Veo cost
+   * thirteen. `auto` and `generated` are accepted for clients whose config
+   * predates this and both behave as `auto` (stock, then a still); `stock`
+   * holds a beat nothing real matches instead of falling back to a still.
    */
   footageSource: z.enum(["auto", "stock", "generated"]).default("auto"),
+  /**
+   * This client's own ceiling on one run, in USD. Never above the product's
+   * `MAX_RUN_COST_USD`; a client may ask for less, not more.
+   */
+  maxRunCostUsd: z.number().positive().max(2).optional(),
 });
 export type TikTokClipConfig = z.infer<typeof TikTokClipConfigSchema>;
 
 /** The config a client with no `tiktokClips` block runs under. */
 export const DEFAULT_CLIP_CONFIG: TikTokClipConfig = TikTokClipConfigSchema.parse({});
 
-/** Which sourcing tier actually produced this run's footage — recorded on the intake, the deliverable, and the hold reason when every tier came up dry. */
-export type ClipSourceTier = "user-asset" | "owned-footage" | "web-harvest" | "generated";
+/**
+ * Which sourcing tier actually produced this run's footage — recorded on the
+ * intake, the deliverable, and the hold reason when every tier came up dry.
+ * `stock` is the original short (real library footage per beat, a generated
+ * still where none matches); `generated` is kept in the type only so a
+ * deliverable persisted before 2026-09-09 still reads, nothing produces it.
+ */
+export type ClipSourceTier = "user-asset" | "owned-footage" | "web-harvest" | "stock" | "generated";
+
+/**
+ * The product rule (2026-09-09): one short never costs more than two dollars,
+ * all in. Enforced three ways: the dispatcher's `WorkflowBudget` (checked by
+ * `step.code`/`step.agent` before every step), the workflow's own estimate
+ * before the first plate is bought, and a guard before each purchase.
+ */
+export const MAX_RUN_COST_USD = 2;
+
+/** A flat allowance for the Gemini visual QA call in the pre-purchase estimate; the real figure is token-billed after the fact and has run $0.003–0.005. */
+export const VISUAL_QA_ESTIMATE_USD = 0.01;
 
 /**
  * Where the run's topic came from. `footage` means the client handed us a
@@ -113,7 +138,7 @@ export interface TikTokIntake {
   topicSource: TopicSource;
   /** Set when the topic came from the catalog, so the reservation can be committed or released. */
   reservationKey?: string;
-  /** The media file to clip. Absent only for `sourceTier: "generated"`, whose footage is made per beat AFTER the script exists. */
+  /** The media file to clip. Absent only for `sourceTier: "stock"`, whose footage is found per beat AFTER the script exists. */
   sourcePath?: string;
   /** Which tier the footage came from. A `generated` source has no transcript — the spoken-moment steps are skipped for it. */
   sourceTier: ClipSourceTier;
@@ -194,7 +219,7 @@ export const TopicScoutOutputSchema = z.object({
 });
 export type TopicScoutOutput = z.infer<typeof TopicScoutOutputSchema>;
 
-/** Veo's clip lengths. The pipeline picks one per beat from how long its narration runs. */
+/** A beat's plate lengths. Kept to these three so a stock search has a sane minimum and a still has a sane hold. */
 export const PLATE_SECONDS = [4, 6, 8] as const;
 
 /**
@@ -208,11 +233,11 @@ export const ScriptBeatSchema = z.object({
   narration: z.string().min(1).max(260),
   /** The on-screen text when the short runs silent. ≤ 8 words, in the client's voice. */
   onScreenText: z.string().min(1).max(80),
-  /** What the b-roll shows: a concrete scene, lighting, motion. No text, no logos, no brand names. */
+  /** What the b-roll shows: a concrete scene and its light. Briefs the generated STILL when no stock clip matches. No text, no logos, no brand names. */
   visualBrief: z.string().min(10).max(600),
   /**
    * 2 to 5 plain English nouns the stock-footage library is searched with
-   * FIRST (`empty office desk night`); the `visualBrief` goes to the generator
+   * FIRST (`empty office desk night`); the `visualBrief` briefs a photograph
    * only when nothing real matches. Optional so a v3-era script still parses.
    */
   stockQuery: z.string().min(2).max(60).optional(),
