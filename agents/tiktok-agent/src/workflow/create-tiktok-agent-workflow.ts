@@ -167,6 +167,9 @@ const TWO_SHOT_BEAT_SECONDS = 6;
 /** The second shot of a beat may be shorter than the beat: it only has to cover half the hold. */
 const SECOND_SHOT_MIN_SECONDS = 3;
 
+/** A music bed is a few minutes of compressed audio; anything past this is not a track. */
+const MAX_MUSIC_TRACK_BYTES = 25 * 1024 * 1024;
+
 /**
  * The caption/furniture font for a language. The server image ships Noto
  * (`fonts-noto-core`), and libass falls back per glyph through fontconfig
@@ -1175,6 +1178,8 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       budgetPlan?: BudgetPlan;
       /** How many times the script went back to the writer over cost. */
       replans?: number;
+      /** Whether a music bed was laid, and why not when it was not. Original shorts only. */
+      music?: { applied: boolean; note?: string };
     }
 
     /**
@@ -1618,6 +1623,49 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         return { path: result.outputPath, durationSeconds: result.durationSeconds, words, notes };
       });
 
+      /**
+       * Downloads the client's track and lays it under the sequence. Returns
+       * the path to frame (the mixed file, or the original when anything
+       * about the bed did not work out) and what to tell the reviewer.
+       */
+      const layMusicBed = async (sequencePath: string, dir: string): Promise<{ path: string; music: { applied: boolean; note?: string } }> => {
+        const noBed = (note: string) => ({ path: sequencePath, music: { applied: false, note } });
+        if (config.musicTrackUri === undefined) return noBed("no musicTrackUri in the client's tiktokClips config");
+        const mix = tools["video.mixMusic"];
+        if (mix === undefined) return noBed("video.mixMusic is not registered in this deployment");
+        let bytes: Buffer;
+        let extension = "mp3";
+        try {
+          const response = await (options.fetchImpl ?? fetch)(config.musicTrackUri, { signal: AbortSignal.timeout(30_000) });
+          if (!response.ok) return noBed(`the music track could not be fetched (${response.status})`);
+          const type = (response.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+          if (type.length > 0 && !type.startsWith("audio/") && type !== "application/octet-stream" && type !== "video/mp4") {
+            return noBed(`the music track URL returned ${type}, not audio`);
+          }
+          if (type.includes("mp4") || type.includes("m4a") || type.includes("aac")) extension = "m4a";
+          else if (type.includes("wav")) extension = "wav";
+          bytes = Buffer.from(await response.arrayBuffer());
+        } catch (error) {
+          return noBed(`the music track could not be fetched: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        if (bytes.byteLength === 0 || bytes.byteLength > MAX_MUSIC_TRACK_BYTES) {
+          return noBed(`the music track is ${Math.round(bytes.byteLength / 1_048_576)} MB; a bed is under ${MAX_MUSIC_TRACK_BYTES / 1_048_576} MB`);
+        }
+        const musicPath = path.join(dir, `music.${extension}`);
+        await fs.writeFile(musicPath, bytes);
+        const outcome = await mix.execute(
+          { videoPath: sequencePath, musicPath, outputPath: path.join(dir, "sequence-music.mp4"), ...(config.musicGainDb !== undefined ? { musicGainDb: config.musicGainDb } : {}) },
+          { ctx },
+        );
+        if (outcome.status !== "success") {
+          console.warn(`08-render: video.mixMusic ${outcome.status}${"reason" in outcome ? ` (${outcome.reason})` : ""}; shipping without a bed`);
+          return noBed(`the mix failed (${outcome.status}); shipped without a bed`);
+        }
+        const mixed = outcome.result as { outputPath: string; ducked: boolean };
+        return { path: mixed.outputPath, music: { applied: true, ...(mixed.ducked ? {} : { note: "bed laid under a silent short" }) } };
+      };
+      let musicOutcome: { applied: boolean; note?: string } | undefined;
+
       // ── 08: render — hold each plate for its beat, lay the voice under,
       //        burn the captions, frame it. ──
       const rendered = await wf.step.code(rev("08-render"), async (): Promise<{ outputPath: string; durationSeconds: number | null }> => {
@@ -1678,6 +1726,15 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         }
         const sequence = composed.result as { outputPath: string; durationSeconds: number | null };
 
+        // ── The music bed (2026-09-09). Every 2026-09-08 short played a
+        //    synthetic voice over silence, the second-loudest "made by a
+        //    machine" signal after the footage. The client's own track, looped
+        //    or trimmed to the picture, ducked under the voice, faded out.
+        //    Never a hold: no track, no tool, a bad download or a failed mix
+        //    all ship the clip without a bed and say so to the reviewer. ──
+        const bedded = await layMusicBed(sequence.outputPath, workDir);
+        musicOutcome = bedded.music;
+
         // With a voice, the captions are the spoken words and ONE title card
         // sits above them: beat 1's on-screen text, for the whole first beat.
         // That card is the visual hook a stranger reads before they hear a
@@ -1693,7 +1750,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         // Plates are portrait: fill the picture area edge to edge rather than
         // letterboxing a 9:16 clip inside a 9:12.7 region (the 2026-09-08
         // render had dark side bars either side of every plate).
-        return brandFrame(sequence.outputPath, workDir, srtPath, titleCards, "cover", captionFontFor(language));
+        return brandFrame(bedded.path, workDir, srtPath, titleCards, "cover", captionFontFor(language));
       });
 
       return finishDraft(rev, revision, {
@@ -1714,6 +1771,9 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         guardrailText: [script.caption, script.about, ...script.beats.map((b) => b.narration)].join("\n\n"),
         captionsExpected: true,
         estimatedCostUsd: estimate.estimatedTotalUsd,
+        // On a replay of a checkpointed render the helper never ran; the
+        // reviewer then sees "unknown" rather than a claim nobody verified.
+        music: musicOutcome ?? { applied: false, note: "render replayed from checkpoint; bed status not re-derived" },
       });
     };
 
@@ -1762,6 +1822,27 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           return null;
         }
         return outcome.result as { gcsUri: string; signedUrl?: string };
+      });
+
+      // ── 10c: the anti-repetition window learns about this clip NOW, not
+      //         only on commit (2026-09-09). Two GEO shorts were made six
+      //         hours apart on 2026-09-08 because the first sat at its gate
+      //         unrecorded, so the next run's scout never saw it. Idempotent
+      //         on runId: 13-commit-and-record re-records the same entry with
+      //         the words that actually shipped. A rejected clip's angle
+      //         stays in the window too, and that is right: the next run
+      //         should not re-propose the thing a person just turned down. ──
+      await wf.step.code(rev("10c-record-pending-excerpt"), async () => {
+        try {
+          const outcome = await tools["ledger.recordOutputExcerpt"]?.execute(
+            { agentId: "tiktok-agent", runId: wf.runId, excerpt: `${draft.commentary.caption}\n\n${draft.commentary.about}` },
+            { ctx },
+          );
+          return { recorded: outcome?.status === "success" };
+        } catch (error) {
+          console.error(`${rev("10c-record-pending-excerpt")}: could not record the pending excerpt`, error);
+          return { recorded: false };
+        }
       });
 
       // ── 10b: the visual QA — a model WATCHES the finished clip and says
@@ -1844,6 +1925,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         ...(draft.estimatedCostUsd !== undefined ? { estimatedCostUsd: draft.estimatedCostUsd } : {}),
         ...(draft.budgetPlan !== undefined ? { budgetPlan: draft.budgetPlan } : {}),
         ...(draft.replans !== undefined ? { replans: draft.replans } : {}),
+        ...(draft.music !== undefined ? { music: draft.music } : {}),
         ...(draft.plateSources !== undefined ? { plateSources: draft.plateSources } : {}),
         ...(visualQa.skipped ? {} : { visualQa: { passed: visualQa.passed, ...(visualQa.reason !== undefined ? { reason: visualQa.reason } : {}), evidence: visualQa.evidence } }),
       };
@@ -1893,6 +1975,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           maxCostUsd: costCapUsd,
           ...(draft.budgetPlan !== undefined ? { budgetPlan: draft.budgetPlan } : {}),
           ...(draft.replans !== undefined ? { replans: draft.replans } : {}),
+          ...(draft.music !== undefined ? { music: draft.music } : {}),
         },
         requiredRole: "account_manager",
         // An unanswered gate approves itself after an hour ONLY for a clip the
@@ -1966,6 +2049,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
             maxCostUsd: costCapUsd,
             ...(review.output.budgetPlan !== undefined ? { budgetPlan: review.output.budgetPlan } : {}),
             ...(review.output.replans !== undefined ? { replans: review.output.replans } : {}),
+            ...(review.output.music !== undefined ? { music: review.output.music } : {}),
             hookType: moment.hookType,
             startSeconds: bounds.startSeconds,
             endSeconds: bounds.endSeconds,
