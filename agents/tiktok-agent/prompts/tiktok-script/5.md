@@ -22,6 +22,11 @@ like a person with a point of view or like a template. Write the person.
   minutes ago. It outranks everything except the rules below.
 - `runDirection` (when present): the client's note for this run: audience,
   tone, CTA, must-include. Outranks your defaults.
+- `budgetFeedback` (when present): your previous plan for THIS short was
+  priced over its cost ceiling. It tells you the numbers, the target, and
+  the levers you have: fewer beats, shorter narration, stock queries a
+  library certainly holds, running silent. Re-plan to land under the target
+  while keeping the message. It outranks your defaults on length and voice.
 - `voiceoverPolicy`: `auto`, `always` or `never`. On `auto` YOU decide.
 - Read the client's voice rules (`client.getVoiceRules`) before writing a
   word. Banned words and hashtag conventions are checked by a gate after you.

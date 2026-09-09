@@ -44,10 +44,12 @@ function voiceWords(): Array<{ type: string; text: string; start: number; end: n
   return text.split(/\s+/).map((word, i) => ({ type: "word", text: word, start: i * 0.43, end: i * 0.43 + 0.4 }));
 }
 
-function sequentialFakeRouter(candidates: readonly unknown[]): ModelRouter {
+/** A router that answers from a queue and records every prompt it was shown, so a test can see what the writer was told. */
+function sequentialFakeRouter(candidates: readonly unknown[], prompts: string[] = []): ModelRouter {
   const queue = [...candidates];
   return {
-    async complete(_prompt, _schema, policy) {
+    async complete(prompt, _schema, policy) {
+      prompts.push(typeof prompt === "string" ? prompt : JSON.stringify(prompt));
       const next = queue.shift();
       if (next === undefined) throw new Error("sequentialFakeRouter: exhausted configured turns");
       return {
@@ -230,11 +232,18 @@ function stubTools(
   return { tools: tools as unknown as AgentToolRegistry, calls, imageArgs, stillArgs, stockArgs, composeArgs, voiceArgs, transcribedPaths, frameArgs, qaArgs, deliverables };
 }
 
-async function run(h: Harness, runId: string, turns: unknown[] = [VOICED_SCRIPT]) {
+/** A silent version of the script (the schema's three-beat floor stands): what a writer told to cut cost would hand back. */
+const CHEAP_SCRIPT = {
+  ...VOICED_SCRIPT,
+  voiceover: false,
+  voiceoverRationale: "Re-planned for cost: three blunt claims read better silent.",
+};
+
+async function run(h: Harness, runId: string, turns: unknown[] = [VOICED_SCRIPT], prompts: string[] = []) {
   const workflow = createTikTokAgentWorkflow({
     tools: h.tools,
     promptStore: new FilePromptStore(PROMPTS_ROOT),
-    router: sequentialFakeRouter(turns),
+    router: sequentialFakeRouter(turns, prompts),
     autoApprove: true,
     repoRoot: os.tmpdir(),
   });
@@ -335,20 +344,75 @@ describe("original short: script → plates → voice → captions → sequence 
     expect(srt).not.toContain("Nobody tells you the first");
   }, 20_000);
 
-  it("holds BEFORE buying anything when the plan cannot fit under the client's ceiling, naming the breakdown", async () => {
-    // Three beats of narration at the dearer TTS rate plus three worst-case
-    // stills is about $0.14; a five-cent ceiling cannot hold it.
-    const h = stubTools({ maxRunCostUsd: 0.05 });
-    const result = await run(h, "run-os-over-budget");
+  it("a plan priced over the ceiling goes back to the writer with the numbers, and the cheaper plan ships (one continuous run, no hold)", async () => {
+    // Three voiced beats with three worst-case stills price at about $0.15;
+    // a fourteen-cent ceiling cannot hold that, but the same three beats
+    // silent ($0.12 of stills at worst, plus QA) can. The writer is handed
+    // the breakdown and the target, answers with the silent script, and the
+    // run carries on.
+    const h = stubTools({ maxRunCostUsd: 0.14 });
+    const prompts: string[] = [];
+    const result = await run(h, "run-os-replan", [VOICED_SCRIPT, CHEAP_SCRIPT], prompts);
 
+    if (result.status !== "completed") throw new Error(`unexpected ${result.status}: ${JSON.stringify(result)}`);
+    expect(result.status).toBe("completed");
+    // Two drafts: the original and one re-plan.
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]).not.toContain("budgetFeedback");
+    expect(prompts[1]).toContain("budgetFeedback");
+    expect(prompts[1]).toMatch(/priced at \$0\.1\d against a \$0\.14 ceiling/);
+    expect(prompts[1]).toContain("lands under $0.11");
+    // The cheaper plan is the one that shipped, stills still permitted, nothing held.
+    expect(h.stockArgs).toHaveLength(3);
+    expect(h.calls).not.toContain("video.synthesizeVoice");
+    expect(h.deliverables[0]).toMatchObject({ budgetPlan: "replan", replans: 1, voiceover: false, maxCostUsd: 0.14 });
+    expect(h.calls).not.toContain("topics.release");
+  }, 20_000);
+
+  it("after two re-plans that still price over the ceiling, a deterministic rule takes over: stock only, and the run still ships", async () => {
+    // The writer keeps handing back the same expensive plan. Nobody is asked a
+    // third time: stills are off the table, the beats take free stock, and
+    // the client meets a finished clip, never a budget error.
+    const h = stubTools({ maxRunCostUsd: 0.05 });
+    const prompts: string[] = [];
+    const result = await run(h, "run-os-fallback", [VOICED_SCRIPT, VOICED_SCRIPT, VOICED_SCRIPT], prompts);
+
+    expect(result.status).toBe("completed");
+    expect(prompts).toHaveLength(3);
+    expect(prompts[2]).toContain("budgetFeedback");
+    expect(h.imageArgs).toHaveLength(0);
+    // Under a five-cent ceiling the voice ($0.02) plus QA fits once stills are gone, so it keeps its voice.
+    expect(h.calls).toContain("video.synthesizeVoice");
+    expect(h.deliverables[0]).toMatchObject({ budgetPlan: "stock-only", replans: 2, plateSources: ["stock", "stock", "stock"], voiceover: true });
+    expect(h.calls).not.toContain("topics.release");
+  }, 20_000);
+
+  it("stock only, silent, when even the voice does not fit: the captions carry the words and the run ships", async () => {
+    const h = stubTools({ maxRunCostUsd: 0.02 });
+    const result = await run(h, "run-os-fallback-silent", [VOICED_SCRIPT, VOICED_SCRIPT, VOICED_SCRIPT]);
+
+    expect(result.status).toBe("completed");
+    expect(h.imageArgs).toHaveLength(0);
+    expect(h.calls).not.toContain("video.synthesizeVoice");
+    expect(h.deliverables[0]).toMatchObject({ budgetPlan: "stock-only-silent", replans: 2, voiceover: false });
+    const srt = await fs.readFile(h.frameArgs[0]!["srtPath"] as string, "utf8");
+    expect(srt).toContain("The first hire is a bet");
+  }, 20_000);
+
+  it("in stock-only mode a beat the library misses walks a free ladder (brief-derived query, then a generic scene) instead of buying a still", async () => {
+    const h = stubTools({ maxRunCostUsd: 0.05, stock: "hit-then-miss" });
+    // `hit-then-miss` answers the first search only; the ladder then tries
+    // three more queries per beat and every one misses, so the honest
+    // outcome is a hold naming what was tried, with nothing bought.
+    const result = await run(h, "run-os-fallback-ladder", [VOICED_SCRIPT, VOICED_SCRIPT, VOICED_SCRIPT]);
     expect(result.status).toBe("held");
     if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/would cost about \$0\.\d+ against a \$0\.05 ceiling/);
-    expect(result.reason).toContain("nothing was bought");
-    for (const tool of ["video.findStockClip", "image.generate", "video.synthesizeVoice", "video.composeSequence"]) {
-      expect(h.calls, tool).not.toContain(tool);
-    }
-    expect(h.calls).toContain("topics.release");
+    expect(result.reason).toContain("no free footage for beat 2");
+    expect(result.reason).toContain("the plan is stock-only");
+    expect(h.imageArgs).toHaveLength(0);
+    // Beat 1 hit on its own query; beat 2 tried its query (here the brief-derived one, so the two coincide) and two generic scenes.
+    expect(h.stockArgs.map((a) => a["outputName"])).toEqual(["plate-1", "plate-2", "plate-2", "plate-2"]);
+    expect(h.stockArgs.slice(1).map((a) => a["query"])).toContain("hands typing keyboard");
   }, 20_000);
 
   it("a client's ceiling can lower the product's two dollars but never raise it", async () => {
@@ -452,5 +516,7 @@ describe("original short: real footage, then a still, never generated video (202
     if (result.status !== "held") throw new Error("unreachable");
     expect(result.reason).toContain('footageSource is "stock"');
     expect(h.imageArgs).toHaveLength(0);
+    // The free ladder was walked before giving up: the beat's query (the brief-derived one for this v3-shaped script) and two generic scenes.
+    expect(h.stockArgs.filter((a) => a["outputName"] === "plate-1")).toHaveLength(3);
   });
 });
