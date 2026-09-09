@@ -6,7 +6,7 @@ import { promises as fs } from "node:fs";
 import type { ZodType } from "zod";
 import { FilePromptStore, type AgentToolRegistry, type CompletionResult, type ModelRouter } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
-import { BrandFrameInputSchema, ComposeSequenceInputSchema, SelfEvalGateInputSchema, StillToClipInputSchema, SynthesizeVoiceInputSchema, TranscribeInputSchema } from "@agent-engine/tool-karos-video";
+import { BrandFrameInputSchema, ComposeSequenceInputSchema, MixMusicInputSchema, SelfEvalGateInputSchema, StillToClipInputSchema, SynthesizeVoiceInputSchema, TranscribeInputSchema } from "@agent-engine/tool-karos-video";
 import { FindStockClipInputSchema, GenerateImageInputSchema, VisualQaGateInputSchema } from "@agent-engine/tool-karos-media";
 import { createTikTokAgentWorkflow } from "../src/workflow/create-tiktok-agent-workflow.js";
 
@@ -68,6 +68,8 @@ function sequentialFakeRouter(candidates: readonly unknown[], prompts: string[] 
 interface Harness {
   tools: AgentToolRegistry;
   calls: string[];
+  musicArgs: Array<Record<string, unknown>>;
+  excerpts: Array<Record<string, unknown>>;
   imageArgs: Array<Record<string, unknown>>;
   stillArgs: Array<Record<string, unknown>>;
   stockArgs: Array<Record<string, unknown>>;
@@ -92,9 +94,13 @@ function stubTools(
     maxRunCostUsd?: number;
     /** The client's content language (BCP-47); default en-GB. */
     voiceLanguage?: string;
+    /** A music track URL in the client's config; registers video.mixMusic too. */
+    music?: string;
   } = {},
 ): Harness {
   const calls: string[] = [];
+  const musicArgs: Array<Record<string, unknown>> = [];
+  const excerpts: Array<Record<string, unknown>> = [];
   const imageArgs: Array<Record<string, unknown>> = [];
   const stillArgs: Array<Record<string, unknown>> = [];
   const stockArgs: Array<Record<string, unknown>> = [];
@@ -126,6 +132,7 @@ function stubTools(
           voiceLanguage: opts.voiceLanguage ?? "en-GB",
           voiceName: "en-GB-Chirp3-HD-Charon",
           voiceSpeakingRate: 1.1,
+          ...(opts.music !== undefined ? { musicTrackUri: opts.music, musicGainDb: -18 } : {}),
           sourcePool: [],
           guestWatchlist: [],
           narrowing: [],
@@ -200,6 +207,21 @@ function stubTools(
       FindStockClipInputSchema,
     );
   }
+  tools["ledger.recordOutputExcerpt"] = tool("ledger.recordOutputExcerpt", (args) => {
+    excerpts.push(args as Record<string, unknown>);
+    return ok({ recorded: true, total: excerpts.length });
+  });
+  if (opts.music !== undefined) {
+    tools["video.mixMusic"] = tool(
+      "video.mixMusic",
+      (args) => {
+        const input = args as { outputPath: string };
+        musicArgs.push(input as unknown as Record<string, unknown>);
+        return ok({ outputPath: input.outputPath, durationSeconds: 13.5, ducked: true });
+      },
+      MixMusicInputSchema,
+    );
+  }
   if (opts.still !== false) {
     tools["image.generate"] = tool(
       "image.generate",
@@ -232,7 +254,7 @@ function stubTools(
       VisualQaGateInputSchema,
     );
   }
-  return { tools: tools as unknown as AgentToolRegistry, calls, imageArgs, stillArgs, stockArgs, composeArgs, voiceArgs, transcribedPaths, frameArgs, qaArgs, deliverables };
+  return { tools: tools as unknown as AgentToolRegistry, calls, musicArgs, excerpts, imageArgs, stillArgs, stockArgs, composeArgs, voiceArgs, transcribedPaths, frameArgs, qaArgs, deliverables };
 }
 
 /** A silent version of the script (the schema's three-beat floor stands): what a writer told to cut cost would hand back. */
@@ -242,6 +264,13 @@ const CHEAP_SCRIPT = {
   voiceoverRationale: "Re-planned for cost: three blunt claims read better silent.",
 };
 
+/** Serves any https URL as a small mp3, so a music track "downloads" without the network. */
+const fakeAudioFetch = (async (input: string | URL) => {
+  const url = String(input);
+  if (url.endsWith(".mp3")) return new Response(new Uint8Array(2048), { status: 200, headers: { "content-type": "audio/mpeg" } });
+  return new Response("not found", { status: 404 });
+}) as typeof fetch;
+
 async function run(h: Harness, runId: string, turns: unknown[] = [VOICED_SCRIPT], prompts: string[] = []) {
   const workflow = createTikTokAgentWorkflow({
     tools: h.tools,
@@ -249,6 +278,7 @@ async function run(h: Harness, runId: string, turns: unknown[] = [VOICED_SCRIPT]
     router: sequentialFakeRouter(turns, prompts),
     autoApprove: true,
     repoRoot: os.tmpdir(),
+    fetchImpl: fakeAudioFetch,
   });
   return new WorkflowEngine(new MemoryDurableStepStore()).run(workflow, { ...PARAMS, runId, input: {} });
 }
@@ -504,6 +534,49 @@ describe("original short: real footage, then a still, never generated video (202
     expect(h.stillArgs.map((a) => a["move"])).toEqual(["pull-back", "push-in"]);
     expect((h.deliverables[0] as { plateSources?: string[] }).plateSources).toEqual(["stock", "still", "still"]);
   });
+
+  it("lays the client's music bed under the sequence before framing, ducked under the voice, and tells the reviewer", async () => {
+    const h = stubTools({ music: "https://cdn.example.com/beds/calm.mp3" });
+    const result = await run(h, "run-os-music");
+    expect(result.status).toBe("completed");
+    expect(h.musicArgs).toHaveLength(1);
+    expect(String(h.musicArgs[0]!["videoPath"])).toMatch(/sequence\.mp4$/);
+    expect(String(h.musicArgs[0]!["musicPath"])).toMatch(/music\.mp3$/);
+    expect(h.musicArgs[0]!["musicGainDb"]).toBe(-18);
+    // The framed file is the MIXED sequence, not the dry one.
+    expect(String(h.frameArgs[0]!["videoPath"])).toMatch(/sequence-music\.mp4$/);
+    expect(h.deliverables[0]).toMatchObject({ music: { applied: true } });
+  }, 20_000);
+
+  it("no track, no bed, no hold: the clip ships and the gate says why there is no music", async () => {
+    const h = stubTools();
+    const result = await run(h, "run-os-no-music");
+    expect(result.status).toBe("completed");
+    expect(h.calls).not.toContain("video.mixMusic");
+    expect(String(h.frameArgs[0]!["videoPath"])).toMatch(/sequence\.mp4$/);
+    expect(h.deliverables[0]).toMatchObject({ music: { applied: false, note: "no musicTrackUri in the client's tiktokClips config" } });
+  }, 20_000);
+
+  it("a track that cannot be fetched ships the clip dry with the reason, never held", async () => {
+    const h = stubTools({ music: "https://cdn.example.com/beds/missing.wav" });
+    const result = await run(h, "run-os-music-404");
+    expect(result.status).toBe("completed");
+    expect(h.calls).not.toContain("video.mixMusic");
+    expect(h.deliverables[0]).toMatchObject({ music: { applied: false, note: "the music track could not be fetched (404)" } });
+  }, 20_000);
+
+  it("records the clip in the anti-repetition window BEFORE the gate, so a run waiting for approval already counts as said", async () => {
+    const h = stubTools();
+    const result = await run(h, "run-os-pending-excerpt");
+    expect(result.status).toBe("completed");
+    const firstRecord = h.calls.indexOf("ledger.recordOutputExcerpt");
+    expect(firstRecord).toBeGreaterThan(-1);
+    expect(firstRecord).toBeLessThan(h.calls.indexOf("ledger.writeDeliverable"));
+    // Twice, idempotent on runId: once pending, once on commit with the shipped words.
+    expect(h.excerpts).toHaveLength(2);
+    expect(h.excerpts.every((e) => e["runId"] === "run-os-pending-excerpt")).toBe(true);
+    expect(String(h.excerpts[0]!["excerpt"])).toContain(VOICED_SCRIPT.caption);
+  }, 20_000);
 
   it("a Hebrew client's captions and furniture are set in a Hebrew face, so the frame is not assembled from fallback glyphs", async () => {
     const h = stubTools({ voiceLanguage: "he-IL" });
