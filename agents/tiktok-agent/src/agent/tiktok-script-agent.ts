@@ -68,7 +68,12 @@ export class TikTokScriptAgent extends BaseAgent<ShortScript> {
     // fallback), names beat 1's on-screen text as the one title card, and
     // bans the sales CTA beat the 2026-09-08 scripts kept appending. v4 stays
     // frozen.
-    skillRef: "tiktok-script@5",
+    // Pinned to "6" (2026-09-10): v6 adds the `format` decision (footage or
+    // text-led), tells the writer the hook is set large on screen for the
+    // first two seconds and that beat 1's narration IS the hook, and adds the
+    // "write for a thumb" rules after the 2026-09-08 shorts read like
+    // LinkedIn posts read aloud. v5 stays frozen.
+    skillRef: "tiktok-script@6",
     // The same lint 07-compliance runs afterwards, run FIRST on the model's
     // own output so a tell comes back as feedback it can act on rather than
     // as a held run. Two revisions: the first fix is usually enough, the

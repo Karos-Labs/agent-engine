@@ -38,6 +38,7 @@ const GOOD_REPORT: VisualQaReport = {
   brandFrameIntact: true,
   looksAiGenerated: "no",
   notes: ["pacing is tight"],
+  beats: [],
 };
 
 function expectations(overrides: Partial<VisualQaExpectations> = {}): VisualQaExpectations {
@@ -139,7 +140,7 @@ describe("video.visualQaGate — verdicts", () => {
     const { client } = recordingVision(JSON.stringify(GOOD_REPORT));
     const verdict = verdictOf(await createVisualQaGate({ client }).execute(qaInput({ videoPath: clipPath, expectations: expectations() }), CTX));
     expect(verdict.verdict).toBe("pass");
-    expect(verdict.toolVersion).toBe("1.1.0");
+    expect(verdict.toolVersion).toBe("1.2.0");
     expect((verdict as { evidence: string[] }).evidence).toEqual([
       "overallScore: 8.5",
       "hookLandsInFirstTwoSeconds: true",
@@ -173,6 +174,32 @@ describe("video.visualQaGate — verdicts", () => {
     const noCaptions = { ...GOOD_REPORT, captions: { present: false, legible: false, syncedToSpeech: false } };
     expect(visualQaFailures(noCaptions, base)).toEqual(["captions were expected but none are present"]);
     expect(visualQaFailures(noCaptions, { ...base, expectations: { ...base.expectations, captionsExpected: false } })).toEqual([]);
+  });
+
+  it("scores each beat's footage against its line when the beats are given, names weak ones in evidence, and ignores a beat the caller never named", async () => {
+    const beats = [
+      { index: 1, start: 0, end: 4, narration: "Your round got smaller. Good." },
+      { index: 2, start: 4, end: 10, narration: "A small round forces you to pick one thing." },
+    ];
+    const report = { ...GOOD_REPORT, beats: [{ index: 1, relevance: 9, note: "an empty desk under a line about focus" }, { index: 2, relevance: 3, note: "a concert under a line about a boardroom" }, { index: 7, relevance: 10, note: "invented" }] };
+    const { client, requests } = recordingVision(JSON.stringify(report));
+    const outcome = await createVisualQaGate({ client }).execute(qaInput({ videoPath: clipPath, expectations: expectations({ format: "original-short", beats }) }), CTX);
+    const verdict = verdictOf(outcome) as { verdict: string; evidence: string[]; beats?: Array<{ index: number; relevance: number }> };
+    expect(verdict.verdict).toBe("pass");
+    expect(verdict.beats).toEqual([
+      { index: 1, relevance: 9, note: "an empty desk under a line about focus" },
+      { index: 2, relevance: 3, note: "a concert under a line about a boardroom" },
+    ]);
+    expect(verdict.evidence).toContain("beat 2 relevance: 3 (a concert under a line about a boardroom)");
+    // The prompt named every beat with its window and asked for the per-beat shape.
+    const prompt = JSON.stringify(requests[0]);
+    expect(prompt).toContain('Beat 2 (4.0s–10.0s): \\"A small round forces you to pick one thing.\\"');
+    expect(prompt).toContain('\\"beats\\": [{\\"index\\": 1, \\"relevance\\": 0-10');
+    // Without beats: no per-beat ask, no beats on the verdict.
+    const plain = recordingVision(JSON.stringify(GOOD_REPORT));
+    const plainVerdict = verdictOf(await createVisualQaGate({ client: plain.client }).execute(qaInput({ videoPath: clipPath, expectations: expectations() }), CTX)) as { beats?: unknown[] };
+    expect(plainVerdict.beats).toEqual([]);
+    expect(JSON.stringify(plain.requests[0])).not.toContain("relevance");
   });
 
   it("an artefact alone fails neither format since 2026-09-09: it lowers the score and is carried in evidence", () => {
