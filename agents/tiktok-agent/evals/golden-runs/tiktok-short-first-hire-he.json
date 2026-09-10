@@ -1,0 +1,53 @@
+{
+  "id": "tiktok-short-first-hire-he",
+  "description": "A Hebrew-language short on the first hire, for a Hebrew-publishing client. Exists so an English script shipped to a Hebrew client is a measurable failure rather than something a person notices by eye, and so the voice, shot and pitch lints are exercised on Hebrew words (the stock queries stay English: the library is). Three beats, 20 seconds, every sentence under a breath.",
+  "agentId": "tiktok-agent",
+  "language": "he",
+  "input": {
+    "topic": "השכירה הראשונה בסטארטאפ: למי מגייסים, לחברה של היום או לזו של עוד שנה",
+    "clientSlug": "karoslabs",
+    "voiceRules": { "tone": "ענייני, ישיר, בלי ז'רגון", "signature": "No pitch, just a plan." },
+    "brand": { "handle": "karoslabs", "language": "he-IL" },
+    "contentLanguage": "he-IL",
+    "voiceoverPolicy": "auto",
+    "allowPeople": false
+  },
+  "endorsedOutput": {
+    "hook": "השכירה הראשונה שלכם היא הימור על חברה שעוד לא קיימת.",
+    "format": "footage",
+    "formatRationale": "יש כאן מקום: שולחן ריק, לוח שנמחק, רחוב בבוקר. סצנות אמיתיות נותנות לטענה משקל שכרטיסי טקסט לא נותנים.",
+    "beats": [
+      {
+        "narration": "השכירה הראשונה שלכם היא הימור על חברה שעוד לא קיימת.",
+        "onScreenText": "מגייסים למי שתהיו",
+        "visualBrief": "שולחן עבודה ריק ליד חלון גדול, אור בוקר אפרפר, כיסא אחד מוזז לאחור. בלי אנשים, בלי מסכים, בלי טקסט. תחושה של משרד רגע לפני שמישהו מגיע.",
+        "stockQuery": "empty desk chair office window morning",
+        "seconds": 6
+      },
+      {
+        "narration": "אתם מגייסים לחברה שיש לכם היום. אחרי חצי שנה זו כבר חברה אחרת.",
+        "onScreenText": "חצי שנה משנה הכול",
+        "visualBrief": "לוח מחיק שנמחק ביד, שאריות טוש כחול נתפסות באור מהחלון, תנועת מצלמה קלה. בלי טקסט קריא, בלי לוגואים.",
+        "stockQuery": "whiteboard being wiped clean marker",
+        "seconds": 8
+      },
+      {
+        "narration": "תגייסו למי שאתם הופכים להיות. לא למי שאתם עכשיו.",
+        "onScreenText": "לגייס לעתיד, לא להווה",
+        "visualBrief": "מעבר חצייה עירוני בבוקר, אנשים חוצים מצולמים מאחור, אור נמוך וחם. בלי פנים מזוהות, בלי שלטים קריאים.",
+        "stockQuery": "city street crossing people walking morning",
+        "seconds": 6
+      }
+    ],
+    "caption": "השכירה הראשונה קובעת יותר מהתקציב הראשון. שאלו איזו חברה תהיו בעוד שנה, ותגייסו לזה. karoslabs.com. No pitch, just a plan. #גיוס #סטארטאפ #KarosLabs",
+    "about": "סרטון של שלושה ביטים על השכירה הראשונה בסטארטאפ: לגייס לחברה שתהיה, לא לזו שקיימת. קהל: מייסדים לפני הגיוס הראשון.",
+    "voiceover": true,
+    "voiceoverRationale": "טענה עם סיבה ותוצאה: מגייסים להיום, החברה משתנה, ולכן מגייסים לעתיד. קול נושא את הרצף; כתוביות לבד היו מפרקות אותו לשלוש טענות.",
+    "language": "he-IL"
+  },
+  "gateArgs": {
+    "brandCompliance": { "forbiddenTerms": ["מובטח", "הזול ביותר", "מספר אחת בתעשייה", "game-changer", "unlock"] }
+  },
+  "endorsedBy": "claude-code, written for the eval set; awaiting a human endorsement",
+  "endorsedAt": "2026-09-10T13:30:00Z"
+}

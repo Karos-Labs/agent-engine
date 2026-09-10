@@ -8,6 +8,6 @@ export default defineConfig({
   resolve: { alias: workspaceSourceAliases() },
   test: {
     environment: "node",
-    include: ["__tests__/**/*.test.ts"],
+    include: ["__tests__/**/*.test.ts", "evals/**/*.test.ts"],
   },
 });
