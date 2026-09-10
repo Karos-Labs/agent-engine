@@ -1458,7 +1458,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       workDir: string,
       srtPath: string | undefined,
       overlays: readonly TitleCard[] = [],
-      fit: "contain" | "cover" = "contain",
+      fit: "contain" | "cover" | "blur-fill" = "contain",
       captionFontName?: string,
     ): Promise<{ outputPath: string; durationSeconds: number | null }> => {
       const { logoPath, logoScrim } = await prepareLogo(workDir);
