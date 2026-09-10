@@ -300,6 +300,62 @@ export function stockQueryFromBrief(brief: string): string {
   return picked.length >= 2 ? picked.join(" ") : clause.trim().split(/\s+/).slice(0, 4).join(" ");
 }
 
+/** Lower-cased words only, for "is this the same line" comparisons between beats. */
+function narrationKey(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 0)
+    .join(" ");
+}
+
+/**
+ * The structural rules of a short that the schema cannot express, checked in
+ * code after the model returns (2026-09-10, prep run pubsub-21157255126300088:
+ * beats 1 and 2 carried the identical narration, and the hook the prompt
+ * calls "beat 1" was in `hook` only, so the viewer heard the second line
+ * first and then heard it again).
+ *
+ * `repaired` is the script with what code can fix fixed: when beat 1 does
+ * not open on the hook, the hook becomes beat 1's narration (the prompt's own
+ * rule, "beat 1 is the hook"; the hook is at most 200 characters so it fits
+ * the narration cap). `issues` names what only a redraft can fix: two beats
+ * saying the same thing.
+ */
+export function repairScriptStructure(script: ShortScript): { repaired: ShortScript; issues: string[] } {
+  const issues: string[] = [];
+  const beats = script.beats.map((b) => ({ ...b }));
+  const hookKey = narrationKey(script.hook);
+  if (beats[0] !== undefined && hookKey.length > 0 && !narrationKey(beats[0].narration).startsWith(hookKey.split(" ").slice(0, 6).join(" "))) {
+    beats[0] = { ...beats[0], narration: script.hook };
+  }
+  const seen = new Map<string, number>();
+  beats.forEach((beat, i) => {
+    const key = narrationKey(beat.narration);
+    const first = seen.get(key);
+    if (first !== undefined) issues.push(`beats ${first + 1} and ${i + 1} have the same narration ("${beat.narration.slice(0, 60)}…"); each beat says one different thing`);
+    else seen.set(key, i);
+  });
+  return { repaired: { ...script, beats }, issues };
+}
+
+/**
+ * When a redraft still repeats a line, drop the later copy rather than ship
+ * it twice: a three-beat floor stands (the schema's), so only a four- or
+ * five-beat script can lose one. Returns the script unchanged otherwise.
+ */
+export function dropRepeatedBeats(script: ShortScript): ShortScript {
+  const seen = new Set<string>();
+  const kept = script.beats.filter((b) => {
+    const key = narrationKey(b.narration);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return kept.length >= 3 && kept.length < script.beats.length ? { ...script, beats: kept } : script;
+}
+
 export function normalizeScriptDashes(script: ShortScript): ShortScript {
   return {
     ...script,
@@ -1480,28 +1536,42 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
             (stepId, dedupeAvoid) =>
               wf.step.code(stepId, async () => {
                 const agent = new TikTokScriptAgent({ router: options.router, tools, promptStore: options.promptStore });
-                const exec = await runAgentStepWithCommitSteer(wf, stepId.replace("03s-script", "03u-script"), agent, {
-                  ...runDirectionField(runDirection),
-                  topic,
-                  ...(intake.discovered ? { topicBrief: intake.discovered } : {}),
-                  clientProfile: profile,
-                  ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
-                  ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
-                  ...(dedupeAvoid !== undefined ? { dedupeAvoid } : {}),
-                  ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
-                  ...(directive !== undefined ? { revisionRequest: directive } : {}),
-                  ...(feedback !== undefined ? { budgetFeedback: feedback } : {}),
-                  voiceoverPolicy: config.voiceover,
-                  allowPeople: config.allowPeopleInGeneratedFootage,
-                  ...(config.voiceLanguage ?? videoBrand.language ? { contentLanguage: config.voiceLanguage ?? videoBrand.language } : {}),
-                }, "the script");
-                if (exec.status === "content_fail") {
-                  throw new WorkflowHeld("the script did not clear its own output validation");
-                }
-                if (exec.status !== "completed") {
-                  throw new WorkflowToolingFailure(`script step resolved to "${exec.status}"`);
-                }
-                return normalizeScriptDashes(ShortScriptSchema.parse(exec.finalOutput));
+                /** One drafting call; `structureFix` is the note a redraft gets about what the last draft got structurally wrong. */
+                const draftOnce = async (agentStepId: string, structureFix: string | undefined): Promise<ShortScript> => {
+                  const exec = await runAgentStepWithCommitSteer(wf, agentStepId, agent, {
+                    ...runDirectionField(runDirection),
+                    topic,
+                    ...(intake.discovered ? { topicBrief: intake.discovered } : {}),
+                    clientProfile: profile,
+                    ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
+                    ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
+                    ...(dedupeAvoid !== undefined ? { dedupeAvoid } : {}),
+                    ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
+                    ...(directive !== undefined || structureFix !== undefined
+                      ? { revisionRequest: [directive, structureFix].filter((s): s is string => s !== undefined).join("\n\n") }
+                      : {}),
+                    ...(feedback !== undefined ? { budgetFeedback: feedback } : {}),
+                    voiceoverPolicy: config.voiceover,
+                    allowPeople: config.allowPeopleInGeneratedFootage,
+                    ...(config.voiceLanguage ?? videoBrand.language ? { contentLanguage: config.voiceLanguage ?? videoBrand.language } : {}),
+                  }, "the script");
+                  if (exec.status === "content_fail") {
+                    throw new WorkflowHeld("the script did not clear its own output validation");
+                  }
+                  if (exec.status !== "completed") {
+                    throw new WorkflowToolingFailure(`script step resolved to "${exec.status}"`);
+                  }
+                  return normalizeScriptDashes(ShortScriptSchema.parse(exec.finalOutput));
+                };
+                // Structure the schema cannot check: beat 1 opens on the hook
+                // (repaired in code), no two beats say the same line (ONE
+                // redraft with the offending beats named, then the later copy
+                // is dropped rather than shipped twice).
+                const agentStepId = stepId.replace("03s-script", "03u-script");
+                const first = repairScriptStructure(await draftOnce(agentStepId, undefined));
+                if (first.issues.length === 0) return first.repaired;
+                const second = repairScriptStructure(await draftOnce(`${agentStepId}-fix`, `Structure problem in your last draft: ${first.issues.join("; ")}. Rewrite so every beat carries its own line.`));
+                return second.issues.length === 0 ? second.repaired : dropRepeatedBeats(second.repaired);
               }),
             (s) => `${s.caption}\n\n${s.about}`,
           );
@@ -2110,7 +2180,10 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         // visual QA passed. Two prep clips scored 3/10 shipped on 2026-09-08
         // by `system:gate-timeout` after seven hours with nobody watching; a
         // flagged clip now waits for a person, however long that takes.
-        timeout: { duration: "1h", onTimeout: draft.visualQa !== undefined && !draft.visualQa.passed ? "hold" : "auto_approve" },
+        // A clip the visual QA never got to watch (a skipped or failed gate,
+        // as under the 2026-09-10 Vertex hold) waits for a person too: a clip
+        // nobody reviewed is exactly what the audit found shipping.
+        timeout: { duration: "1h", onTimeout: draft.visualQa !== undefined && draft.visualQa.passed ? "auto_approve" : "hold" },
       }),
       onDecision: async ({ revision, response, output }) => {
         // SCRUM-306 (AU23): a reject's drafted content previously had nowhere

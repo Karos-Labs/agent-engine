@@ -8,7 +8,7 @@ import { FilePromptStore, type AgentToolRegistry, type CompletionResult, type Mo
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { BrandFrameInputSchema, ComposeSequenceInputSchema, MixMusicInputSchema, SelfEvalGateInputSchema, StillToClipInputSchema, SynthesizeVoiceInputSchema, TextPlateInputSchema, TranscribeInputSchema } from "@agent-engine/tool-karos-video";
 import { FindStockClipInputSchema, GenerateImageInputSchema, VisualQaGateInputSchema } from "@agent-engine/tool-karos-media";
-import { createTikTokAgentWorkflow } from "../src/workflow/create-tiktok-agent-workflow.js";
+import { createTikTokAgentWorkflow, dropRepeatedBeats, repairScriptStructure } from "../src/workflow/create-tiktok-agent-workflow.js";
 
 /**
  * The ORIGINAL-SHORT production pass in detail: the voiceover decision, the
@@ -298,7 +298,55 @@ async function run(h: Harness, runId: string, turns: unknown[] = [VOICED_SCRIPT]
   return new WorkflowEngine(new MemoryDurableStepStore()).run(workflow, { ...PARAMS, runId, input: {} });
 }
 
+describe("repairScriptStructure (prep run pubsub-21157255126300088)", () => {
+  const base = { ...VOICED_SCRIPT, beats: VOICED_SCRIPT.beats.map((b) => ({ ...b })) };
+
+  it("puts the hook in beat 1 when the writer left it in `hook` only (which alone resolves the prep run's beat-1/beat-2 repeat), and flags two later beats with the same line", () => {
+    const prep = {
+      ...base,
+      hook: "Everyone is worried about privacy. It's not the urgent risk.",
+      beats: [
+        { ...base.beats[0]!, narration: "AI can now optimize your copy to exploit patterns buyers don't know they have." },
+        { ...base.beats[1]!, narration: "AI can now optimize your copy to exploit patterns buyers don't know they have." },
+        base.beats[2]!,
+      ],
+    };
+    const fixed = repairScriptStructure(prep);
+    expect(fixed.repaired.beats[0]!.narration).toBe(prep.hook);
+    expect(fixed.issues).toEqual([]);
+
+    const later = { ...base, beats: [base.beats[0]!, base.beats[1]!, { ...base.beats[2]!, narration: base.beats[1]!.narration }] };
+    const { repaired, issues } = repairScriptStructure(later);
+    expect(repaired.beats[0]!.narration).toBe(base.beats[0]!.narration);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain("beats 2 and 3 have the same narration");
+    // A clean script comes back untouched with no issues.
+    const clean = repairScriptStructure(base);
+    expect(clean.issues).toEqual([]);
+    expect(clean.repaired.beats.map((b) => b.narration)).toEqual(base.beats.map((b) => b.narration));
+  });
+
+  it("drops a later repeated beat only while three remain", () => {
+    const four = { ...base, beats: [...base.beats, { ...base.beats[1]! }] };
+    expect(dropRepeatedBeats(four).beats).toHaveLength(3);
+    const three = { ...base, beats: [base.beats[0]!, base.beats[1]!, { ...base.beats[1]! }] };
+    expect(dropRepeatedBeats(three).beats).toHaveLength(3);
+  });
+});
+
 describe("original short: script → plates → voice → captions → sequence → frame → QA", () => {
+  it("a draft whose beats repeat a line is redrafted ONCE with the beats named, and the clean redraft ships", async () => {
+    const dup = { ...VOICED_SCRIPT, beats: [VOICED_SCRIPT.beats[0]!, { ...VOICED_SCRIPT.beats[1]!, narration: VOICED_SCRIPT.beats[0]!.narration }, VOICED_SCRIPT.beats[2]!] };
+    const h = stubTools();
+    const prompts: string[] = [];
+    const result = await run(h, "run-os-structure-fix", [dup, VOICED_SCRIPT], prompts);
+    expect(result.status).toBe("completed");
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain("beats 1 and 2 have the same narration");
+    const shipped = h.deliverables[0] as { script: { beats: Array<{ narration: string }> } };
+    expect(new Set(shipped.script.beats.map((b) => b.narration)).size).toBe(3);
+  }, 20_000);
+
   it("voices the script when the model asks for it, captions the SCRIPT's words on the voice's timings, and stretches the plates to cover the speech", async () => {
     const h = stubTools();
     const result = await run(h, "run-os-voiced");
