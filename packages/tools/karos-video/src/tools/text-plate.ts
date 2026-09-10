@@ -1,0 +1,157 @@
+import { promises as fs } from "node:fs";
+import * as path from "node:path";
+import { z } from "zod";
+import { defineTool, success, toolingError } from "@agent-engine/tool-common";
+import { resolveRuntime, type KarosVideoToolOptions } from "../config.js";
+import { assertToolPath, filterPath, hexToAss, hexToFfmpeg, probeDuration, sanitizeAssText, wrapOverlayText } from "./clip-compose.js";
+
+// 1.0.1 — `fps` documented (the registry's description guard).
+const TOOL_VERSION = "1.0.1";
+
+const HEX6 = /^#[0-9a-fA-F]{6}$/;
+
+/**
+ * `video.textPlate` (2026-09-10): a beat's line as the picture.
+ *
+ * The free tier under every other tier. A short whose beat no library has
+ * a clip for, and that may not buy a still (a client on `footageSource:
+ * "stock"`, a plan the budget forced to stock only, a run at its ceiling),
+ * used to HOLD there — the one place the original short still stopped a
+ * run over footage. A text plate costs nothing and needs nothing: the
+ * brand ground, a slow accent bar drawing across the bottom of the picture
+ * over the hold, and the beat's on-screen line set large in the brand's
+ * text colour, faded in. It is also a legitimate TikTok format on its own
+ * (text-led shorts are a third of the platform), which is why it renders
+ * through libass: any script, any direction, wrapped and centred.
+ *
+ * Pure ffmpeg from a `color` source, silent, on the composer's encode
+ * contract (H.264, yuv420p, 30 fps, bt709), so `concat` takes it as a plate.
+ */
+export const TextPlateInputSchema = z.object({
+  text: z.string().min(1).max(160).describe("The line to set, 1-12 words. Wrapped onto up to three lines."),
+  outputPath: z.string().min(1).describe("Path to write the MP4 plate to."),
+  durationSeconds: z.number().min(1).max(15).describe("How long the plate holds."),
+  ground: z.string().regex(HEX6).describe("Background colour, 6-digit hex (the brand ground)."),
+  fg: z.string().regex(HEX6).default("#F4F2EC").describe("Text colour, 6-digit hex."),
+  accent: z.string().regex(HEX6).optional().describe("A thin bar that draws across the lower third over the hold. Omit for none."),
+  fontName: z.string().min(1).default("Liberation Sans").describe("fontconfig family. Name the script's own face (Noto Sans Hebrew, Noto Sans Arabic, …) for non-Latin text."),
+  canvas: z
+    .object({ w: z.number().int().positive(), h: z.number().int().positive() })
+    .default(() => ({ w: 1080, h: 1920 }))
+    .describe("Output canvas in pixels. Defaults to 1080x1920 (9:16)."),
+  fps: z.number().int().min(24).max(60).default(30).describe("Output frame rate. 30 matches the composer's normalisation."),
+});
+export type TextPlateInput = z.infer<typeof TextPlateInputSchema>;
+
+export interface TextPlateResult {
+  outputPath: string;
+  durationSeconds: number | null;
+}
+
+/**
+ * The libass script for the plate: one centred style (Alignment 5 = middle
+ * centre), the line faded in over 350 ms, wrapped by `wrapOverlayText` at
+ * 18 characters so a 12-word line is three lines at most. Exported for the test.
+ */
+export function buildTextPlateAss(input: TextPlateInput): string {
+  const { w, h } = input.canvas;
+  const fontSize = Math.round(h * 0.052);
+  const text = wrapOverlayText(sanitizeAssText(input.text), 18).replace(/\n/g, "\\N");
+  const end = (() => {
+    const s = input.durationSeconds;
+    const hh = Math.floor(s / 3600);
+    const mm = Math.floor((s % 3600) / 60);
+    const ss = Math.floor(s % 60);
+    const cs = Math.min(99, Math.round((s - Math.floor(s)) * 100));
+    return `${hh}:${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}.${String(cs).padStart(2, "0")}`;
+  })();
+  return (
+    [
+      "[Script Info]",
+      "ScriptType: v4.00+",
+      `PlayResX: ${w}`,
+      `PlayResY: ${h}`,
+      "WrapStyle: 0",
+      "ScaledBorderAndShadow: yes",
+      "",
+      "[V4+ Styles]",
+      "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+      `Style: Line,${input.fontName},${fontSize},${hexToAss(input.fg)},${hexToAss(input.fg)},&HFF000000,&HFF000000,-1,0,0,0,100,100,0,0,1,0,0,5,${Math.round(w * 0.09)},${Math.round(w * 0.09)},0,1`,
+      "",
+      "[Events]",
+      "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+      `Dialogue: 0,0:00:00.00,${end},Line,,0,0,0,,{\\fad(350,0)}${text}`,
+    ].join("\n") + "\n"
+  );
+}
+
+/** ffmpeg filter args want plain decimals, not `0.40000000000000002`. */
+function secs(n: number): string {
+  return String(Number(n.toFixed(3)));
+}
+
+/** The ffmpeg args for one plate, given where the ASS script was written. Exported for the test. */
+export function buildTextPlateArgs(input: TextPlateInput, assPath: string): string[] {
+  const { w, h } = input.canvas;
+  const filters: string[] = [];
+  if (input.accent !== undefined) {
+    // A 6px bar in the lower third that draws left to right over the hold:
+    // the one moving element, so the plate reads as video, not a slide.
+    const y = Math.round(h * 0.72);
+    filters.push(`drawbox=x=${Math.round(w * 0.09)}:y=${y}:w='min(t/${secs(input.durationSeconds)}\\,1)*${Math.round(w * 0.82)}':h=6:color=${hexToFfmpeg(input.accent)}:t=fill`);
+  }
+  filters.push(`subtitles='${filterPath(assPath)}'`, "format=yuv420p");
+  return [
+    "-y",
+    "-f",
+    "lavfi",
+    "-i",
+    `color=c=${hexToFfmpeg(input.ground)}:s=${w}x${h}:r=${input.fps}:d=${secs(input.durationSeconds)}`,
+    "-vf",
+    filters.join(","),
+    "-t",
+    secs(input.durationSeconds),
+    "-an",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "veryfast",
+    "-crf",
+    "20",
+    "-colorspace",
+    "bt709",
+    "-color_primaries",
+    "bt709",
+    "-color_trc",
+    "bt709",
+    "-color_range",
+    "tv",
+    "-movflags",
+    "+faststart",
+    input.outputPath,
+  ];
+}
+
+export function createTextPlate(options: KarosVideoToolOptions = {}) {
+  const runtime = resolveRuntime(options);
+  return defineTool<TextPlateInput, TextPlateResult>({
+    name: "video.textPlate",
+    description:
+      "Renders a beat's line as a silent 9:16 video plate: the brand ground, the text set large and centred through libass (any script), faded in, with an optional accent bar drawing across over the hold. The free tier under stock footage and stills, and a text-led format in its own right. Fails only over ffmpeg.",
+    version: TOOL_VERSION,
+    inputSchema: TextPlateInputSchema,
+    async execute(input, { ctx }) {
+      await assertToolPath(runtime, ctx.clientSlug, input.outputPath, "outputPath");
+      const outDir = path.dirname(path.resolve(input.outputPath));
+      await fs.mkdir(outDir, { recursive: true });
+      const assPath = path.join(outDir, `${path.basename(input.outputPath, path.extname(input.outputPath))}.ass`);
+      await fs.writeFile(assPath, buildTextPlateAss(input), "utf8");
+      const result = await runtime.runner(runtime.ffmpegBin, buildTextPlateArgs(input, assPath));
+      if (result.exitCode !== 0) {
+        const tail = (result.stderr || result.stdout || "").trim().slice(-2000);
+        return toolingError(`video.textPlate: ffmpeg exited ${result.exitCode}${tail ? `: ${tail}` : ""}`);
+      }
+      return success<TextPlateResult>({ outputPath: input.outputPath, durationSeconds: await probeDuration(runtime, input.outputPath) });
+    },
+  });
+}
