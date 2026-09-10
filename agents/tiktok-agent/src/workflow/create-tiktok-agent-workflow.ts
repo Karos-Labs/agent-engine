@@ -1960,18 +1960,21 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           const relevance = { brief: beat.visualBrief, narration: beat.narration };
           const taken: number[] = [...usedStockIds];
           /** A stock search for this beat, with the run's used ids excluded. */
-          const searchStock = async (attemptQuery: string, minDurationSeconds: number, outputName: string) => {
+          const searchStock = async (attemptQuery: string, minDurationSeconds: number, outputName: string, avoidTitleLike?: string) => {
             const stock = tools["video.findStockClip"]!;
-            const found = await stock.execute({ repoRoot, runId: wf.runId, query: attemptQuery, minDurationSeconds, excludeIds: [...taken], outputName, relevance }, { ctx });
+            const found = await stock.execute(
+              { repoRoot, runId: wf.runId, query: attemptQuery, minDurationSeconds, excludeIds: [...taken], outputName, relevance, ...(avoidTitleLike !== undefined ? { avoidTitleLike } : {}) },
+              { ctx },
+            );
             if (found.status !== "success") return { ok: false as const, note: `stock "${attemptQuery}": ${found.status}${"reason" in found ? ` (${found.reason})` : ""}` };
             const result = found.result as { path: string; pexelsId: number; sourceUrl: string };
             taken.push(result.pexelsId);
             return { ok: true as const, plate: { path: path.resolve(repoRoot, result.path), source: "stock" as const, stockId: result.pexelsId, sourceUrl: result.sourceUrl } };
           };
-          /** The second shot of a long beat: same query, the first clip excluded, half the length. Optional: a miss leaves one shot. */
+          /** The second shot of a long beat: same query, the first clip excluded AND nothing titled like it (two clocks are one clock twice), half the length. Optional: a miss leaves one shot. */
           const withSecondShot = async (first: PlateResult): Promise<BeatPlates> => {
             if (beat.seconds < TWO_SHOT_BEAT_SECONDS || tools["video.findStockClip"] === undefined) return { shots: [first] };
-            const second = await searchStock(query, SECOND_SHOT_MIN_SECONDS, `plate-${i + 1}-b`);
+            const second = await searchStock(query, SECOND_SHOT_MIN_SECONDS, `plate-${i + 1}-b`, first.sourceUrl);
             return { shots: second.ok ? [first, second.plate] : [first] };
           };
           // A still is a purchase. It is off the table when the plan said
