@@ -139,7 +139,7 @@ describe("video.visualQaGate — verdicts", () => {
     const { client } = recordingVision(JSON.stringify(GOOD_REPORT));
     const verdict = verdictOf(await createVisualQaGate({ client }).execute(qaInput({ videoPath: clipPath, expectations: expectations() }), CTX));
     expect(verdict.verdict).toBe("pass");
-    expect(verdict.toolVersion).toBe("1.0.0");
+    expect(verdict.toolVersion).toBe("1.1.0");
     expect((verdict as { evidence: string[] }).evidence).toEqual([
       "overallScore: 8.5",
       "hookLandsInFirstTwoSeconds: true",

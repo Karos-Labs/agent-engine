@@ -13,7 +13,10 @@ import { assertNoTraversalOrNul, assertWithinTenantWorkRoot } from "../sandbox.j
 // the caption font/size/outline are explicit instead of the renderer's defaults.
 // 1.1.1 — `fit: "cover"` scales the clip to FILL the picture area and crops the
 // overflow (for portrait plates), where the default `contain` letterboxes it.
-const TOOL_VERSION = "1.1.1";
+// 1.2.0 (2026-09-09): the series header, @handle and title cards are one
+// libass script (`buildFurnitureAss`) instead of drawtext, so any script gets
+// bidi and shaping; `sanitizeOverlayText` keeps non-ASCII letters.
+const TOOL_VERSION = "1.2.0";
 
 /**
  * The pure-ffmpeg clip pipeline: `video.cutClip` and `video.brandFrame`.
