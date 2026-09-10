@@ -239,7 +239,12 @@ describe.skipIf(!isChromiumInstalled())("a Hebrew slide renders through publish.
       },
       { ctx: { runId: "r", clientSlug: "script-font-test", productId: "instagram-agent", runKind: "setup", metadata: {} } },
     );
-    expect(outcome.status).toBe("success");
+    // The reason is folded into the asserted value on purpose: this test only
+    // runs where Chromium is installed (CI, and a dev box that ran `npx
+    // playwright install chromium`), so a bare `toBe("success")` reports
+    // "expected 'tooling_error' to be 'success'" in the one place nobody can
+    // reproduce it, and says nothing about which render step failed.
+    expect(outcome.status === "success" ? "success" : `${outcome.status}: ${"reason" in outcome ? outcome.reason : "(no reason)"}`).toBe("success");
     if (outcome.status !== "success") throw new Error("unreachable");
     const png = await fs.readFile(outcome.result.rendered[0]!.path);
     expect(png.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
