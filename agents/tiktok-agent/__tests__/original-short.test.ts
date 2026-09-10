@@ -528,6 +528,10 @@ describe("original short: script → plates → voice → captions → sequence 
     expect(expectations["hookLine"]).toBe(VOICED_SCRIPT.hook);
 
     expect(h.deliverables[0]).toMatchObject({ format: "original-short", voiceover: true, sourceTier: "stock", plateSources: ["stock", "stock", "stock", "stock", "stock"], maxCostUsd: 2 });
+    // Why stock and not the client's own footage: what every higher tier said, carried to the reviewer.
+    const notes = (h.deliverables[0] as { sourceNotes?: string[] }).sourceNotes!;
+    expect(notes[0]).toBe("user-asset: no media attached to this run");
+    expect(notes.some((n) => n.startsWith("owned-footage"))).toBe(true);
     // Latin captions keep the frame's default font.
     expect(h.frameArgs[0]!["captionStyle"]).toBeUndefined();
     expect(h.calls).toContain("topics.commit");

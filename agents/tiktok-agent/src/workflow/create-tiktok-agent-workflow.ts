@@ -1180,7 +1180,9 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       } else if (tools["video.findStockClip"] === undefined || options.repoRoot === undefined) {
         tierOutcomes.push(`stock: not wired in this deployment (${options.repoRoot === undefined ? "no repoRoot configured" : "video.findStockClip is not registered — set PEXELS_API_KEY"})`);
       } else {
-        return { ...base, sourceTier: "stock" };
+        // The notes travel with the intake: the reviewer sees why this is
+        // stock and not the client's own footage, beside the play button.
+        return { ...base, sourceTier: "stock", sourceNotes: tierOutcomes };
       }
 
       // Every tier dry. A video post has no typographic fallback — this hold
@@ -2469,6 +2471,9 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           clipPath: draft.renderedPath,
           durationSeconds: draft.durationSeconds,
           sourceTier: intake.sourceTier,
+          // Why the footage is stock and not the client's own: what each
+          // higher tier said. Absent when a higher tier served.
+          ...(intake.sourceNotes !== undefined && intake.sourceNotes.length > 0 ? { sourceNotes: intake.sourceNotes } : {}),
           voiceover: draft.voiceover,
           ...(draft.script ? { script: draft.script } : {}),
           revision,
@@ -2573,6 +2578,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
             endSeconds: bounds.endSeconds,
             durationSeconds,
             sourceTier: intake.sourceTier,
+            ...(intake.sourceNotes !== undefined && intake.sourceNotes.length > 0 ? { sourceNotes: intake.sourceNotes } : {}),
             voiceover,
             ...(script ? { script } : {}),
             ...(uploaded?.signedUrl !== undefined ? { signedUrl: uploaded.signedUrl } : {}),
