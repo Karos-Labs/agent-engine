@@ -1,7 +1,6 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { z } from "zod";
-import type { ToolUnitUsage } from "@agent-engine/core";
 import { defineTool, success, contentFail, notAvailable, toolingError } from "@agent-engine/tool-common";
 import { MEDIA_CACHE_PREFIX } from "./find-images.js";
 import { broadeningVariants } from "./quality.js";
@@ -229,7 +228,8 @@ export function createFindStockClip(options: StockVideoOptions = {}) {
       // query that matches nothing usually has a three-noun core that does.
       const variants = [input.query, ...broadeningVariants(input.query).filter((v) => v !== input.query)].slice(0, 3);
       let chosen: { video: PexelsVideo; file: { link: string; width: number; height: number }; query: string; score?: number; reason?: string } | undefined;
-      const usage: ToolUnitUsage[] = [];
+      /** Vision tokens spent scoring, summed across every query variant tried; undefined until the model is actually asked. */
+      let usageTokens: { prompt: number; output: number } | undefined;
       let relevanceNote: string | undefined;
       let candidatesConsidered = 0;
       const scoring = input.relevance !== undefined && options.visionClient !== undefined ? { client: options.visionClient, model: options.visionModel ?? DEFAULT_VISION_MODEL, ...input.relevance } : undefined;
@@ -306,10 +306,10 @@ export function createFindStockClip(options: StockVideoOptions = {}) {
             contents: [{ role: "user", parts: [{ text: buildRelevancePrompt(scoring, refs) }, ...parts] }],
             config: { responseMimeType: "application/json" },
           });
-          usage.push(
-            { model: "gemini-2.5-flash-vision-analysis-input-token", unit: "input-token", quantity: response.usageMetadata?.promptTokenCount ?? 0 },
-            { model: "gemini-2.5-flash-vision-analysis-output-token", unit: "output-token", quantity: response.usageMetadata?.candidatesTokenCount ?? 0 },
-          );
+          usageTokens = {
+            prompt: (usageTokens?.prompt ?? 0) + (response.usageMetadata?.promptTokenCount ?? 0),
+            output: (usageTokens?.output ?? 0) + (response.usageMetadata?.candidatesTokenCount ?? 0),
+          };
           const text = response.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
           scored = RelevanceResponseSchema.parse(JSON.parse(stripCodeFence(text)));
         } catch (error) {
@@ -357,26 +357,31 @@ export function createFindStockClip(options: StockVideoOptions = {}) {
       const fileName = `${input.outputName}.mp4`;
       await fs.writeFile(path.join(absDir, fileName), bytes);
 
+      const result: FindStockClipResult = {
+        path: `${relDir}/${fileName}`,
+        pexelsId: num(chosen.video.id)!,
+        durationSeconds: num(chosen.video.duration)!,
+        width: chosen.file.width,
+        height: chosen.file.height,
+        sourceUrl: str(chosen.video.url) ?? `https://www.pexels.com/video/${num(chosen.video.id)}/`,
+        photographer: str(chosen.video.user?.name) ?? "unknown",
+        license: PEXELS_LICENSE,
+        query: chosen.query,
+        ...(chosen.score !== undefined ? { relevanceScore: chosen.score } : {}),
+        ...(chosen.reason !== undefined ? { relevanceNote: chosen.reason } : relevanceNote !== undefined ? { relevanceNote } : {}),
+        ...(candidatesConsidered > 0 ? { candidatesConsidered } : {}),
+      };
       // The Pexels licence is free of charge, so the clip itself bills
-      // nothing — the whole point of this tier. The only usage is the
-      // vision model's tokens when it was asked to look.
-      return success<FindStockClipResult>(
-        {
-          path: `${relDir}/${fileName}`,
-          pexelsId: num(chosen.video.id)!,
-          durationSeconds: num(chosen.video.duration)!,
-          width: chosen.file.width,
-          height: chosen.file.height,
-          sourceUrl: str(chosen.video.url) ?? `https://www.pexels.com/video/${num(chosen.video.id)}/`,
-          photographer: str(chosen.video.user?.name) ?? "unknown",
-          license: PEXELS_LICENSE,
-          query: chosen.query,
-          ...(chosen.score !== undefined ? { relevanceScore: chosen.score } : {}),
-          ...(chosen.reason !== undefined ? { relevanceNote: chosen.reason } : relevanceNote !== undefined ? { relevanceNote } : {}),
-          ...(candidatesConsidered > 0 ? { candidatesConsidered } : {}),
-        },
-        usage.length > 0 ? usage : undefined,
-      );
+      // nothing — the whole point of this tier. Without scoring there is no
+      // usage row at all (the 1.0.0 contract).
+      if (usageTokens === undefined) return success<FindStockClipResult>(result);
+      // With scoring, the vision model's tokens, at the per-token rows
+      // `media.inspectImages` bills against (a miss after scoring still
+      // returns content_fail without them — that outcome carries no usage).
+      return success<FindStockClipResult>(result, [
+        { model: "gemini-2.5-flash-vision-analysis-input-token", unit: "input-token", quantity: usageTokens.prompt },
+        { model: "gemini-2.5-flash-vision-analysis-output-token", unit: "output-token", quantity: usageTokens.output },
+      ]);
     },
   });
 }
