@@ -295,6 +295,11 @@ describe("video.findStockClip", () => {
     expect(lexicalFit("empty open plan office dusk", "https://www.pexels.com/video/empty-offices-at-night-55/")).toBe(2);
     expect(lexicalFit("calendar desk crossed days close-up", "https://www.pexels.com/video/person-crossing-days-on-a-desk-calendar-9/")).toBe(4);
     expect(lexicalFit("empty office", "https://www.pexels.com/video/9/")).toBe(0);
+    // A kind of shot the line did not ask for costs a point: the warehouse from a drone loses to the forklift on the floor.
+    expect(lexicalFit("warehouse concrete floor industrial lamp", "https://www.pexels.com/video/aerial-view-of-industrial-warehouse-area-37763654/")).toBe(1);
+    expect(lexicalFit("warehouse concrete floor industrial lamp", "https://www.pexels.com/video/industrial-yellow-forklift-in-warehouse-scene-35595841/")).toBe(2);
+    expect(lexicalFit("aerial city skyline", "https://www.pexels.com/video/aerial-view-of-a-city-skyline-1/")).toBe(3);
+    expect(lexicalFit("office desk", "https://www.pexels.com/video/3d-animation-of-an-office-desk-2/")).toBe(0);
   });
 
   it("with a query, the clip whose title matches ranks first and shortest only breaks ties (prep run pubsub-21157031361398626's desert road)", () => {

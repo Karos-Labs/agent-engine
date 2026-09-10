@@ -25,7 +25,15 @@ import { DEFAULT_VISION_MODEL, stripCodeFence, type VisionAnalysisClient, type V
 // Vertex billing hold) that road opened a short about offices. The title
 // check costs nothing and decides the order the vision model sees candidates
 // in, and the pick whenever the model cannot judge.
-const TOOL_VERSION = "1.2.0";
+// 1.2.1 (2026-09-10) — a title that says the clip is an aerial, a drone
+// pass, a time-lapse, an animation or a render loses a point of fit unless
+// the query asked for that: prep run pubsub-21156937744383149 got "aerial
+// view of industrial warehouse area" (a road from above) for "warehouse
+// concrete floor industrial lamp" on two matched words.
+const TOOL_VERSION = "1.2.1";
+
+/** Title words that describe a KIND of shot a spoken line rarely wants under it; each costs a point of fit unless the query asked for it. */
+const TITLE_PENALTIES = ["aerial", "drone", "timelapse", "time-lapse", "hyperlapse", "animation", "animated", "cartoon", "3d", "render", "rendering", "cgi", "slideshow", "screen", "screencast"];
 
 /** Query words too common to say anything about a clip. `broadeningVariants` drops the same kind. */
 const QUERY_NOISE = new Set(["a", "an", "and", "the", "of", "on", "in", "at", "to", "for", "with", "from", "by", "as", "shot", "close", "up", "closeup", "view", "angle", "footage", "video", "clip", "stock", "person", "people", "background"]);
@@ -58,7 +66,10 @@ function sameWord(a: string, b: string): boolean {
 export function lexicalFit(query: string, url: unknown): number {
   const title = pexelsTitleWords(url);
   if (title.length === 0) return 0;
-  return contentWords(query).filter((q) => title.some((t) => sameWord(q, t))).length;
+  const asked = contentWords(query);
+  const matched = asked.filter((q) => title.some((t) => sameWord(q, t))).length;
+  const penalties = TITLE_PENALTIES.filter((w) => title.includes(w) && !asked.some((q) => sameWord(q, w))).length;
+  return matched - penalties;
 }
 
 /** How many portrait, long-enough candidates per query are shown to the vision model. Each thumbnail is ~260 tokens; eight is about a tenth of a cent. */
