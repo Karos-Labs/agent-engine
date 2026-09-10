@@ -1850,7 +1850,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           const narrationChars = script.beats.reduce((n, b) => n + b.narration.trim().length, 0);
           const narrationWords = script.beats.reduce((n, b) => n + b.narration.trim().split(/\s+/).length, 0);
           const estimate = await wf.step.code(planRev("03v-estimate-cost"), async () =>
-            estimateOriginalShortCost({ spentSoFarUsd: await wf.costSoFarUsd(), narrationChars, beats: script.beats.length, voiceover, stillsAllowed: script.format !== "text-led", visualQaRegistered, costCapUsd }),
+            estimateOriginalShortCost({ spentSoFarUsd: await wf.costSoFarUsd(), narrationChars, beats: script.beats.filter((b) => b.stat === undefined).length, voiceover, stillsAllowed: script.format !== "text-led", visualQaRegistered, costCapUsd }),
           );
           if (estimate.estimatedTotalUsd <= costCapUsd) {
             return { script, voiceover, stillsAllowed: script.format !== "text-led", estimate, replans: attempt, budgetPlan: attempt === 0 ? "original" : "replan" };
@@ -1866,11 +1866,11 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
             const spentSoFarUsd = await wf.costSoFarUsd();
             let plan: BudgetPlan = "stock-only";
             let finalVoice = voiceover;
-            let fallback = estimateOriginalShortCost({ spentSoFarUsd, narrationChars, beats: script.beats.length, voiceover: finalVoice, stillsAllowed: false, visualQaRegistered, costCapUsd });
+            let fallback = estimateOriginalShortCost({ spentSoFarUsd, narrationChars, beats: script.beats.filter((b) => b.stat === undefined).length, voiceover: finalVoice, stillsAllowed: false, visualQaRegistered, costCapUsd });
             if (fallback.estimatedTotalUsd > costCapUsd && finalVoice) {
               finalVoice = false;
               plan = "stock-only-silent";
-              fallback = estimateOriginalShortCost({ spentSoFarUsd, narrationChars, beats: script.beats.length, voiceover: false, stillsAllowed: false, visualQaRegistered, costCapUsd });
+              fallback = estimateOriginalShortCost({ spentSoFarUsd, narrationChars, beats: script.beats.filter((b) => b.stat === undefined).length, voiceover: false, stillsAllowed: false, visualQaRegistered, costCapUsd });
             }
             console.warn(`03w-budget-fallback: two re-plans still priced over $${costCapUsd.toFixed(2)}; continuing as ${plan} at an estimated $${fallback.estimatedTotalUsd.toFixed(2)}`);
             return { script, voiceover: finalVoice, stillsAllowed: false, estimate: fallback, replans: attempt, budgetPlan: plan };
@@ -1884,13 +1884,14 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
        * language's own face. `undefined` when the deployment has no such tool;
        * a render failure is a tooling failure like any other plate's.
        */
-      const renderTextPlate = async (text: string, outputName: string, seconds: number, about: string): Promise<string | undefined> => {
+      const renderTextPlate = async (text: string, outputName: string, seconds: number, about: string, stat?: { value: string; label: string }): Promise<string | undefined> => {
         const render = tools["video.textPlate"];
         if (render === undefined) return undefined;
         const font = captionFontFor(config.voiceLanguage ?? videoBrand.language ?? script.language);
         const outcome = await render.execute(
           {
             text: text.length > 160 ? `${text.slice(0, 157).trimEnd()}…` : text,
+            ...(stat !== undefined ? { stat } : {}),
             outputPath: path.join(baseWorkDir, `${outputName}.mp4`),
             durationSeconds: seconds,
             ground: videoBrand.ground,
@@ -1906,11 +1907,9 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         return (outcome.result as { outputPath: string }).outputPath;
       };
 
-      // ── 04p: FIND the plates, one per beat. Step ids carry NO revision
-      //         suffix on purpose: a reviewer's note changes the words, and
-      //         footage already found for beat 3 is reused for the revised
-      //         beat 3 rather than fetched again. A revision with MORE beats
-      //         finds only the extra ones; one with fewer uses a subset. ──
+      // ── 04p: FIND the plates, one per beat. Revision-scoped since
+      //         2026-09-10: a revised script gets plates for ITS words, and a
+      //         footage-only revision exists to fetch new ones. ──
       //
       // Two tiers, in order. A real clip from the stock library first: real
       // footage is what a viewer trusts, and it costs nothing. Then a
@@ -1940,6 +1939,15 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
             const rendered = await renderTextPlate(beat.onScreenText, `plate-${i + 1}-text`, beat.seconds, `beat ${i + 1}`);
             if (rendered === undefined) throw new WorkflowHeld("this short is text-led and video.textPlate is not registered in this deployment");
             return { shots: [{ path: rendered, source: "text" }] };
+          }
+          // A STAT beat (2026-09-10): one number from the brief is its own
+          // picture. Footage under "47%" is wallpaper; the figure, large, on
+          // the brand ground with its label, is what the viewer should read.
+          // Free, no library, no model. Without the tool the beat falls
+          // through to footage like any other.
+          if (beat.stat !== undefined) {
+            const rendered = await renderTextPlate(beat.stat.label, `plate-${i + 1}-stat`, beat.seconds, `beat ${i + 1} (stat card)`, beat.stat);
+            if (rendered !== undefined) return { shots: [{ path: rendered, source: "text" }] };
           }
           const query = beat.stockQuery ?? stockQueryFromBrief(beat.visualBrief);
           const misses: string[] = [];

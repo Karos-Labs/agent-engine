@@ -86,7 +86,9 @@ export class TikTokScriptAgent extends BaseAgent<ShortScript> {
     // (the same run spent 9,400 output tokens, $0.14 and 150 s of its one
     // turn on a 31,000-character self-check). v7 receives `voiceRules`,
     // `brand` and `strategy` in the input instead of fetching them.
-    skillRef: "tiktok-script@8",
+    // Pinned to "9" (2026-09-10): v9 adds the optional per-beat `stat` (one
+    // figure from the brief rendered as a stat card instead of footage).
+    skillRef: "tiktok-script@9",
     // The same lint 07-compliance runs afterwards, run FIRST on the model's
     // own output so a tell comes back as feedback it can act on rather than
     // as a held run. Two revisions: the first fix is usually enough, the

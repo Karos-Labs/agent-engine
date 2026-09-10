@@ -263,6 +263,14 @@ export const ScriptBeatSchema = z.object({
    * only when nothing real matches. Optional so a v3-era script still parses.
    */
   stockQuery: z.string().min(2).max(60).optional(),
+  /**
+   * When the whole beat is ONE number the brief supports ("47%", "3 of 4",
+   * "$2"), the number and a short label. The beat is then a stat card on the
+   * brand ground instead of footage (2026-09-10): footage under a number is
+   * wallpaper, the number set large is the picture. Never invented: a number
+   * that is not in the brief or the client's own intel is not a stat.
+   */
+  stat: z.object({ value: z.string().min(1).max(12), label: z.string().min(1).max(60) }).optional(),
   /** How long this beat holds on screen. */
   seconds: z.union([z.literal(4), z.literal(6), z.literal(8)]),
 });

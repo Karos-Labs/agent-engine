@@ -440,6 +440,27 @@ describe("salesPitchIssues (prep run pubsub-21157235573121560)", () => {
   }, 20_000);
 });
 
+describe("stat beats (2026-09-10)", () => {
+  it("a beat that is one figure renders as a stat card on the brand ground, searches no library, and is left out of the still estimate", async () => {
+    const withStat = {
+      ...VOICED_SCRIPT,
+      beats: [VOICED_SCRIPT.beats[0]!, { ...VOICED_SCRIPT.beats[1]!, stat: { value: "47%", label: "of first hires leave in a year" } }, VOICED_SCRIPT.beats[2]!],
+    };
+    const h = stubTools();
+    const result = await run(h, "run-os-stat", [withStat]);
+    expect(result.status).toBe("completed");
+    const card = h.textArgs.find((a) => String(a["outputPath"]).endsWith("plate-2-stat.mp4"))!;
+    expect(card).toBeDefined();
+    expect(card["stat"]).toEqual({ value: "47%", label: "of first hires leave in a year" });
+    expect(card["text"]).toBe("of first hires leave in a year");
+    expect(card["durationSeconds"]).toBe(withStat.beats[1]!.seconds);
+    expect(h.stockArgs.some((a) => a["outputName"] === "plate-2" || a["outputName"] === "plate-2-b")).toBe(false);
+    const sources = (h.deliverables[0] as { plateSources?: string[] }).plateSources!;
+    expect(sources[0]).toBe("stock");
+    expect(sources).toContain("text");
+  }, 20_000);
+});
+
 describe("scriptVoiceIssues", () => {
   it("names a hook too long for the screen, a sentence past a breath, and the conference-slide register; a clean script has none", () => {
     expect(scriptVoiceIssues(VOICED_SCRIPT)).toEqual([]);
