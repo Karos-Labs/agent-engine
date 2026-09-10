@@ -137,11 +137,11 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "instagram-copy",
     agent: "instagram-agent",
-    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"],
-    latestVersion: "11",
+    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"],
+    latestVersion: "12",
     requires: { languageDirective: true },
   },
-  { promptId: "instagram-image-vet", agent: "instagram-agent", versions: ["1", "2"], latestVersion: "2" },
+  { promptId: "instagram-image-vet", agent: "instagram-agent", versions: ["1", "2", "3"], latestVersion: "3" },
   { promptId: "instagram-research", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
   { promptId: "instagram-visual-qa", agent: "instagram-agent", versions: ["1", "2", "3"], latestVersion: "3" },
   {
