@@ -33,10 +33,14 @@ const VOICED_SCRIPT = {
   ],
   caption: "The first hire is a bet on a company that will not exist in six months. Hire for the one you're becoming.",
   about: "An original short arguing founders should write early roles for the company they are turning into.",
+  format: "footage" as const,
   voiceover: true,
   voiceoverRationale: "A narrative with a turn in it; a voice carries the 'so' in beat three.",
   language: "en-US",
 };
+
+/** The same piece as a text-led short: every beat is its line on the brand ground, no footage searched. */
+const TEXT_LED_SCRIPT = { ...VOICED_SCRIPT, format: "text-led" as const, formatRationale: "Three blunt claims; the words are the picture.", voiceover: false };
 
 /** The voiceover's words as the transcriber would time them — 30 words over ~13 s. */
 function voiceWords(): Array<{ type: string; text: string; start: number; end: number }> {
@@ -386,27 +390,28 @@ describe("original short: script → plates → voice → captions → sequence 
     // sentence) rather than wherever a counter landed.
     const srtPath = h.frameArgs[0]!["srtPath"] as string;
     const srt = await fs.readFile(srtPath, "utf8");
-    expect(srt.startsWith("1\n00:00:00,000 --> ")).toBe(true);
-    expect(srt).toContain("Nobody tells you the");
+    // No caption while the cold open is on screen: the first cue starts when the hook plate ends (~1.95s, half of beat 1's hold).
+    expect(srt).toMatch(/^1\n00:00:01,9\d\d --> /);
+    expect(srt).not.toContain("Nobody tells you the");
     expect(srt).toContain("one you fire.");
     expect(srt).toContain("becoming.");
-    // One title card, beat 1's on-screen line, for the first beat only.
-    const overlays = h.frameArgs[0]!["overlays"] as Array<{ text: string; start: number }>;
-    expect(overlays).toHaveLength(1);
-    expect(overlays[0]).toMatchObject({ text: "The first hire is a bet", start: 0 });
+    // The cold open replaces the title card: the hook, large, for beat 1's first half.
+    expect(h.frameArgs[0]!["overlays"]).toBeUndefined();
+    expect(h.textArgs[0]).toMatchObject({ text: VOICED_SCRIPT.hook, durationSeconds: 2, ground: "#101418" });
 
-    // The sequence covers the voice: holds sum to voice + tail, each ≥ 2s,
-    // proportional to how much each beat says.
+    // The sequence covers the voice: holds sum to voice + tail, proportional
+    // to how much each beat says; the cold open takes its seconds out of beat 1.
     // Beat 2 says the most, so its hold (~6s) is long enough to cut in two;
     // beat 3's hold (~3.5s) is not, so its second shot is left unused.
     const compose = h.composeArgs[0]!;
     const clips = compose["clips"] as Array<{ path: string; holdSeconds: number }>;
-    expect(clips.map((c) => path.basename(c.path))).toEqual(["plate-1.mp4", "plate-2.mp4", "plate-2-b.mp4", "plate-3.mp4"]);
+    expect(clips.map((c) => path.basename(c.path))).toEqual(["plate-hook.mp4", "plate-1.mp4", "plate-2.mp4", "plate-2-b.mp4", "plate-3.mp4"]);
     const total = clips.reduce((sum, c) => sum + c.holdSeconds, 0);
     expect(total).toBeCloseTo(13.1 + 0.4, 1);
-    expect(clips.every((c) => c.holdSeconds >= 2)).toBe(true);
-    expect(clips[1]!.holdSeconds + clips[2]!.holdSeconds).toBeGreaterThan(clips[0]!.holdSeconds);
-    expect(clips[1]!.holdSeconds).toBeCloseTo(clips[2]!.holdSeconds, 2);
+    expect(clips.every((c) => c.holdSeconds >= 1.9)).toBe(true);
+    expect(clips[0]!.holdSeconds).toBeCloseTo(clips[1]!.holdSeconds, 1);
+    expect(clips[2]!.holdSeconds + clips[3]!.holdSeconds).toBeGreaterThan(clips[0]!.holdSeconds + clips[1]!.holdSeconds);
+    expect(clips[2]!.holdSeconds).toBeCloseTo(clips[3]!.holdSeconds, 2);
     expect(compose["voiceoverPath"]).toMatch(/voiceover\.mp3$/);
 
     // The visual QA watched the framed file with the right expectations.
@@ -431,10 +436,12 @@ describe("original short: script → plates → voice → captions → sequence 
     expect(h.calls).not.toContain("video.synthesizeVoice");
     expect(h.calls).not.toContain("video.transcribe");
     const clips = h.composeArgs[0]!["clips"] as Array<{ holdSeconds: number }>;
-    // Silent: the script's own seconds stand, and each six-second beat is two three-second shots.
-    expect(clips.map((c) => c.holdSeconds)).toEqual([4, 3, 3, 3, 3]);
+    // Silent: the script's own seconds stand; the cold open takes two of beat 1's four, and each six-second beat is two three-second shots.
+    expect(clips.map((c) => c.holdSeconds)).toEqual([2, 2, 3, 3, 3, 3]);
     expect(h.composeArgs[0]!["voiceoverPath"]).toBeUndefined();
     const srt = await fs.readFile(h.frameArgs[0]!["srtPath"] as string, "utf8");
+    // Beat 1's caption waits for the cold open to end.
+    expect(srt).toMatch(/^1\n00:00:02,000 --> /);
     expect(srt).toContain("The first hire is a bet");
     expect(srt).toContain("Hire for who you're becoming");
     expect(h.deliverables[0]).toMatchObject({ voiceover: false });
@@ -517,8 +524,9 @@ describe("original short: script → plates → voice → captions → sequence 
     // Beat 1 hit on its own query; beats 2 and 3 tried their query (here the brief-derived one, so the two coincide) and two generic scenes each.
     expect(h.stockArgs.map((a) => a["outputName"])).toEqual(["plate-1", "plate-2", "plate-2", "plate-2", "plate-3", "plate-3", "plate-3"]);
     expect(h.stockArgs.slice(1).map((a) => a["query"])).toContain("hands typing keyboard");
-    expect(h.textArgs.map((a) => a["text"])).toEqual(["Month six changes everything", "Hire for who you're becoming"]);
-    expect(h.textArgs[0]).toMatchObject({ ground: "#101418", fg: "#F2F0EA", durationSeconds: 6 });
+    const beatPlates = h.textArgs.filter((a) => !String(a["outputPath"]).includes("plate-hook"));
+    expect(beatPlates.map((a) => a["text"])).toEqual(["Month six changes everything", "Hire for who you're becoming"]);
+    expect(beatPlates[0]).toMatchObject({ ground: "#101418", fg: "#F2F0EA", durationSeconds: 6 });
     expect((h.deliverables[0] as { plateSources?: string[] }).plateSources).toEqual(["stock", "text", "text"]);
   }, 20_000);
 
@@ -526,7 +534,8 @@ describe("original short: script → plates → voice → captions → sequence 
     const h = stubTools({ maxRunCostUsd: 0.05, stock: "miss", voiceLanguage: "he-IL" });
     const result = await run(h, "run-os-text-hebrew", [VOICED_SCRIPT, VOICED_SCRIPT, VOICED_SCRIPT]);
     expect(result.status).toBe("completed");
-    expect(h.textArgs).toHaveLength(3);
+    // Three beat plates and the cold open, all in the Hebrew face.
+    expect(h.textArgs).toHaveLength(4);
     expect(h.textArgs.every((a) => a["fontName"] === "Noto Sans Hebrew")).toBe(true);
   }, 20_000);
 
@@ -700,7 +709,7 @@ describe("original short: real footage, then a still, never generated video (202
     } as unknown as AgentToolRegistry[string];
     const result = await run(h, "run-os-image-down");
     expect(result.status).toBe("completed");
-    expect(h.textArgs).toHaveLength(3);
+    expect(h.textArgs.filter((a) => !String(a["outputPath"]).includes("plate-hook"))).toHaveLength(3);
     expect((h.deliverables[0] as { plateSources?: string[] }).plateSources).toEqual(["text", "text", "text"]);
   }, 20_000);
 
@@ -719,7 +728,37 @@ describe("original short: real footage, then a still, never generated video (202
     expect(h.imageArgs).toHaveLength(0);
     // The free ladder was walked first: the beat's query (the brief-derived one for this v3-shaped script) and two generic scenes.
     expect(h.stockArgs.filter((a) => a["outputName"] === "plate-1")).toHaveLength(3);
-    expect(h.textArgs).toHaveLength(3);
+    expect(h.textArgs.filter((a) => !String(a["outputPath"]).includes("plate-hook"))).toHaveLength(3);
     expect((h.deliverables[0] as { plateSources?: string[] }).plateSources).toEqual(["text", "text", "text"]);
   });
+
+  it("a text-led short never searches the library: every beat is its own line on the brand ground, no cold open, no stills in the estimate", async () => {
+    const h = stubTools({ voiceoverPolicy: "never" });
+    const result = await run(h, "run-os-text-led", [TEXT_LED_SCRIPT]);
+    expect(result.status).toBe("completed");
+    expect(h.calls).not.toContain("video.findStockClip");
+    expect(h.calls).not.toContain("image.generate");
+    expect(h.textArgs.map((a) => a["text"])).toEqual(["The first hire is a bet", "Month six changes everything", "Hire for who you're becoming"]);
+    expect(h.textArgs.map((a) => a["durationSeconds"])).toEqual([4, 6, 6]);
+    expect(h.frameArgs[0]!["overlays"]).toBeUndefined();
+    expect((h.deliverables[0] as { plateSources?: string[]; script?: { format?: string } }).plateSources).toEqual(["text", "text", "text"]);
+    expect((h.deliverables[0] as { script?: { format?: string } }).script?.format).toBe("text-led");
+    // No cold open: the first caption cue starts at zero, and the clips are the three beats at their scripted seconds.
+    const clips = h.composeArgs[0]!["clips"] as Array<{ path: string; holdSeconds: number }>;
+    expect(clips.map((c) => c.holdSeconds)).toEqual([4, 6, 6]);
+    const srt = await fs.readFile(h.frameArgs[0]!["srtPath"] as string, "utf8");
+    expect(srt).toMatch(/^1\n00:00:00,000 --> /);
+  }, 20_000);
+
+  it("a beat 1 too short to share skips the cold open and keeps the title card", async () => {
+    // A 4-second beat with a two-second cold open leaves two seconds of footage: fine. Force a
+    // tighter beat 1 so the remainder falls under the floor and the card stands in.
+    const tight = { ...VOICED_SCRIPT, voiceover: false, beats: [{ ...VOICED_SCRIPT.beats[0]!, seconds: 4 as const }, ...VOICED_SCRIPT.beats.slice(1)] };
+    const h = stubTools({ voiceoverPolicy: "never" });
+    h.tools["video.textPlate"] = undefined as unknown as AgentToolRegistry[string];
+    const result = await run(h, "run-os-no-text-tool", [tight]);
+    expect(result.status).toBe("completed");
+    const clips = h.composeArgs[0]!["clips"] as Array<{ holdSeconds: number }>;
+    expect(clips.map((c) => c.holdSeconds)).toEqual([4, 3, 3, 3, 3]);
+  }, 20_000);
 });
