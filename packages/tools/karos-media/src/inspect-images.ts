@@ -4,10 +4,19 @@ import { z } from "zod";
 import { defineTool, success, contentFail, toolingError, notAvailable } from "@agent-engine/tool-common";
 import { DEFAULT_VISION_MODEL, type VisionAnalysisClient, type VisionPart } from "./visual-patterns.js";
 
+// 1.1.0 — the `subjects` instruction now requires a legible identity to be
+// NAMED (the club, brand, person, place or era) and an illegible one to be
+// stated as unidentified rather than guessed. The downstream vetting gate
+// judges "does this picture show what the slide CLAIMS?" from this text
+// alone, so an anonymous "fans in a stadium" is what let one club's
+// supporters ship under another club's headline. A telemetry record made
+// after this change is not comparable with one made before it: the same
+// image yields a different `subjects` list, so the vetting decisions built
+// on it shift too.
 // 1.0.0 — new: the first tool in this package that LOOKS at pixels on behalf
 // of a content agent. Until it, every image judgment in the engine was made
 // from a provider's alt text.
-const TOOL_VERSION = "1.0.0";
+const TOOL_VERSION = "1.1.0";
 
 /** Ceiling on one inspected image. Same bound the visual-pattern ingestion uses; well under the model's inline-data limit. */
 const MAX_IMAGE_BYTES = 4_000_000;
