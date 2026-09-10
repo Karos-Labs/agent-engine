@@ -16,7 +16,10 @@ import { assertNoTraversalOrNul, assertWithinTenantWorkRoot } from "../sandbox.j
 // 1.2.0 (2026-09-09): the series header, @handle and title cards are one
 // libass script (`buildFurnitureAss`) instead of drawtext, so any script gets
 // bidi and shaping; `sanitizeOverlayText` keeps non-ASCII letters.
-const TOOL_VERSION = "1.2.0";
+// 1.2.1 (2026-09-10): `wrapOverlayText` takes a `maxLines` (default 3, as
+// before) so `video.textPlate` can wrap a line without losing its end. The
+// two tools here render exactly as before.
+const TOOL_VERSION = "1.2.1";
 
 /**
  * The pure-ffmpeg clip pipeline: `video.cutClip` and `video.brandFrame`.
@@ -111,7 +114,7 @@ export function filterPath(p: string): string {
  * script prompt caps the line at eight words, so three is the ceiling, not
  * the norm.
  */
-export function wrapOverlayText(text: string, maxChars = 22): string {
+export function wrapOverlayText(text: string, maxChars = 22, maxLines = 3): string {
   const words = text.replace(/[\u0000-\u001f\u007f]/g, " ").trim().split(/\s+/).filter((w) => w.length > 0);
   const lines: string[] = [];
   let current = "";
@@ -126,7 +129,7 @@ export function wrapOverlayText(text: string, maxChars = 22): string {
     }
   }
   if (current.length > 0) lines.push(current);
-  return lines.slice(0, 3).join("\n");
+  return lines.slice(0, maxLines).join("\n");
 }
 
 /** Breathing room between the mark and the edge of its legibility plate, in output pixels. */

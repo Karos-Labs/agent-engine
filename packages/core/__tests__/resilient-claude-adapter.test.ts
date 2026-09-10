@@ -64,6 +64,17 @@ describe("ResilientClaudeAdapter", () => {
     expect(result.output).toEqual({ text: "secondary:claude-sonnet-4-6" });
   });
 
+  it("falls over on a 403 from the primary — a billing hold or an IAM refusal is the route refusing us, not the request being wrong (prep run pubsub-21157159789984068, 2026-09-10)", async () => {
+    const primary = fakeAdapter("primary", async () => {
+      throw httpError(403, '[{"error":{"code":403,"message":"Lightning dunning decision is deny for project: projects/680337539054","status":"PERMISSION_DENIED"}}]');
+    });
+    const secondary = fakeAdapter("secondary", async (req) => okResult("secondary", req.model));
+    const adapter = new ResilientClaudeAdapter({ primary, secondary });
+    const result = await adapter.complete(baseReq);
+    expect(result.output).toEqual({ text: "secondary:claude-sonnet-4-6" });
+    expect(result.provenance?.failedOver[0]).toMatchObject({ from: "primary", errorClass: "billing_denied", status: 403 });
+  });
+
   it("does NOT fall over on a non-failover-worthy error (e.g. a 400) — propagates it as-is", async () => {
     const primary = fakeAdapter("primary", async () => {
       throw httpError(400, "bad request");

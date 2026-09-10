@@ -10,6 +10,7 @@ import { normalizeCommentaryDashes, normalizeScriptDashes } from "../src/workflo
 describe("dash normalisation before compliance", () => {
   it("repairs every field a viewer hears or reads on a script, and nothing else", () => {
     const script = normalizeScriptDashes({
+      format: "footage",
       hook: "Nobody tells you — the first hire is the one you fire.",
       beats: [
         { narration: "You hire for the company you have — and by month six it is another company.", onScreenText: "Month six — everything changes", visualBrief: "Whiteboard — wiped clean, marker residue in window light.", seconds: 6 },

@@ -266,6 +266,15 @@ export const ShortScriptSchema = z.object({
   caption: z.string().min(1),
   /** 1-3 plain sentences for the client's own team. */
   about: z.string().min(1),
+  /**
+   * How the short is built (2026-09-10). `footage`: each beat over a real
+   * clip (stock, then a still, then the line itself). `text-led`: every beat
+   * is its on-screen line set large on the brand ground, no footage at all:
+   * the format for a list of blunt claims or a number-driven argument, and
+   * the cheapest short there is. Optional so a v5-era script still parses.
+   */
+  format: z.enum(["footage", "text-led"]).default("footage"),
+  formatRationale: z.string().max(300).optional(),
   /** The script step's own call on whether this piece wants a voice. Overridden by the client's `voiceover` config when not `auto`. */
   voiceover: z.boolean(),
   voiceoverRationale: z.string().min(1).max(300),

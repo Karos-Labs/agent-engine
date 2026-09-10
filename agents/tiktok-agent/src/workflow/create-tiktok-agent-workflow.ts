@@ -44,7 +44,7 @@ import { TikTokMomentAgent } from "../agent/tiktok-moment-agent.js";
 import { TikTokScriptAgent } from "../agent/tiktok-script-agent.js";
 import { TikTokTopicScoutAgent } from "../agent/tiktok-topic-scout-agent.js";
 import { boundsFromTranscript, sentenceBoundedWords, type TranscriptWordLike } from "./clip-bounds.js";
-import { buildScriptCaptions } from "./captions.js";
+import { alignScriptToTimings, buildPhraseCues, cuesToSrt, scriptWords } from "./captions.js";
 import {
   CLIP_DURATION_MAX_SECONDS,
   CLIP_DURATION_MIN_SECONDS,
@@ -132,11 +132,13 @@ const MAX_DEDUPE_ATTEMPTS = 2;
 /**
  * Where one beat's plate came from — carried to the reviewer and the
  * deliverable. `stock` is a real library clip; `still` is a generated
- * photograph held with a slow push-in. There is no `generated` video any
- * more (2026-09-09): the product rule is a short under two dollars, and one
+ * photograph held with a slow push-in; `text` is the beat's own line set
+ * large on the brand ground (free, needs nothing, the tier under every
+ * other tier since 2026-09-10). There is no `generated` video any more
+ * (2026-09-09): the product rule is a short under two dollars, and one
  * generated clip cost more than that on its own.
  */
-export type PlateSource = "stock" | "still";
+export type PlateSource = "stock" | "still" | "text";
 
 interface PlateResult {
   path: string;
@@ -169,6 +171,24 @@ const SECOND_SHOT_MIN_SECONDS = 3;
 
 /** A music bed is a few minutes of compressed audio; anything past this is not a track. */
 const MAX_MUSIC_TRACK_BYTES = 25 * 1024 * 1024;
+
+/**
+ * The cold open (2026-09-10): the hook set large on the brand ground for the
+ * first two seconds, before any footage. A stranger reads the claim before
+ * they hear it; every 2026-09-08 short opened on a neutral stock frame with
+ * a top bar and lost the thumb. Takes its time out of beat 1's hold, so the
+ * voice still starts at zero and the hook is being SAID while it is on screen.
+ */
+const HOOK_PLATE_SECONDS = 2;
+/** Beat 1 keeps at least this much footage after the cold open, or the cold open is skipped and the title card stands in. */
+const MIN_LEAD_REMAINDER_SECONDS = 1.5;
+/**
+ * After the visual QA names beats whose footage does not fit the line said
+ * over them (relevance under 5), up to this many are re-sourced from the
+ * library ONCE and the short re-rendered (2026-09-10). One round: a second
+ * miss ships to the reviewer named, as before.
+ */
+const MAX_REPICK_BEATS = 2;
 
 /**
  * The caption/furniture font for a language. The server image ships Noto
@@ -296,6 +316,154 @@ export function stockQueryFromBrief(brief: string): string {
     .filter((w) => w.length > 2 && !BRIEF_FILLER.has(w));
   const picked = words.slice(0, 4);
   return picked.length >= 2 ? picked.join(" ") : clause.trim().split(/\s+/).slice(0, 4).join(" ");
+}
+
+/** Lower-cased words only, for "is this the same line" comparisons between beats. */
+function narrationKey(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 0)
+    .join(" ");
+}
+
+/**
+ * The structural rules of a short that the schema cannot express, checked in
+ * code after the model returns (2026-09-10, prep run pubsub-21157255126300088:
+ * beats 1 and 2 carried the identical narration, and the hook the prompt
+ * calls "beat 1" was in `hook` only, so the viewer heard the second line
+ * first and then heard it again).
+ *
+ * `repaired` is the script with what code can fix fixed: when beat 1 does
+ * not open on the hook, the hook becomes beat 1's narration (the prompt's own
+ * rule, "beat 1 is the hook"; the hook is at most 200 characters so it fits
+ * the narration cap). `issues` names what only a redraft can fix: two beats
+ * saying the same thing.
+ */
+export function repairScriptStructure(script: ShortScript): { repaired: ShortScript; issues: string[] } {
+  const issues: string[] = [];
+  const beats = script.beats.map((b) => ({ ...b }));
+  const hookKey = narrationKey(script.hook);
+  if (beats[0] !== undefined && hookKey.length > 0 && !narrationKey(beats[0].narration).startsWith(hookKey.split(" ").slice(0, 6).join(" "))) {
+    beats[0] = { ...beats[0], narration: script.hook };
+  }
+  const seen = new Map<string, number>();
+  beats.forEach((beat, i) => {
+    const key = narrationKey(beat.narration);
+    const first = seen.get(key);
+    if (first !== undefined) issues.push(`beats ${first + 1} and ${i + 1} have the same narration ("${beat.narration.slice(0, 60)}…"); each beat says one different thing`);
+    else seen.set(key, i);
+  });
+  return { repaired: { ...script, beats }, issues };
+}
+
+/**
+ * When a redraft still repeats a line, drop the later copy rather than ship
+ * it twice: a three-beat floor stands (the schema's), so only a four- or
+ * five-beat script can lose one. Returns the script unchanged otherwise.
+ */
+/** A spoken sentence longer than this is a paragraph, not a line; the prompt asks for twelve, code allows a little slack. */
+export const MAX_SPOKEN_SENTENCE_WORDS = 14;
+/** The hook is set large on screen for two seconds; past this it does not fit and does not land. */
+export const MAX_HOOK_WORDS = 14;
+
+/**
+ * The phrases that make a short sound like a slide read aloud. The prompt
+ * bans them; this is the check that makes the ban real. Matched on the
+ * spoken and on-screen words only, never the caption or about.
+ */
+const CORPORATE_CADENCE: ReadonlyArray<{ pattern: RegExp; label: string }> = [
+  { pattern: /\bleverag(e|es|ed|ing)\b/i, label: "leverage" },
+  { pattern: /\bat scale\b/i, label: "at scale" },
+  { pattern: /\bhere'?s the thing\b/i, label: "here's the thing" },
+  { pattern: /\bthe (real|actual) (question|problem|issue|risk|answer|story) is\b/i, label: "the real X is" },
+  { pattern: /\bthe question is\b/i, label: "the question is" },
+  { pattern: /\bstrateg(y|ic) (layer|oversight|imperative)\b/i, label: "strategy layer / strategic oversight" },
+  { pattern: /\bunlock(s|ed|ing)?\b/i, label: "unlock" },
+  { pattern: /\bgame[- ]?changer\b/i, label: "game-changer" },
+  { pattern: /\bin today'?s\b/i, label: "in today's" },
+  { pattern: /\becosystem\b/i, label: "ecosystem" },
+  { pattern: /\bsynerg(y|ies|istic)\b/i, label: "synergy" },
+  { pattern: /\bcutting[- ]edge\b/i, label: "cutting-edge" },
+  { pattern: /\bseamless(ly)?\b/i, label: "seamless" },
+  { pattern: /\bempower(s|ed|ing)?\b/i, label: "empower" },
+  { pattern: /\bholistic\b/i, label: "holistic" },
+  { pattern: /\bparadigm\b/i, label: "paradigm" },
+  { pattern: /\bbest[- ]in[- ]class\b/i, label: "best-in-class" },
+  { pattern: /\bthought leader(ship)?\b/i, label: "thought leadership" },
+  { pattern: /\bdelve\b/i, label: "delve" },
+  { pattern: /\bnavigat(e|es|ing) the\b/i, label: "navigate the …" },
+  { pattern: /\bstakeholders?\b/i, label: "stakeholders" },
+];
+
+function wordCount(text: string): number {
+  return text.trim().split(/\s+/).filter((w) => w.length > 0).length;
+}
+
+/**
+ * What only the writer can fix about how a short SOUNDS (2026-09-10): a
+ * hook too long to be set large on screen, a spoken sentence that runs past
+ * a breath, a phrase from the conference-slide register. The prompt states
+ * every one of these rules; the 2026-09-08 scripts broke all three ("That is
+ * a strategy problem. Not a software problem." after a 27-word sentence), so
+ * the rules are checked here and handed back once, named, before the render.
+ */
+export function scriptVoiceIssues(script: ShortScript): string[] {
+  const issues: string[] = [];
+  if (wordCount(script.hook) > MAX_HOOK_WORDS) {
+    issues.push(`the hook is ${wordCount(script.hook)} words; it is set large on screen for two seconds and must be ${MAX_HOOK_WORDS} or fewer`);
+  }
+  script.beats.forEach((beat, i) => {
+    for (const sentence of beat.narration.split(/(?<=[.!?…])\s+/)) {
+      const n = wordCount(sentence);
+      if (n > MAX_SPOKEN_SENTENCE_WORDS) issues.push(`beat ${i + 1} has a ${n}-word sentence ("${sentence.trim().slice(0, 50)}…"); one breath each, ${MAX_SPOKEN_SENTENCE_WORDS} words or fewer`);
+    }
+  });
+  const spoken = [script.hook, ...script.beats.flatMap((b) => [b.narration, b.onScreenText])].join("\n");
+  const heard = CORPORATE_CADENCE.filter((c) => c.pattern.test(spoken)).map((c) => c.label);
+  if (heard.length > 0) issues.push(`corporate cadence a viewer scrolls past: ${heard.join(", ")}; say it the way you would across a table`);
+  return issues;
+}
+
+/** A place word this many beats share means the short is one room. Three of four (prep run pubsub-21156942503403946) is the case that prompted it. */
+export const SAME_PLACE_BEATS = 3;
+
+/** Words in a stock query that say how a place is lit or framed, not which place it is. */
+const QUERY_FRAMING_WORDS = new Set([
+  "empty", "close", "closeup", "up", "wide", "shot", "view", "angle", "interior", "exterior", "light", "glow", "dark", "night", "morning", "dusk", "dawn", "evening", "afternoon", "day", "sunset", "sunrise", "rain", "window", "ceiling", "wall", "floor", "receding", "overhead", "slow", "still", "detail", "texture", "background", "blind", "blinds",
+  "a", "an", "and", "the", "of", "on", "in", "at", "with", "from", "by",
+]);
+
+/**
+ * The beats whose stock queries put the short in one place (2026-09-10).
+ * Prep run pubsub-21156942503403946 asked the library for "empty office desk
+ * night monitor glow", "empty office chair desk morning window blind",
+ * "analog clock wall office close" and "empty office corridor fluorescent
+ * ceiling receding": four beats, one room, a viewer's thumb already moving.
+ * The prompt asks for a different place per beat; this is the check that
+ * makes the rule real, handed back once with the voice issues.
+ */
+export function shotVarietyIssues(script: ShortScript): string[] {
+  if (script.format === "text-led") return [];
+  const perBeat = script.beats.map((b) => new Set((b.stockQuery ?? "").toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 2 && !QUERY_FRAMING_WORDS.has(w))));
+  const counts = new Map<string, number>();
+  for (const words of perBeat) for (const w of words) counts.set(w, (counts.get(w) ?? 0) + 1);
+  const shared = [...counts.entries()].filter(([, n]) => n >= SAME_PLACE_BEATS).sort((a, b) => b[1] - a[1]);
+  if (shared.length === 0) return [];
+  const [word, n] = shared[0]!;
+  return [`${n} of ${script.beats.length} shots are set in the same place ("${word}"); give each beat its own place: an office, then a street, a kitchen, a workshop, a car`];
+}
+
+export function dropRepeatedBeats(script: ShortScript): ShortScript {
+  const seen = new Set<string>();
+  const kept = script.beats.filter((b) => {
+    const key = narrationKey(b.narration);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return kept.length >= 3 && kept.length < script.beats.length ? { ...script, beats: kept } : script;
 }
 
 export function normalizeScriptDashes(script: ShortScript): ShortScript {
@@ -681,6 +849,34 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
     const recentPostsDirective = dedupeDirective(outputHistory);
     const clientIntelContext = await readClientIntelContext(wf, tools, ctx, "read-intel-context");
     const pastFeedback = await readPastFeedback(wf, tools, ctx, "read-past-feedback");
+
+    // ── 03r: the client's own documents, read ONCE for the writer ──
+    //
+    // Until 2026-09-10 the script agent fetched these itself, three model
+    // turns before the one that wrote: the dominant cost and the longest
+    // wait in every prep run. Read here, best-effort each (a client with no
+    // voice rules yet gets a writer who simply has none, not a held run), and
+    // handed to the script step as input. Every `client.*` read is a
+    // workspace read, so the whole step costs nothing.
+    const clientVoice = await wf.step.code("03r-read-client-voice", async (): Promise<{ voiceRules?: unknown; brand?: unknown; strategy?: unknown }> => {
+      const read = async (name: string): Promise<unknown> => {
+        const tool = tools[name];
+        if (tool === undefined) return undefined;
+        try {
+          const outcome = await tool.execute({}, { ctx });
+          return outcome.status === "success" ? outcome.result : undefined;
+        } catch {
+          return undefined;
+        }
+      };
+      const [voiceRules, brand, strategy] = await Promise.all([read("client.getVoiceRules"), read("client.getBrand"), read("client.getStrategy")]);
+      const strategyMarkdown = strategy !== null && typeof strategy === "object" && typeof (strategy as { markdown?: unknown }).markdown === "string" ? (strategy as { markdown: string }).markdown.trim() : "";
+      return {
+        ...(voiceRules !== undefined ? { voiceRules } : {}),
+        ...(brand !== undefined ? { brand } : {}),
+        ...(strategyMarkdown.length > 0 ? { strategy: strategyMarkdown } : {}),
+      };
+    });
 
     // Footage the client handed us, in either form the portal and a hand
     // dispatch use. Decided before the topic claim because it changes what an
@@ -1248,7 +1444,9 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
        * FLAGGED with the model's reason, and the person decides. Absent when
        * the gate is not registered in the deployment.
        */
-      visualQa?: { passed: boolean; reason?: string; evidence: string[] };
+      visualQa?: { passed: boolean; reason?: string; evidence: string[]; weakBeats?: Array<{ index: number; relevance: number; note: string }> };
+      /** The beats' time windows in the finished clip, for the visual QA's per-beat relevance read. Original shorts only. */
+      beatWindows?: Array<{ index: number; start: number; end: number; narration: string }>;
       /** Per beat, where the b-roll came from — so a reviewer knows which plates are real footage. Original shorts only. */
       plateSources?: PlateSource[];
       /** What the run had spent when this draft reached the gate, so the reviewer sees the number beside the play button. */
@@ -1261,6 +1459,8 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       replans?: number;
       /** Whether a music bed was laid, and why not when it was not. Original shorts only. */
       music?: { applied: boolean; note?: string };
+      /** Beats whose footage was re-sourced after the visual QA scored it under 5, and how the re-render fared (original shorts only). */
+      repick?: { beats: number[]; note: string };
     }
 
     /**
@@ -1478,28 +1678,58 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
             (stepId, dedupeAvoid) =>
               wf.step.code(stepId, async () => {
                 const agent = new TikTokScriptAgent({ router: options.router, tools, promptStore: options.promptStore });
-                const exec = await runAgentStepWithCommitSteer(wf, stepId.replace("03s-script", "03u-script"), agent, {
-                  ...runDirectionField(runDirection),
-                  topic,
-                  ...(intake.discovered ? { topicBrief: intake.discovered } : {}),
-                  clientProfile: profile,
-                  ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
-                  ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
-                  ...(dedupeAvoid !== undefined ? { dedupeAvoid } : {}),
-                  ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
-                  ...(directive !== undefined ? { revisionRequest: directive } : {}),
-                  ...(feedback !== undefined ? { budgetFeedback: feedback } : {}),
-                  voiceoverPolicy: config.voiceover,
-                  allowPeople: config.allowPeopleInGeneratedFootage,
-                  ...(config.voiceLanguage ?? videoBrand.language ? { contentLanguage: config.voiceLanguage ?? videoBrand.language } : {}),
-                }, "the script");
-                if (exec.status === "content_fail") {
-                  throw new WorkflowHeld("the script did not clear its own output validation");
-                }
-                if (exec.status !== "completed") {
-                  throw new WorkflowToolingFailure(`script step resolved to "${exec.status}"`);
-                }
-                return normalizeScriptDashes(ShortScriptSchema.parse(exec.finalOutput));
+                /** One drafting call; `structureFix` is the note a redraft gets about what the last draft got structurally wrong. */
+                const draftOnce = async (agentStepId: string, structureFix: string | undefined): Promise<ShortScript> => {
+                  const exec = await runAgentStepWithCommitSteer(wf, agentStepId, agent, {
+                    ...runDirectionField(runDirection),
+                    topic,
+                    ...(intake.discovered ? { topicBrief: intake.discovered } : {}),
+                    clientProfile: profile,
+                    ...clientVoice,
+                    ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
+                    ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
+                    ...(dedupeAvoid !== undefined ? { dedupeAvoid } : {}),
+                    ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
+                    ...(directive !== undefined || structureFix !== undefined
+                      ? { revisionRequest: [directive, structureFix].filter((s): s is string => s !== undefined).join("\n\n") }
+                      : {}),
+                    ...(feedback !== undefined ? { budgetFeedback: feedback } : {}),
+                    voiceoverPolicy: config.voiceover,
+                    allowPeople: config.allowPeopleInGeneratedFootage,
+                    ...(config.voiceLanguage ?? videoBrand.language ? { contentLanguage: config.voiceLanguage ?? videoBrand.language } : {}),
+                  }, "the script");
+                  if (exec.status === "content_fail") {
+                    throw new WorkflowHeld("the script did not clear its own output validation");
+                  }
+                  if (exec.status !== "completed") {
+                    throw new WorkflowToolingFailure(`script step resolved to "${exec.status}"`);
+                  }
+                  return normalizeScriptDashes(ShortScriptSchema.parse(exec.finalOutput));
+                };
+                // Structure the schema cannot check: beat 1 opens on the hook
+                // (repaired in code), no two beats say the same line (ONE
+                // redraft with the offending beats named, then the later copy
+                // is dropped rather than shipped twice).
+                const agentStepId = stepId.replace("03s-script", "03u-script");
+                // …and how it sounds: sentence length, hook length, the
+                // conference-slide register. Same one redraft, every problem
+                // named; what the redraft still gets wrong ships (the human at
+                // the gate hears it), except a repeated beat, which is dropped.
+                const first = repairScriptStructure(await draftOnce(agentStepId, undefined));
+                const firstVoice = scriptVoiceIssues(first.repaired);
+                const firstShots = shotVarietyIssues(first.repaired);
+                if (first.issues.length === 0 && firstVoice.length === 0 && firstShots.length === 0) return first.repaired;
+                const note = [
+                  first.issues.length > 0 ? `Structure problem in your last draft: ${first.issues.join("; ")}. Rewrite so every beat carries its own line.` : undefined,
+                  firstVoice.length > 0 ? `Voice problem in your last draft: ${firstVoice.join("; ")}. Keep the message; rewrite the lines as speech.` : undefined,
+                  firstShots.length > 0 ? `Shot problem in your last draft: ${firstShots.join("; ")}. Keep the words; change only the stockQuery and visualBrief of the beats that share the place.` : undefined,
+                ]
+                  .filter((s): s is string => s !== undefined)
+                  .join("\n");
+                const second = repairScriptStructure(await draftOnce(`${agentStepId}-fix`, note));
+                const secondVoice = scriptVoiceIssues(second.repaired);
+                if (secondVoice.length > 0) console.warn(`${agentStepId}-fix: the redraft still reads off: ${secondVoice.join("; ")}; shipping to the reviewer as is`);
+                return second.issues.length === 0 ? second.repaired : dropRepeatedBeats(second.repaired);
               }),
             (s) => `${s.caption}\n\n${s.about}`,
           );
@@ -1517,10 +1747,10 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           const narrationChars = script.beats.reduce((n, b) => n + b.narration.trim().length, 0);
           const narrationWords = script.beats.reduce((n, b) => n + b.narration.trim().split(/\s+/).length, 0);
           const estimate = await wf.step.code(planRev("03v-estimate-cost"), async () =>
-            estimateOriginalShortCost({ spentSoFarUsd: await wf.costSoFarUsd(), narrationChars, beats: script.beats.length, voiceover, stillsAllowed: true, visualQaRegistered, costCapUsd }),
+            estimateOriginalShortCost({ spentSoFarUsd: await wf.costSoFarUsd(), narrationChars, beats: script.beats.length, voiceover, stillsAllowed: script.format !== "text-led", visualQaRegistered, costCapUsd }),
           );
           if (estimate.estimatedTotalUsd <= costCapUsd) {
-            return { script, voiceover, stillsAllowed: true, estimate, replans: attempt, budgetPlan: attempt === 0 ? "original" : "replan" };
+            return { script, voiceover, stillsAllowed: script.format !== "text-led", estimate, replans: attempt, budgetPlan: attempt === 0 ? "original" : "replan" };
           }
           if (attempt < MAX_BUDGET_REPLANS) {
             budgetFeedback = budgetFeedbackFor(estimate, replanTargetUsd, script.beats.length, narrationWords);
@@ -1546,6 +1776,33 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       })();
       const { script, voiceover, stillsAllowed, estimate, replans, budgetPlan } = drafted;
 
+      /**
+       * A line set large on the brand ground (`video.textPlate`), in the
+       * language's own face. `undefined` when the deployment has no such tool;
+       * a render failure is a tooling failure like any other plate's.
+       */
+      const renderTextPlate = async (text: string, outputName: string, seconds: number, about: string): Promise<string | undefined> => {
+        const render = tools["video.textPlate"];
+        if (render === undefined) return undefined;
+        const font = captionFontFor(config.voiceLanguage ?? videoBrand.language ?? script.language);
+        const outcome = await render.execute(
+          {
+            text: text.length > 160 ? `${text.slice(0, 157).trimEnd()}…` : text,
+            outputPath: path.join(baseWorkDir, `${outputName}.mp4`),
+            durationSeconds: seconds,
+            ground: videoBrand.ground,
+            fg: videoBrand.fg,
+            ...(videoBrand.accent !== undefined ? { accent: videoBrand.accent } : {}),
+            ...(font !== undefined ? { fontName: font } : {}),
+          },
+          { ctx },
+        );
+        if (outcome.status !== "success") {
+          throw new WorkflowToolingFailure(`video.textPlate failed for ${about}: ${outcome.status}${"reason" in outcome ? ` (${outcome.reason})` : ""}`);
+        }
+        return (outcome.result as { outputPath: string }).outputPath;
+      };
+
       // ── 04p: FIND the plates, one per beat. Step ids carry NO revision
       //         suffix on purpose: a reviewer's note changes the words, and
       //         footage already found for beat 3 is reused for the revised
@@ -1570,6 +1827,12 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       for (let i = 0; i < script.beats.length; i++) {
         const beat = script.beats[i]!;
         const plate = await wf.step.code(`04p-plate-${i + 1}`, async (): Promise<BeatPlates> => {
+          // A text-led short never searches: the beat's line IS the picture.
+          if (script.format === "text-led") {
+            const rendered = await renderTextPlate(beat.onScreenText, `plate-${i + 1}-text`, beat.seconds, `beat ${i + 1}`);
+            if (rendered === undefined) throw new WorkflowHeld("this short is text-led and video.textPlate is not registered in this deployment");
+            return { shots: [{ path: rendered, source: "text" }] };
+          }
           const query = beat.stockQuery ?? stockQueryFromBrief(beat.visualBrief);
           const misses: string[] = [];
           // What the library is asked to judge each candidate against: the
@@ -1613,17 +1876,31 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
               misses.push(found.note);
             }
           }
+          /**
+           * The free tier under every other tier (2026-09-10): the beat's own
+           * line, set large on the brand ground with the accent bar drawing
+           * across. Costs nothing, needs no library and no model, renders any
+           * script through libass. Reached when no still may be bought, when
+           * the still tier is not wired, or when the still itself fails; the
+           * only hold left is a deployment without the tool.
+           */
+          const textPlate = async (because: string): Promise<BeatPlates> => {
+            const rendered = await renderTextPlate(beat.onScreenText, `plate-${i + 1}-text`, beat.seconds, `beat ${i + 1}`);
+            if (rendered === undefined) {
+              throw new WorkflowHeld(`no footage for beat ${i + 1} ("${query}"): ${misses.join("; ")}; ${because}; and video.textPlate is not registered`);
+            }
+            return { shots: [{ path: rendered, source: "text" }] };
+          };
+
           if (!stillsHere) {
             const why = config.footageSource === "stock" ? 'this client\'s footageSource is "stock"' : !stillsAllowed ? `the plan is ${budgetPlan}` : "the run has reached its cost ceiling";
-            throw new WorkflowHeld(`no free footage for beat ${i + 1} and no still may be bought (${why}): ${misses.join("; ")}`);
+            return textPlate(`no still may be bought (${why})`);
           }
 
           const generateImage = tools["image.generate"];
           const stillToClip = tools["video.stillToClip"];
           if (generateImage === undefined || stillToClip === undefined) {
-            throw new WorkflowHeld(
-              `no footage for beat ${i + 1} ("${query}"): ${misses.join("; ")}; and the still tier is not wired (${generateImage === undefined ? "image.generate" : "video.stillToClip"} is not registered)`,
-            );
+            return textPlate(`the still tier is not wired (${generateImage === undefined ? "image.generate" : "video.stillToClip"} is not registered)`);
           }
           const image = await generateImage.execute(
             {
@@ -1637,12 +1914,14 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
             { ctx },
           );
           if (image.status !== "success") {
-            throw new WorkflowHeld(`no footage for beat ${i + 1} ("${query}"): ${misses.join("; ")}; still: ${image.status}${"reason" in image ? ` (${image.reason})` : ""}`);
+            // The image route down (a 403 billing hold on Vertex took it out
+            // on 2026-09-10) is a route outage, not a fact about the beat.
+            return textPlate(`still: ${image.status}${"reason" in image ? ` (${image.reason})` : ""}`);
           }
           const generated = image.result as { candidates: Array<{ path: string }>; unmet: Array<{ n: number; reason: string }> };
           const candidate = generated.candidates[0];
           if (candidate === undefined) {
-            throw new WorkflowHeld(`no footage for beat ${i + 1} ("${query}"): ${misses.join("; ")}; still: ${generated.unmet[0]?.reason ?? "the image model produced nothing"}`);
+            return textPlate(`still: ${generated.unmet[0]?.reason ?? "the image model produced nothing"}`);
           }
           const clip = await stillToClip.execute(
             {
@@ -1668,6 +1947,16 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       // ── 05: VOICE — the narration spoken, then TIMED by transcribing the
       //        very file that will play, so captions sit on the words a
       //        listener actually hears rather than on an estimate. ──
+      // ── 04h: the cold open — the hook, large, for the first two seconds
+      //         (see HOOK_PLATE_SECONDS). Footage shorts only: a text-led
+      //         short already opens on its own line. Not a plate source; it
+      //         is furniture the way the title card was. ──
+      const hookPlate = await wf.step.code("04h-hook-plate", async (): Promise<{ path: string; seconds: number } | null> => {
+        if (script.format === "text-led") return null;
+        const rendered = await renderTextPlate(script.hook, "plate-hook", HOOK_PLATE_SECONDS, "the hook");
+        return rendered === undefined ? null : { path: rendered, seconds: HOOK_PLATE_SECONDS };
+      });
+
       const narration = script.beats.map((b) => b.narration.trim()).join(" … ");
       const language = config.voiceLanguage ?? videoBrand.language ?? script.language;
       const voice = await wf.step.code(rev("05-voiceover"), async (): Promise<{ path: string; durationSeconds: number | null; words: TranscriptWordLike[]; notes: string[] } | null> => {
@@ -1682,7 +1971,12 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         await fs.mkdir(workDir, { recursive: true });
         const synth = tools["video.synthesizeVoice"];
         if (synth === undefined) {
-          throw new WorkflowToolingFailure("this piece wants a voiceover but video.synthesizeVoice is not registered — set the client's voiceover to \"never\" or wire a TTS provider");
+          // The same rule as a voice we cannot afford: the short runs silent
+          // and the captions carry the words. A deployment without a TTS
+          // provider is an operator fact the reviewer should see, not a
+          // failed run the client should meet.
+          console.warn("05-voiceover: video.synthesizeVoice is not registered; running silent");
+          return null;
         }
         const outputPath = path.join(workDir, "voiceover.mp3");
         const outcome = await synth.execute(
@@ -1690,7 +1984,11 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           { ctx },
         );
         if (outcome.status !== "success") {
-          throw new WorkflowToolingFailure(`video.synthesizeVoice failed: ${outcome.status}${"reason" in outcome ? ` (${outcome.reason})` : ""}`);
+          // Every TTS route down (2026-09-10: a billing hold took every Google
+          // API in the project offline at once) is a route outage, not a fact
+          // about the script. Silent, with the captions, beats no clip.
+          console.warn(`05-voiceover: video.synthesizeVoice ${outcome.status}${"reason" in outcome ? ` (${outcome.reason})` : ""}; running silent`);
+          return null;
         }
         const result = outcome.result as { outputPath: string; durationSeconds: number | null };
         const notes: string[] = [];
@@ -1749,7 +2047,13 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
 
       // ── 08: render — hold each plate for its beat, lay the voice under,
       //        burn the captions, frame it. ──
-      const rendered = await wf.step.code(rev("08-render"), async (): Promise<{ outputPath: string; durationSeconds: number | null }> => {
+      /**
+       * The render as one PASS. `passRev` names its checkpoints and `workDir`
+       * its files, so the re-pick after the visual QA (below) renders under
+       * `08-render-repick` into its own directory instead of replaying the
+       * first pass's checkpoint or overwriting its clip.
+       */
+      const renderPass = (passRev: (id: string) => string, workDir: string) => wf.step.code(passRev("08-render"), async (): Promise<{ outputPath: string; durationSeconds: number | null; beatWindows: Array<{ index: number; start: number; end: number; narration: string }> }> => {
         await fs.mkdir(workDir, { recursive: true });
 
         // How long each beat holds. With a voice, the plates stretch to cover
@@ -1770,15 +2074,35 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         // "karoslabs.com" is never burned as "Kairoslabs.com" and a cue ends
         // where the phrase does). Without a timed voice, the on-screen text
         // per beat, held for the beat.
+        // How long the cold open holds: up to HOOK_PLATE_SECONDS out of beat
+        // 1's hold, as long as beat 1 keeps enough footage after it. Zero
+        // means no cold open (no tool, a text-led short, or a beat 1 too
+        // short to share).
+        const leadSeconds = (() => {
+          if (hookPlate === null || holds[0] === undefined) return 0;
+          const lead = Math.min(HOOK_PLATE_SECONDS, holds[0] / 2);
+          return holds[0] - lead >= MIN_LEAD_REMAINDER_SECONDS ? Number(lead.toFixed(2)) : 0;
+        })();
+
+        // Captions: the SCRIPT's words, timed by the voice's transcript, cut
+        // at phrase boundaries; none while the cold open is on screen (the
+        // hook is already the picture, twice is noise). Without a timed voice,
+        // the on-screen text per beat, held for the beat.
         const cues =
           voice && voice.words.length > 0
-            ? buildScriptCaptions(
-                script.beats.map((b) => b.narration),
-                voice.words.map((w) => ({ text: w.text, start: w.start, end: w.end })),
-                voice.durationSeconds ?? undefined,
+            ? cuesToSrt(
+                buildPhraseCues(
+                  alignScriptToTimings(
+                    scriptWords(script.beats.map((b) => b.narration)),
+                    voice.words.map((w) => ({ text: w.text, start: w.start, end: w.end })),
+                    voice.durationSeconds ?? undefined,
+                  ),
+                )
+                  .filter((cue) => cue.end > leadSeconds + 0.05)
+                  .map((cue) => ({ ...cue, start: Math.max(cue.start, leadSeconds) })),
               )
             : buildSrt(
-                script.beats.map((b, i) => ({ word: b.onScreenText, start: i === 0 ? 0 : boundaries[i - 1]!, end: boundaries[i]! - 0.05 })),
+                script.beats.map((b, i) => ({ word: b.onScreenText, start: i === 0 ? leadSeconds : boundaries[i - 1]!, end: boundaries[i]! - 0.05 })),
                 0,
                 1,
               );
@@ -1793,9 +2117,14 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
             // whose hold ended up too short for two legible shots (a voice
             // that rushed the line) keeps its first shot alone.
             clips: beatPlates.slice(0, script.beats.length).flatMap((beatPlate, i) => {
-              const hold = holds[i]!;
+              // The cold open takes its seconds out of beat 1's hold.
+              const lead = i === 0 ? leadSeconds : 0;
+              const hold = holds[i]! - lead;
               const shots = beatPlate.shots.length === 2 && hold >= 2 * MIN_PLATE_HOLD_SECONDS ? beatPlate.shots : beatPlate.shots.slice(0, 1);
-              return shots.map((shot) => ({ path: shot.path, holdSeconds: Number((hold / shots.length).toFixed(2)) }));
+              return [
+                ...(lead > 0 && hookPlate !== null ? [{ path: hookPlate.path, holdSeconds: lead }] : []),
+                ...shots.map((shot) => ({ path: shot.path, holdSeconds: Number((hold / shots.length).toFixed(2)) })),
+              ];
             }),
             outputPath: path.join(workDir, "sequence.mp4"),
             ...(voice ? { voiceoverPath: voice.path } : {}),
@@ -1824,38 +2153,118 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         // reads one line at a time. Silent, the on-screen text IS the caption
         // (built above) and no card repeats it.
         const titleCards: TitleCard[] =
-          voice && voice.words.length > 0 && script.beats[0] !== undefined
+          leadSeconds === 0 && voice && voice.words.length > 0 && script.beats[0] !== undefined
             ? [{ text: script.beats[0].onScreenText, start: 0, end: Math.max(0.5, Math.min(boundaries[0]!, 4) - 0.05) }]
             : [];
 
         // Plates are portrait: fill the picture area edge to edge rather than
         // letterboxing a 9:16 clip inside a 9:12.7 region (the 2026-09-08
         // render had dark side bars either side of every plate).
-        return brandFrame(bedded.path, workDir, srtPath, titleCards, "cover", captionFontFor(language));
+        const framed = await brandFrame(bedded.path, workDir, srtPath, titleCards, "cover", captionFontFor(language));
+        // Where each beat's footage sits in the finished clip, for the QA's
+        // per-beat relevance read (the cold open is part of beat 1's window).
+        const beatWindows = script.beats.map((b, i) => ({ index: i + 1, start: Number((i === 0 ? 0 : boundaries[i - 1]!).toFixed(2)), end: Number(boundaries[i]!.toFixed(2)), narration: b.narration }));
+        return { ...framed, beatWindows };
       });
 
-      return finishDraft(rev, revision, {
-        commentary: { caption: script.caption, about: script.about },
-        script,
-        // What actually shipped: a voice skipped at the ceiling is a silent short.
-        voiceover: voice !== null,
-        plateSources,
-        budgetPlan,
-        replans,
-        renderedPath: rendered.outputPath,
-        durationSeconds: rendered.durationSeconds ?? script.beats.reduce((a, b) => a + b.seconds, 0),
-        // What the viewer actually meets first is beat 1's narration; the
-        // script's `hook` field is the same line when the model follows its
-        // prompt, and when it does not, judging the render against a line
-        // nobody hears (as the 2026-09-08 visual QA did) is the wrong test.
-        hookLine: script.beats[0]?.narration ?? script.hook,
-        guardrailText: [script.caption, script.about, ...script.beats.map((b) => b.narration)].join("\n\n"),
-        captionsExpected: true,
-        estimatedCostUsd: estimate.estimatedTotalUsd,
-        // On a replay of a checkpointed render the helper never ran; the
-        // reviewer then sees "unknown" rather than a claim nobody verified.
-        music: musicOutcome ?? { applied: false, note: "render replayed from checkpoint; bed status not re-derived" },
+      /** One pass through the render and everything after it up to the human gate. */
+      const finishPass = async (passRev: (id: string) => string, dir: string, repick?: ClipDraft["repick"]): Promise<ClipDraft> => {
+        const rendered = await renderPass(passRev, dir);
+        return finishDraft(passRev, revision, {
+          commentary: { caption: script.caption, about: script.about },
+          script,
+          // What actually shipped: a voice skipped at the ceiling is a silent short.
+          voiceover: voice !== null,
+          plateSources: beatPlates.flatMap((p) => p.shots.map((s) => s.source)),
+          budgetPlan,
+          replans,
+          renderedPath: rendered.outputPath,
+          durationSeconds: rendered.durationSeconds ?? script.beats.reduce((a, b) => a + b.seconds, 0),
+          beatWindows: rendered.beatWindows,
+          // What the viewer actually meets first is beat 1's narration; the
+          // script's `hook` field is the same line when the model follows its
+          // prompt, and when it does not, judging the render against a line
+          // nobody hears (as the 2026-09-08 visual QA did) is the wrong test.
+          hookLine: script.beats[0]?.narration ?? script.hook,
+          guardrailText: [script.caption, script.about, ...script.beats.map((b) => b.narration)].join("\n\n"),
+          captionsExpected: true,
+          estimatedCostUsd: estimate.estimatedTotalUsd,
+          // On a replay of a checkpointed render the helper never ran; the
+          // reviewer then sees "unknown" rather than a claim nobody verified.
+          music: musicOutcome ?? { applied: false, note: "render replayed from checkpoint; bed status not re-derived" },
+          ...(repick !== undefined ? { repick } : {}),
+        });
+      };
+
+      const first = await finishPass(rev, workDir);
+
+      // ── 10d: RE-PICK the beats the visual QA said do not fit (2026-09-10) ──
+      //
+      // The QA scores every beat's footage against the line said over it and
+      // names the ones under 5 (`weakBeats`). Until now that name went to the
+      // reviewer and no further: the audit's 2026-09-08 clips shipped with a
+      // concert under a line about hiring because nobody was there to swap
+      // it. Now each named beat (the worst first, at most MAX_REPICK_BEATS)
+      // is searched again with every clip this run has used excluded, so the
+      // library must answer with something else; the short is re-rendered
+      // and re-watched under its own step ids, and the cut the QA scored
+      // better is what reaches the gate. ONE round: a beat still weak after
+      // its second clip ships named, as before. Free apart from the second
+      // QA call (~$0.01) and the relevance thumbnails, and skipped at the
+      // ceiling like everything else that costs.
+      const weak = first.visualQa?.weakBeats ?? [];
+      const stockTool = tools["video.findStockClip"];
+      if (weak.length === 0 || script.format === "text-led" || stockTool === undefined || (await wf.costSoFarUsd()) >= costCapUsd) return first;
+      const repicked = await wf.step.code(rev("10d-repick-weak-beats"), async (): Promise<{ swapped: Array<{ index: number; plate: PlateResult }>; misses: string[] }> => {
+        const swapped: Array<{ index: number; plate: PlateResult }> = [];
+        const misses: string[] = [];
+        const taken = [...usedStockIds];
+        for (const w of [...weak].sort((a, b) => a.relevance - b.relevance).slice(0, MAX_REPICK_BEATS)) {
+          const beat = script.beats[w.index - 1];
+          if (beat === undefined) continue;
+          const query = beat.stockQuery ?? stockQueryFromBrief(beat.visualBrief);
+          const found = await stockTool.execute(
+            { repoRoot, runId: wf.runId, query, minDurationSeconds: beat.seconds, excludeIds: [...taken], outputName: `plate-${w.index}-repick`, relevance: { brief: beat.visualBrief, narration: beat.narration } },
+            { ctx },
+          );
+          if (found.status !== "success") {
+            misses.push(`beat ${w.index} ("${query}"): ${found.status}${"reason" in found ? ` (${found.reason})` : ""}`);
+            continue;
+          }
+          const result = found.result as { path: string; pexelsId: number; sourceUrl: string };
+          taken.push(result.pexelsId);
+          swapped.push({ index: w.index, plate: { path: path.resolve(repoRoot, result.path), source: "stock", stockId: result.pexelsId, sourceUrl: result.sourceUrl } });
+        }
+        return { swapped, misses };
       });
+      const named = weak.map((w) => `beat ${w.index}`).join(", ");
+      if (repicked.swapped.length === 0) {
+        return { ...first, repick: { beats: [], note: `the visual QA scored ${named} under 5 and the library had nothing else for ${repicked.misses.join("; ")}` } };
+      }
+      // Applied OUTSIDE the step from its recorded result, so a replay that
+      // skips the step still renders the swapped plates.
+      for (const s of repicked.swapped) {
+        beatPlates[s.index - 1] = { shots: [s.plate] };
+        if (s.plate.stockId !== undefined) usedStockIds.push(s.plate.stockId);
+      }
+      const swappedBeats = repicked.swapped.map((s) => s.index);
+      const because = `${swappedBeats.map((i) => `beat ${i}`).join(", ")} re-sourced after the visual QA scored the footage under 5${repicked.misses.length > 0 ? ` (nothing else for ${repicked.misses.join("; ")})` : ""}`;
+      const passRev = (id: string) => rev(`${id}-repick`);
+      const second = await finishPass(passRev, path.join(workDir, "repick"), { beats: swappedBeats, note: because });
+
+      // The cut the QA scored better ships. A re-render the QA did not get to
+      // watch (an outage between the two calls) ships too — its footage was
+      // at least chosen against the line, where the first's was scored
+      // against it and failed — and the gate then holds for a person, as
+      // any unreviewed clip does.
+      const weakCount = (d: ClipDraft): number => d.visualQa?.weakBeats?.length ?? 0;
+      const worse = second.visualQa !== undefined && first.visualQa !== undefined && ((first.visualQa.passed && !second.visualQa.passed) || weakCount(second) > weakCount(first));
+      if (worse) {
+        return { ...first, repick: { beats: swappedBeats, note: `${because}; the re-render scored worse (${second.visualQa?.reason ?? `${weakCount(second)} weak beat(s)`}), so the first cut ships` } };
+      }
+      const stillWeak = second.visualQa?.weakBeats?.map((w) => `beat ${w.index}`) ?? [];
+      const outcome = second.visualQa === undefined ? "the QA did not watch the re-render" : stillWeak.length === 0 ? "the re-render scored clean" : `the re-render still names ${stillWeak.join(", ")}`;
+      return { ...second, repick: { beats: swappedBeats, note: `${because}; ${outcome}` } };
     };
 
     /**
@@ -1866,7 +2275,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
     const finishDraft = async (
       rev: (id: string) => string,
       revision: number,
-      draft: Omit<ClipDraft, "uploaded" | "costSoFarUsd"> & { guardrailText: string; captionsExpected: boolean },
+      draft: Omit<ClipDraft, "uploaded" | "costSoFarUsd" | "visualQa"> & { guardrailText: string; captionsExpected: boolean },
     ): Promise<ClipDraft> => {
       const { renderedPath } = draft;
 
@@ -1890,10 +2299,11 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       const uploaded = await wf.step.code(rev("10a-upload-clip"), async () => {
         const uploadTool = tools["video.uploadDeliverable"];
         if (!uploadTool) return null;
-        // Revision-suffixed for the same reason the work directory is: a
-        // revision must not overwrite the object the previous round's gate
-        // record links a reviewer to.
-        const objectName = revision === 0 ? "clip.mp4" : `clip-r${revision}.mp4`;
+        // Suffixed like the step ids (`clip.mp4`, `clip-r1.mp4`,
+        // `clip-repick.mp4`) for the same reason the work directory is: a
+        // revision or a re-pick must not overwrite the object the previous
+        // cut's gate record links a reviewer to.
+        const objectName = `${rev("clip")}.mp4`;
         const outcome = await uploadTool.execute(
           { localPath: renderedPath, objectPath: `tiktok/${wf.clientSlug}/${wf.runId}/${objectName}`, contentType: "video/mp4" },
           { ctx },
@@ -1938,7 +2348,8 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       //         is there to make and was never shown. A deployment without the
       //         gate records that it was skipped rather than pretending it
       //         passed. ──
-      const visualQa = await wf.step.code(rev("10b-visual-qa"), async (): Promise<{ skipped: true; note: string } | { skipped: false; passed: boolean; reason?: string; evidence: string[] }> => {
+      type WeakBeat = { index: number; relevance: number; note: string };
+      const visualQa = await wf.step.code(rev("10b-visual-qa"), async (): Promise<{ skipped: true; note: string } | { skipped: false; passed: boolean; reason?: string; evidence: string[]; weakBeats: WeakBeat[] }> => {
         const gate = tools["video.visualQaGate"];
         if (gate === undefined) return { skipped: true, note: "video.visualQaGate is not registered in this deployment" };
         if ((await wf.costSoFarUsd()) >= costCapUsd) return { skipped: true, note: "skipped: the run has reached its cost ceiling; the reviewer judges the clip unaided" };
@@ -1954,19 +2365,29 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
               brandColors: [videoBrand.ground, videoBrand.fg, ...(videoBrand.accent ? [videoBrand.accent] : [])],
               ...(videoBrand.language ? { language: videoBrand.language } : {}),
               format,
+              // The beats and their windows, so the model says WHICH shot is
+              // wallpaper under its line, not only that one is.
+              ...(draft.beatWindows !== undefined && draft.beatWindows.length > 0 ? { beats: draft.beatWindows.slice(0, 6) } : {}),
             },
           },
           { ctx },
         );
         if (outcome.status === "not_available") return { skipped: true, note: `video.visualQaGate is not available: ${outcome.reason}` };
-        if (outcome.status !== "success") throw new WorkflowToolingFailure(`video.visualQaGate: ${outcome.status}${"reason" in outcome ? ` (${outcome.reason})` : ""}`);
-        const verdict = outcome.result as GateVerdict;
-        if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`video.visualQaGate: ${verdict.reason}`);
+        // The QA is advisory: a route outage on the model that would have
+        // watched the clip (a 403 billing hold on Vertex, 2026-09-10) leaves
+        // the human to judge it unaided, recorded as such — never a failed
+        // run over a review nobody got to give.
+        if (outcome.status !== "success") return { skipped: true, note: `video.visualQaGate ${outcome.status}${"reason" in outcome ? ` (${outcome.reason})` : ""}; the reviewer judges the clip unaided` };
+        const verdict = outcome.result as GateVerdict & { beats?: WeakBeat[] };
+        if (verdict.verdict === "tooling_error") return { skipped: true, note: `video.visualQaGate could not review the clip (${verdict.reason}); the reviewer judges it unaided` };
+        // A beat scored under 5 is footage that does not fit its line: named
+        // to the reviewer beside the play button, never a hold on its own.
+        const weakBeats = (verdict.beats ?? []).filter((b) => b.relevance < 5);
         if (verdict.verdict === "content_fail") {
           console.warn(`${rev("10b-visual-qa")}: visual QA flagged the clip, shipping to review flagged rather than held: ${verdict.reason}`);
-          return { skipped: false, passed: false, reason: verdict.reason, evidence: verdict.evidence };
+          return { skipped: false, passed: false, reason: verdict.reason, evidence: verdict.evidence, weakBeats };
         }
-        return { skipped: false, passed: true, evidence: verdict.evidence };
+        return { skipped: false, passed: true, evidence: verdict.evidence, weakBeats };
       });
 
       // ── 10: terminal topic guardrail ──
@@ -2008,7 +2429,17 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         ...(draft.replans !== undefined ? { replans: draft.replans } : {}),
         ...(draft.music !== undefined ? { music: draft.music } : {}),
         ...(draft.plateSources !== undefined ? { plateSources: draft.plateSources } : {}),
-        ...(visualQa.skipped ? {} : { visualQa: { passed: visualQa.passed, ...(visualQa.reason !== undefined ? { reason: visualQa.reason } : {}), evidence: visualQa.evidence } }),
+        ...(draft.repick !== undefined ? { repick: draft.repick } : {}),
+        ...(visualQa.skipped
+          ? {}
+          : {
+              visualQa: {
+                passed: visualQa.passed,
+                ...(visualQa.reason !== undefined ? { reason: visualQa.reason } : {}),
+                evidence: visualQa.evidence,
+                ...(visualQa.weakBeats.length > 0 ? { weakBeats: visualQa.weakBeats } : {}),
+              },
+            }),
       };
     };
 
@@ -2057,13 +2488,18 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           ...(draft.budgetPlan !== undefined ? { budgetPlan: draft.budgetPlan } : {}),
           ...(draft.replans !== undefined ? { replans: draft.replans } : {}),
           ...(draft.music !== undefined ? { music: draft.music } : {}),
+          // Which beats were re-sourced after the QA, and how the re-render fared.
+          ...(draft.repick !== undefined ? { repick: draft.repick } : {}),
         },
         requiredRole: "account_manager",
         // An unanswered gate approves itself after an hour ONLY for a clip the
         // visual QA passed. Two prep clips scored 3/10 shipped on 2026-09-08
         // by `system:gate-timeout` after seven hours with nobody watching; a
         // flagged clip now waits for a person, however long that takes.
-        timeout: { duration: "1h", onTimeout: draft.visualQa !== undefined && !draft.visualQa.passed ? "hold" : "auto_approve" },
+        // A clip the visual QA never got to watch (a skipped or failed gate,
+        // as under the 2026-09-10 Vertex hold) waits for a person too: a clip
+        // nobody reviewed is exactly what the audit found shipping.
+        timeout: { duration: "1h", onTimeout: draft.visualQa !== undefined && draft.visualQa.passed ? "auto_approve" : "hold" },
       }),
       onDecision: async ({ revision, response, output }) => {
         // SCRUM-306 (AU23): a reject's drafted content previously had nowhere
@@ -2125,6 +2561,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
             // portal can show a flagged clip as flagged after the fact.
             ...(review.output.visualQa !== undefined ? { visualQa: review.output.visualQa } : {}),
             ...(review.output.plateSources !== undefined ? { plateSources: review.output.plateSources } : {}),
+            ...(review.output.repick !== undefined ? { repick: review.output.repick } : {}),
             costSoFarUsd: review.output.costSoFarUsd,
             ...(review.output.estimatedCostUsd !== undefined ? { estimatedCostUsd: review.output.estimatedCostUsd } : {}),
             maxCostUsd: costCapUsd,

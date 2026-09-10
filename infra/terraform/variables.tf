@@ -114,9 +114,9 @@ variable "dlq_subscription_name" {
 }
 
 variable "dlq_max_delivery_attempts" {
-  description = "Delivery attempts on the main subscription before a message is dead-lettered. README.md's old (unused) push-subscription example used 5; kept as the default for continuity, not because it was verified against a running config."
+  description = "Delivery attempts on the main subscription before a message is dead-lettered. Since 2026-09-10 the worker holds a message for one run-lease period (5 min) when the run is claimed by a lease that has not lapsed, so each attempt covers ~5.5 min; 12 attempts cover an hour of a killed worker's run before it dead-letters. Was 5 (README.md's old push example), which dead-lettered a deploy-orphaned run in 90 seconds."
   type        = number
-  default     = 5
+  default     = 12
 }
 
 variable "run_jobs_publisher_service_accounts" {

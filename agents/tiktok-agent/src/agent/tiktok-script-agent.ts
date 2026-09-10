@@ -52,7 +52,14 @@ export class TikTokScriptAgent extends BaseAgent<ShortScript> {
     id: "tiktok-script",
     description:
       "Write a 3-5 beat script for an original vertical short on the given topic: a cold-open hook, per-beat narration (≤30 words), on-screen text (≤8 words), a stock-footage search query and a concrete visual brief per beat (a scene — no text, no logos), and the post caption. Use the client's voice rules. Decide whether this piece wants a voiceover and say why. Add no claim the brief does not support.",
-    allowedTools: ["client.getVoiceRules", "client.getBrand", "client.getStrategy"],
+    // No tools since 2026-09-10: the workflow reads the voice rules, brand
+    // and strategy once (`03r-read-client-voice`) and hands them in. With the
+    // tools, every prep script cost three model turns of fetching before the
+    // one that wrote ($0.12-0.17 and 70-115 s per script); the same documents
+    // in the input make it one turn, the way the newsletter draft already
+    // works. Nothing else was ever on this list, so the step's reach is
+    // unchanged: it still cannot go and source a claim of its own.
+    allowedTools: [],
     outputSchema: ShortScriptSchema,
     modelPolicy: resolveModelPolicy("tiktok-script", { policy: "pinned", model: "claude-sonnet-4-6", contentLanguageSensitive: true }),
     // Pinned to "2" (2026-09-07): v2 states the mechanical tells the lint gate
@@ -68,7 +75,18 @@ export class TikTokScriptAgent extends BaseAgent<ShortScript> {
     // fallback), names beat 1's on-screen text as the one title card, and
     // bans the sales CTA beat the 2026-09-08 scripts kept appending. v4 stays
     // frozen.
-    skillRef: "tiktok-script@5",
+    // Pinned to "6" (2026-09-10): v6 adds the `format` decision (footage or
+    // text-led), tells the writer the hook is set large on screen for the
+    // first two seconds and that beat 1's narration IS the hook, and adds the
+    // "write for a thumb" rules after the 2026-09-08 shorts read like
+    // LinkedIn posts read aloud. v5 stays frozen.
+    // Pinned to "8" (2026-09-10): v8 asks for a different place per beat and
+    // welcomes people in library footage (prep run pubsub-21156942503403946
+    // set all four shots in an empty office), and bounds `thought` to a note
+    // (the same run spent 9,400 output tokens, $0.14 and 150 s of its one
+    // turn on a 31,000-character self-check). v7 receives `voiceRules`,
+    // `brand` and `strategy` in the input instead of fetching them.
+    skillRef: "tiktok-script@8",
     // The same lint 07-compliance runs afterwards, run FIRST on the model's
     // own output so a tell comes back as feedback it can act on rather than
     // as a held run. Two revisions: the first fix is usually enough, the

@@ -14,6 +14,14 @@ import type { CompletionRequest, CompletionResult, ModelAdapter } from "./types.
 function isFailoverWorthy(err: unknown): boolean {
   const status = extractHttpStatus(err);
   if (status === 429 || status === 404) return true;
+  // A 403 from a transport is the ROUTE refusing us — Vertex answered every
+  // call in both projects with `Lightning dunning decision is deny for
+  // project` on 2026-09-10 (a billing hold), and prep run
+  // pubsub-21157159789984068 failed its script step on it with the direct
+  // Anthropic secondary never tried. IAM and billing are the operator's
+  // problem to fix on that route; the same request on another route can
+  // succeed right now, exactly as with a 429.
+  if (status === 403) return true;
   // The direct Anthropic API with no prepaid credit left answers 400
   // `invalid_request_error: Your credit balance is too low to access the
   // Anthropic API`. That is the transport being unavailable, not the request
@@ -35,6 +43,9 @@ function classifyFailover(err: unknown): { errorClass: string; status?: number }
   const status = extractHttpStatus(err);
   if (status === 429) return { errorClass: "rate_limited", status };
   if (status === 404) return { errorClass: "not_served", status };
+  // Billing holds are named so an operator reading the failover log sees
+  // "pay the bill", not a generic forbidden.
+  if (status === 403) return { errorClass: /dunning|billing/i.test(err instanceof Error ? err.message : String(err)) ? "billing_denied" : "forbidden", status };
   if (status !== undefined) return { errorClass: "http_error", status };
   const name = err instanceof Error ? err.name : "unknown";
   return { errorClass: /timeout|abort/i.test(name) ? "timeout" : "other" };
