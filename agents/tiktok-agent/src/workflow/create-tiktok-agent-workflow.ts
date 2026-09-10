@@ -138,7 +138,10 @@ const MAX_DEDUPE_ATTEMPTS = 2;
  * (2026-09-09): the product rule is a short under two dollars, and one
  * generated clip cost more than that on its own.
  */
-export type PlateSource = "stock" | "still" | "text";
+export type PlateSource = "stock" | "still" | "text" | "client";
+
+/** A silent source shorter than this cannot carry a 20-40 s short without frozen frames; the plates come from the library instead. */
+export const MIN_CLIENT_FOOTAGE_SECONDS = 12;
 
 interface PlateResult {
   path: string;
@@ -1255,7 +1258,11 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       throw new WorkflowHeld(`no source footage from any tier — ${tierOutcomes.join("; ")}`);
     });
 
-    const format: ClipFormat = intake.sourceTier === "stock" ? "original-short" : "commentary-clip";
+    // `let`: a client's footage with no speech in it turns a commentary clip
+    // into an original short over that footage (see 02-transcribe).
+    let format: ClipFormat = intake.sourceTier === "stock" ? "original-short" : "commentary-clip";
+    /** The client's own silent footage, when it is what the plates are cut from. */
+    let clientFootage: { path: string; durationSeconds: number } | undefined;
 
     /**
      * The run's cost ceiling: the product rule, lowered (never raised) by the
@@ -1314,21 +1321,45 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       bounds = { startSeconds: 0, endSeconds: 0, words: [], text: "", needsCut: false };
     } else {
       // ── 02: transcript ──
-      const words: TranscriptWordLike[] = await wf.step.code("02-transcribe", async () => {
+      const transcript = await wf.step.code("02-transcribe", async (): Promise<{ words: TranscriptWordLike[]; durationSeconds: number | null }> => {
         const result = (await callTool(tools, "video.transcribe", { videoPath: intake.sourcePath }, ctx)) as {
           words?: TranscriptWordLike[];
+          durationSeconds?: number;
         };
         const spoken = (result.words ?? []).filter((w) => typeof w.text === "string" && w.text.trim().length > 0);
-        if (spoken.length === 0) {
-          await releaseReservation();
-          // Non-verbal source. The legacy loop falls back to a retention heatmap
-          // here; this engine has no heatmap tool, so the honest outcome is to
-          // stop rather than to guess a moment out of a silent timeline.
-          throw new WorkflowHeld("the source has no spoken words to clip, and this deployment has no retention-heatmap fallback");
-        }
-        return spoken;
+        return { words: spoken, durationSeconds: typeof result.durationSeconds === "number" ? result.durationSeconds : null };
       });
+      const words = transcript.words;
 
+      if (words.length === 0) {
+        // ── A SILENT source (2026-09-10): a screen demo, a b-roll reel, a
+        //    music-only edit. Until now this held ("no spoken words to clip"):
+        //    two of the audit's eleven runs died here. There is no moment to
+        //    pick, but there is footage the client chose to send, and the
+        //    original-short lane knows how to write a message over footage.
+        //    So: the run becomes an original short on the run's topic, and
+        //    its plates are cut from the client's own file, evenly across it,
+        //    instead of found in a library. A file too short to cover a short
+        //    without frozen frames falls back to library plates. ──
+        if (intake.topicSource === "footage") {
+          await releaseReservation();
+          throw new WorkflowHeld("the attached footage has no spoken words and the run named no topic to write over it: add a requestedTopic or a customPrompt, or attach footage with speech");
+        }
+        if (intake.sourcePath !== undefined && transcript.durationSeconds !== null && transcript.durationSeconds >= MIN_CLIENT_FOOTAGE_SECONDS) {
+          clientFootage = { path: intake.sourcePath, durationSeconds: transcript.durationSeconds };
+        } else {
+          console.warn(`02-transcribe: the silent source is ${transcript.durationSeconds ?? "of unknown length"} s, under ${MIN_CLIENT_FOOTAGE_SECONDS}; the short's plates come from the library instead`);
+        }
+        format = "original-short";
+        moment = await wf.step.code("03-select-moment", () => ({
+          startSeconds: 0,
+          endSeconds: CLIP_DURATION_MIN_SECONDS,
+          hookLine: intake.topic,
+          hookType: "sharp-one-liner" as const,
+          rationale: clientFootage !== undefined ? "silent source — the script carries the message over the client's own footage, cut evenly across it" : "silent source too short to cut from — the script carries the message over library footage",
+        }));
+        bounds = { startSeconds: 0, endSeconds: 0, words: [], text: "", needsCut: false };
+      } else {
       // ── 03: PICK-moment (judgment) ──
       moment = await wf.step.code("03-select-moment", async () => {
         const agent = new TikTokMomentAgent({ router: options.router, tools, promptStore: options.promptStore });
@@ -1377,6 +1408,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         return result;
       });
       bounds = { startSeconds: cut.startSeconds, endSeconds: cut.endSeconds, words: cut.words, text: cut.text, needsCut: true };
+      }
     }
 
     // ── 07b: the client's brand, for the framed clip. Best-effort, never
@@ -1791,6 +1823,10 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
                     ...(intake.discovered ? { topicBrief: intake.discovered } : {}),
                     clientProfile: profile,
                     ...clientVoice,
+                    // The writer should know the pictures are the client's own file, not a library it can steer.
+                    ...(clientFootage !== undefined
+                      ? { footageNote: `The plates are cut from the client's own attached footage (${Math.round(clientFootage.durationSeconds)} s, no speech in it), spread evenly across it. Write beats that read over generic shots of that footage; stockQuery and visualBrief are not used for this short.` }
+                      : {}),
                     ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
                     ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
                     ...(dedupeAvoid !== undefined ? { dedupeAvoid } : {}),
@@ -1854,10 +1890,10 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           const narrationChars = script.beats.reduce((n, b) => n + b.narration.trim().length, 0);
           const narrationWords = script.beats.reduce((n, b) => n + b.narration.trim().split(/\s+/).length, 0);
           const estimate = await wf.step.code(planRev("03v-estimate-cost"), async () =>
-            estimateOriginalShortCost({ spentSoFarUsd: await wf.costSoFarUsd(), narrationChars, beats: script.beats.filter((b) => b.stat === undefined).length, voiceover, stillsAllowed: script.format !== "text-led", visualQaRegistered, costCapUsd }),
+            estimateOriginalShortCost({ spentSoFarUsd: await wf.costSoFarUsd(), narrationChars, beats: script.beats.filter((b) => b.stat === undefined).length, voiceover, stillsAllowed: script.format !== "text-led" && clientFootage === undefined, visualQaRegistered, costCapUsd }),
           );
           if (estimate.estimatedTotalUsd <= costCapUsd) {
-            return { script, voiceover, stillsAllowed: script.format !== "text-led", estimate, replans: attempt, budgetPlan: attempt === 0 ? "original" : "replan" };
+            return { script, voiceover, stillsAllowed: script.format !== "text-led" && clientFootage === undefined, estimate, replans: attempt, budgetPlan: attempt === 0 ? "original" : "replan" };
           }
           if (attempt < MAX_BUDGET_REPLANS) {
             budgetFeedback = budgetFeedbackFor(estimate, replanTargetUsd, script.beats.length, narrationWords);
@@ -1952,6 +1988,22 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           if (beat.stat !== undefined) {
             const rendered = await renderTextPlate(beat.stat.label, `plate-${i + 1}-stat`, beat.seconds, `beat ${i + 1} (stat card)`, beat.stat);
             if (rendered !== undefined) return { shots: [{ path: rendered, source: "text" }] };
+          }
+          // The client's own silent footage (2026-09-10): each beat is a cut
+          // of it, the cuts spread evenly across the file so the short walks
+          // through what the client sent rather than looping its first
+          // seconds. Free, no library, no model; a failed cut falls through
+          // to the library like any other miss.
+          if (clientFootage !== undefined) {
+            const cutTool = tools["video.cutClip"];
+            if (cutTool !== undefined) {
+              const span = Math.max(0, clientFootage.durationSeconds - beat.seconds);
+              const start = Number((script.beats.length === 1 ? 0 : (span * i) / (script.beats.length - 1)).toFixed(2));
+              const end = Number(Math.min(start + beat.seconds, clientFootage.durationSeconds).toFixed(2));
+              const outcome = await cutTool.execute({ sourcePath: clientFootage.path, startSeconds: start, endSeconds: end, outputPath: path.join(baseWorkDir, `plate-${i + 1}-client.mp4`) }, { ctx });
+              if (outcome.status === "success") return { shots: [{ path: (outcome.result as { outputPath: string }).outputPath, source: "client" }] };
+              console.warn(`04p-plate-${i + 1}: cutting the client's footage at ${start}s failed (${outcome.status}${"reason" in outcome ? `: ${outcome.reason}` : ""}); the library serves this beat`);
+            }
           }
           const query = beat.stockQuery ?? stockQueryFromBrief(beat.visualBrief);
           const misses: string[] = [];
@@ -2255,7 +2307,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
                 ...shots.map((shot) => ({
                   path: shot.path,
                   holdSeconds: Number((hold / shots.length).toFixed(2)),
-                  ...(shot.source === "stock" ? { move: stockShotsPlaced++ % 2 === 0 ? ("push-in" as const) : ("pull-back" as const) } : {}),
+                  ...(shot.source === "stock" || shot.source === "client" ? { move: stockShotsPlaced++ % 2 === 0 ? ("push-in" as const) : ("pull-back" as const) } : {}),
                 })),
               ];
             }),

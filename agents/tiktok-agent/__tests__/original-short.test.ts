@@ -329,6 +329,52 @@ async function run(h: Harness, runId: string, turns: unknown[] = [VOICED_SCRIPT]
   return new WorkflowEngine(new MemoryDurableStepStore()).run(workflow, { ...PARAMS, runId, input: {} });
 }
 
+describe("silent client footage (2026-09-10)", () => {
+  it("attached footage with no speech becomes the plates of an original short on the requested topic, cut evenly across the file, never a hold", async () => {
+    const h = stubTools();
+    const sourcePath = path.join(os.tmpdir(), "client-demo.mp4");
+    const cuts: Array<Record<string, unknown>> = [];
+    const realTranscribe = h.tools["video.transcribe"]!;
+    h.tools["video.transcribe"] = {
+      ...realTranscribe,
+      async execute(args: unknown, opts: unknown) {
+        if ((args as { videoPath: string }).videoPath === sourcePath) return { status: "success" as const, result: { words: [], durationSeconds: 60 } };
+        return (realTranscribe as unknown as { execute: (a: unknown, o: unknown) => Promise<unknown> }).execute(args, opts);
+      },
+    } as unknown as AgentToolRegistry[string];
+    h.tools["video.cutClip"] = {
+      name: "video.cutClip",
+      version: "1.0.0",
+      inputSchema: { safeParse: (v: unknown) => ({ success: true as const, data: v }) },
+      async execute(args: unknown) {
+        cuts.push(args as Record<string, unknown>);
+        return { status: "success" as const, result: { outputPath: (args as { outputPath: string }).outputPath, durationSeconds: 6 } };
+      },
+    } as unknown as AgentToolRegistry[string];
+
+    const workflow = createTikTokAgentWorkflow({ tools: h.tools, promptStore: new FilePromptStore(PROMPTS_ROOT), router: sequentialFakeRouter([VOICED_SCRIPT]), autoApprove: true, repoRoot: os.tmpdir(), fetchImpl: fakeAudioFetch });
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflow, { ...PARAMS, runId: "run-os-silent-client", input: { sourcePath, requestedTopic: "Why the first hire is a bet on the company you are becoming" } });
+    expect(result.status).toBe("completed");
+    // No library, no still, no moment agent: the client's file is the footage.
+    expect(h.calls).not.toContain("video.findStockClip");
+    expect(h.calls).not.toContain("image.generate");
+    expect(cuts).toHaveLength(VOICED_SCRIPT.beats.length);
+    expect(cuts.every((c) => c["sourcePath"] === sourcePath)).toBe(true);
+    // Spread across the 60 s file: the first cut opens it, the last ends on its last second.
+    expect(cuts[0]!["startSeconds"]).toBe(0);
+    const last = cuts[cuts.length - 1]!;
+    expect(last["endSeconds"]).toBe(60);
+    expect(Number(last["endSeconds"]) - Number(last["startSeconds"])).toBe(VOICED_SCRIPT.beats[VOICED_SCRIPT.beats.length - 1]!.seconds);
+    const shipped = h.deliverables[0] as { format?: string; sourceTier?: string; plateSources?: string[] };
+    expect(shipped.format).toBe("original-short");
+    expect(shipped.sourceTier).toBe("user-asset");
+    expect(shipped.plateSources).toEqual(VOICED_SCRIPT.beats.map(() => "client"));
+    // The client's shots move like library shots do.
+    const clips = h.composeArgs[0]!["clips"] as Array<{ path: string; move?: string }>;
+    expect(clips.filter((c) => c.path.includes("-client.mp4")).map((c) => c.move)).toEqual(["push-in", "pull-back", "push-in"]);
+  }, 20_000);
+});
+
 describe("footage-only revision (2026-09-10)", () => {
   const workflowFor = (h: Harness, turns: unknown[], prompts: string[]) =>
     createTikTokAgentWorkflow({ tools: h.tools, promptStore: new FilePromptStore(PROMPTS_ROOT), router: sequentialFakeRouter(turns, prompts), repoRoot: os.tmpdir(), fetchImpl: fakeAudioFetch });
