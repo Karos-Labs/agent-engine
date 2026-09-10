@@ -20,7 +20,9 @@
  * different code path.
  */
 import { createModelRouterFromEnv } from "@agent-engine/core";
+import { RetryLater } from "@agent-engine/queue";
 import { logError } from "@agent-engine/telemetry";
+import { RUN_LEASE_TTL_MS } from "@agent-engine/workflow";
 import { RunJobRequestSchema, startRunJob } from "./run-job.js";
 import { createAgentDefinitionStoreFromEnv } from "./wiring/agent-definitions-store.js";
 import { createDurableStoreFromEnv } from "./wiring/durable-store.js";
@@ -94,28 +96,32 @@ async function main(): Promise<void> {
       throw new Error(outcome.message);
     }
     if (outcome.outcome === "conflict") {
-      // NACK, so Pub/Sub redelivers this later. Acking here is what stranded
-      // two runs on 2026-09-03: a deploy killed the worker mid-run, Pub/Sub
-      // redelivered 22 seconds later, the run's lease had not yet lapsed so
-      // the claim was refused — and acking threw away the only message that
-      // could ever have resumed it. Both runs sat in `running` forever.
+      // Hold the message for one lease period, THEN let it redeliver. Acking
+      // here is what stranded two runs on 2026-09-03: a deploy killed the
+      // worker mid-run, Pub/Sub redelivered 22 seconds later, the run's lease
+      // had not yet lapsed so the claim was refused — and acking threw away
+      // the only message that could ever have resumed it. A bare NACK (the
+      // 2026-09-03 fix) stranded prep run pubsub-21157277198365907 on
+      // 2026-09-10 the other way round: five redeliveries ten seconds apart
+      // all met the same live-looking lease and the message dead-lettered
+      // 90 seconds after the deploy, four minutes before the lease would have
+      // lapsed. `RetryLater` spends one delivery attempt per lease period.
       //
-      // Redelivery converges either way. If a live execution really does own
-      // the run, it finishes and the status becomes terminal, at which point a
-      // later delivery claims it and replays from checkpoints — a cheap no-op,
-      // since every completed step short-circuits (RFC-01 §8.1). If the owner
-      // is dead, the lease lapses and the redelivery resumes the run properly.
-      // A duplicate that exhausts the subscription's delivery attempts
-      // dead-letters, which is visible and harmless; a run that can never be
-      // resumed is neither.
-      logError("queue-consumer: run could not be claimed, nacking for redelivery", undefined, {
+      // Redelivery then converges either way. If a live execution really does
+      // own the run, it finishes and the status becomes terminal, at which
+      // point the next delivery claims it and replays from checkpoints — a
+      // cheap no-op, since every completed step short-circuits (RFC-01 §8.1).
+      // If the owner is dead, the lease has lapsed by the time the message
+      // comes back and the redelivery resumes the run properly.
+      logError("queue-consumer: run could not be claimed, holding the message for one lease period before redelivery", undefined, {
         messageId: message.id,
         runId: outcome.runId,
         clientSlug: parsed.data.clientSlug,
         productId: parsed.data.productId,
         reason: outcome.message,
+        retryInMs: RUN_LEASE_TTL_MS + 15_000,
       });
-      throw new Error(`run "${outcome.runId}" is already claimed; nacking for redelivery: ${outcome.message}`);
+      throw new RetryLater(RUN_LEASE_TTL_MS + 15_000, `run "${outcome.runId}" is already claimed; redelivering after its lease can lapse: ${outcome.message}`);
     }
     console.log(`queue-consumer: run "${outcome.runId}" -> ${outcome.status}`);
   });

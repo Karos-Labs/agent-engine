@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import type { Message, PubSub } from "@google-cloud/pubsub";
 import { GooglePubSubQueueAdapter } from "../src/adapters/google-pubsub-adapter.js";
+import { RetryLater } from "../src/types.js";
 
 /**
  * A minimal duck-typed `Message`-shaped fake: a real `EventEmitter` (so
@@ -115,6 +116,34 @@ describe("GooglePubSubQueueAdapter", () => {
       expect(handler).toHaveBeenCalledTimes(1);
       expect(message.nack).toHaveBeenCalledTimes(1);
       expect(message.ack).not.toHaveBeenCalled();
+    });
+
+    it("a handler that throws RetryLater has its message HELD for the delay and nacked only then (prep run pubsub-21157277198365907)", async () => {
+      vi.useFakeTimers();
+      try {
+        const sub = fakeSubscription();
+        const client = fakePubSub({ subscription: sub });
+        const adapter = new GooglePubSubQueueAdapter({ client });
+
+        const handler = vi.fn().mockRejectedValue(new RetryLater(315_000, "run is claimed by a worker whose lease has not lapsed"));
+        adapter.subscribe("my-subscription", handler);
+
+        const message = fakeMessage();
+        sub.emit("message", message);
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(handler).toHaveBeenCalledTimes(1);
+        // Neither acked nor nacked while the wait runs: the message stays in flight.
+        expect(message.ack).not.toHaveBeenCalled();
+        expect(message.nack).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(314_000);
+        expect(message.nack).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(message.nack).toHaveBeenCalledTimes(1);
+        expect(message.ack).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("nacks non-JSON message data without ever invoking the handler", async () => {

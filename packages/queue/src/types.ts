@@ -42,8 +42,34 @@ export interface PublishResult {
  * how many times a NACKed message is retried before it's given up on — this
  * interface deliberately has no dead-letter concept of its own to duplicate
  * that.
+ *
+ * Throwing `RetryLater` is the third outcome: the message is held, unacked,
+ * for `delayMs` and NACKed only then, so the redelivery lands after the wait
+ * instead of within the provider's minimum backoff.
  */
 export type QueueMessageHandler<TPayload = unknown> = (message: QueueMessage<TPayload>) => Promise<void>;
+
+/**
+ * "Not now — ask again in `delayMs`." (2026-09-10.)
+ *
+ * A plain NACK redelivers within the subscription's minimum backoff (10 s on
+ * the run-jobs subscription), and every redelivery counts against
+ * max-delivery-attempts (5). A run whose worker a deploy just killed is
+ * unclaimable until its lease lapses (`RUN_LEASE_TTL_MS`, five minutes), so
+ * five fast NACKs dead-lettered prep run pubsub-21157277198365907 inside 90
+ * seconds and it sat in `running` with nobody able to resume it. Holding the
+ * message for the lease instead (the client keeps its ack deadline alive
+ * while it is held) spends ONE attempt per lease period, so the same five
+ * attempts cover the better part of half an hour.
+ */
+export class RetryLater extends Error {
+  readonly delayMs: number;
+  constructor(delayMs: number, message: string) {
+    super(message);
+    this.name = "RetryLater";
+    this.delayMs = Math.max(0, delayMs);
+  }
+}
 
 export interface QueueSubscription {
   /** Stops pulling new messages and releases the underlying connection. Idempotent. */
