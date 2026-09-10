@@ -2113,6 +2113,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
 
         const compose = tools["video.composeSequence"];
         if (compose === undefined) throw new WorkflowToolingFailure("video.composeSequence is not registered — an original short cannot be assembled");
+        let stockShotsPlaced = 0;
         const composed = await compose.execute(
           {
             // A long beat with two shots cuts halfway through its hold; one
@@ -2125,7 +2126,16 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
               const shots = beatPlate.shots.length === 2 && hold >= 2 * MIN_PLATE_HOLD_SECONDS ? beatPlate.shots : beatPlate.shots.slice(0, 1);
               return [
                 ...(lead > 0 && hookPlate !== null ? [{ path: hookPlate.path, holdSeconds: lead }] : []),
-                ...shots.map((shot) => ({ path: shot.path, holdSeconds: Number((hold / shots.length).toFixed(2)) })),
+                // Library footage gets a slow move, alternating push-in and
+                // pull-back shot by shot across the short (2026-09-10): the
+                // 2026-09-08/10 renders played every plate dead still. A
+                // still already moves (`video.stillToClip`), a text plate
+                // has its bar, so both stay as they are.
+                ...shots.map((shot) => ({
+                  path: shot.path,
+                  holdSeconds: Number((hold / shots.length).toFixed(2)),
+                  ...(shot.source === "stock" ? { move: stockShotsPlaced++ % 2 === 0 ? ("push-in" as const) : ("pull-back" as const) } : {}),
+                })),
               ];
             }),
             outputPath: path.join(workDir, "sequence.mp4"),

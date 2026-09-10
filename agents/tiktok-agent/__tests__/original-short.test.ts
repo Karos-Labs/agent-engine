@@ -913,6 +913,19 @@ describe("original short: real footage, then a still, never generated video (202
     expect(srt).toMatch(/^1\n00:00:00,000 --> /);
   }, 20_000);
 
+  it("library shots alternate a slow push-in and pull-back across the short; the hook card stays still", async () => {
+    const h = stubTools();
+    const result = await run(h, "run-os-moves");
+    expect(result.status).toBe("completed");
+    const clips = h.composeArgs[0]!["clips"] as Array<{ path: string; move?: string }>;
+    const hook = clips.find((c) => c.path.includes("plate-hook"));
+    expect(hook).toBeDefined();
+    expect([undefined, "none"]).toContain(hook!.move);
+    const stock = clips.filter((c) => !c.path.includes("plate-hook"));
+    expect(stock.length).toBeGreaterThanOrEqual(3);
+    expect(stock.map((c) => c.move)).toEqual(stock.map((_, i) => (i % 2 === 0 ? "push-in" : "pull-back")));
+  }, 20_000);
+
   it("a beat 1 too short to share skips the cold open and keeps the title card", async () => {
     // A 4-second beat with a two-second cold open leaves two seconds of footage: fine. Force a
     // tighter beat 1 so the remainder falls under the floor and the card stands in.
