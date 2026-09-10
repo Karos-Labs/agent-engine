@@ -426,6 +426,35 @@ export function scriptVoiceIssues(script: ShortScript): string[] {
   return issues;
 }
 
+/** A place word this many beats share means the short is one room. Three of four (prep run pubsub-21156942503403946) is the case that prompted it. */
+export const SAME_PLACE_BEATS = 3;
+
+/** Words in a stock query that say how a place is lit or framed, not which place it is. */
+const QUERY_FRAMING_WORDS = new Set([
+  "empty", "close", "closeup", "up", "wide", "shot", "view", "angle", "interior", "exterior", "light", "glow", "dark", "night", "morning", "dusk", "dawn", "evening", "afternoon", "day", "sunset", "sunrise", "rain", "window", "ceiling", "wall", "floor", "receding", "overhead", "slow", "still", "detail", "texture", "background", "blind", "blinds",
+  "a", "an", "and", "the", "of", "on", "in", "at", "with", "from", "by",
+]);
+
+/**
+ * The beats whose stock queries put the short in one place (2026-09-10).
+ * Prep run pubsub-21156942503403946 asked the library for "empty office desk
+ * night monitor glow", "empty office chair desk morning window blind",
+ * "analog clock wall office close" and "empty office corridor fluorescent
+ * ceiling receding": four beats, one room, a viewer's thumb already moving.
+ * The prompt asks for a different place per beat; this is the check that
+ * makes the rule real, handed back once with the voice issues.
+ */
+export function shotVarietyIssues(script: ShortScript): string[] {
+  if (script.format === "text-led") return [];
+  const perBeat = script.beats.map((b) => new Set((b.stockQuery ?? "").toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 2 && !QUERY_FRAMING_WORDS.has(w))));
+  const counts = new Map<string, number>();
+  for (const words of perBeat) for (const w of words) counts.set(w, (counts.get(w) ?? 0) + 1);
+  const shared = [...counts.entries()].filter(([, n]) => n >= SAME_PLACE_BEATS).sort((a, b) => b[1] - a[1]);
+  if (shared.length === 0) return [];
+  const [word, n] = shared[0]!;
+  return [`${n} of ${script.beats.length} shots are set in the same place ("${word}"); give each beat its own place: an office, then a street, a kitchen, a workshop, a car`];
+}
+
 export function dropRepeatedBeats(script: ShortScript): ShortScript {
   const seen = new Set<string>();
   const kept = script.beats.filter((b) => {
@@ -1688,10 +1717,12 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
                 // the gate hears it), except a repeated beat, which is dropped.
                 const first = repairScriptStructure(await draftOnce(agentStepId, undefined));
                 const firstVoice = scriptVoiceIssues(first.repaired);
-                if (first.issues.length === 0 && firstVoice.length === 0) return first.repaired;
+                const firstShots = shotVarietyIssues(first.repaired);
+                if (first.issues.length === 0 && firstVoice.length === 0 && firstShots.length === 0) return first.repaired;
                 const note = [
                   first.issues.length > 0 ? `Structure problem in your last draft: ${first.issues.join("; ")}. Rewrite so every beat carries its own line.` : undefined,
                   firstVoice.length > 0 ? `Voice problem in your last draft: ${firstVoice.join("; ")}. Keep the message; rewrite the lines as speech.` : undefined,
+                  firstShots.length > 0 ? `Shot problem in your last draft: ${firstShots.join("; ")}. Keep the words; change only the stockQuery and visualBrief of the beats that share the place.` : undefined,
                 ]
                   .filter((s): s is string => s !== undefined)
                   .join("\n");

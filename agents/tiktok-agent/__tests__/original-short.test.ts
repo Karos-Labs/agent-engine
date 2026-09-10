@@ -8,7 +8,7 @@ import { FilePromptStore, type AgentToolRegistry, type CompletionResult, type Mo
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { BrandFrameInputSchema, ComposeSequenceInputSchema, MixMusicInputSchema, SelfEvalGateInputSchema, StillToClipInputSchema, SynthesizeVoiceInputSchema, TextPlateInputSchema, TranscribeInputSchema } from "@agent-engine/tool-karos-video";
 import { FindStockClipInputSchema, GenerateImageInputSchema, VisualQaGateInputSchema } from "@agent-engine/tool-karos-media";
-import { createTikTokAgentWorkflow, dropRepeatedBeats, repairScriptStructure, scriptVoiceIssues } from "../src/workflow/create-tiktok-agent-workflow.js";
+import { createTikTokAgentWorkflow, dropRepeatedBeats, repairScriptStructure, scriptVoiceIssues, shotVarietyIssues } from "../src/workflow/create-tiktok-agent-workflow.js";
 
 /**
  * The ORIGINAL-SHORT production pass in detail: the voiceover decision, the
@@ -351,6 +351,40 @@ describe("scriptVoiceIssues", () => {
     expect(issues[2]).toContain("in today's");
     expect(issues[2]).toContain("the real X is");
   });
+});
+
+describe("shotVarietyIssues (prep run pubsub-21156942503403946)", () => {
+  const withQueries = (queries: string[]) => ({
+    ...VOICED_SCRIPT,
+    beats: queries.map((q, i) => ({ ...VOICED_SCRIPT.beats[i % VOICED_SCRIPT.beats.length]!, stockQuery: q })),
+  });
+
+  it("names the place three or more beats share, ignoring how each shot is lit or framed", () => {
+    const issues = shotVarietyIssues(withQueries(["empty office desk night monitor glow", "empty office chair desk morning window blind", "analog clock wall office close", "empty office corridor fluorescent ceiling receding"]));
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('4 of 4 shots are set in the same place ("office")');
+  });
+
+  it("is quiet for beats in different places, for two beats that share one, for text-led shorts and for beats without a query", () => {
+    expect(shotVarietyIssues(withQueries(["empty office desk night", "city intersection rain", "hands typing laptop", "warehouse forklift"]))).toEqual([]);
+    expect(shotVarietyIssues(withQueries(["empty office desk night", "office corridor", "city street rain"]))).toEqual([]);
+    expect(shotVarietyIssues({ ...withQueries(["office desk", "office chair", "office wall"]), format: "text-led" as const })).toEqual([]);
+    expect(shotVarietyIssues(VOICED_SCRIPT)).toEqual([]);
+  });
+
+  it("a one-room draft is redrafted ONCE with the place named, alongside any voice issue, and the redraft ships", async () => {
+    const oneRoom = withQueries(["empty office desk night", "office chair window", "office corridor"]);
+    const h = stubTools();
+    const prompts: string[] = [];
+    const result = await run(h, "run-os-one-room", [oneRoom, VOICED_SCRIPT], prompts);
+    expect(result.status).toBe("completed");
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain("Shot problem in your last draft");
+    expect(prompts[1]).toContain("3 of 3 shots are set in the same place");
+    expect(prompts[1]).toContain("office");
+    expect(prompts[1]).not.toContain("Voice problem");
+    expect(h.calls).toContain("ledger.writeDeliverable");
+  }, 20_000);
 });
 
 describe("repairScriptStructure (prep run pubsub-21157255126300088)", () => {

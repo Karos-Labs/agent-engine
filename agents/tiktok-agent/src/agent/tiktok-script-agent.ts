@@ -80,9 +80,13 @@ export class TikTokScriptAgent extends BaseAgent<ShortScript> {
     // first two seconds and that beat 1's narration IS the hook, and adds the
     // "write for a thumb" rules after the 2026-09-08 shorts read like
     // LinkedIn posts read aloud. v5 stays frozen.
-    // Pinned to "7" (2026-09-10): v7 receives `voiceRules`, `brand` and
-    // `strategy` in the input instead of fetching them; otherwise v6.
-    skillRef: "tiktok-script@7",
+    // Pinned to "8" (2026-09-10): v8 asks for a different place per beat and
+    // welcomes people in library footage (prep run pubsub-21156942503403946
+    // set all four shots in an empty office), and bounds `thought` to a note
+    // (the same run spent 9,400 output tokens, $0.14 and 150 s of its one
+    // turn on a 31,000-character self-check). v7 receives `voiceRules`,
+    // `brand` and `strategy` in the input instead of fetching them.
+    skillRef: "tiktok-script@8",
     // The same lint 07-compliance runs afterwards, run FIRST on the model's
     // own output so a tell comes back as feedback it can act on rather than
     // as a held run. Two revisions: the first fix is usually enough, the
