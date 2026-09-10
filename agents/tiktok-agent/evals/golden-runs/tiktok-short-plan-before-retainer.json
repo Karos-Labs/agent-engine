@@ -1,0 +1,59 @@
+{
+  "id": "tiktok-short-plan-before-retainer",
+  "description": "The script prep run pubsub-21157235573121560 produced on 2026-09-10 for a typed topic (prompt v8, $0.08, 3.5 min to the gate), with one correction: its last beat sold (\"We show you the plan before anything else\"), which salesPitchIssues now sends back, so the landing beat was rewritten to end on what the viewer should do. Four beats in four different places, a 10-word hook, sentences under a breath.",
+  "agentId": "tiktok-agent",
+  "language": "en",
+  "input": {
+    "topic": "Why a marketing agency should hand you a plan before it asks for a retainer",
+    "clientSlug": "karoslabs",
+    "voiceRules": { "tone": "clear and precise, confident without being arrogant", "signature": "No pitch, just a plan.", "hashtags": "#CMO #KarosLabs plus two topical" },
+    "brand": { "handle": "karoslabs", "language": "en-US" },
+    "voiceoverPolicy": "auto",
+    "allowPeople": false
+  },
+  "endorsedOutput": {
+    "hook": "If the plan comes after the contract, you're buying faith.",
+    "format": "footage",
+    "formatRationale": "This is a four-beat logical argument with a scene the viewer should inhabit: the moment before signing something they do not fully understand. Footage grounds that tension better than text cards alone.",
+    "beats": [
+      {
+        "narration": "If the plan comes after the contract, you're buying faith. Not strategy.",
+        "onScreenText": "Plan first. Contract second.",
+        "visualBrief": "Close-up of a ballpoint pen resting on a folded paper document on a dark wooden desk, late morning light from a window to the left. The pen is mid-frame, slightly out of focus at the tip. No visible text on the document. No people. Worn desk surface, a coffee ring near the edge. Matte, documentary feel.",
+        "stockQuery": "pen resting on unsigned contract desk",
+        "seconds": 6
+      },
+      {
+        "narration": "A plan before a retainer tells you the channels, the timing, the metrics. You know what you're paying for before you pay.",
+        "onScreenText": "Know what you're paying for.",
+        "visualBrief": "A whiteboard covered in faint marker diagrams, viewed straight-on in an empty meeting room. Afternoon light from a high window, no legible words visible, just geometric shapes and arrows. The room is quiet. No people, no screens. Muted colours, institutional feel, slightly worn marker tray at the bottom.",
+        "stockQuery": "whiteboard markers strategy session empty room",
+        "seconds": 8
+      },
+      {
+        "narration": "When an agency skips the plan, it means one of two things. They do not have one. Or they do not want you to compare it to anyone else's.",
+        "onScreenText": "No plan is a signal.",
+        "visualBrief": "Wide shot of an empty boardroom, chairs pushed in around a long table, grey morning light coming through floor-length windows behind. No people, no screens, no documents on the table. Neutral tones, slightly cold ambient light. The room looks ready for a meeting that has not started yet.",
+        "stockQuery": "empty boardroom chairs morning light",
+        "seconds": 8
+      },
+      {
+        "narration": "Ask for the plan in writing before you sign anything. If it never comes, that is your answer.",
+        "onScreenText": "Ask for the plan first.",
+        "visualBrief": "Wide shot of an empty urban intersection at early morning, wet pavement reflecting pale sky light. No pedestrians, no cars in motion. Buildings on both sides, one traffic light visible mid-frame showing green. Clean, still, directional. The mood is readiness, not drama.",
+        "stockQuery": "city street intersection early morning wide",
+        "seconds": 6
+      }
+    ],
+    "caption": "Most agencies sell you on the retainer first. The plan shows up later, if at all. Before you sign anything, ask for the strategy in writing. karoslabs.com. No pitch, just a plan. #MarketingStrategy #AgencyLife #CMO #KarosLabs",
+    "about": "This short argues that a plan preceding a retainer is the baseline test of a credible agency. Four beats move from the problem framing, to what a real plan contains, to what its absence signals, to what the viewer should ask for. Intended for founder-CMOs evaluating agency relationships.",
+    "voiceover": true,
+    "voiceoverRationale": "The argument has a 'because' running through it: a claim, a mechanism, a signal, and a landing instruction. That chain needs a voice to carry it. Silent captions alone would flatten the logic.",
+    "language": "en-US"
+  },
+  "gateArgs": {
+    "brandCompliance": { "forbiddenTerms": ["game-changer", "unlock", "seamless", "leverage", "guaranteed", "#1"] }
+  },
+  "endorsedBy": "claude-code, from prep run pubsub-21157235573121560 with the last beat rewritten; awaiting a human endorsement",
+  "endorsedAt": "2026-09-10T13:00:00Z"
+}
