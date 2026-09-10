@@ -8,7 +8,7 @@ import { FilePromptStore, type AgentToolRegistry, type CompletionResult, type Mo
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { BrandFrameInputSchema, ComposeSequenceInputSchema, MixMusicInputSchema, SelfEvalGateInputSchema, StillToClipInputSchema, SynthesizeVoiceInputSchema, TextPlateInputSchema, TranscribeInputSchema } from "@agent-engine/tool-karos-video";
 import { FindStockClipInputSchema, GenerateImageInputSchema, VisualQaGateInputSchema } from "@agent-engine/tool-karos-media";
-import { createTikTokAgentWorkflow, dropRepeatedBeats, repairScriptStructure } from "../src/workflow/create-tiktok-agent-workflow.js";
+import { createTikTokAgentWorkflow, dropRepeatedBeats, repairScriptStructure, scriptVoiceIssues } from "../src/workflow/create-tiktok-agent-workflow.js";
 
 /**
  * The ORIGINAL-SHORT production pass in detail: the voiceover decision, the
@@ -28,7 +28,7 @@ const VOICED_SCRIPT = {
   hook: "Nobody tells you the first hire is the one you fire.",
   beats: [
     { narration: "Nobody tells you the first hire is the one you fire.", onScreenText: "The first hire is a bet", visualBrief: "Empty office at dawn, one desk lamp on, slow push-in across a row of dark monitors.", seconds: 4 as const },
-    { narration: "You hire for the company you have, and by month six it is a different company entirely.", onScreenText: "Month six changes everything", visualBrief: "Whiteboard being wiped clean, marker residue catching window light, handheld drift.", seconds: 6 as const },
+    { narration: "You hire for the company you have. By month six it is a different company entirely.", onScreenText: "Month six changes everything", visualBrief: "Whiteboard being wiped clean, marker residue catching window light, handheld drift.", seconds: 6 as const },
     { narration: "So write the role for the company you are becoming.", onScreenText: "Hire for who you're becoming", visualBrief: "City street at blue hour, storefront lights coming on one by one, wide static frame.", seconds: 6 as const },
   ],
   caption: "The first hire is a bet on a company that will not exist in six months. Hire for the one you're becoming.",
@@ -314,6 +314,30 @@ async function run(h: Harness, runId: string, turns: unknown[] = [VOICED_SCRIPT]
   return new WorkflowEngine(new MemoryDurableStepStore()).run(workflow, { ...PARAMS, runId, input: {} });
 }
 
+describe("scriptVoiceIssues", () => {
+  it("names a hook too long for the screen, a sentence past a breath, and the conference-slide register; a clean script has none", () => {
+    expect(scriptVoiceIssues(VOICED_SCRIPT)).toEqual([]);
+    const off = {
+      ...VOICED_SCRIPT,
+      hook: "In today's fast-moving founder landscape, the real question is whether your first hire can scale with you.",
+      beats: [
+        { ...VOICED_SCRIPT.beats[0]!, narration: "The compliance question is what your AI is allowed to do, and the strategy question is what you have decided it should do, and most brands have not asked the second one." },
+        { ...VOICED_SCRIPT.beats[1]!, onScreenText: "Leverage the ecosystem" },
+        VOICED_SCRIPT.beats[2]!,
+      ],
+    };
+    const issues = scriptVoiceIssues(off);
+    expect(issues).toHaveLength(3);
+    expect(issues[0]).toMatch(/the hook is 17 words/);
+    expect(issues[1]).toMatch(/beat 1 has a 32-word sentence/);
+    expect(issues[2]).toContain("corporate cadence");
+    expect(issues[2]).toContain("leverage");
+    expect(issues[2]).toContain("ecosystem");
+    expect(issues[2]).toContain("in today's");
+    expect(issues[2]).toContain("the real X is");
+  });
+});
+
 describe("repairScriptStructure (prep run pubsub-21157255126300088)", () => {
   const base = { ...VOICED_SCRIPT, beats: VOICED_SCRIPT.beats.map((b) => ({ ...b })) };
 
@@ -351,6 +375,21 @@ describe("repairScriptStructure (prep run pubsub-21157255126300088)", () => {
 });
 
 describe("original short: script → plates → voice → captions → sequence → frame → QA", () => {
+  it("a draft that reads like a slide is redrafted ONCE with the lines named; what the redraft still gets wrong ships to the reviewer", async () => {
+    const slide = { ...VOICED_SCRIPT, beats: [VOICED_SCRIPT.beats[0]!, { ...VOICED_SCRIPT.beats[1]!, narration: "You need to leverage a strategy layer that aligns the whole ecosystem before the platform decides it for you at scale." }, VOICED_SCRIPT.beats[2]!] };
+    const h = stubTools();
+    const prompts: string[] = [];
+    const result = await run(h, "run-os-voice-fix", [slide, slide], prompts);
+    expect(result.status).toBe("completed");
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain("Voice problem in your last draft");
+    expect(prompts[1]).toContain("beat 2 has a 21-word sentence");
+    expect(prompts[1]).toContain("leverage");
+    expect(prompts[1]).not.toContain("Structure problem");
+    // The redraft came back the same: it ships (the reviewer hears it), it is not held.
+    expect(h.calls).toContain("ledger.writeDeliverable");
+  }, 20_000);
+
   it("a draft whose beats repeat a line is redrafted ONCE with the beats named, and the clean redraft ships", async () => {
     const dup = { ...VOICED_SCRIPT, beats: [VOICED_SCRIPT.beats[0]!, { ...VOICED_SCRIPT.beats[1]!, narration: VOICED_SCRIPT.beats[0]!.narration }, VOICED_SCRIPT.beats[2]!] };
     const h = stubTools();
@@ -402,8 +441,8 @@ describe("original short: script → plates → voice → captions → sequence 
     // sentence) rather than wherever a counter landed.
     const srtPath = h.frameArgs[0]!["srtPath"] as string;
     const srt = await fs.readFile(srtPath, "utf8");
-    // No caption while the cold open is on screen: the first cue starts when the hook plate ends (~1.95s, half of beat 1's hold).
-    expect(srt).toMatch(/^1\n00:00:01,9\d\d --> /);
+    // No caption while the cold open is on screen: the first cue starts when the hook plate ends (2s; beat 1's hold is ~4s).
+    expect(srt).toMatch(/^1\n00:00:02,0\d\d --> /);
     expect(srt).not.toContain("Nobody tells you the");
     expect(srt).toContain("one you fire.");
     expect(srt).toContain("becoming.");
