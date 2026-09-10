@@ -270,8 +270,8 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "tiktok-topic-scout",
     agent: "tiktok-agent",
-    versions: ["1"],
-    latestVersion: "1",
+    versions: ["1", "2"],
+    latestVersion: "2",
     requires: { structuredOutput: true },
     structuredOutputFields: ["candidates", "topic", "angle", "hook", "format", "whyNow", "evidenceUrls", "voiceoverRecommended", "rationale"],
   },
