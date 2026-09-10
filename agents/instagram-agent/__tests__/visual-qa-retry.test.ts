@@ -17,6 +17,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
+import { goodAngleProposal } from "./angle-fixtures.js";
 
 const params = { runId: "instagram_run_visualqa", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
@@ -43,7 +44,7 @@ describe("08b-visual-qa: post-render visual QA runs and retries through the SAME
       findings: [{ ruleId: "no-empty-closer", slide: 6, passed: false, note: "the closer slide's images carry no device/photo reference" }],
     };
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(badQa),
@@ -65,9 +66,9 @@ describe("08b-visual-qa: post-render visual QA runs and retries through the SAME
     const engine = new WorkflowEngine(durableStore);
     const result = await engine.run(workflowFn, params);
 
-    // scout + research + 2 x (copy + vet + relevance + QA).
+    // scout + research + angle + 2 x (copy + vet + relevance + QA).
     expect(result.status).toBe("completed");
-    expect(router.complete).toHaveBeenCalledTimes(10);
+    expect(router.complete).toHaveBeenCalledTimes(11);
 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).toContain("08b-visual-qa-attempt-1");
@@ -85,7 +86,7 @@ describe("08b-visual-qa: post-render visual QA runs and retries through the SAME
     const promptStore = makePromptStore();
     const badQa = { pass: false, findings: [{ ruleId: "nothing-overlaps", passed: false, note: "a headline field and a stat field both claim the same region" }] };
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(badQa),

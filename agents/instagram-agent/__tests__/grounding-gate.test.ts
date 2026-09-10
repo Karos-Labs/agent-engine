@@ -21,11 +21,31 @@ import {
 import { happyTurns, standardTurns } from "./turns.js";
 
 /**
+ * The audit client has NO persisted brief, which is this whole suite's
+ * subject: `02i-resolve-client-brief` falls back to the DETERMINISTIC brief
+ * derived from onboarding data alone, and the relevance judge is what stops a
+ * run grounded that thinly from shipping a real-estate carousel.
+ *
+ * Since the Phase 1 lifecycle landed (`00b*`), a client with no brief on disk
+ * spends one `instagram-brief` turn before every other model call. These
+ * fixtures queue a turn the brief agent's own output schema refuses
+ * (`coreTerms` may not be empty), so nothing is written, `00b3` records its
+ * warn, and `02i` reports `derived` - exactly the state a client is in until
+ * their first brief succeeds. That fail-open path is asserted directly in
+ * `client-brief-setup.test.ts`; here it is only the starting condition.
+ */
+const NO_BRIEF_WRITTEN_YET = { coreTerms: [] };
+
+/** `happyTurns`, preceded by the refused brief turn every run without a persisted brief now consumes. */
+const auditTurns = (overrides: Parameters<typeof happyTurns>[0] = {}) => happyTurns({ brief: NO_BRIEF_WRITTEN_YET, ...overrides });
+
+/**
  * Instagram Phase 0 grounding gate (spec §C), through the real workflow.
  *
  * Step ids under test are the spec's: `02i-resolve-client-brief` (the brief,
- * `derived` here because no persisted brief exists), `04a-research-pull`
- * (whose `query` is now the GROUNDED string, never the verbatim request),
+ * `derived` here because no persisted brief exists),
+ * `04a2-research-pull-deep` (whose news lane leads with the GROUNDED query,
+ * never the verbatim request),
  * `07g-relevance-attempt-N` (the Flash judge inside the self-check loop),
  * and the `grounding` block on the gate payload and the deliverable.
  *
@@ -95,7 +115,11 @@ describe("02i / 04a / 07g — the grounding gate in the instagram workflow", () 
     // An empty catalog so the client's own `requestedSubject` (the audit's
     // verbatim request) is the claimed topic — the exact shape of the run
     // that shipped off-brief.
-    env = await setupTestEnvironment({ seedTopics: [] });
+    // `seedBrief: false` because this suite is about the DERIVED brief — the
+    // Phase 0 stand-in every client's first run drafts from. Since the Phase 1
+    // 00b* wiring landed, omitting the option seeds a fresh agent brief
+    // instead, and `02i` would report `persisted`.
+    env = await setupTestEnvironment({ seedTopics: [], seedBrief: false });
     await env.store.writeJson("acme", ["client", "config"], {
       instagramStyleConfig: goodStyleConfig(),
       instagramBrandTokens: goodBrandTokens(),
@@ -122,7 +146,7 @@ describe("02i / 04a / 07g — the grounding gate in the instagram workflow", () 
   it("an off-brief verdict returns the draft to 05 with the judge's bridge as relevanceSteer; the second draft passes and the gate payload carries the grounding", async () => {
     const router = fakeRouterSequence([
       // Attempt 1 stops at the judge (no QA turn is ever reached).
-      ...happyTurns({ relevance: OFF_BRIEF_VERDICT, qa: undefined }),
+      ...auditTurns({ relevance: OFF_BRIEF_VERDICT, qa: undefined }),
       // Attempt 2: scout and research ran once per run, so only the per-attempt turns.
       ...standardTurns({ copy: goodCopyOutput(), vet: goodImageVettingOutput(), relevance: goodRelevanceVerdict(), qa: goodVisualQaOutput() }),
     ]);
@@ -178,7 +202,7 @@ describe("02i / 04a / 07g — the grounding gate in the instagram workflow", () 
 
   it("three off-brief verdicts exhaust the self-check budget and HOLD, naming relevance — never a render, never a delivery", async () => {
     const router = fakeRouterSequence([
-      ...happyTurns({ relevance: OFF_BRIEF_VERDICT, qa: undefined }),
+      ...auditTurns({ relevance: OFF_BRIEF_VERDICT, qa: undefined }),
       ...standardTurns({ copy: goodCopyOutput(), vet: goodImageVettingOutput(), relevance: OFF_BRIEF_VERDICT }),
       ...standardTurns({ copy: goodCopyOutput(), vet: goodImageVettingOutput(), relevance: OFF_BRIEF_VERDICT }),
     ]);
@@ -218,7 +242,7 @@ describe("02i / 04a / 07g — the grounding gate in the instagram workflow", () 
       reason: "the post is about marketing automation for founders, which is this field, but nothing on the page is only this business",
       missingBridge: "name the client's own offer in the caption",
     };
-    const router = fakeRouterSequence(happyTurns({ relevance: GENERIC_BUT_ON_FIELD }));
+    const router = fakeRouterSequence(auditTurns({ relevance: GENERIC_BUT_ON_FIELD }));
     const params = { runId: "instagram_run_grounding_thin", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
     const durableStore = new MemoryDurableStepStore();
 
@@ -241,7 +265,7 @@ describe("02i / 04a / 07g — the grounding gate in the instagram workflow", () 
     const relevance = deliverables[0]!.data.deliverable.grounding?.relevance;
     expect(relevance?.score).toBe(2);
     expect(relevance?.reason).toBe(GENERIC_BUT_ON_FIELD.reason);
-    expect(relevance?.note).toMatch(/no product-information or target-audience document/);
+    expect(relevance?.note).toMatch(/no product-information document, no target-audience document and no page of the client's own site/);
     expect(relevance?.note).toMatch(/floor returns to 3\/5/);
 
     const events = await env.store.listJson<{ level: string; eventId: string; message: string }>("acme", ["ledger", "events", params.runId]);
@@ -268,7 +292,7 @@ describe("02i / 04a / 07g — the grounding gate in the instagram workflow", () 
       markdown: "# Target audience\n\nFounders and heads of marketing at seed to series B B2B software companies, usually a team of one to three doing marketing part time.",
     });
     const router = fakeRouterSequence([
-      ...happyTurns({ relevance: { score: 2, reason: "any agency in this field could have posted it", missingBridge: "name the managed content engine" }, qa: undefined }),
+      ...auditTurns({ relevance: { score: 2, reason: "any agency in this field could have posted it", missingBridge: "name the managed content engine" }, qa: undefined }),
       ...standardTurns({ copy: goodCopyOutput(), vet: goodImageVettingOutput(), relevance: goodRelevanceVerdict(), qa: goodVisualQaOutput() }),
     ]);
     const params = { runId: "instagram_run_grounding_full_brief", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
@@ -291,7 +315,7 @@ describe("02i / 04a / 07g — the grounding gate in the instagram workflow", () 
 
   it("a judge that cannot answer fails OPEN: the run delivers on attempt 1 and the ledger carries the unavailable warn", async () => {
     // `score: "high"` fails the judge's own output schema inside BaseAgent -> content_fail -> verdict `error`.
-    const router = fakeRouterSequence(happyTurns({ relevance: { score: "high", reason: "reads fine" } }));
+    const router = fakeRouterSequence(auditTurns({ relevance: { score: "high", reason: "reads fine" } }));
     const params = { runId: "instagram_run_grounding_judge_down", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
     const durableStore = new MemoryDurableStepStore();
 
@@ -315,8 +339,8 @@ describe("02i / 04a / 07g — the grounding gate in the instagram workflow", () 
     expect(deliverables[0]!.data.deliverable.grounding?.relevance).toBeUndefined();
   }, 60000);
 
-  it("04a-research-pull searches the GROUNDED query, not the verbatim request, and 02i's derived brief is schema-valid", async () => {
-    const router = fakeRouterSequence(happyTurns());
+  it("04a2-research-pull-deep searches the GROUNDED query, not the verbatim request, and 02i's derived brief is schema-valid", async () => {
+    const router = fakeRouterSequence(auditTurns());
     const params = { runId: "instagram_run_grounding_query", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
     const durableStore = new MemoryDurableStepStore();
 
@@ -330,16 +354,24 @@ describe("02i / 04a / 07g — the grounding gate in the instagram workflow", () 
     expect(briefStep.output.brief.coreTerms).toContain("marketing");
     expect(briefStep.output.brief.forbidden.topics).toEqual([]);
 
-    const pull = (await durableStore.getStep(params.runId, "04a-research-pull")) as {
-      output: { query: string; groundedQuery?: string; rewrittenFrom?: string; fallbackUsed?: boolean };
+    // Phase 1 (item J) retired `04a-research-pull` for the three-lane
+    // `04a2-research-pull-deep`. The grounded query is unchanged — it is now
+    // the NEWS lane's first and best question, and the lane record is what
+    // makes every billed question auditable from the trace alone (Phase 0's
+    // `groundedQuery`/`rewrittenFrom`/`fallbackUsed` fields were only ever
+    // that same audit trail for a single-question step).
+    const deep = (await durableStore.getStep(params.runId, "04a2-research-pull-deep")) as {
+      output: { lanes: Array<{ lane: string; queries: Array<{ query: string; status: string }> }>; documentCount: number };
     };
-    expect(pull.output.query).toContain(" in the context of ");
-    expect(pull.output.query).toMatch(/^the new offer to first-time buyers in the context of /);
-    expect(pull.output.query).not.toBe(AUDIT_REQUEST);
-    expect(pull.output.query.length).toBeLessThanOrEqual(200);
-    // The additive fields make the rewrite auditable from the trace alone.
-    expect(pull.output.groundedQuery).toBe(pull.output.query);
-    expect(pull.output.rewrittenFrom).toBe(AUDIT_REQUEST);
-    expect(typeof pull.output.fallbackUsed).toBe("boolean");
+    const news = deep.output.lanes.find((l) => l.lane === "news")!;
+    const groundedQuery = news.queries[0]!.query;
+    expect(groundedQuery).toContain(" in the context of ");
+    expect(groundedQuery).toMatch(/^the new offer to first-time buyers in the context of /);
+    expect(groundedQuery).not.toBe(AUDIT_REQUEST);
+    expect(groundedQuery.length).toBeLessThanOrEqual(200);
+    // The fallback Phase 0 only asked after an empty answer is now the news
+    // lane's second question, asked every time.
+    expect(news.queries.length).toBeGreaterThan(1);
+    expect(deep.output.documentCount).toBeGreaterThan(0);
   }, 60000);
 });

@@ -20,6 +20,7 @@ import {
 } from "./test-helpers.js";
 import fsp from "node:fs/promises";
 import pathMod from "node:path";
+import { goodAngleProposal } from "./angle-fixtures.js";
 
 /**
  * IGSTYLE-5 — cross-run adaptation: the memory a run WRITES is the memory
@@ -52,7 +53,9 @@ function tools(env: TestEnvironment, extra: Record<string, unknown> = {}): Agent
 }
 
 function draftTurns(copyOutput: ReturnType<typeof goodCopyOutput>) {
-  return [finalTurn(copyOutput), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())];
+  // The angle proposal (04i) leads each ROUND: one per revision, outside the
+  // attempt loop, so a two-round fixture spends two of them.
+  return [finalTurn(goodAngleProposal()), finalTurn(copyOutput), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())];
 }
 
 describe("cross-run adaptation (IGSTYLE-5)", () => {
@@ -297,7 +300,7 @@ describe("cross-run adaptation (IGSTYLE-5)", () => {
         claimMatchReason: "shows the claimed subject (instagram-image-vet@3 fixture)",
       })),
     };
-    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(copy), finalTurn(vetting), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(vetting), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]);
 
     const workflowFnWithTemplates = createInstagramAgentWorkflow({
       tools: tools(env),

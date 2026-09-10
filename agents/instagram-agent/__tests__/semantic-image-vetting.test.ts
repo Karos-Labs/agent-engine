@@ -81,6 +81,13 @@ describe("InstagramImageVettingAgent @3", () => {
     expect(v3).toMatch(/## 6\. CLIENT PHOTOS/);
     expect(v3).toMatch(/\[client upload, slot N\]/);
     expect(v3).toMatch(/`claimMatch` of 3 or more/);
+    // The gap the rubric alone left open: with no legible club text in
+    // frame, "football supporters in a floodlit stadium" honestly scores a 3
+    // against a Juventus headline, and 3 is the selection floor. So a slide
+    // that names a specific subject and a description that names none is a 2.
+    expect(v3).toMatch(/\*\*An unnamed subject is not a match for a slide that names one\.\*\*/);
+    expect(v3).toMatch(/the score is \*\*2, not 3\*\*/);
+    expect(v3).toMatch(/including its `subjects`/);
     // v2 stays frozen for the runs that were judged by it.
     expect(readFileSync(path.join(PROMPTS_ROOT, "instagram-image-vet", "2.md"), "utf8").split(/\r?\n/)[0]).toBe("# Instagram Image Vetting Craft Guide — v2");
   });
@@ -249,6 +256,73 @@ describe("workflow: a client upload serves the slide it fits", () => {
     expect(slidesData.slides.find((s) => s.n === 3)?.images["hero"]).toBe(".media-cache/run/n1-client.png");
     expect(slidesData.slides.find((s) => s.n === 1)?.images["hero"]).toBe(pool[0]!.path);
     expect(steps.some((s) => s.stepId === "07a-downgrade-unfillable-slides-attempt-1")).toBe(false);
+  });
+
+  it("the vision inspection's NAMED subjects reach the vet, on a client upload and on a harvested candidate alike", async () => {
+    // The vet reads pictures as text. Its `claimMatch` rubric turns on
+    // identity ("a different subject, team, place or era than the slide
+    // names"), and `subjects` is the field that carries "Maccabi Tel Aviv
+    // supporters". Both enrichment sites used to drop it, so the vet was
+    // handed "supporters in a floodlit stadium" and 3 — the selection floor —
+    // was the honest score under any headline.
+    const inspectCalls: Array<{ purpose: string }> = [];
+    const inspect: AgentTool = {
+      name: "media.inspectImages",
+      version: "1.0.0",
+      inputSchema: { parse: (v: unknown) => v } as never,
+      async execute(args: unknown) {
+        const { images, purpose } = args as { images: Array<{ ref: string }>; purpose: string };
+        inspectCalls.push({ purpose });
+        return {
+          status: "success",
+          result: {
+            inspections: images.map((image) => ({
+              ref: image.ref,
+              description: "supporters with scarves in a floodlit stadium",
+              subjects: ["Maccabi Tel Aviv supporters", "yellow and blue scarves"],
+              textInImage: [],
+              mood: "celebratory",
+              quality: "usable",
+            })),
+            unreadable: [],
+            model: "stub-vision",
+          },
+        };
+      },
+    } as unknown as AgentTool;
+
+    const router = fakeRouterSequence(happyTurns());
+    const workflowFn = createInstagramAgentWorkflow({
+      tools: testTools(env, { "media.ingestAssets": stubIngestAssets(), "media.inspectImages": inspect }),
+      promptStore: makePromptStore(),
+      router,
+      repoRoot: env.repoRoot,
+      autoApprove: true,
+      imageCandidatePool: goodImageCandidatePool(),
+    });
+    const durableStore = new MemoryDurableStepStore();
+    const result = await new WorkflowEngine(durableStore).run(workflowFn, {
+      ...params,
+      runId: "ig_semantic_vet_subjects",
+      input: { mediaAssets: [{ uri: "gs://bucket/fans.jpg", role: "source", label: "match night" }] },
+    });
+    expect(result.status).toBe("completed");
+    // The premise: both enrichment paths actually ran.
+    expect(inspectCalls.map((c) => c.purpose)).toEqual(expect.arrayContaining(["attached-media", "candidate-vetting"]));
+
+    const steps = await durableStore.listSteps("ig_semantic_vet_subjects");
+    const tier0 = steps.find((s) => s.stepId === "05z-attach-user-media")?.output as { candidates: Array<{ description: string }> };
+    expect(tier0.candidates[0]!.description).toContain("subjects: Maccabi Tel Aviv supporters, yellow and blue scarves");
+
+    // And the same annotation is what the vet is handed, for the harvested
+    // candidates too — a rubric that depended on a field only one path
+    // passed would score the same photograph differently by provenance.
+    const vetInput = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      .map((call) => (typeof call[0] === "string" ? (JSON.parse(call[0] as string) as { input?: Record<string, unknown> }).input : undefined))
+      .find((input) => input !== undefined && "candidatePool" in input)!;
+    const pool = vetInput["candidatePool"] as Array<{ path: string; description: string }>;
+    expect(pool.length).toBeGreaterThan(1);
+    for (const candidate of pool) expect(candidate.description).toContain("subjects: Maccabi Tel Aviv supporters");
   });
 
   it("mediaSource 'client' keeps today's behaviour: no harvester is asked, even for the slot the vet might move an upload off", async () => {

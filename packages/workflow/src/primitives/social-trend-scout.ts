@@ -246,6 +246,58 @@ export const TREND_SCOUT_STEP_ID = "social-trend-scout";
 
 export const MEDIA_HINTS = ["screenshot", "photo", "data", "none"] as const;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Topic engines (RFC-13 §I, 2026-09) — where a candidate came from
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The five places a candidate can come from. Until Phase 1 there was exactly
+ * one — this week's niche news — which is why five consecutive prep runs of
+ * the Instagram agent landed on the same subject: one source, one week's
+ * stories, one ranking. The other four are evidence the engine already holds
+ * or can fetch for cents: what peer accounts posted that landed, what the
+ * audience is actually asking in public, the client's own assets, and the
+ * evergreen angles their brief names.
+ *
+ * The tag travels on the candidate so the deterministic ranking can weight
+ * engines against each other (an own-asset story is worth more when there is
+ * an offer to attach it to; an evergreen angle is worth less on a hot-news
+ * week) and so the reviewer sees WHICH engine produced the subject that
+ * shipped and which ones were outranked.
+ */
+export const TOPIC_ENGINES = ["niche-news", "reference-accounts", "audience-questions", "own-assets", "evergreen"] as const;
+export const TopicEngineSchema = z.enum(TOPIC_ENGINES);
+export type TopicEngine = z.infer<typeof TopicEngineSchema>;
+
+/** What an untagged candidate is: the only engine that existed before RFC-13 §I. */
+export const DEFAULT_TOPIC_ENGINE: TopicEngine = "niche-news";
+
+/**
+ * The signals the caller gathered for the scout to draw on beyond the news
+ * digest — Instagram's `03e-topic-signals` fills this; X and LinkedIn pass
+ * nothing and behave exactly as before.
+ *
+ * Deliberately flat strings and numbers: this whole object is injected into a
+ * prompt, so it carries what a strategist would need to name a subject and
+ * nothing an engineer would need to reproduce the fetch.
+ */
+export interface TopicSignalsForScout {
+  /** What the brief's reference accounts published lately, strongest first, `engagementScore` normalised per account into [0,1]. */
+  referencePosts: Array<{ platform: string; handle: string; url: string; excerpt: string; publishedAt?: string; engagementScore: number }>;
+  /** Questions the client's audience is asking in public, from community domains. */
+  audienceQuestions: Array<{ question: string; url: string; community?: string }>;
+  /** The client's own material a post could be built on: case studies, data, events, documents. */
+  ownAssets: Array<{ title: string; summary: string; sourceRef: string }>;
+  /** Durable angles the brief names, minus anything another channel just covered. */
+  evergreen: string[];
+}
+
+/** True when there is any material in `signals` at all — a signals object with nothing in it is not a reason to spend a model call. */
+export function hasTopicSignalMaterial(signals: TopicSignalsForScout | undefined): boolean {
+  if (signals === undefined) return false;
+  return signals.referencePosts.length + signals.audienceQuestions.length + signals.ownAssets.length + signals.evergreen.length > 0;
+}
+
 export const TrendCandidateSchema = z.object({
   /** A short subject line, the thing the post is about. */
   topic: z.string().min(1),
@@ -270,8 +322,32 @@ export const TrendCandidateSchema = z.object({
   hasNumbers: z.boolean().default(false),
   /** What picture, if any, would carry this: a screenshot of the source, a real photo, a data visual, or nothing. */
   mediaHint: z.enum(MEDIA_HINTS).default("none"),
+  /**
+   * Which topic engine produced this candidate (RFC-13 §I). Absent means
+   * `niche-news`: read it through `candidateEngine` rather than the raw field.
+   *
+   * `.optional()` and NOT `.default("niche-news")` on purpose. A zod default
+   * makes the field REQUIRED in the inferred TypeScript type, and every
+   * channel agent's fixtures build `TrendCandidate` literals by hand (the
+   * instagram suite alone has ~30) — a default here would stop all of them
+   * compiling for a field none of them cares about. The runtime effect that
+   * matters is the same either way: a scout answering in the pre-Phase-1
+   * shape still validates.
+   */
+  engine: TopicEngineSchema.optional(),
+  /**
+   * What this candidate rests on beyond `sourceUrls`: a reference post's URL,
+   * a community thread, or a client document heading (`market-strategy#…`).
+   * Optional for the same reason as `engine`.
+   */
+  evidenceRefs: z.array(z.string()).optional(),
 });
 export type TrendCandidate = z.infer<typeof TrendCandidateSchema>;
+
+/** The candidate's engine, with the pre-Phase-1 shape (no tag) reading as `niche-news`. One accessor so no caller open-codes the fallback. */
+export function candidateEngine(candidate: Pick<TrendCandidate, "engine">): TopicEngine {
+  return candidate.engine ?? DEFAULT_TOPIC_ENGINE;
+}
 
 export const TrendScoutOutputSchema = z.object({
   candidates: z.array(TrendCandidateSchema).max(10),
@@ -294,6 +370,20 @@ export interface TrendScoutInput {
   requestedTopic?: string | undefined;
   /** ISO date the scout should treat as "now", for freshness judgments. */
   today: string;
+  /**
+   * RFC-13 §I: the other four topic engines' material, gathered by the caller
+   * in one code step. Omitted (X, LinkedIn, and any Instagram run whose brief
+   * names no reference accounts) leaves the prompt input byte-identical to
+   * before this field existed.
+   */
+  signals?: TopicSignalsForScout | undefined;
+  /**
+   * The client brief rendered for a prompt (`briefForPrompt`): who the client
+   * is, what they sell, to whom, in which words. `clientProfile` is raw
+   * onboarding JSON; this is the judged document, and where the two disagree
+   * the prompt says the brief wins.
+   */
+  clientBrief?: string | undefined;
 }
 
 export interface TrendScoutDeps {
@@ -316,7 +406,11 @@ export function buildTrendScoutSystemPrompt(channel: TrendScoutInput["channel"])
     "",
     CHANNEL_NOTE[channel],
     "",
-    "Produce 3 to 8 candidates. Every candidate must be grounded in the documents you were given: never invent a trend, a launch, a number or a date, and list the source URLs the candidate rests on. Never invent — an unsupported claim here becomes a false statement in the client's feed.",
+    "Produce 3 to 8 candidates. Every candidate must be grounded in the material you were given — the research documents, or `signals` when you were given them: never invent a trend, a launch, a number or a date, and name what the candidate rests on (`sourceUrls` for a document, `evidenceRefs` for a signal). Never invent — an unsupported claim here becomes a false statement in the client's feed.",
+    "",
+    "Candidates may also come from `signals`: what reference accounts posted that landed, questions the audience is asking, the client's own assets, evergreen angles. Tag each candidate's `engine` (niche-news | reference-accounts | audience-questions | own-assets | evergreen) and list its `evidenceRefs` (URLs or doc headings). Offer at least one candidate per engine that has material. `clientBrief` is the authority on who the client is and who they sell to.",
+    "A candidate that rests on `signals` rather than on a research document keeps `sourceUrls` EMPTY and puts what it rests on in `evidenceRefs` instead: a URL in `sourceUrls` is a source the drafting step may cite, and a reference post or a document heading is not one.",
+    "`whyNow` is read literally by the writer, so it must be honest about the clock. For `niche-news` (and for `reference-accounts` when the post is about a dated event) it is why THIS WEEK: the date, the launch, the report. For `evergreen`, `own-assets` and `audience-questions` there is no week in it, and you must not invent one: write why this is worth saying now to THIS audience (the question keeps coming up, the offer is running, the asset has never been published) and never a date, never \"this week\", never \"just announced\". A candidate whose only claim to attention is a fabricated recency is worse than no candidate.",
     "",
     "BRAND FIT is the judgment that matters most. Score 1-5 and state the bridge in one sentence:",
     "  5 — the client's core domain; their audience would expect them to have a view.",
@@ -342,8 +436,16 @@ export function buildTrendScoutSystemPrompt(channel: TrendScoutInput["channel"])
 
 /**
  * One scout call, checkpointed under `stepId`. Returns `undefined` when there
- * was nothing to scout (no documents) or the model step did not complete —
- * the caller falls back to `extractResearchCandidate`, exactly as before.
+ * was nothing to scout (no documents AND no signal material) or the model step
+ * did not complete — the caller falls back to `extractResearchCandidate`,
+ * exactly as before.
+ *
+ * The "nothing to scout" guard reads the signals too since RFC-13 §I: a week
+ * whose news pull came back empty (or whose scraper was down) can still have
+ * peer posts, audience questions, the client's own assets and evergreen angles
+ * to name a subject from, and refusing the call on the news digest alone would
+ * throw that away. Callers that pass no signals — X, LinkedIn — see the
+ * original behaviour unchanged.
  */
 export async function runTrendScout(
   wf: WorkflowContext,
@@ -351,7 +453,7 @@ export async function runTrendScout(
   stepId: string,
   input: TrendScoutInput,
 ): Promise<TrendScoutOutput | undefined> {
-  if (input.research.length === 0) return undefined;
+  if (input.research.length === 0 && !hasTopicSignalMaterial(input.signals)) return undefined;
   const scout = new DynamicAgent<TrendScoutOutput>(
     { tools: deps.tools, router: deps.router, promptStore: deps.promptStore },
     {
@@ -378,6 +480,8 @@ export async function runTrendScout(
     ...(input.clientVoiceContext !== undefined ? { clientVoiceContext: input.clientVoiceContext } : {}),
     ...(input.recentPosts !== undefined ? { recentPosts: input.recentPosts } : {}),
     ...(input.requestedTopic !== undefined ? { requestedTopic: input.requestedTopic } : {}),
+    ...(input.clientBrief !== undefined ? { clientBrief: input.clientBrief } : {}),
+    ...(input.signals !== undefined ? { signals: input.signals } : {}),
     forbiddenTopics: [...input.forbiddenTopics],
     research: input.research,
   });
@@ -436,18 +540,35 @@ export function selectTrendCandidate(candidates: readonly TrendCandidate[], mode
   return eligible.slice().sort(rank)[0];
 }
 
-/** The candidate as the drafting prompt receives it — everything the writer needs, nothing about the scoring internals. */
+/**
+ * The candidate as the drafting prompt receives it — everything the writer
+ * needs, nothing about the scoring internals.
+ *
+ * `engine` travels because it is the difference between a live story and a
+ * durable one, and the writer cannot infer it from the rest of the object.
+ * Since RFC-13 §I a candidate may come from the client's own assets, an
+ * evergreen angle in the brief or a question in a community — none of which
+ * carry a date, and all of which still have to fill `whyNow`. Dropped from
+ * this object (as it was), every one of them reached the copy prompt looking
+ * exactly like this week's news, with a timeliness claim the writer was told
+ * to build on: a fabrication no downstream check could catch, because it
+ * happened upstream of the facts. `evidenceRefs` travels for the same reason
+ * `sourceUrls` does: on a signals-borne candidate it is the only trace of
+ * what the subject rests on.
+ */
 export function trendCandidateForDrafting(candidate: TrendCandidate): Record<string, unknown> {
   return {
     topic: candidate.topic,
     headline: candidate.headline,
     mode: candidate.mode,
+    engine: candidateEngine(candidate),
     angle: candidate.angle,
     hook: candidate.hook,
     whyNow: candidate.whyNow,
     brandFitReason: candidate.brandFitReason,
     interest: candidate.interest,
     sourceUrls: candidate.sourceUrls,
+    ...(candidate.evidenceRefs !== undefined && candidate.evidenceRefs.length > 0 ? { evidenceRefs: candidate.evidenceRefs } : {}),
     ...(candidate.publishedAt !== undefined ? { publishedAt: candidate.publishedAt } : {}),
     mediaHint: candidate.mediaHint,
   };

@@ -489,3 +489,58 @@ export function resolveTargetLanguage(input: TargetLanguageInput): TargetLanguag
   );
   return { status: "english-default", evidence };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// One authoritative language per run
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** What the run writes, checks and renders in, after the Client Brief has had its say. */
+export interface TargetLanguageAdoption {
+  /** The run's target language: `undefined` means English, and no script check, fluency judge or script font stack. */
+  language: string | undefined;
+  /** How it was decided — `"resolved"` is 02d's answer, `"brief"` is a brief-declared language 02d could not see, `"english-default"` is neither. */
+  source: "resolved" | "brief" | "english-default";
+  /** Present only for `"brief"`: the line the gate payload and the ledger carry, so a reviewer knows why this run is being judged in a language nothing in the brand record mentions. */
+  note?: string;
+}
+
+/**
+ * The run's ONE target language, resolved after the Client Brief is known.
+ *
+ * `02d-load-target-language` reads the brand record, the profile, the voice
+ * rules and the brand-voice document. It does NOT read the client's own site
+ * — `00b1` does, and the brief agent is then told to "set the language the
+ * sources clearly show they publish in" when the run supplied none
+ * (`prompts/instagram-brief/1.md` §9). So a client whose Hebrew is visible
+ * only on their own pages used to end up with a brief declaring Hebrew, a
+ * copy prompt binding the writer to it (@13 §15: "`language.target`, when
+ * present, is the language of every word you write"), and every guard reading
+ * the OTHER value: no script check, no fluency judge, and Latin fonts around
+ * Hebrew glyphs — the 2026-09-08 audit's defect 5, back through a new door.
+ *
+ * Precedence, and why:
+ * 1. **02d's answer wins.** It is the documented precedence, it is what
+ *    `stampAgentBrief` writes into the brief, and a brief cannot outrank the
+ *    brand record a human set in the portal.
+ * 2. **Otherwise a brief-declared non-English language is adopted** — by the
+ *    whole run, not just the writer: the script check, the fluency judge and
+ *    the script font stack all see it, because a language worth writing in is
+ *    a language worth verifying. Recorded as a note, never silently.
+ * 3. **English stays English.** A brief that declares "English" (or "en-US")
+ *    resolves to `undefined` exactly as 02d does for English clients: there
+ *    is nothing for a script check to verify, and switching the fail-closed
+ *    fluency gate on for English copy would add a per-attempt Haiku call and
+ *    an outage hold path the brief scoped to non-English targets.
+ */
+export function adoptBriefTargetLanguage(resolved: string | undefined, briefTarget: unknown): TargetLanguageAdoption {
+  if (resolved !== undefined) return { language: resolved, source: "resolved" };
+  const declared = typeof briefTarget === "string" ? briefTarget.trim() : "";
+  if (declared.length === 0 || isEnglishTarget(declared)) return { language: undefined, source: "english-default" };
+  return {
+    language: declared,
+    source: "brief",
+    note:
+      `target language ${declared} comes from the client brief, not from the brand record: 02d resolved none, and the brief was written from sources 02d does not read ` +
+      `(the client's own site and recent posts). The copy is written, script-checked, fluency-judged and rendered in ${declared} — set brand.language in the portal to make it explicit.`,
+  };
+}

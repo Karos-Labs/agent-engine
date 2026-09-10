@@ -21,24 +21,48 @@ import { ResearchOutputSchema, type ResearchOutput } from "../workflow/types.js"
  * migration exists to avoid — since the agent only ever sees one already-
  * fetched payload, never a growing pile of prior runs' raw research.
  *
+ * ## Fact cards (`instagram-research@2`, RFC-13 §J, Phase 1)
+ *
+ * The payload this reads is no longer one 4-document pull: `04a2-research-
+ * pull-deep` merges three lanes (news 7d, insight 90d, primary-domains 90d)
+ * into 14-20 documents ordered primary-first, plus the client's own material
+ * as `clientDocuments`. The output grew with it — `kind`, `url`, `quote` and
+ * `primary` per card, 12-24 cards instead of 4-8 facts — because the
+ * downstream steps that were starved were starved of STRUCTURE as much as of
+ * volume: the angle step needs to know which card is a statistic, the copy
+ * prompt maps `kind` to an archetype, and `04b2-dedupe-fact-cards` needs
+ * `primary`/`url` to decide which of two cards saying the same thing to keep.
+ *
  * ## Model (2026-09)
  *
  * Gemini 2.5 Flash on Vertex, `pinned` (never silently substituted). This is
- * an EXTRACTION step: it reads a raw research payload and returns sourced,
- * dated facts as structured output. It is not client-facing copy, so voice
- * is not what it needs; a large window and cheap tokens are. Sonnet cost
- * roughly ten times as much per run here for no measured quality gain on a
- * read-and-list task. Retargetable per deployment
+ * an EXTRACTION step: it reads a research payload and returns sourced, dated
+ * cards as structured output. It is not client-facing copy, so voice is not
+ * what it needs; a large window and cheap tokens are. Sonnet cost roughly ten
+ * times as much per run here for no measured quality gain on a read-and-list
+ * task.
+ *
+ * The `@2` payload is bigger — ~20k input / ~3k output tokens against the
+ * ~5k/1.5k of `@1` — so this step's cost per run goes from ≈ $0.005 to
+ * **≈ $0.014 on Flash** against ≈ $0.11 on Sonnet. It stays on Flash, and the
+ * decision is not a judgment call kept in a comment: `research-extraction-
+ * quality.test.ts` pins the floor this step has to clear (≥ 10 cards, ≥ 3
+ * kinds, no duplicates, a URL on every card whose document had one). If
+ * Flash stops clearing that floor on prep samples, THAT is what moves this
+ * step to Sonnet — at +$0.10 per run against a $1.00 target, which the run
+ * budget can absorb once, not per attempt.
+ *
+ * Retargetable per deployment
  * (`MODEL_STEP_INSTAGRAM_RESEARCH_VENDOR/_MODEL`) and per run in Studio
  * (`stageModels["instagram-research"]`).
  */
 export class InstagramResearchAgent extends BaseAgent<ResearchOutput> {
   protected readonly config: AgentStepConfig<ResearchOutput> = {
     id: "instagram-research",
-    description: "Extract sourced, dated facts worth carrying into carousel slide copy from one already-fetched raw research payload.",
+    description: "Extract sourced, dated fact cards worth carrying into carousel slide copy from one already-fetched multi-lane research payload.",
     allowedTools: [],
     outputSchema: ResearchOutputSchema,
     modelPolicy: resolveModelPolicy("instagram-research", { policy: "pinned", model: "gemini-2.5-flash", vendor: "gemini" }),
-    skillRef: "instagram-research@1",
+    skillRef: "instagram-research@2",
   };
 }

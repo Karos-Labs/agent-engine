@@ -1,3 +1,5 @@
+export * from "./instagram-angle-agent.js";
+export * from "./instagram-brief-agent.js";
 export * from "./instagram-research-agent.js";
 export * from "./instagram-copy-agent.js";
 export * from "./instagram-image-vetting-agent.js";

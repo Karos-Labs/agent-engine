@@ -1,9 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { parseContentModeFromSummary, selectContentMode, type ResearchPullResult, type TrendCandidate, type TrendScoutOutput } from "@agent-engine/workflow";
 import {
+  parseContentModeFromSummary,
+  selectContentMode,
+  type ResearchPullResult,
+  type TopicSignalsForScout,
+  type TrendCandidate,
+  type TrendScoutOutput,
+} from "@agent-engine/workflow";
+import type { ClientBrief } from "@agent-engine/tools";
+import {
+  EVERGREEN_OFF_MODE_MULTIPLIER,
   MAX_ALTERNATIVES,
+  MODE_BONUS,
+  OWN_ASSET_WITH_OFFER_BONUS,
   PLANNED_ROW_SCORE,
   candidateDistance,
+  rankTopicCandidates,
   recentModesFromDecisions,
   resolveTopicClaim,
   scoreCandidate,
@@ -187,6 +199,185 @@ describe("scoring", () => {
 
   it("score is brandFit × interest × distance", () => {
     expect(scoreCandidate(candidate({ brandFit: 5, interest: 4 }), [])).toBe(20);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase 1 (RFC-13 §I): ranking across the five topic engines
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Only the fields `rankTopicCandidates` reads — the ranking must not need a whole brief. */
+const NO_OFFERS: Pick<ClientBrief, "offers"> = { offers: [] };
+const WITH_OFFER: Pick<ClientBrief, "offers"> = { offers: [{ name: "Retainer teardown", summary: "a paid audit of one retainer" }] };
+
+const RANK_BASE = { mode: "deep-value" as const, brief: NO_OFFERS, recentExcerpts: [] as string[], avoidTopics: [] as string[] };
+
+function scoreOf(ranked: ReturnType<typeof rankTopicCandidates>, topic: string): number {
+  const row = ranked.ranked.find((r) => r.candidate.topic === topic);
+  if (row === undefined) throw new Error(`"${topic}" was not ranked (dropped: ${ranked.dropped.map((d) => d.reason).join("; ")})`);
+  return row.score;
+}
+
+describe("rankTopicCandidates: distance beats brand fit", () => {
+  it("prefers a distant 4/5 story over a near-duplicate of last week's post that scores 5/5", () => {
+    const stale = candidate({
+      topic: "automated weekly reporting replaces the Monday status meeting",
+      headline: "Teams that automated reporting reclaimed four hours a week",
+      brandFit: 5,
+      interest: 4,
+    });
+    const fresh = candidate({ topic: "retainer scopes drift in month three", headline: "Why agency retainers lose money by month three", brandFit: 4, interest: 4 });
+    const ranked = rankTopicCandidates([stale, fresh], {
+      ...RANK_BASE,
+      recentExcerpts: ["automated weekly reporting replaces the Monday status meeting: teams that automated reporting reclaimed four hours a week"],
+    });
+    expect(ranked.chosen).toBe(fresh);
+    expect(scoreOf(ranked, fresh.topic)).toBeGreaterThan(scoreOf(ranked, stale.topic));
+    expect(ranked.ranked.find((r) => r.candidate === fresh)!.components).toMatchObject({ distance: 1, modeBonus: MODE_BONUS, engineBonus: 1, engine: "niche-news" });
+  });
+
+  it("drops what is below the brand-fit floor or already covered, and says which was which", () => {
+    const weak = candidate({ topic: "a famous company did a thing", brandFit: 2 });
+    const covered = candidate({ topic: "AI triage for support tickets", brandFit: 5 });
+    const ranked = rankTopicCandidates([weak, covered, candidate({ topic: "keeper" })], { ...RANK_BASE, avoidTopics: ["ai triage"] });
+    expect(ranked.chosen?.topic).toBe("keeper");
+    expect(ranked.dropped).toEqual([
+      { topic: weak.topic, reason: "brand fit 2/5 is below the floor of 3" },
+      { topic: covered.topic, reason: "a subject this client already covered on some channel" },
+    ]);
+  });
+});
+
+describe("rankTopicCandidates: the engine bonuses", () => {
+  it("lifts an own-asset story by half again — but only when the client has an offer for it to lead to", () => {
+    const asset = candidate({ topic: "how Northwind cut onboarding to 3 days", engine: "own-assets", evidenceRefs: ["market-strategy#Northwind"] });
+    const news = candidate({ topic: "a vendor shipped AI triage" });
+    const withoutOffer = rankTopicCandidates([asset, news], RANK_BASE);
+    expect(scoreOf(withoutOffer, asset.topic)).toBe(scoreOf(withoutOffer, news.topic));
+
+    const withOffer = rankTopicCandidates([asset, news], { ...RANK_BASE, brief: WITH_OFFER });
+    expect(withOffer.chosen).toBe(asset);
+    expect(scoreOf(withOffer, asset.topic)).toBeCloseTo(scoreOf(withOffer, news.topic) * OWN_ASSET_WITH_OFFER_BONUS, 5);
+  });
+
+  it("discounts an evergreen angle except on a deep-value week", () => {
+    const evergreen = candidate({ topic: "what practitioners get wrong about retainers", engine: "evergreen", mode: "deep-value" });
+    const onDeepValue = rankTopicCandidates([evergreen], { ...RANK_BASE, mode: "deep-value" });
+    expect(onDeepValue.ranked[0]!.components.engineBonus).toBe(1);
+
+    // Same candidate, a hot-news week: it also loses the mode bonus, which is
+    // the point — evergreen is what you post when there is no news.
+    const onHotNews = rankTopicCandidates([evergreen], { ...RANK_BASE, mode: "hot-news" });
+    expect(onHotNews.ranked[0]!.components).toMatchObject({ engineBonus: EVERGREEN_OFF_MODE_MULTIPLIER, modeBonus: 1 });
+    expect(onHotNews.ranked[0]!.score).toBeLessThan(onDeepValue.ranked[0]!.score);
+  });
+
+  it("lifts a reference-account story by the measured engagement of the post it cites, and not at all when it cites none", () => {
+    const signals: TopicSignalsForScout = {
+      referencePosts: [
+        { platform: "instagram", handle: "peer", url: "https://peer.test/1", excerpt: "what landed", engagementScore: 0.8 },
+        { platform: "x", handle: "quiet", url: "https://peer.test/2", excerpt: "what did not", engagementScore: 0 },
+      ],
+      audienceQuestions: [],
+      ownAssets: [],
+      evergreen: [],
+    };
+    const cited = candidate({ topic: "the pricing thread everyone shared", engine: "reference-accounts", evidenceRefs: ["https://peer.test/1"] });
+    const uncited = candidate({ topic: "a peer post nobody engaged with", engine: "reference-accounts", evidenceRefs: ["https://peer.test/2"] });
+    const unsourced = candidate({ topic: "a peer post with no evidence at all", engine: "reference-accounts" });
+    const ranked = rankTopicCandidates([cited, uncited, unsourced], { ...RANK_BASE, signals });
+    expect(ranked.ranked.find((r) => r.candidate === cited)!.components.engineBonus).toBeCloseTo(1.2, 5);
+    expect(ranked.ranked.find((r) => r.candidate === uncited)!.components.engineBonus).toBe(1);
+    expect(ranked.ranked.find((r) => r.candidate === unsourced)!.components.engineBonus).toBe(1);
+    expect(ranked.chosen).toBe(cited);
+
+    // Without `03e`'s signals the bonus is neutral rather than guessed.
+    expect(rankTopicCandidates([cited], RANK_BASE).ranked[0]!.components.engineBonus).toBe(1);
+  });
+});
+
+describe("rankTopicCandidates: the alternatives the reviewer sees", () => {
+  it("carries the engine, the deciding score and a reason on each, capped, and never the chosen one", () => {
+    const chosen = candidate({ topic: "chosen", brandFit: 5, interest: 5, mode: "deep-value", engine: "own-assets" });
+    const sameMode = candidate({ topic: "second", brandFit: 4, interest: 4, mode: "deep-value", engine: "audience-questions" });
+    const otherMode = candidate({ topic: "third", brandFit: 4, interest: 3, mode: "hot-news", engine: "reference-accounts" });
+    const many = Array.from({ length: 6 }, (_, i) => candidate({ topic: `filler ${i}`, brandFit: 3, interest: 3, mode: "deep-value" }));
+    const ranked = rankTopicCandidates([chosen, sameMode, otherMode, ...many], { ...RANK_BASE, brief: WITH_OFFER });
+
+    expect(ranked.chosen).toBe(chosen);
+    expect(ranked.alternatives).toHaveLength(MAX_ALTERNATIVES);
+    expect(ranked.alternatives.map((a) => a.topic)).not.toContain("chosen");
+    expect(ranked.alternatives[0]).toMatchObject({ topic: "second", engine: "audience-questions", reason: "lower-rank", score: scoreOf(ranked, "second") });
+    expect(ranked.alternatives.find((a) => a.topic === "third")).toMatchObject({ engine: "reference-accounts", reason: "off-mode" });
+  });
+});
+
+describe("resolveTopicClaim with a pre-ranked field", () => {
+  const signalsBrief = { ...RANK_BASE, brief: WITH_OFFER };
+  const assetStory = candidate({ topic: "how Northwind cut onboarding to 3 days", headline: "Northwind: 11 days to 3", brandFit: 5, interest: 5, engine: "own-assets" });
+  const questionStory = candidate({ topic: "who owns the onboarding checklist", headline: "Debate: who owns it", brandFit: 4, interest: 4, engine: "audience-questions" });
+  const ranked = () => rankTopicCandidates([assetStory, questionStory], signalsBrief);
+
+  it("still lets a person's request stand, recording the ranked field with its engines and scores", () => {
+    const pre = ranked();
+    const result = resolveTopicClaim(requestedSeed, scoutWith(assetStory, questionStory), "deep-value", { ...NO_HISTORY, ranked: pre });
+    if ("hold" in result) throw new Error(`unexpected hold: ${result.hold}`);
+    expect(result.claim.topic).toBe(requestedSeed.topic);
+    expect(result.claim.alternatives).toEqual([
+      expect.objectContaining({ topic: assetStory.topic, engine: "own-assets", reason: "outranked-by-request", score: pre.ranked[0]!.score }),
+      expect.objectContaining({ topic: questionStory.topic, engine: "audience-questions", reason: "outranked-by-request" }),
+    ]);
+    expect(result.claim.weighting?.bestCandidateScore).toBe(pre.ranked[0]!.score);
+  });
+
+  it("still lets a planned row keep its slot, and still lets trend-jacking displace it — on the ranked score", () => {
+    const pre = ranked();
+    expect(pre.ranked[0]!.score).toBeGreaterThan(PLANNED_ROW_SCORE);
+
+    const kept = resolveTopicClaim(reservedSeed, scoutWith(assetStory, questionStory), "deep-value", { ...NO_HISTORY, ranked: pre });
+    if ("hold" in kept) throw new Error("unreachable");
+    expect(kept.claim.source).toBe("reserved");
+    expect(kept.claim.alternatives!.every((a) => a.reason === "outranked-by-catalog")).toBe(true);
+    expect(kept.claim.alternatives![0]!.engine).toBe("own-assets");
+
+    const jacked = resolveTopicClaim(reservedSeed, scoutWith(assetStory, questionStory), "deep-value", { ...NO_HISTORY, ranked: pre, trendJacking: "always" });
+    if ("hold" in jacked) throw new Error("unreachable");
+    expect(jacked.claim.source).toBe("trend");
+    expect(jacked.claim.topic).toBe(assetStory.topic);
+    expect(jacked.releaseReservation).toBe(true);
+    expect(jacked.claim.alternatives![0]).toMatchObject({ topic: reservedSeed.topic, reason: "outranked-by-trend" });
+  });
+
+  it("takes the ranking's winner for a research seed and states which engine won and why", () => {
+    const pre = ranked();
+    const result = resolveTopicClaim(researchSeed, scoutWith(assetStory, questionStory), "deep-value", { ...NO_HISTORY, ranked: pre });
+    if ("hold" in result) throw new Error(`unexpected hold: ${result.hold}`);
+    expect(result.claim.source).toBe("trend");
+    expect(result.claim.topic).toBe(assetStory.topic);
+    expect(result.claim.trend).toBe(assetStory);
+    expect(result.claim.weighting?.bestCandidateScore).toBe(pre.ranked[0]!.score);
+    expect(result.claim.weighting?.rule).toMatch(/strongest candidate across the five topic engines: own-assets scored/);
+    expect(result.claim.weighting?.rule).toMatch(/engine 1\.5/);
+    expect(result.claim.alternatives).toEqual(pre.alternatives);
+  });
+
+  it("falls through to a real fetched headline when the ranking dropped everything", () => {
+    const pre = rankTopicCandidates([candidate({ topic: "off-brand", brandFit: 1 })], signalsBrief);
+    expect(pre.chosen).toBeUndefined();
+    const merged: ResearchPullResult = {
+      runId: "r1",
+      query: "agency retainers",
+      fromCache: false,
+      result: { documents: [{ title: "Agencies report 30% of retainers lose money by month three", url: "https://example.test/retainers", content: "30%" }] },
+    };
+    const result = resolveTopicClaim(researchSeed, scoutWith(candidate({ topic: "off-brand", brandFit: 1 })), "deep-value", {
+      ...NO_HISTORY,
+      ranked: pre,
+      trendResearchMerged: merged,
+    });
+    if ("hold" in result) throw new Error(`unexpected hold: ${result.hold}`);
+    expect(result.claim.source).toBe("research");
+    expect(result.claim.topic).toBe("Agencies report 30% of retainers lose money by month three");
   });
 });
 

@@ -6,7 +6,7 @@ import { existsSync, readdirSync } from "node:fs";
 import * as os from "node:os";
 import type { AgentToolRegistry } from "@agent-engine/core";
 import { FilePromptStore, type AgentContext, type CompletionResult, type ModelRouter } from "@agent-engine/core";
-import { createAllKarosTools, WorkspaceStore } from "@agent-engine/tools";
+import { briefSegments, createAllKarosTools, WorkspaceStore, type ClientBrief } from "@agent-engine/tools";
 import { createOfflineScraper, type ScraperProvider } from "@agent-engine/tool-karos-scraper";
 import { validateRenderInputs, type RenderCarouselInput, type RenderCarouselResult } from "@agent-engine/tool-karos-publish";
 import type { TrendScoutOutput } from "@agent-engine/workflow";
@@ -60,6 +60,49 @@ export function copyTurnInputs(router: ModelRouter): Array<Record<string, unknow
     }
   }
   return inputs;
+}
+
+/**
+ * The `08b-visual-qa-attempt-N` inputs a fake router saw, in attempt order.
+ * A QA turn is the one whose input carries `renderRules`; no other agent in
+ * this workflow receives that key.
+ *
+ * By SHAPE rather than by call index, deliberately: every new unconditional
+ * model turn (the scout at `03c`, the relevance judge at `07g`, the angle
+ * proposal at `04i`) shifts every index in every fixture at once, which is
+ * the churn `turns.ts` exists to stop.
+ */
+export function qaTurnInputs(router: ModelRouter): Array<Record<string, unknown>> {
+  const complete = router.complete as unknown as { mock: { calls: unknown[][] } };
+  const inputs: Array<Record<string, unknown>> = [];
+  for (const call of complete.mock.calls) {
+    const promptArg = call[0];
+    if (typeof promptArg !== "string") continue;
+    try {
+      const parsed = JSON.parse(promptArg) as { input?: Record<string, unknown> };
+      if (parsed.input && typeof parsed.input === "object" && "renderRules" in parsed.input) inputs.push(parsed.input);
+    } catch {
+      // not a JSON prompt
+    }
+  }
+  return inputs;
+}
+
+/** The whole prompt string of each `05-write-copy-attempt-N` call, for tests asserting on prompt TEXT rather than the parsed input. */
+export function copyTurnPrompts(router: ModelRouter): string[] {
+  const complete = router.complete as unknown as { mock: { calls: unknown[][] } };
+  const prompts: string[] = [];
+  for (const call of complete.mock.calls) {
+    const promptArg = call[0];
+    if (typeof promptArg !== "string") continue;
+    try {
+      const parsed = JSON.parse(promptArg) as { input?: Record<string, unknown> };
+      if (parsed.input && typeof parsed.input === "object" && "facts" in parsed.input && "styleConfig" in parsed.input) prompts.push(promptArg);
+    } catch {
+      // not a JSON prompt
+    }
+  }
+  return prompts;
 }
 
 export function finalTurn(
@@ -315,6 +358,59 @@ export function goodRelevanceVerdict(overrides: Partial<{ score: number; reason:
   return { score: 5, reason: "every slide names the client's own process data and speaks to operations leads", ...overrides };
 }
 
+/**
+ * A fresh, agent-written Client Brief for `acme` (Phase 1 item H) — the shape
+ * `client.getBrief` serves and `02i-resolve-client-brief` reports as
+ * `persisted`.
+ *
+ * Modelled on the client the grounding gate exists for (an AI marketing
+ * agency for B2B founders), and deliberately RICHER than
+ * `deriveClientBrief`'s output: a positioning line, real ICP roles and pains,
+ * a current offer, reference accounts with reasons — the fields only the
+ * agent writer can fill, so a test can tell a persisted brief from a derived
+ * one by content as well as by `source`.
+ */
+export function goodClientBrief(overrides: Partial<ClientBrief> = {}): ClientBrief {
+  return {
+    version: 1,
+    channel: "instagram",
+    generatedAt: new Date().toISOString(),
+    generatedBy: "agent",
+    agentSkillRef: "instagram-brief@1",
+    sources: [
+      { kind: "profile", ref: "client.getProfile" },
+      { kind: "context-doc", ref: "product-information" },
+      { kind: "site", ref: "https://acme.test/about" },
+    ],
+    positioning: {
+      oneLiner: "Acme runs the weekly content pipeline for B2B founders who have no marketing team yet.",
+      whatWeSell: "A managed content service: research, drafting and publishing across LinkedIn, X and Instagram, with a human editor approving every post before it ships.",
+      differentiators: ["a human editor approves every post", "one weekly cadence per channel, never a burst"],
+    },
+    icp: {
+      summary: "Founders and heads of marketing at seed to series B B2B companies, running content themselves",
+      roles: ["founder", "head of marketing"],
+      pains: ["no time to write weekly", "posts that read like every other vendor's"],
+      industries: ["B2B SaaS"],
+      geos: ["EU", "US"],
+    },
+    offers: [{ name: "First month audit", summary: "A content audit and one month of published posts, fixed price, for a first-time client." }],
+    coreTerms: ["content", "founders", "pipeline", "editorial", "cadence", "b2b"],
+    referenceAccounts: [
+      { platform: "x", handle: "lennysan", why: "the product-growth newsletter this ICP quotes in their own posts" },
+      { platform: "reddit", handle: "SaaS", why: "where the ICP asks what content actually converts" },
+      { platform: "instagram", handle: "marketingexamples", why: "the format vocabulary this audience already reads" },
+    ],
+    forbidden: { topics: ["politics"], claims: ["guaranteed results", "10x your revenue"] },
+    language: { target: "English", register: "direct, practitioner, first person plural, no exclamation marks" },
+    evergreenAngles: ["why a weekly cadence beats a launch burst", "what an editor catches that a model does not"],
+    ownAssets: [{ title: "Q3 onboarding cohort analysis", kind: "data", summary: "Time to first value across 40 onboarded clients.", sourceRef: "client.getKnowledge/assets" }],
+    confidence: "medium",
+    gaps: [],
+    ...overrides,
+  };
+}
+
 export interface TestEnvironment {
   /** The `WorkspaceStore`'s root — client config/topics catalog/ledger live under here. */
   rootDir: string;
@@ -349,6 +445,24 @@ export async function setupTestEnvironment(
      * scout must survive on a planned run — RFC-13 §E).
      */
     scraper?: ScraperProvider | null;
+    /**
+     * The persisted Client Brief this client starts with (Phase 1 item H),
+     * written straight to `clients/acme/brief/instagram-brief.json` — the same
+     * path `client.writeBrief` writes and `client.getBrief` reads.
+     *
+     * Omitted seeds a FRESH agent-written brief (`goodClientBrief()`), so
+     * `00b-check-client-brief` resolves to `reuse` and the fixture consumes no
+     * `instagram-brief` router turn — which is what keeps the ~30 existing
+     * workflow fixtures turn-for-turn identical now that `00b1`/`00b2`/`00b3`
+     * are wired (Phase 1 item H; this default was flipped in the same change).
+     *
+     * `false` seeds nothing: no persisted brief exists, `00b` resolves to
+     * `create`, the brief agent's turn IS consumed, and `02i` derives a
+     * deterministic brief when the write does not land. Pass a brief with an
+     * old `generatedAt` or `generatedBy: "human"` to exercise the
+     * refresh/never-refresh paths.
+     */
+    seedBrief?: ClientBrief | false;
   } = {},
 ): Promise<TestEnvironment> {
   const withConfig = opts.withConfig ?? true;
@@ -370,6 +484,15 @@ export async function setupTestEnvironment(
       instagramStyleConfig: opts.styleConfig ?? goodStyleConfig(),
       instagramBrandTokens: opts.brandTokens ?? goodBrandTokens(),
     });
+  }
+
+  // Written directly rather than through `client.writeBrief` so a fixture can
+  // seed shapes that tool deliberately refuses to produce (a 31-day-old
+  // brief, a human-authored one) — the same reason `brief.test.ts` seeds the
+  // read side by hand.
+  const seedBrief = opts.seedBrief ?? goodClientBrief();
+  if (seedBrief !== false) {
+    await store.writeJson("acme", briefSegments("instagram"), seedBrief);
   }
 
   const seedCtx: AgentContext = { runId: "seed", ...BASE_CTX_FIELDS, metadata: {} };

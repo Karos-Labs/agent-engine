@@ -16,6 +16,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
+import { goodAngleProposal } from "./angle-fixtures.js";
 
 const params = { runId: "instagram_run_reuse_rights", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
@@ -59,7 +60,7 @@ describe("P0 parity-audit Fix 4: image rights/watermark verification holds the w
     // can pin the failure to that one slide.
     vetting.selections = vetting.selections.map((s) => (s.n === 3 ? s : { ...s, rightsUsable: true }));
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
       finalTurn(vetting),
       finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
@@ -101,7 +102,7 @@ describe("P0 parity-audit Fix 4: image rights/watermark verification holds the w
     const vetting = selectionsWith();
     vetting.selections = vetting.selections.map((s) => (s.n === 5 ? { ...s, watermarkFree: false, claimMatch: 5, claimMatchReason: "shows the claimed subject (instagram-image-vet@3 fixture)" } : s));
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
       finalTurn(vetting),
       finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
@@ -155,7 +156,7 @@ describe("P0 parity-audit Fix 3: cross-post image-reuse prevention", () => {
     const otherPaths = [pool[1]!.path, pool[2]!.path];
     const vetting = selectionsWith({ imagePath: (n) => (n === 1 ? alreadyUsedPath : otherPaths[n % otherPaths.length]!) });
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
       finalTurn(vetting),
       finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
@@ -183,7 +184,7 @@ describe("P0 parity-audit Fix 3: cross-post image-reuse prevention", () => {
   it("records every shipped image as used at delivery, so a LATER post's cross-post check picks it up", async () => {
     const promptStore = makePromptStore();
     const vetting = selectionsWith();
-    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodCopyOutput()), finalTurn(vetting), finalTurn(goodRelevanceVerdict()), finalTurn({ pass: true, findings: [] })]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(goodCopyOutput()), finalTurn(vetting), finalTurn(goodRelevanceVerdict()), finalTurn({ pass: true, findings: [] })]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: testTools(env),
       promptStore,

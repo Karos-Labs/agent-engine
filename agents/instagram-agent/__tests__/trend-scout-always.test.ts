@@ -7,7 +7,7 @@ import { MemoryDurableStepStore, WorkflowEngine, parseContentModeFromSummary, ty
 import { createOfflineScraper } from "@agent-engine/tool-karos-scraper";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import type { InstagramTopicClaim } from "../src/workflow/types.js";
-import { fakeRenderCarousel, fakeRouterSequence, goodBrandTokens, goodImageCandidatePool, goodStyleConfig, goodTrendScoutOutput, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import { fakeRenderCarousel, fakeRouterSequence, goodBrandTokens, goodClientBrief, goodImageCandidatePool, goodStyleConfig, goodTrendScoutOutput, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 import { happyTurns } from "./turns.js";
 
 /**
@@ -47,6 +47,14 @@ async function runWorkflow(env: TestEnvironment, runId: string, router = fakeRou
 async function writeConfig(env: TestEnvironment, extra: Record<string, unknown>) {
   await env.store.writeJson("acme", ["client", "config"], { instagramStyleConfig: goodStyleConfig(), instagramBrandTokens: goodBrandTokens(), ...extra });
 }
+
+/**
+ * A persisted brief with nothing for engines 2-5 to work with: no reference
+ * accounts to read, no own assets, no evergreen angles. Used by the two tests
+ * whose subject is "the news pull came back with nothing" — with material in
+ * the brief the scout would (correctly) run anyway.
+ */
+const NO_SIGNAL_BRIEF = goodClientBrief({ referenceAccounts: [], ownAssets: [], evergreenAngles: [] });
 
 describe("03a-03c always run; 03g selects", () => {
   let env: TestEnvironment;
@@ -144,6 +152,56 @@ describe("03a-03c always run; 03g selects", () => {
     expect(selected?.topic).not.toMatch(/trends this week/);
   });
 
+  it("an own-assets subject reaches the writer AS an own-assets subject, and its heading is never the research query", async () => {
+    // Two doors the same defect used to walk through (RFC-13 §I): the five
+    // topic engines can produce a subject with no date and no publication
+    // behind it, and both the copy prompt and the research query used to
+    // treat every scouted candidate as this week's news.
+    env = await setupTestEnvironment({ seedTopics: [] });
+    await env.store.writeJson("acme", ["client", "profile"], { name: "Acme", industry: "B2B SaaS", description: "Acme sells an operations reporting platform to B2B software teams." });
+    const ownAsset = {
+      topic: "what our onboarding cohort data says about time to first value",
+      headline: "market-strategy#Northwind cut onboarding to 3 days",
+      mode: "deep-value" as const,
+      engine: "own-assets" as const,
+      brandFit: 5,
+      interest: 5,
+      brandFitReason: "the client owns the data nobody else can publish",
+      angle: "the cohort data says the opposite of the sales deck",
+      hook: "Three days, not three weeks.",
+      whyNow: "the cohort analysis has never been published",
+      sourceUrls: [],
+      evidenceRefs: ["market-strategy#Northwind"],
+      hasNumbers: true,
+      mediaHint: "data" as const,
+    };
+    const { result, steps, selected, router } = await runWorkflow(
+      env,
+      "ig_scout_own_asset",
+      fakeRouterSequence(happyTurns({ scout: { candidates: [ownAsset], skipped: [] } })),
+    );
+    expect(result.status).toBe("completed");
+    expect(selected?.source).toBe("trend");
+    expect(selected?.trend?.engine).toBe("own-assets");
+
+    // 1. The writer is told which engine produced the subject, so prompt @13
+    //    §14's "only `niche-news` may be written as news" rule can bind.
+    const copyInput = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      .map((call) => (typeof call[0] === "string" ? (JSON.parse(call[0] as string) as { input?: Record<string, unknown> }).input : undefined))
+      .find((input) => input !== undefined && "facts" in input && "styleConfig" in input)!;
+    const trendCandidate = copyInput["trendCandidate"] as Record<string, unknown>;
+    expect(trendCandidate["engine"]).toBe("own-assets");
+    expect(trendCandidate["evidenceRefs"]).toEqual(["market-strategy#Northwind"]);
+    expect(trendCandidate["whyNow"]).toBe(ownAsset.whyNow);
+
+    // 2. And the news lane asks a question a search index can answer: the
+    //    subject grounded in the client's business, not the document heading.
+    const deep = steps.find((s) => s.stepId === "04a2-research-pull-deep")?.output as { lanes: Array<{ lane: string; queries: Array<{ query: string }> }> };
+    const news = deep.lanes.find((l) => l.lane === "news")!;
+    expect(news.queries[0]!.query).toContain(" in the context of ");
+    expect(news.queries.every((q) => !q.query.includes("market-strategy#"))).toBe(true);
+  });
+
   it("empty catalog + a scout that found nothing on-brand: a REAL fetched headline leads, never the query", async () => {
     env = await setupTestEnvironment({ seedTopics: [] });
     await env.store.writeJson("acme", ["client", "profile"], { name: "Acme", industry: "B2B SaaS" });
@@ -156,7 +214,13 @@ describe("03a-03c always run; 03g selects", () => {
   });
 
   it("empty catalog + a search that returned no documents: holds honestly, and spends no model turn", async () => {
-    env = await setupTestEnvironment({ seedTopics: [], scraper: createOfflineScraper({ documentsPerQuery: 0 }) });
+    // A brief with NO signal material (Phase 1 item I): no reference
+    // accounts, no own assets, no evergreen angles. Since the five engines
+    // landed, the scout runs whenever there is ANY material — a quiet news
+    // week can still be named from the brief — so "nothing at all to scout"
+    // now means the news pull AND the other four engines came back empty.
+    // That is what this test is about, and this is how it is arranged.
+    env = await setupTestEnvironment({ seedTopics: [], scraper: createOfflineScraper({ documentsPerQuery: 0 }), seedBrief: NO_SIGNAL_BRIEF });
     await env.store.writeJson("acme", ["client", "profile"], { name: "Acme", industry: "B2B SaaS" });
     const { result, router, stepIds } = await runWorkflow(env, "ig_scout_nothing");
     expect(result.status).toBe("held");
@@ -168,14 +232,20 @@ describe("03a-03c always run; 03g selects", () => {
   });
 
   it("no scraper configured on a planned run: the scout is recorded unavailable and the row still leads — never a hold for an outage", async () => {
-    env = await setupTestEnvironment({ scraper: null });
+    // A brief with NO signal material (Phase 1 item I): no reference
+    // accounts, no own assets, no evergreen angles. Since the five engines
+    // landed, the scout runs whenever there is ANY material — a quiet news
+    // week can still be named from the brief — so "nothing at all to scout"
+    // now means the news pull AND the other four engines came back empty.
+    // That is what this test is about, and this is how it is arranged.
+    env = await setupTestEnvironment({ scraper: null, seedBrief: NO_SIGNAL_BRIEF });
     const { result, selected, stepIds } = await runWorkflow(env, "ig_scout_unavailable");
     expect(result.status).not.toBe("held");
     expect(selected?.source).toBe("reserved");
     expect(selected?.scoutStatus).toBe("unavailable");
     expect(selected?.alternatives).toEqual([]);
     // Topic selection completed and the run moved on to research (which, with no scraper, is a tooling failure of its own — not this gate's).
-    expect(stepIds).toContain("04a-research-pull");
+    expect(stepIds).toContain("04a2-research-pull-deep");
   });
 });
 

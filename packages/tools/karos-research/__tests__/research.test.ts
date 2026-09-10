@@ -394,6 +394,181 @@ describe("karos-research", () => {
     });
   });
 
+  /**
+   * RFC-13 §J — per-call breadth and depth.
+   *
+   * One number used to serve two different jobs: the trend scout skimming a
+   * dozen headlines and a fact-card extraction reading the paragraph a figure
+   * sits in both got `maxResults: 4` (ceiling 10) and a hard-wired 4000
+   * characters per document. Deep research needs 12+ documents at 6000
+   * characters, and — the part that is not just a bigger number — it must
+   * never be handed the scout's shallower answer out of the cache, because a
+   * thin cache hit is indistinguishable from a thin web.
+   */
+  describe("research.pull — per-call breadth and depth (RFC-13 §J)", () => {
+    /** A scraper whose documents are long enough to be truncated at any of the sizes under test, and which records the `SearchOptions` it was handed. */
+    function sizedScraper(bodyChars = 9000) {
+      const searchOptions: Array<Record<string, unknown> | undefined> = [];
+      const { scraper } = fakeScraper();
+      return {
+        searchOptions,
+        scraper: {
+          ...scraper,
+          async searchKeyword(query: string, opts: Record<string, unknown> = {}) {
+            searchOptions.push(opts);
+            const limit = typeof opts["limit"] === "number" ? opts["limit"] : 4;
+            return Array.from({ length: limit }, (_, i) => ({
+              id: `s${i}`,
+              url: `https://example.org/${encodeURIComponent(query)}/${i}`,
+              title: `Doc ${i}`,
+              text: "x".repeat(bodyChars),
+            }));
+          },
+        } as ScraperProvider,
+      };
+    }
+
+    function documentsOf(outcome: unknown): Array<{ content?: string }> {
+      return ((outcome as { result: { result: { documents: Array<{ content?: string }> } } }).result.result.documents);
+    }
+
+    it("truncates each document at `contentChars`, not at the module default", async () => {
+      const scoped = createKarosResearchTools(store, { scraper: sizedScraper().scraper });
+
+      const deep = await scoped["research.pull"]!.execute({ job: "deep", query: "q", window: "24h", contentChars: 6000 }, { ctx });
+      const shallow = await scoped["research.pull"]!.execute({ job: "shallow", query: "q", window: "24h" }, { ctx });
+
+      // `truncate` appends its own "[truncated at N characters]" marker, so the
+      // assertion is on the prefix length and on the marker naming the size
+      // actually asked for.
+      expect(documentsOf(deep)[0]!.content!.startsWith("x".repeat(6000))).toBe(true);
+      expect(documentsOf(deep)[0]!.content).toContain("truncated at 6000 characters");
+      expect(documentsOf(shallow)[0]!.content).toContain("truncated at 4000 characters");
+    });
+
+    it("accepts maxResults up to 16 and rejects 17", async () => {
+      const scoped = createKarosResearchTools(store, { scraper: sizedScraper().scraper });
+
+      const wide = await scoped["research.pull"]!.execute({ job: "wide", query: "q", window: "24h", maxResults: 16 }, { ctx });
+      expect(wide.status).toBe("success");
+      expect(documentsOf(wide)).toHaveLength(16);
+
+      const tooWide = await scoped["research.pull"]!.execute({ job: "wider", query: "q", window: "24h", maxResults: 17 }, { ctx });
+      // `defineTool` rejects on the schema before `execute` ever runs.
+      expect(tooWide.status).not.toBe("success");
+    });
+
+    it("refetches a shallower cached record for a deeper request, and still serves it for an equal one", async () => {
+      const scoped = createKarosResearchTools(store, { scraper: sizedScraper().scraper });
+
+      const shallow = await scoped["research.pull"]!.execute({ job: "j9", query: "acme trends", window: "24h" }, { ctx });
+      const shallowRunId = (shallow as { result: { runId: string } }).result.runId;
+
+      // Same question, same window, MORE depth: a 4000-character record cannot
+      // honestly answer it.
+      const deeper = await scoped["research.pull"]!.execute({ job: "j9", query: "acme trends", window: "24h", contentChars: 6000 }, { ctx });
+      const deeperResult = (deeper as { result: { runId: string; fromCache: boolean } }).result;
+      expect(deeperResult.fromCache).toBe(false);
+      expect(deeperResult.runId).not.toBe(shallowRunId);
+      expect(documentsOf(deeper)[0]!.content).toContain("truncated at 6000 characters");
+
+      // The same question at a size the newest record covers is a cache hit
+      // again — the reuse this cache exists for is unaffected.
+      const equal = await scoped["research.pull"]!.execute({ job: "j9", query: "acme trends", window: "24h", contentChars: 6000 }, { ctx });
+      expect((equal as { result: { fromCache: boolean; runId: string } }).result).toMatchObject({ fromCache: true, runId: deeperResult.runId });
+
+      // And so is a request for LESS than what was fetched: a deep record
+      // answers a shallow question.
+      const narrower = await scoped["research.pull"]!.execute({ job: "j9", query: "acme trends", window: "24h", maxResults: 2 }, { ctx });
+      expect((narrower as { result: { fromCache: boolean } }).result.fromCache).toBe(true);
+    });
+
+    it("treats a domain-restricted search as a different question from the open-web one", async () => {
+      const { scraper, searchOptions } = sizedScraper();
+      const scoped = createKarosResearchTools(store, { scraper });
+
+      await scoped["research.pull"]!.execute({ job: "j10", query: "agency pricing", window: "7d", maxResults: 6 }, { ctx });
+      const restricted = await scoped["research.pull"]!.execute(
+        { job: "j10", query: "agency pricing", window: "7d", maxResults: 6, includeDomains: ["reddit.com", "quora.com"] },
+        { ctx },
+      );
+
+      expect((restricted as { result: { fromCache: boolean } }).result.fromCache).toBe(false);
+      // The restriction reaches the provider's own `SearchOptions` — the field
+      // the ScrappyCoco adapter has always sent and no tool exposed.
+      expect(searchOptions[0]).toEqual({ limit: 6 });
+      expect(searchOptions[1]).toEqual({ limit: 6, includeDomains: ["reddit.com", "quora.com"] });
+
+      // Asking the restricted question again is a hit; the open one is too.
+      const again = await scoped["research.pull"]!.execute(
+        { job: "j10", query: "agency pricing", window: "7d", maxResults: 6, includeDomains: ["QUORA.com", "reddit.com"] },
+        { ctx },
+      );
+      expect((again as { result: { fromCache: boolean } }).result.fromCache).toBe(true);
+      expect(searchOptions).toHaveLength(2);
+
+      expect(await scoped["research.pull"]!.execute({ job: "j10", query: "agency pricing", window: "7d", maxResults: 6 }, { ctx })).toMatchObject({
+        result: { fromCache: true },
+      });
+      expect(searchOptions).toHaveLength(2);
+      expect(await scoped["research.pull"]!.execute({ job: "j10", query: "agency pricing", window: "7d", maxResults: 6, includeDomains: [] }, { ctx })).toMatchObject({
+        result: { fromCache: true },
+      });
+    });
+
+    it("keeps the cache-check hot path a pointer read: an identical repeat never lists runs/", async () => {
+      // AU12's fix, preserved through the size-aware lookup: the historical
+      // scan runs only when the pointer's record exists and cannot serve the
+      // request, never for the ordinary same-question-same-size hit.
+      const scoped = createKarosResearchTools(store, { scraper: sizedScraper().scraper });
+      await scoped["research.pull"]!.execute({ job: "j11", query: "acme trends", window: "24h" }, { ctx });
+
+      const listJsonSpy = vi.spyOn(store, "listJson");
+      const again = await scoped["research.pull"]!.execute({ job: "j11", query: "acme trends", window: "24h" }, { ctx });
+
+      expect((again as { result: { fromCache: boolean } }).result.fromCache).toBe(true);
+      expect(listJsonSpy).not.toHaveBeenCalled();
+      listJsonSpy.mockRestore();
+    });
+
+    /**
+     * THE BYTE-IDENTICAL GUARANTEE.
+     *
+     * Every other agent in the engine calls this tool with `job`/`query`/
+     * `window` and nothing else. Three new options are worth nothing if one of
+     * them silently changed what those callers get, so this pins the whole
+     * payload — including the truncation marker's size — for that exact call.
+     */
+    it("leaves a default-options caller's payload unchanged", async () => {
+      const scoped = createKarosResearchTools(store, {
+        scraper: {
+          ...fakeScraper().scraper,
+          async searchKeyword() {
+            return [{ id: "q3", url: "https://example.org/q3", title: "Q3 report", text: "body text", publishedAt: "2026-08-01T00:00:00.000Z", author: "Ann" }];
+          },
+        } as ScraperProvider,
+      });
+
+      const outcome = await scoped["research.pull"]!.execute({ job: "snapshot", query: "acme trends", window: "24h" }, { ctx });
+
+      expect(outcome.status).toBe("success");
+      expect((outcome as { result: { result: unknown } }).result.result).toEqual({
+        provider: "fake/scraper",
+        query: "acme trends",
+        fetchedAt: "2026-01-01T00:00:00.000Z",
+        documents: [
+          {
+            title: "Q3 report",
+            url: "https://example.org/q3",
+            content: "body text",
+            publishedAt: "2026-08-01T00:00:00.000Z",
+            author: "Ann",
+          },
+        ],
+      });
+    });
+  });
+
   describe("research.captureVisibility", () => {
     const args = {
       promptId: "p1",

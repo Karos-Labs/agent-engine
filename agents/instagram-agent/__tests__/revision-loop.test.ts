@@ -18,6 +18,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
+import { goodAngleProposal } from "./angle-fixtures.js";
 
 /**
  * The universal approve / revise / reject cycle, as instagram-agent uses it.
@@ -40,7 +41,9 @@ function tools(env: TestEnvironment, extra: Record<string, unknown> = {}): Agent
 
 /** Router turns for one full drafting pass: copy, vetting, visual QA. */
 function draftTurns(copyOutput: ReturnType<typeof goodCopyOutput>) {
-  return [finalTurn(copyOutput), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())];
+  // The angle proposal (04i) leads each ROUND: one per revision, outside the
+  // attempt loop, so a two-round fixture spends two of them.
+  return [finalTurn(goodAngleProposal()), finalTurn(copyOutput), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())];
 }
 
 describe("revision loop", () => {
@@ -107,9 +110,11 @@ describe("revision loop", () => {
     expect(ids).toContain("07c-emit-slides-data-attempt-1-r1");
     // Everything upstream of the drafting loop kept its id and was REUSED, which
     // is the whole reason the revision is in-run rather than a fresh run.
-    expect(ids.filter((i) => i === "04a-research-pull")).toHaveLength(1);
+    // Phase 1 (item J): the retired `04a-research-pull` is now
+    // `04a2-research-pull-deep`, and it is still ONCE per run.
+    expect(ids.filter((i) => i === "04a2-research-pull-deep")).toHaveLength(1);
     expect(ids.filter((i) => i.startsWith("04b-research-extract-facts"))).toHaveLength(1);
-    expect(ids).not.toContain("04a-research-pull-r1");
+    expect(ids).not.toContain("04a2-research-pull-deep-r1");
 
     // The delivered copy is the REVISED copy.
     const slidesData = steps.find((s) => s.stepId === "07c-emit-slides-data-attempt-1-r1")?.output as
@@ -193,7 +198,7 @@ describe("revision loop", () => {
   it("holds after the revision ceiling rather than re-drafting indefinitely", async () => {
     const copy = goodCopyOutput();
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       ...draftTurns(copy),
       ...draftTurns(copy),
       ...draftTurns(copy),
@@ -261,7 +266,7 @@ describe("revision loop", () => {
         claimMatchReason: "shows the claimed subject (instagram-image-vet@3 fixture)",
       })),
     };
-    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(copy), finalTurn(vetting), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(vetting), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]);
 
     const workflowFn = createInstagramAgentWorkflow({
       tools: tools(env),

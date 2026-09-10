@@ -15,7 +15,7 @@ import {
   renderVisualPatternReference,
 } from "@agent-engine/tool-karos-media";
 import { ScraperError, type ScrapedRecord, type ScraperProvider, type SocialPlatform } from "@agent-engine/tool-karos-scraper";
-import { latestRunForQuery, writeRunRecord, type RunRecord } from "./runs.js";
+import { latestRunForQuery, listRuns, writeRunRecord, type RunRecord } from "./runs.js";
 import {
   DEFAULT_CONTENT_CHARS,
   HISTORY_EXCERPT_CHARS,
@@ -27,10 +27,14 @@ import {
   type ResearchVisualPatterns,
 } from "./payload.js";
 
+// 1.3.0 (RFC-13 §J): per-call breadth and depth — `maxResults` up to 16,
+// `contentChars` (was the hard-wired `DEFAULT_CONTENT_CHARS`) and
+// `includeDomains` — plus a size-aware cache, so a deep pull is never served
+// a record fetched shallow. Every existing caller's payload is byte-identical.
 // 1.2.0 (SCRUM-321/AU37): additive `includeVisualPatterns` read path on the
 // account-history half of the payload.
 // 1.1.1 (SCRUM-296/AU11): removed the redundant re-parse of already-validated input.
-const TOOL_VERSION = "1.2.0";
+const TOOL_VERSION = "1.3.0";
 
 const SOCIAL_PLATFORMS = ["x", "instagram", "reddit", "tiktok"] as const;
 
@@ -49,11 +53,44 @@ export const PullInputSchema = z.object({
     .number()
     .int()
     .min(1)
-    .max(10)
+    .max(16)
     .default(4)
     .describe(
       "How many live sources to retrieve. The payload is injected whole into the extraction agent's prompt, so this is a token bill as much as a breadth setting.",
     ),
+  /**
+   * RFC-13 §J. Per-document content ceiling for THIS call.
+   *
+   * It used to be the module-level `DEFAULT_CONTENT_CHARS` for every caller,
+   * which made one number serve two genuinely different jobs: a trend scout
+   * skimming twelve headlines wants 4000 characters, and a fact-card
+   * extraction reading a study wants the paragraph the figure is actually in.
+   * The default is unchanged, so no existing caller's payload moves a byte.
+   */
+  contentChars: z
+    .number()
+    .int()
+    .min(500)
+    .max(8000)
+    .default(DEFAULT_CONTENT_CHARS)
+    .describe(
+      "Per-document content ceiling for this call. Higher costs prompt tokens downstream; the default matches what every caller got before this option existed.",
+    ),
+  /**
+   * RFC-13 §J. Restrict the search to these domains — the client's own site,
+   * a reference publication, the community sites an audience-question query
+   * is actually looking for. Reaches `SearchOptions.includeDomains`, which
+   * the ScrappyCoco adapter has always supported and no tool exposed.
+   *
+   * Part of this call's cache identity (see `servesRequest`): a
+   * domain-restricted search and an open one are different questions, not the
+   * same question with a parameter.
+   */
+  includeDomains: z
+    .array(z.string().min(1))
+    .max(8)
+    .optional()
+    .describe("Restrict results to these domains (e.g. the client's own site, a reference publication, community sites). Omitted means the open web."),
   /**
    * Whose prior deliverables to fold in as anti-repetition context, e.g.
    * `"instagram-agent"`. Omitted means no history section at all — a caller
@@ -105,6 +142,104 @@ export interface PullResult {
   result: unknown;
   fromCache: boolean;
   ageMs: number;
+}
+
+/**
+ * RFC-13 §J. A run record plus the SIZE OF THE PULL that produced it.
+ *
+ * Declared here rather than widened into `RunRecord` itself because these
+ * three fields are `research.pull`'s own business: `research.writeRun` and
+ * `research.captureVisibility` write the same record type and have no notion
+ * of a result's breadth. Every field is optional, so a record written before
+ * this version still reads — `servesRequest` treats a missing annotation as
+ * the pre-1.3.0 defaults, which is exactly what it was.
+ */
+interface PullRunRecord extends RunRecord {
+  readonly maxResults?: number;
+  readonly contentChars?: number;
+  readonly includeDomains?: readonly string[];
+}
+
+/** Domain lists compare as sets: order and case are not part of the question. */
+function sameDomains(a: readonly string[] | undefined, b: readonly string[] | undefined): boolean {
+  const norm = (list: readonly string[] | undefined): string =>
+    [...(list ?? [])].map((d) => d.trim().toLowerCase()).sort().join(",");
+  return norm(a) === norm(b);
+}
+
+/**
+ * Whether a cached record can honestly answer THIS request.
+ *
+ * The cache was keyed on `(job, query)` alone, which was right until a call
+ * could ask for more than the last one did: a 4-document / 4000-character
+ * record served to a 6-document / 6000-character request looks like a cache
+ * hit and is silently a thinner answer — the deep-research lanes would have
+ * been handed the trend scout's skim. So a record serves only when it is at
+ * least as broad and at least as deep as what was asked for, and was fetched
+ * under the same domain restriction. Anything less refetches; the new record
+ * supersedes the old one for later cache checks (`latestRunForQuery` reads
+ * the newest matching run).
+ */
+function servesRequest(
+  cached: PullRunRecord,
+  request: { maxResults: number; contentChars: number; includeDomains?: readonly string[] },
+): boolean {
+  const cachedMax = cached.maxResults ?? 4;
+  const cachedChars = cached.contentChars ?? DEFAULT_CONTENT_CHARS;
+  return cachedMax >= request.maxResults && cachedChars >= request.contentChars && sameDomains(cached.includeDomains, request.includeDomains);
+}
+
+/**
+ * Two queries are the same question when they differ only in case or spacing.
+ *
+ * The same rule `runs.ts`'s own `sameQuestion` applies on the `latest.json`
+ * fast path — repeated here because that one is private to the module that
+ * owns the pointer, and the size-aware lookup below needs it for the
+ * historical scan the pointer cannot answer (see `findServingRun`). If the
+ * two ever disagree the symptom is a redundant refetch, never a wrong answer.
+ */
+function sameQuestion(a: string, b: string): boolean {
+  const norm = (s: string): string => s.trim().replace(/\s+/g, " ").toLowerCase();
+  return norm(a) === norm(b);
+}
+
+/**
+ * The newest recorded run that asked this question AND is fresh enough AND
+ * was fetched at least as broad/deep as this request, or `undefined`.
+ *
+ * The pointer read comes first, because that is the common case and it is one
+ * store read whatever the history's size. The scan happens only when the
+ * pointer's record exists but cannot serve THIS request — a `latest.json`
+ * keyed on the query alone cannot distinguish "the last pull of this question"
+ * from "the last DEEP pull of this question", and without the scan an
+ * interleaved shallow/deep (or open/domain-restricted) pair of callers would
+ * refetch each other's answer forever.
+ */
+async function findServingRun(
+  store: WorkspaceStoreLike,
+  clientSlug: string,
+  job: string,
+  query: string,
+  request: { windowMs: number; maxResults: number; contentChars: number; includeDomains?: readonly string[] },
+): Promise<{ record: PullRunRecord; ageMs: number } | undefined> {
+  const usable = (record: PullRunRecord | undefined): { record: PullRunRecord; ageMs: number } | undefined => {
+    if (record === undefined) return undefined;
+    const ageMs = Date.now() - record.at;
+    if (ageMs > request.windowMs) return undefined;
+    return servesRequest(record, request) ? { record, ageMs } : undefined;
+  };
+
+  const pointed = (await latestRunForQuery(store, clientSlug, job, query)) as PullRunRecord | undefined;
+  const fromPointer = usable(pointed);
+  if (fromPointer) return fromPointer;
+  if (pointed === undefined) return undefined;
+
+  for (const record of (await listRuns(store, clientSlug, job)) as PullRunRecord[]) {
+    if (!sameQuestion(record.query, query)) continue;
+    const hit = usable(record);
+    if (hit) return hit;
+  }
+  return undefined;
 }
 
 function toDocument(record: ScrapedRecord, contentChars: number): ResearchDocument {
@@ -159,18 +294,21 @@ export function createPull(store: WorkspaceStoreLike, scraper?: ScraperProvider)
       // parsed `rawInput` against `PullInputSchema` (defaults applied) before calling
       // this — this cast reflects that instead of a second, actually-redundant `.parse()`.
       const input = rawInput as z.output<typeof PullInputSchema>;
-      const { job, query, window, maxResults } = input;
+      const { job, query, window, maxResults, contentChars, includeDomains } = input;
       const windowMs = parseDurationMs(window);
       // Keyed on the QUESTION, not just the job. Keyed on the job alone, a
       // second instagram run the same day reused the first one's research
       // whatever its own subject was — see `latestRunForQuery`.
-      const cached = await latestRunForQuery(store, ctx.clientSlug, job, query);
+      const cached = await findServingRun(store, ctx.clientSlug, job, query, {
+        windowMs,
+        maxResults,
+        contentChars,
+        ...(includeDomains ? { includeDomains } : {}),
+      });
 
       if (cached) {
-        const ageMs = Date.now() - cached.at;
-        if (ageMs <= windowMs) {
-          return success<PullResult>({ runId: cached.runId, query: cached.query, result: cached.result, fromCache: true, ageMs });
-        }
+        const { record, ageMs } = cached;
+        return success<PullResult>({ runId: record.runId, query: record.query, result: record.result, fromCache: true, ageMs });
       }
 
       if (scraper === undefined) {
@@ -183,8 +321,8 @@ export function createPull(store: WorkspaceStoreLike, scraper?: ScraperProvider)
 
       let documents: ResearchDocument[];
       try {
-        const records = await scraper.searchKeyword(query, { limit: maxResults });
-        documents = records.map((r) => toDocument(r, DEFAULT_CONTENT_CHARS));
+        const records = await scraper.searchKeyword(query, { limit: maxResults, ...(includeDomains && includeDomains.length > 0 ? { includeDomains } : {}) });
+        documents = records.map((r) => toDocument(r, contentChars));
       } catch (error) {
         if (error instanceof ScraperError) {
           // A search outage is tooling, never content. Reporting it as an
@@ -215,7 +353,18 @@ export function createPull(store: WorkspaceStoreLike, scraper?: ScraperProvider)
       };
 
       const runId = randomUUID();
-      const record: RunRecord = { job, runId, query, result, at: Date.now() };
+      // The size annotations ride along with the record so the NEXT call can
+      // tell whether this answer is deep enough for it (`servesRequest`).
+      const record: PullRunRecord = {
+        job,
+        runId,
+        query,
+        result,
+        at: Date.now(),
+        maxResults,
+        contentChars,
+        ...(includeDomains ? { includeDomains } : {}),
+      };
       await writeRunRecord(store, ctx.clientSlug, record);
 
       return success<PullResult>({ runId, query, result, fromCache: false, ageMs: 0 });

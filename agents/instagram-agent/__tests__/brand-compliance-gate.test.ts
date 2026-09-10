@@ -20,6 +20,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
+import { goodAngleProposal } from "./angle-fixtures.js";
 
 const ctx: AgentContext = { runId: "run_1", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring", metadata: {} };
 const params = { runId: "instagram_run_brand_gate", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
@@ -167,7 +168,7 @@ describe("SCRUM-301/AU17: step 07's banned-word/char + compliance checks now cal
       const rocketCopy = copyWith(`${goodCopyOutput().slides[0]!.body} Growth incoming 🚀`);
       const cleanCopy = goodCopyOutput();
       const router = fakeRouterSequence([
-        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
         finalTurn(rocketCopy),
         finalTurn(goodImageVettingOutput()),
         finalTurn(cleanCopy),
@@ -203,7 +204,7 @@ describe("SCRUM-301/AU17: step 07's banned-word/char + compliance checks now cal
       const promptStore = makePromptStore();
       const badCopy = goodCopyOutput();
       const router = fakeRouterSequence([
-        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
         finalTurn(badCopy),
         finalTurn(goodImageVettingOutput()),
         finalTurn(badCopy),

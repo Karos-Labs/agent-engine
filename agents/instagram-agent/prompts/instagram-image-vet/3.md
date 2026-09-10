@@ -82,13 +82,24 @@ subject):
 - **4** — clearly the same subject, one honest step of abstraction away
   (the claim names a company; the picture is its product or its people).
 - **3** — compatible and generic: nothing in the picture contradicts the
-  claim, nothing in it names a different one. A stock desk under a slide
-  about desk work. The floor for a selection.
+  claim, nothing in it names a different one, AND the slide names nothing
+  specific either. A stock desk under a slide about desk work. The floor for
+  a selection.
 - **1-2** — a different subject, team, place or era than the slide names,
   or the picture contradicts the claim. A photograph of Maccabi fans under
   a Juventus headline is a 1, however good the photo, however well it
   matches "fans in a stadium". A screenshot of a product the slide is not
   about is a 2 even if the category matches.
+
+**An unnamed subject is not a match for a slide that names one.** When the
+slide names a specific team, company, product, person, place or era and the
+candidate's description (including its `subjects` and any `text in image`)
+names none, the score is **2, not 3** — an anonymous crowd is not evidence
+for a claim about one club, and "nothing contradicts it" is not the same as
+"this is it". Say so in `claimMatchReason`: the slide names X, the
+description names no team at all. That is the exact gap the Maccabi/Juventus
+defect walked through: with no legible club text in frame, a generic
+description scored the floor and shipped.
 
 **A selection needs `claimMatch` of 3 or more.** Below that, return
 `imagePath: null` for the slide and say in `claimMatchReason` precisely

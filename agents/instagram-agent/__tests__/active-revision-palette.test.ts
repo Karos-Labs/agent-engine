@@ -24,6 +24,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
+import { goodAngleProposal } from "./angle-fixtures.js";
 
 /**
  * IGSTYLE-3 — active revision pipeline: the directive reaches the render.
@@ -54,7 +55,9 @@ const PLAIN_BRAND = {
 };
 
 function draftTurns(copyOutput: ReturnType<typeof goodCopyOutput>) {
-  return [finalTurn(copyOutput), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())];
+  // The angle proposal (04i) leads each ROUND: one per revision, outside the
+  // attempt loop, so a two-round fixture spends two of them.
+  return [finalTurn(goodAngleProposal()), finalTurn(copyOutput), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())];
 }
 
 describe("effectiveBrandKit (IGSTYLE-3, §2.3) — pure, no checkpoint", () => {

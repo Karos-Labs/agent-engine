@@ -2,10 +2,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentTool, AgentToolRegistry, GateResponse, ModelRouter, PromptStore, StyleEdit, TemplateFeedback } from "@agent-engine/core";
-import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField, buildClientVoiceContext, readCrossChannelHistory, crossChannelDirective, crossChannelAvoidTopics, socialAccountsFromClient, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, readContextDoc, enforceContextDocPolicy, toAgentContext, distillStylePreferences, varyLearnedStyle, buildTrendQueries, pullTrendResearch, runTrendScout, researchDigestForScout, selectContentMode, trendCandidateForDrafting, type ContentMode, type DistilledStyle, type FeedbackEntryLike, type StyleVariationEntry, type TrendResearch, type TrendScoutOutput } from "@agent-engine/workflow";
+import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField, buildClientIntelContext, buildClientVoiceContext, readCrossChannelHistory, crossChannelDirective, crossChannelAvoidTopics, socialAccountsFromClient, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, readContextDoc, enforceContextDocPolicy, toAgentContext, distillStylePreferences, varyLearnedStyle, buildTrendQueries, hasTopicSignalMaterial, pullTrendResearch, runTrendScout, researchDigestForScout, selectContentMode, trendCandidateForDrafting, type ContentMode, type DistilledStyle, type FeedbackEntryLike, type StyleVariationEntry, type TrendResearch, type TrendScoutOutput } from "@agent-engine/workflow";
 import type { ClientBrand, ClientBrief, ClientKnowledge, ClientProfile, VoiceRules } from "@agent-engine/tools";
 import type { InstagramFormat, InstagramTopicClaim as InstagramTopicClaimShape } from "./types.js";
 import type { RenderCarouselInput, RenderCarouselResult } from "@agent-engine/tool-karos-publish";
+import { InstagramAngleAgent } from "../agent/instagram-angle-agent.js";
+import { InstagramBriefAgent } from "../agent/instagram-brief-agent.js";
 import { InstagramCopyAgent } from "../agent/instagram-copy-agent.js";
 import { InstagramImageVettingAgent } from "../agent/instagram-image-vetting-agent.js";
 import { InstagramResearchAgent } from "../agent/instagram-research-agent.js";
@@ -26,8 +28,32 @@ import {
 import { brandLogoDataUri, downloadBrandLogo, parseBrandLogoDataUri, type BrandLogoPlacement } from "@agent-engine/tool-karos-media";
 import { buildBrandHeadHtml, buildBrandLogoBodyHtml, deriveBrandRenderTokens, filterLearnedStyleToRing, planBrandLogo, type BrandRenderTokens } from "./brand-render-tokens.js";
 import { buildScriptFontHeadForLanguage } from "./script-fonts.js";
-import { resolveTargetLanguage } from "./target-language.js";
-import { briefForPrompt, buildGroundedQuery, deriveClientBrief, fallbackQuery, isBriefStale, isThinlyGrounded } from "./client-brief.js";
+import { adoptBriefTargetLanguage, resolveTargetLanguage } from "./target-language.js";
+import {
+  BRIEF_AGENT_SKILL_REF,
+  briefForPrompt,
+  buildBriefAgentInput,
+  buildGroundedQuery,
+  deriveClientBrief,
+  gatherBriefSourceUrls,
+  isBriefStale,
+  isThinlyGrounded,
+  resolveBriefFreshness,
+  stampAgentBrief,
+} from "./client-brief.js";
+import { gatherTopicSignals } from "./topic-engines.js";
+import { describeWithVision } from "./vision-annotation.js";
+import { buildResearchLanes, normalizeDomain, orderDocumentsPrimaryFirst, pickPrimarySourceUrls, pullResearchLanes } from "./research-lanes.js";
+import { dedupeFactCards, factCardsForPrompt } from "./fact-cards.js";
+import {
+  angleDecisionSummary,
+  angleForCopyInput,
+  angleUnavailable,
+  factsForAnglePrompt,
+  pastAnglesFromDecisions,
+  selectAngle,
+  type AngleDecision,
+} from "./angle-selection.js";
 import {
   relevanceFailureReason,
   relevanceFloor,
@@ -38,7 +64,7 @@ import {
   runRelevanceJudge,
   type RelevanceVerdict,
 } from "./relevance-gate.js";
-import { recentModesFromDecisions, resolveTopicClaim, topicDecisionForGate, topicDecisionSummary } from "./topic-selection.js";
+import { rankTopicCandidates, recentModesFromDecisions, resolveTopicClaim, topicDecisionForGate, topicDecisionSummary } from "./topic-selection.js";
 import {
   CANDIDATES_PER_PHOTO_SLIDE,
   DEFAULT_RUN_SHAPE,
@@ -52,6 +78,7 @@ import {
   readBudgetHistory,
   recordRunInHistory,
   remainingGenerationBudget,
+  revisionEstimateUsd,
   summarizeRunBudget,
   targetCrossedNote,
   type RunBudgetDecision,
@@ -739,6 +766,45 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       };
     });
 
+    // ── The per-run budget: an estimate, an adapted plan, a live meter — never a hold (Phase 0 cost controls) ──
+    //
+    // The owner's rule (2026-09-09, binding): target $1.00, hard max $1.50,
+    // and a limit never breaks a run. `02j-plan-run-budget` estimates the run
+    // from the plan (attempts, images, evidence pulls, re-vets) calibrated by
+    // this client's own history (`memory` beliefs, written back at 09b), and
+    // when the estimate would exceed the target it ADAPTS the plan to fit, in
+    // the owner's order — images capped, evidence pulls warm-cache only, one
+    // return to step 05 instead of two, optional re-vets off — recording each
+    // adaptation as a note the reviewer sees. Then the meter: every model step
+    // adds `max(measured, estimate)` (a Gemini-on-Vertex step may report $0),
+    // every scraper execution and generated image its unit cost. Crossing the
+    // target stops OPTIONAL work; crossing the hard max finishes on the
+    // cheapest complete path and delivers `degraded`. Every mandatory gate
+    // (self-check, craft hygiene, language, relevance, rights) still runs.
+    //
+    // The meter is a plain object, recreated on every invocation: a resumed
+    // run replays each checkpointed step below and re-adds its line, so no
+    // checkpoint of its own is needed. Precision is not the point; the
+    // posture is.
+    const meter = new RunSpendMeter();
+    /** Run notes about money, in the order they happened — the plan's note first, then each threshold the meter crossed. Shown on the gate payload and persisted with the deliverable. */
+    const budgetNotes: string[] = [];
+    const budgetCrossed = { target: false, max: false };
+    /** `meter.add` plus the one-time crossing notes, so no call site has to remember to check. */
+    const spend = (label: string, measuredUsd: number | undefined, estimateUsd: number): void => {
+      meter.add(label, measuredUsd, estimateUsd);
+      if (!budgetCrossed.target && meter.crossedTarget) {
+        budgetCrossed.target = true;
+        budgetNotes.push(targetCrossedNote(meter, label));
+      }
+      if (!budgetCrossed.max && meter.crossedMax) {
+        budgetCrossed.max = true;
+        budgetNotes.push(maxCrossedNote(meter, label));
+      }
+    };
+    /** Images the `generate` rescue tier has requested this run, against the plan's `generatedImagesCap`. Run-scoped: the cap is per run, not per attempt. */
+    let generatedSoFar = 0;
+
     // ── 02b: the client's own voice/profile context — best-effort, never blocking ──
     //
     // Everything else this workflow reads (`instagramStyleConfig`,
@@ -838,7 +904,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // language between attempt 1 and a revision — the gate must judge against
     // the language the copy was actually drafted for. `?? undefined` across
     // the checkpoint boundary for the same JSON round-trip reason as 02c.
-    const targetLanguage =
+    // Named `resolvedTargetLanguage`, not `targetLanguage`: this is what the
+    // brand record, profile, voice rules and brand-voice document say, and it
+    // is what `stampAgentBrief` writes into the brief. The run's ONE target
+    // language is decided once the brief is known (`adoptBriefTargetLanguage`,
+    // just after 02i) — a brief may declare a language 02d cannot see, because
+    // 02d does not read the client's site and `00b1` does.
+    const resolvedTargetLanguage =
       (await wf.step.code("02d-load-target-language", async () => {
         const brandOutcome = await tools["client.getBrand"]?.execute({}, { ctx });
         const profileOutcome = await tools["client.getProfile"]?.execute({}, { ctx });
@@ -866,6 +938,311 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         }
         return resolution.status === "resolved" ? resolution.language : null;
       })) ?? undefined;
+
+    // ── 00b-00b3: the persisted Client Brief, written by an agent (Phase 1, item H) ──
+    //
+    // Phase 0 derives a brief deterministically on every run: copied prose,
+    // `confidence: "low"`, nothing judged. This is the document that replaces
+    // it — ONE Sonnet call that reads the client's onboarding data, their own
+    // site (three pages) and their own recent posts, and writes
+    // `clients/<slug>/brief/instagram-brief.json`. Every step from the trend
+    // scout to the relevance judge reads it for the next 30 days, so its
+    // ~$0.16 (the call plus the page fetches) amortises to about a cent a run
+    // at a weekly cadence — and a client's first run is the only one that
+    // pays it in full.
+    //
+    // WHY HERE, and not immediately after `01-open-run` where the spec's
+    // ordering section puts it: the gather step wants the frozen
+    // `forbiddenTopics` (02) and the RESOLVED target language (02d). A stored
+    // brief whose `language.target` disagreed with what `07e`/`07f` judge
+    // against would send the writer and the language gate to two different
+    // languages — the one inconsistency this document must not introduce.
+    // It still runs before every other model call of the run (the trend scout
+    // at `03c` is the next one), which is what the fixtures' turn order
+    // promises, and before `02i-resolve-client-brief`, which is what makes a
+    // freshly-written brief THIS run's brief rather than next run's.
+    //
+    // Setup never blocks a run (the roster-setup precedent): a malformed turn,
+    // an exhausted turn budget, or a store that refuses the write becomes a
+    // ledger warn, `02i` falls through to the deterministic brief, and the
+    // next run retries. A human-authored brief is never refreshed at all.
+    const briefCheck = await wf.step.code("00b-check-client-brief", async () => {
+      const got = await tools["client.getBrief"]?.execute({ channel: "instagram" }, { ctx });
+      // `client.getBrief` reports `not_available` both for "this client has no
+      // brief" and for "there is a file but it no longer parses". Both
+      // correctly resolve to create/refresh: an unreadable document is not a
+      // document, and re-writing it is the only way out.
+      const stored = got?.status === "success" ? (got.result as { brief: ClientBrief }).brief : undefined;
+      const decision = resolveBriefFreshness(stored, new Date(), (wf.input ?? {})["refreshBrief"] === true);
+      return {
+        action: decision.action,
+        reason: decision.reason,
+        // `NaN` (an undatable `generatedAt`) is a refresh REASON, not an age;
+        // it would cross the JSON checkpoint as `null` and read as a number.
+        ...(decision.ageDays !== undefined && Number.isFinite(decision.ageDays) ? { ageDays: decision.ageDays } : {}),
+        ...(stored !== undefined ? { generatedBy: stored.generatedBy } : {}),
+        // The stored brief's declared language, for the budget plan below and
+        // nothing else: `02j` has to know whether the fluency judge will run
+        // on every attempt, and on a `reuse` run the brief can be the only
+        // place that says so (`adoptBriefTargetLanguage`, after 02i). Absent
+        // on a create/refresh run, where the document does not exist yet —
+        // the estimate then misses one $0.0165 line rather than guessing.
+        ...(typeof stored?.language.target === "string" && stored.language.target.trim().length > 0 ? { languageTarget: stored.language.target } : {}),
+      };
+    });
+
+    // ── 02j: the run's budget plan, BEFORE the first paid call ──
+    //
+    // Reads this client's budget history out of the memory beliefs document
+    // (`RUN_BUDGET_BELIEF_KEY`, written by 09b of every delivered run) and
+    // fits the plan to the target. The shape is the conservative carousel
+    // case — six photo slides, the fluency judge when 02d resolved a
+    // language, four cold trend queries, `03e`'s eight signal executions,
+    // `04a2`'s six lane queries, `04a3`'s two page fetches and one angle
+    // proposal — because the format (04h) and the copy are not known yet and
+    // an estimate must not flatter itself. Checkpointed so a resume keeps the
+    // plan it started under.
+    //
+    // WHY HERE and not next to the other `02*` steps, which is where its id
+    // says it belongs: `00b1`/`00b2` bill about $0.18 on a brief refresh, and
+    // this step used to run after them — so a new client's first run fitted
+    // its plan to the whole $1.00 with a fifth of it already spent, and the
+    // step's own promise ("BEFORE the first paid call") was false on exactly
+    // the runs that most needed it. `00b-check-client-brief` above is a free
+    // store read whose answer (`refresh`/`create` vs `reuse`) is the one plan
+    // fact this step could not otherwise know, so the plan now sits BETWEEN
+    // the decision and the spending. `spentUsd` is belt and braces for the
+    // same invariant: the plan is fitted to what is left of the target, so
+    // adding a paid step above this one can never silently disarm the lever.
+    // The id is unchanged, so an in-flight run resumes onto its own plan.
+    const budgetDecision: RunBudgetDecision = await wf.step.code("02j-plan-run-budget", async () => {
+      let history = readBudgetHistory(undefined);
+      try {
+        const read = await tools["memory.read"]?.execute({ scope: "beliefs" }, { ctx });
+        if (read?.status === "success") history = readBudgetHistory((read.result as { beliefs?: unknown }).beliefs);
+      } catch (error) {
+        console.error("02j-plan-run-budget: could not read the budget history, planning from the defaults", error);
+      }
+      return planRunBudget(
+        {
+          ...DEFAULT_RUN_SHAPE,
+          // The fluency judge runs on every attempt for any non-English
+          // target, and the target can come from the stored brief as well as
+          // from 02d (`adoptBriefTargetLanguage`).
+          targetLanguage:
+            resolvedTargetLanguage !== undefined ||
+            (briefCheck.languageTarget !== undefined && adoptBriefTargetLanguage(undefined, briefCheck.languageTarget).language !== undefined),
+          // Phase 1, item H: the Sonnet brief call and its source scrapes are
+          // this run's cost only when `00b` asked for a fresh document.
+          briefRefresh: briefCheck.action !== "reuse",
+        },
+        history,
+        { spentUsd: meter.totalUsd },
+      );
+    });
+    const budgetPlan = budgetDecision.plan;
+    budgetNotes.push(budgetDecision.note);
+
+    /**
+     * What the brief lifecycle did this run — `undefined` when the stored
+     * brief was reused (the overwhelming majority of runs). A non-`written`
+     * status is the honest signal on the gate payload that this run drafted
+     * from the deterministic stand-in.
+     */
+    let briefWriteOutcome: { status: "written" | "brief-agent-failed" | "brief-write-refused"; reason?: string; sourceNotes?: string[] } | undefined;
+    if (briefCheck.action !== "reuse") {
+      // Every source read INLINE rather than through `readContextDoc`: that
+      // helper is a checkpointed step of its own, and five more step ids for
+      // documents only this once-a-month call reads would clutter every run
+      // record. Nothing here throws and nothing holds — each failure is a
+      // named string that becomes one of the agent's own `gaps`.
+      const gathered = await wf.step.code("00b1-gather-brief-sources", async () => {
+        const problems: string[] = [];
+        const readObject = async <T,>(toolName: string, input: Record<string, unknown> = {}): Promise<T | undefined> => {
+          const tool = tools[toolName];
+          if (tool === undefined) {
+            problems.push(`${toolName} is not registered for this client`);
+            return undefined;
+          }
+          try {
+            const outcome = await tool.execute(input, { ctx });
+            if (outcome.status === "success" && outcome.result !== null && typeof outcome.result === "object") return outcome.result as T;
+            // `not_available` is "nothing set up yet", which
+            // `buildBriefAgentInput` already turns into a named gap; anything
+            // else is a real failure worth naming separately.
+            if (outcome.status !== "not_available") {
+              problems.push(`${toolName} reported ${outcome.status}${"reason" in outcome ? `: ${outcome.reason}` : ""}`);
+            }
+            return undefined;
+          } catch (error) {
+            problems.push(`${toolName} could not be read: ${(error as Error).message}`);
+            return undefined;
+          }
+        };
+
+        const profile = await readObject<ClientProfile>("client.getProfile");
+        const brand = await readObject<ClientBrand>("client.getBrand");
+        const voiceRules = await readObject<VoiceRules>("client.getVoiceRules");
+        const knowledge = await readObject<ClientKnowledge>("client.getKnowledge");
+        const config = await readObject<Record<string, unknown>>("client.getConfig");
+
+        const contextDocs: Record<string, string | undefined> = {};
+        for (const docType of ["product-information", "target-audience", "market-strategy", "brand-voice", "competitor-analysis"] as const) {
+          const doc = await readObject<{ markdown?: unknown }>("client.getContextDoc", { docType });
+          // An absent or empty document is passed as `undefined` on purpose:
+          // `buildBriefAgentInput` then names it as a gap instead of handing
+          // the model an empty document to write around.
+          contextDocs[docType] = typeof doc?.markdown === "string" && doc.markdown.trim().length > 0 ? doc.markdown : undefined;
+        }
+
+        // The client's own intel report, distilled by the same helper `04f`
+        // uses — read inline here because `04f` runs much later, after the
+        // topic is claimed.
+        const intelReport = await readObject<{ report?: unknown }>("intel.getReport");
+        const intelContext = intelReport === undefined ? undefined : buildClientIntelContext(intelReport.report);
+
+        let scraperExecutions = 0;
+
+        // The client's own site: home, /about, /pricing. Skipped entirely
+        // (not called with an empty array, which the tool's schema refuses)
+        // when the profile carries no usable website.
+        let sitePages: Array<{ url: string; title?: string; text: string }> = [];
+        const urls = gatherBriefSourceUrls(profile);
+        const fetchPages = tools["research.fetchPages"];
+        if (urls.length === 0) {
+          // `buildBriefAgentInput` names this gap itself; nothing to add.
+        } else if (fetchPages === undefined) {
+          problems.push("research.fetchPages is not registered, so the client's own site was not read");
+        } else {
+          try {
+            const outcome = await fetchPages.execute({ urls, maxChars: 4000 }, { ctx });
+            if (outcome.status === "success") {
+              const result = outcome.result as { pages: Array<{ url: string; title?: string; text: string; fromCache: boolean }>; problems: string[] };
+              sitePages = result.pages.map((p) => ({ url: p.url, ...(p.title !== undefined ? { title: p.title } : {}), text: p.text }));
+              scraperExecutions += result.pages.filter((p) => !p.fromCache).length;
+              for (const problem of result.problems) problems.push(`site: ${problem}`);
+            } else {
+              problems.push(`the client's own site could not be read (research.fetchPages reported ${outcome.status}${"reason" in outcome ? `: ${outcome.reason}` : ""})`);
+            }
+          } catch (error) {
+            problems.push(`the client's own site could not be read: ${(error as Error).message}`);
+          }
+        }
+
+        // The client's own recent posts — the only OBSERVED evidence of their
+        // register, as opposed to what their voice rules claim it is. A 24h
+        // window shares its cache with `04e`'s read of the same accounts.
+        let ownPosts: Array<{ platform: string; username: string; url: string; excerpt: string; publishedAt?: string }> = [];
+        const accounts = socialAccountsFromClient(config, brand as Record<string, unknown> | undefined);
+        const socialHistory = tools["research.socialHistory"];
+        if (accounts.length === 0) {
+          problems.push("the client's config and brand kit name no social accounts, so none of their own posts were read");
+        } else if (socialHistory === undefined) {
+          problems.push("research.socialHistory is not registered, so none of the client's own posts were read");
+        } else {
+          try {
+            const outcome = await socialHistory.execute({ accounts, window: "24h" }, { ctx });
+            if (outcome.status === "success") {
+              const result = outcome.result as {
+                posts: Array<{ platform: string; username: string; url: string; excerpt: string; publishedAt?: string }>;
+                problems: string[];
+                fromCache: boolean;
+              };
+              ownPosts = result.posts;
+              if (!result.fromCache) scraperExecutions += accounts.length;
+              for (const problem of result.problems) problems.push(`own account: ${problem}`);
+            } else {
+              problems.push(`the client's own posts could not be read (${outcome.status}${"reason" in outcome ? `: ${outcome.reason}` : ""})`);
+            }
+          } catch (error) {
+            problems.push(`the client's own posts could not be read: ${(error as Error).message}`);
+          }
+        }
+
+        const build = buildBriefAgentInput({
+          profile,
+          brand,
+          voiceRules,
+          knowledge,
+          contextDocs,
+          intelContext,
+          sitePages,
+          ownPosts,
+          problems,
+          targetLanguage: resolvedTargetLanguage,
+          forbiddenTopics: frozen.forbiddenTopics,
+        });
+        return { ...build, scraperExecutions };
+      });
+      if (gathered.scraperExecutions > 0) {
+        spend("00b1-gather-brief-sources", undefined, gathered.scraperExecutions * STEP_COST_ESTIMATES_USD.scraperExecution);
+      }
+
+      const briefAgent = new InstagramBriefAgent({ router: options.router, tools, promptStore: options.promptStore });
+      const briefExec = await wf.step.agent("00b2-write-client-brief", briefAgent, gathered.input);
+      spend("00b2-write-client-brief", briefExec.totalCostUsd, STEP_COST_ESTIMATES_USD.brief);
+
+      briefWriteOutcome = await wf.step.code(
+        "00b3-persist-client-brief",
+        async (): Promise<{ status: "written" | "brief-agent-failed" | "brief-write-refused"; reason?: string; sourceNotes?: string[] }> => {
+          /** One warn row so an operator can see that this run drafted from the stand-in, and why. Idempotent on `(runId, eventId)`. */
+          const recordUnavailable = async (reason: string): Promise<void> => {
+            try {
+              await tools["ledger.appendEvent"]?.execute(
+                {
+                  runId: wf.runId,
+                  eventId: `${wf.runId}__client-brief-unavailable`,
+                  level: "warn",
+                  message: `the client brief could not be written this run (${reason}) — this post was drafted from the deterministic brief, and the next run retries`,
+                },
+                { ctx },
+              );
+            } catch (error) {
+              console.error("00b3-persist-client-brief: could not record the brief-unavailable warn", error);
+            }
+          };
+
+          if (briefExec.status !== "completed" || briefExec.finalOutput === undefined || briefExec.finalOutput === null) {
+            const reason = `the brief agent resolved to "${briefExec.status}"`;
+            await recordUnavailable(reason);
+            return { status: "brief-agent-failed", reason };
+          }
+          // `targetLanguage` overrides the model's own `language.target` —
+          // `02d` resolved it with a documented precedence, and this document
+          // outlives the run that wrote it.
+          //
+          // `presentSources` overrides the model's own `sources` the same way,
+          // and for a sharper reason: that list is what `isThinlyGrounded`
+          // reads, so left verbatim it would let the writer of the brief set
+          // the relevance gate's own passing score (3/5 down to 2/5) by
+          // under-reporting what it read. `stampAgentBrief` reconciles it
+          // against what `00b1` actually supplied — every grounding-bearing
+          // row this run read is stamped in, every row it did not supply is
+          // dropped — and hands back the corrections, which ride on the step
+          // record so the difference is visible rather than silent.
+          const stamped = stampAgentBrief(briefExec.finalOutput, {
+            targetLanguage: resolvedTargetLanguage,
+            agentSkillRef: BRIEF_AGENT_SKILL_REF,
+            presentSources: gathered.presentSources,
+          });
+          const sourceNotes = stamped.sourceNotes;
+          if (sourceNotes.length > 0) console.warn(`00b3-persist-client-brief: ${sourceNotes.join("; ")}`);
+          const write = await tools["client.writeBrief"]?.execute({ channel: "instagram", brief: stamped.brief }, { ctx });
+          if (write === undefined || write.status !== "success") {
+            // `content_fail` here is the store refusing the write, not a
+            // fault: an invalid payload, or a human-authored brief on disk
+            // that must not be overwritten.
+            const reason =
+              write === undefined
+                ? "client.writeBrief is not registered for this client"
+                : `client.writeBrief reported ${write.status}${"reason" in write ? `: ${write.reason}` : ""}`;
+            await recordUnavailable(reason);
+            return { status: "brief-write-refused", reason, ...(sourceNotes.length > 0 ? { sourceNotes } : {}) };
+          }
+          return { status: "written", ...(sourceNotes.length > 0 ? { sourceNotes } : {}) };
+        },
+      );
+    }
 
     // ── 02e: the client's projected branding-guidelines context doc (C1/SCRUM-209, T-A9) ──
     //
@@ -1008,12 +1385,34 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           contextDocs: { productInformation, targetAudience, marketStrategy },
           knowledge,
           forbiddenTopics: frozen.forbiddenTopics,
-          targetLanguage,
+          targetLanguage: resolvedTargetLanguage,
         });
         return { brief, source: "derived", notes };
       },
     );
     const brief = briefResolution.brief;
+
+    // ── The run's ONE target language (Phase 1, closing audit defect 5's second door) ──
+    //
+    // `adoptBriefTargetLanguage` (pure, `target-language.ts`): 02d's answer
+    // wins; failing that, a NON-English language the brief declares is
+    // adopted by the whole run. Not just by the writer — the copy prompt makes
+    // `language.target` binding (@13 §15), and before this every guard read
+    // 02d's value instead: `07e-language-script` and `07f-language-fluency`
+    // only run `if (targetLanguage !== undefined)`, and
+    // `buildScriptFontHeadForLanguage` emits the Hebrew stack off the same
+    // value. A geektime-shaped client whose Hebrew appears only on their own
+    // pages (which 02d does not read and `00b1` does) therefore shipped
+    // Hebrew copy in a Chromium fallback face with no script check and no
+    // fluency judge at all. One value from here down.
+    const languageAdoption = adoptBriefTargetLanguage(resolvedTargetLanguage, brief.language.target);
+    const targetLanguage = languageAdoption.language;
+    if (languageAdoption.note !== undefined) {
+      // A run note, not a gate: the language is now consistent everywhere, and
+      // what an operator needs to know is that it came from a document rather
+      // than from the brand record they can edit.
+      console.warn(`02i-resolve-client-brief: ${languageAdoption.note}`);
+    }
 
     /**
      * The brand kit THIS attempt actually renders with — `brandKit` (Layer 0,
@@ -1166,67 +1565,6 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // decide handed to the 08b judge. A client with its own render rules sees
     // zero change (`renderRuleSource === "client"`).
     const { source: renderRuleSource, rules: renderRules } = resolveRenderRules(frozen.styleConfig.rules);
-
-    // ── The per-run budget: an estimate, an adapted plan, a live meter — never a hold (Phase 0 cost controls) ──
-    //
-    // The owner's rule (2026-09-09, binding): target $1.00, hard max $1.50,
-    // and a limit never breaks a run. `02j-plan-run-budget` estimates the run
-    // from the plan (attempts, images, evidence pulls, re-vets) calibrated by
-    // this client's own history (`memory` beliefs, written back at 09b), and
-    // when the estimate would exceed the target it ADAPTS the plan to fit, in
-    // the owner's order — images capped, evidence pulls warm-cache only, one
-    // return to step 05 instead of two, optional re-vets off — recording each
-    // adaptation as a note the reviewer sees. Then the meter: every model step
-    // adds `max(measured, estimate)` (a Gemini-on-Vertex step may report $0),
-    // every scraper execution and generated image its unit cost. Crossing the
-    // target stops OPTIONAL work; crossing the hard max finishes on the
-    // cheapest complete path and delivers `degraded`. Every mandatory gate
-    // (self-check, craft hygiene, language, relevance, rights) still runs.
-    //
-    // The meter is a plain object, recreated on every invocation: a resumed
-    // run replays each checkpointed step below and re-adds its line, so no
-    // checkpoint of its own is needed. Precision is not the point; the
-    // posture is.
-    const meter = new RunSpendMeter();
-    /** Run notes about money, in the order they happened — the plan's note first, then each threshold the meter crossed. Shown on the gate payload and persisted with the deliverable. */
-    const budgetNotes: string[] = [];
-    const budgetCrossed = { target: false, max: false };
-    /** `meter.add` plus the one-time crossing notes, so no call site has to remember to check. */
-    const spend = (label: string, measuredUsd: number | undefined, estimateUsd: number): void => {
-      meter.add(label, measuredUsd, estimateUsd);
-      if (!budgetCrossed.target && meter.crossedTarget) {
-        budgetCrossed.target = true;
-        budgetNotes.push(targetCrossedNote(meter, label));
-      }
-      if (!budgetCrossed.max && meter.crossedMax) {
-        budgetCrossed.max = true;
-        budgetNotes.push(maxCrossedNote(meter, label));
-      }
-    };
-    /** Images the `generate` rescue tier has requested this run, against the plan's `generatedImagesCap`. Run-scoped: the cap is per run, not per attempt. */
-    let generatedSoFar = 0;
-
-    // ── 02j: the run's budget plan, BEFORE the first paid call ──
-    //
-    // Reads this client's budget history out of the memory beliefs document
-    // (`RUN_BUDGET_BELIEF_KEY`, written by 09b of every delivered run) and
-    // fits the plan to the target. The shape is the conservative carousel
-    // case — six photo slides, the fluency judge when 02d resolved a
-    // language, four cold trend queries — because the format (04h) and the
-    // copy are not known yet and an estimate must not flatter itself.
-    // Checkpointed so a resume keeps the plan it started under.
-    const budgetDecision: RunBudgetDecision = await wf.step.code("02j-plan-run-budget", async () => {
-      let history = readBudgetHistory(undefined);
-      try {
-        const read = await tools["memory.read"]?.execute({ scope: "beliefs" }, { ctx });
-        if (read?.status === "success") history = readBudgetHistory((read.result as { beliefs?: unknown }).beliefs);
-      } catch (error) {
-        console.error("02j-plan-run-budget: could not read the budget history, planning from the defaults", error);
-      }
-      return planRunBudget({ ...DEFAULT_RUN_SHAPE, targetLanguage: targetLanguage !== undefined }, history);
-    });
-    const budgetPlan = budgetDecision.plan;
-    budgetNotes.push(budgetDecision.note);
 
     // ── 03: claim the subject — the catalog first, then the same fallbacks every other channel already has ──
     const claimedTopic = await wf.step.code("03-claim-topic", async (): Promise<InstagramTopicClaim> => {
@@ -1449,13 +1787,57 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       if (executed > 0) spend("03b-trend-research-pull", undefined, executed * STEP_COST_ESTIMATES_USD.scraperExecution);
     }
 
+    // ── 03e: the other four topic engines (Phase 1, item I) ──
+    //
+    // Niche news (03b) was the only engine this agent had, and a quiet news
+    // week therefore meant a weak subject. Four more, all from material the
+    // brief points at: what the client's REFERENCE ACCOUNTS posted that landed
+    // (`research.socialHistory`, scored by whatever engagement fields the
+    // provider returned), what the AUDIENCE is asking in communities (two
+    // `research.pull` queries restricted to reddit/quora/HN/stackexchange),
+    // the client's OWN ASSETS (brief `ownAssets` plus headings in the
+    // product-information and market-strategy documents 02i already read) and
+    // the brief's EVERGREEN angles. The last two cost nothing at all.
+    //
+    // `gatherTopicSignals` never throws: every source that fails becomes a
+    // line in `notes`, carried to the gate payload so a reviewer can see that
+    // an engine contributed nothing and why. Only executions that actually
+    // reached the vendor are billed — the 24h reference-account read shares
+    // its cache with `04e`, and the community queries are cached 7d.
+    const topicSignals = await wf.step.code("03e-topic-signals", () =>
+      gatherTopicSignals(tools, ctx, {
+        brief,
+        contextDocs: {
+          ...(productInformation !== undefined ? { productInformation } : {}),
+          ...(marketStrategy !== undefined ? { marketStrategy } : {}),
+        },
+        avoidTopics: crossChannelAvoidTopics(crossChannel),
+        // `research.pull` gained `includeDomains` in this same phase (item J),
+        // so the community filter genuinely applies.
+        includeDomainsSupported: true,
+      }),
+    );
+    if (topicSignals.scraperExecutions > 0) {
+      spend("03e-topic-signals", undefined, topicSignals.scraperExecutions * STEP_COST_ESTIMATES_USD.scraperExecution);
+    }
+
     let scout: TrendScoutOutput | undefined;
-    if (trendResearch !== undefined) {
-      const digest = researchDigestForScout(trendResearch.merged);
+    // The scout used to be gated on the news digest alone, so a week whose
+    // pull came back empty — or whose scraper was down on a planned run —
+    // threw away the four engines the run had already paid for. It runs when
+    // there is ANY material; `runTrendScout` itself makes no model call when
+    // there is none, so the two conditions cannot disagree.
+    const digest = trendResearch !== undefined ? researchDigestForScout(trendResearch.merged) : [];
+    if (digest.length > 0 || hasTopicSignalMaterial(topicSignals.signals)) {
       scout = await runTrendScout(wf, { tools, promptStore: options.promptStore, router: options.router }, "03c-trend-scout", {
         research: digest,
         channel: "instagram",
         clientProfile: trendProfile.profile,
+        // Phase 1, item I: the four other engines' material, and the brief as
+        // the authority on who the client is — `clientProfile` is raw
+        // onboarding prose, the brief is the judged version of it.
+        signals: topicSignals.signals,
+        clientBrief: briefForPrompt(brief),
         ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
         ...(clientVoiceContext !== undefined ? { clientVoiceContext } : {}),
         ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
@@ -1463,14 +1845,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         forbiddenTopics: trendProfile.forbiddenTopics,
         today: new Date().toISOString().slice(0, 10),
       });
-      // `runTrendScout` returns `undefined` without a model call when the
-      // digest is empty (nothing to scout), and after a call whose output
-      // failed its schema. Either way the documents were there, so the status
-      // is "ran" whenever a call was made — the meter counts that call.
-      if (digest.length > 0) {
-        scoutStatus = "ran";
-        spend("03c-trend-scout", undefined, STEP_COST_ESTIMATES_USD.scout);
-      }
+      // A call was made (`runTrendScout` also returns `undefined` after a call
+      // whose output failed its schema), so the status is "ran" and the meter
+      // counts it.
+      scoutStatus = "ran";
+      spend("03c-trend-scout", undefined, STEP_COST_ESTIMATES_USD.scout);
     }
 
     // ── 03d: this run's content mode, rotated over the decision log (Phase 0, item E) ──
@@ -1481,27 +1860,96 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // `selectContentMode` (the same rotation x-agent and linkedin-agent use)
     // reads it back — never the immediately prior mode, then the least used.
     // A `requestedMode` in the client config wins outright.
-    const modeSelection = await wf.step.code("03d-select-content-mode", async (): Promise<{ mode: ContentMode; source: "requested" | "rotation"; priorMode?: ContentMode }> => {
-      const configOutcome = await tools["client.getConfig"]?.execute({}, { ctx });
-      const config = configOutcome?.status === "success" ? (configOutcome.result as Record<string, unknown>) : {};
-      const requestedMode = typeof config["requestedMode"] === "string" ? (config["requestedMode"] as string) : undefined;
-      let recentModes: ContentMode[] = [];
-      try {
-        const read = await tools["memory.read"]?.execute({ scope: "decisions", limit: 20 }, { ctx });
-        if (read?.status === "success") {
-          recentModes = recentModesFromDecisions((read.result as { items?: Array<{ at?: unknown; summary: string }> }).items ?? []);
+    //
+    // Phase 1, item K: the same `memory.read` is the ONLY read of the decision
+    // log this run makes, so the rows travel on this step's own checkpoint
+    // (additive field `decisions`) for the angle step at `04i` to parse
+    // `pastAngles` out of. Threaded rather than captured in a closure
+    // variable: a resumed run replays this step from its checkpoint and never
+    // re-executes the body, so a closure would be empty on exactly the runs
+    // that matter.
+    const modeSelection = await wf.step.code(
+      "03d-select-content-mode",
+      // `decisions` is declared OPTIONAL even though the body below always
+      // returns it: this step's checkpoint predates the field, so a resumed
+      // run genuinely replays an output without it, and typing it as required
+      // is what let a new consumer read `.slice` off `undefined`.
+      async (): Promise<{ mode: ContentMode; source: "requested" | "rotation"; priorMode?: ContentMode; decisions?: Array<{ at?: string; summary: string }> }> => {
+        const configOutcome = await tools["client.getConfig"]?.execute({}, { ctx });
+        const config = configOutcome?.status === "success" ? (configOutcome.result as Record<string, unknown>) : {};
+        const requestedMode = typeof config["requestedMode"] === "string" ? (config["requestedMode"] as string) : undefined;
+        let recentModes: ContentMode[] = [];
+        let decisions: Array<{ at?: string; summary: string }> = [];
+        try {
+          const read = await tools["memory.read"]?.execute({ scope: "decisions", limit: 20 }, { ctx });
+          if (read?.status === "success") {
+            const items = (read.result as { items?: Array<{ at?: unknown; summary: string }> }).items ?? [];
+            recentModes = recentModesFromDecisions(items);
+            decisions = items
+              .filter((item): item is { at?: unknown; summary: string } => typeof item?.summary === "string")
+              .slice(0, 20)
+              .map((item) => ({ ...(typeof item.at === "string" ? { at: item.at } : {}), summary: item.summary }));
+          }
+        } catch (error) {
+          console.error("03d-select-content-mode: could not read the decision log, rotating from an empty history", error);
         }
-      } catch (error) {
-        console.error("03d-select-content-mode: could not read the decision log, rotating from an empty history", error);
-      }
-      const mode = selectContentMode(recentModes, requestedMode);
-      const priorMode = recentModes.at(-1);
-      return {
-        mode,
-        source: requestedMode !== undefined && mode === requestedMode ? "requested" : "rotation",
-        ...(priorMode !== undefined ? { priorMode } : {}),
-      };
-    });
+        const mode = selectContentMode(recentModes, requestedMode);
+        const priorMode = recentModes.at(-1);
+        return {
+          mode,
+          source: requestedMode !== undefined && mode === requestedMode ? "requested" : "rotation",
+          ...(priorMode !== undefined ? { priorMode } : {}),
+          decisions,
+        };
+      },
+    );
+
+    /**
+     * The decision rows `03d` read, as every later consumer must treat them:
+     * possibly ABSENT.
+     *
+     * `decisions` is an additive field on `03d-select-content-mode`'s output,
+     * and that step is checkpointed. A run that was sitting at a gate when
+     * this phase deployed replays its old `03d` checkpoint verbatim — no
+     * `decisions` key at all — while every NEW step id below (`03f`, `04i`)
+     * executes its body for the first time. Reading the field unguarded there
+     * turns such a resume into a `TypeError` instead of a delivered post,
+     * which is the one thing the owner's rule forbids. One binding, guarded
+     * once, read by both consumers.
+     */
+    const recentDecisions = modeSelection.decisions ?? [];
+
+    /**
+     * The five engines' candidates, ranked in code (Phase 1, item I).
+     *
+     * `interest × brandFit × distance × modeBonus × engineBonus` — the scout
+     * judges a story, this decides between stories, and the arithmetic is
+     * checkpointed so a reviewer can disagree with a weight rather than with a
+     * verdict. `dropped` is the honest counterpart to `chosen`: what was
+     * excluded before scoring, and why.
+     *
+     * Pure, and safe to compute even when the scout never ran (an empty
+     * candidate list ranks to nothing and `03g` falls through exactly as it
+     * did in Phase 0).
+     */
+    const rankedTopics = await wf.step.code("03f-rank-topic-candidates", () =>
+      rankTopicCandidates(scout?.candidates ?? [], {
+        mode: modeSelection.mode,
+        brief,
+        // The same two windows `07d` and the scout steer by: what shipped on
+        // any channel, and what this agent decided on its last few runs.
+        recentExcerpts: [
+          ...crossChannel.entries.slice(-5).map((e) => e.excerpt),
+          ...recentDecisions.slice(0, 5).map((d) => d.summary),
+        ],
+        avoidTopics: crossChannelAvoidTopics(crossChannel),
+        // Required for the reference-accounts engagement bonus: the measured
+        // engagement lives in 03e's signals, matched to a candidate through
+        // its `evidenceRefs`. Without it the bonus is a neutral 1.0, never a
+        // guess.
+        signals: topicSignals.signals,
+      }),
+    );
 
     // ── 03g: the subject, under one precedence order (Phase 0, item E) ──
     //
@@ -1524,6 +1972,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         recentExcerpts: crossChannel.entries.map((e) => e.excerpt),
         trendResearchMerged: trendResearch?.merged,
         scoutStatus,
+        // Phase 1, item I: the five-engine ranking replaces the Phase 0
+        // in-function `selectTrendCandidate` call. Every precedence rule is
+        // unchanged — the ranking only decides WHICH candidate is the
+        // strongest, and supplies the score the trend-jack comparison uses.
+        ranked: rankedTopics,
       });
       if ("hold" in resolved) throw new WorkflowHeld(resolved.hold);
       if (resolved.releaseReservation && claimedTopic.reservationKey !== undefined) {
@@ -1550,56 +2003,120 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       return { format: "carousel", source: "default" };
     });
 
-    // ── 04: research the subject — verbatim raw payload capture, then judgment ──
+    // ── 04a2: research the subject in three lanes (Phase 1, item J) ──
     //
-    // Phase 0, item C (2026-09): the query is GROUNDED in the brief. The
-    // audit's defining defect was this step sending the run request verbatim
-    // ("Create content that introduces the new offer to first-time buyers")
-    // to a web search, which answered with first-time HOME buyers. A scouted
-    // trend passes through as-is (already brand-fit judged); anything else is
-    // rewritten as `<subject> in the context of <what the client sells> for
-    // <who they sell to>`. If that finds nothing, ONE fallback pull inside the
-    // same step asks `<subject> <coreTerms>` instead. Same id, same
-    // `{runId, query, result}` shape; the rewrite is auditable from the
-    // additive `groundedQuery`/`rewrittenFrom`/`fallbackUsed` fields.
-    const researchPull = await wf.step.code("04a-research-pull", async () => {
-      const grounded = buildGroundedQuery(topicClaim, brief);
-      const pull = async (query: string) =>
-        tools["research.pull"]!.execute(
-          // `historyAgentId` joins this agent to the same anti-repetition
-          // history feed every OTHER channel already requested — instagram was
-          // the one caller that omitted it entirely.
-          { job: "instagram-carousel-research", query, window: "24h", historyAgentId: "instagram-agent" },
-          { ctx },
-        );
-      let outcome = await pull(grounded.query);
-      if (outcome.status !== "success") {
-        throw new WorkflowToolingFailure(`research.pull failed: ${outcome.status}`);
-      }
-      let fallbackUsed = false;
-      const documentCount = (o: typeof outcome): number =>
-        o.status === "success" ? ((o.result as { result?: { documents?: unknown[] } }).result?.documents?.length ?? 0) : 0;
-      if (documentCount(outcome) === 0) {
-        const fallback = await pull(fallbackQuery(grounded.subject, brief));
-        // Only a fallback that actually answered replaces the grounded pull;
-        // an empty grounded result is still an honest, cached result.
-        if (fallback.status === "success" && documentCount(fallback) > 0) {
-          outcome = fallback;
-          fallbackUsed = true;
+    // `04a-research-pull` is RETIRED. It asked ONE question with `maxResults:
+    // 4` and a 24-hour window, and the audit's carousels were written from
+    // four blog posts. `pullResearchLanes` asks the same grounded question
+    // (Phase 0, item C — a scouted trend passes through as-is, anything else
+    // is rewritten as `<subject> in the context of <what the client sells> for
+    // <whom>`) plus a 90-day INSIGHT lane for reports and studies and, when
+    // the brief points at real domains, a PRIMARY-DOMAINS lane restricted to
+    // them. Typically 14-20 unique documents against yesterday's four.
+    //
+    // Phase 0's in-step fallback pull is SUBSUMED: the news lane's second and
+    // third questions are the fallback, always asked rather than only after an
+    // empty answer. A single dead query is recorded and skipped; the step
+    // fails as tooling only when every query failed, which is
+    // `pullTrendResearch`'s own rule.
+    const grounded = buildGroundedQuery(topicClaim, brief);
+    const clientWebsite = typeof trendProfile.profile["website"] === "string" ? (trendProfile.profile["website"] as string) : undefined;
+    const clientDomain = clientWebsite === undefined ? undefined : normalizeDomain(clientWebsite);
+    const researchLanes = buildResearchLanes({
+      groundedQuery: grounded.query,
+      subject: grounded.subject,
+      brief,
+      ...(trendProfile.companyName !== undefined ? { companyName: trendProfile.companyName } : {}),
+      // Passed in rather than read inside the lane builder so the questions a
+      // resumed run replays are the questions it originally asked.
+      year: new Date().getUTCFullYear(),
+      ...(clientDomain !== undefined ? { clientDomain } : {}),
+      // `domain`, never `handle`: a handle is a social identifier ("lennysan",
+      // "SaaS"), and feeding those to a domain filter either dropped them all
+      // (no dot) or restricted the search to a host that does not exist. Only
+      // the brief's own `referenceAccounts[].domain` is a hostname, and the
+      // lane builder skips the whole lane when none of them resolves — see
+      // `buildResearchLanes`.
+      referenceDomains: brief.referenceAccounts.map((a) => a.domain).filter((d): d is string => d !== undefined),
+    });
+    const deepResearch = await pullResearchLanes(wf, tools, ctx, {
+      stepId: "04a2-research-pull-deep",
+      lanes: researchLanes,
+      job: "instagram-carousel-research",
+      historyAgentId: "instagram-agent",
+    });
+    // Only queries that actually reached the vendor are billed; the news lane
+    // is cached 7d and the insight lane 90d, so a weekly cadence pays for the
+    // news lane about once a week and the insight lane about once a quarter.
+    if (deepResearch.billedPulls > 0) {
+      spend("04a2-research-pull-deep", undefined, deepResearch.billedPulls * STEP_COST_ESTIMATES_USD.scraperExecution);
+    }
+
+    // ── 04a3: read the two most source-like pages in full (Phase 1, item J) ──
+    //
+    // A merged document carries an excerpt; a report carries the paragraph the
+    // figure is in. Two pages, chosen by URL shape (`.pdf`, `/report`,
+    // `/study`, `.gov`, `.edu`, or the client's own domain), at 8000
+    // characters each — best-effort throughout, because a dead PDF link must
+    // cost a note and not a run. The client's OWN material joins the same
+    // input marked `primary`, at no vendor cost at all.
+    const primarySources = await wf.step.code("04a3-fetch-primary-sources", async () => {
+      const urls = pickPrimarySourceUrls(deepResearch.merged, clientDomain, 2);
+      const notes: string[] = [];
+      let pages: Array<{ title: string; url: string; content: string; primary: true; fromCache: boolean }> = [];
+      const fetchPages = tools["research.fetchPages"];
+      if (urls.length === 0) {
+        notes.push("no merged document looked like a primary source, so no page was read in full");
+      } else if (fetchPages === undefined) {
+        // Guarded rather than asserted so this step is order-independent of
+        // the work package that registers the tool.
+        notes.push("research.fetchPages is not registered, so no primary source was read in full");
+      } else {
+        try {
+          const outcome = await fetchPages.execute({ urls, maxChars: 8000 }, { ctx });
+          if (outcome.status === "success") {
+            const result = outcome.result as { pages: Array<{ url: string; title?: string; text: string; fromCache: boolean }>; problems: string[] };
+            pages = result.pages.map((p) => ({ title: p.title ?? p.url, url: p.url, content: p.text, primary: true as const, fromCache: p.fromCache }));
+            notes.push(...result.problems);
+          } else {
+            notes.push(`the primary sources could not be read (${outcome.status}${"reason" in outcome ? `: ${outcome.reason}` : ""})`);
+          }
+        } catch (error) {
+          notes.push(`the primary sources could not be read: ${(error as Error).message}`);
         }
       }
-      const result = outcome.result as { runId: string; query: string; result: unknown; fromCache?: boolean };
-      return { ...result, groundedQuery: grounded.query, rewrittenFrom: grounded.rewrittenFrom, fallbackUsed };
+
+      // The client's own material — the product-information document and
+      // everything the brief lists as an own asset. `primary: true` because
+      // it is: for a claim about this client, they ARE the source.
+      const clientDocuments: Array<{ title: string; content: string; primary: true }> = [];
+      if (productInformation !== undefined && productInformation.trim().length > 0) {
+        clientDocuments.push({ title: "the client's product-information document", content: productInformation, primary: true });
+      }
+      for (const asset of brief.ownAssets) {
+        clientDocuments.push({ title: `${asset.title} (${asset.kind}, from ${asset.sourceRef})`, content: asset.summary, primary: true });
+      }
+      return { urls, pages, clientDocuments, notes };
     });
-    if (researchPull.fromCache !== true) {
-      spend("04a-research-pull", undefined, (researchPull.fallbackUsed ? 2 : 1) * STEP_COST_ESTIMATES_USD.scraperExecution);
+    const fetchedPages = primarySources.pages.map((p) => ({ title: p.title, url: p.url, content: p.content, primary: true as const }));
+    const billedPageFetches = primarySources.pages.filter((p) => !p.fromCache).length;
+    if (billedPageFetches > 0) {
+      spend("04a3-fetch-primary-sources", undefined, billedPageFetches * STEP_COST_ESTIMATES_USD.scraperExecution);
     }
 
     const researchAgent = new InstagramResearchAgent({ router: options.router, tools, promptStore: options.promptStore });
     const researchExec = await wf.step.agent("04b-research-extract-facts", researchAgent, {
       topic: topicClaim.topic,
-      rawPayload: researchPull.result,
-      rawPayloadRef: researchPull.runId,
+      // `instagram-research@2`'s own field names. The raw payload is GONE from
+      // the input: the prompt no longer mentions it, and shipping the merged
+      // documents twice (once raw, once ordered) would double a 20k-token
+      // bill for nothing. `rawPayloadRef` is the "+"-joined list of the
+      // underlying pull run ids, so a card still traces to the record its
+      // document came from.
+      documents: orderDocumentsPrimaryFirst([...(deepResearch.merged.result?.documents ?? []), ...fetchedPages], clientDomain),
+      clientDocuments: primarySources.clientDocuments,
+      clientBrief: briefForPrompt(brief),
+      rawPayloadRef: deepResearch.merged.runId,
     });
     spend("04b-research-extract-facts", researchExec.totalCostUsd, STEP_COST_ESTIMATES_USD.extraction);
     if (researchExec.status === "content_fail") {
@@ -1611,7 +2128,42 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // Re-validate defensively — `finalOutput` is already schema-checked inside
     // BaseAgent, but this keeps step 07's self-check callers honestly typed
     // without a non-null assertion on a value this workflow never produced itself.
-    const research: ResearchOutput = ResearchOutputSchema.parse(researchExec.finalOutput);
+    const researchExtracted: ResearchOutput = ResearchOutputSchema.parse(researchExec.finalOutput);
+
+    // ── 04b2: one card per claim (Phase 1, item J) ──
+    //
+    // Three lanes over sixteen documents produce the same figure from the
+    // study, the trade-press write-up of the study and somebody's blog post
+    // about the write-up. `dedupeFactCards` keeps the primary/URL-bearing one
+    // and records what it dropped and which rule fired. Everything downstream
+    // — the copy input's `facts`, the angle proposal, and `checkSlidesData`'s
+    // verbatim `sourceRef` trace — reads THIS set, so a slide can never cite a
+    // card that was dropped.
+    const factCards = await wf.step.code("04b2-dedupe-fact-cards", () => dedupeFactCards(researchExtracted.facts));
+    const research: ResearchOutput = { ...researchExtracted, facts: factCards.facts };
+
+    /**
+     * The ONE ordered slice of the fact set every prompt in this run sees
+     * (Phase 1, items J and K).
+     *
+     * `factCardsForPrompt` re-orders the deduped cards primary-first and keeps
+     * the top 14. It used to be called only for the copy step, while the angle
+     * proposer got `factsForAnglePrompt(research.facts)` — the first 14 in
+     * DEDUPE order. With 15+ cards and any primary card past index 13 the two
+     * slices differ, so the proposer could rest an angle on a card the writer
+     * never received, and prompt @13 §17 tells the writer those cards carry
+     * the argument and must be cited verbatim with their source, date and URL.
+     * There is nothing the writer can do with a card that is not in its own
+     * `facts` array.
+     *
+     * One list, three consumers: 04i proposes from it, 04j judges `restsOn`
+     * eligibility against it (the proposer cannot honestly rest on a card it
+     * was never shown), and 05 writes from it. Step 07's verbatim `sourceRef`
+     * trace still runs against the FULL deduped set (`research.facts`), which
+     * is a superset, so a citation that clears the writer's list clears the
+     * gate too.
+     */
+    const promptFacts = factCardsForPrompt(research.facts);
 
     // Cross-post image-reuse prevention (Fix 3): fetched once, before any
     // vetting attempt — every prior post's shipped images for this client,
@@ -1727,7 +2279,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           });
           candidates = result.candidates.map((c, i) => {
             const found = byRef.get(`attached-${i + 1}`);
-            return found ? { ...c, description: `${c.description} [vision: ${String(found["description"] ?? "")}${Array.isArray(found["textInImage"]) && (found["textInImage"] as string[]).length > 0 ? `; text in image: ${(found["textInImage"] as string[]).join(" / ")}` : ""}]` } : c;
+            // `subjects` travels with the description (`describeWithVision`):
+            // the vet judges pictures as text, and its `claimMatch` rubric
+            // turns on the identity of what is in frame — the named team,
+            // company, place or era. Dropped, an upload of the client's own
+            // supporters under a rival's headline still read as "compatible
+            // and generic" and cleared the selection floor.
+            return found ? { ...c, description: describeWithVision(c.description, found) } : c;
           });
         } else {
           visionNote = `vision inspection of the attachments did not complete (${inspected.status}${"reason" in inspected ? `: ${inspected.reason}` : ""})`;
@@ -2050,6 +2608,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     //           -> render -> post-render visual QA, all sharing ONE retry
     //           budget capped at two returns to step 05 (RFC-03 §3 step 07,
     //           extended by Fixes 2/3 to cover the two new checks) ──
+    const angleAgent = new InstagramAngleAgent({ router: options.router, tools, promptStore: options.promptStore });
     const copyAgent = new InstagramCopyAgent({ router: options.router, tools, promptStore: options.promptStore });
     const imageAgent = new InstagramImageVettingAgent({ router: options.router, tools, promptStore: options.promptStore });
     const qaAgent = new InstagramVisualQaAgent({ router: options.router, tools, promptStore: options.promptStore });
@@ -2160,6 +2719,14 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        * is told why the usual floor of 3 could not be applied to this client.
        */
       relevance?: { score: number; reason: string; note?: string };
+      /**
+       * Phase 1, item K — what `04i`/`04j` decided for THIS round: the chosen
+       * angle, the two rejected ones with their scores, or
+       * `status: "unavailable"` when the proposer could not run (fail-open).
+       * Absent only when the round skipped the proposal entirely — the run was
+       * already past the hard max and finished on the cheapest complete path.
+       */
+      angleDecision?: AngleDecision;
     }
 
     /**
@@ -2372,6 +2939,89 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             }
           : undefined;
 
+      // ── 04i / 04j: the angle this carousel argues (Phase 1, item K) ──
+      //
+      // The audit's copy was competent and said nothing: research facts,
+      // restated. The angle IS the editorial judgment — a wrong assumption in
+      // the niche, a surprising number, or what this means for the ICP — and
+      // one Sonnet call proposes three of them, each resting on named fact
+      // cards and carrying the ONE sentence the reader should remember.
+      // `selectAngle` then picks in code: brief fit × novelty against the
+      // ledger × mode fit, so a proposal that repeats last week's line scores
+      // zero however confident it is.
+      //
+      // Once per REVISION, outside the attempt loop (~$0.036, ≤ 3 per run):
+      // three redrafts of the same round argue the same angle, which is the
+      // point — a redraft fixes a finding, it does not change the argument.
+      // A reviewer's `revise` round proposes fresh, with their words attached.
+      //
+      // FAILS OPEN, always. A malformed proposal or an exhausted turn budget
+      // records `angleDecision.status === "unavailable"`, writes one ledger
+      // warn, and the copy step drafts with no `angle` block at all — a
+      // documented, unchanged path in prompt @13 §17. An angle improves a
+      // post; it is not a precondition for one (owner's rule: a deliverable
+      // always reaches the client).
+      const pastAngles = pastAnglesFromDecisions(recentDecisions);
+      let angleDecision: AngleDecision | undefined;
+      if (meter.posture === "cheapest-path") {
+        // Past the hard max: finish on the cheapest path that still yields a
+        // complete deliverable. The angle is optional work by construction.
+        budgetNotes.push("budget: angle proposal skipped on the cheapest complete path");
+      } else {
+        // A revision's own estimate, as a NOTE rather than a hold (owner's
+        // amendment): a reviewer who asked for a change always gets their
+        // round, and the meter's posture already trims the optional work
+        // inside it.
+        if (revision >= 1) {
+          const verdict = meter.canAfford(revisionEstimateUsd({ attempts: maxAttempts, targetLanguage: targetLanguage !== undefined, angle: true }));
+          if (!verdict.ok) budgetNotes.push(`budget: ${verdict.reason} — the revision runs on the cheapest complete path`);
+        }
+        const angleExec = await wf.step.agent(rev("04i-propose-angles"), angleAgent, {
+          topicDecision: topicDecisionForGate(topicClaim),
+          mode: topicClaim.mode ?? modeSelection.mode,
+          clientBrief: briefForPrompt(brief),
+          // The deduped cards (04b2), in the SAME ordered slice the writer
+          // gets (`promptFacts`) — `restsOn` must name one of these verbatim,
+          // so the proposer sees exactly what the writer will.
+          facts: factsForAnglePrompt(promptFacts),
+          pastAngles,
+          targetLanguage: targetLanguage ?? "English",
+          ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
+          ...(directive !== undefined ? { revisionRequest: directive } : {}),
+        });
+        spend(rev("04i-propose-angles"), angleExec.totalCostUsd, STEP_COST_ESTIMATES_USD.angle);
+        if (angleExec.status === "completed" && angleExec.finalOutput !== undefined && angleExec.finalOutput !== null) {
+          const proposal = angleExec.finalOutput;
+          angleDecision = await wf.step.code(rev("04j-select-angle"), () =>
+            selectAngle(proposal.angles, {
+              brief,
+              // The eligibility set is the list the proposer SAW, not the full
+              // deduped set: an angle resting on a card that never reached
+              // either prompt is one the writer could not attribute.
+              facts: promptFacts,
+              pastAngles,
+              recentExcerpts: crossChannel.entries.slice(-5).map((e) => e.excerpt),
+              mode: topicClaim.mode ?? modeSelection.mode,
+            }),
+          );
+        } else {
+          angleDecision = angleUnavailable(`the angle proposer did not complete (${angleExec.status})`);
+          // Keyed per revision so a resumed run writes ONE row, and so a
+          // second round's outage is visible as its own.
+          await tools["ledger.appendEvent"]?.execute(
+            {
+              runId: wf.runId,
+              eventId: `${wf.runId}__angle-unavailable-r${revision}`,
+              level: "warn",
+              message: `revision ${revision}: the angle proposer could not run (${angleExec.status}); the post was drafted without an angle`,
+            },
+            { ctx },
+          );
+        }
+      }
+      /** `{ chosen, rejected }` for the copy prompt (§17) — `undefined` on the fail-open path, which the prompt documents as an unchanged drafting path. */
+      const angleForCopy = angleDecision !== undefined ? angleForCopyInput(angleDecision) : undefined;
+
       let finalCopy: InstagramCopyOutput | undefined;
       let finalSelections: ImageSelection[] | undefined;
       let finalSlidesData: RenderCarouselInput | undefined;
@@ -2417,6 +3067,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // facts; and, after an off-brief verdict, why the last draft failed
         // the relevance check and must be fixed, not argued with.
         clientBrief: briefForPrompt(brief),
+        // Phase 1, item K — the angle this carousel argues (prompt §17): the
+        // chosen one plus the two it is NOT making, as context. Absent on the
+        // fail-open path, which the prompt documents as an unchanged path.
+        ...(angleForCopy !== undefined ? { angle: angleForCopy } : {}),
         ...(relevanceSteer !== undefined ? { relevanceSteer } : {}),
         // What the previous attempt's self-check found (prompt §16) — the
         // fluency judge's issues, the failed render rule and slide, the
@@ -2433,7 +3087,15 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // What the client attached, as a vision model described it — slide N
         // is written TO the client's picture N.
         ...("analyses" in tier0Pool && tier0Pool.analyses.length > 0 ? { attachedMedia: tier0Pool.analyses } : {}),
-        facts: research.facts,
+        // Phase 1, item J: the DEDUPED cards (04b2), rendered primary-first
+        // with `kind` always present — prompt @13 §18 routes a card by its
+        // kind (stat -> stat_callout, quote -> quote_card, event -> date it)
+        // and prefers a `primary: true` card over an article about it, and
+        // `kind` is optional on the wire. `claim` is untouched, so step 07's
+        // verbatim `sourceRef` trace against the full deduped set still holds.
+        // The SAME list the angle proposer read (`promptFacts`), so a chosen
+        // angle's `restsOn` cards are always here to be cited.
+        facts: promptFacts,
         styleConfig: {
           // Phase 0, item D: when the default render rules are in force the
           // writer is told the rules it will be judged by at 07h/08b, rather
@@ -2719,9 +3381,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                   dropped += 1;
                   return;
                 }
-                const text = Array.isArray(found["textInImage"]) && (found["textInImage"] as string[]).length > 0 ? `; text in image: ${(found["textInImage"] as string[]).join(" / ")}` : "";
-                const flags = [found["looksLikeScreenshot"] === true ? "screenshot/document" : "", found["looksAiGenerated"] === true ? "looks AI-generated" : ""].filter(Boolean).join(", ");
-                enriched.push({ ...c, description: `${c.description} [vision: ${String(found["description"] ?? "")}${text}${flags ? `; ${flags}` : ""}]` });
+                // Same annotation the tier-0 path builds, flags included:
+                // description, then the NAMED subjects the vet's claimMatch
+                // rubric is written against, then legible text, then the
+                // screenshot / AI-generated flags.
+                enriched.push({ ...c, description: describeWithVision(c.description, found, { includeFlags: true }) });
               });
             }
             if (dropped > 0) sourcingReason = `${sourcingReason ? `${sourcingReason}; ` : ""}${dropped} candidate(s) dropped by vision inspection (watermarked or unusable)`;
@@ -3555,6 +4219,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         ...(variationPlan !== undefined && variationPlan.length > 0 ? { variationPlan } : {}),
         contrastFacts: finalContrastFacts,
         ...(finalRelevance !== undefined ? { relevance: finalRelevance } : {}),
+        ...(angleDecision !== undefined ? { angleDecision } : {}),
       };
     };
 
@@ -3567,7 +4232,46 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     const groundingFor = (draft: DraftResult) => ({
       briefSource: briefResolution.source,
       briefConfidence: brief.confidence,
+      // Phase 1, item H — WHEN the brief was written and by what, so a
+      // reviewer can tell a document written this morning from one a month
+      // old, and an agent-written one from the deterministic stand-in.
+      briefGeneratedAt: brief.generatedAt,
+      briefGeneratedBy: brief.generatedBy,
+      // When the run's target language came from the brief rather than from
+      // the brand record (02d resolved none), the reviewer sees WHY this post
+      // is in a language nothing in the portal declares — and the ledger has
+      // the one-line remedy.
+      ...(languageAdoption.source === "brief" && languageAdoption.note !== undefined
+        ? { targetLanguage: languageAdoption.language, targetLanguageSource: "brief" as const, targetLanguageNote: languageAdoption.note }
+        : {}),
+      ...(briefWriteOutcome !== undefined && briefWriteOutcome.status !== "written"
+        ? { briefWriteProblem: briefWriteOutcome.reason ?? briefWriteOutcome.status }
+        : {}),
+      // What the engine corrected in the brief's own audit trail when it was
+      // written this run: a source the model claimed that this run never
+      // supplied, or a grounding source it read and the model left out. The
+      // relevance floor is computed from the corrected list, so this is the
+      // line that explains a floor a reviewer might otherwise not expect.
+      ...(briefWriteOutcome?.sourceNotes !== undefined && briefWriteOutcome.sourceNotes.length > 0
+        ? { briefSourceNotes: briefWriteOutcome.sourceNotes }
+        : {}),
       ...(draft.relevance !== undefined ? { relevance: draft.relevance } : {}),
+    });
+
+    /**
+     * Phase 1, items I and J — what the evidence gathering could and could not
+     * do this run: which topic engines contributed nothing and why, which
+     * candidates were dropped before scoring, whether the research base came
+     * in thin, and how many duplicate fact cards were merged. Notes, never
+     * gates: every one of them is a run that still delivered.
+     */
+    const evidenceNotesForGate = () => ({
+      ...(topicSignals.notes.length > 0 ? { topicSignals: topicSignals.notes } : {}),
+      ...(rankedTopics.dropped.length > 0 ? { droppedCandidates: rankedTopics.dropped } : {}),
+      documentCount: deepResearch.documentCount,
+      ...(deepResearch.note !== undefined ? { researchNote: deepResearch.note } : {}),
+      ...(primarySources.notes.length > 0 ? { primarySourceNotes: primarySources.notes } : {}),
+      factCards: { kept: factCards.facts.length, duplicatesDropped: factCards.dropped.length, truncated: factCards.truncated },
     });
 
     // ── 09a: the universal approve / revise / reject cycle ──
@@ -3631,6 +4335,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // NOT chosen and the rule that decided, so the reviewer sees the
           // road not taken rather than only the destination.
           topicDecision: topicDecisionForGate(topicClaim),
+          // Phase 1, item K — the angle this round argues, the two it
+          // rejected, and the arithmetic that decided; `status: "unavailable"`
+          // when the proposer could not run.
+          ...(draft.angleDecision !== undefined ? { angleDecision: draft.angleDecision } : {}),
+          // Phase 1, items I/J — what the five engines and the three research
+          // lanes could and could not read this run.
+          evidence: evidenceNotesForGate(),
           // Phase 0 cost controls — what this run has spent so far
           // (max(measured, estimate) per step) and the plan it ran under:
           // estimate vs actual, every adaptation, every threshold crossed.
@@ -4011,6 +4722,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             // on the persisted record.
             grounding: groundingFor(review.output),
             topicDecision: topicDecisionForGate(topicClaim),
+            // Phase 1 (items I/J/K): the angle the shipped post argues and
+            // what the evidence gathering could read, on the persisted record.
+            ...(review.output.angleDecision !== undefined ? { angleDecision: review.output.angleDecision } : {}),
+            evidence: evidenceNotesForGate(),
             spendUsd: meter.totalUsd,
             budget: summarizeRunBudget(budgetDecision, meter, budgetNotes),
             caption,
@@ -4067,12 +4782,22 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         await tools["memory.appendDecision"]?.execute(
           {
             decisionId: `${wf.runId}__topic`,
-            summary: topicDecisionSummary({
-              topic: topicClaim.topic,
-              mode: topicClaim.mode ?? modeSelection.mode,
-              source: topicClaim.source,
-              archetypes: slidesData.slides.map((s) => s.template.replace(/(-inv)?\.html$/, "")),
-            }),
+            // Phase 1, item K: the angle joins the same row, LAST inside the
+            // parenthesis. `rememberLine` is free prose that may itself
+            // contain semicolons and colons, so it has to be terminal for
+            // `angleFromDecisionSummary` to read it back — which is how next
+            // week's proposal knows what this account already said.
+            // `parseContentModeFromSummary`'s `/mode: ([a-z-]+)/` still
+            // matches, so the mode rotation is untouched.
+            summary: angleDecisionSummary(
+              topicDecisionSummary({
+                topic: topicClaim.topic,
+                mode: topicClaim.mode ?? modeSelection.mode,
+                source: topicClaim.source,
+                archetypes: slidesData.slides.map((s) => s.template.replace(/(-inv)?\.html$/, "")),
+              }),
+              review.output.angleDecision?.status === "selected" ? review.output.angleDecision.chosen : undefined,
+            ),
             ...(topicClaim.weighting?.rule !== undefined ? { rationale: topicClaim.weighting.rule } : {}),
           },
           { ctx },

@@ -319,13 +319,52 @@ export interface InstagramTopicClaim {
 // Step 04 — research (InstagramResearchAgent's output)
 // ─────────────────────────────────────────────────────────────────────────
 
-/** One sourced fact — "every fact that will reach a slide needs a source + date" (RFC-03 §3 step 04). */
+/**
+ * One sourced fact — "every fact that will reach a slide needs a source +
+ * date" (RFC-03 §3 step 04) — and, since `instagram-research@2` (RFC-13 §J),
+ * a FACT CARD: the same claim plus what kind of thing it is, where exactly it
+ * came from, and whether that source is primary.
+ *
+ * `claim` stays the verbatim key everything downstream traces through
+ * (`checkSlidesData` matches every slide's `sourceRef` against it, the angle
+ * step's `restsOn` names it, `dedupeFactCards` normalises it) — the new
+ * fields are all additive and all read-only steering:
+ *
+ * - `kind` decides which archetype the claim WANTS (a stat belongs in a
+ *   `stat_callout`, a quote in a `quote_card`, an event gets dated) — copy
+ *   prompt §17. Defaults to `stat` because that is what the extraction step
+ *   returned exclusively before this field existed.
+ * - `url` is the traceable source, when the document had one. `source` stays
+ *   the human-readable attribution that gets printed ON the slide.
+ * - `quote` carries the speaker's own words verbatim for a `kind: "quote"`
+ *   card, capped so a whole paragraph cannot ride in as a pull-quote.
+ * - `primary` marks the report/study/client document itself rather than an
+ *   article restating it. `dedupeFactCards` keeps the primary card when two
+ *   say the same thing, and `factCardsForPrompt` shows primaries first.
+ */
 export const ResearchFactSchema = z.object({
   claim: z.string().min(1),
   source: z.string().min(1),
   date: z.string().min(1),
+  url: z.string().optional(),
+  kind: z.enum(["stat", "quote", "event", "definition"]).default("stat"),
+  quote: z.string().max(240).optional(),
+  primary: z.boolean().default(false),
 });
-export type ResearchFact = z.infer<typeof ResearchFactSchema>;
+export type ResearchFactKind = z.output<typeof ResearchFactSchema>["kind"];
+/**
+ * Deliberately the schema's INPUT shape, not its output.
+ *
+ * `kind` and `primary` carry zod defaults, so anything that came through
+ * `ResearchOutputSchema.parse` (every agent output, which is the only path
+ * facts reach the workflow by) always has them at runtime. But fact lists are
+ * also hand-built — test fixtures, ledger rows written before `@2` — and
+ * those legitimately omit both. Typing the export as the input shape keeps
+ * them valid and forces every consumer to handle a missing `kind` the way
+ * `fact-cards.ts` does (as `"stat"`) instead of trusting a default it may not
+ * have been parsed through.
+ */
+export type ResearchFact = z.input<typeof ResearchFactSchema>;
 
 /**
  * `InstagramResearchAgent`'s output. `rawPayloadRef` is the `research.pull`
@@ -337,10 +376,17 @@ export type ResearchFact = z.infer<typeof ResearchFactSchema>;
  */
 export const ResearchOutputSchema = z.object({
   topic: z.string().min(1),
-  facts: z.array(ResearchFactSchema).min(1),
+  /**
+   * `.max(30)` since `@2` (RFC-13 §J): the prompt asks for 12-24 cards, and
+   * the ceiling is what keeps a model that decided to list every sentence in
+   * every document from turning one step's output into the copy prompt's
+   * whole context. `dedupeFactCards` then caps the SHIPPED set at 24.
+   */
+  facts: z.array(ResearchFactSchema).min(1).max(30),
   rawPayloadRef: z.string().min(1),
 });
-export type ResearchOutput = z.infer<typeof ResearchOutputSchema>;
+/** The input shape, for the same reason `ResearchFact` is — see its comment. */
+export type ResearchOutput = z.input<typeof ResearchOutputSchema>;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Step 05 — write copy (InstagramCopyAgent's output)
