@@ -455,6 +455,30 @@ export function shotVarietyIssues(script: ShortScript): string[] {
   return [`${n} of ${script.beats.length} shots are set in the same place ("${word}"); give each beat its own place: an office, then a street, a kitchen, a workshop, a car`];
 }
 
+/** Words a reviewer uses about the PICTURE. English and Hebrew, since both are typed at the gate. */
+const FOOTAGE_WORDS = /\b(footage|shot|shots|clip|clips|plate|plates|b-?roll|visual|visuals|video|image|picture|stock|scene)\b|פוטג|שוט|קליפ|תמונ|וידאו|ויזואל|סצנ/i;
+/** Words a reviewer uses about the WORDS, the voice or the music: any of these and the writer has to hear the note. "line" is deliberately absent: "the clip does not fit the line" is the commonest footage note there is. */
+const WORDING_WORDS = /\b(script|word|words|say|says|said|wording|phrase|sentence|hook|caption|about|narration|voice|voiceover|tone|shorter|longer|rewrite|rewritten|copy|text|title|music)\b|טקסט|מיל|משפט|סקריפט|כתובי|קול|קריינות|הוק|נוסח|מוזיק/i;
+
+/**
+ * Whether a reviewer's note is about the footage and nothing else (2026-09-10).
+ * "Beat 2's clip does not fit" is; "swap the clip and shorten the hook" is
+ * not, because the writer has to hear the second half.
+ */
+export function isFootageOnlyFeedback(feedback: string): boolean {
+  return FOOTAGE_WORDS.test(feedback) && !WORDING_WORDS.test(feedback);
+}
+
+/** The beats a note points at ("beat 2", "shot 3", "ביט 2"), 1-based, in the order named, deduplicated. Empty when it names none. */
+export function beatsNamedIn(feedback: string): number[] {
+  const out: number[] = [];
+  for (const m of feedback.matchAll(/\b(?:beat|shot)\s*#?(\d{1,2})\b|ביט\s*(\d{1,2})/gi)) {
+    const n = Number(m[1] ?? m[2]);
+    if (n >= 1 && n <= 8 && !out.includes(n)) out.push(n);
+  }
+  return out;
+}
+
 export function dropRepeatedBeats(script: ShortScript): ShortScript {
   const seen = new Set<string>();
   const kept = script.beats.filter((b) => {
@@ -1463,6 +1487,10 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       music?: { applied: boolean; note?: string };
       /** Beats whose footage was re-sourced after the visual QA scored it under 5, and how the re-render fared (original shorts only). */
       repick?: { beats: number[]; note: string };
+      /** Per beat, the library ids of its shots, so a later revision can exclude exactly the footage a reviewer turned down. Not shown to the reviewer. */
+      plateStockIds?: Array<{ beat: number; ids: number[] }>;
+      /** How this round was produced: the words rewritten, or only the footage re-sourced under the approved words (2026-09-10). Absent on round 0. */
+      revisionKind?: "rewrite" | "footage-only";
     }
 
     /**
@@ -1641,11 +1669,39 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
     // The ORIGINAL-SHORT production pass: a script, generated plates per
     // beat, an optional voice, captions from real word timings, framed.
     // ─────────────────────────────────────────────────────────────────────
+    /** The last draft this process produced, so a revision can keep its words and know which clips it used. Rebuilt from checkpoints on a replay, since round 0 re-runs first. */
+    let lastDraft: ClipDraft | undefined;
     const produceOriginalShort = async (revision: number, notes: readonly RevisionNote[]): Promise<ClipDraft> => {
+      const draft = await produceOriginalShortRound(revision, notes);
+      lastDraft = draft;
+      return draft;
+    };
+    const produceOriginalShortRound = async (revision: number, notes: readonly RevisionNote[]): Promise<ClipDraft> => {
       const rev = (id: string) => (revision === 0 ? id : `${id}-r${revision}`);
       const directive = revisionDirective(notes);
       const workDir = revision === 0 ? baseWorkDir : path.join(baseWorkDir, `r${revision}`);
       const repoRoot = options.repoRoot!;
+
+      // ── A FOOTAGE-ONLY revision (2026-09-10) ──
+      //
+      // When every note the reviewer left this round is about the footage
+      // ("beat 2's clip does not fit"), the words they did not complain about
+      // are kept exactly, the writer is not asked again, and only the plates
+      // are re-sourced, with the turned-down clips excluded so the library
+      // must answer with something else. Until now every revise rewrote the
+      // script: a footage note changed lines a reviewer had already accepted
+      // and paid a drafting turn for the privilege. A note that mentions the
+      // words, the voice or the music at all goes to the writer as before.
+      const footageRevision = (() => {
+        if (revision === 0 || lastDraft?.script === undefined || notes.length === 0) return undefined;
+        const thisRound = notes.filter((n) => n.revision === revision - 1);
+        const relevant = thisRound.length > 0 ? thisRound : notes;
+        if (!relevant.every((n) => isFootageOnlyFeedback(n.feedback))) return undefined;
+        const beats = [...new Set(relevant.flatMap((n) => beatsNamedIn(n.feedback)))];
+        const previous = lastDraft.plateStockIds ?? [];
+        const excludeStockIds = previous.filter((p) => beats.length === 0 || beats.includes(p.beat)).flatMap((p) => p.ids);
+        return { script: lastDraft.script, beats, excludeStockIds };
+      })();
 
       // ── 03s → 07 → 03v: SCRIPT, compliance, ESTIMATE — as a RE-PLAN LOOP ──
       //
@@ -1673,7 +1729,12 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         for (let attempt = 0; ; attempt++) {
           const planRev = (id: string) => rev(attempt === 0 ? id : `${id}-replan-${attempt}`);
           const feedback = budgetFeedback;
-          const script = await draftWithVerifiedDedupe<ShortScript>(
+          // A footage-only revision keeps the approved words: no writer, no
+          // dedupe (the same words were already verified), one cheap step.
+          const script =
+            footageRevision !== undefined
+              ? await wf.step.code(planRev("03s-script"), async (): Promise<ShortScript> => footageRevision.script)
+              : await draftWithVerifiedDedupe<ShortScript>(
             planRev,
             "03s-script",
             "03t-verify-not-duplicate",
@@ -1825,10 +1886,15 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       }
       const beatPlates: BeatPlates[] = [];
       const plateSources: PlateSource[] = [];
-      const usedStockIds: number[] = [];
+      // Seeded with the clips a footage-only revision is replacing, so the
+      // library cannot hand the same one back for the beat a reviewer named.
+      const usedStockIds: number[] = [...(footageRevision?.excludeStockIds ?? [])];
       for (let i = 0; i < script.beats.length; i++) {
         const beat = script.beats[i]!;
-        const plate = await wf.step.code(`04p-plate-${i + 1}`, async (): Promise<BeatPlates> => {
+        // Revision-scoped (2026-09-10): a revised script needs its own plates,
+        // and a footage revision exists to fetch new ones. Unscoped, round 1
+        // replayed round 0's checkpointed plates under different words.
+        const plate = await wf.step.code(rev(`04p-plate-${i + 1}`), async (): Promise<BeatPlates> => {
           // A text-led short never searches: the beat's line IS the picture.
           if (script.format === "text-led") {
             const rendered = await renderTextPlate(beat.onScreenText, `plate-${i + 1}-text`, beat.seconds, `beat ${i + 1}`);
@@ -1953,7 +2019,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       //         (see HOOK_PLATE_SECONDS). Footage shorts only: a text-led
       //         short already opens on its own line. Not a plate source; it
       //         is furniture the way the title card was. ──
-      const hookPlate = await wf.step.code("04h-hook-plate", async (): Promise<{ path: string; seconds: number } | null> => {
+      const hookPlate = await wf.step.code(rev("04h-hook-plate"), async (): Promise<{ path: string; seconds: number } | null> => {
         if (script.format === "text-led") return null;
         const rendered = await renderTextPlate(script.hook, "plate-hook", HOOK_PLATE_SECONDS, "the hook");
         return rendered === undefined ? null : { path: rendered, seconds: HOOK_PLATE_SECONDS };
@@ -2188,6 +2254,8 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           // What actually shipped: a voice skipped at the ceiling is a silent short.
           voiceover: voice !== null,
           plateSources: beatPlates.flatMap((p) => p.shots.map((s) => s.source)),
+          plateStockIds: beatPlates.map((p, i) => ({ beat: i + 1, ids: p.shots.flatMap((s) => (s.stockId !== undefined ? [s.stockId] : [])) })),
+          ...(revision > 0 ? { revisionKind: footageRevision !== undefined ? ("footage-only" as const) : ("rewrite" as const) } : {}),
           budgetPlan,
           replans,
           renderedPath: rendered.outputPath,
@@ -2442,6 +2510,8 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         ...(draft.music !== undefined ? { music: draft.music } : {}),
         ...(draft.plateSources !== undefined ? { plateSources: draft.plateSources } : {}),
         ...(draft.repick !== undefined ? { repick: draft.repick } : {}),
+        ...(draft.plateStockIds !== undefined ? { plateStockIds: draft.plateStockIds } : {}),
+        ...(draft.revisionKind !== undefined ? { revisionKind: draft.revisionKind } : {}),
         ...(visualQa.skipped
           ? {}
           : {
@@ -2505,6 +2575,8 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           ...(draft.music !== undefined ? { music: draft.music } : {}),
           // Which beats were re-sourced after the QA, and how the re-render fared.
           ...(draft.repick !== undefined ? { repick: draft.repick } : {}),
+          // Whether this round rewrote the words or only re-sourced footage.
+          ...(draft.revisionKind !== undefined ? { revisionKind: draft.revisionKind } : {}),
         },
         requiredRole: "account_manager",
         // An unanswered gate approves itself after an hour ONLY for a clip the
@@ -2577,6 +2649,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
             ...(review.output.visualQa !== undefined ? { visualQa: review.output.visualQa } : {}),
             ...(review.output.plateSources !== undefined ? { plateSources: review.output.plateSources } : {}),
             ...(review.output.repick !== undefined ? { repick: review.output.repick } : {}),
+            ...(review.output.revisionKind !== undefined ? { revisionKind: review.output.revisionKind } : {}),
             costSoFarUsd: review.output.costSoFarUsd,
             ...(review.output.estimatedCostUsd !== undefined ? { estimatedCostUsd: review.output.estimatedCostUsd } : {}),
             maxCostUsd: costCapUsd,

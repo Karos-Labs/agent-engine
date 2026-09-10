@@ -8,7 +8,7 @@ import { FilePromptStore, type AgentToolRegistry, type CompletionResult, type Mo
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { BrandFrameInputSchema, ComposeSequenceInputSchema, MixMusicInputSchema, SelfEvalGateInputSchema, StillToClipInputSchema, SynthesizeVoiceInputSchema, TextPlateInputSchema, TranscribeInputSchema } from "@agent-engine/tool-karos-video";
 import { FindStockClipInputSchema, GenerateImageInputSchema, VisualQaGateInputSchema } from "@agent-engine/tool-karos-media";
-import { createTikTokAgentWorkflow, dropRepeatedBeats, repairScriptStructure, scriptVoiceIssues, shotVarietyIssues } from "../src/workflow/create-tiktok-agent-workflow.js";
+import { beatsNamedIn, createTikTokAgentWorkflow, dropRepeatedBeats, isFootageOnlyFeedback, repairScriptStructure, scriptVoiceIssues, shotVarietyIssues } from "../src/workflow/create-tiktok-agent-workflow.js";
 
 /**
  * The ORIGINAL-SHORT production pass in detail: the voiceover decision, the
@@ -328,6 +328,77 @@ async function run(h: Harness, runId: string, turns: unknown[] = [VOICED_SCRIPT]
   });
   return new WorkflowEngine(new MemoryDurableStepStore()).run(workflow, { ...PARAMS, runId, input: {} });
 }
+
+describe("footage-only revision (2026-09-10)", () => {
+  const workflowFor = (h: Harness, turns: unknown[], prompts: string[]) =>
+    createTikTokAgentWorkflow({ tools: h.tools, promptStore: new FilePromptStore(PROMPTS_ROOT), router: sequentialFakeRouter(turns, prompts), repoRoot: os.tmpdir(), fetchImpl: fakeAudioFetch });
+  const at = () => new Date().toISOString();
+
+  it("tells a footage note from one that touches the words, in English and Hebrew, and reads the beats it names", () => {
+    expect(isFootageOnlyFeedback("Beat 2's footage does not fit the line, the concert is wrong.")).toBe(true);
+    expect(isFootageOnlyFeedback("הפוטג' בביט 2 לא מתאים")).toBe(true);
+    expect(isFootageOnlyFeedback("Swap the clip in beat 2 and shorten the hook.")).toBe(false);
+    expect(isFootageOnlyFeedback("Lead with the disagreement, not the number.")).toBe(false);
+    expect(beatsNamedIn("beat 2 and beat 3 footage, shot 1 too, ביט 4")).toEqual([2, 3, 1, 4]);
+    expect(beatsNamedIn("the footage is generic")).toEqual([]);
+  });
+
+  it("a revise whose only complaint is footage keeps the approved words, never asks the writer again, and re-sources the named beat with its old clip excluded", async () => {
+    const h = stubTools();
+    const prompts: string[] = [];
+    const workflow = workflowFor(h, [VOICED_SCRIPT, VOICED_SCRIPT], prompts);
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+    const runId = "run-os-footage-revise";
+
+    const r0 = await engine.run(workflow, { ...PARAMS, runId, input: {} });
+    expect(r0.status).toBe("awaiting_gate");
+    const round0 = [...h.stockArgs];
+    const beat2FirstCall = round0.findIndex((a) => a["outputName"] === "plate-2");
+    const beat2Id = 1001 + beat2FirstCall; // the stub numbers clips 1001, 1002, … in call order
+    await engine.resolveGate(runId, "11-clip-review-r0", { decision: "revise", actor: "jane@karoslabs.com", feedback: "Beat 2's footage does not fit the line. Keep everything else.", at: at() });
+
+    const r1 = await engine.run(workflow, { ...PARAMS, runId, input: {} });
+    expect(r1.status).toBe("awaiting_gate");
+    // The writer was asked once, on round 0.
+    expect(prompts).toHaveLength(1);
+    const round1 = h.stockArgs.slice(round0.length);
+    expect(round1.length).toBeGreaterThan(0);
+    // Beat 2 is searched again with its turned-down clip excluded; beat 1 is free to find the same clip it had.
+    expect(round1.find((a) => a["outputName"] === "plate-2")!["excludeIds"]).toContain(beat2Id);
+    expect(round1.find((a) => a["outputName"] === "plate-1")!["excludeIds"]).not.toContain(1001);
+    const ids = (await store.listSteps(runId)).map((s) => s.stepId);
+    expect(ids).toContain("03s-script-r1");
+    expect(ids).not.toContain("03u-script-r1");
+    expect(ids).toContain("04p-plate-2-r1");
+    expect(ids).toContain("08-render-r1");
+
+    await engine.resolveGate(runId, "11-clip-review-r1", { decision: "approve", actor: "jane@karoslabs.com", at: at() });
+    const final = await engine.run(workflow, { ...PARAMS, runId, input: {} });
+    expect(final.status).toBe("completed");
+    expect(h.deliverables[0]).toMatchObject({ revisionKind: "footage-only" });
+    expect((h.deliverables[0] as { script?: { hook?: string } }).script?.hook).toBe(VOICED_SCRIPT.hook);
+  }, 30_000);
+
+  it("a revise that touches the words still goes to the writer, and the plates are re-sourced for the new round", async () => {
+    const h = stubTools();
+    const prompts: string[] = [];
+    const workflow = workflowFor(h, [VOICED_SCRIPT, VOICED_SCRIPT], prompts);
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+    const runId = "run-os-words-revise";
+    await engine.run(workflow, { ...PARAMS, runId, input: {} });
+    await engine.resolveGate(runId, "11-clip-review-r0", { decision: "revise", actor: "jane@karoslabs.com", feedback: "Swap the clip in beat 2 and shorten the hook.", at: at() });
+    const r1 = await engine.run(workflow, { ...PARAMS, runId, input: {} });
+    expect(r1.status).toBe("awaiting_gate");
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain("shorten the hook");
+    const ids = (await store.listSteps(runId)).map((s) => s.stepId);
+    expect(ids).toContain("03u-script-r1");
+    expect(ids).toContain("04p-plate-1-r1");
+    expect(ids).toContain("04h-hook-plate-r1");
+  }, 30_000);
+});
 
 describe("scriptVoiceIssues", () => {
   it("names a hook too long for the screen, a sentence past a breath, and the conference-slide register; a clean script has none", () => {
