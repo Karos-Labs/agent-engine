@@ -45,7 +45,7 @@ describe("Layer 3 tool registry — cross-cutting", () => {
   it("merges all ten servers' tools into one registry with no name collisions", () => {
     const expectedPrefixes = ["client.", "gate.", "intel.", "ledger.", "memory.", "publish.", "reputation.", "research.", "seoGeo.", "topics."];
     const names = Object.keys(tools);
-    // 10 client + 6 gates + 2 intel + 8 ledger + 7 memory + 4 publish + 5 reputation + 10 research + 2 seoGeo + 5 topics = 59
+    // 12 client + 6 gates + 2 intel + 8 ledger + 7 memory + 4 publish + 5 reputation + 11 research + 2 seoGeo + 5 topics = 62
     // (topics grew from 4 to 5: topics.list, 2026-09-09 — the read-only catalog view a
     // discovery step consults before proposing, so a re-worded topic is caught against
     // the lane instead of becoming a new row. See karos-topics/src/list.ts.)
@@ -97,7 +97,18 @@ describe("Layer 3 tool registry — cross-cutting", () => {
     // (58 → 59 → 60: topics.list landed on main in the same week as
     // client.getBrief, and each added one tool. Both counts read 59 on their own
     // branch; merged they are 60.)
-    expect(names.length).toBe(60);
+    // (60 → 62, Instagram Phase 1 item H: client.writeBrief (client 11 → 12) is
+    // the registry's single writer — it persists the agent-written Client Brief
+    // that client.getBrief reads back, schema-validated and never over a
+    // human-authored one; research.fetchPages (research 10 → 11) reads the
+    // pages a caller already holds the URL of (the client's own site, the
+    // report a source cites) through the same scraper seam as every other
+    // research read. The Phase 1 spec predicted 61 because it was written
+    // against a branch where topics.list had not yet merged; the two new tools
+    // are what this count is actually asserting. See
+    // packages/tools/karos-client/src/brief.ts and
+    // packages/tools/karos-research/src/fetch-pages.ts.)
+    expect(names.length).toBe(62);
     for (const prefix of expectedPrefixes) {
       expect(names.some((n) => n.startsWith(prefix))).toBe(true);
     }

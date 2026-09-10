@@ -132,6 +132,28 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyOutput> {
     // 2026-09-08 prep audit: an AI marketing agency shipped a real-estate
     // carousel that cleared every gate, because no prompt or check ever
     // said who the client was. v11 stays frozen.
-    skillRef: "instagram-copy@12",
+    // Pinned to "13" (2026-09, Instagram Phase 1 item K): v13 adds §17, "The
+    // angle" — `angle.chosen` (the editorial decision `04i-propose-angles`
+    // proposed and `04j-select-angle` picked, deterministically) is what the
+    // carousel argues, its `rememberLine` appears on the cover or the closer
+    // near-verbatim in the target language, and the two `rejected` angles are
+    // context only, never blended in; an input with no `angle` block writes
+    // exactly as v12 did, so the fail-open path needs no second prompt. §18
+    // routes item J's fact-card `kind`s: `stat` to a `stat_callout` or
+    // `comparison_card` (under §7's one-per-carousel rule), `quote` to a
+    // `quote_card` attributed from the card's own `source`, `event` to a
+    // dated slide, `definition` to prose, plus the `~date` and
+    // `primary: true` rules. The 2026-09-08 prep audit's five auto runs were
+    // correct, sourced and unmemorable because nothing in the pipeline ever
+    // decided what a post was FOR. v12 stays frozen as the Phase 0 baseline.
+    // v13 also rewrites §14 for item I's five topic engines: `trendCandidate`
+    // now carries `engine`, and only `niche-news` may be written as news —
+    // an `own-assets` or `evergreen` subject has no week in it, so nothing on
+    // a slide may say "this week" unless a fact card carries the date.
+    // Before this, `engine` was dropped on the way to the prompt and §14 told
+    // the writer the scout had "found a live story", which turned every
+    // evergreen subject's `whyNow` into an invented timeliness claim no
+    // downstream check could catch.
+    skillRef: "instagram-copy@13",
   };
 }

@@ -1,11 +1,15 @@
 import { similarity } from "@agent-engine/core";
+import type { ClientBrief } from "@agent-engine/tools";
 import {
   MIN_BRAND_FIT,
+  candidateEngine,
   extractResearchCandidate,
   parseContentModeFromSummary,
   selectTrendCandidate,
   type ContentMode,
   type ResearchPullResult,
+  type TopicEngine,
+  type TopicSignalsForScout,
   type TrendCandidate,
   type TrendScoutOutput,
 } from "@agent-engine/workflow";
@@ -44,6 +48,16 @@ import type { InstagramTopicClaim, TopicAlternative, TopicAlternativeReason, Top
  * - `topicDecisionSummary` is the one line `09b` appends to the decision log,
  *   shaped so `parseContentModeFromSummary` reads the mode back next run and
  *   so the archetypes used are recorded at zero cost (audit finding 8).
+ *
+ * ## Phase 1 (RFC-13 §I)
+ *
+ * `rankTopicCandidates` ranks candidates from all FIVE topic engines
+ * (`topic-engines.ts` gathers the other four's evidence) with the mode and
+ * engine bonuses applied, and `resolveTopicClaim` takes its `chosen` /
+ * `alternatives` through the optional `ranked` option instead of calling
+ * `selectTrendCandidate` itself. The precedence order above does not change:
+ * ranking decides which STORY leads, never whether a story outranks a person's
+ * request or a planned row.
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -107,14 +121,21 @@ function overlaps(text: string, avoid: readonly string[]): boolean {
   });
 }
 
-function alternativeFromCandidate(candidate: TrendCandidate, reason: TopicAlternativeReason, recentExcerpts: readonly string[]): TopicAlternative {
+/**
+ * `score` is the candidate's rank score: `scoreCandidate` on the Phase 0 path,
+ * and the pre-computed `rankTopicCandidates` score (which folds in the mode and
+ * engine bonuses) when the caller ranked first — passed in rather than
+ * recomputed so the number the reviewer sees is the number that decided.
+ */
+function alternativeFromCandidate(candidate: TrendCandidate, reason: TopicAlternativeReason, recentExcerpts: readonly string[], score?: number): TopicAlternative {
   return {
     topic: candidate.topic,
     headline: candidate.headline,
     brandFit: candidate.brandFit,
     interest: candidate.interest,
     mode: candidate.mode,
-    score: round3(scoreCandidate(candidate, recentExcerpts)),
+    engine: candidateEngine(candidate),
+    score: round3(score ?? scoreCandidate(candidate, recentExcerpts)),
     reason,
   };
 }
@@ -126,6 +147,171 @@ function round3(n: number): number {
 /** Strongest first, capped — the shape every branch below records its alternatives in. */
 function rankAlternatives(alternatives: readonly TopicAlternative[]): TopicAlternative[] {
   return [...alternatives].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, MAX_ALTERNATIVES);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Ranking across the five topic engines (RFC-13 §I, Phase 1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A candidate in this run's content mode is worth 15% more — the rotation is a steer with a price, not a wall (`selectTrendCandidate` keeps the same posture). */
+export const MODE_BONUS = 1.15;
+/** How much a peer post's own engagement can lift a candidate the reference-accounts engine produced: at most +25%, and only with a measured score. */
+export const REFERENCE_ENGAGEMENT_BONUS = 0.25;
+/** The client's own case study or data point is worth 50% more WHEN there is an offer for it to lead to; without one it is just another story. */
+export const OWN_ASSET_WITH_OFFER_BONUS = 1.5;
+/** An evergreen angle is worth 20% less than a dated story — except on a deep-value week, which is exactly what evergreen is for. */
+export const EVERGREEN_OFF_MODE_MULTIPLIER = 0.8;
+
+/** Why each factor moved the score. Checkpointed with the ranking so a reviewer can disagree with a weight rather than with a total. */
+export interface RankComponents {
+  brandFit: number;
+  interest: number;
+  distance: number;
+  modeBonus: number;
+  engineBonus: number;
+  engine: TopicEngine;
+}
+
+export interface RankedCandidate {
+  candidate: TrendCandidate;
+  score: number;
+  components: RankComponents;
+}
+
+export interface RankedTopics {
+  /** Every eligible candidate, strongest first. */
+  ranked: RankedCandidate[];
+  /** The strongest one, when anything was eligible. */
+  chosen?: TrendCandidate;
+  /** The next `MAX_ALTERNATIVES`, already shaped for the claim and the gate. */
+  alternatives: TopicAlternative[];
+  /** Candidates dropped before scoring, with the reason — the honest counterpart to `chosen`. */
+  dropped: Array<{ topic: string; reason: string }>;
+}
+
+export interface RankTopicOptions {
+  /** This run's content mode (`03d`). */
+  mode: ContentMode;
+  /** The client brief: `offers` decides whether an own-asset candidate gets its bonus. */
+  brief: Pick<ClientBrief, "offers">;
+  /** Recent post excerpts across channels — what `candidateDistance` measures against. */
+  recentExcerpts: readonly string[];
+  /** Subjects already covered anywhere; an overlapping candidate is dropped before scoring. */
+  avoidTopics: readonly string[];
+  /**
+   * `03e`'s signals, so a reference-accounts candidate can be matched back to
+   * the peer post it rests on (`evidenceRefs`) and carry that post's measured
+   * engagement into its bonus. Absent, the bonus is neutral rather than
+   * guessed.
+   */
+  signals?: TopicSignalsForScout | undefined;
+  /** Overridable only for tests; production uses the shared `MIN_BRAND_FIT`. */
+  minBrandFit?: number;
+}
+
+/** The strongest measured engagement among the peer posts this candidate cites, in [0,1]; 0 when it cites none. */
+function citedEngagement(candidate: TrendCandidate, signals: TopicSignalsForScout | undefined): number {
+  const refs = candidate.evidenceRefs ?? [];
+  if (signals === undefined || refs.length === 0) return 0;
+  let best = 0;
+  for (const post of signals.referencePosts) {
+    const url = post.url.trim().toLowerCase();
+    if (url.length === 0) continue;
+    const cited = refs.some((raw) => {
+      const ref = raw.trim().toLowerCase();
+      return ref.length > 0 && (ref === url || ref.includes(url) || url.includes(ref));
+    });
+    if (cited && post.engagementScore > best) best = post.engagementScore;
+  }
+  return Math.min(1, Math.max(0, best));
+}
+
+/**
+ * What the candidate's ORIGIN is worth, on top of the scout's own judgment.
+ *
+ * The scout scores brand fit and interest; it cannot know that the client has
+ * an offer this case study leads to, or that a peer's post on this subject
+ * measurably outperformed their own median. That is what these multipliers
+ * carry — and they are multipliers, not additions, so no engine can rescue a
+ * candidate the scout scored as uninteresting.
+ */
+export function engineBonus(candidate: TrendCandidate, options: Pick<RankTopicOptions, "mode" | "brief" | "signals">): number {
+  switch (candidateEngine(candidate)) {
+    case "reference-accounts":
+      return 1 + REFERENCE_ENGAGEMENT_BONUS * citedEngagement(candidate, options.signals);
+    case "own-assets":
+      return options.brief.offers.length > 0 ? OWN_ASSET_WITH_OFFER_BONUS : 1;
+    case "evergreen":
+      return options.mode === "deep-value" ? 1 : EVERGREEN_OFF_MODE_MULTIPLIER;
+    case "audience-questions":
+    case "niche-news":
+    default:
+      return 1;
+  }
+}
+
+/**
+ * Ranks every candidate the scout produced, whatever engine it came from, and
+ * says which one wins.
+ *
+ * `interest × brandFit × distance × modeBonus × engineBonus`. The first three
+ * are Phase 0's `scoreCandidate` (a story the client already covered scores
+ * near zero however good it is); the two bonuses are what makes five engines
+ * comparable — see `engineBonus`. Multiplicative throughout, so every factor
+ * can veto and none can carry a candidate alone.
+ *
+ * Dropped before scoring: anything below the brand-fit floor (`MIN_BRAND_FIT`
+ * — not on-brand enough to post about at all) and anything overlapping a
+ * subject another channel already covered. Both are recorded in `dropped`.
+ */
+export function rankTopicCandidates(candidates: readonly TrendCandidate[], options: RankTopicOptions): RankedTopics {
+  const minFit = options.minBrandFit ?? MIN_BRAND_FIT;
+  const dropped: RankedTopics["dropped"] = [];
+  const ranked: RankedCandidate[] = [];
+
+  for (const candidate of candidates) {
+    if (candidate.brandFit < minFit) {
+      dropped.push({ topic: candidate.topic, reason: `brand fit ${candidate.brandFit}/5 is below the floor of ${minFit}` });
+      continue;
+    }
+    if (overlaps(candidate.topic, options.avoidTopics) || overlaps(candidate.headline, options.avoidTopics)) {
+      dropped.push({ topic: candidate.topic, reason: "a subject this client already covered on some channel" });
+      continue;
+    }
+    const distance = candidateDistance(candidate, options.recentExcerpts);
+    const modeBonus = candidate.mode === options.mode ? MODE_BONUS : 1;
+    const bonus = engineBonus(candidate, options);
+    ranked.push({
+      candidate,
+      score: round3(candidate.brandFit * candidate.interest * distance * modeBonus * bonus),
+      components: {
+        brandFit: candidate.brandFit,
+        interest: candidate.interest,
+        distance: round3(distance),
+        modeBonus,
+        engineBonus: round3(bonus),
+        engine: candidateEngine(candidate),
+      },
+    });
+  }
+
+  // Ties broken the way `selectTrendCandidate` breaks them — a citable figure,
+  // then the more recent date — so two candidates the formula cannot separate
+  // are separated by the same rule everywhere in the codebase.
+  ranked.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    if (a.candidate.hasNumbers !== b.candidate.hasNumbers) return a.candidate.hasNumbers ? -1 : 1;
+    return (b.candidate.publishedAt ?? "").localeCompare(a.candidate.publishedAt ?? "");
+  });
+
+  const chosen = ranked[0]?.candidate;
+  const alternatives = ranked
+    .slice(1, 1 + MAX_ALTERNATIVES)
+    .map((row) =>
+      alternativeFromCandidate(row.candidate, chosen !== undefined && row.candidate.mode === chosen.mode ? "lower-rank" : "off-mode", options.recentExcerpts, row.score),
+    );
+
+  return { ranked, ...(chosen !== undefined ? { chosen } : {}), alternatives, dropped };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -164,6 +350,18 @@ export interface ResolveTopicOptions {
   trendResearchMerged?: ResearchPullResult | undefined;
   /** What the workflow observed of the scout: ran, saw no documents, or could not run. Recorded on the claim verbatim. */
   scoutStatus: TopicScoutStatus;
+  /**
+   * Phase 1 (RFC-13 §I): `03f-rank-topic-candidates`'s output. When present it
+   * REPLACES the internal `selectTrendCandidate` / `scoreCandidate` ordering,
+   * so the subject is chosen by the five-engine formula (mode and engine
+   * bonuses included) and the alternatives carry the engine and the score that
+   * actually decided. Every precedence rule below is unchanged: a request
+   * still outranks the ranking, and a planned row still outranks it unless the
+   * client opted into trend-jacking.
+   *
+   * Absent — every Phase 0 run — this function behaves exactly as it did.
+   */
+  ranked?: RankedTopics | undefined;
 }
 
 export type ResolvedTopic =
@@ -186,9 +384,20 @@ export type ResolvedTopic =
 export function resolveTopicClaim(seed: InstagramTopicClaim, scout: TrendScoutOutput | undefined, mode: ContentMode, options: ResolveTopicOptions): ResolvedTopic {
   const candidates = scout?.candidates ?? [];
   const recent = options.recentExcerpts;
-  const scored = candidates.map((c) => ({ candidate: c, score: scoreCandidate(c, recent) })).sort((a, b) => b.score - a.score);
+  const pre = options.ranked;
+  // One ordering for every branch below: the pre-computed five-engine ranking
+  // when `03f` ran, else Phase 0's `brandFit × interest × distance`.
+  const scored: Array<{ candidate: TrendCandidate; score: number }> =
+    pre !== undefined ? pre.ranked : candidates.map((c) => ({ candidate: c, score: scoreCandidate(c, recent) })).sort((a, b) => b.score - a.score);
   const best = scored[0];
   const common = { mode, scoutStatus: options.scoutStatus };
+  /** Every considered story as an alternative under one reason, strongest first — pre-ranked scores when there are any. */
+  const alternativesUnder = (reason: TopicAlternativeReason): TopicAlternative[] =>
+    rankAlternatives(
+      pre !== undefined
+        ? pre.ranked.map((row) => alternativeFromCandidate(row.candidate, reason, recent, row.score))
+        : candidates.map((c) => alternativeFromCandidate(c, reason, recent)),
+    );
 
   // 1. A person's request stands. The scout ran anyway, so the reviewer sees
   //    what this week's stories were — as alternatives, never as the subject.
@@ -197,7 +406,7 @@ export function resolveTopicClaim(seed: InstagramTopicClaim, scout: TrendScoutOu
       claim: {
         ...seed,
         ...common,
-        alternatives: rankAlternatives(candidates.map((c) => alternativeFromCandidate(c, "outranked-by-request", recent))),
+        alternatives: alternativesUnder("outranked-by-request"),
         weighting: {
           ...(best !== undefined ? { bestCandidateScore: round3(best.score) } : {}),
           rule: "a subject someone typed or configured for this run outranks every scouted story",
@@ -222,7 +431,7 @@ export function resolveTopicClaim(seed: InstagramTopicClaim, scout: TrendScoutOu
     if (winner !== undefined) {
       const { candidate } = winner;
       const rowAsAlternative: TopicAlternative = { topic: seed.topic, reason: "outranked-by-trend", score: PLANNED_ROW_SCORE };
-      const others = scored.filter((s) => s.candidate !== candidate).map((s) => alternativeFromCandidate(s.candidate, "lower-rank", recent));
+      const others = scored.filter((s) => s.candidate !== candidate).map((s) => alternativeFromCandidate(s.candidate, "lower-rank", recent, s.score));
       // No `reservationKey` on the new claim: the row goes back to the
       // catalog (the caller releases it), and step 09 must not commit a
       // reservation for a subject the catalog did not supply.
@@ -257,18 +466,23 @@ export function resolveTopicClaim(seed: InstagramTopicClaim, scout: TrendScoutOu
       claim: {
         ...seed,
         ...common,
-        alternatives: rankAlternatives(candidates.map((c) => alternativeFromCandidate(c, "outranked-by-catalog", recent))),
+        alternatives: alternativesUnder("outranked-by-catalog"),
         weighting,
       },
       releaseReservation: false,
     };
   }
 
-  // 3. Nothing planned. The strongest on-brand candidate for this run's mode
+  // 3. Nothing planned. The strongest on-brand candidate: the five-engine
+  //    ranking's winner when `03f` ran, else the strongest for this run's mode
   //    (mode-first, then any mode — the rotation is a steer, not a wall).
-  const trend = selectTrendCandidate(candidates, mode, { avoidTopics: options.avoidTopics });
+  const trend = pre !== undefined ? pre.chosen : selectTrendCandidate(candidates, mode, { avoidTopics: options.avoidTopics });
   if (trend !== undefined) {
-    const others = candidates.filter((c) => c !== trend).map((c) => alternativeFromCandidate(c, c.mode === trend.mode ? "lower-rank" : "off-mode", recent));
+    const chosenRow = pre?.ranked.find((row) => row.candidate === trend);
+    const others =
+      pre !== undefined
+        ? pre.alternatives
+        : rankAlternatives(candidates.filter((c) => c !== trend).map((c) => alternativeFromCandidate(c, c.mode === trend.mode ? "lower-rank" : "off-mode", recent)));
     return {
       claim: {
         ...seed,
@@ -276,13 +490,17 @@ export function resolveTopicClaim(seed: InstagramTopicClaim, scout: TrendScoutOu
         topic: trend.topic,
         source: "trend",
         trend,
-        alternatives: rankAlternatives(others),
+        alternatives: others,
         weighting: {
-          bestCandidateScore: round3(scoreCandidate(trend, recent)),
+          bestCandidateScore: chosenRow !== undefined ? chosenRow.score : round3(scoreCandidate(trend, recent)),
           rule:
-            trend.mode === mode
-              ? `strongest candidate in this run's mode (${mode}) with brand fit ≥ ${MIN_BRAND_FIT}`
-              : `no candidate in this run's mode (${mode}); strongest on-brand candidate of any mode (${trend.mode}) taken instead`,
+            chosenRow !== undefined
+              ? `strongest candidate across the five topic engines: ${chosenRow.components.engine} scored ${chosenRow.score} ` +
+                `(brand fit ${chosenRow.components.brandFit}/5 × interest ${chosenRow.components.interest}/5 × distance ${chosenRow.components.distance} ` +
+                `× mode ${chosenRow.components.modeBonus} × engine ${chosenRow.components.engineBonus})`
+              : trend.mode === mode
+                ? `strongest candidate in this run's mode (${mode}) with brand fit ≥ ${MIN_BRAND_FIT}`
+                : `no candidate in this run's mode (${mode}); strongest on-brand candidate of any mode (${trend.mode}) taken instead`,
         },
       },
       releaseReservation: false,

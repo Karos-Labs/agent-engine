@@ -10,7 +10,7 @@ import { createGetSubredditRules } from "./get-subreddit-rules.js";
 import { createGetStrategy } from "./get-strategy.js";
 import { createGetKnowledge } from "./get-knowledge.js";
 import { createGetContextDoc } from "./get-context-doc.js";
-import { createGetBrief } from "./brief.js";
+import { createGetBrief, createWriteBrief } from "./brief.js";
 
 export * from "./get-profile.js";
 export * from "./get-brand.js";
@@ -30,12 +30,17 @@ export * from "./brief.js";
  * resolves its tenant from `context.ctx.clientSlug`; none accepts a
  * tenant-shaped argument.
  *
- * Read-only is about to acquire exactly one exception: Phase 1 of the
- * Instagram grounding work adds `client.writeBrief`, the registry's single
- * writer, whose payload is schema-validated (`ClientBriefSchema`),
- * channel-scoped, and never overwrites a human-authored brief. Everything
- * else here stays a read. `client.getBrief` (this phase) is the read side of
- * that same document.
+ * Read-only except `client.writeBrief`, the registry's single writer, whose
+ * payload is schema-validated (`ClientBriefSchema`), channel-scoped, and
+ * never overwrites a human-authored brief. Everything else here stays a read.
+ * `client.getBrief` is the read side of that same document.
+ *
+ * The exception exists because the Client Brief is the one piece of client
+ * data this engine DERIVES rather than receives: the portal has no field for
+ * "who is this client, in the words a topic scout and a copywriter need", so
+ * the Instagram brief agent (`instagram-brief@1`) writes it and every channel
+ * reads it. It is still the client's own document, which is why a human edit
+ * in the portal outranks the agent permanently — see `createWriteBrief`.
  */
 export function createKarosClientTools(store: WorkspaceStoreLike = createWorkspaceStore()): AgentToolRegistry {
   return {
@@ -50,5 +55,9 @@ export function createKarosClientTools(store: WorkspaceStoreLike = createWorkspa
     "client.getKnowledge": createGetKnowledge(store),
     "client.getContextDoc": createGetContextDoc(store),
     "client.getBrief": createGetBrief(store),
+    // The one writer here. Its own doc comment carries the three properties
+    // that make that safe (schema-validated, channel/tenant-scoped, never
+    // overwrites a human).
+    "client.writeBrief": createWriteBrief(store),
   };
 }

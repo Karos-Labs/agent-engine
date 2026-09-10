@@ -18,6 +18,7 @@ import {
   type TestEnvironment,
 } from "./test-helpers.js";
 import type { InstagramCopyOutput } from "../src/workflow/types.js";
+import { goodAngleProposal } from "./angle-fixtures.js";
 
 const params = { runId: "instagram_run_selfcheck", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
@@ -51,7 +52,7 @@ describe("07-emit-slides-data: self-check retry, capped at two returns to step 0
     const badCopy = copyOutputWithBannedWord();
     const goodCopy = goodCopyOutput();
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(badCopy),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodCopy),
@@ -71,9 +72,9 @@ describe("07-emit-slides-data: self-check retry, capped at two returns to step 0
     const engine = new WorkflowEngine(durableStore);
     const result = await engine.run(workflowFn, params);
 
-    // scout + research + (copy + vet) + (copy + vet + relevance + QA): a failed 07 self-check never reaches the relevance judge.
+    // scout + research + angle + (copy + vet) + (copy + vet + relevance + QA): a failed 07 self-check never reaches the relevance judge.
     expect(result.status).toBe("completed");
-    expect(router.complete).toHaveBeenCalledTimes(8);
+    expect(router.complete).toHaveBeenCalledTimes(9);
 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).toContain("05-write-copy-attempt-1");
@@ -97,7 +98,7 @@ describe("07-emit-slides-data: self-check retry, capped at two returns to step 0
     const promptStore = makePromptStore();
     const badCopy = copyOutputWithBannedWord();
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(badCopy),
       finalTurn(goodImageVettingOutput()),
       finalTurn(badCopy),
@@ -121,8 +122,8 @@ describe("07-emit-slides-data: self-check retry, capped at two returns to step 0
     expect(result.status).toBe("held");
     if (result.status !== "held") throw new Error("unreachable");
     expect(result.reason).toMatch(/self-check never passed after 3 attempt/i);
-    // scout + research + 3 x (copy + vet): the relevance judge and QA are never reached.
-    expect(router.complete).toHaveBeenCalledTimes(8);
+    // scout + research + angle + 3 x (copy + vet): the relevance judge and QA are never reached.
+    expect(router.complete).toHaveBeenCalledTimes(9);
 
     const stepIds = (await durableStore.listSteps("instagram_run_selfcheck_exhausted")).map((s) => s.stepId);
     expect(stepIds).toContain("05-write-copy-attempt-1");

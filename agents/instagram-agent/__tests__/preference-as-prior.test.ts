@@ -20,6 +20,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
+import { goodAngleProposal } from "./angle-fixtures.js";
 
 /**
  * IGSTYLE-7 — "preference as prior, not pin" (§2.6): the end-to-end proof
@@ -64,7 +65,9 @@ function tools(env: TestEnvironment): AgentToolRegistry {
 }
 
 function draftTurns(copyOutput: ReturnType<typeof goodCopyOutput>) {
-  return [finalTurn(copyOutput), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())];
+  // The angle proposal (04i) leads each ROUND: one per revision, outside the
+  // attempt loop, so a two-round fixture spends two of them.
+  return [finalTurn(goodAngleProposal()), finalTurn(copyOutput), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())];
 }
 
 describe("preference as prior, not pin (IGSTYLE-7, §7b/§7c end-to-end)", () => {

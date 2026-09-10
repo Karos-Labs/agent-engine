@@ -4,6 +4,7 @@ import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import { fakeRouterSequence, goodCopyOutput, goodResearchOutput, goodTrendScoutOutput, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 import { standardTurns } from "./turns.js";
+import { goodAngleProposal } from "./angle-fixtures.js";
 
 /**
  * Tier 0 — media the client attached to this run.
@@ -72,7 +73,7 @@ describe("instagram Tier 0: client-supplied media", () => {
     const copy = goodCopyOutput();
     // Through the scout, research and copy; the tests below stop at Tier 0 /
     // 05b and never need a vetting turn.
-    const router = fakeRouterSequence(standardTurns({ scout: goodTrendScoutOutput(), research: goodResearchOutput(), copy }));
+    const router = fakeRouterSequence(standardTurns({ scout: goodTrendScoutOutput(), research: goodResearchOutput(), angle: goodAngleProposal(), copy }));
     const store = new MemoryDurableStepStore();
     const workflowFn = createInstagramAgentWorkflow({
       tools: { ...env.tools, ...tools } as never,

@@ -33,6 +33,7 @@ import {
 import { deriveBrandRenderTokens, paletteForSlide } from "../src/workflow/brand-render-tokens.js";
 import { checkPaletteWithinKit } from "../src/workflow/visual-qa-pre-checks.js";
 import { InstagramSlideCopySchema, type InstagramCopyOutput, type ImageSelection } from "../src/workflow/types.js";
+import { goodAngleProposal } from "./angle-fixtures.js";
 
 const CANVAS = { w: 1080, h: 1440, scale: 2, slides_min: 6, slides_max: 8 };
 
@@ -473,7 +474,7 @@ describe("template registry integration (Approach a)", () => {
     const pool = goodImageCandidatePool();
     const photoNs = base.slides.filter((s) => s.n !== 2).map((s) => s.n);
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(copy),
       finalTurn({
         selections: photoNs.map((n) => ({
@@ -554,7 +555,7 @@ describe("template registry integration (Approach a)", () => {
     };
 
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
@@ -591,10 +592,12 @@ describe("template registry integration (Approach a)", () => {
     const store = new MemoryTemplateStore([]);
     const first = goodCopyOutput();
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(first),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+      // Round 1 proposes its own angle (04i runs once per REVISION).
+      finalTurn(goodAngleProposal()),
       finalTurn(first),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),

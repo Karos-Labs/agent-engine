@@ -19,6 +19,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
+import { goodAngleProposal } from "./angle-fixtures.js";
 
 const params = { runId: "instagram_run_resume", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
@@ -48,7 +49,7 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
   it("re-running engine.run() with the same runId does not re-execute any already-completed step", async () => {
     const promptStore = makePromptStore();
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
@@ -73,7 +74,8 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
     const first = await engine.run(workflowFn, params);
     expect(first.status).toBe("completed");
     const countsAfterFirst = callCounts();
-    expect(router.complete).toHaveBeenCalledTimes(6);
+    // scout + research + angle + copy + vet + relevance + QA.
+    expect(router.complete).toHaveBeenCalledTimes(7);
     expect(Object.values(countsAfterFirst).some((n) => n > 0)).toBe(true);
 
     const second = await engine.run(workflowFn, params);
@@ -82,7 +84,8 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
     expect(second.output).toEqual(first.output);
 
     // Nothing ran again: the router turns, and every tool call, stayed at their first-run counts.
-    expect(router.complete).toHaveBeenCalledTimes(6);
+    // scout + research + angle + copy + vet + relevance + QA.
+    expect(router.complete).toHaveBeenCalledTimes(7);
     expect(callCounts()).toEqual(countsAfterFirst);
 
     const stepRecords = await durableStore.listSteps(params.runId);
@@ -115,7 +118,8 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
     await env.store.writeJson("acme", ["client", "brand"], PLAIN_BRAND);
 
     const copy = goodCopyOutput();
-    const draftTurns = () => [finalTurn(copy), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())];
+    // The angle proposal (04i) leads each ROUND, so a two-round fixture spends two.
+    const draftTurns = () => [finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())];
     const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...draftTurns(), ...draftTurns()]);
 
     const tools: AgentToolRegistry = { ...env.tools, "publish.renderCarousel": fakeRenderCarousel(env.tools["publish.renderCarousel"]!) };

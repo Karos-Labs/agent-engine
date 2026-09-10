@@ -105,6 +105,141 @@ describe("client.getBrief", () => {
   });
 });
 
+describe("client.writeBrief", () => {
+  let rootDir: string;
+  let store: WorkspaceStore;
+  let tools: ReturnType<typeof createKarosClientTools>;
+
+  /** The payload shape the tool takes: a whole brief minus `generatedAt`, which it stamps itself. */
+  function payload(overrides: Partial<ClientBrief> = {}): Record<string, unknown> {
+    const { generatedAt: _stamped, ...rest } = validBrief(overrides);
+    return rest;
+  }
+
+  beforeEach(async () => {
+    rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "karos-client-write-brief-"));
+    store = new WorkspaceStore(rootDir);
+    tools = createKarosClientTools(store);
+  });
+
+  afterEach(async () => {
+    await fs.rm(rootDir, { recursive: true, force: true });
+  });
+
+  it("is registered on the tool registry", () => {
+    expect(tools["client.writeBrief"]).toBeDefined();
+  });
+
+  it("writes at clients/<slug>/brief/instagram-brief.json, stamps generatedAt, and client.getBrief reads it straight back", async () => {
+    const before = Date.now();
+    const outcome = await tools["client.writeBrief"]!.execute({ channel: "instagram", brief: payload() }, { ctx });
+    expect(outcome.status).toBe("success");
+    const result = (outcome as { result: { created: boolean; path: string; previousGeneratedAt?: string } }).result;
+    expect(result.created).toBe(true);
+    expect(result.previousGeneratedAt).toBeUndefined();
+    expect(result.path.replace(/\\/g, "/")).toContain("clients/acme/brief/instagram-brief.json");
+
+    const stored = await store.readJson<ClientBrief>("acme", briefSegments("instagram"));
+    expect(stored).toBeDefined();
+    // Stamped by the tool, not supplied: within the window this test spans.
+    const stampedAt = Date.parse(stored!.generatedAt);
+    expect(stampedAt).toBeGreaterThanOrEqual(before);
+    expect(stampedAt).toBeLessThanOrEqual(Date.now());
+
+    const read = await tools["client.getBrief"]!.execute({ channel: "instagram" }, { ctx });
+    expect(read.status).toBe("success");
+    expect((read as { result: { brief: ClientBrief; ageDays: number } }).result.brief).toEqual(stored);
+    expect((read as { result: { ageDays: number } }).result.ageDays).toBe(0);
+  });
+
+  it("ignores a caller-supplied generatedAt entirely: the schema omits the field, so a future date cannot make a brief permanently fresh", async () => {
+    const future = new Date(Date.now() + 400 * DAY_MS).toISOString();
+    const outcome = await tools["client.writeBrief"]!.execute({ channel: "instagram", brief: { ...payload(), generatedAt: future } }, { ctx });
+    expect(outcome.status).toBe("success");
+    const stored = await store.readJson<ClientBrief>("acme", briefSegments("instagram"));
+    expect(stored!.generatedAt).not.toBe(future);
+    expect(briefAgeDays(stored!)).toBe(0);
+  });
+
+  it("rejects an invalid brief (empty coreTerms) with content_fail and writes nothing", async () => {
+    const outcome = await tools["client.writeBrief"]!.execute({ channel: "instagram", brief: payload({ coreTerms: [] }) }, { ctx });
+    // The input schema itself refuses it, before the tool body runs: either
+    // outcome is a refusal, and neither may leave a file behind.
+    expect(["content_fail", "tooling_error"]).toContain(outcome.status);
+    expect(await store.readJson("acme", briefSegments("instagram"))).toBeUndefined();
+  });
+
+  it("refuses a payload whose own channel disagrees with the requested one, rather than filing an x brief under instagram", async () => {
+    const outcome = await tools["client.writeBrief"]!.execute({ channel: "instagram", brief: payload({ channel: "x" }) }, { ctx });
+    expect(outcome.status).toBe("content_fail");
+    expect((outcome as { reason: string }).reason).toMatch(/disagree/);
+    expect(await store.readJson("acme", briefSegments("instagram"))).toBeUndefined();
+  });
+
+  it("never overwrites a human-authored brief: content_fail, and the stored document is untouched", async () => {
+    const human = validBrief({ generatedBy: "human", positioning: { oneLiner: "The line the client's own marketer wrote.", whatWeSell: "What they say they sell.", differentiators: [] } });
+    await store.writeJson("acme", briefSegments("instagram"), human);
+
+    const outcome = await tools["client.writeBrief"]!.execute({ channel: "instagram", brief: payload() }, { ctx });
+    expect(outcome.status).toBe("content_fail");
+    expect((outcome as { reason: string }).reason).toMatch(/authored by a human/);
+    expect((outcome as { reason: string }).reason).toContain(human.generatedAt.slice(0, 10));
+    expect(await store.readJson<ClientBrief>("acme", briefSegments("instagram"))).toEqual(human);
+  });
+
+  it("still recognises a human brief whose SHAPE has drifted: authorship outranks a schema client.getBrief would decline to serve", async () => {
+    // `client.getBrief` reports not_available for this document (no
+    // `coreTerms`), which must not make it overwritable — that would turn
+    // "your edit was refused" into "your edit was silently replaced".
+    await store.writeJson("acme", briefSegments("instagram"), { ...validBrief({ generatedBy: "human" }), coreTerms: [] });
+
+    const read = await tools["client.getBrief"]!.execute({ channel: "instagram" }, { ctx });
+    expect(read.status).toBe("not_available");
+
+    const outcome = await tools["client.writeBrief"]!.execute({ channel: "instagram", brief: payload() }, { ctx });
+    expect(outcome.status).toBe("content_fail");
+    expect((outcome as { reason: string }).reason).toMatch(/authored by a human/);
+  });
+
+  it("a refresh over an agent brief reports created: false with what it replaced", async () => {
+    const first = await tools["client.writeBrief"]!.execute({ channel: "instagram", brief: payload() }, { ctx });
+    expect(first.status).toBe("success");
+    const firstStamp = (await store.readJson<ClientBrief>("acme", briefSegments("instagram")))!.generatedAt;
+
+    const second = await tools["client.writeBrief"]!.execute({ channel: "instagram", brief: payload({ confidence: "high" }) }, { ctx });
+    expect(second.status).toBe("success");
+    const result = (second as { result: { created: boolean; previousGeneratedAt?: string; previousGeneratedBy?: string } }).result;
+    expect(result.created).toBe(false);
+    expect(result.previousGeneratedAt).toBe(firstStamp);
+    expect(result.previousGeneratedBy).toBe("agent");
+    expect((await store.readJson<ClientBrief>("acme", briefSegments("instagram")))!.confidence).toBe("high");
+  });
+
+  it("replaces a deterministic brief without complaint — that is the whole point of the refresh", async () => {
+    await store.writeJson("acme", briefSegments("instagram"), validBrief({ generatedBy: "deterministic", confidence: "low" }));
+    const outcome = await tools["client.writeBrief"]!.execute({ channel: "instagram", brief: payload() }, { ctx });
+    expect(outcome.status).toBe("success");
+    expect((outcome as { result: { previousGeneratedBy?: string } }).result.previousGeneratedBy).toBe("deterministic");
+    expect((await store.readJson<ClientBrief>("acme", briefSegments("instagram")))!.generatedBy).toBe("agent");
+  });
+
+  it("is channel-scoped: writing an x brief leaves the instagram one alone", async () => {
+    await tools["client.writeBrief"]!.execute({ channel: "instagram", brief: payload() }, { ctx });
+    await tools["client.writeBrief"]!.execute({ channel: "x", brief: payload({ channel: "x", coreTerms: ["threads"] }) }, { ctx });
+
+    const instagram = await store.readJson<ClientBrief>("acme", briefSegments("instagram"));
+    const x = await store.readJson<ClientBrief>("acme", briefSegments("x"));
+    expect(instagram!.coreTerms).toEqual(validBrief().coreTerms);
+    expect(x!.coreTerms).toEqual(["threads"]);
+  });
+
+  it("is tenant-scoped: another client's brief is written under its own slug", async () => {
+    await tools["client.writeBrief"]!.execute({ channel: "instagram", brief: payload() }, { ctx: { ...ctx, clientSlug: "geektime" } });
+    expect(await store.readJson("acme", briefSegments("instagram"))).toBeUndefined();
+    expect(await store.readJson("geektime", briefSegments("instagram"))).toBeDefined();
+  });
+});
+
 describe("ClientBriefSchema", () => {
   it("accepts a fully populated brief and fills the array defaults on a minimal one", () => {
     expect(ClientBriefSchema.safeParse(validBrief()).success).toBe(true);

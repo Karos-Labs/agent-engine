@@ -1,7 +1,10 @@
+import { z } from "zod";
+import { candidateEngine } from "@agent-engine/workflow";
 import {
   BRIEF_TTL_DAYS,
   ClientBriefSchema,
   briefAgeDays,
+  type BriefSource,
   type ClientBrand,
   type ClientBrief,
   type ClientKnowledge,
@@ -65,6 +68,21 @@ function clampWords(text: string, max: number): string {
   const lastSpace = cut.lastIndexOf(" ");
   // Keep at least half the budget rather than collapsing to one long word.
   return (lastSpace > max / 2 ? cut.slice(0, lastSpace) : cut).replace(/[\s,;:(\-]+$/u, "");
+}
+
+/**
+ * Cut `text` to at most `max` characters WITHOUT collapsing its whitespace —
+ * for the documents that reach a prompt, where headings, lists and paragraph
+ * breaks are structure the model reads. Cuts at a whitespace boundary and says
+ * it truncated, so a model never treats a document that stops mid-sentence as
+ * the whole of what the client says.
+ */
+function clampRaw(text: string, max: number): string {
+  const t = text.trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const lastBreak = cut.search(/\s+\S*$/u);
+  return `${(lastBreak > max / 2 ? cut.slice(0, lastBreak) : cut).trimEnd()}\n\n[truncated at ${max} characters]`;
 }
 
 /** The first sentence of a prose blurb; `undefined` when there is no prose. */
@@ -238,37 +256,74 @@ function ownAssetsFrom(knowledge: ClientKnowledge | undefined): ClientBrief["own
 
 /**
  * The generic ICP summaries `deriveClientBrief` falls back to when there is
- * no target-audience document. Constants because `isThinlyGrounded` below
- * recognises the brief by them: two spellings of the same sentence in two
- * modules is how a floor silently stops applying.
+ * no target-audience document. Constants so the two call sites below cannot
+ * drift; nothing reads them as a signal any more — `isThinlyGrounded` used to
+ * fingerprint them and stopped recognising a thin brief the moment an agent
+ * wrote one, so it reads `sources` instead.
  */
 const GENERIC_ICP_PREFIX = "practitioners in ";
 const GENERIC_ICP_NO_INDUSTRY = "this client's customers (no target-audience document or industry on file)";
 
 /**
+ * The context documents that carry what a post has to be legible AS: what
+ * this business sells (`product-information`) and who it sells to
+ * (`target-audience`). A brief resting on either one describes a business; a
+ * brief resting on neither describes a field.
+ */
+const GROUNDING_DOC_REFS: ReadonlySet<string> = new Set(["product-information", "target-audience"]);
+
+/** True for the source rows `isThinlyGrounded` reads — the ones that decide the relevance floor, and therefore the ones the engine stamps itself. */
+function isGroundingSource(source: BriefSource): boolean {
+  return (source.kind === "context-doc" && GROUNDING_DOC_REFS.has(source.ref)) || source.kind === "site";
+}
+
+/**
  * Does this brief have nothing but the industry to stand on?
  *
- * True when the derivation took BOTH of its widest fallbacks: no
- * product-information document (so `positioning.whatWeSell` is the industry
- * name) and no target-audience document (so `icp.summary` is "practitioners
- * in <industry>"). A brief like that describes a whole field rather than a
- * business, and the relevance judge's own rubric then scores a 2 — "a
- * different business in the same field could have posted this word for word"
- * — for every post a writer given that grounding could possibly produce.
- * Three redrafts and a hold on it punish the client for thin onboarding, and
- * the redraft has nothing new to work with, so `relevanceFloor` lowers the
- * passing score to 2 for this shape and says so in the gate payload. A 1
- * (the MassHousing failure: a different industry, a different customer) is
- * still off-brief and still returns to step 05.
+ * True when its own audit trail names none of the three sources that can say
+ * what this business sells and to whom: a `product-information` context doc,
+ * a `target-audience` context doc, or the client's own site (`kind: "site"`,
+ * which the Phase 1 brief agent fetches at `00b1` and which is usually the
+ * sharpest positioning statement available). A brief like that describes a
+ * whole field rather than a business, and the relevance judge's own rubric
+ * then scores a 2 — "a different business in the same field could have posted
+ * this word for word" — for every post a writer given that grounding could
+ * possibly produce. Three redrafts and a hold on it punish the client for
+ * thin onboarding, and the redraft has nothing new to work with, so
+ * `relevanceFloor` lowers the passing score to 2 for this shape and says so
+ * in the gate payload. A 1 (the MassHousing failure: a different industry, a
+ * different customer) is still off-brief and still returns to step 05.
  *
- * Read off `sources` and `icp.summary` rather than `confidence`, which is
- * "low" for every deterministically derived brief and therefore says nothing
- * about how much grounding there was.
+ * Read off `sources` alone, and `sources` is a field the ENGINE can vouch
+ * for: `stampAgentBrief` reconciles the brief agent's own list against
+ * `buildBriefAgentInput`'s `presentSources` before anything is persisted
+ * (`reconcileBriefSources`), so every grounding-bearing row the gather step
+ * actually read is present whether or not the model listed it, and a row for
+ * a source the run never supplied is dropped. Without that reconciliation
+ * this floor would be the model's to lower: under-report your sources and
+ * the passing score drops from 3 to 2. It is not, and the brief prompt is no
+ * longer told the mechanism exists.
+ *
+ * Read off `sources` alone, deliberately. It used to ALSO fingerprint
+ * `deriveClientBrief`'s own fallback literals (`icp.summary` starting with
+ * "practitioners in "), which made the floor unreachable the moment Phase 1
+ * replaced the deterministic brief with an agent-written one: model prose
+ * matches no literal, `resolveBriefFreshness` refreshes every deterministic
+ * brief on a client's first Phase 1 run, and so every client's floor went
+ * back to 3 — re-opening the unwinnable three-attempt hold this constant
+ * exists to prevent, and contradicting what the brief prompt promises the
+ * model ("a later step lowers its own quality bar for exactly this case, and
+ * it can only do that if you say so", `prompts/instagram-brief/1.md` §4).
+ * `sources` is the one field every writer of a brief fills the same way —
+ * deterministic, agent and human alike — and it is exactly the audit trail
+ * the prompt asks for.
+ *
+ * Not read off `confidence`, which is "low" for every deterministically
+ * derived brief and therefore says nothing about how much grounding there
+ * was.
  */
 export function isThinlyGrounded(brief: ClientBrief): boolean {
-  const docRefs = new Set(brief.sources.filter((s) => s.kind === "context-doc").map((s) => s.ref));
-  if (docRefs.has("product-information") || docRefs.has("target-audience")) return false;
-  return brief.icp.summary.startsWith(GENERIC_ICP_PREFIX) || brief.icp.summary === GENERIC_ICP_NO_INDUSTRY;
+  return !brief.sources.some(isGroundingSource);
 }
 
 /**
@@ -430,6 +485,527 @@ export function isBriefStale(brief: Pick<ClientBrief, "generatedBy" | "generated
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Phase 1 — the persisted brief's lifecycle: when the setup-style agent
+// runs, what it reads, and what shape its answer is stored in.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** The `skillRef` the brief agent runs under, stamped onto every brief it writes so a stored document names the prompt version that produced it. */
+export const BRIEF_AGENT_SKILL_REF = "instagram-brief@1";
+
+/**
+ * What `InstagramBriefAgent` returns: the whole `ClientBrief` minus the five
+ * fields the ENGINE knows and the model does not.
+ *
+ * `version`/`channel` are facts about the pipeline, `generatedBy`/
+ * `agentSkillRef` are facts about who wrote it, and `generatedAt` is the field
+ * every staleness decision is made on — a model that could set it could date
+ * its own brief permanently fresh. The agent fills everything that is
+ * genuinely a judgment about the client, `sources`/`confidence`/`gaps`
+ * included: which sources it actually used and what it could not ground is
+ * exactly the part a reviewer needs from the writer rather than from the
+ * caller.
+ *
+ * Lives here rather than in `types.ts` because it is derived from the
+ * schema in `@agent-engine/tools` that both writers share — the agent
+ * imports it from this module the way the other agents import theirs from
+ * `types.js`.
+ */
+export const InstagramBriefAgentOutputSchema = ClientBriefSchema.omit({
+  version: true,
+  channel: true,
+  generatedAt: true,
+  generatedBy: true,
+  agentSkillRef: true,
+});
+export type InstagramBriefAgentOutput = z.infer<typeof InstagramBriefAgentOutputSchema>;
+
+/** The payload `client.writeBrief` takes: a whole brief minus `generatedAt`, which that tool stamps. */
+export type BriefWritePayload = Omit<ClientBrief, "generatedAt">;
+
+/**
+ * A source row's identity, for comparing a claim against what was supplied.
+ * Whitespace-collapsed, lowercased, trailing slashes off — onboarding data
+ * and model prose disagree about all three and about nothing else that
+ * matters here.
+ */
+function sourceRefKey(source: BriefSource): string {
+  return `${source.kind}:${normalise(source.ref).toLowerCase().replace(/\/+$/u, "")}`;
+}
+
+/**
+ * The kinds whose `ref` is the tool that produced them, so there is exactly
+ * one row per kind and the `ref` carries no information the model could get
+ * wrong. Matched by KIND alone (and canonicalised to the engine's own ref):
+ * a model that writes `{ kind: "profile", ref: "profile" }` named the source
+ * it was actually given, and dropping that row would corrupt the audit trail
+ * over a spelling.
+ */
+const SINGLETON_SOURCE_KINDS: ReadonlySet<BriefSource["kind"]> = new Set(["profile", "brand", "voice-rules", "knowledge", "intel"]);
+
+export interface BriefSourceReconciliation {
+  /** What gets persisted: the model's claim, intersected with the truth, with every grounding-bearing row the run read unioned back in. */
+  sources: BriefSource[];
+  /** One readable line per correction, for the step record and the reviewer. Empty when the model's list was exactly right. */
+  notes: string[];
+}
+
+/**
+ * Reconcile the brief agent's self-reported `sources` against the rows the
+ * gather step actually produced (`buildBriefAgentInput`'s `presentSources`).
+ *
+ * ## Why this exists
+ *
+ * `sources` is not decoration: `isThinlyGrounded` reads it, and through
+ * `relevanceFloor` it sets the passing score of the one gate that closes the
+ * audit's "any agency could have posted this" defect (3/5 normally, 2/5 for
+ * a brief with no product-information document, no target-audience document
+ * and no page of the client's own site). Persisted verbatim, that made the
+ * floor a lever the writer could pull: a brief that read the site and the
+ * product-information document but listed only `profile` and `voice-rules`
+ * — a plausible, unpunished omission — silently dropped the floor to "a
+ * different business in the same field could have posted this word for word".
+ *
+ * So the engine stamps what it can see and keeps only what it supplied:
+ *
+ * 1. **Every grounding-bearing row the run read is unioned in** — the
+ *    `product-information`/`target-audience` documents and each site page
+ *    `research.fetchPages` returned. These are exactly the rows the floor
+ *    turns on, and the engine knows them for certain, so the floor is now
+ *    decided by what was read and never by what was claimed. Erring toward
+ *    "grounded" is the safe direction: it raises the bar, never lowers it.
+ * 2. **A claimed row with no counterpart in `presentSources` is dropped.**
+ *    The run cannot vouch for it, and a `site` or document row nobody
+ *    supplied would raise the floor on grounding that does not exist.
+ * 3. **Everything else the model claimed and the run supplied is kept**, in
+ *    the model's own order, canonicalised to the engine's `ref`. That is
+ *    still the useful half of the audit trail: which of the supplied
+ *    sources the writer says it actually drew on.
+ *
+ * Pure, and `notes` names every correction so the difference between what
+ * the model claimed and what the run read is visible rather than silent.
+ */
+export function reconcileBriefSources(claimed: readonly BriefSource[], present: readonly BriefSource[]): BriefSourceReconciliation {
+  const notes: string[] = [];
+  const presentByKey = new Map(present.map((s) => [sourceRefKey(s), s]));
+  const presentByKind = new Map<BriefSource["kind"], BriefSource>();
+  for (const source of present) if (!presentByKind.has(source.kind)) presentByKind.set(source.kind, source);
+
+  const sources: BriefSource[] = [];
+  const taken = new Set<string>();
+  const push = (source: BriefSource): void => {
+    const key = sourceRefKey(source);
+    if (taken.has(key)) return;
+    taken.add(key);
+    sources.push(source);
+  };
+
+  const dropped: string[] = [];
+  for (const claim of claimed) {
+    const exact = presentByKey.get(sourceRefKey(claim));
+    if (exact !== undefined) {
+      push(exact);
+      continue;
+    }
+    if (SINGLETON_SOURCE_KINDS.has(claim.kind)) {
+      const byKind = presentByKind.get(claim.kind);
+      if (byKind !== undefined) {
+        push(byKind);
+        continue;
+      }
+    } else {
+      // A ref-bearing kind whose ref the model wrote its own way: a handle
+      // without its platform, a page URL without its scheme. One containment
+      // test each way, on the normalised refs, before giving up on the row.
+      const claimRef = normalise(claim.ref).toLowerCase().replace(/\/+$/u, "");
+      const fuzzy =
+        claimRef.length > 0
+          ? present.find((p) => {
+              if (p.kind !== claim.kind) return false;
+              const ref = normalise(p.ref).toLowerCase().replace(/\/+$/u, "");
+              return ref.includes(claimRef) || claimRef.includes(ref);
+            })
+          : undefined;
+      if (fuzzy !== undefined) {
+        push(fuzzy);
+        continue;
+      }
+    }
+    dropped.push(`${claim.kind}:${normalise(claim.ref)}`);
+  }
+
+  const added: string[] = [];
+  for (const source of present) {
+    if (!isGroundingSource(source)) continue;
+    const key = sourceRefKey(source);
+    if (taken.has(key)) continue;
+    push(source);
+    added.push(`${source.kind}:${source.ref}`);
+  }
+
+  if (dropped.length > 0) {
+    notes.push(`dropped ${dropped.length} source(s) the brief listed but this run never supplied: ${dropped.join(", ")}`);
+  }
+  if (added.length > 0) {
+    notes.push(`added ${added.length} grounding source(s) this run read but the brief did not list: ${added.join(", ")}`);
+  }
+  return { sources, notes };
+}
+
+/**
+ * The agent's answer, stamped into a storable brief: `version: 1`, the
+ * channel, `generatedBy: "agent"`, the prompt version that wrote it, the
+ * resolved target language when the run had one, and the RECONCILED source
+ * list.
+ *
+ * The language override is deliberate rather than trusting the model's own
+ * `language.target`: step `02d` resolves the target language from
+ * `brand.language`, the profile and the voice rules with a documented
+ * precedence, and a brief that disagreed with it would send the copy step and
+ * the language gate to two different languages. The model still fills
+ * `language.register`, which nothing else derives.
+ *
+ * `presentSources` is the same reasoning applied to the audit trail: pass
+ * what `00b1` actually read and `reconcileBriefSources` decides the stored
+ * `sources`, because that field sets the relevance floor and a model must not
+ * be able to lower its own gate (see that function). It returns
+ * `{ brief, sourceNotes }` rather than a bare payload so a caller cannot
+ * persist a brief and quietly discard the corrections that were made to it;
+ * omitting `presentSources` keeps the model's list verbatim and yields no
+ * notes, which is right for a caller with no gather step to compare against
+ * (a unit test, a human import) and wrong for `00b3`.
+ */
+export interface StampedAgentBrief {
+  brief: BriefWritePayload;
+  /** `reconcileBriefSources`'s notes: what was dropped, what the engine added. Empty when the model's list matched what the run read. */
+  sourceNotes: string[];
+}
+
+export function stampAgentBrief(
+  output: InstagramBriefAgentOutput,
+  options: {
+    channel?: ClientBrief["channel"];
+    agentSkillRef?: string;
+    targetLanguage?: string | undefined;
+    presentSources?: readonly BriefSource[] | undefined;
+  },
+): StampedAgentBrief {
+  const target = options.targetLanguage ?? output.language.target;
+  const reconciled =
+    options.presentSources === undefined ? { sources: [...output.sources], notes: [] } : reconcileBriefSources(output.sources, options.presentSources);
+  return {
+    brief: {
+      ...output,
+      sources: reconciled.sources,
+      version: 1,
+      channel: options.channel ?? "instagram",
+      generatedBy: "agent",
+      agentSkillRef: options.agentSkillRef ?? BRIEF_AGENT_SKILL_REF,
+      language: {
+        ...output.language,
+        ...(target !== undefined ? { target } : {}),
+      },
+    },
+    sourceNotes: reconciled.notes,
+  };
+}
+
+export type BriefFreshnessAction = "reuse" | "refresh" | "create";
+
+export interface BriefFreshness {
+  action: BriefFreshnessAction;
+  /** Present whenever a brief exists — `NaN` for an unparseable `generatedAt`, which is itself a refresh reason. */
+  ageDays?: number;
+  /** Why, in a sentence a run record can carry. */
+  reason: string;
+}
+
+/**
+ * Should the brief agent run this run?
+ *
+ * Four answers, in this precedence:
+ *
+ * 1. **No brief at all → `create`.** Every client's first Instagram run pays
+ *    for one Sonnet call and writes the document the next month of runs reads.
+ * 2. **Human-authored → `reuse`, always.** Somebody corrected what the agent
+ *    inferred, and this cycle runs unattended. It outranks even an explicit
+ *    `refreshBrief` on the run input, because `client.writeBrief` refuses to
+ *    overwrite a human brief anyway — resolving to `refresh` here would spend
+ *    a Sonnet call to be declined at the store. A human brief changes in the
+ *    portal.
+ * 3. **Asked for → `refresh`.** `wf.input.refreshBrief` is the operator's
+ *    "the client repositioned, read them again" button; it needs no other
+ *    justification.
+ * 4. **Deterministic, older than `BRIEF_TTL_DAYS`, or undatable →
+ *    `refresh`.** A deterministic brief is Phase 0's stand-in (copied, never
+ *    judged, `confidence: "low"`), so the first Phase 1 run for a client
+ *    replaces it. Everything else is reused: at a weekly cadence the write
+ *    amortises to about a cent a run, and re-reading a client's site every
+ *    week to re-derive the same positioning is spend with no reader.
+ */
+export function resolveBriefFreshness(brief: ClientBrief | undefined, now: Date = new Date(), refreshRequested = false): BriefFreshness {
+  if (brief === undefined) {
+    return { action: "create", reason: "no persisted instagram brief for this client yet — writing the first one" };
+  }
+  const ageDays = briefAgeDays(brief, now);
+  if (brief.generatedBy === "human") {
+    return {
+      action: "reuse",
+      ageDays,
+      reason: `the stored brief was authored by a human${Number.isNaN(ageDays) ? "" : ` ${ageDays} day(s) ago`} and is never refreshed automatically — edit it in the portal`,
+    };
+  }
+  if (refreshRequested) {
+    return { action: "refresh", ageDays, reason: "this run asked for a fresh brief (refreshBrief)" };
+  }
+  if (brief.generatedBy === "deterministic") {
+    return { action: "refresh", ageDays, reason: "the stored brief was derived deterministically (a stand-in, never judged) — replacing it with an agent-written one" };
+  }
+  if (Number.isNaN(ageDays)) {
+    return { action: "refresh", ageDays, reason: `the stored brief's generatedAt ("${brief.generatedAt}") cannot be read as a date, so its age is unknown — refreshing rather than trusting it` };
+  }
+  if (ageDays > BRIEF_TTL_DAYS) {
+    return { action: "refresh", ageDays, reason: `the stored brief is ${ageDays} day(s) old, past the ${BRIEF_TTL_DAYS}-day TTL` };
+  }
+  return { action: "reuse", ageDays, reason: `the stored brief is ${ageDays} day(s) old (written by ${brief.generatedBy}), inside the ${BRIEF_TTL_DAYS}-day TTL` };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// What the brief agent is given, and how a missing source becomes a gap
+// rather than a hold.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Per-document ceiling on what reaches the brief agent's prompt. Enough of a context doc to state a positioning from; not the whole document five times over. */
+const BRIEF_INPUT_DOC_CHARS = 6000;
+/** Per-page ceiling for the client's own site. Their home page's own words are the point, not their footer. */
+const BRIEF_INPUT_PAGE_CHARS = 4000;
+/** How many of the client's own recent posts travel, and how much of each. Register and recurring subjects, not an archive. */
+const BRIEF_INPUT_POSTS = 12;
+const BRIEF_INPUT_POST_CHARS = 400;
+
+/** One context document as `00b1` read it: the docType it was asked for and the markdown it got, or `undefined` when there is none. */
+export interface BriefContextDocs {
+  [docType: string]: string | undefined;
+}
+
+/**
+ * Everything `00b1-gather-brief-sources` collected, each field
+ * `undefined`/empty when that read found nothing. Nothing here is required:
+ * a client with only a profile still gets a brief, with `gaps` saying so.
+ */
+export interface BriefSourceBundle {
+  profile?: ClientProfile | undefined;
+  brand?: ClientBrand | undefined;
+  voiceRules?: VoiceRules | undefined;
+  knowledge?: ClientKnowledge | undefined;
+  /** The five context documents item H names: product-information, target-audience, market-strategy, brand-voice, competitor-analysis. */
+  contextDocs: BriefContextDocs;
+  /** The client's own intel report, distilled (`readClientIntelContext`). */
+  intelContext?: string | undefined;
+  /** `research.fetchPages` over `gatherBriefSourceUrls(profile)`. */
+  sitePages?: ReadonlyArray<{ url: string; title?: string; text: string }> | undefined;
+  /** `research.socialHistory` over the client's own accounts. */
+  ownPosts?: ReadonlyArray<{ platform: string; username: string; url: string; excerpt: string; publishedAt?: string }> | undefined;
+  /** Failures the gather step named as it went (a 403 on the pricing page, a scraper that is not configured). Each becomes a gap. */
+  problems?: readonly string[] | undefined;
+  /** Step 02d's resolved target language, when there is one. */
+  targetLanguage?: string | undefined;
+  /** The frozen style config's forbidden topics — the client's own standing "never post about this". */
+  forbiddenTopics?: readonly string[] | undefined;
+}
+
+/** The JSON object the brief agent's single turn receives. Field names are what the prompt refers to. */
+export interface BriefAgentInput {
+  channel: "instagram";
+  profile?: { name?: string; industry?: string; website?: string; description?: string };
+  brand?: { tagline?: string; language?: string; palette?: unknown };
+  voiceRules?: VoiceRules;
+  contextDocs: Array<{ docType: string; markdown: string }>;
+  intelContext?: string;
+  sitePages: Array<{ url: string; title?: string; text: string }>;
+  ownPosts: Array<{ platform: string; username: string; excerpt: string; publishedAt?: string }>;
+  knowledgeTitles: string[];
+  forbiddenTopics: string[];
+  targetLanguage?: string;
+  /** What the gather step could NOT read, verbatim, so the agent lists the same shortfalls in its own `gaps` instead of inventing around them. */
+  missingSources: string[];
+}
+
+export interface BriefAgentInputBuild {
+  input: BriefAgentInput;
+  /** The `sources` rows the gather step actually produced — the truth the agent's own `sources` claim is checked against. */
+  presentSources: BriefSource[];
+  /** Named shortfalls, both "no such document" and "the read failed". Passed to the agent AND recorded on the step. */
+  gaps: string[];
+}
+
+/**
+ * Shape the gathered sources into the brief agent's single-turn input.
+ *
+ * Pure, so the interesting half of `00b1` is testable without a workflow: what
+ * counts as a present source, what counts as a gap, and what the model is
+ * allowed to see. Every document is clamped — the whole point of this step is
+ * one bounded Sonnet call whose cost amortises over a month of runs, and an
+ * unclamped knowledge base would make that a per-client lottery.
+ *
+ * A source that is missing and a source that failed to read are BOTH gaps,
+ * and both reach the model, so the brief it writes says what it could not
+ * ground. What the relevance floor downstream actually reads is the brief's
+ * `sources` list, not its `gaps` prose (`isThinlyGrounded`): a brief that
+ * names no product-information document, no target-audience document and no
+ * site page gets the lowered floor, whoever wrote it. `presentSources` below
+ * is therefore load-bearing, and consumed rather than merely recorded:
+ * `00b3` passes it to `stampAgentBrief`, which reconciles the model's claim
+ * against it (`reconcileBriefSources`) before the brief is persisted. A
+ * grounding source this step read reaches the stored `sources` whether or
+ * not the model listed it, and a row for a source this step never supplied
+ * does not — so the floor follows what was read.
+ */
+export function buildBriefAgentInput(bundle: BriefSourceBundle): BriefAgentInputBuild {
+  const presentSources: BriefSource[] = [];
+  const gaps: string[] = [];
+
+  const profile = bundle.profile;
+  if (profile !== undefined) presentSources.push({ kind: "profile", ref: "client.getProfile" });
+  else gaps.push("no client profile on file");
+  if (bundle.brand !== undefined) presentSources.push({ kind: "brand", ref: "client.getBrand" });
+  if (bundle.voiceRules !== undefined) presentSources.push({ kind: "voice-rules", ref: "client.getVoiceRules" });
+  else gaps.push("no voice rules on file: register and forbidden claims are unverified");
+  if (bundle.knowledge !== undefined) presentSources.push({ kind: "knowledge", ref: "client.getKnowledge" });
+
+  const contextDocs: BriefAgentInput["contextDocs"] = [];
+  for (const [docType, markdown] of Object.entries(bundle.contextDocs)) {
+    const text = typeof markdown === "string" ? normalise(markdown) : "";
+    if (text.length === 0) {
+      gaps.push(`no ${docType} document`);
+      continue;
+    }
+    presentSources.push({ kind: "context-doc", ref: docType });
+    // Clamped on the RAW markdown (`clampRaw`, not `clampWords`): the model
+    // reads headings and lists as structure, and collapsing them costs more
+    // than the whitespace saves.
+    contextDocs.push({ docType, markdown: clampRaw(markdown as string, BRIEF_INPUT_DOC_CHARS) });
+  }
+
+  const sitePages: BriefAgentInput["sitePages"] = [];
+  for (const page of bundle.sitePages ?? []) {
+    const text = typeof page.text === "string" ? page.text.trim() : "";
+    if (text.length === 0) continue;
+    presentSources.push({ kind: "site", ref: page.url });
+    sitePages.push({ url: page.url, ...(page.title ? { title: page.title } : {}), text: clampRaw(text, BRIEF_INPUT_PAGE_CHARS) });
+  }
+  if (sitePages.length === 0) gaps.push("the client's own site could not be read (no website on file, or every page failed): positioning rests on onboarding data alone");
+
+  const ownPosts: BriefAgentInput["ownPosts"] = [];
+  for (const post of (bundle.ownPosts ?? []).slice(0, BRIEF_INPUT_POSTS)) {
+    const excerpt = typeof post.excerpt === "string" ? normalise(post.excerpt) : "";
+    if (excerpt.length === 0) continue;
+    ownPosts.push({
+      platform: post.platform,
+      username: post.username,
+      excerpt: clampWords(excerpt, BRIEF_INPUT_POST_CHARS),
+      ...(post.publishedAt ? { publishedAt: post.publishedAt } : {}),
+    });
+  }
+  if (ownPosts.length > 0) {
+    for (const handle of new Set(ownPosts.map((p) => `${p.platform}/@${p.username}`))) {
+      presentSources.push({ kind: "social-history", ref: handle });
+    }
+  } else {
+    gaps.push("no recent posts of the client's own could be read: the register in `language.register` is inferred from the voice rules, not observed");
+  }
+
+  if (bundle.intelContext !== undefined && bundle.intelContext.trim().length > 0) {
+    presentSources.push({ kind: "intel", ref: "intel.getReport" });
+  }
+
+  const knowledgeTitles: string[] = [];
+  for (const asset of Array.isArray(bundle.knowledge?.assets) ? bundle.knowledge!.assets : []) {
+    const title = optionalString(asset?.name);
+    if (title) knowledgeTitles.push(clampWords(title, 120));
+  }
+  for (const transcript of Array.isArray(bundle.knowledge?.transcripts) ? bundle.knowledge!.transcripts : []) {
+    const title = optionalString(transcript?.title);
+    if (title) knowledgeTitles.push(clampWords(title, 120));
+  }
+
+  for (const problem of bundle.problems ?? []) {
+    const text = normalise(problem);
+    if (text.length > 0 && !gaps.includes(text)) gaps.push(text);
+  }
+
+  const input: BriefAgentInput = {
+    channel: "instagram",
+    ...(profile !== undefined
+      ? {
+          profile: {
+            ...(optionalString(profile.name) ? { name: optionalString(profile.name)! } : {}),
+            ...(optionalString(profile.industry) ? { industry: optionalString(profile.industry)! } : {}),
+            ...(optionalString(profile.website) ? { website: optionalString(profile.website)! } : {}),
+            ...(optionalString(profile.description) ? { description: clampRaw(profile.description as string, BRIEF_INPUT_DOC_CHARS) } : {}),
+          },
+        }
+      : {}),
+    ...(bundle.brand !== undefined
+      ? {
+          brand: {
+            ...(optionalString(bundle.brand.tagline) ? { tagline: optionalString(bundle.brand.tagline)! } : {}),
+            ...(optionalString(bundle.brand["language"]) ? { language: optionalString(bundle.brand["language"])! } : {}),
+          },
+        }
+      : {}),
+    ...(bundle.voiceRules !== undefined ? { voiceRules: bundle.voiceRules } : {}),
+    contextDocs,
+    ...(bundle.intelContext !== undefined && bundle.intelContext.trim().length > 0
+      ? { intelContext: clampRaw(bundle.intelContext, BRIEF_INPUT_DOC_CHARS) }
+      : {}),
+    sitePages,
+    ownPosts,
+    knowledgeTitles,
+    forbiddenTopics: [...(bundle.forbiddenTopics ?? [])],
+    ...(bundle.targetLanguage !== undefined ? { targetLanguage: bundle.targetLanguage } : {}),
+    missingSources: gaps,
+  };
+
+  return { input, presentSources, gaps };
+}
+
+/**
+ * The client's own pages the brief agent reads: home, about, pricing.
+ *
+ * Three because `research.fetchPages` bills per URL and these three carry
+ * what the brief actually needs — what they sell (home), who they are and
+ * who they sell to (about), and what the current offers are (pricing). A
+ * profile with no website yields an empty list, which the gather step records
+ * as a `gap` rather than treating as a failure: plenty of clients onboard
+ * with a social handle and no site.
+ *
+ * Bare hosts are normalised to `https://`, because onboarding forms collect
+ * "acme.com" as often as a URL, and `research.fetchPages` requires a real
+ * one. Anything that still does not parse is dropped — a broken website
+ * field must not cost a brief.
+ */
+export function gatherBriefSourceUrls(profile: ClientProfile | undefined): string[] {
+  const raw = optionalString(profile?.website);
+  if (raw === undefined) return [];
+  const withScheme = /^https?:\/\//iu.test(raw) ? raw : `https://${raw.replace(/^\/+/u, "")}`;
+  let origin: URL;
+  try {
+    origin = new URL(withScheme);
+  } catch {
+    return [];
+  }
+  // The site's own path is kept when it has one (a client whose "website" is
+  // a landing page under a shared domain), and `about`/`pricing` are hung off
+  // it rather than off the bare origin.
+  const base = `${origin.origin}${origin.pathname.replace(/\/+$/u, "")}`;
+  const urls: string[] = [];
+  for (const candidate of [base, `${base}/about`, `${base}/pricing`]) {
+    if (!urls.includes(candidate)) urls.push(candidate);
+  }
+  return urls;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // briefForPrompt — the ~600-800 token rendering the copy agent and the
 // relevance judge both read. One renderer so the two never disagree about
 // who the client is.
@@ -545,15 +1121,24 @@ export interface GroundedQuery {
   subject: string;
   /** The verbatim request/topic the query was built from. */
   rewrittenFrom: string;
-  /** False when the query IS the input (a scouted headline is already brand-fit judged). */
+  /** False when the query IS the input (a scouted `niche-news` headline, already brand-fit judged). */
   rewritten: boolean;
 }
 
 /**
  * `<subject> in the context of <what the client sells> for <the ICP>`,
- * trimmed to `MAX_GROUNDED_QUERY_CHARS`, except for a scouted trend, whose
- * headline passes through as-is (the scout already judged its brand fit,
- * and the headline's own words are what the sources use).
+ * trimmed to `MAX_GROUNDED_QUERY_CHARS`, except for a scouted NEWS headline,
+ * which passes through as-is (the scout already judged its brand fit, and a
+ * dated story's own words are what the sources reporting it use).
+ *
+ * The pass-through is limited to `engine: "niche-news"` on purpose. Since
+ * RFC-13 §I a scouted candidate may come from the client's own documents, an
+ * evergreen angle in the brief or a question in a community, and those
+ * "headlines" are a document heading or a phrase the scout wrote — not
+ * something any publication published. Sent verbatim to a keyword index they
+ * return the client's own page or nothing, which is how a heading became the
+ * news lane's primary query. Anything but news is therefore grounded exactly
+ * like a requested subject.
  *
  * The trimming order when the parts overrun the ceiling: shorten the ICP,
  * then what-we-sell, then the subject — the subject is the one part the
@@ -561,7 +1146,7 @@ export interface GroundedQuery {
  */
 export function buildGroundedQuery(topicClaim: Pick<InstagramTopicClaim, "topic" | "source" | "trend">, brief: ClientBrief): GroundedQuery {
   const rewrittenFrom = normalise(topicClaim.topic);
-  if (topicClaim.source === "trend" && topicClaim.trend?.headline) {
+  if (topicClaim.source === "trend" && topicClaim.trend?.headline && candidateEngine(topicClaim.trend) === "niche-news") {
     return { query: topicClaim.trend.headline, subject: rewrittenFrom, rewrittenFrom, rewritten: false };
   }
 

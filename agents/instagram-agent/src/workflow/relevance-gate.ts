@@ -121,7 +121,8 @@ export function relevanceFloor(thinlyGrounded: boolean): RelevanceFloor {
   return {
     minScore: THIN_GROUNDING_MIN_RELEVANCE_SCORE,
     relaxedReason:
-      `the client brief has no product-information or target-audience document, so it grounds this post in an industry rather than a business — ` +
+      `the client brief names no product-information document, no target-audience document and no page of the client's own site among its sources, ` +
+      `so it grounds this post in an industry rather than a business — ` +
       `a score of ${THIN_GROUNDING_MIN_RELEVANCE_SCORE}/5 is the most any draft could earn against it and was accepted; fill in those documents and the floor returns to ${MIN_RELEVANCE_SCORE}/5`,
   };
 }

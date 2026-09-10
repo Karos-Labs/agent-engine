@@ -1,15 +1,23 @@
-import { describe, expect, it } from "vitest";
-import type { AgentContext, AgentTool, AgentToolRegistry } from "@agent-engine/core";
+import { describe, expect, it, vi } from "vitest";
+import type { AgentContext, AgentTool, AgentToolRegistry, CompletionResult, ModelRouter, PromptStore } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "../src/index.js";
 import {
+  TrendCandidateSchema,
   buildTrendQueries,
+  buildTrendScoutSystemPrompt,
+  candidateEngine,
+  hasTopicSignalMaterial,
   mergeResearchPulls,
   parseContentModeFromSummary,
   resolveSocialMedia,
   analyzeAttachedMedia,
+  runTrendScout,
   selectContentMode,
   selectTrendCandidate,
+  trendCandidateForDrafting,
+  type TopicSignalsForScout,
   type TrendCandidate,
+  type TrendScoutInput,
   type ResearchPullResult,
 } from "../src/index.js";
 
@@ -108,6 +116,170 @@ describe("selectTrendCandidate", () => {
       avoidTopics: ['Posted about "four-day weeks" (lane: knowledge)'],
     });
     expect(picked?.topic).toBe("onboarding");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RFC-13 §I — the topic-engine tag and the scout's new inputs, both additive:
+// X and LinkedIn pass neither and must be unaffected.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A candidate exactly as a scout answered before RFC-13 §I existed — no `engine`, no `evidenceRefs`. */
+const V1_CANDIDATE = {
+  topic: "automated reporting",
+  headline: "Teams reclaimed four hours a week",
+  mode: "deep-value",
+  brandFit: 4,
+  brandFitReason: "the client sells this",
+  angle: "the hours come back when the report writes itself",
+  hook: "Your status meeting is a report nobody wrote.",
+  whyNow: "the survey published this week",
+};
+
+describe("TrendCandidateSchema: the engine tag is additive", () => {
+  it("still validates a pre-Phase-1 candidate, which reads as niche-news", () => {
+    const parsed = TrendCandidateSchema.parse(V1_CANDIDATE);
+    expect(parsed.engine).toBeUndefined();
+    expect(parsed.evidenceRefs).toBeUndefined();
+    // The accessor, not the raw field, is what callers read — so an untagged
+    // candidate is attributed to the only engine that could have produced it.
+    expect(candidateEngine(parsed)).toBe("niche-news");
+    // The other defaults still apply, unchanged.
+    expect(parsed.interest).toBe(3);
+    expect(parsed.mediaHint).toBe("none");
+  });
+
+  it("carries a tagged candidate's engine and evidence, and refuses an engine it does not know", () => {
+    const tagged = TrendCandidateSchema.parse({ ...V1_CANDIDATE, engine: "own-assets", evidenceRefs: ["market-strategy#Northwind cut onboarding to 3 days"] });
+    expect(candidateEngine(tagged)).toBe("own-assets");
+    expect(tagged.evidenceRefs).toEqual(["market-strategy#Northwind cut onboarding to 3 days"]);
+    expect(TrendCandidateSchema.safeParse({ ...V1_CANDIDATE, engine: "vibes" }).success).toBe(false);
+  });
+});
+
+describe("buildTrendScoutSystemPrompt", () => {
+  it("tells the scout about the signals, the engine tag and the brief's authority, on every channel", () => {
+    for (const channel of ["x", "linkedin", "instagram"] as const) {
+      const prompt = buildTrendScoutSystemPrompt(channel);
+      expect(prompt).toContain("Candidates may also come from `signals`");
+      expect(prompt).toContain("niche-news | reference-accounts | audience-questions | own-assets | evergreen");
+      expect(prompt).toContain("`evidenceRefs`");
+      expect(prompt).toContain("`clientBrief` is the authority on who the client is");
+      // The four new engines cannot honestly fill a "why this week", and the
+      // writer reads `whyNow` literally: an evergreen angle or a client
+      // document heading dressed as this week's news is a fabrication the
+      // copy step cannot catch, because it happened here.
+      expect(prompt).toContain("`whyNow` is read literally by the writer");
+      expect(prompt).toMatch(/never a date, never "this week"/);
+      // And a candidate that rests on a signal must not put it in
+      // `sourceUrls`, which the drafting step reads as citable sources.
+      expect(prompt).toContain("keeps `sourceUrls` EMPTY");
+    }
+  });
+});
+
+describe("trendCandidateForDrafting", () => {
+  it("carries the engine and the evidence refs, so a non-news candidate does not reach the writer disguised as a live story", () => {
+    const ownAsset = TrendCandidateSchema.parse({
+      ...V1_CANDIDATE,
+      engine: "own-assets",
+      evidenceRefs: ["market-strategy#Northwind cut onboarding to 3 days"],
+      sourceUrls: [],
+    });
+    const forDrafting = trendCandidateForDrafting(ownAsset);
+    expect(forDrafting["engine"]).toBe("own-assets");
+    expect(forDrafting["evidenceRefs"]).toEqual(["market-strategy#Northwind cut onboarding to 3 days"]);
+    // Everything the writer already read is still there.
+    expect(forDrafting["whyNow"]).toBe(ownAsset.whyNow);
+    expect(forDrafting["hook"]).toBe(ownAsset.hook);
+  });
+
+  it("a v1-shaped candidate reads as niche-news and grows no empty fields", () => {
+    const forDrafting = trendCandidateForDrafting(TrendCandidateSchema.parse(V1_CANDIDATE));
+    expect(forDrafting["engine"]).toBe("niche-news");
+    expect("evidenceRefs" in forDrafting).toBe(false);
+  });
+});
+
+const EMPTY_SIGNALS: TopicSignalsForScout = { referencePosts: [], audienceQuestions: [], ownAssets: [], evergreen: [] };
+
+const SIGNALS: TopicSignalsForScout = {
+  referencePosts: [{ platform: "instagram", handle: "peer", url: "https://peer.test/1", excerpt: "what landed", engagementScore: 0.9 }],
+  audienceQuestions: [{ question: "How do agencies price retainers?", url: "https://reddit.com/r/agency/1", community: "reddit.com" }],
+  ownAssets: [{ title: "Northwind cut onboarding to 3 days", summary: "case study", sourceRef: "market-strategy#Northwind" }],
+  evergreen: ["what practitioners get wrong about retainers"],
+};
+
+/**
+ * Runs one scout call and returns what reached the model. The agent's input
+ * travels as JSON in the turn prompt (`BaseAgent.buildTurnPrompt`), so
+ * asserting on it is how "passed through only when present" is pinned.
+ */
+async function runScoutCapturingInput(overrides: Partial<TrendScoutInput> = {}): Promise<{ output: unknown; inputs: Array<Record<string, unknown>>; calls: number }> {
+  const inputs: Array<Record<string, unknown>> = [];
+  const router = {
+    complete: vi.fn(async (prompt: string): Promise<CompletionResult<unknown>> => {
+      inputs.push((JSON.parse(prompt) as { input: Record<string, unknown> }).input);
+      return {
+        output: { type: "final", output: { candidates: [V1_CANDIDATE], skipped: [] } },
+        modelUsed: "gemini-2.5-flash",
+        inputTokens: { cached: 0, uncached: 100 },
+        outputTokens: 40,
+      };
+    }),
+    completeAlias: vi.fn(async () => {
+      throw new Error("completeAlias is not used by the scout");
+    }),
+  } as unknown as ModelRouter;
+
+  const engine = new WorkflowEngine(new MemoryDurableStepStore());
+  const result = await engine.run(
+    async (wf) =>
+      runTrendScout(wf, { tools: {}, promptStore: {} as unknown as PromptStore, router }, "scout", {
+        research: [{ title: "A story", url: "https://example.test/a", excerpt: "text" }],
+        channel: "instagram",
+        clientProfile: { industry: "B2B SaaS" },
+        forbiddenTopics: [],
+        today: "2026-09-10",
+        ...overrides,
+      }),
+    { runId: "run_scout", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" },
+  );
+  if (result.status !== "completed") throw new Error(`unexpected ${result.status}`);
+  return { output: result.output, inputs, calls: (router.complete as unknown as { mock: { calls: unknown[] } }).mock.calls.length };
+}
+
+describe("runTrendScout: signals and clientBrief", () => {
+  it("sends neither field when the caller passes neither — X and LinkedIn's input is byte-identical to before", async () => {
+    const { inputs, output } = await runScoutCapturingInput();
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]).not.toHaveProperty("signals");
+    expect(inputs[0]).not.toHaveProperty("clientBrief");
+    // The old-shaped candidate the fake model returned still validates.
+    expect((output as { candidates: TrendCandidate[] }).candidates).toHaveLength(1);
+  });
+
+  it("passes both through verbatim when present", async () => {
+    const { inputs } = await runScoutCapturingInput({ signals: SIGNALS, clientBrief: "Client brief (confidence high). Positioning: …" });
+    expect(inputs[0]!["signals"]).toEqual(SIGNALS);
+    expect(inputs[0]!["clientBrief"]).toBe("Client brief (confidence high). Positioning: …");
+  });
+
+  it("scouts on signals alone when the news pull came back empty, and still refuses a call with nothing at all", async () => {
+    // A quiet news week (or a scraper outage) must not throw away four engines
+    // of evidence the run already paid for.
+    const withSignals = await runScoutCapturingInput({ research: [], signals: SIGNALS });
+    expect(withSignals.calls).toBe(1);
+    expect(withSignals.inputs[0]!["research"]).toEqual([]);
+
+    for (const signals of [undefined, EMPTY_SIGNALS]) {
+      const nothing = await runScoutCapturingInput({ research: [], ...(signals !== undefined ? { signals } : {}) });
+      expect(nothing.calls).toBe(0);
+      expect(nothing.output).toBeUndefined();
+    }
+    expect(hasTopicSignalMaterial(EMPTY_SIGNALS)).toBe(false);
+    expect(hasTopicSignalMaterial(SIGNALS)).toBe(true);
+    expect(hasTopicSignalMaterial(undefined)).toBe(false);
   });
 });
 

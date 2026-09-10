@@ -1,4 +1,6 @@
 import { describe, expect, it, afterEach, beforeEach } from "vitest";
+import fsp from "node:fs/promises";
+import pathMod from "node:path";
 import type { AgentToolRegistry } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
@@ -20,6 +22,7 @@ import {
   fakeRenderCarousel,
   fakeRouterSequence,
   finalTurn,
+  goodClientBrief,
   goodCopyOutput,
   goodImageCandidatePool,
   goodImageVettingOutput,
@@ -29,6 +32,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
+import { goodAngleProposal } from "./angle-fixtures.js";
 
 /**
  * SCRUM-310 (AU32) — the language-compliance gate, both stages, both halves.
@@ -256,7 +260,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
   it("PASSES: good Hebrew clears stage 1 deterministically and stage 2's judge, and the run completes", async () => {
     await env.store.writeJson("acme", ["client", "brand"], HEBREW_BRAND);
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()),
@@ -269,8 +273,8 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     const result = await new WorkflowEngine(durableStore).run(workflowFor(router), params);
 
     expect(result.status).toBe("completed");
-    // scout + research + copy + vet + relevance + fluency judge + QA (Phase 0: the scout runs on every run and the relevance judge on every attempt).
-    expect(router.complete).toHaveBeenCalledTimes(7);
+    // scout + research + angle + copy + vet + relevance + fluency judge + QA (Phase 0: the scout runs on every run and the relevance judge on every attempt; Phase 1 adds the angle proposal, once per revision).
+    expect(router.complete).toHaveBeenCalledTimes(8);
 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).toContain("02d-load-target-language");
@@ -296,7 +300,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     // Three full attempts of copy + vetting and NOT ONE fluency turn — the
     // deterministic stage rejects each draft before stage 2 costs anything.
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodCopyOutput()),
@@ -316,7 +320,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     expect(result.reason).toMatch(/not written in the Hebrew script/i);
 
     // Stage 2 was never asked, and neither was the relevance judge (07e fails before 07g): scout + research + 3 x (copy + vetting).
-    expect(router.complete).toHaveBeenCalledTimes(8);
+    expect(router.complete).toHaveBeenCalledTimes(9);
 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).toContain("07e-language-script-attempt-1");
@@ -336,7 +340,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
   it("FAILS stage 2: Hebrew-script nonsense clears the script check and is caught by the judge, then holds", async () => {
     await env.store.writeJson("acme", ["client", "brand"], HEBREW_BRAND);
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(badHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()),
@@ -359,8 +363,8 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     if (result.status !== "held") throw new Error("unreachable");
     expect(result.reason).toMatch(/not fluent Hebrew on attempt 3/i);
     expect(result.reason).toMatch(/machine translation/i);
-    // A `not_fluent` verdict is a verdict: no in-step retry is spent on it. scout + research + 3 x (copy + vet + relevance + judge).
-    expect(router.complete).toHaveBeenCalledTimes(14);
+    // A `not_fluent` verdict is a verdict: no in-step retry is spent on it. scout + research + angle + 3 x (copy + vet + relevance + judge).
+    expect(router.complete).toHaveBeenCalledTimes(15);
 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     // Stage 1 passed on every attempt — the copy really is in Hebrew script.
@@ -375,7 +379,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
   it("PASSES stage 2 on a redraft: bad Hebrew is sent back to step 05 and good Hebrew ships", async () => {
     await env.store.writeJson("acme", ["client", "brand"], HEBREW_BRAND);
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(badHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()),
@@ -391,9 +395,9 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     const durableStore = new MemoryDurableStepStore();
     const result = await new WorkflowEngine(durableStore).run(workflowFor(router), params);
 
-    // scout + research + (copy + vet + relevance + judge) + (copy + vet + relevance + judge + QA).
+    // scout + research + angle + (copy + vet + relevance + judge) + (copy + vet + relevance + judge + QA).
     expect(result.status).toBe("completed");
-    expect(router.complete).toHaveBeenCalledTimes(11);
+    expect(router.complete).toHaveBeenCalledTimes(12);
 
     const first = (await durableStore.getStep(params.runId, "07f-language-fluency-attempt-1")) as { output: { finalOutput: { fluent: boolean } } };
     expect(first.output.finalOutput.fluent).toBe(false);
@@ -419,7 +423,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
   it("TRANSLATIONESE: a grammatical but word-by-word Hebrew draft is returned to 05 with the finding the copy prompt promises", async () => {
     await env.store.writeJson("acme", ["client", "brand"], HEBREW_BRAND);
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       // Fluent Hebrew SCRIPT and fluent Hebrew GRAMMAR: stage 1 passes, and
       // every pre-2026-09-10 rubric bullet passes it too. Only the
       // translationese bullet can fail this draft.
@@ -460,7 +464,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
   it("a transient judge failure is retried once inside the same 07f step: two router turns, no redraft, and the run passes", async () => {
     await env.store.writeJson("acme", ["client", "brand"], HEBREW_BRAND);
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()),
@@ -474,9 +478,9 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     const result = await new WorkflowEngine(durableStore).run(workflowFor(router), params);
 
     expect(result.status).toBe("completed");
-    // scout + research + copy + vet + relevance + TWO judge calls + QA: the retry is a real
+    // scout + research + angle + copy + vet + relevance + TWO judge calls + QA: the retry is a real
     // second model call, not a replay of the first checkpoint.
-    expect(router.complete).toHaveBeenCalledTimes(8);
+    expect(router.complete).toHaveBeenCalledTimes(9);
 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).toContain("07f-language-fluency-attempt-1");
@@ -502,7 +506,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
   it("FAILS CLOSED: a judge that errors twice on attempt 1 sends the draft back to step 05, and a working judge on attempt 2 ships it", async () => {
     await env.store.writeJson("acme", ["client", "brand"], HEBREW_BRAND);
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()),
@@ -519,9 +523,9 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     const durableStore = new MemoryDurableStepStore();
     const result = await new WorkflowEngine(durableStore).run(workflowFor(router), params);
 
-    // scout + research + (copy + vet + relevance + judge + judge retry) + (copy + vet + relevance + judge + QA).
+    // scout + research + angle + (copy + vet + relevance + judge + judge retry) + (copy + vet + relevance + judge + QA).
     expect(result.status).toBe("completed");
-    expect(router.complete).toHaveBeenCalledTimes(12);
+    expect(router.complete).toHaveBeenCalledTimes(13);
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).toContain("07f-language-fluency-attempt-1");
     expect(stepIds).toContain(`07f-language-fluency-attempt-1${LANGUAGE_FLUENCY_RETRY_SUFFIX}`);
@@ -540,7 +544,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
   it("FAILS CLOSED: a judge that errors on every attempt holds the run, and the reason names the outage, not the copy", async () => {
     await env.store.writeJson("acme", ["client", "brand"], HEBREW_BRAND);
     const attemptTurns = () => [finalTurn(goodHebrewCopy()), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(JUDGE_ERROR_TURN), finalTurn(JUDGE_ERROR_TURN)];
-    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...attemptTurns(), ...attemptTurns(), ...attemptTurns()]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), ...attemptTurns(), ...attemptTurns(), ...attemptTurns()]);
     const params = { runId: "instagram_run_lang_judge_outage", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
     const durableStore = new MemoryDurableStepStore();
@@ -551,9 +555,9 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     expect(result.reason).toMatch(/self-check never passed after 3 attempt/i);
     expect(result.reason).toMatch(/could not run/i);
     expect(result.reason).toMatch(/Hebrew/);
-    // scout + research + 3 x (copy + vet + relevance + judge + judge retry). Every attempt
+    // scout + research + angle + 3 x (copy + vet + relevance + judge + judge retry). Every attempt
     // paid for the retry before giving up on the judge.
-    expect(router.complete).toHaveBeenCalledTimes(17);
+    expect(router.complete).toHaveBeenCalledTimes(18);
 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).toContain(`07f-language-fluency-attempt-3${LANGUAGE_FLUENCY_RETRY_SUFFIX}`);
@@ -575,7 +579,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     // gate off in every sampled prep run.
     await env.store.writeJson("acme", ["client", "profile"], GEEKTIME_PROFILE);
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()),
@@ -587,9 +591,9 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     const durableStore = new MemoryDurableStepStore();
     const result = await new WorkflowEngine(durableStore).run(workflowFor(router), params);
 
-    // scout + research + copy + vet + relevance + fluency judge + QA.
+    // scout + research + angle + copy + vet + relevance + fluency judge + QA.
     expect(result.status).toBe("completed");
-    expect(router.complete).toHaveBeenCalledTimes(7);
+    expect(router.complete).toHaveBeenCalledTimes(8);
     const language = (await durableStore.getStep(params.runId, "02d-load-target-language")) as { output: string | null };
     expect(language.output).toBe("Hebrew");
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
@@ -617,7 +621,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).not.toContain("05-write-copy-attempt-1");
-    expect(stepIds).not.toContain("04a-research-pull");
+    expect(stepIds).not.toContain("04a2-research-pull-deep");
   }, 60000);
 
   it("does NOT hold at 02d when one voice-rule line is Cyrillic and the profile is plainly English", async () => {
@@ -636,7 +640,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
       doList: ["Пишите коротко и по делу, без рекламных штампов и лишних слов", "lead with the number"],
     });
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
@@ -666,7 +670,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
       description: "We are an AI marketing agency for English-speaking markets in B2B SaaS. Karos Labs publishes in English for founders.",
     });
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
@@ -677,9 +681,9 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     const result = await new WorkflowEngine(durableStore).run(workflowFor(router), params);
 
     expect(result.status).toBe("completed");
-    // scout + research + copy + vet + relevance + QA. A seventh call would be
+    // scout + research + angle + copy + vet + relevance + QA. An eighth call would be
     // the fluency judge, and would exhaust the router.
-    expect(router.complete).toHaveBeenCalledTimes(6);
+    expect(router.complete).toHaveBeenCalledTimes(7);
     const language = (await durableStore.getStep(params.runId, "02d-load-target-language")) as { output: string | null };
     expect(language.output).toBeNull();
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
@@ -691,7 +695,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     // No `client/brand` and no profile written at all — the default fixture
     // client, which resolves to `english-default`.
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
@@ -701,11 +705,120 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     const durableStore = new MemoryDurableStepStore();
     const result = await new WorkflowEngine(durableStore).run(workflowFor(router), params);
 
-    // scout + research + copy + vet + relevance + QA — and no fluency judge.
+    // scout + research + angle + copy + vet + relevance + QA — and no fluency judge.
     expect(result.status).toBe("completed");
-    expect(router.complete).toHaveBeenCalledTimes(6);
+    expect(router.complete).toHaveBeenCalledTimes(7);
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).toContain("02d-load-target-language");
+    expect(stepIds).not.toContain("07e-language-script-attempt-1");
+    expect(stepIds).not.toContain("07f-language-fluency-attempt-1");
+  }, 60000);
+});
+
+describe("a brief-declared language is the RUN's language, not just the writer's", () => {
+  let env: TestEnvironment;
+  afterEach(async () => {
+    await env.cleanup();
+  });
+
+  function workflowFor(router: ReturnType<typeof fakeRouterSequence>) {
+    return createInstagramAgentWorkflow({
+      tools: testTools(env),
+      promptStore: makePromptStore(),
+      router,
+      repoRoot: env.repoRoot,
+      imageCandidatePool: goodImageCandidatePool(),
+      autoApprove: true,
+    });
+  }
+
+  /**
+   * Audit defect 5's second door. `02d` reads the brand record, the profile,
+   * the voice rules and the brand-voice document; it does NOT read the
+   * client's own site, and `00b1` does -- so the brief agent, told to "set the
+   * language the sources clearly show they publish in" when the run resolved
+   * none, can hand back `language.target: "Hebrew"` for a client whose Hebrew
+   * lives only on their own pages. The copy prompt then makes that binding
+   * ("`language.target`, when present, is the language of every word you
+   * write"), while `07e`, `07f` and the Hebrew font stack all used to read
+   * 02d's `undefined`: Hebrew copy, in the Chromium fallback face, with no
+   * script check and no fluency judge at all.
+   */
+  it("02d resolves nothing + a brief that declares Hebrew -> 07e/07f run and the rendered template carries the Hebrew face", async () => {
+    // The default fixture client: no `client/brand`, no profile prose -- 02d
+    // resolves `english-default`. The persisted brief is the only thing that
+    // says Hebrew.
+    env = await setupTestEnvironment({
+      seedBrief: goodClientBrief({ language: { target: "Hebrew", register: "ישיר, מקצועי, בגוף ראשון רבים" } }),
+    });
+    const router = fakeRouterSequence([
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodHebrewCopy()),
+      finalTurn(goodImageVettingOutput()),
+      finalTurn(goodRelevanceVerdict()),
+      finalTurn(FLUENT_VERDICT),
+      finalTurn(goodVisualQaOutput()),
+    ]);
+    const params = { runId: "instagram_run_lang_from_brief", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
+
+    const durableStore = new MemoryDurableStepStore();
+    const result = await new WorkflowEngine(durableStore).run(workflowFor(router), params);
+    expect(result.status, JSON.stringify(result)).toBe("completed");
+
+    // 02d itself is unchanged: it still honestly reports that nothing IT
+    // reads names a language.
+    const resolved = (await durableStore.getStep(params.runId, "02d-load-target-language")) as { output: string | null };
+    expect(resolved.output).toBeNull();
+
+    // Both gate stages ran, on the language the writer was actually told to
+    // use -- and the judge's turn is consumed, so a run that skipped the gate
+    // would leave `FLUENT_VERDICT` to be read by the visual QA step instead.
+    const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
+    expect(stepIds).toContain("07e-language-script-attempt-1");
+    expect(stepIds).toContain("07f-language-fluency-attempt-1");
+    const script = (await durableStore.getStep(params.runId, "07e-language-script-attempt-1")) as { output: { ok: boolean } };
+    expect(script.output.ok).toBe(true);
+    expect(router.complete).toHaveBeenCalledTimes(8);
+    // Nothing sent it back to 05: the language is consistent, not contested.
+    expect(stepIds).not.toContain("05-write-copy-attempt-2");
+
+    // And the glyphs have a face to render in: the script font fragment is
+    // spliced into the materialized template.
+    const composed = await fsp.readFile(pathMod.join(env.repoRoot, ".template-cache", params.runId, "slide.html"), "utf8");
+    expect(composed).toContain("family=Heebo");
+    expect(composed).toContain("'Heebo'");
+
+    // The reviewer is told where the language came from and how to make it
+    // explicit, rather than discovering a Hebrew post from an English client.
+    const deliverables = await env.store.listJson<{ deliverable: { grounding?: { targetLanguage?: string; targetLanguageSource?: string; targetLanguageNote?: string } } }>(
+      "acme",
+      ["ledger", "deliverables", params.runId, "_"],
+    );
+    expect(deliverables).toHaveLength(1);
+    const grounding = deliverables[0]!.data.deliverable.grounding;
+    expect(grounding?.targetLanguage).toBe("Hebrew");
+    expect(grounding?.targetLanguageSource).toBe("brief");
+    expect(grounding?.targetLanguageNote).toMatch(/brand\.language/);
+  }, 60000);
+
+  it("a brief that declares English changes nothing: no gate steps, no extra model call", async () => {
+    // The common case, and the reason the adoption is filtered: switching the
+    // fail-closed gate on for English copy would add a Haiku call per attempt
+    // and a judge-outage hold path the brief scoped to non-English targets.
+    env = await setupTestEnvironment({ seedBrief: goodClientBrief({ language: { target: "en-US" } }) });
+    const router = fakeRouterSequence([
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodCopyOutput()),
+      finalTurn(goodImageVettingOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+    ]);
+    const params = { runId: "instagram_run_lang_brief_english", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
+
+    const durableStore = new MemoryDurableStepStore();
+    const result = await new WorkflowEngine(durableStore).run(workflowFor(router), params);
+    expect(result.status, JSON.stringify(result)).toBe("completed");
+    expect(router.complete).toHaveBeenCalledTimes(7);
+    const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).not.toContain("07e-language-script-attempt-1");
     expect(stepIds).not.toContain("07f-language-fluency-attempt-1");
   }, 60000);

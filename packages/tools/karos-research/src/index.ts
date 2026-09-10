@@ -2,6 +2,7 @@ import type { AgentToolRegistry } from "@agent-engine/core";
 import { createWorkspaceStore, type WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { createPull } from "./pull.js";
 import { createSocialHistory } from "./social-history.js";
+import { createFetchPages } from "./fetch-pages.js";
 import { createGetRuns } from "./get-runs.js";
 import { createWriteRun } from "./write-run.js";
 import { createCheckFreshness } from "./check-freshness.js";
@@ -16,6 +17,7 @@ import { createScraperProvider, type ScraperProvider } from "@agent-engine/tool-
 export * from "./runs.js";
 export * from "./pull.js";
 export * from "./social-history.js";
+export * from "./fetch-pages.js";
 export * from "./get-runs.js";
 export * from "./write-run.js";
 export * from "./check-freshness.js";
@@ -95,6 +97,12 @@ export function createKarosResearchTools(
     // 2026-09: the client's own recent posts, cached per account set, for the
     // cross-channel anti-repetition read every content agent now does.
     "research.socialHistory": createSocialHistory(store, scraper),
+    // 2026-09 (Instagram Phase 1 item H): the pages a caller already holds the
+    // URL of — the client's own site for the Client Brief, the report a
+    // secondary article cites for fact extraction. Same scraper seam, cached
+    // per URL; searching for a URL you already have is a worse read and a
+    // billed one.
+    "research.fetchPages": createFetchPages(store, scraper),
     "research.getRuns": createGetRuns(store),
     "research.writeRun": createWriteRun(store),
     "research.checkFreshness": createCheckFreshness(store),

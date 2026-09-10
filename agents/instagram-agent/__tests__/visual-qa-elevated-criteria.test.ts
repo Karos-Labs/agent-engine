@@ -15,9 +15,11 @@ import {
   goodResearchOutput,
   goodVisualQaOutput,
   makePromptStore,
+  qaTurnInputs,
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
+import { goodAngleProposal } from "./angle-fixtures.js";
 
 /**
  * SCRUM-324 (AU40) — the required evidence: a deterministic pre-check
@@ -44,14 +46,17 @@ function testTools(env: TestEnvironment): AgentToolRegistry {
   return { ...env.tools, "publish.renderCarousel": fakeRenderCarousel(env.tools["publish.renderCarousel"]!) };
 }
 
-/** The qa turn's own input, pulled back out of `router.complete`'s recorded prompt argument. */
-function qaTurnInput(router: ReturnType<typeof fakeRouterSequence>, callIndex: number): Record<string, unknown> {
-  const complete = router.complete as unknown as { mock: { calls: unknown[][] } };
-  const promptArg = complete.mock.calls[callIndex]?.[0];
-  if (typeof promptArg !== "string") throw new Error(`expected call ${callIndex} to have a string prompt argument`);
-  const parsed = JSON.parse(promptArg) as { input?: Record<string, unknown> };
-  if (!parsed.input) throw new Error(`call ${callIndex}'s prompt carried no "input" field: ${promptArg}`);
-  return parsed.input;
+/**
+ * The Nth `08b-visual-qa` turn's own input.
+ *
+ * Selected by SHAPE (`renderRules` reaches no other agent) rather than by
+ * call index, which is what every new unconditional model turn shifts — the
+ * trend scout, the relevance judge, and now the angle proposal at `04i`.
+ */
+function qaTurnInput(router: ReturnType<typeof fakeRouterSequence>, attempt = 0): Record<string, unknown> {
+  const input = qaTurnInputs(router)[attempt];
+  if (input === undefined) throw new Error(`no 08b-visual-qa turn at index ${attempt}`);
+  return input;
 }
 
 // The describe that used to live here — "08a2-visual-qa-pre-checks: an
@@ -79,7 +84,7 @@ describe("08b-visual-qa: the elevated criteria sent to the model shrink to match
 
   it("a brandless client is asked to grade composition/font-hierarchy only — never brand-asset-integration or colour-harmony", async () => {
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
@@ -95,7 +100,7 @@ describe("08b-visual-qa: the elevated criteria sent to the model shrink to match
     const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflowFn, { runId: "instagram_no_brand", ...base });
     expect(result.status).toBe("completed");
 
-    const qaInput = qaTurnInput(router, 5);
+    const qaInput = qaTurnInput(router);
     const ruleIds = (qaInput["renderRules"] as Array<{ id: string }>).map((r) => r.id);
     expect(ruleIds).toContain("composition-richness");
     expect(ruleIds).toContain("font-hierarchy");
@@ -108,7 +113,7 @@ describe("08b-visual-qa: the elevated criteria sent to the model shrink to match
   it("a brand kit with a palette but no logo adds colour-harmony but not brand-asset-integration", async () => {
     await env.store.writeJson("acme", ["client", "brand"], { accent: "#A5E82B" });
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
@@ -124,7 +129,7 @@ describe("08b-visual-qa: the elevated criteria sent to the model shrink to match
     const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflowFn, { runId: "instagram_palette_no_logo", ...base });
     expect(result.status).toBe("completed");
 
-    const qaInput = qaTurnInput(router, 5);
+    const qaInput = qaTurnInput(router);
     const ruleIds = (qaInput["renderRules"] as Array<{ id: string }>).map((r) => r.id);
     expect(ruleIds).toContain("colour-harmony");
     expect(ruleIds).not.toContain("brand-asset-integration");
@@ -135,7 +140,7 @@ describe("08b-visual-qa: the elevated criteria sent to the model shrink to match
   it("a present, legible logo adds brand-asset-integration with the deterministic corner/scrim facts, never asking the model whether the logo exists", async () => {
     await env.store.writeJson("acme", ["client", "brand"], { accent: "#A5E82B", logoUrl: "https://logos.example/acme.png" });
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
@@ -152,7 +157,7 @@ describe("08b-visual-qa: the elevated criteria sent to the model shrink to match
     const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflowFn, { runId: "instagram_logo_present", ...base });
     expect(result.status).toBe("completed");
 
-    const qaInput = qaTurnInput(router, 5);
+    const qaInput = qaTurnInput(router);
     const ruleIds = (qaInput["renderRules"] as Array<{ id: string }>).map((r) => r.id);
     expect(ruleIds).toContain("brand-asset-integration");
     expect(qaInput["brandAssetContext"]).toMatchObject({ corner: expect.any(String), scrimmed: expect.any(Boolean) });
@@ -161,7 +166,7 @@ describe("08b-visual-qa: the elevated criteria sent to the model shrink to match
   it("a configured but unreachable (gs://) logo never asks the model to grade brand-asset-integration, and never holds the run over it", async () => {
     await env.store.writeJson("acme", ["client", "brand"], { accent: "#A5E82B", logoUrl: "gs://karos-brand-assets/acme/logo.svg" });
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
@@ -182,7 +187,7 @@ describe("08b-visual-qa: the elevated criteria sent to the model shrink to match
     // state repeatedly ("brand furniture must never be able to hold a run").
     expect(result.status).toBe("completed");
 
-    const qaInput = qaTurnInput(router, 5);
+    const qaInput = qaTurnInput(router);
     const ruleIds = (qaInput["renderRules"] as Array<{ id: string }>).map((r) => r.id);
     expect(ruleIds).not.toContain("brand-asset-integration");
 

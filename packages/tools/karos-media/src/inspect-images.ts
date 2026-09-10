@@ -115,7 +115,13 @@ function buildInstructions(input: z.output<typeof InspectImagesInputSchema>, sho
     "",
     "For every image report, in JSON only:",
     "- description: one or two plain sentences of what is actually in frame. Never guess at what is out of frame.",
-    "- subjects: the concrete things visible (objects, places, charts, UI), 2-6 short nouns.",
+    // Identity is the field the downstream vetting gate's whole rubric turns
+    // on ("does this picture show what the slide CLAIMS?"), and that gate
+    // reads only this text. An anonymous "fans in a stadium" is what let a
+    // photograph of one club's supporters ship under another club's
+    // headline, so a recognisable identity must be NAMED here when it is
+    // legible, and must stay unnamed when it is a guess.
+    "- subjects: the concrete things visible (objects, places, charts, UI), 2-6 short nouns. NAME what you can actually recognise — the team, club, brand, product, public figure, city, landmark or era (a kit, a crest, a logo, a skyline, a period of dress or technology) — and say so plainly (\"Juventus crest on the shirt\", \"1970s office\"). If you cannot tell which team, brand, person or place it is, do not guess: say what it generically is (\"unidentified football supporters\") so a later step knows the identity is unknown rather than assuming it matched.",
     "- textInImage: every legible word or number, transcribed. An empty list when there is none.",
     "- mood: a few words (calm, urgent, celebratory, clinical ...).",
     "- hasPeople: whether identifiable people are visible.",

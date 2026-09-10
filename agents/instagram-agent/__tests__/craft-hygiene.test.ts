@@ -19,6 +19,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
+import { goodAngleProposal } from "./angle-fixtures.js";
 
 const ctx: AgentContext = { runId: "run_1", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring", metadata: {} };
 const params = { runId: "instagram_run_craft", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
@@ -205,7 +206,7 @@ describe("Fix 3: unconditional mechanical craft-hygiene gate (em dash / exclamat
       const emDashCopy = copyWith("Teams saved time — every single week, without fail.");
       const cleanCopy = goodCopyOutput();
       const router = fakeRouterSequence([
-        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
         finalTurn(emDashCopy),
         finalTurn(goodImageVettingOutput()),
         finalTurn(cleanCopy),
@@ -239,7 +240,7 @@ describe("Fix 3: unconditional mechanical craft-hygiene gate (em dash / exclamat
       const promptStore = makePromptStore();
       const shoutyCopy = copyWith("Four hours back every week!");
       const router = fakeRouterSequence([
-        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
         finalTurn(shoutyCopy),
         finalTurn(goodImageVettingOutput()),
         finalTurn(shoutyCopy),
@@ -275,7 +276,7 @@ describe("Fix 3: unconditional mechanical craft-hygiene gate (em dash / exclamat
       const promptStore = makePromptStore();
       const emDashCopy = copyWith("Teams saved time — every week, reliably.");
       const router = fakeRouterSequence([
-        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
         finalTurn(emDashCopy),
         finalTurn(goodImageVettingOutput()),
         finalTurn(emDashCopy),

@@ -18,10 +18,13 @@ import {
   goodStyleConfig,
   goodTrendScoutOutput,
   goodVisualQaOutput,
+  copyTurnInputs,
   makePromptStore,
+  qaTurnInputs,
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
+import { goodAngleProposal } from "./angle-fixtures.js";
 import { happyTurns, standardTurns } from "./turns.js";
 
 /**
@@ -65,14 +68,21 @@ async function run(env: TestEnvironment, runId: string, router: ReturnType<typeo
   return { result, steps, stepIds, plan, deliverable: deliverable?.deliverable, router };
 }
 
-/** The 08b turn's input, parsed back out of the prompt argument the fake router recorded at `callIndex`. */
-function turnInput(router: ReturnType<typeof fakeRouterSequence>, callIndex: number): Record<string, unknown> {
-  const complete = router.complete as unknown as { mock: { calls: unknown[][] } };
-  const promptArg = complete.mock.calls[callIndex]?.[0];
-  if (typeof promptArg !== "string") throw new Error(`expected call ${callIndex} to have a string prompt argument`);
-  const parsed = JSON.parse(promptArg) as { input?: Record<string, unknown> };
-  if (!parsed.input) throw new Error(`call ${callIndex} carried no input`);
-  return parsed.input;
+/**
+ * The Nth QA (`08b`) or copy (`05`) turn's own input, selected by SHAPE rather
+ * than by call index: every new unconditional model turn (the trend scout, the
+ * relevance judge, and now `04i-propose-angles`) shifts every index in every
+ * fixture at once.
+ */
+function qaInputAt(router: ReturnType<typeof fakeRouterSequence>, attempt = 0): Record<string, unknown> {
+  const input = qaTurnInputs(router)[attempt];
+  if (input === undefined) throw new Error(`no 08b-visual-qa turn at index ${attempt}`);
+  return input;
+}
+function copyInputAt(router: ReturnType<typeof fakeRouterSequence>, attempt = 0): Record<string, unknown> {
+  const input = copyTurnInputs(router)[attempt];
+  if (input === undefined) throw new Error(`no 05-write-copy turn at index ${attempt}`);
+  return input;
 }
 
 describe("run budget: estimate, adapt, meter, learn — never a hold (owner's rule)", () => {
@@ -85,14 +95,24 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     await env.cleanup();
   });
 
-  it("a fresh client gets the full plan, the note says so, and estimate vs actual reaches the deliverable", async () => {
+  it("a fresh client's cold plan is adapted BEFORE the loop, the note names the lever, and estimate vs actual reaches the deliverable", async () => {
     const { result, plan, deliverable, stepIds } = await run(env, "budget_fresh", fakeRouterSequence(happyTurns()));
     expect(result.status).toBe("completed");
     expect(stepIds.indexOf("02j-plan-run-budget")).toBeLessThan(stepIds.indexOf("03-claim-topic"));
-    expect(plan?.adaptations).toEqual([]);
-    expect(plan?.plan).toEqual({ maxSelfCheckAttempts: 3, generatedImagesCap: 8, evidencePulls: "full", optionalRevets: true });
-    expect(plan?.note).toMatch(/^budget: estimate \$0\.\d\d ≤ \$1\.00 → full plan$/);
-    expect(deliverable?.budget).toMatchObject({ crossedTarget: false, crossedMax: false, posture: "normal", adaptations: [] });
+    // The plan is made before ANY paid step: `00b1`/`00b2` bill about $0.18 on
+    // a brief refresh, so the plan sits between `00b-check-client-brief` (a
+    // free store read) and the writing.
+    expect(stepIds.indexOf("02j-plan-run-budget")).toBeGreaterThan(stepIds.indexOf("00b-check-client-brief"));
+    expect(stepIds.indexOf("02j-plan-run-budget")).toBeLessThan(stepIds.indexOf("03c-trend-scout"));
+    // A cold, uncalibrated Phase 1 carousel estimates $1.14 (03e's signal
+    // pulls, 04a2's three lanes, 04a3's fetches, the angle, the re-priced
+    // scout and extraction), so the first lever fires exactly as the owner's
+    // amendment asks — no hold, and no attempt given up for a picture.
+    expect(plan?.adaptations).toEqual(["images capped at 4"]);
+    expect(plan?.plan).toEqual({ maxSelfCheckAttempts: 3, generatedImagesCap: 4, evidencePulls: "full", optionalRevets: true });
+    expect(plan?.note).toMatch(/^budget: estimate \$1\.\d\d > \$1\.00 → images capped at 4 \(now \$0\.\d\d\)$/);
+    expect(plan?.spentBeforePlanUsd).toBe(0);
+    expect(deliverable?.budget).toMatchObject({ crossedTarget: false, crossedMax: false, posture: "normal", adaptations: ["images capped at 4"] });
     expect(deliverable?.budget.estimatedUsd).toBe(plan!.estimate.estimatedUsd);
     expect(deliverable?.budget.actualUsd).toBe(deliverable?.spendUsd);
     expect(deliverable?.budget.actualUsd).toBeGreaterThan(0);
@@ -103,32 +123,46 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     expect(history.map((r) => r.runId)).toEqual(["budget_fresh"]);
     const budgetEvent = await env.store.readJson<{ level: string; message: string }>("acme", ["ledger", "events", "budget_fresh", "budget_fresh__budget"]);
     expect(budgetEvent?.level).toBe("info");
-    expect(budgetEvent?.message).toMatch(/^budget: estimated \$0\.\d\d, actual \$0\.\d\d \(under target\)$/);
+    expect(budgetEvent?.message).toMatch(/^budget: estimated \$0\.\d\d, actual \$0\.\d\d \(under target\); adaptations: images capped at 4$/);
   });
 
-  it("estimate over target -> the plan is adapted BEFORE the loop, the note names the adaptation, and the run completes", async () => {
-    // A client whose history says runs cost 1.15x the estimate: the full plan reads as ~$1.14 > $1.00, and one lever (images 8 -> 4) fits it.
+  it("a client whose runs come in UNDER the estimate gets the full plan back, and the note says so", async () => {
+    // The learning loop closing: a client whose delivered runs cost half the
+    // cold worst case is planned at $0.57, so every picture and every attempt
+    // is back on the table.
+    await env.tools["memory.updateBeliefs"]!.execute({ diff: { [RUN_BUDGET_BELIEF_KEY]: { version: 1, ewmaRatio: 0.5, overrunStreak: 0, underTargetStreak: 0, runs: [] } } }, { ctx });
+    const { result, plan, deliverable } = await run(env, "budget_calibrated", fakeRouterSequence(happyTurns()));
+    expect(result.status, JSON.stringify(result)).toBe("completed");
+    expect(plan?.adaptations).toEqual([]);
+    expect(plan?.plan).toEqual({ maxSelfCheckAttempts: 3, generatedImagesCap: 8, evidencePulls: "full", optionalRevets: true });
+    expect(plan?.note).toMatch(/^budget: estimate \$0\.\d\d ≤ \$1\.00 → full plan$/);
+    expect(deliverable?.budget.adaptations).toEqual([]);
+  });
+
+  it("a client whose runs run HOT pulls further rungs of the image ladder, never a shorter run and never a hold", async () => {
+    // 1.15x reads the cold plan as $1.31, so the ladder runs to its last rung
+    // — stock and text-only pictures, with all three attempts intact.
     await env.tools["memory.updateBeliefs"]!.execute({ diff: { [RUN_BUDGET_BELIEF_KEY]: { version: 1, ewmaRatio: 1.15, overrunStreak: 0, underTargetStreak: 0, runs: [] } } }, { ctx });
     const { result, plan, deliverable } = await run(env, "budget_adapted", fakeRouterSequence(happyTurns()));
-    expect(result.status).toBe("completed");
+    expect(result.status, JSON.stringify(result)).toBe("completed");
     expect(plan?.initialEstimateUsd).toBeGreaterThan(1);
     expect(plan?.estimate.estimatedUsd).toBeLessThanOrEqual(1);
-    expect(plan?.adaptations).toEqual(["images capped at 4"]);
-    expect(plan?.plan.generatedImagesCap).toBe(4);
-    expect(plan?.note).toMatch(/^budget: estimate \$1\.\d\d > \$1\.00 → images capped at 4 \(now \$0\.\d\d\)$/);
-    expect(deliverable?.budget.adaptations).toEqual(["images capped at 4"]);
-    expect(deliverable?.budget.plan.generatedImagesCap).toBe(4);
+    expect(plan?.adaptations).toEqual(["images capped at 4", "images capped at 2", "no generated images (stock or text-only)"]);
+    expect(plan?.plan.generatedImagesCap).toBe(0);
+    expect(plan?.plan.maxSelfCheckAttempts).toBe(3);
+    expect(plan?.note).toMatch(/^budget: estimate \$1\.\d\d > \$1\.00 → images capped at 4, images capped at 2, no generated images \(stock or text-only\) \(now \$0\.\d\d\)$/);
+    expect(deliverable?.budget.plan.generatedImagesCap).toBe(0);
   });
 
   it("actual over the hard max mid-run -> the run COMPLETES degraded with a full deliverable on the cheapest path, writes the ledger row, and the NEXT run starts tighter", async () => {
     // The copy turn reports 120k output tokens on Sonnet ($15/1M): $1.80 measured, straight through $1.00 and $1.50.
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()),
-      finalTurn(goodResearchOutput()),
+      finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput(), { outputTokens: 120_000 }),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()),
-      // No visual-QA turn: over the hard max the optional model QA is skipped. A sixth call would exhaust the router and fail this test.
+      // No visual-QA turn: over the hard max the optional model QA is skipped. A further call would exhaust the router and fail this test.
     ]);
     const { result, stepIds, steps, deliverable } = await run(env, "budget_overrun", router);
     expect(result.status).toBe("completed");
@@ -136,7 +170,8 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     expect(result.output.renderedCount).toBe(6);
     expect(result.output.budget?.status).toBe("degraded");
     expect(result.output.budget?.reason).toMatch(/^budget: estimated \$0\.\d\d, actual \$1\.\d\d \(over the hard max\); budget: \$1\.\d\d spent at 05-write-copy-attempt-1, over the \$1\.50 hard max — finishing on the cheapest complete path/);
-    expect(router.complete).toHaveBeenCalledTimes(5);
+    // scout + research + angle + copy + vet + relevance; no visual-QA turn.
+    expect(router.complete).toHaveBeenCalledTimes(6);
     // Every mandatory gate still ran; the optional model QA was consciously skipped under its own id.
     for (const id of ["06-vet-images-attempt-1", "07-self-check-attempt-1", "07b-craft-hygiene-attempt-1", "07g-relevance-attempt-1", "08-render-carousel-attempt-1", "08a2-visual-qa-pre-checks-attempt-1", "08b-visual-qa-attempt-1", "09b-deliver-and-log"]) {
       expect(stepIds).toContain(id);
@@ -156,7 +191,7 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     expect(copyLine?.measuredUsd).toBeGreaterThanOrEqual(1.8);
     const budgetEvent = await env.store.readJson<{ level: string; message: string }>("acme", ["ledger", "events", "budget_overrun", "budget_overrun__budget"]);
     expect(budgetEvent?.level).toBe("warn");
-    expect(budgetEvent?.message).toMatch(/\(over the hard max\); delivered degraded on the cheapest complete path$/);
+    expect(budgetEvent?.message).toMatch(/\(over the hard max\); adaptations: images capped at 4; delivered degraded on the cheapest complete path$/);
 
     // The next run reads the history and starts tight: images capped at 4 before any estimate, and the calibration ratio now reflects the overrun.
     // (A different post than run 1's, so 07d's dedupe check against the shipped-output window does not spend an attempt.)
@@ -176,6 +211,11 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
   });
 
   it("the image cap is an adaptation, not a hold: 4 gaps x 3 attempts asks image.generate for at most 8 images and the excess ships text-only with the budget named", async () => {
+    // This proof is about the RUN-scoped cap, so the client is calibrated
+    // (past runs at half the cold worst case) and the plan's own cap is the
+    // full 8 — a fresh client's cold plan adapts it to 4 before the loop,
+    // which the first test in this file proves separately.
+    await env.tools["memory.updateBeliefs"]!.execute({ diff: { [RUN_BUDGET_BELIEF_KEY]: { version: 1, ewmaRatio: 0.5, overrunStreak: 0, underTargetStreak: 0, runs: [] } } }, { ctx });
     const copy = goodCopyOutput();
     const pool = goodImageCandidatePool();
     const requested: number[] = [];
@@ -206,7 +246,7 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     const failingQa = { pass: false, findings: [{ ruleId: "font-hierarchy", slide: 6, passed: false, note: "the closer's headline and body are the same size" }] };
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()),
-      finalTurn(goodResearchOutput()),
+      finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       // attempt 1: copy, vet (4 gaps), generate re-vet, relevance, QA fails
       finalTurn(copy), finalTurn(vetWithGaps()), finalTurn(revetRejects()), finalTurn(goodRelevanceVerdict()), finalTurn(failingQa),
       // attempt 2: same — the second four images spend the cap
@@ -225,7 +265,8 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     expect(downgrade.downgraded).toEqual(gaps);
     expect(downgrade.reason).toContain("generation budget for this run spent (8 images)");
     // Not a hold, and not a budget note either: the cap is the plan working as designed.
-    expect(router.complete).toHaveBeenCalledTimes(2 + 5 + 5 + 4);
+    // scout + research + angle, then attempts of 5 + 5 + 4 turns.
+    expect(router.complete).toHaveBeenCalledTimes(3 + 5 + 5 + 4);
   });
 });
 
@@ -240,16 +281,15 @@ describe("default render rules through the workflow (WP0-4's workflow-level proo
     const { result, stepIds, router } = await run(env, "drr_defaults", fakeRouterSequence(happyTurns()));
     expect(result.status).toBe("completed");
     expect(stepIds).toContain("07h-default-render-rules-attempt-1");
-    // scout, research, copy, vet, relevance, QA -> the QA turn is call 5.
-    const qaInput = turnInput(router, 5);
+    const qaInput = qaInputAt(router);
     const ruleIds = (qaInput["renderRules"] as Array<{ id: string }>).map((r) => r.id);
     expect(ruleIds.length).toBeGreaterThan(0);
     // goodCopyOutput's closer has neither a question mark nor a lexicon CTA, so that rule reaches the judge as residue; the deterministic passes do not.
     expect(ruleIds).toContain("default:closer-carries-cta");
     expect(ruleIds).not.toContain("default:cover-carries-device");
     expect(ruleIds).not.toContain("default:numbers-are-devices");
-    // The writer was told the rules it is judged by (copy input, call 2).
-    const copyInput = turnInput(router, 2);
+    // The writer was told the rules it is judged by (the copy input).
+    const copyInput = copyInputAt(router);
     const copyRuleIds = ((copyInput["styleConfig"] as { rules: Array<{ id: string }> }).rules).map((r) => r.id);
     for (const rule of DEFAULT_RENDER_RULES) expect(copyRuleIds).toContain(rule.id);
   });
@@ -260,11 +300,11 @@ describe("default render rules through the workflow (WP0-4's workflow-level proo
     const { result, stepIds, router } = await run(env, "drr_client", fakeRouterSequence(happyTurns()));
     expect(result.status).toBe("completed");
     expect(stepIds).not.toContain("07h-default-render-rules-attempt-1");
-    const qaInput = turnInput(router, 5);
+    const qaInput = qaInputAt(router);
     const ruleIds = (qaInput["renderRules"] as Array<{ id: string }>).map((r) => r.id);
     expect(ruleIds).toContain("figures-are-designed");
     expect(ruleIds.some((id) => id.startsWith("default:"))).toBe(false);
-    const copyInput = turnInput(router, 2);
+    const copyInput = copyInputAt(router);
     const copyRuleIds = ((copyInput["styleConfig"] as { rules: Array<{ id: string }> }).rules).map((r) => r.id);
     expect(copyRuleIds.some((id) => id.startsWith("default:"))).toBe(false);
   });
@@ -274,7 +314,7 @@ describe("default render rules through the workflow (WP0-4's workflow-level proo
     // Slide 4 opens with a sourced figure ("25%" is in its fact) but renders as prose on a photo slide -> default:numbers-are-devices.
     const bad: InstagramCopyOutput = { ...goodCopyOutput(), slides: goodCopyOutput().slides.map((s) => (s.n === 4 ? { ...s, body: "25% more satisfied teams after the process change, per the internal pulse survey." } : s)) };
     const router = fakeRouterSequence([
-      ...standardTurns({ scout: goodTrendScoutOutput(), research: goodResearchOutput(), copy: bad, vet: goodImageVettingOutput(), relevance: goodRelevanceVerdict() }),
+      ...standardTurns({ scout: goodTrendScoutOutput(), research: goodResearchOutput(), angle: goodAngleProposal(), copy: bad, vet: goodImageVettingOutput(), relevance: goodRelevanceVerdict() }),
       ...standardTurns({ copy: goodCopyOutput(), vet: goodImageVettingOutput(), relevance: goodRelevanceVerdict(), qa: goodVisualQaOutput() }),
     ]);
     const { result, steps, stepIds } = await run(env, "drr_fail_then_pass", router);
@@ -285,15 +325,15 @@ describe("default render rules through the workflow (WP0-4's workflow-level proo
     expect(stepIds).not.toContain("08b-visual-qa-attempt-1");
     expect(stepIds).toContain("08-render-carousel-attempt-2");
     expect(stepIds).toContain("08b-visual-qa-attempt-2");
-    // scout + research + (copy + vet + relevance) + (copy + vet + relevance + QA): zero QA turns on attempt 1.
-    expect(router.complete).toHaveBeenCalledTimes(9);
+    // scout + research + angle + (copy + vet + relevance) + (copy + vet + relevance + QA): zero QA turns on attempt 1.
+    expect(router.complete).toHaveBeenCalledTimes(10);
     // The redraft is told WHICH rule and WHICH slide failed (prompt §16), not
-    // just asked again: call 5 is attempt 2's copy turn (scout, research,
-    // copy, vet, relevance, copy).
-    expect(turnInput(router, 2)["selfCheckSteer"]).toBeUndefined();
-    const steer = turnInput(router, 5)["selfCheckSteer"];
+    // just asked again: the SECOND copy turn is attempt 2's.
+    expect(copyInputAt(router, 0)["selfCheckSteer"]).toBeUndefined();
+    const steer = copyInputAt(router, 1)["selfCheckSteer"];
     expect(steer).toMatch(/default:numbers-are-devices \(slide 4\)/);
     expect(steer).toMatch(/"25%"/);
     expect(steer).toMatch(/stat_callout or comparison_card/);
   });
 });
+

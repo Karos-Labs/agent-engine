@@ -66,8 +66,8 @@ export const MAX_RUN_SPEND_USD = 1.5;
  * under-reports), and the pre-run estimator multiplies by the plan. Keys name
  * the unit: `copyAttempt` is one Sonnet copy draft with the @12 input size;
  * `generatedImage` and `scraperExecution` are billed per unit, not per step;
- * `angle` and `brief` are Phase 1's Sonnet steps, listed now so PR-B adds
- * wiring only, never a constant.
+ * `angle` and `brief` are Phase 1's Sonnet steps, priced into `rawEstimate`
+ * through `RunShape.angleRounds` and `RunShape.briefRefresh`.
  */
 export const STEP_COST_ESTIMATES_USD = {
   /** Sonnet, ~19.5k in / 3.5k out, one draft of copy. */
@@ -82,10 +82,23 @@ export const STEP_COST_ESTIMATES_USD = {
   fluency: 0.0055,
   /** Flash visual QA (08b), ~5k in / 1k out. */
   visualQa: 0.004,
-  /** Flash trend scout (03c), ~12k in / 2k out. */
-  scout: 0.009,
-  /** Flash research extraction (04b), ~5k in / 1.5k out. */
-  extraction: 0.005,
+  /**
+   * Flash trend scout (03c), ~18k in / 2.5k out.
+   *
+   * Phase 1 (item I) widened this call's input: the four other topic engines'
+   * signals and the Client Brief now travel with the news digest, so the
+   * Phase 0 figure ($0.009 at 12k/2k) prices a call this workflow no longer
+   * makes.
+   */
+  scout: 0.012,
+  /**
+   * Flash research extraction (04b), ~20k in / 3k out.
+   *
+   * Phase 1 (item J) feeds it the merged multi-lane pull (up to 16 documents
+   * at up to 6000 chars each) and asks for 12-24 fact cards, against Phase
+   * 0's ~5k in / 1.5k out.
+   */
+  extraction: 0.0135,
   /** `gemini-2.5-flash-image`, per generated picture. */
   generatedImage: 0.039,
   /** ScrappyCoco, per `web.search_web` execution (`scrappycoco.ts` header). Cached pulls cost nothing and must not be added. */
@@ -126,6 +139,33 @@ export function roundUsd(value: number): number {
 export function formatUsd(value: number): string {
   return `$${value.toFixed(2)}`;
 }
+
+/**
+ * What one REVISION ROUND is expected to cost before it starts (Phase 1,
+ * item K): the angle proposal plus the attempts it drafts under.
+ *
+ * A revision is not "one more attempt": a reviewer's `revise` re-enters
+ * `draftOnce`, which proposes a fresh angle at `04i` (once per revision,
+ * outside the attempt loop — `instagram-angle-agent.ts`) and then drafts up
+ * to `plan.maxSelfCheckAttempts` times. Pricing a revision as one attempt
+ * under-counts it by the whole Sonnet angle call, which is the single
+ * largest per-revision line after the copy draft itself, and an estimate
+ * that flatters itself pulls no lever.
+ *
+ * Read by the pre-revision check the way `DRAFT_ATTEMPT_ESTIMATE_USD` is
+ * read before an attempt. Note what the meter does with it: crossing a
+ * threshold degrades OPTIONAL work and never refuses the round (owner's
+ * amendment, 2026-09-09) — a reviewer who asks for a change gets it, on the
+ * cheapest complete path if the money has run out.
+ */
+export function revisionEstimateUsd(input: { attempts?: number; targetLanguage?: boolean; angle?: boolean } = {}): number {
+  const attempts = Number.isFinite(input.attempts) ? Math.max(1, Math.floor(input.attempts!)) : 1;
+  const perAttempt = DRAFT_ATTEMPT_ESTIMATE_USD + STEP_COST_ESTIMATES_USD.relevance + (input.targetLanguage === true ? STEP_COST_ESTIMATES_USD.fluency : 0);
+  return roundUsd((input.angle === false ? 0 : STEP_COST_ESTIMATES_USD.angle) + attempts * perAttempt);
+}
+
+/** The floor of a revision round: one angle proposal and one drafting attempt on an English-language client. */
+export const PER_REVISION_ESTIMATE_USD = revisionEstimateUsd();
 
 /**
  * How the live meter wants the rest of the run spent.
@@ -250,12 +290,57 @@ export const DEFAULT_RUN_BUDGET_PLAN: Readonly<RunBudgetPlan> = {
   optionalRevets: true,
 };
 
+/**
+ * Scraper executions one brief refresh bills at `00b1-gather-brief-sources`:
+ * three page fetches of the client's own site (home, about, pricing) plus up
+ * to six `research.socialHistory` accounts. The worst case, because the
+ * cheaper cases are cache hits and an estimate that flatters itself pulls no
+ * lever.
+ */
+export const BRIEF_REFRESH_SCRAPER_EXECUTIONS = 9;
+
+/** Scraper executions `03e-topic-signals` bills cold: up to six reference accounts plus two community queries (Phase 1, item I). */
+export const TOPIC_SIGNAL_EXECUTIONS = 8;
+
+/** Lane queries `04a2-research-pull-deep` bills cold: news 3 + insight 2 + primary-domains 1 (Phase 1, item J). */
+export const RESEARCH_LANE_QUERIES = 6;
+
+/** Page fetches `04a3-fetch-primary-sources` bills cold (Phase 1, item J caps it at two). */
+export const PRIMARY_SOURCE_PAGE_FETCHES = 2;
+
 /** What is known about the run before the first paid call — the estimator's inputs. */
 export interface RunShape {
   /** A resolved non-English target language means the fluency judge runs on every attempt. */
   targetLanguage: boolean;
   /** Trend-evidence queries 03b would issue under a `full` plan (cold-cache worst case). */
   trendQueries: number;
+  /**
+   * Phase 1, item H — whether `00b` resolved `refresh`/`create`, so this run
+   * pays the Sonnet brief call at `00b2` and the source scrapes at `00b1`.
+   * Known before any of it is spent (`00b-check-client-brief` is a free store
+   * read), which is why `02j-plan-run-budget` sits between the two.
+   */
+  briefRefresh: boolean;
+  /** Scraper executions a refresh would bill; counted only when `briefRefresh`. Defaults to `BRIEF_REFRESH_SCRAPER_EXECUTIONS`. */
+  briefScrapes: number;
+  /**
+   * Phase 1, item I — `03e-topic-signals` executions (reference accounts +
+   * community queries), cold. NOT trimmed by the `evidencePulls` lever, which
+   * only reaches 03b's trend queries (`create-instagram-agent-workflow.ts`'s
+   * `queries` slice): the estimate prices what the run would actually do.
+   */
+  signalExecutions: number;
+  /** Phase 1, item J — `04a2-research-pull-deep` lane queries, cold. Replaces Phase 0's single `04a` pull. */
+  researchLaneQueries: number;
+  /** Phase 1, item J — `04a3-fetch-primary-sources` page fetches, cold. */
+  pageFetches: number;
+  /**
+   * Phase 1, item K — angle proposals this plan pays for: one per revision
+   * ROUND, and the plan covers the initial round only (a reviewer's `revise`
+   * is priced separately by `revisionEstimateUsd`). Zero for a run whose
+   * angle step cannot run at all.
+   */
+  angleRounds: number;
   /**
    * Photo slides the copy is expected to produce — drives the harvest, the
    * `05c` candidate inspection (`CANDIDATES_PER_PHOTO_SLIDE` images EACH) and
@@ -271,7 +356,18 @@ export interface RunShape {
   slideCount: number;
 }
 
-export const DEFAULT_RUN_SHAPE: Readonly<RunShape> = { targetLanguage: false, trendQueries: 4, photoSlides: 6, slideCount: 8 };
+export const DEFAULT_RUN_SHAPE: Readonly<RunShape> = {
+  targetLanguage: false,
+  trendQueries: 4,
+  photoSlides: 6,
+  slideCount: 8,
+  briefRefresh: false,
+  briefScrapes: BRIEF_REFRESH_SCRAPER_EXECUTIONS,
+  signalExecutions: TOPIC_SIGNAL_EXECUTIONS,
+  researchLaneQueries: RESEARCH_LANE_QUERIES,
+  pageFetches: PRIMARY_SOURCE_PAGE_FETCHES,
+  angleRounds: 1,
+};
 
 /** The estimate, itemised so the gate summary and the ledger can show where the money is expected to go. */
 export interface RunCostEstimate {
@@ -282,11 +378,35 @@ export interface RunCostEstimate {
   breakdown: { fixed: number; attempts: number; rescue: number; images: number };
 }
 
+/** A count from a shape, floored at zero: a hand-written or replayed shape must never make the estimator subtract. */
+const count = (value: number | undefined): number => (typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0);
+
 /** Cold-cache, worst-case-under-the-plan cost of a run, before calibration. */
 function rawEstimate(plan: RunBudgetPlan, shape: RunShape): RunCostEstimate["breakdown"] {
   const c = STEP_COST_ESTIMATES_USD;
-  const queries = plan.evidencePulls === "full" ? Math.max(0, shape.trendQueries) : Math.min(1, Math.max(0, shape.trendQueries));
-  const fixed = c.scout + queries * c.scraperExecution + c.scraperExecution + c.extraction;
+  const queries = plan.evidencePulls === "full" ? count(shape.trendQueries) : Math.min(1, count(shape.trendQueries));
+  // Every ONCE-PER-RUN line, in execution order. Phase 1 added five of them
+  // (the brief and its scrapes, the topic-signal engines, the research lanes,
+  // the primary-source fetches, the angle proposal) and pricing a Phase 1 run
+  // with Phase 0's `fixed` under-counted a cold run by roughly $0.25 — so
+  // `fits()` was true, `adaptations` was empty, and the lever the owner's
+  // amendment exists to pull never fired on this phase's own spend.
+  const fixed =
+    // 00b1 + 00b2, only on the runs that write a brief (`00b` decided this
+    // before a cent was spent, and 02j runs between the two).
+    (shape.briefRefresh ? c.brief + count(shape.briefScrapes) * c.scraperExecution : 0) +
+    // 03b trend evidence (the one lever `evidencePulls` reaches) + 03c scout.
+    queries * c.scraperExecution +
+    c.scout +
+    // 03e's four other engines.
+    count(shape.signalExecutions) * c.scraperExecution +
+    // 04a2's lanes (Phase 0's single `04a` pull was one execution) + 04a3's page fetches.
+    count(shape.researchLaneQueries) * c.scraperExecution +
+    count(shape.pageFetches) * c.scraperExecution +
+    // 04b extraction, then 04i's angle: one per revision round, and the plan
+    // covers the initial round.
+    c.extraction +
+    count(shape.angleRounds) * c.angle;
   const photos = Math.max(0, shape.photoSlides);
   // A carousel cannot have more photo slides than slides; a shape that says
   // so is priced at the larger of the two rather than under-counting 08a4.
@@ -430,6 +550,13 @@ export interface RunBudgetDecision {
   targetUsd: number;
   maxUsd: number;
   calibration: { ratio: number; posture: "default" | "tight"; pastRuns: number };
+  /**
+   * Money already on the meter when the plan was made — normally $0, because
+   * `02j-plan-run-budget` runs before the first paid call. Non-zero only if a
+   * future step is added ahead of it: the plan is then fitted to what is LEFT
+   * of the target rather than to the whole of it, so the lever still fires.
+   */
+  spentBeforePlanUsd: number;
   /** Every lever pulled, in order, in the words the reviewer reads. Empty when the full plan fits. */
   adaptations: string[];
   /** The one-line run note ("budget: estimate $1.21 > $1.00 → images capped at 4, one return to step 05 instead of two"). */
@@ -446,9 +573,14 @@ const IMAGE_CAP_STEPS = [4, 2, 0] as const;
  * that still does not fit after every lever is returned as-is with the note
  * saying so — the run proceeds; the live meter takes it from there.
  */
-export function planRunBudget(shape: RunShape, history: RunBudgetHistory = EMPTY_RUN_BUDGET_HISTORY): RunBudgetDecision {
+export function planRunBudget(
+  shape: RunShape,
+  history: RunBudgetHistory = EMPTY_RUN_BUDGET_HISTORY,
+  options: { spentUsd?: number } = {},
+): RunBudgetDecision {
   const posture = calibrationPosture(history);
   const ratio = history.ewmaRatio;
+  const spent = roundUsd(count(options.spentUsd));
   const adaptations: string[] = [];
   let plan: RunBudgetPlan = { ...DEFAULT_RUN_BUDGET_PLAN };
   if (posture === "tight") {
@@ -457,7 +589,11 @@ export function planRunBudget(shape: RunShape, history: RunBudgetHistory = EMPTY
   }
   const initialEstimate = estimateRunCost(plan, shape, ratio);
   let estimate = initialEstimate;
-  const fits = () => estimate.estimatedUsd <= TARGET_RUN_SPEND_USD;
+  // The rest of the run has to fit what is LEFT of the target: money already
+  // billed is money the plan cannot un-spend, and fitting the plan to the
+  // whole $1.00 after $0.18 of brief writing is exactly the flattery this
+  // file's own comment warns about.
+  const fits = () => roundUsd(estimate.estimatedUsd + spent) <= TARGET_RUN_SPEND_USD;
 
   // 1. Cap generated images (prefer tier-0/stock, then text-only).
   for (const cap of IMAGE_CAP_STEPS) {
@@ -485,11 +621,15 @@ export function planRunBudget(shape: RunShape, history: RunBudgetHistory = EMPTY
     adaptations.push("optional rescue re-vets skipped");
   }
 
-  const note = fits()
-    ? adaptations.length === 0
-      ? `budget: estimate ${formatUsd(estimate.estimatedUsd)} ≤ ${formatUsd(TARGET_RUN_SPEND_USD)} → full plan`
-      : `budget: estimate ${formatUsd(initialEstimate.estimatedUsd)} > ${formatUsd(TARGET_RUN_SPEND_USD)} → ${adaptations.join(", ")} (now ${formatUsd(estimate.estimatedUsd)})`
-    : `budget: estimate ${formatUsd(initialEstimate.estimatedUsd)} > ${formatUsd(TARGET_RUN_SPEND_USD)} → ${adaptations.join(", ")}; still ${formatUsd(estimate.estimatedUsd)} on the tightest plan — running anyway, the live meter finishes on the cheapest path if needed`;
+  const note =
+    (fits()
+      ? adaptations.length === 0
+        ? `budget: estimate ${formatUsd(estimate.estimatedUsd)} ≤ ${formatUsd(TARGET_RUN_SPEND_USD)} → full plan`
+        : `budget: estimate ${formatUsd(initialEstimate.estimatedUsd)} > ${formatUsd(TARGET_RUN_SPEND_USD)} → ${adaptations.join(", ")} (now ${formatUsd(estimate.estimatedUsd)})`
+      : `budget: estimate ${formatUsd(initialEstimate.estimatedUsd)} > ${formatUsd(TARGET_RUN_SPEND_USD)} → ${adaptations.join(", ")}; still ${formatUsd(estimate.estimatedUsd)} on the tightest plan — running anyway, the live meter finishes on the cheapest path if needed`) +
+    // Silent in the normal case (nothing is billed before 02j), so the note a
+    // reviewer reads on almost every run is unchanged.
+    (spent > 0 ? `; ${formatUsd(spent)} was already spent before the plan, so the target left for the rest of the run is ${formatUsd(Math.max(0, roundUsd(TARGET_RUN_SPEND_USD - spent)))}` : "");
 
   return {
     plan,
@@ -498,6 +638,7 @@ export function planRunBudget(shape: RunShape, history: RunBudgetHistory = EMPTY
     targetUsd: TARGET_RUN_SPEND_USD,
     maxUsd: MAX_RUN_SPEND_USD,
     calibration: { ratio: estimate.calibrationRatio, posture, pastRuns: history.runs.length },
+    spentBeforePlanUsd: spent,
     adaptations,
     note,
   };

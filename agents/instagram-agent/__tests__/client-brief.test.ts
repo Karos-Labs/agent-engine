@@ -26,7 +26,7 @@ import {
   runRelevanceJudge,
   type RelevanceJudgeInput,
 } from "../src/workflow/relevance-gate.js";
-import { fakeRouterSequence, finalTurn, goodCopyOutput, goodRelevanceVerdict, makePromptStore } from "./test-helpers.js";
+import { fakeRouterSequence, finalTurn, goodClientBrief, goodCopyOutput, goodRelevanceVerdict, makePromptStore } from "./test-helpers.js";
 
 /**
  * Instagram Phase 0 grounding gate — the pure half, standalone.
@@ -282,6 +282,43 @@ describe("buildGroundedQuery — the request, grounded in what the client sells 
     expect(g.query).toBe(trend.headline);
     expect(g.rewritten).toBe(false);
     expect(g.subject).toBe(trend.topic);
+
+    // An untagged candidate is `niche-news` by definition (`candidateEngine`),
+    // which is the pre-RFC-13 shape this pass-through was written for.
+    expect(buildGroundedQuery({ topic: trend.topic, source: "trend", trend: { ...trend, engine: "niche-news" } as never }, brief).rewritten).toBe(false);
+  });
+
+  it("grounds a scouted candidate that is NOT news: an own-asset heading is not a query any index can answer", () => {
+    const brief = karoslabsBrief();
+    // `own-assets` and `evergreen` candidates carry a document heading or a
+    // phrase the scout wrote, never something a publication published. Sent
+    // verbatim to a keyword index they return the client's own page or
+    // nothing, so the news lane's primary question was a heading.
+    const ownAsset = {
+      topic: "what the onboarding cohort data says about time to first value",
+      headline: "market-strategy#Northwind cut onboarding to 3 days",
+      mode: "deep-value" as const,
+      engine: "own-assets" as const,
+      brandFit: 5,
+      interest: 4,
+      brandFitReason: "the client owns this data",
+      angle: "the cohort data says the opposite of the sales deck",
+      hook: "Three days, not three weeks.",
+      whyNow: "the cohort analysis has never been published",
+      sourceUrls: [],
+      evidenceRefs: ["market-strategy#Northwind"],
+      hasNumbers: true,
+    };
+    const g = buildGroundedQuery({ topic: ownAsset.topic, source: "trend", trend: ownAsset as never }, brief);
+    expect(g.rewritten).toBe(true);
+    expect(g.query).toContain(" in the context of ");
+    expect(g.query).not.toContain("market-strategy#");
+    expect(g.query.length).toBeLessThanOrEqual(MAX_GROUNDED_QUERY_CHARS);
+    expect(g.subject).toBe(ownAsset.topic);
+
+    for (const engine of ["evergreen", "audience-questions", "reference-accounts"] as const) {
+      expect(buildGroundedQuery({ topic: ownAsset.topic, source: "trend", trend: { ...ownAsset, engine } as never }, brief).rewritten).toBe(true);
+    }
   });
 
   it("shrinks the ICP first, then what-we-sell, then the subject when the parts overrun the ceiling — and never exceeds it", () => {
@@ -391,6 +428,52 @@ describe("isThinlyGrounded / relevanceFloor — the gate floor the grounding ear
     expect(isThinlyGrounded(deriveClientBrief({ contextDocs: {}, forbiddenTopics: [], now: NOW }))).toBe(true);
   });
 
+  it("an AGENT-written thin brief earns the relaxed floor too: the decision is the brief's own audit trail, not the derivation's prose", () => {
+    // The mechanism this pins. `resolveBriefFreshness` replaces every
+    // deterministic brief on a client's first Phase 1 run, so from then on
+    // `icp.summary` is model prose and no fallback literal appears anywhere.
+    // Fingerprinting those literals made the relaxed floor unreachable for
+    // the writer that actually produces briefs — and re-opened the
+    // unwinnable three-attempt hold it exists to prevent, for exactly the
+    // thin-onboarding client the audit was about.
+    const thinAgentBrief = goodClientBrief({
+      generatedBy: "agent",
+      sources: [
+        { kind: "profile", ref: "client.getProfile" },
+        { kind: "voice-rules", ref: "client.getVoiceRules" },
+        { kind: "context-doc", ref: "brand-voice" },
+      ],
+      icp: {
+        summary: "Marketing leads at mid-sized agencies who own their own content calendar",
+        roles: ["marketing lead"],
+        pains: ["no time to write"],
+        industries: [],
+        geos: [],
+      },
+      gaps: ["no product-information document: the offer is inferred from the profile description", "no target-audience document: the ICP is inferred"],
+    });
+    expect(thinAgentBrief.icp.summary.startsWith("practitioners in ")).toBe(false);
+    expect(isThinlyGrounded(thinAgentBrief)).toBe(true);
+    expect(relevanceFloor(isThinlyGrounded(thinAgentBrief)).minScore).toBe(THIN_GROUNDING_MIN_RELEVANCE_SCORE);
+
+    // The same writer with the client's own site read is NOT thin: `00b1`
+    // fetches home/about/pricing, and their own words about themselves are
+    // grounding a post can be legible against.
+    const siteGrounded = goodClientBrief({
+      generatedBy: "agent",
+      sources: [
+        { kind: "profile", ref: "client.getProfile" },
+        { kind: "site", ref: "https://acme.test/about" },
+      ],
+    });
+    expect(isThinlyGrounded(siteGrounded)).toBe(false);
+    expect(relevanceFloor(isThinlyGrounded(siteGrounded)).minScore).toBe(MIN_RELEVANCE_SCORE);
+
+    // And a human-authored brief is read by the same rule.
+    expect(isThinlyGrounded(goodClientBrief({ generatedBy: "human", sources: [{ kind: "context-doc", ref: "target-audience" }] }))).toBe(false);
+    expect(isThinlyGrounded(goodClientBrief({ generatedBy: "human", sources: [] }))).toBe(true);
+  });
+
   it("EITHER onboarding document is enough to earn the normal floor", () => {
     const withProduct = deriveClientBrief({ profile: KAROSLABS_PROFILE, contextDocs: { productInformation: PRODUCT_INFORMATION }, forbiddenTopics: [], now: NOW });
     expect(isThinlyGrounded(withProduct)).toBe(false);
@@ -404,7 +487,7 @@ describe("isThinlyGrounded / relevanceFloor — the gate floor the grounding ear
     const relaxed = relevanceFloor(true);
     expect(relaxed.minScore).toBe(THIN_GROUNDING_MIN_RELEVANCE_SCORE);
     expect(relaxed.minScore).toBeLessThan(MIN_RELEVANCE_SCORE);
-    expect(relaxed.relaxedReason).toMatch(/no product-information or target-audience document/);
+    expect(relaxed.relaxedReason).toMatch(/no product-information document, no target-audience document and no page of the client's own site/);
     expect(relaxed.relaxedReason).toMatch(/floor returns to 3\/5/);
   });
 

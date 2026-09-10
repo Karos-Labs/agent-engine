@@ -5,6 +5,7 @@ import {
   DEFAULT_RUN_SHAPE,
   DRAFT_ATTEMPT_ESTIMATE_USD,
   EMPTY_RUN_BUDGET_HISTORY,
+  BRIEF_REFRESH_SCRAPER_EXECUTIONS,
   GENERATED_IMAGES_PER_RUN_CAP,
   MAX_RUN_SPEND_USD,
   RUN_BUDGET_BELIEF_KEY,
@@ -33,6 +34,16 @@ import {
  * `image.generate` never asked for more than the cap) live in
  * `run-budget-workflow.test.ts`.
  */
+
+/**
+ * Every evidence pull a cache hit — the steady-state weekly run. Kept next to
+ * `DEFAULT_RUN_SHAPE` (the cold worst case the planner is fed) so the two
+ * ends of the range are both exercised.
+ */
+const WARM_RUN_SHAPE = { ...DEFAULT_RUN_SHAPE, trendQueries: 0, signalExecutions: 0, researchLaneQueries: 0, pageFetches: 0 };
+
+/** A client whose past runs cost about half what the cold worst case predicts — the calibration every client reaches after one delivered run. */
+const CALIBRATED_HISTORY = { ...EMPTY_RUN_BUDGET_HISTORY, ewmaRatio: 0.5, runs: [] };
 
 describe("RunSpendMeter.add — max(measured, estimate), never trusting a $0 reading", () => {
   it("counts the estimate when the step reported nothing", () => {
@@ -183,29 +194,83 @@ describe("estimateRunCost — every term priced off what the run actually bills"
     );
   });
 
-  it("the corrected default carousel no longer trivially fits: a Hebrew run pulls the first lever", () => {
-    // $0.988 English, $1.0045 with the fluency judge on every attempt — the
-    // shape the image cap was written for, which the old 05c term (one image
-    // per photo slide) reported as $0.89/$0.91 and adapted for not at all.
-    const english = estimateRunCost(DEFAULT_RUN_BUDGET_PLAN, DEFAULT_RUN_SHAPE);
-    expect(english.estimatedUsd).toBeCloseTo(0.988, 3);
-    const hebrewShape = { ...DEFAULT_RUN_SHAPE, targetLanguage: true };
-    expect(estimateRunCost(DEFAULT_RUN_BUDGET_PLAN, hebrewShape).estimatedUsd).toBeGreaterThan(TARGET_RUN_SPEND_USD);
-    const decision = planRunBudget(hebrewShape);
+  it("the cold Phase 1 carousel does not fit the target, so the first lever fires on this phase's own spend", () => {
+    // $1.14 cold English. Every term of the $0.2015 fixed line is Phase 1
+    // spend the estimator used to be blind to: 03e's eight signal
+    // executions, 04a2's six lane queries, 04a3's two page fetches, the
+    // re-priced scout and extraction, and 04i's angle. Priced at Phase 0's
+    // `fixed` ($0.049) the same run read as $0.99, `fits()` was true, and the
+    // adaptation the owner's amendment exists to trigger never fired.
+    const cold = estimateRunCost(DEFAULT_RUN_BUDGET_PLAN, DEFAULT_RUN_SHAPE);
+    expect(cold.breakdown.fixed).toBeCloseTo(0.2015, 6);
+    expect(cold.estimatedUsd).toBeGreaterThan(TARGET_RUN_SPEND_USD);
+    const decision = planRunBudget(DEFAULT_RUN_SHAPE);
     expect(decision.adaptations).toEqual(["images capped at 4"]);
     expect(decision.estimate.estimatedUsd).toBeLessThanOrEqual(TARGET_RUN_SPEND_USD);
+    // A Hebrew client pays the fluency judge on every attempt and needs one
+    // lever more.
+    expect(planRunBudget({ ...DEFAULT_RUN_SHAPE, targetLanguage: true }).adaptations).toEqual(["images capped at 4", "images capped at 2"]);
+  });
+
+  it("prices every once-per-run line Phase 1 added, each one off the step that bills it", () => {
+    const of = (shape: Partial<typeof DEFAULT_RUN_SHAPE>) => estimateRunCost(DEFAULT_RUN_BUDGET_PLAN, { ...DEFAULT_RUN_SHAPE, ...shape }).rawUsd;
+    const base = of({});
+    const c = STEP_COST_ESTIMATES_USD;
+    // 03e-topic-signals: reference accounts + community queries.
+    expect(base - of({ signalExecutions: 0 })).toBeCloseTo(8 * c.scraperExecution, 6);
+    // 04a2-research-pull-deep: the three lanes (Phase 0 priced ONE pull).
+    expect(base - of({ researchLaneQueries: 0 })).toBeCloseTo(6 * c.scraperExecution, 6);
+    // 04a3-fetch-primary-sources.
+    expect(base - of({ pageFetches: 0 })).toBeCloseTo(2 * c.scraperExecution, 6);
+    // 04i-propose-angles, once for the initial round.
+    expect(base - of({ angleRounds: 0 })).toBeCloseTo(c.angle, 6);
+    // 00b2-write-client-brief plus 00b1's page/socialHistory scrapes — only
+    // on the runs `00b` sent to the writer.
+    expect(of({ briefRefresh: true }) - base).toBeCloseTo(c.brief + BRIEF_REFRESH_SCRAPER_EXECUTIONS * c.scraperExecution, 6);
+    // The re-priced Phase 1 model calls (scout 18k/2.5k, extraction 20k/3k).
+    expect(c.scout).toBeCloseTo(0.012, 6);
+    expect(c.extraction).toBeCloseTo(0.0135, 6);
+  });
+
+  it("a first run for a new client is planned WITH the brief it is about to write, not after it", () => {
+    // $1.32 cold with the refresh, so the ladder runs to the fourth rung
+    // rather than discovering $0.18 of Sonnet on the meter.
+    const refresh = { ...DEFAULT_RUN_SHAPE, briefRefresh: true };
+    expect(estimateRunCost(DEFAULT_RUN_BUDGET_PLAN, refresh).estimatedUsd).toBeGreaterThan(1.3);
+    const decision = planRunBudget(refresh);
+    expect(decision.adaptations.length).toBeGreaterThan(1);
+    expect(decision.estimate.estimatedUsd).toBeLessThanOrEqual(TARGET_RUN_SPEND_USD);
+    expect(decision.spentBeforePlanUsd).toBe(0);
+  });
+
+  it("money already billed before the plan is money the plan cannot spend: the target left is what it fits", () => {
+    // Belt for the ordering invariant (`02j` runs before `00b1`/`00b2`): if a
+    // paid step is ever added above it, the lever still fires.
+    const warmFits = planRunBudget(WARM_RUN_SHAPE, CALIBRATED_HISTORY);
+    expect(warmFits.adaptations).toEqual([]);
+    const withSpend = planRunBudget(WARM_RUN_SHAPE, CALIBRATED_HISTORY, { spentUsd: 0.6 });
+    expect(withSpend.adaptations).not.toEqual([]);
+    expect(withSpend.spentBeforePlanUsd).toBe(0.6);
+    expect(withSpend.note).toContain("$0.60 was already spent before the plan");
+    expect(withSpend.estimate.estimatedUsd + 0.6).toBeLessThanOrEqual(TARGET_RUN_SPEND_USD + 1e-9);
+    // A nonsensical figure is read as nothing spent rather than thrown on.
+    expect(planRunBudget(WARM_RUN_SHAPE, CALIBRATED_HISTORY, { spentUsd: Number.NaN }).spentBeforePlanUsd).toBe(0);
   });
 });
 
 describe("planRunBudget — the owner's levers, in order, never a hold", () => {
-  it("the default carousel plan fits the $1.00 target with no adaptation and says so", () => {
-    const decision = planRunBudget(DEFAULT_RUN_SHAPE);
+  it("a warm run for a calibrated client fits the $1.00 target with no adaptation and says so", () => {
+    // The steady state: caches warm, and one delivered run's worth of history
+    // saying the cold worst case over-predicts. This is the shape that gets
+    // the full plan — a first, cold, uncalibrated run does not, and the test
+    // above proves the lever fires there instead.
+    const decision = planRunBudget(WARM_RUN_SHAPE, CALIBRATED_HISTORY);
     expect(decision.plan).toEqual(DEFAULT_RUN_BUDGET_PLAN);
     expect(decision.adaptations).toEqual([]);
     expect(decision.estimate.estimatedUsd).toBeLessThanOrEqual(TARGET_RUN_SPEND_USD);
-    expect(decision.estimate.estimatedUsd).toBeGreaterThan(0.5);
+    expect(decision.estimate.estimatedUsd).toBeGreaterThan(0.3);
     expect(decision.note).toMatch(/^budget: estimate \$0\.\d\d ≤ \$1\.00 → full plan$/);
-    expect(decision.calibration).toEqual({ ratio: 1, posture: "default", pastRuns: 0 });
+    expect(decision.calibration).toEqual({ ratio: 0.5, posture: "default", pastRuns: 0 });
   });
 
   it("a non-English target adds the fluency judge to every attempt", () => {
@@ -215,11 +280,10 @@ describe("planRunBudget — the owner's levers, in order, never a hold", () => {
   });
 
   it("over the target it caps images FIRST (8 -> 4) and records the adaptation in the reviewer's words", () => {
-    // A client whose past runs cost 1.15x the estimate: the full plan ($0.988)
-    // reads as $1.14, and one lever (images 8 -> 4, $0.156 of pictures instead
-    // of $0.312) brings it back to $0.96.
-    const history = { ...EMPTY_RUN_BUDGET_HISTORY, ewmaRatio: 1.15, runs: [] };
-    const decision = planRunBudget(DEFAULT_RUN_SHAPE, history);
+    // The cold Phase 1 default ($1.14): one lever (images 8 -> 4, $0.156 of
+    // pictures instead of $0.312) brings it back to $0.98, and nothing else
+    // is touched — no attempt is given up for a picture.
+    const decision = planRunBudget(DEFAULT_RUN_SHAPE);
     expect(decision.initialEstimateUsd).toBeGreaterThan(TARGET_RUN_SPEND_USD);
     expect(decision.estimate.estimatedUsd).toBeLessThanOrEqual(TARGET_RUN_SPEND_USD);
     expect(decision.plan.generatedImagesCap).toBe(4);
@@ -231,8 +295,11 @@ describe("planRunBudget — the owner's levers, in order, never a hold", () => {
   });
 
   it("pulls every lever in the owner's order when one is not enough: images, evidence pulls, one return instead of two, re-vets", () => {
-    // 2.4x: the plan before the re-vet lever ($0.446 raw: fixed $0.028 + 2 attempts x $0.176 + 2 x $0.033 rescue) reads as $1.07, so every lever is needed; with re-vets off ($0.380 raw) it reads as $0.91.
-    const history = { ...EMPTY_RUN_BUDGET_HISTORY, ewmaRatio: 2.4, runs: [] };
+    // 1.8x on the cold Phase 1 shape: $2.05 initially, still $1.08 with no
+    // images, reduced evidence and one return instead of two, and $0.96 once
+    // the optional re-vets go too — so every rung of the ladder is needed and
+    // the last one fits.
+    const history = { ...EMPTY_RUN_BUDGET_HISTORY, ewmaRatio: 1.8, runs: [] };
     const decision = planRunBudget(DEFAULT_RUN_SHAPE, history);
     expect(decision.adaptations).toEqual([
       "images capped at 4",
@@ -318,7 +385,7 @@ describe("RunSpendMeter posture and the notes — the live meter adapts, it does
   });
 
   it("summarizes estimate vs actual for the gate, the deliverable and the ledger", () => {
-    const decision = planRunBudget(DEFAULT_RUN_SHAPE);
+    const decision = planRunBudget(WARM_RUN_SHAPE, CALIBRATED_HISTORY);
     const meter = new RunSpendMeter();
     meter.add("05-write-copy-attempt-1", undefined, STEP_COST_ESTIMATES_USD.copyAttempt);
     const summary = summarizeRunBudget(decision, meter, [decision.note]);
