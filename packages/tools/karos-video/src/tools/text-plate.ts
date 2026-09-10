@@ -6,7 +6,38 @@ import { resolveRuntime, type KarosVideoToolOptions } from "../config.js";
 import { assertToolPath, filterPath, hexToAss, hexToFfmpeg, probeDuration, sanitizeAssText, wrapOverlayText } from "./clip-compose.js";
 
 // 1.0.1 — `fps` documented (the registry's description guard).
-const TOOL_VERSION = "1.0.1";
+// 1.1.0 (2026-09-10) — the line is FITTED, never cut. 1.0.x wrapped at 18
+// characters and dropped everything past the third line, so the cold-open
+// hook of prep run pubsub-21157031361398626 ("Your AI tools saved you time.
+// Nobody measured what that time built.") played as "…Nobody measured" for
+// two seconds. Now a line that needs more than three lines at the full size
+// is set smaller and wrapped wider, down to 65% of the size, and past that
+// simply takes more lines. `fitPlateText` is exported for the test.
+const TOOL_VERSION = "1.1.0";
+
+/** Characters per line at the full size: a 12-word hook is three lines. Scales with the size below. */
+const BASE_WRAP_CHARS = 18;
+/** How many lines the plate holds at a given size before the size comes down. */
+const MAX_LINES_AT_SIZE = 3;
+/** The sizes tried, largest first. The last one is kept whatever it needs. */
+const FIT_SCALES: readonly number[] = [1, 0.85, 0.75, 0.65];
+
+/**
+ * The line wrapped to fit the plate: the full size when it makes three lines
+ * or fewer, else the next size down with a proportionally wider wrap, and at
+ * the smallest size as many lines as it takes. Every word survives.
+ */
+export function fitPlateText(text: string, fullFontSize: number): { text: string; fontSize: number; lines: number } {
+  const clean = sanitizeAssText(text);
+  let wrapped = "";
+  let scale = 1;
+  for (const s of FIT_SCALES) {
+    scale = s;
+    wrapped = wrapOverlayText(clean, Math.round(BASE_WRAP_CHARS / s), Number.POSITIVE_INFINITY);
+    if (wrapped.split("\n").length <= MAX_LINES_AT_SIZE) break;
+  }
+  return { text: wrapped.replace(/\n/g, "\\N"), fontSize: Math.round(fullFontSize * scale), lines: wrapped.split("\n").length };
+}
 
 const HEX6 = /^#[0-9a-fA-F]{6}$/;
 
@@ -28,7 +59,7 @@ const HEX6 = /^#[0-9a-fA-F]{6}$/;
  * contract (H.264, yuv420p, 30 fps, bt709), so `concat` takes it as a plate.
  */
 export const TextPlateInputSchema = z.object({
-  text: z.string().min(1).max(160).describe("The line to set, 1-12 words. Wrapped onto up to three lines."),
+  text: z.string().min(1).max(160).describe("The line to set, 1-14 words. Wrapped to fit: three lines at the full size, set smaller and wider when it needs more; never cut."),
   outputPath: z.string().min(1).describe("Path to write the MP4 plate to."),
   durationSeconds: z.number().min(1).max(15).describe("How long the plate holds."),
   ground: z.string().regex(HEX6).describe("Background colour, 6-digit hex (the brand ground)."),
@@ -50,13 +81,12 @@ export interface TextPlateResult {
 
 /**
  * The libass script for the plate: one centred style (Alignment 5 = middle
- * centre), the line faded in over 350 ms, wrapped by `wrapOverlayText` at
- * 18 characters so a 12-word line is three lines at most. Exported for the test.
+ * centre), the line faded in over 350 ms, sized and wrapped by
+ * `fitPlateText` so all of it is on the plate. Exported for the test.
  */
 export function buildTextPlateAss(input: TextPlateInput): string {
   const { w, h } = input.canvas;
-  const fontSize = Math.round(h * 0.052);
-  const text = wrapOverlayText(sanitizeAssText(input.text), 18).replace(/\n/g, "\\N");
+  const { text, fontSize } = fitPlateText(input.text, Math.round(h * 0.052));
   const end = (() => {
     const s = input.durationSeconds;
     const hh = Math.floor(s / 3600);

@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentContext } from "@agent-engine/core";
-import { TextPlateInputSchema, buildTextPlateArgs, buildTextPlateAss, createTextPlate } from "../src/tools/text-plate.js";
+import { TextPlateInputSchema, buildTextPlateArgs, buildTextPlateAss, createTextPlate, fitPlateText } from "../src/tools/text-plate.js";
 import type { ProcessRunner } from "../src/process/runner.js";
 
 const ctx: AgentContext = { runId: "r1", clientSlug: "acme", productId: "tiktok-agent", runKind: "recurring", metadata: {} };
@@ -26,6 +26,26 @@ describe("buildTextPlateAss / buildTextPlateArgs", () => {
     const hebrew = buildTextPlateAss(TextPlateInputSchema.parse({ text: "הכסף הוא לא הפרס", outputPath: "o.mp4", durationSeconds: 4, ground: "#242429", fontName: "Noto Sans Hebrew" }));
     expect(hebrew).toContain("Style: Line,Noto Sans Hebrew,");
     expect(hebrew).toContain("הכסף הוא לא הפרס");
+  });
+
+  it("a line that needs more than three lines is set smaller and wrapped wider, never cut (prep run pubsub-21157031361398626's hook)", () => {
+    // 12 words, 67 characters: four lines at 18 chars; at 85% (21 chars) still four; at 75% (24 chars) three.
+    const hook = "Your AI tools saved you time. Nobody measured what that time built.";
+    const fit = fitPlateText(hook, 100);
+    expect(fit.lines).toBe(3);
+    expect(fit.fontSize).toBe(75);
+    expect(fit.text.replace(/\\N/g, " ")).toBe(hook);
+    const ass = buildTextPlateAss(TextPlateInputSchema.parse({ text: hook, outputPath: "o.mp4", durationSeconds: 2, ground: "#242429" }));
+    expect(ass).toContain("Style: Line,Liberation Sans,75,");
+    expect(ass).toContain("time built.");
+    // Short lines keep the full size…
+    expect(fitPlateText("Pick one thing", 100)).toEqual({ text: "Pick one thing", fontSize: 100, lines: 1 });
+    // …and a line too long for even the smallest size takes the lines it needs rather than losing its end.
+    const long = "One two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty";
+    const longFit = fitPlateText(long, 100);
+    expect(longFit.fontSize).toBe(65);
+    expect(longFit.lines).toBeGreaterThan(3);
+    expect(longFit.text.replace(/\\N/g, " ")).toBe(long);
   });
 
   it("renders from a colour source on the composer's encode contract, silent, with the accent bar drawing across over the hold", () => {

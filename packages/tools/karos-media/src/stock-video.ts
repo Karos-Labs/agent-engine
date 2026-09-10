@@ -16,7 +16,50 @@ import { DEFAULT_VISION_MODEL, stripCodeFence, type VisionAnalysisClient, type V
 // 1.1.1 — the scoring tokens are reported as one literal usage row pair on the
 // success outcome (summed across query variants), where 1.1.0 passed an
 // accumulated array the cost-accuracy guard could not see.
-const TOOL_VERSION = "1.1.1";
+// 1.2.0 (2026-09-10) — the candidates are ranked by how well the library's
+// own title for the clip (the words in its Pexels URL, "empty-office-at-night-
+// 12345") matches the query, shortest first among equals, where 1.1.x took
+// the shortest outright. Pexels weights the last word of a query heavily:
+// "empty open plan office dusk" returned a desert road at sunset first, and
+// with the vision model unavailable (prep run pubsub-21157031361398626, the
+// Vertex billing hold) that road opened a short about offices. The title
+// check costs nothing and decides the order the vision model sees candidates
+// in, and the pick whenever the model cannot judge.
+const TOOL_VERSION = "1.2.0";
+
+/** Query words too common to say anything about a clip. `broadeningVariants` drops the same kind. */
+const QUERY_NOISE = new Set(["a", "an", "and", "the", "of", "on", "in", "at", "to", "for", "with", "from", "by", "as", "shot", "close", "up", "closeup", "view", "angle", "footage", "video", "clip", "stock", "person", "people", "background"]);
+
+function contentWords(text: string): string[] {
+  return text
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((w) => w.length > 1 && !/^\d+$/.test(w) && !QUERY_NOISE.has(w));
+}
+
+/** The words of a Pexels clip's title, read off its page URL (`…/video/empty-office-at-night-12345/`). */
+export function pexelsTitleWords(url: unknown): string[] {
+  if (typeof url !== "string") return [];
+  const slug = url.replace(/\/+$/, "").split("/").pop() ?? "";
+  return contentWords(slug.replace(/-\d+$/, "").replace(/-/g, " "));
+}
+
+/** True when two words are the same word give or take a suffix: office/offices, calendar/calendars, run/running. */
+function sameWord(a: string, b: string): boolean {
+  if (a === b) return true;
+  const stem = Math.min(a.length, b.length, 5);
+  return stem >= 4 && a.slice(0, stem) === b.slice(0, stem);
+}
+
+/**
+ * How many of the query's content words the clip's own title carries, 0 when
+ * the title is unknown or says nothing. Exported for the test.
+ */
+export function lexicalFit(query: string, url: unknown): number {
+  const title = pexelsTitleWords(url);
+  if (title.length === 0) return 0;
+  return contentWords(query).filter((q) => title.some((t) => sameWord(q, t))).length;
+}
 
 /** How many portrait, long-enough candidates per query are shown to the vision model. Each thumbnail is ~260 tokens; eight is about a tenth of a cent. */
 const DEFAULT_RELEVANCE_CANDIDATES = 8;
@@ -188,11 +231,14 @@ export function pickPortraitFile(files: readonly PexelsVideoFile[]): { link: str
 
 /**
  * Ranks the search hits: portrait, long enough, not already used — then the
- * SHORTEST that clears the beat (a 9-second clip for a 6-second beat is a
- * smaller download and less to trim than a 45-second one).
+ * clip whose own title carries the most of the query (`lexicalFit`; 1.2.0),
+ * and among equals the SHORTEST that clears the beat (a 9-second clip for a
+ * 6-second beat is a smaller download and less to trim than a 45-second one).
+ * Without a `query`, or when no title says anything, the order is shortest-first as in 1.0.0.
  */
-export function rankStockVideos(videos: readonly PexelsVideo[], minDurationSeconds: number, excludeIds: readonly number[]): PexelsVideo[] {
+export function rankStockVideos(videos: readonly PexelsVideo[], minDurationSeconds: number, excludeIds: readonly number[], query?: string): PexelsVideo[] {
   const excluded = new Set(excludeIds);
+  const fit = (v: PexelsVideo): number => (query === undefined ? 0 : lexicalFit(query, v.url));
   return videos
     .filter((v) => {
       const id = num(v.id);
@@ -201,7 +247,7 @@ export function rankStockVideos(videos: readonly PexelsVideo[], minDurationSecon
       const d = num(v.duration);
       return id !== undefined && !excluded.has(id) && w !== undefined && h !== undefined && h > w && d !== undefined && d >= minDurationSeconds;
     })
-    .sort((a, b) => (num(a.duration) ?? 0) - (num(b.duration) ?? 0));
+    .sort((a, b) => fit(b) - fit(a) || (num(a.duration) ?? 0) - (num(b.duration) ?? 0));
 }
 
 export function createFindStockClip(options: StockVideoOptions = {}) {
@@ -236,7 +282,7 @@ export function createFindStockClip(options: StockVideoOptions = {}) {
       let relevanceNote: string | undefined;
       let candidatesConsidered = 0;
       const scoring = input.relevance !== undefined && options.visionClient !== undefined ? { client: options.visionClient, model: options.visionModel ?? DEFAULT_VISION_MODEL, ...input.relevance } : undefined;
-      if (input.relevance !== undefined && scoring === undefined) relevanceNote = "no vision backend configured; took the shortest clip that cleared the beat";
+      if (input.relevance !== undefined && scoring === undefined) relevanceNote = "no vision backend configured; took the clip whose title best matched the query, shortest first";
       for (const query of variants) {
         const url = new URL(PEXELS_VIDEO_ENDPOINT);
         url.searchParams.set("query", query);
@@ -264,7 +310,10 @@ export function createFindStockClip(options: StockVideoOptions = {}) {
         } catch (error) {
           return toolingError(`video.findStockClip: Pexels returned a non-JSON body for "${query}": ${(error as Error).message}`);
         }
-        const usable = rankStockVideos(body.videos ?? [], input.minDurationSeconds, input.excludeIds)
+        // Ranked against the caller's FULL query, not the broadened variant
+        // that was searched: the words the variant dropped still say what the
+        // beat is about ("empty open plan office dusk" → the office, not the dusk).
+        const usable = rankStockVideos(body.videos ?? [], input.minDurationSeconds, input.excludeIds, input.query)
           .map((video) => ({ video, file: pickPortraitFile(video.video_files ?? []) }))
           .filter((c): c is { video: PexelsVideo; file: { link: string; width: number; height: number } } => c.file !== undefined);
         if (usable.length === 0) continue;
@@ -273,16 +322,13 @@ export function createFindStockClip(options: StockVideoOptions = {}) {
           break;
         }
 
-        // Show the model the poster frames, in the library's own relevance
-        // order (Pexels ranks by query match; our shortest-first sort is a
-        // download-size preference, not a quality one), and take the best
+        // Show the model the poster frames of the candidates whose titles
+        // say the most about the query (1.2.0; before that, the library's own
+        // order, which weights the last word of the query), and take the best
         // fit that clears the floor. Nothing over the floor on this query
         // means the next, broader variant is tried — a broader query with a
         // fitting frame beats a precise query with a wrong one.
-        const pool = (body.videos ?? [])
-          .map((video) => ({ video, file: pickPortraitFile(video.video_files ?? []) }))
-          .filter((c): c is { video: PexelsVideo; file: { link: string; width: number; height: number } } => c.file !== undefined && usable.some((u) => u.video.id === c.video.id))
-          .slice(0, scoring.candidates);
+        const pool = usable.slice(0, scoring.candidates);
         const parts: VisionPart[] = [];
         const refs: string[] = [];
         const byRef = new Map<string, (typeof pool)[number]>();
@@ -297,7 +343,7 @@ export function createFindStockClip(options: StockVideoOptions = {}) {
           parts.push({ text: `Candidate ref: ${ref}` }, { inlineData: inline });
         }
         if (refs.length === 0) {
-          relevanceNote = "no candidate thumbnail could be fetched; took the shortest clip that cleared the beat";
+          relevanceNote = "no candidate thumbnail could be fetched; took the clip whose title best matched the query, shortest first";
           chosen = { ...usable[0]!, query };
           break;
         }
@@ -318,7 +364,7 @@ export function createFindStockClip(options: StockVideoOptions = {}) {
         } catch (error) {
           // A scoring failure is not a footage failure: the beat still gets a
           // real plate, the old way, and the note says the model never looked.
-          relevanceNote = `relevance scoring failed (${(error as Error).message.slice(0, 160)}); took the shortest clip that cleared the beat`;
+          relevanceNote = `relevance scoring failed (${(error as Error).message.slice(0, 160)}); took the clip whose title best matched the query, shortest first`;
           chosen = { ...usable[0]!, query };
           break;
         }
