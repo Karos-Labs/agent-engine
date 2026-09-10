@@ -479,6 +479,44 @@ export function beatsNamedIn(feedback: string): number[] {
   return out;
 }
 
+/** The calls to action a short is not allowed to make unless the run asked for one. Spoken and on-screen words only. */
+const PITCH_PATTERNS: ReadonlyArray<{ pattern: RegExp; label: string }> = [
+  { pattern: /\b(book|schedule|grab) a (call|demo|meeting|slot)\b/i, label: "book a call" },
+  { pattern: /\b(dm|message|email) (us|me)\b/i, label: "DM us" },
+  { pattern: /\blink in (my |our |the )?bio\b/i, label: "link in bio" },
+  { pattern: /\b(sign up|get started|contact us|reach out|get in touch)\b/i, label: "sign up / contact us" },
+  { pattern: /\bfollow (us|me|for more)\b/i, label: "follow us" },
+  { pattern: /\b[a-z0-9-]+\.(com|io|co|ai|net|org)\b/i, label: "a website address" },
+  { pattern: /\bthat'?s (what|how) we do\b/i, label: "that's what we do" },
+];
+/** A last beat that talks about what the client offers is a sales beat however softly it is put. */
+const LAST_BEAT_WE_SELL = /\b(we|our team) (can|will|help|show|build|give|offer|do|make|take care of)\b/i;
+/** A run that asked for a call to action lifts the rule. */
+const CTA_REQUESTED = /call to action|\bcta\b|קריאה לפעולה/i;
+
+/**
+ * The pitch the prompt bans (2026-09-10): every 2026-09-08 script ended on
+ * one, and prep run pubsub-21157235573121560's last beat was "We show you the
+ * plan before anything else." A website address or a "book a call" anywhere,
+ * or a last beat about what the client offers, goes back to the writer once
+ * with the beat named, unless the run's own direction asked for a call to
+ * action. The caption is exempt: the client's hashtag and URL convention
+ * lives there by design.
+ */
+export function salesPitchIssues(script: ShortScript, direction: string | undefined): string[] {
+  if (direction !== undefined && CTA_REQUESTED.test(direction)) return [];
+  const issues: string[] = [];
+  script.beats.forEach((beat, i) => {
+    const spoken = `${beat.narration}\n${beat.onScreenText}`;
+    const hit = PITCH_PATTERNS.find((p) => p.pattern.test(spoken));
+    if (hit !== undefined) issues.push(`beat ${i + 1} pitches (${hit.label}); the short lands an idea, it does not sell`);
+    else if (i === script.beats.length - 1 && LAST_BEAT_WE_SELL.test(spoken)) {
+      issues.push(`the last beat sells ("${beat.narration.slice(0, 60)}…"); land what the viewer should think or do, not what the client offers`);
+    }
+  });
+  return issues;
+}
+
 export function dropRepeatedBeats(script: ShortScript): ShortScript {
   const seen = new Set<string>();
   const kept = script.beats.filter((b) => {
@@ -1781,11 +1819,13 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
                 const first = repairScriptStructure(await draftOnce(agentStepId, undefined));
                 const firstVoice = scriptVoiceIssues(first.repaired);
                 const firstShots = shotVarietyIssues(first.repaired);
-                if (first.issues.length === 0 && firstVoice.length === 0 && firstShots.length === 0) return first.repaired;
+                const firstPitch = salesPitchIssues(first.repaired, runDirection.direction);
+                if (first.issues.length === 0 && firstVoice.length === 0 && firstShots.length === 0 && firstPitch.length === 0) return first.repaired;
                 const note = [
                   first.issues.length > 0 ? `Structure problem in your last draft: ${first.issues.join("; ")}. Rewrite so every beat carries its own line.` : undefined,
                   firstVoice.length > 0 ? `Voice problem in your last draft: ${firstVoice.join("; ")}. Keep the message; rewrite the lines as speech.` : undefined,
                   firstShots.length > 0 ? `Shot problem in your last draft: ${firstShots.join("; ")}. Keep the words; change only the stockQuery and visualBrief of the beats that share the place.` : undefined,
+                  firstPitch.length > 0 ? `Pitch problem in your last draft: ${firstPitch.join("; ")}. Rewrite that beat so it ends on the idea, in the client's voice, with no offer and no address.` : undefined,
                 ]
                   .filter((s): s is string => s !== undefined)
                   .join("\n");
