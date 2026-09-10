@@ -5,7 +5,8 @@ import { defineTool, success, toolingError } from "@agent-engine/tool-common";
 import { resolveRuntime, type KarosVideoToolOptions } from "../config.js";
 import { assertToolPath, filterPath, hexToAss, hexToFfmpeg, probeDuration, sanitizeAssText, wrapOverlayText } from "./clip-compose.js";
 
-const TOOL_VERSION = "1.0.0";
+// 1.0.1 — `fps` documented (the registry's description guard).
+const TOOL_VERSION = "1.0.1";
 
 const HEX6 = /^#[0-9a-fA-F]{6}$/;
 
@@ -38,7 +39,7 @@ export const TextPlateInputSchema = z.object({
     .object({ w: z.number().int().positive(), h: z.number().int().positive() })
     .default(() => ({ w: 1080, h: 1920 }))
     .describe("Output canvas in pixels. Defaults to 1080x1920 (9:16)."),
-  fps: z.number().int().min(24).max(60).default(30),
+  fps: z.number().int().min(24).max(60).default(30).describe("Output frame rate. 30 matches the composer's normalisation."),
 });
 export type TextPlateInput = z.infer<typeof TextPlateInputSchema>;
 
