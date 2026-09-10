@@ -140,7 +140,7 @@ describe("video.visualQaGate — verdicts", () => {
     const { client } = recordingVision(JSON.stringify(GOOD_REPORT));
     const verdict = verdictOf(await createVisualQaGate({ client }).execute(qaInput({ videoPath: clipPath, expectations: expectations() }), CTX));
     expect(verdict.verdict).toBe("pass");
-    expect(verdict.toolVersion).toBe("1.2.0");
+    expect(verdict.toolVersion).toBe("1.3.0");
     expect((verdict as { evidence: string[] }).evidence).toEqual([
       "overallScore: 8.5",
       "hookLandsInFirstTwoSeconds: true",
@@ -150,6 +150,7 @@ describe("video.visualQaGate — verdicts", () => {
       "artifacts: none",
       "brandFrameIntact: true",
       "looksAiGenerated: no",
+      "thirdPartyMarks: none",
       "note: pacing is tight",
     ]);
   });

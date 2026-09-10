@@ -600,6 +600,12 @@ describe("original short: script → plates → voice → captions → sequence 
     expect(h.stockArgs.map((a) => a["outputName"])).toEqual(["plate-1", "plate-2", "plate-2-b", "plate-3", "plate-3-b"]);
     expect(h.stockArgs.map((a) => a["minDurationSeconds"])).toEqual([4, 6, 3, 6, 3]);
     expect(h.stockArgs[2]!["excludeIds"]).toEqual([1001, 1002]);
+    // A beat's second shot is searched with the first shot's page URL to avoid, so the same scene is not shown twice.
+    const secondShot = h.stockArgs.find((a) => a["outputName"] === "plate-2-b");
+    if (secondShot !== undefined) {
+      const firstShot = h.stockArgs.findIndex((a) => a["outputName"] === "plate-2");
+      expect(secondShot["avoidTitleLike"]).toBe(`https://www.pexels.com/video/${1001 + firstShot}/`);
+    }
     // The writer was handed the client's documents in its input and fetched nothing itself.
     expect(prompts[0]).toContain('"voiceRules":{"tone":"direct"}');
     expect(prompts[0]).toContain('"handle":"acmeco"');

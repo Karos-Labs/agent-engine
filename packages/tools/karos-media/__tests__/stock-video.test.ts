@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { buildRelevancePrompt, createFindStockClip, FindStockClipInputSchema, pickPortraitFile, rankStockVideos, lexicalFit, pexelsTitleWords } from "../src/stock-video.js";
+import { buildRelevancePrompt, createFindStockClip, FindStockClipInputSchema, pickPortraitFile, rankStockVideos, lexicalFit, pexelsTitleWords, titleSimilarity } from "../src/stock-video.js";
 import type { VisionAnalysisClient } from "../src/visual-patterns.js";
 
 const ctx = { ctx: { runId: "r", clientSlug: "acme", productId: "tiktok-agent", runKind: "recurring" } } as never;
@@ -300,6 +300,20 @@ describe("video.findStockClip", () => {
     expect(lexicalFit("warehouse concrete floor industrial lamp", "https://www.pexels.com/video/industrial-yellow-forklift-in-warehouse-scene-35595841/")).toBe(2);
     expect(lexicalFit("aerial city skyline", "https://www.pexels.com/video/aerial-view-of-a-city-skyline-1/")).toBe(3);
     expect(lexicalFit("office desk", "https://www.pexels.com/video/3d-animation-of-an-office-desk-2/")).toBe(0);
+  });
+
+  it("a near-twin of the first shot's title is skipped for the second shot, a different picture is not (prep run pubsub-21156937744383149's two clocks)", () => {
+    expect(titleSimilarity("https://www.pexels.com/video/empty-classroom-with-sunlit-whiteboard-1/", "https://www.pexels.com/video/empty-classroom-with-desks-and-whiteboard-2/")).toBeCloseTo(0.6, 2);
+    expect(titleSimilarity("https://www.pexels.com/video/analog-clock-on-a-wall-1/", "https://www.pexels.com/video/hands-writing-in-a-notebook-2/")).toBe(0);
+    expect(titleSimilarity("https://www.pexels.com/video/1/", "https://www.pexels.com/video/analog-clock-2/")).toBe(0);
+    const ranked = rankStockVideos(
+      [video(1, 9, 1080, 1920, [], "empty-classroom-with-desks-and-whiteboard"), video(2, 12, 1080, 1920, [], "students-walking-a-school-corridor")],
+      6,
+      [],
+      "empty classroom whiteboard",
+      "https://www.pexels.com/video/empty-classroom-with-sunlit-whiteboard-99/",
+    );
+    expect(ranked.map((v) => v.id)).toEqual([2]);
   });
 
   it("with a query, the clip whose title matches ranks first and shortest only breaks ties (prep run pubsub-21157031361398626's desert road)", () => {

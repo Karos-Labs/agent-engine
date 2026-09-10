@@ -13,7 +13,12 @@ import { stripCodeFence, type VisionAnalysisClient, type VisionPart } from "./vi
 // lines, the reviewer scores how well each window's footage fits the line
 // said over it; the verdict carries `beats` and one evidence line per beat,
 // so the human at the gate sees WHICH shot is wallpaper, not only that one is.
-const TOOL_VERSION = "1.2.0";
+// 1.3.0 (2026-09-10): `thirdPartyMarks`. Library footage carries other
+// people's brands (a lighting maker's logo on a softbox, a shop sign, a
+// product label) and the frame then puts the client's name over them. The
+// reviewer names every visible logo, brand name or legible third-party text
+// in the footage; it is evidence for the human, not a verdict on its own.
+const TOOL_VERSION = "1.3.0";
 
 /**
  * `video.visualQaGate` — a vision model WATCHES the finished clip before it
@@ -101,6 +106,8 @@ export const VisualQaReportSchema = z.object({
   artifacts: z.array(z.string()).default([]),
   brandFrameIntact: z.boolean(),
   looksAiGenerated: z.enum(["no", "slightly", "obviously"]),
+  /** Every visible logo, brand name or legible third-party text in the FOOTAGE (not the client's own frame), one entry each. */
+  thirdPartyMarks: z.array(z.string()).default([]),
   notes: z.array(z.string()).default([]),
   /** Per beat, how well the footage in its window fits the line said over it (0-10). Only when `expectations.beats` was given. */
   beats: z.array(z.object({ index: z.number().int().positive(), relevance: z.number().min(0).max(10), note: z.string().max(300).default("") })).default([]),
@@ -166,6 +173,7 @@ function buildReviewPrompt(expectations: VisualQaExpectations): string {
     '  "artifacts": ["only genuine defects you saw: morphing, warped hands or faces, flicker, frozen frames, black frames, letterboxing inside the frame"],',
     '  "brandFrameIntact": true|false (bars/header/logo present, not cropped or covered),',
     '  "looksAiGenerated": "no"|"slightly"|"obviously",',
+    '  "thirdPartyMarks": ["every visible logo, brand name or legible third-party text IN THE FOOTAGE with when it shows (a lighting brand on a softbox at 0:07, a shop sign, a product label); the client\'s own header, handle and logo do not count; [] when none"],',
     '  "notes": ["anything else the editor should hear, one observation per line"]' + (expectations.beats !== undefined && expectations.beats.length > 0 ? "," : ""),
     ...(expectations.beats !== undefined && expectations.beats.length > 0 ? ['  "beats": [{"index": 1, "relevance": 0-10, "note": "<one short line on the fit>"}, ...one per beat]'] : []),
     "}",
@@ -187,6 +195,7 @@ function renderEvidence(report: VisualQaReport): string[] {
     `artifacts: ${report.artifacts.length > 0 ? report.artifacts.join("; ") : "none"}`,
     `brandFrameIntact: ${report.brandFrameIntact}`,
     `looksAiGenerated: ${report.looksAiGenerated}`,
+    `thirdPartyMarks: ${report.thirdPartyMarks.length > 0 ? report.thirdPartyMarks.join("; ") : "none"}`,
     ...report.beats.map((b) => `beat ${b.index} relevance: ${b.relevance}${b.note ? ` (${b.note})` : ""}`),
     ...report.notes.map((note) => `note: ${note}`),
   ];
