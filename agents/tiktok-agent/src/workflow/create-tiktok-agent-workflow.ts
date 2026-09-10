@@ -356,6 +356,69 @@ export function repairScriptStructure(script: ShortScript): { repaired: ShortScr
  * it twice: a three-beat floor stands (the schema's), so only a four- or
  * five-beat script can lose one. Returns the script unchanged otherwise.
  */
+/** A spoken sentence longer than this is a paragraph, not a line; the prompt asks for twelve, code allows a little slack. */
+export const MAX_SPOKEN_SENTENCE_WORDS = 14;
+/** The hook is set large on screen for two seconds; past this it does not fit and does not land. */
+export const MAX_HOOK_WORDS = 14;
+
+/**
+ * The phrases that make a short sound like a slide read aloud. The prompt
+ * bans them; this is the check that makes the ban real. Matched on the
+ * spoken and on-screen words only, never the caption or about.
+ */
+const CORPORATE_CADENCE: ReadonlyArray<{ pattern: RegExp; label: string }> = [
+  { pattern: /\bleverag(e|es|ed|ing)\b/i, label: "leverage" },
+  { pattern: /\bat scale\b/i, label: "at scale" },
+  { pattern: /\bhere'?s the thing\b/i, label: "here's the thing" },
+  { pattern: /\bthe (real|actual) (question|problem|issue|risk|answer|story) is\b/i, label: "the real X is" },
+  { pattern: /\bthe question is\b/i, label: "the question is" },
+  { pattern: /\bstrateg(y|ic) (layer|oversight|imperative)\b/i, label: "strategy layer / strategic oversight" },
+  { pattern: /\bunlock(s|ed|ing)?\b/i, label: "unlock" },
+  { pattern: /\bgame[- ]?changer\b/i, label: "game-changer" },
+  { pattern: /\bin today'?s\b/i, label: "in today's" },
+  { pattern: /\becosystem\b/i, label: "ecosystem" },
+  { pattern: /\bsynerg(y|ies|istic)\b/i, label: "synergy" },
+  { pattern: /\bcutting[- ]edge\b/i, label: "cutting-edge" },
+  { pattern: /\bseamless(ly)?\b/i, label: "seamless" },
+  { pattern: /\bempower(s|ed|ing)?\b/i, label: "empower" },
+  { pattern: /\bholistic\b/i, label: "holistic" },
+  { pattern: /\bparadigm\b/i, label: "paradigm" },
+  { pattern: /\bbest[- ]in[- ]class\b/i, label: "best-in-class" },
+  { pattern: /\bthought leader(ship)?\b/i, label: "thought leadership" },
+  { pattern: /\bdelve\b/i, label: "delve" },
+  { pattern: /\bnavigat(e|es|ing) the\b/i, label: "navigate the …" },
+  { pattern: /\bstakeholders?\b/i, label: "stakeholders" },
+];
+
+function wordCount(text: string): number {
+  return text.trim().split(/\s+/).filter((w) => w.length > 0).length;
+}
+
+/**
+ * What only the writer can fix about how a short SOUNDS (2026-09-10): a
+ * hook too long to be set large on screen, a spoken sentence that runs past
+ * a breath, a phrase from the conference-slide register. The prompt states
+ * every one of these rules; the 2026-09-08 scripts broke all three ("That is
+ * a strategy problem. Not a software problem." after a 27-word sentence), so
+ * the rules are checked here and handed back once, named, before the render.
+ */
+export function scriptVoiceIssues(script: ShortScript): string[] {
+  const issues: string[] = [];
+  if (wordCount(script.hook) > MAX_HOOK_WORDS) {
+    issues.push(`the hook is ${wordCount(script.hook)} words; it is set large on screen for two seconds and must be ${MAX_HOOK_WORDS} or fewer`);
+  }
+  script.beats.forEach((beat, i) => {
+    for (const sentence of beat.narration.split(/(?<=[.!?…])\s+/)) {
+      const n = wordCount(sentence);
+      if (n > MAX_SPOKEN_SENTENCE_WORDS) issues.push(`beat ${i + 1} has a ${n}-word sentence ("${sentence.trim().slice(0, 50)}…"); one breath each, ${MAX_SPOKEN_SENTENCE_WORDS} words or fewer`);
+    }
+  });
+  const spoken = [script.hook, ...script.beats.flatMap((b) => [b.narration, b.onScreenText])].join("\n");
+  const heard = CORPORATE_CADENCE.filter((c) => c.pattern.test(spoken)).map((c) => c.label);
+  if (heard.length > 0) issues.push(`corporate cadence a viewer scrolls past: ${heard.join(", ")}; say it the way you would across a table`);
+  return issues;
+}
+
 export function dropRepeatedBeats(script: ShortScript): ShortScript {
   const seen = new Set<string>();
   const kept = script.beats.filter((b) => {
@@ -1581,9 +1644,22 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
                 // redraft with the offending beats named, then the later copy
                 // is dropped rather than shipped twice).
                 const agentStepId = stepId.replace("03s-script", "03u-script");
+                // …and how it sounds: sentence length, hook length, the
+                // conference-slide register. Same one redraft, every problem
+                // named; what the redraft still gets wrong ships (the human at
+                // the gate hears it), except a repeated beat, which is dropped.
                 const first = repairScriptStructure(await draftOnce(agentStepId, undefined));
-                if (first.issues.length === 0) return first.repaired;
-                const second = repairScriptStructure(await draftOnce(`${agentStepId}-fix`, `Structure problem in your last draft: ${first.issues.join("; ")}. Rewrite so every beat carries its own line.`));
+                const firstVoice = scriptVoiceIssues(first.repaired);
+                if (first.issues.length === 0 && firstVoice.length === 0) return first.repaired;
+                const note = [
+                  first.issues.length > 0 ? `Structure problem in your last draft: ${first.issues.join("; ")}. Rewrite so every beat carries its own line.` : undefined,
+                  firstVoice.length > 0 ? `Voice problem in your last draft: ${firstVoice.join("; ")}. Keep the message; rewrite the lines as speech.` : undefined,
+                ]
+                  .filter((s): s is string => s !== undefined)
+                  .join("\n");
+                const second = repairScriptStructure(await draftOnce(`${agentStepId}-fix`, note));
+                const secondVoice = scriptVoiceIssues(second.repaired);
+                if (secondVoice.length > 0) console.warn(`${agentStepId}-fix: the redraft still reads off: ${secondVoice.join("; ")}; shipping to the reviewer as is`);
                 return second.issues.length === 0 ? second.repaired : dropRepeatedBeats(second.repaired);
               }),
             (s) => `${s.caption}\n\n${s.about}`,
