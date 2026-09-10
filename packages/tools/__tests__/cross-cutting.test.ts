@@ -45,7 +45,10 @@ describe("Layer 3 tool registry — cross-cutting", () => {
   it("merges all ten servers' tools into one registry with no name collisions", () => {
     const expectedPrefixes = ["client.", "gate.", "intel.", "ledger.", "memory.", "publish.", "reputation.", "research.", "seoGeo.", "topics."];
     const names = Object.keys(tools);
-    // 10 client + 6 gates + 2 intel + 8 ledger + 7 memory + 4 publish + 5 reputation + 10 research + 2 seoGeo + 4 topics = 58
+    // 10 client + 6 gates + 2 intel + 8 ledger + 7 memory + 4 publish + 5 reputation + 10 research + 2 seoGeo + 5 topics = 59
+    // (topics grew from 4 to 5: topics.list, 2026-09-09 — the read-only catalog view a
+    // discovery step consults before proposing, so a re-worded topic is caught against
+    // the lane instead of becoming a new row. See karos-topics/src/list.ts.)
     // (research grew from 7 to 10: research.auditOnPage, research.fetchCoreWebVitals and
     // research.lookupEntity — the on-page, PageSpeed/CrUX and Wikidata reads that back most of
     // the SEO/GEO scoring inputs that were permanently "unavailable" before. See
@@ -85,7 +88,7 @@ describe("Layer 3 tool registry — cross-cutting", () => {
     // — the read-only view over the nine v1 client/agent-profile document types,
     // distinct from client.getKnowledge's older portal-sync bundle. See
     // packages/tools/karos-client/src/get-context-doc.ts.)
-    expect(names.length).toBe(58);
+    expect(names.length).toBe(59);
     for (const prefix of expectedPrefixes) {
       expect(names.some((n) => n.startsWith(prefix))).toBe(true);
     }
