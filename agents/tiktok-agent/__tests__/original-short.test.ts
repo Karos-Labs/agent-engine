@@ -404,7 +404,8 @@ describe("original short: script → plates → voice → captions → sequence 
 
   it("voices the script when the model asks for it, captions the SCRIPT's words on the voice's timings, and stretches the plates to cover the speech", async () => {
     const h = stubTools();
-    const result = await run(h, "run-os-voiced");
+    const prompts: string[] = [];
+    const result = await run(h, "run-os-voiced", [VOICED_SCRIPT], prompts);
 
     expect(result.status).toBe("completed");
     if (result.status !== "completed") throw new Error("unreachable");
@@ -418,6 +419,10 @@ describe("original short: script → plates → voice → captions → sequence 
     expect(h.stockArgs.map((a) => a["outputName"])).toEqual(["plate-1", "plate-2", "plate-2-b", "plate-3", "plate-3-b"]);
     expect(h.stockArgs.map((a) => a["minDurationSeconds"])).toEqual([4, 6, 3, 6, 3]);
     expect(h.stockArgs[2]!["excludeIds"]).toEqual([1001, 1002]);
+    // The writer was handed the client's documents in its input and fetched nothing itself.
+    expect(prompts[0]).toContain('"voiceRules":{"tone":"direct"}');
+    expect(prompts[0]).toContain('"handle":"acmeco"');
+    expect(h.calls.filter((c) => c === "client.getVoiceRules")).toHaveLength(1);
     // Every search carries what the library should judge a candidate against.
     expect(h.stockArgs[0]!["relevance"]).toEqual({ brief: VOICED_SCRIPT.beats[0]!.visualBrief, narration: VOICED_SCRIPT.beats[0]!.narration });
     expect(h.imageArgs).toHaveLength(0);

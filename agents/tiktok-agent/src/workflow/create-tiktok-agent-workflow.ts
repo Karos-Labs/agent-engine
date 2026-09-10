@@ -814,6 +814,34 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
     const clientIntelContext = await readClientIntelContext(wf, tools, ctx, "read-intel-context");
     const pastFeedback = await readPastFeedback(wf, tools, ctx, "read-past-feedback");
 
+    // ── 03r: the client's own documents, read ONCE for the writer ──
+    //
+    // Until 2026-09-10 the script agent fetched these itself, three model
+    // turns before the one that wrote: the dominant cost and the longest
+    // wait in every prep run. Read here, best-effort each (a client with no
+    // voice rules yet gets a writer who simply has none, not a held run), and
+    // handed to the script step as input. Every `client.*` read is a
+    // workspace read, so the whole step costs nothing.
+    const clientVoice = await wf.step.code("03r-read-client-voice", async (): Promise<{ voiceRules?: unknown; brand?: unknown; strategy?: unknown }> => {
+      const read = async (name: string): Promise<unknown> => {
+        const tool = tools[name];
+        if (tool === undefined) return undefined;
+        try {
+          const outcome = await tool.execute({}, { ctx });
+          return outcome.status === "success" ? outcome.result : undefined;
+        } catch {
+          return undefined;
+        }
+      };
+      const [voiceRules, brand, strategy] = await Promise.all([read("client.getVoiceRules"), read("client.getBrand"), read("client.getStrategy")]);
+      const strategyMarkdown = strategy !== null && typeof strategy === "object" && typeof (strategy as { markdown?: unknown }).markdown === "string" ? (strategy as { markdown: string }).markdown.trim() : "";
+      return {
+        ...(voiceRules !== undefined ? { voiceRules } : {}),
+        ...(brand !== undefined ? { brand } : {}),
+        ...(strategyMarkdown.length > 0 ? { strategy: strategyMarkdown } : {}),
+      };
+    });
+
     // Footage the client handed us, in either form the portal and a hand
     // dispatch use. Decided before the topic claim because it changes what an
     // empty catalog MEANS: with footage in hand it is a missing hint, without
@@ -1619,6 +1647,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
                     topic,
                     ...(intake.discovered ? { topicBrief: intake.discovered } : {}),
                     clientProfile: profile,
+                    ...clientVoice,
                     ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
                     ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
                     ...(dedupeAvoid !== undefined ? { dedupeAvoid } : {}),
