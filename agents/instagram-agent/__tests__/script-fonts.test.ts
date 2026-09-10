@@ -234,7 +234,10 @@ describe.skipIf(!isChromiumInstalled())("a Hebrew slide renders through publish.
             htmlFragments: {},
           },
         ],
-        canvas: { w: 1080, h: 1440, scale: 1, slides_min: 1, slides_max: 8 },
+        // scale MUST be 2 — validateRenderInputs rejects anything else
+        // ("the QA PNG floor depends on it"), same canvas every sibling
+        // render test and every real caller uses.
+        canvas: { w: 1080, h: 1440, scale: 2, slides_min: 1, slides_max: 8 },
         readyFlag: "__CAROUSEL_READY__",
       },
       { ctx: { runId: "r", clientSlug: "script-font-test", productId: "instagram-agent", runKind: "setup", metadata: {} } },
