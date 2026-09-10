@@ -19,7 +19,15 @@ import { assertNoTraversalOrNul, assertWithinTenantWorkRoot } from "../sandbox.j
 // 1.2.1 (2026-09-10): `wrapOverlayText` takes a `maxLines` (default 3, as
 // before) so `video.textPlate` can wrap a line without losing its end. The
 // two tools here render exactly as before.
-const TOOL_VERSION = "1.2.1";
+// 1.3.0 (2026-09-10): `fit: "blur-fill"` for a client's 16:9 frame on a 9:16
+// short: the whole picture kept, as `contain`, but the letterbox filled with
+// a blurred, darkened copy of the clip instead of the ground colour, the way
+// every podcast clip on the platform is cut. `contain` and `cover` unchanged.
+const TOOL_VERSION = "1.3.0";
+
+/** `blur-fill`: how soft the background copy is (boxblur luma radius, two passes) and how much darker, so the real picture reads as the subject. */
+const BLUR_FILL_RADIUS = 40;
+const BLUR_FILL_BRIGHTNESS = -0.08;
 
 /**
  * The pure-ffmpeg clip pipeline: `video.cutClip` and `video.brandFrame`.
@@ -222,10 +230,10 @@ export const BrandFrameInputSchema = z.object({
   brand: BrandFrameBrandSchema.describe("The brand inputs to composite — everything optional except the ground color the bars are painted in."),
   srtPath: z.string().min(1).optional().describe("SRT file to burn as captions. Absent means no captions."),
   fit: z
-    .enum(["contain", "cover"])
+    .enum(["contain", "cover", "blur-fill"])
     .default("contain")
     .describe(
-      "How the clip meets the picture area between the bars. `contain` (default) scales it to fit and letterboxes the rest in the ground colour — right for a client's 16:9 podcast frame, whose faces a crop would cut. `cover` scales it to fill and crops the overflow — right for a portrait plate, which otherwise sits between two dark side bars.",
+      "How the clip meets the picture area between the bars. `contain` (default) scales it to fit and letterboxes the rest in the ground colour. `cover` scales it to fill and crops the overflow — right for a portrait plate, which otherwise sits between two dark side bars. `blur-fill` keeps the whole clip like `contain` but fills the letterbox with a blurred, darkened copy of the clip — right for a client's 16:9 podcast frame, whose faces a crop would cut.",
     ),
   captionStyle: BrandFrameCaptionStyleSchema.default(() => BrandFrameCaptionStyleSchema.parse({})).describe("Caption font, size, outline and clearance above the bottom bar."),
   overlays: z
@@ -336,10 +344,16 @@ export function buildBrandFrameFilter(input: BrandFrameInput, furnitureAssPath?:
   // rest in the ground colour. `cover`: scale to fill it and crop the
   // overflow, centred. Either way the second pad IS the top and bottom
   // bars, always painted, whatever else is absent.
+  // `blur-fill` splits the source: the background copy is scaled to cover,
+  // cropped, blurred and darkened; the foreground copy is scaled to fit and
+  // centred over it, so nothing of the picture is lost and nothing is flat
+  // ground. The `;`-separated legs are valid inside the comma-joined graph.
   const fitChain =
     input.fit === "cover"
       ? `scale=${w}:${inner}:force_original_aspect_ratio=increase,crop=${w}:${inner},`
-      : `scale=${w}:${inner}:force_original_aspect_ratio=decrease,`;
+      : input.fit === "blur-fill"
+        ? `split[bgsrc][fgsrc];[bgsrc]scale=${w}:${inner}:force_original_aspect_ratio=increase,crop=${w}:${inner},boxblur=${BLUR_FILL_RADIUS}:2,eq=brightness=${BLUR_FILL_BRIGHTNESS}[bg];[fgsrc]scale=${w}:${inner}:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,`
+        : `scale=${w}:${inner}:force_original_aspect_ratio=decrease,`;
   const filters: string[] = [
     fitChain + `pad=${w}:${inner}:(ow-iw)/2:(oh-ih)/2:color=${ground},` + `pad=${w}:${h}:0:${bar}:color=${ground},format=yuv420p`,
   ];
