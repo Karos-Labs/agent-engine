@@ -1682,7 +1682,12 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         await fs.mkdir(workDir, { recursive: true });
         const synth = tools["video.synthesizeVoice"];
         if (synth === undefined) {
-          throw new WorkflowToolingFailure("this piece wants a voiceover but video.synthesizeVoice is not registered — set the client's voiceover to \"never\" or wire a TTS provider");
+          // The same rule as a voice we cannot afford: the short runs silent
+          // and the captions carry the words. A deployment without a TTS
+          // provider is an operator fact the reviewer should see, not a
+          // failed run the client should meet.
+          console.warn("05-voiceover: video.synthesizeVoice is not registered; running silent");
+          return null;
         }
         const outputPath = path.join(workDir, "voiceover.mp3");
         const outcome = await synth.execute(
@@ -1690,7 +1695,11 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           { ctx },
         );
         if (outcome.status !== "success") {
-          throw new WorkflowToolingFailure(`video.synthesizeVoice failed: ${outcome.status}${"reason" in outcome ? ` (${outcome.reason})` : ""}`);
+          // Every TTS route down (2026-09-10: a billing hold took every Google
+          // API in the project offline at once) is a route outage, not a fact
+          // about the script. Silent, with the captions, beats no clip.
+          console.warn(`05-voiceover: video.synthesizeVoice ${outcome.status}${"reason" in outcome ? ` (${outcome.reason})` : ""}; running silent`);
+          return null;
         }
         const result = outcome.result as { outputPath: string; durationSeconds: number | null };
         const notes: string[] = [];
@@ -1959,9 +1968,13 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           { ctx },
         );
         if (outcome.status === "not_available") return { skipped: true, note: `video.visualQaGate is not available: ${outcome.reason}` };
-        if (outcome.status !== "success") throw new WorkflowToolingFailure(`video.visualQaGate: ${outcome.status}${"reason" in outcome ? ` (${outcome.reason})` : ""}`);
+        // The QA is advisory: a route outage on the model that would have
+        // watched the clip (a 403 billing hold on Vertex, 2026-09-10) leaves
+        // the human to judge it unaided, recorded as such — never a failed
+        // run over a review nobody got to give.
+        if (outcome.status !== "success") return { skipped: true, note: `video.visualQaGate ${outcome.status}${"reason" in outcome ? ` (${outcome.reason})` : ""}; the reviewer judges the clip unaided` };
         const verdict = outcome.result as GateVerdict;
-        if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`video.visualQaGate: ${verdict.reason}`);
+        if (verdict.verdict === "tooling_error") return { skipped: true, note: `video.visualQaGate could not review the clip (${verdict.reason}); the reviewer judges it unaided` };
         if (verdict.verdict === "content_fail") {
           console.warn(`${rev("10b-visual-qa")}: visual QA flagged the clip, shipping to review flagged rather than held: ${verdict.reason}`);
           return { skipped: false, passed: false, reason: verdict.reason, evidence: verdict.evidence };

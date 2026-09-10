@@ -85,7 +85,9 @@ function stubTools(
   opts: {
     voiceoverPolicy?: "auto" | "always" | "never";
     transcribeVoice?: boolean;
-    qa?: "pass" | "fail" | "none";
+    /** `"down"` makes the TTS tool answer tooling_error, as every route did under the 2026-09-10 billing hold. */
+    voice?: "ok" | "down";
+    qa?: "pass" | "fail" | "none" | "down";
     /** How the stock library answers. Default `hit`; `none` leaves it unregistered. */
     stock?: "hit" | "miss" | "hit-then-miss" | "none";
     /** Whether the still tier (image.generate + video.stillToClip) is registered. Default true. */
@@ -151,6 +153,7 @@ function stubTools(
       "video.synthesizeVoice",
       (args) => {
         voiceArgs.push(args as Record<string, unknown>);
+        if (opts.voice === "down") return { status: "tooling_error" as const, reason: "google: 403 Lightning dunning decision is deny; elevenlabs: 401" };
         return ok({ outputPath: (args as { outputPath: string }).outputPath, provider: "google", voice: "en-GB-Chirp3-HD-Charon", charCount: 160, durationSeconds: 13.1 });
       },
       SynthesizeVoiceInputSchema,
@@ -247,6 +250,7 @@ function stubTools(
       "video.visualQaGate",
       (args) => {
         qaArgs.push(args as Record<string, unknown>);
+        if (opts.qa === "down") return { status: "tooling_error" as const, reason: "the vision model call failed — 403 Lightning dunning decision is deny" };
         return opts.qa === "fail"
           ? ok({ verdict: "content_fail" as const, evidence: ["artifacts: warped hands in beat 2"], reason: "rendering artefacts on an original short: warped hands in beat 2", toolVersion: "1.0.0" })
           : ok({ verdict: "pass" as const, evidence: ["overallScore: 9"], toolVersion: "1.0.0" });
@@ -484,6 +488,27 @@ describe("original short: script → plates → voice → captions → sequence 
     const shipped = h.deliverables[0] as { visualQa?: { passed: boolean; reason?: string } };
     expect(shipped.visualQa?.passed).toBe(false);
     expect(shipped.visualQa?.reason).toContain("warped hands");
+  }, 20_000);
+
+  it("a TTS route outage runs the short silent with its captions, flagged to the reviewer, never a failed run (2026-09-10 billing hold)", async () => {
+    const h = stubTools({ voice: "down" });
+    const result = await run(h, "run-os-tts-down");
+    expect(result.status).toBe("completed");
+    expect(h.calls).toContain("video.synthesizeVoice");
+    expect(h.calls).not.toContain("video.transcribe");
+    expect(h.composeArgs[0]!["voiceoverPath"]).toBeUndefined();
+    const srt = await fs.readFile(h.frameArgs[0]!["srtPath"] as string, "utf8");
+    expect(srt).toContain("The first hire is a bet");
+    expect(h.deliverables[0]).toMatchObject({ voiceover: false });
+  }, 20_000);
+
+  it("a visual QA route outage ships the clip to the human unreviewed, recorded as skipped, never a failed run", async () => {
+    const h = stubTools({ qa: "down" });
+    const result = await run(h, "run-os-qa-down");
+    expect(result.status).toBe("completed");
+    expect(h.calls).toContain("video.visualQaGate");
+    expect(h.calls).toContain("ledger.writeDeliverable");
+    expect((h.deliverables[0] as { visualQa?: unknown }).visualQa).toBeUndefined();
   }, 20_000);
 
   it("proceeds to the human gate unreviewed — recorded, not pretended — when no visual QA gate is registered", async () => {
