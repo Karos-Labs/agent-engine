@@ -671,6 +671,7 @@ describe("tiered source cascade", () => {
     if (result.status !== "held") throw new Error("unreachable");
     expect(result.reason).toContain("no footage for beat 1");
     expect(result.reason).toContain("image.generate is not registered");
+    expect(result.reason).toContain("video.textPlate is not registered");
     expect(h.calls).toContain("topics.release");
     expect(h.calls).not.toContain("ledger.writeDeliverable");
   }, 20_000);

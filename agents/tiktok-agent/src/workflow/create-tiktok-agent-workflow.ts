@@ -132,11 +132,13 @@ const MAX_DEDUPE_ATTEMPTS = 2;
 /**
  * Where one beat's plate came from — carried to the reviewer and the
  * deliverable. `stock` is a real library clip; `still` is a generated
- * photograph held with a slow push-in. There is no `generated` video any
- * more (2026-09-09): the product rule is a short under two dollars, and one
+ * photograph held with a slow push-in; `text` is the beat's own line set
+ * large on the brand ground (free, needs nothing, the tier under every
+ * other tier since 2026-09-10). There is no `generated` video any more
+ * (2026-09-09): the product rule is a short under two dollars, and one
  * generated clip cost more than that on its own.
  */
-export type PlateSource = "stock" | "still";
+export type PlateSource = "stock" | "still" | "text";
 
 interface PlateResult {
   path: string;
@@ -1613,17 +1615,47 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
               misses.push(found.note);
             }
           }
+          /**
+           * The free tier under every other tier (2026-09-10): the beat's own
+           * line, set large on the brand ground with the accent bar drawing
+           * across. Costs nothing, needs no library and no model, renders any
+           * script through libass. Reached when no still may be bought, when
+           * the still tier is not wired, or when the still itself fails; the
+           * only hold left is a deployment without the tool.
+           */
+          const textPlate = async (because: string): Promise<BeatPlates> => {
+            const render = tools["video.textPlate"];
+            if (render === undefined) {
+              throw new WorkflowHeld(`no footage for beat ${i + 1} ("${query}"): ${misses.join("; ")}; ${because}; and video.textPlate is not registered`);
+            }
+            const font = captionFontFor(config.voiceLanguage ?? videoBrand.language ?? script.language);
+            const outcome = await render.execute(
+              {
+                text: beat.onScreenText,
+                outputPath: path.join(baseWorkDir, `plate-${i + 1}-text.mp4`),
+                durationSeconds: beat.seconds,
+                ground: videoBrand.ground,
+                fg: videoBrand.fg,
+                ...(videoBrand.accent !== undefined ? { accent: videoBrand.accent } : {}),
+                ...(font !== undefined ? { fontName: font } : {}),
+              },
+              { ctx },
+            );
+            if (outcome.status !== "success") {
+              throw new WorkflowToolingFailure(`video.textPlate failed for beat ${i + 1}: ${outcome.status}${"reason" in outcome ? ` (${outcome.reason})` : ""}`);
+            }
+            return { shots: [{ path: (outcome.result as { outputPath: string }).outputPath, source: "text" }] };
+          };
+
           if (!stillsHere) {
             const why = config.footageSource === "stock" ? 'this client\'s footageSource is "stock"' : !stillsAllowed ? `the plan is ${budgetPlan}` : "the run has reached its cost ceiling";
-            throw new WorkflowHeld(`no free footage for beat ${i + 1} and no still may be bought (${why}): ${misses.join("; ")}`);
+            return textPlate(`no still may be bought (${why})`);
           }
 
           const generateImage = tools["image.generate"];
           const stillToClip = tools["video.stillToClip"];
           if (generateImage === undefined || stillToClip === undefined) {
-            throw new WorkflowHeld(
-              `no footage for beat ${i + 1} ("${query}"): ${misses.join("; ")}; and the still tier is not wired (${generateImage === undefined ? "image.generate" : "video.stillToClip"} is not registered)`,
-            );
+            return textPlate(`the still tier is not wired (${generateImage === undefined ? "image.generate" : "video.stillToClip"} is not registered)`);
           }
           const image = await generateImage.execute(
             {
@@ -1637,12 +1669,14 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
             { ctx },
           );
           if (image.status !== "success") {
-            throw new WorkflowHeld(`no footage for beat ${i + 1} ("${query}"): ${misses.join("; ")}; still: ${image.status}${"reason" in image ? ` (${image.reason})` : ""}`);
+            // The image route down (a 403 billing hold on Vertex took it out
+            // on 2026-09-10) is a route outage, not a fact about the beat.
+            return textPlate(`still: ${image.status}${"reason" in image ? ` (${image.reason})` : ""}`);
           }
           const generated = image.result as { candidates: Array<{ path: string }>; unmet: Array<{ n: number; reason: string }> };
           const candidate = generated.candidates[0];
           if (candidate === undefined) {
-            throw new WorkflowHeld(`no footage for beat ${i + 1} ("${query}"): ${misses.join("; ")}; still: ${generated.unmet[0]?.reason ?? "the image model produced nothing"}`);
+            return textPlate(`still: ${generated.unmet[0]?.reason ?? "the image model produced nothing"}`);
           }
           const clip = await stillToClip.execute(
             {

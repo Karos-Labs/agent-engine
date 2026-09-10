@@ -6,7 +6,7 @@ import { promises as fs } from "node:fs";
 import type { ZodType } from "zod";
 import { FilePromptStore, type AgentToolRegistry, type CompletionResult, type ModelRouter } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
-import { BrandFrameInputSchema, ComposeSequenceInputSchema, MixMusicInputSchema, SelfEvalGateInputSchema, StillToClipInputSchema, SynthesizeVoiceInputSchema, TranscribeInputSchema } from "@agent-engine/tool-karos-video";
+import { BrandFrameInputSchema, ComposeSequenceInputSchema, MixMusicInputSchema, SelfEvalGateInputSchema, StillToClipInputSchema, SynthesizeVoiceInputSchema, TextPlateInputSchema, TranscribeInputSchema } from "@agent-engine/tool-karos-video";
 import { FindStockClipInputSchema, GenerateImageInputSchema, VisualQaGateInputSchema } from "@agent-engine/tool-karos-media";
 import { createTikTokAgentWorkflow } from "../src/workflow/create-tiktok-agent-workflow.js";
 
@@ -69,6 +69,7 @@ interface Harness {
   tools: AgentToolRegistry;
   calls: string[];
   musicArgs: Array<Record<string, unknown>>;
+  textArgs: Array<Record<string, unknown>>;
   excerpts: Array<Record<string, unknown>>;
   imageArgs: Array<Record<string, unknown>>;
   stillArgs: Array<Record<string, unknown>>;
@@ -102,6 +103,7 @@ function stubTools(
 ): Harness {
   const calls: string[] = [];
   const musicArgs: Array<Record<string, unknown>> = [];
+  const textArgs: Array<Record<string, unknown>> = [];
   const excerpts: Array<Record<string, unknown>> = [];
   const imageArgs: Array<Record<string, unknown>> = [];
   const stillArgs: Array<Record<string, unknown>> = [];
@@ -210,6 +212,15 @@ function stubTools(
       FindStockClipInputSchema,
     );
   }
+  tools["video.textPlate"] = tool(
+    "video.textPlate",
+    (args) => {
+      const input = args as { outputPath: string; durationSeconds: number };
+      textArgs.push(input as unknown as Record<string, unknown>);
+      return ok({ outputPath: input.outputPath, durationSeconds: input.durationSeconds });
+    },
+    TextPlateInputSchema,
+  );
   tools["ledger.recordOutputExcerpt"] = tool("ledger.recordOutputExcerpt", (args) => {
     excerpts.push(args as Record<string, unknown>);
     return ok({ recorded: true, total: excerpts.length });
@@ -258,7 +269,7 @@ function stubTools(
       VisualQaGateInputSchema,
     );
   }
-  return { tools: tools as unknown as AgentToolRegistry, calls, musicArgs, excerpts, imageArgs, stillArgs, stockArgs, composeArgs, voiceArgs, transcribedPaths, frameArgs, qaArgs, deliverables };
+  return { tools: tools as unknown as AgentToolRegistry, calls, musicArgs, textArgs, excerpts, imageArgs, stillArgs, stockArgs, composeArgs, voiceArgs, transcribedPaths, frameArgs, qaArgs, deliverables };
 }
 
 /** A silent version of the script (the schema's three-beat floor stands): what a writer told to cut cost would hand back. */
@@ -447,20 +458,28 @@ describe("original short: script → plates → voice → captions → sequence 
     expect(srt).toContain("The first hire is a bet");
   }, 20_000);
 
-  it("in stock-only mode a beat the library misses walks a free ladder (brief-derived query, then a generic scene) instead of buying a still", async () => {
+  it("in stock-only mode a beat the library misses walks a free ladder (brief-derived query, then generic scenes), then becomes a TEXT plate: nothing bought, nothing held", async () => {
     const h = stubTools({ maxRunCostUsd: 0.05, stock: "hit-then-miss" });
     // `hit-then-miss` answers the first search only; the ladder then tries
-    // three more queries per beat and every one misses, so the honest
-    // outcome is a hold naming what was tried, with nothing bought.
+    // the remaining queries per beat and every one misses, so beats 2 and 3
+    // become the beat's own line on the brand ground.
     const result = await run(h, "run-os-fallback-ladder", [VOICED_SCRIPT, VOICED_SCRIPT, VOICED_SCRIPT]);
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toContain("no free footage for beat 2");
-    expect(result.reason).toContain("the plan is stock-only");
+    expect(result.status).toBe("completed");
     expect(h.imageArgs).toHaveLength(0);
-    // Beat 1 hit on its own query; beat 2 tried its query (here the brief-derived one, so the two coincide) and two generic scenes.
-    expect(h.stockArgs.map((a) => a["outputName"])).toEqual(["plate-1", "plate-2", "plate-2", "plate-2"]);
+    // Beat 1 hit on its own query; beats 2 and 3 tried their query (here the brief-derived one, so the two coincide) and two generic scenes each.
+    expect(h.stockArgs.map((a) => a["outputName"])).toEqual(["plate-1", "plate-2", "plate-2", "plate-2", "plate-3", "plate-3", "plate-3"]);
     expect(h.stockArgs.slice(1).map((a) => a["query"])).toContain("hands typing keyboard");
+    expect(h.textArgs.map((a) => a["text"])).toEqual(["Month six changes everything", "Hire for who you're becoming"]);
+    expect(h.textArgs[0]).toMatchObject({ ground: "#101418", fg: "#F2F0EA", durationSeconds: 6 });
+    expect((h.deliverables[0] as { plateSources?: string[] }).plateSources).toEqual(["stock", "text", "text"]);
+  }, 20_000);
+
+  it("a Hebrew client's text plates are set in the Hebrew face", async () => {
+    const h = stubTools({ maxRunCostUsd: 0.05, stock: "miss", voiceLanguage: "he-IL" });
+    const result = await run(h, "run-os-text-hebrew", [VOICED_SCRIPT, VOICED_SCRIPT, VOICED_SCRIPT]);
+    expect(result.status).toBe("completed");
+    expect(h.textArgs).toHaveLength(3);
+    expect(h.textArgs.every((a) => a["fontName"] === "Noto Sans Hebrew")).toBe(true);
   }, 20_000);
 
   it("a client's ceiling can lower the product's two dollars but never raise it", async () => {
@@ -621,7 +640,23 @@ describe("original short: real footage, then a still, never generated video (202
     expect(h.calls).not.toContain("video.synthesizeVoice");
   });
 
-  it("holds a beat the library cannot serve when the client asked for stock only, instead of taking a still", async () => {
+  it("a still that cannot be made (image route down) becomes a text plate, never a hold", async () => {
+    const h = stubTools({ stock: "miss" });
+    h.tools["image.generate"] = {
+      name: "image.generate",
+      version: "1.0.0",
+      inputSchema: { safeParse: (v: unknown) => ({ success: true as const, data: v }) },
+      async execute() {
+        return { status: "tooling_error" as const, reason: "the image model call failed — 403 Lightning dunning decision is deny" };
+      },
+    } as unknown as AgentToolRegistry[string];
+    const result = await run(h, "run-os-image-down");
+    expect(result.status).toBe("completed");
+    expect(h.textArgs).toHaveLength(3);
+    expect((h.deliverables[0] as { plateSources?: string[] }).plateSources).toEqual(["text", "text", "text"]);
+  }, 20_000);
+
+  it("a beat the library cannot serve for a stock-only client becomes a text plate instead of a still or a hold", async () => {
     const h = stubTools({ stock: "miss" });
     h.tools["client.getConfig"] = {
       name: "client.getConfig",
@@ -632,11 +667,11 @@ describe("original short: real footage, then a still, never generated video (202
       },
     } as unknown as AgentToolRegistry[string];
     const result = await run(h, "run-os-stock-only-miss");
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toContain('footageSource is "stock"');
+    expect(result.status).toBe("completed");
     expect(h.imageArgs).toHaveLength(0);
-    // The free ladder was walked before giving up: the beat's query (the brief-derived one for this v3-shaped script) and two generic scenes.
+    // The free ladder was walked first: the beat's query (the brief-derived one for this v3-shaped script) and two generic scenes.
     expect(h.stockArgs.filter((a) => a["outputName"] === "plate-1")).toHaveLength(3);
+    expect(h.textArgs).toHaveLength(3);
+    expect((h.deliverables[0] as { plateSources?: string[] }).plateSources).toEqual(["text", "text", "text"]);
   });
 });
