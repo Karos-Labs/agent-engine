@@ -92,7 +92,7 @@ function stubTools(
     transcribeVoice?: boolean;
     /** `"down"` makes the TTS tool answer tooling_error, as every route did under the 2026-09-10 billing hold. */
     voice?: "ok" | "down";
-    qa?: "pass" | "fail" | "none" | "down" | "weak-beat";
+    qa?: "pass" | "fail" | "none" | "down" | "weak-beat" | "weak-beat-sticky";
     /** How the stock library answers. Default `hit`; `none` leaves it unregistered. */
     stock?: "hit" | "miss" | "hit-then-miss" | "none";
     /** Whether the still tier (image.generate + video.stillToClip) is registered. Default true. */
@@ -261,12 +261,27 @@ function stubTools(
     );
   }
   if ((opts.qa ?? "pass") !== "none") {
+    let qaCalls = 0;
     tools["video.visualQaGate"] = tool(
       "video.visualQaGate",
       (args) => {
         qaArgs.push(args as Record<string, unknown>);
+        qaCalls += 1;
         if (opts.qa === "down") return { status: "tooling_error" as const, reason: "the vision model call failed — 403 Lightning dunning decision is deny" };
-        if (opts.qa === "weak-beat") {
+        // "weak-beat": beat 2 does not fit the first time, and the re-render (a second call) is clean. "weak-beat-sticky": it never fits.
+        if (opts.qa === "weak-beat" && qaCalls > 1) {
+          return ok({
+            verdict: "pass" as const,
+            evidence: ["overallScore: 9", "beat 1 relevance: 9", "beat 2 relevance: 8", "beat 3 relevance: 8"],
+            toolVersion: "1.2.0",
+            beats: [
+              { index: 1, relevance: 9, note: "" },
+              { index: 2, relevance: 8, note: "" },
+              { index: 3, relevance: 8, note: "" },
+            ],
+          });
+        }
+        if (opts.qa === "weak-beat" || opts.qa === "weak-beat-sticky") {
           return ok({
             verdict: "pass" as const,
             evidence: ["overallScore: 8", "beat 1 relevance: 9", "beat 2 relevance: 3 (a concert under a line about hiring)", "beat 3 relevance: 8"],
@@ -634,7 +649,7 @@ describe("original short: script → plates → voice → captions → sequence 
     expect(h.deliverables[0]).toMatchObject({ voiceover: false });
   }, 20_000);
 
-  it("the visual QA is told each beat's window and line, and a beat whose footage does not fit is named on the deliverable", async () => {
+  it("the visual QA is told each beat's window and line; a beat whose footage does not fit is RE-SOURCED once with every used clip excluded, re-rendered under its own steps, and the clean re-render ships", async () => {
     const h = stubTools({ qa: "weak-beat" });
     const result = await run(h, "run-os-weak-beat");
     expect(result.status).toBe("completed");
@@ -643,9 +658,49 @@ describe("original short: script → plates → voice → captions → sequence 
     expect(expectations.beats![0]).toMatchObject({ index: 1, start: 0, narration: VOICED_SCRIPT.beats[0]!.narration });
     expect(expectations.beats![1]!.start).toBeCloseTo(expectations.beats![0]!.end, 2);
     expect(expectations.beats![2]!.end).toBeCloseTo(13.5, 1);
-    const shipped = h.deliverables[0] as { visualQa?: { passed: boolean; weakBeats?: Array<{ index: number; relevance: number }> } };
+    // The re-pick: beat 2 searched again after the QA, every clip this run had used excluded, judged against its own line.
+    const repickSearch = h.stockArgs[h.stockArgs.length - 1]!;
+    expect(repickSearch["outputName"]).toBe("plate-2-repick");
+    expect(repickSearch["query"]).toBe(h.stockArgs.find((a) => a["outputName"] === "plate-2")!["query"]);
+    expect(repickSearch["excludeIds"]).toEqual(h.stockArgs.slice(0, -1).map((_, i) => 1001 + i));
+    expect(repickSearch["relevance"]).toEqual({ brief: VOICED_SCRIPT.beats[1]!.visualBrief, narration: VOICED_SCRIPT.beats[1]!.narration });
+    // Rendered and watched twice; the second cut carries the new plate for beat 2 alone.
+    expect(h.composeArgs).toHaveLength(2);
+    expect(h.qaArgs).toHaveLength(2);
+    const secondClips = h.composeArgs[1]!["clips"] as Array<{ path: string }>;
+    expect(secondClips.some((c) => c.path.endsWith("plate-2-repick.mp4"))).toBe(true);
+    expect(secondClips.some((c) => c.path.endsWith("plate-2.mp4"))).toBe(false);
+    // The clean re-render is what ships, and the reviewer is told what was swapped and why.
+    const shipped = h.deliverables[0] as { visualQa?: { passed: boolean; weakBeats?: unknown }; repick?: { beats: number[]; note: string } };
     expect(shipped.visualQa?.passed).toBe(true);
+    expect(shipped.visualQa?.weakBeats).toBeUndefined();
+    expect(shipped.repick?.beats).toEqual([2]);
+    expect(shipped.repick?.note).toContain("beat 2 re-sourced after the visual QA scored the footage under 5");
+    expect(shipped.repick?.note).toContain("the re-render scored clean");
+  }, 20_000);
+
+  it("a beat still weak after its second clip ships NAMED to the reviewer; there is no second re-pick", async () => {
+    const h = stubTools({ qa: "weak-beat-sticky" });
+    const result = await run(h, "run-os-weak-beat-sticky");
+    expect(result.status).toBe("completed");
+    expect(h.qaArgs).toHaveLength(2);
+    expect(h.composeArgs).toHaveLength(2);
+    expect(h.stockArgs.filter((a) => String(a["outputName"]).endsWith("-repick"))).toHaveLength(1);
+    const shipped = h.deliverables[0] as { visualQa?: { passed: boolean; weakBeats?: Array<{ index: number; relevance: number }> }; repick?: { beats: number[]; note: string } };
     expect(shipped.visualQa?.weakBeats).toEqual([{ index: 2, relevance: 3, note: "a concert under a line about hiring" }]);
+    expect(shipped.repick?.beats).toEqual([2]);
+    expect(shipped.repick?.note).toContain("the re-render still names beat 2");
+  }, 20_000);
+
+  it("when the library has nothing else for the weak beat, the first cut ships with the beat named and the miss explained", async () => {
+    const h = stubTools({ qa: "weak-beat-sticky", stock: "hit-then-miss" });
+    const result = await run(h, "run-os-weak-beat-no-stock");
+    expect(result.status).toBe("completed");
+    expect(h.qaArgs).toHaveLength(1);
+    expect(h.composeArgs).toHaveLength(1);
+    const shipped = h.deliverables[0] as { repick?: { beats: number[]; note: string } };
+    expect(shipped.repick?.beats).toEqual([]);
+    expect(shipped.repick?.note).toContain("the library had nothing else");
   }, 20_000);
 
   it("a visual QA route outage ships the clip to the human unreviewed, recorded as skipped, never a failed run", async () => {
