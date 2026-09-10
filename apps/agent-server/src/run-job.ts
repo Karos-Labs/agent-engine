@@ -141,6 +141,27 @@ function agentStepTimeoutMsFor(productId: string): number | undefined {
   return AGENT_STEP_TIMEOUT_OVERRIDES_MS[productId];
 }
 
+/**
+ * Per-product cost ceilings, in USD, applied when the dispatch names none.
+ *
+ * `WorkflowBudget.maxTotalCostUsd` existed since the engine's first RFC and
+ * was never set by anything: four prep TikTok runs on 2026-09-07/08 each bought
+ * ~$13 of generated footage with no ceiling in their way. The number here is
+ * the product rule the owner stated on 2026-09-09 (a short must never cost
+ * more than two dollars), enforced by `step.code` and `step.agent` before
+ * every step, and read by the workflow itself (`wf.budget`) to size its plan.
+ * A run that trips it ends `failed` with `budget ceiling exceeded` in its
+ * reason, and the steps already paid for stay billed.
+ */
+const RUN_BUDGET_USD_DEFAULTS: Readonly<Record<string, number>> = {
+  "tiktok-agent": 2,
+};
+
+function budgetFor(productId: string): { maxTotalCostUsd: number } | undefined {
+  const max = RUN_BUDGET_USD_DEFAULTS[productId];
+  return max === undefined ? undefined : { maxTotalCostUsd: max };
+}
+
 export async function startRunJob(request: RunJobRequest, runId: string, deps: StartRunJobDeps): Promise<StartRunJobOutcome> {
   const engine = new WorkflowEngine(deps.durableStore);
 
@@ -176,6 +197,7 @@ export async function startRunJob(request: RunJobRequest, runId: string, deps: S
       ...(request.input !== undefined ? { input: request.input } : {}),
       ...(request.stageModels !== undefined ? { stageModels: request.stageModels } : {}),
       ...(contentLanguage !== undefined ? { contentLanguage } : {}),
+      ...(budgetFor(request.productId) !== undefined ? { budget: budgetFor(request.productId)! } : {}),
     });
     const report = await buildRunReport(deps.durableStore, runId, request.productId);
     return {

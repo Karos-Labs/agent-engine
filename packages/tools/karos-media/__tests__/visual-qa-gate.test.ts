@@ -139,7 +139,7 @@ describe("video.visualQaGate — verdicts", () => {
     const { client } = recordingVision(JSON.stringify(GOOD_REPORT));
     const verdict = verdictOf(await createVisualQaGate({ client }).execute(qaInput({ videoPath: clipPath, expectations: expectations() }), CTX));
     expect(verdict.verdict).toBe("pass");
-    expect(verdict.toolVersion).toBe("1.0.0");
+    expect(verdict.toolVersion).toBe("1.1.0");
     expect((verdict as { evidence: string[] }).evidence).toEqual([
       "overallScore: 8.5",
       "hookLandsInFirstTwoSeconds: true",
@@ -175,10 +175,14 @@ describe("video.visualQaGate — verdicts", () => {
     expect(visualQaFailures(noCaptions, { ...base, expectations: { ...base.expectations, captionsExpected: false } })).toEqual([]);
   });
 
-  it("any artefact fails an original-short but only lowers the score on a commentary clip", () => {
+  it("an artefact alone fails neither format since 2026-09-09: it lowers the score and is carried in evidence", () => {
+    // Until then any artefact failed an original-short outright, a rule written
+    // for generated plates. Original shorts are stock footage and stills now,
+    // where "artefact" is a compression quirk the human at the gate should see,
+    // not a reason to send the clip back before they do.
     const flicker = { ...GOOD_REPORT, artifacts: ["flicker at 0:04"] };
     const parsed = VisualQaGateInputSchema.parse({ gcsUri: "gs://b/c.mp4", expectations: expectations({ format: "original-short" }) });
-    expect(visualQaFailures(flicker, parsed)).toEqual(["rendering artefacts on an original short: flicker at 0:04"]);
+    expect(visualQaFailures(flicker, parsed)).toEqual([]);
     const commentary = VisualQaGateInputSchema.parse({ gcsUri: "gs://b/c.mp4", expectations: expectations({ format: "commentary-clip" }) });
     expect(visualQaFailures(flicker, commentary)).toEqual([]);
   });

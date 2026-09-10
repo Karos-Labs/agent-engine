@@ -6,13 +6,16 @@ import type { AgentContext } from "@agent-engine/core";
 import {
   BrandFrameInputSchema,
   buildBrandFrameFilter,
+  buildFurnitureAss,
   BrandFrameCaptionStyleSchema,
   captionForceStyle,
   wrapOverlayText,
   buildSrt,
   createBrandFrame,
   createCutClip,
+  hexToAss,
   hexToFfmpeg,
+  sanitizeAssText,
   sanitizeOverlayText,
 } from "../src/tools/clip-compose.js";
 import type { ProcessRunner } from "../src/process/runner.js";
@@ -53,6 +56,13 @@ describe("sanitizeOverlayText / hexToFfmpeg", () => {
     expect(sanitizeOverlayText("PITCH SCHOOL | LESSON 15")).toBe("PITCH SCHOOL | LESSON 15");
     expect(sanitizeOverlayText("evil':drawbox=%{pts}")).toBe("evildrawbox=pts".replace("=", "")); // no quotes/colons/percent/braces survive
     expect(sanitizeOverlayText("@geektimecoil")).toBe("@geektimecoil");
+    // Any script's letters survive (2026-09-09): a Hebrew or Arabic header is
+    // a header, not an empty bar.
+    expect(sanitizeOverlayText("קארוס לאבס | פרק 3")).toBe("קארוס לאבס | פרק 3");
+    expect(sanitizeOverlayText("مرحبا بالعالم")).toBe("مرحبا بالعالم");
+    expect(sanitizeAssText("a {tag} \\N b")).toBe("a (tag) /N b");
+    expect(hexToAss("#17181C")).toBe("&H001C1817");
+    expect(hexToAss("#17181C", 0.72)).toBe("&H471C1817");
   });
 
   it("converts #RRGGBB to ffmpeg 0x form", () => {
@@ -68,13 +78,34 @@ describe("buildBrandFrameFilter", () => {
   });
 
   it("always paints the bars, and composites every present element into one graph ending at [out]", () => {
-    const filter = buildBrandFrameFilter(base);
+    const filter = buildBrandFrameFilter(base, "C:\\work\\furniture.ass");
     expect(filter).toContain("pad=1080:1920:0:200:color=0x17181C");
     expect(filter).toContain("drawbox=x=0:y=194:w=1080:h=6:color=0xA5E82B");
-    expect(filter).toContain("drawtext=text='GEEK WEEKLY'");
-    expect(filter).toContain("drawtext=text='@geektimecoil'");
+    // Header and handle are no longer drawtext: they ride in the furniture script.
+    expect(filter).not.toContain("drawtext");
+    expect(filter).toContain("subtitles='C\\:/work/furniture.ass'");
     expect(filter.endsWith("[out]")).toBe(true);
     expect(filter).not.toContain("[framed]"); // no logo → single chain
+  });
+
+  it("writes the header, handle and cards as one libass script with pixel margins, so any script gets bidi and shaping", () => {
+    const ass = buildFurnitureAss(
+      { ...base, brand: { ...base.brand, seriesHeader: "קארוס לאבס", handle: "@karoslabs" } },
+      [{ text: "Stop paying for clicks that never convert", start: 0, end: 5.5 }],
+    )!;
+    expect(ass).toContain("PlayResX: 1080");
+    expect(ass).toContain("PlayResY: 1920");
+    // Header centred in the 200px top bar (top-aligned, margin from the top edge); handle centred in the bottom bar.
+    expect(ass).toContain("Style: Header,Liberation Sans,44,&H00ECF2F4,&H00ECF2F4,&HFF000000,&HFF000000,0,0,0,0,100,100,0,0,1,0,0,8,80,80,74,1");
+    expect(ass).toContain("Style: Handle,Liberation Sans,36,");
+    expect(ass).toMatch(/Style: Handle,[^\n]*,2,80,80,78,1/);
+    // Card: opaque box (BorderStyle 3) in the ground at 72%, 22px padding, upper third of the picture (200 + 7% of 1520 = 306).
+    expect(ass).toMatch(/Style: Card,Liberation Sans,61,&H00ECF2F4,&H00ECF2F4,&H471C1817,&H471C1817,-1,0,0,0,100,100,0,0,3,22,0,8,80,80,306,1/);
+    expect(ass).toContain("Dialogue: 0,0:00:00.00,9:59:59.00,Header,,0,0,0,,קארוס לאבס");
+    expect(ass).toContain("Dialogue: 0,0:00:00.00,9:59:59.00,Handle,,0,0,0,,@karoslabs");
+    expect(ass).toContain("Dialogue: 1,0:00:00.00,0:00:05.50,Card,,0,0,0,,Stop paying for clicks\\Nthat never convert");
+    // Nothing to draw → no script at all.
+    expect(buildFurnitureAss(BrandFrameInputSchema.parse({ videoPath: "a.mp4", outputPath: "b.mp4", brand: { ground: "#111111" } }), [])).toBeUndefined();
   });
 
   it("letterboxes by default and fills-and-crops on fit: cover", () => {
@@ -117,19 +148,12 @@ describe("buildBrandFrameFilter", () => {
     expect(captionForceStyle(BrandFrameCaptionStyleSchema.parse({}), 1920, 200)).toContain("MarginV=38");
   });
 
-  it("draws each timed title card in the upper third, boxed in the ground colour, from a text file", () => {
-    const filter = buildBrandFrameFilter(base, [
-      { textfile: "C:\\work\\overlay-1.txt", start: 0, end: 5.5 },
-      { textfile: "C:\\work\\overlay-2.txt", start: 5.5, end: 11 },
-    ]);
-    expect(filter).toContain("drawtext=textfile='C\\:/work/overlay-1.txt':font='Liberation Sans':fontcolor=0xF4F2EC:fontsize=61:");
-    expect(filter).toContain("box=1:boxcolor=0x17181C@0.72:boxborderw=22:x=(w-text_w)/2:y=306:enable='between(t,0,5.5)'");
-    expect(filter).toContain("enable='between(t,5.5,11)'");
-    // The cards are drawn BEFORE the captions burn, so the two never share a zone.
-    expect(filter.indexOf("drawtext=textfile")).toBeLessThan(filter.indexOf("subtitles=") === -1 ? Infinity : filter.indexOf("subtitles="));
+  it("burns the furniture script BEFORE the captions, so cards and captions never share a zone", () => {
+    const filter = buildBrandFrameFilter({ ...base, srtPath: "C:\\work\\clip.srt" }, "C:\\work\\furniture.ass");
+    expect(filter.indexOf("furniture.ass")).toBeLessThan(filter.indexOf("clip.srt"));
   });
 
-  it("wraps an on-screen line for drawtext, which never wraps by itself", () => {
+  it("wraps an on-screen line, which libass would otherwise break only at the margins", () => {
     expect(wrapOverlayText("Stop paying for clicks that never convert")).toBe("Stop paying for clicks\nthat never convert");
     expect(wrapOverlayText("Short")).toBe("Short");
     expect(wrapOverlayText("  spaced   out\tline ")).toBe("spaced out line");
@@ -140,6 +164,7 @@ describe("buildBrandFrameFilter", () => {
     const filter = buildBrandFrameFilter(BrandFrameInputSchema.parse({ videoPath: "a.mp4", outputPath: "b.mp4", brand: { ground: "#111111" } }));
     expect(filter).toContain("pad=1080:1920:0:200");
     expect(filter).not.toContain("drawtext");
+    expect(filter).not.toContain("subtitles=");
     expect(filter.endsWith("[out]")).toBe(true);
   });
 });
@@ -191,7 +216,7 @@ describe("video.brandFrame", () => {
     expect(ffmpeg.args.filter((a) => a === "-i")).toHaveLength(1);
   });
 
-  it("writes each overlay's wrapped text to a file next to the output and references it from the graph", async () => {
+  it("writes the furniture script next to the output, with each card's wrapped text, and references it from the graph", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "brand-frame-"));
     try {
       const calls: Array<{ bin: string; args: string[] }> = [];
@@ -210,22 +235,26 @@ describe("video.brandFrame", () => {
       );
       expect(outcome.status).toBe("success");
       expect((outcome as { result: { applied: string[] } }).result.applied).toContain("overlays");
-      expect(await fs.readFile(path.join(dir, "overlay-1.txt"), "utf8")).toBe("Stop paying for clicks\nthat never convert");
+      const ass = await fs.readFile(path.join(dir, "furniture.ass"), "utf8");
+      expect(ass).toContain("Card,,0,0,0,,Stop paying for clicks\\Nthat never convert");
+      // The blank card is skipped, not drawn empty.
+      expect(ass.match(/^Dialogue:/gm)).toHaveLength(1);
       const ffmpeg = calls.find((c) => c.bin === "ffmpeg")!;
       const graph = ffmpeg.args[ffmpeg.args.indexOf("-filter_complex") + 1]!;
-      expect(graph).toContain("overlay-1.txt");
-      expect(graph).not.toContain("overlay-2.txt");
+      expect(graph).toContain("furniture.ass");
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
   });
 
   it("reports which elements composited", async () => {
+    // A real output directory: the furniture script is written beside the output, never into the cwd.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "brand-frame-"));
     const tool = createBrandFrame({ runner: fakeRunner([]), env: {} });
     const outcome = await tool.execute(
       BrandFrameInputSchema.parse({
-        videoPath: "clip.mp4",
-        outputPath: "framed.mp4",
+        videoPath: path.join(dir, "clip.mp4"),
+        outputPath: path.join(dir, "framed.mp4"),
         brand: { ground: "#17181C", fg: "#F4F2EC", accent: "#A5E82B", seriesHeader: "X", handle: "@x" },
       }),
       { ctx },

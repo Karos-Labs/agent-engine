@@ -4,7 +4,8 @@ import { isCheckpointedStepStatus, type StepRecord } from "../adapters/types.js"
 // AU67's translation, shared with `fanout` since AU68 (SCRUM-366) — see that module.
 import { describeOutcomeReason, statusFromOutcome } from "./outcome-status.js";
 import type { WorkflowRuntime } from "./context.js";
-import { markStepRunning, scopedStepId } from "./context.js";
+import { markStepRunning, scopedStepId, sumRunCost } from "./context.js";
+import { WorkflowBudgetExceeded } from "./signals.js";
 
 /**
  * `step.code(id, fn)` (RFC-01 §8.1/§8.2): a deterministic step, checkpointed
@@ -22,6 +23,20 @@ export async function runStepCode<T>(runtime: WorkflowRuntime, id: string, fn: (
   const existing = await runtime.store.getStep(runtime.runId, stepId);
   if (existing && isCheckpointedStepStatus(existing.status)) {
     return existing.output as T;
+  }
+
+  // The same ceiling `step.agent` enforces, checked here too (2026-09-09).
+  // Every media purchase in this fleet — a generated plate, a voiceover, a
+  // stock download — happens inside a `step.code` body, so a budget that only
+  // guarded agent calls left the expensive steps of a TikTok run entirely
+  // outside it: the four prep runs that each bought ~$13 of Veo footage under
+  // a would-be $2 ceiling never met a check at all. Before, not after: a step
+  // that has already spent is billed by the catch below regardless.
+  if (runtime.budget?.maxTotalCostUsd !== undefined) {
+    const spentSoFar = await sumRunCost(runtime.store, runtime.runId);
+    if (spentSoFar >= runtime.budget.maxTotalCostUsd) {
+      throw new WorkflowBudgetExceeded(runtime.runId, spentSoFar, runtime.budget.maxTotalCostUsd);
+    }
   }
 
   return withWorkflowStepSpan(

@@ -93,6 +93,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ffmpeg \
       fonts-dejavu-core \
       fonts-liberation \
+      fonts-noto-core \
     && pip3 install --no-cache-dir --break-system-packages \
       "numpy>=1.26,<3" \
       "pillow>=10,<13" \

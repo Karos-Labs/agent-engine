@@ -12,6 +12,8 @@ import { createRenderOverlays } from "./tools/render-overlays.js";
 import { createMaterializeInputs } from "./tools/materialize-inputs.js";
 import { createCutClip, createBrandFrame } from "./tools/clip-compose.js";
 import { createComposeSequence } from "./tools/compose-sequence.js";
+import { createStillToClip } from "./tools/still-to-clip.js";
+import { createMixMusic } from "./tools/mix-music.js";
 import { createReadJsonFile } from "./tools/read-json-file.js";
 import { createSelfEvalGate } from "./tools/self-eval-gate.js";
 import { createSynthesizeVoice, type CreateSynthesizeVoiceOptions } from "./tools/synthesize-voice.js";
@@ -36,6 +38,8 @@ export * from "./tools/render-overlays.js";
 export * from "./tools/materialize-inputs.js";
 export * from "./tools/clip-compose.js";
 export * from "./tools/compose-sequence.js";
+export * from "./tools/still-to-clip.js";
+export * from "./tools/mix-music.js";
 export * from "./tools/self-eval-gate.js";
 export * from "./tools/synthesize-voice.js";
 export * from "./tools/transcribe.js";
@@ -89,7 +93,9 @@ export function createKarosVideoTools(options: CreateKarosVideoToolsOptions = {}
     "video.composeSequence": createComposeSequence(options),
     "video.synthesizeVoice": createSynthesizeVoice({ ...options, ...options.synthesizeVoice }),
     "video.selfEvalGate": createSelfEvalGate(options),
-    "video.transcribe": createTranscribe({ ...(options.env !== undefined ? { env: options.env } : {}), ...options.transcribe }),
+    "video.transcribe": createTranscribe({ ...options, ...options.transcribe }),
+    "video.stillToClip": createStillToClip(options),
+    "video.mixMusic": createMixMusic(options),
     "video.writeJsonFile": createWriteJsonFile(options),
     "video.readJsonFile": createReadJsonFile(options),
     ...(options.mediaStore ? { "video.uploadDeliverable": createUploadDeliverable(options.mediaStore) } : {}),
