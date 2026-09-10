@@ -182,6 +182,13 @@ const MAX_MUSIC_TRACK_BYTES = 25 * 1024 * 1024;
 const HOOK_PLATE_SECONDS = 2;
 /** Beat 1 keeps at least this much footage after the cold open, or the cold open is skipped and the title card stands in. */
 const MIN_LEAD_REMAINDER_SECONDS = 1.5;
+/**
+ * After the visual QA names beats whose footage does not fit the line said
+ * over them (relevance under 5), up to this many are re-sourced from the
+ * library ONCE and the short re-rendered (2026-09-10). One round: a second
+ * miss ships to the reviewer named, as before.
+ */
+const MAX_REPICK_BEATS = 2;
 
 /**
  * The caption/furniture font for a language. The server image ships Noto
@@ -1423,6 +1430,8 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       replans?: number;
       /** Whether a music bed was laid, and why not when it was not. Original shorts only. */
       music?: { applied: boolean; note?: string };
+      /** Beats whose footage was re-sourced after the visual QA scored it under 5, and how the re-render fared (original shorts only). */
+      repick?: { beats: number[]; note: string };
     }
 
     /**
@@ -2007,7 +2016,13 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
 
       // ── 08: render — hold each plate for its beat, lay the voice under,
       //        burn the captions, frame it. ──
-      const rendered = await wf.step.code(rev("08-render"), async (): Promise<{ outputPath: string; durationSeconds: number | null; beatWindows: Array<{ index: number; start: number; end: number; narration: string }> }> => {
+      /**
+       * The render as one PASS. `passRev` names its checkpoints and `workDir`
+       * its files, so the re-pick after the visual QA (below) renders under
+       * `08-render-repick` into its own directory instead of replaying the
+       * first pass's checkpoint or overwriting its clip.
+       */
+      const renderPass = (passRev: (id: string) => string, workDir: string) => wf.step.code(passRev("08-render"), async (): Promise<{ outputPath: string; durationSeconds: number | null; beatWindows: Array<{ index: number; start: number; end: number; narration: string }> }> => {
         await fs.mkdir(workDir, { recursive: true });
 
         // How long each beat holds. With a voice, the plates stretch to cover
@@ -2121,29 +2136,104 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         return { ...framed, beatWindows };
       });
 
-      return finishDraft(rev, revision, {
-        commentary: { caption: script.caption, about: script.about },
-        script,
-        // What actually shipped: a voice skipped at the ceiling is a silent short.
-        voiceover: voice !== null,
-        plateSources,
-        budgetPlan,
-        replans,
-        renderedPath: rendered.outputPath,
-        durationSeconds: rendered.durationSeconds ?? script.beats.reduce((a, b) => a + b.seconds, 0),
-        beatWindows: rendered.beatWindows,
-        // What the viewer actually meets first is beat 1's narration; the
-        // script's `hook` field is the same line when the model follows its
-        // prompt, and when it does not, judging the render against a line
-        // nobody hears (as the 2026-09-08 visual QA did) is the wrong test.
-        hookLine: script.beats[0]?.narration ?? script.hook,
-        guardrailText: [script.caption, script.about, ...script.beats.map((b) => b.narration)].join("\n\n"),
-        captionsExpected: true,
-        estimatedCostUsd: estimate.estimatedTotalUsd,
-        // On a replay of a checkpointed render the helper never ran; the
-        // reviewer then sees "unknown" rather than a claim nobody verified.
-        music: musicOutcome ?? { applied: false, note: "render replayed from checkpoint; bed status not re-derived" },
+      /** One pass through the render and everything after it up to the human gate. */
+      const finishPass = async (passRev: (id: string) => string, dir: string, repick?: ClipDraft["repick"]): Promise<ClipDraft> => {
+        const rendered = await renderPass(passRev, dir);
+        return finishDraft(passRev, revision, {
+          commentary: { caption: script.caption, about: script.about },
+          script,
+          // What actually shipped: a voice skipped at the ceiling is a silent short.
+          voiceover: voice !== null,
+          plateSources: beatPlates.flatMap((p) => p.shots.map((s) => s.source)),
+          budgetPlan,
+          replans,
+          renderedPath: rendered.outputPath,
+          durationSeconds: rendered.durationSeconds ?? script.beats.reduce((a, b) => a + b.seconds, 0),
+          beatWindows: rendered.beatWindows,
+          // What the viewer actually meets first is beat 1's narration; the
+          // script's `hook` field is the same line when the model follows its
+          // prompt, and when it does not, judging the render against a line
+          // nobody hears (as the 2026-09-08 visual QA did) is the wrong test.
+          hookLine: script.beats[0]?.narration ?? script.hook,
+          guardrailText: [script.caption, script.about, ...script.beats.map((b) => b.narration)].join("\n\n"),
+          captionsExpected: true,
+          estimatedCostUsd: estimate.estimatedTotalUsd,
+          // On a replay of a checkpointed render the helper never ran; the
+          // reviewer then sees "unknown" rather than a claim nobody verified.
+          music: musicOutcome ?? { applied: false, note: "render replayed from checkpoint; bed status not re-derived" },
+          ...(repick !== undefined ? { repick } : {}),
+        });
+      };
+
+      const first = await finishPass(rev, workDir);
+
+      // ── 10d: RE-PICK the beats the visual QA said do not fit (2026-09-10) ──
+      //
+      // The QA scores every beat's footage against the line said over it and
+      // names the ones under 5 (`weakBeats`). Until now that name went to the
+      // reviewer and no further: the audit's 2026-09-08 clips shipped with a
+      // concert under a line about hiring because nobody was there to swap
+      // it. Now each named beat (the worst first, at most MAX_REPICK_BEATS)
+      // is searched again with every clip this run has used excluded, so the
+      // library must answer with something else; the short is re-rendered
+      // and re-watched under its own step ids, and the cut the QA scored
+      // better is what reaches the gate. ONE round: a beat still weak after
+      // its second clip ships named, as before. Free apart from the second
+      // QA call (~$0.01) and the relevance thumbnails, and skipped at the
+      // ceiling like everything else that costs.
+      const weak = first.visualQa?.weakBeats ?? [];
+      const stockTool = tools["video.findStockClip"];
+      if (weak.length === 0 || script.format === "text-led" || stockTool === undefined || (await wf.costSoFarUsd()) >= costCapUsd) return first;
+      const repicked = await wf.step.code(rev("10d-repick-weak-beats"), async (): Promise<{ swapped: Array<{ index: number; plate: PlateResult }>; misses: string[] }> => {
+        const swapped: Array<{ index: number; plate: PlateResult }> = [];
+        const misses: string[] = [];
+        const taken = [...usedStockIds];
+        for (const w of [...weak].sort((a, b) => a.relevance - b.relevance).slice(0, MAX_REPICK_BEATS)) {
+          const beat = script.beats[w.index - 1];
+          if (beat === undefined) continue;
+          const query = beat.stockQuery ?? stockQueryFromBrief(beat.visualBrief);
+          const found = await stockTool.execute(
+            { repoRoot, runId: wf.runId, query, minDurationSeconds: beat.seconds, excludeIds: [...taken], outputName: `plate-${w.index}-repick`, relevance: { brief: beat.visualBrief, narration: beat.narration } },
+            { ctx },
+          );
+          if (found.status !== "success") {
+            misses.push(`beat ${w.index} ("${query}"): ${found.status}${"reason" in found ? ` (${found.reason})` : ""}`);
+            continue;
+          }
+          const result = found.result as { path: string; pexelsId: number; sourceUrl: string };
+          taken.push(result.pexelsId);
+          swapped.push({ index: w.index, plate: { path: path.resolve(repoRoot, result.path), source: "stock", stockId: result.pexelsId, sourceUrl: result.sourceUrl } });
+        }
+        return { swapped, misses };
       });
+      const named = weak.map((w) => `beat ${w.index}`).join(", ");
+      if (repicked.swapped.length === 0) {
+        return { ...first, repick: { beats: [], note: `the visual QA scored ${named} under 5 and the library had nothing else for ${repicked.misses.join("; ")}` } };
+      }
+      // Applied OUTSIDE the step from its recorded result, so a replay that
+      // skips the step still renders the swapped plates.
+      for (const s of repicked.swapped) {
+        beatPlates[s.index - 1] = { shots: [s.plate] };
+        if (s.plate.stockId !== undefined) usedStockIds.push(s.plate.stockId);
+      }
+      const swappedBeats = repicked.swapped.map((s) => s.index);
+      const because = `${swappedBeats.map((i) => `beat ${i}`).join(", ")} re-sourced after the visual QA scored the footage under 5${repicked.misses.length > 0 ? ` (nothing else for ${repicked.misses.join("; ")})` : ""}`;
+      const passRev = (id: string) => rev(`${id}-repick`);
+      const second = await finishPass(passRev, path.join(workDir, "repick"), { beats: swappedBeats, note: because });
+
+      // The cut the QA scored better ships. A re-render the QA did not get to
+      // watch (an outage between the two calls) ships too — its footage was
+      // at least chosen against the line, where the first's was scored
+      // against it and failed — and the gate then holds for a person, as
+      // any unreviewed clip does.
+      const weakCount = (d: ClipDraft): number => d.visualQa?.weakBeats?.length ?? 0;
+      const worse = second.visualQa !== undefined && first.visualQa !== undefined && ((first.visualQa.passed && !second.visualQa.passed) || weakCount(second) > weakCount(first));
+      if (worse) {
+        return { ...first, repick: { beats: swappedBeats, note: `${because}; the re-render scored worse (${second.visualQa?.reason ?? `${weakCount(second)} weak beat(s)`}), so the first cut ships` } };
+      }
+      const stillWeak = second.visualQa?.weakBeats?.map((w) => `beat ${w.index}`) ?? [];
+      const outcome = second.visualQa === undefined ? "the QA did not watch the re-render" : stillWeak.length === 0 ? "the re-render scored clean" : `the re-render still names ${stillWeak.join(", ")}`;
+      return { ...second, repick: { beats: swappedBeats, note: `${because}; ${outcome}` } };
     };
 
     /**
@@ -2178,10 +2268,11 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       const uploaded = await wf.step.code(rev("10a-upload-clip"), async () => {
         const uploadTool = tools["video.uploadDeliverable"];
         if (!uploadTool) return null;
-        // Revision-suffixed for the same reason the work directory is: a
-        // revision must not overwrite the object the previous round's gate
-        // record links a reviewer to.
-        const objectName = revision === 0 ? "clip.mp4" : `clip-r${revision}.mp4`;
+        // Suffixed like the step ids (`clip.mp4`, `clip-r1.mp4`,
+        // `clip-repick.mp4`) for the same reason the work directory is: a
+        // revision or a re-pick must not overwrite the object the previous
+        // cut's gate record links a reviewer to.
+        const objectName = `${rev("clip")}.mp4`;
         const outcome = await uploadTool.execute(
           { localPath: renderedPath, objectPath: `tiktok/${wf.clientSlug}/${wf.runId}/${objectName}`, contentType: "video/mp4" },
           { ctx },
@@ -2307,6 +2398,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         ...(draft.replans !== undefined ? { replans: draft.replans } : {}),
         ...(draft.music !== undefined ? { music: draft.music } : {}),
         ...(draft.plateSources !== undefined ? { plateSources: draft.plateSources } : {}),
+        ...(draft.repick !== undefined ? { repick: draft.repick } : {}),
         ...(visualQa.skipped
           ? {}
           : {
@@ -2365,6 +2457,8 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           ...(draft.budgetPlan !== undefined ? { budgetPlan: draft.budgetPlan } : {}),
           ...(draft.replans !== undefined ? { replans: draft.replans } : {}),
           ...(draft.music !== undefined ? { music: draft.music } : {}),
+          // Which beats were re-sourced after the QA, and how the re-render fared.
+          ...(draft.repick !== undefined ? { repick: draft.repick } : {}),
         },
         requiredRole: "account_manager",
         // An unanswered gate approves itself after an hour ONLY for a clip the
@@ -2436,6 +2530,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
             // portal can show a flagged clip as flagged after the fact.
             ...(review.output.visualQa !== undefined ? { visualQa: review.output.visualQa } : {}),
             ...(review.output.plateSources !== undefined ? { plateSources: review.output.plateSources } : {}),
+            ...(review.output.repick !== undefined ? { repick: review.output.repick } : {}),
             costSoFarUsd: review.output.costSoFarUsd,
             ...(review.output.estimatedCostUsd !== undefined ? { estimatedCostUsd: review.output.estimatedCostUsd } : {}),
             maxCostUsd: costCapUsd,
