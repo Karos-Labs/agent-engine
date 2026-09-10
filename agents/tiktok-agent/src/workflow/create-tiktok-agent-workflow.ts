@@ -1317,7 +1317,9 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
        * FLAGGED with the model's reason, and the person decides. Absent when
        * the gate is not registered in the deployment.
        */
-      visualQa?: { passed: boolean; reason?: string; evidence: string[] };
+      visualQa?: { passed: boolean; reason?: string; evidence: string[]; weakBeats?: Array<{ index: number; relevance: number; note: string }> };
+      /** The beats' time windows in the finished clip, for the visual QA's per-beat relevance read. Original shorts only. */
+      beatWindows?: Array<{ index: number; start: number; end: number; narration: string }>;
       /** Per beat, where the b-roll came from — so a reviewer knows which plates are real footage. Original shorts only. */
       plateSources?: PlateSource[];
       /** What the run had spent when this draft reached the gate, so the reviewer sees the number beside the play button. */
@@ -1900,7 +1902,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
 
       // ── 08: render — hold each plate for its beat, lay the voice under,
       //        burn the captions, frame it. ──
-      const rendered = await wf.step.code(rev("08-render"), async (): Promise<{ outputPath: string; durationSeconds: number | null }> => {
+      const rendered = await wf.step.code(rev("08-render"), async (): Promise<{ outputPath: string; durationSeconds: number | null; beatWindows: Array<{ index: number; start: number; end: number; narration: string }> }> => {
         await fs.mkdir(workDir, { recursive: true });
 
         // How long each beat holds. With a voice, the plates stretch to cover
@@ -2007,7 +2009,11 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         // Plates are portrait: fill the picture area edge to edge rather than
         // letterboxing a 9:16 clip inside a 9:12.7 region (the 2026-09-08
         // render had dark side bars either side of every plate).
-        return brandFrame(bedded.path, workDir, srtPath, titleCards, "cover", captionFontFor(language));
+        const framed = await brandFrame(bedded.path, workDir, srtPath, titleCards, "cover", captionFontFor(language));
+        // Where each beat's footage sits in the finished clip, for the QA's
+        // per-beat relevance read (the cold open is part of beat 1's window).
+        const beatWindows = script.beats.map((b, i) => ({ index: i + 1, start: Number((i === 0 ? 0 : boundaries[i - 1]!).toFixed(2)), end: Number(boundaries[i]!.toFixed(2)), narration: b.narration }));
+        return { ...framed, beatWindows };
       });
 
       return finishDraft(rev, revision, {
@@ -2020,6 +2026,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         replans,
         renderedPath: rendered.outputPath,
         durationSeconds: rendered.durationSeconds ?? script.beats.reduce((a, b) => a + b.seconds, 0),
+        beatWindows: rendered.beatWindows,
         // What the viewer actually meets first is beat 1's narration; the
         // script's `hook` field is the same line when the model follows its
         // prompt, and when it does not, judging the render against a line
@@ -2042,7 +2049,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
     const finishDraft = async (
       rev: (id: string) => string,
       revision: number,
-      draft: Omit<ClipDraft, "uploaded" | "costSoFarUsd"> & { guardrailText: string; captionsExpected: boolean },
+      draft: Omit<ClipDraft, "uploaded" | "costSoFarUsd" | "visualQa"> & { guardrailText: string; captionsExpected: boolean },
     ): Promise<ClipDraft> => {
       const { renderedPath } = draft;
 
@@ -2114,7 +2121,8 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       //         is there to make and was never shown. A deployment without the
       //         gate records that it was skipped rather than pretending it
       //         passed. ──
-      const visualQa = await wf.step.code(rev("10b-visual-qa"), async (): Promise<{ skipped: true; note: string } | { skipped: false; passed: boolean; reason?: string; evidence: string[] }> => {
+      type WeakBeat = { index: number; relevance: number; note: string };
+      const visualQa = await wf.step.code(rev("10b-visual-qa"), async (): Promise<{ skipped: true; note: string } | { skipped: false; passed: boolean; reason?: string; evidence: string[]; weakBeats: WeakBeat[] }> => {
         const gate = tools["video.visualQaGate"];
         if (gate === undefined) return { skipped: true, note: "video.visualQaGate is not registered in this deployment" };
         if ((await wf.costSoFarUsd()) >= costCapUsd) return { skipped: true, note: "skipped: the run has reached its cost ceiling; the reviewer judges the clip unaided" };
@@ -2130,6 +2138,9 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
               brandColors: [videoBrand.ground, videoBrand.fg, ...(videoBrand.accent ? [videoBrand.accent] : [])],
               ...(videoBrand.language ? { language: videoBrand.language } : {}),
               format,
+              // The beats and their windows, so the model says WHICH shot is
+              // wallpaper under its line, not only that one is.
+              ...(draft.beatWindows !== undefined && draft.beatWindows.length > 0 ? { beats: draft.beatWindows.slice(0, 6) } : {}),
             },
           },
           { ctx },
@@ -2140,13 +2151,16 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         // the human to judge it unaided, recorded as such — never a failed
         // run over a review nobody got to give.
         if (outcome.status !== "success") return { skipped: true, note: `video.visualQaGate ${outcome.status}${"reason" in outcome ? ` (${outcome.reason})` : ""}; the reviewer judges the clip unaided` };
-        const verdict = outcome.result as GateVerdict;
+        const verdict = outcome.result as GateVerdict & { beats?: WeakBeat[] };
         if (verdict.verdict === "tooling_error") return { skipped: true, note: `video.visualQaGate could not review the clip (${verdict.reason}); the reviewer judges it unaided` };
+        // A beat scored under 5 is footage that does not fit its line: named
+        // to the reviewer beside the play button, never a hold on its own.
+        const weakBeats = (verdict.beats ?? []).filter((b) => b.relevance < 5);
         if (verdict.verdict === "content_fail") {
           console.warn(`${rev("10b-visual-qa")}: visual QA flagged the clip, shipping to review flagged rather than held: ${verdict.reason}`);
-          return { skipped: false, passed: false, reason: verdict.reason, evidence: verdict.evidence };
+          return { skipped: false, passed: false, reason: verdict.reason, evidence: verdict.evidence, weakBeats };
         }
-        return { skipped: false, passed: true, evidence: verdict.evidence };
+        return { skipped: false, passed: true, evidence: verdict.evidence, weakBeats };
       });
 
       // ── 10: terminal topic guardrail ──
@@ -2188,7 +2202,16 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         ...(draft.replans !== undefined ? { replans: draft.replans } : {}),
         ...(draft.music !== undefined ? { music: draft.music } : {}),
         ...(draft.plateSources !== undefined ? { plateSources: draft.plateSources } : {}),
-        ...(visualQa.skipped ? {} : { visualQa: { passed: visualQa.passed, ...(visualQa.reason !== undefined ? { reason: visualQa.reason } : {}), evidence: visualQa.evidence } }),
+        ...(visualQa.skipped
+          ? {}
+          : {
+              visualQa: {
+                passed: visualQa.passed,
+                ...(visualQa.reason !== undefined ? { reason: visualQa.reason } : {}),
+                evidence: visualQa.evidence,
+                ...(visualQa.weakBeats.length > 0 ? { weakBeats: visualQa.weakBeats } : {}),
+              },
+            }),
       };
     };
 

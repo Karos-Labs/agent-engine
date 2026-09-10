@@ -92,7 +92,7 @@ function stubTools(
     transcribeVoice?: boolean;
     /** `"down"` makes the TTS tool answer tooling_error, as every route did under the 2026-09-10 billing hold. */
     voice?: "ok" | "down";
-    qa?: "pass" | "fail" | "none" | "down";
+    qa?: "pass" | "fail" | "none" | "down" | "weak-beat";
     /** How the stock library answers. Default `hit`; `none` leaves it unregistered. */
     stock?: "hit" | "miss" | "hit-then-miss" | "none";
     /** Whether the still tier (image.generate + video.stillToClip) is registered. Default true. */
@@ -266,6 +266,18 @@ function stubTools(
       (args) => {
         qaArgs.push(args as Record<string, unknown>);
         if (opts.qa === "down") return { status: "tooling_error" as const, reason: "the vision model call failed — 403 Lightning dunning decision is deny" };
+        if (opts.qa === "weak-beat") {
+          return ok({
+            verdict: "pass" as const,
+            evidence: ["overallScore: 8", "beat 1 relevance: 9", "beat 2 relevance: 3 (a concert under a line about hiring)", "beat 3 relevance: 8"],
+            toolVersion: "1.2.0",
+            beats: [
+              { index: 1, relevance: 9, note: "" },
+              { index: 2, relevance: 3, note: "a concert under a line about hiring" },
+              { index: 3, relevance: 8, note: "" },
+            ],
+          });
+        }
         return opts.qa === "fail"
           ? ok({ verdict: "content_fail" as const, evidence: ["artifacts: warped hands in beat 2"], reason: "rendering artefacts on an original short: warped hands in beat 2", toolVersion: "1.0.0" })
           : ok({ verdict: "pass" as const, evidence: ["overallScore: 9"], toolVersion: "1.0.0" });
@@ -576,6 +588,20 @@ describe("original short: script → plates → voice → captions → sequence 
     const srt = await fs.readFile(h.frameArgs[0]!["srtPath"] as string, "utf8");
     expect(srt).toContain("The first hire is a bet");
     expect(h.deliverables[0]).toMatchObject({ voiceover: false });
+  }, 20_000);
+
+  it("the visual QA is told each beat's window and line, and a beat whose footage does not fit is named on the deliverable", async () => {
+    const h = stubTools({ qa: "weak-beat" });
+    const result = await run(h, "run-os-weak-beat");
+    expect(result.status).toBe("completed");
+    const expectations = h.qaArgs[0]!["expectations"] as { beats?: Array<{ index: number; start: number; end: number; narration: string }> };
+    expect(expectations.beats).toHaveLength(3);
+    expect(expectations.beats![0]).toMatchObject({ index: 1, start: 0, narration: VOICED_SCRIPT.beats[0]!.narration });
+    expect(expectations.beats![1]!.start).toBeCloseTo(expectations.beats![0]!.end, 2);
+    expect(expectations.beats![2]!.end).toBeCloseTo(13.5, 1);
+    const shipped = h.deliverables[0] as { visualQa?: { passed: boolean; weakBeats?: Array<{ index: number; relevance: number }> } };
+    expect(shipped.visualQa?.passed).toBe(true);
+    expect(shipped.visualQa?.weakBeats).toEqual([{ index: 2, relevance: 3, note: "a concert under a line about hiring" }]);
   }, 20_000);
 
   it("a visual QA route outage ships the clip to the human unreviewed, recorded as skipped, never a failed run", async () => {

@@ -9,7 +9,11 @@ import { stripCodeFence, type VisionAnalysisClient, type VisionPart } from "./vi
 // generated video — the rubric stops treating real footage as a defect, the
 // hook counts as landed when it has started within two seconds, and an
 // artefact lowers the score instead of failing the clip outright.
-const TOOL_VERSION = "1.1.0";
+// 1.2.0 (2026-09-10): per-beat relevance. Given the beats' time windows and
+// lines, the reviewer scores how well each window's footage fits the line
+// said over it; the verdict carries `beats` and one evidence line per beat,
+// so the human at the gate sees WHICH shot is wallpaper, not only that one is.
+const TOOL_VERSION = "1.2.0";
 
 /**
  * `video.visualQaGate` — a vision model WATCHES the finished clip before it
@@ -54,6 +58,18 @@ export const VisualQaExpectationsSchema = z.object({
   voiceoverExpected: z.boolean().describe("Whether a voiceover should be audible; steers the caption-sync check."),
   brandColors: z.array(z.string().regex(HEX6)).optional().describe("The client's palette (hex6), so an off-brand frame is noticed."),
   language: z.string().optional().describe("BCP-47 language the captions/voiceover should be in."),
+  beats: z
+    .array(
+      z.object({
+        index: z.number().int().positive().describe("1-based beat number."),
+        start: z.number().nonnegative().describe("Seconds into the clip the beat's footage starts."),
+        end: z.number().positive().describe("Seconds into the clip the beat's footage ends."),
+        narration: z.string().min(1).max(400).describe("The line spoken (or shown) over this window."),
+      }),
+    )
+    .max(6)
+    .optional()
+    .describe("An original short's beats with their time windows, so the reviewer can score how well each window's footage fits the line said over it. Absent: no per-beat scoring."),
   format: z
     .enum(["commentary-clip", "original-short"])
     .describe("Which pipeline produced it. An `original-short` is stock footage and stills under a voice; a `commentary-clip` is cut from licensed source footage. Since 2026-09-09 neither is judged for generation artefacts as a hard rule: an artefact lowers the score and is reported in evidence."),
@@ -86,8 +102,13 @@ export const VisualQaReportSchema = z.object({
   brandFrameIntact: z.boolean(),
   looksAiGenerated: z.enum(["no", "slightly", "obviously"]),
   notes: z.array(z.string()).default([]),
+  /** Per beat, how well the footage in its window fits the line said over it (0-10). Only when `expectations.beats` was given. */
+  beats: z.array(z.object({ index: z.number().int().positive(), relevance: z.number().min(0).max(10), note: z.string().max(300).default("") })).default([]),
 });
 export type VisualQaReport = z.infer<typeof VisualQaReportSchema>;
+
+/** A beat whose footage the reviewer scored under this does not fit its line; named to the human, never a hold on its own. */
+export const WEAK_BEAT_RELEVANCE = 5;
 
 export interface VisualQaGateOptions {
   /** The vision model. Absent → `not_available` per call, never a construction-time throw. */
@@ -129,6 +150,13 @@ function buildReviewPrompt(expectations: VisualQaExpectations): string {
     expectations.brandColors !== undefined && expectations.brandColors.length > 0
       ? `- Brand colours the frame (bars, header, caption styling) should use: ${expectations.brandColors.join(", ")}`
       : undefined,
+    ...(expectations.beats !== undefined && expectations.beats.length > 0
+      ? [
+          "",
+          "The beats, with the window each one's footage plays in. For EACH, score 0-10 how well the footage in that window fits the line said over it: 9-10 the picture is that scene or a natural metaphor for the line; 6-8 plausible, a viewer would not notice; 0-5 unrelated — a concert under a line about a boardroom, a gaming rig under a line about a server room. Text on the brand ground counts as fitting (it is the line itself).",
+          ...expectations.beats.map((b) => `- Beat ${b.index} (${b.start.toFixed(1)}s–${b.end.toFixed(1)}s): "${b.narration}"`),
+        ]
+      : []),
     "",
     "Answer with JSON only, no prose outside it, in exactly this shape:",
     "{",
@@ -138,7 +166,8 @@ function buildReviewPrompt(expectations: VisualQaExpectations): string {
     '  "artifacts": ["only genuine defects you saw: morphing, warped hands or faces, flicker, frozen frames, black frames, letterboxing inside the frame"],',
     '  "brandFrameIntact": true|false (bars/header/logo present, not cropped or covered),',
     '  "looksAiGenerated": "no"|"slightly"|"obviously",',
-    '  "notes": ["anything else the editor should hear, one observation per line"]',
+    '  "notes": ["anything else the editor should hear, one observation per line"]' + (expectations.beats !== undefined && expectations.beats.length > 0 ? "," : ""),
+    ...(expectations.beats !== undefined && expectations.beats.length > 0 ? ['  "beats": [{"index": 1, "relevance": 0-10, "note": "<one short line on the fit>"}, ...one per beat]'] : []),
     "}",
     "",
     "Be exact and unforgiving: an artefact you are unsure about belongs in notes, not artifacts; an artefact you saw belongs in artifacts even if brief.",
@@ -158,6 +187,7 @@ function renderEvidence(report: VisualQaReport): string[] {
     `artifacts: ${report.artifacts.length > 0 ? report.artifacts.join("; ") : "none"}`,
     `brandFrameIntact: ${report.brandFrameIntact}`,
     `looksAiGenerated: ${report.looksAiGenerated}`,
+    ...report.beats.map((b) => `beat ${b.index} relevance: ${b.relevance}${b.note ? ` (${b.note})` : ""}`),
     ...report.notes.map((note) => `note: ${note}`),
   ];
 }
@@ -177,12 +207,15 @@ export function visualQaFailures(report: VisualQaReport, input: Pick<VisualQaGat
   return reasons;
 }
 
+/** The gate's verdict plus the per-beat relevance read, when beats were given. Structurally a `GateVerdict`, so every gate consumer keeps working. */
+export type VisualQaVerdict = GateVerdict & { beats?: Array<{ index: number; relevance: number; note: string }> };
+
 export function createVisualQaGate(options: VisualQaGateOptions = {}) {
   const env = options.env ?? {};
   const model = options.model ?? env["VIDEO_QA_MODEL"]?.trim() ?? DEFAULT_VIDEO_QA_MODEL;
   const maxInlineBytes = options.maxInlineBytes ?? DEFAULT_MAX_INLINE_BYTES;
 
-  return defineTool<VisualQaGateInput, GateVerdict>({
+  return defineTool<VisualQaGateInput, VisualQaVerdict>({
     name: "video.visualQaGate",
     description:
       "Has a vision model watch the finished TikTok as a senior short-form editor would — hook timing, caption presence/legibility/sync, rendering artefacts, brand frame, how AI-made it looks — and returns a GateVerdict. content_fail below the minimum score, on an obviously-generated look, on missing expected captions, or on any artefact in an original short. Reports not_available when no vision client is configured.",
@@ -287,13 +320,17 @@ export function createVisualQaGate(options: VisualQaGateOptions = {}) {
 
       const evidence = renderEvidence(report);
       const failures = visualQaFailures(report, input);
+      // Only beats the caller actually named, so a model that invents a sixth
+      // beat cannot point the reviewer at footage that does not exist.
+      const wanted = new Set((input.expectations.beats ?? []).map((b) => b.index));
+      const beats = report.beats.filter((b) => wanted.has(b.index)).map((b) => ({ index: b.index, relevance: b.relevance, note: b.note }));
       if (failures.length > 0) {
-        return success<GateVerdict>({ verdict: "content_fail", evidence, reason: failures.join("; "), toolVersion: TOOL_VERSION }, usage);
+        return success<VisualQaVerdict>({ verdict: "content_fail", evidence, reason: failures.join("; "), toolVersion: TOOL_VERSION, beats }, usage);
       }
       // The billed units, spelled out at the success return (the shape
       // `cost-accuracy-golden.test.ts` reads for) — the same two SKUs the
       // early returns above report through `usage`.
-      return success<GateVerdict>({ verdict: "pass", evidence, toolVersion: TOOL_VERSION }, [
+      return success<VisualQaVerdict>({ verdict: "pass", evidence, toolVersion: TOOL_VERSION, beats }, [
         { model: "gemini-2.5-flash-video-qa-input-token", unit: "input-token", quantity: promptTokens },
         { model: "gemini-2.5-flash-video-qa-output-token", unit: "output-token", quantity: outputTokens },
       ]);
