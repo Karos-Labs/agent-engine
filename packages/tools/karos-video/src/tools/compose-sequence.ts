@@ -5,7 +5,17 @@ import { defineTool, success, toolingError } from "@agent-engine/tool-common";
 import { resolveRuntime, type KarosVideoRuntime, type KarosVideoToolOptions } from "../config.js";
 import { assertToolPath, probeDuration } from "./clip-compose.js";
 
-const TOOL_VERSION = "1.0.0";
+// 1.1.0 (2026-09-10) — `move` per clip: a slow 6% push-in or pull-back paced
+// over the clip's hold, on a 2x-oversampled frame so it does not shimmer.
+// Every 2026-09-08/10 short played its stock shots dead still; a slow move
+// under a spoken line is the cheapest thing that reads as filmed rather than
+// assembled. Static by default; a clip without a hold cannot be paced and
+// stays static whatever it asks.
+const TOOL_VERSION = "1.1.0";
+
+/** Total zoom of a `move` over the hold: 1.0 → 1.06. Light on purpose: a viewer should feel it, not see it. */
+export const MOVE_ZOOM_SPAN = 0.06;
+const OUTPUT_FPS = 30;
 
 /**
  * `video.composeSequence` — N generated/cut plates → one 9:16 clip, with an
@@ -42,8 +52,27 @@ export const ComposeSequenceClipSchema = z.object({
     .positive()
     .optional()
     .describe("Trim/extend this clip to exactly this many seconds (freeze the last frame if it is shorter). Absent means the clip's own length."),
+  move: z
+    .enum(["none", "push-in", "pull-back"])
+    .default("none")
+    .describe("A slow 6% zoom paced over the clip's holdSeconds: push-in grows, pull-back shrinks, none stays static. Needs holdSeconds; without one the clip stays static."),
 });
 export type ComposeSequenceClip = z.infer<typeof ComposeSequenceClipSchema>;
+
+/**
+ * The filter for one clip's `move`, or "" for none: the frame is oversampled
+ * 2x, `zoompan` advances a constant zoom step per output frame (d=1: one
+ * output frame per input frame, so `on` runs over the whole hold) and sizes
+ * back to the canvas. Exported for the test.
+ */
+export function moveFilter(move: ComposeSequenceClip["move"], holdSeconds: number | undefined, w: number, h: number): string {
+  if (move === "none" || holdSeconds === undefined) return "";
+  const frames = Math.max(2, Math.round(holdSeconds * OUTPUT_FPS));
+  const step = (MOVE_ZOOM_SPAN / (frames - 1)).toFixed(6);
+  const span = (1 + MOVE_ZOOM_SPAN).toFixed(3);
+  const zoom = move === "push-in" ? `min(1+on*${step},${span})` : `max(${span}-on*${step},1)`;
+  return `,scale=${w * 2}:${h * 2},zoompan=z='${zoom}':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=${w}x${h}:fps=${OUTPUT_FPS},setsar=1,format=yuv420p`;
+}
 
 export const ComposeSequenceInputSchema = z.object({
   clips: z.array(ComposeSequenceClipSchema).min(1).max(8).describe("The plates to concatenate, in order. 1 to 8."),
@@ -115,6 +144,9 @@ export function buildComposeSequenceArgs(input: ComposeSequenceInput, probe: Com
         chain += `,tpad=stop_mode=clone:stop_duration=${secs(clip.holdSeconds - probed)}`;
       }
     }
+    // The move comes AFTER the hold is fixed, so a frozen tail keeps moving
+    // and the zoom is paced over exactly the seconds the plate is on screen.
+    chain += moveFilter(clip.move, clip.holdSeconds, w, h);
     filters.push(`[${i}:v]${chain}[v${i}]`);
     effective.push(clip.holdSeconds ?? probed);
   }
