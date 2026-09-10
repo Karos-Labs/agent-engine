@@ -8,7 +8,10 @@ import { VideoTranscriptSchema, type VideoTranscript } from "../types.js";
 import { probeDuration } from "./clip-compose.js";
 
 /** 1.1.0 (2026-09-09): reports per-second usage against `elevenlabs-scribe` so a transcription is billed like every other media purchase. */
-const TOOL_VERSION = "1.1.0";
+// 1.2.0 (2026-09-10): the result carries `durationSeconds` (the length ffprobe
+// measured for billing). A source with no speech returns no words and, until
+// now, nothing else; the TikTok agent needs its length to cut plates from it.
+const TOOL_VERSION = "1.2.0";
 /** The `UNIT_PRICING` row this tool bills against, unit `second`. */
 export const ELEVENLABS_SCRIBE_SKU = "elevenlabs-scribe";
 const ELEVENLABS_ENDPOINT = "https://api.elevenlabs.io/v1/speech-to-text";
@@ -144,7 +147,7 @@ export function createTranscribe(options: CreateTranscribeOptions = {}) {
 
       const body = (await response.json()) as ElevenLabsSpeechToTextResponse;
       const words = (body.words ?? []).map((w) => ({ type: w.type, text: w.text, start: w.start, end: w.end }));
-      const parsed = VideoTranscriptSchema.safeParse({ words });
+      const parsed = VideoTranscriptSchema.safeParse({ words, ...(audioSeconds !== null && audioSeconds > 0 ? { durationSeconds: audioSeconds } : {}) });
       if (!parsed.success) {
         return toolingError(`ElevenLabs response did not match the expected transcript shape: ${parsed.error.message}`);
       }
