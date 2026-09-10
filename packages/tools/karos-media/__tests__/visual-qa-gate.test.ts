@@ -37,6 +37,7 @@ const GOOD_REPORT: VisualQaReport = {
   artifacts: [],
   brandFrameIntact: true,
   looksAiGenerated: "no",
+  thirdPartyMarks: [],
   notes: ["pacing is tight"],
   beats: [],
 };
