@@ -1458,7 +1458,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       workDir: string,
       srtPath: string | undefined,
       overlays: readonly TitleCard[] = [],
-      fit: "contain" | "cover" = "contain",
+      fit: "contain" | "cover" | "blur-fill" = "contain",
       captionFontName?: string,
     ): Promise<{ outputPath: string; durationSeconds: number | null }> => {
       const { logoPath, logoScrim } = await prepareLogo(workDir);
@@ -1687,7 +1687,11 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           await fs.writeFile(srtPath, srt, "utf8");
         }
 
-        return brandFrame(clipPath, workDir, srtPath, [], "contain", captionFontFor(videoBrand.language));
+        // A client's 16:9 frame on a 9:16 short (2026-09-10): the whole picture
+        // kept, the letterbox filled with a blurred copy of it rather than flat
+        // ground, the way every podcast clip on the platform is cut. A crop
+        // would take the faces; flat bars read as a screen recording.
+        return brandFrame(clipPath, workDir, srtPath, [], "blur-fill", captionFontFor(videoBrand.language));
       });
 
       return finishDraft(rev, revision, {

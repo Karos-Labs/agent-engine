@@ -115,6 +115,13 @@ describe("buildBrandFrameFilter", () => {
     expect(cover).toContain("pad=1080:1920:0:200:color=0x17181C");
   });
 
+  it("fills the letterbox with a blurred, darkened copy of the clip on fit: blur-fill, keeping the whole picture", () => {
+    const filter = buildBrandFrameFilter({ ...base, fit: "blur-fill" });
+    expect(filter).toContain("[0:v]split[bgsrc][fgsrc];[bgsrc]scale=1080:1520:force_original_aspect_ratio=increase,crop=1080:1520,boxblur=40:2,eq=brightness=-0.08[bg];[fgsrc]scale=1080:1520:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,pad=1080:1520:");
+    expect(filter).toContain("pad=1080:1920:0:200:color=0x17181C");
+    expect(filter.endsWith("[out]")).toBe(true);
+  });
+
   it("routes through an overlay chain when a logo is present", () => {
     const filter = buildBrandFrameFilter({ ...base, brand: { ...base.brand, logoPath: "logo.png" } });
     expect(filter).toContain("[1:v]scale=-1:110[logo]");
