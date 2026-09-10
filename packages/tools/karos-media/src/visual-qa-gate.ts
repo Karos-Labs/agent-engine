@@ -5,7 +5,11 @@ import type { GateVerdict } from "@agent-engine/core";
 import { defineTool, notAvailable, success, toolingError } from "@agent-engine/tool-common";
 import { stripCodeFence, type VisionAnalysisClient, type VisionPart } from "./visual-patterns.js";
 
-const TOOL_VERSION = "1.0.0";
+// 1.1.0 (2026-09-09): an original short is stock footage and stills, not
+// generated video — the rubric stops treating real footage as a defect, the
+// hook counts as landed when it has started within two seconds, and an
+// artefact lowers the score instead of failing the clip outright.
+const TOOL_VERSION = "1.1.0";
 
 /**
  * `video.visualQaGate` — a vision model WATCHES the finished clip before it

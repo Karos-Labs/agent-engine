@@ -80,6 +80,18 @@ export const TikTokClipConfigSchema = z.object({
   voiceLanguage: z.string().min(2).optional(),
   /** Provider voice id/name for the voiceover. Provider default when absent. */
   voiceName: z.string().min(1).optional(),
+  /** Speech tempo for the voiceover, 1.0 = the provider's natural pace. A short reads faster than a podcast; 1.05–1.15 is usual. */
+  voiceSpeakingRate: z.number().min(0.7).max(1.3).optional(),
+  /**
+   * The music bed under an original short: an https:// URL to a track the
+   * client holds the rights to (mp3/m4a/wav). Looped or trimmed to the
+   * picture, ducked under the voice, faded out. Absent means no bed, and the
+   * run says so in the gate payload rather than holding: a short with no
+   * music is a worse short, not a failed one.
+   */
+  musicTrackUri: z.string().url().regex(/^https:\/\//i, "musicTrackUri must be an https:// URL").optional(),
+  /** Level of the bed when nobody is speaking, in dB (default -16). */
+  musicGainDb: z.number().max(0).min(-40).optional(),
   /** Whether generated b-roll may contain people. Off by default: faces are where generated footage most often looks generated. */
   allowPeopleInGeneratedFootage: z.boolean().default(false),
   /**

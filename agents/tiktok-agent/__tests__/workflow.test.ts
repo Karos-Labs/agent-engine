@@ -628,7 +628,8 @@ describe("tiered source cascade", () => {
     // plates are assembled, framed and gated like any other clip.
     expect(h.calls).not.toContain("video.transcribe");
     expect(h.calls).not.toContain("video.cutClip");
-    expect(h.calls.filter((c) => c === "video.findStockClip")).toHaveLength(GOOD_SCRIPT.beats.length);
+    // One search per beat, plus a second shot for each beat of six seconds or more (two of the three).
+    expect(h.calls.filter((c) => c === "video.findStockClip")).toHaveLength(GOOD_SCRIPT.beats.length + 2);
     expect(h.calls).toContain("video.composeSequence");
     expect(h.calls).toContain("video.brandFrame");
     expect(h.calls).toContain("video.selfEvalGate");

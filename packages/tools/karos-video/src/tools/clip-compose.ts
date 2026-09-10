@@ -13,7 +13,10 @@ import { assertNoTraversalOrNul, assertWithinTenantWorkRoot } from "../sandbox.j
 // the caption font/size/outline are explicit instead of the renderer's defaults.
 // 1.1.1 — `fit: "cover"` scales the clip to FILL the picture area and crops the
 // overflow (for portrait plates), where the default `contain` letterboxes it.
-const TOOL_VERSION = "1.1.1";
+// 1.2.0 (2026-09-09): the series header, @handle and title cards are one
+// libass script (`buildFurnitureAss`) instead of drawtext, so any script gets
+// bidi and shaping; `sanitizeOverlayText` keeps non-ASCII letters.
+const TOOL_VERSION = "1.2.0";
 
 /**
  * The pure-ffmpeg clip pipeline: `video.cutClip` and `video.brandFrame`.
@@ -42,10 +45,50 @@ const HEX6 = /^#[0-9a-fA-F]{6}$/;
  * the characters that carry meaning inside an ffmpeg filtergraph. Stripped,
  * not escaped: a series header or an @handle that loses a stray colon is
  * still itself; a broken filtergraph is a failed render.
+ *
+ * Letters and digits in ANY script survive (2026-09-09). The previous
+ * `[^A-Za-z0-9 …]` allowlist deleted every Hebrew, Arabic, Cyrillic and CJK
+ * character, so a Hebrew client's series header rendered as an empty bar.
  */
 export function sanitizeOverlayText(text: string): string {
-  return text.replace(/[^A-Za-z0-9 @#&+.,|_\-!?]/g, "").trim().slice(0, 60);
+  return text
+    .replace(/[^\p{L}\p{N}\p{M} @#&+.,|_\-!?]/gu, "")
+    .trim()
+    .slice(0, 60);
 }
+
+/** Text inside an ASS event: braces open override blocks and a backslash opens a tag, so both are replaced; newlines become ASS line breaks. */
+export function sanitizeAssText(text: string): string {
+  return text
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/[{}]/g, (c) => (c === "{" ? "(" : ")"))
+    .replace(/\\/g, "/")
+    .trim();
+}
+
+/** `#RRGGBB` (+ alpha 0-1, 1 = opaque) → ASS `&HAABBGGRR`. */
+export function hexToAss(hex: string, alpha = 1): string {
+  const r = hex.slice(1, 3);
+  const g = hex.slice(3, 5);
+  const b = hex.slice(5, 7);
+  const a = Math.round((1 - Math.min(1, Math.max(0, alpha))) * 255)
+    .toString(16)
+    .padStart(2, "0")
+    .toUpperCase();
+  return `&H${a}${b}${g}${r}`.toUpperCase().replace("&H", "&H");
+}
+
+function assTime(seconds: number): string {
+  const clamped = Math.max(0, seconds);
+  const h = Math.floor(clamped / 3600);
+  const m = Math.floor((clamped % 3600) / 60);
+  const s = Math.floor(clamped % 60);
+  const cs = Math.round((clamped - Math.floor(clamped)) * 100);
+  return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${String(Math.min(cs, 99)).padStart(2, "0")}`;
+}
+
+/** Long enough to outlast any clip this pipeline renders: the header and handle are on screen for the whole file. */
+const ASS_WHOLE_CLIP_END = "9:59:59.00";
 
 /** `#RRGGBB` → ffmpeg's `0xRRGGBB`. */
 export function hexToFfmpeg(hex: string): string {
@@ -195,11 +238,72 @@ export const BrandFrameInputSchema = z.object({
 });
 export type BrandFrameInput = z.infer<typeof BrandFrameInputSchema>;
 
-/** An overlay whose text has already been written to a file — what the filter graph actually references. */
-export interface BrandFrameOverlayFile {
-  textfile: string;
-  start: number;
-  end: number;
+/**
+ * The brand furniture (series header, @handle, timed title cards) as ONE
+ * libass script, burned by the `subtitles` filter (2026-09-09).
+ *
+ * Until now these were `drawtext` filters. drawtext has no bidi and no
+ * shaping: a Hebrew header came out mirrored, an Arabic one as disconnected
+ * letters, and `sanitizeOverlayText` deleted them anyway. libass runs
+ * FriBidi and HarfBuzz and falls back per glyph through fontconfig, which is
+ * exactly what the captions already got for free — so the furniture now
+ * goes the same way. `PlayResX/Y` is the canvas, so every margin is in
+ * output pixels. Returns `undefined` when there is nothing to draw.
+ */
+export function buildFurnitureAss(
+  input: Pick<BrandFrameInput, "brand" | "canvas" | "barHeight" | "captionStyle">,
+  overlays: readonly BrandFrameOverlay[],
+): string | undefined {
+  const { w, h } = input.canvas;
+  const bar = input.barHeight;
+  const inner = h - 2 * bar;
+  const font = input.captionStyle.fontName;
+  const fg = hexToAss(input.brand.fg);
+  const ground = hexToAss(input.brand.ground);
+  const cardBox = hexToAss(input.brand.ground, 0.72);
+  const transparent = "&HFF000000";
+  const header = input.brand.seriesHeader !== undefined ? sanitizeAssText(input.brand.seriesHeader).slice(0, 60) : "";
+  const handle = input.brand.handle !== undefined ? sanitizeAssText(input.brand.handle).slice(0, 60) : "";
+  const cards = overlays
+    .map((o) => ({ text: wrapOverlayText(sanitizeAssText(o.text)).replace(/\n/g, "\\N"), start: o.start, end: o.end }))
+    .filter((o) => o.text.length > 0 && o.end > o.start);
+  if (header.length === 0 && handle.length === 0 && cards.length === 0) return undefined;
+
+  // Header: centred in the top bar (Alignment 8 = top-centre; MarginV is the
+  // distance from the top edge to the top of the text). Handle: centred in
+  // the bottom bar (Alignment 2 = bottom-centre; MarginV from the bottom).
+  // Card: upper third of the picture, an opaque box (BorderStyle 3) in the
+  // ground colour at 72%, `Outline` doubling as the box padding.
+  const headerSize = 44;
+  const handleSize = 36;
+  const cardSize = Math.round(h * 0.032);
+  const headerMarginV = Math.max(0, Math.round((bar - headerSize * 1.2) / 2));
+  const handleMarginV = Math.max(0, Math.round((bar - handleSize * 1.2) / 2));
+  const cardMarginV = bar + Math.round(inner * 0.07);
+  const style = (name: string, size: number, align: number, marginV: number, box: boolean) =>
+    `Style: ${name},${font},${size},${fg},${fg},${box ? cardBox : transparent},${box ? cardBox : transparent},${box ? -1 : 0},0,0,0,100,100,0,0,${box ? 3 : 1},${box ? 22 : 0},0,${align},80,80,${marginV},1`;
+  const lines = [
+    "[Script Info]",
+    "ScriptType: v4.00+",
+    `PlayResX: ${w}`,
+    `PlayResY: ${h}`,
+    "WrapStyle: 0",
+    "ScaledBorderAndShadow: yes",
+    "",
+    "[V4+ Styles]",
+    "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+    style("Header", headerSize, 8, headerMarginV, false),
+    style("Handle", handleSize, 2, handleMarginV, false),
+    style("Card", cardSize, 8, cardMarginV, true),
+    "",
+    "[Events]",
+    "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+  ];
+  if (header.length > 0) lines.push(`Dialogue: 0,0:00:00.00,${ASS_WHOLE_CLIP_END},Header,,0,0,0,,${header}`);
+  if (handle.length > 0) lines.push(`Dialogue: 0,0:00:00.00,${ASS_WHOLE_CLIP_END},Handle,,0,0,0,,${handle}`);
+  for (const card of cards) lines.push(`Dialogue: 1,${assTime(card.start)},${assTime(card.end)},Card,,0,0,0,,${card.text}`);
+  void ground;
+  return lines.join("\n") + "\n";
 }
 
 /** The libass `force_style` for the captions: bold white, black outline, centred, held clear of the bottom bar. */
@@ -218,14 +322,12 @@ export function captionForceStyle(style: BrandFrameCaptionStyle, canvasH: number
  * between the bars, padded in the brand ground, then text/logo/captions
  * composite on top.
  */
-export function buildBrandFrameFilter(input: BrandFrameInput, overlayFiles: readonly BrandFrameOverlayFile[] = []): string {
+export function buildBrandFrameFilter(input: BrandFrameInput, furnitureAssPath?: string): string {
   const { w, h } = input.canvas;
   const bar = input.barHeight;
   const inner = h - 2 * bar;
   const ground = hexToFfmpeg(input.brand.ground);
-  const fg = hexToFfmpeg(input.brand.fg);
   const hasLogo = input.brand.logoPath !== undefined;
-  const fontName = input.captionStyle.fontName;
 
   // `contain`: scale to fit the region between the bars and letterbox the
   // rest in the ground colour. `cover`: scale to fill it and crop the
@@ -244,31 +346,12 @@ export function buildBrandFrameFilter(input: BrandFrameInput, overlayFiles: read
     filters.push(`drawbox=x=0:y=${bar - 6}:w=${w}:h=6:color=${accent}:t=fill`);
     filters.push(`drawbox=x=0:y=${h - bar}:w=${w}:h=6:color=${accent}:t=fill`);
   }
-  if (input.brand.seriesHeader !== undefined) {
-    const text = sanitizeOverlayText(input.brand.seriesHeader);
-    if (text.length > 0) {
-      filters.push(`drawtext=text='${text}':fontcolor=${fg}:fontsize=44:x=(w-text_w)/2:y=${Math.round(bar / 2)}-text_h/2`);
-    }
-  }
-  if (input.brand.handle !== undefined) {
-    const text = sanitizeOverlayText(input.brand.handle);
-    if (text.length > 0) {
-      filters.push(`drawtext=text='${text}':fontcolor=${fg}:fontsize=36:x=(w-text_w)/2:y=${h - bar}+${Math.round(bar / 2)}-text_h/2`);
-    }
-  }
-  // Title cards: the beat's on-screen line, boxed in the brand ground, in the
-  // upper third of the PICTURE (below the top bar), each shown for its beat.
-  // Above the captions on purpose — the two never share a zone, which is the
-  // overlap a reviewer saw on the 2026-09-07 render (captions across text).
-  if (overlayFiles.length > 0) {
-    const fontSize = Math.round(h * 0.032);
-    const y = bar + Math.round(inner * 0.07);
-    for (const overlay of overlayFiles) {
-      filters.push(
-        `drawtext=textfile='${filterPath(overlay.textfile)}':font='${fontName}':fontcolor=${fg}:fontsize=${fontSize}:line_spacing=10:` +
-          `box=1:boxcolor=${ground}@0.72:boxborderw=22:x=(w-text_w)/2:y=${y}:enable='between(t,${overlay.start},${overlay.end})'`,
-      );
-    }
+  // The furniture (header, handle, title cards) is one libass script —
+  // see `buildFurnitureAss` — burned before the captions so the two never
+  // share a zone: the cards sit in the upper third of the PICTURE, the
+  // captions above the bottom bar.
+  if (furnitureAssPath !== undefined) {
+    filters.push(`subtitles='${filterPath(furnitureAssPath)}'`);
   }
   if (input.srtPath !== undefined) {
     // Forward slashes always: the subtitles filter parses backslashes as
@@ -442,18 +525,19 @@ export function createBrandFrame(options: KarosVideoToolOptions = {}) {
       const outDir = path.dirname(path.resolve(input.outputPath));
       await fs.mkdir(outDir, { recursive: true });
 
-      // drawtext reads its text from a file so nothing in a beat's line (a
-      // quote, a colon, a percent sign) has to survive filtergraph escaping.
-      const overlayFiles: BrandFrameOverlayFile[] = [];
-      for (const [i, overlay] of effective.overlays.entries()) {
-        const wrapped = wrapOverlayText(overlay.text);
-        if (wrapped.length === 0 || overlay.end <= overlay.start) continue;
-        const textfile = path.join(outDir, `overlay-${i + 1}.txt`);
-        await fs.writeFile(textfile, wrapped, "utf8");
-        overlayFiles.push({ textfile, start: overlay.start, end: overlay.end });
+      // Header, handle and title cards as one ASS script next to the output:
+      // libass reads it from a file, so nothing in a beat's line (a quote, a
+      // colon, a percent sign, a right-to-left word) has to survive
+      // filtergraph escaping, and every script gets bidi and shaping.
+      const furniture = buildFurnitureAss(effective, effective.overlays);
+      let furniturePath: string | undefined;
+      if (furniture !== undefined) {
+        furniturePath = path.join(outDir, "furniture.ass");
+        await fs.writeFile(furniturePath, furniture, "utf8");
       }
+      const cardsDrawn = effective.overlays.filter((o) => wrapOverlayText(sanitizeAssText(o.text)).length > 0 && o.end > o.start).length;
 
-      const filter = buildBrandFrameFilter(effective, overlayFiles);
+      const filter = buildBrandFrameFilter(effective, furniturePath);
       const args = [
         "-y",
         "-i",
@@ -500,7 +584,7 @@ export function createBrandFrame(options: KarosVideoToolOptions = {}) {
         ...(brand.logoPath !== undefined ? ["logo"] : []),
         ...(brand.logoPath !== undefined && brand.logoScrim !== undefined ? ["logo-scrim"] : []),
         ...(effective.srtPath !== undefined ? ["captions"] : []),
-        ...(overlayFiles.length > 0 ? ["overlays"] : []),
+        ...(cardsDrawn > 0 ? ["overlays"] : []),
       ];
       return success<BrandFrameResult>({
         outputPath: effective.outputPath,

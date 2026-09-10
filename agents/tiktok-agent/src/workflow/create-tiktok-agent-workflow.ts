@@ -157,6 +157,37 @@ function unitPriceUsd(sku: string): number {
 const NARRATION_CHARS_PER_SECOND = 14;
 
 /**
+ * A beat this long or longer is cut as TWO shots when the library can serve
+ * two (2026-09-09): a six-second hold on one clip is the pace of a
+ * documentary, and a vertical short changes picture every two to four
+ * seconds. The second shot answers the same query with the first clip
+ * excluded, so the beat stays on subject and never repeats a frame.
+ */
+const TWO_SHOT_BEAT_SECONDS = 6;
+/** The second shot of a beat may be shorter than the beat: it only has to cover half the hold. */
+const SECOND_SHOT_MIN_SECONDS = 3;
+
+/** A music bed is a few minutes of compressed audio; anything past this is not a track. */
+const MAX_MUSIC_TRACK_BYTES = 25 * 1024 * 1024;
+
+/**
+ * The caption/furniture font for a language. The server image ships Noto
+ * (`fonts-noto-core`), and libass falls back per glyph through fontconfig
+ * anyway; naming the script's own face keeps the primary text from being
+ * assembled out of fallback glyphs. Latin and everything unlisted keep the
+ * frame's default.
+ */
+export function captionFontFor(language: string | undefined): string | undefined {
+  const tag = (language ?? "").toLowerCase();
+  if (tag.startsWith("he") || tag.startsWith("iw") || tag.startsWith("yi")) return "Noto Sans Hebrew";
+  if (tag.startsWith("ar") || tag.startsWith("fa") || tag.startsWith("ur")) return "Noto Sans Arabic";
+  if (tag.startsWith("ja")) return "Noto Sans CJK JP";
+  if (tag.startsWith("ko")) return "Noto Sans CJK KR";
+  if (tag.startsWith("zh")) return "Noto Sans CJK SC";
+  return undefined;
+}
+
+/**
  * How many times a script that prices over the ceiling is sent back to the
  * writer with the numbers before the deterministic fallback takes over.
  * Two: the first re-plan almost always lands (fewer beats, silent), the
@@ -345,6 +376,58 @@ function normalizeTopic(topic: string): string {
  * candidate is already published" is the question actually being asked.
  */
 const CANDIDATE_CONTAINMENT_THRESHOLD = 0.6;
+
+/**
+ * The angles this week's research is pulled from, one per discovery run,
+ * rotating with the size of the lane (2026-09-09). Under a single fixed
+ * query ("what is being debated this week") prep's scout read the same eight
+ * documents on every run for two days and proposed the same seven
+ * candidates. A different lens returns different documents, and a different
+ * pillar each time keeps a multi-pillar client from living in one of them.
+ */
+export const DISCOVERY_LENSES = [
+  "what is being debated this week",
+  "the numbers, reports and studies published this week",
+  "what buyers and practitioners are asking and complaining about right now",
+  "regulation, platform and policy changes this week",
+  "myths and received wisdom being challenged this week",
+  "case studies and real results published this week",
+] as const;
+
+const TOPIC_STOP_WORDS = new Set([
+  "the", "a", "an", "of", "for", "to", "in", "on", "and", "or", "is", "are", "was", "were", "has", "have", "been", "will", "your", "you", "their", "our", "we", "they",
+  "why", "what", "how", "not", "now", "this", "that", "it", "its", "with", "as", "at", "by", "from", "be", "new", "just", "more", "most", "into", "about",
+]);
+
+/** Salient word tokens of a catalog-row-sized string, for near-duplicate detection between topics. */
+function topicTokens(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s]/gu, " ")
+      .split(/\s+/)
+      .filter((w) => w.length > 1 && !TOPIC_STOP_WORDS.has(w)),
+  );
+}
+
+/**
+ * Whether two topic rows are the same idea in different words: enough
+ * salient words in common that a viewer would call it the same short.
+ * "The rise of Generative Engine Optimization as a new marketing discipline"
+ * and "Introducing Generative Engine Optimization (GEO)" share three salient
+ * words and most of the shorter one; "AI marketing budget cuts" and "AI
+ * marketing ethics" share two and are different subjects. Exported for the test.
+ */
+export function nearDuplicateTopic(a: string, b: string): boolean {
+  const ta = topicTokens(a);
+  const tb = topicTokens(b);
+  if (ta.size === 0 || tb.size === 0) return false;
+  let shared = 0;
+  for (const w of ta) if (tb.has(w)) shared++;
+  const union = ta.size + tb.size - shared;
+  const containment = shared / Math.min(ta.size, tb.size);
+  return shared / union >= 0.6 || (shared >= 3 && containment >= 0.6) || (shared >= 4 && containment >= 0.5);
+}
 
 /** True when `text` is mostly already inside one of the client's published excerpts. */
 function repeatsPublished(text: string, history: readonly { excerpt: string }[]): boolean {
@@ -663,6 +746,19 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           return { candidates: [], seeded: 0, notes: ["topics.topUp is not registered; discovered topics would have nowhere to land"] };
         }
 
+        // What the lane already holds — made, waiting, or proposed before —
+        // read first: it rotates the research lens and pillar, goes to the
+        // scout as a hard do-not-repeat, and drops what comes back anyway.
+        const alreadyInCatalog: string[] = await (async () => {
+          const list = tools["topics.list"];
+          if (list === undefined) return [];
+          const outcome = await list.execute({ lane: CLIP_LANE }, { ctx });
+          if (outcome.status !== "success") return [];
+          return (outcome.result as { rows: Array<{ topic: string }> }).rows.map((r) => r.topic);
+        })();
+        const rotation = alreadyInCatalog.length;
+        const researchLens = DISCOVERY_LENSES[rotation % DISCOVERY_LENSES.length]!;
+
         interface ResearchDoc {
           title: string;
           url: string;
@@ -676,8 +772,12 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         } else if (profile.industry === undefined) {
           notes.push("client profile declares no industry, so there was no honest research query to run");
         } else {
-          const pillars = intakeConfig.contentPillars.slice(0, 4);
-          const query = pillars.length > 0 ? `${profile.industry}: ${pillars.join(", ")} — what is being debated this week` : `${profile.industry} news, debates and shifts this week`;
+          // One pillar per discovery, rotating, rather than all of them in one
+          // query: a search engine answers "A, B, C, D this week" with the
+          // same generic A-and-B page every time.
+          const pillars = intakeConfig.contentPillars;
+          const pillar = pillars.length > 0 ? pillars[rotation % pillars.length]! : undefined;
+          const query = pillar !== undefined ? `${profile.industry}: ${pillar} — ${researchLens}` : `${profile.industry} — ${researchLens}`;
           const pulled = await research.execute(
             { job: "tiktok-topic-discovery", query, window: "24h", maxResults: 8, historyAgentId: "tiktok-agent" },
             { ctx },
@@ -712,6 +812,8 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           researchDocuments,
           ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
           ...(plainSourceNames(config).length > 0 ? { sourcePool: plainSourceNames(config) } : {}),
+          ...(alreadyInCatalog.length > 0 ? { alreadyInCatalog: alreadyInCatalog.slice(-40) } : {}),
+          researchLens,
           mode: config.mode,
         });
         if (exec.status === "content_fail") {
@@ -729,9 +831,17 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         const excluded = new Set(config.narrowing.map(normalizeTopic));
         const candidates: TopicCandidate[] = [];
         let droppedAsRepeats = 0;
+        let droppedAsCatalogRepeats = 0;
         for (const raw of proposed.candidates) {
           const candidate: TopicCandidate = { ...raw, evidenceUrls: raw.evidenceUrls.filter((u) => knownUrls.has(u)) };
           if (excluded.has(normalizeTopic(candidate.topic))) continue;
+          // The same idea in new words is the same row. `topics.topUp` only
+          // knows the exact string, so this is where a re-proposed topic is
+          // caught — against the lane AND against what this run already kept.
+          if ([...alreadyInCatalog, ...candidates.map((c) => c.topic)].some((existing) => nearDuplicateTopic(candidate.topic, existing))) {
+            droppedAsCatalogRepeats += 1;
+            continue;
+          }
           // Two reads of "is this a repeat": the fleet's calibrated Jaccard
           // verdict, and a containment check sized for a short candidate
           // against a long caption (see `repeatsPublished`). Either drops it.
@@ -744,6 +854,8 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           candidates.push(candidate);
         }
         if (droppedAsRepeats > 0) notes.push(`${droppedAsRepeats} candidate(s) dropped as too close to what the client recently published`);
+        if (droppedAsCatalogRepeats > 0) notes.push(`${droppedAsCatalogRepeats} candidate(s) dropped as the same idea as a topic already in the lane`);
+        notes.push(`research lens: ${researchLens}`);
         if (candidates.length === 0) {
           notes.push("every proposed candidate was excluded or a repeat");
           return { candidates: [], seeded: 0, notes };
@@ -1087,6 +1199,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       srtPath: string | undefined,
       overlays: readonly TitleCard[] = [],
       fit: "contain" | "cover" = "contain",
+      captionFontName?: string,
     ): Promise<{ outputPath: string; durationSeconds: number | null }> => {
       const { logoPath, logoScrim } = await prepareLogo(workDir);
       const frameOutcome = await tools["video.brandFrame"]?.execute(
@@ -1095,6 +1208,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           outputPath: path.join(workDir, "clip-framed.mp4"),
           fit,
           ...(overlays.length > 0 ? { overlays } : {}),
+          ...(captionFontName !== undefined ? { captionStyle: { fontName: captionFontName } } : {}),
           brand: {
             ground: videoBrand.ground,
             fg: videoBrand.fg,
@@ -1145,6 +1259,8 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       budgetPlan?: BudgetPlan;
       /** How many times the script went back to the writer over cost. */
       replans?: number;
+      /** Whether a music bed was laid, and why not when it was not. Original shorts only. */
+      music?: { applied: boolean; note?: string };
     }
 
     /**
@@ -1303,7 +1419,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           await fs.writeFile(srtPath, srt, "utf8");
         }
 
-        return brandFrame(clipPath, workDir, srtPath);
+        return brandFrame(clipPath, workDir, srtPath, [], "contain", captionFontFor(videoBrand.language));
       });
 
       return finishDraft(rev, revision, {
@@ -1444,14 +1560,37 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       // called "obviously AI-generated", against a product rule of two
       // dollars a short. `footageSource: "stock"` holds instead of taking
       // the still.
-      const plates: string[] = [];
+      /** One beat's footage: one shot, or two when the beat is long and the library had two clips for it. */
+      interface BeatPlates {
+        shots: PlateResult[];
+      }
+      const beatPlates: BeatPlates[] = [];
       const plateSources: PlateSource[] = [];
       const usedStockIds: number[] = [];
       for (let i = 0; i < script.beats.length; i++) {
         const beat = script.beats[i]!;
-        const plate = await wf.step.code(`04p-plate-${i + 1}`, async (): Promise<PlateResult> => {
+        const plate = await wf.step.code(`04p-plate-${i + 1}`, async (): Promise<BeatPlates> => {
           const query = beat.stockQuery ?? stockQueryFromBrief(beat.visualBrief);
           const misses: string[] = [];
+          // What the library is asked to judge each candidate against: the
+          // scene the script wanted and the words the viewer will hear over it.
+          const relevance = { brief: beat.visualBrief, narration: beat.narration };
+          const taken: number[] = [...usedStockIds];
+          /** A stock search for this beat, with the run's used ids excluded. */
+          const searchStock = async (attemptQuery: string, minDurationSeconds: number, outputName: string) => {
+            const stock = tools["video.findStockClip"]!;
+            const found = await stock.execute({ repoRoot, runId: wf.runId, query: attemptQuery, minDurationSeconds, excludeIds: [...taken], outputName, relevance }, { ctx });
+            if (found.status !== "success") return { ok: false as const, note: `stock "${attemptQuery}": ${found.status}${"reason" in found ? ` (${found.reason})` : ""}` };
+            const result = found.result as { path: string; pexelsId: number; sourceUrl: string };
+            taken.push(result.pexelsId);
+            return { ok: true as const, plate: { path: path.resolve(repoRoot, result.path), source: "stock" as const, stockId: result.pexelsId, sourceUrl: result.sourceUrl } };
+          };
+          /** The second shot of a long beat: same query, the first clip excluded, half the length. Optional: a miss leaves one shot. */
+          const withSecondShot = async (first: PlateResult): Promise<BeatPlates> => {
+            if (beat.seconds < TWO_SHOT_BEAT_SECONDS || tools["video.findStockClip"] === undefined) return { shots: [first] };
+            const second = await searchStock(query, SECOND_SHOT_MIN_SECONDS, `plate-${i + 1}-b`);
+            return { shots: second.ok ? [first, second.plate] : [first] };
+          };
           // A still is a purchase. It is off the table when the plan said
           // stock only, when the client said stock only, or when the run has
           // already reached its ceiling: in every one of those cases the beat
@@ -1459,8 +1598,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           // serve is the one honest hold left.
           const stillsHere = stillsAllowed && config.footageSource !== "stock" && (await wf.costSoFarUsd()) < costCapUsd;
 
-          const stock = tools["video.findStockClip"];
-          if (stock === undefined) {
+          if (tools["video.findStockClip"] === undefined) {
             misses.push("stock: video.findStockClip is not registered");
           } else {
             // The beat's own query first; without a still to fall back on,
@@ -1470,15 +1608,9 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
               ? [query]
               : [...new Set([query, stockQueryFromBrief(beat.visualBrief), GENERIC_STOCK_QUERIES[i % GENERIC_STOCK_QUERIES.length]!, GENERIC_STOCK_QUERIES[(i + 1) % GENERIC_STOCK_QUERIES.length]!])];
             for (const attemptQuery of ladder) {
-              const found = await stock.execute(
-                { repoRoot, runId: wf.runId, query: attemptQuery, minDurationSeconds: beat.seconds, excludeIds: [...usedStockIds], outputName: `plate-${i + 1}` },
-                { ctx },
-              );
-              if (found.status === "success") {
-                const result = found.result as { path: string; pexelsId: number; sourceUrl: string };
-                return { path: path.resolve(repoRoot, result.path), source: "stock", stockId: result.pexelsId, sourceUrl: result.sourceUrl };
-              }
-              misses.push(`stock "${attemptQuery}": ${found.status}${"reason" in found ? ` (${found.reason})` : ""}`);
+              const found = await searchStock(attemptQuery, beat.seconds, `plate-${i + 1}`);
+              if (found.ok) return withSecondShot(found.plate);
+              misses.push(found.note);
             }
           }
           if (!stillsHere) {
@@ -1524,11 +1656,13 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           if (clip.status !== "success") {
             throw new WorkflowToolingFailure(`video.stillToClip failed for beat ${i + 1}: ${clip.status}${"reason" in clip ? ` (${clip.reason})` : ""}`);
           }
-          return { path: (clip.result as { outputPath: string }).outputPath, source: "still" };
+          return { shots: [{ path: (clip.result as { outputPath: string }).outputPath, source: "still" }] };
         });
-        plates.push(plate.path);
-        plateSources.push(plate.source);
-        if (plate.stockId !== undefined) usedStockIds.push(plate.stockId);
+        beatPlates.push(plate);
+        for (const shot of plate.shots) {
+          plateSources.push(shot.source);
+          if (shot.stockId !== undefined) usedStockIds.push(shot.stockId);
+        }
       }
 
       // ── 05: VOICE — the narration spoken, then TIMED by transcribing the
@@ -1552,7 +1686,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         }
         const outputPath = path.join(workDir, "voiceover.mp3");
         const outcome = await synth.execute(
-          { text: narration, outputPath, language, ...(config.voiceName ? { voice: config.voiceName } : {}) },
+          { text: narration, outputPath, language, ...(config.voiceName ? { voice: config.voiceName } : {}), ...(config.voiceSpeakingRate !== undefined ? { speakingRate: config.voiceSpeakingRate } : {}) },
           { ctx },
         );
         if (outcome.status !== "success") {
@@ -1569,6 +1703,49 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         }
         return { path: result.outputPath, durationSeconds: result.durationSeconds, words, notes };
       });
+
+      /**
+       * Downloads the client's track and lays it under the sequence. Returns
+       * the path to frame (the mixed file, or the original when anything
+       * about the bed did not work out) and what to tell the reviewer.
+       */
+      const layMusicBed = async (sequencePath: string, dir: string): Promise<{ path: string; music: { applied: boolean; note?: string } }> => {
+        const noBed = (note: string) => ({ path: sequencePath, music: { applied: false, note } });
+        if (config.musicTrackUri === undefined) return noBed("no musicTrackUri in the client's tiktokClips config");
+        const mix = tools["video.mixMusic"];
+        if (mix === undefined) return noBed("video.mixMusic is not registered in this deployment");
+        let bytes: Buffer;
+        let extension = "mp3";
+        try {
+          const response = await (options.fetchImpl ?? fetch)(config.musicTrackUri, { signal: AbortSignal.timeout(30_000) });
+          if (!response.ok) return noBed(`the music track could not be fetched (${response.status})`);
+          const type = (response.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+          if (type.length > 0 && !type.startsWith("audio/") && type !== "application/octet-stream" && type !== "video/mp4") {
+            return noBed(`the music track URL returned ${type}, not audio`);
+          }
+          if (type.includes("mp4") || type.includes("m4a") || type.includes("aac")) extension = "m4a";
+          else if (type.includes("wav")) extension = "wav";
+          bytes = Buffer.from(await response.arrayBuffer());
+        } catch (error) {
+          return noBed(`the music track could not be fetched: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        if (bytes.byteLength === 0 || bytes.byteLength > MAX_MUSIC_TRACK_BYTES) {
+          return noBed(`the music track is ${Math.round(bytes.byteLength / 1_048_576)} MB; a bed is under ${MAX_MUSIC_TRACK_BYTES / 1_048_576} MB`);
+        }
+        const musicPath = path.join(dir, `music.${extension}`);
+        await fs.writeFile(musicPath, bytes);
+        const outcome = await mix.execute(
+          { videoPath: sequencePath, musicPath, outputPath: path.join(dir, "sequence-music.mp4"), ...(config.musicGainDb !== undefined ? { musicGainDb: config.musicGainDb } : {}) },
+          { ctx },
+        );
+        if (outcome.status !== "success") {
+          console.warn(`08-render: video.mixMusic ${outcome.status}${"reason" in outcome ? ` (${outcome.reason})` : ""}; shipping without a bed`);
+          return noBed(`the mix failed (${outcome.status}); shipped without a bed`);
+        }
+        const mixed = outcome.result as { outputPath: string; ducked: boolean };
+        return { path: mixed.outputPath, music: { applied: true, ...(mixed.ducked ? {} : { note: "bed laid under a silent short" }) } };
+      };
+      let musicOutcome: { applied: boolean; note?: string } | undefined;
 
       // ── 08: render — hold each plate for its beat, lay the voice under,
       //        burn the captions, frame it. ──
@@ -1612,7 +1789,14 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         if (compose === undefined) throw new WorkflowToolingFailure("video.composeSequence is not registered — an original short cannot be assembled");
         const composed = await compose.execute(
           {
-            clips: plates.slice(0, script.beats.length).map((p, i) => ({ path: p, holdSeconds: Number(holds[i]!.toFixed(2)) })),
+            // A long beat with two shots cuts halfway through its hold; one
+            // whose hold ended up too short for two legible shots (a voice
+            // that rushed the line) keeps its first shot alone.
+            clips: beatPlates.slice(0, script.beats.length).flatMap((beatPlate, i) => {
+              const hold = holds[i]!;
+              const shots = beatPlate.shots.length === 2 && hold >= 2 * MIN_PLATE_HOLD_SECONDS ? beatPlate.shots : beatPlate.shots.slice(0, 1);
+              return shots.map((shot) => ({ path: shot.path, holdSeconds: Number((hold / shots.length).toFixed(2)) }));
+            }),
             outputPath: path.join(workDir, "sequence.mp4"),
             ...(voice ? { voiceoverPath: voice.path } : {}),
           },
@@ -1622,6 +1806,15 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           throw new WorkflowToolingFailure(`video.composeSequence failed: ${composed.status}${"reason" in composed ? ` (${composed.reason})` : ""}`);
         }
         const sequence = composed.result as { outputPath: string; durationSeconds: number | null };
+
+        // ── The music bed (2026-09-09). Every 2026-09-08 short played a
+        //    synthetic voice over silence, the second-loudest "made by a
+        //    machine" signal after the footage. The client's own track, looped
+        //    or trimmed to the picture, ducked under the voice, faded out.
+        //    Never a hold: no track, no tool, a bad download or a failed mix
+        //    all ship the clip without a bed and say so to the reviewer. ──
+        const bedded = await layMusicBed(sequence.outputPath, workDir);
+        musicOutcome = bedded.music;
 
         // With a voice, the captions are the spoken words and ONE title card
         // sits above them: beat 1's on-screen text, for the whole first beat.
@@ -1638,7 +1831,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         // Plates are portrait: fill the picture area edge to edge rather than
         // letterboxing a 9:16 clip inside a 9:12.7 region (the 2026-09-08
         // render had dark side bars either side of every plate).
-        return brandFrame(sequence.outputPath, workDir, srtPath, titleCards, "cover");
+        return brandFrame(bedded.path, workDir, srtPath, titleCards, "cover", captionFontFor(language));
       });
 
       return finishDraft(rev, revision, {
@@ -1659,6 +1852,9 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         guardrailText: [script.caption, script.about, ...script.beats.map((b) => b.narration)].join("\n\n"),
         captionsExpected: true,
         estimatedCostUsd: estimate.estimatedTotalUsd,
+        // On a replay of a checkpointed render the helper never ran; the
+        // reviewer then sees "unknown" rather than a claim nobody verified.
+        music: musicOutcome ?? { applied: false, note: "render replayed from checkpoint; bed status not re-derived" },
       });
     };
 
@@ -1707,6 +1903,27 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           return null;
         }
         return outcome.result as { gcsUri: string; signedUrl?: string };
+      });
+
+      // ── 10c: the anti-repetition window learns about this clip NOW, not
+      //         only on commit (2026-09-09). Two GEO shorts were made six
+      //         hours apart on 2026-09-08 because the first sat at its gate
+      //         unrecorded, so the next run's scout never saw it. Idempotent
+      //         on runId: 13-commit-and-record re-records the same entry with
+      //         the words that actually shipped. A rejected clip's angle
+      //         stays in the window too, and that is right: the next run
+      //         should not re-propose the thing a person just turned down. ──
+      await wf.step.code(rev("10c-record-pending-excerpt"), async () => {
+        try {
+          const outcome = await tools["ledger.recordOutputExcerpt"]?.execute(
+            { agentId: "tiktok-agent", runId: wf.runId, excerpt: `${draft.commentary.caption}\n\n${draft.commentary.about}` },
+            { ctx },
+          );
+          return { recorded: outcome?.status === "success" };
+        } catch (error) {
+          console.error(`${rev("10c-record-pending-excerpt")}: could not record the pending excerpt`, error);
+          return { recorded: false };
+        }
       });
 
       // ── 10b: the visual QA — a model WATCHES the finished clip and says
@@ -1789,6 +2006,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         ...(draft.estimatedCostUsd !== undefined ? { estimatedCostUsd: draft.estimatedCostUsd } : {}),
         ...(draft.budgetPlan !== undefined ? { budgetPlan: draft.budgetPlan } : {}),
         ...(draft.replans !== undefined ? { replans: draft.replans } : {}),
+        ...(draft.music !== undefined ? { music: draft.music } : {}),
         ...(draft.plateSources !== undefined ? { plateSources: draft.plateSources } : {}),
         ...(visualQa.skipped ? {} : { visualQa: { passed: visualQa.passed, ...(visualQa.reason !== undefined ? { reason: visualQa.reason } : {}), evidence: visualQa.evidence } }),
       };
@@ -1838,6 +2056,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           maxCostUsd: costCapUsd,
           ...(draft.budgetPlan !== undefined ? { budgetPlan: draft.budgetPlan } : {}),
           ...(draft.replans !== undefined ? { replans: draft.replans } : {}),
+          ...(draft.music !== undefined ? { music: draft.music } : {}),
         },
         requiredRole: "account_manager",
         // An unanswered gate approves itself after an hour ONLY for a clip the
@@ -1911,6 +2130,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
             maxCostUsd: costCapUsd,
             ...(review.output.budgetPlan !== undefined ? { budgetPlan: review.output.budgetPlan } : {}),
             ...(review.output.replans !== undefined ? { replans: review.output.replans } : {}),
+            ...(review.output.music !== undefined ? { music: review.output.music } : {}),
             hookType: moment.hookType,
             startSeconds: bounds.startSeconds,
             endSeconds: bounds.endSeconds,

@@ -32,6 +32,11 @@ export class TikTokTopicScoutAgent extends BaseAgent<TopicScoutOutput> {
     allowedTools: [],
     outputSchema: TopicScoutOutputSchema,
     modelPolicy: resolveModelPolicy("tiktok-topic-scout", { policy: "pinned", model: "gemini-2.5-pro", vendor: "gemini" }),
-    skillRef: "tiktok-topic-scout@1",
+    // Pinned to "2" (2026-09-09): v2 adds `alreadyInCatalog` (the lane's
+    // rows as a hard do-not-repeat, including the same idea in new words),
+    // `researchLens`, and a variety rule across hook types and pillars. Prep
+    // proposed the same seven GEO / AI-Max / EU-ChatGPT candidates on every
+    // run for two days under v1. v1 stays frozen.
+    skillRef: "tiktok-topic-scout@2",
   };
 }
