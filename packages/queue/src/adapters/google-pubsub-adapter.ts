@@ -1,6 +1,6 @@
 import type { Message, PubSub } from "@google-cloud/pubsub";
 import { logError } from "@agent-engine/telemetry";
-import type { PublishResult, QueueAdapter, QueueMessage, QueueMessageHandler, QueueSubscription } from "../types.js";
+import { RetryLater, type PublishResult, type QueueAdapter, type QueueMessage, type QueueMessageHandler, type QueueSubscription } from "../types.js";
 
 /** Same client-resolver-function convention `GeminiAdapter`/`OpenAICompatibleAdapter` use — lets a caller memoize one client (the common case) or hand back a per-call/test double, without this class caring which. */
 export type PubSubClientResolver = () => PubSub;
@@ -67,6 +67,16 @@ export class GooglePubSubQueueAdapter implements QueueAdapter {
           await handler(queueMessage);
           message.ack();
         } catch (err) {
+          if (err instanceof RetryLater) {
+            // Held, not NACKed: the client's lease manager keeps extending the
+            // ack deadline of a message it still holds, so nothing is
+            // redelivered during the wait, and the NACK at the end of it brings
+            // the message back within the subscription's minimum backoff. One
+            // delivery attempt spent per wait, not per ten seconds.
+            console.warn(`google-pubsub: handler asked to retry message ${message.id} in ${Math.round(err.delayMs / 1000)}s: ${err.message}`);
+            setTimeout(() => message.nack(), err.delayMs);
+            return;
+          }
           // The catch-all for any handler exception, including one the caller
           // never explicitly logged itself — this IS the "unhandled exception"
           // backstop a worker-failures log-based metric needs to see every
