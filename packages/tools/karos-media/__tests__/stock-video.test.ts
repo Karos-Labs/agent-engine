@@ -2,18 +2,18 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { buildRelevancePrompt, createFindStockClip, FindStockClipInputSchema, pickPortraitFile, rankStockVideos } from "../src/stock-video.js";
+import { buildRelevancePrompt, createFindStockClip, FindStockClipInputSchema, pickPortraitFile, rankStockVideos, lexicalFit, pexelsTitleWords } from "../src/stock-video.js";
 import type { VisionAnalysisClient } from "../src/visual-patterns.js";
 
 const ctx = { ctx: { runId: "r", clientSlug: "acme", productId: "tiktok-agent", runKind: "recurring" } } as never;
 
-function video(id: number, duration: number, w: number, h: number, files: Array<{ w: number; h: number; type?: string }>) {
+function video(id: number, duration: number, w: number, h: number, files: Array<{ w: number; h: number; type?: string }>, title?: string) {
   return {
     id,
     duration,
     width: w,
     height: h,
-    url: `https://www.pexels.com/video/${id}/`,
+    url: title === undefined ? `https://www.pexels.com/video/${id}/` : `https://www.pexels.com/video/${title}-${id}/`,
     image: `https://images.pexels.com/videos/${id}/poster.jpeg`,
     user: { name: "Someone" },
     video_files: files.map((f, i) => ({ id: id * 10 + i, quality: f.h >= 1080 ? "hd" : "sd", file_type: f.type ?? "video/mp4", width: f.w, height: f.h, link: `https://videos.pexels.com/${id}-${f.h}.mp4` })),
@@ -131,6 +131,30 @@ describe("video.findStockClip relevance (2026-09-09)", () => {
       expect(miss.status).toBe("content_fail");
       if (miss.status !== "content_fail") throw new Error("unreachable");
       expect(miss.reason).toContain("none fit the beat");
+    } finally {
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("without a vision backend the clip whose TITLE matches the query is taken over a shorter mismatch, and the note says so", async () => {
+    const repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), "stock-rel-"));
+    try {
+      const titled = {
+        "empty open plan office dusk": {
+          videos: [
+            video(21, 9, 1080, 1920, [{ w: 1080, h: 1920 }], "a-road-in-the-desert-at-sunset"),
+            video(22, 15, 1080, 1920, [{ w: 1080, h: 1920 }], "empty-office-at-dusk"),
+          ],
+        },
+      };
+      const outcome = await createFindStockClip({ apiKey: "key-123", fetchImpl: fakeFetch(titled).fetch }).execute(
+        FindStockClipInputSchema.parse({ repoRoot, runId: "run-rel6", query: "empty open plan office dusk", minDurationSeconds: 6, relevance: { brief: "b", narration: "n" } }),
+        ctx,
+      );
+      expect(outcome.status).toBe("success");
+      if (outcome.status !== "success") throw new Error("unreachable");
+      expect(outcome.result.pexelsId).toBe(22);
+      expect(outcome.result.relevanceNote).toContain("title best matched");
     } finally {
       await fs.rm(repoRoot, { recursive: true, force: true });
     }
@@ -261,5 +285,30 @@ describe("video.findStockClip", () => {
   it("ranks portrait, long-enough, unused videos shortest-first", () => {
     const ranked = rankStockVideos([video(1, 30, 1080, 1920, []), video(2, 9, 1080, 1920, []), video(3, 3, 1080, 1920, []), video(4, 9, 1920, 1080, [])], 6, [1]);
     expect(ranked.map((v) => v.id)).toEqual([2]);
+  });
+
+  it("reads the clip's title off its Pexels URL and counts the query words it carries, give or take a suffix", () => {
+    expect(pexelsTitleWords("https://www.pexels.com/video/a-road-in-the-desert-at-sunset-1234/")).toEqual(["road", "desert", "sunset"]);
+    expect(pexelsTitleWords("https://www.pexels.com/video/1234/")).toEqual([]);
+    expect(pexelsTitleWords(undefined)).toEqual([]);
+    expect(lexicalFit("empty open plan office dusk", "https://www.pexels.com/video/a-road-in-the-desert-at-sunset-1234/")).toBe(0);
+    expect(lexicalFit("empty open plan office dusk", "https://www.pexels.com/video/empty-offices-at-night-55/")).toBe(2);
+    expect(lexicalFit("calendar desk crossed days close-up", "https://www.pexels.com/video/person-crossing-days-on-a-desk-calendar-9/")).toBe(4);
+    expect(lexicalFit("empty office", "https://www.pexels.com/video/9/")).toBe(0);
+  });
+
+  it("with a query, the clip whose title matches ranks first and shortest only breaks ties (prep run pubsub-21157031361398626's desert road)", () => {
+    const ranked = rankStockVideos(
+      [
+        video(1, 9, 1080, 1920, [], "a-road-in-the-desert-at-sunset"),
+        video(2, 20, 1080, 1920, [], "empty-office-at-dusk"),
+        video(3, 14, 1080, 1920, [], "modern-office-interior"),
+        video(4, 12, 1080, 1920, [], "empty-office-with-lights-switching-off"),
+      ],
+      6,
+      [],
+      "empty open plan office dusk",
+    );
+    expect(ranked.map((v) => v.id)).toEqual([2, 4, 3, 1]);
   });
 });
