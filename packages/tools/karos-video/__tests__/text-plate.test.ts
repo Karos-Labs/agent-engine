@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentContext } from "@agent-engine/core";
-import { TextPlateInputSchema, buildTextPlateArgs, buildTextPlateAss, createTextPlate, fitPlateText } from "../src/tools/text-plate.js";
+import { TextPlateInputSchema, buildTextPlateArgs, buildTextPlateAss, createTextPlate, fitPlateText, statLayout } from "../src/tools/text-plate.js";
 import type { ProcessRunner } from "../src/process/runner.js";
 
 const ctx: AgentContext = { runId: "r1", clientSlug: "acme", productId: "tiktok-agent", runKind: "recurring", metadata: {} };
@@ -46,6 +46,17 @@ describe("buildTextPlateAss / buildTextPlateArgs", () => {
     expect(longFit.fontSize).toBe(65);
     expect(longFit.lines).toBeGreaterThan(3);
     expect(longFit.text.replace(/\\N/g, " ")).toBe(long);
+  });
+
+  it("a stat card sets the figure at 2.5x the fitted label size with the label under it, in the same faded, centred line", () => {
+    const input = TextPlateInputSchema.parse({ text: "of founders run their own ads", stat: { value: "47%", label: "of founders run their own ads" }, outputPath: "o.mp4", durationSeconds: 6, ground: "#242429" });
+    const ass = buildTextPlateAss(input);
+    expect(ass).toContain("Style: Line,Liberation Sans,100,");
+    expect(ass).toContain("{\\fad(350,0)}{\\fs250}47%{\\fs100}\\Nof founders run\\Nthe own ads".replace("the own", "their own"));
+    expect(statLayout({ value: "$2", label: "a short, at most" }, { text: "a short, at most", fontSize: 75 })).toBe("{\\fs188}$2{\\fs75}\\Na short, at most");
+    // A label that needs the smaller size scales the figure with it, so both fit.
+    const long = buildTextPlateAss(TextPlateInputSchema.parse({ text: "x", stat: { value: "3 of 4", label: "marketing budgets nobody can defend at the quarterly review" }, outputPath: "o.mp4", durationSeconds: 6, ground: "#242429" }));
+    expect(long).toMatch(/\{\\fs(163|188|213)\}3 of 4\{\\fs(65|75|85)\}/);
   });
 
   it("renders from a colour source on the composer's encode contract, silent, with the accent bar drawing across over the hold", () => {
