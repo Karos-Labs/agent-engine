@@ -13,7 +13,10 @@ import { DEFAULT_VISION_MODEL, stripCodeFence, type VisionAnalysisClient, type V
 // where 1.0.0 took the shortest clip that cleared the length. The 2026-09-08
 // prep renders showed why: "empty conference stage" returned a guitarist mid-
 // solo, "empty boardroom" a tram window, because nothing ever looked.
-const TOOL_VERSION = "1.1.0";
+// 1.1.1 — the scoring tokens are reported as one literal usage row pair on the
+// success outcome (summed across query variants), where 1.1.0 passed an
+// accumulated array the cost-accuracy guard could not see.
+const TOOL_VERSION = "1.1.1";
 
 /** How many portrait, long-enough candidates per query are shown to the vision model. Each thumbnail is ~260 tokens; eight is about a tenth of a cent. */
 const DEFAULT_RELEVANCE_CANDIDATES = 8;
