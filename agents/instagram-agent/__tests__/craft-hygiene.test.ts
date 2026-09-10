@@ -5,6 +5,8 @@ import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-a
 import { checkCraftHygiene, checkSentenceCase } from "../src/workflow/craft-hygiene.js";
 import type { InstagramCopyOutput } from "../src/workflow/types.js";
 import {
+  goodRelevanceVerdict,
+  goodTrendScoutOutput,
   fakeRenderCarousel,
   fakeRouterSequence,
   finalTurn,
@@ -116,6 +118,75 @@ describe("Fix 3: unconditional mechanical craft-hygiene gate (em dash / exclamat
       const result = await checkCraftHygiene(env.tools, ctx, goodCopyOutput());
       expect(result.ok).toBe(true);
     });
+
+    it("names the failing slide by number even when it is not the first one", async () => {
+      const copy = copyWith("Support tickets dropped — by a third.", 3);
+      const result = await checkCraftHygiene(env.tools, ctx, copy);
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("unreachable");
+      expect(result.reason).toMatch(/^slide 4 failed the mechanical craft-hygiene gate: /);
+      expect(result.reason).not.toMatch(/thread part/);
+    });
+
+    // ── The caption is linted too (Instagram upgrade 2026-09, brief item B) ──
+    //
+    // The gate used to iterate `copy.slides` only, so the one piece of copy a
+    // reader sees without tapping through was never read.
+
+    it("catches an em dash in the CAPTION and names the caption, not a slide", async () => {
+      const copy = { ...goodCopyOutput(), caption: "A quick look at what changed — and what teams did differently." };
+      const result = await checkCraftHygiene(env.tools, ctx, copy);
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("unreachable");
+      expect(result.reason).toMatch(/^caption failed the mechanical craft-hygiene gate: /);
+      expect(result.reason).toMatch(/em dash/);
+      expect(result.reason).not.toMatch(/slide \d/);
+    });
+
+    it("catches a caption over Instagram's 2,200-character limit", async () => {
+      const sentence = "Teams that automated their weekly reporting saved four hours a week. ";
+      const caption = sentence.repeat(Math.ceil(2300 / sentence.length));
+      expect(caption.length).toBeGreaterThan(2200);
+      const result = await checkCraftHygiene(env.tools, ctx, { ...goodCopyOutput(), caption });
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("unreachable");
+      expect(result.reason).toMatch(/^caption failed the mechanical craft-hygiene gate: /);
+      expect(result.reason).toMatch(/2200/);
+    });
+
+    it("catches shouting in the caption via the sentence-case check, naming the caption", async () => {
+      const result = await checkCraftHygiene(env.tools, ctx, { ...goodCopyOutput(), caption: "STOP scrolling. This quarter's process changes, in six slides." });
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("unreachable");
+      expect(result.reason).toMatch(/^caption failed the sentence-case check: /);
+    });
+
+    it("hashtags in the caption do not trip the sentence-case check", async () => {
+      // "TLV NYC" would read as consecutive caps without the hashtag strip.
+      const result = await checkCraftHygiene(env.tools, ctx, { ...goodCopyOutput(), caption: "Three lessons from a week of founder meetings. #TLV #NYC #SXSW #B2BMarketing" });
+      expect(result.ok).toBe(true);
+    });
+
+    it("a Hebrew slide with a Latin acronym passes, and a Hebrew caption passes", async () => {
+      const copy = {
+        ...goodCopyOutput(),
+        caption: "מבט קצר על השינויים בתהליכי העבודה שבאמת הזיזו את המחט ברבעון הזה.",
+        slides: goodCopyOutput().slides.map((s, i) =>
+          i === 0 ? { ...s, headline: "ממצא מספר אחד", body: "צוותים שעברו סקירת GDPR מצאו שלושה פערים בתהליך הקליטה." } : s,
+        ),
+      };
+      const result = await checkCraftHygiene(env.tools, ctx, copy);
+      expect(result.ok, result.ok ? "" : result.reason).toBe(true);
+    });
+
+    it("'GDPR IS BROKEN' still fails inside Hebrew copy", async () => {
+      const copy = copyWith("הרגולטור אמר את זה בפירוש: GDPR IS BROKEN, ולא רק בישראל.");
+      const result = await checkCraftHygiene(env.tools, ctx, copy);
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("unreachable");
+      expect(result.reason).toMatch(/slide 1 failed the sentence-case check/);
+      expect(result.reason).toMatch(/consecutive ALL-CAPS/);
+    });
   });
 
   describe("wired into the workflow's retry loop (integration)", () => {
@@ -134,12 +205,12 @@ describe("Fix 3: unconditional mechanical craft-hygiene gate (em dash / exclamat
       const emDashCopy = copyWith("Teams saved time — every single week, without fail.");
       const cleanCopy = goodCopyOutput();
       const router = fakeRouterSequence([
-        finalTurn(goodResearchOutput()),
+        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
         finalTurn(emDashCopy),
         finalTurn(goodImageVettingOutput()),
         finalTurn(cleanCopy),
         finalTurn(goodImageVettingOutput()),
-        finalTurn(goodVisualQaOutput()),
+        finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
       ]);
       const workflowFn = createInstagramAgentWorkflow({
         tools: testTools(env),
@@ -168,7 +239,7 @@ describe("Fix 3: unconditional mechanical craft-hygiene gate (em dash / exclamat
       const promptStore = makePromptStore();
       const shoutyCopy = copyWith("Four hours back every week!");
       const router = fakeRouterSequence([
-        finalTurn(goodResearchOutput()),
+        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
         finalTurn(shoutyCopy),
         finalTurn(goodImageVettingOutput()),
         finalTurn(shoutyCopy),
@@ -204,7 +275,7 @@ describe("Fix 3: unconditional mechanical craft-hygiene gate (em dash / exclamat
       const promptStore = makePromptStore();
       const emDashCopy = copyWith("Teams saved time — every week, reliably.");
       const router = fakeRouterSequence([
-        finalTurn(goodResearchOutput()),
+        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
         finalTurn(emDashCopy),
         finalTurn(goodImageVettingOutput()),
         finalTurn(emDashCopy),
@@ -279,11 +350,67 @@ describe("checkSentenceCase: acronyms must not cost a run", () => {
   it("does not flag two acronyms sitting next to each other, since that is terminology not shouting", () => {
     expect(checkSentenceCase("Our GDPR CCPA obligations overlap.").ok).toBe(true);
     expect(checkSentenceCase("We track ROI and CAC weekly.").ok).toBe(true);
+    // Two-letter acronym pairs are terminology too — nothing here is on any list.
+    expect(checkSentenceCase("Our UX UI team shipped the redesign.").ok).toBe(true);
+    expect(checkSentenceCase("The NYC VC scene moved to Miami.").ok).toBe(true);
+  });
+
+  it("flags a caps FUNCTION word next to a caps word: 'GDPR IS BROKEN' is shouting, whatever the allowlist says about GDPR", () => {
+    // The allowlist's comment promised this for a long time while the
+    // three-letter floor on the adjacency rule quietly let "IS" through.
+    const result = checkSentenceCase("The verdict was GDPR IS BROKEN according to the audit.");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/consecutive ALL-CAPS words.*IS BROKEN/);
+    expect(checkSentenceCase("THIS IS THE moment to switch.").ok).toBe(false);
   });
 
   it("leaves the Title Case heuristic untouched", () => {
     const result = checkSentenceCase("Five Ways To Grow Your Team This Quarter");
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toMatch(/title case/i);
+  });
+});
+
+/**
+ * Instagram upgrade 2026-09 (brief item B): the tokeniser was `[A-Za-z]…`,
+ * blind to every non-Latin letter, so for geektime's Hebrew copy the check
+ * read only the Latin loanwords. It now tokenises `\p{L}` and applies the
+ * case rules only to CASED tokens — a Hebrew word is neither "all caps" nor
+ * "capitalised", however `toUpperCase()` happens to compare it.
+ */
+describe("checkSentenceCase: scripts without case", () => {
+  const HEBREW = "צוותים שהפכו את הדוח השבועי לאוטומטי חסכו בממוצע ארבע שעות בכל שבוע, ולא רק בצוותי המוצר.";
+
+  it("never reads Hebrew as shouting, even though every Hebrew word equals its own toUpperCase()", () => {
+    expect(HEBREW.toUpperCase()).toBe(HEBREW);
+    expect(checkSentenceCase(HEBREW).ok).toBe(true);
+    expect(checkSentenceCase("שמרו את הפוסט הזה. שתפו אותו עם הצוות. ספרו לנו מה עבד אצלכם.").ok).toBe(true);
+  });
+
+  it("never reads Hebrew as Title Case, even with several Latin brand names in it", () => {
+    expect(checkSentenceCase("צוות המוצר עבר מ-Google Workspace ל-Notion ו-Slack, והוסיף גם Anthropic Claude לתהליך הכתיבה השבועי.").ok).toBe(true);
+    expect(checkSentenceCase(`${HEBREW} OpenAI Anthropic Google Gemini`).ok).toBe(true);
+  });
+
+  it("judges a Latin acronym inside Hebrew copy exactly as in English copy", () => {
+    expect(checkSentenceCase("צוותים שעברו סקירת GDPR מצאו שלושה פערים בתהליך הקליטה.").ok).toBe(true);
+    expect(checkSentenceCase("הרגולטור אמר את זה בפירוש: GDPR IS BROKEN, ולא רק בישראל.").ok).toBe(false);
+    const emphasis = checkSentenceCase("זה FREE לזמן מוגבל בלבד, לכל מי שנרשם השבוע.");
+    expect(emphasis.ok).toBe(false);
+    if (!emphasis.ok) expect(emphasis.reason).toMatch(/emphasis/i);
+  });
+
+  it("still judges cased non-Latin scripts: Cyrillic shouting is shouting", () => {
+    const result = checkSentenceCase("Это ВНИМАНИЕ СРОЧНО для всех подписчиков канала.");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/consecutive ALL-CAPS/);
+    expect(checkSentenceCase("Команды, автоматизировавшие отчёты, сэкономили четыре часа в неделю.").ok).toBe(true);
+  });
+
+  it("tokenises letters with curly apostrophes and hyphens as one word, so DON’T is one emphasis token", () => {
+    const result = checkSentenceCase("DON’T miss the second slide.");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/DON’T/);
+    expect(checkSentenceCase("Arabic and Thai copy is uncased too: ทีมที่ทำรายงานอัตโนมัติประหยัดเวลาได้สี่ชั่วโมงต่อสัปดาห์").ok).toBe(true);
   });
 });

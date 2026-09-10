@@ -2,18 +2,8 @@ import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import type { AgentToolRegistry } from "@agent-engine/core";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
-import {
-  fakeRenderCarousel,
-  fakeRouterSequence,
-  finalTurn,
-  goodCopyOutput,
-  goodImageCandidatePool,
-  goodResearchOutput,
-  goodVisualQaOutput,
-  makePromptStore,
-  setupTestEnvironment,
-  type TestEnvironment,
-} from "./test-helpers.js";
+import { fakeRenderCarousel, fakeRouterSequence, goodCopyOutput, goodImageCandidatePool, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import { happyTurns } from "./turns.js";
 
 const params = { runId: "instagram_run_novimg", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
@@ -44,14 +34,12 @@ describe("06-vet-images: no viable image ships text-only rather than holding (gu
         license: s.n === 3 ? "n/a — no candidate qualified" : "CC0, test fixture",
         rightsUsable: s.n !== 3,
         watermarkFree: s.n !== 3,
+        // `instagram-image-vet@3`: every selection scores the claim, the null one included.
+        claimMatch: s.n === 3 ? 1 : 5,
+        claimMatchReason: s.n === 3 ? "nothing in the pool is near this slide's subject" : "shows the claimed subject",
       })),
     };
-    const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
-      finalTurn(copy),
-      finalTurn(vetting),
-      finalTurn(goodVisualQaOutput()),
-    ]);
+    const router = fakeRouterSequence(happyTurns({ copy, vet: vetting }));
     const workflowFn = createInstagramAgentWorkflow({
       tools: testTools(env),
       promptStore,
@@ -86,13 +74,9 @@ describe("06-vet-images: no viable image ships text-only rather than holding (gu
     const promptStore = makePromptStore();
     const copy = goodCopyOutput();
     // No "vetting" turn queued: an empty pool skips step 06's model call
-    // entirely (see the workflow's own comment on why), straight to research
-    // -> copy -> visual QA.
-    const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
-      finalTurn(copy),
-      finalTurn(goodVisualQaOutput()),
-    ]);
+    // entirely (see the workflow's own comment on why), straight from copy
+    // to the relevance judge and visual QA.
+    const router = fakeRouterSequence(happyTurns({ copy, vet: undefined }));
     const workflowFn = createInstagramAgentWorkflow({
       tools: testTools(env),
       promptStore,

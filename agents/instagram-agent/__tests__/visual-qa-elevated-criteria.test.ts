@@ -3,6 +3,8 @@ import type { AgentToolRegistry } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import {
+  goodRelevanceVerdict,
+  goodTrendScoutOutput,
   fakeRenderCarousel,
   fakeRouterSequence,
   finalTurn,
@@ -52,76 +54,17 @@ function qaTurnInput(router: ReturnType<typeof fakeRouterSequence>, callIndex: n
   return parsed.input;
 }
 
-describe("08a2-visual-qa-pre-checks: an off-kit accent color short-circuits the model entirely", () => {
-  let env: TestEnvironment;
-
-  beforeEach(async () => {
-    // A client whose portal-authored brand.json accent ("#ABCDEF", the sole
-    // member of the kit ring built by AU39's buildAccentRing) genuinely
-    // disagrees with the instagramStyleConfig accentColor ("#123456") the
-    // render actually paints every slide with — a real, realistic config
-    // drift between two brand sources of truth, not a synthetic hook.
-    env = await setupTestEnvironment({ brandTokens: goodBrandTokens({ accentColor: "#123456" }) });
-    await env.store.writeJson("acme", ["client", "brand"], { accent: "#ABCDEF" });
-  });
-
-  afterEach(async () => {
-    await env.cleanup();
-  });
-
-  it("never calls the model for visual QA, on any of the 3 attempts, and holds the run with the deterministic reason", async () => {
-    // Deliberately NO visual-qa turn anywhere in this queue. If the
-    // pre-check ever failed to short-circuit, `qaAgent`'s `wf.step.agent`
-    // call would pop from this exhausted queue and THROW
-    // "fakeRouterSequence: exhausted configured turns" — the run would fail
-    // outright, not merely hold. Completing as `held` with every attempt's
-    // budget consumed by copy+vetting alone is the proof the model was never
-    // asked to grade anything this ticket's pre-checks can answer in code.
-    const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
-      finalTurn(goodCopyOutput()),
-      finalTurn(goodImageVettingOutput()),
-      finalTurn(goodCopyOutput()),
-      finalTurn(goodImageVettingOutput()),
-      finalTurn(goodCopyOutput()),
-      finalTurn(goodImageVettingOutput()),
-    ]);
-    const workflowFn = createInstagramAgentWorkflow({
-      tools: testTools(env),
-      promptStore: makePromptStore(),
-      router,
-      repoRoot: env.repoRoot,
-      imageCandidatePool: goodImageCandidatePool(),
-      autoApprove: true,
-    });
-
-    const durableStore = new MemoryDurableStepStore();
-    const engine = new WorkflowEngine(durableStore);
-    const result = await engine.run(workflowFn, { runId: "instagram_offkit_palette", ...base });
-
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/deterministic pre-check failed/);
-    expect(result.reason).toMatch(/#123456/);
-    expect(result.reason).toMatch(/#abcdef/i);
-    // Exactly 1 research + 3 × (copy + vetting) = 7 — the model was NEVER
-    // invoked for `08b-visual-qa`, on any attempt.
-    expect(router.complete).toHaveBeenCalledTimes(7);
-
-    const stepIds = (await durableStore.listSteps("instagram_offkit_palette")).map((s) => s.stepId);
-    expect(stepIds).toContain("08a2-visual-qa-pre-checks-attempt-1");
-    expect(stepIds).toContain("08a2-visual-qa-pre-checks-attempt-3");
-    expect(stepIds).not.toContain("08b-visual-qa-attempt-1");
-    expect(stepIds).not.toContain("08b-visual-qa-attempt-2");
-    expect(stepIds).not.toContain("08b-visual-qa-attempt-3");
-
-    const preCheck1 = (await durableStore.getStep("instagram_offkit_palette", "08a2-visual-qa-pre-checks-attempt-1")) as {
-      output: { paletteGate: { ok: boolean; reason: string } };
-    };
-    expect(preCheck1.output.paletteGate.ok).toBe(false);
-    expect(preCheck1.output.paletteGate.reason).toContain("#123456");
-  }, 60000);
-});
+// The describe that used to live here — "08a2-visual-qa-pre-checks: an
+// off-kit accent color short-circuits the model entirely" — pinned the exact
+// hold path Instagram Phase 0 item G (2026-09) removes: a config
+// `accentColor` (#123456) disagreeing with brand.json's accent (#ABCDEF) is
+// now a two-member ring anchored on the config hex, every slide paints FROM
+// the ring, and the palette gate passes by construction (the fixture used to
+// burn three attempts and $0.86 on it — prep run pubsub-21634455753345065).
+// The pure short-circuit proof (`checkPaletteWithinKit` with an off-kit hex)
+// lives in `visual-qa-pre-checks.test.ts`; the inverse, on this very fixture
+// (completes on attempt 1, palette gate ok), lives in
+// `accent-ring-alignment.test.ts`.
 
 describe("08b-visual-qa: the elevated criteria sent to the model shrink to match what code already verified", () => {
   let env: TestEnvironment;
@@ -136,10 +79,10 @@ describe("08b-visual-qa: the elevated criteria sent to the model shrink to match
 
   it("a brandless client is asked to grade composition/font-hierarchy only — never brand-asset-integration or colour-harmony", async () => {
     const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
     ]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: testTools(env),
@@ -152,7 +95,7 @@ describe("08b-visual-qa: the elevated criteria sent to the model shrink to match
     const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflowFn, { runId: "instagram_no_brand", ...base });
     expect(result.status).toBe("completed");
 
-    const qaInput = qaTurnInput(router, 3);
+    const qaInput = qaTurnInput(router, 5);
     const ruleIds = (qaInput["renderRules"] as Array<{ id: string }>).map((r) => r.id);
     expect(ruleIds).toContain("composition-richness");
     expect(ruleIds).toContain("font-hierarchy");
@@ -165,10 +108,10 @@ describe("08b-visual-qa: the elevated criteria sent to the model shrink to match
   it("a brand kit with a palette but no logo adds colour-harmony but not brand-asset-integration", async () => {
     await env.store.writeJson("acme", ["client", "brand"], { accent: "#A5E82B" });
     const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
     ]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: testTools(env),
@@ -181,7 +124,7 @@ describe("08b-visual-qa: the elevated criteria sent to the model shrink to match
     const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflowFn, { runId: "instagram_palette_no_logo", ...base });
     expect(result.status).toBe("completed");
 
-    const qaInput = qaTurnInput(router, 3);
+    const qaInput = qaTurnInput(router, 5);
     const ruleIds = (qaInput["renderRules"] as Array<{ id: string }>).map((r) => r.id);
     expect(ruleIds).toContain("colour-harmony");
     expect(ruleIds).not.toContain("brand-asset-integration");
@@ -192,10 +135,10 @@ describe("08b-visual-qa: the elevated criteria sent to the model shrink to match
   it("a present, legible logo adds brand-asset-integration with the deterministic corner/scrim facts, never asking the model whether the logo exists", async () => {
     await env.store.writeJson("acme", ["client", "brand"], { accent: "#A5E82B", logoUrl: "https://logos.example/acme.png" });
     const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
     ]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: testTools(env),
@@ -209,7 +152,7 @@ describe("08b-visual-qa: the elevated criteria sent to the model shrink to match
     const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflowFn, { runId: "instagram_logo_present", ...base });
     expect(result.status).toBe("completed");
 
-    const qaInput = qaTurnInput(router, 3);
+    const qaInput = qaTurnInput(router, 5);
     const ruleIds = (qaInput["renderRules"] as Array<{ id: string }>).map((r) => r.id);
     expect(ruleIds).toContain("brand-asset-integration");
     expect(qaInput["brandAssetContext"]).toMatchObject({ corner: expect.any(String), scrimmed: expect.any(Boolean) });
@@ -218,10 +161,10 @@ describe("08b-visual-qa: the elevated criteria sent to the model shrink to match
   it("a configured but unreachable (gs://) logo never asks the model to grade brand-asset-integration, and never holds the run over it", async () => {
     await env.store.writeJson("acme", ["client", "brand"], { accent: "#A5E82B", logoUrl: "gs://karos-brand-assets/acme/logo.svg" });
     const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
     ]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: testTools(env),
@@ -239,7 +182,7 @@ describe("08b-visual-qa: the elevated criteria sent to the model shrink to match
     // state repeatedly ("brand furniture must never be able to hold a run").
     expect(result.status).toBe("completed");
 
-    const qaInput = qaTurnInput(router, 3);
+    const qaInput = qaTurnInput(router, 5);
     const ruleIds = (qaInput["renderRules"] as Array<{ id: string }>).map((r) => r.id);
     expect(ruleIds).not.toContain("brand-asset-integration");
 

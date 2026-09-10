@@ -176,16 +176,38 @@ export interface VariationPlanEntry {
   reason?: "ring=1" | "accent-fails-inverted-ground" | "directive-pinned" | "no-ground-pair";
 }
 
-/** The accent one slide actually renders with, and whether that came from a genuine rotation — shared by `assembleSlidesData` and `buildVariationPlan` so the two can never disagree about what a slide's accent is. */
+/**
+ * The accent one slide actually renders with, and whether that came from a
+ * genuine rotation — shared by `assembleSlidesData` and `buildVariationPlan`
+ * so the two can never disagree about what a slide's accent is.
+ *
+ * THE RING IS THE SINGLE SOURCE OF TRUTH whenever it has any member: a
+ * multi-member ring walks (`paletteForSlide`'s seeded rotation), a one-member
+ * ring paints `ring[0]` on every slide (`rotates: false`, reported as
+ * `"ring=1"` by `buildVariationPlan` exactly as before). `fallbackAccent` is
+ * consulted ONLY when there is no ring at all — a client with no derivable
+ * kit accent, where the legacy `brandTokens.accentColor ?? brand accent ??
+ * #C4552F` ladder is the only thing left to paint with.
+ *
+ * This used to fall back for a one-member ring too, and that is the exact
+ * mechanism behind prep run `pubsub-21634455753345065`'s three-attempt hold:
+ * `buildAccentRing` anchored the ring on `client/brand.json`'s `#d95f2b`
+ * while this fallback painted the config's `#ff6b2c`, so every slide carried
+ * a hex the kit's own ring did not contain and `checkPaletteWithinKit` failed
+ * three times over a disagreement no human made. With the ring painting its
+ * own anchor there is no second opinion left to disagree; the palette gate
+ * stays as the belt, not the mechanism.
+ */
 function resolveSlideAccent(
   index: number,
-  accentRing: string[] | undefined,
+  accentRing: readonly string[] | undefined,
   paletteSeed: string | undefined,
   fallbackAccent: string,
 ): { accent: string; rotates: boolean } {
-  const slidePalette =
-    accentRing !== undefined ? paletteForSlide({ palette: accentRing }, { index, ...(paletteSeed !== undefined ? { seed: paletteSeed } : {}) }) : undefined;
-  return slidePalette?.rotates === true ? { accent: slidePalette.accent, rotates: true } : { accent: fallbackAccent, rotates: false };
+  if (accentRing === undefined || accentRing.length === 0) return { accent: fallbackAccent, rotates: false };
+  // `paletteForSlide` returns `undefined` only for an empty ring, excluded above.
+  const slidePalette = paletteForSlide({ palette: [...accentRing] }, { index, ...(paletteSeed !== undefined ? { seed: paletteSeed } : {}) })!;
+  return { accent: slidePalette.accent, rotates: slidePalette.rotates };
 }
 
 /**
@@ -228,9 +250,9 @@ function decideGroundFgInversion(
  */
 export function buildVariationPlan(params: {
   slideNs: readonly number[];
-  accentRing?: string[] | undefined;
+  accentRing?: readonly string[] | undefined;
   paletteSeed?: string | undefined;
-  /** The same fallback `assembleSlidesData` resolves to for a non-rotating slide. */
+  /** The same fallback `assembleSlidesData` resolves to when there is no ring at all (see `resolveSlideAccent`). */
   brandAccentFallback: string;
   groundFgInversion?: GroundFgInversionConfig | undefined;
 }): VariationPlanEntry[] {
@@ -731,11 +753,14 @@ export function assembleSlidesData(params: {
   /** Which `custom` archetypeIds passed their safety check THIS attempt. See `resolveLayout`'s own note. */
   validatedCustomArchetypeIds?: ReadonlySet<string>;
   /**
-   * The brand.json accent, used only when `brandTokens.accentColor` is
-   * unset. The accent has exactly ONE channel — this per-slide field — and
-   * the brand token sheet deliberately never emits `--accent` (see
-   * `buildBrandHeadHtml`), so precedence stays legible:
-   * config accentColor > brand.json accent > the legacy default.
+   * The kit's derived accent, used — together with `brandTokens.accentColor`
+   * — ONLY when `accentRing` is empty (see `resolveSlideAccent`). The accent
+   * has exactly ONE channel — this per-slide field — and the brand token
+   * sheet deliberately never emits `--accent` (see `buildBrandHeadHtml`), so
+   * precedence stays legible: ring member > config accentColor > brand.json
+   * accent > the legacy default. With a kit present the ring's anchor already
+   * IS the config accentColor when one is set (`deriveBrandRenderTokens`), so
+   * the two ladders name the same hex for slide 0.
    */
   brandAccentFallback?: string | undefined;
   /** The client's normalized `@handle` watermark, from the frozen brand kit. Rendered by the templates' `.brand-handle` component; absent means the slot strips clean. */
@@ -744,12 +769,14 @@ export function assembleSlidesData(params: {
   slideStyleOverrides?: ReadonlyMap<number, SlideStyleOverride>;
   /**
    * IGSTYLE-7, §7a — the effective kit's accent ring (`BrandRenderTokens.palette`),
-   * wiring `paletteForSlide`'s already-seeded rotation into the render path for
-   * the first time. Absent, or a ring of length ≤ 1, falls back to
-   * `brandAccentFallback`/`brandTokens.accentColor` for EVERY slide exactly as
-   * before this ticket — a one-colour kit is unchanged.
+   * wiring `paletteForSlide`'s already-seeded rotation into the render path.
+   * Any non-empty ring is the single source of truth for every slide's
+   * accent: a one-member ring paints `ring[0]` everywhere, a longer one walks.
+   * Only an ABSENT or EMPTY ring falls back to `brandAccentFallback` /
+   * `brandTokens.accentColor` — see `resolveSlideAccent` for why a one-member
+   * ring no longer does.
    */
-  accentRing?: string[] | undefined;
+  accentRing?: readonly string[] | undefined;
   /**
    * Seeds the ring walk (`paletteForSlide`'s own "SEEDED, NOT RANDOM" contract)
    * — the run id, per §7a. Absent is treated as phase 0 (same as an empty
@@ -794,11 +821,11 @@ export function assembleSlidesData(params: {
     const { layout } = resolveLayout(slide, params.availableTemplates, usedLayouts, params.validatedCustomArchetypeIds);
     if (layout === "custom") usedLayouts.add(slide.customArchetype!.archetypeId);
     else if (layout !== "photo" && layout !== "text_only") usedLayouts.add(layout);
-    // IGSTYLE-7, §7a — a slide's accent comes from the ring walk rather than
-    // one shared `accentColor` whenever the kit can actually rotate.
-    // `rotates: false` (an empty or one-member ring) keeps every slide on the
-    // SAME existing `accentColor` fallback — a one-colour kit renders exactly
-    // as it did before this ticket, never a manufactured "variation."
+    // IGSTYLE-7, §7a — a slide's accent comes from the ring whenever the kit
+    // has one: the seeded walk when it can rotate, `ring[0]` on every slide
+    // when it cannot (never a manufactured "variation"). Only a client with
+    // no ring at all paints the shared `accentColor` ladder above — see
+    // `resolveSlideAccent` for why a one-member ring is no longer a fallback.
     const { accent: slideAccentColor } = resolveSlideAccent(slide.n, params.accentRing, params.paletteSeed, accentColor);
     const { fields, htmlFragments } = contentFor(
       layout,

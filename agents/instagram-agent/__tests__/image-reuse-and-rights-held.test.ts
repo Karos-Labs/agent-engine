@@ -3,6 +3,8 @@ import type { AgentToolRegistry } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import {
+  goodRelevanceVerdict,
+  goodTrendScoutOutput,
   fakeRenderCarousel,
   fakeRouterSequence,
   finalTurn,
@@ -32,6 +34,9 @@ function selectionsWith(overrides: { imagePath?: (n: number) => string; rightsUs
       license: "CC0, test fixture",
       rightsUsable: overrides.rightsUsable ?? true,
       watermarkFree: overrides.watermarkFree ?? true,
+      // instagram-image-vet@3 (Phase 0, item F): every selection carries a claim-match verdict.
+      claimMatch: 5,
+      claimMatchReason: "shows the claimed subject",
     })),
   };
 }
@@ -54,10 +59,10 @@ describe("P0 parity-audit Fix 4: image rights/watermark verification holds the w
     // can pin the failure to that one slide.
     vetting.selections = vetting.selections.map((s) => (s.n === 3 ? s : { ...s, rightsUsable: true }));
     const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
       finalTurn(goodCopyOutput()),
       finalTurn(vetting),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
     ]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: testTools(env),
@@ -94,12 +99,12 @@ describe("P0 parity-audit Fix 4: image rights/watermark verification holds the w
   it("downgrades to text-only rather than shipping it when a slide's selected image is watermarkFree: false", async () => {
     const promptStore = makePromptStore();
     const vetting = selectionsWith();
-    vetting.selections = vetting.selections.map((s) => (s.n === 5 ? { ...s, watermarkFree: false } : s));
+    vetting.selections = vetting.selections.map((s) => (s.n === 5 ? { ...s, watermarkFree: false, claimMatch: 5, claimMatchReason: "shows the claimed subject (instagram-image-vet@3 fixture)" } : s));
     const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
       finalTurn(goodCopyOutput()),
       finalTurn(vetting),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
     ]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: testTools(env),
@@ -150,10 +155,10 @@ describe("P0 parity-audit Fix 3: cross-post image-reuse prevention", () => {
     const otherPaths = [pool[1]!.path, pool[2]!.path];
     const vetting = selectionsWith({ imagePath: (n) => (n === 1 ? alreadyUsedPath : otherPaths[n % otherPaths.length]!) });
     const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
       finalTurn(goodCopyOutput()),
       finalTurn(vetting),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
     ]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: testTools(env),
@@ -178,7 +183,7 @@ describe("P0 parity-audit Fix 3: cross-post image-reuse prevention", () => {
   it("records every shipped image as used at delivery, so a LATER post's cross-post check picks it up", async () => {
     const promptStore = makePromptStore();
     const vetting = selectionsWith();
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), finalTurn(goodCopyOutput()), finalTurn(vetting), finalTurn({ pass: true, findings: [] })]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodCopyOutput()), finalTurn(vetting), finalTurn(goodRelevanceVerdict()), finalTurn({ pass: true, findings: [] })]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: testTools(env),
       promptStore,

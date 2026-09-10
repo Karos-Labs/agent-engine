@@ -3,6 +3,8 @@ import type { AgentToolRegistry } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import {
+  goodRelevanceVerdict,
+  goodTrendScoutOutput,
   fakeRenderCarousel,
   fakeRouterSequence,
   finalTurn,
@@ -41,14 +43,14 @@ describe("08b-visual-qa: post-render visual QA runs and retries through the SAME
       findings: [{ ruleId: "no-empty-closer", slide: 6, passed: false, note: "the closer slide's images carry no device/photo reference" }],
     };
     const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(badQa),
+      finalTurn(goodRelevanceVerdict()), finalTurn(badQa),
       // Attempt 2: full re-run of write-copy -> vet-images -> visual QA.
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
     ]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: testTools(env),
@@ -63,8 +65,9 @@ describe("08b-visual-qa: post-render visual QA runs and retries through the SAME
     const engine = new WorkflowEngine(durableStore);
     const result = await engine.run(workflowFn, params);
 
+    // scout + research + 2 x (copy + vet + relevance + QA).
     expect(result.status).toBe("completed");
-    expect(router.complete).toHaveBeenCalledTimes(7);
+    expect(router.complete).toHaveBeenCalledTimes(10);
 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).toContain("08b-visual-qa-attempt-1");
@@ -82,16 +85,16 @@ describe("08b-visual-qa: post-render visual QA runs and retries through the SAME
     const promptStore = makePromptStore();
     const badQa = { pass: false, findings: [{ ruleId: "nothing-overlaps", passed: false, note: "a headline field and a stat field both claim the same region" }] };
     const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(badQa),
+      finalTurn(goodRelevanceVerdict()), finalTurn(badQa),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(badQa),
+      finalTurn(goodRelevanceVerdict()), finalTurn(badQa),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(badQa),
+      finalTurn(goodRelevanceVerdict()), finalTurn(badQa),
     ]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: testTools(env),

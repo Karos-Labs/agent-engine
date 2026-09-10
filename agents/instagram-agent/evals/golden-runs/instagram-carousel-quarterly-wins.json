@@ -35,12 +35,12 @@
   },
   "endorsedSelections": {
     "selections": [
-      { "n": 1, "imagePath": "fixtures/images/photo-1.png", "reason": "shows an open-plan office matching the slide's collaborative framing", "license": "CC0, test fixture", "rightsUsable": true, "watermarkFree": true },
-      { "n": 2, "imagePath": "fixtures/images/photo-2.png", "reason": "close-up of hands on a keyboard matches the support-workflow framing", "license": "CC0, test fixture", "rightsUsable": true, "watermarkFree": true },
-      { "n": 3, "imagePath": "fixtures/images/photo-3.png", "reason": "a team reviewing charts matches the onboarding-review framing", "license": "CC0, test fixture", "rightsUsable": true, "watermarkFree": true },
-      { "n": 4, "imagePath": "fixtures/images/photo-1.png", "reason": "office collaboration shot fits a team-satisfaction slide", "license": "CC0, test fixture", "rightsUsable": true, "watermarkFree": true },
-      { "n": 5, "imagePath": "fixtures/images/photo-2.png", "reason": "hands-on-keyboard shot fits a design-iteration slide", "license": "CC0, test fixture", "rightsUsable": true, "watermarkFree": true },
-      { "n": 6, "imagePath": "fixtures/images/photo-3.png", "reason": "team-review shot fits an onboarding-timeline slide", "license": "CC0, test fixture", "rightsUsable": true, "watermarkFree": true }
+      { "n": 1, "imagePath": "fixtures/images/photo-1.png", "reason": "shows an open-plan office matching the slide's collaborative framing", "license": "CC0, test fixture", "rightsUsable": true, "watermarkFree": true, "claimMatch": 5, "claimMatchReason": "shows the claimed subject (instagram-image-vet@3)" },
+      { "n": 2, "imagePath": "fixtures/images/photo-2.png", "reason": "close-up of hands on a keyboard matches the support-workflow framing", "license": "CC0, test fixture", "rightsUsable": true, "watermarkFree": true, "claimMatch": 5, "claimMatchReason": "shows the claimed subject (instagram-image-vet@3)" },
+      { "n": 3, "imagePath": "fixtures/images/photo-3.png", "reason": "a team reviewing charts matches the onboarding-review framing", "license": "CC0, test fixture", "rightsUsable": true, "watermarkFree": true, "claimMatch": 5, "claimMatchReason": "shows the claimed subject (instagram-image-vet@3)" },
+      { "n": 4, "imagePath": "fixtures/images/photo-1.png", "reason": "office collaboration shot fits a team-satisfaction slide", "license": "CC0, test fixture", "rightsUsable": true, "watermarkFree": true, "claimMatch": 5, "claimMatchReason": "shows the claimed subject (instagram-image-vet@3)" },
+      { "n": 5, "imagePath": "fixtures/images/photo-2.png", "reason": "hands-on-keyboard shot fits a design-iteration slide", "license": "CC0, test fixture", "rightsUsable": true, "watermarkFree": true, "claimMatch": 5, "claimMatchReason": "shows the claimed subject (instagram-image-vet@3)" },
+      { "n": 6, "imagePath": "fixtures/images/photo-3.png", "reason": "team-review shot fits an onboarding-timeline slide", "license": "CC0, test fixture", "rightsUsable": true, "watermarkFree": true, "claimMatch": 5, "claimMatchReason": "shows the claimed subject (instagram-image-vet@3)" }
     ]
   },
   "endorsedBy": "tomer@karoslabs.com",

@@ -10,6 +10,7 @@ import { createGetSubredditRules } from "./get-subreddit-rules.js";
 import { createGetStrategy } from "./get-strategy.js";
 import { createGetKnowledge } from "./get-knowledge.js";
 import { createGetContextDoc } from "./get-context-doc.js";
+import { createGetBrief } from "./brief.js";
 
 export * from "./get-profile.js";
 export * from "./get-brand.js";
@@ -21,12 +22,20 @@ export * from "./get-subreddit-rules.js";
 export * from "./get-strategy.js";
 export * from "./get-knowledge.js";
 export * from "./get-context-doc.js";
+export * from "./brief.js";
 
 /**
  * The `karos-client` MCP server's tool registry (RFC-01 §9.1/§9.2) — a
  * read-only, tenant-bound view of a client's onboarding data. Every tool
  * resolves its tenant from `context.ctx.clientSlug`; none accepts a
  * tenant-shaped argument.
+ *
+ * Read-only is about to acquire exactly one exception: Phase 1 of the
+ * Instagram grounding work adds `client.writeBrief`, the registry's single
+ * writer, whose payload is schema-validated (`ClientBriefSchema`),
+ * channel-scoped, and never overwrites a human-authored brief. Everything
+ * else here stays a read. `client.getBrief` (this phase) is the read side of
+ * that same document.
  */
 export function createKarosClientTools(store: WorkspaceStoreLike = createWorkspaceStore()): AgentToolRegistry {
   return {
@@ -40,5 +49,6 @@ export function createKarosClientTools(store: WorkspaceStoreLike = createWorkspa
     "client.getStrategy": createGetStrategy(store),
     "client.getKnowledge": createGetKnowledge(store),
     "client.getContextDoc": createGetContextDoc(store),
+    "client.getBrief": createGetBrief(store),
   };
 }

@@ -3,7 +3,10 @@ import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import type { AgentTool, AgentToolRegistry } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
+import { CANDIDATES_PER_PHOTO_SLIDE } from "../src/workflow/run-budget.js";
 import {
+  goodRelevanceVerdict,
+  goodTrendScoutOutput,
   fakeRenderCarousel,
   fakeRouterSequence,
   finalTurn,
@@ -58,6 +61,9 @@ function selectionsFor(copy: ReturnType<typeof goodCopyOutput>, imagePath: strin
       license: "Unsplash License — free for commercial use, no attribution required",
       rightsUsable: true,
       watermarkFree: true,
+      // instagram-image-vet@3 (Phase 0, item F): every selection carries a claim-match verdict.
+      claimMatch: 5,
+      claimMatchReason: "shows the claimed subject",
     })),
   };
 }
@@ -89,7 +95,7 @@ describe("05b-source-images", () => {
     };
 
     const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
       finalTurn(copy),
       finalTurn(selectionsFor(copy, pool[0]!.path)),
     ]);
@@ -109,6 +115,11 @@ describe("05b-source-images", () => {
     expect(seen?.["repoRoot"]).toBe(env.repoRoot);
     // Run-scoped, so two concurrent runs cannot overwrite each other's files.
     expect(seen?.["runId"]).toBe(params.runId);
+    // The pool width is asked for EXPLICITLY, from the same constant the
+    // pre-run budget estimate prices 05c's per-candidate vision inspection
+    // off — leaving it to the tool's schema default is how the estimate came
+    // to under-count that term sixfold.
+    expect(seen?.["maxPerNeed"]).toBe(CANDIDATES_PER_PHOTO_SLIDE);
 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).toContain("05b-source-images-attempt-1");
@@ -127,7 +138,7 @@ describe("05b-source-images", () => {
     };
 
     const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
       finalTurn(copy),
       finalTurn(selectionsFor(copy, pool[0]!.path)),
     ]);
@@ -158,7 +169,7 @@ describe("05b-source-images", () => {
     });
 
     // No "vetting" turn: an empty pool skips step 06's model call entirely.
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), finalTurn(copy), finalTurn(goodVisualQaOutput())]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]);
 
     const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(
       createInstagramAgentWorkflow({ tools, promptStore: makePromptStore(), router, repoRoot: env.repoRoot, autoApprove: true }),
@@ -182,7 +193,7 @@ describe("05b-source-images", () => {
         reason: "media.findImages: no image-search backend configured — set UNSPLASH_ACCESS_KEY",
       }),
     });
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), finalTurn(copy), finalTurn(goodVisualQaOutput())]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]);
 
     const durableStore = new MemoryDurableStepStore();
     const result = await new WorkflowEngine(durableStore).run(
@@ -207,7 +218,7 @@ describe("05b-source-images", () => {
         reason: "media.findImages: no candidate images could be sourced. Chain tried: openverse, wikimedia. slide 1 (openverse: no results; wikimedia: no results)",
       }),
     });
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), finalTurn(copy), finalTurn(goodVisualQaOutput())]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]);
 
     const durableStore = new MemoryDurableStepStore();
     const result = await new WorkflowEngine(durableStore).run(
@@ -234,7 +245,7 @@ describe("05b-source-images", () => {
     // Only three turns are supplied: research, copy, visual QA. A vetting
     // call would exhaust the sequence and throw, so this passing proves it
     // never ran.
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), finalTurn(copy), finalTurn(goodVisualQaOutput())]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]);
 
     const durableStore = new MemoryDurableStepStore();
     const result = await new WorkflowEngine(durableStore).run(
@@ -266,6 +277,8 @@ describe("05b-source-images", () => {
               license: "n/a — no candidate qualified",
               rightsUsable: false,
               watermarkFree: false,
+              claimMatch: 1,
+              claimMatchReason: "no candidate shows the claim",
             }
           : {
               n: s.n,
@@ -274,6 +287,8 @@ describe("05b-source-images", () => {
               license: "Unsplash License",
               rightsUsable: true,
               watermarkFree: true,
+              claimMatch: 5,
+              claimMatchReason: "shows the claimed subject",
             },
       ),
     };
@@ -309,14 +324,14 @@ describe("05b-source-images", () => {
     };
 
     const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
       finalTurn(copy),
       // First vetting pass: slide 2 has no match.
       finalTurn(selectionsWithGaps(copy, filled, [2])),
       // Rescue vetting pass: the generated image clears the gate.
       finalTurn({
         selections: [
-          { n: 2, imagePath: filled, reason: "the generated illustration matches the brief", license: "Generated image", rightsUsable: true, watermarkFree: true },
+          { n: 2, imagePath: filled, reason: "the generated illustration matches the brief", license: "Generated image", rightsUsable: true, watermarkFree: true, claimMatch: 5, claimMatchReason: "drawn to the slide's claim" },
         ],
       }),
     ]);
@@ -342,10 +357,10 @@ describe("05b-source-images", () => {
     });
 
     const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
       finalTurn(copy),
       finalTurn(selectionsWithGaps(copy, pool[0]!.path, [5])),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
     ]);
 
     const durableStore = new MemoryDurableStepStore();
@@ -376,16 +391,16 @@ describe("05b-source-images", () => {
     });
 
     const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
       finalTurn(copy),
       finalTurn(selectionsWithGaps(copy, pool[0]!.path, [3])),
       // The rescue produced something, but the gate refused it too.
       finalTurn({
         selections: [
-          { n: 3, imagePath: null, reason: "the generated image still does not match", license: "n/a", rightsUsable: false, watermarkFree: false },
+          { n: 3, imagePath: null, reason: "the generated image still does not match", license: "n/a", rightsUsable: false, watermarkFree: false, claimMatch: 1, claimMatchReason: "still not the claimed subject" },
         ],
       }),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
     ]);
 
     const durableStore = new MemoryDurableStepStore();
@@ -411,10 +426,10 @@ describe("05b-source-images", () => {
     });
 
     const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
       finalTurn(copy),
       finalTurn(selectionsWithGaps(copy, pool[0]!.path, [4])),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
     ]);
 
     const durableStore = new MemoryDurableStepStore();
@@ -442,7 +457,7 @@ describe("05b-source-images", () => {
     const copy = goodCopyOutput();
     // No "vetting" turn: an empty pool (no media.findImages tool at all)
     // skips step 06's model call entirely.
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), finalTurn(copy), finalTurn(goodVisualQaOutput())]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]);
 
     const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(
       createInstagramAgentWorkflow({
@@ -471,7 +486,7 @@ describe("05b-source-images", () => {
       ...env.tools,
       "media.findImages": stubFindImages({ status: "tooling_error", reason: "unsplash search returned 503" }),
     });
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), finalTurn(copy), finalTurn(goodVisualQaOutput())]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]);
 
     const durableStore = new MemoryDurableStepStore();
     const result = await new WorkflowEngine(durableStore).run(
@@ -505,7 +520,7 @@ describe("05b-source-images", () => {
     // Attempt 1's vetting output is malformed, which sends the loop back to
     // step 05 for a fresh draft; attempt 2 succeeds.
     const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
       finalTurn(copy),
       finalTurn({ selections: [] }),
       finalTurn(copy),
@@ -572,7 +587,7 @@ describe("archetype-aware sourcing", () => {
     // for those four.
     const photoNs = [1, 3, 5, 6];
     const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
       finalTurn(copy),
       finalTurn({
         selections: photoNs.map((n) => ({
@@ -582,9 +597,11 @@ describe("archetype-aware sourcing", () => {
           license: "CC0, test fixture",
           rightsUsable: true,
           watermarkFree: true,
+          claimMatch: 5,
+          claimMatchReason: "shows the claimed subject (instagram-image-vet@3 fixture)",
         })),
       }),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
     ]);
 
     const durableStore = new MemoryDurableStepStore();

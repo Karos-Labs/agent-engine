@@ -5,7 +5,7 @@ import {
   type BrandLogoDownload,
   type BrandLogoPlacement,
 } from "@agent-engine/tool-karos-media";
-import type { BrandTokens } from "./types.js";
+import type { BrandTokens, StyleOverrides } from "./types.js";
 
 /**
  * The Brand Kit's render half: turns a client's `client/brand.json` (portal-
@@ -86,16 +86,25 @@ const BADGE_STYLES: readonly BadgeStyle[] = ["pill", "brackets", "underline", "p
  * Space/alphanumeric only — real Google-Fonts families are, and anything
  * wider would need CSS-string AND URL escaping to be safe in both places
  * this value lands (a `font-family` declaration and a css2 URL).
+ *
+ * Exported for `script-fonts.ts`, which reads a client's already-emitted
+ * `--f-*` stacks back out of the kit and must apply the SAME acceptance rule
+ * before re-quoting a family into its own sheet — one rule, two emitters.
  */
-const FONT_FAMILY = /^[A-Za-z0-9 ]{1,60}$/;
+export const FONT_FAMILY = /^[A-Za-z0-9 ]{1,60}$/;
 
 const HANDLE = /^@?[A-Za-z0-9._]{1,40}$/;
 
 /** The css2 origin every template's hardcoded font link already uses. */
-const GOOGLE_FONTS_CSS2 = "https://fonts.googleapis.com/css2";
+export const GOOGLE_FONTS_CSS2 = "https://fonts.googleapis.com/css2";
 
-/** The fallback stacks the templates' own `:root` blocks declare — a brand face slots in FRONT of these, never instead of them. */
-const FALLBACK_STACKS = {
+/**
+ * The fallback stacks the templates' own `:root` blocks declare — a brand
+ * face slots in FRONT of these, never instead of them. Exported so the
+ * script-font sheet (`script-fonts.ts`) ends its stacks on exactly the same
+ * generic families the templates and this module do.
+ */
+export const FALLBACK_STACKS = {
   display: "Georgia, 'Times New Roman', serif",
   body: "system-ui, -apple-system, sans-serif",
   mono: "ui-monospace, monospace",
@@ -314,14 +323,25 @@ function ringMod(value: number, length: number): number {
 
 /**
  * Every hex the Brand Kit actually ships, in the order the rotation should
- * prefer them: hand-authored `brandTokens.palette` first (explicit beats
- * derived, the same ladder the rest of this module uses), then the named
- * non-neutral roles in `brand.colors`, then the extracted `dominantColors`
- * most-dominant first. Anything that isn't a valid hex is DROPPED here, not
- * repaired.
+ * prefer them: the config's own `brandTokens.accentColor` first, then the
+ * hand-authored `brandTokens.palette` (explicit beats derived, the same
+ * ladder the rest of this module uses), then the named non-neutral roles in
+ * `brand.colors`, then the extracted `dominantColors` most-dominant first.
+ * Anything that isn't a valid hex is DROPPED here, not repaired.
+ *
+ * `brandTokens.accentColor` is a candidate at all because of a real prep
+ * hold (run `pubsub-21634455753345065`, 2026-09): the config said `#ff6b2c`,
+ * `client/brand.json` said `#d95f2b`, and the two sources of truth never
+ * met — the ring was built from brand.json alone while the slides were
+ * painted from the config, so `checkPaletteWithinKit` failed every attempt
+ * and burned $0.86 on a disagreement no human had made. Both hexes are now
+ * ring members, and the anchor below is the one that actually paints.
  */
 function kitAccentCandidates(b: Record<string, unknown>, brandTokens: BrandTokens): string[] {
   const out: string[] = [];
+
+  const configAccent = asHex(brandTokens.accentColor);
+  if (configAccent !== undefined) out.push(configAccent);
 
   for (const entry of Array.isArray(brandTokens.palette) ? brandTokens.palette : []) {
     const hex = asHex(entry);
@@ -498,15 +518,26 @@ export function deriveBrandRenderTokens(brand: unknown, brandTokens: BrandTokens
     fontFamilies.push(mono);
   }
 
-  // ── accent: explicit override (IGSTYLE-3) > client/brand.json > nothing ──
+  // ── accent: explicit override (IGSTYLE-3) > config accentColor > client/brand.json > nothing ──
   //
   // `overrides.accent` was added at IGSTYLE-1 (see this file's `renderTokens`
   // doc comment there) but deliberately left inert — this is the line that
   // actually wires it in, completing the same "explicit override beats
   // derivation" ladder every other field here already follows. Extracted for
   // `assembleSlidesData`'s EXISTING accent channel; never emitted as a var.
+  //
+  // `brandTokens.accentColor` sits SECOND, above brand.json, because this
+  // precedence must be the one the slides are actually painted with:
+  // `assembleSlidesData` has always read `brandTokens.accentColor ??
+  // brandAccentFallback`, so a ring anchored on brand.json while the config
+  // disagreed put a hex on every slide that the ring never contained (see
+  // `kitAccentCandidates`). The anchor is the single source of truth for
+  // "what colour is slide 0", and it is now the same answer both places give.
   const brandAccent =
-    asHex(overrides.accent) ?? asHex(b["accent"]) ?? asHex((b["colors"] as Record<string, unknown> | undefined)?.["primaryAccent"]);
+    asHex(overrides.accent) ??
+    asHex(brandTokens.accentColor) ??
+    asHex(b["accent"]) ??
+    asHex((b["colors"] as Record<string, unknown> | undefined)?.["primaryAccent"]);
 
   // ── palette ring: the accent, then whatever else the kit legibly ships ──
   // Deliberately NOT part of `hasAnything` below: the ring is built from the
@@ -596,6 +627,47 @@ export function deriveBrandRenderTokens(brand: unknown, brandTokens: BrandTokens
     ...(handle !== undefined ? { handle } : {}),
     badgeStyle,
     palette,
+  };
+}
+
+/**
+ * IGSTYLE-7's learned prior (Layer 1) filtered against the brand kit's own
+ * accent ring BEFORE it is applied: a learned `accent` that is not a ring
+ * member is DROPPED from `applied` and reported in `notes`; `ground`/`fg`
+ * pass through untouched (they have their own contrast-floor refusal path in
+ * `effectiveBrandKit`, and a ring says nothing about neutrals).
+ *
+ * Why a note and never an application: the ring is the single source of
+ * truth for which accents this client's kit legally ships (`buildAccentRing`),
+ * and a reviewer's past "loved the orange" vote must not be able to widen it
+ * — a hex outside the ring is exactly what `checkPaletteWithinKit` exists to
+ * refuse, so applying it here would set up the render to fail its own gate
+ * three attempts later (the `pubsub-21634455753345065` hold, ~$0.30 per
+ * three-attempt hold). Recording the preference instead keeps the signal
+ * visible to the reviewer (the caller turns each note into a `StyleRefusal`
+ * on the gate payload) with a one-line remedy: add the hex to the kit
+ * palette and it becomes legal on the next run.
+ *
+ * An EMPTY ring means the kit has no opinion (a brandless client, or one
+ * with no derivable accent), so nothing is filtered — the same refuse-to-
+ * guess rule `checkPaletteWithinKit` applies to an empty kit. Membership is
+ * case-insensitive, matching `buildAccentRing`'s own dedupe key. Pure;
+ * `learned` is never mutated.
+ */
+export function filterLearnedStyleToRing(learned: StyleOverrides, ring: readonly string[]): { applied: StyleOverrides; notes: string[] } {
+  const accent = asHex(learned.accent);
+  if (accent === undefined || ring.length === 0) return { applied: { ...learned }, notes: [] };
+
+  const members = new Set(ring.map((h) => h.toLowerCase()));
+  if (members.has(accent.toLowerCase())) return { applied: { ...learned }, notes: [] };
+
+  const { accent: _dropped, ...rest } = learned;
+  return {
+    applied: rest,
+    notes: [
+      `learned accent ${accent} is outside the brand kit's accent ring [${ring.join(", ")}] — recorded for the reviewer, ` +
+        "not applied; add it to the kit palette to make it legal",
+    ],
   };
 }
 

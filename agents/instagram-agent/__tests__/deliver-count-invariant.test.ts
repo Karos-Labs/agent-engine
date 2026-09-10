@@ -3,6 +3,8 @@ import type { AgentToolRegistry } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import {
+  goodRelevanceVerdict,
+  goodTrendScoutOutput,
   fakeRouterSequence,
   finalTurn,
   goodCopyOutput,
@@ -31,10 +33,10 @@ describe("09b-deliver-and-log: rendered PNG count must exactly match slide count
   it("refuses to log a deliverable when the render tool reports fewer rendered PNGs than slides -- a real, checked invariant", async () => {
     const promptStore = makePromptStore();
     const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
     ]);
 
     // A deliberately broken stand-in for publish.renderCarousel: reports

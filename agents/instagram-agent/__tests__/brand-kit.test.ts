@@ -4,6 +4,8 @@ import pathMod from "node:path";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import {
+  goodRelevanceVerdict,
+  goodTrendScoutOutput,
   fakeRenderCarousel,
   fakeRouterSequence,
   finalTurn,
@@ -47,10 +49,10 @@ const GEEKTIME_BRAND = {
 
 function happyRouter() {
   return fakeRouterSequence([
-    finalTurn(goodResearchOutput()),
+    finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
     finalTurn(goodCopyOutput()),
     finalTurn(goodImageVettingOutput()),
-    finalTurn(goodVisualQaOutput()),
+    finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
   ]);
 }
 
@@ -125,8 +127,8 @@ describe("brand kit: the client's brand reaches the rendered templates", () => {
     await env.store.writeJson("acme", ["client", "brand"], GEEKTIME_BRAND);
 
     const first = goodCopyOutput();
-    const draftTurns = () => [finalTurn(first), finalTurn(goodImageVettingOutput()), finalTurn(goodVisualQaOutput())];
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), ...draftTurns(), ...draftTurns()]);
+    const draftTurns = () => [finalTurn(first), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())];
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...draftTurns(), ...draftTurns()]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: { ...env.tools, "publish.renderCarousel": fakeRenderCarousel(env.tools["publish.renderCarousel"]!) },
       promptStore: makePromptStore(),
@@ -214,6 +216,35 @@ describe("brand kit: the client's brand reaches the rendered templates", () => {
     const composed = await fsp.readFile(pathMod.join(env.repoRoot, ".template-cache", "branded_logo_down", "slide.html"), "utf8");
     expect(composed).not.toContain("brand-logo");
     expect(composed).toContain("--bg: #272A35;");
+  }, 30000);
+
+  // Phase 0, item G — one ring for both brand sources of truth. The 02c
+  // checkpoint is what every later consumer (the ring walk, the palette gate,
+  // the learned-preference filter) reads, so it is where the alignment must
+  // be visible: the config's accentColor anchors, brand.json's accent joins.
+  it("02c: a config accentColor that disagrees with brand.json's accent yields ONE ring, anchored on the config hex, with brand.json's hex as a member", async () => {
+    await env.cleanup();
+    env = await setupTestEnvironment({ brandTokens: goodBrandTokens({ accentColor: "#ff6b2c" }) });
+    await env.store.writeJson("acme", ["client", "brand"], { ...GEEKTIME_BRAND, accent: "#d95f2b", colors: { ...GEEKTIME_BRAND.colors, primaryAccent: "#d95f2b" } });
+
+    const durableStore = new MemoryDurableStepStore();
+    const result = await new WorkflowEngine(durableStore).run(workflowFor(happyRouter()), { runId: "drifted_ring_run", ...base });
+    expect(result.status).toBe("completed");
+
+    const kit = (await durableStore.listSteps("drifted_ring_run")).find((s) => s.stepId === "02c-load-brand-kit")?.output as
+      | { palette: string[]; brandAccent?: string }
+      | null
+      | undefined;
+    expect(kit?.brandAccent).toBe("#ff6b2c");
+    expect(kit?.palette[0]).toBe("#ff6b2c");
+    expect(kit?.palette).toContain("#d95f2b");
+
+    // And the slides were painted from that ring — never from a second opinion.
+    const slidesData = (await durableStore.listSteps("drifted_ring_run")).find((s) => s.stepId === "07c-emit-slides-data-attempt-1")?.output as
+      | { slides: Array<{ fields: Record<string, string> }> }
+      | undefined;
+    const ring = new Set(kit!.palette.map((h) => h.toLowerCase()));
+    for (const slide of slidesData?.slides ?? []) expect(ring.has(slide.fields["accentColor"]!.toLowerCase())).toBe(true);
   }, 30000);
 
   it("a standing seriesBadge from brandTokens lands on every slide's fields", async () => {

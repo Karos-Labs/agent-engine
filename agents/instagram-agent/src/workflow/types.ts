@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { DegradedContextGroundingMarker, TrendCandidate } from "@agent-engine/workflow";
+import type { ContentMode, DegradedContextGroundingMarker, TrendCandidate } from "@agent-engine/workflow";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Style config + brand tokens (RFC-03 step 02 — "freeze the small files")
@@ -236,6 +236,54 @@ export interface InstagramRunClaim {
 /** Where step 03's subject came from — decides whether there is a dedup reservation to commit at step 09. `trend` (2026-09): the scout's on-brand candidate took the slot. */
 export type InstagramTopicSource = "reserved" | "requested" | "trend" | "research";
 
+/**
+ * Why a scouted story was NOT the one posted about (RFC-13 §E, 2026-09).
+ *
+ * `outranked-by-request` / `-catalog` / `-trend`: a person's typed subject, a
+ * planned catalog row, or a stronger trend took the slot. `lower-rank`: the
+ * candidate lost the scoring inside its own group. `off-mode`: it was tagged
+ * for a content mode other than the one this run rotated to.
+ */
+export type TopicAlternativeReason = "lower-rank" | "off-mode" | "outranked-by-request" | "outranked-by-catalog" | "outranked-by-trend";
+
+/**
+ * A subject the run considered and did not take, kept so the reviewer at the
+ * gate sees what was NOT chosen rather than only what was. `engine` and
+ * `score` are filled by Phase 1's topic engines; Phase 0's scout candidates
+ * carry `brandFit`/`interest`/`mode` and the deterministic `score`.
+ */
+export interface TopicAlternative {
+  topic: string;
+  headline?: string;
+  brandFit?: number;
+  interest?: number;
+  mode?: ContentMode;
+  engine?: string;
+  score?: number;
+  reason: TopicAlternativeReason;
+}
+
+/**
+ * How the subject was weighed. `plannedScore` is what a catalog row is worth
+ * (`PLANNED_ROW_SCORE`), `bestCandidateScore` the strongest scouted story's
+ * `brandFit × interest × distance`, and `rule` the one sentence that says
+ * which precedence rule decided — so a reviewer can disagree with a rule
+ * rather than with a number.
+ */
+export interface TopicWeighting {
+  plannedScore?: number;
+  bestCandidateScore?: number;
+  rule: string;
+}
+
+/**
+ * Whether the trend scout actually saw this week's stories. `no-documents`:
+ * the research pull answered with nothing to scout; `unavailable`: the
+ * scraper was not configured or was down, recorded on the claim instead of
+ * holding a run whose subject a person had already planned.
+ */
+export type TopicScoutStatus = "ran" | "no-documents" | "unavailable";
+
 export interface InstagramTopicClaim {
   /**
    * OPTIONAL, because only a `"reserved"` claim has one.
@@ -253,6 +301,18 @@ export interface InstagramTopicClaim {
   source: InstagramTopicSource;
   /** Present when `source === "trend"`: the scouted candidate, with its angle, hook, why-now and brand-fit bridge. */
   trend?: TrendCandidate;
+  /**
+   * The content mode this run rotated to (`selectContentMode` over the
+   * decision log), set by `03g-select-topic`. Optional because step 03's own
+   * seed claim predates the selection; every claim past 03g carries it.
+   */
+  mode?: ContentMode;
+  /** The scouted stories this run did not post about, and why — filled by `resolveTopicClaim`. */
+  alternatives?: TopicAlternative[];
+  /** How the chosen subject was weighed against the alternatives. */
+  weighting?: TopicWeighting;
+  /** Whether the scout ran, saw nothing, or could not run. */
+  scoutStatus?: TopicScoutStatus;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -527,8 +587,32 @@ export const ImageSelectionSchema = z.object({
   rightsUsable: z.boolean(),
   /** False when the candidate carries a visible watermark, stock-site overlay, or other embedded marking — never shipped regardless of visual fit. */
   watermarkFree: z.boolean(),
+  /**
+   * Does the picture show what the slide CLAIMS (headline + body), not
+   * merely the objects `visualNeed` lists? 5 = the picture is evidence for
+   * the claim; 3 = compatible and generic, nothing contradicts; 1-2 = a
+   * different subject, team, place or era, or the picture contradicts the
+   * claim. Required on every selection, `null` ones included, because the
+   * defect this closes (RFC-13 §F: client photos of one team's fans shipped
+   * under another team's headline, prep 2026-09) was a vet that judged
+   * objects and never the claim — an absent score would let that return.
+   * The workflow re-checks `claimMatch < MIN_CLAIM_MATCH` deterministically
+   * in `isUnfillable`; the model's own threshold is never trusted alone.
+   */
+  claimMatch: z.number().int().min(1).max(5),
+  /** Why the score — names what in the picture does or does not carry the slide's claim. Required, so a low score is checkable rather than a black box. */
+  claimMatchReason: z.string().min(1),
 });
 export type ImageSelection = z.infer<typeof ImageSelectionSchema>;
+
+/**
+ * A selection whose `claimMatch` is below this is unfillable, exactly like a
+ * `null` `imagePath` or a failed rights/watermark verdict: the slide takes
+ * the existing text-only downgrade path. 3 ("compatible and generic") is the
+ * floor because a generic-but-honest picture is what most stock pools can
+ * offer; 1-2 is a picture that says something the slide does not.
+ */
+export const MIN_CLAIM_MATCH = 3;
 
 export const ImageVettingOutputSchema = z.object({
   selections: z.array(ImageSelectionSchema).min(1),
@@ -590,4 +674,12 @@ export interface InstagramAgentWorkflowResult {
   deliverableId: string;
   /** SCRUM-242 (T-A10) — present only when this run's branding-guidelines context doc was absent; a human reviewer must see this, not merely a system that fetched it. */
   contextGrounding?: DegradedContextGroundingMarker;
+  /**
+   * Phase 0 cost controls (owner's rule, 2026-09-09) — present only when the
+   * run's spend crossed the hard max and the rest of the run took the
+   * cheapest complete path (text-only image gaps, no vision inspection, no
+   * optional visual-QA model call). The run still COMPLETED and delivered;
+   * a budget is an adaptation, never a hold.
+   */
+  budget?: { status: "degraded"; reason: string };
 }

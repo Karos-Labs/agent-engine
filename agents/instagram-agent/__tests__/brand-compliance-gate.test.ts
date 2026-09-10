@@ -5,6 +5,8 @@ import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-a
 import { checkSlidesData } from "../src/workflow/slides-data.js";
 import type { InstagramCopyOutput } from "../src/workflow/types.js";
 import {
+  goodRelevanceVerdict,
+  goodTrendScoutOutput,
   fakeRenderCarousel,
   fakeRouterSequence,
   finalTurn,
@@ -165,12 +167,12 @@ describe("SCRUM-301/AU17: step 07's banned-word/char + compliance checks now cal
       const rocketCopy = copyWith(`${goodCopyOutput().slides[0]!.body} Growth incoming 🚀`);
       const cleanCopy = goodCopyOutput();
       const router = fakeRouterSequence([
-        finalTurn(goodResearchOutput()),
+        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
         finalTurn(rocketCopy),
         finalTurn(goodImageVettingOutput()),
         finalTurn(cleanCopy),
         finalTurn(goodImageVettingOutput()),
-        finalTurn(goodVisualQaOutput()),
+        finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
       ]);
       const workflowFn = createInstagramAgentWorkflow({
         tools: testTools(env),
@@ -201,7 +203,7 @@ describe("SCRUM-301/AU17: step 07's banned-word/char + compliance checks now cal
       const promptStore = makePromptStore();
       const badCopy = goodCopyOutput();
       const router = fakeRouterSequence([
-        finalTurn(goodResearchOutput()),
+        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
         finalTurn(badCopy),
         finalTurn(goodImageVettingOutput()),
         finalTurn(badCopy),

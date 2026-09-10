@@ -20,15 +20,15 @@ import { createInstagramAgentWorkflow } from "../../../agents/instagram-agent/sr
 import {
   fakeRenderCarousel,
   fakeRouterSequence as instagramFakeRouterSequence,
-  finalTurn as instagramFinalTurn,
-  goodCopyOutput,
   goodImageCandidatePool,
-  goodImageVettingOutput,
-  goodResearchOutput,
-  goodVisualQaOutput,
   makePromptStore as makeInstagramPromptStore,
   setupTestEnvironment as setupInstagramEnv,
 } from "../../../agents/instagram-agent/__tests__/test-helpers.js";
+// The instagram turn list is named, not positional: RFC-13 Phase 0 added two
+// unconditional model steps (the trend scout at 03c, the relevance judge at
+// 07g), and a positional list of four turns here would silently feed the copy
+// output to the scout and hold the run. See that helper's own doc comment.
+import { happyTurns as instagramHappyTurns } from "../../../agents/instagram-agent/__tests__/turns.js";
 
 import { createBrandedShortsAgentWorkflow } from "../../../agents/branded-shorts-agent/src/workflow/create-branded-shorts-agent-workflow.js";
 import {
@@ -109,12 +109,7 @@ describe("SCRUM-242 (T-A10) — one fixture, all four grounded agents, every con
     const instagramEnv = await setupInstagramEnv();
     try {
       const instagramParams = { runId: "fixture_instagram", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
-      const instagramRouter = instagramFakeRouterSequence([
-        instagramFinalTurn(goodResearchOutput()),
-        instagramFinalTurn(goodCopyOutput()),
-        instagramFinalTurn(goodImageVettingOutput()),
-        instagramFinalTurn(goodVisualQaOutput()),
-      ]);
+      const instagramRouter = instagramFakeRouterSequence(instagramHappyTurns());
       const instagramWorkflowFn = createInstagramAgentWorkflow({
         tools: { ...instagramEnv.tools, "publish.renderCarousel": fakeRenderCarousel(instagramEnv.tools["publish.renderCarousel"]!) },
         promptStore: makeInstagramPromptStore(),

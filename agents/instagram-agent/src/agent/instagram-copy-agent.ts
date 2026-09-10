@@ -118,6 +118,20 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyOutput> {
     // so slide N is written TO the client's picture N), and §14
     // `trendCandidate` (a scouted story with its angle, hook, why-now and
     // brand-fit bridge). v10 stays frozen.
-    skillRef: "instagram-copy@11",
+    // Pinned to "12" (2026-09, Instagram Phase 0 grounding gate): v12 adds
+    // §15, "Who this client is" — `clientBrief` (the Client Brief from
+    // `client.getBrief` or the deterministic derivation in
+    // `workflow/client-brief.ts`: positioning, ICP, offers, core terms,
+    // forbidden claims, language) is read BEFORE the facts and every slide
+    // must be legible as this business speaking to its audience; and
+    // `relevanceSteer`, the relevance judge's verdict from a failed
+    // attempt, which must be fixed rather than argued with. §7 gains the
+    // three default render rules (cover carries a device, numbers are
+    // devices, closer carries a CTA) the deterministic 07h check enforces.
+    // v12 also fixes the H1, which said "v10" from v10 through v11. The
+    // 2026-09-08 prep audit: an AI marketing agency shipped a real-estate
+    // carousel that cleared every gate, because no prompt or check ever
+    // said who the client was. v11 stays frozen.
+    skillRef: "instagram-copy@12",
   };
 }

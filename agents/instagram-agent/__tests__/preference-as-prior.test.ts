@@ -6,6 +6,8 @@ import { MemoryDurableStepStore, WorkflowEngine, varyLearnedStyle } from "@agent
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import { applyIntents } from "../src/workflow/style-directive.js";
 import {
+  goodRelevanceVerdict,
+  goodTrendScoutOutput,
   fakeRenderCarousel,
   fakeRouterSequence,
   finalTurn,
@@ -62,7 +64,7 @@ function tools(env: TestEnvironment): AgentToolRegistry {
 }
 
 function draftTurns(copyOutput: ReturnType<typeof goodCopyOutput>) {
-  return [finalTurn(copyOutput), finalTurn(goodImageVettingOutput()), finalTurn(goodVisualQaOutput())];
+  return [finalTurn(copyOutput), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())];
 }
 
 describe("preference as prior, not pin (IGSTYLE-7, §7b/§7c end-to-end)", () => {
@@ -107,7 +109,7 @@ describe("preference as prior, not pin (IGSTYLE-7, §7b/§7c end-to-end)", () =>
     }
 
     const copy = goodCopyOutput();
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), ...draftTurns(copy)]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...draftTurns(copy)]);
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
     const runId = "igstyle7_budget_accent";
@@ -166,7 +168,7 @@ describe("preference as prior, not pin (IGSTYLE-7, §7b/§7c end-to-end)", () =>
     }
 
     const copy = goodCopyOutput();
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), ...draftTurns(copy)]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...draftTurns(copy)]);
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
     const runId = "igstyle7_intent_satisfaction";
@@ -201,12 +203,69 @@ describe("preference as prior, not pin (IGSTYLE-7, §7b/§7c end-to-end)", () =>
     expect(groundVariation?.reason).toContain("rule 10");
   }, 60000);
 
+  // Phase 0, item G — the flywheel regression: a learned accent that IS a
+  // member of the baseline ring is still applied (it becomes the ring's
+  // anchor via the effective kit), so aligning the ring did not silence the
+  // preference signal it exists to protect. Three unanimous structured votes
+  // put strength at 1.0 (>= VARIATION_THRESHOLD), so 7b leaves the hex alone
+  // and what reaches the slides is the learned hex itself, not a variation.
+  it("flywheel regression (item G): a learned accent that IS a ring member is applied as before — it anchors the ring and reaches the slides", async () => {
+    await env.store.writeJson("acme", ["client", "brand"], MULTI_ACCENT_BRAND);
+    const append = env.tools["memory.appendFeedback"]!;
+    const ctx: AgentContext = { runId: "seed", ...base, metadata: {} };
+    for (const i of [0, 1, 2]) {
+      await append.execute(
+        {
+          feedbackId: `seed-accent-onring-${i}`,
+          productId: "instagram-agent",
+          decision: "approve",
+          actor: "jane@karoslabs.com",
+          note: "the coral is right",
+          revision: 0,
+          style: { overrides: { accent: "#FF5B5F" }, source: "structured", intents: [], applied: [] },
+        },
+        { ctx },
+      );
+    }
+
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...draftTurns(goodCopyOutput())]);
+    const durableStore = new MemoryDurableStepStore();
+    const runId = "igstyle7_onring_flywheel";
+    const r0 = await new WorkflowEngine(durableStore).run(workflowFn(router), { ...base, runId });
+    expect(r0.status).toBe("awaiting_gate");
+
+    const learned = (await durableStore.listSteps(runId)).find((s) => s.stepId === "02h-learned-style-preferences")?.output as {
+      overrides: Record<string, string>;
+      strength: Record<string, number>;
+    };
+    expect(learned.overrides.accent).toBe("#FF5B5F");
+    expect(learned.strength.accent).toBeGreaterThanOrEqual(0.75);
+
+    const slidesData = (await durableStore.listSteps(runId)).find((s) => s.stepId === "07c-emit-slides-data-attempt-1")?.output as {
+      slides: Array<{ fields: Record<string, string> }>;
+    };
+    const usedAccents = new Set(slidesData.slides.map((s) => s.fields["accentColor"]));
+    // The learned hex is genuinely on the slides (as the ring anchor it is
+    // slide 0's colour under phase 0, and a member of every seeded walk).
+    expect(usedAccents).toContain("#FF5B5F");
+    for (const hex of usedAccents) expect(RING).toContain(hex);
+
+    // No refusal was recorded for it — it is a ring member, so the learned-
+    // preference filter (when wired) has nothing to note.
+    const gate = await durableStore.getGate(`${runId}__09a-batch-review-r0`);
+    const payload = gate?.payload as { styleDirectiveOutcome?: { refusals: Array<{ role: string; requested: string }> } };
+    expect(payload.styleDirectiveOutcome?.refusals.some((r) => r.role === "accent" && r.requested === "#FF5B5F") ?? false).toBe(false);
+  }, 60000);
+
   it("in-run supremacy: this round's own explicit directive still outranks whatever the learned-preference budget would have varied to", async () => {
     // Deliberately a kit with NO other legible accent candidates (unlike
     // `MULTI_ACCENT_BRAND` above) — the ring stays one-colour throughout, so
     // 7a's own per-slide rotation (a SEPARATE, orthogonal axis of variation
     // this ticket also adds) cannot itself be the reason every slide agrees;
     // this test is isolating supremacy over the LEARNED BUDGET specifically.
+    // (Item G: a one-member ring now paints `ring[0]` rather than falling
+    // back — the directive's hex IS `ring[0]` here, so the assertion below
+    // holds for the same reason, stated more directly.)
     const NEUTRAL_ONLY_BRAND = { colors: { neutralDark: "#17181C", neutralLight: "#F2F2F2" }, visualStyle: "Dark Mode" };
     await env.store.writeJson("acme", ["client", "brand"], NEUTRAL_ONLY_BRAND);
     const append = env.tools["memory.appendFeedback"]!;
@@ -229,7 +288,7 @@ describe("preference as prior, not pin (IGSTYLE-7, §7b/§7c end-to-end)", () =>
     }
 
     const copy = goodCopyOutput();
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), ...draftTurns(copy), ...draftTurns(copy)]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...draftTurns(copy), ...draftTurns(copy)]);
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
     const runId = "igstyle7_in_run_supremacy";

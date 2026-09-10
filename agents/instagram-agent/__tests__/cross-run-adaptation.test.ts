@@ -4,6 +4,8 @@ import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { MemoryTemplateStore, TemplateDefinitionSchema } from "@agent-engine/tool-karos-templates";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import {
+  goodRelevanceVerdict,
+  goodTrendScoutOutput,
   fakeRenderCarousel,
   fakeRouterSequence,
   finalTurn,
@@ -50,7 +52,7 @@ function tools(env: TestEnvironment, extra: Record<string, unknown> = {}): Agent
 }
 
 function draftTurns(copyOutput: ReturnType<typeof goodCopyOutput>) {
-  return [finalTurn(copyOutput), finalTurn(goodImageVettingOutput()), finalTurn(goodVisualQaOutput())];
+  return [finalTurn(copyOutput), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())];
 }
 
 describe("cross-run adaptation (IGSTYLE-5)", () => {
@@ -108,7 +110,8 @@ describe("cross-run adaptation (IGSTYLE-5)", () => {
     ];
     const copyForRunB = {
       format: "carousel" as const,
-      caption: "None of this happened last quarter — a completely fresh set of updates.",
+      // No em dash: the caption is linted by 07b since Phase 0 (item B), exactly like the slides.
+      caption: "None of this happened last quarter, a completely fresh set of updates.",
       // `sourceRef` stays the ORIGINAL research fact's claim, verbatim — the
       // terminal self-check requires every slide's `sourceRef` to match a
       // real research fact exactly, and both runs share the same research
@@ -127,7 +130,7 @@ describe("cross-run adaptation (IGSTYLE-5)", () => {
     // accumulated, never the note it is itself supplying). One structured
     // pick, recorded on the approve that follows it, is exactly enough —
     // this is "one deliberate pick suffices" in its simplest possible shape.
-    const routerA = fakeRouterSequence([finalTurn(goodResearchOutput()), ...draftTurns(copy), ...draftTurns(copy)]);
+    const routerA = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...draftTurns(copy), ...draftTurns(copy)]);
     const durableStoreA = new MemoryDurableStepStore();
     const engineA = new WorkflowEngine(durableStoreA);
     const runIdA = "igstyle5_flywheel_run_a";
@@ -159,7 +162,7 @@ describe("cross-run adaptation (IGSTYLE-5)", () => {
     // ── Run B: a FRESH workflow/run id, same clientSlug+productId, SHARED
     // `env.store` — no gate resolved yet, so revision 0 has had zero human
     // input this run.
-    const routerB = fakeRouterSequence([finalTurn(goodResearchOutput()), ...draftTurns(copyForRunB)]);
+    const routerB = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...draftTurns(copyForRunB)]);
     const durableStoreB = new MemoryDurableStepStore();
     const engineB = new WorkflowEngine(durableStoreB);
     const runIdB = "igstyle5_flywheel_run_b";
@@ -241,7 +244,7 @@ describe("cross-run adaptation (IGSTYLE-5)", () => {
   it("memory.readFeedback absent ⇒ the run drafts exactly as today (02h stays inert, revision 0 unconditional)", async () => {
     await env.store.writeJson("acme", ["client", "brand"], PLAIN_BRAND);
     const copy = goodCopyOutput();
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), ...draftTurns(copy)]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...draftTurns(copy)]);
 
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
@@ -290,9 +293,11 @@ describe("cross-run adaptation (IGSTYLE-5)", () => {
         license: "CC0",
         rightsUsable: true,
         watermarkFree: true,
+        claimMatch: 5,
+        claimMatchReason: "shows the claimed subject (instagram-image-vet@3 fixture)",
       })),
     };
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), finalTurn(copy), finalTurn(vetting), finalTurn(goodVisualQaOutput())]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(copy), finalTurn(vetting), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]);
 
     const workflowFnWithTemplates = createInstagramAgentWorkflow({
       tools: tools(env),
