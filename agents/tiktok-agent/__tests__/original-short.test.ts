@@ -8,7 +8,7 @@ import { FilePromptStore, type AgentToolRegistry, type CompletionResult, type Mo
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { BrandFrameInputSchema, ComposeSequenceInputSchema, MixMusicInputSchema, SelfEvalGateInputSchema, StillToClipInputSchema, SynthesizeVoiceInputSchema, TextPlateInputSchema, TranscribeInputSchema } from "@agent-engine/tool-karos-video";
 import { FindStockClipInputSchema, GenerateImageInputSchema, VisualQaGateInputSchema } from "@agent-engine/tool-karos-media";
-import { beatsNamedIn, createTikTokAgentWorkflow, dropRepeatedBeats, isFootageOnlyFeedback, repairScriptStructure, scriptVoiceIssues, shotVarietyIssues } from "../src/workflow/create-tiktok-agent-workflow.js";
+import { beatsNamedIn, createTikTokAgentWorkflow, dropRepeatedBeats, isFootageOnlyFeedback, repairScriptStructure, salesPitchIssues, scriptVoiceIssues, shotVarietyIssues } from "../src/workflow/create-tiktok-agent-workflow.js";
 
 /**
  * The ORIGINAL-SHORT production pass in detail: the voiceover decision, the
@@ -398,6 +398,46 @@ describe("footage-only revision (2026-09-10)", () => {
     expect(ids).toContain("04p-plate-1-r1");
     expect(ids).toContain("04h-hook-plate-r1");
   }, 30_000);
+});
+
+describe("salesPitchIssues (prep run pubsub-21157235573121560)", () => {
+  const lastBeat = (narration: string, onScreenText = "Plan first.") => ({
+    ...VOICED_SCRIPT,
+    beats: [VOICED_SCRIPT.beats[0]!, VOICED_SCRIPT.beats[1]!, { ...VOICED_SCRIPT.beats[2]!, narration, onScreenText }],
+  });
+
+  it("names a beat that pitches anywhere, and a last beat about what the client offers; a clean script has none", () => {
+    expect(salesPitchIssues(VOICED_SCRIPT, undefined)).toEqual([]);
+    const sells = salesPitchIssues(lastBeat("We show you the plan before anything else. No pitch, just a plan."), undefined);
+    expect(sells).toHaveLength(1);
+    expect(sells[0]).toContain('the last beat sells ("We show you the plan before anything else.');
+    expect(sells[0]).toContain("not what the client offers");
+    expect(salesPitchIssues(lastBeat("Ask for the plan first.", "karoslabs.com"), undefined)[0]).toContain("beat 3 pitches (a website address)");
+    const middle = { ...VOICED_SCRIPT, beats: [VOICED_SCRIPT.beats[0]!, { ...VOICED_SCRIPT.beats[1]!, narration: "Book a call and we will walk you through it." }, VOICED_SCRIPT.beats[2]!] };
+    expect(salesPitchIssues(middle, undefined)[0]).toContain("beat 2 pitches (book a call)");
+    // A middle beat may say "we" without selling; only the last beat is held to that.
+    const weInMiddle = { ...VOICED_SCRIPT, beats: [VOICED_SCRIPT.beats[0]!, { ...VOICED_SCRIPT.beats[1]!, narration: "We can see the pattern in every hiring cycle." }, VOICED_SCRIPT.beats[2]!] };
+    expect(salesPitchIssues(weInMiddle, undefined)).toEqual([]);
+  });
+
+  it("a run that asked for a call to action lifts the rule", () => {
+    const pitch = lastBeat("Book a call and we will show you the plan.");
+    expect(salesPitchIssues(pitch, "End with a call to action to book a call.")).toEqual([]);
+    expect(salesPitchIssues(pitch, "סיים עם קריאה לפעולה")).toEqual([]);
+    expect(salesPitchIssues(pitch, "Keep it under 25 seconds.")).toHaveLength(1);
+  });
+
+  it("a draft that ends on a pitch is redrafted ONCE with the beat named, and the clean redraft ships", async () => {
+    const h = stubTools();
+    const prompts: string[] = [];
+    const result = await run(h, "run-os-pitch-fix", [lastBeat("We show you the plan before anything else. No pitch, just a plan."), VOICED_SCRIPT], prompts);
+    expect(result.status).toBe("completed");
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain("Pitch problem in your last draft");
+    expect(prompts[1]).toContain("the last beat sells");
+    expect(prompts[1]).not.toContain("Voice problem");
+    expect((h.deliverables[0] as { script?: { beats: Array<{ narration: string }> } }).script?.beats[2]?.narration).toBe(VOICED_SCRIPT.beats[2]!.narration);
+  }, 20_000);
 });
 
 describe("scriptVoiceIssues", () => {
