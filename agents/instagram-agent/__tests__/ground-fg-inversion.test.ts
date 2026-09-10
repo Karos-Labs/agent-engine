@@ -6,6 +6,8 @@ import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import { invertedTemplateFileName } from "../src/workflow/slides-data.js";
 import {
+  goodRelevanceVerdict,
+  goodTrendScoutOutput,
   fakeRenderCarousel,
   fakeRouterSequence,
   finalTurn,
@@ -40,7 +42,10 @@ const base = { clientSlug: "acme", productId: "instagram-agent", runKind: "recur
  * rather than the accent-contrast refusal (see the `thepitchbydeel`-style
  * fixture below for that). A single accent candidate — ring stays one-colour
  * throughout — so this run doubles as the "one-colour ring still inverts"
- * proof end to end, not only at the pure-function level.
+ * proof end to end, not only at the pure-function level. Since Phase 0's
+ * item G a one-member ring paints `ring[0]` on every slide rather than
+ * falling back to the shared accent; here both are `#C4552F`, so the walk
+ * and the inversion gate see the same accent they always did.
  */
 const INVERTIBLE_BRAND = {
   accent: "#C4552F",
@@ -57,7 +62,7 @@ function tools(env: TestEnvironment): AgentToolRegistry {
 }
 
 function draftTurns(copyOutput: ReturnType<typeof goodCopyOutput>) {
-  return [finalTurn(copyOutput), finalTurn(goodImageVettingOutput()), finalTurn(goodVisualQaOutput())];
+  return [finalTurn(copyOutput), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())];
 }
 
 describe("ground/fg inversion, end to end (IGSTYLE-10, §10a/10b/10c/10e)", () => {
@@ -82,7 +87,7 @@ describe("ground/fg inversion, end to end (IGSTYLE-10, §10a/10b/10c/10e)", () =
   it("materializes an inverted sibling template with ground/fg swapped, points the seeded slide at it, and reports it in the gate's variationPlan", async () => {
     await env.store.writeJson("acme", ["client", "brand"], INVERTIBLE_BRAND);
     const copy = goodCopyOutput();
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), ...draftTurns(copy)]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...draftTurns(copy)]);
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
     // Verified empirically (see this ticket's own implementation notes): this
@@ -133,7 +138,7 @@ describe("ground/fg inversion, end to end (IGSTYLE-10, §10a/10b/10c/10e)", () =
   it("§10c-4 directive supremacy: a round with its own colour directive produces zero groundFg alternates, even on a seed that would otherwise invert", async () => {
     await env.store.writeJson("acme", ["client", "brand"], INVERTIBLE_BRAND);
     const copy = goodCopyOutput();
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), ...draftTurns(copy), ...draftTurns(copy)]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...draftTurns(copy), ...draftTurns(copy)]);
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
     const runId = "igstyle10_ground_fg_inversion"; // same seed that inverted slide 5 above

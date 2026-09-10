@@ -4,6 +4,8 @@ import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { MemoryTemplateStore, TemplateDefinitionSchema } from "@agent-engine/tool-karos-templates";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import {
+  goodRelevanceVerdict,
+  goodTrendScoutOutput,
   fakeRenderCarousel,
   fakeRouterSequence,
   finalTurn,
@@ -38,7 +40,7 @@ function tools(env: TestEnvironment, extra: Record<string, unknown> = {}): Agent
 
 /** Router turns for one full drafting pass: copy, vetting, visual QA. */
 function draftTurns(copyOutput: ReturnType<typeof goodCopyOutput>) {
-  return [finalTurn(copyOutput), finalTurn(goodImageVettingOutput()), finalTurn(goodVisualQaOutput())];
+  return [finalTurn(copyOutput), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())];
 }
 
 describe("revision loop", () => {
@@ -55,7 +57,7 @@ describe("revision loop", () => {
     const revised = { ...first, slides: first.slides.map((s) => ({ ...s, headline: `${s.headline} (revised)` })) };
 
     // Two full drafting passes queued: the original and the revision.
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), ...draftTurns(first), ...draftTurns(revised)]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...draftTurns(first), ...draftTurns(revised)]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: tools(env),
       promptStore: makePromptStore(),
@@ -120,7 +122,7 @@ describe("revision loop", () => {
     const first = goodCopyOutput();
     const captured: Array<Record<string, unknown>> = [];
     // A router that records what the copy agent was actually asked.
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), ...draftTurns(first), ...draftTurns(first)]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...draftTurns(first), ...draftTurns(first)]);
     const originalComplete = router.complete as unknown as (...a: unknown[]) => unknown;
     (router as { complete: unknown }).complete = (...args: unknown[]) => {
       // Every argument, stringified: which positional slot carries the payload
@@ -160,7 +162,7 @@ describe("revision loop", () => {
   }, 60000);
 
   it("records feedback on an APPROVAL too, because a store that only remembers complaints learns a distorted picture", async () => {
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), ...draftTurns(goodCopyOutput())]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...draftTurns(goodCopyOutput())]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: tools(env),
       promptStore: makePromptStore(),
@@ -191,7 +193,7 @@ describe("revision loop", () => {
   it("holds after the revision ceiling rather than re-drafting indefinitely", async () => {
     const copy = goodCopyOutput();
     const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
       ...draftTurns(copy),
       ...draftTurns(copy),
       ...draftTurns(copy),
@@ -255,9 +257,11 @@ describe("revision loop", () => {
         license: "CC0",
         rightsUsable: true,
         watermarkFree: true,
+        claimMatch: 5,
+        claimMatchReason: "shows the claimed subject (instagram-image-vet@3 fixture)",
       })),
     };
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), finalTurn(copy), finalTurn(vetting), finalTurn(goodVisualQaOutput())]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(copy), finalTurn(vetting), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]);
 
     const workflowFn = createInstagramAgentWorkflow({
       tools: tools(env),

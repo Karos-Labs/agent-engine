@@ -5,12 +5,16 @@ import {
   BRAND_ASSET_INTEGRATION_CRITERION,
   COLOUR_HARMONY_CRITERION,
   COMPOSITION_RICHNESS_CRITERION,
+  DEFAULT_RENDER_RULES,
   FONT_HIERARCHY_CRITERION,
+  LAYOUT_FIELD_KEYS,
   assessBrandAssetPresence,
   assessContrastFacts,
   buildElevatedVisualQaCriteria,
   checkPaletteWithinKit,
+  resolveRenderRules,
 } from "../src/workflow/visual-qa-pre-checks.js";
+import { StyleRuleSchema, type StyleRule } from "../src/workflow/types.js";
 
 /**
  * SCRUM-324 (AU40) — the deterministic pre-checks in isolation, pure and
@@ -56,6 +60,42 @@ describe("checkPaletteWithinKit — an includes() check, never a model judgment"
     if (result.ok) throw new Error("unreachable");
     // Reported once, not three times.
     expect(result.reason.match(/#ff0000/gi)?.length).toBe(1);
+  });
+});
+
+describe("DEFAULT_RENDER_RULES + resolveRenderRules — Phase 0 item D's rule source", () => {
+  it("every default rule is check:'render', schema-valid, with a unique 'default:'-namespaced id", () => {
+    expect(DEFAULT_RENDER_RULES.length).toBe(4);
+    for (const rule of DEFAULT_RENDER_RULES) {
+      expect(rule.check).toBe("render");
+      expect(rule.id.startsWith("default:")).toBe(true);
+      expect(StyleRuleSchema.safeParse(rule).success).toBe(true);
+    }
+    expect(new Set(DEFAULT_RENDER_RULES.map((r) => r.id)).size).toBe(DEFAULT_RENDER_RULES.length);
+  });
+
+  it("a client with its own render rules is unaffected — source 'client', its rules verbatim", () => {
+    const own: StyleRule[] = [
+      { id: "nothing-overlaps", check: "render", description: "No element overlaps another on any slide." },
+      { id: "no-hype-words", check: "copy", description: "slide copy must not use hype/banned words" },
+    ];
+    const resolved = resolveRenderRules(own);
+    expect(resolved.source).toBe("client");
+    expect(resolved.rules).toEqual([own[0]]);
+  });
+
+  it("a config with only copy rules has no render rules and gets the defaults", () => {
+    const resolved = resolveRenderRules([{ id: "no-hype-words", check: "copy", description: "slide copy must not use hype/banned words" }]);
+    expect(resolved.source).toBe("default");
+    expect(resolved.rules).toBe(DEFAULT_RENDER_RULES);
+  });
+
+  it("an empty rules list gets the defaults — today's 'no render rules provided' can no longer happen", () => {
+    expect(resolveRenderRules([])).toEqual({ source: "default", rules: DEFAULT_RENDER_RULES });
+  });
+
+  it("LAYOUT_FIELD_KEYS is exactly the workflow's former NON_PROSE_FIELD_KEYS", () => {
+    expect([...LAYOUT_FIELD_KEYS].sort()).toEqual(["accentColor", "brandHandle", "dir", "fontScale", "seriesBadge", "textAlign"]);
   });
 });
 

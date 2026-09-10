@@ -3,6 +3,8 @@ import type { AgentToolRegistry } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import {
+  goodRelevanceVerdict,
+  goodTrendScoutOutput,
   fakeRenderCarousel,
   fakeRouterSequence,
   finalTurn,
@@ -42,10 +44,10 @@ function testTools(env: TestEnvironment): AgentToolRegistry {
 
 function happyRouter() {
   return fakeRouterSequence([
-    finalTurn(goodResearchOutput()),
+    finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
     finalTurn(goodCopyOutput()),
     finalTurn(goodImageVettingOutput()),
-    finalTurn(goodVisualQaOutput()),
+    finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
   ]);
 }
 
@@ -85,13 +87,13 @@ describe("instagram-agent grounding: branding-guidelines (SCRUM-241/T-A9)", () =
     const stepA = await runA.durableStore.getStep(params.runId, "02e-load-branding-guidelines");
     expect(stepA?.output).toBe("Never show identifiable human faces in photography — product and interface only.");
 
-    // The copy-writing model call is the second turn (research, then copy).
+    // The copy-writing model call is the third turn (scout, research, then copy — Phase 0's scout runs on every run).
     // `copyCall[0]` is `BaseAgent.buildTurnPrompt`'s own return value — the
     // literal per-turn prompt string sent to the model, not the (separately
     // cached) system/craft-policy text, which would contain the word
     // "brandingGuidelines" regardless of whether any client had one
     // projected, since that's where §11's field DOCUMENTATION lives.
-    const promptA = (runA.router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[1]![0] as string;
+    const promptA = (runA.router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[2]![0] as string;
     expect(promptA).toContain("Never show identifiable human faces");
 
     // A second, fresh run for the SAME client with DIFFERENT branding
@@ -102,7 +104,7 @@ describe("instagram-agent grounding: branding-guidelines (SCRUM-241/T-A9)", () =
     const runB = await runWithBrandingGuidelines(env, "Lead every slide with the client's signature deep-teal palette; never use warm tones.");
     expect(runB.result.status).toBe("completed");
 
-    const promptB = (runB.router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[1]![0] as string;
+    const promptB = (runB.router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[2]![0] as string;
     expect(promptB).toContain("signature deep-teal palette");
     expect(promptB).not.toContain("Never show identifiable human faces");
     expect(promptA).not.toContain("signature deep-teal palette");
@@ -127,7 +129,7 @@ describe("instagram-agent grounding: branding-guidelines (SCRUM-241/T-A9)", () =
     const step = await durableStore.getStep(params.runId, "02e-load-branding-guidelines");
     expect(step?.output).toBeNull();
 
-    const prompt = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[1]![0] as string;
+    const prompt = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[2]![0] as string;
     expect(prompt).not.toContain("brandingGuidelines");
   }, 60000);
 });

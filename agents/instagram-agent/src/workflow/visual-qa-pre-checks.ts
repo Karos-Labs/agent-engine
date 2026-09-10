@@ -1,6 +1,8 @@
 import type { BrandLogoPlacement } from "@agent-engine/tool-karos-media";
+import type { RenderCarouselInput, Slide } from "@agent-engine/tool-karos-publish";
 import { ACCENT_GROUND_CONTRAST_FLOOR, TEXT_CONTRAST_FLOOR, contrastRatio } from "./brand-render-tokens.js";
-import type { SlidesDataSelfCheck } from "./types.js";
+import { INVERTED_TEMPLATE_SUFFIX } from "./slides-data.js";
+import type { InstagramCopyOutput, SlidesDataSelfCheck, StyleRule } from "./types.js";
 
 /**
  * SCRUM-324 (AU40) — the deterministic half of "elevated visual QA."
@@ -316,4 +318,307 @@ export function buildElevatedVisualQaCriteria(input: { logo: BrandAssetFact; kit
   if (input.logo.present) criteria.push(BRAND_ASSET_INTEGRATION_CRITERION);
   if (input.kitPalette.length > 0) criteria.push(COLOUR_HARMONY_CRITERION);
   return criteria;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 4. Default render rules (Phase 0, brief item D) — the rules every client
+//    is judged by when its frozen style config declares none, and the
+//    deterministic half of checking them BEFORE a render is paid for.
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Why these exist at all: the 2026-09-08 audit found `renderRules`
+ * (`frozen.styleConfig.rules.filter(check === "render")`) empty for EVERY
+ * live client, so `08b-visual-qa` passed each attempt with "no render rules
+ * provided" and the vision `fitScore` sat at 5 on every slide — a judge with
+ * nothing to judge against. Finding 9 of the same audit is what that
+ * silence was hiding: cover slides that are a headline on blank ground (top
+ * 60% empty), numbers set as prose, and closers with no call to action.
+ *
+ * These four are the floor a carousel has to clear regardless of client, and
+ * they are worded so that the six bundled archetypes (`photo`,
+ * `stat_callout`, `quote_card`, `comparison_card`, `list_takeaway`,
+ * `headline_focus`) can satisfy every one of them today — Phase 2's template
+ * work is out of scope, so a rule the bundled set could not meet would only
+ * manufacture redrafts. A client whose config carries its own `render`
+ * rules never sees these (`resolveRenderRules`): the defaults fill an
+ * absence, they never override a client's stated standard.
+ *
+ * Ids are namespaced `default:` so a finding in the ledger or the gate
+ * payload can never be mistaken for a rule the client authored. The copy
+ * step receives the same list in `styleConfig.rules` when the defaults are
+ * in force, so the writer is told the rules it will be judged by (copy
+ * prompt @12 §7 states the same three devices in the writer's terms).
+ */
+export const DEFAULT_RENDER_RULES: StyleRule[] = [
+  {
+    id: "default:cover-carries-device",
+    check: "render",
+    description: "Slide 1 carries a photograph or a figure device (stat, comparison, quote, list). A headline alone on empty ground is not a cover.",
+  },
+  {
+    id: "default:two-elements-per-slide",
+    check: "render",
+    description:
+      "Every slide carries at least two content elements (headline + body, figure + label, quote + attribution, image + headline, list with 2+ items).",
+  },
+  {
+    id: "default:numbers-are-devices",
+    check: "render",
+    description:
+      "A slide whose headline or body opens with a number, percentage or currency amount is set as a stat callout or comparison card, never as prose. Only one of each exists per carousel, so every other numeric fact leads with the noun.",
+  },
+  {
+    id: "default:closer-carries-cta",
+    check: "render",
+    description: "The last slide of a carousel (the caption, for a single) carries a call to action or a question the reader can answer.",
+  },
+];
+
+/** Where an attempt's `renderRules` came from — the client's frozen config, or the defaults above filling an absence. */
+export type RenderRuleSource = "client" | "default";
+
+/**
+ * The one place the "client rules or defaults" decision is made, so the
+ * copy input, `07h`'s deterministic check and `08b`'s judge can never
+ * disagree about which list is in force. A config with ONLY `check: "copy"`
+ * rules has no render rules and gets the defaults — a copy rule says nothing
+ * about the rendered slide.
+ */
+export function resolveRenderRules(frozenRules: readonly StyleRule[]): { source: RenderRuleSource; rules: StyleRule[] } {
+  const clientRender = frozenRules.filter((r) => r.check === "render");
+  return clientRender.length > 0 ? { source: "client", rules: clientRender } : { source: "default", rules: DEFAULT_RENDER_RULES };
+}
+
+/**
+ * Slide `fields` that are layout metadata rather than prose — a hex code, a
+ * direction token, brand furniture, the reviewer's typography controls.
+ * Excluded from anything that counts or reads a slide's CONTENT: the
+ * two-elements rule below, the workflow's `slidesTextFor` (topic guardrail
+ * coverage) and the reviewer's editable-fields view. Lifted here from the
+ * workflow's former local `NON_PROSE_FIELD_KEYS` so a new metadata field is
+ * added in one place and every consumer agrees on it.
+ */
+export const LAYOUT_FIELD_KEYS: ReadonlySet<string> = new Set(["accentColor", "dir", "brandHandle", "seriesBadge", "fontScale", "textAlign"]);
+
+/**
+ * Leads with a figure: an optional currency sign, digits with separators,
+ * an optional unit — `%`, `k`/`M` shorthand, million/billion in English or
+ * Hebrew. The `(?!\d{4}\b)` lookahead exempts a bare four-digit number so
+ * "2026 was the year…" reads as a date, not a statistic; a genuine
+ * four-digit count ("4200 teams") is the accepted cost of that exemption,
+ * since a year opening a sentence is far more common in this copy than a
+ * four-digit figure with no separator. No `g` flag on purpose — a stateful
+ * `lastIndex` on a shared module-level regex is a classic source of
+ * every-other-call misses.
+ */
+export const LEADS_WITH_FIGURE = /^\s*(?!\d{4}\b)(?:[$€£₪]\s?)?\d[\d.,]*\s?(?:%|[kKmM]\b|million|billion|אלף|מיליון|מיליארד)?/u;
+
+/**
+ * The small closer lexicon the deterministic pass accepts as a call to
+ * action. Deliberately small: a MISS here is not a failure (see
+ * `checkDefaultRenderRules`), it only hands the question to the judge, so
+ * the list needs to be right when it matches, not exhaustive.
+ */
+export const CTA_LEXICON_LATIN = /\b(save|share|comment|tell us|try|download|book|sign up|follow|dm|reply)\b/i;
+export const CTA_LEXICON_HEBREW = /(שמרו|שתפו|ספרו|נסו|הורידו|עקבו|מה דעתכם|כתבו לנו)/u;
+/** A question the reader can answer — `?` plus the Arabic-script question mark, since `dir="rtl"` copy already renders here. */
+const QUESTION_MARK = /[?؟]/u;
+
+/** Template basenames that ARE a figure device on their own (the cover rule) — the four structured archetypes that render a designed element without a photograph. */
+const DEVICE_TEMPLATE_BASENAMES: ReadonlySet<string> = new Set(["stat-callout", "comparison-card", "quote-card", "list-takeaway"]);
+/** The two archetypes a leading figure is allowed to live in (the numbers rule). `resolveLayout` allows each ONCE per carousel — hence the rule's own "every other numeric fact leads with the noun". */
+const FIGURE_TEMPLATE_BASENAMES: ReadonlySet<string> = new Set(["stat-callout", "comparison-card"]);
+/** `templateFileName("custom_x")` → `custom-x.html`; the prefix is the only thing a template path tells us about a model-authored archetype. */
+const CUSTOM_TEMPLATE_PREFIX = "custom-";
+const HEADLINE_FOCUS_BASENAME = "headline-focus";
+
+/**
+ * The archetype a rendered slide's template path names, normalised: the
+ * last path segment, without its extension, without the `-inv` suffix
+ * IGSTYLE-10's ground/fg inversion appends (`stat-callout-inv.html` is
+ * still a stat callout). The client's own base template (`photo` /
+ * `text_only`, configurable filename) is whatever basename it has — every
+ * check below treats "not a known archetype" as "the client's base slide".
+ */
+export function templateBasename(template: string): string {
+  const file = template.split(/[\\/]/).pop() ?? template;
+  const stem = file.replace(/\.[^.]+$/u, "");
+  return stem.endsWith(INVERTED_TEMPLATE_SUFFIX) ? stem.slice(0, -INVERTED_TEMPLATE_SUFFIX.length) : stem;
+}
+
+export interface DefaultRenderRuleFailure {
+  ruleId: string;
+  /** Omitted for a whole-post finding; every rule below happens to name a slide. */
+  slide?: number;
+  reason: string;
+}
+
+export interface DefaultRenderRulesResult {
+  /** Deterministic failures — a `continue` back to step 05 with NO render spent. Empty means every rule code could decide was met. */
+  failures: DefaultRenderRuleFailure[];
+  /**
+   * Rules code could not decide, for `08b`'s judge — each carries its
+   * original description plus a note saying exactly what code looked for
+   * and did not find, so the model judges the residue, not the whole rule.
+   * Never contains a rule that passed deterministically: re-asking the
+   * model a question code already answered is the pattern this whole module
+   * exists to remove.
+   */
+  residue: StyleRule[];
+}
+
+/** Non-empty prose field values of one assembled slide, layout metadata excluded. */
+function proseFieldsOf(slide: Slide): Array<[key: string, value: string]> {
+  return Object.entries(slide.fields ?? {}).filter(([key, value]) => !LAYOUT_FIELD_KEYS.has(key) && value.trim().length > 0);
+}
+
+/**
+ * How many content elements a rendered slide actually carries. Prose fields
+ * (after `LAYOUT_FIELD_KEYS`), plus the hero image, plus a list's rows
+ * fragment (the rows live in `htmlFragments`, never in `fields`).
+ *
+ * `headline-focus` ON THE COVER is the one case counted differently, and the
+ * reason is in its own template: the body renders as a 31px subline under
+ * the accent band beneath a 118px headline — a statement and its sub-line,
+ * ONE lockup, not two competing elements — which on slide 1 is exactly the
+ * "headline on blank ground" the cover rule exists to refuse. That slide is
+ * already failed by the cover rule above (a headline_focus cover can never
+ * carry `images.hero`, and the archetype is not a figure device), so this is
+ * belt and braces rather than the deciding check; it stays because the two
+ * rules answer different questions and a `custom` cover that resolves to
+ * this template would otherwise be counted generously. Copy prompt @12 §7
+ * tells the writer the same thing the cover rule enforces: `headline_focus`
+ * is a mid-carousel turn, never slide 1, and a `kicker` does not make it a
+ * cover.
+ *
+ * Mid-carousel the SAME archetype counts headline + body as two, because
+ * that is what the prompt tells the writer (§7: "Uses `headline` and `body`";
+ * the kicker is "optional" and recommended only for slide 1) and what the
+ * rule's own description promises ("headline + body"). Until 2026-09-09 the
+ * subtraction applied to every slide, so a prompt-compliant "turn in the
+ * middle of the carousel" failed 07h on every attempt and, under a `reduced`
+ * budget plan, was a hold on the second miss.
+ */
+function countContentElements(slide: Slide, isCover: boolean): number {
+  const prose = proseFieldsOf(slide);
+  const keys = new Set(prose.map(([key]) => key));
+  let count = prose.length;
+  if (isCover && templateBasename(slide.template) === HEADLINE_FOCUS_BASENAME && keys.has("headline") && keys.has("body")) count -= 1;
+  if (slide.images?.["hero"]) count += 1;
+  if (slide.htmlFragments?.["itemRows"]) count += 1;
+  return count;
+}
+
+function withNote(rule: StyleRule, note: string): StyleRule {
+  return { ...rule, description: `${rule.description} (${note})` };
+}
+
+/**
+ * The deterministic half of the default render rules, run on the ASSEMBLED
+ * slides-data (`07c-emit-slides-data`) — after `resolveLayout` has decided
+ * which template each slide really renders through and which slide really
+ * has a hero image — and BEFORE `08-render-carousel`, so a failure costs a
+ * copy redraft and nothing else (no Chromium render, no vision inspection,
+ * no QA model call).
+ *
+ * Failures are things with a factual answer: is there a hero or a device on
+ * slide 1; how many elements does slide N carry; does a slide open with a
+ * figure and render as prose. The closer rule is the one that is NOT
+ * deterministic in the failing direction: code can prove a CTA is present
+ * (a question mark, a lexicon verb) but cannot prove one is absent — "what
+ * would you do differently on Monday" is an invitation with no `?` and no
+ * lexicon hit — so a miss is handed to the judge as `residue` with a note,
+ * never failed. Same posture for a model-authored `custom` archetype on the
+ * cover: its markup may well be a figure device, and a template path cannot
+ * tell us, so the judge gets the question rather than the writer getting a
+ * redraft it may not deserve.
+ *
+ * Reads only `copy.format`/`copy.caption` from the copy — the text checks
+ * run on the fields the slide RENDERS (`fields.headline`/`fields.body`),
+ * which `contentFor` copies verbatim from the slide copy whenever the
+ * archetype shows them. A quote card shows neither; a list takeaway shows
+ * the headline only; failing a slide for a figure in a body the template
+ * never displays would be a defect of the check, not of the slide.
+ */
+export function checkDefaultRenderRules(slidesData: RenderCarouselInput, copy: InstagramCopyOutput): DefaultRenderRulesResult {
+  const failures: DefaultRenderRuleFailure[] = [];
+  const residue: StyleRule[] = [];
+  const rule = (id: string): StyleRule => DEFAULT_RENDER_RULES.find((r) => r.id === id)!;
+  const slides = slidesData.slides;
+  if (slides.length === 0) return { failures, residue };
+
+  // default:cover-carries-device — slide 1 needs a photograph or a device.
+  const cover = slides[0]!;
+  const coverBase = templateBasename(cover.template);
+  if (!cover.images?.["hero"] && !DEVICE_TEMPLATE_BASENAMES.has(coverBase)) {
+    if (coverBase.startsWith(CUSTOM_TEMPLATE_PREFIX)) {
+      residue.push(withNote(rule("default:cover-carries-device"), "slide 1 is a model-authored custom archetype with no photograph; judge whether its markup carries a figure device"));
+    } else {
+      failures.push({
+        ruleId: "default:cover-carries-device",
+        slide: cover.n,
+        reason: `slide ${cover.n} renders through "${cover.template}" with no hero image and no figure device — a headline alone on empty ground is not a cover`,
+      });
+    }
+  }
+
+  // default:two-elements-per-slide — counted on what renders, per slide.
+  for (const [index, slide] of slides.entries()) {
+    const isCover = index === 0;
+    const count = countContentElements(slide, isCover);
+    if (count < 2 && templateBasename(slide.template).startsWith(CUSTOM_TEMPLATE_PREFIX)) {
+      // Same posture as the cover rule: a model-authored custom archetype's
+      // markup may reference ANY of the shared fields (`{{kicker}}`,
+      // `{{headline}}`, …) alongside its own slots, and the assembled slide
+      // only carries the slots `contentFor` spread over the base — so the
+      // count here undercounts by construction. The judge sees the render;
+      // the writer does not get a redraft it may not deserve.
+      residue.push(withNote(rule("default:two-elements-per-slide"), `slide ${slide.n} is a model-authored custom archetype whose field count (${count}) cannot be read from its template path; judge whether the render carries two content elements`));
+      continue;
+    }
+    if (count < 2) {
+      const present = proseFieldsOf(slide).map(([key]) => key);
+      failures.push({
+        ruleId: "default:two-elements-per-slide",
+        slide: slide.n,
+        reason:
+          `slide ${slide.n} ("${templateBasename(slide.template)}") carries ${count} content element(s)` +
+          `${present.length > 0 ? ` — ${present.join(", ")}` : ""}` +
+          `${isCover && templateBasename(slide.template) === HEADLINE_FOCUS_BASENAME ? "; on the cover a headline_focus statement and its sub-line are one lockup, so it needs its kicker" : ""} — at least two are required`,
+      });
+    }
+  }
+
+  // default:numbers-are-devices — a leading figure belongs in a stat callout or a comparison card.
+  for (const slide of slides) {
+    const base = templateBasename(slide.template);
+    if (FIGURE_TEMPLATE_BASENAMES.has(base) || base.startsWith(CUSTOM_TEMPLATE_PREFIX)) continue;
+    for (const field of ["headline", "body"] as const) {
+      const text = slide.fields?.[field];
+      if (text === undefined) continue;
+      const match = LEADS_WITH_FIGURE.exec(text);
+      if (match === null) continue;
+      failures.push({
+        ruleId: "default:numbers-are-devices",
+        slide: slide.n,
+        reason: `slide ${slide.n}'s ${field} opens with the figure "${match[0].trim()}" but renders as prose through "${slide.template}" — set it as a stat_callout or comparison_card, or lead with the noun`,
+      });
+      break; // one finding per slide is enough to send it back
+    }
+  }
+
+  // default:closer-carries-cta — provable when present, never failed when absent.
+  const closerText = copy.format === "single" ? copy.caption : proseFieldsOf(slides[slides.length - 1]!).map(([, value]) => value).join(" ");
+  const hasCta = QUESTION_MARK.test(closerText) || CTA_LEXICON_LATIN.test(closerText) || CTA_LEXICON_HEBREW.test(closerText);
+  if (!hasCta) {
+    residue.push(withNote(rule("default:closer-carries-cta"), "no question mark or lexicon CTA found; judge whether the closer invites action"));
+  }
+
+  return { failures, residue };
+}
+
+/** The `lastSelfCheckReason` body for a failing `07h` — one line per finding, so the next copy draft (and the eventual hold reason) name every slide that sent it back. */
+export function formatDefaultRenderRuleFailures(failures: readonly DefaultRenderRuleFailure[]): string {
+  return failures.map((f) => `${f.ruleId}${f.slide !== undefined ? ` (slide ${f.slide})` : ""}: ${f.reason}`).join("; ");
 }

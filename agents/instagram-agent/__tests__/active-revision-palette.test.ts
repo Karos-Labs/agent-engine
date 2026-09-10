@@ -9,6 +9,8 @@ import {
 import { deriveBrandRenderTokens, type BrandRenderTokens } from "../src/workflow/brand-render-tokens.js";
 import type { BrandTokens } from "../src/workflow/types.js";
 import {
+  goodRelevanceVerdict,
+  goodTrendScoutOutput,
   fakeRenderCarousel,
   fakeRouterSequence,
   finalTurn,
@@ -52,7 +54,7 @@ const PLAIN_BRAND = {
 };
 
 function draftTurns(copyOutput: ReturnType<typeof goodCopyOutput>) {
-  return [finalTurn(copyOutput), finalTurn(goodImageVettingOutput()), finalTurn(goodVisualQaOutput())];
+  return [finalTurn(copyOutput), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())];
 }
 
 describe("effectiveBrandKit (IGSTYLE-3, §2.3) — pure, no checkpoint", () => {
@@ -116,7 +118,7 @@ describe("active revision palette: the directive reaches the render (IGSTYLE-3)"
     const workflowFnAuto = createInstagramAgentWorkflow({
       tools: { ...env.tools, "publish.renderCarousel": fakeRenderCarousel(env.tools["publish.renderCarousel"]!) },
       promptStore: makePromptStore(),
-      router: fakeRouterSequence([finalTurn(goodResearchOutput()), ...draftTurns(goodCopyOutput())]),
+      router: fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...draftTurns(goodCopyOutput())]),
       repoRoot: env.repoRoot,
       imageCandidatePool: goodImageCandidatePool(),
       autoApprove: true,
@@ -135,7 +137,7 @@ describe("active revision palette: the directive reaches the render (IGSTYLE-3)"
   it("THE required invariant: a revise asking for a darker background and orange text changes --bg/--fg in the round-1 render", async () => {
     await env.store.writeJson("acme", ["client", "brand"], PLAIN_BRAND);
     const copy = goodCopyOutput();
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), ...draftTurns(copy), ...draftTurns(copy)]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...draftTurns(copy), ...draftTurns(copy)]);
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
     const runId = "igstyle3_invariant";
@@ -173,7 +175,7 @@ describe("active revision palette: the directive reaches the render (IGSTYLE-3)"
   it("edits.style on a revise outranks parsed free text (Tier 0 beats Tier 1)", async () => {
     await env.store.writeJson("acme", ["client", "brand"], PLAIN_BRAND);
     const copy = goodCopyOutput();
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), ...draftTurns(copy), ...draftTurns(copy)]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...draftTurns(copy), ...draftTurns(copy)]);
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
     const runId = "igstyle3_structured_outranks_parsed";
@@ -212,7 +214,7 @@ describe("active revision palette: the directive reaches the render (IGSTYLE-3)"
   it("a refused style directive emits a ledger warn AND appears in the next gate payload as styleDirectiveOutcome — never silently dropped", async () => {
     await env.store.writeJson("acme", ["client", "brand"], PLAIN_BRAND);
     const copy = goodCopyOutput();
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), ...draftTurns(copy), ...draftTurns(copy)]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...draftTurns(copy), ...draftTurns(copy)]);
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
     const runId = "igstyle3_refusal";

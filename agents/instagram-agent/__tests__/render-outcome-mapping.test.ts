@@ -3,6 +3,8 @@ import type { AgentContext, AgentToolRegistry } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import {
+  goodRelevanceVerdict,
+  goodTrendScoutOutput,
   fakeRouterSequence,
   finalTurn,
   goodBrandTokens,
@@ -53,13 +55,15 @@ describe("08-render-carousel: the three-way outcome mapping, never confused (RFC
         license: "CC0, test fixture",
         rightsUsable: true,
         watermarkFree: true,
+        claimMatch: 5,
+        claimMatchReason: "shows the claimed subject (instagram-image-vet@3 fixture)",
       })),
     };
     const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
       finalTurn(copy),
       finalTurn(vetting),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
     ]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: testTools(env),
@@ -105,9 +109,11 @@ describe("08-render-carousel: the three-way outcome mapping, never confused (RFC
         license: "CC0, test fixture",
         rightsUsable: true,
         watermarkFree: true,
+        claimMatch: 5,
+        claimMatchReason: "shows the claimed subject (instagram-image-vet@3 fixture)",
       })),
     };
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), finalTurn(copy), finalTurn(vetting)]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(copy), finalTurn(vetting)]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: env.tools,
       promptStore,

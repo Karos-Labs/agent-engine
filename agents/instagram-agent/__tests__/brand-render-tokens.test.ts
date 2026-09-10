@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildBrandHeadHtml, contrastRatio, deriveBrandRenderTokens, paletteForSlide } from "../src/workflow/brand-render-tokens.js";
+import {
+  buildBrandHeadHtml,
+  contrastRatio,
+  deriveBrandRenderTokens,
+  filterLearnedStyleToRing,
+  paletteForSlide,
+} from "../src/workflow/brand-render-tokens.js";
 import type { BrandTokens } from "../src/workflow/types.js";
 
 const baseTokens: BrandTokens = { templateDir: "t", slideTemplate: "slide.html" };
@@ -262,6 +268,99 @@ describe("palette ring: what the rotation is allowed to draw from", () => {
     };
     const tokens = deriveBrandRenderTokens(brand, baseTokens)!;
     expect(tokens.palette).toEqual(["#A5E82B", "#41C6FF"]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase 0, item G — one source of truth for the accent ring. Prep run
+// `pubsub-21634455753345065` held three times because the config said
+// `#ff6b2c`, brand.json said `#d95f2b`, the ring was anchored on brand.json
+// and the slides were painted from the config — so `checkPaletteWithinKit`
+// failed on a disagreement no human had made.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe("palette ring: the config accentColor and brand.json accent agree on one ring (item G)", () => {
+  const drifted = () => ({
+    accent: "#d95f2b",
+    colors: { primaryAccent: "#d95f2b", neutralDark: "#17181C", neutralLight: "#F4F2EC" },
+    dominantColors: [{ hex: "#17181C", dominanceRank: 1, role: "ground" }],
+    visualStyle: "Dark Mode",
+  });
+
+  it("anchors on the config accentColor (the hex the slides paint) and keeps the brand.json accent as a ring member", () => {
+    const tokens = deriveBrandRenderTokens(drifted(), { ...baseTokens, accentColor: "#ff6b2c" })!;
+    expect(tokens.brandAccent).toBe("#ff6b2c");
+    expect(tokens.palette[0]).toBe("#ff6b2c");
+    expect(tokens.palette).toContain("#d95f2b");
+  });
+
+  it("without a config accentColor the brand.json accent is the anchor, exactly as before", () => {
+    const tokens = deriveBrandRenderTokens(drifted(), baseTokens)!;
+    expect(tokens.brandAccent).toBe("#d95f2b");
+    expect(tokens.palette).toEqual(["#d95f2b"]);
+  });
+
+  it("an explicit renderTokens.accent (a reviewer's directive, IGSTYLE-3) still outranks both", () => {
+    const tokens = deriveBrandRenderTokens(drifted(), { ...baseTokens, accentColor: "#ff6b2c", renderTokens: { accent: "#0057B8" } })!;
+    expect(tokens.brandAccent).toBe("#0057B8");
+    expect(tokens.palette[0]).toBe("#0057B8");
+    // The config and brand.json hexes are still legal ring members behind the directive.
+    expect(tokens.palette).toContain("#ff6b2c");
+    expect(tokens.palette).toContain("#d95f2b");
+  });
+
+  it("a malformed config accentColor is dropped, never repaired, and brand.json anchors instead", () => {
+    const tokens = deriveBrandRenderTokens(drifted(), { ...baseTokens, accentColor: "orange" })!;
+    expect(tokens.brandAccent).toBe("#d95f2b");
+    expect(tokens.palette).toEqual(["#d95f2b"]);
+  });
+
+  it("with no derivable ground the config accent still anchors, and brand.json's accent is not promoted (no legibility check possible)", () => {
+    const tokens = deriveBrandRenderTokens({ accent: "#ABCDEF" }, { ...baseTokens, accentColor: "#123456" })!;
+    expect(tokens.palette).toEqual(["#123456"]);
+  });
+});
+
+describe("filterLearnedStyleToRing: a learned accent outside the ring is a note, never applied (item G)", () => {
+  const RING = ["#A5E82B", "#FF5B5F", "#41C6FF"];
+
+  it("drops an off-ring learned accent and says why, with the remedy", () => {
+    const { applied, notes } = filterLearnedStyleToRing({ accent: "#00ff00", ground: "#111111", fg: "#FAFAFA" }, RING);
+    expect(applied.accent).toBeUndefined();
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toContain("#00ff00");
+    expect(notes[0]).toContain("outside the brand kit's accent ring");
+    expect(notes[0]).toContain("#A5E82B, #FF5B5F, #41C6FF");
+    expect(notes[0]).toContain("not applied");
+    expect(notes[0]).toContain("add it to the kit palette");
+  });
+
+  it("keeps an on-ring learned accent, case-insensitively — the flywheel still turns", () => {
+    const { applied, notes } = filterLearnedStyleToRing({ accent: "#ff5b5f" }, RING);
+    expect(applied.accent).toBe("#ff5b5f");
+    expect(notes).toEqual([]);
+  });
+
+  it("never touches ground/fg — those have their own contrast-floor refusal path", () => {
+    const learned = { accent: "#00ff00", ground: "#111111", fg: "#FAFAFA", fontDisplay: "Fraunces" };
+    const { applied } = filterLearnedStyleToRing(learned, RING);
+    expect(applied.ground).toBe("#111111");
+    expect(applied.fg).toBe("#FAFAFA");
+    expect(applied.fontDisplay).toBe("Fraunces");
+    // Pure: the input is not mutated.
+    expect(learned.accent).toBe("#00ff00");
+  });
+
+  it("an empty ring has no opinion — nothing is filtered (the brandless client)", () => {
+    const { applied, notes } = filterLearnedStyleToRing({ accent: "#00ff00" }, []);
+    expect(applied.accent).toBe("#00ff00");
+    expect(notes).toEqual([]);
+  });
+
+  it("no learned accent, nothing to do", () => {
+    const { applied, notes } = filterLearnedStyleToRing({ ground: "#111111" }, RING);
+    expect(applied).toEqual({ ground: "#111111" });
+    expect(notes).toEqual([]);
   });
 });
 

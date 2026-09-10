@@ -2,7 +2,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentTool, AgentToolRegistry, GateResponse, ModelRouter, PromptStore, StyleEdit, TemplateFeedback } from "@agent-engine/core";
-import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField, buildClientVoiceContext, readCrossChannelHistory, crossChannelDirective, crossChannelAvoidTopics, socialAccountsFromClient, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, readContextDoc, enforceContextDocPolicy, toAgentContext, distillStylePreferences, varyLearnedStyle, buildTrendQueries, pullTrendResearch, runTrendScout, researchDigestForScout, selectTrendCandidate, trendCandidateForDrafting, CONTENT_MODES, type DistilledStyle, type FeedbackEntryLike, type StyleVariationEntry } from "@agent-engine/workflow";
+import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField, buildClientVoiceContext, readCrossChannelHistory, crossChannelDirective, crossChannelAvoidTopics, socialAccountsFromClient, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, readContextDoc, enforceContextDocPolicy, toAgentContext, distillStylePreferences, varyLearnedStyle, buildTrendQueries, pullTrendResearch, runTrendScout, researchDigestForScout, selectContentMode, trendCandidateForDrafting, type ContentMode, type DistilledStyle, type FeedbackEntryLike, type StyleVariationEntry, type TrendResearch, type TrendScoutOutput } from "@agent-engine/workflow";
+import type { ClientBrand, ClientBrief, ClientKnowledge, ClientProfile, VoiceRules } from "@agent-engine/tools";
 import type { InstagramFormat, InstagramTopicClaim as InstagramTopicClaimShape } from "./types.js";
 import type { RenderCarouselInput, RenderCarouselResult } from "@agent-engine/tool-karos-publish";
 import { InstagramCopyAgent } from "../agent/instagram-copy-agent.js";
@@ -23,7 +24,38 @@ import {
   type TemplateStore,
 } from "@agent-engine/tool-karos-templates";
 import { brandLogoDataUri, downloadBrandLogo, parseBrandLogoDataUri, type BrandLogoPlacement } from "@agent-engine/tool-karos-media";
-import { buildBrandHeadHtml, buildBrandLogoBodyHtml, deriveBrandRenderTokens, planBrandLogo, type BrandRenderTokens } from "./brand-render-tokens.js";
+import { buildBrandHeadHtml, buildBrandLogoBodyHtml, deriveBrandRenderTokens, filterLearnedStyleToRing, planBrandLogo, type BrandRenderTokens } from "./brand-render-tokens.js";
+import { buildScriptFontHeadForLanguage } from "./script-fonts.js";
+import { resolveTargetLanguage } from "./target-language.js";
+import { briefForPrompt, buildGroundedQuery, deriveClientBrief, fallbackQuery, isBriefStale, isThinlyGrounded } from "./client-brief.js";
+import {
+  relevanceFailureReason,
+  relevanceFloor,
+  relevanceSlidesFor,
+  relevanceSteerFor,
+  relevanceThinGroundingEvent,
+  relevanceUnavailableEvent,
+  runRelevanceJudge,
+  type RelevanceVerdict,
+} from "./relevance-gate.js";
+import { recentModesFromDecisions, resolveTopicClaim, topicDecisionForGate, topicDecisionSummary } from "./topic-selection.js";
+import {
+  CANDIDATES_PER_PHOTO_SLIDE,
+  DEFAULT_RUN_SHAPE,
+  RUN_BUDGET_BELIEF_KEY,
+  RunSpendMeter,
+  STEP_COST_ESTIMATES_USD,
+  estimateVsActualLine,
+  formatUsd,
+  maxCrossedNote,
+  planRunBudget,
+  readBudgetHistory,
+  recordRunInHistory,
+  remainingGenerationBudget,
+  summarizeRunBudget,
+  targetCrossedNote,
+  type RunBudgetDecision,
+} from "./run-budget.js";
 import {
   ARCHETYPE_TEMPLATE_FILES,
   assembleSlidesData,
@@ -41,7 +73,12 @@ import {
   assessBrandAssetPresence,
   assessContrastFacts,
   buildElevatedVisualQaCriteria,
+  checkDefaultRenderRules,
   checkPaletteWithinKit,
+  DEFAULT_RENDER_RULES,
+  formatDefaultRenderRuleFailures,
+  LAYOUT_FIELD_KEYS,
+  resolveRenderRules,
   type ContrastFact,
 } from "./visual-qa-pre-checks.js";
 import { parseStyleDirective, applyIntents, type StyleDirectiveResult, type StyleIntent, type StyleRefusal } from "./style-directive.js";
@@ -49,6 +86,7 @@ import {
   BrandTokensSchema,
   type BrandTokens,
   mergeStyleOverrides,
+  MIN_CLAIM_MATCH,
   ResearchOutputSchema,
   StyleConfigSchema,
   type ImageCandidate,
@@ -767,31 +805,66 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         );
       })) ?? undefined;
 
-    // ── 02d: the client's declared target language — the language gate's subject ──
+    // ── 02d: the client's target language — the language gate's subject ──
     //
-    // SCRUM-310 (AU32). 02b folds `client.getBrand().language` into a PROMPT
-    // (a requirement the drafting model is asked to follow); steps 07e/07f
-    // need the bare value back out to CHECK that it was followed. Reading the
-    // structured field rather than re-deriving a language out of 02b's prose
-    // blob is the whole point of AU31 having introduced the field.
+    // SCRUM-310 (AU32). 02b folds the client's language into a PROMPT (a
+    // requirement the drafting model is asked to follow); steps 07e/07f need
+    // the bare value back out to CHECK that it was followed.
     //
-    // A separate checkpointed step rather than a widening of 02b or 02c, for
-    // exactly the reason 02c's own comment gives: both of those checkpoint
-    // shapes are already in production, and an in-flight run resuming across
-    // this deploy would replay an old-shape checkpoint into new-shape code.
-    // Checkpointed, so a portal edit mid-run cannot change the language
-    // between attempt 1 and a revision — the gate must judge against the
-    // language the copy was actually drafted for.
+    // Instagram Phase 0, item B (2026-09): this step used to read ONLY
+    // `client.getBrand().language`, and that field was unset for every
+    // sampled prep client — so the gate ran in none of ten prep runs,
+    // including geektime's, whose Hebrew is stated in its profile prose.
+    // `resolveTargetLanguage` now resolves in order: brand.language (wins,
+    // returned verbatim) -> an explicit language statement in the profile
+    // description / voice rules / brand-voice doc -> a script sniff of that
+    // same prose. A single-language script (Hebrew, Greek, Thai, ...) resolves
+    // to its language; a script several languages share (Cyrillic, Arabic,
+    // Devanagari, Han) with no explicit statement is an honest unknown, and
+    // the run HOLDS here (intake, not return-to-step: no redraft can answer
+    // "which language does this client publish in") with the candidates and
+    // the one-line remedy. `null` when nothing anywhere points at a
+    // non-English language, AND when what it points at is English itself
+    // (`brand.language: "en-US"`, "for English-speaking markets"): there is
+    // nothing for a script check or a fluency judge to verify about English
+    // copy for an English client, and switching the fail-closed gate on for
+    // it would only add a per-attempt Haiku call and a judge-outage hold path
+    // the brief scoped to non-English targets. Every other Latin-script
+    // language (Spanish, French) still resolves and still gets both stages.
     //
-    // `?? undefined` across the checkpoint boundary for the same JSON
-    // round-trip reason as 02c: a step's `undefined` comes back as `null` on
-    // a resumed run.
+    // Same id and the same `string | null` checkpoint shape as before, so an
+    // in-flight run resuming across this deploy replays its old value
+    // unchanged. Checkpointed, so a portal edit mid-run cannot change the
+    // language between attempt 1 and a revision — the gate must judge against
+    // the language the copy was actually drafted for. `?? undefined` across
+    // the checkpoint boundary for the same JSON round-trip reason as 02c.
     const targetLanguage =
       (await wf.step.code("02d-load-target-language", async () => {
         const brandOutcome = await tools["client.getBrand"]?.execute({}, { ctx });
-        if (brandOutcome?.status !== "success") return null;
-        const language = (brandOutcome.result as { language?: unknown }).language;
-        return typeof language === "string" && language.trim().length > 0 ? language.trim() : null;
+        const profileOutcome = await tools["client.getProfile"]?.execute({}, { ctx });
+        const voiceOutcome = await tools["client.getVoiceRules"]?.execute({}, { ctx });
+        // Best-effort inline read, not `readContextDoc`: that helper is a
+        // step of its own, and this step's id/shape must not change.
+        const brandVoiceOutcome = await tools["client.getContextDoc"]?.execute({ docType: "brand-voice" }, { ctx });
+        const brandVoiceDoc = brandVoiceOutcome?.status === "success" ? (brandVoiceOutcome.result as { markdown?: unknown }).markdown : undefined;
+        const resolution = resolveTargetLanguage({
+          brandLanguage: brandOutcome?.status === "success" ? (brandOutcome.result as { language?: unknown }).language : undefined,
+          profile: profileOutcome?.status === "success" ? (profileOutcome.result as Record<string, unknown>) : undefined,
+          voiceRules: voiceOutcome?.status === "success" ? (voiceOutcome.result as Record<string, unknown>) : undefined,
+          brandVoiceDoc: typeof brandVoiceDoc === "string" ? brandVoiceDoc : undefined,
+        });
+        if (resolution.status === "unresolved-non-english") {
+          // The reason names the prose that actually decided
+          // (`resolution.sourceLabel`), not "the profile": the script can come
+          // from the voice rules or the brand-voice document, and telling
+          // somebody to look at the profile when the Cyrillic is in a do-list
+          // line sends them to the wrong field.
+          throw new WorkflowHeld(
+            `target language could not be resolved for this client: ${resolution.sourceLabel} is written in the ${resolution.script} script ` +
+              `(candidates: ${resolution.candidates.join(", ")}) — set brand.language in the portal`,
+          );
+        }
+        return resolution.status === "resolved" ? resolution.language : null;
       })) ?? undefined;
 
     // ── 02e: the client's projected branding-guidelines context doc (C1/SCRUM-209, T-A9) ──
@@ -884,6 +957,63 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // import comment on why `packages/workflow` cannot import this agent's
     // own types).
     const learnedStyle: StyleOverrides = distilledStyle.overrides;
+
+    // ── 02i: the Client Brief — who this client is, for every step that has to know (Phase 0, item C) ──
+    //
+    // The 2026-09-08 prep audit: an AI marketing agency shipped a real-estate
+    // carousel about first-time HOME buyers, approved at the gate, because the
+    // run request was searched verbatim and no prompt or check ever said who
+    // the client was. The brief is the one document that does: positioning,
+    // ICP, offers, core terms, forbidden claims, language. Read by 04a (the
+    // grounded research query), 05 (the copy prompt's §15), 07g (the relevance
+    // judge) and the gate payload.
+    //
+    // A persisted brief (`client.getBrief`, written by Phase 1's setup agent or
+    // a human) wins when it is fresh; otherwise — including on every Phase 0
+    // run — `deriveClientBrief` builds one deterministically from the
+    // onboarding data already on disk (`confidence: "low"`, never a hold). The
+    // three C1 documents it reads are steps of their own (`readContextDoc`),
+    // so they are read OUTSIDE this step; brand-voice already reaches the
+    // prompt via 02b. `profile`/`voiceRules`/`brand`/`knowledge` are re-read
+    // here rather than threaded from 02b's prose blob: the derivation wants
+    // the structured objects, and a store read is cheap next to a stale brief.
+    const productInformation = await readContextDoc(wf, tools, ctx, "product-information", "02i1-load-product-information");
+    const targetAudience = await readContextDoc(wf, tools, ctx, "target-audience", "02i2-load-target-audience");
+    const marketStrategy = await readContextDoc(wf, tools, ctx, "market-strategy", "02i3-load-market-strategy");
+    const briefResolution = await wf.step.code(
+      "02i-resolve-client-brief",
+      async (): Promise<{ brief: ClientBrief; source: "persisted" | "derived"; notes: string[] }> => {
+        const notes: string[] = [];
+        const got = await tools["client.getBrief"]?.execute({ channel: "instagram" }, { ctx });
+        if (got?.status === "success") {
+          const { brief, ageDays } = got.result as { brief: ClientBrief; ageDays: number };
+          if (!isBriefStale(brief)) return { brief, source: "persisted", notes };
+          notes.push(`persisted brief is stale (generatedBy ${brief.generatedBy}, ${ageDays} day(s) old) — derived a fresh deterministic brief instead`);
+        } else if (got !== undefined && got.status !== "not_available") {
+          notes.push(`client.getBrief reported ${got.status}${"reason" in got ? `: ${got.reason}` : ""} — derived a deterministic brief instead`);
+        }
+        // Each read's `result` is the karos-client tool's own typed output;
+        // a non-success outcome (nothing set up yet) reads as `undefined` and
+        // the derivation records the gap.
+        const resultOf = <T,>(outcome: { status: string; result?: unknown } | undefined): T | undefined =>
+          outcome?.status === "success" && outcome.result !== null && typeof outcome.result === "object" ? (outcome.result as T) : undefined;
+        const profile = resultOf<ClientProfile>(await tools["client.getProfile"]?.execute({}, { ctx }));
+        const voiceRules = resultOf<VoiceRules>(await tools["client.getVoiceRules"]?.execute({}, { ctx }));
+        const brand = resultOf<ClientBrand>(await tools["client.getBrand"]?.execute({}, { ctx }));
+        const knowledge = resultOf<ClientKnowledge>(await tools["client.getKnowledge"]?.execute({}, { ctx }));
+        const brief = deriveClientBrief({
+          profile,
+          voiceRules,
+          brand,
+          contextDocs: { productInformation, targetAudience, marketStrategy },
+          knowledge,
+          forbiddenTopics: frozen.forbiddenTopics,
+          targetLanguage,
+        });
+        return { brief, source: "derived", notes };
+      },
+    );
+    const brief = briefResolution.brief;
 
     /**
      * The brand kit THIS attempt actually renders with — `brandKit` (Layer 0,
@@ -1005,22 +1135,98 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
      * degrades to "no logo this attempt" rather than ever failing a compose.
      */
     const brandFragments = async (): Promise<{ head?: string; body?: string }> => {
-      if (effectiveKit === undefined) return {};
+      // Instagram Phase 0, item A (2026-09): the script-font sheet is driven
+      // by the TARGET LANGUAGE (02d), not by what the client declared, and is
+      // emitted independently of the kit — a brandless Hebrew client used to
+      // get no head fragment at all and rendered in Chromium's fallback face.
+      // `undefined` for Latin/unknown/no language, so an English client's head
+      // is byte-identical to before. Ordered `[scriptHead, brandHead]` per the
+      // spec; the sheet's own selectors make it order-independent anyway.
+      const scriptHead = buildScriptFontHeadForLanguage(targetLanguage, effectiveKit?.cssVars);
+      if (effectiveKit === undefined) return scriptHead !== undefined ? { head: scriptHead } : {};
       const { logoDataUri, placement } = await brandLogoAssessment();
       // A plan whose decision is `omit` emits neither the rules nor the
       // `<img>`: an illegible mark ships as nothing, never as a smudge, and
       // never as a held run.
       const showLogo = logoDataUri !== undefined && placement !== undefined && placement.decision !== "omit";
+      const head = [scriptHead, buildBrandHeadHtml(effectiveKit, showLogo ? { logo: placement } : {})].filter((s): s is string => s !== undefined).join("\n");
       return {
-        head: buildBrandHeadHtml(effectiveKit, showLogo ? { logo: placement } : {}),
+        head,
         ...(showLogo ? { body: buildBrandLogoBodyHtml(logoDataUri) } : {}),
       };
     };
 
-    // Render-type rules from the frozen config (Fix 2) — evaluated post-render
-    // by step 08b, never by step 07's checkSlidesData (which only ever
-    // evaluates `check: "copy"` rules).
-    const renderRules = frozen.styleConfig.rules.filter((r) => r.check === "render");
+    // Render-type rules (Fix 2) — evaluated post-render by step 08b, never by
+    // step 07's checkSlidesData (which only ever evaluates `check: "copy"`
+    // rules). Instagram Phase 0, item D (2026-09): `renderRules` was empty for
+    // EVERY prep client, so 08b passed each run with "no render rules
+    // provided". When the frozen config declares none, the four
+    // `DEFAULT_RENDER_RULES` apply instead — checked deterministically at
+    // `07h` before any render is spent, with only the residue code cannot
+    // decide handed to the 08b judge. A client with its own render rules sees
+    // zero change (`renderRuleSource === "client"`).
+    const { source: renderRuleSource, rules: renderRules } = resolveRenderRules(frozen.styleConfig.rules);
+
+    // ── The per-run budget: an estimate, an adapted plan, a live meter — never a hold (Phase 0 cost controls) ──
+    //
+    // The owner's rule (2026-09-09, binding): target $1.00, hard max $1.50,
+    // and a limit never breaks a run. `02j-plan-run-budget` estimates the run
+    // from the plan (attempts, images, evidence pulls, re-vets) calibrated by
+    // this client's own history (`memory` beliefs, written back at 09b), and
+    // when the estimate would exceed the target it ADAPTS the plan to fit, in
+    // the owner's order — images capped, evidence pulls warm-cache only, one
+    // return to step 05 instead of two, optional re-vets off — recording each
+    // adaptation as a note the reviewer sees. Then the meter: every model step
+    // adds `max(measured, estimate)` (a Gemini-on-Vertex step may report $0),
+    // every scraper execution and generated image its unit cost. Crossing the
+    // target stops OPTIONAL work; crossing the hard max finishes on the
+    // cheapest complete path and delivers `degraded`. Every mandatory gate
+    // (self-check, craft hygiene, language, relevance, rights) still runs.
+    //
+    // The meter is a plain object, recreated on every invocation: a resumed
+    // run replays each checkpointed step below and re-adds its line, so no
+    // checkpoint of its own is needed. Precision is not the point; the
+    // posture is.
+    const meter = new RunSpendMeter();
+    /** Run notes about money, in the order they happened — the plan's note first, then each threshold the meter crossed. Shown on the gate payload and persisted with the deliverable. */
+    const budgetNotes: string[] = [];
+    const budgetCrossed = { target: false, max: false };
+    /** `meter.add` plus the one-time crossing notes, so no call site has to remember to check. */
+    const spend = (label: string, measuredUsd: number | undefined, estimateUsd: number): void => {
+      meter.add(label, measuredUsd, estimateUsd);
+      if (!budgetCrossed.target && meter.crossedTarget) {
+        budgetCrossed.target = true;
+        budgetNotes.push(targetCrossedNote(meter, label));
+      }
+      if (!budgetCrossed.max && meter.crossedMax) {
+        budgetCrossed.max = true;
+        budgetNotes.push(maxCrossedNote(meter, label));
+      }
+    };
+    /** Images the `generate` rescue tier has requested this run, against the plan's `generatedImagesCap`. Run-scoped: the cap is per run, not per attempt. */
+    let generatedSoFar = 0;
+
+    // ── 02j: the run's budget plan, BEFORE the first paid call ──
+    //
+    // Reads this client's budget history out of the memory beliefs document
+    // (`RUN_BUDGET_BELIEF_KEY`, written by 09b of every delivered run) and
+    // fits the plan to the target. The shape is the conservative carousel
+    // case — six photo slides, the fluency judge when 02d resolved a
+    // language, four cold trend queries — because the format (04h) and the
+    // copy are not known yet and an estimate must not flatter itself.
+    // Checkpointed so a resume keeps the plan it started under.
+    const budgetDecision: RunBudgetDecision = await wf.step.code("02j-plan-run-budget", async () => {
+      let history = readBudgetHistory(undefined);
+      try {
+        const read = await tools["memory.read"]?.execute({ scope: "beliefs" }, { ctx });
+        if (read?.status === "success") history = readBudgetHistory((read.result as { beliefs?: unknown }).beliefs);
+      } catch (error) {
+        console.error("02j-plan-run-budget: could not read the budget history, planning from the defaults", error);
+      }
+      return planRunBudget({ ...DEFAULT_RUN_SHAPE, targetLanguage: targetLanguage !== undefined }, history);
+    });
+    const budgetPlan = budgetDecision.plan;
+    budgetNotes.push(budgetDecision.note);
 
     // ── 03: claim the subject — the catalog first, then the same fallbacks every other channel already has ──
     const claimedTopic = await wf.step.code("03-claim-topic", async (): Promise<InstagramTopicClaim> => {
@@ -1112,19 +1318,20 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         return { topic: runClaim.requestedSubject, source: "requested" };
       }
 
-      // 2. A research-derived subject, built the same way x-agent's step 04/05
-      //    builds its own fallback candidate: from the client's own declared
-      //    industry, labelled for what it is. Phase 1's `research.pull` has no
-      //    real search backend (see karos-research/src/pull.ts), so the honest
-      //    candidate is the QUERY, never a fabricated finding — the research
-      //    agent at step 04b still does the real sourcing work on top of it.
+      // 2. Nothing planned and nothing requested: the client's declared
+      //    industry, as a SEED ONLY (Phase 0, item E, 2026-09). This used to
+      //    return a literal "<industry> trends" query as the subject — a query,
+      //    not a subject — and the research step then researched the query; five
+      //    auto prep runs landed on the same topic. `03g-select-topic` below
+      //    MUST replace this seed with a scouted story or a real fetched
+      //    headline, or hold honestly; it is never drafted from as-is.
       const profileOutcome = await tools["client.getProfile"]!.execute({}, { ctx });
       const industry =
         profileOutcome.status === "success" && typeof (profileOutcome.result as Record<string, unknown>)["industry"] === "string"
           ? ((profileOutcome.result as Record<string, unknown>)["industry"] as string)
           : undefined;
       if (industry) {
-        return { topic: `${industry} trends this week`, source: "research" };
+        return { topic: industry, source: "research" };
       }
 
       // 3. Genuinely nothing to post about: no catalog row, no requested
@@ -1168,57 +1375,168 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // opportunities) and have their caption writer never see a word of it.
     const clientIntelContext = await readClientIntelContext(wf, tools, ctx, "04f-read-intel-context");
 
-    // ── 03a-03c: the trend scout, only on the fallback path (2026-09) ──
+    // ── 03a-03c: the trend scout, on EVERY run (Phase 0, item E, 2026-09) ──
     //
-    // Step 03 falls back to `${industry} trends this week` when nobody planned
-    // this run's subject — a query, not a subject, and the research step then
-    // researched the query. Now that path pulls the field's news (several
-    // questions, cached), asks the scout for brand-fit-scored candidates, and
-    // takes the strongest on-brand one. A planned catalog row or a typed
-    // request is untouched: the scout never outranks a person's choice.
-    let topicClaim: InstagramTopicClaimShape = claimedTopic;
-    if (claimedTopic.source === "research") {
-      const trendProfile = await wf.step.code("03a-load-trend-profile", async () => {
-        const profileOutcome = await tools["client.getProfile"]!.execute({}, { ctx });
-        const profile = profileOutcome.status === "success" ? (profileOutcome.result as Record<string, unknown>) : {};
-        const configOutcome = await tools["client.getConfig"]!.execute({}, { ctx });
-        const config = configOutcome.status === "success" ? (configOutcome.result as Record<string, unknown>) : {};
-        const configured = Array.isArray(config["trendQueries"]) ? (config["trendQueries"] as unknown[]).filter((q): q is string => typeof q === "string" && q.trim().length > 0) : [];
-        return {
-          profile,
-          industry: typeof profile["industry"] === "string" ? (profile["industry"] as string) : undefined,
-          companyName: typeof profile["companyName"] === "string" ? (profile["companyName"] as string) : typeof profile["name"] === "string" ? (profile["name"] as string) : undefined,
-          trendQueries: configured,
-          forbiddenTopics: readForbiddenTopics(config),
-        };
-      });
-      const queries = buildTrendQueries({ industry: trendProfile.industry, companyName: trendProfile.companyName, configuredQueries: trendProfile.trendQueries });
-      const trendResearch = await pullTrendResearch(wf, tools, ctx, {
+    // The scout used to run only when step 03 had fallen through to the
+    // "<industry> trends" query literal — so a client with a healthy
+    // catalog or a requested subject never saw this week's stories. Now every
+    // run pulls the field's news (several questions, cached 7d), scouts them
+    // for brand-fit-scored candidates, and `03g` weighs them against the
+    // planned row or the request: a person's choice still leads, but the
+    // reviewer sees what was NOT chosen, and an empty catalog gets a real
+    // story instead of a query. The request/row itself is researched alongside
+    // the field (`requestedTopic`), so the draft has sources for it either way.
+    const trendProfile = await wf.step.code("03a-load-trend-profile", async () => {
+      const profileOutcome = await tools["client.getProfile"]!.execute({}, { ctx });
+      const profile = profileOutcome.status === "success" ? (profileOutcome.result as Record<string, unknown>) : {};
+      const configOutcome = await tools["client.getConfig"]!.execute({}, { ctx });
+      const config = configOutcome.status === "success" ? (configOutcome.result as Record<string, unknown>) : {};
+      const configured = Array.isArray(config["trendQueries"]) ? (config["trendQueries"] as unknown[]).filter((q): q is string => typeof q === "string" && q.trim().length > 0) : [];
+      return {
+        profile,
+        industry: typeof profile["industry"] === "string" ? (profile["industry"] as string) : undefined,
+        companyName: typeof profile["companyName"] === "string" ? (profile["companyName"] as string) : typeof profile["name"] === "string" ? (profile["name"] as string) : undefined,
+        trendQueries: configured,
+        forbiddenTopics: readForbiddenTopics(config),
+      };
+    });
+    // The request or the planned row is researched alongside the field, but
+    // GROUNDED exactly as 04a grounds it (Phase 0, item C) — never verbatim.
+    // The audited defect was this literal reaching a web index: "Create
+    // content that introduces the new offer to first-time buyers" went out as
+    // the first of the four queries and the scout's "alternatives" came back
+    // about first-time HOME buyers. `buildGroundedQuery` reduces a direction
+    // to its subject and anchors it in what the client sells and to whom
+    // (the brief is resolved at 02i, before 03a); the scout reads the same
+    // grounded subject as its reference for what the request is about.
+    const requestedTopic = claimedTopic.source !== "research" ? buildGroundedQuery(claimedTopic, brief).query : undefined;
+    const fullQueries = buildTrendQueries({
+      industry: trendProfile.industry,
+      companyName: trendProfile.companyName,
+      configuredQueries: trendProfile.trendQueries,
+      requestedTopic,
+    });
+    // Budget lever 2: a `reduced` plan keeps only the first query — the
+    // industry question that repeats run to run and is therefore the one
+    // most likely to be a free 7d cache hit.
+    const queries = budgetPlan.evidencePulls === "reduced" ? fullQueries.slice(0, 1) : fullQueries;
+
+    // 03b degrades on an outage for a PLANNED run. A reserved row or a typed
+    // request is a subject someone already chose; a scraper that is not
+    // configured or is down must not hold that run — it is recorded on the
+    // claim as `scoutStatus: "unavailable"` and the row leads as it did before
+    // the scout existed. With nothing planned the seed is only the industry,
+    // so a failed pull is the tooling failure it always was.
+    let trendResearch: TrendResearch | undefined;
+    let scoutStatus: InstagramTopicClaimShape["scoutStatus"] = "no-documents";
+    try {
+      trendResearch = await pullTrendResearch(wf, tools, ctx, {
         stepId: "03b-trend-research-pull",
         job: "instagram-trend-scan",
         queries: queries.length > 0 ? queries : [claimedTopic.topic],
         window: "7d",
         historyAgentId: "instagram-agent",
       });
-      const scout = await runTrendScout(wf, { tools, promptStore: options.promptStore, router: options.router }, "03c-trend-scout", {
-        research: researchDigestForScout(trendResearch.merged),
+    } catch (error) {
+      if (!(error instanceof WorkflowToolingFailure) || claimedTopic.source === "research") throw error;
+      scoutStatus = "unavailable";
+      console.error(`03b-trend-research-pull: scout unavailable on a planned run (${error.message}); the ${claimedTopic.source} subject leads without alternatives`);
+    }
+    // Only executions that actually hit the vendor cost anything; a 7d cache
+    // hit is free. Counted from the pull's own per-query record.
+    if (trendResearch !== undefined) {
+      const executed = trendResearch.queries.filter((q) => q.status === "success" && !q.fromCache).length;
+      if (executed > 0) spend("03b-trend-research-pull", undefined, executed * STEP_COST_ESTIMATES_USD.scraperExecution);
+    }
+
+    let scout: TrendScoutOutput | undefined;
+    if (trendResearch !== undefined) {
+      const digest = researchDigestForScout(trendResearch.merged);
+      scout = await runTrendScout(wf, { tools, promptStore: options.promptStore, router: options.router }, "03c-trend-scout", {
+        research: digest,
         channel: "instagram",
         clientProfile: trendProfile.profile,
         ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
         ...(clientVoiceContext !== undefined ? { clientVoiceContext } : {}),
         ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
+        ...(requestedTopic !== undefined ? { requestedTopic } : {}),
         forbiddenTopics: trendProfile.forbiddenTopics,
         today: new Date().toISOString().slice(0, 10),
       });
-      if (scout !== undefined) {
-        // This agent keeps no decision log, so the content mode rotates on the
-        // count of shipped posts: hot news, deep value, open discussion, in turn.
-        const mode = CONTENT_MODES[ownShippedCount % CONTENT_MODES.length]!;
-        const avoidTopics = crossChannelAvoidTopics(crossChannel);
-        const trend = selectTrendCandidate(scout.candidates, mode, { avoidTopics });
-        if (trend !== undefined) topicClaim = { topic: trend.topic, source: "trend", trend };
+      // `runTrendScout` returns `undefined` without a model call when the
+      // digest is empty (nothing to scout), and after a call whose output
+      // failed its schema. Either way the documents were there, so the status
+      // is "ran" whenever a call was made — the meter counts that call.
+      if (digest.length > 0) {
+        scoutStatus = "ran";
+        spend("03c-trend-scout", undefined, STEP_COST_ESTIMATES_USD.scout);
       }
     }
+
+    // ── 03d: this run's content mode, rotated over the decision log (Phase 0, item E) ──
+    //
+    // Replaces `CONTENT_MODES[ownShippedCount % 3]`: a counter every failed or
+    // held run left untouched, so the "rotation" could sit on one mode for
+    // weeks. `09b` now appends one decision per delivered post and the shared
+    // `selectContentMode` (the same rotation x-agent and linkedin-agent use)
+    // reads it back — never the immediately prior mode, then the least used.
+    // A `requestedMode` in the client config wins outright.
+    const modeSelection = await wf.step.code("03d-select-content-mode", async (): Promise<{ mode: ContentMode; source: "requested" | "rotation"; priorMode?: ContentMode }> => {
+      const configOutcome = await tools["client.getConfig"]?.execute({}, { ctx });
+      const config = configOutcome?.status === "success" ? (configOutcome.result as Record<string, unknown>) : {};
+      const requestedMode = typeof config["requestedMode"] === "string" ? (config["requestedMode"] as string) : undefined;
+      let recentModes: ContentMode[] = [];
+      try {
+        const read = await tools["memory.read"]?.execute({ scope: "decisions", limit: 20 }, { ctx });
+        if (read?.status === "success") {
+          recentModes = recentModesFromDecisions((read.result as { items?: Array<{ at?: unknown; summary: string }> }).items ?? []);
+        }
+      } catch (error) {
+        console.error("03d-select-content-mode: could not read the decision log, rotating from an empty history", error);
+      }
+      const mode = selectContentMode(recentModes, requestedMode);
+      const priorMode = recentModes.at(-1);
+      return {
+        mode,
+        source: requestedMode !== undefined && mode === requestedMode ? "requested" : "rotation",
+        ...(priorMode !== undefined ? { priorMode } : {}),
+      };
+    });
+
+    // ── 03g: the subject, under one precedence order (Phase 0, item E) ──
+    //
+    // `resolveTopicClaim` (pure, `topic-selection.ts`): a person's request >
+    // a planned row (unless the client set `trendJacking: "always"` AND a
+    // story is unmistakably on-brand, stops a reader, and out-scores the row
+    // with distance from recent posts applied) > the strongest on-brand trend
+    // for this run's mode > a real fetched headline > an honest hold. The
+    // output IS the claim from here on; everything not chosen rides along as
+    // `alternatives` for the gate. When a trend displaces a reserved row the
+    // reservation is released so the row is reservable again — and the new
+    // claim carries no key, so 09b never commits a topic the catalog did not
+    // issue.
+    const topicClaim: InstagramTopicClaimShape = await wf.step.code("03g-select-topic", async (): Promise<InstagramTopicClaimShape> => {
+      const configOutcome = await tools["client.getConfig"]?.execute({}, { ctx });
+      const config = configOutcome?.status === "success" ? (configOutcome.result as Record<string, unknown>) : {};
+      const resolved = resolveTopicClaim(claimedTopic, scout, modeSelection.mode, {
+        avoidTopics: crossChannelAvoidTopics(crossChannel),
+        trendJacking: typeof config["trendJacking"] === "string" ? (config["trendJacking"] as string) : undefined,
+        recentExcerpts: crossChannel.entries.map((e) => e.excerpt),
+        trendResearchMerged: trendResearch?.merged,
+        scoutStatus,
+      });
+      if ("hold" in resolved) throw new WorkflowHeld(resolved.hold);
+      if (resolved.releaseReservation && claimedTopic.reservationKey !== undefined) {
+        const release = await tools["topics.release"]?.execute({ reservationKey: claimedTopic.reservationKey }, { ctx });
+        if (release !== undefined && release.status !== "success") {
+          // The row stays reserved until the reservation expires on its own;
+          // a stuck row is a smaller failure than holding a run that has a
+          // stronger subject in hand.
+          console.error(`03g-select-topic: topics.release reported ${release.status} for "${claimedTopic.reservationKey}"`);
+        }
+      }
+      return resolved.claim;
+    });
 
     // ── 04h: the post format — a request, the client's setting, or the rotation ──
     //
@@ -1233,19 +1551,49 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     });
 
     // ── 04: research the subject — verbatim raw payload capture, then judgment ──
+    //
+    // Phase 0, item C (2026-09): the query is GROUNDED in the brief. The
+    // audit's defining defect was this step sending the run request verbatim
+    // ("Create content that introduces the new offer to first-time buyers")
+    // to a web search, which answered with first-time HOME buyers. A scouted
+    // trend passes through as-is (already brand-fit judged); anything else is
+    // rewritten as `<subject> in the context of <what the client sells> for
+    // <who they sell to>`. If that finds nothing, ONE fallback pull inside the
+    // same step asks `<subject> <coreTerms>` instead. Same id, same
+    // `{runId, query, result}` shape; the rewrite is auditable from the
+    // additive `groundedQuery`/`rewrittenFrom`/`fallbackUsed` fields.
     const researchPull = await wf.step.code("04a-research-pull", async () => {
-      const outcome = await tools["research.pull"]!.execute(
-        // `historyAgentId` joins this agent to the same anti-repetition
-        // history feed every OTHER channel already requested — instagram was
-        // the one caller that omitted it entirely.
-        { job: "instagram-carousel-research", query: topicClaim.topic, window: "24h", historyAgentId: "instagram-agent" },
-        { ctx },
-      );
+      const grounded = buildGroundedQuery(topicClaim, brief);
+      const pull = async (query: string) =>
+        tools["research.pull"]!.execute(
+          // `historyAgentId` joins this agent to the same anti-repetition
+          // history feed every OTHER channel already requested — instagram was
+          // the one caller that omitted it entirely.
+          { job: "instagram-carousel-research", query, window: "24h", historyAgentId: "instagram-agent" },
+          { ctx },
+        );
+      let outcome = await pull(grounded.query);
       if (outcome.status !== "success") {
         throw new WorkflowToolingFailure(`research.pull failed: ${outcome.status}`);
       }
-      return outcome.result as { runId: string; query: string; result: unknown };
+      let fallbackUsed = false;
+      const documentCount = (o: typeof outcome): number =>
+        o.status === "success" ? ((o.result as { result?: { documents?: unknown[] } }).result?.documents?.length ?? 0) : 0;
+      if (documentCount(outcome) === 0) {
+        const fallback = await pull(fallbackQuery(grounded.subject, brief));
+        // Only a fallback that actually answered replaces the grounded pull;
+        // an empty grounded result is still an honest, cached result.
+        if (fallback.status === "success" && documentCount(fallback) > 0) {
+          outcome = fallback;
+          fallbackUsed = true;
+        }
+      }
+      const result = outcome.result as { runId: string; query: string; result: unknown; fromCache?: boolean };
+      return { ...result, groundedQuery: grounded.query, rewrittenFrom: grounded.rewrittenFrom, fallbackUsed };
     });
+    if (researchPull.fromCache !== true) {
+      spend("04a-research-pull", undefined, (researchPull.fallbackUsed ? 2 : 1) * STEP_COST_ESTIMATES_USD.scraperExecution);
+    }
 
     const researchAgent = new InstagramResearchAgent({ router: options.router, tools, promptStore: options.promptStore });
     const researchExec = await wf.step.agent("04b-research-extract-facts", researchAgent, {
@@ -1253,6 +1601,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       rawPayload: researchPull.result,
       rawPayloadRef: researchPull.runId,
     });
+    spend("04b-research-extract-facts", researchExec.totalCostUsd, STEP_COST_ESTIMATES_USD.extraction);
     if (researchExec.status === "content_fail") {
       throw new WorkflowHeld("research extraction did not produce output that cleared its own schema — nothing honestly cleared this run's research step");
     }
@@ -1389,6 +1738,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         ...(result.unmet.length > 0 ? [result.unmet.map((u) => `slide ${u.slot}: ${u.reason}`).join("; ")] : []),
         ...(visionNote !== undefined ? [visionNote] : []),
       ];
+      // Phase 0, item F: the vet (`instagram-image-vet@3`) may re-offer a
+      // client's upload to the slide it honestly fits rather than the slot
+      // upload order assigned it — and it can only do that if it can tell a
+      // client photo apart from a harvested one. `ImageCandidate` has no
+      // source field, so the tag rides on the description the vet reads.
+      candidates = candidates.map((c, i) => ({ ...c, description: `[client upload, slot ${i + 1}] ${c.description}` }));
       return {
         candidates,
         // Only the slides an asset actually landed on. An attachment that
@@ -1507,16 +1862,19 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           console.error("04c-resolve-templates: registry materialization failed, falling back to the client's templateDir", error);
         }
       }
-      // No registry, but a brand kit: the client's read-only templateDir is
-      // copied into the run's own directory with the brand spliced in, so a
-      // brandless deployment still gets branded slides.
-      if (brandKit !== undefined) {
+      // No registry, but SOMETHING to splice into the head — a brand kit, or
+      // (Phase 0, item A) a script-font sheet for a non-Latin target language
+      // even with no kit at all: the client's read-only templateDir is copied
+      // into the run's own directory with the fragments spliced in. Keyed on
+      // the fragments rather than on `brandKit`, otherwise a brandless Hebrew
+      // client's font sheet would be computed and never written anywhere.
+      if (brandKit !== undefined || (await brandFragments()).head !== undefined) {
         try {
           const branded = await materializeBrandedClientDir();
           return {
             ...branded,
             chosen: [],
-            brandTokenDrift: await brandTokenDrift(branded.templateDir),
+            ...(brandKit !== undefined ? { brandTokenDrift: await brandTokenDrift(branded.templateDir) } : {}),
           };
         } catch (error) {
           console.error("04c-resolve-templates: branded copy of the client templateDir failed, falling back to the unbranded original", error);
@@ -1789,10 +2147,27 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       variationPlan?: VariationPlanEntry[];
       /** SCRUM-393 (IGSTYLE-8) — text and accent-on-ground contrast, reported as facts. Never gates. */
       contrastFacts: ContrastFact[];
+      /**
+       * Phase 0, item C — the relevance judge's verdict on the WINNING attempt
+       * (`07g-relevance-attempt-N`), for the gate payload's and the
+       * deliverable's `grounding.relevance`. Absent when the judge could not
+       * run on that attempt (it fails open with a ledger warn), so a reviewer
+       * can tell "judged 5/5" from "not judged" — never a fabricated score.
+       *
+       * `note` is present only when the score passed on the RELAXED floor
+       * (`relevanceFloor` for a brief with no product-information and no
+       * target-audience document): the post shipped at 2/5, and the reviewer
+       * is told why the usual floor of 3 could not be applied to this client.
+       */
+      relevance?: { score: number; reason: string; note?: string };
     }
 
-    /** Never prose — excluded from anything a human or the topic guardrail reads as text. */
-    const NON_PROSE_FIELD_KEYS = new Set(["accentColor", "dir", "brandHandle", "seriesBadge", "fontScale", "textAlign"]);
+    /**
+     * Never prose — excluded from anything a human or the topic guardrail
+     * reads as text. Lifted to `visual-qa-pre-checks.ts` (Phase 0, item D)
+     * so the default render rules count content elements by the same list.
+     */
+    const NON_PROSE_FIELD_KEYS = LAYOUT_FIELD_KEYS;
 
     /**
      * Every slide's prose field values, joined — everything ON the carousel
@@ -1832,6 +2207,17 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       /** The reviewer's accumulated change requests, as a directive for the copy agent. */
       const directive = revisionDirective(notes);
 
+      /**
+       * The attempt cap THIS run drafts under: `MAX_SELF_CHECK_ATTEMPTS` by
+       * default, lowered to 2 by the budget plan (lever 3, "one return to
+       * step 05 instead of two") when the pre-run estimate did not fit the
+       * target. Decided at 02j, before the loop — the budget never cuts the
+       * loop mid-way into a hold (owner's rule), and a reviewer's `revise`
+       * always gets its round: a run over the hard max drafts it on the
+       * cheapest path instead of refusing.
+       */
+      const maxAttempts = Math.min(MAX_SELF_CHECK_ATTEMPTS, Math.max(1, budgetPlan.maxSelfCheckAttempts));
+
       // ── 04g: this round's style directive (IGSTYLE-3, §2.2 Layer 2 — ACTIVE, binding within this run) ──
       //
       // Revision-scoped, not attempt-scoped: resolved once here, reused by
@@ -1868,7 +2254,16 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // still merged LAST inside `effectiveBrandKit`, so "in-run supremacy"
       // holds structurally: an explicit directive always outranks whatever
       // 7b/7c produce here, exactly as IGSTYLE-3 already guarantees). ──
-      const { varied: variedLearnedStyle, variations: budgetVariations } = varyLearnedStyle(learnedStyle, distilledStyle.strength, wf.runId, {
+      // ── Phase 0, item G: a learned accent OUTSIDE the brand kit's ring is a
+      // note for the reviewer, never applied. The ring is the single source of
+      // truth for which accents this kit legally ships; applying a past "loved
+      // the orange" vote from outside it set the render up to fail its own
+      // palette gate three attempts later (prep run pubsub-21634455753345065,
+      // $0.86 for nothing). Ground/fg are untouched — they have their own
+      // contrast-floor refusal path. Each note becomes a `StyleRefusal` below,
+      // written to the ledger and shown on the gate payload like any other.
+      const { applied: ringLegalLearnedStyle, notes: learnedRingNotes } = filterLearnedStyleToRing(learnedStyle, brandKit?.palette ?? []);
+      const { varied: variedLearnedStyle, variations: budgetVariations } = varyLearnedStyle(ringLegalLearnedStyle, distilledStyle.strength, wf.runId, {
         ...(brandKit?.cssVars["--bg"] !== undefined ? { baselineGround: brandKit.cssVars["--bg"] } : {}),
         ...(brandKit?.cssVars["--fg"] !== undefined ? { baselineFg: brandKit.cssVars["--fg"] } : {}),
         ring: brandKit?.palette ?? [],
@@ -1933,7 +2328,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             }
           : undefined;
 
-      const allStyleRefusals: StyleRefusal[] = [...styleDirectiveResult.refusals, ...kitRefusals];
+      const allStyleRefusals: StyleRefusal[] = [
+        ...styleDirectiveResult.refusals,
+        ...kitRefusals,
+        ...learnedRingNotes.map((reason): StyleRefusal => ({ role: "accent", requested: learnedStyle.accent ?? "(learned accent)", reason })),
+      ];
       // Loud refusals (§2.3, mandatory): a silently-dropped directive is
       // indistinguishable from the original bug this whole ticket exists to
       // fix. One ledger event per revision (not per refusal) — `eventId` has
@@ -1983,11 +2382,47 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       let lastSelfCheckReason = "no attempt completed";
       /** Set by a failed 07d similarity check, so the NEXT attempt's prompt names exactly which published post to move away from. */
       let dedupeRetrySteer: string | undefined;
+      /** Set by an off-brief 07g verdict (Phase 0, item C), so the NEXT attempt's prompt names the bridge the judge could not find. */
+      let relevanceSteer: string | undefined;
+      /**
+       * Every OTHER self-check finding the next draft must fix — 07's slide
+       * check, 07b craft hygiene, 07e script, 07f fluency, 07h default render
+       * rules, 08b visual QA. Until 2026-09-09 `lastSelfCheckReason` was read
+       * by nothing but the final `WorkflowHeld`, so a Hebrew draft that "reads
+       * translated" was redrafted from a byte-identical prompt and the gate
+       * was a hold generator, not a corrector (spec B: the draft returns to 05
+       * WITH the findings). Handed to the copy step as `selfCheckSteer`
+       * (prompt §16) for exactly one attempt — the one right after the
+       * failure; relevance and dedupe keep their own typed steers.
+       */
+      let selfCheckSteer: string | undefined;
+      /** Records why this attempt failed AND hands that finding to the next draft. */
+      const returnToCopyWith = (reason: string): void => {
+        lastSelfCheckReason = reason;
+        selfCheckSteer = reason;
+      };
+      /** The winning attempt's relevance verdict, for `DraftResult.relevance`; undefined when the judge could not run on it. */
+      let finalRelevance: DraftResult["relevance"];
 
-    for (let attempt = 1; attempt <= MAX_SELF_CHECK_ATTEMPTS; attempt++) {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      // Consumed here so a finding from attempt 1 never outlives attempt 2:
+      // an attempt that fails on relevance or dedupe instead carries THOSE
+      // steers, and a stale render-rule finding must not ride along with them.
+      const priorFindings = selfCheckSteer;
+      selfCheckSteer = undefined;
       const copyExec = await wf.step.agent(rev(`05-write-copy-attempt-${attempt}`), copyAgent, {
         ...runDirectionField(runDirection),
         topic: topicClaim.topic,
+        // Phase 0, item C — who this client is (prompt §15), read BEFORE the
+        // facts; and, after an off-brief verdict, why the last draft failed
+        // the relevance check and must be fixed, not argued with.
+        clientBrief: briefForPrompt(brief),
+        ...(relevanceSteer !== undefined ? { relevanceSteer } : {}),
+        // What the previous attempt's self-check found (prompt §16) — the
+        // fluency judge's issues, the failed render rule and slide, the
+        // banned phrase — so the redraft fixes the finding instead of
+        // repeating the draft blind.
+        ...(priorFindings !== undefined ? { selfCheckSteer: priorFindings } : {}),
         // The post format (2026-09): `carousel` (6-8 slides) or `single` (one
         // designed slide and a deep caption). The copy step echoes it back and
         // `checkSlidesData` holds the slide count to it.
@@ -2000,7 +2435,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         ...("analyses" in tier0Pool && tier0Pool.analyses.length > 0 ? { attachedMedia: tier0Pool.analyses } : {}),
         facts: research.facts,
         styleConfig: {
-          rules: frozen.styleConfig.rules,
+          // Phase 0, item D: when the default render rules are in force the
+          // writer is told the rules it will be judged by at 07h/08b, rather
+          // than discovering them as a redraft.
+          rules: renderRuleSource === "default" ? [...frozen.styleConfig.rules, ...DEFAULT_RENDER_RULES] : frozen.styleConfig.rules,
           banned_words: frozen.styleConfig.banned_words,
           banned_chars: frozen.styleConfig.banned_chars,
           compliance: frozen.styleConfig.compliance,
@@ -2031,8 +2469,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
         ...(directive !== undefined ? { revisionRequest: directive } : {}),
       });
+      spend(rev(`05-write-copy-attempt-${attempt}`), copyExec.totalCostUsd, STEP_COST_ESTIMATES_USD.copyAttempt);
       if (copyExec.status === "tooling_error") {
-        throw new WorkflowToolingFailure(`copy step resolved to "${copyExec.status}" on attempt ${attempt}/${MAX_SELF_CHECK_ATTEMPTS}`);
+        throw new WorkflowToolingFailure(`copy step resolved to "${copyExec.status}" on attempt ${attempt}/${maxAttempts}`);
       }
       if (copyExec.status !== "completed") {
         // A malformed draft (failed its own output schema) or a draft that ran
@@ -2108,7 +2547,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // also needs no photo. Asking the resolved layout keeps this decision
       // consistent with what `assembleSlidesData` will actually render.
       const photoSlideNs = new Set(copy.slides.filter((s) => resolveLayout(s, availableTemplates).layout === "photo").map((s) => s.n));
-      const slidesNeedingSource = copy.slides.filter((s) => photoSlideNs.has(s.n) && !tier0Slots.has(s.n));
+      // Phase 0, item F: Tier-0 slots are harvested for TOO on a system-managed
+      // run. The vet may move a client's upload to the slide it honestly fits,
+      // and the slot it left behind then has alternatives instead of a forced
+      // text-only downgrade. A client-only run (`mediaSource: "client"`) keeps
+      // today's behaviour: nothing is sourced beyond the uploads.
+      const slidesNeedingSource = copy.slides.filter((s) => photoSlideNs.has(s.n) && (!clientMediaOnly || !tier0Slots.has(s.n)));
       if (clientMediaOnly && slidesNeedingSource.length > 0) {
         // Recorded in the sourcing layer's own words, so the downgrade below
         // says "the client asked for no sourcing", not "nothing qualified".
@@ -2120,6 +2564,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             {
               repoRoot: options.repoRoot,
               runId: wf.runId,
+              // Explicit rather than the tool schema's own default: 05c pays a
+              // vision inspection per candidate in this pool, and the run
+              // budget's pre-run estimate prices that term off the same
+              // constant (`CANDIDATES_PER_PHOTO_SLIDE`). Leaving the width to
+              // the tool's default is how the estimate came to under-count
+              // 05c sixfold.
+              maxPerNeed: CANDIDATES_PER_PHOTO_SLIDE,
               // Only the slides Tier 0 did not already fill. Searching for a
             // slide that already has the client's own photo on it would be
             // paying a harvester to produce a candidate that must lose.
@@ -2177,6 +2628,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         license: "n/a — typographic layout, no image used",
         rightsUsable: true,
         watermarkFree: true,
+        claimMatch: 5,
+        claimMatchReason: "typographic layout, no photograph to judge",
       });
 
       /**
@@ -2192,6 +2645,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         if (s.imagePath === null) return true;
         if (!s.rightsUsable || !s.watermarkFree) return true;
         if (usedImagesSet.has(s.imagePath)) return true;
+        // Phase 0, item F: a picture that does not show the slide's CLAIM is
+        // not a picture for that slide, however good it is — re-checked here
+        // against the model's own score rather than trusted to its threshold.
+        if (s.claimMatch < MIN_CLAIM_MATCH) return true;
         return false;
       };
 
@@ -2217,6 +2674,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                 license: "n/a — no candidate qualified",
                 rightsUsable: false,
                 watermarkFree: false,
+                claimMatch: 1,
+                claimMatchReason: "no candidate was sourced, so nothing could be judged against the claim",
               }
             : typographicSelection({ n: s.n, layout: resolveLayout(s, availableTemplates).layout }),
         );
@@ -2232,7 +2691,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // gate at all. Best-effort: no vision backend, or a failed call, leaves
         // the pool exactly as it was.
         const inspectTool = tools["media.inspectImages"];
-        if (inspectTool !== undefined) {
+        // Cheapest path (budget): over the hard max the per-candidate vision
+        // pass is optional spend and is skipped; the vet still judges every
+        // candidate, and rights/watermark/claim-match are still enforced.
+        if (inspectTool !== undefined && meter.posture !== "cheapest-path") {
           attemptPool = await wf.step.code(rev(`05c-inspect-candidates-attempt-${attempt}`), async (): Promise<ImageCandidate[]> => {
             const enriched: ImageCandidate[] = [];
             let dropped = 0;
@@ -2265,17 +2727,26 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             if (dropped > 0) sourcingReason = `${sourcingReason ? `${sourcingReason}; ` : ""}${dropped} candidate(s) dropped by vision inspection (watermarked or unusable)`;
             return enriched;
           });
+          spend(rev(`05c-inspect-candidates-attempt-${attempt}`), undefined, attemptPool.length * STEP_COST_ESTIMATES_USD.visionInspectPerImage);
         }
         const imageExec = await wf.step.agent(rev(`06-vet-images-attempt-${attempt}`), imageAgent, {
           // Only the photo slides are put in front of the gate. A typographic
           // archetype has nothing for it to judge, and including it would ask
           // the model to match a picture to a slide that renders none.
-          slides: copy.slides.filter((s) => photoSlideNs.has(s.n)).map((s) => ({ n: s.n, visualNeed: s.visualNeed })),
+          // Phase 0, item F (`instagram-image-vet@3`): each slide carries its
+          // headline and body so the vet judges whether a picture shows the
+          // CLAIM, not merely the objects `visualNeed` lists; and whether the
+          // slot holds a client upload, so it can re-offer that upload to the
+          // slide it honestly fits.
+          slides: copy.slides
+            .filter((s) => photoSlideNs.has(s.n))
+            .map((s) => ({ n: s.n, headline: s.headline, body: s.body, visualNeed: s.visualNeed, isClientPhotoSlot: tier0Slots.has(s.n) })),
           candidatePool: attemptPool,
           usedImages,
         });
+        spend(rev(`06-vet-images-attempt-${attempt}`), imageExec.totalCostUsd, STEP_COST_ESTIMATES_USD.vetCall);
         if (imageExec.status === "tooling_error") {
-          throw new WorkflowToolingFailure(`image vetting step resolved to "${imageExec.status}" on attempt ${attempt}/${MAX_SELF_CHECK_ATTEMPTS}`);
+          throw new WorkflowToolingFailure(`image vetting step resolved to "${imageExec.status}" on attempt ${attempt}/${maxAttempts}`);
         }
         if (imageExec.status !== "completed") {
           lastSelfCheckReason = `image vetting failed its own output validation on attempt ${attempt}`;
@@ -2362,6 +2833,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         },
       ];
 
+      /** Slides a rescue tier could not even ask for this attempt, with the budget reason: the run's image cap was spent, or the meter/plan stopped optional work (Phase 0 cost controls). */
+      const rescueSkipped = new Map<number, string>();
+
       let tierIndex = 0;
       for (const tier of rescueTiers) {
         tierIndex += 1;
@@ -2369,10 +2843,36 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // take the downgrade path with the sourcing reason recorded above.
         if (clientMediaOnly || unfillable.length === 0 || tier.tool === undefined) continue;
 
-        const gaps: ImageGap[] = unfillable
+        let gaps: ImageGap[] = unfillable
           .map((u) => ({ n: u.n, prompt: copy.slides.find((sl) => sl.n === u.n)?.visualNeed }))
           .filter((g): g is ImageGap => g.prompt !== undefined);
         if (gaps.length === 0) continue;
+
+        // Budget (owner's rule): the rescue tiers are OPTIONAL spend. They are
+        // skipped — the gaps take the text-only downgrade, exactly like "no
+        // viable image" today — when the plan turned optional re-vets off
+        // (lever 4) or the live meter has crossed the target. Never a hold.
+        if (!budgetPlan.optionalRevets) {
+          for (const g of gaps) rescueSkipped.set(g.n, "optional rescue re-vets skipped by the run budget plan");
+          continue;
+        }
+        if (meter.posture !== "normal") {
+          for (const g of gaps) rescueSkipped.set(g.n, `run budget ${meter.crossedMax ? "hard max" : "target"} crossed (${formatUsd(meter.totalUsd)}) — no more ${tier.id === "generate" ? "generated images" : "rescue re-vets"}`);
+          continue;
+        }
+
+        // Phase 0 cost controls: generation is billed per image, and it used to
+        // be uncapped — a three-attempt run with several gaps each could bill
+        // a dozen images. At most the plan's `generatedImagesCap` per RUN (not
+        // per attempt; 8 at the widest, fewer when the estimate was adapted);
+        // gaps over the cap stay unfillable and take the text-only downgrade
+        // with the budget named as the reason — an adaptation, not a hold.
+        if (tier.id === "generate") {
+          const budget = remainingGenerationBudget(generatedSoFar, budgetPlan.generatedImagesCap);
+          for (const over of gaps.slice(budget)) rescueSkipped.set(over.n, `generation budget for this run spent (${budgetPlan.generatedImagesCap} images)`);
+          gaps = gaps.slice(0, budget);
+          if (gaps.length === 0) continue;
+        }
 
         const sourced = await wf.step.code(rev(`06${"bd"[tierIndex - 1]}-${tier.id}-images-attempt-${attempt}`), async () =>
           tier.tool!.execute(tier.buildArgs(gaps), { ctx }),
@@ -2387,13 +2887,25 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         }
 
         const tierPool = (sourced.result as { candidates: ImageCandidate[] }).candidates;
+        if (tier.id === "generate") {
+          generatedSoFar += tierPool.length;
+          spend(rev(`06d-generate-images-attempt-${attempt}`), undefined, tierPool.length * STEP_COST_ESTIMATES_USD.generatedImage);
+        } else {
+          spend(rev(`06b-scrape-images-attempt-${attempt}`), undefined, gaps.length * STEP_COST_ESTIMATES_USD.scraperExecution);
+        }
         if (tierPool.length === 0) continue;
 
         const revet = await wf.step.agent(rev(`06${"ce"[tierIndex - 1]}-vet-${tier.id}-attempt-${attempt}`), imageAgent, {
-          slides: gaps.map((g) => ({ n: g.n, visualNeed: g.prompt })),
+          // Same shape as 06's input (Phase 0, item F): the re-vet judges the
+          // rescue candidates against the slide's claim too.
+          slides: gaps.map((g) => {
+            const slide = copy.slides.find((sl) => sl.n === g.n);
+            return { n: g.n, headline: slide?.headline ?? "", body: slide?.body ?? "", visualNeed: g.prompt, isClientPhotoSlot: tier0Slots.has(g.n) };
+          }),
           candidatePool: tierPool,
           usedImages,
         });
+        spend(rev(`06${"ce"[tierIndex - 1]}-vet-${tier.id}-attempt-${attempt}`), revet.totalCostUsd, STEP_COST_ESTIMATES_USD.vetCall);
         if (revet.status !== "completed") continue;
 
         const rescued = new Map(revet.finalOutput!.selections.map((sel) => [sel.n, sel]));
@@ -2457,6 +2969,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // pubsub-21543794087429035, both of which held on exactly this with a
       // real Vertex quota blip as the actual cause, not an editorial "no
       // picture exists" verdict.
+      /** Which slides THIS attempt downgraded for want of a picture — read by 07h so a lost photograph is never mistaken for a copy defect. */
+      let downgradedForImagesThisAttempt = new Set<number>();
       if (unfillable.length > 0) {
         // `s.reason` carries the real diagnostic (an unset key, a provider's
         // own "no results" chain, the vetting model's own explanation) —
@@ -2465,12 +2979,16 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // pubsub-21528976110173438 got burned by, with the actual cause
         // (an unset UNSPLASH_ACCESS_KEY) sitting one step upstream of it.
         const detail = unfillable.map((s) => {
-          if (s.imagePath === null) return `${s.n}: ${s.reason}`;
+          if (s.imagePath === null) return `${s.n}: ${rescueSkipped.has(s.n) ? `${rescueSkipped.get(s.n)}; ` : ""}${s.reason}`;
           if (!s.rightsUsable) return `${s.n}: not rights-usable (${s.reason})`;
           if (!s.watermarkFree) return `${s.n}: not watermark-free (${s.reason})`;
+          // Phase 0, item F: the picture exists and is clean, but it does not
+          // show what the slide claims — the vet's own words say what it shows.
+          if (s.claimMatch < MIN_CLAIM_MATCH) return `${s.n}: picture does not show the slide's claim (claimMatch ${s.claimMatch}/5: ${s.claimMatchReason})`;
           return `${s.n}: already used in a prior post`;
         });
         const downgradedNs = new Set(unfillable.map((s) => s.n));
+        downgradedForImagesThisAttempt = downgradedNs;
         await wf.step.code(rev(`07a-downgrade-unfillable-slides-attempt-${attempt}`), () => ({
           downgraded: [...downgradedNs],
           reason: `slide(s) ${[...downgradedNs].join(", ")} shipping text-only — no viable image survived retrieval, social-scrape, and generation (${detail.join("; ")})`,
@@ -2487,7 +3005,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       );
 
       if (!attemptChecked.ok) {
-        lastSelfCheckReason = attemptChecked.reason;
+        returnToCopyWith(attemptChecked.reason);
         continue;
       }
 
@@ -2496,7 +3014,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // every attempt regardless of what the client's own style rules say.
       const craftHygiene = await wf.step.code(rev(`07b-craft-hygiene-attempt-${attempt}`), () => checkCraftHygiene(tools, ctx, copy));
       if (!craftHygiene.ok) {
-        lastSelfCheckReason = craftHygiene.reason;
+        returnToCopyWith(craftHygiene.reason);
         continue;
       }
 
@@ -2512,8 +3030,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // which is how the geektime carousel shipped in English for a
       // Hebrew-only outlet and passed every check that existed.
       //
-      // Both stages are skipped entirely when the client has declared no
-      // target language (step 02d) — there is nothing to check against, and
+      // Both stages are skipped only for english-default clients — 02d found
+      // no evidence of a non-English language anywhere (brand, profile, voice
+      // rules, brand-voice doc). There is then nothing to check against, and
       // like `runTopicGuardrail` on a client who forbids no topics, that
       // costs no model call and adds no step to the trace.
       //
@@ -2529,9 +3048,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // building a dedupe steer out of it) is work thrown away. Step ids in
       // this loop are already not monotonic in execution order — 07d runs
       // before 07c — because they name what a step is, not when it runs.
-      if (targetLanguage !== undefined) {
-        const gateText = languageGateText(copy);
-
+      //
+      // Order within the paid checks (Phase 0): 07e (free) -> 07g relevance
+      // (Flash, ~$0.002) -> 07f fluency (Haiku, ~$0.0055) — cheapest paid
+      // rejection first.
+      const gateText = targetLanguage !== undefined ? languageGateText(copy) : undefined;
+      if (targetLanguage !== undefined && gateText !== undefined) {
         // Stage 1 — deterministic, no model call, no tools. Runs first so
         // the catastrophic case (an entirely wrong-script post) never pays
         // for stage 2.
@@ -2539,10 +3061,70 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           checkExpectedScript(gateText, targetLanguage),
         );
         if (!scriptCheck.ok) {
-          lastSelfCheckReason = `slide copy failed the deterministic language/script check: ${scriptCheck.reason}`;
+          returnToCopyWith(`slide copy failed the deterministic language/script check: ${scriptCheck.reason}`);
           continue;
         }
+      }
 
+      // ── 07g: the relevance judge (Phase 0, item C) ──
+      //
+      // "Would a reader who follows this account see how this post connects
+      // to what this business sells and to whom?" — scored 1-5 against the
+      // brief by `instagram-relevance-judge` (one Flash call per attempt,
+      // ~$0.002: closes the MassHousing class of defect at < 2% of the copy
+      // step's cost). Below `MIN_RELEVANCE_SCORE` the draft returns to 05
+      // with the judge's missing bridge as `relevanceSteer`. A judge that
+      // cannot run FAILS OPEN with a ledger warn — this is a quality gate on a
+      // run that still has a human gate, and the binding rule is about the
+      // score, not the outage (unlike 07f, whose subject nothing else reads).
+      //
+      // The floor is `MIN_RELEVANCE_SCORE` (3), except for a brief with no
+      // product-information and no target-audience document, where it is 2:
+      // that score is the rubric's own ceiling for a post written from
+      // industry-only grounding ("a different business in the same field
+      // could have posted this"), so holding a run on it would fail every
+      // attempt of exactly the thin-onboarding client the audit was about,
+      // on a verdict no redraft can answer. A 1 — the audit's own
+      // real-estate carousel — is off-brief at either floor.
+      const relevanceGateFloor = relevanceFloor(isThinlyGrounded(brief));
+      const relevance: RelevanceVerdict = await runRelevanceJudge(
+        wf,
+        { tools, promptStore: options.promptStore, router: options.router },
+        rev(`07g-relevance-attempt-${attempt}`),
+        { brief: briefForPrompt(brief), topic: topicClaim.topic, caption: copy.caption, slides: relevanceSlidesFor(copy) },
+        relevanceGateFloor,
+      );
+      spend(rev(`07g-relevance-attempt-${attempt}`), undefined, STEP_COST_ESTIMATES_USD.relevance);
+      if (relevance.status === "off-brief") {
+        lastSelfCheckReason = relevanceFailureReason(relevance);
+        relevanceSteer = relevanceSteerFor(relevance);
+        continue;
+      }
+      if (relevance.status === "error") {
+        try {
+          await tools["ledger.appendEvent"]?.execute({ runId: wf.runId, ...relevanceUnavailableEvent(wf.runId, attempt, relevance) }, { ctx });
+        } catch (error) {
+          console.error(`07g-relevance-attempt-${attempt}: could not record the judge-unavailable warn`, error);
+        }
+      }
+      // A draft that passed only on the relaxed floor is recorded where a
+      // reviewer will see it, on the ledger as well as on the gate payload:
+      // the post ships, and the reason the usual floor could not be applied
+      // to this client is a sentence they can act on (two onboarding
+      // documents).
+      if (relevance.status === "relevant" && relevance.note !== undefined) {
+        try {
+          await tools["ledger.appendEvent"]?.execute({ runId: wf.runId, ...relevanceThinGroundingEvent(wf.runId, attempt, relevance) }, { ctx });
+        } catch (error) {
+          console.error(`07g-relevance-attempt-${attempt}: could not record the thin-grounding warn`, error);
+        }
+      }
+      const attemptRelevance: DraftResult["relevance"] =
+        relevance.status === "error"
+          ? undefined
+          : { score: relevance.score, reason: relevance.reason, ...(relevance.status === "relevant" && relevance.note !== undefined ? { note: relevance.note } : {}) };
+
+      if (targetLanguage !== undefined && gateText !== undefined) {
         // Stage 2 — one commodity-tier judge call. Hebrew-shaped nonsense is
         // still Hebrew characters, so stage 1 cannot see it.
         const fluency = await runLanguageFluency(
@@ -2552,15 +3134,29 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           targetLanguage,
           rev(`${LANGUAGE_FLUENCY_STEP_ID}-attempt-${attempt}`),
         );
-        // `error` is never a failure of the draft — same fail-open-loudly
-        // posture as `runTopicGuardrail`. The verdict is in the step's own
-        // checkpointed output, so a human can see the check did not run
-        // rather than a green tick it did not earn.
-        if (fluency.status === "not_fluent") {
-          lastSelfCheckReason =
-            `slide copy is not fluent ${targetLanguage} on attempt ${attempt}: ` +
-            `${fluency.issues.length > 0 ? fluency.issues.join("; ") : "no specific issues given"}` +
-            `${fluency.evidence ? ` (e.g. "${fluency.evidence}")` : ""}`;
+        // An `error` verdict means the judge ran twice (the call and its one
+        // in-step retry) and could not answer: the meter counts both calls.
+        spend(rev(`${LANGUAGE_FLUENCY_STEP_ID}-attempt-${attempt}`), undefined, (fluency.status === "error" ? 2 : 1) * STEP_COST_ESTIMATES_USD.fluency);
+        // FAILS CLOSED (Phase 0, item B). `error` used to be a pass — the same
+        // fail-open posture as `runTopicGuardrail` — which is exactly what
+        // let unverified Hebrew ship: copy in a language nothing else in the
+        // pipeline reads does not go out on the strength of an outage.
+        // `runLanguageFluency` already retried the judge once inside the
+        // same step, so a transient 429 costs nothing here; a real outage
+        // costs the attempt, bounded by MAX_SELF_CHECK_ATTEMPTS -> the
+        // existing WorkflowHeld, whose reason names the outage so an operator
+        // does not chase a copy problem.
+        if (fluency.status !== "fluent") {
+          // The judge's own findings (issues + evidence) travel into the
+          // redraft prompt — a "reads translated" verdict with no steer was
+          // a blind redraft of the same sentences.
+          returnToCopyWith(
+            fluency.status === "error"
+              ? `the fluency judge could not run (${fluency.error ?? "unknown error"}): refusing to ship unverified ${targetLanguage} copy on attempt ${attempt}`
+              : `slide copy is not fluent ${targetLanguage} on attempt ${attempt}: ` +
+                  `${fluency.issues.length > 0 ? fluency.issues.join("; ") : "no specific issues given"}` +
+                  `${fluency.evidence ? ` (e.g. "${fluency.evidence}")` : ""}`,
+          );
           continue;
         }
       }
@@ -2579,7 +3175,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // reviewing at 09a.
       const draftText = `${copy.caption}\n\n${copy.slides.map((s) => `${s.headline} ${s.body}`).join("\n")}`;
       const dedupeVerdict = await checkOutputDedupe(wf, rev(`07d-dedupe-check-attempt-${attempt}`), draftText, outputHistory);
-      if (dedupeVerdict.status === "similar" && attempt < MAX_SELF_CHECK_ATTEMPTS) {
+      if (dedupeVerdict.status === "similar" && attempt < maxAttempts) {
         dedupeRetrySteer = dedupeRetryDirective(dedupeVerdict, outputHistory);
         lastSelfCheckReason = `draft is ${Math.round(dedupeVerdict.maxSimilarity * 100)}% similar to an already-published post (run ${dedupeVerdict.mostSimilarRunId ?? "unknown"})`;
         continue;
@@ -2617,6 +3213,49 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           ...(groundFgInversion !== undefined ? { groundFgInversion } : {}),
         }),
       );
+
+      // ── 07h: the default render rules, checked in code BEFORE any render is spent (Phase 0, item D) ──
+      //
+      // Only when the frozen config declares no render rules of its own. Runs
+      // on the ASSEMBLED slides-data so it sees the templates `resolveLayout`
+      // actually picked and the hero images the selections actually attached.
+      // A failure is a copy/layout defect and returns the draft to 05 like
+      // any other self-check; what code cannot decide (a closer with no
+      // question mark or lexicon CTA, a custom-archetype cover) is `residue`
+      // for the 08b judge — so "no render rules provided" never happens again.
+      //
+      // One deliberate waiver, for the zero-held guarantee above: the cover
+      // rule is NOT failed when slide 1 lost its photograph to sourcing (07a
+      // downgraded it this attempt). A redraft cannot conjure a picture the
+      // tiers could not find, and holding for it would be exactly the
+      // "held because of a picture" this workflow promises never to do — the
+      // rule joins the residue with the reason, so the judge and the reviewer
+      // still see it.
+      let residueRules: typeof DEFAULT_RENDER_RULES = [];
+      if (renderRuleSource === "default") {
+        const drr = await wf.step.code(rev(`07h-default-render-rules-attempt-${attempt}`), () => {
+          const checked = checkDefaultRenderRules(slidesDataAttempt, copy);
+          const coverLostToSourcing = downgradedForImagesThisAttempt.has(slidesDataAttempt.slides[0]?.n ?? -1);
+          const failures = checked.failures.filter((f) => !(coverLostToSourcing && f.ruleId === "default:cover-carries-device"));
+          const waived = checked.failures.filter((f) => coverLostToSourcing && f.ruleId === "default:cover-carries-device");
+          const residue = [
+            ...checked.residue,
+            ...(waived.length > 0 ? DEFAULT_RENDER_RULES.filter((r) => r.id === "default:cover-carries-device") : []),
+          ];
+          return {
+            failures,
+            residue,
+            ...(waived.length > 0
+              ? { waived: waived.map((w) => ({ ...w, reason: `${w.reason} — waived: slide 1 lost its photograph to image sourcing this attempt, which is never a hold; left to the judge` })) }
+              : {}),
+          };
+        });
+        if (drr.failures.length > 0) {
+          returnToCopyWith(`default render rule(s) failed on attempt ${attempt} (no render spent): ${formatDefaultRenderRuleFailures(drr.failures)}`);
+          continue;
+        }
+        residueRules = drr.residue;
+      }
 
       // ── 08: render via the shared, already-tested publish.renderCarousel tool ──
       await ensureTemplatesOnDisk(validatedCustomArchetypes);
@@ -2706,7 +3345,15 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           .map((s) => s.fields["accentColor"])
           .filter((h): h is string => typeof h === "string");
         return {
-          paletteGate: checkPaletteWithinKit(usedHexes, effectiveKit?.palette ?? []),
+          // Phase 0, item G: the ring is the single source of truth and every
+          // slide now paints FROM it (`resolveSlideAccent`), so this belt
+          // cannot fail on a config-vs-brand accent disagreement any more. A
+          // reviewer's explicit directive pick is unioned in for the same
+          // reason — it is the ring anchor after re-derivation by construction.
+          paletteGate: checkPaletteWithinKit(usedHexes, [
+            ...(effectiveKit?.palette ?? []),
+            ...(styleDirectiveResult.overrides.accent !== undefined ? [styleDirectiveResult.overrides.accent] : []),
+          ]),
           brandAsset: assessBrandAssetPresence({
             configuredLogoUrl: effectiveKit?.logoUrl,
             rejectedLogoUrlReason: effectiveKit?.rejectedLogoUrlReason,
@@ -2774,7 +3421,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // call, leaves the QA exactly as it was.
       const inspectRendered = tools["media.inspectImages"];
       let renderedInspections: Array<Record<string, unknown>> = [];
-      if (inspectRendered !== undefined && renderedAttempt.rendered.length > 0) {
+      // Cheapest path (budget): over the hard max the rendered inspection is
+      // optional spend and is skipped; the deterministic 08a2 pre-checks stand.
+      if (inspectRendered !== undefined && renderedAttempt.rendered.length > 0 && meter.posture !== "cheapest-path") {
         renderedInspections = await wf.step.code(rev(`08a4-inspect-rendered-attempt-${attempt}`), async (): Promise<Array<Record<string, unknown>>> => {
           const images = renderedAttempt.rendered.slice(0, 12).flatMap((r): Array<{ ref: string; url?: string; path?: string }> => {
             if (/^https?:\/\//i.test(r.path)) return [{ ref: `slide-${r.n}`, url: r.path }];
@@ -2804,9 +3453,35 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             ...(i["fitScore"] !== undefined ? { fitScore: i["fitScore"], fitReason: i["fitReason"] } : {}),
           }));
         });
+        spend(rev(`08a4-inspect-rendered-attempt-${attempt}`), undefined, Math.min(renderedAttempt.rendered.length, 12) * STEP_COST_ESTIMATES_USD.visionInspectPerImage);
       }
 
       const elevatedCriteria = buildElevatedVisualQaCriteria({ logo: preChecks.brandAsset, kitPalette: effectiveKit?.palette ?? [] });
+      // Phase 0, item D: the client's own render rules when it has them;
+      // otherwise the default rules 07h could NOT settle in code (the residue)
+      // — never a rule that already passed deterministically.
+      const judgedRenderRules = renderRuleSource === "client" ? renderRules : residueRules;
+      // Cheapest path (budget, owner's rule): over the hard max the visual-QA
+      // MODEL call is optional spend and is skipped — the deterministic 08a2
+      // pre-checks above already passed, and the human gate still reviews the
+      // render. Recorded as a checkpointed code step under the SAME id so the
+      // trace shows the check was consciously skipped rather than never
+      // reached, and the deliverable carries the degraded note.
+      if (meter.posture === "cheapest-path") {
+        await wf.step.code(rev(`08b-visual-qa-attempt-${attempt}`), () => ({
+          skipped: "budget" as const,
+          reason: `run budget hard max crossed (${formatUsd(meter.totalUsd)} > ${formatUsd(budgetDecision.maxUsd)}) — the optional visual-QA model call was skipped on the cheapest complete path; deterministic pre-checks passed`,
+          renderRules: [...judgedRenderRules.map((r) => ({ id: r.id, description: r.description })), ...elevatedCriteria],
+        }));
+        finalCopy = copy;
+        finalSelections = selections;
+        finalSlidesData = slidesDataForQa;
+        finalRendered = renderedAttempt;
+        finalContrastFacts = preChecks.contrastFacts;
+        finalRelevance = attemptRelevance;
+        finalOutcomeOk = true;
+        break;
+      }
       const qaExec = await wf.step.agent(rev(`08b-visual-qa-attempt-${attempt}`), qaAgent, {
         // The format (2026-09): a single-image post has no "closer" slide and
         // a rule written for an eight-slide carousel does not apply to it.
@@ -2814,7 +3489,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // What a vision model saw in the actual PNGs, when one was available.
         ...(renderedInspections.length > 0 ? { renderedInspections } : {}),
         slides: slidesDataForQa.slides.map((s) => ({ n: s.n, fields: s.fields, images: s.images })),
-        renderRules: [...renderRules.map((r) => ({ id: r.id, description: r.description })), ...elevatedCriteria],
+        renderRules: [...judgedRenderRules.map((r) => ({ id: r.id, description: r.description })), ...elevatedCriteria],
         // Facts the judge must not re-derive (per-criterion doc comments in
         // `visual-qa-pre-checks.ts`) — present only when the corresponding
         // elevated criterion above was actually included.
@@ -2823,8 +3498,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           : {}),
         ...(effectiveKit !== undefined && effectiveKit.palette.length > 0 ? { brandPalette: effectiveKit.palette } : {}),
       });
+      spend(rev(`08b-visual-qa-attempt-${attempt}`), qaExec.totalCostUsd, STEP_COST_ESTIMATES_USD.visualQa);
       if (qaExec.status === "tooling_error") {
-        throw new WorkflowToolingFailure(`visual QA step resolved to "${qaExec.status}" on attempt ${attempt}/${MAX_SELF_CHECK_ATTEMPTS}`);
+        throw new WorkflowToolingFailure(`visual QA step resolved to "${qaExec.status}" on attempt ${attempt}/${maxAttempts}`);
       }
       if (qaExec.status !== "completed") {
         lastSelfCheckReason = `visual QA output failed its own output validation on attempt ${attempt}`;
@@ -2833,7 +3509,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       const qa = qaExec.finalOutput!;
       if (!qa.pass) {
         const failing = qa.findings.filter((f) => !f.passed);
-        lastSelfCheckReason = `visual QA failed on attempt ${attempt}: ${failing.length > 0 ? failing.map((f) => `${f.ruleId}${f.slide !== undefined ? ` (slide ${f.slide})` : ""}: ${f.note}`).join("; ") : "no specific findings given"}`;
+        returnToCopyWith(`visual QA failed on attempt ${attempt}: ${failing.length > 0 ? failing.map((f) => `${f.ruleId}${f.slide !== undefined ? ` (slide ${f.slide})` : ""}: ${f.note}`).join("; ") : "no specific findings given"}`);
         continue;
       }
 
@@ -2842,13 +3518,14 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       finalSlidesData = slidesDataForQa;
       finalRendered = renderedAttempt;
       finalContrastFacts = preChecks.contrastFacts;
+      finalRelevance = attemptRelevance;
       finalOutcomeOk = true;
       break;
     }
 
       if (!finalOutcomeOk || !finalCopy || !finalSelections || !finalSlidesData || !finalRendered) {
         throw new WorkflowHeld(
-          `step 07's self-check never passed after ${MAX_SELF_CHECK_ATTEMPTS} attempt(s) (initial + ${MAX_SELF_CHECK_ATTEMPTS - 1} return(s) to step 05) — last reason: ${lastSelfCheckReason}`,
+          `step 07's self-check never passed after ${maxAttempts} attempt(s) (initial + ${maxAttempts - 1} return(s) to step 05${maxAttempts < MAX_SELF_CHECK_ATTEMPTS ? ", the run budget plan allowed one return instead of two" : ""}) — last reason: ${lastSelfCheckReason}`,
         );
       }
       // IGSTYLE-10, §10e — reconstructed from the SAME pure per-slide
@@ -2877,8 +3554,21 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         ...(styleVariation.length > 0 ? { styleVariation } : {}),
         ...(variationPlan !== undefined && variationPlan.length > 0 ? { variationPlan } : {}),
         contrastFacts: finalContrastFacts,
+        ...(finalRelevance !== undefined ? { relevance: finalRelevance } : {}),
       };
     };
+
+    /**
+     * Phase 0, item C — what grounded this post, for the gate payload and the
+     * deliverable: where the brief came from, how confident it is, and the
+     * relevance judge's verdict on the shipped attempt (absent when the judge
+     * could not run — never a fabricated score).
+     */
+    const groundingFor = (draft: DraftResult) => ({
+      briefSource: briefResolution.source,
+      briefConfidence: brief.confidence,
+      ...(draft.relevance !== undefined ? { relevance: draft.relevance } : {}),
+    });
 
     // ── 09a: the universal approve / revise / reject cycle ──
     //
@@ -2933,6 +3623,22 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           slideCount: draft.slidesData.slides.length,
           renderedCount: draft.rendered.rendered.length,
           revision,
+          // Phase 0, item C — the brief that grounded this post and the
+          // relevance verdict, so the reviewer knows whether "reads as this
+          // client's" was judged and how.
+          grounding: groundingFor(draft),
+          // Phase 0, item E — the subject decision: source, mode, the stories
+          // NOT chosen and the rule that decided, so the reviewer sees the
+          // road not taken rather than only the destination.
+          topicDecision: topicDecisionForGate(topicClaim),
+          // Phase 0 cost controls — what this run has spent so far
+          // (max(measured, estimate) per step) and the plan it ran under:
+          // estimate vs actual, every adaptation, every threshold crossed.
+          // A reviewer sees what a `revise` will cost; nothing here ever
+          // holds the run (owner's rule).
+          spendUsd: meter.totalUsd,
+          budget: summarizeRunBudget(budgetDecision, meter, budgetNotes),
+          budgetLine: estimateVsActualLine(summarizeRunBudget(budgetDecision, meter, budgetNotes)),
           // IGSTYLE-3, §2.3's "loud refusals" requirement — what THIS round's
           // style-directive resolution did, including any refusal, so a
           // silently-dropped colour instruction is never indistinguishable
@@ -3300,6 +4006,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             // why-now and brand-fit bridge for the reviewer.
             format: review.output.copy.format,
             ...(topicClaim.trend !== undefined ? { trend: topicClaim.trend } : {}),
+            // Phase 0 (items C/E and the cost controls): the same grounding,
+            // topic decision and spend the reviewer saw on the gate payload,
+            // on the persisted record.
+            grounding: groundingFor(review.output),
+            topicDecision: topicDecisionForGate(topicClaim),
+            spendUsd: meter.totalUsd,
+            budget: summarizeRunBudget(budgetDecision, meter, budgetNotes),
             caption,
             slides: slidesData.slides,
             rendered: rendered.rendered,
@@ -3344,6 +4057,68 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         console.error("09b-deliver-and-log: could not record the output excerpt for future dedup", error);
       }
 
+      // Phase 0, item E: the decision log `03d` rotates the content mode over
+      // next run, and (audit finding 8) the first place the archetypes a post
+      // actually shipped with are recorded — at zero cost. Idempotent on
+      // `decisionId`; best-effort like the excerpt write above: losing a row
+      // costs rotation signal, failing a delivered post over it would cost
+      // the post.
+      try {
+        await tools["memory.appendDecision"]?.execute(
+          {
+            decisionId: `${wf.runId}__topic`,
+            summary: topicDecisionSummary({
+              topic: topicClaim.topic,
+              mode: topicClaim.mode ?? modeSelection.mode,
+              source: topicClaim.source,
+              archetypes: slidesData.slides.map((s) => s.template.replace(/(-inv)?\.html$/, "")),
+            }),
+            ...(topicClaim.weighting?.rule !== undefined ? { rationale: topicClaim.weighting.rule } : {}),
+          },
+          { ctx },
+        );
+      } catch (error) {
+        console.error("09b-deliver-and-log: could not append the topic decision for the mode rotation", error);
+      }
+
+      // Budget learning (owner's rule 3): estimate vs actual for THIS run goes
+      // into the client's history so the next run's `02j` starts calibrated —
+      // tighter after an overrun, relaxed again after two runs under target —
+      // and one ledger row says what happened to the money. Best-effort like
+      // the writes above: losing the calibration costs the next estimate,
+      // failing a delivered post over it would cost the post.
+      const budgetSummary = summarizeRunBudget(budgetDecision, meter, budgetNotes);
+      try {
+        let history = readBudgetHistory(undefined);
+        const read = await tools["memory.read"]?.execute({ scope: "beliefs" }, { ctx });
+        if (read?.status === "success") history = readBudgetHistory((read.result as { beliefs?: unknown }).beliefs);
+        const next = recordRunInHistory(history, {
+          runId: wf.runId,
+          at: new Date().toISOString(),
+          estimatedUsd: budgetSummary.estimatedUsd,
+          actualUsd: budgetSummary.actualUsd,
+          crossedTarget: budgetSummary.crossedTarget,
+          crossedMax: budgetSummary.crossedMax,
+          adaptations: budgetSummary.adaptations.length,
+        });
+        await tools["memory.updateBeliefs"]?.execute({ diff: { [RUN_BUDGET_BELIEF_KEY]: next } }, { ctx });
+      } catch (error) {
+        console.error("09b-deliver-and-log: could not record the run's budget history for the next run's estimate", error);
+      }
+      try {
+        await tools["ledger.appendEvent"]?.execute(
+          {
+            runId: wf.runId,
+            eventId: `${wf.runId}__budget`,
+            level: budgetSummary.crossedTarget ? "warn" : "info",
+            message: `${estimateVsActualLine(budgetSummary)}${budgetSummary.adaptations.length > 0 ? `; adaptations: ${budgetSummary.adaptations.join(", ")}` : ""}${budgetSummary.crossedMax ? "; delivered degraded on the cheapest complete path" : ""}`,
+          },
+          { ctx },
+        );
+      } catch (error) {
+        console.error("09b-deliver-and-log: could not record the budget ledger row", error);
+      }
+
       await tools["ledger.appendEvent"]!.execute(
         {
           runId: wf.runId,
@@ -3384,6 +4159,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // SCRUM-242 (T-A10): same DEGRADED marker, on the workflow's own typed
       // return value — see 02f's own comment.
       ...(contextGrounding.decision === "degraded" ? { contextGrounding: contextGrounding.marker } : {}),
+      // Budget (owner's rule): a run that crossed the hard max still COMPLETED
+      // and delivered, on the cheapest complete path — the marker says so, and
+      // why, so the reviewer knows which optional checks were skipped.
+      ...(meter.crossedMax
+        ? { budget: { status: "degraded" as const, reason: `${estimateVsActualLine(summarizeRunBudget(budgetDecision, meter, budgetNotes))}; ${budgetNotes.at(-1) ?? "hard max crossed"}` } }
+        : {}),
     };
   };
 }

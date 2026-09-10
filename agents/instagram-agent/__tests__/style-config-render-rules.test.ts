@@ -2,7 +2,8 @@ import { describe, expect, it, afterEach } from "vitest";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import { StyleConfigSchema, type StyleConfig } from "../src/workflow/types.js";
-import { fakeRouterSequence, finalTurn, goodBrandTokens, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import { DEFAULT_RENDER_RULES, resolveRenderRules } from "../src/workflow/visual-qa-pre-checks.js";
+import { fakeRouterSequence, finalTurn, goodBrandTokens, goodStyleConfig, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 
 const params = { runId: "instagram_run_render_rules", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
@@ -65,5 +66,26 @@ describe("02-freeze-style-config: a real legacy-shaped (100% check:'render') sty
     const stepRecords = await durableStore.listSteps(params.runId);
     const step02 = stepRecords.find((s) => s.stepId === "02-freeze-style-config");
     expect(step02?.status).toBe("completed");
+  });
+});
+
+/**
+ * Phase 0 item D: the default render rules fill an ABSENCE. A client whose
+ * frozen config carries its own `check: "render"` rules — this file's
+ * legacy-shaped fixture is exactly that client — must see zero change from
+ * their introduction: same rules, same order, none of the `default:` ids.
+ */
+describe("resolveRenderRules: a client with its own render rules is unaffected by the defaults", () => {
+  it("resolves the legacy-shaped config to source 'client' with its five rules verbatim", () => {
+    const resolved = resolveRenderRules(LEGACY_SHAPED_STYLE_CONFIG.rules);
+    expect(resolved.source).toBe("client");
+    expect(resolved.rules).toEqual(LEGACY_SHAPED_STYLE_CONFIG.rules);
+    expect(resolved.rules.some((r) => r.id.startsWith("default:"))).toBe(false);
+  });
+
+  it("resolves the happy-path test config (copy rules only) to the defaults", () => {
+    const resolved = resolveRenderRules(goodStyleConfig().rules);
+    expect(resolved.source).toBe("default");
+    expect(resolved.rules).toBe(DEFAULT_RENDER_RULES);
   });
 });

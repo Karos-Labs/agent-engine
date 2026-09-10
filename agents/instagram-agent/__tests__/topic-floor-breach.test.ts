@@ -2,8 +2,16 @@ import { describe, expect, it, afterEach } from "vitest";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import { fakeRouterSequence, finalTurn, goodBrandTokens, goodStyleConfig, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import { happyTurns } from "./turns.js";
 
 const params = { runId: "instagram_run_floor", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
+
+/** True when `expected` appears in `actual` in this order (other ids may sit between) — intake steps other work packages add must not break this suite. */
+function containsInOrder(actual: readonly string[], expected: readonly string[]): boolean {
+  let cursor = 0;
+  for (const id of actual) if (id === expected[cursor]) cursor++;
+  return cursor === expected.length;
+}
 
 describe("03-claim-topic: the topics catalog is the only dedup gate (RFC-03 §2.3)", () => {
   let env: TestEnvironment;
@@ -35,9 +43,15 @@ describe("03-claim-topic: the topics catalog is the only dedup gate (RFC-03 §2.
     expect(router.complete).not.toHaveBeenCalled();
 
     const stepRecords = await durableStore.listSteps(params.runId);
+    const stepIds = stepRecords.map((s) => s.stepId);
     // 00-auto-setup runs first; with no declared industry it seeds nothing, so
     // the breach below is reached exactly as it was before that step existed.
-    expect(stepRecords.map((s) => s.stepId)).toEqual([
+    // The hold is still thrown INSIDE 03 (RFC-13 §E keeps that case there: no
+    // row, no request AND no industry to seed the scout from), so 03 is the
+    // last step and none of 03a-03g ever ran.
+    expect(stepIds.at(-1)).toBe("03-claim-topic");
+    expect(stepIds.some((id) => /^03[a-z]-/.test(id))).toBe(false);
+    expect(containsInOrder(stepIds, [
       "00a-check-media-source",
       "00-auto-setup",
       "01-open-run",
@@ -58,7 +72,7 @@ describe("03-claim-topic: the topics catalog is the only dedup gate (RFC-03 §2.
       "02g-load-brand-kit-raw",
       "02h-learned-style-preferences",
       "03-claim-topic",
-    ]);
+    ])).toBe(true);
 
     // Nothing was ever reserved/committed -- the catalog stays exactly as empty as it started.
     const catalog = await env.store.readJson<unknown[]>("acme", ["topics", "catalog"]);
@@ -81,7 +95,11 @@ describe("03-claim-topic: the topics catalog is the only dedup gate (RFC-03 §2.
   describe("falling back when the catalog cannot serve the run", () => {
     async function runWithEmptyCatalog(runId: string) {
       const promptStore = makePromptStore();
-      const router = fakeRouterSequence([finalTurn({ text: "unused — this test only exercises step 03" })]);
+      // The scout runs on every run now (RFC-13 §E), so a run that gets past
+      // step 03 consumes real turns; these tests only read step 03's own
+      // output, so the happy path is queued and whatever happens after is
+      // not asserted on.
+      const router = fakeRouterSequence(happyTurns());
       const workflowFn = createInstagramAgentWorkflow({ tools: env.tools, promptStore, router, repoRoot: env.repoRoot });
       const durableStore = new MemoryDurableStepStore();
       await new WorkflowEngine(durableStore).run(workflowFn, { ...params, runId });
@@ -104,13 +122,18 @@ describe("03-claim-topic: the topics catalog is the only dedup gate (RFC-03 §2.
       expect((step03?.output as Record<string, unknown>)["reservationKey"]).toBeUndefined();
     });
 
-    it("derives a subject from the client's declared industry when there is no requested one", async () => {
+    it("seeds the scout from the client's declared industry when there is no requested one — a seed, never a subject", async () => {
       env = await setupTestEnvironment({ seedTopics: [] });
       await env.store.writeJson("acme", ["client", "profile"], { name: "Acme", industry: "B2B SaaS" });
 
       const step03 = await runWithEmptyCatalog("instagram_run_fallback_research");
       expect(step03?.status).toBe("completed");
-      expect(step03?.output).toEqual({ topic: "B2B SaaS trends this week", source: "research" });
+      // RFC-13 §E: the `${industry} trends this week` literal is gone. Step 03
+      // hands the bare industry forward as a `research` SEED that 03g must
+      // replace with a scouted story or a real fetched headline, or hold on.
+      // `trend-scout-always.test.ts` covers what 03g does with it.
+      expect(step03?.output).toEqual({ topic: "B2B SaaS", source: "research" });
+      expect((step03?.output as { topic: string }).topic).not.toMatch(/trends this week/);
     });
 
     it("prefers a real catalog reservation over either fallback, so a healthy client's dedup lock is unchanged", async () => {
@@ -153,7 +176,7 @@ describe("03-claim-topic: the topics catalog is the only dedup gate (RFC-03 §2.
   it("still claims a topic normally when the catalog has enough unused rows", async () => {
     env = await setupTestEnvironment(); // the default seed has 6 topics
     const promptStore = makePromptStore();
-    const router = fakeRouterSequence([finalTurn({ text: "unused — this test only exercises step 03" })]);
+    const router = fakeRouterSequence(happyTurns({ research: { text: "unused — this test only exercises step 03" } }));
     const workflowFn = createInstagramAgentWorkflow({ tools: env.tools, promptStore, router, repoRoot: env.repoRoot });
 
     const durableStore = new MemoryDurableStepStore();
@@ -219,7 +242,7 @@ describe("03-claim-topic: the topics catalog is the only dedup gate (RFC-03 §2.
       });
 
       const promptStore = makePromptStore();
-      const router = fakeRouterSequence([finalTurn({ text: "unused — this test only exercises step 03" })]);
+      const router = fakeRouterSequence(happyTurns({ research: { text: "unused — this test only exercises step 03" } }));
       const workflowFn = createInstagramAgentWorkflow({ tools: env.tools, promptStore, router, repoRoot: env.repoRoot });
 
       const durableStore = new MemoryDurableStepStore();

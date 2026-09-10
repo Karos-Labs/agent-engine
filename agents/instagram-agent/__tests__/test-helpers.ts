@@ -7,8 +7,9 @@ import * as os from "node:os";
 import type { AgentToolRegistry } from "@agent-engine/core";
 import { FilePromptStore, type AgentContext, type CompletionResult, type ModelRouter } from "@agent-engine/core";
 import { createAllKarosTools, WorkspaceStore } from "@agent-engine/tools";
-import { createOfflineScraper } from "@agent-engine/tool-karos-scraper";
+import { createOfflineScraper, type ScraperProvider } from "@agent-engine/tool-karos-scraper";
 import { validateRenderInputs, type RenderCarouselInput, type RenderCarouselResult } from "@agent-engine/tool-karos-publish";
+import type { TrendScoutOutput } from "@agent-engine/workflow";
 import type { BrandTokens, ImageCandidate, ImageVettingOutput, InstagramCopyOutput, ResearchFact, ResearchOutput, StyleConfig, VisualQaOutput } from "../src/workflow/types.js";
 import { DEFAULT_CAROUSEL_LANE } from "../src/workflow/create-instagram-agent-workflow.js";
 
@@ -35,6 +36,30 @@ export function fakeRouterSequence(turns: Array<() => CompletionResult<unknown>>
       throw new Error("fakeRouterSequence: completeAlias not used in these tests");
     }),
   } as unknown as ModelRouter;
+}
+
+/**
+ * The `05-write-copy-attempt-N` inputs a fake router saw, in attempt order,
+ * parsed back out of the JSON prompt `BaseAgent` sends. A copy turn is the
+ * one whose input carries both `facts` and `styleConfig`; no other agent in
+ * this workflow receives both. Lets a test assert WHAT the redraft was told
+ * (`relevanceSteer`, `selfCheckSteer`, `dedupeAvoid`), not only that a
+ * second attempt happened.
+ */
+export function copyTurnInputs(router: ModelRouter): Array<Record<string, unknown>> {
+  const complete = router.complete as unknown as { mock: { calls: unknown[][] } };
+  const inputs: Array<Record<string, unknown>> = [];
+  for (const call of complete.mock.calls) {
+    const promptArg = call[0];
+    if (typeof promptArg !== "string") continue;
+    try {
+      const parsed = JSON.parse(promptArg) as { input?: Record<string, unknown> };
+      if (parsed.input && typeof parsed.input === "object" && "facts" in parsed.input && "styleConfig" in parsed.input) inputs.push(parsed.input);
+    } catch {
+      // not a JSON prompt (never the case for BaseAgent calls, but be safe)
+    }
+  }
+  return inputs;
 }
 
 export function finalTurn(
@@ -204,7 +229,7 @@ export function goodCopyOutput(): InstagramCopyOutput {
   };
 }
 
-/** Vets every slide in `goodCopyOutput()` against a real fixture image — never a `null`, always rights-usable/watermark-free (Fix 4). */
+/** Vets every slide in `goodCopyOutput()` against a real fixture image — never a `null`, always rights-usable/watermark-free (Fix 4), and a full claim match (RFC-13 §F, `instagram-image-vet@3`). */
 export function goodImageVettingOutput(pool: ImageCandidate[] = goodImageCandidatePool()): ImageVettingOutput {
   return {
     selections: goodCopyOutput().slides.map((slide, i) => ({
@@ -214,6 +239,8 @@ export function goodImageVettingOutput(pool: ImageCandidate[] = goodImageCandida
       license: "CC0, test fixture",
       rightsUsable: true,
       watermarkFree: true,
+      claimMatch: 5,
+      claimMatchReason: "shows the claimed subject",
     })),
   };
 }
@@ -221,6 +248,71 @@ export function goodImageVettingOutput(pool: ImageCandidate[] = goodImageCandida
 /** A clean, passing post-render visual QA verdict (Fix 2) — no `check: "render"` rule findings tripped. */
 export function goodVisualQaOutput(): VisualQaOutput {
   return { pass: true, findings: [] };
+}
+
+/**
+ * The trend scout's answer over the offline scraper's synthetic documents
+ * (RFC-13 §E: the scout runs on EVERY run since 2026-09, so every workflow
+ * fixture needs one). Three candidates, one per content mode, brand fit 5/4/3
+ * — so `selectTrendCandidate` has an in-mode pick whatever mode the rotation
+ * lands on, and `resolveTopicClaim` records two alternatives.
+ */
+export function goodTrendScoutOutput(overrides: Partial<TrendScoutOutput> = {}): TrendScoutOutput {
+  return {
+    candidates: [
+      {
+        topic: "automated weekly reporting is replacing the Monday status meeting",
+        headline: "Survey: teams that automated reporting reclaimed four hours a week",
+        mode: "deep-value",
+        brandFit: 5,
+        interest: 4,
+        brandFitReason: "the client sells exactly this kind of workflow automation to operations teams",
+        angle: "the hours come back only when the report writes itself from the source data",
+        hook: "Your Monday status meeting is a report nobody wrote down.",
+        whyNow: "the survey published this week",
+        sourceUrls: ["https://offline.test/reporting/0"],
+        publishedAt: "2026-09-07",
+        hasNumbers: true,
+        mediaHint: "data",
+      },
+      {
+        topic: "a major ticketing vendor shipped AI triage to every plan",
+        headline: "Vendor adds AI triage to all support plans",
+        mode: "hot-news",
+        brandFit: 4,
+        interest: 4,
+        brandFitReason: "the client's own triage flow is the practitioner's alternative to a vendor default",
+        angle: "a default triage is not a designed one",
+        hook: "Every ticket now gets triaged by a model. Not every ticket should.",
+        whyNow: "announced two days ago",
+        sourceUrls: ["https://offline.test/triage/0"],
+        publishedAt: "2026-09-08",
+        hasNumbers: false,
+        mediaHint: "screenshot",
+      },
+      {
+        topic: "should onboarding checklists be owned by product or by success?",
+        headline: "Debate: who owns the onboarding checklist",
+        mode: "open-discussion",
+        brandFit: 3,
+        interest: 3,
+        brandFitReason: "the client's onboarding cohort data gives it a position, though the bridge takes a sentence",
+        angle: "the owner is whoever is measured on time-to-first-value",
+        hook: "Who owns your onboarding checklist? Wrong answer: both.",
+        whyNow: "two widely shared threads this week",
+        sourceUrls: ["https://offline.test/onboarding/0"],
+        hasNumbers: false,
+        mediaHint: "none",
+      },
+    ],
+    skipped: [{ headline: "Celebrity launches a productivity app", reason: "famous, not on-brand: no connection to what the client sells" }],
+    ...overrides,
+  };
+}
+
+/** The relevance judge's passing verdict (RFC-13 §C, `instagram-relevance-judge`): the post unmistakably reads as this client's. */
+export function goodRelevanceVerdict(overrides: Partial<{ score: number; reason: string; missingBridge: string }> = {}): Record<string, unknown> {
+  return { score: 5, reason: "every slide names the client's own process data and speaks to operations leads", ...overrides };
 }
 
 export interface TestEnvironment {
@@ -249,6 +341,14 @@ export async function setupTestEnvironment(
      * lane, matched here on purpose — see that constant's doc comment).
      */
     seedTopicsByLane?: Record<string, string[]>;
+    /**
+     * The scraper behind `research.pull` / `research.socialHistory`. Defaults
+     * to `createOfflineScraper()`; pass `createOfflineScraper({ documentsPerQuery: 0 })`
+     * for "the search answered with nothing" and `null` for "no scraper is
+     * configured" (`research.pull` → `not_available`, the outage the trend
+     * scout must survive on a planned run — RFC-13 §E).
+     */
+    scraper?: ScraperProvider | null;
   } = {},
 ): Promise<TestEnvironment> {
   const withConfig = opts.withConfig ?? true;
@@ -263,7 +363,7 @@ export async function setupTestEnvironment(
   // placeholder is what let every content agent draft from nothing for months.
   // Tests still need deterministic offline data, so they opt in here; nothing in
   // `apps/` does.
-  const tools = createAllKarosTools(store, undefined, { scraper: createOfflineScraper() });
+  const tools = createAllKarosTools(store, undefined, { scraper: opts.scraper === undefined ? createOfflineScraper() : opts.scraper });
 
   if (withConfig) {
     await store.writeJson("acme", ["client", "config"], {

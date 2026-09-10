@@ -5,6 +5,8 @@ import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import type { AgentToolRegistry } from "@agent-engine/core";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import {
+  goodRelevanceVerdict,
+  goodTrendScoutOutput,
   fakeRenderCarousel,
   fakeRouterSequence,
   finalTurn,
@@ -46,10 +48,10 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
   it("re-running engine.run() with the same runId does not re-execute any already-completed step", async () => {
     const promptStore = makePromptStore();
     const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
     ]);
     // Chromium-free, same rationale as `workflow-e2e.test.ts` (see
     // `fakeRenderCarousel`'s own doc comment) -- swapped in BEFORE spying so
@@ -71,7 +73,7 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
     const first = await engine.run(workflowFn, params);
     expect(first.status).toBe("completed");
     const countsAfterFirst = callCounts();
-    expect(router.complete).toHaveBeenCalledTimes(4);
+    expect(router.complete).toHaveBeenCalledTimes(6);
     expect(Object.values(countsAfterFirst).some((n) => n > 0)).toBe(true);
 
     const second = await engine.run(workflowFn, params);
@@ -80,7 +82,7 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
     expect(second.output).toEqual(first.output);
 
     // Nothing ran again: the router turns, and every tool call, stayed at their first-run counts.
-    expect(router.complete).toHaveBeenCalledTimes(4);
+    expect(router.complete).toHaveBeenCalledTimes(6);
     expect(callCounts()).toEqual(countsAfterFirst);
 
     const stepRecords = await durableStore.listSteps(params.runId);
@@ -113,8 +115,8 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
     await env.store.writeJson("acme", ["client", "brand"], PLAIN_BRAND);
 
     const copy = goodCopyOutput();
-    const draftTurns = () => [finalTurn(copy), finalTurn(goodImageVettingOutput()), finalTurn(goodVisualQaOutput())];
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), ...draftTurns(), ...draftTurns()]);
+    const draftTurns = () => [finalTurn(copy), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())];
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...draftTurns(), ...draftTurns()]);
 
     const tools: AgentToolRegistry = { ...env.tools, "publish.renderCarousel": fakeRenderCarousel(env.tools["publish.renderCarousel"]!) };
     const { spied, callCounts } = spyOnAllTools(tools);

@@ -5,6 +5,8 @@ import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { MemoryTemplateStore, TemplateDefinitionSchema } from "@agent-engine/tool-karos-templates";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import {
+  goodRelevanceVerdict,
+  goodTrendScoutOutput,
   fakeRenderCarousel,
   fakeRouterSequence,
   finalTurn,
@@ -28,7 +30,8 @@ import {
   resolveLayout,
   VARIATION_MIX,
 } from "../src/workflow/slides-data.js";
-import { paletteForSlide } from "../src/workflow/brand-render-tokens.js";
+import { deriveBrandRenderTokens, paletteForSlide } from "../src/workflow/brand-render-tokens.js";
+import { checkPaletteWithinKit } from "../src/workflow/visual-qa-pre-checks.js";
 import { InstagramSlideCopySchema, type InstagramCopyOutput, type ImageSelection } from "../src/workflow/types.js";
 
 const CANVAS = { w: 1080, h: 1440, scale: 2, slides_min: 6, slides_max: 8 };
@@ -54,7 +57,7 @@ describe("assembleSlidesData: per-slide layout routing", () => {
   it("routes a 'photo' slide through the client's configured template and attaches its vetted image", () => {
     const copy = copyWith([{ n: 1, layout: "photo" }]);
     const selections: ImageSelection[] = [
-      { n: 1, imagePath: "photos/n1.jpg", reason: "matches", license: "CC0", rightsUsable: true, watermarkFree: true },
+      { n: 1, imagePath: "photos/n1.jpg", reason: "matches", license: "CC0", rightsUsable: true, watermarkFree: true, claimMatch: 5, claimMatchReason: "shows the claimed subject" },
     ];
 
     const data = assembleSlidesData({
@@ -80,7 +83,7 @@ describe("assembleSlidesData: per-slide layout routing", () => {
     // even if a caller somehow passed a leftover path through: "text_only"
     // never carries a photo, regardless of what the selection says.
     const selections: ImageSelection[] = [
-      { n: 1, imagePath: null, reason: "no candidate qualified", license: "n/a", rightsUsable: false, watermarkFree: false },
+      { n: 1, imagePath: null, reason: "no candidate qualified", license: "n/a", rightsUsable: false, watermarkFree: false, claimMatch: 1, claimMatchReason: "no candidate qualified" },
     ];
 
     const data = assembleSlidesData({
@@ -102,8 +105,8 @@ describe("assembleSlidesData: per-slide layout routing", () => {
   it("keeps headline/body/accentColor identical across layouts -- layout only ever changes the template/image wiring, never the copy", () => {
     const copy = copyWith([{ n: 1, layout: "photo" }, { n: 2, layout: "text_only" }]);
     const selections: ImageSelection[] = [
-      { n: 1, imagePath: "photos/n1.jpg", reason: "matches", license: "CC0", rightsUsable: true, watermarkFree: true },
-      { n: 2, imagePath: null, reason: "no candidate qualified", license: "n/a", rightsUsable: false, watermarkFree: false },
+      { n: 1, imagePath: "photos/n1.jpg", reason: "matches", license: "CC0", rightsUsable: true, watermarkFree: true, claimMatch: 5, claimMatchReason: "shows the claimed subject" },
+      { n: 2, imagePath: null, reason: "no candidate qualified", license: "n/a", rightsUsable: false, watermarkFree: false, claimMatch: 1, claimMatchReason: "no candidate qualified" },
     ];
 
     const data = assembleSlidesData({
@@ -169,9 +172,9 @@ describe("assembleSlidesData: per-slide layout routing", () => {
       brandTokens: { templateDir: "fixtures/templates", slideTemplate: "slide.html" },
       copy: hebrewCopy,
       selections: [
-        { n: 1, imagePath: "photos/n1.jpg", reason: "matches", license: "CC0", rightsUsable: true, watermarkFree: true },
-        { n: 2, imagePath: null, reason: "n/a", license: "n/a", rightsUsable: false, watermarkFree: false },
-        { n: 3, imagePath: null, reason: "n/a", license: "n/a", rightsUsable: false, watermarkFree: false },
+        { n: 1, imagePath: "photos/n1.jpg", reason: "matches", license: "CC0", rightsUsable: true, watermarkFree: true, claimMatch: 5, claimMatchReason: "shows the claimed subject" },
+        { n: 2, imagePath: null, reason: "n/a", license: "n/a", rightsUsable: false, watermarkFree: false, claimMatch: 1, claimMatchReason: "no candidate qualified" },
+        { n: 3, imagePath: null, reason: "n/a", license: "n/a", rightsUsable: false, watermarkFree: false, claimMatch: 1, claimMatchReason: "no candidate qualified" },
       ],
       canvas: CANVAS,
     });
@@ -184,7 +187,7 @@ describe("assembleSlidesData: per-slide layout routing", () => {
   it("marks every slide's fields dir: 'ltr' for an English carousel", () => {
     const copy = copyWith([{ n: 1, layout: "photo" }]);
     const selections: ImageSelection[] = [
-      { n: 1, imagePath: "photos/n1.jpg", reason: "matches", license: "CC0", rightsUsable: true, watermarkFree: true },
+      { n: 1, imagePath: "photos/n1.jpg", reason: "matches", license: "CC0", rightsUsable: true, watermarkFree: true, claimMatch: 5, claimMatchReason: "shows the claimed subject" },
     ];
 
     const data = assembleSlidesData({
@@ -341,7 +344,7 @@ describe("archetype layouts (legacy port)", () => {
 
   it("attaches a hero image only to a photo slide, never to a typographic archetype", () => {
     const selections: ImageSelection[] = [
-      { n: 1, imagePath: "photos/n1.jpg", reason: "matches", license: "CC0", rightsUsable: true, watermarkFree: true },
+      { n: 1, imagePath: "photos/n1.jpg", reason: "matches", license: "CC0", rightsUsable: true, watermarkFree: true, claimMatch: 5, claimMatchReason: "shows the claimed subject" },
     ];
     const photo = assemble({ slides: [slide({ layout: "photo" })] } as InstagramCopyOutput, selections);
     expect(photo.slides[0]!.images).toEqual({ hero: "photos/n1.jpg" });
@@ -470,7 +473,7 @@ describe("template registry integration (Approach a)", () => {
     const pool = goodImageCandidatePool();
     const photoNs = base.slides.filter((s) => s.n !== 2).map((s) => s.n);
     const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
       finalTurn(copy),
       finalTurn({
         selections: photoNs.map((n) => ({
@@ -480,9 +483,11 @@ describe("template registry integration (Approach a)", () => {
           license: "CC0, test fixture",
           rightsUsable: true,
           watermarkFree: true,
+          claimMatch: 5,
+          claimMatchReason: "shows the claimed subject",
         })),
       }),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
     ]);
 
     const durableStore = new MemoryDurableStepStore();
@@ -549,10 +554,10 @@ describe("template registry integration (Approach a)", () => {
     };
 
     const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
     ]);
     const durableStore = new MemoryDurableStepStore();
     const result = await new WorkflowEngine(durableStore).run(
@@ -586,13 +591,13 @@ describe("template registry integration (Approach a)", () => {
     const store = new MemoryTemplateStore([]);
     const first = goodCopyOutput();
     const router = fakeRouterSequence([
-      finalTurn(goodResearchOutput()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
       finalTurn(first),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
       finalTurn(first),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
     ]);
 
     const durableStore = new MemoryDurableStepStore();
@@ -659,6 +664,8 @@ describe("assembleSlidesData: per-slide accent rotation (IGSTYLE-7, §7a)", () =
       license: "CC0",
       rightsUsable: true,
       watermarkFree: true,
+      claimMatch: 5,
+      claimMatchReason: "shows the claimed subject",
     }));
   }
 
@@ -682,7 +689,28 @@ describe("assembleSlidesData: per-slide accent rotation (IGSTYLE-7, §7a)", () =
     for (const hex of expected) expect(RING).toContain(hex);
   });
 
-  it("falls back to the existing accentColor param for EVERY slide when the ring cannot rotate (length <= 1) — a one-colour kit is unchanged", () => {
+  // Phase 0, item G — the ring is the single source of truth whenever it has
+  // a member. This used to fall back to `brandAccentFallback` for a one-member
+  // ring, which is exactly how prep run `pubsub-21634455753345065` painted a
+  // config hex the kit's ring never contained and held three times on its own
+  // palette gate.
+  it("a one-member ring paints ring[0] on EVERY slide — never the fallback, even when the two disagree (item G)", () => {
+    const data = assembleSlidesData({
+      clientSlug: "acme",
+      postId: "post_1",
+      repoRoot: "/repo",
+      brandTokens: { ...BRAND_TOKENS, accentColor: "#ff6b2c" },
+      copy: sixSlideCopy(),
+      selections: sixSelections(),
+      canvas: CANVAS,
+      brandAccentFallback: "#123456",
+      accentRing: ["#d95f2b"],
+      paletteSeed: "run-xyz",
+    });
+    for (const s of data.slides) expect(s.fields["accentColor"]).toBe("#d95f2b");
+  });
+
+  it("a two-member ring rotates between exactly its two members, as before", () => {
     const data = assembleSlidesData({
       clientSlug: "acme",
       postId: "post_1",
@@ -691,11 +719,71 @@ describe("assembleSlidesData: per-slide accent rotation (IGSTYLE-7, §7a)", () =
       copy: sixSlideCopy(),
       selections: sixSelections(),
       canvas: CANVAS,
-      brandAccentFallback: "#A5E82B",
-      accentRing: ["#A5E82B"],
+      brandAccentFallback: "#123456",
+      accentRing: ["#ff6b2c", "#d95f2b"],
       paletteSeed: "run-xyz",
     });
-    for (const s of data.slides) expect(s.fields["accentColor"]).toBe("#A5E82B");
+    const used = data.slides.map((s) => s.fields["accentColor"]);
+    expect(new Set(used)).toEqual(new Set(["#ff6b2c", "#d95f2b"]));
+    for (let i = 1; i < used.length; i++) expect(used[i]).not.toBe(used[i - 1]);
+  });
+
+  it("an EMPTY ring is the only case that falls back — the config accentColor, then brandAccentFallback (regression)", () => {
+    const withConfig = assembleSlidesData({
+      clientSlug: "acme",
+      postId: "post_1",
+      repoRoot: "/repo",
+      brandTokens: { ...BRAND_TOKENS, accentColor: "#ff6b2c" },
+      copy: sixSlideCopy(),
+      selections: sixSelections(),
+      canvas: CANVAS,
+      brandAccentFallback: "#123456",
+      accentRing: [],
+      paletteSeed: "run-xyz",
+    });
+    for (const s of withConfig.slides) expect(s.fields["accentColor"]).toBe("#ff6b2c");
+    const withoutConfig = assembleSlidesData({
+      clientSlug: "acme",
+      postId: "post_1",
+      repoRoot: "/repo",
+      brandTokens: BRAND_TOKENS,
+      copy: sixSlideCopy(),
+      selections: sixSelections(),
+      canvas: CANVAS,
+      brandAccentFallback: "#123456",
+      accentRing: [],
+    });
+    for (const s of withoutConfig.slides) expect(s.fields["accentColor"]).toBe("#123456");
+  });
+
+  it("the prep incident's own fixture (config #ff6b2c vs brand.json #d95f2b) passes checkPaletteWithinKit against the derived ring", () => {
+    const brandTokens = { ...BRAND_TOKENS, accentColor: "#ff6b2c" };
+    const kit = deriveBrandRenderTokens(
+      {
+        accent: "#d95f2b",
+        colors: { primaryAccent: "#d95f2b", neutralDark: "#17181C", neutralLight: "#F4F2EC" },
+        dominantColors: [{ hex: "#17181C", dominanceRank: 1, role: "ground" }],
+        visualStyle: "Dark Mode",
+      },
+      brandTokens,
+    )!;
+    expect(kit.palette[0]).toBe("#ff6b2c");
+    expect(kit.palette).toContain("#d95f2b");
+    // Exactly the wiring `create-instagram-agent-workflow.ts` uses at 07c and 08a2.
+    const data = assembleSlidesData({
+      clientSlug: "acme",
+      postId: "post_1",
+      repoRoot: "/repo",
+      brandTokens,
+      copy: sixSlideCopy(),
+      selections: sixSelections(),
+      canvas: CANVAS,
+      brandAccentFallback: kit.brandAccent,
+      accentRing: kit.palette,
+      paletteSeed: "pubsub-21634455753345065",
+    });
+    const usedHexes = data.slides.map((s) => s.fields["accentColor"]!);
+    expect(checkPaletteWithinKit(usedHexes, kit.palette)).toEqual({ ok: true });
   });
 
   it("falls back to the existing accentColor param for EVERY slide when no ring is passed at all — byte-identical to pre-IGSTYLE-7 callers", () => {
@@ -829,6 +917,8 @@ describe("assembleSlidesData: ground/fg inversion axis (IGSTYLE-10, §10a/10c)",
       license: "CC0",
       rightsUsable: true,
       watermarkFree: true,
+      claimMatch: 5,
+      claimMatchReason: "shows the claimed subject",
     }));
   }
 
@@ -916,12 +1006,17 @@ describe("assembleSlidesData: ground/fg inversion axis (IGSTYLE-10, §10a/10c)",
       copy: sixSlideCopy(),
       selections: sixSelections(),
       canvas: CANVAS,
-      brandAccentFallback: "#C4552F",
-      accentRing: ["#A5E82B"], // ring.length <= 1: the accent axis cannot rotate
+      // Item G: a one-member ring now PAINTS `ring[0]`, so the accent the
+      // inversion gate measures is the ring's, not the fallback's — the ring
+      // carries the hex that clears 3:1 on both grounds (#C4552F) and the
+      // fallback deliberately disagrees, proving which one was consulted.
+      brandAccentFallback: "#A5E82B",
+      accentRing: ["#C4552F"], // ring.length <= 1: the accent axis cannot rotate
       groundFgInversion: { ground: "#17181C", fg: "#F4F2EC", directivePinned: false },
       paletteSeed: "run-inv-1",
     });
     expect(data.slides.some((s) => s.template === invertedTemplateFileName("slide.html"))).toBe(true);
+    for (const s of data.slides) expect(s.fields["accentColor"]).toBe("#C4552F");
   });
 
   it("§10a inversion safety: the inverted pairing's text contrast equals the primary's exactly (contrastRatio's own symmetry, asserted rather than assumed)", () => {
@@ -988,9 +1083,11 @@ describe("buildVariationPlan (IGSTYLE-10, §10e — the gate payload's own repor
   it("reports 'ring=1' for the accent axis and honest groundFg status when the ring cannot rotate", () => {
     const plan = buildVariationPlan({
       slideNs: [1, 2, 3, 4, 5, 6],
-      accentRing: ["#A5E82B"],
+      // Item G: `ring[0]` is what paints (and what the inversion gate measures),
+      // so the ring carries the invertible hex and the fallback disagrees.
+      accentRing: ["#C4552F"],
       paletteSeed: "run-plan-1",
-      brandAccentFallback: "#C4552F",
+      brandAccentFallback: "#A5E82B",
       groundFgInversion: { ground: "#17181C", fg: "#F4F2EC", directivePinned: false },
     });
     const accentEntries = plan.filter((e) => e.axis === "accent");
@@ -1050,6 +1147,8 @@ describe("buildVariationPlan (IGSTYLE-10, §10e — the gate payload's own repor
       license: "CC0",
       rightsUsable: true,
       watermarkFree: true,
+      claimMatch: 5,
+      claimMatchReason: "shows the claimed subject",
     }));
     const data = assembleSlidesData({
       clientSlug: "acme",

@@ -85,7 +85,13 @@ describe("Layer 3 tool registry — cross-cutting", () => {
     // — the read-only view over the nine v1 client/agent-profile document types,
     // distinct from client.getKnowledge's older portal-sync bundle. See
     // packages/tools/karos-client/src/get-context-doc.ts.)
-    expect(names.length).toBe(58);
+    // (client grew from 10 to 11, Instagram Phase 0 grounding gate:
+    // client.getBrief reads the persisted per-channel Client Brief
+    // (clients/<slug>/brief/<channel>-brief.json) — positioning, ICP, offers,
+    // core terms — that grounds the research query and the relevance judge.
+    // Phase 1 adds its writer, client.writeBrief. See
+    // packages/tools/karos-client/src/brief.ts.)
+    expect(names.length).toBe(59);
     for (const prefix of expectedPrefixes) {
       expect(names.some((n) => n.startsWith(prefix))).toBe(true);
     }

@@ -3,6 +3,8 @@ import type { AgentToolRegistry } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import {
+  goodRelevanceVerdict,
+  goodTrendScoutOutput,
   fakeRenderCarousel,
   fakeRouterSequence,
   finalTurn,
@@ -20,10 +22,10 @@ const base = { clientSlug: "acme", productId: "instagram-agent", runKind: "recur
 
 function happyRouter() {
   return fakeRouterSequence([
-    finalTurn(goodResearchOutput()),
+    finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
     finalTurn(goodCopyOutput()),
     finalTurn(goodImageVettingOutput()),
-    finalTurn(goodVisualQaOutput()),
+    finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
   ]);
 }
 

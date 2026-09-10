@@ -5,6 +5,8 @@ import type { AgentToolRegistry } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import {
+  goodRelevanceVerdict,
+  goodTrendScoutOutput,
   fakeRenderCarousel,
   fakeRouterSequence,
   finalTurn,
@@ -54,7 +56,25 @@ const HAPPY_PATH_STEP_IDS = [
   // the derived output) and the learned style prior (inert until IGSTYLE-5).
   "02g-load-brand-kit-raw",
   "02h-learned-style-preferences",
+  // Instagram Phase 0 (RFC-13 §C): the Client Brief — three C1 documents read
+  // best-effort as steps of their own, then the brief itself (`derived` here:
+  // no persisted brief exists in this fixture).
+  "02i1-load-product-information",
+  "02i2-load-target-audience",
+  "02i3-load-market-strategy",
+  "02i-resolve-client-brief",
+  // Phase 0 cost controls (owner's rule, 2026-09-09): the run's budget plan,
+  // estimated and adapted BEFORE the first paid call — never a hold.
+  "02j-plan-run-budget",
   "03-claim-topic",
+  // Phase 0 (RFC-13 §E): the trend scout runs on EVERY run now — also with a
+  // planned catalog row, as an "alternatives" signal — then the content mode
+  // rotates over the decision log and 03g selects the subject.
+  "03a-load-trend-profile",
+  "03b-trend-research-pull",
+  "03c-trend-scout",
+  "03d-select-content-mode",
+  "03g-select-topic",
   "04a-research-pull",
   "04b-research-extract-facts",
   // Resolves the run's template directory and which archetype files are in
@@ -73,8 +93,8 @@ const HAPPY_PATH_STEP_IDS = [
   // The client's intel report, distilled into drafting context.
   "04f-read-intel-context",
   // 2026-09: the post format — a request, the client's setting, or the auto
-  // rotation; `carousel` by default. The trend scout (03a-03c) does NOT appear
-  // here: the seeded catalog planned this run's topic, so it never runs.
+  // rotation; `carousel` by default. (Since Phase 0 the trend scout 03a-03c
+  // above runs on every run, planned row or not — see RFC-13 §E.)
   "04h-select-format",
   // IGSTYLE-3: this round's style directive (§2.2 Layer 2) — revision 0 with
   // no structured pick and no feedback resolves to `{overrides:{}, source:"none"}`
@@ -90,10 +110,17 @@ const HAPPY_PATH_STEP_IDS = [
   "06f-verify-images-on-disk-attempt-1",
   "07-self-check-attempt-1",
   "07b-craft-hygiene-attempt-1",
+  // Phase 0 (RFC-13 §C): the relevance judge — one Flash call per attempt,
+  // "would a reader see how this post connects to this business?".
+  "07g-relevance-attempt-1",
   // Deterministic similarity check against the shipped-output window —
   // flags and steers a redraft, never holds.
   "07d-dedupe-check-attempt-1",
   "07c-emit-slides-data-attempt-1",
+  // Phase 0 (RFC-13 §D): the default render rules, checked in code before any
+  // render is spent — present because this fixture's config declares no
+  // render rules of its own.
+  "07h-default-render-rules-attempt-1",
   "08-render-carousel-attempt-1",
   // Deterministic pre-checks (SCRUM-324/AU40) — logo presence/contrast and
   // palette-within-kit — answered in code before the model is ever asked to
@@ -108,10 +135,10 @@ const HAPPY_PATH_STEP_IDS = [
 
 function happyRouter() {
   return fakeRouterSequence([
-    finalTurn(goodResearchOutput()),
+    finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
     finalTurn(goodCopyOutput()),
     finalTurn(goodImageVettingOutput()),
-    finalTurn(goodVisualQaOutput()),
+    finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
   ]);
 }
 
@@ -159,7 +186,8 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     expect(result.output.slideCount).toBe(6);
     expect(result.output.renderedCount).toBe(6);
     expect(result.output.deliverableId).toBeTruthy();
-    expect(router.complete).toHaveBeenCalledTimes(4);
+    // scout + research + copy + vet + relevance + QA (Phase 0: the scout runs on every run, the relevance judge on every attempt).
+    expect(router.complete).toHaveBeenCalledTimes(6);
 
     const stepRecords = await durableStore.listSteps(params.runId);
     expect(stepRecords.map((s) => s.stepId).sort()).toEqual([...HAPPY_PATH_STEP_IDS].sort());
@@ -199,7 +227,17 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     });
 
     const promptStore = makePromptStore();
-    const router = happyRouter();
+    // Phase 0 (item B): "publishes exclusively in Spanish" now RESOLVES the
+    // target language from the profile prose (02d), so this client gets the
+    // language gate — one fluency-judge turn after the relevance judge.
+    const router = fakeRouterSequence([
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
+      finalTurn(goodCopyOutput()),
+      finalTurn(goodImageVettingOutput()),
+      finalTurn(goodRelevanceVerdict()),
+      finalTurn({ fluent: true, issues: [] }),
+      finalTurn(goodVisualQaOutput()),
+    ]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: testTools(env),
       promptStore,
@@ -222,7 +260,8 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     // The copy-writing model call actually received it, not just the step
     // that read it — a plumbing gap between the two would look identical
     // from the step record alone.
-    const copyCallArgs = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[1]!;
+    // The copy call is the THIRD turn since Phase 0 (scout, research, copy).
+    const copyCallArgs = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[2]!;
     const serializedInput = JSON.stringify(copyCallArgs);
     expect(serializedInput).toContain("publishes exclusively in Spanish");
   }, 60000);
@@ -264,7 +303,8 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     expect(intelStep?.output).toContain("Q4 kickoff — Lead with the compliance story.");
 
     // And the copy-writing model call actually received it.
-    const copyCallArgs = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[1]!;
+    // The copy call is the THIRD turn since Phase 0 (scout, research, copy).
+    const copyCallArgs = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[2]!;
     expect(JSON.stringify(copyCallArgs)).toContain("Confident, never boastful");
   }, 60000);
 
@@ -337,7 +377,7 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
 
     const second = await engine.run(workflowFn, { ...params, runId: "instagram_run_gate" });
     expect(second.status).toBe("completed");
-    expect(router.complete).toHaveBeenCalledTimes(4);
+    expect(router.complete).toHaveBeenCalledTimes(6);
 
     const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", "instagram_run_gate", "_"]);
     expect(deliverables.map((d) => d.id)).toEqual(["instagram-carousel"]);

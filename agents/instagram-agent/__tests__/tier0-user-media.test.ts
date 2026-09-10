@@ -2,15 +2,8 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import type { AgentTool } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
-import {
-  fakeRouterSequence,
-  finalTurn,
-  goodCopyOutput,
-  goodResearchOutput,
-  makePromptStore,
-  setupTestEnvironment,
-  type TestEnvironment,
-} from "./test-helpers.js";
+import { fakeRouterSequence, goodCopyOutput, goodResearchOutput, goodTrendScoutOutput, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import { standardTurns } from "./turns.js";
 
 /**
  * Tier 0 — media the client attached to this run.
@@ -77,7 +70,9 @@ describe("instagram Tier 0: client-supplied media", () => {
 
   async function run(input: Record<string, unknown>, tools: Record<string, unknown>) {
     const copy = goodCopyOutput();
-    const router = fakeRouterSequence([finalTurn(goodResearchOutput()), finalTurn(copy)]);
+    // Through the scout, research and copy; the tests below stop at Tier 0 /
+    // 05b and never need a vetting turn.
+    const router = fakeRouterSequence(standardTurns({ scout: goodTrendScoutOutput(), research: goodResearchOutput(), copy }));
     const store = new MemoryDurableStepStore();
     const workflowFn = createInstagramAgentWorkflow({
       tools: { ...env.tools, ...tools } as never,
@@ -124,20 +119,29 @@ describe("instagram Tier 0: client-supplied media", () => {
     expect(result.candidates[0]!.description).toContain("CLIENT-SUPPLIED");
     expect(result.candidates[0]!.description).toContain("hero shot");
     expect(result.candidates[0]!.description).toContain("rights-cleared");
+    // `instagram-image-vet@3` (RFC-13 §F) tells uploads apart from harvested
+    // candidates by this prefix — `ImageCandidate` has no source field — so
+    // the vet may re-offer an upload to the slide it honestly fits.
+    expect(result.candidates[0]!.description.startsWith("[client upload, slot 1] ")).toBe(true);
+    expect(result.candidates[1]!.description.startsWith("[client upload, slot 2] ")).toBe(true);
   });
 
-  it("does not ask the harvesters for slides Tier 0 already filled", async () => {
+  it("asks the harvesters for the Tier 0 slots as well, so an upload the vet moves elsewhere leaves alternatives behind", async () => {
     const seen: { needs?: Array<{ n: number }> } = {};
-    await run(
+    const { copy } = await run(
       { mediaAssets: [{ uri: "gs://bucket/a.jpg" }, { uri: "gs://bucket/b.jpg" }] },
       { "media.findImages": recordingFindImages(seen), "media.ingestAssets": stubIngestAssets() },
     );
 
-    // Slides 1 and 2 are covered; paying a harvester for a candidate that must
-    // lose to the client's own photo is pure waste.
-    expect(seen.needs?.map((n) => n.n)).not.toContain(1);
-    expect(seen.needs?.map((n) => n.n)).not.toContain(2);
-    expect((seen.needs?.length ?? 0)).toBeGreaterThan(0);
+    // Until 2026-09 slots 1 and 2 were skipped as "already filled". The
+    // semantic vet (`instagram-image-vet@3`) may now place the client's
+    // upload on whichever photo slide it fits — a photo of one team's fans
+    // does not belong under a headline about another — and a slot it moved
+    // off would then be forced text-only without a harvested alternative.
+    // One retrieval call for two more needs is the price of not shipping a
+    // typographic slide where a picture was available. Client-only runs
+    // (`mediaSource: "client"`) still harvest nothing — see below.
+    expect(seen.needs?.map((n) => n.n)).toEqual(copy.slides.map((s) => s.n));
   });
 
   it("asks for every slide when nothing was attached, exactly as before Tier 0 existed", async () => {
@@ -225,13 +229,14 @@ describe("instagram Tier 0: client-supplied media", () => {
     expect(steps.some((s) => /05b-source-images|06[bd]-(scrape|generate)-images/.test(s.stepId))).toBe(false);
   });
 
-  it("system-managed media (the default) still sources for the slides the client did not cover — nothing changed for the untouched dialog", async () => {
+  it("system-managed media (the default) still sources for every photo slide, the client-covered one included — nothing changed for the untouched dialog", async () => {
     const seen: { needs?: Array<{ n: number }> } = {};
-    await run(
+    const { copy } = await run(
       { mediaSource: "system", mediaAssets: [{ uri: "gs://bucket/a.jpg" }] },
       { "media.findImages": recordingFindImages(seen), "media.ingestAssets": stubIngestAssets() },
     );
     expect((seen.needs?.length ?? 0)).toBeGreaterThan(0);
-    expect(seen.needs?.map((n) => n.n)).not.toContain(1);
+    // Slot 1 is included since `instagram-image-vet@3` (see the Tier 0 test above).
+    expect(seen.needs?.map((n) => n.n)).toEqual(copy.slides.map((s) => s.n));
   });
 });

@@ -45,9 +45,11 @@ import type { InstagramCopyOutput, SlidesDataSelfCheck } from "./types.js";
  *
  * Stage 2 (`runLanguageFluency`) is the judgment stage 1 cannot make:
  * Hebrew characters in Hebrew-shaped nonsense are still Hebrew characters. A
- * model transliterating, emitting machine-translated word salad, or writing
- * grammatically broken Hebrew scores 100% on the script check. Only a reader
- * of the language can call that, so stage 2 is one cheap `commodity`-tier
+ * model transliterating, emitting machine-translated word salad, writing
+ * grammatically broken Hebrew, or — the commonest of the four, and the only
+ * one that also survives a proofreader — writing GRAMMATICAL Hebrew that is
+ * an English draft rendered clause by clause, all score 100% on the script
+ * check. Only a reader of the language can call that, so stage 2 is one cheap `commodity`-tier
  * model call, built the same way `runTopicGuardrail`
  * (`packages/workflow/src/primitives/topic-guardrail.ts`) builds its
  * verifier: a `DynamicAgent` with no tools, `maxSteps: 1`, a flat output
@@ -55,26 +57,46 @@ import type { InstagramCopyOutput, SlidesDataSelfCheck } from "./types.js";
  *
  * ## When it runs at all
  *
- * Only when the client has a declared target language
- * (`client.getBrand().language`). No declared language means there is
- * nothing to check against — a real and common state, not a
- * misconfiguration — and, exactly like `runTopicGuardrail` with an empty
- * forbidden-topics list, it then costs no model call and adds no step to the
- * trace.
+ * Whenever step 02d resolved a target language for the client. Since the
+ * 2026-09 Instagram upgrade (brief item B) that resolution is no longer
+ * `client.getBrand().language` alone: `resolveTargetLanguage`
+ * (`./target-language.ts`) also reads the profile, the voice rules and the
+ * brand-voice document, because the audit found the gate had run in NONE of
+ * ten sampled prep runs — geektime's Hebrew lives in its profile prose, and
+ * karoslabs has no `brand.language` at all. The only client for whom both
+ * stages are skipped is one with no evidence of any non-English language
+ * anywhere (`status: "english-default"`), and that skip still costs no model
+ * call and adds no step to the trace, like `runTopicGuardrail` with an
+ * empty forbidden-topics list.
  *
  * ## Failure handling
  *
- * Same posture as `runTopicGuardrail`: a verifier that could not do its job
- * never blocks good output. An incomplete stage-2 execution returns
- * `status: "error"`, which is recorded in the checkpointed step (so a human
- * can see the check did not run) and does NOT fail the attempt. The one
- * difference from the topic guardrail is the remedy for a real failure:
- * the guardrail is terminal and throws, whereas this gate sits inside the
- * step-07 retry loop, where the established remedy for "the copy is wrong"
- * is `RETURN: 05` — redraft. A redraft is also the right remedy here, since
- * the language requirement is already in the drafting prompt and the model
- * is being told it did not follow it. Only exhausting the retry budget holds
- * the run, via the loop's existing `WorkflowHeld`.
+ * Stage 2 FAILS CLOSED. This used to follow `runTopicGuardrail`'s "a
+ * verifier that could not do its job never blocks good output", and that is
+ * the wrong posture for this gate specifically: the guardrail protects
+ * against a rare, explicit forbidden-topics list, whereas this gate is the
+ * ONLY reader of the language for a client whose entire output is in it.
+ * Letting an outage wave through unverified Hebrew is exactly the geektime
+ * failure with a better excuse. So an incomplete stage-2 execution still
+ * returns `status: "error"` (same shape as before — the checkpointed step
+ * records that the check did not run), but the caller now treats anything
+ * other than `"fluent"` as a failed attempt: `RETURN: 05`, with a reason
+ * that names the outage rather than a copy problem, so an operator reading
+ * the eventual hold does not chase a redraft.
+ *
+ * The cost of that posture is a Sonnet redraft (~$0.12) per transient judge
+ * failure, which is why `runLanguageFluency` retries the judge ONCE, inside
+ * the same 07f invocation, before reporting `error`. A single 429 or a
+ * one-off malformed reply therefore costs one Haiku call, not a redraft; a
+ * real outage costs the attempt budget and holds with the outage named.
+ *
+ * The remedy for a real `not_fluent` verdict is unchanged: the guardrail is
+ * terminal and throws, whereas this gate sits inside the step-07 retry
+ * loop, where the established remedy for "the copy is wrong" is
+ * `RETURN: 05` — redraft. The language requirement is already in the
+ * drafting prompt, and the model is being told it did not follow it. Only
+ * exhausting the retry budget holds the run, via the loop's existing
+ * `WorkflowHeld`.
  */
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -87,6 +109,15 @@ export interface ExpectedScript {
   readonly name: string;
   /** Matches exactly one character belonging to this script. */
   readonly test: RegExp;
+}
+
+/** One row of `SCRIPT_TABLE`: a writing system plus every language name and BCP-47 primary subtag this gate knows to be written in it. */
+export interface ScriptTableEntry {
+  readonly script: ExpectedScript;
+  /** Lower-cased language names, as a portal user would type them ("hebrew", "ivrit", "עברית"). */
+  readonly names: readonly string[];
+  /** Lower-cased BCP-47 primary subtags ("he", "iw"). */
+  readonly tags: readonly string[];
 }
 
 /**
@@ -103,8 +134,15 @@ export interface ExpectedScript {
  * must degrade to "this gate has no opinion", never to "fail every draft for
  * this client", because a failure here costs a redraft attempt and, at the
  * retry cap, the whole run.
+ *
+ * Private on purpose; `scriptTableEntries()` is the read-only view other
+ * modules get. `target-language.ts` infers a client's language from prose
+ * using exactly these names and script tests, and it must not carry a second
+ * copy of them — two tables drift, and a language the inference knows but
+ * the gate does not (or vice versa) is a client whose gate silently never
+ * runs.
  */
-const SCRIPT_TABLE: ReadonlyArray<{ script: ExpectedScript; names: readonly string[]; tags: readonly string[] }> = [
+const SCRIPT_TABLE: ReadonlyArray<ScriptTableEntry> = [
   { script: { name: "Hebrew", test: /\p{Script=Hebrew}/u }, names: ["hebrew", "ivrit", "עברית"], tags: ["he", "iw"] },
   { script: { name: "Arabic", test: /\p{Script=Arabic}/u }, names: ["arabic", "farsi", "persian", "urdu"], tags: ["ar", "fa", "ur"] },
   { script: { name: "Greek", test: /\p{Script=Greek}/u }, names: ["greek"], tags: ["el"] },
@@ -141,6 +179,19 @@ const SCRIPT_TABLE: ReadonlyArray<{ script: ExpectedScript; names: readonly stri
     ],
   },
 ];
+
+/**
+ * Read-only view over `SCRIPT_TABLE` for `target-language.ts`'s inference —
+ * the one table, shared, never duplicated (see `SCRIPT_TABLE`'s doc comment
+ * for why). The array and its rows are frozen at module load so a consumer
+ * cannot reach in and change what the gate itself checks against.
+ */
+const SCRIPT_TABLE_VIEW: ReadonlyArray<ScriptTableEntry> = Object.freeze(
+  SCRIPT_TABLE.map((row) => Object.freeze({ script: Object.freeze({ ...row.script }), names: Object.freeze([...row.names]), tags: Object.freeze([...row.tags]) })),
+);
+export function scriptTableEntries(): ReadonlyArray<ScriptTableEntry> {
+  return SCRIPT_TABLE_VIEW;
+}
 
 /**
  * The writing system a declared language is written in, or `undefined` when
@@ -252,6 +303,17 @@ export const LANGUAGE_FLUENCY_STEP_ID = "07f-language-fluency";
 /** The step id stage 1 checkpoints under, before the `-attempt-N` suffix. */
 export const LANGUAGE_SCRIPT_STEP_ID = "07e-language-script";
 
+/**
+ * Appended to the caller's step id for the one in-step retry of the fluency
+ * judge (`07f-language-fluency-attempt-2-retry`). Its own checkpoint rather
+ * than a re-call under the same id: `step.agent` replays any checkpointed
+ * status — `content_fail` and `tooling_error` included — so a second call
+ * with the first call's id would return the first call's failure without
+ * ever touching the model. A distinct id is also what makes the retry
+ * visible in the trace and idempotent across a resume.
+ */
+export const LANGUAGE_FLUENCY_RETRY_SUFFIX = "-retry";
+
 export interface LanguageGateDeps {
   tools: AgentToolRegistry;
   promptStore: PromptStore;
@@ -259,7 +321,13 @@ export interface LanguageGateDeps {
 }
 
 export interface LanguageFluencyVerdict {
-  /** `error` means the judge could not run — never a failure of the draft. */
+  /**
+   * `error` means the judge could not run, twice (the call and its one
+   * in-step retry). It is not a verdict on the draft, but the caller fails
+   * closed on it all the same — see the module doc comment's "Failure
+   * handling": unverified copy in a language nothing else reads does not
+   * ship on the strength of an outage.
+   */
   status: "fluent" | "not_fluent" | "error";
   /** The judge's own findings, each a short phrase. Empty when fluent. */
   issues: string[];
@@ -286,7 +354,8 @@ export const LANGUAGE_FLUENCY_OUTPUT_FIELDS: readonly AgentDefinitionField[] = [
   {
     name: "issues",
     type: "string[]",
-    description: "Each concrete language problem found, one short phrase each (wrong language, broken grammar, nonsense phrasing, transliteration). Empty when fluent.",
+    description:
+      "Each concrete language problem found, one short phrase each (wrong language, broken grammar, nonsense phrasing, transliteration, translationese: a word-for-word translation of English rather than how a native writer would say it). Empty when fluent.",
     optional: false,
   },
   {
@@ -330,10 +399,19 @@ export function buildLanguageFluencySystemPrompt(language: string): string {
     "- grammatically broken (wrong agreement, wrong verb forms, mangled word order)",
     "- word-salad or machine-translated nonsense, even when every individual word is a real word",
     `- transliterated into another script rather than written in ${language}'s own`,
+    // Translationese is the failure mode this gate meets most often and the
+    // only one every bullet above waves through: a draft written in English
+    // and rendered clause by clause is grammatical, uses real words, is in
+    // the right script, and reads to a native speaker as a translation. The
+    // drafting prompt (@12 §16) already promises the writer this exact
+    // finding as a redraft steer ("reads as word by word translation" means
+    // those slides are rewritten as a native writer would say them), and
+    // that steer can only ever be emitted if the judge is asked the question.
+    `- a word-for-word translation of English rather than ${language} as a native writer would say it: calqued idiom, English clause order that is grammatical but not natural, marketing phrases rendered literally instead of in their ${language} equivalent`,
     "",
     `Proper nouns, brand names, product names and technical terms left in their original language are NORMAL and are NOT a failure. Neither is informal register, fragments, or headline style — social copy is written that way on purpose.`,
     "",
-    "Report concrete issues only, quoting the text. Never invent a problem to seem thorough: if it reads as competent writing, say so.",
+    `Report concrete issues only, quoting the text. Never invent a problem to seem thorough: if it reads as competent, natural ${language} writing, say so. "Competent" is the bar for grammar; "natural" is the bar for phrasing, and a draft can pass the first and fail the second.`,
   ].join("\n");
 }
 
@@ -350,8 +428,14 @@ export function buildLanguageFluencySystemPrompt(language: string): string {
  * fluent Hebrew, yes or no" is, and which keeps the cost of having the gate
  * on at all close to nothing.
  *
- * Never throws: a judge that could not complete returns `status: "error"`,
- * and the caller records it and lets the draft through.
+ * Never throws. A judge call that does not complete is retried ONCE, under
+ * `${stepId}${LANGUAGE_FLUENCY_RETRY_SUFFIX}`, before this returns
+ * `status: "error"` — and the caller FAILS CLOSED on that error (it is a
+ * failed attempt, not a pass; see the module doc comment). The retry is what
+ * keeps a transient 429 or a one-off malformed reply from costing a Sonnet
+ * redraft: the second Haiku call is ~$0.006, the redraft it prevents ~$0.12.
+ * A judge that fails twice in a row is an outage, and an outage is exactly
+ * what the caller's hold reason should name.
  */
 export async function runLanguageFluency(
   wf: WorkflowContext,
@@ -374,10 +458,24 @@ export async function runLanguageFluency(
     },
     buildLanguageFluencySystemPrompt(language),
   );
+  const input = { language, draft: text.slice(0, LANGUAGE_JUDGE_MAX_CHARS) };
 
-  const exec = await wf.step.agent(stepId, judge, { language, draft: text.slice(0, LANGUAGE_JUDGE_MAX_CHARS) });
+  let exec = await wf.step.agent(stepId, judge, input);
   if (exec.status !== "completed" || !exec.finalOutput) {
-    return { status: "error", issues: [], error: `language fluency judge did not complete (${exec.status})` };
+    const firstStatus = exec.status;
+    // One retry, its own checkpoint (see `LANGUAGE_FLUENCY_RETRY_SUFFIX`).
+    // Any non-completed status is retried, not just `tooling_error`: with
+    // `maxSteps: 1` a `content_fail` here is the model returning something
+    // its own output schema rejects, which on a fresh sample is as transient
+    // as a rate limit.
+    exec = await wf.step.agent(`${stepId}${LANGUAGE_FLUENCY_RETRY_SUFFIX}`, judge, input);
+    if (exec.status !== "completed" || !exec.finalOutput) {
+      return {
+        status: "error",
+        issues: [],
+        error: `language fluency judge did not complete (${firstStatus}), nor on its in-step retry (${exec.status})`,
+      };
+    }
   }
 
   const output = exec.finalOutput as unknown as LanguageFluencyOutput;

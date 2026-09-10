@@ -45,7 +45,7 @@ import { ImageVettingOutputSchema, type ImageVettingOutput } from "../workflow/t
 export class InstagramImageVettingAgent extends BaseAgent<ImageVettingOutput> {
   protected readonly config: AgentStepConfig<ImageVettingOutput> = {
     id: "instagram-image-vet",
-    description: "Judge, per slide, whether any candidate in the supplied image pool actually satisfies that slide's visual need AND is rights-usable, watermark-free, and not already used in a prior post — report null, never a placeholder, when none does.",
+    description: "Judge, per slide, whether any candidate in the supplied image pool actually shows what the slide's headline and body CLAIM (claimMatch 1-5, selection needs 3+) AND is rights-usable, watermark-free, and not already used in a prior post — report null, never a placeholder, when none does.",
     allowedTools: [],
     outputSchema: ImageVettingOutputSchema,
     modelPolicy: resolveModelPolicy("instagram-image-vet", { policy: "pinned", model: "gemini-2.5-flash", vendor: "gemini" }),
@@ -60,6 +60,18 @@ export class InstagramImageVettingAgent extends BaseAgent<ImageVettingOutput> {
     // reject on a subject mismatch or a real contradiction of the slide's
     // claim, not on an atmosphere/expression/framing detail that doesn't
     // change what the slide is actually saying. v1 stays frozen.
-    skillRef: "instagram-image-vet@2",
+    //
+    // v3 (RFC-13 §F, 2026-09): v2 judged OBJECTS — "person + laptop + dark
+    // setting" — against `visualNeed`, and never the slide's claim. The
+    // audit's worst defect followed directly: a client's photos of one
+    // football club's fans shipped under headlines about two other clubs,
+    // because every object the need listed was in frame. v3 receives each
+    // slide's `headline` + `body` and must return `claimMatch` (1-5) with a
+    // reason per selection; a selection needs 3+, and the workflow re-checks
+    // that floor deterministically (`MIN_CLAIM_MATCH`). v3 also lets a
+    // `[client upload, slot N]` candidate serve whichever photo slide it
+    // honestly fits, instead of being forced onto slot N. Costs ~1k more
+    // input tokens per call (≈ $0.0003 on Flash) and no new call. v2 frozen.
+    skillRef: "instagram-image-vet@3",
   };
 }
