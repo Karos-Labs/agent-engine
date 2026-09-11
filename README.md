@@ -365,8 +365,14 @@ gcloud pubsub subscriptions create agent-engine-run-jobs-push \
   --push-endpoint=https://YOUR-SERVICE-URL/api/v1/queue/pubsub-push \
   --push-auth-service-account=YOUR-PUSH-SA@YOUR-PROJECT.iam.gserviceaccount.com \
   --dead-letter-topic=agent-engine-run-jobs-dlq \
-  --max-delivery-attempts=5
+  --max-delivery-attempts=12
 ```
+
+> The 5 this example carried until SCRUM-435 is where
+> `infra/terraform/variables.tf`'s old default came from — it said so itself.
+> This block documents the PUSH subscription, which the worker above replaced,
+> so an obsolete example was setting the number for a live subscription. Both
+> say 12 now; the reasoning lives on the Terraform variable.
 
 Grant the push service account permission to actually invoke this (private)
 Cloud Run service:

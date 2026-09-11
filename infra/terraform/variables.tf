@@ -114,7 +114,22 @@ variable "dlq_subscription_name" {
 }
 
 variable "dlq_max_delivery_attempts" {
-  description = "Delivery attempts on the main subscription before a message is dead-lettered. Since 2026-09-10 the worker holds a message for one run-lease period (5 min) when the run is claimed by a lease that has not lapsed, so each attempt covers ~5.5 min; 12 attempts cover an hour of a killed worker's run before it dead-letters. Was 5 (README.md's old push example), which dead-lettered a deploy-orphaned run in 90 seconds."
+  description = <<-EOT
+    Delivery attempts on the main subscription before a message is
+    dead-lettered.
+
+    Since 2026-09-10 the worker holds a message for one run-lease period
+    (5 min) when the run is claimed by a lease that has not lapsed, so each
+    attempt covers ~5.5 min; 12 attempts cover an hour of a killed worker's
+    run before it dead-letters. Was 5 (README.md's old push example), which
+    dead-lettered a deploy-orphaned run in 90 seconds. 5 is also Pub/Sub's
+    own minimum, the least forgiving value available.
+
+    ONE NUMBER FOR BOTH ENVIRONMENTS, deliberately: neither envs/*.tfvars
+    overrides it, so prep and prod cannot drift on how hard they try. If prod
+    should ever differ, set it there explicitly rather than by leaving a
+    default behind. (SCRUM-435)
+  EOT
   type        = number
   default     = 12
 }
