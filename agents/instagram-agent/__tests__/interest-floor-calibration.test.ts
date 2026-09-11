@@ -574,10 +574,28 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
         report(`${entry.template} EMPTY`, roles[index]!, entry);
         const findings = checkInterestFloor(entry.metrics, entry.probe, roles[index]!, optsFor(entry)).findings;
         expect(findings.map((f) => f.kind), `${entry.template} with empty slots produced no finding`).not.toEqual([]);
-        // `dead-space` or `empty`: either "there is a hole" or "there is
-        // nothing to read". Which one fires depends on what the template's
-        // ground paints unconditionally, and both are correct answers.
-        expect(findings.some((f) => f.kind === "dead-space" || f.kind === "empty"), `${entry.template}: ${findings.map((f) => f.kind).join(", ")}`).toBe(true);
+        // `dead-space`, `empty` or `render-integrity`: "there is a hole",
+        // "there is nothing to read", or "there is hardly any ink on this
+        // frame at all". Which one fires depends on how much the template's
+        // ground still paints once nothing is standing on it, and all three
+        // are correct answers for a plate with every slot empty.
+        //
+        // `render-integrity` is here because it is what CI actually reported
+        // once the grounds were bound to their content, and it is the
+        // STRONGEST of the three rather than a looser alternative. Clause A
+        // (`inkShare < INK_SHARE_FLOOR`) returns on its own and suppresses
+        // the rest — deliberately: "the render looks broken, not boring"
+        // carries a different steer (re-render, do not rewrite), and a
+        // dead-space sentence about a frame with 0.5% ink on it would send a
+        // writer to fix copy that is not the problem. So a template landing
+        // there is a template whose ground paints even LESS unconditionally
+        // than one reported as a hole, which is the direction this test is
+        // pushing. It is still a pixel fact: `inkShare` comes from the
+        // screenshot, never from the DOM.
+        expect(
+          findings.some((f) => f.kind === "dead-space" || f.kind === "empty" || f.kind === "render-integrity"),
+          `${entry.template}: ${findings.map((f) => f.kind).join(", ")} (inkShare ${entry.metrics.inkShare.toFixed(4)})`,
+        ).toBe(true);
         // And the DOM agrees: with every slot hidden by its own `:empty`
         // rule, no text box painted.
         expect(entry.probe.textBoxShare).toBeLessThan(0.02);
@@ -597,11 +615,12 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
         // floor), a finding must still fire — which it can only do from the
         // pixels. Every ink-bearing layer in the bundled set is now bound to
         // the content that justifies it, so an empty plate measures ~0.5%
-        // occupied and clauses C, D and G all fire on their own.
+        // occupied, under half the ink floor, and clause A answers first.
         const pixelsOnly = checkInterestFloor(entry.metrics, { ...entry.probe, textBoxShare: 0.5 }, roles[index]!, optsFor(entry)).findings;
         expect(
-          pixelsOnly.some((f) => f.kind === "dead-space" || f.kind === "empty"),
+          pixelsOnly.some((f) => f.kind === "dead-space" || f.kind === "empty" || f.kind === "render-integrity"),
           `${entry.template} with empty slots passed on the PIXELS — a ground layer is painting unconditionally: ${JSON.stringify({
+            inkShare: entry.metrics.inkShare,
             occupiedShare: entry.metrics.occupiedShare,
             contentOccupiedShare: entry.metrics.contentOccupiedShare,
             largestEmptyRectShare: entry.metrics.largestEmptyRectShare,

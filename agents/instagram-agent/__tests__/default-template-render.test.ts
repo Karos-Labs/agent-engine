@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { createRenderCarousel } from "@agent-engine/tool-karos-publish";
 import { isChromiumInstalled } from "./test-helpers.js";
+import { syntheticPhotograph } from "./synthetic-photograph.js";
 
 /**
  * A real, un-mocked Chromium render of the actual production default
@@ -240,21 +241,35 @@ describe.skipIf(!isChromiumInstalled())("instagram-agent's default template rend
    * shipped eight flat slides with vetted images sitting unused on disk.
    *
    * Rendering the SAME slide with and without the hero and requiring the bytes
-   * to DIFFER catches it without decoding a PNG: if the image is blocked, both
-   * renders draw identical text on an identical background and come out
-   * byte-identical. A pixel decoder would be more direct and much heavier for
-   * the one bit of information that matters.
+   * to DIFFER catches the blocked-load case without decoding a PNG: if the
+   * image is blocked, both renders draw identical text on an identical
+   * background and come out byte-identical.
+   *
+   * ── 2026-09-11: WHAT THE SECOND ASSERTION USED TO BE, AND WHY IT WENT ──
+   *
+   * It used to be `withHero.byteLength > withoutHero.byteLength`, on the
+   * stated premise that "a full-bleed photograph compresses to more bytes
+   * than a flat background". Both halves of that premise are now false and
+   * the assertion failed in CI at 124,956 against 1,072,883 bytes. The hero
+   * was a SOLID MAGENTA 8x8 upscaled by `object-fit: cover` — a flat fill,
+   * which compresses to almost nothing — and the heroless ground stopped
+   * being flat when this directory's grounds became visible, so the
+   * text-only plate is now the bigger PNG. The comparison was measuring
+   * which of the two was flatter, in a direction that reversed the moment
+   * the templates were fixed.
+   *
+   * So the second assertion is now the thing it was always standing in for,
+   * measured rather than inferred: the renderer's own `measure` reports
+   * `imageryShare`, the share of the frame carrying per-cell tonal variety,
+   * and a photograph is the only thing that produces it. The hero fixture is
+   * `syntheticPhotograph` at the design canvas's own size for the same
+   * reason — see that file's header for what a solid or upscaled stand-in
+   * measures as instead. A blocked `file://` load now fails BOTH assertions.
    */
   it("renders differently with a hero image than without one", async () => {
     outDir = await fs.mkdtemp(path.join(REPO_ROOT, ".tmp-render-test-"));
-    // Solid magenta, 8x8. `object-fit: cover` blows it up to the full canvas,
-    // so a loaded hero changes almost every pixel above the scrim.
-    const magenta = Buffer.from(
-      "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFElEQVR4nGP8z/CfARtgwio6aCUAkYsCDoRKzmMAAAAASUVORK5CYII=",
-      "base64",
-    );
     const imageAbsPath = path.join(outDir, "hero.png");
-    await fs.writeFile(imageAbsPath, magenta);
+    await fs.writeFile(imageAbsPath, syntheticPhotograph(1080, 1440));
 
     const tool = createRenderCarousel();
     const ctx = { ctx: { runId: "r", clientSlug: "smoke-test", productId: "instagram-agent", runKind: "setup" as const, metadata: {} } };
@@ -268,28 +283,37 @@ describe.skipIf(!isChromiumInstalled())("instagram-agent's default template rend
       fields: { headline: "Identical copy on both", body: "Only the hero differs.", accentColor: "#2F6FC4" },
     };
 
-    async function render(postId: string, images: Record<string, string>): Promise<Buffer> {
+    async function render(postId: string, images: Record<string, string>): Promise<{ bytes: Buffer; imageryShare: number | undefined }> {
       const outcome = await tool.execute(
         {
           ...base,
           postId,
+          measure: true,
           slides: [{ n: 1, template: "slide.html", fields: base.fields, images, htmlFragments: {} }],
         },
         ctx,
       );
       if (outcome.status !== "success") throw new Error(JSON.stringify(outcome));
-      return fs.readFile(outcome.result.rendered[0]!.path);
+      const entry = outcome.result.rendered[0]!;
+      return { bytes: await fs.readFile(entry.path), imageryShare: entry.metrics?.imageryShare };
     }
 
     const withHero = await render("with-hero", { hero: path.relative(REPO_ROOT, imageAbsPath) });
     const withoutHero = await render("without-hero", {});
 
-    expect(withHero.equals(withoutHero)).toBe(false);
-    // And the hero render is the bigger one: a full-bleed photograph compresses
-    // to more bytes than a flat background. Not a strict law of PNG, but with a
-    // solid colour against solid colour it is a real signal, and it fails in the
-    // right direction if the two ever drift apart for some other reason.
-    expect(withHero.byteLength).toBeGreaterThan(withoutHero.byteLength);
+    expect(withHero.bytes.equals(withoutHero.bytes)).toBe(false);
+
+    // And the difference is the PHOTOGRAPH, not some other drift. `imagery`
+    // is the bucket for cells with per-cell tonal variety, which only a
+    // photograph produces: the template's own ground is a texture over a
+    // flat fill and scores as `graphic` instead. Measured on real Chromium,
+    // this hero lands at 0.655 and the heroless plate at 0.006 (the same
+    // plate, same copy, `.local/hero-imagery.mts`, 2026-09-11). The bounds
+    // below sit well inside that gap, so they pin the fact without pinning a
+    // number that a future ground rework would move.
+    expect(withoutHero.imageryShare, "the renderer reported no metrics — `measure: true` is not being honoured").toBeDefined();
+    expect(withoutHero.imageryShare!).toBeLessThan(0.05);
+    expect(withHero.imageryShare!).toBeGreaterThan(0.4);
   }, 60_000);
 
   it("produces a real, non-empty PNG for a slide WITH a hero image", async () => {
