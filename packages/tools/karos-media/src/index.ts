@@ -11,6 +11,7 @@ import { createYtDlpHarvestProvider } from "./providers/yt-dlp-harvest.js";
 import { createScrapeImages } from "./scrape-images.js";
 import { createIngestAssets, type ObjectReader } from "./ingest-assets.js";
 import { createGetVisualPatterns, createIngestVisualPatterns, type VisionAnalysisClient } from "./visual-patterns.js";
+import { createMediaLibraryAdd, createMediaLibraryList } from "./media-library.js";
 import { createVisualQaGate } from "./visual-qa-gate.js";
 import { createInspectImages } from "./inspect-images.js";
 import { createHarvestArticleImages } from "./harvest-article-images.js";
@@ -42,6 +43,7 @@ export * from "./inspect-images.js";
 export * from "./harvest-article-images.js";
 export * from "./screenshot-page.js";
 export * from "./stage-asset.js";
+export * from "./media-library.js";
 
 export interface KarosMediaToolsOptions {
   env?: Record<string, string | undefined>;
@@ -66,10 +68,12 @@ export interface KarosMediaToolsOptions {
   objectReader?: ObjectReader | undefined;
   /**
    * SCRUM-321 (AU37). The client workspace `media.ingestVisualPatterns` reads
-   * consent from and writes versioned profiles to. Defaults to the same
-   * file+git store `createKarosClientTools` defaults to, so the visual-pattern
-   * documents sit beside `client/brand` and `client/config` rather than in a
-   * storage mechanism of their own.
+   * consent from and writes versioned profiles to — and, since RFC-14 item T,
+   * the same workspace `media.libraryAdd`/`media.libraryList` keep the client's
+   * media library document in. Defaults to the same file+git store
+   * `createKarosClientTools` defaults to, so both sets of documents sit beside
+   * `client/brand` and `client/config` rather than in a storage mechanism of
+   * their own.
    */
   store?: WorkspaceStoreLike;
   /**
@@ -167,7 +171,10 @@ export function createKarosMediaTools(options: KarosMediaToolsOptions = {}): Age
       ? undefined
       : (options.visionClient ??
         (createImageGenerationClientFromEnv(options.env ?? process.env) as unknown as VisionAnalysisClient | undefined));
-  const visualPatternStore = options.store ?? createWorkspaceStore();
+  // One workspace handle for every document this package keeps about a client:
+  // the versioned visual-pattern profiles and the media library. Two handles
+  // would be two places a deployment could point at different storage.
+  const clientWorkspaceStore = options.store ?? createWorkspaceStore();
 
   // The QA gate looks through the same eyes as the pattern analysis unless a
   // deployment says otherwise — `null` switches the gate off without touching
@@ -241,13 +248,21 @@ export function createKarosMediaTools(options: KarosMediaToolsOptions = {}): Age
     // credentialed capability here; the consent gate, not the registry, is
     // what decides whether a given client's history is ever read.
     "media.ingestVisualPatterns": createIngestVisualPatterns({
-      store: visualPatternStore,
+      store: clientWorkspaceStore,
       ...(scraper ? { scraper } : {}),
       ...(visionClient ? { visionClient } : {}),
       ...(options.visionModel ? { visionModel: options.visionModel } : {}),
       ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
     }),
-    "media.getVisualPatterns": createGetVisualPatterns(visualPatternStore),
+    "media.getVisualPatterns": createGetVisualPatterns(clientWorkspaceStore),
+    // ── RFC-14 item T: the client media library. Uploads stop being single-run
+    // attachments — they are filed by content hash with the description the
+    // run's vision pass already produced, so a later post can draw on the
+    // archive without paying for vision again, and a frame that shipped last
+    // week can be excluded by run id. Registered unconditionally like every
+    // other storage-backed capability here.
+    "media.libraryAdd": createMediaLibraryAdd({ store: clientWorkspaceStore }),
+    "media.libraryList": createMediaLibraryList({ store: clientWorkspaceStore }),
     // ── The finished clip, watched before the human sees it. Same Vertex
     // credential as everything above; not_available without one, so the
     // pipeline proceeds to the human gate unreviewed rather than holding.

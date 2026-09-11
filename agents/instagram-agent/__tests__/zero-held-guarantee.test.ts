@@ -20,6 +20,7 @@ import {
   type TestEnvironment,
 } from "./test-helpers.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
+import { RUN_BUDGET_BELIEF_KEY } from "../src/workflow/run-budget.js";
 
 /**
  * The zero-held guarantee.
@@ -173,6 +174,17 @@ describe("zero-held guarantee: a picture problem never costs the post", () => {
   }, 30000);
 
   it("completes when the generative tier 429s on SOME slides, keeping the images it did get", async () => {
+    // A calibrated history, because this test is about the GENERATIVE TIER
+    // and the cold uncalibrated plan no longer reaches it: at
+    // `instagram-copy@15`'s honest price the cold worst case estimates $1.26,
+    // so lever 1 steps the image cap 8 -> 4 -> 2 -> 0 and generation is off
+    // before a single tool is called. That is the owner's own lever order
+    // (pictures before attempts), and it self-corrects after one delivered
+    // run — which is exactly what this seeded history is.
+    await env.tools["memory.updateBeliefs"]!.execute(
+      { diff: { [RUN_BUDGET_BELIEF_KEY]: { version: 1, ewmaRatio: 0.5, overrunStreak: 0, underTargetStreak: 0, runs: [] } } },
+      { ctx: { ...base, runId: "zero_held_partial_generation", metadata: {} } },
+    );
     const copy = goodCopyOutput();
     const genPath = "fixtures/images/photo-1.png";
     const registry = tools(env, {

@@ -134,6 +134,14 @@ describe("media.ingestAssets", () => {
     // still have to cover, and it can only do that from this list.
     expect(result!.unmet[0]!.slot).toBe(1);
     expect(result!.unmet[0]!.reason).toContain("could not read the object");
+    // THE NAMING CONTRACT. `candidates` is the surviving subset, so
+    // `candidates[i]` is not `assets[i]` the moment one attachment fails, and
+    // a caller that needs to know which asset a file came from has only the
+    // filename to go on. Both writers here stamp `n<slot>-` at the front of
+    // the stem; `ingestedSlotOf` in agents/instagram-agent reads it back to
+    // pair a staged file with its upload (and with the library row it must be
+    // filed under). Pinned so that parser cannot rot silently.
+    expect(path.basename((result!.candidates as Array<{ path: string }>)[0]!.path).startsWith("n2-")).toBe(true);
   });
 
   it("refuses an empty object instead of writing a zero-byte slide", async () => {
@@ -165,6 +173,10 @@ describe("media.ingestAssets", () => {
     expect(outcome.status).toBe("success");
     const candidate = outcome.status === "success" ? (outcome.result as { candidates: Array<{ path: string }> }).candidates[0]! : undefined;
     await expect(fs.readFile(path.join(repoRoot, candidate!.path))).resolves.toHaveLength(48);
+    // The same `n<slot>-` stem as the gs:// path above, and for the same
+    // reason: it is the only key a caller has to pair a returned file with the
+    // asset it was asked to fetch.
+    expect(path.basename(candidate!.path).startsWith("n1-")).toBe(true);
   });
 
   it("refuses an https:// image whose content type is not one", async () => {

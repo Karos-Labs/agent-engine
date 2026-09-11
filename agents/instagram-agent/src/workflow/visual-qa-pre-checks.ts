@@ -1,6 +1,7 @@
 import type { BrandLogoPlacement } from "@agent-engine/tool-karos-media";
 import type { RenderCarouselInput, Slide } from "@agent-engine/tool-karos-publish";
 import { ACCENT_GROUND_CONTRAST_FLOOR, TEXT_CONTRAST_FLOOR, contrastRatio } from "./brand-render-tokens.js";
+import { NO_IMAGE_MEANS_DEVICE_RULE, checkNoImageMeansDevice } from "./scene-brief.js";
 import { INVERTED_TEMPLATE_SUFFIX } from "./slides-data.js";
 import type { InstagramCopyOutput, SlidesDataSelfCheck, StyleRule } from "./types.js";
 
@@ -375,6 +376,10 @@ export const DEFAULT_RENDER_RULES: StyleRule[] = [
     description:
       "The last slide of a carousel (the caption, for a single) carries a call to action or a question the reader can answer — that is what the `closer` archetype's takeaway plus accent-ruled question line is for.",
   },
+  // Phase 3, item R. APPENDED, so the four ids above and their order are
+  // untouched. The rule's text and its deterministic check live in
+  // `scene-brief.ts` beside the schema that creates the case it guards.
+  NO_IMAGE_MEANS_DEVICE_RULE,
 ];
 
 /** Where an attempt's `renderRules` came from — the client's frozen config, or the defaults above filling an absence. */
@@ -809,6 +814,11 @@ export function checkDefaultRenderRules(slidesData: RenderCarouselInput, copy: I
   if (!hasCta) {
     residue.push(withNote(rule("default:closer-carries-cta"), "no question mark or lexicon CTA found; judge whether the closer invites action"));
   }
+
+  // Phase 3, item R: a slide that chose no picture at all must carry a device.
+  const noImage = checkNoImageMeansDevice(slides, copy.slides);
+  failures.push(...noImage.failures);
+  for (const { note } of noImage.residue) residue.push(withNote(rule(NO_IMAGE_MEANS_DEVICE_RULE.id), note));
 
   return { failures, residue };
 }

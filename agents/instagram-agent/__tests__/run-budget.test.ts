@@ -49,8 +49,8 @@ describe("RunSpendMeter.add — max(measured, estimate), never trusting a $0 rea
   it("counts the estimate when the step reported nothing", () => {
     const meter = new RunSpendMeter();
     meter.add("05-write-copy-attempt-1", undefined, STEP_COST_ESTIMATES_USD.copyAttempt);
-    expect(meter.totalUsd).toBe(0.1455);
-    expect(meter.lines[0]).toMatchObject({ label: "05-write-copy-attempt-1", usd: 0.1455, estimateUsd: 0.1455, basis: "estimate" });
+    expect(meter.totalUsd).toBe(0.159);
+    expect(meter.lines[0]).toMatchObject({ label: "05-write-copy-attempt-1", usd: 0.159, estimateUsd: 0.159, basis: "estimate" });
     expect(meter.lines[0]).not.toHaveProperty("measuredUsd");
   });
 
@@ -65,13 +65,13 @@ describe("RunSpendMeter.add — max(measured, estimate), never trusting a $0 rea
     const meter = new RunSpendMeter();
     meter.add("05-write-copy-attempt-1", 0.31, STEP_COST_ESTIMATES_USD.copyAttempt);
     expect(meter.totalUsd).toBe(0.31);
-    expect(meter.lines[0]).toMatchObject({ measuredUsd: 0.31, estimateUsd: 0.1455, basis: "measured" });
+    expect(meter.lines[0]).toMatchObject({ measuredUsd: 0.31, estimateUsd: 0.159, basis: "measured" });
   });
 
   it("counts the estimate when the measured figure is below it — an under-reporting vendor is still bounded", () => {
     const meter = new RunSpendMeter();
     meter.add("05-write-copy-attempt-1", 0.02, STEP_COST_ESTIMATES_USD.copyAttempt);
-    expect(meter.totalUsd).toBe(0.1455);
+    expect(meter.totalUsd).toBe(0.159);
     expect(meter.lines[0]).toMatchObject({ measuredUsd: 0.02, basis: "estimate" });
   });
 
@@ -144,24 +144,29 @@ describe("RunSpendMeter.canAfford — flips exactly at the $1.50 ceiling", () =>
     expect(meter.canAfford(MAX_RUN_SPEND_USD + 0.01).ok).toBe(false);
   });
 
-  it("the pre-attempt bundle is copy + vet + visual QA, at the @14/@4 prompt sizes", () => {
-    expect(DRAFT_ATTEMPT_ESTIMATE_USD).toBeCloseTo(0.1455 + 0.006 + 0.0041, 10);
+  it("the pre-attempt bundle is copy + vet + visual QA, at the @15/@4 prompt sizes", () => {
+    expect(DRAFT_ATTEMPT_ESTIMATE_USD).toBeCloseTo(0.159 + 0.006 + 0.0041, 10);
   });
 
-  // `copyAttempt` is priced on BOTH sides of the @14 call, and the output
-  // side is the one that moved: an output token costs 5x an input one on
-  // Sonnet, and §20 turned `customArchetype` from "a rare tool" into "at most
-  // two per carousel" — a `bodyHtml` fragment plus a `css` block each, on top
-  // of §19's device objects. Priced on input growth alone the estimate
-  // flattered itself by $0.0585 over three attempts, which is more than the
-  // whole first image lever is worth.
+  // `copyAttempt` is priced on BOTH sides of the call, and both times the
+  // output side is the one that moved: an output token costs 5x an input one
+  // on Sonnet. @14 turned `customArchetype` from "a rare tool" into "at most
+  // two per carousel" (a `bodyHtml` fragment plus a `css` block each, on top
+  // of §19's device objects); @15 replaced a ~12-word `visualNeed` string
+  // with a four-key object on EVERY slide. Priced on input growth alone the
+  // estimate flattered itself by $0.0585 over three attempts at @14 and a
+  // further $0.036 at @15 — each more than the whole first image lever.
   it("prices the copy call on its OUTPUT as well as its input, at the published Sonnet rates", () => {
     const SONNET_IN_PER_1M = 3;
     const SONNET_OUT_PER_1M = 15;
-    expect(STEP_COST_ESTIMATES_USD.copyAttempt).toBeCloseTo((21_000 * SONNET_IN_PER_1M + 5_500 * SONNET_OUT_PER_1M) / 1_000_000, 10);
+    expect(STEP_COST_ESTIMATES_USD.copyAttempt).toBeCloseTo((21_500 * SONNET_IN_PER_1M + 6_300 * SONNET_OUT_PER_1M) / 1_000_000, 10);
     // The output half is now the larger half — the property an input-only
     // re-price cannot have.
-    expect(5_500 * SONNET_OUT_PER_1M).toBeGreaterThan(21_000 * SONNET_IN_PER_1M);
+    expect(6_300 * SONNET_OUT_PER_1M).toBeGreaterThan(21_500 * SONNET_IN_PER_1M);
+    // And @15's own growth is priced on the side it actually landed on: the
+    // four-key `visualNeed` is ~800 more output tokens a draft (~$0.012)
+    // against ~455 more input tokens (~$0.0014).
+    expect(STEP_COST_ESTIMATES_USD.copyAttempt - 0.1455).toBeCloseTo((455 * SONNET_IN_PER_1M + 800 * SONNET_OUT_PER_1M) / 1_000_000, 3);
   });
 });
 
@@ -221,25 +226,24 @@ describe("estimateRunCost — every term priced off what the run actually bills"
     expect(cold.breakdown.fixed).toBeCloseTo(0.2015, 6);
     expect(cold.estimatedUsd).toBeGreaterThan(TARGET_RUN_SPEND_USD);
     const decision = planRunBudget(DEFAULT_RUN_SHAPE);
-    // Phase 2's own arithmetic, and the reason `copyAttempt` had to be
-    // re-priced to the @14 call on BOTH sides: at an image cap of 4 the cold
-    // English shape estimates $1.0613, so `fits()` is FALSE and the first
-    // lever has to step twice — 4 then 2 — to land at $0.9833. Priced at
-    // @13's $0.12 the same shape read as $0.9845, `fits()` was true after one
-    // step, and the second image lever never armed while the run still billed
-    // over the target. Priced on INPUT growth alone ($0.126) it read $1.0028
-    // — over the target, so the lever still fired, but with $0.0585 of §19
-    // devices and §20 authored layouts unbudgeted behind it.
-    expect(estimateRunCost({ ...DEFAULT_RUN_BUDGET_PLAN, generatedImagesCap: 4 }, DEFAULT_RUN_SHAPE).estimatedUsd).toBeCloseTo(1.0613, 6);
-    expect(decision.adaptations).toEqual(["images capped at 4", "images capped at 2"]);
-    expect(decision.plan.generatedImagesCap).toBe(2);
-    expect(decision.estimate.estimatedUsd).toBeCloseTo(0.9833, 6);
+    // Phase 3's own arithmetic, and the reason `copyAttempt` had to be
+    // re-priced to the @15 call on BOTH sides: at an image cap of 4 the cold
+    // English shape estimates $1.1018, so `fits()` is FALSE and the first
+    // lever has to step three times — 4, then 2, then 0 — to land at
+    // $0.9458. Priced at @13's $0.12 the same shape read as $0.9845, `fits()`
+    // was true after one step, and the run still billed over the target.
+    // Priced at @14's $0.1455 it stopped at cap 2 and $0.9833, with $0.0405
+    // of §22 scene briefs unbudgeted behind it.
+    expect(estimateRunCost({ ...DEFAULT_RUN_BUDGET_PLAN, generatedImagesCap: 4 }, DEFAULT_RUN_SHAPE).estimatedUsd).toBeCloseTo(1.1018, 6);
+    expect(decision.adaptations).toEqual(["images capped at 4", "images capped at 2", "no generated images (stock or text-only)"]);
+    expect(decision.plan.generatedImagesCap).toBe(0);
+    expect(decision.estimate.estimatedUsd).toBeCloseTo(0.9458, 6);
     expect(decision.estimate.estimatedUsd).toBeLessThanOrEqual(TARGET_RUN_SPEND_USD);
     // A Hebrew client pays the fluency judge on every attempt — $0.0165 more
     // over three — and the same two image steps still absorb it, so nothing
     // past the image lever is spent on language compliance.
     const hebrew = planRunBudget({ ...DEFAULT_RUN_SHAPE, targetLanguage: true });
-    expect(hebrew.adaptations).toEqual(["images capped at 4", "images capped at 2"]);
+    expect(hebrew.adaptations).toEqual(["images capped at 4", "images capped at 2", "no generated images (stock or text-only)"]);
     expect(hebrew.estimate.estimatedUsd).toBeLessThanOrEqual(TARGET_RUN_SPEND_USD);
     expect(hebrew.estimate.estimatedUsd - decision.estimate.estimatedUsd).toBeCloseTo(3 * STEP_COST_ESTIMATES_USD.fluency, 6);
   });
@@ -311,37 +315,41 @@ describe("planRunBudget — the owner's levers, in order, never a hold", () => {
     expect(hebrew.estimatedUsd - english.estimatedUsd).toBeCloseTo(3 * STEP_COST_ESTIMATES_USD.fluency, 6);
   });
 
-  it("over the target it caps images FIRST, stepping 8 -> 4 -> 2, and records each step in the reviewer's words", () => {
-    // The cold Phase 2 default ($1.22): the FIRST lever is the only one
-    // touched, and it steps twice — 8 -> 4 is still $1.0613, over the target,
-    // so 4 -> 2 lands it at $0.9833. Nothing below the image cap moves: no
-    // attempt is given up for a picture. (At @13's copy price the cap-4 step
-    // read $0.9845 and stopped there, while the run billed over target — see
-    // "the cold Phase 1 carousel" below.)
+  it("over the target it caps images FIRST, stepping 8 -> 4 -> 2 -> 0, and records each step in the reviewer's words", () => {
+    // The cold Phase 3 default ($1.26): the FIRST lever is the only one
+    // touched, and it steps three times — 8 -> 4 is $1.1018 and 4 -> 2 is
+    // $1.0238, both over the target, so 2 -> 0 lands it at $0.9458. Nothing
+    // below the image cap moves: no attempt is given up for a picture. The
+    // third step is @15's honest price arriving (0.1455 -> 0.159 x 3
+    // attempts = +$0.0405, which is what pushed cap-2 back over $1.00) —
+    // exactly the lever an input-only re-price would have left unpulled while
+    // the run billed over target.
     const decision = planRunBudget(DEFAULT_RUN_SHAPE);
     expect(decision.initialEstimateUsd).toBeGreaterThan(TARGET_RUN_SPEND_USD);
     expect(decision.estimate.estimatedUsd).toBeLessThanOrEqual(TARGET_RUN_SPEND_USD);
-    expect(decision.plan.generatedImagesCap).toBe(2);
+    expect(decision.plan.generatedImagesCap).toBe(0);
     expect(decision.plan.maxSelfCheckAttempts).toBe(3);
     expect(decision.plan.evidencePulls).toBe("full");
     expect(decision.plan.optionalRevets).toBe(true);
-    expect(decision.adaptations).toEqual(["images capped at 4", "images capped at 2"]);
-    expect(decision.note).toMatch(/^budget: estimate \$1\.\d\d > \$1\.00 → images capped at 4, images capped at 2 \(now \$0\.\d\d\)$/);
+    expect(decision.adaptations).toEqual(["images capped at 4", "images capped at 2", "no generated images (stock or text-only)"]);
+    expect(decision.note).toMatch(
+      /^budget: estimate \$1\.\d\d > \$1\.00 → images capped at 4, images capped at 2, no generated images \(stock or text-only\) \(now \$0\.\d\d\)$/,
+    );
   });
 
   it("pulls every lever in the owner's order when one is not enough: images, evidence pulls, one return instead of two, re-vets", () => {
-    // 1.7x on the cold Phase 2 shape: $2.07 initially, still over target with
-    // no images, reduced evidence and one return instead of two, and $0.99
+    // 1.6x on the cold Phase 3 shape: $2.02 initially, still over target with
+    // no images, reduced evidence and one return instead of two, and $0.98
     // once the optional re-vets go too — so every rung of the ladder is needed
     // and the last one fits.
     //
-    // The ratio moved from 1.8 with `copyAttempt`'s honest re-price (the @14
-    // call's OUTPUT grew, and output costs 5x input on Sonnet): the ladder
-    // saturates sooner when a copy attempt really costs $0.1455, which is the
-    // point of pricing it that way. Above ~1.72 the tightest plan no longer
-    // fits — that regime is the next test, which asserts the run proceeds
-    // anyway.
-    const history = { ...EMPTY_RUN_BUDGET_HISTORY, ewmaRatio: 1.7, runs: [] };
+    // The ratio moved 1.8 -> 1.7 -> 1.6 with each of `copyAttempt`'s honest
+    // re-prices (the @14 and @15 calls' OUTPUT grew, and output costs 5x
+    // input on Sonnet): the ladder saturates sooner when a copy attempt
+    // really costs $0.159, which is the point of pricing it that way. Above
+    // ~1.63 the tightest plan no longer fits — that regime is the next test,
+    // which asserts the run proceeds anyway.
+    const history = { ...EMPTY_RUN_BUDGET_HISTORY, ewmaRatio: 1.6, runs: [] };
     const decision = planRunBudget(DEFAULT_RUN_SHAPE, history);
     expect(decision.adaptations).toEqual([
       "images capped at 4",
@@ -475,6 +483,13 @@ describe("the estimate table", () => {
     expect(Object.values(STEP_COST_ESTIMATES_USD).every((v) => v > 0)).toBe(true);
     // No Opus anywhere: the largest single-step estimate is the Sonnet copy draft, and it is an order of magnitude under the ceiling.
     expect(Math.max(...Object.values(STEP_COST_ESTIMATES_USD))).toBe(STEP_COST_ESTIMATES_USD.copyAttempt);
-    expect(STEP_COST_ESTIMATES_USD.copyAttempt * 10).toBeLessThan(MAX_RUN_SPEND_USD);
+    // Sonnet-priced, not Opus-priced, stated as arithmetic rather than as a
+    // round multiple: the IDENTICAL call on Opus ($15/$75 per 1M, 5x) would
+    // be ~$0.80 — over half the hard max for one draft, and three attempts of
+    // it would not fit a run at all. On Sonnet three full attempts (copy +
+    // vet + visual QA) still sit inside half the max, which is what leaves
+    // room for the images, the research and the rescue tiers.
+    expect(STEP_COST_ESTIMATES_USD.copyAttempt * 5).toBeGreaterThan(MAX_RUN_SPEND_USD / 2);
+    expect(3 * DRAFT_ATTEMPT_ESTIMATE_USD).toBeLessThan(MAX_RUN_SPEND_USD / 2);
   });
 });

@@ -154,6 +154,24 @@ describe("planSetupBudget: the six levers, in the owner's order", () => {
     expect(nonsense.plan.repairsAllowed).toBe(0);
     expect(Number.isFinite(nonsense.estimate.estimatedUsd)).toBe(true);
   });
+
+  it("takes a FINITE zero as an instruction: a setup with no studio work plans no templates and no design brief", () => {
+    // Phase 3 (item Q). The real case: the 90-day visual-direction TTL
+    // expires INSIDE the 120-day studio TTL, so `00d` re-derives the
+    // direction on a run whose studio resolved `reuse`. Inventing four
+    // templates there would put ~$0.25 of design work into an estimate no
+    // step can spend, and the estimate-vs-actual it recorded would
+    // mis-calibrate the next setup downwards.
+    const directionOnly = planSetupBudget({ templates: 0, repairs: 0, referenceAccounts: 0, sitePages: 0, referenceImages: 0, setReview: false, visualDirection: true });
+    expect(directionOnly.plan.templates).toBe(0);
+    expect(directionOnly.plan.visualDirection).toBe(true);
+    expect(directionOnly.estimate.breakdown.design).toBe(0);
+    expect(directionOnly.estimate.breakdown.validation).toBe(0);
+    // Only item Q's two lines are priced, and they fit the target many times
+    // over, so no lever fires and nothing is adapted away.
+    expect(directionOnly.estimate.breakdown.direction).toBeGreaterThan(0);
+    expect(directionOnly.adaptations).toEqual([]);
+  });
 });
 
 describe("the setup meter is the run meter with two different numbers", () => {

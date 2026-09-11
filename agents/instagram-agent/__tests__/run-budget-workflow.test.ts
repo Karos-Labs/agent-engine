@@ -104,22 +104,24 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     // free store read) and the writing.
     expect(stepIds.indexOf("02j-plan-run-budget")).toBeGreaterThan(stepIds.indexOf("00b-check-client-brief"));
     expect(stepIds.indexOf("02j-plan-run-budget")).toBeLessThan(stepIds.indexOf("03c-trend-scout"));
-    // A cold, uncalibrated Phase 2 carousel estimates $1.22 (03e's signal
+    // A cold, uncalibrated Phase 3 carousel estimates $1.26 (03e's signal
     // pulls, 04a2's three lanes, 04a3's fetches, the angle, the re-priced
-    // scout and extraction, and the @14 copy draft priced on BOTH sides of
+    // scout and extraction, and the @15 copy draft priced on BOTH sides of
     // the call), so the FIRST lever fires exactly as the owner's amendment
-    // asks and it steps twice: an image cap of 4 still reads $1.0613, so the
-    // cap goes to 2 and the estimate lands at $0.9833. No hold, and no
-    // attempt given up for a picture.
-    expect(plan?.adaptations).toEqual(["images capped at 4", "images capped at 2"]);
-    expect(plan?.plan).toEqual({ maxSelfCheckAttempts: 3, generatedImagesCap: 2, evidencePulls: "full", optionalRevets: true });
-    expect(plan?.note).toMatch(/^budget: estimate \$1\.\d\d > \$1\.00 → images capped at 4, images capped at 2 \(now \$0\.\d\d\)$/);
+    // asks and it steps three times: an image cap of 4 reads $1.1018 and a
+    // cap of 2 reads $1.0238, so the cap goes to 0 and the estimate lands at
+    // $0.9458. No hold, and no attempt given up for a picture — the owner's
+    // lever order is pictures first, and one delivered run's history relaxes
+    // it again (the "UNDER the estimate" test below).
+    expect(plan?.adaptations).toEqual(["images capped at 4", "images capped at 2", "no generated images (stock or text-only)"]);
+    expect(plan?.plan).toEqual({ maxSelfCheckAttempts: 3, generatedImagesCap: 0, evidencePulls: "full", optionalRevets: true });
+    expect(plan?.note).toMatch(/^budget: estimate \$1\.\d\d > \$1\.00 → images capped at 4, images capped at 2, no generated images \(stock or text-only\) \(now \$0\.\d\d\)$/);
     expect(plan?.spentBeforePlanUsd).toBe(0);
     expect(deliverable?.budget).toMatchObject({
       crossedTarget: false,
       crossedMax: false,
       posture: "normal",
-      adaptations: ["images capped at 4", "images capped at 2"],
+      adaptations: ["images capped at 4", "images capped at 2", "no generated images (stock or text-only)"],
     });
     expect(deliverable?.budget.estimatedUsd).toBe(plan!.estimate.estimatedUsd);
     expect(deliverable?.budget.actualUsd).toBe(deliverable?.spendUsd);
@@ -131,7 +133,9 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     expect(history.map((r) => r.runId)).toEqual(["budget_fresh"]);
     const budgetEvent = await env.store.readJson<{ level: string; message: string }>("acme", ["ledger", "events", "budget_fresh", "budget_fresh__budget"]);
     expect(budgetEvent?.level).toBe("info");
-    expect(budgetEvent?.message).toMatch(/^budget: estimated \$0\.\d\d, actual \$0\.\d\d \(under target\); adaptations: images capped at 4, images capped at 2$/);
+    expect(budgetEvent?.message).toMatch(
+      /^budget: estimated \$0\.\d\d, actual \$0\.\d\d \(under target\); adaptations: images capped at 4, images capped at 2, no generated images \(stock or text-only\)$/,
+    );
   });
 
   it("a client whose runs come in UNDER the estimate gets the full plan back, and the note says so", async () => {
@@ -148,14 +152,14 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
   });
 
   it("a client whose runs run HOT pulls further rungs of the image ladder, never a shorter run and never a hold", async () => {
-    // 1.08x reads the cold plan as $1.31, so the ladder runs to the last rung
+    // 1.05x reads the cold plan as $1.32, so the ladder runs to the last rung
     // of the IMAGE lever — stock and text-only pictures, with all three
-    // attempts intact. (The ratio moved from 1.15 when `copyAttempt` was
-    // re-priced on the @14 call's output as well as its input: at $0.1455 a
-    // draft, 1.15x pulls two further rungs and gives up an attempt, which is
-    // the opposite of what this test is about. The rung ORDER — pictures
-    // before attempts — is what it pins, and that is unchanged.)
-    await env.tools["memory.updateBeliefs"]!.execute({ diff: { [RUN_BUDGET_BELIEF_KEY]: { version: 1, ewmaRatio: 1.08, overrunStreak: 0, underTargetStreak: 0, runs: [] } } }, { ctx });
+    // attempts intact. (The ratio moved 1.15 -> 1.08 -> 1.05 as `copyAttempt`
+    // was re-priced on the @14 and then the @15 call's OUTPUT as well as its
+    // input: a hotter ratio now pulls the evidence lever too, which is the
+    // opposite of what this test is about. The rung ORDER — pictures before
+    // evidence before attempts — is what it pins, and that is unchanged.)
+    await env.tools["memory.updateBeliefs"]!.execute({ diff: { [RUN_BUDGET_BELIEF_KEY]: { version: 1, ewmaRatio: 1.05, overrunStreak: 0, underTargetStreak: 0, runs: [] } } }, { ctx });
     const { result, plan, deliverable } = await run(env, "budget_adapted", fakeRouterSequence(happyTurns()));
     expect(result.status, JSON.stringify(result)).toBe("completed");
     expect(plan?.initialEstimateUsd).toBeGreaterThan(1);
@@ -205,7 +209,7 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     const budgetEvent = await env.store.readJson<{ level: string; message: string }>("acme", ["ledger", "events", "budget_overrun", "budget_overrun__budget"]);
     expect(budgetEvent?.level).toBe("warn");
     expect(budgetEvent?.message).toMatch(
-      /\(over the hard max\); adaptations: images capped at 4, images capped at 2; delivered degraded on the cheapest complete path$/,
+      /\(over the hard max\); adaptations: images capped at 4, images capped at 2, no generated images \(stock or text-only\); delivered degraded on the cheapest complete path$/,
     );
 
     // The next run reads the history and starts tight: images capped at 4 before any estimate, and the calibration ratio now reflects the overrun.

@@ -1,6 +1,11 @@
 import { z } from "zod";
 import type { ContentMode, DegradedContextGroundingMarker, TrendCandidate } from "@agent-engine/workflow";
 import { SlideDeviceSchema } from "./slide-devices.js";
+// Phase 3, item R: the scene brief. A VALUE import, and deliberately from a
+// module that imports nothing but zod — see `scene-brief.ts`'s own header for
+// why (types.ts <- visual-qa-pre-checks.ts <- scene-brief.ts would otherwise
+// be a runtime cycle).
+import { VisualNeedFieldSchema } from "./scene-brief.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Style config + brand tokens (RFC-03 step 02 — "freeze the small files")
@@ -395,7 +400,9 @@ export type ResearchOutput = z.input<typeof ResearchOutputSchema>;
 
 /**
  * One slide's copy — "one idea each" (RFC-03 §3 step 05). `visualNeed` is
- * what step 06 vets a picture against; `sourceRef` must name one of step
+ * what step 06 vets a picture against — since Phase 3 item R it is a scene
+ * brief rather than a keyword string, defined and read in `scene-brief.ts`;
+ * `sourceRef` must name one of step
  * 04's `facts[].claim` values verbatim, which is exactly what step 07's
  * self-check verifies ("every claim traces to a source").
  */
@@ -525,7 +532,18 @@ export const InstagramSlideCopySchema = z.object({
   n: z.number().int().positive(),
   headline: z.string().min(1),
   body: z.string().min(1),
-  visualNeed: z.string().min(1),
+  /**
+   * Phase 3, item R: a scene brief, not twelve words.
+   *
+   * The union keeps the legacy bare string parsing — every in-flight
+   * checkpoint, every existing fixture and a model that regresses to a
+   * sentence — while the object form carries what each consumer actually
+   * needs: `scene` for generation, `why` for the vet's claim judgment,
+   * `searchTerms` for the keyword index, and `source` for the decision to
+   * skip image sourcing altogether. The shape and the one reader every
+   * consumer goes through (`normaliseVisualNeed`) live in `scene-brief.ts`.
+   */
+  visualNeed: VisualNeedFieldSchema,
   sourceRef: z.string().min(1),
   layout: InstagramSlideLayoutSchema.default("photo"),
   /**

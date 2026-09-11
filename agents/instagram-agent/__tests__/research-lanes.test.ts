@@ -63,7 +63,17 @@ function fakeWorkflowContext(): WorkflowContext {
  * that only counted calls would pass with every lane asking the same question.
  */
 function fakePull(
-  answer: (args: Record<string, unknown>, index: number) => { status: string; reason?: string; documents?: number; fromCache?: boolean },
+  answer: (
+    args: Record<string, unknown>,
+    index: number,
+  ) => {
+    status: string;
+    reason?: string;
+    documents?: number;
+    fromCache?: boolean;
+    /** Phase 3, item Q: the block `research.pull` folds in under `includeVisualPatterns`. */
+    visualPatterns?: Record<string, unknown>;
+  },
 ) {
   const calls: Array<Record<string, unknown>> = [];
   const tools = {
@@ -74,7 +84,11 @@ function fakePull(
         const outcome = answer(args, calls.length - 1);
         if (outcome.status !== "success") return { status: outcome.status, reason: outcome.reason ?? "stub failure" };
         const query = String(args["query"]);
-        const result: ResearchPullResult = {
+        // Cast because `visualPatterns` is a real key of `research.pull`'s
+        // payload that `@agent-engine/workflow`'s `ResearchPullResult` does
+        // not declare — which is exactly why `pullResearchLanes` narrows it
+        // by hand instead of reading it off the merged result.
+        const result = {
           runId: `run-${calls.length}`,
           query,
           fromCache: outcome.fromCache ?? false,
@@ -85,8 +99,9 @@ function fakePull(
               url: `https://source.example.com/${encodeURIComponent(query)}/${i}`,
               content: "body",
             })),
+            ...(outcome.visualPatterns !== undefined ? { visualPatterns: outcome.visualPatterns } : {}),
           },
-        };
+        } as unknown as ResearchPullResult;
         return { status: "success", result };
       },
     },
@@ -324,6 +339,90 @@ describe("pullResearchLanes", () => {
     await expect(
       pullResearchLanes(fakeWorkflowContext(), tools, CTX, { stepId: "04a2-research-pull-deep", lanes: [], job: "j", historyAgentId: "instagram-agent" }),
     ).rejects.toThrow(/no research lanes/);
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Phase 3, item Q — the option that shipped dark in `research.pull` 1.2.0
+  // ───────────────────────────────────────────────────────────────────────
+
+  it("asks every query for the client's own visual patterns — the option had no caller until now", async () => {
+    const { calls, tools } = fakePull(() => ({ status: "success", documents: 6 }));
+
+    await pullResearchLanes(fakeWorkflowContext(), tools, CTX, {
+      stepId: "04a2-research-pull-deep",
+      lanes: lanes(),
+      job: "instagram-carousel-research",
+      historyAgentId: "instagram-agent",
+    });
+
+    // Free and local: it reads the client's own workspace, reaches no network
+    // and bills nothing. `pull.ts` itself is untouched and unbumped — the
+    // read path, the schema and the payload fold have all existed since
+    // 1.2.0 with nothing calling them.
+    expect(calls).toHaveLength(6);
+    expect(calls.every((c) => c["includeVisualPatterns"] === true)).toBe(true);
+  });
+
+  it("surfaces the profile when the client has one and consent is live", async () => {
+    const { tools } = fakePull(() => ({
+      status: "success",
+      documents: 6,
+      visualPatterns: {
+        versionId: "v0003",
+        generatedAt: "2026-08-01T00:00:00.000Z",
+        reviewStatus: "corrected",
+        reference: "Client visual patterns (v0003).\nWarm interior light, work in progress, never a posed team photo.",
+        templateHints: ["full-bleed photo, caption below"],
+      },
+    }));
+
+    const result = await pullResearchLanes(fakeWorkflowContext(), tools, CTX, {
+      stepId: "04a2-research-pull-deep",
+      lanes: lanes(),
+      job: "instagram-carousel-research",
+      historyAgentId: "instagram-agent",
+    });
+
+    // Carried as its own field rather than read off `merged`:
+    // `mergeResearchPulls` keeps provider, documents and history and drops
+    // everything else, and it is a shared primitive x and linkedin also run
+    // through.
+    expect(result.visualPatterns).toEqual({
+      versionId: "v0003",
+      generatedAt: "2026-08-01T00:00:00.000Z",
+      reviewStatus: "corrected",
+      reference: "Client visual patterns (v0003).\nWarm interior light, work in progress, never a posed team photo.",
+      templateHints: ["full-bleed photo, caption below"],
+    });
+  });
+
+  it("omits the key entirely when no profile exists, and never reads an absent review state as reviewed", async () => {
+    const { tools } = fakePull(() => ({ status: "success", documents: 6 }));
+
+    const none = await pullResearchLanes(fakeWorkflowContext(), tools, CTX, {
+      stepId: "04a2-research-pull-deep",
+      lanes: lanes(),
+      job: "instagram-carousel-research",
+      historyAgentId: "instagram-agent",
+    });
+
+    // "No profile" and "a profile that says nothing" are different claims;
+    // an empty shell here would read as the second.
+    expect(none.visualPatterns).toBeUndefined();
+    expect("visualPatterns" in none).toBe(false);
+
+    const partial = fakePull(() => ({ status: "success", documents: 6, visualPatterns: { versionId: "v0001", reference: "text only" } }));
+    const degraded = await pullResearchLanes(fakeWorkflowContext(), partial.tools, CTX, {
+      stepId: "04a2-research-pull-deep",
+      lanes: lanes(),
+      job: "instagram-carousel-research",
+      historyAgentId: "instagram-agent",
+    });
+
+    // `unreviewed` is the weaker of the two states and therefore the safe
+    // default — a profile nobody has checked must not outrank a corrected one.
+    expect(degraded.visualPatterns?.reviewStatus).toBe("unreviewed");
+    expect(degraded.visualPatterns?.templateHints).toBeUndefined();
   });
 });
 

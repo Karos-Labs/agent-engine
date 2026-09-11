@@ -1,6 +1,9 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { promises as fs } from "node:fs";
+import * as path from "node:path";
 import type { AgentTool } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
+import { MEDIA_LIBRARY_SEGMENTS, createMediaLibraryTools, type MediaLibraryDocument } from "@agent-engine/tool-karos-media";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import { fakeRouterSequence, goodCopyOutput, goodResearchOutput, goodTrendScoutOutput, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 import { standardTurns } from "./turns.js";
@@ -239,5 +242,157 @@ describe("instagram Tier 0: client-supplied media", () => {
     expect((seen.needs?.length ?? 0)).toBeGreaterThan(0);
     // Slot 1 is included since `instagram-image-vet@3` (see the Tier 0 test above).
     expect(seen.needs?.map((n) => n.n)).toEqual(copy.slides.map((s) => s.n));
+  });
+
+  // ── RFC-14 item T: the upload also joins the client's media library ──
+  //
+  // These two go green when the integrator extends `05z-attach-user-media`
+  // (step 4 of the Phase 3 wiring order) to file each upload through
+  // `media.libraryAdd` after the existing `media.inspectImages` pass. The step
+  // id does not change; the write is BEST-EFFORT, which is what the second
+  // test is actually about.
+
+  /** A 1x1 PNG on disk at the path `stubIngestAssets` claims, so the real library tool has real bytes to hash. */
+  const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==", "base64");
+
+  async function stageUploadedFile(slot: number) {
+    await fs.mkdir(path.join(env.repoRoot, ".media-cache", "run"), { recursive: true });
+    await fs.writeFile(path.join(env.repoRoot, ".media-cache", "run", `n${slot}-client.png`), PNG);
+  }
+
+  /** `media.inspectImages` with a real answer, so there is a description worth filing. */
+  function stubInspect(): AgentTool {
+    return {
+      name: "media.inspectImages",
+      version: "1.0.0",
+      inputSchema: { parse: (v: unknown) => v } as never,
+      async execute(args: unknown) {
+        const images = (args as { images: Array<{ ref: string }> }).images;
+        return {
+          status: "success",
+          result: {
+            inspections: images.map((i) => ({
+              ref: i.ref,
+              description: "The founder on a conference stage, mid-sentence, warm side light.",
+              subjects: ["founder", "conference stage"],
+              textInImage: [],
+              mood: "energetic",
+            })),
+            unreadable: [],
+            model: "gemini-2.5-flash",
+          },
+        };
+      },
+    } as unknown as AgentTool;
+  }
+
+  it("files the upload in the client's media library with the description the run already paid for", async () => {
+    await stageUploadedFile(1);
+    const library = createMediaLibraryTools({ store: env.store });
+    await run(
+      { mediaAssets: [{ uri: "gs://bucket/hero.jpg", role: "source", label: "hero shot" }] },
+      { "media.ingestAssets": stubIngestAssets(), "media.inspectImages": stubInspect(), ...library },
+    );
+
+    const doc = await env.store.readJson<MediaLibraryDocument>("acme", [...MEDIA_LIBRARY_SEGMENTS]);
+    expect(doc?.entries).toHaveLength(1);
+    // The point of the library: the sentence a vision call produced this run is
+    // still on file next run, so the same frame costs nothing to reuse.
+    expect(doc?.entries[0]!.description).toContain("conference stage");
+    expect(doc?.entries[0]!.subjects).toEqual(["founder", "conference stage"]);
+    expect(doc?.entries[0]!.gcsUri).toBe("gs://bucket/hero.jpg");
+    expect(doc?.entries[0]!.rights.source).toContain("client");
+  });
+
+  /**
+   * The pairing property, on the WRITE side, where a mistake is durable.
+   *
+   * `media.ingestAssets` reports an unreadable object in `unmet` and carries
+   * on, so `result.candidates` is the surviving subset of the request. Filing
+   * by array index would therefore record the surviving frame's bytes and
+   * description under the FAILED upload's `gcsUri` — and `media.libraryAdd`
+   * keeps the first sighting and only overwrites `gcsUri` when a later call
+   * supplies one, so the wrong URI would never be corrected: a later run would
+   * re-ingest the wrong object and hand the vet a sentence about a picture it
+   * is not looking at.
+   */
+  it("files each upload under ITS OWN durable URI when an earlier attachment could not be ingested", async () => {
+    await stageUploadedFile(2);
+    const partialIngest: AgentTool = {
+      name: "media.ingestAssets",
+      version: "1.0.0",
+      inputSchema: { parse: (v: unknown) => v } as never,
+      async execute(args: unknown) {
+        const assets = (args as { assets: Array<{ uri: string; slot: number }> }).assets;
+        const [dead, ...alive] = assets;
+        return {
+          status: "success",
+          result: {
+            candidates: alive.map((a) => ({
+              path: `.media-cache/run/n${a.slot}-client.png`,
+              description: `slide ${a.slot} candidate, CLIENT-SUPPLIED asset uploaded with this run. [licence: client-supplied]`,
+              provider: "client-upload",
+              licenseConfidence: "client-supplied",
+            })),
+            unmet: [{ slot: dead!.slot, uri: dead!.uri, reason: "the object is empty" }],
+          },
+        };
+      },
+    } as unknown as AgentTool;
+
+    const library = createMediaLibraryTools({ store: env.store });
+    const { steps } = await run(
+      {
+        mediaAssets: [
+          { uri: "gs://bucket/broken.jpg", role: "source" },
+          { uri: "gs://bucket/good.jpg", role: "source", label: "the one that worked" },
+        ],
+      },
+      { "media.ingestAssets": partialIngest, "media.inspectImages": stubInspect(), ...library },
+    );
+
+    const doc = await env.store.readJson<MediaLibraryDocument>("acme", [...MEDIA_LIBRARY_SEGMENTS]);
+    expect(doc?.entries).toHaveLength(1);
+    expect(doc?.entries[0]!.gcsUri).toBe("gs://bucket/good.jpg");
+    expect(doc?.entries[0]!.description).toContain("the one that worked");
+
+    // The same slot, everywhere the run reports it: the surviving upload is
+    // slide 2's, so it must not reserve slide 1 or be labelled as slide 1's.
+    const tier0 = steps.find((s) => s.stepId === "05z-attach-user-media")?.output as {
+      slots: number[];
+      candidates: Array<{ description: string }>;
+      analyses: Array<{ slot: number }>;
+    };
+    expect(tier0.slots).toEqual([2]);
+    expect(tier0.analyses.map((a) => a.slot)).toEqual([2]);
+    expect(tier0.candidates[0]!.description.startsWith("[client upload, slot 2] ")).toBe(true);
+  });
+
+  it("leaves the run byte-identical when the library write fails — a note, never a failure", async () => {
+    await stageUploadedFile(1);
+    const failingAdd: AgentTool = {
+      name: "media.libraryAdd",
+      version: "1.0.0",
+      inputSchema: { parse: (v: unknown) => v } as never,
+      async execute() {
+        return { status: "tooling_error", reason: "the workspace is read-only" };
+      },
+    } as unknown as AgentTool;
+
+    const input = { mediaAssets: [{ uri: "gs://bucket/hero.jpg", role: "source" }] };
+    const withoutLibrary = await run(input, { "media.ingestAssets": stubIngestAssets(), "media.inspectImages": stubInspect() });
+    await env.cleanup();
+    env = await setupTestEnvironment();
+    await stageUploadedFile(1);
+    const withFailingLibrary = await run(input, { "media.ingestAssets": stubIngestAssets(), "media.inspectImages": stubInspect(), "media.libraryAdd": failingAdd });
+
+    const tier0Of = (steps: Awaited<ReturnType<typeof run>>["steps"]) => {
+      const output = steps.find((s) => s.stepId === "05z-attach-user-media")?.output as Record<string, unknown>;
+      // The library note is allowed to differ — it is the only thing that may.
+      const { note: _note, ...rest } = output;
+      return rest;
+    };
+    expect(tier0Of(withFailingLibrary.steps)).toEqual(tier0Of(withoutLibrary.steps));
+    expect(String((withFailingLibrary.steps.find((s) => s.stepId === "05z-attach-user-media")?.output as { note?: string }).note ?? "")).toContain("library");
   });
 });

@@ -3,7 +3,7 @@ import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import type { AgentTool, AgentToolRegistry } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
-import { CANDIDATES_PER_PHOTO_SLIDE } from "../src/workflow/run-budget.js";
+import { CANDIDATES_PER_PHOTO_SLIDE, RUN_BUDGET_BELIEF_KEY } from "../src/workflow/run-budget.js";
 import {
   goodRelevanceVerdict,
   goodTrendScoutOutput,
@@ -40,6 +40,24 @@ const params = {
   productId: "instagram-agent",
   runKind: "recurring" as const,
 };
+
+/**
+ * Seeds one delivered run's worth of budget history, so the generative tier
+ * is on the plan.
+ *
+ * A test about the GENERATIVE RESCUE has to be able to reach it, and the cold
+ * uncalibrated plan no longer does: at `instagram-copy@15`'s honest price the
+ * cold worst case estimates $1.26, so `planRunBudget`'s first lever steps the
+ * image cap 8 -> 4 -> 2 -> 0 before any tool is called — the owner's own
+ * lever order, pictures before attempts. One under-target run relaxes it
+ * again, and this is that run.
+ */
+async function allowGeneratedImages(env: TestEnvironment, runId: string): Promise<void> {
+  await env.tools["memory.updateBeliefs"]!.execute(
+    { diff: { [RUN_BUDGET_BELIEF_KEY]: { version: 1, ewmaRatio: 0.5, overrunStreak: 0, underTargetStreak: 0, runs: [] } } },
+    { ctx: { ...params, runId, metadata: {} } },
+  );
+}
 
 /** A stand-in for the registered `media.findImages`, returning whatever outcome a test needs. */
 function stubFindImages(outcome: unknown, onCall?: (args: Record<string, unknown>) => void): AgentTool {
@@ -112,7 +130,15 @@ describe("05b-source-images", () => {
     // retry loop rather than before it.
     const needs = seen?.["needs"] as { n: number; query: string }[];
     expect(needs.map((n) => n.n)).toEqual(copy.slides.map((s) => s.n));
-    expect(needs.map((n) => n.query)).toEqual(copy.slides.map((s) => s.visualNeed));
+    // Phase 3, item R: the retrieval query is `retrievalQueryFor(...)`, not
+    // the raw need. This fixture's slides carry the LEGACY bare string, and
+    // the rule for one is "the first eight words" — a keyword index cannot
+    // read a sentence, which is the whole reason §6 of the copy prompt spent
+    // forty lines on it. A slide whose writer supplied `searchTerms` sends
+    // those instead; a full scene brief never reaches a keyword search.
+    expect(needs.map((n) => n.query)).toEqual(
+      copy.slides.map((s) => String(s.visualNeed).split(/\s+/).slice(0, 8).join(" ")),
+    );
     expect(seen?.["repoRoot"]).toBe(env.repoRoot);
     // Run-scoped, so two concurrent runs cannot overwrite each other's files.
     expect(seen?.["runId"]).toBe(params.runId);
@@ -308,6 +334,7 @@ describe("05b-source-images", () => {
   }
 
   it("generates only the unfilled slides, and completes a post that would otherwise have held", async () => {
+    await allowGeneratedImages(env, "instagram_run_rescue_ok");
     const copy = goodCopyOutput();
     const pool = goodImageCandidatePool();
     const filled = pool[0]!.path;
@@ -453,6 +480,7 @@ describe("05b-source-images", () => {
   });
 
   it("does not let a rescue image that fails its own gate overwrite the original verdict", async () => {
+    await allowGeneratedImages(env, "instagram_run_rescue_rejected");
     const copy = goodCopyOutput();
     const pool = goodImageCandidatePool();
 

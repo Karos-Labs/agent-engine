@@ -8,6 +8,7 @@ import {
   LEADS_WITH_FIGURE,
   checkDefaultRenderRules,
   formatDefaultRenderRuleFailures,
+  resolveRenderRules,
   templateBasename,
 } from "../src/workflow/visual-qa-pre-checks.js";
 import type { ImageSelection, InstagramCopyOutput, InstagramSlideCopy } from "../src/workflow/types.js";
@@ -62,14 +63,83 @@ function failuresFor(result: ReturnType<typeof checkDefaultRenderRules>, ruleId:
   return result.failures.filter((f) => f.ruleId === ruleId);
 }
 
-describe("DEFAULT_RENDER_RULES — the four ids, all render-checkable", () => {
-  it("carries exactly the spec's four ids, namespaced 'default:'", () => {
+describe("DEFAULT_RENDER_RULES — the five ids, all render-checkable", () => {
+  it("carries exactly the spec's ids, namespaced 'default:', with item R's appended last", () => {
     expect(DEFAULT_RENDER_RULES.map((r) => r.id)).toEqual([
       "default:cover-carries-device",
       "default:two-elements-per-slide",
       "default:numbers-are-devices",
       "default:closer-carries-cta",
+      // Phase 3, item R (2026-09): APPENDED, never inserted — the four above
+      // keep their ids and their order, so a client's stored feedback about a
+      // rule still names the same rule.
+      "default:no-image-means-device",
     ]);
+  });
+});
+
+/**
+ * Phase 3, item R — where items L, M and R meet.
+ *
+ * `source: "none"` is the writer's lever to skip a slide's picture entirely,
+ * and it is cheap: six slides of `"none"` costs no sourcing at all and
+ * produces six headlines on flat ground, which is the defect item L measures
+ * in pixels. The rule is the floor under the lever.
+ */
+describe("default:no-image-means-device", () => {
+  const NO_IMAGE = { scene: "a laptop on a kitchen table at 6am", why: "the slide claims founders work alone", source: "none" as const };
+
+  it("fails a source:'none' slide that carries no device, and names the slide", () => {
+    const { copy, selections } = copyWith([
+      { hero: true },
+      { visualNeed: NO_IMAGE },
+      { hero: true },
+      { hero: true },
+      { hero: true },
+      CLOSER_WITH_QUESTION,
+    ]);
+    const result = checkDefaultRenderRules(assemble(copy, selections), copy);
+    const failures = failuresFor(result, "default:no-image-means-device");
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({ slide: 2 });
+    expect(failures[0]!.reason).toMatch(/source to "none"/);
+  });
+
+  it("passes the same slide once it carries a device the template actually renders", () => {
+    // `headline_focus`, not `photo`: `DEVICE_SLOT_LAYOUTS` is what decides
+    // whether a device reaches the pixels, and a device on a `photo` slide
+    // renders nowhere — which is exactly why this rule still fails that case.
+    const { copy, selections } = copyWith([
+      { hero: true },
+      { layout: "headline_focus", visualNeed: NO_IMAGE, device: { kind: "figure", value: "42%", label: "of teams ship weekly", source: "internal survey" } },
+      { hero: true },
+      { hero: true },
+      { hero: true },
+      CLOSER_WITH_QUESTION,
+    ]);
+    const result = checkDefaultRenderRules(assemble(copy, selections), copy);
+    expect(failuresFor(result, "default:no-image-means-device")).toHaveLength(0);
+  });
+
+  it("passes a source:'none' slide whose archetype IS a device", () => {
+    const { copy, selections } = copyWith([
+      { hero: true },
+      { ...STAT, visualNeed: NO_IMAGE },
+      { hero: true },
+      { hero: true },
+      { hero: true },
+      CLOSER_WITH_QUESTION,
+    ]);
+    const result = checkDefaultRenderRules(assemble(copy, selections), copy);
+    expect(failuresFor(result, "default:no-image-means-device")).toHaveLength(0);
+  });
+
+  it("is inert for a client with its own render rules — the defaults fill an absence, they never override a standard", () => {
+    // `resolveRenderRules` is what the workflow gates the whole `07h` block
+    // on, so a client-authored list means none of these five rules run at all.
+    const clientRules = resolveRenderRules([{ id: "client:one-idea", check: "render", description: "One idea per slide." }]);
+    expect(clientRules.source).toBe("client");
+    expect(clientRules.rules.map((r) => r.id)).not.toContain("default:no-image-means-device");
   });
 });
 

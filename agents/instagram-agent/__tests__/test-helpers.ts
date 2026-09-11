@@ -611,6 +611,46 @@ export function goodClientBrief(overrides: Partial<ClientBrief> = {}): ClientBri
 }
 
 /**
+ * A fresh, agent-written visual direction for `acme` (RFC-14 item Q) — the
+ * document `00d-check-visual-direction` reads back out of the beliefs under
+ * `VISUAL_DIRECTION_BELIEF_KEY`.
+ *
+ * `generatedAt` is NOW, so `00d` resolves `reuse` and no
+ * `instagram-art-director` turn is consumed. That is the same reason
+ * `seedBrief` defaults to a fresh brief and `seedStudio` to a fresh approved
+ * set: a per-client SETUP artefact must not silently shift every fixture's
+ * turn list. A test that wants the derive path passes
+ * `seedVisualDirection: false` here AND an `artDirection` fixture to
+ * `standardTurns`.
+ *
+ * Typed loosely on purpose (the shape belongs to
+ * `src/workflow/visual-direction.ts`), but it is a REAL document: it parses
+ * against `VisualDirectionSchema`, which `visual-direction.test.ts` asserts.
+ */
+export function goodVisualDirection(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    generatedBy: "instagram-art-director@1",
+    subject: ["a founder at their own desk, working, never posed"],
+    light: ["one soft window source, late afternoon"],
+    palette: ["#C4552F", "#17181C", "#F4F2EC"],
+    treatment: ["documentary, lightly desaturated, never crushed to monochrome"],
+    forbid: ["stock handshakes", "boardroom tables", "politics"],
+    lines: [
+      { line: "Shoot the work, not the workplace: a laptop mid-sentence, a whiteboard with real handwriting.", basis: "brief: positioning.oneLiner", confidence: "high" },
+      { line: "One soft window light from the left, late afternoon, no fill.", basis: "brand kit: lighting", confidence: "medium" },
+      { line: "Keep the frame inside the brand palette: #C4552F, #17181C, #F4F2EC.", basis: "brand kit: palette", confidence: "high" },
+      { line: "Let the brand accent appear once as a real object, never as a colour overlay.", basis: "brand kit: accentColor", confidence: "high" },
+    ],
+    styleLock: { id: "documentary-warm", line: "documentary 35 mm, one soft window source, muted terracotta and bone palette, fine grain" },
+    source: "brand+brief",
+    gaps: [],
+    ...overrides,
+  };
+}
+
+/**
  * A per-client Template Studio set (RFC-14 item N) as a test can seed it.
  *
  * `archetypeIds` must be ids the layout enum can actually ROUTE to (spec
@@ -808,13 +848,19 @@ export async function setupTestEnvironment(
      * (`VISUAL_DIRECTION_BELIEF_KEY`, owned by
      * `src/workflow/visual-direction.ts` in PR-D).
      *
-     * Typed `unknown` on purpose: this helper's job is to put a document at
+     * Typed loosely on purpose: this helper's job is to put a document at
      * the right key, and the document's shape belongs to the module that
      * defines it — a mirrored interface here would be a second definition to
-     * keep in sync for no benefit. Omitted writes nothing, so
-     * `00d-check-visual-direction` resolves `derive`.
+     * keep in sync for no benefit.
+     *
+     * Omitted seeds a FRESH direction (`goodVisualDirection()`), for the same
+     * reason `seedBrief` defaults to a fresh brief and `seedStudio` to a
+     * fresh approved set: `00d-check-visual-direction` then resolves `reuse`
+     * and consumes no `instagram-art-director` turn, so a fixture's turn list
+     * is unchanged. `false` seeds NOTHING, which is the derive path — pass it
+     * together with an `artDirection` fixture in `standardTurns`.
      */
-    seedVisualDirection?: unknown;
+    seedVisualDirection?: Record<string, unknown> | false;
     /** Any other beliefs keys a fixture needs (a seeded `instagramRunBudget` history, an `instagramCustomArchetypes` record). Merged with the two above into one write. */
     seedBeliefs?: Record<string, unknown>;
   } = {},
@@ -854,7 +900,8 @@ export async function setupTestEnvironment(
   // a delivered run leaves behind rather than a shape only tests produce.
   const beliefs: Record<string, unknown> = { ...(opts.seedBeliefs ?? {}) };
   if (opts.seedSkeletons !== undefined) beliefs[SKELETON_BELIEF_KEY] = opts.seedSkeletons;
-  if (opts.seedVisualDirection !== undefined) beliefs["instagramVisualDirection"] = opts.seedVisualDirection;
+  const seedDirection = opts.seedVisualDirection ?? goodVisualDirection();
+  if (seedDirection !== false) beliefs["instagramVisualDirection"] = seedDirection;
   if (Object.keys(beliefs).length > 0) await store.writeJson("acme", ["memory", "beliefs"], beliefs);
 
   const templateStore =

@@ -142,11 +142,18 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   // receives `targetLanguage`, not `clientVoiceContext`, and it outputs no
   // statistics for the numbers gate to source.
   { promptId: "instagram-brief", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
+  // Phase 3, item Q. No `requires` flags for the same reason as
+  // `instagram-brief`: the art director receives the resolved
+  // `targetLanguage` and never `clientVoiceContext` (so the
+  // `languageDirective` marker would be unsatisfiable — its output is an
+  // English generation brief for an image model, never client-facing copy),
+  // and it names no `gate.*`.
+  { promptId: "instagram-art-director", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
   {
     promptId: "instagram-copy",
     agent: "instagram-agent",
-    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14"],
-    latestVersion: "14",
+    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"],
+    latestVersion: "15",
     requires: { languageDirective: true },
   },
   // Phase 2, item N. The Template Studio's three setup-time prompts. None of
@@ -161,7 +168,7 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   // exactly the "unenforced instruction dressed as an enforced one" this
   // registry's own doc comment warns about.
   { promptId: "instagram-design-brief", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
-  { promptId: "instagram-image-vet", agent: "instagram-agent", versions: ["1", "2", "3"], latestVersion: "3" },
+  { promptId: "instagram-image-vet", agent: "instagram-agent", versions: ["1", "2", "3", "4"], latestVersion: "4" },
   { promptId: "instagram-research", agent: "instagram-agent", versions: ["1", "2"], latestVersion: "2" },
   { promptId: "instagram-template-designer", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
   { promptId: "instagram-template-set-review", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },

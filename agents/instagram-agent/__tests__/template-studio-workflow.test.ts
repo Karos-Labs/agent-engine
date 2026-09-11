@@ -9,6 +9,7 @@ import { readSetupBudgetHistory } from "../src/workflow/run-budget.js";
 import {
   fakeRenderCarousel,
   fakeRouterSequence,
+  finalTurn,
   goodCopyOutput,
   goodImageCandidatePool,
   goodImageVettingOutput,
@@ -469,6 +470,76 @@ describe.skipIf(!STUDIO_WIRED)("the Template Studio in a real run", () => {
       await offline.cleanup();
     }
   }, 120_000);
+
+  /**
+   * The LIVE meter, not the plan that was made before anything was spent.
+   *
+   * `planSetupBudget` runs at `00c1`, before the first paid call, and its
+   * fifth lever names the visual-direction block as the optional one. But
+   * `setupSpend` records MEASURED costs, so a studio turn that bills far over
+   * its estimate pushes the meter past the $3.00 hard max while the plan still
+   * says the lever is on. The standing amendment is "past the target stop
+   * optional work, past the hard max finish on the cheapest complete path", so
+   * the optional item-Q work has to read the meter the way `describeSample`
+   * already does. Otherwise the setup keeps spending after it is over budget
+   * and still reports it as one adapted setup.
+   */
+  it("stops the optional visual-direction work when the setup meter has already crossed its hard max", async () => {
+    const overspent = await setupTestEnvironment({
+      seedStudio: false,
+      // Nothing on file, so `00d` would resolve `derive` on the plan alone.
+      seedVisualDirection: false,
+      seedTopics: Array.from({ length: 10 }, (_, i) => `overspend topic ${i + 1}`),
+    });
+    try {
+      // One design-brief turn billed at 2M Sonnet input tokens = ~$6, which is
+      // twice the $3.00 setup hard max, recorded as the MEASURED cost of
+      // `00c3`. Nothing about the plan changes; the meter does.
+      const router = fakeRouterSequence([
+        finalTurn(designBriefOutput(), { inputTokens: 2_000_000 }),
+        ...standardTurns({ templateDesign: ALL_DRAFTS, setReview: setReviewOutput(), ...runTurns }),
+      ]);
+      const durable = new MemoryDurableStepStore();
+      const result = await new WorkflowEngine(durable).run(
+        createInstagramAgentWorkflow({
+          tools: { ...overspent.tools, "publish.renderCarousel": fakeRenderCarousel(overspent.tools["publish.renderCarousel"]!) },
+          promptStore: makePromptStore(),
+          router,
+          repoRoot: overspent.repoRoot,
+          imageCandidatePool: goodImageCandidatePool(),
+          autoApprove: true,
+          templateStore: overspent.templateStore,
+        }),
+        { runId: "studio_overspent", ...base },
+      );
+
+      // It DELIVERS. A budget never holds a run, and never holds a setup.
+      expect(result.status).toBe("completed");
+      const stepIds = (await durable.listSteps("studio_overspent")).map((s) => s.stepId);
+      expect(stepIds).toContain("00c3-write-design-brief");
+      expect(stepIds).toContain("00d-check-visual-direction");
+      // The $0.075 of item-Q work is NOT spent past the hard max.
+      expect(stepIds).not.toContain("00d1-ingest-visual-patterns");
+      expect(stepIds).not.toContain("00d2-derive-visual-direction");
+      expect(stepIds).not.toContain("00d3-persist-visual-direction");
+
+      // And it is reported like every other lever, rather than silently
+      // skipped: the note names the meter and the number.
+      const deliverables = await overspent.store.listJson<{ deliverable?: Record<string, unknown> }>("acme", ["ledger", "deliverables", "studio_overspent", "_"]);
+      const payload = (deliverables.at(-1)?.data.deliverable ?? {}) as {
+        setup?: { budget?: { crossedMax?: boolean; notes?: string[] } };
+        visualDirection?: { action?: string; reason?: string; generatedBy?: string };
+      };
+      expect(payload.setup?.budget?.crossedMax).toBe(true);
+      expect((payload.setup?.budget?.notes ?? []).join(" ")).toContain("hard max before the art-direction step");
+      // The run still has a direction: the fallback, named as such, so no
+      // generated image falls back to the twelve-word neutral line.
+      expect(payload.visualDirection?.action).toBe("unavailable");
+      expect(payload.visualDirection?.generatedBy).toContain("fallback");
+    } finally {
+      await overspent.cleanup();
+    }
+  }, 180_000);
 
   it("approving a studio template at the gate flips `enabled`, and the NEXT run materializes it", async () => {
     const router = fakeRouterSequence(

@@ -312,4 +312,105 @@ describe("image.generate", () => {
   it("is registered even when generation is unconfigured, so the workflow can check for the tool not the config", () => {
     expect(createKarosMediaTools({ env: {} })["image.generate"]).toBeDefined();
   });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // RFC-13 Phase 3, item Q — `forbid` and `styleLock` (TOOL_VERSION 1.1.0)
+  // ───────────────────────────────────────────────────────────────────────
+
+  it("declares 1.1.0, because the brief it composes changed shape", () => {
+    // The tool-version gate on main diffs this against the merge base; a
+    // prompt change that keeps its version is exactly what that gate exists
+    // to catch (PR #95 is the precedent).
+    expect(tool(null).version).toBe("1.1.0");
+  });
+
+  it("emits the style lock and the 'Do not include:' block in the documented order: direction, lock, negatives, constraints", async () => {
+    let seen: { contents: string } | undefined;
+    const client = fakeClient((req) => {
+      seen = req;
+      return imageResponse();
+    });
+
+    await tool(client).execute(
+      {
+        repoRoot,
+        runId: "run_1",
+        needs: [{ n: 1, prompt: "a quiet desk at dawn" }],
+        art: {
+          aesthetic: "editorial documentary",
+          forbid: ["stock handshakes", "glass-tower skylines"],
+          styleLock: "Warm documentary photography, one subject, soft single-source light, no composite.",
+        },
+      },
+      { ctx: CTX },
+    );
+
+    const brief = seen!.contents;
+    expect(brief).toContain("Style lock (identical for every image in this set, do not vary it): Warm documentary photography");
+    expect(brief).toContain("Do not include:\n- stock handshakes\n- glass-tower skylines");
+
+    // The order is the point: the lock sits with the direction because it IS
+    // direction, and the client's negatives sit against the pipeline's own so
+    // the model reads one list of negatives rather than two kinds of rule.
+    const at = (needle: string): number => brief.indexOf(needle);
+    expect(at("Art direction:")).toBeLessThan(at("Style lock"));
+    expect(at("Style lock")).toBeLessThan(at("Do not include:"));
+    expect(at("Do not include:")).toBeLessThan(at("Constraints: no text"));
+  });
+
+  it("a caller supplying NO art still gets the byte-identical prior neutral brief", async () => {
+    // The regression that actually matters: every other channel, and any
+    // in-flight checkpoint, calls this tool exactly as before. Written as an
+    // exact string rather than a set of `toContain`s because "byte-identical"
+    // is the claim.
+    let seen: { contents: string } | undefined;
+    const client = fakeClient((req) => {
+      seen = req;
+      return imageResponse();
+    });
+
+    await tool(client).execute({ repoRoot, runId: "run_1", needs: [{ n: 1, prompt: "a quiet desk at dawn" }] }, { ctx: CTX });
+
+    expect(seen!.contents).toBe(
+      [
+        "Create a photographic image for a social media carousel slide: a quiet desk at dawn",
+        "",
+        "Style: realistic photography, natural lighting, clean composition.",
+        "",
+        "Constraints: no text, no words, no lettering, no numbers rendered in the image, no logos, no watermarks, no borders or frames, no collage or split panels.",
+      ].join("\n"),
+    );
+  });
+
+  it("drops the neutral style line when the only thing supplied is a style lock, rather than stating two styles", async () => {
+    let seen: { contents: string } | undefined;
+    const client = fakeClient((req) => {
+      seen = req;
+      return imageResponse();
+    });
+
+    await tool(client).execute(
+      { repoRoot, runId: "run_1", needs: [{ n: 1, prompt: "x" }], art: { styleLock: "Duotone, single subject, hard shadow." } },
+      { ctx: CTX },
+    );
+
+    // "realistic photography, natural lighting, clean composition" printed
+    // immediately above a specific locked treatment is two different briefs,
+    // and the model would pick.
+    expect(seen!.contents).not.toContain("Style: realistic photography");
+    expect(seen!.contents).toContain("Duotone, single subject, hard shadow.");
+  });
+
+  it("refuses more than ten forbid entries and an empty one, so the negative block stays a list a model can hold", async () => {
+    const parsed = tool(null).inputSchema.safeParse({
+      repoRoot,
+      runId: "run_1",
+      needs: [{ n: 1, prompt: "x" }],
+      art: { forbid: Array.from({ length: 11 }, (_, i) => `no ${i}`) },
+    });
+    expect(parsed.success).toBe(false);
+
+    expect(tool(null).inputSchema.safeParse({ repoRoot, runId: "run_1", needs: [{ n: 1, prompt: "x" }], art: { forbid: [""] } }).success).toBe(false);
+    expect(tool(null).inputSchema.safeParse({ repoRoot, runId: "run_1", needs: [{ n: 1, prompt: "x" }], art: { forbid: ["no faces"], styleLock: "one look" } }).success).toBe(true);
+  });
 });

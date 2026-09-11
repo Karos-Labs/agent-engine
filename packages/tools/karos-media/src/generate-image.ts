@@ -6,7 +6,15 @@ import { defineTool, success, contentFail, toolingError, notAvailable } from "@a
 import { MEDIA_CACHE_PREFIX, type FindImagesCandidate } from "./find-images.js";
 
 // 1.0.1 (SCRUM-296/AU11): removed the redundant re-parse of already-validated input.
-const TOOL_VERSION = "1.0.1";
+// 1.1.0 (RFC-13 Phase 3, item Q): `art` gains `forbid` and `styleLock`, and
+// `buildBrief` gains the two blocks that carry them. A MINOR bump rather than
+// a patch because the prompt this tool composes changed shape: two callers
+// passing the same `needs` and the same `art` before and after this version
+// do not send the same brief to the model, and the tool-version gate on main
+// exists precisely so that a prompt change is legible in the version (PR #95
+// is the precedent). Both fields are optional and additive, so every existing
+// caller's brief is byte-identical.
+const TOOL_VERSION = "1.1.0";
 
 /**
  * The image-generation call, narrowed to what this tool uses so the package
@@ -66,6 +74,37 @@ export const GenerateImageInputSchema = z.object({
       accentColor: z.string().min(1).optional().describe("The client's single accent colour, when they have one."),
       mood: z.string().min(1).optional().describe("e.g. \"calm and considered\", \"urgent\"."),
       notes: z.string().min(1).optional().describe("Extra client-specific direction, appended verbatim."),
+      /**
+       * What must never appear in the frame — the client's own negative
+       * list, distinct from the standing `Constraints:` line below.
+       *
+       * The constraints are this pipeline's (no lettering, no logos: the
+       * template draws the real headline over this image). This is the
+       * client's: "no stock handshakes", "no cityscape skylines", "never a
+       * person's face". Advisory to an image model rather than enforced —
+       * which is honest about what the only available lever can do — but a
+       * named negative is measurably better than none, and everything on
+       * this list arrived with a basis attached (see the instagram agent's
+       * `visual-direction.ts`).
+       */
+      forbid: z
+        .array(z.string().min(1))
+        .max(10)
+        .optional()
+        .describe("Client-specific things that must never appear in the frame, emitted as an explicit negative block. Distinct from the standing pipeline constraints, which always apply."),
+      /**
+       * The ONE per-client generation style every generated image in a run
+       * inherits, so a set of rescue images reads as one set rather than as
+       * three unrelated pictures that happen to sit in one carousel.
+       *
+       * A single string rather than a structure: it is appended verbatim, and
+       * the caller owns keeping it stable across the run.
+       */
+      styleLock: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("One sentence, identical for every image in a run, so the generated images read as one set. Placed after the art direction and before the constraints."),
     })
     .optional()
     .describe(
@@ -376,6 +415,17 @@ export function createGenerateImage(options: {
  * and the carousel template renders the real headline and body as live text
  * over this image, so words in the frame would collide with copy already
  * there. No logos or watermarks for the same reason the rights gate exists.
+ *
+ * ## The order of the blocks (1.1.0)
+ *
+ * Need, then art direction, then the style lock, then `Do not include:`, then
+ * the standing constraints. The style lock sits with the direction because it
+ * IS direction — one sentence repeated across a run so a set of rescue images
+ * reads as one set. `Do not include:` sits next to the constraints because
+ * both are negatives, and a model reading two negative blocks back to back
+ * treats them as one list; splitting them across the positive direction would
+ * invite it to weigh the client's "no cityscapes" against "no lettering" as
+ * if they were different kinds of rule.
  */
 function buildBrief(visualNeed: string, art?: GenerateImageInputParsed["art"]): string {
   const lines = [`Create a photographic image for a social media carousel slide: ${visualNeed}`];
@@ -388,11 +438,35 @@ function buildBrief(visualNeed: string, art?: GenerateImageInputParsed["art"]): 
   if (art?.mood) direction.push(`Mood: ${art.mood}.`);
   if (art?.notes) direction.push(art.notes);
 
+  const styleLock = art?.styleLock;
+  const forbid = art?.forbid ?? [];
+
   if (direction.length > 0) {
     lines.push("", "Art direction:", ...direction.map((d) => `- ${d}`));
-  } else {
+  } else if (styleLock === undefined) {
     // The prior behaviour, kept verbatim for a caller supplying no direction.
+    //
+    // Kept rather than deleted for two reasons: a caller with nothing to say
+    // would be WORSE off without it, and it is documented prior behaviour
+    // that other channels may still rely on. What item Q changes is not this
+    // line, it is that the Instagram caller now always has something to say —
+    // `fallbackVisualDirection` derives four grounded lines from the brand
+    // kit and the brief with no model call at all, so this branch is
+    // unreachable for any Instagram client rather than being the default one.
+    //
+    // A caller supplying ONLY a style lock skips it: emitting "realistic
+    // photography, natural lighting, clean composition" immediately above a
+    // specific locked treatment states two different styles and lets the
+    // model pick.
     lines.push("", "Style: realistic photography, natural lighting, clean composition.");
+  }
+
+  if (styleLock !== undefined) {
+    lines.push("", `Style lock (identical for every image in this set, do not vary it): ${styleLock}`);
+  }
+
+  if (forbid.length > 0) {
+    lines.push("", "Do not include:", ...forbid.map((f) => `- ${f}`));
   }
 
   lines.push(
