@@ -350,10 +350,15 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
     "every ground-bearing template FAILS the floor when its slots come through empty",
     async () => {
       const furniture = { dir: "ltr", fontScale: "m", textAlign: "start", accentColor: "#C4552F", groundStyle: "grid", slideIndex: "01" };
+      // `client` and `repoRoot`, NOT `clientSlug`: this input is hand-built
+      // rather than assembled, and the `as unknown as` cast below means the
+      // compiler cannot catch a wrong field name here. Getting it wrong cost
+      // a CI-only schema rejection on this PR's first push.
       const blanks: RenderCarouselInput = {
-        clientSlug: "calibration",
+        client: "calibration",
         postId: "interest-floor-empty",
         canvas: CANVAS,
+        repoRoot: REPO_ROOT,
         templateDir: path.relative(REPO_ROOT, templateDir).replaceAll("\\", "/"),
         slides: [
           { n: 1, template: "cover.html", fields: { ...furniture }, images: {}, htmlFragments: {} },

@@ -220,6 +220,14 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // `interest:` finding), plus §19-21 appended. Everything else is
     // byte-identical, so no Phase 0/1 rule can be lost to a prompt bump.
     const between = (text: string, from: string, to?: string) => text.slice(text.indexOf(from), to === undefined ? undefined : text.indexOf(to));
+    // Every assertion below that spans a line break compares against `lf(...)`.
+    // The prompt files are CRLF in a Windows working tree and LF in the repo
+    // blob (so LF on a Linux CI checkout), which means a literal "\r\n" in an
+    // expectation is a guard that only holds on the machine it was written on:
+    // it passed locally and failed in CI on the first push of this PR.
+    // Normalising the haystack asserts the wording, which is what these are
+    // about, on either checkout.
+    const lf = (text: string) => text.replace(/\r\n/g, "\n");
     expect(between(v14, "## 1. ", "## 7. ")).toBe(between(v13, "## 1. ", "## 7. "));
     expect(between(v14, "## 8. ", "## 16. ")).toBe(between(v13, "## 8. ", "## 16. "));
     // `.trimEnd()` only because the appended §19 introduces one blank
@@ -253,15 +261,15 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     expect(v14).toContain("`headline_focus` and `text_only` on slide 1 ARE refused before a render is spent");
     expect(v14).toContain("**Where the two positional archetypes belong.**");
     // The closer half is graded, not refused, and the prompt now says so.
-    expect(v14).toContain("the last\nslide's closing rule is graded".replace(/\n/g, "\r\n"));
+    expect(lf(v14)).toContain("the last\nslide's closing rule is graded");
 
     // ── §7: the degrade target is no longer the blanket `text_only` ──────
     // The grey screen the owner complained about IS `text_only` routed to
     // the client's own image-less base template, so a prompt that still
     // teaches "the automatic fallback" is teaching the defect.
-    expect(v13).toContain("it is also the automatic\n  fallback when a photo cannot be sourced".replace(/\n/g, "\r\n"));
+    expect(lf(v13)).toContain("it is also the automatic\n  fallback when a photo cannot be sourced");
     expect(v14).not.toContain("it is also the automatic");
-    expect(v14).toContain("falls back\n  to the archetype the content actually is".replace(/\n/g, "\r\n"));
+    expect(lf(v14)).toContain("falls back\n  to the archetype the content actually is");
 
     // ── §7: a leading figure needs a device on ANY archetype now ─────────
     expect(v13).toContain('Every other numeric fact leads with the noun ("Teams that automated intake cut onboarding 40%"), never with the figure.');
@@ -288,7 +296,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     }
     expect(s19).toContain("**Three archetypes render a device, and only those three: `cover`,");
     expect(s19).toContain("`headline_focus`, and `closer` when it has no earlier slides to recap.**");
-    expect(s19).not.toContain("any slide\nof any archetype may carry one".replace(/\n/g, "\r\n"));
+    expect(lf(s19)).not.toContain("any slide\nof any archetype may carry one");
     expect(s19).toContain("**The post's key figure MUST get a device, which means putting it on a slide");
     expect(s19).toContain("**Every value is 12 characters at most.**");
     expect(s19).toContain("**`figure`, `figure_pair` and `bars` REQUIRE a `source`.**");
@@ -297,7 +305,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
 
     // ── §20: the licence, the shape-gap criterion, the two-per-carousel cap
     const s20 = between(v14, "## 20. ", "## 21. ");
-    expect(s20).toContain("**At most two\nper carousel.**".replace(/\n/g, "\r\n"));
+    expect(lf(s20)).toContain("**At most two\nper carousel.**");
     expect(s20).toContain("The test is a SHAPE GAP, never novelty.");
     expect(s20).toContain("naming the SHAPE the eight archetypes cannot");
     // The old stance is gone: `custom` is no longer "a rare tool, not a

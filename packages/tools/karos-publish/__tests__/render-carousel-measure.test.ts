@@ -113,7 +113,13 @@ function input(overrides: Partial<RenderCarouselInput> = {}): RenderCarouselInpu
 }
 
 async function run(payload: RenderCarouselInput): Promise<RenderCarouselResult> {
-  const outcome = await createRenderCarousel().execute(payload, { runId: "r_measure", stepId: "render" } as never);
+  // The second argument is the tool-call envelope, NOT the context itself:
+  // `execute` reads `arg.ctx.runId`, so a bare `{ runId, stepId }` throws
+  // "Cannot read properties of undefined (reading 'runId')" before Chromium
+  // is ever launched. This is Chromium-gated, so it only surfaced in CI.
+  const outcome = await createRenderCarousel().execute(payload, {
+    ctx: { runId: "r_measure", clientSlug: "acme", productId: "instagram-agent", runKind: "setup", metadata: {} },
+  } as never);
   expect(outcome.status, `render failed: ${JSON.stringify(outcome)}`).toBe("success");
   return (outcome as { status: "success"; result: RenderCarouselResult }).result;
 }
