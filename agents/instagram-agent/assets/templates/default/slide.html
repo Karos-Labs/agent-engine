@@ -40,6 +40,21 @@
     --bg: #17181C;
     --fg: #F4F2EC;
     --accent: {{accentColor}};
+    /* THE WASH TONE, and it is a mix rather than the accent itself.
+       A ground wash has to land in the measurement's 12-18 band — visible
+       tone that is not a mark — for EVERY accent the palette walk admits,
+       and the accent alone cannot do that. The only gate on --accent is
+       ACCENT_GROUND_CONTRAST_FLOOR = 3 against the ground, so a dark accent
+       sits ~92 units from the bundled ground and a pale one ~159: the same
+       14% alpha that measures 12.9 on the first measures 22.3 on the second,
+       which is INK. Rendered with a pale kit every template in this
+       directory then put ink in the 8px bleed band (clippedEdgeShare 0.5-0.7%
+       against a 0.4% ceiling) and counted its own wash as content.
+       Mixing the accent halfway into the foreground compresses that spread:
+       the mix is ~170 units from the ground on a dark accent and ~195 on a
+       pale one, so 8% of it is 13.6 and 15.6 — inside the band on both, with
+       the accent's hue still in it. */
+    --wash: color-mix(in srgb, var(--accent) 45%, var(--fg));
     --accent-ink: #141414;
     --f-display: 'Fraunces', Georgia, 'Times New Roman', serif;
     --f-body: 'Inter', system-ui, -apple-system, sans-serif;
@@ -64,39 +79,136 @@
     background: var(--bg); color: var(--fg);
     font-family: var(--f-body);
   }
-  .bg { position: absolute; inset: 0; z-index: 0; }
+  /* ── The ground under the photograph. ──
+     `slide.html` is the one archetype that must stay under the interest
+     floor's imagery-or-device floor when its hero contributes no pixels —
+     `interest-floor-calibration.test.ts` renders a 1x1 TRANSPARENT hero and
+     requires `imageryOrDeviceShare < 0.03`, because that is the prep defect
+     with no symptom: a "successful" render whose photograph is not there. So
+     this ground is texture and tone ONLY. No filled block, no tinted panel:
+     a texture never covers the 48-of-64 samples of a cell that the
+     measurement needs before the cell counts as a drawn device, so it can be
+     as loud as it likes without pretending to be a picture.
+
+     What it does fix is the other half: a heroless slide used to be bare
+     ground with a 58% contiguous empty rectangle, which clause C fails and a
+     reader calls unfinished. The wash stays inside the 12-18 band (a pixel is
+     ground within 12 and ink beyond 18) so it may bleed to the frame edge;
+     the texture carries ink, so it is inset 16px, because ink inside the 8px
+     bleed band is what `clippedEdgeShare` reads as clipped type. */
+  .ground {
+    position: absolute; inset: 0; z-index: 0;
+    background-image: linear-gradient(188deg, transparent 46%, color-mix(in srgb, var(--wash) 8%, transparent) 100%);
+  }
+  .bg { position: absolute; inset: 0; z-index: 1; }
+  /* NO HERO, NO SCRIM OVER THE GROUND. `onerror` removes the <img>, which
+     leaves `.bg` genuinely empty (the element is written on one line, so no
+     whitespace text node survives to defeat `:empty`), and the ground then
+     paints ABOVE the scrim instead of under it. Without this the scrim — which
+     exists to make copy legible over a PHOTOGRAPH — spends itself flattening
+     a ground that has no photograph to sit on. */
+  body:has(.bg:empty) .ground { z-index: 3; }
   .bg img { width: 100%; height: 100%; object-fit: cover; display: block; }
   /* Bottom-anchored scrim (legacy `.scrim.tall`) — the copy block always sits on a
      readable dark gradient whether or not a hero image loaded. */
   .scrim {
-    position: absolute; inset: 0; z-index: 1; pointer-events: none;
+    position: absolute; inset: 0; z-index: 2; pointer-events: none;
     background: linear-gradient(to top,
       color-mix(in srgb, var(--bg) 96%, transparent) 0%, color-mix(in srgb, var(--bg) 86%, transparent) 22%,
       color-mix(in srgb, var(--bg) 52%, transparent) 42%, color-mix(in srgb, var(--bg) 0%, transparent) 62%);
   }
   .copy { position: absolute; left: var(--mx); right: var(--mx); bottom: 96px; z-index: 4; }
+  /* ── THE HEROLESS PLATE. ──
+     With a photograph this archetype is a photograph: the copy sits on the
+     scrim in the lower third and the picture carries the frame. Without one,
+     a caption in the lower third of a bare plate IS the owner's complaint
+     ("אתה רואה מסך אפור ברובו"), so the copy block stops being a caption and
+     becomes the composition: it takes the whole frame inside the 16px margin,
+     centres itself, and carries the texture and the accent geometry as its
+     OWN background.
+
+     The previous revision reached for the same effect with two full-bleed
+     ground divs, and that is what this pass is removing everywhere: a texture
+     painting ink in every cell makes `occupiedShare` and
+     `largestEmptyRectShare` constants, so the clause that names the
+     complaint could not fire on any plate this directory produced. Bound to
+     the copy block instead, the numbers describe the slide: with a headline,
+     ~57% occupied and a small empty rectangle; with the slots empty, nothing
+     paints at all and clauses D and G catch it on the pixels alone.
+
+     16px rather than 0 because `clippedEdgeShare` counts ink inside an 8px
+     bleed band and fails a slide over 0.4%. */
+  body:has(.bg:empty) .copy {
+    inset: 16px; z-index: 3;
+    display: flex; flex-direction: column; justify-content: center;
+    padding: calc(72px * var(--ts, 1)) calc(var(--mx) - 16px);
+  }
+  body:has(.bg:empty) .copy:has(.headline:not(:empty)) {
+    background-image:
+      repeating-linear-gradient(45deg,
+        var(--accent) 0 3px, transparent 3px 46px),
+      repeating-linear-gradient(45deg,
+        color-mix(in srgb, var(--fg) 20%, transparent) 0 2px,
+        transparent 2px 11px);
+    background-size: 100% 360px, auto;
+    background-repeat: no-repeat, repeat;
+    background-position: 0 0, 0 0;
+  }
+  /* The statement carries the plate when the photograph does not, so it is
+     set at the display size the composition needs rather than at a caption's. */
+  body:has(.bg:empty) .headline { font-size: calc(96px * var(--ts, 1)); line-height: 1.14; }
   .headline {
     font-family: var(--f-display); font-weight: 600; font-size: calc(76px * var(--ts, 1));
     line-height: 1.3; letter-spacing: -0.012em; text-wrap: balance;
+    /* A glyph box taller than its line box makes the block report
+       `scrollHeight > clientHeight`, which the renderer's DOM probe reports as
+       an overflowing element and clause B of the interest floor fails on. */
+    padding-block-end: 0.1em;
   }
   .body-text {
     font-family: var(--f-body); font-weight: 400; font-size: calc(31px * var(--ts, 1));
     line-height: 1.55; color: color-mix(in srgb, var(--fg) 92%, transparent);
     margin-top: 28px; max-width: 900px; text-wrap: pretty;
   }
-  /* The orange square underline (legacy `.stat-band`) — one accent mark, rationed. */
-  .stat-band { width: 96px; height: 10px; background: var(--accent); margin-top: 30px; }
+  /* The accent mark under the copy (legacy `.stat-band`), sized to the plate
+     rather than to the legacy 96x10 detail. */
+  .stat-band { width: 200px; height: 14px; background: var(--accent); margin-top: 30px; }
+
+  /* Standing brand furniture. The brand head fragment (`buildBrandHeadHtml`)
+     restates both rules and lands AFTER this sheet, so a client with a kit
+     keeps its own placement; these defaults exist because a brandless render
+     otherwise lays the handle out in normal flow, over the photograph. */
+  .brand-handle {
+    position: absolute; bottom: 34px; inset-inline-start: 44px; z-index: 6;
+    font-family: var(--f-mono); font-size: calc(19px * var(--ts, 1)); letter-spacing: 0.08em;
+    color: color-mix(in srgb, var(--fg) 60%, transparent);
+  }
+  .brand-badge {
+    position: absolute; top: 36px; inset-inline-start: var(--mx); z-index: 6;
+    font-family: var(--f-mono); font-weight: 600; font-size: calc(19px * var(--ts, 1));
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent);
+  }
+  /* An @handle, a URL and a #hashtag are LTR strings, and a Hebrew or Arabic
+     slide lays them out inside an RTL paragraph: the leading `@` is a bidi
+     NEUTRAL, so it takes the paragraph embedding level and ends up on the
+     wrong side — every Hebrew slide in the tree shipped `karoslabs@`. The
+     `<bdi dir="ltr">` in the markup is the fix; `dir` on the DIV would also
+     have re-resolved its own `inset-inline-start` and moved the watermark to
+     the other corner. The extra :has() selector is what keeps an empty slot
+     hidden now that the div always has an element child. */
+  .brand-badge:empty, .brand-handle:empty, .brand-handle:has(> bdi:empty) { display: none; }
 </style>
 </head>
 <body class="ts-{{fontScale}} ta-{{textAlign}}">
+  <div class="ground" aria-hidden="true"></div>
   <div class="brand-badge">{{seriesBadge}}</div>
-  <div class="brand-handle">{{brandHandle}}</div>
-  <div class="bg">
-    <!-- No fallback image when {{image:hero}} is unset — the scrim's own dark gradient
-         already reads fine over the plain background, so a missing/broken photo is
-         quietly hidden rather than shown as a broken-image glyph. -->
-    <img src="{{image:hero}}" onerror="this.style.display='none'" />
-  </div>
+  <div class="brand-handle"><bdi dir="ltr">{{brandHandle}}</bdi></div>
+  <!-- No fallback image when {{image:hero}} is unset. `onerror` REMOVES the
+       node rather than hiding it (a removed node can leave no broken-image
+       glyph and no alt-text box behind), and the element is written on one
+       line so that `.bg` is then `:empty` in the CSS sense — which is what
+       the ground's own rule above keys off. -->
+  <div class="bg"><img src="{{image:hero}}" onerror="this.remove()" alt="" /></div>
   <div class="scrim"></div>
   <div class="copy">
     <div class="headline">{{headline}}</div>

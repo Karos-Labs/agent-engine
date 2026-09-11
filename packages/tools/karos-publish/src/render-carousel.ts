@@ -13,8 +13,16 @@ import { measureSlidePng, type SlideMetrics, type SlideProbe } from "./slide-met
  * caller reading the 1.1.0 fields reads the same numbers. See
  * `slide-metrics.ts`'s "CONTENT vs DECORATION" comment for why a second mask
  * exists — a decorative ground field satisfied the first one on its own.
+ *
+ * 1.3.0 — `probe.overflow` gains a BLOCK-START limb. The result shape is
+ * unchanged, but the meaning of the field is not: a page whose content
+ * escapes the TOP of its parent now reports `overflow: true` where it used to
+ * report clean, because `scrollHeight` describes an overflow region that only
+ * grows downward. Not additive — a caller that gates on `probe.overflow` will
+ * see slides fail that used to pass, and those slides were always broken. See
+ * `probePage`'s "THE BLOCK-START LIMB" comment.
  */
-const TOOL_VERSION = "1.2.0";
+const TOOL_VERSION = "1.3.0";
 
 // n/template/fields/images have no existing TSDoc to transcribe (SCRUM-293 flag) — descriptions
 // below synthesized from fillTemplate's/validateRenderInputs' usage of each field.
@@ -282,6 +290,7 @@ interface ProbeElement {
   clientHeight: number;
   children: { length: number };
   textContent: string | null;
+  parentElement: ProbeElement | null;
   getBoundingClientRect(): ProbeRect;
 }
 declare const document: {
@@ -289,7 +298,7 @@ declare const document: {
   fonts: { ready: Promise<unknown> };
   querySelectorAll(selector: string): ProbeElement[];
 };
-declare function getComputedStyle(element: ProbeElement): { fontFamily: string };
+declare function getComputedStyle(element: ProbeElement): { fontFamily: string; overflow: string; position: string };
 
 function readyFlagCheck(flag: string): boolean {
   return window[flag] === true || document.body?.dataset?.["ready"] === flag;
@@ -308,6 +317,10 @@ function fontsReady(): Promise<unknown> {
  *   Hebrew string of the same length as an English one has a different
  *   rendered width, so that breakpoint can pick a size that spills its box —
  *   and the pixels then show nothing except a few clipped edge pixels.
+ *   `overflow` has TWO limbs, and the second one is not optional: see
+ *   "THE BLOCK-START LIMB" below. `scrollHeight` is blind in one direction,
+ *   and a plate shipped through that blind spot with its headline printed
+ *   on top of its own kicker.
  * - `offscreen`, boxes escaping the canvas entirely, which is invisible in a
  *   screenshot by definition.
  * - `fontFamiliesUsed`, the first real evidence that a script font LOADED
@@ -355,10 +368,46 @@ export function probePage(canvas: { n: number; w: number; h: number }): {
     const tag = String(element.tagName || "").toLowerCase();
     if (nonVisual.indexOf(tag) !== -1) continue;
 
-    if (element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1) {
-      if (overflowing.length < 6) overflowing.push(describe(element));
-    }
     const rect = element.getBoundingClientRect();
+    let spills = element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1;
+
+    // ── THE BLOCK-START LIMB ────────────────────────────────────────────
+    //
+    // `scrollWidth`/`scrollHeight` describe the SCROLLABLE OVERFLOW REGION,
+    // which by specification starts at the padding box's block-start edge
+    // and only ever grows away from it. Content pushed out of the TOP of
+    // its parent is not in that region and cannot change either number, so
+    // the limb above is structurally blind to upward escape.
+    //
+    // That is not a theoretical gap. `headline-focus.html` had a `.copy`
+    // block that was `flex: 0 1 auto; min-block-size: 0` under
+    // `justify-content: flex-end`: when the statement ran past its field the
+    // flex algorithm shrank the box below its own content and the excess
+    // spilled out of the block-start edge. At the reviewer's `l` type scale
+    // the headline rendered 155px above its parent, on top of the kicker
+    // rail, with the hairline rule running through the glyphs — and the
+    // probe reported `scrollHeight 478 === clientHeight 478`, clean. A
+    // calibration test that rendered exactly that plate passed.
+    //
+    // Three exclusions, each of them a real layout idiom and not a defect:
+    //
+    //  * a parent that is not `overflow: visible` has already declared what
+    //    happens to content leaving it (and a clipped child is a different
+    //    finding, one the pixels do show at the bleed band);
+    //  * an ABSOLUTELY POSITIONED child is placed, not laid out — the
+    //    bundled grounds deliberately bleed a display numeral 210px off the
+    //    block-start corner, and that is art direction;
+    //  * a 2px tolerance, because a display face's glyph box routinely sits
+    //    a subpixel or two above its line box.
+    const parent: ProbeElement | null = element.parentElement ?? null;
+    if (!spills && parent !== null && rect.height > 0 && typeof parent.getBoundingClientRect === "function") {
+      const placed = getComputedStyle(element).position === "absolute" || getComputedStyle(element).position === "fixed";
+      if (!placed && getComputedStyle(parent).overflow === "visible") {
+        const parentRect = parent.getBoundingClientRect();
+        if (parentRect.height > 0 && rect.top < parentRect.top - 2) spills = true;
+      }
+    }
+    if (spills && overflowing.length < 6) overflowing.push(describe(element));
     if (rect.width > 0 && rect.height > 0 && (rect.left < -1 || rect.top < -1 || rect.right > canvas.w + 1 || rect.bottom > canvas.h + 1)) {
       if (offscreen.length < 6) offscreen.push(describe(element));
     }

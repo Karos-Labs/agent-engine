@@ -734,7 +734,15 @@ export function buildBrandHeadHtml(tokens: BrandRenderTokens, options: { logo?: 
   // side). An EMPTY slot must vanish completely — a `pill` variant painting
   // an accent-filled background behind zero characters would otherwise ship
   // an empty pill on every slide of a client with no badge.
-  css.push(".eyebrow:empty, .kicker:empty, .brand-badge:empty, .brand-handle:empty { display: none; }");
+  // `.brand-handle:has(> bdi:empty)` rides along with `:empty`, because the
+  // bundled templates isolate the handle slot: `<div class="brand-handle"><bdi
+  // dir="ltr">{{brandHandle}}</bdi></div>`. An `@handle`, a URL and a
+  // `#hashtag` are LTR strings whose leading character is a bidi NEUTRAL, so
+  // in a Hebrew or Arabic document they take the paragraph's own RTL
+  // embedding level and lay out as `karoslabs@`. With the `<bdi>` in place the
+  // div is never `:empty` again, and without this second selector a client
+  // with no handle would ship an empty — but `pill`-painted — watermark box.
+  css.push(".eyebrow:empty, .kicker:empty, .brand-badge:empty, .brand-handle:empty, .brand-handle:has(> bdi:empty) { display: none; }");
   css.push(
     [
       ".brand-handle {",

@@ -248,7 +248,14 @@ function buildTemplateShell(title: string, bodyHtml: string): string {
 </head>
 <body class="ts-{{fontScale}} ta-{{textAlign}}">
 <div class="brand-badge">{{seriesBadge}}</div>
-<div class="brand-handle">{{brandHandle}}</div>
+<!-- The handle slot is bidi-ISOLATED, the same way the bundled archetypes do
+     it. An @handle, a URL and a #hashtag are LTR strings whose leading
+     character is a bidi neutral, so inside a Hebrew or Arabic document they
+     take the paragraph's own RTL embedding level and lay out as "karoslabs@".
+     dir on the <bdi> rather than on the <div>, because the div's own
+     inset-inline-start would re-resolve with it and move the watermark to
+     the opposite corner. -->
+<div class="brand-handle"><bdi dir="ltr">{{brandHandle}}</bdi></div>
 ${bodyHtml}
 <script>
   window.__CAROUSEL_READY__ = true;

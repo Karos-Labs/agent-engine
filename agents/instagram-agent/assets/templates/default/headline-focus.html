@@ -19,80 +19,81 @@
   are built on made a considered move to sentence case ("uppercase reserved for
   hooks and the mono face"), and mixing an uppercase-900 slide into a carousel
   whose other slides are sentence-case serif reads as two different designs
-  rather than one with range. Impact is bought back with size (118px) and the
-  accent band instead.
+  rather than one with range. Impact is bought back with size and with the
+  accent geometry below, not with a second typeface.
 
-  `line-height: 1.02` rather than Gen-2's usual 1.3: that 1.3 exists to leave
-  vertical room for the `.hl` highlighter-band device, which this template does
-  not use. Without a band to clear, 1.3 on a 118px display face just reads as a
-  gap.
+  ── 2026-09-11, THE VISUAL REWORK ──
 
-  ── 2026-09-10, item M.3: THE GROUND ──
+  The owner's complaint (2026-09-10, verbatim: "אתה רואה מסך אפור ברובו") was
+  about THIS archetype. The previous revision answered it with a ground that
+  was tuned to sit under every measurement threshold on purpose — a 14%
+  hairline field, a 4px accent rule, a numeral outlined at 26% — each with a
+  comment saying it had to stay "too thin to be read as a device". The result
+  measured as a ground and looked like nothing: a statement in the lower third
+  of a grey plate, which is the defect verbatim.
 
-  Everything above `.copy` used to be bare `var(--bg)`: with a two-line
-  headline this template measured `flatBackgroundShare` ~0.91, `occupiedShare`
-  ~0.13 and a single contiguous empty rectangle covering ~0.69 of the plate,
-  which is precisely the slide the owner pointed at ("מסך אפור ברובו") and
-  precisely what item L's `LARGEST_EMPTY_RECT_CEILING` refuses. It now paints
-  a token-driven ground, CSS only, no new content slot:
+  What actually had to change is WHICH property does the work:
 
-    * `gr-grid` (the default): a 45-degree hairline field at 14% of the
-      foreground token, 1.5px rules every 18px, plus one thin accent rule.
-    * `gr-glyph`: the same field mirrored to 135 degrees, plus a display-face
-      numeral bleeding off the top — filled at 8% (texture) and stroked at
-      26% (content).
+  * A ground must be VISIBLE. Nothing about clause E (the cover role's
+    imagery-or-device floor) requires a ground to be invisible; it requires it
+    not to be a DRAWN DEVICE. Those are different properties, and the
+    measurement already separates them: a device is a COVERED cell (48 of 64
+    samples are ink) with almost no colour variety, while a texture — however
+    strong its contrast — never covers the cells it crosses. So the texture
+    here is now loud (2px rules every 14px at 24% of the foreground, plus an
+    accent diagonal band at full strength) and carries no graphic share at all.
+  * The composition, not the decoration, fills the plate. The lockup used to
+    be one bottom-anchored block with two thirds of the frame above it empty.
+    It is now a three-part column — a kicker rail at the top under a full-
+    measure hairline, the statement set in the optical centre, the body at the
+    foot — so the type itself is what occupies the frame.
+  * The plate is no longer FLAT. A sub-ink tonal wash (see `.ground`) takes
+    `flatBackgroundShare` from ~0.88 to well under the interest floor's 0.70
+    ceiling, which is the honest way out of clause D: that clause is a
+    CONJUNCTION (flat AND idle), and a plate with a real ground is not flat.
 
-  The field's parameters are design decisions, and the measurements below are
-  their CONSEQUENCE rather than their cause. That ordering is worth stating
-  plainly, because an earlier revision of this comment had it the other way
-  round — it explained the 14% mix as "8% measures 17.2, just under the ink
-  threshold; 14% is above the line", which is a template designed to a
-  counter. A design tuned to cross a measurement threshold is not a design,
-  and the review that caught it was right: at that point the metric was
-  measuring the ground rather than the slide.
+  What this archetype deliberately still does NOT carry is a drawn device, and
+  `__tests__/interest-floor-calibration.test.ts` pins that: a `headline_focus`
+  judged at the cover role must report `no-device`. That is not a metric being
+  protected — it is this archetype's editorial identity. It is the one quiet,
+  all-type turn in the set, the floor exempts interiors from clause E for
+  exactly that reason, and a slide that wants a device has `{{html:device}}`
+  or another archetype. So: every element on this plate is either type, a
+  texture, or a rule — no filled block anywhere, and no outline heavy enough
+  to cover a cell.
 
-  So, the design first. 1.5px rules every 18px at 14% of the foreground is
-  the contrast at which a pinstripe READS as a pinstripe on a phone at feed
-  size: at 8% it is a smudge that reproduces as nothing on a dim screen, and
-  above ~20% it competes with the body text for the reader's eye. A single
-  45-degree direction rather than a grid because a grid's crossings make a
-  visible dot at every intersection, which fights the diagonal accent rule.
-  Inset 16px rather than full-bleed because a hairline field crossing the
-  frame edge reads as a printing error, not as a ground.
+  ── The two ground variants ──
 
-  What that then measures, through the real `measureSlidePng` over
-  synthesised plates of this template:
-
-    bare plate         flat 90.9%  occupied 13.5%  emptyRect 69.4%  content 13.5%
-    orthogonal grid    flat 77.1%  occupied 38.6%  emptyRect  1.5%  content 13.6%
-    45-degree field    flat 83.8%  occupied 40.7%  emptyRect  1.5%  content 13.5%
-
-  Read that last column. The field moves `occupiedShare` and the empty
-  rectangle and leaves `contentOccupiedShare` — the mask that only counts
-  cells whose MEAN colour has left the ground — exactly where it was, because
-  an 8.3% duty cycle at 24 units of contrast shifts a cell's mean by about 2.
-  That is the honest description of what a ground treatment is, and it is why
-  `interest-floor.ts` gained clause G: the field legitimately fills the dead
-  space clause C measures (a slide with a ground is not a slide with a bare
-  ground, which is the rule clause C inherited), and it cannot stand in for
-  content, because clause G reads the content mask and a texture cannot
-  satisfy it at any opacity that keeps it a texture. An empty-slot render of
-  this template fails clause G, and
-  `__tests__/interest-floor-calibration.test.ts` asserts exactly that.
-
-  One further constraint the numbers do decide, and it is a real one: the
-  field must NOT read as a device. A filled low-colour measurement cell
-  counts as `graphicShare`, so an orthogonal grid's crossings — which fill
-  whole cells — would have let a statement slide clear the cover role's
-  imagery-or-device floor and quietly undone `default:cover-carries-device`.
-  A single-direction field has no crossings and adds ~0.1pp of graphic share.
+    * `gr-grid` (the default): a 45-degree texture plus an accent diagonal
+      band across the upper third.
+    * `gr-glyph`: the texture mirrored to 135 degrees, plus a display-face
+      numeral bleeding off the start corner, outlined heavily enough to READ.
 
   Which variant a slide paints comes from `slides-data.ts`'s existing seeded
   low-discrepancy walk (`isVariationSlot`) under its own `:ground` namespace
   — deterministic within a run, phase-shifted across runs, no new randomness
-  mechanism. The field is the CSS default so that a checkpoint written before
-  `{{groundStyle}}` existed (where the class token strips to a bare "gr-")
-  still paints a ground rather than reverting to the bare plate.
+  mechanism. The grid variant is the CSS default so that a checkpoint written
+  before `{{groundStyle}}` existed (where the class token strips to a bare
+  "gr-") still paints a ground rather than reverting to the bare plate.
+
+  ── Why every decoration is a BACKGROUND LAYER and never a positioned box ──
+
+  The previous revision drew its accent rule as an absolutely positioned
+  `<div>` at `inset-inline-end: -80px`, rotated. A positioned child that
+  leaves its parent's padding box makes that parent report `scrollWidth >
+  clientWidth`, which is precisely what the renderer's DOM probe calls an
+  overflowing element — and clause B of the interest floor fails a slide on
+  `probe.overflow` alone, whatever the pixels say. Every `headline_focus` and
+  every `closer` therefore carried a `clipped` finding on every attempt for a
+  decoration nobody could see. Background layers cannot overflow anything, so
+  all ground geometry is painted as `background-image` layers on two boxes:
+  `.ground` (full bleed, tonal only) and `.ground-art` (inset 16px, the layers
+  that carry real ink).
+
+  The 16px inset on `.ground-art` is load-bearing for the same family of
+  reasons: `clippedEdgeShare` counts ink inside an 8px bleed band and fails a
+  slide over 0.4%, and a full-bleed texture measured 0.5%. `.ground`'s wash
+  stays below the ink threshold at every stop, so it may bleed.
 
   See `stat-callout.html`'s header for why the token block is duplicated.
 -->
@@ -105,6 +106,22 @@
     --bg: #17181C;
     --fg: #F4F2EC;
     --accent: {{accentColor}};
+    /* THE WASH TONE, and it is a mix rather than the accent itself.
+       A ground wash has to land in the measurement's 12-18 band — visible
+       tone that is not a mark — for EVERY accent the palette walk admits,
+       and the accent alone cannot do that. The only gate on --accent is
+       ACCENT_GROUND_CONTRAST_FLOOR = 3 against the ground, so a dark accent
+       sits ~92 units from the bundled ground and a pale one ~159: the same
+       14% alpha that measures 12.9 on the first measures 22.3 on the second,
+       which is INK. Rendered with a pale kit every template in this
+       directory then put ink in the 8px bleed band (clippedEdgeShare 0.5-0.7%
+       against a 0.4% ceiling) and counted its own wash as content.
+       Mixing the accent halfway into the foreground compresses that spread:
+       the mix is ~170 units from the ground on a dark accent and ~195 on a
+       pale one, so 8% of it is 13.6 and 15.6 — inside the band on both, with
+       the accent's hue still in it. */
+    --wash: color-mix(in srgb, var(--accent) 45%, var(--fg));
+    --accent-ink: #141414;
     --f-display: 'Fraunces', Georgia, 'Times New Roman', serif;
     --f-body: 'Inter', system-ui, -apple-system, sans-serif;
     --f-mono: 'IBM Plex Mono', ui-monospace, monospace;
@@ -123,103 +140,341 @@
   body.ta-center { text-align: center; }
   body.ta-end { text-align: end; }
   html, body { width: 1080px; height: 1440px; }
-  body { position: relative; overflow: hidden; background: var(--bg); color: var(--fg); font-family: var(--f-body); }
-
-  /* ── The ground (item M.3) — see the header for the measured numbers. ── */
-  .ground {
-    /* INSET, not full-bleed: a hairline field crossing the frame edge reads
-       as a printing error rather than as a ground. The 16px is also
-       load-bearing for the measurement — `clippedEdgeShare` counts ink inside
-       an 8px bleed band and fails a slide over 0.4%, and a full-bleed version
-       of this field measured 0.5% — so the design choice and the metric agree
-       here, which is the only reason a number appears in this comment. */
-    position: absolute; inset: 16px; z-index: 0; overflow: hidden;
-    background-image: repeating-linear-gradient(45deg,
-      color-mix(in srgb, var(--fg) 14%, transparent) 0 1.5px,
-      transparent 1.5px 18px);
+  body {
+    position: relative; overflow: hidden;
+    background: var(--bg); color: var(--fg); font-family: var(--f-body);
+    display: flex; flex-direction: column;
+    padding: 104px var(--mx) 112px;
   }
-  /* The accent moment stays a RULE, never a solid block. A solid block over
-     ~3% of the frame measures as `graphicShare`, which would let a statement
-     slide clear the cover role's imagery-or-device floor and quietly undo
-     `default:cover-carries-device`. A hairline is too thin to be read as a
-     device by the pixels, which is the correct answer for an interior slide. */
-  .ground-rule {
-    position: absolute; inset-block-start: 90px; inset-inline-end: -80px;
-    inline-size: 520px; block-size: 4px; background: var(--accent);
-    transform: rotate(45deg); transform-origin: center;
+
+  /* ── L1: the tonal wash, FULL BLEED, and it lives in the 12-18 BAND. ──
+     The measurement has two lines: a pixel is GROUND within 12 of the ground
+     colour and INK beyond 18, and the band between them is counted in
+     nothing. That band is exactly what a ground wash is — a tone a reader can
+     see that is not a mark — so both stops are placed inside it (7% of the
+     foreground token is 15.1, 15% of a typical accent is 13.8). Three things
+     follow, and all three are wanted: the wash may bleed to the frame edge
+     without putting ink in the band `clippedEdgeShare` reads; it takes the
+     plate OFF "flat", which is the honest way past clause D (a conjunction:
+     flat AND idle — a plate with a ground is not flat); and it cannot be
+     mistaken for content, so `contentOccupiedShare` keeps meaning "something
+     to read".
+
+     The two washes are kept spatially APART (one in the start corner, one at
+     the far end) rather than layered: two 15-unit tones stacked would sum
+     past 18 and become a drawn field, which is not what this is. */
+  .ground {
+    position: absolute; inset: 0; z-index: 0;
+    background-image:
+      radial-gradient(104% 62% at 2% 0%, color-mix(in srgb, var(--fg) 7%, transparent) 0%, transparent 80%),
+      linear-gradient(196deg, transparent 40%, color-mix(in srgb, var(--wash) 8%, transparent) 100%);
+  }
+
+  /* ── L2: the texture and the accent geometry, ON THE STATEMENT FIELD. ──
+
+     This used to be two full-bleed `<div>`s inset 16px, and that was the
+     defect this revision exists to remove. A texture that paints ink in every
+     cell of the plate makes `occupiedShare` and `largestEmptyRectShare`
+     constants: measured through `measureSlidePng` over real Chromium, this
+     file's previous revision reported the SAME 1.5% largest empty rectangle
+     with the full copy on it and with every slot empty (the 16px left gutter,
+     the one strip the inset did not paint), and 43.3% occupied on a plate
+     carrying nothing at all. Clause C of the interest floor — the one the
+     metric's own module header calls "the metric that names the complaint" —
+     could not fire on any plate this directory produced.
+
+     So the standing rule stated in `cover.html`'s header applies here:
+     **tone may paint anywhere, ink only inside a region the composition
+     occupies, and only when the content that justifies it is present.**
+     `.copy` is that region — the statement's field — and the texture and the
+     accent geometry are ITS background, switched off entirely when there is
+     no statement. An empty plate now measures 3% occupied and fails clauses
+     D and G on the pixels alone, and a plate whose middle is hollow reports
+     the hole.
+
+     The texture is 2px rules every 9px at 22% of the foreground: about 48
+     units of contrast, a real pinstripe at feed size, where the pre-rework
+     14%/1.5px/18px was 31 units at half the duty and reproduced as nothing on
+     a dim phone. The PITCH is the number that had to be re-derived once the
+     texture stopped being full-bleed, and it was derived from the instrument:
+     a measurement cell is 4 design px, so a 2px rule on a `p`px pitch marks
+     `(2+4)/p` of the cells it crosses. At the old 13px pitch that is 46% —
+     the field looked textured and measured half empty, and this archetype sat
+     6 points under the interior occupancy floor with no margin. At 9px it is
+     67%, which puts a field-bearing plate at ~53% occupied against a 30%
+     floor and keeps the calibration's 8-point margin.
+
+     It stays a TEXTURE and not a device at either pitch, and that is a
+     property of the RULE WIDTH rather than of the pitch: a 2px rule cannot
+     fill three quarters of a 4px cell, so no cell it crosses can ever reach
+     the 48-of-64 coverage the measurement requires before it counts as
+     drawn. That is what keeps `headline_focus` under the cover role's device
+     floor — its editorial identity, pinned by the calibration test.
+
+     A single 45-degree direction rather than a grid, because a grid's
+     crossings fill whole cells at their intersections — which WOULD read as
+     device coverage, and would quietly undo `default:cover-carries-device`
+     for a statement slide.
+
+     The accent geometry is TWO bands, 3px rules every 46px (~6.5% duty) — 300px
+     across the field's head and 200px across its foot, placed with
+     `background-size` and `-position` so each repeat is confined to a band
+     rather than covering the field. Enough accent for the eye to land on;
+     nowhere near the coverage a drawn device needs (this plate measures 5-9%
+     of imagery-or-device against a 10% floor it must stay under, which is
+     `headline_focus`'s editorial identity).
+     Two rather than one because the statement is centred in its field: with a
+     band only at the head, a short statement left the bottom quarter of the
+     plate as bare texture and the plate read bottom-empty. Bands at both ends
+     frame the statement instead of hanging above it. */
+  .copy-art {
+    background-image:
+      repeating-linear-gradient(45deg,
+        var(--accent) 0 3px, transparent 3px 46px),
+      repeating-linear-gradient(45deg,
+        var(--accent) 0 3px, transparent 3px 46px),
+      repeating-linear-gradient(45deg,
+        color-mix(in srgb, var(--fg) 22%, transparent) 0 2px,
+        transparent 2px 9px);
+    background-size: 100% 300px, 100% 200px, auto;
+    background-repeat: no-repeat, no-repeat, repeat;
+    background-position: 0 0, 0 100%, 0 0;
+  }
+  /* The guard. No statement, no field — see the block above. */
+  body:has(#headline:empty) .copy-art { background-image: none; }
+
+  /* The alternative ground: the texture mirrored, plus a display-face numeral
+     bleeding off the start corner. The numeral is OUTLINED rather than
+     filled, which is what keeps a 760px glyph from becoming the largest drawn
+     device on the plate — but the stroke is now 5px at 34% of the foreground
+     (the previous 3px at 26% was invisible at feed size), and the fill is
+     lifted to 11% so the counters read as tone rather than as holes. */
+  body.gr-glyph .copy-art {
+    background-image:
+      repeating-linear-gradient(135deg,
+        var(--accent) 0 3px, transparent 3px 46px),
+      repeating-linear-gradient(135deg,
+        var(--accent) 0 3px, transparent 3px 46px),
+      repeating-linear-gradient(135deg,
+        color-mix(in srgb, var(--fg) 22%, transparent) 0 2px,
+        transparent 2px 9px);
   }
   .ground-glyph { display: none; }
-  /* The alternative ground: the same field mirrored, plus a display-face
-     numeral bleeding off the top. The numeral is OUTLINED — the fill sits
-     below the ink threshold (texture) while the stroke is above it (content),
-     and both stay too thin to register as a device. */
-  body.gr-glyph .ground { background-image: repeating-linear-gradient(135deg,
-      color-mix(in srgb, var(--fg) 14%, transparent) 0 1.5px,
-      transparent 1.5px 18px); }
-  body.gr-glyph .ground-rule { display: none; }
+  /* Furniture, but furniture that paints ink, so it answers to the same rule:
+     a plate with no statement on it paints no numeral either. */
+  body:has(#headline:empty) .ground-glyph { display: none !important; }
   body.gr-glyph .ground-glyph {
-    display: block; position: absolute;
-    inset-block-start: calc(-190px * var(--ts, 1)); inset-inline-start: calc(-24px * var(--ts, 1));
-    font-family: var(--f-display); font-weight: 600; font-size: calc(760px * var(--ts, 1));
-    line-height: 0.8; letter-spacing: -0.04em;
-    color: color-mix(in srgb, var(--fg) 8%, transparent);
-    -webkit-text-stroke: 3px color-mix(in srgb, var(--fg) 26%, transparent);
+    display: block; position: absolute; z-index: 0;
+    inset-block-start: calc(-210px * var(--ts, 1)); inset-inline-start: calc(-18px * var(--ts, 1));
+    font-family: var(--f-display); font-weight: 600; font-size: calc(720px * var(--ts, 1));
+    line-height: 1; letter-spacing: -0.04em; padding-block-end: 0.2em;
+    /* OUTLINE ONLY, and that is the whole trick. A filled numeral is a filled
+       SHAPE: at 9% of the foreground its interior sits 19 units off the
+       ground, past the ink line, so every cell inside the glyph counts as a
+       covered low-colour cell — a drawn device — and this plate measured
+       12.7% of device share from a decoration. Dropping the fill entirely and
+       spending the budget on stroke CONTRAST instead (4px at 52%, against the
+       previous 3px at 26%) gives a numeral a reader can actually see while
+       the pixels inside it stay ground. */
+    color: transparent;
+    -webkit-text-stroke: 4px color-mix(in srgb, var(--fg) 52%, transparent);
   }
 
-  .copy { position: absolute; inset-inline: var(--mx); bottom: 130px; z-index: 4; }
-  /* An optional number device sits inside the bottom-anchored lockup, above
-     the kicker, so it grows upward into the ground rather than pushing the
-     headline off the plate. Any archetype may carry a `device` (item M.4);
-     this is the one bundled typographic archetype that renders it. */
-  .hf-device { margin-block-end: calc(40px * var(--ts, 1)); }
+  /* ── The composition. Three parts down the plate, not one block at the
+        bottom: this is what fills the frame, and it is the half of the fix
+        that decoration cannot do. ── */
+  .hf-top { position: relative; z-index: 4; flex: 0 0 auto; }
+  /* The statement is anchored to the FOOT of the elastic middle rather than
+     optically centred in it. Centring left a 500px band of nothing between
+     the accent band and the body — the same hole this archetype is being
+     rebuilt to close, moved down the plate. Anchored, the breathing room all
+     collects at the top, where the accent geometry is, and the reading order
+     (kicker -> statement -> evidence) is one continuous block. */
+  /* The field runs the full measure inside the 16px frame — wider than the
+     body's own 64px margin, which is what makes it read as a field rather
+     than as a highlighted paragraph. The negative inline margin and the
+     matching inline padding cancel, so no glyph moves. 16px and not 0,
+     because `clippedEdgeShare` counts ink inside an 8px bleed band and fails
+     a slide over 0.4%.
+     It holds the statement AND the evidence under it, so the region the
+     texture marks is the whole of what the reader reads — which is what
+     `largestEmptyRectShare` is supposed to be measuring the complement of. */
+  .hf-field {
+    position: relative; z-index: 4; flex: 1 1 auto; min-block-size: 0;
+    display: flex; flex-direction: column; justify-content: center;
+    margin-inline: calc(16px - var(--mx)); padding-inline: calc(var(--mx) - 16px);
+    margin-block-start: calc(30px * var(--ts, 1));
+    padding-block: calc(44px * var(--ts, 1));
+  }
+  /* THE STATEMENT BLOCK NEVER SHRINKS BELOW ITS OWN CONTENT, and that is a
+     correctness rule rather than a taste one.
+
+     It used to read `flex: 0 1 auto; min-block-size: 0; justify-content:
+     flex-end`. Those three together are a trap: when the copy runs past the
+     field the flex algorithm is free to shrink this box under its content,
+     and `flex-end` then spills the excess out of the BLOCK-START edge. At
+     `l` with the calibration's 90-character statement the headline rendered
+     155px ABOVE its own parent and printed over the kicker rail — two type
+     blocks on top of each other, with the hairline running through the
+     glyphs — and every instrument in the tree called the plate clean,
+     because `scrollHeight` counts content below the padding box and never
+     content above it. (That blindness is now closed at the source: see the
+     block-start limb in `probePage`, `render-carousel.ts`.)
+
+     At `flex: 0 0 auto` the box is exactly its content. Any residual
+     overflow is then pushed out of `.hf-field`, which is centred, so it
+     spills in BOTH directions and the DOM probe's `scrollHeight` limb sees
+     it and fails clause B. Overflow that cannot be designed away must at
+     least be visible. */
+  .copy { flex: 0 0 auto; display: flex; flex-direction: column; }
+  .hf-foot { flex: 0 0 auto; margin-block-start: calc(46px * var(--ts, 1)); }
+
+  /* An optional number device sits above the statement, inside the elastic
+     middle, so it grows away from the headline rather than pushing it off the
+     plate. Any archetype may carry a `device` (item M.4); this is the one
+     bundled typographic archetype that renders it. */
+  .hf-device { margin-block-end: calc(44px * var(--ts, 1)); }
   .hf-device:empty { display: none; }
 
   .kicker {
-    font-family: var(--f-mono); font-weight: 500; font-size: calc(22px * var(--ts, 1));
-    letter-spacing: 0.22em; text-transform: uppercase;
-    color: color-mix(in srgb, var(--fg) 78%, transparent); margin-bottom: 28px;
+    font-family: var(--f-mono); font-weight: 600; font-size: calc(24px * var(--ts, 1));
+    letter-spacing: 0.24em; text-transform: uppercase;
+    color: color-mix(in srgb, var(--fg) 88%, transparent);
   }
   .kicker:empty { display: none; }
+  /* The rail under the kicker runs the full measure — it is what tells the
+     reader the plate has a top edge, and it is the element that stops the
+     upper third reading as a hole. A 3px rule covers no cell, so it is
+     geometry the reader sees and the device floor does not. */
+  .hf-rail { block-size: 2px; background: color-mix(in srgb, var(--fg) 48%, transparent); margin-block-start: calc(26px * var(--ts, 1)); }
 
   .hf-headline {
-    font-family: var(--f-display); font-weight: 600; font-size: calc(118px * var(--ts, 1));
-    line-height: 1.02; letter-spacing: -0.02em; text-wrap: balance;
+    /* Weight 500, not 600. A 118px Fraunces at 600 has stems thick enough to
+       COVER whole measurement cells, and a covered low-colour cell is what
+       the instrument calls a drawn device — at 600 this plate measured 3.9%
+       of drawn device from its typography alone, over the cover role's 3%
+       floor, which would have made an all-type statement slide look to the
+       floor exactly like a cover carrying a figure. At 500 it measures well
+       under, and Fraunces at 500/118px is not a quieter headline; it is a
+       better-drawn one. */
+    font-family: var(--f-display); font-weight: 500; font-size: calc(124px * var(--ts, 1));
+    line-height: 1.06; letter-spacing: -0.02em; text-wrap: balance;
+    /* Not cosmetic. A display face's glyph box is taller than a sub-1.15
+       line box, so the block reports `scrollHeight > clientHeight` and the
+       renderer's DOM probe calls it an overflowing element — which fails
+       clause B of the interest floor on a slide that fits perfectly. The
+       padding is in `em` so it tracks every size step and every per-script
+       type scale. */
+    padding-block-end: 0.22em;
   }
-  .hf-headline.small { font-size: calc(92px * var(--ts, 1)); line-height: 1.05; }
-  .hf-headline.tiny { font-size: calc(74px * var(--ts, 1)); line-height: 1.1; }
+  /* The ladder steps UP from the previous revision (112/92/76). A statement
+     slide is the one plate in the set with nothing on it but the statement,
+     and at the old sizes a 63-character headline filled 380px of a 1110px
+     field: the type had to carry the frame and it was not big enough to.
+     It also gained a FOURTH step, `micro`: three steps bottomed out at 86px
+     and there was nothing under it, so past ~100 characters the block simply
+     grew until it left the plate. */
+  .hf-headline.small { font-size: calc(104px * var(--ts, 1)); line-height: 1.08; }
+  .hf-headline.tiny { font-size: calc(86px * var(--ts, 1)); line-height: 1.12; }
+  .hf-headline.micro { font-size: calc(68px * var(--ts, 1)); line-height: 1.16; }
 
-  .stat-band { width: 132px; height: 12px; background: var(--accent); margin-top: 34px; }
+  /* The accent band under the statement. 200x14 rather than the set's
+     standing 132x12: on a 1080px plate the smaller bar reads as a detail
+     rather than as punctuation, and 14px is still a rule — it covers three
+     and a half of the measurement's 4px cell rows, which is under the
+     coverage a drawn device needs. */
+  .stat-band {
+    inline-size: calc(200px * var(--ts, 1)); block-size: calc(14px * var(--ts, 1));
+    background: var(--accent); margin-block-start: calc(36px * var(--ts, 1));
+  }
 
   .body-text {
-    font-family: var(--f-body); font-weight: 400; font-size: calc(31px * var(--ts, 1)); line-height: 1.55;
-    color: color-mix(in srgb, var(--fg) 92%, transparent); margin-top: 30px; max-width: 900px; text-wrap: pretty;
+    font-family: var(--f-body); font-weight: 400; font-size: calc(33px * var(--ts, 1)); line-height: 1.55;
+    color: color-mix(in srgb, var(--fg) 92%, transparent); max-inline-size: 900px; text-wrap: pretty;
+    border-inline-start: calc(4px * var(--ts, 1)) solid color-mix(in srgb, var(--accent) 80%, transparent);
+    padding-inline-start: calc(30px * var(--ts, 1));
   }
   .body-text:empty { display: none; }
-  .brand-badge:empty, .brand-handle:empty { display: none; }
+
+  /* Standing brand furniture. The brand head fragment
+     (`buildBrandHeadHtml`) restates both rules and lands AFTER this sheet, so
+     a client with a kit keeps its own placement; these defaults exist because
+     a brandless render otherwise lays the handle out in normal flow, on top
+     of the copy. */
+  .brand-handle {
+    position: absolute; bottom: 44px; inset-inline-start: 44px; z-index: 6;
+    font-family: var(--f-mono); font-size: calc(19px * var(--ts, 1)); letter-spacing: 0.08em;
+    color: color-mix(in srgb, var(--fg) 55%, transparent);
+  }
+  .brand-badge {
+    position: absolute; top: 56px; inset-inline-start: var(--mx); z-index: 6;
+    font-family: var(--f-mono); font-weight: 600; font-size: calc(19px * var(--ts, 1));
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent);
+  }
+  /* An @handle, a URL and a #hashtag are LTR strings, and a Hebrew or Arabic
+     slide lays them out inside an RTL paragraph: the leading `@` is a bidi
+     NEUTRAL, so it takes the paragraph embedding level and ends up on the
+     wrong side — every Hebrew slide in the tree shipped `karoslabs@`. The
+     `<bdi dir="ltr">` in the markup is the fix; `dir` on the DIV would also
+     have re-resolved its own `inset-inline-start` and moved the watermark to
+     the other corner. The extra :has() selector is what keeps an empty slot
+     hidden now that the div always has an element child. */
+  .brand-badge:empty, .brand-handle:empty, .brand-handle:has(> bdi:empty) { display: none; }
 </style>
 </head>
 <body class="ts-{{fontScale}} ta-{{textAlign}} gr-{{groundStyle}}">
+  <div class="ground" aria-hidden="true"></div>
+  <span class="ground-glyph" aria-hidden="true">{{slideIndex}}</span>
   <div class="brand-badge">{{seriesBadge}}</div>
-  <div class="brand-handle">{{brandHandle}}</div>
-  <div class="ground" aria-hidden="true">
-    <div class="ground-rule"></div>
-    <span class="ground-glyph">{{slideIndex}}</span>
-  </div>
-  <div class="copy">
-    <div class="hf-device">{{html:device}}</div>
+  <div class="brand-handle"><bdi dir="ltr">{{brandHandle}}</bdi></div>
+  <div class="hf-top">
     <div class="kicker">{{kicker}}</div>
-    <div class="hf-headline" id="headline">{{headline}}</div>
-    <div class="stat-band"></div>
-    <div class="body-text">{{body}}</div>
+    <div class="hf-rail"></div>
+  </div>
+  <div class="hf-field copy-art">
+    <div class="copy">
+      <div class="hf-device">{{html:device}}</div>
+      <div class="hf-headline" id="headline">{{headline}}</div>
+      <div class="stat-band"></div>
+    </div>
+    <div class="hf-foot">
+      <div class="body-text">{{body}}</div>
+    </div>
   </div>
   <script>
-    // Legacy `news-pulse` breakpoints verbatim: >32 characters to `small`,
-    // >60 to `tiny`.
+    // Legacy `news-pulse` gave two breakpoints (>32 to `small`, >60 to
+    // `tiny`) and nothing below them. Two things are wrong with that here.
+    //
+    // 1. THE LADDER HAD NO BOTTOM. Past ~100 characters the block just kept
+    //    growing at 86px until it ran off the plate. Measured at `m`: a
+    //    129-character statement put the headline 13px ABOVE the kicker
+    //    rail. The `micro` step is the floor the ladder was missing.
+    //
+    // 2. THE BREAKPOINTS HAVE TO MOVE WITH THE REVIEWER'S TYPE SCALE, for
+    //    the reason `quote-card.html`'s script already states: the ladder
+    //    picks a size from the string's length alone, so at `l` (`--ts`
+    //    1.18) every step it picks is 18% taller inside a plate that did not
+    //    grow. Measured: the calibration fixture's own 90-character LONG
+    //    statement with its 307-character body took the `tiny` step at both
+    //    scales, fitted at `m` with 120px of clearance, and at `l` needed
+    //    155px more than the field has. Shifting each threshold down by
+    //    ~15% at `l` steps that statement to `micro`, which fits.
+    //
+    // `s` keeps the `m` thresholds: a smaller scale never overflows, and
+    // stepping DOWN there would make a short statement tiny for no reason.
+    //
+    // The one honest cost: at `l` a long statement now sets a little SMALLER
+    // than the same statement at `m` (68 x 1.18 = 80px against 86px). That
+    // is the right trade — `l` is a reviewer asking for bigger type, and the
+    // ladder gives it on everything that fits, but a statement printed on
+    // top of its own kicker is not a bigger statement, it is a broken plate.
     (function () {
       var h = document.getElementById("headline");
       var len = (h.textContent || "").trim().length;
-      if (len > 60) h.className = "hf-headline tiny";
-      else if (len > 32) h.className = "hf-headline small";
+      var big = document.body.classList.contains("ts-l");
+      if (len > (big ? 78 : 100)) h.className = "hf-headline micro";
+      else if (len > (big ? 50 : 60)) h.className = "hf-headline tiny";
+      else if (len > (big ? 27 : 32)) h.className = "hf-headline small";
       window.__CAROUSEL_READY__ = true;
     })();
   </script>

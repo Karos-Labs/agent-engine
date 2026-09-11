@@ -110,9 +110,36 @@ describe("buildScriptFontHeadHtml: the Hebrew fragment", () => {
 
   it("sets display and body line heights on the real template classes, never on the stat figure's lockup", () => {
     const head = buildScriptFontHeadHtml("Hebrew", HEBREW, {});
-    expect(head).toMatch(/\.headline, \.hf-headline, \.quote-text, \.cmp-head[^{]*\{ line-height: 1\.12; \}/);
+    expect(head).toMatch(/\.headline, \.hf-headline, \.quote-text, \.cmp-head[^{]*\{ line-height: 1\.12;/);
     expect(head).toMatch(/\.body-text, \.body, \.num-body[^{]*\.kicker, \.eyebrow \{ line-height: 1\.6; \}/);
     expect(head).not.toContain(".num-figure");
+  });
+
+  /**
+   * THE DESCENDER ALLOWANCE TRAVELS WITH THE LEADING IT ANSWERS TO.
+   *
+   * A display face's glyph box is taller than a sub-1.15 line box, so a block
+   * set at the Hebrew display leading reports `scrollHeight > clientHeight`,
+   * which the renderer's DOM probe calls an overflowing element and clause B
+   * of the interest floor fails the slide on — a false `clipped` finding
+   * whose steer tells the writer to shorten a headline that fits.
+   *
+   * The templates each carry their own `padding-block-end` for the LATIN
+   * case, sized against their own 1.2-1.3 leading, and that was the whole bug:
+   * this sheet overrides all of them to 1.12 and the per-template allowance
+   * then either covers the new half-leading deficit or does not. Measured in
+   * Chromium with Heebo at 62px/1.12 the requirement is ~0.177em, and four of
+   * the eight bundled templates shipped between 0.10em and 0.14em. So the
+   * allowance is emitted HERE, by the rule that sets the leading, and this
+   * test is what stops the two being separated again.
+   */
+  it("emits a descender allowance alongside the display leading, on the same selectors", () => {
+    for (const [script, spec] of Object.entries(SCRIPT_TYPOGRAPHY)) {
+      const head = buildScriptFontHeadHtml(script, spec, {});
+      const rule = /\.headline, [^{]*\{ line-height: [\d.]+; padding-block-end: ([\d.]+)em; \}/.exec(head);
+      expect(rule, `${script} sets a display leading with no descender allowance beside it`).not.toBeNull();
+      expect(Number(rule![1]), `${script}'s descender allowance is under the ~0.177em Heebo needs at this leading`).toBeGreaterThanOrEqual(0.18);
+    }
   });
 
   it("drops a client family that fails the shared family-name rule rather than quoting it into the sheet", () => {

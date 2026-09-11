@@ -451,15 +451,37 @@ describe("05b-source-images", () => {
       | { downgraded: number[]; archetypes: Array<{ slide: number; layout: string }>; reason: string }
       | undefined;
     expect(downgrade?.downgraded).toEqual([1]);
-    // The ladder, not `text_only`: with no hero and no device a cover takes
-    // the ground-reworked `headline_focus`.
-    expect(downgrade?.archetypes).toEqual([{ slide: 1, layout: "headline_focus" }]);
-    expect(downgrade?.reason).toContain("1 → headline_focus");
+    // The ladder, not `text_only` — and on slide 1 the ladder's answer is
+    // `cover`, not `headline_focus`.
+    //
+    // It used to be `headline_focus`, because `fallbackArchetypePreferences`
+    // gated its slide-1 entry on a hero-or-device being present. Measured on
+    // real renders of the bundled templates, that gate was routing away from
+    // the only plate that works: with no hero and no device
+    // `cover.html` measures 33.1% imagery-or-device against the cover role's
+    // 10% floor, while `headline-focus.html` measures 3.9% and the client's
+    // bare `slide.html` 4.3% — both of which fail clause E. The whole reason
+    // this slide reaches 07a is that no photograph could be found, so there
+    // is no writer left to ask for one; the degrade takes the best plate the
+    // pipeline can build. (`interest-relayout`'s `colour-block-ground`
+    // remedy already moved slide 1 onto `cover` for exactly this finding, one
+    // paid render later — this is that answer, reached first.)
+    expect(downgrade?.archetypes).toEqual([{ slide: 1, layout: "cover" }]);
+    expect(downgrade?.reason).toContain("1 → cover");
 
     // And what actually rendered says the same thing.
     const slidesData = steps.find((s) => s.stepId === "07c-emit-slides-data-attempt-1")?.output as
       | { slides: Array<{ n: number; template: string; images?: Record<string, string> }> }
       | undefined;
+    // ...and lands one rung DOWN from what 07a named, because this client's
+    // templateDir is `__tests__/fixtures/templates/`, which holds no
+    // `cover.html`. That is `resolveLayout`'s availability floor doing its
+    // job — the guaranteed-delivery rule that keeps a client configured
+    // before the archetype set shipped from turning its next carousel into a
+    // `tooling_error` — and the two values differing here is the pin on it.
+    // A client whose directory does hold `cover.html` renders slide 1 as a
+    // cover; this one takes the next rung, `headline_focus`, and NOT the bare
+    // `slide.html` the ladder exists to avoid.
     expect(slidesData?.slides[0]?.template).toBe("headline-focus.html");
     // No hero on it either, so `slide.html` here would have been the bare
     // plate rather than a photo slide's ground.

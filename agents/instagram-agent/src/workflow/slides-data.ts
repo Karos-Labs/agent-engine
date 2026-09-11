@@ -604,11 +604,86 @@ export interface SlidePosition {
   earlier?: readonly InstagramSlideCopy[] | undefined;
 }
 
-/** Whether the content a `cover` needs is there: a photograph, or a device to carry the frame instead. */
-function coverContentAvailable(slide: InstagramSlideCopy, position: SlidePosition | undefined): boolean {
-  if (slide.device !== undefined) return true;
-  return position?.hasHeroImage !== false;
-}
+/*
+ * ── WHY THERE IS NO `coverContentAvailable` ANY MORE ─────────────────────
+ *
+ * There was one, and it read "a cover needs a photograph or a device;
+ * neither, and it is the headline-on-flat-ground slide `cover.html` exists to
+ * make impossible". That premise was true of the `cover.html` that shipped
+ * with item M — whose two gradient stops both sat inside `INK_DELTA`, i.e.
+ * invisible on purpose — and it is false of the one in the tree now.
+ *
+ * Measured through real 2160x2880 renders of the bundled templates
+ * (`.local/probe-template.mjs`, 2026-09-11), for a slide 1 with no hero and
+ * no device, against the cover role's own floors:
+ *
+ *   plate                    imagery+device   occupied   largest empty rect
+ *   cover.html                   20.6%          37.9%          9.8%     passes
+ *   slide.html (client base)      6.1%          54.9%          1.5%     fails clause E
+ *   headline-focus.html           4.5%          50.9%          7.8%     fails clause E
+ *   ── the cover role's floors ─  10.0%          42.0%         22.0%
+ *
+ * (Re-measured 2026-09-11 after the archetypes stopped painting a full-plate
+ * texture and bound every ink-bearing layer to the content that justifies it;
+ * the shape of the table is the same and the conclusion is unchanged.
+ * `occupied` reads below the cover floor on all three now because the floor's
+ * clause is a CONJUNCTION with `flatBackgroundShare > 0.70`, which none of
+ * them trips.)
+ *
+ * So the gate was routing slide 1 away from the only plate that clears the
+ * role it is about to be judged at, and toward one the floor is deliberately
+ * built to reject (`IMAGERY_OR_DEVICE_FLOOR`'s own note: "`headline_focus`
+ * judged at the cover role still reports `no-device`"). Four other modules
+ * had already reached the opposite conclusion — `DEVICE_TEMPLATE_BASENAMES`
+ * (visual-qa-pre-checks) and `DEVICE_BEARING_ARCHETYPES` (scene-brief) both
+ * list `cover` as an archetype that carries the frame on its own,
+ * `IMAGERY_OR_DEVICE_FLOOR`'s measured band table records the cover's colour
+ * field, and `interest-relayout`'s `colour-block-ground` remedy spends the
+ * one free re-layout moving slide 1 onto `cover` for exactly this finding.
+ * This function was the lone dissenter, and it ran FIRST, so the pipeline
+ * rendered the bad plate, measured it, and then paid a second render to reach
+ * the answer it could have had — except when `07a` marked the slide
+ * `downgradedForImages`, which WAIVES clause E, so no finding fired, no
+ * re-layout ran, and the type-only plate shipped.
+ *
+ * ── WHAT THAT WAIVED PATH IS AND IS NOT, EXACTLY ─────────────────────────
+ *
+ * Removing this gate closes the waived path for any client whose
+ * `templateDir` carries the bundled archetype set: slide 1 lands on `cover`,
+ * the plate clears clause E on its own, and there is nothing for the waiver
+ * to hide. It does NOT close it for a legacy `templateDir` with no
+ * `cover.html` in it, and that is a live configuration rather than a
+ * hypothetical — `availableTemplates` is read from the client's own directory
+ * (`create-instagram-agent-workflow.ts`'s `ensureTemplatesOnDisk` plus
+ * `materializeBrandedClientDir`, which copies the client's files and never
+ * adds the bundled archetypes). For such a client `resolveLayout`'s
+ * availability check still drops slide 1 to `headline_focus` (or to
+ * `text_only`), that plate still measures under the cover role's device
+ * floor, and `downgradedForImages` still waives the finding — as does
+ * `COVER_WAIVED_RULE_IDS` for `default:cover-carries-device` in the same
+ * breath. `__tests__/slides-data.test.ts` and `image-sourcing.test.ts` both
+ * pin that route, deliberately.
+ *
+ * What HAS changed for that client, and it is the half that mattered, is what
+ * the waived plate looks like: `headline-focus.html` is no longer a statement
+ * in the lower third of a plate whose ground was tuned to be invisible. It
+ * carries a visible textured field bound to its own statement, 50.9% occupied
+ * against 47.2%, and a real largest empty rectangle (7.8%, where the old
+ * full-plate texture pinned every plate in the directory at 1.5% whatever was
+ * on it). So the waiver no longer hides a grey screen; it hides a designed
+ * typographic plate that is not a cover. Closing the remaining gap needs
+ * either a bundled-cover fallback in `materializeBrandedClientDir` or a
+ * narrower waiver, and neither belongs in this function.
+ *
+ * What is given up is real and worth naming: a bare `cover` request used to
+ * degrade to `headline_focus` and come back as a `default:cover-carries-device`
+ * failure, which sent the draft to a redraft that could add a figure device.
+ * That lever is gone for slide 1. It bought a redraft's worth of cost to turn
+ * a 20.6% plate into a 27.4% plate that also carries a number — a real
+ * improvement, but not one worth shipping 4.5% whenever it cannot be had.
+ * Prompt @14 §7 and §19 still ask for the picture and the device in words,
+ * and the interest floor still steers a cover that measures thin.
+ */
 
 /** Whether the content a `closer` needs is there: a recap to build, a device, or copy that actually closes. */
 function closerContentAvailable(slide: InstagramSlideCopy, position: SlidePosition | undefined): boolean {
@@ -643,7 +718,10 @@ export function fallbackArchetypePreferences(slide: InstagramSlideCopy, position
   if (slide.comparison) preferences.push("comparison_card");
   if (slide.items && slide.items.length >= 2) preferences.push("list_takeaway");
   if (position?.hasHeroImage === true) preferences.push("photo");
-  if (position !== undefined && position.index === 0 && coverContentAvailable(slide, position)) preferences.push("cover");
+  // SLIDE 1 IS A COVER, WITH OR WITHOUT A PHOTOGRAPH — see the note above
+  // `closerContentAvailable` for the measurements that removed the
+  // hero-or-device condition this entry used to carry.
+  if (position !== undefined && position.index === 0) preferences.push("cover");
   if (position !== undefined && position.index === position.lastIndex && position.index > 0 && closerContentAvailable(slide, position)) {
     preferences.push("closer");
   }
@@ -791,19 +869,18 @@ export function resolveLayout(
       return slide.comparison ? { layout: slide.layout } : missing("comparison");
     case "list_takeaway":
       return slide.items && slide.items.length >= 2 ? { layout: slide.layout } : missing("items");
-    case "cover":
-      // A cover carries a photograph or a device. Neither, and it is the
-      // headline-on-flat-ground slide `cover.html` exists to make
-      // impossible — so it degrades rather than rendering the defect under
-      // a better name.
-      return coverContentAvailable(slide, position) ? { layout: slide.layout } : missing("hero image or device");
     case "closer":
       return closerContentAvailable(slide, position) ? { layout: slide.layout } : missing("recap, device, or closing line");
+    case "cover":
     case "photo":
     case "text_only":
     case "headline_focus":
-      // These three need nothing beyond `headline`/`body`, which the schema
-      // already requires on every slide.
+      // These four need nothing beyond `headline`/`body`, which the schema
+      // already requires on every slide. `cover` joined them when its own
+      // ground layer stopped being invisible — see the note above
+      // `closerContentAvailable`. A hero is still ATTACHED when one exists
+      // (`HERO_IMAGE_LAYOUTS`); what changed is that its absence is no longer
+      // a reason to render something else.
       //
       // An EXPLICITLY REQUESTED `text_only` is honoured rather than sent
       // through the ladder above: a request is a statement about the slide,
@@ -818,9 +895,10 @@ export function resolveLayout(
       // rule for a lost photograph, and clause E of the interest floor is
       // waived for the same reason). `07a` now picks its target with
       // `fallbackArchetypeFor(slide, { hasHeroImage: false, ... })` instead,
-      // so a hero-less cover lands on `cover` when it carries a device and on
-      // the ground-reworked `headline_focus` otherwise. `text_only` is
-      // reached only through `degradeTo`'s floor above — a client whose
+      // so a hero-less slide 1 lands on `cover`, whose colour-block ground is
+      // purpose-built for the no-photograph case, and an interior or closing
+      // slide takes the best archetype its own content can fill. `text_only`
+      // is reached only through `degradeTo`'s floor above — a client whose
       // `templateDir` holds nothing else — or by a writer who asked for it.
       //
       // The slide that MEASURES empty is re-laid-out on evidence separately,

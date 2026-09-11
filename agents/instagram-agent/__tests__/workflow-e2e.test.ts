@@ -22,6 +22,7 @@ import {
   type TestEnvironment,
 } from "./test-helpers.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
+import { syntheticPhotograph } from "./synthetic-photograph.js";
 import { SKELETON_BELIEF_KEY, readSkeletonHistory, skeletonSignature } from "../src/workflow/skeleton-memory.js";
 import { CUSTOM_ARCHETYPE_BELIEF_KEY } from "../src/workflow/custom-archetype-memory.js";
 import { RUN_BUDGET_BELIEF_KEY } from "../src/workflow/run-budget.js";
@@ -571,7 +572,49 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
   // `publish.renderCarousel` tool (real Chromium, real screenshot) slots in
   // without any change to the workflow at all, whenever a real browser
   // binary happens to be available.
+  /**
+   * REAL TEMPLATES AND A REAL PHOTOGRAPH, for this test only.
+   *
+   * Every other test in this file renders through `fakeRenderCarousel`, which
+   * never opens the files — so `__tests__/fixtures/` has always held thin
+   * stand-ins: a 39-line `slide.html` that is a white page with centred text,
+   * and 68-byte 1x1 hero images. That was fine until item L started MEASURING
+   * the pixels. Measured through the real renderer
+   * (`.local/e2e-fixture-probe.mjs`, 2026-09-11), those fixtures are
+   * indistinguishable from the defect the floor exists to catch:
+   *
+   *   fixture template            flat   occupied  emptyRect  img+dev   verdict
+   *   slide.html + fixture hero  98.0%      3.4%      40.6%      1.2%   dead-space, empty, no-device, empty
+   *   headline-focus.html        95.6%      6.6%      53.9%      3.0%   dead-space, empty
+   *   list-takeaway.html         98.1%      2.9%      44.3%      1.3%   dead-space, empty, no-device, empty
+   *
+   * So `08a1` fails, `returnToCopyWith` sends the attempt back to `05` for a
+   * redraft, `happyRouter()`'s queued turns run out, and the run ends
+   * `degraded` — for reasons that are entirely about the fixtures and say
+   * nothing about the workflow this test exists to prove. The answer is not
+   * to accept `degraded` (that would delete the only end-to-end check that
+   * the real renderer produces a shippable carousel) and not to queue extra
+   * turns (that would assert the redraft loop rather than the wiring). It is
+   * to hand this one test what a real run actually gets: the bundled
+   * templates, and a hero with variety in its pixels.
+   */
+  async function installRealRenderFixtures(repoRoot: string): Promise<void> {
+    const bundled = path.resolve(__dirname, "..", "assets", "templates", "default");
+    const into = path.join(repoRoot, "fixtures", "templates");
+    for (const file of (await fs.readdir(bundled)).filter((f) => f.endsWith(".html"))) {
+      await fs.copyFile(path.join(bundled, file), path.join(into, file));
+    }
+    // The design canvas's own size — see `syntheticPhotograph` for why a
+    // small image upscaled cannot stand in for a photograph here.
+    const photograph = syntheticPhotograph(1080, 1440);
+    const imageDir = path.join(repoRoot, "fixtures", "images");
+    for (const file of (await fs.readdir(imageDir)).filter((f) => f.endsWith(".png"))) {
+      await fs.writeFile(path.join(imageDir, file), photograph);
+    }
+  }
+
   it.skipIf(!isChromiumInstalled())("(real Chromium) renders and delivers using the actual publish.renderCarousel tool, unmodified", async () => {
+    await installRealRenderFixtures(env.repoRoot);
     const promptStore = makePromptStore();
     const router = happyRouter();
     const workflowFn = createInstagramAgentWorkflow({
@@ -590,6 +633,12 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     expect(result.status).toBe("completed");
     if (result.status !== "completed") throw new Error("unreachable");
     expect(result.output.renderedCount).toBe(6);
+    // AND IT SHIPPED CLEAN. `completed` alone does not say the carousel was
+    // worth shipping — item L's floor never holds a run, it marks it. This is
+    // the assertion that the real renderer, the real templates and a real
+    // photograph produce a post with no interest finding on it, which is the
+    // whole claim the fixture rework above exists to make honest.
+    expect(result.output.visualInterest, "the real-Chromium carousel shipped with an interest finding").toBeUndefined();
 
     const outDir = path.join(env.repoRoot, "instagram-output", "acme", "instagram_run_real_chromium");
     for (let n = 1; n <= 6; n++) {
