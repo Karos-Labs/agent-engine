@@ -26,6 +26,14 @@ export const BUNDLED_ARCHETYPES: readonly { file: string; archetypeId: string; n
   { file: "comparison-card.html", archetypeId: "comparison_card", name: "Comparison card", photo: false },
   { file: "list-takeaway.html", archetypeId: "list_takeaway", name: "List takeaway", photo: false },
   { file: "headline-focus.html", archetypeId: "headline_focus", name: "Headline focus", photo: false },
+  // Phase 2, item M. `cover` is the SECOND archetype that consumes a
+  // photograph — it is the grid thumbnail, and a cover that cannot hold a
+  // full-bleed image would put every carousel's first slide back on
+  // typography alone. Its template still renders without one (a graphic
+  // ground takes over), so `photo: true` here buys image SOURCING for that
+  // slide, never a dependency on the sourcing succeeding.
+  { file: "cover.html", archetypeId: "cover", name: "Cover", photo: true },
+  { file: "closer.html", archetypeId: "closer", name: "Closer", photo: false },
 ];
 
 /** Every `{{slot}}`, `{{html:slot}}` and `{{image:slot}}` name a template actually reads. */

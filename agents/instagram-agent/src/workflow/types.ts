@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ContentMode, DegradedContextGroundingMarker, TrendCandidate } from "@agent-engine/workflow";
+import { SlideDeviceSchema } from "./slide-devices.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Style config + brand tokens (RFC-03 step 02 — "freeze the small files")
@@ -417,9 +418,19 @@ export type ResearchOutput = z.input<typeof ResearchOutputSchema>;
  * - `"photo"` is the default, so any caller predating this field is unchanged.
  * - `"text_only"` is the guaranteed-delivery floor: the workflow reassigns a
  *   slide here when every image tier and the rights gate leave it with no
- *   usable picture (see `ImageSelectionSchema`). It is also what any other
- *   archetype degrades to if its own required content fields are missing —
- *   a deliberate archetype, never a placeholder.
+ *   usable picture (see `ImageSelectionSchema`). It is no longer what every
+ *   other archetype degrades to, though — Phase 2, item M: a slide whose
+ *   requested archetype cannot be satisfied now degrades through
+ *   `fallbackArchetypeFor` to the best archetype its CONTENT can fill, and
+ *   only reaches `text_only` when it truly has nothing but a headline and a
+ *   body (or when the client's own `templateDir` holds nothing else). Every
+ *   degrade path used to converge here, which is how a lost photograph
+ *   turned into the mostly-grey slide the owner named as the defect.
+ *
+ * `"cover"` and `"closer"` (Phase 2, item M) are the two POSITIONAL
+ * archetypes: slide 1 is the grid thumbnail, the last slide is the save
+ * moment. They inherit `resolveLayout`'s once-per-carousel rule for free,
+ * which is correct by nature — a carousel has one cover and one close.
  */
 export const InstagramSlideLayoutSchema = z.enum([
   "photo",
@@ -429,6 +440,8 @@ export const InstagramSlideLayoutSchema = z.enum([
   "comparison_card",
   "list_takeaway",
   "headline_focus",
+  "cover",
+  "closer",
   "custom",
 ]);
 export type InstagramSlideLayout = z.infer<typeof InstagramSlideLayoutSchema>;
@@ -536,6 +549,20 @@ export const InstagramSlideCopySchema = z.object({
   customArchetype: SlideCustomArchetypeSchema.optional(),
   /** A short mono eyebrow above a `headline_focus` statement. Optional on every archetype. */
   kicker: z.string().min(1).max(48).optional(),
+  /**
+   * Phase 2, item M — a number device, available on EVERY archetype rather
+   * than only on the two that happen to be built around a figure.
+   *
+   * This is what removes `default:numbers-are-devices`'s old apology ("only
+   * one of each exists per carousel, so every other numeric fact leads with
+   * the noun"): `resolveLayout` allows each structured archetype once per
+   * carousel, so before this field a second or third figure in a post had
+   * nowhere designed to go and was set as prose. A device is typed DATA the
+   * copy model authors; `slide-devices.ts` — first-party code — authors the
+   * markup, because `{{html:}}` substitution is unescaped and a copy field
+   * must never be able to reach it.
+   */
+  device: SlideDeviceSchema.optional(),
 });
 export type InstagramSlideCopy = z.infer<typeof InstagramSlideCopySchema>;
 
@@ -728,4 +755,16 @@ export interface InstagramAgentWorkflowResult {
    * a budget is an adaptation, never a hold.
    */
   budget?: { status: "degraded"; reason: string };
+  /**
+   * Phase 2, item L (RFC-14) — present only when the visual-interest floor
+   * was STILL failing on the final drafting attempt (or the run was past its
+   * hard max, where escalation is suppressed).
+   *
+   * The run COMPLETED and delivered: an empty-looking slide is a
+   * picture/layout problem, and this workflow's standing promise is that one
+   * never costs the post (`zero-held-guarantee.test.ts`). The marker is what
+   * keeps "shipped degraded" distinguishable from "shipped fine", with the
+   * measured numbers in the reason.
+   */
+  visualInterest?: { status: "degraded"; reason: string };
 }

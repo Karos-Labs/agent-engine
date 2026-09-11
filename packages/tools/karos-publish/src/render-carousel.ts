@@ -2,8 +2,19 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { z } from "zod";
 import { defineTool, success, contentFail, toolingError, type GcsArtifactStoreLike } from "@agent-engine/tool-common";
+import { measureSlidePng, type SlideMetrics, type SlideProbe } from "./slide-metrics.js";
 
-const TOOL_VERSION = "1.0.0";
+/**
+ * 1.1.0 — `measure` and `probe`. Both default off, so every existing caller
+ * gets byte-identical behaviour and an unchanged result shape.
+ *
+ * 1.2.0 — `metrics` gains the CONTENT mask (`contentOccupiedShare`,
+ * `largestEmptyContentRect`, `largestEmptyContentRectShare`). Additive: a
+ * caller reading the 1.1.0 fields reads the same numbers. See
+ * `slide-metrics.ts`'s "CONTENT vs DECORATION" comment for why a second mask
+ * exists — a decorative ground field satisfied the first one on its own.
+ */
+const TOOL_VERSION = "1.2.0";
 
 // n/template/fields/images have no existing TSDoc to transcribe (SCRUM-293 flag) — descriptions
 // below synthesized from fillTemplate's/validateRenderInputs' usage of each field.
@@ -18,6 +29,19 @@ export const SlideSchema = z.object({
     .describe(
       "Pre-assembled markup for {{html:key}} slots — a list archetype's rows, a comparison's columns. Distinct from fields because fields is escaped and this is not: only the calling agent's own fragment builder writes here, never a model directly.",
     ),
+  measure: z
+    .object({
+      groundHex: z.string().optional().describe("This slide's ground token (`--bg`). Anchors the measurement: on a full-bleed photograph the modal colour IS the photograph, and a flat-background share against a photograph's dominant tone means nothing."),
+      accentHex: z.string().optional().describe("This slide's resolved accent. Without it accentShare is 0 — an accent cannot be measured against an accent nobody named."),
+      foregroundHex: z
+        .string()
+        .optional()
+        .describe(
+          "This slide's foreground token, accepted so a caller can pass the whole token triple it already holds. No emitted metric anchors on it: ink is measured as 'not the ground', because a photograph and a scrim are ink too, not only glyph colour.",
+        ),
+    })
+    .optional()
+    .describe("The palette this slide was built from, used only when `measure` is set on the input. Purely an anchor — it never changes what is rendered."),
 });
 export type Slide = z.infer<typeof SlideSchema>;
 
@@ -46,6 +70,16 @@ export const RenderCarouselInputSchema = z.object({
     .min(1)
     .default("__CAROUSEL_READY__")
     .describe("The window flag (or document.body.dataset.ready value) the renderer polls for before screenshotting each slide."),
+  measure: z
+    .boolean()
+    .optional()
+    .describe(
+      "Measure each slide's rendered pixels (see slide-metrics.ts) and return the numbers on that slide's rendered[] entry. Free — no model call, ~200ms per slide — and it runs on the screenshot buffer this tool already holds, which with a mediaStore configured is the only place those bytes ever exist.",
+    ),
+  probe: z
+    .boolean()
+    .optional()
+    .describe("Run one page.evaluate per slide in the page already open, reporting overflow, offscreen boxes, element count, text-box share and the font families actually resolved. Also free."),
 });
 export type RenderCarouselInput = z.infer<typeof RenderCarouselInputSchema>;
 
@@ -56,6 +90,12 @@ export interface RenderCarouselResult {
     path: string;
     /** `gs://<bucket>/...` — always populated alongside `path` when `mediaStore` is configured, even if `path` itself holds a (possibly time-limited) signed URL, so a caller has a durable reference to fall back to. */
     gcsUri?: string;
+    /** Present only when the input asked for `measure` AND the PNG was readable. */
+    metrics?: SlideMetrics;
+    /** Why measurement produced nothing, when it was asked for and did not. A fact for the caller's ledger, never a render failure: an unreadable PNG is a tooling oddity, not an editorial verdict. */
+    measureFailure?: string;
+    /** Present only when the input asked for `probe` and the page answered. */
+    probe?: SlideProbe;
   }>;
 }
 
@@ -220,11 +260,36 @@ export async function validateRenderInputs(
  * fallback face.
  */
 
-// The two callbacks below run inside the Chromium page (Playwright serializes and executes them
+// The callbacks below run inside the Chromium page (Playwright serializes and executes them
 // in-browser), never in this Node process — this package's tsconfig has no DOM lib, so `window`/
-// `document` are declared `any` locally rather than pulling a full DOM lib in for two call sites.
+// `document` are declared locally rather than pulling a full DOM lib in for three call sites.
 declare const window: Record<string, unknown>;
-declare const document: { body?: { dataset?: Record<string, string> }; fonts: { ready: Promise<unknown> } };
+interface ProbeRect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+}
+interface ProbeElement {
+  tagName: string;
+  id: string;
+  className: unknown;
+  scrollWidth: number;
+  scrollHeight: number;
+  clientWidth: number;
+  clientHeight: number;
+  children: { length: number };
+  textContent: string | null;
+  getBoundingClientRect(): ProbeRect;
+}
+declare const document: {
+  body?: { dataset?: Record<string, string> };
+  fonts: { ready: Promise<unknown> };
+  querySelectorAll(selector: string): ProbeElement[];
+};
+declare function getComputedStyle(element: ProbeElement): { fontFamily: string };
 
 function readyFlagCheck(flag: string): boolean {
   return window[flag] === true || document.body?.dataset?.["ready"] === flag;
@@ -232,6 +297,91 @@ function readyFlagCheck(flag: string): boolean {
 
 function fontsReady(): Promise<unknown> {
   return document.fonts.ready;
+}
+
+/**
+ * The DOM half of a slide's measurement, in ONE `page.evaluate` in the page
+ * the renderer already has open. Free, and it sees three things no PNG can:
+ *
+ * - `overflow`, which is the only reliable signal for the templates that size
+ *   their display type from an in-page `textContent.length` breakpoint. A
+ *   Hebrew string of the same length as an English one has a different
+ *   rendered width, so that breakpoint can pick a size that spills its box —
+ *   and the pixels then show nothing except a few clipped edge pixels.
+ * - `offscreen`, boxes escaping the canvas entirely, which is invisible in a
+ *   screenshot by definition.
+ * - `fontFamiliesUsed`, the first real evidence that a script font LOADED
+ *   rather than that its `<link>` was emitted.
+ *
+ * Selectors are truncated to six because they exist to name a culprit in a
+ * steer sentence, not to enumerate a DOM.
+ *
+ * EXPORTED so it can be tested without a browser. Playwright serialises this
+ * function by its source and runs it in the page, so it closes over nothing
+ * at module scope — every helper and constant it uses is declared inside it,
+ * and exporting it does not change a byte of what Chromium executes. A test
+ * that installs a fake `document`/`getComputedStyle` on the global exercises
+ * the same body; without that, this logic would only ever run where Chromium
+ * is installed, and would be untested everywhere else.
+ */
+export function probePage(canvas: { n: number; w: number; h: number }): {
+  n: number;
+  overflow: boolean;
+  overflowing: string[];
+  offscreen: string[];
+  elementCount: number;
+  textBoxShare: number;
+  fontFamiliesUsed: string[];
+} {
+  const describe = (element: ProbeElement): string => {
+    const tag = String(element.tagName || "").toLowerCase();
+    const id = element.id ? `#${element.id}` : "";
+    const cls = typeof element.className === "string" && element.className.trim() !== "" ? `.${element.className.trim().split(/\s+/)[0]}` : "";
+    return `${tag}${id}${cls}`;
+  };
+
+  // `<script>` and `<style>` are text-bearing leaves with a computed font
+  // family and no pixels. Counting them would put a font nothing renders in
+  // into `fontFamiliesUsed` — which is the field the script-font check reads.
+  const nonVisual = ["script", "style", "head", "meta", "link", "title", "noscript", "template"];
+
+  const all = document.querySelectorAll("*");
+  const overflowing: string[] = [];
+  const offscreen: string[] = [];
+  const families: string[] = [];
+  let textArea = 0;
+
+  for (const element of all) {
+    const tag = String(element.tagName || "").toLowerCase();
+    if (nonVisual.indexOf(tag) !== -1) continue;
+
+    if (element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1) {
+      if (overflowing.length < 6) overflowing.push(describe(element));
+    }
+    const rect = element.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0 && (rect.left < -1 || rect.top < -1 || rect.right > canvas.w + 1 || rect.bottom > canvas.h + 1)) {
+      if (offscreen.length < 6) offscreen.push(describe(element));
+    }
+    // A TEXT-BEARING LEAF: an element with words and no element children.
+    // Summing every ancestor's box instead would report a share over 1 and
+    // mean nothing.
+    const text = (element.textContent ?? "").trim();
+    if (element.children.length === 0 && text !== "") {
+      textArea += rect.width * rect.height;
+      const family = String(getComputedStyle(element).fontFamily || "").split(",")[0]?.trim().replace(/^["']|["']$/g, "");
+      if (family !== undefined && family !== "" && families.indexOf(family) === -1) families.push(family);
+    }
+  }
+
+  return {
+    n: canvas.n,
+    overflow: overflowing.length > 0,
+    overflowing,
+    offscreen,
+    elementCount: all.length,
+    textBoxShare: Math.min(1, textArea / (canvas.w * canvas.h)),
+    fontFamiliesUsed: families.sort(),
+  };
 }
 
 /**
@@ -268,7 +418,7 @@ export function createRenderCarousel(mediaStore?: GcsArtifactStoreLike) {
   return defineTool<RenderCarouselInput, RenderCarouselResult>({
     name: "publish.renderCarousel",
     description:
-      "Renders each slide's HTML template to a PNG via headless Chromium, uploading to GCS when a mediaStore is configured or writing to outDir on local disk otherwise. A typed-outcome port of legacy render.mjs's three-way exit contract: a bad/escaping path is a tooling failure, a missing image is a content failure, never confused.",
+      "Renders each slide's HTML template to a PNG via headless Chromium, uploading to GCS when a mediaStore is configured or writing to outDir on local disk otherwise. A typed-outcome port of legacy render.mjs's three-way exit contract: a bad/escaping path is a tooling failure, a missing image is a content failure, never confused. Optionally (measure/probe, both free) reports what each rendered slide actually contains — flat-background and ink shares, the largest empty rectangle, imagery/device/text coverage, and a DOM probe for overflow and resolved font families.",
     version: TOOL_VERSION,
     inputSchema: RenderCarouselInputSchema,
     async execute(input) {
@@ -346,10 +496,62 @@ export function createRenderCarousel(mediaStore?: GcsArtifactStoreLike) {
           await page.evaluate(fontsReady);
 
           const buffer = await page.screenshot();
+
+          /*
+           * MEASURED HERE, ON THE BUFFER IN HAND, BEFORE IT IS PERSISTED.
+           *
+           * This is not a convenience — it is the only place the bytes exist.
+           * With a `mediaStore` configured, `persistRenderedSlide` uploads the
+           * buffer and returns a (possibly time-limited) signed URL; no local
+           * PNG is ever written, so a separate "read the slide PNGs back and
+           * measure them" step would have to re-download what this process
+           * was already holding, and would be unable to do even that once the
+           * signature expired.
+           *
+           * `canvas.scale` is validated as EXACTLY 2 by `validateRenderInputs`
+           * above, so every measured PNG is 2160x2880 against the 1080x1440
+           * design canvas and the metric's cell grid is fixed rather than
+           * assumed. If that ever changes, `measureSlidePng` refuses a size
+           * that is not an integer multiple rather than reporting numbers off
+           * a different grid.
+           */
+          let metrics: SlideMetrics | undefined;
+          let measureFailure: string | undefined;
+          if (input.measure === true) {
+            const outcome = measureSlidePng(buffer, {
+              design: { w: input.canvas.w, h: input.canvas.h },
+              expected: {
+                ...(slide.measure?.groundHex !== undefined ? { ground: slide.measure.groundHex } : {}),
+                ...(slide.measure?.accentHex !== undefined ? { accent: slide.measure.accentHex } : {}),
+              },
+            });
+            if (outcome.ok) metrics = outcome.metrics;
+            else measureFailure = outcome.reason;
+          }
+
+          // AFTER the screenshot, deliberately: nothing the probe reads can
+          // then have perturbed the pixels that were measured.
+          let probe: SlideProbe | undefined;
+          if (input.probe === true) {
+            try {
+              probe = await page.evaluate(probePage, { n: slide.n, w: input.canvas.w, h: input.canvas.h });
+            } catch {
+              // The probe is diagnostic. A page that will not answer it still
+              // rendered, and a render must not fail on its own instrumentation.
+              probe = undefined;
+            }
+          }
+
           const outPath = path.join(resolvedOutDir, `slide-${slide.n}.png`);
           const objectPath = `instagram/${input.client}/${input.postId}/slide-${slide.n}.png`;
           const persisted = await persistRenderedSlide(buffer, outPath, objectPath, mediaStore);
-          rendered.push({ n: slide.n, ...persisted });
+          rendered.push({
+            n: slide.n,
+            ...persisted,
+            ...(metrics !== undefined ? { metrics } : {}),
+            ...(measureFailure !== undefined ? { measureFailure } : {}),
+            ...(probe !== undefined ? { probe } : {}),
+          });
         }
 
         return success<RenderCarouselResult>({ rendered });

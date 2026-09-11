@@ -23,9 +23,26 @@ import { isChromiumInstalled } from "./test-helpers.js";
 describe("default templates are token-driven, not literal-colored", () => {
   const TEMPLATE_DIR = path.resolve(__dirname, "..", "assets", "templates", "default");
 
+  it("ships the whole routable archetype set, so a client's templateDir can hold all of it", async () => {
+    // Phase 2, item M added `cover` and `closer`. `LAYOUT_TEMPLATE_FILES`
+    // routes to these filenames byte-identically, so a missing file here is a
+    // routing dead end that only shows up as a render tooling error.
+    const files = (await fs.readdir(TEMPLATE_DIR)).filter((f) => f.endsWith(".html"));
+    expect(files.sort()).toEqual([
+      "closer.html",
+      "comparison-card.html",
+      "cover.html",
+      "headline-focus.html",
+      "list-takeaway.html",
+      "quote-card.html",
+      "slide.html",
+      "stat-callout.html",
+    ]);
+  });
+
   it("no template carries a hardcoded bg/fg-derived rgba literal", async () => {
     const files = (await fs.readdir(TEMPLATE_DIR)).filter((f) => f.endsWith(".html"));
-    expect(files.length).toBeGreaterThanOrEqual(6);
+    expect(files.length).toBeGreaterThanOrEqual(8);
     for (const file of files) {
       const html = await fs.readFile(path.join(TEMPLATE_DIR, file), "utf8");
       // Only the STYLE half matters — a doc comment describing the legacy

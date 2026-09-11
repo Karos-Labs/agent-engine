@@ -49,8 +49,8 @@ describe("RunSpendMeter.add — max(measured, estimate), never trusting a $0 rea
   it("counts the estimate when the step reported nothing", () => {
     const meter = new RunSpendMeter();
     meter.add("05-write-copy-attempt-1", undefined, STEP_COST_ESTIMATES_USD.copyAttempt);
-    expect(meter.totalUsd).toBe(0.12);
-    expect(meter.lines[0]).toMatchObject({ label: "05-write-copy-attempt-1", usd: 0.12, estimateUsd: 0.12, basis: "estimate" });
+    expect(meter.totalUsd).toBe(0.1455);
+    expect(meter.lines[0]).toMatchObject({ label: "05-write-copy-attempt-1", usd: 0.1455, estimateUsd: 0.1455, basis: "estimate" });
     expect(meter.lines[0]).not.toHaveProperty("measuredUsd");
   });
 
@@ -65,13 +65,13 @@ describe("RunSpendMeter.add — max(measured, estimate), never trusting a $0 rea
     const meter = new RunSpendMeter();
     meter.add("05-write-copy-attempt-1", 0.31, STEP_COST_ESTIMATES_USD.copyAttempt);
     expect(meter.totalUsd).toBe(0.31);
-    expect(meter.lines[0]).toMatchObject({ measuredUsd: 0.31, estimateUsd: 0.12, basis: "measured" });
+    expect(meter.lines[0]).toMatchObject({ measuredUsd: 0.31, estimateUsd: 0.1455, basis: "measured" });
   });
 
   it("counts the estimate when the measured figure is below it — an under-reporting vendor is still bounded", () => {
     const meter = new RunSpendMeter();
     meter.add("05-write-copy-attempt-1", 0.02, STEP_COST_ESTIMATES_USD.copyAttempt);
-    expect(meter.totalUsd).toBe(0.12);
+    expect(meter.totalUsd).toBe(0.1455);
     expect(meter.lines[0]).toMatchObject({ measuredUsd: 0.02, basis: "estimate" });
   });
 
@@ -144,8 +144,24 @@ describe("RunSpendMeter.canAfford — flips exactly at the $1.50 ceiling", () =>
     expect(meter.canAfford(MAX_RUN_SPEND_USD + 0.01).ok).toBe(false);
   });
 
-  it("the pre-attempt bundle is copy + vet + visual QA", () => {
-    expect(DRAFT_ATTEMPT_ESTIMATE_USD).toBeCloseTo(0.12 + 0.006 + 0.004, 10);
+  it("the pre-attempt bundle is copy + vet + visual QA, at the @14/@4 prompt sizes", () => {
+    expect(DRAFT_ATTEMPT_ESTIMATE_USD).toBeCloseTo(0.1455 + 0.006 + 0.0041, 10);
+  });
+
+  // `copyAttempt` is priced on BOTH sides of the @14 call, and the output
+  // side is the one that moved: an output token costs 5x an input one on
+  // Sonnet, and §20 turned `customArchetype` from "a rare tool" into "at most
+  // two per carousel" — a `bodyHtml` fragment plus a `css` block each, on top
+  // of §19's device objects. Priced on input growth alone the estimate
+  // flattered itself by $0.0585 over three attempts, which is more than the
+  // whole first image lever is worth.
+  it("prices the copy call on its OUTPUT as well as its input, at the published Sonnet rates", () => {
+    const SONNET_IN_PER_1M = 3;
+    const SONNET_OUT_PER_1M = 15;
+    expect(STEP_COST_ESTIMATES_USD.copyAttempt).toBeCloseTo((21_000 * SONNET_IN_PER_1M + 5_500 * SONNET_OUT_PER_1M) / 1_000_000, 10);
+    // The output half is now the larger half — the property an input-only
+    // re-price cannot have.
+    expect(5_500 * SONNET_OUT_PER_1M).toBeGreaterThan(21_000 * SONNET_IN_PER_1M);
   });
 });
 
@@ -205,11 +221,27 @@ describe("estimateRunCost — every term priced off what the run actually bills"
     expect(cold.breakdown.fixed).toBeCloseTo(0.2015, 6);
     expect(cold.estimatedUsd).toBeGreaterThan(TARGET_RUN_SPEND_USD);
     const decision = planRunBudget(DEFAULT_RUN_SHAPE);
-    expect(decision.adaptations).toEqual(["images capped at 4"]);
+    // Phase 2's own arithmetic, and the reason `copyAttempt` had to be
+    // re-priced to the @14 call on BOTH sides: at an image cap of 4 the cold
+    // English shape estimates $1.0613, so `fits()` is FALSE and the first
+    // lever has to step twice — 4 then 2 — to land at $0.9833. Priced at
+    // @13's $0.12 the same shape read as $0.9845, `fits()` was true after one
+    // step, and the second image lever never armed while the run still billed
+    // over the target. Priced on INPUT growth alone ($0.126) it read $1.0028
+    // — over the target, so the lever still fired, but with $0.0585 of §19
+    // devices and §20 authored layouts unbudgeted behind it.
+    expect(estimateRunCost({ ...DEFAULT_RUN_BUDGET_PLAN, generatedImagesCap: 4 }, DEFAULT_RUN_SHAPE).estimatedUsd).toBeCloseTo(1.0613, 6);
+    expect(decision.adaptations).toEqual(["images capped at 4", "images capped at 2"]);
+    expect(decision.plan.generatedImagesCap).toBe(2);
+    expect(decision.estimate.estimatedUsd).toBeCloseTo(0.9833, 6);
     expect(decision.estimate.estimatedUsd).toBeLessThanOrEqual(TARGET_RUN_SPEND_USD);
-    // A Hebrew client pays the fluency judge on every attempt and needs one
-    // lever more.
-    expect(planRunBudget({ ...DEFAULT_RUN_SHAPE, targetLanguage: true }).adaptations).toEqual(["images capped at 4", "images capped at 2"]);
+    // A Hebrew client pays the fluency judge on every attempt — $0.0165 more
+    // over three — and the same two image steps still absorb it, so nothing
+    // past the image lever is spent on language compliance.
+    const hebrew = planRunBudget({ ...DEFAULT_RUN_SHAPE, targetLanguage: true });
+    expect(hebrew.adaptations).toEqual(["images capped at 4", "images capped at 2"]);
+    expect(hebrew.estimate.estimatedUsd).toBeLessThanOrEqual(TARGET_RUN_SPEND_USD);
+    expect(hebrew.estimate.estimatedUsd - decision.estimate.estimatedUsd).toBeCloseTo(3 * STEP_COST_ESTIMATES_USD.fluency, 6);
   });
 
   it("prices every once-per-run line Phase 1 added, each one off the step that bills it", () => {
@@ -279,27 +311,37 @@ describe("planRunBudget — the owner's levers, in order, never a hold", () => {
     expect(hebrew.estimatedUsd - english.estimatedUsd).toBeCloseTo(3 * STEP_COST_ESTIMATES_USD.fluency, 6);
   });
 
-  it("over the target it caps images FIRST (8 -> 4) and records the adaptation in the reviewer's words", () => {
-    // The cold Phase 1 default ($1.14): one lever (images 8 -> 4, $0.156 of
-    // pictures instead of $0.312) brings it back to $0.98, and nothing else
-    // is touched — no attempt is given up for a picture.
+  it("over the target it caps images FIRST, stepping 8 -> 4 -> 2, and records each step in the reviewer's words", () => {
+    // The cold Phase 2 default ($1.22): the FIRST lever is the only one
+    // touched, and it steps twice — 8 -> 4 is still $1.0613, over the target,
+    // so 4 -> 2 lands it at $0.9833. Nothing below the image cap moves: no
+    // attempt is given up for a picture. (At @13's copy price the cap-4 step
+    // read $0.9845 and stopped there, while the run billed over target — see
+    // "the cold Phase 1 carousel" below.)
     const decision = planRunBudget(DEFAULT_RUN_SHAPE);
     expect(decision.initialEstimateUsd).toBeGreaterThan(TARGET_RUN_SPEND_USD);
     expect(decision.estimate.estimatedUsd).toBeLessThanOrEqual(TARGET_RUN_SPEND_USD);
-    expect(decision.plan.generatedImagesCap).toBe(4);
+    expect(decision.plan.generatedImagesCap).toBe(2);
     expect(decision.plan.maxSelfCheckAttempts).toBe(3);
     expect(decision.plan.evidencePulls).toBe("full");
     expect(decision.plan.optionalRevets).toBe(true);
-    expect(decision.adaptations).toEqual(["images capped at 4"]);
-    expect(decision.note).toMatch(/^budget: estimate \$1\.\d\d > \$1\.00 → images capped at 4 \(now \$0\.\d\d\)$/);
+    expect(decision.adaptations).toEqual(["images capped at 4", "images capped at 2"]);
+    expect(decision.note).toMatch(/^budget: estimate \$1\.\d\d > \$1\.00 → images capped at 4, images capped at 2 \(now \$0\.\d\d\)$/);
   });
 
   it("pulls every lever in the owner's order when one is not enough: images, evidence pulls, one return instead of two, re-vets", () => {
-    // 1.8x on the cold Phase 1 shape: $2.05 initially, still $1.08 with no
-    // images, reduced evidence and one return instead of two, and $0.96 once
-    // the optional re-vets go too — so every rung of the ladder is needed and
-    // the last one fits.
-    const history = { ...EMPTY_RUN_BUDGET_HISTORY, ewmaRatio: 1.8, runs: [] };
+    // 1.7x on the cold Phase 2 shape: $2.07 initially, still over target with
+    // no images, reduced evidence and one return instead of two, and $0.99
+    // once the optional re-vets go too — so every rung of the ladder is needed
+    // and the last one fits.
+    //
+    // The ratio moved from 1.8 with `copyAttempt`'s honest re-price (the @14
+    // call's OUTPUT grew, and output costs 5x input on Sonnet): the ladder
+    // saturates sooner when a copy attempt really costs $0.1455, which is the
+    // point of pricing it that way. Above ~1.72 the tightest plan no longer
+    // fits — that regime is the next test, which asserts the run proceeds
+    // anyway.
+    const history = { ...EMPTY_RUN_BUDGET_HISTORY, ewmaRatio: 1.7, runs: [] };
     const decision = planRunBudget(DEFAULT_RUN_SHAPE, history);
     expect(decision.adaptations).toEqual([
       "images capped at 4",
@@ -368,6 +410,21 @@ describe("RunBudgetHistory — EWMA of actual/estimate, tolerant of anything in 
 });
 
 describe("RunSpendMeter posture and the notes — the live meter adapts, it does not hold", () => {
+  // Phase 2 gave the meter one optional constructor argument so the per-client
+  // SETUP budget (item N: target $2.00, hard max $3.00) could reuse the same
+  // machinery. This is the pin that the RUN meter is unchanged: zero
+  // arguments still means the owner's $1.00/$1.50, and every existing
+  // `new RunSpendMeter()` call site still postures on those two numbers.
+  it("still defaults to the owner's per-run numbers with no constructor argument", () => {
+    const meter = new RunSpendMeter();
+    expect(meter.targetUsd).toBe(TARGET_RUN_SPEND_USD);
+    expect(meter.maxUsd).toBe(MAX_RUN_SPEND_USD);
+    expect(meter.scope).toBe("run");
+    meter.add("05-write-copy-attempt-1", undefined, 1.01);
+    expect(meter.crossedTarget).toBe(true);
+    expect(meter.crossedMax).toBe(false);
+  });
+
   it("normal under the target, essential-only over it, cheapest-path over the hard max", () => {
     const meter = new RunSpendMeter();
     meter.add("a", undefined, 0.9);
@@ -389,9 +446,11 @@ describe("RunSpendMeter posture and the notes — the live meter adapts, it does
     const meter = new RunSpendMeter();
     meter.add("05-write-copy-attempt-1", undefined, STEP_COST_ESTIMATES_USD.copyAttempt);
     const summary = summarizeRunBudget(decision, meter, [decision.note]);
-    expect(summary).toMatchObject({ estimatedUsd: decision.estimate.estimatedUsd, actualUsd: 0.12, targetUsd: 1, maxUsd: 1.5, crossedTarget: false, crossedMax: false, posture: "normal", adaptations: [] });
+    expect(summary).toMatchObject({ estimatedUsd: decision.estimate.estimatedUsd, actualUsd: STEP_COST_ESTIMATES_USD.copyAttempt, targetUsd: 1, maxUsd: 1.5, crossedTarget: false, crossedMax: false, posture: "normal", adaptations: [] });
     expect(summary.lines).toHaveLength(1);
-    expect(estimateVsActualLine(summary)).toBe(`budget: estimated $${decision.estimate.estimatedUsd.toFixed(2)}, actual $0.12 (under target)`);
+    expect(estimateVsActualLine(summary)).toBe(
+      `budget: estimated $${decision.estimate.estimatedUsd.toFixed(2)}, actual $${STEP_COST_ESTIMATES_USD.copyAttempt.toFixed(2)} (under target)`,
+    );
   });
 });
 

@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en" dir="{{dir}}">
+<head>
+<meta charset="utf-8" />
+<title>instagram-agent cover slide template</title>
+<!--
+  `cover` — slide 1. The grid thumbnail, and the only slide most people ever
+  decide about.
+
+  THE STRUCTURAL POINT OF THIS FILE: it is incapable of rendering as a
+  headline on flat ground. The owner's complaint (2026-09-10, verbatim: "אתה
+  רואה מסך אפור ברובו") was about exactly that slide — a statement in the
+  lower third of an otherwise empty plate — and a template that can produce
+  it will eventually produce it, whatever the prompt says. So the ground here
+  is a LAYER STACK with three fallbacks, and every one of them paints:
+
+    1. a full-bleed `<img class="hero">`, when image sourcing found one;
+    2. an accent colour block with a token-derived diagonal keyline, revealed
+       by the image's own `onerror` removing itself;
+    3. a two-token gradient underneath both, so even the block's own edges
+       sit on modulated ground rather than a single flat colour.
+
+  With no hero and no device the block plus keyline still occupy roughly a
+  quarter of the frame, which is what carries this archetype over item L's
+  `IMAGERY_OR_DEVICE_FLOOR` for the cover role. That is measured, not
+  asserted: `__tests__/interest-floor-calibration.test.ts` renders this file
+  with neither and asserts the floor.
+
+  The scrim is deliberately NOT full-frame, unlike `slide.html`'s. It covers
+  the bottom 52% and fades to fully transparent — the legacy design system's
+  own hard rule, and the reason is editorial: a scrim over the whole plate
+  turns a photograph into a texture. The top half of a cover stays a
+  photograph.
+
+  Slots: `eyebrow`, `title`, `subtitle`, `image:hero`, `html:device`, plus
+  the standing furniture (`accentColor`, `dir`, `fontScale`, `textAlign`,
+  `brandHandle`, `seriesBadge`, `groundStyle`, `slideIndex`). `eyebrow` is
+  fed from the copy's own `kicker` — see `contentFor` — so a cover never ends
+  up with two competing eyebrows.
+
+  See `stat-callout.html`'s header for why the token block is duplicated.
+-->
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600;1,400;1,500;1,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #17181C;
+    --fg: #F4F2EC;
+    --accent: {{accentColor}};
+    --accent-ink: #141414;
+    --f-display: 'Fraunces', Georgia, 'Times New Roman', serif;
+    --f-body: 'Inter', system-ui, -apple-system, sans-serif;
+    --f-mono: 'IBM Plex Mono', ui-monospace, monospace;
+    --mx: 64px;
+    --ts: 1;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  /* Reviewer typography controls (Phase 2): a discrete type-scale multiplier
+     and logical text alignment, applied per slide via body classes. Classes,
+     never a {{fontScale}} CSS var: a stripped placeholder degrades to a
+     harmless "ts-" class token, whereas an EMPTY-but-defined custom property
+     substitutes as empty (not the var() fallback) and would invalidate every
+     font-size on an older checkpointed slides-data re-rendered post-deploy. */
+  body.ts-s { --ts: 0.85; }
+  body.ts-l { --ts: 1.18; }
+  body.ta-center { text-align: center; }
+  body.ta-end { text-align: end; }
+  html, body { width: 1080px; height: 1440px; }
+  body {
+    position: relative; overflow: hidden;
+    background: var(--bg); color: var(--fg); font-family: var(--f-body);
+    display: flex; flex-direction: column;
+  }
+
+  /* ── The ground stack. Layer 3 (the gradient) is on the container itself,
+        so it is painted whatever happens to the two layers above it. ── */
+  .ground {
+    position: absolute; inset: 0; z-index: 0; overflow: hidden;
+    /* Layer 3, always painted. Both stops stay INSIDE the ink threshold
+       (`INK_DELTA`, 18 on the weighted-RGB scale) so a full-bleed gradient
+       contributes no ink to the 8px bleed band `clippedEdgeShare` measures —
+       6% of the foreground token is 12.9, and 16% of a typical accent is
+       14.7. It moves `flatBackgroundShare` without ever reading as clipped
+       type. */
+    background: linear-gradient(160deg,
+      color-mix(in srgb, var(--fg) 6%, var(--bg)) 0%,
+      var(--bg) 52%,
+      color-mix(in srgb, var(--accent) 16%, var(--bg)) 100%);
+  }
+  /* Layer 2b: the same 45-degree hairline field the typographic archetypes
+     use (see `headline-focus.html`'s header for the measured numbers). It is
+     what carries a no-hero cover's OCCUPANCY — the colour block alone left it
+     a couple of points above the cover role's 0.42 floor, which is not a
+     margin. Inset 16px, so no rule reaches the bleed band. */
+  .ground-field {
+    position: absolute; inset: 16px;
+    background-image: repeating-linear-gradient(45deg,
+      color-mix(in srgb, var(--fg) 14%, transparent) 0 1.5px,
+      transparent 1.5px 18px);
+  }
+  /* Layer 2: an accent block anchored to the reading-start corner, with a
+     diagonal keyline derived from the foreground token. This is the layer
+     that carries a no-hero cover over the imagery-or-device floor — a filled,
+     low-colour-count region of ~29% of the frame measures as `graphicShare`.
+     `inset-inline-start`, not `left` — the corner is defined relative to
+     reading direction, so it flips with dir="{{dir}}" rather than staying
+     pinned for an RTL client. The 16px inset is the same bleed-band rule as
+     the field: full-bleed, this block's two edges measured 0.7% of the frame
+     as edge ink against a 0.4% ceiling. */
+  .ground-block {
+    position: absolute; inset-block-start: 16px; inset-inline-start: 16px;
+    inline-size: 64%; block-size: 46%;
+    background-color: color-mix(in srgb, var(--accent) 88%, var(--bg));
+    background-image: repeating-linear-gradient(45deg,
+      color-mix(in srgb, var(--fg) 16%, transparent) 0 2px,
+      transparent 2px 26px);
+  }
+  /* Layer 1: the photograph, painted over both. `onerror="this.remove()"`
+     rather than `display:none` (slide.html's older approach) because a
+     removed node cannot leave a broken-image glyph or an alt-text box behind
+     — and removing it is what reveals the colour block underneath. */
+  .hero { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+
+  /* Bottom-anchored scrim, 52% tall, fading to fully transparent. */
+  .scrim {
+    position: absolute; inset-block-end: 0; inset-inline: 0; block-size: 52%;
+    z-index: 2; pointer-events: none;
+    background: linear-gradient(to top,
+      color-mix(in srgb, var(--bg) 94%, transparent) 0%,
+      color-mix(in srgb, var(--bg) 74%, transparent) 42%,
+      color-mix(in srgb, var(--bg) 0%, transparent) 100%);
+  }
+
+  /* The elastic middle: an optional device sits here, bottom-aligned so it
+     grows upward away from the lockup instead of pushing it off the plate. */
+  .mid {
+    position: relative; z-index: 3; flex: 1 1 auto; min-block-size: 0;
+    display: flex; align-items: flex-end;
+    padding-inline: var(--mx); padding-block-start: calc(150px * var(--ts, 1));
+    overflow: hidden;
+  }
+  .cov-device { inline-size: 100%; }
+  .cov-device:empty { display: none; }
+
+  .lockup {
+    position: relative; z-index: 4; flex: 0 0 auto;
+    padding-inline: var(--mx); padding-block-end: 118px;
+  }
+  .eyebrow {
+    font-family: var(--f-mono); font-weight: 500; font-size: calc(22px * var(--ts, 1));
+    letter-spacing: 0.22em; text-transform: uppercase;
+    color: color-mix(in srgb, var(--fg) 78%, transparent); margin-block-end: calc(26px * var(--ts, 1));
+  }
+  .eyebrow:empty { display: none; }
+
+  /* `.headline` rather than a cover-specific class name on purpose: it is one
+     of `script-fonts.ts`'s DISPLAY_SELECTORS, so a Hebrew or Arabic cover
+     picks up that script's own leading instead of Latin leading on a
+     script whose ascenders and nikud need more room. */
+  .headline {
+    font-family: var(--f-display); font-weight: 600; font-size: calc(100px * var(--ts, 1));
+    line-height: 1.06; letter-spacing: -0.02em; text-wrap: balance;
+  }
+  .headline.small { font-size: calc(80px * var(--ts, 1)); line-height: 1.1; }
+  .headline.tiny { font-size: calc(64px * var(--ts, 1)); line-height: 1.14; }
+
+  /* One accent mark, rationed — the same 132x12 band the rest of the set uses. */
+  .stat-band { inline-size: 132px; block-size: 12px; background: var(--accent); margin-block-start: calc(30px * var(--ts, 1)); }
+
+  .body-text {
+    font-family: var(--f-body); font-weight: 400; font-size: calc(31px * var(--ts, 1)); line-height: 1.5;
+    color: color-mix(in srgb, var(--fg) 92%, transparent);
+    margin-block-start: calc(26px * var(--ts, 1)); max-inline-size: 880px; text-wrap: pretty;
+  }
+  .body-text:empty { display: none; }
+  .brand-badge:empty, .brand-handle:empty { display: none; }
+</style>
+</head>
+<body class="ts-{{fontScale}} ta-{{textAlign}}">
+  <div class="brand-badge">{{seriesBadge}}</div>
+  <div class="brand-handle">{{brandHandle}}</div>
+  <div class="ground" aria-hidden="true">
+    <div class="ground-field"></div>
+    <div class="ground-block"></div>
+    <img class="hero" src="{{image:hero}}" onerror="this.remove()" alt="" />
+  </div>
+  <div class="scrim" aria-hidden="true"></div>
+  <div class="mid">
+    <div class="cov-device">{{html:device}}</div>
+  </div>
+  <div class="lockup">
+    <div class="eyebrow">{{eyebrow}}</div>
+    <div class="headline" id="title">{{title}}</div>
+    <div class="stat-band"></div>
+    <div class="body-text">{{subtitle}}</div>
+  </div>
+  <script>
+    // The same character-count ladder the rest of the set uses (legacy
+    // `_cf-core.js`'s approach), with a cover's own breakpoints: a cover
+    // title is shorter than a `headline_focus` statement, and the lockup is
+    // bottom-anchored inside an elastic column, so a long title grows
+    // upwards into the middle rather than off the plate.
+    (function () {
+      var t = document.getElementById("title");
+      var len = (t.textContent || "").trim().length;
+      if (len > 64) t.className = "headline tiny";
+      else if (len > 34) t.className = "headline small";
+      window.__CAROUSEL_READY__ = true;
+    })();
+  </script>
+</body>
+</html>

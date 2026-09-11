@@ -2,15 +2,18 @@ import { vi } from "vitest";
 import { fileURLToPath } from "node:url";
 import * as path from "node:path";
 import { promises as fs } from "node:fs";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import * as os from "node:os";
 import type { AgentToolRegistry } from "@agent-engine/core";
 import { FilePromptStore, type AgentContext, type CompletionResult, type ModelRouter } from "@agent-engine/core";
 import { briefSegments, createAllKarosTools, WorkspaceStore, type ClientBrief } from "@agent-engine/tools";
 import { createOfflineScraper, type ScraperProvider } from "@agent-engine/tool-karos-scraper";
-import { validateRenderInputs, type RenderCarouselInput, type RenderCarouselResult } from "@agent-engine/tool-karos-publish";
+import { validateRenderInputs, type RenderCarouselInput, type RenderCarouselResult, type Slide } from "@agent-engine/tool-karos-publish";
+import { MemoryTemplateStore, TemplateDefinitionSchema, extractSupportedFields, type TemplateDefinition, type TemplateStore } from "@agent-engine/tool-karos-templates";
 import type { TrendScoutOutput } from "@agent-engine/workflow";
 import type { BrandTokens, ImageCandidate, ImageVettingOutput, InstagramCopyOutput, ResearchFact, ResearchOutput, StyleConfig, VisualQaOutput } from "../src/workflow/types.js";
+import type { SlideMetrics, SlideProbe } from "../src/workflow/interest-floor.js";
+import { SKELETON_BELIEF_KEY, type SkeletonHistory } from "../src/workflow/skeleton-memory.js";
 import { DEFAULT_CAROUSEL_LANE } from "../src/workflow/create-instagram-agent-workflow.js";
 
 export { DEFAULT_CAROUSEL_LANE };
@@ -140,10 +143,197 @@ const MINIMAL_PNG_BYTES = Buffer.from(
   "base64",
 );
 
-export function fakeRenderCarousel(realTool: AgentToolRegistry[string]): AgentToolRegistry[string] {
+/**
+ * A slide measurement that clears the interest floor at EVERY role,
+ * cover and closer included — RFC-14 item L.
+ *
+ * The default for `fakeRenderCarousel`, and it has to be, because
+ * `MINIMAL_PNG_BYTES` above is a 1×1 PNG: measured for real it is 100% flat
+ * background, 0% occupied, one contiguous empty rectangle covering the whole
+ * frame — the exact shape of the defect item L exists to fail. Without a
+ * passing default every one of this package's ~30 workflow fixtures would
+ * start failing the floor for a reason that has nothing to do with what they
+ * test.
+ *
+ * The numbers are a realistic photo-bearing slide (roughly what
+ * `photo.html`'s Chromium render measures), chosen so that no clause and no
+ * WARNING fires either — a fixture that suddenly grew an accent warning
+ * would be just as much churn as one that grew a failure.
+ */
+export function passingSlideMetrics(overrides: Partial<SlideMetrics> = {}): SlideMetrics {
+  return {
+    backgroundHex: "#17181c",
+    backgroundMatchesBrandGround: true,
+    flatBackgroundShare: 0.46,
+    inkShare: 0.21,
+    occupiedShare: 0.54,
+    // The content mask (`render-carousel` 1.2.0): lower than `occupiedShare`
+    // on any real slide, because the difference between the two IS the ground
+    // treatment. 0.31 clears clause G's floor at every role with room.
+    contentOccupiedShare: 0.31,
+    largestEmptyRect: { x: 64, y: 96, w: 952, h: 240 },
+    largestEmptyRectShare: 0.147,
+    largestEmptyContentRect: { x: 64, y: 96, w: 952, h: 320 },
+    largestEmptyContentRectShare: 0.196,
+    imageryShare: 0.28,
+    graphicShare: 0.06,
+    imageryOrDeviceShare: 0.34,
+    textShare: 0.2,
+    accentShare: 0.012,
+    accentPresent: true,
+    edgeDensity: 0.19,
+    quantisedColourCount: 14,
+    clippedEdgeShare: 0,
+    ...overrides,
+  };
+}
+
+/**
+ * The audit slide, as numbers: a mostly-grey plate with a headline in the
+ * lower third and a large empty upper area.
+ *
+ * Taken from the 2026-09-08 audit's measured Karos Labs renders
+ * (`gs://karoscmo-prep-media-assets/instagram/karoslabs/<runId>/slide-*.png`)
+ * — 93% of the pixels are the ground colour, 18% of the frame is occupied,
+ * the largest hole is over half the plate, and nothing but type is in frame.
+ * Fails clauses C, D and (at cover/closer) E, which is the whole point.
+ *
+ * `contentOccupiedShare` equals `occupiedShare` here, and that is the audit
+ * slide's own truth: it carried no ground treatment at all, so every mark on
+ * it was content. The two numbers only diverge on a slide with a decorated
+ * ground — which is exactly the case `decoratedEmptySlideMetrics` covers.
+ */
+export function boringSlideMetrics(overrides: Partial<SlideMetrics> = {}): SlideMetrics {
+  return passingSlideMetrics({
+    flatBackgroundShare: 0.93,
+    inkShare: 0.045,
+    occupiedShare: 0.18,
+    contentOccupiedShare: 0.18,
+    largestEmptyRect: { x: 0, y: 0, w: 1080, h: 800 },
+    largestEmptyRectShare: 0.556,
+    largestEmptyContentRect: { x: 0, y: 0, w: 1080, h: 800 },
+    largestEmptyContentRectShare: 0.556,
+    imageryShare: 0,
+    graphicShare: 0.004,
+    imageryOrDeviceShare: 0.004,
+    textShare: 0.176,
+    edgeDensity: 0.22,
+    quantisedColourCount: 4,
+    ...overrides,
+  });
+}
+
+/**
+ * THE DECORATED EMPTY PLATE, as numbers — and these are measured, not
+ * invented.
+ *
+ * A 2160×2880 truecolour PNG painting ONLY item M.3's 45-degree hairline
+ * field over `#17181C` (stripe `rgb(54,55,57)` = 14% of the foreground token,
+ * 3px wide on a 36px period at scale 2, inset 32px) and nothing else: no
+ * headline, no body, no kicker, no accent, no content of any kind. Run
+ * through the real `measureSlidePng` with `expected.ground: "#17181C"` it
+ * reports exactly this.
+ *
+ * Read against `interest-floor.ts`'s constants, this plate passes clause A
+ * (7.9% ink is five times the 1.5% floor), clause C (a 1.5% largest empty
+ * rectangle against a 22-28% ceiling), clause D (42% occupied clears every
+ * `OCCUPIED_SHARE_FLOOR`, so the flat-93% limb never gets to matter) and
+ * clause F. Which is the defect: an emptiness measurement that cannot tell a
+ * blank slide from a full one. Clause G is what fails it, on
+ * `contentOccupiedShare` — the stripe's 8.3% duty cycle at 24 units of
+ * contrast moves each cell's mean by about 2, so the field is ground, not
+ * content.
+ */
+export function decoratedEmptySlideMetrics(overrides: Partial<SlideMetrics> = {}): SlideMetrics {
+  return {
+    backgroundHex: "#17181C",
+    backgroundMatchesBrandGround: true,
+    flatBackgroundShare: 0.9209307484567901,
+    inkShare: 0.07906925154320987,
+    occupiedShare: 0.42169753086419753,
+    contentOccupiedShare: 0,
+    largestEmptyRect: { x: 0, y: 0, w: 16, h: 1440 },
+    largestEmptyRectShare: 0.014814814814814815,
+    largestEmptyContentRect: { x: 0, y: 0, w: 1080, h: 1440 },
+    largestEmptyContentRectShare: 1,
+    imageryShare: 0,
+    graphicShare: 0,
+    imageryOrDeviceShare: 0,
+    textShare: 0.42169753086419753,
+    accentShare: 0,
+    accentPresent: false,
+    edgeDensity: 0.6672237198957457,
+    quantisedColourCount: 2,
+    clippedEdgeShare: 0,
+    ...overrides,
+  };
+}
+
+/** A clean DOM probe: nothing overflows, nothing escapes the canvas, the brand's own faces resolved. */
+export function passingSlideProbe(n: number, overrides: Partial<SlideProbe> = {}): SlideProbe {
+  return {
+    n,
+    overflow: false,
+    overflowing: [],
+    offscreen: [],
+    elementCount: 14,
+    textBoxShare: 0.31,
+    fontFamiliesUsed: ["Inter", "IBM Plex Mono"],
+    ...overrides,
+  };
+}
+
+/**
+ * What a test wants the fake renderer to report per slide.
+ *
+ * Functions rather than values so one options bag can describe "slide 1 is
+ * empty, the rest are fine" — the shape every interest-floor workflow test
+ * needs. Returning `undefined` from `metrics` is how a test asks for the
+ * `{ ok: false }` measurement path (the renderer measured nothing for that
+ * slide), which must deliver rather than hold.
+ */
+export interface FakeRenderCarouselOptions {
+  metrics?: (slide: Slide) => SlideMetrics | undefined;
+  /** The renderer's own `measureFailure` reason to report alongside an absent `metrics`. Defaults to a plausible decoder refusal. */
+  measureFailure?: (slide: Slide) => string;
+  probe?: (slide: Slide) => SlideProbe | undefined;
+  /**
+   * Make one render CALL fail, by its 1-based ordinal within the run.
+   *
+   * The free re-layout at `08a1b` mutates the copy, the image selections and
+   * the type-scale overrides and then re-renders at `08a1c`; a re-render that
+   * does not succeed must leave every one of those exactly where the FIRST
+   * render left them, or the shipped deliverable's text disagrees with its own
+   * PNGs. `content_fail` is the reachable case: `promote-image-to-cover`
+   * attaches a path that may not exist on this instance's disk.
+   *
+   * By call ordinal rather than by input shape because that is the only thing
+   * a caller can predict: render 1 is `08`, render 2 is `08a1c`.
+   */
+  failRenderCall?: (callNumber: number) => { status: "content_fail" | "tooling_error"; reason: string } | undefined;
+}
+
+/**
+ * One rendered slide as the fake reports it — `RenderCarouselResult`'s own
+ * row widened with item L's two additive fields. Widened here rather than
+ * imported so this helper compiles before/independently of
+ * `packages/tools/karos-publish`'s own `TOOL_VERSION 1.1.0` change being
+ * rebuilt into `dist/`; the shapes are structurally identical.
+ */
+type FakeRenderedSlide = RenderCarouselResult["rendered"][number] & {
+  metrics?: SlideMetrics;
+  measureFailure?: string;
+  probe?: SlideProbe;
+};
+
+export function fakeRenderCarousel(realTool: AgentToolRegistry[string], opts: FakeRenderCarouselOptions = {}): AgentToolRegistry[string] {
+  let renderCalls = 0;
   return {
     ...realTool,
     async execute(rawArgs: unknown) {
+      renderCalls += 1;
+      const forced = opts.failRenderCall?.(renderCalls);
+      if (forced !== undefined) return forced;
       const parsed = realTool.inputSchema.safeParse(rawArgs);
       if (!parsed.success) {
         return { status: "tooling_error", reason: `bad args: ${parsed.error.message}` };
@@ -154,11 +344,20 @@ export function fakeRenderCarousel(realTool: AgentToolRegistry[string]): AgentTo
         return validation.kind === "tooling" ? { status: "tooling_error", reason: validation.reason } : { status: "content_fail", reason: validation.reason };
       }
       await fs.mkdir(validation.resolvedOutDir, { recursive: true });
-      const rendered: RenderCarouselResult["rendered"] = [];
+      const rendered: FakeRenderedSlide[] = [];
       for (const slide of input.slides) {
         const outPath = path.join(validation.resolvedOutDir, `slide-${slide.n}.png`);
         await fs.writeFile(outPath, MINIMAL_PNG_BYTES);
-        rendered.push({ n: slide.n, path: outPath });
+        const metrics = opts.metrics ? opts.metrics(slide) : passingSlideMetrics();
+        const probe = opts.probe ? opts.probe(slide) : passingSlideProbe(slide.n);
+        rendered.push({
+          n: slide.n,
+          path: outPath,
+          ...(metrics !== undefined
+            ? { metrics }
+            : { measureFailure: opts.measureFailure?.(slide) ?? "measureSlidePng: the PNG could not be decoded (interlaced)" }),
+          ...(probe !== undefined ? { probe } : {}),
+        });
       }
       return { status: "success", result: { rendered } };
     },
@@ -411,6 +610,110 @@ export function goodClientBrief(overrides: Partial<ClientBrief> = {}): ClientBri
   };
 }
 
+/**
+ * A per-client Template Studio set (RFC-14 item N) as a test can seed it.
+ *
+ * `archetypeIds` must be ids the layout enum can actually ROUTE to (spec
+ * finding 7: `templateForLayout` maps only the fixed enum, so a row carrying
+ * a novel `archetypeId` is a template nothing can ever pick). The default
+ * four are all routable today and all have real fixture markup in
+ * `__tests__/fixtures/templates/`, so a seeded row is a genuine template
+ * rather than a stub — nothing here is placeholder markup.
+ */
+export interface StudioSeed {
+  archetypeIds?: readonly string[];
+  /** Item N stores at 65 (`DEFAULT_QUALITY_STUDIO`) — strictly below the bundled floor of 70, so a generated design never displaces a fleet-verified one. */
+  qualityScore?: number;
+  /** Item N stores `enabled: false` until the portal approves. The default here is APPROVED, so `00c-check-template-studio` resolves `reuse` and consumes no router turn. */
+  enabled?: boolean;
+  clientSlug?: string;
+  /**
+   * How old every seeded row is, in days. Defaults to 0 (fresh, so `00c`
+   * resolves `reuse`); anything past `STUDIO_TTL_DAYS` seeds the TTL-refresh
+   * path, where `00c` resolves `generate` over rows that already exist and
+   * the duplicate guard must NOT refuse the archetypes being replaced.
+   */
+  ageDays?: number;
+}
+
+/** Which archetypes the default studio seed implements — routable ids with real fixture markup, one file each. */
+const DEFAULT_STUDIO_ARCHETYPES = [
+  { archetypeId: "stat_callout", file: "stat-callout.html", name: "Studio stat callout", layoutType: "typographic" as const },
+  { archetypeId: "quote_card", file: "quote-card.html", name: "Studio quote card", layoutType: "typographic" as const },
+  { archetypeId: "list_takeaway", file: "list-takeaway.html", name: "Studio list takeaway", layoutType: "typographic" as const },
+  { archetypeId: "headline_focus", file: "headline-focus.html", name: "Studio headline focus", layoutType: "typographic" as const },
+] as const;
+
+async function buildStudioStore(repoRoot: string, seed: StudioSeed, nowMs: number): Promise<MemoryTemplateStore> {
+  const now = nowMs - Math.max(0, seed.ageDays ?? 0) * 24 * 60 * 60 * 1000;
+  const wanted = seed.archetypeIds;
+  const chosen = wanted === undefined ? DEFAULT_STUDIO_ARCHETYPES : DEFAULT_STUDIO_ARCHETYPES.filter((a) => wanted.includes(a.archetypeId));
+  const rows: TemplateDefinition[] = [];
+  for (const archetype of chosen) {
+    const html = await fs.readFile(path.join(repoRoot, "fixtures", "templates", archetype.file), "utf8");
+    rows.push(
+      TemplateDefinitionSchema.parse({
+        id: `studio_${seed.clientSlug ?? "acme"}_${archetype.archetypeId}`,
+        archetypeId: archetype.archetypeId,
+        name: archetype.name,
+        layoutType: archetype.layoutType,
+        htmlTemplate: html,
+        cssStyles: "",
+        supportedFields: extractSupportedFields(html),
+        qualityScore: seed.qualityScore ?? 65,
+        source: "ai_generated",
+        clientSlug: seed.clientSlug ?? "acme",
+        enabled: seed.enabled ?? true,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+  }
+  return new MemoryTemplateStore(rows);
+}
+
+/**
+ * ONE studio row, stored the way item N stores one: `enabled: false`,
+ * awaiting a human's approval at the review gate.
+ *
+ * For a fixture that supplies its OWN `MemoryTemplateStore` (the
+ * custom-archetype, revision-loop, cross-run-adaptation, slides-data and
+ * auto-promote suites all do) rather than `env.templateStore`. Without a
+ * studio row of some kind, `00c-check-template-studio` reads an empty set
+ * for the client and resolves `generate` — which is correct behaviour and
+ * wrong for those fixtures, whose router queues no studio turns.
+ *
+ * `enabled: false` is the deliberate choice over an approved row: `00c`
+ * resolves `awaiting-approval` (so the paid block is skipped, exactly as
+ * `reuse` would), AND `matchesQuery` filters a disabled row out of the
+ * default `list()` — so `materializeTemplates` cannot see it and every one
+ * of those fixtures renders byte-identically to before item N.
+ *
+ * Real fixture markup, never a stub: a row nothing could render would be a
+ * lie in the store even if no test reads it.
+ */
+export function pendingStudioRow(options: { archetypeId?: string; clientSlug?: string; now?: number } = {}): TemplateDefinition {
+  const archetypeId = options.archetypeId ?? "stat_callout";
+  const clientSlug = options.clientSlug ?? "acme";
+  const html = readFileSync(path.join(FIXTURES_ROOT, "templates", "stat-callout.html"), "utf8");
+  const now = options.now ?? Date.now();
+  return TemplateDefinitionSchema.parse({
+    id: `studio_${clientSlug}_${archetypeId}`,
+    archetypeId,
+    name: `Studio ${archetypeId} (awaiting approval)`,
+    layoutType: "typographic",
+    htmlTemplate: html,
+    cssStyles: "",
+    supportedFields: extractSupportedFields(html),
+    qualityScore: 65,
+    source: "ai_generated",
+    clientSlug,
+    enabled: false,
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
 export interface TestEnvironment {
   /** The `WorkspaceStore`'s root — client config/topics catalog/ledger live under here. */
   rootDir: string;
@@ -418,6 +721,16 @@ export interface TestEnvironment {
   repoRoot: string;
   store: WorkspaceStore;
   tools: ReturnType<typeof createAllKarosTools>;
+  /**
+   * A per-client Template Studio set (RFC-14 item N), seeded per `seedStudio`.
+   *
+   * Handed back rather than wired in: `templateStore` is a WORKFLOW option
+   * (`createInstagramAgentWorkflow({ templateStore })`), not an environment
+   * one, so every existing fixture that does not pass it stays byte-identical
+   * — which is exactly the property the ~30 workflow fixtures need. A test
+   * that wants the studio path passes `templateStore: env.templateStore`.
+   */
+  templateStore: TemplateStore;
   cleanup: () => Promise<void>;
 }
 
@@ -463,6 +776,47 @@ export async function setupTestEnvironment(
      * refresh/never-refresh paths.
      */
     seedBrief?: ClientBrief | false;
+    /**
+     * The per-client Template Studio set on `env.templateStore` (RFC-14 item
+     * N). Omitted seeds a FRESH, APPROVED four-template set, for the same
+     * reason `seedBrief` defaults to a fresh brief: `00c-check-template-studio`
+     * then resolves `reuse` and consumes no `instagram-template-designer`
+     * router turn, so a fixture that wires the store keeps its turn list.
+     *
+     * `false` seeds an EMPTY store: no client-scoped rows exist, `00c`
+     * resolves `generate`, and the studio's design turns ARE consumed. Pass
+     * `{ enabled: false }` for the awaiting-approval path (the rows exist and
+     * the portal can see them, but `resolveBest` skips them, so the run uses
+     * the bundled set).
+     */
+    seedStudio?: StudioSeed | false;
+    /**
+     * The shipped-skeleton history this client starts with (RFC-14 item P),
+     * written verbatim into the beliefs document under `SKELETON_BELIEF_KEY`
+     * — the same key `readSkeletonHistory` reads and `09b-deliver-and-log`
+     * writes.
+     *
+     * Omitted writes NOTHING, deliberately: a first run has no history, both
+     * of item P's checks are inert then, and that is what keeps every
+     * existing fixture identical. A test seeds last week's signature to
+     * exercise the repeat refusal.
+     */
+    seedSkeletons?: SkeletonHistory;
+    /**
+     * The stored per-client visual direction (RFC-14 item Q), written
+     * verbatim into the beliefs document under `"instagramVisualDirection"`
+     * (`VISUAL_DIRECTION_BELIEF_KEY`, owned by
+     * `src/workflow/visual-direction.ts` in PR-D).
+     *
+     * Typed `unknown` on purpose: this helper's job is to put a document at
+     * the right key, and the document's shape belongs to the module that
+     * defines it — a mirrored interface here would be a second definition to
+     * keep in sync for no benefit. Omitted writes nothing, so
+     * `00d-check-visual-direction` resolves `derive`.
+     */
+    seedVisualDirection?: unknown;
+    /** Any other beliefs keys a fixture needs (a seeded `instagramRunBudget` history, an `instagramCustomArchetypes` record). Merged with the two above into one write. */
+    seedBeliefs?: Record<string, unknown>;
   } = {},
 ): Promise<TestEnvironment> {
   const withConfig = opts.withConfig ?? true;
@@ -495,6 +849,19 @@ export async function setupTestEnvironment(
     await store.writeJson("acme", briefSegments("instagram"), seedBrief);
   }
 
+  // One write, several keys — mirroring the single merging `memory.updateBeliefs({ diff })`
+  // call `09b-deliver-and-log` makes, so a seeded document has the same shape
+  // a delivered run leaves behind rather than a shape only tests produce.
+  const beliefs: Record<string, unknown> = { ...(opts.seedBeliefs ?? {}) };
+  if (opts.seedSkeletons !== undefined) beliefs[SKELETON_BELIEF_KEY] = opts.seedSkeletons;
+  if (opts.seedVisualDirection !== undefined) beliefs["instagramVisualDirection"] = opts.seedVisualDirection;
+  if (Object.keys(beliefs).length > 0) await store.writeJson("acme", ["memory", "beliefs"], beliefs);
+
+  const templateStore =
+    opts.seedStudio === false
+      ? new MemoryTemplateStore()
+      : await buildStudioStore(repoRoot, opts.seedStudio ?? {}, Date.now());
+
   const seedCtx: AgentContext = { runId: "seed", ...BASE_CTX_FIELDS, metadata: {} };
   const seedTopics = opts.seedTopics ?? [
     "5 automation wins from this quarter",
@@ -519,6 +886,7 @@ export async function setupTestEnvironment(
     repoRoot,
     store,
     tools,
+    templateStore,
     cleanup: async () => {
       await fs.rm(rootDir, { recursive: true, force: true });
       await fs.rm(repoRoot, { recursive: true, force: true });

@@ -107,17 +107,38 @@ describe("brand kit: the client's brand reaches the rendered templates", () => {
     expect(resolved?.brandTokenDrift?.present.join(",")).toContain("--bg=#272A35");
   }, 30000);
 
-  it("a client with no brand.json renders exactly as before brand kits existed", async () => {
+  it("a client with no brand.json, no registry and a Latin language still gets the device stylesheet", async () => {
+    // Phase 2, item M / spec finding 10. This client has NOTHING to splice
+    // from a brand kit and nothing from `script-fonts.ts` either, because the
+    // target language is Latin — which used to mean 04c returned the client's
+    // read-only `templateDir` verbatim. `.dv-*` lives only in
+    // `deviceCssBlock()` (no bundled template file defines it), so on that
+    // path every number device on this client rendered as unstyled
+    // default-size text over the ground: the one visual mechanism item M
+    // added, silently absent on exactly the clients the `extraHeadHtml`
+    // parameter was introduced for. The copy is now unconditional.
     const durableStore = new MemoryDurableStepStore();
     const result = await new WorkflowEngine(durableStore).run(workflowFor(happyRouter()), { runId: "brandless_run", ...base });
     expect(result.status).toBe("completed");
 
     const resolved = (await durableStore.listSteps("brandless_run")).find((s) => s.stepId === "04c-resolve-templates")?.output as
-      | { templateDir: string; brandTokenDrift?: unknown }
+      | { templateDir: string; files: string[]; brandTokenDrift?: unknown }
       | undefined;
-    // Untouched original path: the client's own templateDir, no run-dir copy.
-    expect(resolved?.templateDir).toBe("fixtures/templates");
+    expect(resolved?.templateDir).toBe(".template-cache/brandless_run");
+    // `files` keeps its "archetype files present" meaning on this path too.
+    expect(resolved?.files).toContain("headline-focus.html");
+    // No kit, so still no drift note — that half is unchanged.
     expect(resolved?.brandTokenDrift).toBeUndefined();
+
+    const written = await fsp.readFile(pathMod.join(env.repoRoot, ".template-cache", "brandless_run", "headline-focus.html"), "utf8");
+    expect(written).toContain(".dv-figure");
+    expect(written).toContain(".dv-bar");
+    // The client's own markup is copied through untouched — the sheet is
+    // spliced into the head, it does not replace anything.
+    const original = await fsp.readFile(pathMod.join(env.repoRoot, "fixtures", "templates", "headline-focus.html"), "utf8");
+    expect(written).toContain(original.slice(original.indexOf("<body"), original.indexOf("<body") + 40));
+    // Nothing brand-shaped got invented for a client with no brand.
+    expect(written).not.toContain("family=Space+Grotesk");
   }, 30000);
 
   it("re-writes the branded run dir before a revision render after the instance's disk was wiped", async () => {

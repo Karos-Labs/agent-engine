@@ -145,13 +145,27 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "instagram-copy",
     agent: "instagram-agent",
-    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13"],
-    latestVersion: "13",
+    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14"],
+    latestVersion: "14",
     requires: { languageDirective: true },
   },
+  // Phase 2, item N. The Template Studio's three setup-time prompts. None of
+  // them carries `requires` flags, for the same reason `instagram-brief` and
+  // `instagram-angle` do not: they receive the resolved `targetLanguage`
+  // rather than `clientVoiceContext` (so the `languageDirective` marker,
+  // which looks for that literal, would be unsatisfiable), and while the
+  // design brief is under a hard "never invent a metric" rule, what enforces
+  // it is `assertNoInventedMetrics` over the evidence block, NOT
+  // `gate.numbersSourced` — and the `numbersSourced` flag requires the prompt
+  // to name that gate. Naming a gate that never runs on this output is
+  // exactly the "unenforced instruction dressed as an enforced one" this
+  // registry's own doc comment warns about.
+  { promptId: "instagram-design-brief", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
   { promptId: "instagram-image-vet", agent: "instagram-agent", versions: ["1", "2", "3"], latestVersion: "3" },
   { promptId: "instagram-research", agent: "instagram-agent", versions: ["1", "2"], latestVersion: "2" },
-  { promptId: "instagram-visual-qa", agent: "instagram-agent", versions: ["1", "2", "3"], latestVersion: "3" },
+  { promptId: "instagram-template-designer", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
+  { promptId: "instagram-template-set-review", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
+  { promptId: "instagram-visual-qa", agent: "instagram-agent", versions: ["1", "2", "3", "4"], latestVersion: "4" },
   {
     promptId: "intel-report-grounding",
     agent: "intel-report-agent",

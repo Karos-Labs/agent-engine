@@ -22,9 +22,13 @@ import {
   goodVisualQaOutput,
   makePromptStore,
   setupTestEnvironment,
+  boringSlideMetrics,
+  passingSlideMetrics,
   type TestEnvironment,
+  pendingStudioRow,
 } from "./test-helpers.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
+import { validateCustomArchetypeSlots } from "../src/workflow/custom-archetype-checks.js";
 
 const base = { clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
@@ -70,7 +74,11 @@ describe("custom archetypes: authoring, safety, and promotion", () => {
   });
 
   it("renders a run-authored custom archetype end to end", async () => {
-    const store = new MemoryTemplateStore();
+    // One DISABLED studio row, so `00c-check-template-studio` resolves
+    // `awaiting-approval` and the studio's paid block is skipped (this
+    // fixture's router queues no studio turns). `materializeTemplates` lists
+    // only enabled rows, so nothing about the render changes.
+    const store = new MemoryTemplateStore([pendingStudioRow()]);
     const copy = withCustomArchetype();
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
@@ -111,7 +119,11 @@ describe("custom archetypes: authoring, safety, and promotion", () => {
   }, 30000);
 
   it("downgrades a slide whose custom archetype tries to smuggle a <script>, rather than failing the run", async () => {
-    const store = new MemoryTemplateStore();
+    // One DISABLED studio row, so `00c-check-template-studio` resolves
+    // `awaiting-approval` and the studio's paid block is skipped (this
+    // fixture's router queues no studio turns). `materializeTemplates` lists
+    // only enabled rows, so nothing about the render changes.
+    const store = new MemoryTemplateStore([pendingStudioRow()]);
     const copy = withCustomArchetype({ bodyHtml: `<div><script>fetch('https://evil.example')</script>{{note}}</div>` });
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
@@ -144,6 +156,104 @@ describe("custom archetypes: authoring, safety, and promotion", () => {
     expect(slidesData?.slides.find((s) => s.n === 2)?.template).toBe("slide.html");
   }, 30000);
 
+  it("degrades a slide whose custom archetype references a slot nothing fills, rather than rendering a hole", async () => {
+    // Item O's slot contract (`validateCustomArchetypeSlots`), free and
+    // pre-render. `materializeTemplates` substitutes what it is given and
+    // leaves the rest, so `{{price}}` reaches the slide as literal text and
+    // nothing downstream fails: today that ships. Green once the integrator
+    // lands note (e) — `validateCustomArchetypes` additionally calling
+    // `validateCustomArchetypeSlots`.
+    // One DISABLED studio row, so `00c-check-template-studio` resolves
+    // `awaiting-approval` and the studio's paid block is skipped (this
+    // fixture's router queues no studio turns). `materializeTemplates` lists
+    // only enabled rows, so nothing about the render changes.
+    const store = new MemoryTemplateStore([pendingStudioRow()]);
+    const copy = withCustomArchetype({ bodyHtml: `<div class="wrap"><h1>{{kicker}}</h1><p>{{note}}</p><em>{{price}}</em></div>` });
+    const router = fakeRouterSequence([
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(copy),
+      finalTurn(goodImageVettingOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+    ]);
+
+    const durableStore = new MemoryDurableStepStore();
+    const result = await new WorkflowEngine(durableStore).run(
+      createInstagramAgentWorkflow({
+        tools: { ...env.tools, "publish.renderCarousel": fakeRenderCarousel(env.tools["publish.renderCarousel"]!) },
+        promptStore: makePromptStore(),
+        router,
+        repoRoot: env.repoRoot,
+        imageCandidatePool: goodImageCandidatePool(),
+        autoApprove: true,
+        templateStore: store,
+      }),
+      { runId: "custom_unfilled_slot", ...base },
+    );
+
+    expect(result.status).toBe("completed");
+    const steps = await durableStore.listSteps("custom_unfilled_slot");
+    const slidesData = steps.find((s) => s.stepId === "07c-emit-slides-data-attempt-1")?.output as
+      | { slides: Array<{ n: number; template: string }> }
+      | undefined;
+    // Degraded through the same path a `stat_callout` with no `stat` takes.
+    expect(slidesData?.slides.find((s) => s.n === 2)?.template).not.toBe("custom-bold-diagonal.html");
+    // The finding is a pure-function verdict, asserted directly so the reason
+    // text is pinned where a reader of this file can see it.
+    expect(validateCustomArchetypeSlots(copy.slides[1]!.customArchetype!)).toMatchObject({ ok: false });
+  }, 30000);
+
+  it("a custom archetype whose render measures empty produces an interest finding naming custom-<id>", async () => {
+    // Item L IS item O's render validation: no separate render-and-check pass
+    // exists, and a custom design that renders empty fails `08a1` like any
+    // other slide. Green once the integrator lands step 9 of the Phase 2
+    // wiring order (WP-C2's `08a1-interest-floor-attempt-N`).
+    // One DISABLED studio row, so `00c-check-template-studio` resolves
+    // `awaiting-approval` and the studio's paid block is skipped (this
+    // fixture's router queues no studio turns). `materializeTemplates` lists
+    // only enabled rows, so nothing about the render changes.
+    const store = new MemoryTemplateStore([pendingStudioRow()]);
+    const copy = withCustomArchetype();
+    // Three drafting attempts: `08a1` sits BEFORE `08b`, so the two refused
+    // attempts spend copy + vetting + relevance and no visual-QA turn, and
+    // the angle is proposed once per REVISION rather than once per attempt.
+    const router = fakeRouterSequence([
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(copy), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()),
+      finalTurn(copy), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()),
+      finalTurn(copy), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()),
+      finalTurn(goodVisualQaOutput()),
+    ]);
+
+    const durableStore = new MemoryDurableStepStore();
+    const result = await new WorkflowEngine(durableStore).run(
+      createInstagramAgentWorkflow({
+        tools: {
+          ...env.tools,
+          // The custom slide measures as an empty plate; every other slide passes.
+          "publish.renderCarousel": fakeRenderCarousel(env.tools["publish.renderCarousel"]!, {
+            metrics: (slide) => (slide.n === 2 ? boringSlideMetrics() : passingSlideMetrics()),
+          }),
+        },
+        promptStore: makePromptStore(),
+        router,
+        repoRoot: env.repoRoot,
+        imageCandidatePool: goodImageCandidatePool(),
+        autoApprove: true,
+        templateStore: store,
+      }),
+      { runId: "custom_empty_render", ...base },
+    );
+
+    // Never held: a picture/layout problem ships degraded with the numbers.
+    expect(result.status).not.toBe("held");
+    const steps = await durableStore.listSteps("custom_empty_render");
+    const floor = steps.find((s) => s.stepId === "08a1-interest-floor-attempt-1")?.output as
+      | { findings?: Array<{ slide: number; kind: string; sentence: string }> }
+      | undefined;
+    expect(floor?.findings?.some((f) => f.slide === 2)).toBe(true);
+    expect(JSON.stringify(floor?.findings ?? [])).toContain("custom-custom_bold_diagonal");
+  }, 60000);
+
   it("belt-and-suspenders: refuses a custom archetypeId that collides with a real archetype id", () => {
     const good = goodCopyOutput();
     // Bypasses the schema's own `custom_` regex deliberately — this proves
@@ -174,7 +284,11 @@ describe("custom archetypes: authoring, safety, and promotion", () => {
   });
 
   it("promotes a custom archetype into the registry when the reviewer sets promote: true, and only reviews it (never re-promotes) on a later round", async () => {
-    const store = new MemoryTemplateStore();
+    // One DISABLED studio row, so `00c-check-template-studio` resolves
+    // `awaiting-approval` and the studio's paid block is skipped (this
+    // fixture's router queues no studio turns). `materializeTemplates` lists
+    // only enabled rows, so nothing about the render changes.
+    const store = new MemoryTemplateStore([pendingStudioRow()]);
     const copy = withCustomArchetype();
     const revised = { ...copy, caption: `${copy.caption} (revised)` };
     // The angle proposal (04i) leads each ROUND: one per revision.

@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en" dir="{{dir}}">
+<head>
+<meta charset="utf-8" />
+<title>instagram-agent closer slide template</title>
+<!--
+  `closer` — the last slide. The save moment, and the only slide that gets to
+  ask the reader for something.
+
+  The 2026-09-08 audit's finding 9 named three defects, and the third was
+  "closers with no call to action". The deeper version of that defect is a
+  closer that is near-empty: a line of thanks on a bare plate, which is the
+  cheapest slide in any carousel to get wrong because nobody is looking at it
+  when the copy is written. So this file, like `cover.html`, is built so the
+  empty version cannot be rendered:
+
+    * a token-driven GROUND is always painted (a hairline grid plus one solid
+      accent block, or a display-face numeral field — chosen per run by the
+      same seeded walk `paletteForSlide` uses, see `isVariationSlot`);
+    * a RECAP STRIP of two to four mini plates, built BY CODE from the
+      carousel's own earlier slides (`buildRecapFragment`) — never a second
+      draft of the post, every plate is a verbatim fragment of a slide the
+      reader has already seen;
+    * the takeaway in the display face, and a question or a CTA under an
+      accent rule.
+
+  Slots: `takeaway`, `cta`, `question`, `html:recap`, plus `eyebrow` and the
+  standing furniture. Exactly one of `cta`/`question` is filled per slide —
+  see `contentFor`: a question is set as an invitation, a CTA as a line, and
+  those are two different typographic jobs rather than one slot with two
+  meanings. `html:recap` carries the recap strip, or a slide-level number
+  device when there is no recap to build.
+
+  See `stat-callout.html`'s header for why the token block is duplicated.
+-->
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600;1,400;1,500;1,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #17181C;
+    --fg: #F4F2EC;
+    --accent: {{accentColor}};
+    --accent-ink: #141414;
+    --line: color-mix(in srgb, var(--fg) 20%, transparent);
+    --f-display: 'Fraunces', Georgia, 'Times New Roman', serif;
+    --f-body: 'Inter', system-ui, -apple-system, sans-serif;
+    --f-mono: 'IBM Plex Mono', ui-monospace, monospace;
+    --mx: 64px;
+    --ts: 1;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  /* Reviewer typography controls (Phase 2) — see `stat-callout.html`'s note
+     on why these are classes and never a {{fontScale}} custom property. */
+  body.ts-s { --ts: 0.85; }
+  body.ts-l { --ts: 1.18; }
+  body.ta-center { text-align: center; }
+  body.ta-end { text-align: end; }
+  html, body { width: 1080px; height: 1440px; }
+  body {
+    position: relative; overflow: hidden;
+    background: var(--bg); color: var(--fg); font-family: var(--f-body);
+    display: flex; flex-direction: column; justify-content: center;
+    padding-inline: var(--mx);
+  }
+
+  /* ── The token-driven ground (item M.3). Identical to `headline-focus.html`'s
+        — see that file's header for why the field is 45 degrees, 14%, and
+        inset 16px rather than an orthogonal grid bleeding off the plate, and
+        for the measurement it does and does not move (it is a GROUND: it
+        fills the dead space clause C reads and cannot satisfy clause G's
+        content mask, which is what stops it standing in for a slide). The
+        field is the
+        CSS default, so a checkpoint written before `{{groundStyle}}` existed
+        (where the class token strips to a bare "gr-") still paints a ground
+        rather than reverting to the bare plate this archetype exists to
+        avoid. ── */
+  .ground {
+    position: absolute; inset: 16px; z-index: 0; overflow: hidden;
+    background-image: repeating-linear-gradient(45deg,
+      color-mix(in srgb, var(--fg) 14%, transparent) 0 1.5px,
+      transparent 1.5px 18px);
+  }
+  /* The closer's standing graphic, always painted, sitting inside the inset
+     ground so no ink lands in the bleed band. A closer with no recap to
+     build (a device in its place, or neither) would otherwise carry nothing
+     the imagery-or-device floor can see — see `.cl-recap`'s note. */
+  .ground-plate {
+    position: absolute; inset-block-end: 0; inset-inline-end: 0;
+    inline-size: 380px; block-size: 230px;
+    background: color-mix(in srgb, var(--accent) 42%, var(--bg));
+  }
+  .ground-glyph { display: none; }
+  body.gr-glyph .ground { background-image: repeating-linear-gradient(135deg,
+      color-mix(in srgb, var(--fg) 14%, transparent) 0 1.5px,
+      transparent 1.5px 18px); }
+  body.gr-glyph .ground-glyph {
+    display: block; position: absolute;
+    inset-block-start: calc(-190px * var(--ts, 1)); inset-inline-start: calc(-24px * var(--ts, 1));
+    font-family: var(--f-display); font-weight: 600; font-size: calc(760px * var(--ts, 1));
+    line-height: 0.8; letter-spacing: -0.04em;
+    color: color-mix(in srgb, var(--fg) 8%, transparent);
+    -webkit-text-stroke: 3px color-mix(in srgb, var(--fg) 26%, transparent);
+  }
+
+  .cl-wrap { position: relative; z-index: 3; }
+  .eyebrow {
+    font-family: var(--f-mono); font-weight: 500; font-size: calc(19px * var(--ts, 1));
+    letter-spacing: 0.2em; text-transform: uppercase; color: color-mix(in srgb, var(--fg) 70%, transparent);
+    margin-block-end: calc(40px * var(--ts, 1));
+  }
+  .eyebrow:empty { display: none; }
+
+  /* ── The recap strip. Class names match `buildRecapFragment` exactly; the
+        plate title reuses `.item-title`, one of `script-fonts.ts`'s
+        DISPLAY_SELECTORS, so a Hebrew recap gets Hebrew leading. ── */
+  /* THE PANEL IS NOT DECORATION. Clause E of the interest floor
+     (`IMAGERY_OR_DEVICE_FLOOR`) applies to the closer as well as the cover:
+     the last slide has to carry something, and a closer with no photograph
+     has to carry it as a graphic. A tinted panel of ~14% of the frame
+     measures as `graphicShare` (a filled, low-colour-count region), where
+     the recap's own hairlines and the accent rule are far too thin to
+     register. Without it a perfectly composed closer would fail clause E on
+     every attempt. */
+  .cl-recap { position: relative; }
+  .cl-recap:empty { display: none; }
+  .cl-recap:not(:empty) {
+    background: color-mix(in srgb, var(--accent) 30%, var(--bg));
+    padding: calc(34px * var(--ts, 1)) calc(30px * var(--ts, 1)) calc(28px * var(--ts, 1));
+    margin-block-end: calc(64px * var(--ts, 1));
+  }
+  .rc-strip { display: flex; gap: calc(20px * var(--ts, 1)); }
+  .rc-plate {
+    flex: 1 1 0; border-block-start: 3px solid var(--line);
+    padding-block-start: calc(22px * var(--ts, 1));
+  }
+  .rc-n {
+    font-family: var(--f-mono); font-weight: 600; font-size: calc(19px * var(--ts, 1));
+    letter-spacing: 0.16em; color: color-mix(in srgb, var(--fg) 50%, transparent);
+    margin-block-end: calc(16px * var(--ts, 1));
+  }
+  .rc-plate .item-title {
+    font-family: var(--f-display); font-weight: 500; font-size: calc(31px * var(--ts, 1));
+    line-height: 1.25; letter-spacing: -0.01em; text-wrap: balance;
+  }
+
+  /* `.headline`, not a closer-specific name — a DISPLAY_SELECTOR, so the
+     takeaway picks up per-script leading. */
+  .headline {
+    font-family: var(--f-display); font-weight: 600; font-size: calc(84px * var(--ts, 1));
+    line-height: 1.1; letter-spacing: -0.018em; text-wrap: balance;
+  }
+  .headline.small { font-size: calc(66px * var(--ts, 1)); line-height: 1.14; }
+
+  /* The one accent moment: a rule under the takeaway, above the ask. */
+  .cl-rule { inline-size: 220px; block-size: 12px; background: var(--accent); margin-block: calc(44px * var(--ts, 1)); }
+
+  .cl-question {
+    font-family: var(--f-display); font-weight: 500; font-size: calc(50px * var(--ts, 1));
+    line-height: 1.28; letter-spacing: -0.012em; text-wrap: balance;
+  }
+  .cl-question:empty { display: none; }
+  .cl-cta {
+    font-family: var(--f-body); font-weight: 500; font-size: calc(34px * var(--ts, 1));
+    line-height: 1.45; color: color-mix(in srgb, var(--fg) 92%, transparent);
+    max-inline-size: 860px; text-wrap: pretty;
+  }
+  .cl-cta:empty { display: none; }
+  .brand-badge:empty, .brand-handle:empty { display: none; }
+</style>
+</head>
+<body class="ts-{{fontScale}} ta-{{textAlign}} gr-{{groundStyle}}">
+  <div class="brand-badge">{{seriesBadge}}</div>
+  <div class="brand-handle">{{brandHandle}}</div>
+  <div class="ground" aria-hidden="true">
+    <div class="ground-plate"></div>
+    <span class="ground-glyph">{{slideIndex}}</span>
+  </div>
+  <div class="cl-wrap">
+    <div class="eyebrow">{{eyebrow}}</div>
+    <div class="cl-recap">{{html:recap}}</div>
+    <div class="headline" id="takeaway">{{takeaway}}</div>
+    <div class="cl-rule"></div>
+    <div class="cl-question">{{question}}</div>
+    <div class="cl-cta">{{cta}}</div>
+  </div>
+  <script>
+    (function () {
+      var t = document.getElementById("takeaway");
+      if ((t.textContent || "").trim().length > 46) t.className = "headline small";
+      window.__CAROUSEL_READY__ = true;
+    })();
+  </script>
+</body>
+</html>

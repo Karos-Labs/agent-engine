@@ -83,7 +83,15 @@ describe("bundled store: the read-only floor", () => {
     // Renaming a file must not silently flip whether its slides pay for image
     // sourcing, so the mapping is explicit.
     expect(BUNDLED_ARCHETYPES.find((a) => a.archetypeId === "photo")!.photo).toBe(true);
-    expect(BUNDLED_ARCHETYPES.every((a) => a.archetypeId === "photo" || !a.photo)).toBe(true);
+    // Exactly the archetypes that consume a photograph carry the flag, and
+    // no others: `photo`, plus `cover` since item M gave the bundled set a
+    // full-bleed cover. Written as a set comparison rather than "only photo"
+    // because the flag decides whether a slide PAYS for image sourcing —
+    // a new photographic archetype has to be added here deliberately, and a
+    // typographic one silently gaining the flag has to fail.
+    const photoConsuming = BUNDLED_ARCHETYPES.filter((a) => a.photo).map((a) => a.archetypeId).sort();
+    const expected = ["cover", "photo"].filter((id) => BUNDLED_ARCHETYPES.some((a) => a.archetypeId === id));
+    expect(photoConsuming).toEqual(expected);
   });
 });
 
@@ -430,6 +438,28 @@ describe("promotion and review: the flywheel", () => {
     const best = resolveBest([...(await bundled.list()), promoted]);
     // The verified bundled design still wins until the new one accumulates approvals.
     expect(best.get("stat_callout")!.source).toBe("legacy");
+  });
+
+  // The Template Studio added `qualityScore` / `enabled` / `derivedFrom` /
+  // `role` overrides to `promoteTemplate`. This is the pin that the promotion
+  // path a HUMAN drives is byte-identical without them.
+  it("omitting every new override leaves the human promotion path exactly as it was", async () => {
+    const store = new MemoryTemplateStore();
+    const promoted = await promoteTemplate({
+      store,
+      archetypeId: "quote_card",
+      name: "v",
+      htmlTemplate: "<html><head></head><body>{{quoteText}}</body></html>",
+      layoutType: "typographic",
+      source: "ai_generated",
+      actor: "a",
+      now: 1,
+    });
+    expect(promoted.qualityScore).toBe(40);
+    expect(promoted.enabled).toBe(true);
+    expect(promoted.derivedFrom).toBeUndefined();
+    expect(promoted.role).toBeUndefined();
+    expect(promoted.feedback).toHaveLength(1);
   });
 
   it("climbs on approvals and falls faster on revisions", async () => {

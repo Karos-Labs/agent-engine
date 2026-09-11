@@ -17,6 +17,7 @@ import {
   makePromptStore,
   setupTestEnvironment,
   type TestEnvironment,
+  pendingStudioRow,
 } from "./test-helpers.js";
 import fsp from "node:fs/promises";
 import pathMod from "node:path";
@@ -268,6 +269,12 @@ describe("cross-run adaptation (IGSTYLE-5)", () => {
 
   it("template critique produces a durable memory row (scope: \"template\") in addition to the registry write, which is not replaced", async () => {
     const store = new MemoryTemplateStore([
+      // Item N: one DISABLED studio row so `00c-check-template-studio`
+      // resolves `awaiting-approval` and the studio's paid block is skipped
+      // (this fixture's router queues no studio turns). Invisible to
+      // `materializeTemplates`, which lists only enabled rows, so the render
+      // is byte-identical to before.
+      pendingStudioRow(),
       TemplateDefinitionSchema.parse({
         id: "ai:quote:1",
         archetypeId: "quote_card",

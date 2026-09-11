@@ -354,24 +354,26 @@ export const DEFAULT_RENDER_RULES: StyleRule[] = [
   {
     id: "default:cover-carries-device",
     check: "render",
-    description: "Slide 1 carries a photograph or a figure device (stat, comparison, quote, list). A headline alone on empty ground is not a cover.",
+    description:
+      "Slide 1 is a cover: a photograph, the `cover` archetype's graphic ground, or a figure device (stat, comparison, quote, list, or a `device` on the slide). A headline alone on empty ground is not a cover.",
   },
   {
     id: "default:two-elements-per-slide",
     check: "render",
     description:
-      "Every slide carries at least two content elements (headline + body, figure + label, quote + attribution, image + headline, list with 2+ items).",
+      "Every slide carries at least two content elements (headline + body, figure + label, quote + attribution, image + headline, list with 2+ items, a number device, a closer's recap strip).",
   },
   {
     id: "default:numbers-are-devices",
     check: "render",
     description:
-      "A slide whose headline or body opens with a number, percentage or currency amount is set as a stat callout or comparison card, never as prose. Only one of each exists per carousel, so every other numeric fact leads with the noun.",
+      "A slide whose headline or body opens with a number, percentage or currency amount renders that figure AS a device — a stat callout, a comparison card, or a `device` on the slide (figure, figure_pair, bars, timeline, versus, unit_grid) — never as prose.",
   },
   {
     id: "default:closer-carries-cta",
     check: "render",
-    description: "The last slide of a carousel (the caption, for a single) carries a call to action or a question the reader can answer.",
+    description:
+      "The last slide of a carousel (the caption, for a single) carries a call to action or a question the reader can answer — that is what the `closer` archetype's takeaway plus accent-ruled question line is for.",
   },
 ];
 
@@ -399,7 +401,25 @@ export function resolveRenderRules(frozenRules: readonly StyleRule[]): { source:
  * workflow's former local `NON_PROSE_FIELD_KEYS` so a new metadata field is
  * added in one place and every consumer agrees on it.
  */
-export const LAYOUT_FIELD_KEYS: ReadonlySet<string> = new Set(["accentColor", "dir", "brandHandle", "seriesBadge", "fontScale", "textAlign"]);
+export const LAYOUT_FIELD_KEYS: ReadonlySet<string> = new Set([
+  "accentColor",
+  "dir",
+  "brandHandle",
+  "seriesBadge",
+  "fontScale",
+  "textAlign",
+  // Phase 2, item M. All four are code-derived layout metadata, never prose:
+  // `groundStyle` names which token-driven ground the slide paints,
+  // `slideIndex` is the numeral the glyph ground sets, `deviceFigures` is
+  // the list of figures a rendered device paints — read by
+  // `default:numbers-are-devices` below — and `deviceKind` is the proof that
+  // the device actually reached a slot, read by `07k`'s skeleton signature
+  // and by `collectDeviceIssues`. None of them counts as content.
+  "groundStyle",
+  "slideIndex",
+  "deviceFigures",
+  "deviceKind",
+]);
 
 /**
  * Leads with a figure: an optional currency sign, digits with separators,
@@ -425,13 +445,102 @@ export const CTA_LEXICON_HEBREW = /(שמרו|שתפו|ספרו|נסו|הוריד
 /** A question the reader can answer — `?` plus the Arabic-script question mark, since `dir="rtl"` copy already renders here. */
 const QUESTION_MARK = /[?؟]/u;
 
-/** Template basenames that ARE a figure device on their own (the cover rule) — the four structured archetypes that render a designed element without a photograph. */
-const DEVICE_TEMPLATE_BASENAMES: ReadonlySet<string> = new Set(["stat-callout", "comparison-card", "quote-card", "list-takeaway"]);
-/** The two archetypes a leading figure is allowed to live in (the numbers rule). `resolveLayout` allows each ONCE per carousel — hence the rule's own "every other numeric fact leads with the noun". */
-const FIGURE_TEMPLATE_BASENAMES: ReadonlySet<string> = new Set(["stat-callout", "comparison-card"]);
+/**
+ * Template basenames that ARE a designed element on their own (the cover
+ * rule) — the archetypes that carry their frame without a photograph.
+ *
+ * `cover` and `closer` join them in Phase 2 (item M), and `cover` is the
+ * interesting one: it is here even though it MAY have no hero and no device,
+ * because `cover.html` is structurally incapable of rendering as a headline
+ * on flat ground — its ground layer falls back from a full-bleed photograph
+ * to an accent colour block with a diagonal keyline to a two-token gradient,
+ * so there is no content combination that produces the bare plate this rule
+ * exists to refuse. The pixel proof is the calibration test, not this
+ * comment: `interest-floor-calibration.test.ts` renders a cover with neither
+ * a hero nor a device and asserts it still clears the cover role's
+ * imagery-or-device floor.
+ */
+const DEVICE_TEMPLATE_BASENAMES: ReadonlySet<string> = new Set(["stat-callout", "comparison-card", "quote-card", "list-takeaway", "cover", "closer"]);
 /** `templateFileName("custom_x")` → `custom-x.html`; the prefix is the only thing a template path tells us about a model-authored archetype. */
 const CUSTOM_TEMPLATE_PREFIX = "custom-";
 const HEADLINE_FOCUS_BASENAME = "headline-focus";
+const COVER_BASENAME = "cover";
+const CLOSER_BASENAME = "closer";
+const QUOTE_CARD_BASENAME = "quote-card";
+
+/**
+ * Archetypes whose bundled template declares a slot a `SlideDevice` fragment
+ * can paint into — verified against the files, not assumed: only
+ * `cover.html` and `headline-focus.html` carry `{{html:device}}`, and
+ * `closer.html` carries `{{html:recap}}`, which `contentFor` fills with a
+ * device when there is no recap strip to build.
+ *
+ * This exists so that `default:numbers-are-devices` never recommends a
+ * mechanism the failing slide's archetype cannot render. `photo`/`text_only`
+ * are absent because they route to the CLIENT's own configured
+ * `slideTemplate`, a file this repo does not control and cannot assume has a
+ * device slot; `stat_callout` and `comparison_card` are absent because they
+ * ARE figure devices (`rendersFigureAsDevice` reads their own numerals);
+ * `list_takeaway` and `quote_card` are absent because their middles are
+ * already spoken for by rows and by a quotation.
+ */
+const DEVICE_SLOT_BASENAMES: ReadonlySet<string> = new Set([COVER_BASENAME, HEADLINE_FOCUS_BASENAME, CLOSER_BASENAME]);
+
+/**
+ * Whether a device could actually paint on THIS rendered slide.
+ *
+ * Not a property of the archetype alone: a `closer` has one elastic middle,
+ * and a recap strip built from the carousel's own earlier slides takes it —
+ * `contentFor` then drops the slide-level device. `deviceKind` is present
+ * exactly when a device won that slot, so its presence (or the absence of a
+ * recap) is the honest answer.
+ */
+function canCarryDevice(slide: Slide, base: string): boolean {
+  if (!DEVICE_SLOT_BASENAMES.has(base)) return false;
+  if (base !== CLOSER_BASENAME) return true;
+  return slide.fields?.["deviceKind"] !== undefined || slide.htmlFragments?.["recap"] === undefined;
+}
+
+/**
+ * Rendered prose fields a leading figure is NOT a defect in.
+ *
+ * `quoteText`/`attribution` are a verbatim quotation and its speaker —
+ * restructuring someone's words into a bar chart is not a layout fix, it is
+ * a misquote — and `sourceLine` is a citation, where a year or a sample size
+ * leading the line is correct.
+ */
+const FIGURE_RULE_EXEMPT_FIELDS: ReadonlySet<string> = new Set(["quoteText", "attribution", "sourceLine"]);
+
+/** The six device shapes, as the copy schema names them — quoted verbatim in the steer so the writer can act on it without opening the prompt. */
+const DEVICE_KINDS_SENTENCE = "figure, figure_pair, bars, timeline, versus, unit_grid";
+
+/**
+ * The remedy sentence for a slide that led with a figure and rendered it as
+ * prose — and it must name a mechanism THIS slide's archetype can actually
+ * perform.
+ *
+ * Only three of the eight archetypes render a device
+ * (`DEVICE_SLOT_BASENAMES`), so on the other five "give the slide a device"
+ * is advice for the exact thing that was just silently dropped: the writer
+ * did what §19 asked, `withDevice` emitted nothing, and the rule then failed
+ * the slide for it. A steer has to be actionable or it trains the model to
+ * ignore steers.
+ */
+function figureRemedyFor(slide: Slide, base: string): string {
+  if (canCarryDevice(slide, base)) {
+    return `give the slide a device carrying that figure (${DEVICE_KINDS_SENTENCE}), or lead with the noun`;
+  }
+  if (base === CLOSER_BASENAME) {
+    return (
+      "this closer's middle is already filled by the recap strip built from the earlier slides, so a device has nowhere to paint — " +
+      "move the figure to a slide that can carry one (cover, headline_focus) or lead with the noun"
+    );
+  }
+  return (
+    `the "${base}" archetype has no device slot — set this slide as a stat_callout or a comparison_card (both of which ARE figure devices), ` +
+    "move the figure onto the cover or a headline_focus slide, or lead with the noun"
+  );
+}
 
 /**
  * The archetype a rendered slide's template path names, normalised: the
@@ -507,7 +616,58 @@ function countContentElements(slide: Slide, isCover: boolean): number {
   if (isCover && templateBasename(slide.template) === HEADLINE_FOCUS_BASENAME && keys.has("headline") && keys.has("body")) count -= 1;
   if (slide.images?.["hero"]) count += 1;
   if (slide.htmlFragments?.["itemRows"]) count += 1;
+  // Phase 2, item M: a rendered number device and a closer's recap strip are
+  // content elements in exactly the way a list's rows are — a designed block
+  // the reader looks at — and they live in `htmlFragments` for the same
+  // reason (a variable number of children the renderer cannot loop over).
+  if (slide.htmlFragments?.["device"]) count += 1;
+  if (slide.htmlFragments?.["recap"]) count += 1;
   return count;
+}
+
+/**
+ * The digits a figure token carries, separators and units stripped — the
+ * comparable core of "42%", "₪1,200", "4.2x".
+ *
+ * Comparing digit runs rather than whole strings is what lets a headline's
+ * "₪1,200 a month" match a device whose display reads "₪1,200" without
+ * either side having to normalise currency symbols, thin spaces or the
+ * Hebrew thousands separator.
+ */
+function digitsOf(value: string): string {
+  return value.replace(/[^\d]/gu, "");
+}
+
+/**
+ * Whether this rendered slide sets `figure` AS A DEVICE rather than as prose.
+ *
+ * Phase 2, item M.4 — this REPLACES the old "is the template a stat callout
+ * or a comparison card" test, and the difference matters: `resolveLayout`
+ * allows each structured archetype once per carousel, so under the old test
+ * the second and third numeric fact in a post had nowhere designed to go,
+ * which is why the rule's own text used to end with the apology "every other
+ * numeric fact leads with the noun". With `device` declarable on any
+ * archetype and rendered by three of them (`DEVICE_SLOT_BASENAMES`), the
+ * honest question is whether THIS slide paints THIS figure as a designed
+ * element.
+ *
+ * The candidate pool is what the slide actually renders: a device's own
+ * painted figures (`deviceFigures`, emitted by `contentFor` beside the
+ * fragment), a stat callout's big numeral, and a comparison card's two
+ * sides — all of which are figure devices by construction.
+ */
+function rendersFigureAsDevice(slide: Slide, figure: string): boolean {
+  const wanted = digitsOf(figure);
+  if (wanted.length === 0) return false;
+  const candidates = [
+    ...(slide.fields?.["deviceFigures"] ?? "").split("|"),
+    slide.fields?.["figure"] ?? "",
+    slide.fields?.["leftLabel"] ?? "",
+    slide.fields?.["leftBody"] ?? "",
+    slide.fields?.["rightLabel"] ?? "",
+    slide.fields?.["rightBody"] ?? "",
+  ];
+  return candidates.some((candidate) => digitsOf(candidate).includes(wanted));
 }
 
 function withNote(rule: StyleRule, note: string): StyleRule {
@@ -535,11 +695,14 @@ function withNote(rule: StyleRule, note: string): StyleRule {
  * redraft it may not deserve.
  *
  * Reads only `copy.format`/`copy.caption` from the copy — the text checks
- * run on the fields the slide RENDERS (`fields.headline`/`fields.body`),
- * which `contentFor` copies verbatim from the slide copy whenever the
- * archetype shows them. A quote card shows neither; a list takeaway shows
- * the headline only; failing a slide for a figure in a body the template
- * never displays would be a defect of the check, not of the slide.
+ * run on the fields the slide RENDERS, enumerated per slide by
+ * `proseFieldsOf` rather than by a hard-coded field pair. `contentFor` names
+ * a cover's prose `title`/`subtitle` and a closer's `takeaway`/`cta`, so a
+ * check spelled `fields.headline`/`fields.body` silently skipped both of the
+ * slides prompt @14 §7 makes slide 1 and the last slide. A quote card shows
+ * neither; a list takeaway shows the headline only; failing a slide for a
+ * figure in a body the template never displays would be a defect of the
+ * check, not of the slide.
  */
 export function checkDefaultRenderRules(slidesData: RenderCarouselInput, copy: InstagramCopyOutput): DefaultRenderRulesResult {
   const failures: DefaultRenderRuleFailure[] = [];
@@ -549,9 +712,24 @@ export function checkDefaultRenderRules(slidesData: RenderCarouselInput, copy: I
   if (slides.length === 0) return { failures, residue };
 
   // default:cover-carries-device — slide 1 needs a photograph or a device.
+  //
+  // A RENDERED device counts, whatever the archetype. The template basename
+  // answers "can this archetype carry the frame on its own"; it cannot answer
+  // "did this slide paint a figure device", and `headline_focus` — one of the
+  // three archetypes that actually paints one (`DEVICE_SLOT_BASENAMES`, copy
+  // @14 §19) — is deliberately absent from `DEVICE_TEMPLATE_BASENAMES`
+  // because a bare headline_focus cover IS the defect. Reading the fragment
+  // separates the two: a slide-1 headline_focus with `htmlFragments.device`
+  // is exactly what `figureRemedyFor` ("move the figure onto the cover or a
+  // headline_focus slide") and the interest floor's cover steer ("a device
+  // built from the strongest number in this post") tell the writer to
+  // produce, and failing it with "no hero image and no figure device" would
+  // be a steer the code then refuses — untrue of the assembled slide, and the
+  // unenforced-instruction-dressed-as-enforced defect in reverse.
   const cover = slides[0]!;
   const coverBase = templateBasename(cover.template);
-  if (!cover.images?.["hero"] && !DEVICE_TEMPLATE_BASENAMES.has(coverBase)) {
+  const coverCarriesDevice = (cover.htmlFragments?.["device"] ?? "").trim().length > 0;
+  if (!cover.images?.["hero"] && !DEVICE_TEMPLATE_BASENAMES.has(coverBase) && !coverCarriesDevice) {
     if (coverBase.startsWith(CUSTOM_TEMPLATE_PREFIX)) {
       residue.push(withNote(rule("default:cover-carries-device"), "slide 1 is a model-authored custom archetype with no photograph; judge whether its markup carries a figure device"));
     } else {
@@ -590,19 +768,36 @@ export function checkDefaultRenderRules(slidesData: RenderCarouselInput, copy: I
     }
   }
 
-  // default:numbers-are-devices — a leading figure belongs in a stat callout or a comparison card.
+  // default:numbers-are-devices — a leading figure has to be SET as a device
+  // on the slide that opens with it (item M.4).
+  //
+  // Read off the fields the slide ACTUALLY RENDERS (`proseFieldsOf`), not a
+  // fixed `headline`/`body` pair. `contentFor` emits neither of those names
+  // for a `cover` (`eyebrow`/`title`/`subtitle`) or a `closer`
+  // (`eyebrow`/`takeaway`/`cta`|`question`) — and prompt @14 §7 puts a cover
+  // on slide 1 and a closer last, so the fixed pair left the rule blind on
+  // the two slides carrying the post's strongest figure, which §19 says MUST
+  // get a device. Under @13 slide 1 was a `photo`/`stat_callout` emitting
+  // `headline`/`body` and was covered; the archetypes moved, the rule did
+  // not.
   for (const slide of slides) {
     const base = templateBasename(slide.template);
-    if (FIGURE_TEMPLATE_BASENAMES.has(base) || base.startsWith(CUSTOM_TEMPLATE_PREFIX)) continue;
-    for (const field of ["headline", "body"] as const) {
-      const text = slide.fields?.[field];
-      if (text === undefined) continue;
+    if (base.startsWith(CUSTOM_TEMPLATE_PREFIX)) continue;
+    // A quote card's whole content is a quotation; see
+    // `FIGURE_RULE_EXEMPT_FIELDS`.
+    if (base === QUOTE_CARD_BASENAME) continue;
+    for (const [field, text] of proseFieldsOf(slide)) {
+      if (FIGURE_RULE_EXEMPT_FIELDS.has(field)) continue;
       const match = LEADS_WITH_FIGURE.exec(text);
       if (match === null) continue;
+      const figure = match[0].trim();
+      if (rendersFigureAsDevice(slide, figure)) break;
       failures.push({
         ruleId: "default:numbers-are-devices",
         slide: slide.n,
-        reason: `slide ${slide.n}'s ${field} opens with the figure "${match[0].trim()}" but renders as prose through "${slide.template}" — set it as a stat_callout or comparison_card, or lead with the noun`,
+        reason:
+          `slide ${slide.n}'s ${field} opens with the figure "${figure}" but renders as prose through "${slide.template}" — ` +
+          figureRemedyFor(slide, base),
       });
       break; // one finding per slide is enough to send it back
     }

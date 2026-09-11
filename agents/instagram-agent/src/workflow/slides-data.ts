@@ -3,6 +3,7 @@ import { WorkflowToolingFailure } from "@agent-engine/workflow";
 import type { RenderCarouselInput, Slide } from "@agent-engine/tool-karos-publish";
 import { templateFileName } from "@agent-engine/tool-karos-templates";
 import { contrastRatio, paletteForSlide } from "./brand-render-tokens.js";
+import { buildDeviceFragment, deviceFigureValues, validateDevice, type SlideDevice } from "./slide-devices.js";
 import type {
   BrandTokens,
   ImageSelection,
@@ -30,6 +31,12 @@ const LAYOUT_TEMPLATE_FILES: Record<Exclude<InstagramSlideLayout, "photo" | "tex
   comparison_card: "comparison-card.html",
   list_takeaway: "list-takeaway.html",
   headline_focus: "headline-focus.html",
+  // Phase 2, item M. Adding them here extends `ARCHETYPE_TEMPLATE_FILES`
+  // (and therefore every "does this client's templateDir hold the archetype
+  // set" check) automatically, which is the point of deriving that list from
+  // this record rather than declaring it twice.
+  cover: "cover.html",
+  closer: "closer.html",
 };
 
 function templateForLayout(layout: InstagramSlideLayout, slide: InstagramSlideCopy, clientTemplate: string): string {
@@ -38,8 +45,78 @@ function templateForLayout(layout: InstagramSlideLayout, slide: InstagramSlideCo
   return LAYOUT_TEMPLATE_FILES[layout];
 }
 
-/** The five archetype template filenames, for a caller checking which of them a `templateDir` actually holds. */
+/** The seven archetype template filenames, for a caller checking which of them a `templateDir` actually holds. */
 export const ARCHETYPE_TEMPLATE_FILES: readonly string[] = Object.values(LAYOUT_TEMPLATE_FILES);
+
+/**
+ * The layouts that consume a hero photograph.
+ *
+ * `cover` joins `photo` here (Phase 2, item M) and this set is the single
+ * source of truth for it, because the same fact is read in two places that
+ * must never disagree: the workflow's `photoSlideNs` (which decides whether
+ * a slide is worth paying to source an image for) and `assembleSlidesData`
+ * below (which decides whether to attach the sourced path). A cover that was
+ * missing from the first list would never be offered a photograph, and would
+ * then degrade for want of one — a self-fulfilling downgrade.
+ *
+ * `cover.html` still renders correctly with no hero (a graphic ground takes
+ * over), so membership here buys image SOURCING, never a dependency on the
+ * sourcing succeeding.
+ */
+export const HERO_IMAGE_LAYOUTS: ReadonlySet<InstagramSlideLayout> = new Set<InstagramSlideLayout>(["photo", "cover"]);
+
+/**
+ * Which layouts declare a `{{html:device}}` slot, so a device on a slide
+ * actually reaches the pixels.
+ *
+ * `closer` is deliberately absent: it declares `{{html:recap}}` instead, and
+ * `contentFor` routes a closer's device into that slot when there is no
+ * recap to build (see `buildRecapFragment`) — one elastic middle, two
+ * possible code-built fragments, rather than two slots competing for the
+ * same space. Every OTHER bundled archetype is absent because its own
+ * template has no device slot, and emitting a fragment nothing renders would
+ * let `default:numbers-are-devices` pass on a figure the reader never sees.
+ */
+const DEVICE_SLOT_LAYOUTS: ReadonlySet<InstagramSlideLayout> = new Set<InstagramSlideLayout>(["cover", "headline_focus"]);
+
+/**
+ * How many earlier slides a `closer` needs before its recap strip is worth
+ * building. Two plates is the smallest thing that reads as a recap; one is
+ * just a repeated slide.
+ */
+export const MIN_RECAP_PLATES = 2;
+/** The most plates the strip holds — four 240px plates across a 952px content column, which is where they stop being readable. */
+export const MAX_RECAP_PLATES = 4;
+/** Where a recap plate's title is cut. Longer than this and the plate stops being a glance. */
+export const MAX_RECAP_PLATE_CHARS = 40;
+
+/**
+ * The ground treatment a token-driven archetype paints behind its copy
+ * (Phase 2, item M.3).
+ *
+ * `"grid"` is an accent geometric field (a hairline grid plus one solid
+ * accent block on a frame edge); `"glyph"` is a very-low-contrast
+ * display-face numeral bleeding off the top-inline-start corner. The grid is
+ * the CSS DEFAULT in the templates, so a checkpoint written before this
+ * field existed — where `{{groundStyle}}` strips to nothing — still paints a
+ * ground rather than reverting to the bare plate this item exists to kill.
+ */
+export type SlideGroundStyle = "grid" | "glyph";
+
+/**
+ * The share of ground-bearing slides that take the glyph field rather than
+ * the grid.
+ *
+ * Half, not `VARIATION_MIX`'s 25%: this axis is a choice between two equally
+ * good grounds rather than a departure from a default, so an even split is
+ * what makes two consecutive runs of the same client look different. The
+ * walk itself is `isVariationSlot`'s — deterministic per run, phase-shifted
+ * per seed — under its own `:ground` namespace so it does not coincide with
+ * the accent or ground/fg axes over the same seed. Adjacency is not a
+ * concern here: `resolveLayout` allows `cover` and `headline_focus` once per
+ * carousel each, so at most two slides in a post paint a ground at all.
+ */
+export const GROUND_VARIATION_MIX = 0.5;
 
 // ─────────────────────────────────────────────────────────────────────────
 // IGSTYLE-10, §10a/10b/10c/10e — smart template & palette variation.
@@ -334,6 +411,24 @@ function detectDirection(text: string): "rtl" | "ltr" {
   return rtl > latin ? "rtl" : "ltr";
 }
 
+/** Every user-visible string one device carries, for `collectSlideText`'s direction sample. */
+function deviceTextOf(device: SlideDevice): string[] {
+  switch (device.kind) {
+    case "figure":
+      return [device.value, device.label, device.source];
+    case "figure_pair":
+      return [device.before.value, device.before.label, device.after.value, device.after.label, device.source];
+    case "bars":
+      return [...device.rows.flatMap((row) => [row.label, row.display]), device.source];
+    case "timeline":
+      return device.points.flatMap((point) => [point.at, point.what]);
+    case "versus":
+      return [device.left.label, device.left.body, device.right.label, device.right.body];
+    case "unit_grid":
+      return [device.label];
+  }
+}
+
 /** Every user-visible string a slide can carry, across every archetype — the corpus `detectDirection` reads. */
 function collectSlideText(slide: InstagramSlideCopy): string {
   return [
@@ -351,6 +446,10 @@ function collectSlideText(slide: InstagramSlideCopy): string {
     slide.comparison?.rightBody,
     ...(slide.items?.flatMap((item) => [item.title, item.note]) ?? []),
     ...(slide.customArchetype ? Object.values(slide.customArchetype.fields) : []),
+    // A device's labels are rendered copy like any other, so they count
+    // towards which direction the carousel is written in — a Hebrew post
+    // whose only long strings are its device labels must still resolve rtl.
+    ...(slide.device ? deviceTextOf(slide.device) : []),
   ]
     .filter((value): value is string => typeof value === "string")
     .join(" ");
@@ -395,6 +494,171 @@ export function buildListRows(items: readonly { title: string; note?: string | u
         `</div></div>`,
     )
     .join("");
+}
+
+/**
+ * One recap plate's text: the shortest true thing the slide already said.
+ *
+ * A figure first (a stat's `figure`, then a device's own painted value),
+ * because a strip of numbers is what a recap is for; the headline otherwise,
+ * cut at a word boundary. Never invents a summary — every plate is a
+ * verbatim fragment of a slide the reader has already seen, which is what
+ * makes a recap a recap rather than a second draft of the post.
+ */
+function recapTextFor(slide: InstagramSlideCopy): string {
+  const figure = slide.stat?.figure ?? (slide.device ? deviceFigureValues(slide.device)[0] : undefined);
+  if (figure !== undefined && figure.trim().length > 0) return figure.trim();
+  const headline = slide.headline.trim();
+  if (headline.length <= MAX_RECAP_PLATE_CHARS) return headline;
+  const cut = headline.slice(0, MAX_RECAP_PLATE_CHARS);
+  const lastSpace = cut.lastIndexOf(" ");
+  return `${(lastSpace > MAX_RECAP_PLATE_CHARS / 2 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
+}
+
+/**
+ * Which earlier slides a `closer`'s recap strip draws on.
+ *
+ * At most `MAX_RECAP_PLATES`, in carousel order, spread evenly across the
+ * post rather than taken from the front: a recap of slides 2, 3, 4 and 5 of
+ * an eight-slide carousel would silently drop the second half of the
+ * argument. Slides whose only text is a cover headline are still eligible —
+ * every slide said something, and the plate is that something.
+ */
+export function recapSourceSlides(earlier: readonly InstagramSlideCopy[]): InstagramSlideCopy[] {
+  if (earlier.length <= MAX_RECAP_PLATES) return [...earlier];
+  const step = (earlier.length - 1) / (MAX_RECAP_PLATES - 1);
+  const picked: InstagramSlideCopy[] = [];
+  for (let i = 0; i < MAX_RECAP_PLATES; i++) {
+    const slide = earlier[Math.round(i * step)];
+    if (slide !== undefined && !picked.includes(slide)) picked.push(slide);
+  }
+  return picked;
+}
+
+/**
+ * The `closer`'s recap strip, as one markup fragment.
+ *
+ * Built by code from the carousel's own earlier slides for the same reason
+ * `buildListRows` is: `publish.renderCarousel` substitutes flat strings and
+ * has no loop construct, and the `{{html:}}` form it does have is
+ * deliberately unescaped — so a variable number of plates has to be
+ * assembled here, with every interpolated value escaped on the way in.
+ *
+ * The plate number is the slide's own `n`, zero-padded, so a reader can map
+ * a plate back to the slide it recaps. Returns `""` when there is nothing
+ * worth recapping, and the template's `:empty` rule collapses the slot.
+ */
+export function buildRecapFragment(earlier: readonly InstagramSlideCopy[]): string {
+  const sources = recapSourceSlides(earlier);
+  if (sources.length < MIN_RECAP_PLATES) return "";
+  const plates = sources
+    .map(
+      (slide) =>
+        `<div class="rc-plate">` +
+        `<div class="rc-n">${esc(String(slide.n).padStart(2, "0"))}</div>` +
+        `<div class="item-title">${esc(recapTextFor(slide))}</div>` +
+        `</div>`,
+    )
+    .join("");
+  return `<div class="rc-strip">${plates}</div>`;
+}
+
+/**
+ * Whether a slide's own copy closes the post — a question the reader can
+ * answer, or an invitation to act.
+ *
+ * A deliberately small lexicon, and a deliberate duplicate of
+ * `visual-qa-pre-checks.ts`'s own `CTA_LEXICON_*`: that module imports THIS
+ * one (for `INVERTED_TEMPLATE_SUFFIX`), so importing its lexicons back would
+ * close a cycle between two modules that already share a direction of
+ * dependency. The two ask different questions of different inputs anyway —
+ * that one reads the RENDERED prose fields of the last slide to decide
+ * whether to hand the closer rule to the judge; this one reads the slide
+ * COPY to decide whether the `closer` archetype has anything to close with.
+ * A miss here degrades the archetype, exactly as a missing `stat` degrades
+ * `stat_callout`; it never fails a draft.
+ */
+function hasCloserVoice(slide: InstagramSlideCopy): boolean {
+  const text = `${slide.headline} ${slide.body}`;
+  return /[?؟]/u.test(text) || /\b(save|share|comment|tell us|try|download|book|sign up|follow|dm|reply)\b/i.test(text) || /(שמרו|שתפו|ספרו|נסו|הורידו|עקבו|מה דעתכם|כתבו לנו)/u.test(text);
+}
+
+/** Where a slide sits in the carousel, and what the pipeline already knows about it — the inputs the two POSITIONAL archetypes need. */
+export interface SlidePosition {
+  /** Zero-based index in carousel order. */
+  index: number;
+  /** Zero-based index of the last slide, so "is this the closer" is answerable without the whole array. */
+  lastIndex: number;
+  /**
+   * Whether this slide will actually carry a photograph.
+   *
+   * Three-valued on purpose. `undefined` means image sourcing has not run
+   * yet (the workflow's `photoSlideNs` calls `resolveLayout` before it knows
+   * what it can find), and a `cover` must survive that call or it would
+   * never be offered an image at all. `false` is a KNOWN absence, at
+   * assembly time, and is the only state that degrades a cover.
+   */
+  hasHeroImage?: boolean | undefined;
+  /** The slides before this one, for a `closer`'s recap strip. */
+  earlier?: readonly InstagramSlideCopy[] | undefined;
+}
+
+/** Whether the content a `cover` needs is there: a photograph, or a device to carry the frame instead. */
+function coverContentAvailable(slide: InstagramSlideCopy, position: SlidePosition | undefined): boolean {
+  if (slide.device !== undefined) return true;
+  return position?.hasHeroImage !== false;
+}
+
+/** Whether the content a `closer` needs is there: a recap to build, a device, or copy that actually closes. */
+function closerContentAvailable(slide: InstagramSlideCopy, position: SlidePosition | undefined): boolean {
+  if (slide.device !== undefined) return true;
+  if (recapSourceSlides(position?.earlier ?? []).length >= MIN_RECAP_PLATES) return true;
+  return hasCloserVoice(slide);
+}
+
+/**
+ * The archetypes this slide's CONTENT could fill, best first — the degrade
+ * ladder (Phase 2, item M).
+ *
+ * Every degrade path used to converge on `text_only`, which routes to the
+ * client's own base template with no photograph: a headline in the lower
+ * third of an otherwise empty plate. That is the exact slide the owner
+ * pointed at ("מסך אפור ברובו"), so a degrade landing there means the
+ * failure mode of every content mismatch IS the defect. This ladder degrades
+ * to the best archetype the slide can actually fill instead.
+ *
+ * Order is content-shape first (a slide with a stat is a stat callout
+ * wherever it sits), then POSITION (slide 1 is a cover, the last slide is a
+ * closer), then `headline_focus` as the typographic floor. `text_only`
+ * appears nowhere in this list: it is reached only when the client's own
+ * `templateDir` holds none of these files, which `resolveLayout` decides —
+ * that is what "text_only remains only when there is nothing else" means in
+ * practice.
+ */
+export function fallbackArchetypePreferences(slide: InstagramSlideCopy, position?: SlidePosition): InstagramSlideLayout[] {
+  const preferences: InstagramSlideLayout[] = [];
+  if (slide.stat) preferences.push("stat_callout");
+  if (slide.quote) preferences.push("quote_card");
+  if (slide.comparison) preferences.push("comparison_card");
+  if (slide.items && slide.items.length >= 2) preferences.push("list_takeaway");
+  if (position?.hasHeroImage === true) preferences.push("photo");
+  if (position !== undefined && position.index === 0 && coverContentAvailable(slide, position)) preferences.push("cover");
+  if (position !== undefined && position.index === position.lastIndex && position.index > 0 && closerContentAvailable(slide, position)) {
+    preferences.push("closer");
+  }
+  preferences.push("headline_focus");
+  return preferences;
+}
+
+/**
+ * The single best archetype this slide's content can fill, ignoring what the
+ * client's `templateDir` holds and what earlier slides already used —
+ * `fallbackArchetypePreferences`'s head. This is the table the tests assert;
+ * `resolveLayout` walks the whole list because availability and repeats can
+ * rule the head out.
+ */
+export function fallbackArchetypeFor(slide: InstagramSlideCopy, position?: SlidePosition): InstagramSlideLayout {
+  return fallbackArchetypePreferences(slide, position)[0]!;
 }
 
 /**
@@ -463,17 +727,43 @@ export function resolveLayout(
    * `availableTemplates`.
    */
   validatedCustomArchetypeIds?: ReadonlySet<string>,
+  /**
+   * Where this slide sits, and whether it has a photograph — needed only by
+   * the two POSITIONAL archetypes (`cover`, `closer`) and by the degrade
+   * ladder's position-aware entries. OPTIONAL, so every existing caller
+   * keeps working: the workflow's `photoSlideNs` legitimately asks "is this
+   * a photo slide" before image sourcing has run, and at that point there is
+   * no honest answer to "does it have a hero" — see `SlidePosition`.
+   */
+  position?: SlidePosition,
 ): { layout: InstagramSlideLayout; downgradedFrom?: string } {
-  const missing = (what: string) => ({ layout: "text_only" as const, downgradedFrom: `${slide.layout} (no ${what} supplied)` });
+  /**
+   * Walks the degrade ladder (`fallbackArchetypePreferences`) and takes the
+   * first archetype this client's `templateDir` actually holds and no
+   * earlier slide has claimed. `text_only` is the floor, not the target —
+   * see `fallbackArchetypePreferences`'s doc comment for why that
+   * distinction is the whole point of this change.
+   */
+  const degradeTo = (reason: string): { layout: InstagramSlideLayout; downgradedFrom: string } => {
+    for (const candidate of fallbackArchetypePreferences(slide, position)) {
+      if (candidate === slide.layout) continue; // whatever just failed cannot be the remedy
+      const file = LAYOUT_TEMPLATE_FILES[candidate as Exclude<InstagramSlideLayout, "photo" | "text_only" | "custom">] as string | undefined;
+      if (file !== undefined && availableTemplates !== undefined && !availableTemplates.has(file)) continue;
+      if (file !== undefined && usedLayouts?.has(candidate)) continue;
+      return { layout: candidate, downgradedFrom: `${reason}; rendering as ${candidate}` };
+    }
+    return { layout: "text_only", downgradedFrom: `${reason}; rendering as text_only` };
+  };
+  const missing = (what: string) => degradeTo(`${slide.layout} (no ${what} supplied)`);
 
   if (slide.layout === "custom") {
     const archetype = slide.customArchetype;
     if (!archetype) return missing("customArchetype");
     if (!validatedCustomArchetypeIds?.has(archetype.archetypeId)) {
-      return { layout: "text_only", downgradedFrom: `custom (${archetype.archetypeId} failed its markup safety check)` };
+      return degradeTo(`custom (${archetype.archetypeId} failed its markup safety check)`);
     }
     if (usedLayouts?.has(archetype.archetypeId)) {
-      return { layout: "text_only", downgradedFrom: `custom (${archetype.archetypeId} already used earlier in this carousel)` };
+      return degradeTo(`custom (${archetype.archetypeId} already used earlier in this carousel)`);
     }
     return { layout: "custom" };
   }
@@ -483,12 +773,12 @@ export function resolveLayout(
   if (slide.layout !== "photo" && slide.layout !== "text_only" && availableTemplates !== undefined) {
     const file = LAYOUT_TEMPLATE_FILES[slide.layout];
     if (!availableTemplates.has(file)) {
-      return { layout: "text_only", downgradedFrom: `${slide.layout} (this client's templateDir has no ${file})` };
+      return degradeTo(`${slide.layout} (this client's templateDir has no ${file})`);
     }
   }
 
   if (slide.layout !== "photo" && slide.layout !== "text_only" && usedLayouts?.has(slide.layout)) {
-    return { layout: "text_only", downgradedFrom: `${slide.layout} (already used earlier in this carousel)` };
+    return degradeTo(`${slide.layout} (already used earlier in this carousel)`);
   }
 
   switch (slide.layout) {
@@ -500,11 +790,41 @@ export function resolveLayout(
       return slide.comparison ? { layout: slide.layout } : missing("comparison");
     case "list_takeaway":
       return slide.items && slide.items.length >= 2 ? { layout: slide.layout } : missing("items");
+    case "cover":
+      // A cover carries a photograph or a device. Neither, and it is the
+      // headline-on-flat-ground slide `cover.html` exists to make
+      // impossible — so it degrades rather than rendering the defect under
+      // a better name.
+      return coverContentAvailable(slide, position) ? { layout: slide.layout } : missing("hero image or device");
+    case "closer":
+      return closerContentAvailable(slide, position) ? { layout: slide.layout } : missing("recap, device, or closing line");
     case "photo":
     case "text_only":
     case "headline_focus":
       // These three need nothing beyond `headline`/`body`, which the schema
       // already requires on every slide.
+      //
+      // An EXPLICITLY REQUESTED `text_only` is honoured rather than sent
+      // through the ladder above: a request is a statement about the slide,
+      // and re-shaping it on suspicion would sometimes make it worse.
+      //
+      // What that boundary must NOT be used for is a downgrade.
+      // `07a-downgrade-unfillable-slides` used to assign `text_only` to a
+      // slide that lost its photograph, and because this case honours it the
+      // slide went straight out through the client's own un-reworked
+      // `slide.html` — the mostly-grey plate item M exists to remove, reached
+      // by the one path nothing downstream can recover (07h waives the cover
+      // rule for a lost photograph, and clause E of the interest floor is
+      // waived for the same reason). `07a` now picks its target with
+      // `fallbackArchetypeFor(slide, { hasHeroImage: false, ... })` instead,
+      // so a hero-less cover lands on `cover` when it carries a device and on
+      // the ground-reworked `headline_focus` otherwise. `text_only` is
+      // reached only through `degradeTo`'s floor above — a client whose
+      // `templateDir` holds nothing else — or by a writer who asked for it.
+      //
+      // The slide that MEASURES empty is re-laid-out on evidence separately,
+      // by item L's free `planInterestRelayout` pass, which reads this
+      // module's own `fallbackArchetypeFor` to do it.
       return { layout: slide.layout };
   }
 }
@@ -533,15 +853,64 @@ function contentFor(
   brand?: { handle?: string | undefined; seriesBadge?: string | undefined },
   /** Reviewer typography for THIS slide. Defaults always emitted — a stripped `{{fontScale}}` class token is harmless, but emitting the default keeps every rendered document explicit. */
   style?: SlideStyleOverride,
+  /** Position, the earlier slides (for a closer's recap), the ground pick and the target language (for a device's illustrative note). */
+  context?: {
+    position?: SlidePosition | undefined;
+    groundStyle?: SlideGroundStyle | undefined;
+    targetLanguage?: string | undefined;
+  },
 ): { fields: Record<string, string>; htmlFragments: Record<string, string> } {
   const base: Record<string, string> = {
     accentColor,
     dir,
     fontScale: style?.fontScale ?? "m",
     textAlign: style?.textAlign ?? "start",
+    // Layout metadata, never prose: the code-picked ground treatment and the
+    // slide's own number (which the glyph ground sets as a giant numeral).
+    // Both are in `LAYOUT_FIELD_KEYS`, so nothing that counts or reads a
+    // slide's CONTENT ever sees them.
+    groundStyle: context?.groundStyle ?? "grid",
+    slideIndex: String(slide.n).padStart(2, "0"),
     ...(slide.kicker ? { kicker: slide.kicker } : {}),
     ...(brand?.handle !== undefined ? { brandHandle: brand.handle } : {}),
     ...(brand?.seriesBadge !== undefined ? { seriesBadge: brand.seriesBadge } : {}),
+  };
+
+  /**
+   * The device fragment, but only for an archetype whose template actually
+   * declares a slot for it.
+   *
+   * A fragment nothing renders is worse than no fragment: it would let
+   * `default:numbers-are-devices` pass on a figure the reader never sees.
+   * An INVALID device is dropped the same way — devices are furniture, and
+   * furniture must not be able to hold a run (`collectDeviceIssues` is how
+   * the drop is reported).
+   */
+  const deviceFragment = (): { device: string; deviceFigures: string; deviceKind: string } | undefined => {
+    if (slide.device === undefined) return undefined;
+    if (!validateDevice(slide.device).ok) return undefined;
+    return {
+      device: buildDeviceFragment(slide.device, dir, context?.targetLanguage),
+      deviceFigures: deviceFigureValues(slide.device).join("|"),
+      // Layout metadata, emitted so that every consumer of "did this slide
+      // paint a device" reads the ASSEMBLED slide rather than the copy's
+      // request. `07k`'s skeleton signature used to read
+      // `copy.slides[].device?.kind`, which counted a device on an archetype
+      // with no slot for it — so the variety check could be satisfied by a
+      // device that never painted.
+      deviceKind: slide.device.kind,
+    };
+  };
+  const withDevice = (
+    result: { fields: Record<string, string>; htmlFragments: Record<string, string> },
+  ): { fields: Record<string, string>; htmlFragments: Record<string, string> } => {
+    if (!DEVICE_SLOT_LAYOUTS.has(layout)) return result;
+    const built = deviceFragment();
+    if (built === undefined) return result;
+    return {
+      fields: { ...result.fields, deviceFigures: built.deviceFigures, deviceKind: built.deviceKind },
+      htmlFragments: { ...result.htmlFragments, device: built.device },
+    };
   };
 
   switch (layout) {
@@ -579,6 +948,45 @@ function contentFor(
         fields: { ...base, headline: slide.headline },
         htmlFragments: { itemRows: buildListRows(slide.items!) },
       };
+    case "cover": {
+      // `eyebrow` is fed from the copy's own `kicker` rather than a new copy
+      // field: it is the same editorial object (a short mono line above the
+      // title) and one element renders it, so a cover cannot end up with two
+      // competing eyebrows.
+      return withDevice({
+        fields: {
+          ...base,
+          ...(slide.kicker ? { eyebrow: slide.kicker } : {}),
+          title: slide.headline,
+          subtitle: slide.body,
+        },
+        htmlFragments: {},
+      });
+    }
+    case "closer": {
+      const recap = buildRecapFragment(context?.position?.earlier ?? []);
+      const built = deviceFragment();
+      // ONE elastic middle, two possible code-built fragments. The recap
+      // strip is the closer's own device; a slide-level `device` fills the
+      // same slot when there is no recap to build, rather than the template
+      // growing a second slot the two would compete for.
+      const fragment = recap.length > 0 ? recap : (built?.device ?? "");
+      const closes = hasCloserVoice(slide);
+      return {
+        fields: {
+          ...base,
+          ...(slide.kicker ? { eyebrow: slide.kicker } : {}),
+          takeaway: slide.headline,
+          // A question is set as an invitation in the display face, a CTA as
+          // a line in the text face — two different typographic jobs, so the
+          // body goes to whichever slot matches what it actually is, and the
+          // other collapses.
+          ...(closes && /[?؟]/u.test(slide.body) ? { question: slide.body } : { cta: slide.body }),
+          ...(built !== undefined && fragment === built.device ? { deviceFigures: built.deviceFigures, deviceKind: built.deviceKind } : {}),
+        },
+        htmlFragments: fragment.length > 0 ? { recap: fragment } : {},
+      };
+    }
     case "custom":
       // Model-authored slot values are substituted through the SAME escaped
       // `{{key}}` path as every other archetype's fields — no raw/`html:`
@@ -588,8 +996,59 @@ function contentFor(
     case "photo":
     case "text_only":
     case "headline_focus":
-      return { fields: { ...base, headline: slide.headline, body: slide.body }, htmlFragments: {} };
+      return withDevice({ fields: { ...base, headline: slide.headline, body: slide.body }, htmlFragments: {} });
   }
+}
+
+/**
+ * Devices this draft carries that cannot be rendered honestly, per slide.
+ *
+ * Reported as FACTS, never as a gate — the same posture
+ * `assessBrandAssetPresence` takes, and for the same reason: a device is
+ * furniture, and a redraft loop over furniture would spend the whole
+ * self-check budget on a slide whose copy was fine. `contentFor` drops the
+ * fragment; this is how the drop becomes visible on the gate payload and in
+ * the run trace instead of being silent.
+ */
+export function collectDeviceIssues(
+  copy: InstagramCopyOutput,
+  /**
+   * The ASSEMBLED slides, when the caller has them.
+   *
+   * Without them this reports only devices that are invalid in themselves.
+   * With them it also reports a device that was valid and was still DROPPED,
+   * which is the other half of the same defect: `withDevice` only emits a
+   * fragment for an archetype whose template declares a slot for it
+   * (`DEVICE_SLOT_LAYOUTS`), and a `closer` whose recap strip took the
+   * elastic middle drops the device too. Both drops used to be invisible —
+   * the writer was told in §19 that any archetype may carry a device, the
+   * device vanished, and `default:numbers-are-devices` then failed the slide
+   * for leading with a figure it had in fact given a device. Reporting the
+   * drop is what makes that a fact on the gate instead of a mystery.
+   */
+  slidesData?: { slides: readonly Slide[] } | undefined,
+): Array<{ slide: number; kind: string; reason: string }> {
+  const issues: Array<{ slide: number; kind: string; reason: string }> = [];
+  const assembled = new Map((slidesData?.slides ?? []).map((s) => [s.n, s]));
+  for (const slide of copy.slides) {
+    if (slide.device === undefined) continue;
+    const verdict = validateDevice(slide.device);
+    if (!verdict.ok) {
+      issues.push({ slide: slide.n, kind: slide.device.kind, reason: verdict.reason });
+      continue;
+    }
+    const rendered = assembled.get(slide.n);
+    if (rendered === undefined) continue;
+    if (rendered.fields?.["deviceKind"] !== undefined) continue;
+    issues.push({
+      slide: slide.n,
+      kind: slide.device.kind,
+      reason:
+        `the archetype this slide resolved to ("${rendered.template}") has no device slot, so the device was not rendered — ` +
+        "a device paints on cover, headline_focus, and on a closer whose middle is not already taken by a recap strip",
+    });
+  }
+  return issues;
 }
 
 /**
@@ -792,6 +1251,13 @@ export function assembleSlidesData(params: {
    * suppresses it even when present.
    */
   groundFgInversion?: GroundFgInversionConfig | undefined;
+  /**
+   * The run's resolved target language (02d), for the one string in the
+   * device library that is neither a numeral nor model-authored copy: an
+   * unsourced device's "illustrative, not measured" note. Absent yields the
+   * English note — never a guessed translation baked into a rendered slide.
+   */
+  targetLanguage?: string | undefined;
 }): RenderCarouselInput {
   const selectionByN = new Map(params.selections.map((s) => [s.n, s]));
 
@@ -816,9 +1282,22 @@ export function assembleSlidesData(params: {
   // two slides in the same fixed layout — see `resolveLayout`'s own doc
   // comment on `usedLayouts`.
   const usedLayouts = new Set<string>();
-  const slides: Slide[] = params.copy.slides.map((slide) => {
+  const lastIndex = params.copy.slides.length - 1;
+  const slides: Slide[] = params.copy.slides.map((slide, index) => {
     const selection = selectionByN.get(slide.n);
-    const { layout } = resolveLayout(slide, params.availableTemplates, usedLayouts, params.validatedCustomArchetypeIds);
+    // Phase 2, item M: the two positional archetypes need to know where the
+    // slide sits, whether a photograph actually arrived, and what came
+    // before it (a closer's recap strip). `hasHeroImage` is a KNOWN fact
+    // here — the selections are in hand — which is the state that lets a
+    // cover with no picture and no device degrade instead of rendering the
+    // headline-on-flat-ground slide it exists to prevent.
+    const position: SlidePosition = {
+      index,
+      lastIndex,
+      hasHeroImage: (selection?.imagePath ?? null) !== null,
+      earlier: params.copy.slides.slice(0, index),
+    };
+    const { layout } = resolveLayout(slide, params.availableTemplates, usedLayouts, params.validatedCustomArchetypeIds, position);
     if (layout === "custom") usedLayouts.add(slide.customArchetype!.archetypeId);
     else if (layout !== "photo" && layout !== "text_only") usedLayouts.add(layout);
     // IGSTYLE-7, §7a — a slide's accent comes from the ring whenever the kit
@@ -837,13 +1316,22 @@ export function assembleSlidesData(params: {
         seriesBadge: params.brandTokens.seriesBadge,
       },
       params.slideStyleOverrides?.get(slide.n),
+      {
+        position,
+        // Item M.3 — which token-driven ground this slide paints, on the
+        // EXISTING seeded low-discrepancy walk under its own namespace. No
+        // new randomness mechanism: same seed and index always agree, a
+        // different run starts the walk at a different phase.
+        groundStyle: isVariationSlot(slide.n, GROUND_VARIATION_MIX, `${params.paletteSeed ?? ""}:ground`) ? "glyph" : "grid",
+        ...(params.targetLanguage !== undefined ? { targetLanguage: params.targetLanguage } : {}),
+      },
     );
-    // Only `photo` consumes a hero image. Every other archetype is typographic
-    // by design, so attaching one would either be ignored by its template or —
-    // worse, for a template that did grow a background slot later — quietly
-    // reintroduce the "every slide needs a picture" coupling this set exists
-    // to break.
-    const imagePath = layout === "photo" ? (selection?.imagePath ?? undefined) : undefined;
+    // Only `photo` and `cover` consume a hero image (`HERO_IMAGE_LAYOUTS`).
+    // Every other archetype is typographic by design, so attaching one would
+    // either be ignored by its template or — worse, for a template that did
+    // grow a background slot later — quietly reintroduce the "every slide
+    // needs a picture" coupling this set exists to break.
+    const imagePath = HERO_IMAGE_LAYOUTS.has(layout) ? (selection?.imagePath ?? undefined) : undefined;
     const primaryTemplate = templateForLayout(layout, slide, params.brandTokens.slideTemplate);
     // IGSTYLE-10, §10a/10c — this slide's ground/fg pairing: the inverted
     // sibling file when the seeded walk lands here AND the accent still

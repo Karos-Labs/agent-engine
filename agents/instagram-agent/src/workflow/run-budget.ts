@@ -64,14 +64,56 @@ export const MAX_RUN_SPEND_USD = 1.5;
 /**
  * Per-unit estimates the meter falls back to when a step reports no cost (or
  * under-reports), and the pre-run estimator multiplies by the plan. Keys name
- * the unit: `copyAttempt` is one Sonnet copy draft with the @12 input size;
- * `generatedImage` and `scraperExecution` are billed per unit, not per step;
- * `angle` and `brief` are Phase 1's Sonnet steps, priced into `rawEstimate`
- * through `RunShape.angleRounds` and `RunShape.briefRefresh`.
+ * the unit: `copyAttempt` is one Sonnet copy draft at the `instagram-copy@14`
+ * input size; `generatedImage` and `scraperExecution` are billed per unit,
+ * not per step; `angle` and `brief` are Phase 1's Sonnet steps, priced into
+ * `rawEstimate` through `RunShape.angleRounds` and `RunShape.briefRefresh`.
+ *
+ * **These numbers must track the prompts.** A price left at the previous
+ * prompt's size is the same defect `CANDIDATES_PER_PHOTO_SLIDE` documents
+ * below: an estimate that flatters itself pulls no lever, so the plan the
+ * planner chooses is not the plan the run can afford. Every prompt bump that
+ * changes a step's input size re-prices its key here in the same commit.
  */
 export const STEP_COST_ESTIMATES_USD = {
-  /** Sonnet, ~19.5k in / 3.5k out, one draft of copy. */
-  copyAttempt: 0.12,
+  /**
+   * Sonnet, ~21k in / ~5.5k out, one draft of copy: $0.063 in + $0.0825 out
+   * at $3/$15 per 1M = $0.1455.
+   *
+   * Phase 2 grew this call on BOTH sides, and the output side is the larger
+   * of the two — which is the half an input-only re-price missed, because on
+   * Sonnet an output token costs 5x an input one.
+   *
+   * **Input** (≈+1.55k, ≈+$0.005): the prompt went from 33.9k to 40.0k
+   * characters (`instagram-copy@14` — the eight archetypes, §19 devices, §20
+   * the custom-archetype licence, §21 the skeleton avoid-list), ≈+1.4k
+   * tokens, and every attempt now also carries `recentSkeletons` +
+   * `skeletonRule` (item P, ≈+150).
+   *
+   * **Output** (≈+2.0k, ≈+$0.030), which is where the money is:
+   *
+   * * §20 turned `customArchetype` from "a rare tool" (@13) into "author the
+   *   layout yourself … **At most two per carousel**" (@14). Each authored
+   *   layout is a `bodyHtml` fragment PLUS a `css` block for the fixed
+   *   1080x1440 canvas, with the token block, logical properties and slot
+   *   list @14 spells out — ≈900-1800 output tokens each, so up to ≈3.6k for
+   *   the two the prompt permits.
+   * * §19 ("the post's key figure MUST get a device") adds a `device` object
+   *   on top, ≈100-200 tokens per device.
+   *
+   * ~5.5k out is one authored layout plus devices as the expected draft,
+   * rather than the ~7k worst case: the estimator's job is to arm the right
+   * lever before the money is spent, and pricing every attempt at two
+   * authored layouts would pull an image lever on the majority of runs that
+   * author none. The live meter's posture and `ewmaRatio` close the rest.
+   *
+   * **These numbers must describe the call `instagram-copy@14` actually
+   * makes.** At 3 attempts the difference between 0.126 and 0.15 is $0.072 —
+   * more than the whole first image lever — and an estimate that flatters
+   * itself pulls no lever, so the plan the planner chooses is not the plan
+   * the run can afford (`__tests__/run-budget.test.ts` pins the arithmetic).
+   */
+  copyAttempt: 0.1455,
   /** Flash image vet, ~6k in / 1.5k out — the 06 call or one rescue-tier re-vet. */
   vetCall: 0.006,
   /** Flash vision inspection, per image (05c candidate batches, 08a4 rendered slides). */
@@ -80,8 +122,15 @@ export const STEP_COST_ESTIMATES_USD = {
   relevance: 0.002,
   /** Haiku fluency judge (07f), ~4k in / 0.3k out, non-English targets only. */
   fluency: 0.0055,
-  /** Flash visual QA (08b), ~5k in / 1k out. */
-  visualQa: 0.004,
+  /**
+   * Flash visual QA (08b), ~5.5k in / 1k out.
+   *
+   * `instagram-visual-qa` went 3 → 4 in this phase (6,655 → 8,686
+   * characters: the interest-floor residue and the cross-post rhythm
+   * question), and the step's input gained `previousSkeleton`/`thisSkeleton`.
+   * Small in absolute terms, re-priced for the same reason `copyAttempt` is.
+   */
+  visualQa: 0.0041,
   /**
    * Flash trend scout (03c), ~18k in / 2.5k out.
    *
@@ -184,8 +233,51 @@ export type SpendPosture = "normal" | "essential-only" | "cheapest-path";
  * invocation (a resume re-adds the lines from checkpointed step outputs);
  * never serialised as a checkpoint of its own.
  */
+/**
+ * The two numbers a meter postures against, plus what to call itself.
+ *
+ * Exists because Phase 2 added a SECOND budget with the same machinery and
+ * different numbers: the per-client setup spend (item N — target $2.00, hard
+ * max $3.00), which must never be mixed into the per-run meter that `02j`
+ * reads. One optional constructor argument was the whole change: `canAfford`,
+ * `crossedTarget`, `crossedMax` and the two notes used to read the module
+ * constants directly, so a setup meter would have reported a $2.40 setup as
+ * "over the hard max" of a run it has nothing to do with.
+ */
+export interface SpendMeterLimits {
+  /** Defaults to `TARGET_RUN_SPEND_USD`. */
+  targetUsd?: number;
+  /** Defaults to `MAX_RUN_SPEND_USD`. */
+  maxUsd?: number;
+  /** What the notes call this budget ("run", "setup"). Reads as "per-run ceiling" / "per-setup ceiling". */
+  scope?: string;
+}
+
 export class RunSpendMeter {
   private readonly entries: SpendLine[] = [];
+
+  /** The target this meter postures against — the run's by default, the setup's when one was passed. */
+  readonly targetUsd: number;
+  /** The hard max this meter postures against. */
+  readonly maxUsd: number;
+  /** Names the budget in every note this meter's numbers appear in. */
+  readonly scope: string;
+
+  /**
+   * Zero arguments is the per-run meter, byte-identically to before: every
+   * existing call site keeps the owner's $1.00/$1.50.
+   *
+   * A non-finite or non-positive limit falls back to the run constant rather
+   * than throwing. The meter must never be the thing that fails a run, and
+   * that includes a caller that computed a limit badly.
+   */
+  constructor(limits: SpendMeterLimits = {}) {
+    const positive = (value: number | undefined, fallback: number): number =>
+      typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+    this.targetUsd = positive(limits.targetUsd, TARGET_RUN_SPEND_USD);
+    this.maxUsd = positive(limits.maxUsd, MAX_RUN_SPEND_USD);
+    this.scope = typeof limits.scope === "string" && limits.scope.trim().length > 0 ? limits.scope.trim() : "run";
+  }
 
   /**
    * Records `max(measuredUsd ?? 0, estimateUsd)` under `label`.
@@ -229,21 +321,21 @@ export class RunSpendMeter {
    */
   canAfford(nextEstimateUsd: number): { ok: true } | { ok: false; reason: string } {
     const projected = roundUsd(this.totalUsd + Math.max(0, nextEstimateUsd));
-    if (projected <= MAX_RUN_SPEND_USD) return { ok: true };
+    if (projected <= this.maxUsd) return { ok: true };
     return {
       ok: false,
-      reason: `${formatUsd(this.totalUsd)} spent so far; the next step is estimated at ${formatUsd(nextEstimateUsd)}, which would take this run to ${formatUsd(projected)} — over the ${formatUsd(MAX_RUN_SPEND_USD)} per-run ceiling`,
+      reason: `${formatUsd(this.totalUsd)} spent so far; the next step is estimated at ${formatUsd(nextEstimateUsd)}, which would take this ${this.scope} to ${formatUsd(projected)} — over the ${formatUsd(this.maxUsd)} per-${this.scope} ceiling`,
     };
   }
 
   /** `true` once the running total exceeds the owner's target — optional work stops. */
   get crossedTarget(): boolean {
-    return this.totalUsd > TARGET_RUN_SPEND_USD;
+    return this.totalUsd > this.targetUsd;
   }
 
   /** `true` once the running total exceeds the hard max — the rest of the run takes the cheapest complete path. */
   get crossedMax(): boolean {
-    return this.totalUsd > MAX_RUN_SPEND_USD;
+    return this.totalUsd > this.maxUsd;
   }
 
   /** The posture the rest of the run should take, read live at every optional spend point. */
@@ -648,14 +740,14 @@ export function planRunBudget(
 // The live notes and the summary the reviewer / ledger see
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** The note recorded the moment the meter crosses the target. */
+/** The note recorded the moment the meter crosses the target. Reads the METER's target, so a setup meter's note carries the setup number. */
 export function targetCrossedNote(meter: RunSpendMeter, at: string): string {
-  return `budget: ${formatUsd(meter.totalUsd)} spent at ${at}, over the ${formatUsd(TARGET_RUN_SPEND_USD)} target — optional work stopped (no more generated images, no rescue re-vets); every mandatory gate still runs`;
+  return `budget: ${formatUsd(meter.totalUsd)} spent at ${at}, over the ${formatUsd(meter.targetUsd)} target — optional work stopped (no more generated images, no rescue re-vets); every mandatory gate still runs`;
 }
 
 /** The note recorded the moment the meter crosses the hard max. */
 export function maxCrossedNote(meter: RunSpendMeter, at: string): string {
-  return `budget: ${formatUsd(meter.totalUsd)} spent at ${at}, over the ${formatUsd(MAX_RUN_SPEND_USD)} hard max — finishing on the cheapest complete path (text-only for any image gap, no vision inspection, no visual-QA model call) and delivering; the deliverable is marked degraded, never held`;
+  return `budget: ${formatUsd(meter.totalUsd)} spent at ${at}, over the ${formatUsd(meter.maxUsd)} hard max — finishing on the cheapest complete path (text-only for any image gap, no vision inspection, no visual-QA model call) and delivering; the deliverable is marked degraded, never held`;
 }
 
 /** Estimate vs actual, for the gate summary, the deliverable and the ledger. */
@@ -693,4 +785,407 @@ export function summarizeRunBudget(decision: RunBudgetDecision, meter: RunSpendM
 export function estimateVsActualLine(summary: Pick<RunBudgetSummary, "estimatedUsd" | "actualUsd" | "crossedTarget" | "crossedMax">): string {
   const verdict = summary.crossedMax ? "over the hard max" : summary.crossedTarget ? "over target" : "under target";
   return `budget: estimated ${formatUsd(summary.estimatedUsd)}, actual ${formatUsd(summary.actualUsd)} (${verdict})`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 2, item N — the SETUP budget: separate meter, separate target, same
+// rule (it adapts, it never holds)
+//
+// The owner's second number (2026-09-10, binding): one-off per-client setup
+// work — the Template Studio's 4-6 generated templates, and Phase 3's visual
+// direction — is amortised over a quarter of runs, so it gets its own budget
+// (target $2.00, hard max $3.00 per client per setup) and is reported exactly
+// the way a run is. It lives in THIS file rather than a module of its own for
+// one reason: the machinery is identical (a table of per-unit estimates, an
+// estimator, levers pulled in a fixed order, a live meter, a per-client
+// calibration in the beliefs document) and a second copy of it would drift.
+//
+// "A setup that would exceed the budget generates FEWER TEMPLATES rather than
+// failing" is the brief's own words, and it is the entire semantics of
+// `planSetupBudget`: there is no refusal branch, not even past the hard max.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The owner's target per client per setup: the number the pre-setup plan is fitted to. */
+export const TARGET_SETUP_SPEND_USD = 2.0;
+
+/** The owner's hard max per client per setup. Crossing it means fewer templates on the cheapest complete path — never a failure, never a hold. */
+export const MAX_SETUP_SPEND_USD = 3.0;
+
+/** The key under which `memory.updateBeliefs` / `memory.read({scope:"beliefs"})` carry the setup history, beside `RUN_BUDGET_BELIEF_KEY`. */
+export const SETUP_BUDGET_BELIEF_KEY = "instagramSetupBudget";
+
+/**
+ * How many templates a full setup generates, and the floors the levers stop
+ * at.
+ *
+ * `MIN_STUDIO_TEMPLATES = 4` is a quality floor, not a budget one: the brief
+ * asks for "4-6 templates per client", and a client whose pool is a cover and
+ * a closer has no menu to route a carousel through — it would fall back to
+ * the bundled set on most slides anyway, which is the outcome the studio
+ * exists to improve on. Lever 3 therefore stops at 4 and only the
+ * past-the-hard-max lever 6 goes below it, with the reason recorded.
+ */
+export const STUDIO_TEMPLATES_TARGET = 6;
+export const MIN_STUDIO_TEMPLATES = 4;
+/** The absolute floor, reached only past the hard max: a cover and a closer, the two slides every carousel has. */
+export const CHEAPEST_PATH_STUDIO_TEMPLATES = 2;
+
+/**
+ * Per-unit estimates for the setup steps, the same `max(measured, estimate)`
+ * contract `STEP_COST_ESTIMATES_USD` documents.
+ *
+ * Every figure is a token count against the published rates in this file's
+ * header (Sonnet 4.6 $3/$15, Gemini 2.5 Flash $0.30/$2.50 per 1M) — no Opus
+ * anywhere, per the owner's rule. The two Sonnet lines are the ones that
+ * carry the money, and each is justified where it is spent: a weak format
+ * thesis or a weak layout is not one bad post, it is every post until the
+ * next setup.
+ */
+export const SETUP_STEP_COST_ESTIMATES_USD = {
+  /** Sonnet, ~8k in / 1.2k out — the format thesis every designer call reads (00c3). */
+  designBrief: 0.042,
+  /** Sonnet, ~7k in / 2.0k out — authors one template's HTML+CSS+sample, in the client's own script (00c4). ONE CALL PER TEMPLATE, so a schema failure costs one template instead of six. */
+  templateDesign: 0.051,
+  /** Sonnet, ~6k in / 2.0k out — one repair carrying the failing gate's measured numbers (00c7), at most two per setup. */
+  templateRepair: 0.048,
+  /** Flash, ~6k in / 1k out — grades the rendered samples it can see described (00c6). Residue only; the eight gates answer the factual half. */
+  setReview: 0.004,
+  /** Flash vision, one look per image: a reference post at 00c2, our own rendered sample at 00c5. */
+  sampleInspect: 0.001,
+  /**
+   * Flash, ~12k in / 1.5k out — names formats over numbers code already
+   * computed.
+   *
+   * Priced at ZERO occurrences in the plan below, deliberately: the wired
+   * `00c2` ranks formats in code (`rankReferenceFormats`), which is free and
+   * deterministic. The unit stays in the table because the qualitative
+   * fallback — no numeric engagement signal anywhere, so nothing to rank —
+   * is one step away from wanting a cheap labelling pass, and an estimator
+   * whose table cannot name a unit it might bill is how a step gets added
+   * without anyone re-running the numbers.
+   */
+  formatMap: 0.008,
+  /** Sonnet, ~8k in / 1.2k out — Phase 3 item Q's art-direction lines, once per client per 90 days. */
+  artDirection: 0.042,
+  /** `media.ingestVisualPatterns`: Flash + vision + <=3 scrapes, consent-gated (Phase 3 item Q). */
+  visualPatterns: 0.033,
+  /** ScrappyCoco, per execution — reference-account history and the client's own site pages, cache shared with `00b1`/`03e`. */
+  scraperExecution: 0.007,
+} as const;
+
+export type SetupStepCostKey = keyof typeof SETUP_STEP_COST_ESTIMATES_USD;
+
+/** What is known about a setup before the first paid call — the estimator's inputs, cold-cache worst case. */
+export interface SetupShape {
+  /** Templates the design brief wants to author (4-6). */
+  templates: number;
+  /** Repair turns allowed across the whole setup. */
+  repairs: number;
+  /** `research.socialHistory` reads at `00c2` — the brief's reference accounts, capped at 6 by the tool's own schema. */
+  referenceAccounts: number;
+  /** `research.fetchPages` reads of the client's own site at `00c2`. */
+  sitePages: number;
+  /** Reference-post images `media.inspectImages` looks at, at `00c2`. */
+  referenceImages: number;
+  /** Whether the Flash set review at `00c6` runs. */
+  setReview: boolean;
+  /** Whether Phase 3's visual-direction block (`00d1`/`00d2`) runs on this setup. */
+  visualDirection: boolean;
+}
+
+/** The full plan: what a setup does when the money is there. Matches spec N.5's cold table ($0.552 at 5 templates / 2 repairs). */
+export const DEFAULT_SETUP_SHAPE: Readonly<SetupShape> = {
+  templates: STUDIO_TEMPLATES_TARGET,
+  repairs: 2,
+  referenceAccounts: 6,
+  sitePages: 3,
+  referenceImages: 12,
+  setReview: true,
+  visualDirection: true,
+};
+
+/** What a setup is ALLOWED to do, decided before the first paid call and never tightened into a refusal. */
+export interface SetupBudgetPlan {
+  templates: number;
+  repairsAllowed: number;
+  referenceImages: number;
+  setReview: boolean;
+  visualDirection: boolean;
+}
+
+export interface SetupCostEstimate {
+  estimatedUsd: number;
+  rawUsd: number;
+  calibrationRatio: number;
+  breakdown: { evidence: number; design: number; validation: number; review: number; repairs: number; direction: number };
+}
+
+/** Cold-cache, worst-case-under-the-plan cost of one setup, before calibration. */
+function rawSetupEstimate(plan: SetupBudgetPlan, shape: SetupShape): SetupCostEstimate["breakdown"] {
+  const c = SETUP_STEP_COST_ESTIMATES_USD;
+  const templates = Math.max(0, Math.floor(count(plan.templates)));
+  // 00c2: one scrape per reference account and per site page (both usually
+  // warm — the 24h cache is shared with 03e/04e and 00b1), plus one Flash
+  // vision look per reference image.
+  const evidence = (count(shape.referenceAccounts) + count(shape.sitePages)) * c.scraperExecution + count(plan.referenceImages) * c.sampleInspect;
+  // 00c3 + 00c4: the thesis once, then one Sonnet call per template.
+  const design = c.designBrief + templates * c.templateDesign;
+  // 00c5: the eight gates and their Chromium renders are FREE; only the one
+  // vision look per rendered sample bills.
+  const validation = templates * c.sampleInspect;
+  const review = plan.setReview ? c.setReview : 0;
+  const repairs = Math.max(0, Math.floor(count(plan.repairsAllowed))) * c.templateRepair;
+  const direction = plan.visualDirection ? c.visualPatterns + c.artDirection : 0;
+  return {
+    evidence: roundUsd(evidence),
+    design: roundUsd(design),
+    validation: roundUsd(validation),
+    review: roundUsd(review),
+    repairs: roundUsd(repairs),
+    direction: roundUsd(direction),
+  };
+}
+
+export function estimateSetupCost(plan: SetupBudgetPlan, shape: SetupShape, calibrationRatio = 1): SetupCostEstimate {
+  const ratio = Number.isFinite(calibrationRatio) ? Math.min(MAX_CALIBRATION_RATIO, Math.max(MIN_CALIBRATION_RATIO, calibrationRatio)) : 1;
+  const breakdown = rawSetupEstimate(plan, shape);
+  const rawUsd = roundUsd(breakdown.evidence + breakdown.design + breakdown.validation + breakdown.review + breakdown.repairs + breakdown.direction);
+  return { estimatedUsd: roundUsd(rawUsd * ratio), rawUsd, calibrationRatio: ratio, breakdown };
+}
+
+/** One past setup's money, as the next setup's estimator reads it. */
+export interface SetupBudgetRecord {
+  runId: string;
+  at: string;
+  estimatedUsd: number;
+  actualUsd: number;
+  templatesStored: number;
+  templatesDropped: number;
+  crossedTarget: boolean;
+  crossedMax: boolean;
+  adaptations: number;
+}
+
+export interface SetupBudgetHistory {
+  version: 1;
+  /** Exponentially weighted mean of actual/estimate across past setups (alpha 0.5); 1 when nothing is known. */
+  ewmaRatio: number;
+  /** The last few setups, oldest first. A client normally has one or two ever, which is exactly why the calibration matters more per row than the run meter's. */
+  setups: SetupBudgetRecord[];
+}
+
+export const EMPTY_SETUP_BUDGET_HISTORY: Readonly<SetupBudgetHistory> = { version: 1, ewmaRatio: 1, setups: [] };
+
+const SETUP_HISTORY_KEPT = 5;
+
+/** Reads the setup history back out of a beliefs document, tolerating anything a past version or a hand edit left there. */
+export function readSetupBudgetHistory(beliefs: unknown): SetupBudgetHistory {
+  const raw = beliefs !== null && typeof beliefs === "object" ? (beliefs as Record<string, unknown>)[SETUP_BUDGET_BELIEF_KEY] : undefined;
+  if (raw === null || typeof raw !== "object") return { ...EMPTY_SETUP_BUDGET_HISTORY, setups: [] };
+  const r = raw as Record<string, unknown>;
+  const num = (v: unknown, fallback: number): number => (typeof v === "number" && Number.isFinite(v) ? v : fallback);
+  const setups = Array.isArray(r["setups"])
+    ? (r["setups"] as unknown[]).flatMap((entry): SetupBudgetRecord[] => {
+        if (entry === null || typeof entry !== "object") return [];
+        const e = entry as Record<string, unknown>;
+        if (typeof e["runId"] !== "string") return [];
+        return [
+          {
+            runId: e["runId"],
+            at: typeof e["at"] === "string" ? e["at"] : "",
+            estimatedUsd: num(e["estimatedUsd"], 0),
+            actualUsd: num(e["actualUsd"], 0),
+            templatesStored: Math.max(0, Math.floor(num(e["templatesStored"], 0))),
+            templatesDropped: Math.max(0, Math.floor(num(e["templatesDropped"], 0))),
+            crossedTarget: e["crossedTarget"] === true,
+            crossedMax: e["crossedMax"] === true,
+            adaptations: Math.max(0, Math.floor(num(e["adaptations"], 0))),
+          },
+        ];
+      })
+    : [];
+  return {
+    version: 1,
+    ewmaRatio: Math.min(MAX_CALIBRATION_RATIO, Math.max(MIN_CALIBRATION_RATIO, num(r["ewmaRatio"], 1))),
+    setups: setups.slice(-SETUP_HISTORY_KEPT),
+  };
+}
+
+/** The setup history after one more finished setup. Pure; idempotent on `runId`, so a resumed `09b` cannot double-count. */
+export function recordSetupInHistory(history: SetupBudgetHistory, setup: SetupBudgetRecord): SetupBudgetHistory {
+  if (history.setups.some((s) => s.runId === setup.runId)) return history;
+  const ratio = setup.estimatedUsd > 0 ? setup.actualUsd / setup.estimatedUsd : 1;
+  const bounded = Math.min(MAX_CALIBRATION_RATIO, Math.max(MIN_CALIBRATION_RATIO, ratio));
+  const ewmaRatio = roundUsd(history.setups.length === 0 ? bounded : history.ewmaRatio * (1 - EWMA_ALPHA) + bounded * EWMA_ALPHA);
+  return { version: 1, ewmaRatio, setups: [...history.setups, setup].slice(-SETUP_HISTORY_KEPT) };
+}
+
+export interface SetupBudgetDecision {
+  plan: SetupBudgetPlan;
+  estimate: SetupCostEstimate;
+  /** The estimate BEFORE any lever was pulled. */
+  initialEstimateUsd: number;
+  targetUsd: number;
+  maxUsd: number;
+  calibration: { ratio: number; pastSetups: number };
+  /** Money already on the SETUP meter when the plan was made — normally $0, because `00c1` runs before the first paid setup call. */
+  spentBeforePlanUsd: number;
+  /** Every lever pulled, in order, in the words the reviewer reads. */
+  adaptations: string[];
+  /** True when even the tightest plan above the template floor did not fit the HARD MAX, so lever 6 went below four templates. */
+  belowTemplateFloor: boolean;
+  note: string;
+}
+
+/** Lever 1's steps: the reference-image vision pass, which is the only evidence line that scales with money rather than with cache state. */
+const SETUP_REFERENCE_IMAGE_STEPS = [6, 0] as const;
+
+/**
+ * Decide what this client's setup is allowed to do, before the first paid
+ * setup call.
+ *
+ * The levers, in the owner's order (spec N.5): fewer reference images, then
+ * no set review, then fewer templates (down to four), then fewer repairs,
+ * then no visual direction — and only PAST THE HARD MAX, fewer than four
+ * templates, with the reason recorded.
+ *
+ * **There is no refusal.** Not over the target, not over the hard max, not
+ * with a calibration ratio pinned at its ceiling. The worst outcome this
+ * function can produce is a two-template plan and a note saying so; the
+ * bundled eight archetypes are always underneath, so a thin setup costs
+ * variety, never a delivery.
+ */
+export function planSetupBudget(
+  shape: SetupShape,
+  history: SetupBudgetHistory = EMPTY_SETUP_BUDGET_HISTORY,
+  options: { spentUsd?: number } = {},
+): SetupBudgetDecision {
+  const ratio = history.ewmaRatio;
+  const spent = roundUsd(count(options.spentUsd));
+  const adaptations: string[] = [];
+  const requestedTemplates = Math.max(0, Math.floor(count(shape.templates)));
+  let plan: SetupBudgetPlan = {
+    templates: Math.min(STUDIO_TEMPLATES_TARGET, Math.max(MIN_STUDIO_TEMPLATES, requestedTemplates)),
+    repairsAllowed: Math.max(0, Math.floor(count(shape.repairs))),
+    referenceImages: Math.max(0, Math.floor(count(shape.referenceImages))),
+    setReview: shape.setReview,
+    visualDirection: shape.visualDirection,
+  };
+  const initialEstimate = estimateSetupCost(plan, shape, ratio);
+  let estimate = initialEstimate;
+  const reprice = () => {
+    estimate = estimateSetupCost(plan, shape, ratio);
+  };
+  const fitsTarget = () => roundUsd(estimate.estimatedUsd + spent) <= TARGET_SETUP_SPEND_USD;
+  const fitsMax = () => roundUsd(estimate.estimatedUsd + spent) <= MAX_SETUP_SPEND_USD;
+
+  // 1. Reference images: the format map then ranks from text only, and says so.
+  for (const step of SETUP_REFERENCE_IMAGE_STEPS) {
+    if (fitsTarget() || plan.referenceImages <= step) continue;
+    plan = { ...plan, referenceImages: step };
+    reprice();
+    adaptations.push(
+      step === 0
+        ? "no reference-post images inspected — formats ranked from post text alone, recorded as an absent signal"
+        : `reference-post images inspected cut to ${step}`,
+    );
+  }
+  // 2. The set review — the residue call, the first thing that is purely optional.
+  if (!fitsTarget() && plan.setReview) {
+    plan = { ...plan, setReview: false };
+    reprice();
+    adaptations.push("no set review — the eight validation gates still run on every template");
+  }
+  // 3. Templates, down to the floor of four ("two formats is not a menu").
+  while (!fitsTarget() && plan.templates > MIN_STUDIO_TEMPLATES) {
+    plan = { ...plan, templates: plan.templates - 1 };
+    reprice();
+    adaptations.push(`${plan.templates} templates instead of ${plan.templates + 1}`);
+  }
+  // 4. Repairs.
+  while (!fitsTarget() && plan.repairsAllowed > 0) {
+    plan = { ...plan, repairsAllowed: plan.repairsAllowed - 1 };
+    reprice();
+    adaptations.push(
+      plan.repairsAllowed === 0
+        ? "no repair turns — a template that fails a gate is dropped rather than repaired"
+        : `${plan.repairsAllowed} repair turn instead of ${plan.repairsAllowed + 1}`,
+    );
+  }
+  // 5. Visual direction (item Q) deferred to the next setup.
+  if (!fitsTarget() && plan.visualDirection) {
+    plan = { ...plan, visualDirection: false };
+    reprice();
+    adaptations.push("visual direction deferred to the next setup — generated images keep the brand-kit fallback direction until then");
+  }
+  // 6. Past the HARD MAX only: below the template floor, on the cheapest
+  //    complete path. This is the branch that replaces the refusal the owner's
+  //    rule forbids.
+  let belowTemplateFloor = false;
+  while (!fitsMax() && plan.templates > CHEAPEST_PATH_STUDIO_TEMPLATES) {
+    plan = { ...plan, templates: plan.templates - 1 };
+    reprice();
+    belowTemplateFloor = true;
+    adaptations.push(`generated ${plan.templates} templates instead of ${MIN_STUDIO_TEMPLATES} on the cheapest complete path (past the ${formatUsd(MAX_SETUP_SPEND_USD)} hard max)`);
+  }
+
+  const note =
+    (fitsTarget()
+      ? adaptations.length === 0
+        ? `setup budget: estimate ${formatUsd(estimate.estimatedUsd)} ≤ ${formatUsd(TARGET_SETUP_SPEND_USD)} → ${plan.templates} templates, full plan`
+        : `setup budget: estimate ${formatUsd(initialEstimate.estimatedUsd)} > ${formatUsd(TARGET_SETUP_SPEND_USD)} → ${adaptations.join(", ")} (now ${formatUsd(estimate.estimatedUsd)})`
+      : `setup budget: estimate ${formatUsd(initialEstimate.estimatedUsd)} > ${formatUsd(TARGET_SETUP_SPEND_USD)} → ${adaptations.join(", ")}; still ${formatUsd(estimate.estimatedUsd)} on the tightest plan — generating anyway, the live meter finishes on the cheapest complete path and the bundled archetypes cover whatever is not stored`) +
+    (spent > 0 ? `; ${formatUsd(spent)} was already spent on this setup, so the target left for the rest of it is ${formatUsd(Math.max(0, roundUsd(TARGET_SETUP_SPEND_USD - spent)))}` : "");
+
+  return {
+    plan,
+    estimate,
+    initialEstimateUsd: initialEstimate.estimatedUsd,
+    targetUsd: TARGET_SETUP_SPEND_USD,
+    maxUsd: MAX_SETUP_SPEND_USD,
+    calibration: { ratio: estimate.calibrationRatio, pastSetups: history.setups.length },
+    spentBeforePlanUsd: spent,
+    adaptations,
+    belowTemplateFloor,
+    note,
+  };
+}
+
+/** Estimate vs actual for one setup — the gate payload's `setup.budget`, the deliverable's, and the ledger row's. */
+export interface SetupBudgetSummary {
+  estimatedUsd: number;
+  actualUsd: number;
+  targetUsd: number;
+  maxUsd: number;
+  crossedTarget: boolean;
+  crossedMax: boolean;
+  posture: SpendPosture;
+  plan: SetupBudgetPlan;
+  adaptations: string[];
+  notes: string[];
+  lines: SpendLine[];
+}
+
+export function summarizeSetupBudget(decision: SetupBudgetDecision, meter: RunSpendMeter, notes: readonly string[]): SetupBudgetSummary {
+  return {
+    estimatedUsd: decision.estimate.estimatedUsd,
+    actualUsd: meter.totalUsd,
+    targetUsd: decision.targetUsd,
+    maxUsd: decision.maxUsd,
+    crossedTarget: meter.crossedTarget,
+    crossedMax: meter.crossedMax,
+    posture: meter.posture,
+    plan: decision.plan,
+    adaptations: [...decision.adaptations],
+    notes: [...notes],
+    lines: [...meter.lines],
+  };
+}
+
+/** The one-line "estimate vs actual" for a setup, in the same shape a run's reads. */
+export function setupEstimateVsActualLine(
+  summary: Pick<SetupBudgetSummary, "estimatedUsd" | "actualUsd" | "crossedTarget" | "crossedMax" | "plan">,
+): string {
+  const verdict = summary.crossedMax ? "over the hard max" : summary.crossedTarget ? "over target" : "under target";
+  return `setup budget: estimated ${formatUsd(summary.estimatedUsd)}, actual ${formatUsd(summary.actualUsd)} (${verdict}) for ${summary.plan.templates} planned template(s)`;
 }
