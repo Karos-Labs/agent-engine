@@ -339,13 +339,144 @@ export const OCCUPIED_SHARE_FLOOR: Readonly<Record<SlideRole, number>> = { cover
  * A cover or a closer must carry imagery or a drawn device. Interiors are
  * **exempt**.
  *
- * The gap this sits in is large and the threshold only has to land inside it:
- * a full-bleed photo measures ≈1.0, a scrimmed photo panel ≈0.45, the
- * smallest legitimate device the bundled set can make (a 300px figure plus
- * the 132×12 accent band) ≈0.04–0.06, and a headline-only cover ≤0.01 — the
- * accent band alone is 0.001 of the frame.
+ * ## 2026-09-11: moved from 0.03 to 0.10, and the old number was simply wrong
+ *
+ * This constant used to read: "a full-bleed photo measures ≈1.0, a scrimmed
+ * photo panel ≈0.45, the smallest legitimate device the bundled set can make
+ * (a 300px figure plus the 132×12 accent band) ≈0.04–0.06, and a headline-only
+ * cover ≤0.01 — the accent band alone is 0.001 of the frame." The last claim
+ * is the load-bearing one, and it is false on a real render.
+ *
+ * `graphicShare` counts a cell as a drawn device when the cell is COVERED
+ * (48 of its 64 samples are ink) and carries at most three distinct colours.
+ * A display face at 100px+ has stems that cover whole 4×4-px cells, so a plate
+ * carrying nothing but a headline scores several per cent of "drawn device"
+ * out of its own typography. Measured through the real `measureSlidePng` over
+ * real Chromium renders of the bundled set (the same instrument the
+ * calibration test uses, one plate per row) — THIS TABLE IS THE FIRST PASS,
+ * against the templates as they stood before the visual rework, and it is
+ * kept because it is the evidence that 0.03 was the wrong number. The table
+ * that describes the CURRENT tree is the third-pass sweep further down; where
+ * the two disagree, the later one is the measurement:
+ *
+ *   headline_focus, type + texture only, short / medium / long   3.7% 4.4% 6.1%
+ *   headline_focus, glyph ground variant                              5.2%
+ *   headline_focus, Hebrew                                            3.0%
+ *   headline_focus + a three-row bars device                          5.5%
+ *   slide.html, heroless                                              3.2%
+ *   slide.html, a 1×1 TRANSPARENT hero (the prep defect)              2.8%
+ *   headline_focus with every slot empty                              1.5%
+ *   ── the gap ──
+ *   comparison_card, two cards                                       19.9%
+ *   closer, footer band, no recap strip                              23.4%
+ *   list_takeaway, rows panel                                        26.2%
+ *   quote_card, pull-quote panel                                     28.8%
+ *   cover, colour field, no hero                                     33.1%
+ *   closer, footer band + recap panel                                35.7%
+ *   stat_callout, stat slab                                          36.3%
+ *   a full-bleed photograph                                         ~100%
+ *
+ * At 0.03 the clause sat INSIDE the type-only band: whether an all-type plate
+ * was judged to "carry a device" came down to how many characters the headline
+ * happened to have. That is not a rule, and it is why the old grounds were
+ * built invisible — the only way to keep a statement slide under a 3% floor
+ * was to make sure nothing on it could be seen. 0.10 sits in the real gap, so
+ * the clause now says what it means: **a cover or a closer carries a
+ * photograph or a filled field, not just big words.**
+ *
+ * ## 2026-09-11, second pass: "unconditionally" was the wrong word
+ *
+ * This note used to end "a cover or closer rendered from
+ * `cover.html`/`closer.html` clears it unconditionally (33% and 22-36%,
+ * because both paint a colour field whatever the copy does)". That was an
+ * accurate description of those two files and a bad property for them to
+ * have: a colour field painted *whatever the copy does* is a field measuring
+ * the template rather than the slide. Rendered with every slot empty, the old
+ * `cover.html` reported 29.7% here and 55.8% occupied — clearing the cover
+ * role's 10% device floor and its 42% occupancy floor on a plate with nothing
+ * on it at all. An instrument that scores its own decoration is the same
+ * defect this module exists to catch, one level down.
+ *
+ * Both files now bind their field to the content that justifies it (see
+ * `cover.html`'s header for the rule the whole directory keeps).
+ *
+ * ## 2026-09-11, third pass: the band, re-measured on the current templates
+ *
+ * The second pass's table was written against an intermediate state of the
+ * directory and its summary — "a factor of 1.6 above the loudest type-only
+ * plate and a factor of 2 below the quietest field-bearing one" — did not
+ * survive the templates that shipped with it. Re-measured, the loudest
+ * type-only plate was 9.0% (`headline_focus` at the reviewer's `l` type
+ * scale, a case the old table never sampled because it only rendered `m`) and
+ * the quietest field-bearing one 13.5%: a 1.0-point margin above and a 1.35x
+ * factor below, neither of them the stated number. A comment that is wrong
+ * about the gap is worse than no comment, because the gap is the entire
+ * argument for the constant.
+ *
+ * So: the full sweep, every bundled archetype at every type scale, both
+ * ground variants, Hebrew, the pale-accent kit and the empty/hollow guards —
+ * 56 plates through `measureSlidePng` over real Chromium
+ * (`.local/probe-template.mjs`, 2026-09-11, against this working tree). Every
+ * row, sorted, with nothing omitted between the two ends of the gap:
+ *
+ *   ── TYPE AND TEXTURE ONLY (no field, no photograph) ──
+ *   every slot empty (cover / closer / headline_focus)   0.2%
+ *   headline_focus with an empty statement               0.7%
+ *   headline_focus, Hebrew                               2.7%
+ *   slide.html, a 1x1 TRANSPARENT hero (the prep defect) 2.7%
+ *   slide.html heroless, Hebrew                          3.4%
+ *   headline_focus, short copy                           3.6%
+ *   headline_focus, medium copy / judged as a cover      4.8%
+ *   headline_focus at the `s` type scale                 4.9%
+ *   headline_focus, glyph ground variant                 5.7%
+ *   slide.html, heroless                                 6.1%
+ *   headline_focus, long copy                            6.7%
+ *   headline_focus at the `l` type scale                 7.0%
+ *   headline_focus + a three-row bars device             7.1%
+ *   ── the gap: 7.1% to 13.5%, and 0.10 is inside it ──
+ *   comparison_card at `s`                              13.5%
+ *   comparison_card, Hebrew                             14.1%
+ *   cover at `l`                                        14.2%
+ *   comparison_card in position 1 / at `l`         15.4/15.6%
+ *   closer with a hollowed takeaway                     18.2%
+ *   closer, Hebrew                                      19.8%
+ *   closer, no recap strip (pale kit / reference) 21.6/21.7%
+ *   closer, glyph ground variant                        21.9%
+ *   cover, colour field, no hero                        26.9%
+ *   closer at `s` / with a badge / cover at `s`    29.7-30.7%
+ *   closer, footer band + recap strip                   31.2%
+ *   stat_callout at `s`                                 31.6%
+ *   cover, Hebrew / at `l` / pale kit / short copy 32.7-34.0%
+ *   cover + a figure device                             34.4%
+ *   stat_callout (slab), quote_card (panel)        34.7-46.7%
+ *   list_takeaway (rows panel)                     37.5-44.1%
+ *   a full-bleed photograph (dark / light plate)   58.0/64.2%
+ *
+ * The band is bipartite with nothing between 7.1% and 13.5%, and 0.10 sits
+ * 2.9 points above the loudest type-only plate (a factor of 1.41) and 3.5
+ * points below the quietest field-bearing one (a factor of 1.35). That is
+ * the honest statement of the margin: it is not symmetric, it is not the 1.6x
+ * and 2x the second pass claimed, and it is real.
+ *
+ * TWO ROWS THAT LOOK LIKE ANOMALIES AND ARE NOT.
+ * `headline_focus + a three-row bars device` is the loudest type-only row at
+ * 7.1% and it is carrying a rendered device — the bars are strokes and labels
+ * rather than filled area, so the metric correctly declines to score them as
+ * one. That is why the constant is stated as a floor on IMAGERY OR DEVICE
+ * SHARE and not as "does this slide have a device slot": a device the pixels
+ * cannot see is not one. And `comparison_card` at 13.5-15.6% is the quietest
+ * field-bearing archetype because its two cards are outlined rather than
+ * filled; it is also the row that sets this constant's ceiling, so a future
+ * revision that lightens those cards moves the floor, not the other way round.
+ *
+ * The three things this must not break are all still true: a cover or closer
+ * WITH COPY ON IT clears the floor with 1.4-6.4x of margin; `headline_focus`
+ * judged at the cover role still reports `no-device`, which is the pixel half
+ * of `default:cover-carries-device`; and a hero that contributed no pixels is
+ * still caught. What changed in the second pass is that an EMPTY cover now
+ * fails it too.
  */
-export const IMAGERY_OR_DEVICE_FLOOR = 0.03;
+export const IMAGERY_OR_DEVICE_FLOOR = 0.1;
 
 /**
  * **Not taste — render integrity.** A single 74px headline line on its own
@@ -381,6 +512,32 @@ export const EDGE_DENSITY_FLOOR = 0.06;
  * accent has become the ground, which is sometimes deliberate. Neither can
  * hold a run: brand furniture must never be able to, the invariant
  * `assessBrandAssetPresence` already states.
+ *
+ * ## Why 0.45 is a real band and not decoration, as of 2026-09-11
+ *
+ * A warning nothing can ever trip is worse than no warning, and a warning
+ * that trips on every slide a whole client ever ships is worse still: it
+ * trains the reviewer to ignore the one signal that says the brand colour ran
+ * away with the plate. The previous `cover.html` was 4.3 points under this
+ * ceiling on the reference kit (40.0% against 45%) with a flat
+ * `color-mix(accent 88%, bg)` field across the top half — and OVER it on a
+ * pale accent the palette walk admits without complaint: rendered at
+ * `#EFC75E`, whose only gate is `ACCENT_GROUND_CONTRAST_FLOOR = 3` against
+ * the ground, the same cover measured 45.7%. Every cover that client shipped
+ * would have carried `accent-out-of-band`.
+ *
+ * `cover.html`'s field is now a graded ramp rather than a flat fill, and only
+ * its head is within `accent` tolerance of the token. Re-measured over real
+ * Chromium on both kits:
+ *
+ *   cover, no hero, reference `#C4552F`     3.7-4.9%
+ *   cover, no hero, pale `#EFC75E`               2.2%
+ *   stat_callout / quote_card / closer, pale 0.7-1.9%
+ *
+ * — mid-band on both ends for both kits, which is what makes a reading near
+ * 45% mean something again. `interest-floor-calibration.test.ts` renders the
+ * pale-accent row so the band table covers the range the palette walk
+ * actually permits rather than the one reference hex.
  */
 export const ACCENT_MIN_SHARE = 0.0008;
 export const ACCENT_MAX_SHARE = 0.45;

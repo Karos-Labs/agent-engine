@@ -473,6 +473,16 @@ export function deviceCssBlock(): string {
   white-space: nowrap;
   line-height: 0.95; letter-spacing: -0.02em;
   font-size: calc(200px * var(--ts, 1));
+  /* Not cosmetic, and not slack. A display face's glyph box is TALLER than a
+     line box under about 1.15, so a figure set at 0.95 reports
+     \`scrollHeight > clientHeight\` — and the renderer's DOM probe reports any
+     such element as overflowing, which fails clause B of the interest floor
+     (\`probe.overflow\` is a limb no amount of imagery exempts). Measured: a
+     150px figure's line box is 143px against 163px of content. A tight line
+     height is the right typography for a standalone numeral, so the fix is to
+     give the box the descender room rather than to loosen the leading. In
+     \`em\`, so it tracks all three size steps and every per-script type scale. */
+  padding-block-end: 0.16em;
 }
 .dv-figure--mid { font-size: calc(150px * var(--ts, 1)); }
 .dv-figure--small { font-size: calc(108px * var(--ts, 1)); }

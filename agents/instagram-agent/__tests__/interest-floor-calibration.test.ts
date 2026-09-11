@@ -2,12 +2,13 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { createRenderCarousel, type RenderCarouselInput, type SlideMetrics, type SlideProbe } from "@agent-engine/tool-karos-publish";
-import { checkInterestFloor, type SlideRole } from "../src/workflow/interest-floor.js";
+import { ACCENT_MAX_SHARE, ACCENT_MIN_SHARE, checkInterestFloor, CLIPPED_EDGE_SHARE_CEILING, INK_SHARE_FLOOR, type SlideRole } from "../src/workflow/interest-floor.js";
 import { buildScriptFontHeadForLanguage } from "../src/workflow/script-fonts.js";
 import { deviceCssBlock } from "../src/workflow/slide-devices.js";
 import { assembleSlidesData } from "../src/workflow/slides-data.js";
 import { templateBasename } from "../src/workflow/visual-qa-pre-checks.js";
 import { InstagramSlideCopySchema, type ImageSelection, type InstagramCopyOutput, type InstagramSlideCopy } from "../src/workflow/types.js";
+import { syntheticPhotograph } from "./synthetic-photograph.js";
 import { isChromiumInstalled } from "./test-helpers.js";
 
 /**
@@ -54,11 +55,6 @@ const TRANSPARENT_1X1 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAABP2FU6AAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
   "base64",
 );
-/** Solid magenta 8x8 — `object-fit: cover` blows it up to a full-bleed photograph's worth of pixels. */
-const MAGENTA_8X8 = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFElEQVR4nGP8z/CfARtgwio6aCUAkYsCDoRKzmMAAAAASUVORK5CYII=",
-  "base64",
-);
 
 const SHORT = { headline: "Intake is the bottleneck", body: "Every queue we measured said the same thing." };
 const MEDIUM = {
@@ -94,6 +90,29 @@ let heroPath: string;
 let transparentHeroPath: string;
 
 /**
+ * The `--bg`/`--fg` each bundled template declares, read out of the files
+ * themselves, keyed by filename.
+ *
+ * READ rather than written down, because a hard-coded pair is a second
+ * source of truth for the one thing this whole file is anchored on: a
+ * `groundHex` that does not match the document's real ground silently turns
+ * `flatBackgroundShare` into a fact about nothing, and the source-pinning
+ * tests forbid the literals appearing in `src/` precisely so they cannot be
+ * copied around. If a template's token block is ever re-shaped, this map
+ * follows it or `groundFor` throws — it does not quietly go on measuring
+ * against a colour no document paints.
+ */
+const groundTokens = new Map<string, { ground: string; foreground: string }>();
+
+/** The per-slide measure anchors for one template, or a throw naming the file whose token block could not be read. */
+function groundFor(template: string): { ground: string; foreground: string } {
+  const file = template.split(/[\\/]/u).pop() ?? template;
+  const tokens = groundTokens.get(file);
+  if (tokens === undefined) throw new Error(`no --bg/--fg found in ${file} — the calibration cannot anchor a measurement it cannot name`);
+  return tokens;
+}
+
+/**
  * Materializes the bundled templates the way the workflow does at
  * `04c-resolve-templates`: every document gets the shared device stylesheet
  * spliced before `</head>` (the `extraHeadHtml` channel), and a non-Latin
@@ -107,6 +126,9 @@ async function materialize(dir: string, scriptLanguage?: string): Promise<void> 
     .join("\n");
   for (const file of (await fs.readdir(SOURCE_TEMPLATE_DIR)).filter((f) => f.endsWith(".html"))) {
     const html = await fs.readFile(path.join(SOURCE_TEMPLATE_DIR, file), "utf8");
+    const ground = /--bg\s*:\s*(#[0-9a-fA-F]{3,8})/u.exec(html)?.[1];
+    const foreground = /--fg\s*:\s*(#[0-9a-fA-F]{3,8})/u.exec(html)?.[1];
+    if (ground !== undefined && foreground !== undefined) groundTokens.set(file, { ground, foreground });
     await fs.writeFile(path.join(dir, file), html.replace("</head>", `${extra}\n</head>`), "utf8");
   }
 }
@@ -125,9 +147,44 @@ const selection = (n: number, imagePath: string | null): ImageSelection => ({
   claimMatchReason: "calibration fixture",
 });
 
+/**
+ * Attaches the per-slide measurement anchors the workflow attaches at
+ * `07c-emit-slides-data-attempt-N`, in the same shape and from the same
+ * places: `accentHex` from the slide's own resolved `fields.accentColor`,
+ * `groundHex`/`foregroundHex` from the brand token pair the document
+ * declares.
+ *
+ * WITHOUT THIS THE CALIBRATION WAS MEASURING A DIFFERENT RENDER FROM
+ * PRODUCTION. `measureSlidePng` takes its anchors from the caller and has no
+ * other way to learn them, so an un-hinted render reports `accentShare` 0.0%
+ * on every slide — the accent band warning fires on all eight archetypes and
+ * the one metric that says "this slide is painted in the brand's colours" is
+ * dead. `groundHex` matters for the opposite reason: the ground is otherwise
+ * inferred as the modal flat colour, which is right for a typographic plate
+ * and wrong for anything carrying a field or a photograph, where the modal
+ * colour IS the field. Both are what `assembleForAttempt` passes, so this is
+ * the harness catching up to the pipeline, not a new measurement policy.
+ */
+function withMeasureAnchors(assembled: RenderCarouselInput): RenderCarouselInput {
+  return {
+    ...assembled,
+    slides: assembled.slides.map((slide) => {
+      const { ground, foreground } = groundFor(slide.template);
+      return {
+        ...slide,
+        measure: {
+          ...(typeof slide.fields["accentColor"] === "string" ? { accentHex: slide.fields["accentColor"] } : {}),
+          foregroundHex: foreground,
+          groundHex: ground,
+        },
+      };
+    }),
+  };
+}
+
 /** Assembles one carousel through the REAL `assembleSlidesData`, so every rendered field is the one a run would produce. */
 function assemble(slides: InstagramSlideCopy[], selections: ImageSelection[], over: Partial<Parameters<typeof assembleSlidesData>[0]> = {}): RenderCarouselInput {
-  return assembleSlidesData({
+  return withMeasureAnchors(assembleSlidesData({
     clientSlug: "calibration",
     postId: "interest-floor",
     repoRoot: REPO_ROOT,
@@ -138,7 +195,7 @@ function assemble(slides: InstagramSlideCopy[], selections: ImageSelection[], ov
     availableTemplates: new Set(["cover.html", "closer.html", "stat-callout.html", "quote-card.html", "comparison-card.html", "list-takeaway.html", "headline-focus.html"]),
     templateDirOverride: path.relative(REPO_ROOT, templateDir).replaceAll("\\", "/"),
     ...over,
-  });
+  }));
 }
 
 interface Measured {
@@ -202,13 +259,26 @@ function findingsAtMargin(measured: Measured, role: SlideRole, margin: number): 
   return checkInterestFloor(tightened, measured.probe, role, optsFor(measured)).findings.map((f) => `${f.kind} (${f.sentence})`);
 }
 
+/**
+ * A row of the band table the constants' doc comments cite.
+ *
+ * The label names the CASE and `measured.template` names the FILE, and they
+ * are printed separately because they are not the same claim. The labels here
+ * are hand-written; the file is whatever `resolveLayout` chose. They disagreed
+ * for the whole of this PR's first CI run: "cover.html no-hero" was rendering
+ * `headline-focus.html`, because `resolveLayout` refused a cover with no hero
+ * and no device, so the row recorded as `cover.html`'s numbers (2.7%
+ * imagery-or-device) were a different template's — and the conclusion drawn
+ * from them, that `cover.html` fails its own floor, was about a file the test
+ * never rendered. Printing both is what makes that visible.
+ */
 function report(label: string, role: SlideRole, measured: Measured): void {
   const m = measured.metrics;
   const pct = (value: number) => `${(value * 100).toFixed(1)}%`;
-  // The band table the constants' doc comments cite.
   console.log(
     [
-      label.padEnd(34),
+      label.padEnd(30),
+      `→ ${templateBasename(measured.template)}`.padEnd(20),
       role.padEnd(9),
       `flat ${pct(m.flatBackgroundShare)}`.padEnd(13),
       `occupied ${pct(m.occupiedShare)}`.padEnd(18),
@@ -231,7 +301,7 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
     await fs.mkdir(outDir, { recursive: true });
     heroPath = path.join(workDir, "hero.png");
     transparentHeroPath = path.join(workDir, "transparent.png");
-    await fs.writeFile(heroPath, MAGENTA_8X8);
+    await fs.writeFile(heroPath, syntheticPhotograph(CANVAS.w, CANVAS.h));
     await fs.writeFile(transparentHeroPath, TRANSPARENT_1X1);
   }, 120_000);
 
@@ -271,6 +341,125 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
     600_000,
   );
 
+  /**
+   * THE OTHER TWO TYPE SCALES, which nothing in this file used to render.
+   *
+   * `SlideStyleOverride.fontScale` gives the reviewer three steps and every
+   * other case here hard-codes `"m"` — so the band table, and every
+   * `probe.overflow === false` assertion resting on it, described one third of
+   * what a reviewer can actually set. Measured on real Chromium, that gap was
+   * hiding two genuine layout overflows at `l` (content cut off, not the 2-3px
+   * glyph-box artefact): `stat-callout.html`'s slab overflowed by 43px with a
+   * long subLabel, and `list-takeaway.html`'s rows panel by 88px with the four
+   * items `SlideListSchema` permits. Both are fixed in the templates — the
+   * slab is capped and the four-row list sets its own tighter row.
+   *
+   * AND THAT SENTENCE USED TO END "and this is what stops the next one
+   * shipping", WHICH WAS NOT TRUE OF THE INSTRUMENT IT RESTED ON. The next
+   * one shipped in the same commit. `headline_focus` at `l` with the LONG
+   * copy below — the case this very test renders as slide 6 — printed its
+   * headline 155px above its own parent and straight on top of the kicker
+   * rail, and both assertions here passed, because `scrollHeight` describes
+   * the scrollable overflow region and that region only grows DOWNWARD: an
+   * element pushed out of the block-start edge of its parent leaves
+   * `scrollHeight === clientHeight`. `probe.overflow` could not see it, so
+   * neither could this test. (A `justify-content: flex-end` block that the
+   * flex algorithm was free to shrink below its content is how a layout
+   * arrives in that state; `closer.html`'s middle was in the same shape.)
+   *
+   * `probePage` now carries a second limb that compares each in-flow
+   * element's rect against its parent's, so `probe.overflow` means what the
+   * assertions below have always claimed it means. That limb, not this
+   * comment, is what stops the next one.
+   *
+   * Four items rather than three on the list, deliberately: four is the
+   * schema's cap and the only row count that does not fit at `l`.
+   */
+  it(
+    "every archetype passes at the reviewer's OTHER type scales, s and l",
+    async () => {
+      for (const fontScale of ["s", "l"] as const) {
+        const slides = [
+          slide({ n: 1, layout: "cover", ...LONG, kicker: "THE SHIFT" }),
+          slide({ n: 2, layout: "stat_callout", ...MEDIUM, stat: { figure: "$25,000", subLabel: "interest-free assistance for eligible first-time buyers", source: "MassHousing press release, April 2026" } }),
+          slide({ n: 3, layout: "quote_card", ...MEDIUM, quote: { text: "We stopped guessing and started measuring the queue, and the second month stopped being the one that broke.", attribution: "Head of Ops, 2026" } }),
+          slide({ n: 4, layout: "comparison_card", ...LONG, comparison: { leftLabel: "Before", leftBody: "Five review rounds and a spreadsheet nobody owns", rightLabel: "After", rightBody: "Two review rounds and one named owner" } }),
+          slide({
+            n: 5,
+            layout: "list_takeaway",
+            ...LONG,
+            items: [
+              { title: "Name the owner", note: "One person, not a channel" },
+              { title: "Measure the queue", note: "Weekly, not monthly" },
+              { title: "Cut a review round", note: "Two rounds is enough for anything under a page" },
+              { title: "Publish on a schedule", note: "The calendar is the process, not the plan" },
+            ],
+          }),
+          slide({ n: 6, layout: "headline_focus", ...LONG, kicker: "THE TURN" }),
+          slide({ n: 7, layout: "closer", headline: "Three things to review before your next campaign goes live", body: "Save this for your next planning session." }),
+        ];
+        const overrides = new Map(slides.map((s) => [s.n, { fontScale }] as const));
+        const measured = await render(assemble(slides, slides.map((s) => selection(s.n, null)), { slideStyleOverrides: overrides }));
+        // Position 1 is a cover and the last position a closer, exactly as
+        // `checkSlidesInterestFloor` assigns roles from position.
+        const roles: SlideRole[] = measured.map((_, i) => (i === 0 ? "cover" : i === measured.length - 1 ? "closer" : "interior"));
+
+        for (const [index, entry] of measured.entries()) {
+          report(`${entry.template} (fontScale ${fontScale})`, roles[index]!, entry);
+          // A content archetype at a positional role may fail clause E and
+          // nothing else — the same posture the position-1/last test asserts.
+          expect(
+            checkInterestFloor(entry.metrics, entry.probe, roles[index]!, optsFor(entry)).findings.map((f) => f.kind).filter((k) => k !== "no-device"),
+            `${entry.template} @ fontScale ${fontScale}`,
+          ).toEqual([]);
+          expect(entry.probe.overflow, `${entry.template} @ fontScale ${fontScale} overflows: ${entry.probe.overflowing.join(", ")}`).toBe(false);
+        }
+      }
+    },
+    600_000,
+  );
+
+  /**
+   * THE ACCENT BAND, AT THE OTHER END OF THE RANGE THE PALETTE WALK ADMITS.
+   *
+   * `--accent` is a live brand-kit slot whose only gate is
+   * `ACCENT_GROUND_CONTRAST_FLOOR = 3` against the ground, so a pale kit is
+   * admissible and every case above renders the one dark reference hex. That
+   * gap mattered: the previous `cover.html` painted a flat
+   * `color-mix(accent 88%, bg)` field across half the plate, which measured
+   * 40.0% accent on `#C4552F` — 4.3 points under `ACCENT_MAX_SHARE` — and
+   * 45.7% on `#EFC75E`, OVER it, so every cover that client shipped would have
+   * carried "the accent has become the ground". A warning that fires on every
+   * slide is a warning the reviewer learns to ignore.
+   */
+  it(
+    "the accent stays inside its band on a PALE brand accent, not only on the dark reference kit",
+    async () => {
+      const slides = [
+        slide({ n: 1, layout: "cover", ...MEDIUM, kicker: "MARKET SIGNAL" }),
+        slide({ n: 2, layout: "stat_callout", ...MEDIUM, stat: { figure: "73%", subLabel: "of teams file intake by hand", source: "Karos survey, 2026" } }),
+        slide({ n: 3, layout: "quote_card", ...MEDIUM, quote: { text: "We stopped guessing and started measuring the queue.", attribution: "Head of Ops, 2026" } }),
+        slide({ n: 4, layout: "closer", headline: "That is the whole pattern", body: "Which round would you cut first?" }),
+      ];
+      const pale = "#EFC75E";
+      const measured = await render(
+        assemble(slides, slides.map((s) => selection(s.n, null)), {
+          brandTokens: { templateDir: path.relative(REPO_ROOT, templateDir).replaceAll("\\", "/"), slideTemplate: "slide.html", accentColor: pale },
+        }),
+      );
+      const roles: SlideRole[] = ["cover", "interior", "interior", "closer"];
+      for (const [index, entry] of measured.entries()) {
+        report(`${entry.template} (pale accent ${pale})`, roles[index]!, entry);
+        expect(entry.metrics.accentShare, `${entry.template}: the pale accent did not paint at all`).toBeGreaterThan(ACCENT_MIN_SHARE);
+        expect(entry.metrics.accentShare, `${entry.template}: the pale accent has become the ground`).toBeLessThan(ACCENT_MAX_SHARE);
+        // And the plate still passes its role's floor on the pale kit — the
+        // accent's lightness must not be what carries a template over it.
+        expect(checkInterestFloor(entry.metrics, entry.probe, roles[index]!, optsFor(entry)).findings, `${entry.template} @ pale accent`).toEqual([]);
+      }
+    },
+    600_000,
+  );
+
   it(
     "cover and closer pass the tighter COVER/CLOSER floors, including a cover with no photograph at all",
     async () => {
@@ -286,8 +475,17 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
 
         const cover = measured[0]!;
         const closer = measured[3]!;
-        report(`cover.html no-hero (${lengthLabel})`, "cover", cover);
-        report(`closer.html (${lengthLabel})`, "closer", closer);
+        report(`cover no-hero (${lengthLabel})`, "cover", cover);
+        report(`closer (${lengthLabel})`, "closer", closer);
+
+        // THE PREMISE, ASSERTED BEFORE THE NUMBERS. Every claim below is
+        // about `cover.html`, and for the whole of this PR's first CI run it
+        // was not: `resolveLayout` degraded a hero-less, device-less cover to
+        // `headline-focus.html`, and this test measured that instead while
+        // calling it the cover. A band table is worth nothing if it cannot
+        // say which file it measured.
+        expect(templateBasename(cover.template), `the no-hero cover case did not render cover.html at ${lengthLabel}`).toBe("cover");
+        expect(templateBasename(closer.template), `the closer case did not render closer.html at ${lengthLabel}`).toBe("closer");
 
         // THE STRUCTURAL CLAIM, ON PIXELS: with no hero and no device the
         // cover's colour-block ground plus keyline still carry the frame.
@@ -366,7 +564,10 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
           { n: 3, template: "closer.html", fields: { ...furniture }, images: {}, htmlFragments: {} },
         ],
       } as unknown as RenderCarouselInput;
-      const measured = await render(blanks);
+      // The SAME anchors every other case in this file measures against —
+      // otherwise the one test whose job is to prove a decorated empty plate
+      // fails would be the one measuring it differently from the rest.
+      const measured = await render(withMeasureAnchors(blanks));
       const roles: SlideRole[] = ["cover", "interior", "closer"];
 
       for (const [index, entry] of measured.entries()) {
@@ -380,6 +581,98 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
         // And the DOM agrees: with every slot hidden by its own `:empty`
         // rule, no text box painted.
         expect(entry.probe.textBoxShare).toBeLessThan(0.02);
+
+        // ── AND IT FAILS ON THE PIXELS ALONE. ──
+        //
+        // This is the half the first version of this test could not see, and
+        // the half that matters. Clause G has a DOM limb (`textBoxShare`
+        // under `PROBE_TEXT_BOX_SHARE_FLOOR`) which an empty plate trips
+        // whatever the pixels say — so for the whole life of the previous
+        // revision the assertion above passed through that limb while the
+        // pixel metrics said the plate was full: `cover.html` with EVERY SLOT
+        // EMPTY measured 55.8% occupied against a 42% floor and 29.7%
+        // imagery-or-device against a 10% one, because the ground painted a
+        // colour field and a full-plate texture whatever the copy did. Re-run
+        // with the DOM limb switched off (a `textBoxShare` well over its
+        // floor), a finding must still fire — which it can only do from the
+        // pixels. Every ink-bearing layer in the bundled set is now bound to
+        // the content that justifies it, so an empty plate measures ~0.5%
+        // occupied and clauses C, D and G all fire on their own.
+        const pixelsOnly = checkInterestFloor(entry.metrics, { ...entry.probe, textBoxShare: 0.5 }, roles[index]!, optsFor(entry)).findings;
+        expect(
+          pixelsOnly.some((f) => f.kind === "dead-space" || f.kind === "empty"),
+          `${entry.template} with empty slots passed on the PIXELS — a ground layer is painting unconditionally: ${JSON.stringify({
+            occupiedShare: entry.metrics.occupiedShare,
+            contentOccupiedShare: entry.metrics.contentOccupiedShare,
+            largestEmptyRectShare: entry.metrics.largestEmptyRectShare,
+            imageryOrDeviceShare: entry.metrics.imageryOrDeviceShare,
+          })}`,
+        ).toBe(true);
+      }
+    },
+    600_000,
+  );
+
+  /**
+   * THE OTHER HALF OF THE SAME GUARD: a plate with copy on it, and a HOLE in
+   * the middle of it.
+   *
+   * The empty-plate case above proves an unconditional ground cannot score;
+   * this one proves the emptiness measurement can still SEE a hole on a plate
+   * that is otherwise working. It is the property `largestEmptyRect` exists
+   * for — `slide-metrics.ts`'s own header calls it "the metric that names the
+   * complaint", because "a large empty upper area" is one contiguous block
+   * and a slide can sit under a flat-share ceiling while still carrying one.
+   *
+   * It could not fire at all before this revision. Every bundled template
+   * painted a full-bleed texture inset 16px, which marks a cell in every
+   * position on the plate, so `largestEmptyRectShare` was the SAME 1.5% (the
+   * 16px gutter the inset did not paint) on a plate with the full copy on it
+   * and on a plate with nothing on it. The texture-immune second mask was
+   * defeated too: the ground stack's combined mean shift crossed the content
+   * threshold, so `largestEmptyContentRectShare` collapsed to the same 1.5%.
+   *
+   * So: render `headline_focus` and `closer` with their top and bottom copy
+   * present and the MIDDLE slot missing, and require `dead-space`. Rendered
+   * that way, `headline-focus.html` reports a 36% rectangle against a 28%
+   * interior ceiling and `closer.html` 56% against 22%.
+   */
+  it(
+    "a plate whose MIDDLE is hollow reports dead-space, on a plate that is otherwise carrying copy",
+    async () => {
+      const furniture = { dir: "ltr", fontScale: "m", textAlign: "start", accentColor: "#C4552F", groundStyle: "grid", slideIndex: "03" };
+      // Hand-built for the same reason the empty case is: `InstagramSlideCopySchema`
+      // requires a non-empty headline, and a slot that came through empty is a
+      // RENDER accident rather than something the copy schema can express.
+      const hollow: RenderCarouselInput = {
+        client: "calibration",
+        postId: "interest-floor-hollow",
+        canvas: CANVAS,
+        repoRoot: REPO_ROOT,
+        templateDir: path.relative(REPO_ROOT, templateDir).replaceAll("\\", "/"),
+        slides: [
+          // kicker at the top, body at the foot, no statement between them.
+          { n: 1, template: "headline-focus.html", fields: { ...furniture, kicker: "THE FAILURE MODE", headline: "", body: MEDIUM.body }, images: {}, htmlFragments: {} },
+          // eyebrow at the top, the ask at the foot, no takeaway between them.
+          { n: 2, template: "closer.html", fields: { ...furniture, eyebrow: "WHAT TO DO", takeaway: "", question: "", cta: "Save this for your next planning session." }, images: {}, htmlFragments: {} },
+        ],
+      } as unknown as RenderCarouselInput;
+      const measured = await render(withMeasureAnchors(hollow));
+      const roles: SlideRole[] = ["interior", "closer"];
+
+      for (const [index, entry] of measured.entries()) {
+        report(`${entry.template} HOLLOW MIDDLE`, roles[index]!, entry);
+        // The premise, asserted first: this plate is NOT the empty one. The
+        // copy that is present really did paint, so a `dead-space` finding
+        // here is about the hole and not about a blank render.
+        expect(entry.probe.textBoxShare, `${entry.template} hollow: no copy painted, so this is the empty case, not the hollow one`).toBeGreaterThan(0.01);
+        expect(entry.metrics.inkShare, `${entry.template} hollow: nothing painted at all`).toBeGreaterThan(INK_SHARE_FLOOR);
+
+        const findings = checkInterestFloor(entry.metrics, entry.probe, roles[index]!, optsFor(entry)).findings;
+        expect(
+          findings.map((f) => f.kind),
+          `${entry.template} with a hollow middle did not report dead-space (largestEmptyRectShare ${entry.metrics.largestEmptyRectShare}) — a ground layer is painting where the composition is not`,
+        ).toContain("dead-space");
       }
     },
     600_000,
@@ -453,7 +746,10 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
       const slides = [slide({ n: 1, layout: "headline_focus", ...MEDIUM, kicker: "THE SETUP" }), slide({ n: 2, layout: "photo", ...SHORT })];
       const measured = await render(assemble(slides, [selection(1, null), selection(2, null)]));
       const entry = measured[0]!;
-      report("headline-focus.html as cover", "cover", entry);
+      report("headline-focus as cover", "cover", entry);
+      // The premise, again: an EXPLICIT `headline_focus` on slide 1 is still
+      // honoured as one. What changed is only what a slide DEGRADES to there.
+      expect(templateBasename(entry.template)).toBe("headline-focus");
 
       // The asserted exception. A statement slide is a good mid-carousel
       // turn and a bad cover, and the floor has to be able to say so —
@@ -479,25 +775,131 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
       report("slide.html transparent hero", "cover", measured[1]!);
 
       expect(measured[0]!.metrics.imageryShare).toBeGreaterThanOrEqual(0.5);
+      // AND THE BRAND GROUND SURVIVES UNDER IT. A photograph has variety in
+      // every cell, so it contributes no FLAT cells and cannot win the modal
+      // flat colour — the ground stays the token the caller declared. This is
+      // the assertion that fails the moment the "photograph" is really a flat
+      // fill, which is how the old solid-magenta fixture went unnoticed: it
+      // became the ground, and 41.9% of a visually full plate then measured
+      // as an empty rectangle.
+      expect(measured[0]!.metrics.backgroundMatchesBrandGround, "a photograph must not become the measured ground").toBe(true);
       // A FULL-BLEED PHOTOGRAPH PUTS INK IN THE BLEED BAND BY DEFINITION.
-      // Measured on a synthetic full-frame photograph, `clippedEdgeShare` is
-      // ~2.6% against clause B's 0.4% ceiling — six times over — so clause
-      // B's `clippedEdgeShare` limb has to be inert for a slide that is
-      // carrying imagery, or every correct photo slide fails the floor on
-      // every attempt. This assertion is where that shows up.
+      // Measured on this fixture, `clippedEdgeShare` is ~1.7% against clause
+      // B's 0.4% ceiling — four times over — so clause B's `clippedEdgeShare`
+      // limb has to be inert for a slide that is carrying imagery, or every
+      // correct photo slide fails the floor on every attempt. This assertion
+      // is where that shows up.
+      expect(measured[0]!.metrics.clippedEdgeShare, "the bleed-band exemption is only meaningful if the band actually has ink in it").toBeGreaterThan(
+        CLIPPED_EDGE_SHARE_CEILING,
+      );
       expect(checkInterestFloor(measured[0]!.metrics, measured[0]!.probe, "cover", optsFor(measured[0]!)).findings).toEqual([]);
 
       // The prep defect that had no symptom: a "successful" render whose
       // hero contributed no pixels at all. It renders, it is well-formed,
       // and it is empty — which is exactly what the measurement is for.
-      expect(measured[1]!.metrics.imageryOrDeviceShare).toBeLessThan(0.03);
+      //
+      // A MEASURED DIGIT, deliberately, and NOT `IMAGERY_OR_DEVICE_FLOOR`.
+      //
+      // This line was widened to the floor once, on the reasoning that "the
+      // base template now paints a readable gradient whether or not a hero
+      // loaded, which took this from ~2.8% to ~4.3%". That was a first-pass
+      // number the templates' own rework superseded: this plate measures
+      // **2.7%** against the current tree (`.local/probe-template.mjs`'s
+      // `slide-transparent-hero` row, and the third-pass table beside
+      // `IMAGERY_OR_DEVICE_FLOOR` lists the same figure). So the widening was
+      // not needed to turn anything green — and at the floor's value the
+      // assertion became a restatement of the `no-device` expectation on the
+      // next line, since both are the same comparison against the same
+      // constant. Two assertions that cannot disagree pin one fact.
+      //
+      // 0.035 is 2.7% plus a third of itself: enough that a font or a
+      // rasteriser nudging the number does not fail the suite, tight enough
+      // that a template change which put real ink on this plate would. If it
+      // ever legitimately moves, re-measure and move the literal WITH the new
+      // number written here — that is what makes this line say something the
+      // line below it does not.
+      expect(measured[1]!.metrics.imageryOrDeviceShare, "a 1x1 transparent hero measured 2.7% on the current templates").toBeLessThan(0.035);
       expect(checkInterestFloor(measured[1]!.metrics, measured[1]!.probe, "cover", optsFor(measured[1]!)).findings.map((f) => f.kind)).toContain("no-device");
     },
     300_000,
   );
 
+  /**
+   * A COVER ON A PHOTOGRAPH, CARRYING A SERIES BADGE.
+   *
+   * Two gaps closed at once. Every other case in this file — and all 50 cases
+   * in `.local/probe-template.mjs` — rendered `seriesBadge: ""`, and
+   * `.brand-badge:empty { display: none }` then hid the badge in every one of
+   * them, so nothing in the loop ever rendered it. And `cover.html` is the
+   * one template whose field paint is switched OFF when a photograph loads,
+   * which is exactly when its badge and eyebrow stop standing on a ramp the
+   * template controls and start standing on someone's picture. `cover.html`
+   * shipped a badge in `--accent-ink` (#141414) for one revision: correct on
+   * the ramp head it was written for, 1.10:1 over a dark photograph.
+   *
+   * WHAT THIS TEST CAN AND CANNOT SEE. Nothing in `measureSlidePng` or in the
+   * DOM probe measures CONTRAST, so this case pins the geometry — the floor,
+   * and that the chip and scrim the legibility fix adds do not overflow or
+   * push the plate off its numbers. The contrast itself is measured in
+   * `.local/cover-contrast.mjs` (glyph core against the median of the text's
+   * own band, over light, near-white and dark grained plates) and the numbers
+   * are written beside the rules they justify in `cover.html`. Saying so here
+   * is the point: a green on this case is not a claim about legibility.
+   */
   it(
-    "a HEBREW render of cover/stat_callout/list_takeaway/closer passes, in the script's own faces, with no overflow",
+    "a cover on a photograph carrying a series badge clears the cover floor",
+    async () => {
+      const slides = [
+        slide({ n: 1, layout: "cover", ...MEDIUM, kicker: "THE SHIFT" }),
+        slide({ n: 2, layout: "photo", ...SHORT }),
+        slide({ n: 3, layout: "closer", headline: "That is the pattern", body: "Which round would you cut first?" }),
+      ];
+      const measured = await render(
+        assemble(
+          slides,
+          [selection(1, path.relative(REPO_ROOT, heroPath).replaceAll("\\", "/")), selection(2, null), selection(3, null)],
+          {
+            brandTokens: {
+              templateDir: path.relative(REPO_ROOT, templateDir).replaceAll("\\", "/"),
+              slideTemplate: "slide.html",
+              accentColor: "#C4552F",
+              seriesBadge: "THE SIGNAL",
+            },
+          },
+        ),
+      );
+      const entry = measured[0]!;
+      report("cover + hero + badge", "cover", entry);
+      expect(templateBasename(entry.template)).toBe("cover");
+      expect(checkInterestFloor(entry.metrics, entry.probe, "cover", optsFor(entry)).findings.map((f) => f.kind).filter((k) => k !== "dead-space"), `cover + hero + badge`).toEqual([]);
+      // The chip behind the eyebrow is a real box with real padding, and the
+      // `.cov-rail`'s spread is a real shadow: neither may push anything out
+      // of its parent, in either direction.
+      expect(entry.probe.overflow, `cover + hero + badge overflows: ${entry.probe.overflowing.join(", ")}`).toBe(false);
+    },
+    300_000,
+  );
+
+  /**
+   * HEBREW, ACROSS EVERY TEMPLATE THE SCRIPT SHEET TOUCHES.
+   *
+   * It used to render four of the eight, and the four it skipped were the
+   * ones that were broken. `script-fonts.ts` overrides the leading of every
+   * DISPLAY_SELECTOR to 1.12 for Hebrew, which is tighter than the 1.2-1.3 the
+   * templates were sized against, and a display face's glyph box taller than
+   * its line box makes the block report `scrollHeight > clientHeight` — which
+   * the DOM probe calls an overflowing element and clause B fails the slide
+   * on. Measured in Chromium with Heebo at 62px/1.12, the allowance needed is
+   * ~0.177em; `list_takeaway` shipped 0.10-0.12em, `quote_card` 0.14em,
+   * `comparison_card` 0.12-0.14em and `slide.html` 0.10em, so all four
+   * reported `probe.overflow` on EVERY Hebrew render at every copy length —
+   * a false `clipped` finding whose steer told the writer to shorten a
+   * headline that fit. The allowance now comes from the sheet that sets the
+   * leading rather than from a per-template constant, and this case is what
+   * keeps the two in step.
+   */
+  it(
+    "a HEBREW render of every bundled archetype passes, in the script's own faces, with no overflow",
     async () => {
       const hebrewTemplateDir = path.join(workDir, "templates-he");
       await materialize(hebrewTemplateDir, "Hebrew");
@@ -513,10 +915,23 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
             ...HEBREW,
             items: [{ title: "לקבוע אחראי", note: "אדם אחד, לא ערוץ" }, { title: "למדוד את התור", note: "שבועי, לא חודשי" }, { title: "לחתוך סבב" }],
           }),
-          slide({ n: 4, layout: "closer", headline: "זה כל הדפוס", body: "איזה סבב הייתם חותכים ראשון?" }),
+          slide({ n: 4, layout: "quote_card", ...HEBREW, quote: { text: "הפסקנו לנחש והתחלנו למדוד את התור.", attribution: "מנהלת תפעול, 2026" } }),
+          slide({
+            n: 5,
+            layout: "comparison_card",
+            ...HEBREW,
+            comparison: { leftLabel: "לפני", leftBody: "חמישה סבבי בדיקה", rightLabel: "אחרי", rightBody: "שני סבבי בדיקה" },
+          }),
+          // `photo` WITH a hero, so `slide.html` itself is rendered rather
+          // than degraded away: it is the fourth file whose display leading
+          // the script sheet overrides, and it was the fourth that overflowed.
+          slide({ n: 6, layout: "photo", ...HEBREW }),
+          slide({ n: 7, layout: "closer", headline: "זה כל הדפוס", body: "איזה סבב הייתם חותכים ראשון?" }),
         ];
-        const measured = await render(assemble(slides, [1, 2, 3, 4].map((n) => selection(n, null))));
-        const roles: SlideRole[] = ["cover", "interior", "interior", "closer"];
+        const measured = await render(
+          assemble(slides, [1, 2, 3, 4, 5, 6, 7].map((n) => selection(n, n === 6 ? path.relative(REPO_ROOT, heroPath).replaceAll("\\", "/") : null))),
+        );
+        const roles: SlideRole[] = ["cover", "interior", "interior", "interior", "interior", "interior", "closer"];
         for (const [index, entry] of measured.entries()) {
           report(`${entry.template} (Hebrew)`, roles[index]!, entry);
           expect(checkInterestFloor(entry.metrics, entry.probe, roles[index]!, optsFor(entry)).findings, `${entry.template} (Hebrew)`).toEqual([]);

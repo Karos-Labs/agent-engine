@@ -319,9 +319,19 @@ describe("archetype layouts (legacy port)", () => {
       expect(resolved.downgradedFrom, layout).toContain(layout);
       expect(resolved.downgradedFrom, layout).toContain("rendering as headline_focus");
 
-      const data = assemble({ slides: [s] } as InstagramCopyOutput);
-      expect(data.slides[0]!.template).toBe("headline-focus.html");
-      expect(data.slides[0]!.fields).toMatchObject({ headline: "A headline", body: "Some body copy." });
+      // Assembled at an INTERIOR position, so this stays a question about
+      // content shape. Position 1 has its own answer — see below.
+      const data = assemble({ slides: [slide({ n: 1 }), { ...s, n: 2 }] } as InstagramCopyOutput);
+      expect(data.slides[1]!.template).toBe("headline-focus.html");
+      expect(data.slides[1]!.fields).toMatchObject({ headline: "A headline", body: "Some body copy." });
+
+      // ...and on SLIDE 1 the same content-shape degrade lands on the cover
+      // archetype instead, because position 1 is a cover whatever the content
+      // says and `cover.html`'s colour-block ground carries the frame with no
+      // photograph (33.1% imagery-or-device, measured; `headline-focus.html`
+      // manages 3.9% and fails the cover role's clause E on it).
+      const atCover = assemble({ slides: [s] } as InstagramCopyOutput);
+      expect(atCover.slides[0]!.template, layout).toBe("cover.html");
     }
   });
 
@@ -465,15 +475,44 @@ describe("cover and closer (item M)", () => {
     expect(data.slides[2]!.template).toBe("closer.html");
   });
 
-  it("a cover with NEITHER a hero nor a device degrades through the ladder — and never to text_only", () => {
+  /**
+   * 2026-09-11: this used to assert the opposite — that a cover with neither
+   * a hero nor a device DEGRADES, to `headline_focus`. That rule was written
+   * against the `cover.html` item M first shipped, whose ground treatment sat
+   * inside `INK_DELTA` on purpose and really was a headline on flat ground.
+   * Against the template in the tree it is false, and expensively so.
+   * Measured on real 2160x2880 renders, for a slide 1 with no hero and no
+   * device (`.local/probe-template.mjs`):
+   *
+   *   cover.html              33.1% imagery+device   62.0% occupied   passes the cover role
+   *   headline-focus.html      3.9%                  47.2%           fails clause E
+   *   slide.html               4.3%                  43.8%           fails clause E
+   *
+   * So the degrade was routing slide 1 away from the only plate that clears
+   * the role it is judged at. See `slides-data.ts`'s own note for the four
+   * other modules that had already reached the opposite conclusion, and for
+   * what the change gives up.
+   */
+  it("a cover with NEITHER a hero nor a device IS still a cover — its ground layer is what carries the frame", () => {
     const slides = [slide({ n: 1, layout: "cover" }), slide({ n: 2 })];
     const resolved = resolveLayout(slides[0]!, undefined, undefined, undefined, { index: 0, lastIndex: 1, hasHeroImage: false });
-    expect(resolved.layout).toBe("headline_focus");
-    expect(resolved.downgradedFrom).toContain("hero image or device");
+    expect(resolved.layout).toBe("cover");
+    expect(resolved.downgradedFrom, "nothing was missing, so nothing was downgraded").toBeUndefined();
 
     const data = assemble(slides, [noHero(1), hero(2)]);
-    expect(data.slides[0]!.template).toBe("headline-focus.html");
+    expect(data.slides[0]!.template).toBe("cover.html");
+    // The rule that has not changed, and the one this test was always really
+    // about: slide 1 never lands on the client's own bare base template.
     expect(data.slides[0]!.template).not.toBe("slide.html");
+    expect(data.slides[0]!.images).toEqual({});
+  });
+
+  it("...but a client whose templateDir has no cover.html still takes the next rung down, never slide.html", () => {
+    const slides = [slide({ n: 1, layout: "cover" }), slide({ n: 2 })];
+    const legacyDir = new Set(["headline-focus.html", "stat-callout.html"]);
+    const resolved = resolveLayout(slides[0]!, legacyDir, undefined, undefined, { index: 0, lastIndex: 1, hasHeroImage: false });
+    expect(resolved.layout).toBe("headline_focus");
+    expect(resolved.downgradedFrom).toContain("no cover.html");
   });
 
   it("a cover with a DEVICE and no hero stays a cover — the device carries the frame", () => {

@@ -60,6 +60,120 @@ describe("default templates are token-driven, not literal-colored", () => {
       expect(styles, `${file} sizes type off a bare px literal instead of calc(...* var(--ts, 1))`).not.toMatch(/font-size:\s*\d+px/);
     }
   });
+
+  /**
+   * The `@handle` watermark is an LTR string whose leading character is a
+   * BIDI NEUTRAL, so dropped raw into a Hebrew or Arabic document it takes the
+   * paragraph's own RTL embedding level and lays out as `karoslabs@` — with
+   * the `@` on the wrong side, on every slide of every non-Latin run. A URL
+   * and a `#hashtag` break identically, so the SLOT is isolated rather than
+   * the one string.
+   *
+   * Asserted on the source rather than on a render because no pixel metric
+   * can see it (every Hebrew calibration case reported `ok` while the plates
+   * carried it) and because the renderer's DOM probe does not report computed
+   * `direction`. What the source can say, and what matters, is that the slot
+   * is isolated in every file that has one — including the scaffold
+   * `karos-templates`' `buildTemplateShell` writes for a custom archetype.
+   *
+   * `dir` on the `<bdi>` and never on the `<div>`: the div's own
+   * `inset-inline-start` would re-resolve with it and move the watermark to
+   * the opposite corner of an RTL plate.
+   */
+  it("every template bidi-ISOLATES the brand handle slot, so an @handle does not reorder in an RTL document", async () => {
+    const files = (await fs.readdir(TEMPLATE_DIR)).filter((f) => f.endsWith(".html"));
+    expect(files.length).toBeGreaterThanOrEqual(8);
+    for (const file of files) {
+      const html = await fs.readFile(path.join(TEMPLATE_DIR, file), "utf8");
+      expect(html, `${file} drops {{brandHandle}} into an RTL paragraph with no bidi isolation`).toContain(
+        '<div class="brand-handle"><bdi dir="ltr">{{brandHandle}}</bdi></div>',
+      );
+      // ...and an isolated slot is never `:empty`, so the rule that hides a
+      // handle-less client's watermark has to look inside it.
+      const styles = [...html.matchAll(/<style>[\s\S]*?<\/style>/g)].map((m) => m[0]).join("\n");
+      expect(styles, `${file} hides an empty handle with :empty alone, which a <bdi> child defeats`).toMatch(/\.brand-handle:has\(\s*>\s*bdi:empty\s*\)/);
+    }
+  });
+
+  /**
+   * THE SERIES BADGE MUST NOT BE PAINTED IN A TOKEN ITS OWN GROUND SWALLOWS.
+   *
+   * `--accent-ink` (#141414) exists to be the text ON an accent chip —
+   * `BADGE_VARIANT_CSS`'s `pill` is where it belongs. Seven of the eight
+   * bundled templates therefore colour a bare `.brand-badge` in `var(--accent)`
+   * and stand it on the plate's own dark ground. `cover.html` cannot: its
+   * badge sits at y=56, which on a cover with no photograph is the head of
+   * the field's accent ramp, where an accent-coloured badge is invisible. So
+   * it is the one file that reaches for `--accent-ink` — and for exactly one
+   * revision it did so UNCONDITIONALLY, on the only template whose field
+   * paint is switched off when a photograph loads. Over a dark plate that
+   * badge measured 1.10:1 (`.local/cover-contrast.mjs`).
+   *
+   * No pixel metric in this repo measures contrast and every probe case
+   * rendered an empty badge, so this is asserted on the source: a template
+   * may use `--accent-ink` for the badge only if it ALSO switches the value
+   * on the same guards that switch its field paint off.
+   */
+  it("no template paints its series badge in an ink token without a branch for the ground that ink needs", async () => {
+    const files = (await fs.readdir(TEMPLATE_DIR)).filter((f) => f.endsWith(".html"));
+    expect(files.length).toBeGreaterThanOrEqual(8);
+    for (const file of files) {
+      const html = await fs.readFile(path.join(TEMPLATE_DIR, file), "utf8");
+      // CSS COMMENTS STRIPPED FIRST. These sheets carry long rationale
+      // comments that quote selectors verbatim — `cover.html`'s badge note
+      // quotes `.brand-badge { ... }` while explaining what the brand head
+      // splices in — and a scan that reads those reads prose as CSS.
+      const styles = [...html.matchAll(/<style>[\s\S]*?<\/style>/g)].map((m) => m[0]).join("\n").replace(/\/\*[\s\S]*?\*\//g, "");
+      // The `.brand-badge { ... }` declaration block, not the `:empty` rule.
+      const block = /\.brand-badge\s*\{([^}]*)\}/.exec(styles)?.[1] ?? "";
+      expect(block, `${file} has no .brand-badge rule, so a brandless render lays the badge out in normal flow`).toMatch(/color\s*:/);
+      if (/--accent-ink/.test(block)) {
+        expect.fail(`${file} colours .brand-badge straight off --accent-ink; that token is text ON an accent chip and this badge has no chip`);
+      }
+      if (/var\(\s*--badge-ink/.test(block)) {
+        // The indirection is only honest if BOTH branches are declared, and
+        // the guards must be the field's own — a badge whose ink outlives the
+        // ground it was chosen for is the defect this test exists for.
+        expect(styles, `${file} reads --badge-ink but never declares its default`).toMatch(/body\s*\{[^}]*--badge-ink\s*:/);
+        expect(styles, `${file} never switches --badge-ink off the accent ramp`).toMatch(/body:has\(\.hero\)[^{]*\{[^}]*--badge-ink\s*:/);
+      } else {
+        expect(block, `${file} should colour a bare badge in var(--accent) like its seven siblings`).toMatch(/color\s*:\s*var\(\s*--accent\s*\)/);
+      }
+    }
+  });
+
+  /**
+   * THE RULE THE WHOLE DIRECTORY KEEPS, pinned where it cannot rot: **a
+   * ground layer may paint TONE anywhere; it may paint INK only inside a
+   * region the composition occupies.**
+   *
+   * Every template used to carry a full-bleed `<div class="ground-art">`
+   * inset 16px painting a pinstripe over the entire plate. A texture that
+   * marks a cell in every position on the frame makes `occupiedShare` and
+   * `largestEmptyRectShare` CONSTANTS — measured through the real
+   * `measureSlidePng`, each of these files reported the same 1.5% largest
+   * empty rectangle with the full copy on it and with every slot empty — so
+   * the one clause `slide-metrics.ts`'s own header calls "the metric that
+   * names the complaint" could not fire on any plate this directory produced.
+   *
+   * The pixel half of this is asserted in `interest-floor-calibration.test.ts`
+   * (the empty-plate and hollow-middle cases). This is the cheap structural
+   * half, and it is the one that runs without Chromium: no `.ground-art`
+   * element may come back.
+   */
+  it("no template paints a full-bleed ink layer — ground art is bound to the composition, not to the frame", async () => {
+    const files = (await fs.readdir(TEMPLATE_DIR)).filter((f) => f.endsWith(".html"));
+    for (const file of files) {
+      const html = await fs.readFile(path.join(TEMPLATE_DIR, file), "utf8");
+      const body = html.slice(html.indexOf("<body"));
+      expect(body, `${file} re-introduced a full-bleed ground-art layer; bind the texture to the block whose content justifies it`).not.toMatch(
+        /class="[^"]*\bground-art\b/,
+      );
+      expect(body, `${file} re-introduced a full-bleed accent-rules layer; bind it to the block whose content justifies it`).not.toMatch(
+        /class="[^"]*\bground-rules\b/,
+      );
+    }
+  });
 });
 
 // AU57: this launches a real Chromium. Its sibling in workflow-e2e.test.ts
