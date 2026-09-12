@@ -287,6 +287,78 @@ function badgeContrast(badged: Buffer, unbadged: Buffer): { ratio: number; chang
   return { ratio: contrastRatio(glyph, ground), changed: deltas.length, glyph, ground };
 }
 
+/**
+ * The contrast between a bar's FILL and the TRACK it stands in, measured by
+ * difference between two renders of the same slide whose only difference is
+ * one row's value.
+ *
+ * Same trick as `badgeContrast`, aimed at the other half of the device: the
+ * pixels that change between a 21%-long bar and a 40%-long one are, by
+ * construction, the strip that is bare TRACK in the first frame and FILL in
+ * the second. Neither colour is hard-coded, no geometry is assumed, and the
+ * comparison survives any change to where the device sits on the plate.
+ *
+ * WHAT IT IS FOR. A bar chart is the one device in the set made of AREA, and
+ * the reader's whole job on it is to compare three lengths at a glance.
+ * `slide-devices.ts` painted the track at 8% and the quiet fill at 22% OVER
+ * `transparent`, so `headline-focus.html`'s dash-screen ground read straight
+ * through both. Nothing in the suite could see it: `imageryOrDeviceShare`
+ * counts covered cells and says nothing about tone, and the device case above
+ * asserted only that the share was over 0.03. Both are opaque
+ * `color-mix(…, var(--bg))` plates now.
+ *
+ * This comparison run against the two states of the file, on this tree:
+ *   the washes  1.94:1  fill #585759 on track #2c2c30
+ *   the plates  3.41:1  fill #8a8988 on track #363739
+ * — so the guard refuses what shipped and passes what replaced it, which is
+ * the only thing that makes it a guard.
+ *
+ * The floor asserted is 3.0:1 — WCAG's ratio for a graphical object, which is
+ * what a bar is — leaving 0.41 of the measured margin. A median rather than a
+ * mean because the strip has two antialiased vertical edges and they are not
+ * what is being asked about.
+ */
+function barPlateContrast(longer: Buffer, shorter: Buffer): { ratio: number; changed: number; fill: string; track: string } {
+  const readRgb = (bytes: Buffer): Uint8Array => {
+    let out: Uint8Array | undefined;
+    let stride = 0;
+    const header = decodePngRows(bytes, (row, y, hd) => {
+      if (out === undefined) {
+        stride = hd.width * 3;
+        out = new Uint8Array(hd.height * stride);
+      }
+      let o = y * stride;
+      for (let i = 0; i < row.length; i += 4) {
+        out[o++] = row[i]!;
+        out[o++] = row[i + 1]!;
+        out[o++] = row[i + 2]!;
+      }
+    });
+    if (header === undefined || out === undefined) throw new Error("the rendered PNG did not decode — the bar comparison has nothing to measure");
+    return out;
+  };
+  const a = readRgb(longer);
+  const b = readRgb(shorter);
+  if (a.length !== b.length) throw new Error("the two bar frames are different sizes");
+
+  const changed: number[] = [];
+  for (let i = 0; i < a.length; i += 3) {
+    const d = Math.abs(a[i]! - b[i]!) + Math.abs(a[i + 1]! - b[i + 1]!) + Math.abs(a[i + 2]! - b[i + 2]!);
+    if (d > 24) changed.push(i);
+  }
+  if (changed.length === 0) return { ratio: 1, changed: 0, fill: "-", track: "-" };
+  const median = (src: Uint8Array): [number, number, number] => {
+    const chan = (k: number): number => {
+      const v = changed.map((i) => src[i + k]!).sort((x, y) => x - y);
+      return v[Math.floor(v.length / 2)]!;
+    };
+    return [chan(0), chan(1), chan(2)];
+  };
+  const fill = hex(...median(a));
+  const track = hex(...median(b));
+  return { ratio: contrastRatio(fill, track), changed: changed.length, fill, track };
+}
+
 /** Renders one assembled carousel with measurement and the DOM probe on, and hands back both per slide. */
 async function render(input: RenderCarouselInput): Promise<Measured[]> {
   const tool = createRenderCarousel();
@@ -505,8 +577,14 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
           // through the recap's "01". This sweep's closer used to carry a
           // 41-character body while slides 1 and 4-7 all carried LONG, so the
           // one archetype whose middle is elastic was the one never given a
-          // long string. Fixed in `closer.html` (a `flex: 0 0 auto` wrap and
-          // length ladders on both ask slots); this is what keeps it fixed.
+          // long string. Fixed in `closer.html` by the length ladders on the
+          // takeaway and both ask slots — re-checked 2026-09-12 by neutering
+          // each candidate in turn: the ladders are what make it fit, and the
+          // `flex: 0 0 auto` wrap (kept, and a correctness rule in its own
+          // right) changes no measured value on any case this tree produces.
+          // This sweep covers `s` and `l`; the `m` scale is covered by the
+          // cover/closer case below, which now varies the closer's takeaway
+          // AND its body with the copy length and renders both ask slots.
           slide({ n: 8, layout: "closer", headline: "Three things to review before your next campaign goes live", body: LONG.body }),
         ];
         const overrides = new Map(slides.map((s) => [s.n, { fontScale }] as const));
@@ -638,23 +716,59 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
     600_000,
   );
 
+  /**
+   * THE DEFAULT TYPE SCALE, AND THE CLOSER'S BODY NOW GROWS WITH THE REST.
+   *
+   * This loop varies copy length for the cover and reused the SAME
+   * 31-character closing line at every length — so the one archetype with an
+   * elastic middle was never given a long string at the scale most slides
+   * render at. The `s`/`l` sweep gained a LONG closer when `.cl-wrap` was
+   * fixed; `m` did not, and `m` is where the review measured `.cl-wrap`
+   * escaping its field by 105px (`cta` slot) and 304px (`question` slot).
+   *
+   * The closer's body is `copy.body` now, so all three lengths reach it here.
+   * `slides-data.ts` routes a body containing '?' into the `question` slot and
+   * everything else into `cta`, and only ONE of those can be exercised per
+   * render — so at the LONG length this renders twice, once each way. The
+   * question variant is the same 306 characters with its full stop traded for
+   * a question mark, which is the shape the review's worse case had.
+   */
   it(
     "cover and closer pass the tighter COVER/CLOSER floors, including a cover with no photograph at all",
     async () => {
       for (const [lengthLabel, copy] of [["short", SHORT], ["medium", MEDIUM], ["long", LONG]] as const) {
+        const closerBodies: Array<readonly [string, string]> =
+          lengthLabel === "long"
+            ? [
+                ["cta slot", copy.body],
+                ["question slot", `${copy.body.replace(/\.$/, "")}, so which round would you cut first?`],
+              ]
+            : [["cta slot", copy.body]];
+        for (const [slotLabel, closerBody] of closerBodies) {
         const slides = [
           slide({ n: 1, layout: "cover", ...copy, kicker: "THE SHIFT" }),
           slide({ n: 2, layout: "stat_callout", ...copy, stat: { figure: "73%", subLabel: "of teams", source: "Karos survey, 2026" } }),
           slide({ n: 3, layout: "list_takeaway", ...copy, items: [{ title: "Name the owner" }, { title: "Measure the queue" }] }),
-          slide({ n: 4, layout: "closer", headline: "That is the whole pattern", body: "Which round would you cut first?" }),
+          // The TAKEAWAY grows with the copy too, and that is the half that
+          // matters: with a 25-character takeaway the long ask fits at `m`
+          // whatever `.cl-wrap` and the ladders do, so a case that varied only
+          // the body could not fail and was not a scan. The review's failing
+          // plate was the LONG headline over the long ask.
+          slide({ n: 4, layout: "closer", headline: copy.headline, body: closerBody }),
         ];
         const selections = [selection(1, null), selection(2, null), selection(3, null), selection(4, null)];
-        const measured = await render(assemble(slides, selections));
+        const assembled = assemble(slides, selections);
+        // THE PREMISE FOR THE CLOSER ROWS. `slides-data.ts` chooses the slot
+        // from the body's own punctuation, and a closing line that quietly
+        // landed in neither slot — or in the one this case is not naming —
+        // would make every number below a measurement of an empty middle.
+        expect(assembled.slides[3]!.fields[slotLabel === "question slot" ? "question" : "cta"], `the closer's ${slotLabel} did not receive the ${lengthLabel} body`).toBe(closerBody);
+        const measured = await render(assembled);
 
         const cover = measured[0]!;
         const closer = measured[3]!;
         report(`cover no-hero (${lengthLabel})`, "cover", cover);
-        report(`closer (${lengthLabel})`, "closer", closer);
+        report(`closer (${lengthLabel}, ${slotLabel})`, "closer", closer);
 
         // THE PREMISE, ASSERTED BEFORE THE NUMBERS. Every claim below is
         // about `cover.html`, and for the whole of this PR's first CI run it
@@ -673,9 +787,13 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
         expect(checkInterestFloor(cover.metrics, cover.probe, "cover", optsFor(cover)).findings, `cover @ ${lengthLabel}`).toEqual([]);
         expect(findingsAtMargin(cover, "cover", CALIBRATION_MARGIN), `cover @ ${lengthLabel} margin`).toEqual([]);
 
-        expect(checkInterestFloor(closer.metrics, closer.probe, "closer", optsFor(closer)).findings, `closer @ ${lengthLabel}`).toEqual([]);
-        expect(findingsAtMargin(closer, "closer", CALIBRATION_MARGIN), `closer @ ${lengthLabel} margin`).toEqual([]);
-        expect(closer.probe.overflow).toBe(false);
+        expect(checkInterestFloor(closer.metrics, closer.probe, "closer", optsFor(closer)).findings, `closer @ ${lengthLabel} ${slotLabel}`).toEqual([]);
+        expect(findingsAtMargin(closer, "closer", CALIBRATION_MARGIN), `closer @ ${lengthLabel} ${slotLabel} margin`).toEqual([]);
+        // The limb that catches `.cl-wrap` leaving through the block-start
+        // edge is `probe.overflow`'s second one, so this is the assertion the
+        // long body at `m` exists to reach.
+        expect(closer.probe.overflow, `closer @ ${lengthLabel} ${slotLabel} overflows: ${closer.probe.overflowing.join(", ")}`).toBe(false);
+        }
       }
     },
     600_000,
@@ -701,6 +819,79 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
       // reads — that is the whole reason the free re-layout can fix a
       // no-device finding without a redraft.
       expect(measured[1]!.metrics.imageryOrDeviceShare).toBeGreaterThan(0.03);
+    },
+    600_000,
+  );
+
+  /**
+   * A BAR YOU CAN SEE THE END OF, MEASURED IN PIXELS.
+   *
+   * The case above renders the same bars device and asserts nothing about
+   * whether a reader can read it: `imageryOrDeviceShare > 0.03` counts covered
+   * cells and is indifferent to tone, and every other instrument in this file
+   * is an area share. So the bars shipped with an 8%-over-transparent track
+   * and a 22%-over-transparent quiet fill — `headline-focus.html`'s dash
+   * screen visible straight through both, and the fill measuring 1.94:1
+   * against its own track by this very comparison — while every suite in the
+   * tree was green.
+   *
+   * `barPlateContrast` closes that by difference (see its note). Two renders
+   * of the identical slide, one row's value 21 against 40, `max: 100` pinned
+   * so the other two rows' geometry cannot move with it and the row stays
+   * under `DEVICE_VALUE_INSIDE_BAR_THRESHOLD` in both frames so its value
+   * label stays outside the fill. The strip that changes is bare track in one
+   * frame and fill in the other, which is exactly the edge a reader looks for.
+   *
+   * The `display` string is deliberately the same in both frames: it is the
+   * only other thing that would repaint, and this case is about the plate.
+   *
+   * Measured on this tree: 3.41:1, fill #8a8988 on track #363739, 17,440
+   * changed pixels. The floor is 3.0:1, WCAG's ratio for a graphical object.
+   * Run with the two CSS lines reverted it reports 1.94:1 and fails, which is
+   * how this was checked rather than assumed.
+   */
+  it(
+    "a bar's fill stands out of its own track, at the tone a reader sees",
+    async () => {
+      const frames: Buffer[] = [];
+      for (const secondRow of [40, 21]) {
+        const slides = [
+          slide({ n: 1, layout: "cover", ...MEDIUM, kicker: "THE SHIFT" }),
+          slide({
+            n: 2,
+            layout: "headline_focus",
+            ...MEDIUM,
+            kicker: "THE TURN",
+            device: {
+              kind: "bars" as const,
+              // Pinned, so `barMaxFor`'s "rows sum to 100" branch cannot make
+              // the OTHER two bars move when the second row's value does.
+              max: 100,
+              rows: [
+                { label: "Manual intake", value: 62, display: "62%" },
+                { label: "Partly automated", value: secondRow, display: "21%" },
+                { label: "Fully automated", value: 17, display: "17%" },
+              ],
+              source: "Karos survey, 2026",
+            },
+          }),
+          slide({ n: 3, layout: "closer", headline: "That is the pattern", body: "Which round would you cut?" }),
+        ];
+        const measured = await render(assemble(slides, [1, 2, 3].map((n) => selection(n, null))));
+        const bars = measured[1]!;
+        expect(templateBasename(bars.template), "the bars case did not render headline-focus.html").toBe("headline-focus");
+        frames.push(await fs.readFile(path.isAbsolute(bars.path) ? bars.path : path.join(REPO_ROOT, bars.path)));
+      }
+
+      const { ratio, changed, fill, track } = barPlateContrast(frames[0]!, frames[1]!);
+      console.log(`bar fill vs track: ${ratio.toFixed(2)}:1  fill ${fill}  track ${track}  (${changed} px)`);
+      // The premise. A 19-point difference in bar length over a ~570px track
+      // at scale 2 repaints on the order of 17,000 pixels; the floor is well
+      // under that because the track's width follows the label column, which
+      // follows the face. What it has to separate is "the bar got longer"
+      // from "nothing moved", and nothing moved repaints zero.
+      expect(changed, `the 21% and 40% bars differ in ${changed} pixels — the fill length did not change`).toBeGreaterThan(4000);
+      expect(ratio, `a bar's fill measures ${ratio.toFixed(2)}:1 against its own track — a reader cannot see where it ends`).toBeGreaterThanOrEqual(3);
     },
     600_000,
   );

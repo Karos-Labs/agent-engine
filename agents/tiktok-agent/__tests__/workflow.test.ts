@@ -352,13 +352,24 @@ describe("tiktok-agent clip pipeline", () => {
     expect(h.calls).not.toContain("video.cutClip");
   });
 
-  it("holds on a silent source instead of guessing a moment out of a blank timeline", async () => {
-    const h = stubTools({ transcriptWords: [] });
-    const result = await run(h, "run-tt-silent");
-
+  it("holds on a silent source only when the run has no topic to write over it (2026-09-10), and says what to add", async () => {
+    // No catalog topic and no typed one: the attached footage IS the topic, and a silent file has none to give.
+    const h = stubTools({ transcriptWords: [], reserveFails: true });
+    const result = await run(h, "run-tt-silent-no-topic");
     expect(result.status).toBe("held");
-    // And gives the moment back, because nothing was produced from it.
-    expect(h.calls).toContain("topics.release");
+    expect(JSON.stringify(result)).toContain("no spoken words");
+    expect(JSON.stringify(result)).toContain("requestedTopic");
+  });
+
+  it("a silent source WITH a topic is no longer a hold: the run keeps its reservation and goes on as an original short over the client's footage", async () => {
+    // This harness stubs the commentary lane only, so the original-short lane
+    // cannot finish here; what this proves is the decision — no hold, no
+    // release — which is where the audit's two silent-footage runs died.
+    const h = stubTools({ transcriptWords: [] });
+    const result = await run(h, "run-tt-silent-with-topic");
+    expect(result.status).not.toBe("held");
+    expect(JSON.stringify(result)).not.toContain("no spoken words");
+    expect(h.calls).toContain("video.transcribe");
   });
 
   it("holds when the selected moment is too short to be a clip", async () => {

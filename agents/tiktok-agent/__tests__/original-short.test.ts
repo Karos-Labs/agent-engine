@@ -8,7 +8,7 @@ import { FilePromptStore, type AgentToolRegistry, type CompletionResult, type Mo
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { BrandFrameInputSchema, ComposeSequenceInputSchema, MixMusicInputSchema, SelfEvalGateInputSchema, StillToClipInputSchema, SynthesizeVoiceInputSchema, TextPlateInputSchema, TranscribeInputSchema } from "@agent-engine/tool-karos-video";
 import { FindStockClipInputSchema, GenerateImageInputSchema, VisualQaGateInputSchema } from "@agent-engine/tool-karos-media";
-import { createTikTokAgentWorkflow, dropRepeatedBeats, repairScriptStructure, scriptVoiceIssues, shotVarietyIssues } from "../src/workflow/create-tiktok-agent-workflow.js";
+import { beatsNamedIn, createTikTokAgentWorkflow, dropRepeatedBeats, isFootageOnlyFeedback, repairScriptStructure, salesPitchIssues, scriptVoiceIssues, shotVarietyIssues } from "../src/workflow/create-tiktok-agent-workflow.js";
 
 /**
  * The ORIGINAL-SHORT production pass in detail: the voiceover decision, the
@@ -329,6 +329,184 @@ async function run(h: Harness, runId: string, turns: unknown[] = [VOICED_SCRIPT]
   return new WorkflowEngine(new MemoryDurableStepStore()).run(workflow, { ...PARAMS, runId, input: {} });
 }
 
+describe("silent client footage (2026-09-10)", () => {
+  it("attached footage with no speech becomes the plates of an original short on the requested topic, cut evenly across the file, never a hold", async () => {
+    const h = stubTools();
+    const sourcePath = path.join(os.tmpdir(), "client-demo.mp4");
+    const cuts: Array<Record<string, unknown>> = [];
+    const realTranscribe = h.tools["video.transcribe"]!;
+    h.tools["video.transcribe"] = {
+      ...realTranscribe,
+      async execute(args: unknown, opts: unknown) {
+        if ((args as { videoPath: string }).videoPath === sourcePath) return { status: "success" as const, result: { words: [], durationSeconds: 60 } };
+        return (realTranscribe as unknown as { execute: (a: unknown, o: unknown) => Promise<unknown> }).execute(args, opts);
+      },
+    } as unknown as AgentToolRegistry[string];
+    h.tools["video.cutClip"] = {
+      name: "video.cutClip",
+      version: "1.0.0",
+      inputSchema: { safeParse: (v: unknown) => ({ success: true as const, data: v }) },
+      async execute(args: unknown) {
+        cuts.push(args as Record<string, unknown>);
+        return { status: "success" as const, result: { outputPath: (args as { outputPath: string }).outputPath, durationSeconds: 6 } };
+      },
+    } as unknown as AgentToolRegistry[string];
+
+    const workflow = createTikTokAgentWorkflow({ tools: h.tools, promptStore: new FilePromptStore(PROMPTS_ROOT), router: sequentialFakeRouter([VOICED_SCRIPT]), autoApprove: true, repoRoot: os.tmpdir(), fetchImpl: fakeAudioFetch });
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflow, { ...PARAMS, runId: "run-os-silent-client", input: { sourcePath, requestedTopic: "Why the first hire is a bet on the company you are becoming" } });
+    expect(result.status).toBe("completed");
+    // No library, no still, no moment agent: the client's file is the footage.
+    expect(h.calls).not.toContain("video.findStockClip");
+    expect(h.calls).not.toContain("image.generate");
+    expect(cuts).toHaveLength(VOICED_SCRIPT.beats.length);
+    expect(cuts.every((c) => c["sourcePath"] === sourcePath)).toBe(true);
+    // Spread across the 60 s file: the first cut opens it, the last ends on its last second.
+    expect(cuts[0]!["startSeconds"]).toBe(0);
+    const last = cuts[cuts.length - 1]!;
+    expect(last["endSeconds"]).toBe(60);
+    expect(Number(last["endSeconds"]) - Number(last["startSeconds"])).toBe(VOICED_SCRIPT.beats[VOICED_SCRIPT.beats.length - 1]!.seconds);
+    const shipped = h.deliverables[0] as { format?: string; sourceTier?: string; plateSources?: string[] };
+    expect(shipped.format).toBe("original-short");
+    expect(shipped.sourceTier).toBe("user-asset");
+    expect(shipped.plateSources).toEqual(VOICED_SCRIPT.beats.map(() => "client"));
+    // The client's shots move like library shots do.
+    const clips = h.composeArgs[0]!["clips"] as Array<{ path: string; move?: string }>;
+    expect(clips.filter((c) => c.path.includes("-client.mp4")).map((c) => c.move)).toEqual(["push-in", "pull-back", "push-in"]);
+  }, 20_000);
+});
+
+describe("footage-only revision (2026-09-10)", () => {
+  const workflowFor = (h: Harness, turns: unknown[], prompts: string[]) =>
+    createTikTokAgentWorkflow({ tools: h.tools, promptStore: new FilePromptStore(PROMPTS_ROOT), router: sequentialFakeRouter(turns, prompts), repoRoot: os.tmpdir(), fetchImpl: fakeAudioFetch });
+  const at = () => new Date().toISOString();
+
+  it("tells a footage note from one that touches the words, in English and Hebrew, and reads the beats it names", () => {
+    expect(isFootageOnlyFeedback("Beat 2's footage does not fit the line, the concert is wrong.")).toBe(true);
+    expect(isFootageOnlyFeedback("הפוטג' בביט 2 לא מתאים")).toBe(true);
+    expect(isFootageOnlyFeedback("Swap the clip in beat 2 and shorten the hook.")).toBe(false);
+    expect(isFootageOnlyFeedback("Lead with the disagreement, not the number.")).toBe(false);
+    expect(beatsNamedIn("beat 2 and beat 3 footage, shot 1 too, ביט 4")).toEqual([2, 3, 1, 4]);
+    expect(beatsNamedIn("the footage is generic")).toEqual([]);
+  });
+
+  it("a revise whose only complaint is footage keeps the approved words, never asks the writer again, and re-sources the named beat with its old clip excluded", async () => {
+    const h = stubTools();
+    const prompts: string[] = [];
+    const workflow = workflowFor(h, [VOICED_SCRIPT, VOICED_SCRIPT], prompts);
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+    const runId = "run-os-footage-revise";
+
+    const r0 = await engine.run(workflow, { ...PARAMS, runId, input: {} });
+    expect(r0.status).toBe("awaiting_gate");
+    const round0 = [...h.stockArgs];
+    const beat2FirstCall = round0.findIndex((a) => a["outputName"] === "plate-2");
+    const beat2Id = 1001 + beat2FirstCall; // the stub numbers clips 1001, 1002, … in call order
+    await engine.resolveGate(runId, "11-clip-review-r0", { decision: "revise", actor: "jane@karoslabs.com", feedback: "Beat 2's footage does not fit the line. Keep everything else.", at: at() });
+
+    const r1 = await engine.run(workflow, { ...PARAMS, runId, input: {} });
+    expect(r1.status).toBe("awaiting_gate");
+    // The writer was asked once, on round 0.
+    expect(prompts).toHaveLength(1);
+    const round1 = h.stockArgs.slice(round0.length);
+    expect(round1.length).toBeGreaterThan(0);
+    // Beat 2 is searched again with its turned-down clip excluded; beat 1 is free to find the same clip it had.
+    expect(round1.find((a) => a["outputName"] === "plate-2")!["excludeIds"]).toContain(beat2Id);
+    expect(round1.find((a) => a["outputName"] === "plate-1")!["excludeIds"]).not.toContain(1001);
+    const ids = (await store.listSteps(runId)).map((s) => s.stepId);
+    expect(ids).toContain("03s-script-r1");
+    expect(ids).not.toContain("03u-script-r1");
+    expect(ids).toContain("04p-plate-2-r1");
+    expect(ids).toContain("08-render-r1");
+
+    await engine.resolveGate(runId, "11-clip-review-r1", { decision: "approve", actor: "jane@karoslabs.com", at: at() });
+    const final = await engine.run(workflow, { ...PARAMS, runId, input: {} });
+    expect(final.status).toBe("completed");
+    expect(h.deliverables[0]).toMatchObject({ revisionKind: "footage-only" });
+    expect((h.deliverables[0] as { script?: { hook?: string } }).script?.hook).toBe(VOICED_SCRIPT.hook);
+  }, 30_000);
+
+  it("a revise that touches the words still goes to the writer, and the plates are re-sourced for the new round", async () => {
+    const h = stubTools();
+    const prompts: string[] = [];
+    const workflow = workflowFor(h, [VOICED_SCRIPT, VOICED_SCRIPT], prompts);
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+    const runId = "run-os-words-revise";
+    await engine.run(workflow, { ...PARAMS, runId, input: {} });
+    await engine.resolveGate(runId, "11-clip-review-r0", { decision: "revise", actor: "jane@karoslabs.com", feedback: "Swap the clip in beat 2 and shorten the hook.", at: at() });
+    const r1 = await engine.run(workflow, { ...PARAMS, runId, input: {} });
+    expect(r1.status).toBe("awaiting_gate");
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain("shorten the hook");
+    const ids = (await store.listSteps(runId)).map((s) => s.stepId);
+    expect(ids).toContain("03u-script-r1");
+    expect(ids).toContain("04p-plate-1-r1");
+    expect(ids).toContain("04h-hook-plate-r1");
+  }, 30_000);
+});
+
+describe("salesPitchIssues (prep run pubsub-21157235573121560)", () => {
+  const lastBeat = (narration: string, onScreenText = "Plan first.") => ({
+    ...VOICED_SCRIPT,
+    beats: [VOICED_SCRIPT.beats[0]!, VOICED_SCRIPT.beats[1]!, { ...VOICED_SCRIPT.beats[2]!, narration, onScreenText }],
+  });
+
+  it("names a beat that pitches anywhere, and a last beat about what the client offers; a clean script has none", () => {
+    expect(salesPitchIssues(VOICED_SCRIPT, undefined)).toEqual([]);
+    const sells = salesPitchIssues(lastBeat("We show you the plan before anything else. No pitch, just a plan."), undefined);
+    expect(sells).toHaveLength(1);
+    expect(sells[0]).toContain('the last beat sells ("We show you the plan before anything else.');
+    expect(sells[0]).toContain("not what the client offers");
+    expect(salesPitchIssues(lastBeat("Ask for the plan first.", "karoslabs.com"), undefined)[0]).toContain("beat 3 pitches (a website address)");
+    const middle = { ...VOICED_SCRIPT, beats: [VOICED_SCRIPT.beats[0]!, { ...VOICED_SCRIPT.beats[1]!, narration: "Book a call and we will walk you through it." }, VOICED_SCRIPT.beats[2]!] };
+    expect(salesPitchIssues(middle, undefined)[0]).toContain("beat 2 pitches (book a call)");
+    // A middle beat may say "we" without selling; only the last beat is held to that.
+    const weInMiddle = { ...VOICED_SCRIPT, beats: [VOICED_SCRIPT.beats[0]!, { ...VOICED_SCRIPT.beats[1]!, narration: "We can see the pattern in every hiring cycle." }, VOICED_SCRIPT.beats[2]!] };
+    expect(salesPitchIssues(weInMiddle, undefined)).toEqual([]);
+  });
+
+  it("a run that asked for a call to action lifts the rule", () => {
+    const pitch = lastBeat("Book a call and we will show you the plan.");
+    expect(salesPitchIssues(pitch, "End with a call to action to book a call.")).toEqual([]);
+    expect(salesPitchIssues(pitch, "סיים עם קריאה לפעולה")).toEqual([]);
+    expect(salesPitchIssues(pitch, "Keep it under 25 seconds.")).toHaveLength(1);
+  });
+
+  it("a draft that ends on a pitch is redrafted ONCE with the beat named, and the clean redraft ships", async () => {
+    const h = stubTools();
+    const prompts: string[] = [];
+    const result = await run(h, "run-os-pitch-fix", [lastBeat("We show you the plan before anything else. No pitch, just a plan."), VOICED_SCRIPT], prompts);
+    expect(result.status).toBe("completed");
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain("Pitch problem in your last draft");
+    expect(prompts[1]).toContain("the last beat sells");
+    expect(prompts[1]).not.toContain("Voice problem");
+    expect((h.deliverables[0] as { script?: { beats: Array<{ narration: string }> } }).script?.beats[2]?.narration).toBe(VOICED_SCRIPT.beats[2]!.narration);
+  }, 20_000);
+});
+
+describe("stat beats (2026-09-10)", () => {
+  it("a beat that is one figure renders as a stat card on the brand ground, searches no library, and is left out of the still estimate", async () => {
+    const withStat = {
+      ...VOICED_SCRIPT,
+      beats: [VOICED_SCRIPT.beats[0]!, { ...VOICED_SCRIPT.beats[1]!, stat: { value: "47%", label: "of first hires leave in a year" } }, VOICED_SCRIPT.beats[2]!],
+    };
+    const h = stubTools();
+    const result = await run(h, "run-os-stat", [withStat]);
+    expect(result.status).toBe("completed");
+    const card = h.textArgs.find((a) => String(a["outputPath"]).endsWith("plate-2-stat.mp4"))!;
+    expect(card).toBeDefined();
+    expect(card["stat"]).toEqual({ value: "47%", label: "of first hires leave in a year" });
+    expect(card["text"]).toBe("of first hires leave in a year");
+    expect(card["durationSeconds"]).toBe(withStat.beats[1]!.seconds);
+    expect(h.stockArgs.some((a) => a["outputName"] === "plate-2" || a["outputName"] === "plate-2-b")).toBe(false);
+    const sources = (h.deliverables[0] as { plateSources?: string[] }).plateSources!;
+    expect(sources[0]).toBe("stock");
+    expect(sources).toContain("text");
+  }, 20_000);
+});
+
 describe("scriptVoiceIssues", () => {
   it("names a hook too long for the screen, a sentence past a breath, and the conference-slide register; a clean script has none", () => {
     expect(scriptVoiceIssues(VOICED_SCRIPT)).toEqual([]);
@@ -468,6 +646,12 @@ describe("original short: script → plates → voice → captions → sequence 
     expect(h.stockArgs.map((a) => a["outputName"])).toEqual(["plate-1", "plate-2", "plate-2-b", "plate-3", "plate-3-b"]);
     expect(h.stockArgs.map((a) => a["minDurationSeconds"])).toEqual([4, 6, 3, 6, 3]);
     expect(h.stockArgs[2]!["excludeIds"]).toEqual([1001, 1002]);
+    // A beat's second shot is searched with the first shot's page URL to avoid, so the same scene is not shown twice.
+    const secondShot = h.stockArgs.find((a) => a["outputName"] === "plate-2-b");
+    if (secondShot !== undefined) {
+      const firstShot = h.stockArgs.findIndex((a) => a["outputName"] === "plate-2");
+      expect(secondShot["avoidTitleLike"]).toBe(`https://www.pexels.com/video/${1001 + firstShot}/`);
+    }
     // The writer was handed the client's documents in its input and fetched nothing itself.
     expect(prompts[0]).toContain('"voiceRules":{"tone":"direct"}');
     expect(prompts[0]).toContain('"handle":"acmeco"');
@@ -528,6 +712,10 @@ describe("original short: script → plates → voice → captions → sequence 
     expect(expectations["hookLine"]).toBe(VOICED_SCRIPT.hook);
 
     expect(h.deliverables[0]).toMatchObject({ format: "original-short", voiceover: true, sourceTier: "stock", plateSources: ["stock", "stock", "stock", "stock", "stock"], maxCostUsd: 2 });
+    // Why stock and not the client's own footage: what every higher tier said, carried to the reviewer.
+    const notes = (h.deliverables[0] as { sourceNotes?: string[] }).sourceNotes!;
+    expect(notes[0]).toBe("user-asset: no media attached to this run");
+    expect(notes.some((n) => n.startsWith("owned-footage"))).toBe(true);
     // Latin captions keep the frame's default font.
     expect(h.frameArgs[0]!["captionStyle"]).toBeUndefined();
     expect(h.calls).toContain("topics.commit");
@@ -907,6 +1095,19 @@ describe("original short: real footage, then a still, never generated video (202
     expect(clips.map((c) => c.holdSeconds)).toEqual([4, 6, 6]);
     const srt = await fs.readFile(h.frameArgs[0]!["srtPath"] as string, "utf8");
     expect(srt).toMatch(/^1\n00:00:00,000 --> /);
+  }, 20_000);
+
+  it("library shots alternate a slow push-in and pull-back across the short; the hook card stays still", async () => {
+    const h = stubTools();
+    const result = await run(h, "run-os-moves");
+    expect(result.status).toBe("completed");
+    const clips = h.composeArgs[0]!["clips"] as Array<{ path: string; move?: string }>;
+    const hook = clips.find((c) => c.path.includes("plate-hook"));
+    expect(hook).toBeDefined();
+    expect([undefined, "none"]).toContain(hook!.move);
+    const stock = clips.filter((c) => !c.path.includes("plate-hook"));
+    expect(stock.length).toBeGreaterThanOrEqual(3);
+    expect(stock.map((c) => c.move)).toEqual(stock.map((_, i) => (i % 2 === 0 ? "push-in" : "pull-back")));
   }, 20_000);
 
   it("a beat 1 too short to share skips the cold open and keeps the title card", async () => {

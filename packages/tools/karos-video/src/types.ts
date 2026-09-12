@@ -156,6 +156,8 @@ export type TranscriptWord = z.infer<typeof TranscriptWordSchema>;
 export const VideoTranscriptSchema = z
   .object({
     words: z.array(TranscriptWordSchema),
+    /** The file's length as probed for billing, when ffprobe could read it (transcribe 1.2.0): a silent source has no words but still has a length to cut. */
+    durationSeconds: z.number().nonnegative().optional(),
   })
   .passthrough();
 export type VideoTranscript = z.infer<typeof VideoTranscriptSchema>;

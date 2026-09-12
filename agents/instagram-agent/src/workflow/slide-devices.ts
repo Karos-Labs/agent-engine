@@ -523,16 +523,71 @@ export function deviceCssBlock(): string {
   flex: 0 0 calc(300px * var(--ts, 1)); font-family: var(--f-body); font-size: calc(26px * var(--ts, 1));
   line-height: 1.35; text-wrap: pretty; text-align: start;
 }
-.dv-bar-track { flex: 1 1 auto; block-size: calc(40px * var(--ts, 1)); background: color-mix(in srgb, var(--fg) 8%, transparent); }
+/* ── 2026-09-12: THE TRACKS AND THE QUIET FILLS ARE OPAQUE PLATES NOW, NOT
+      WASHES. ──
+   Every other device in this sheet is a MARK — a 12px rule, a 14px dot, a 6px
+   cell border — and a translucent \`color-mix(…, transparent)\` is the right
+   treatment for a mark: the plate's own texture reading through a hairline is
+   the brand showing, not a defect. A bar chart is the one device made of
+   AREA, and the reader's whole job on it is to compare three lengths at a
+   glance. Painted at 8% and 22% OVER TRANSPARENT, both the track and the
+   non-accent fill let the archetype's ground through — on \`headline-focus\`'s
+   dash screen the accent hairlines run straight across the bars — and the
+   quiet fill ends up within 2:1 of the track it is supposed to stand out of.
+
+   THE NUMBER, from the guard rather than from a sample. The pixel case in
+   \`interest-floor-calibration.test.ts\` ("a bar's fill stands out of its own
+   track") renders the same slide twice with one row at 21 and at 40 and takes
+   the median of the ~17,400 pixels that are bare track in one frame and fill
+   in the other. It measures 1.94:1 on the washes (fill #585759 on track
+   #2c2c30) and 3.41:1 on these plates (fill #8a8988 on track #363739); both
+   figures are from running that case on this tree, the second as it stands
+   and the first with these two lines reverted.
+
+   The candidates, read at feed size and sampled point-wise alongside
+   (\`.local/px-bars.mjs\`, real Chromium 1080x1440 @2, the last row's fill and
+   its track on headline-focus):
+
+     track / fill mix        fill         track        fill vs track
+     8% / 22% over transp.   88,87,89     85,85,86*     1.04:1   <- as shipped
+     10% / 46% over --bg     125,124,124  45,46,49      3.26:1
+     14% / 52% over --bg     138,137,136  54,55,57      3.41:1   <- this
+     18% / 60% over --bg     156,155,153  63,63,65      3.78:1
+     (* a single-point sample, and at \`m\` that point lands where a ground
+      hairline crosses the track — which is the defect stated as a number:
+      the ground is INSIDE the bar. The guard's median, 1.94:1, is the honest
+      figure for the washes; this row is why the median was needed.)
+
+   14/52 rather than 18/60 by reading the plates at feed size: at 18/60 the
+   grey fills start competing with the accent bar for the eye, and exactly one
+   accent per device is this sheet's rule. Mixed with \`var(--bg)\` rather than
+   with \`transparent\` so a client's own ground token still sets the tone and
+   the ground stops at the track's edge.
+
+   The metric follows the reading rather than leading it: the same plate moves
+   from 5.3 / 7.1 / 9.3% imagery-or-device at s/m/l to 7.5 / 9.2 / 11.1%, and
+   \`interest-floor.ts\`'s note on IMAGERY_OR_DEVICE_FLOOR — which named this
+   exact change as the fix for a device the pixels could not see — carries the
+   consequence. No threshold moved. */
+.dv-bar-track { flex: 1 1 auto; block-size: calc(40px * var(--ts, 1)); background: color-mix(in srgb, var(--fg) 14%, var(--bg)); }
 .dv-bar-fill {
-  block-size: 100%; background: var(--dv-ink, var(--dv-quiet));
+  block-size: 100%; background: var(--dv-ink, color-mix(in srgb, var(--fg) 52%, var(--bg)));
   display: flex; align-items: center; justify-content: flex-end;
-  padding-inline-end: calc(14px * var(--ts, 1)); color: color-mix(in srgb, var(--fg) 92%, transparent);
+  padding-inline-end: calc(14px * var(--ts, 1)); color: var(--bg);
 }
-/* A value riding inside the accent fill is ground-coloured, the one place a
-   device inverts — the accent's contrast against the ground is already a
-   reported fact (assessContrastFacts), so this pairing is measured, not hoped for. */
-.dv-bar-fill.dv-accent { color: var(--bg); }
+/* A VALUE RIDING INSIDE A FILL IS GROUND-COLOURED, whichever fill it is —
+   the one place a device inverts.
+   It used to be the accent fill alone, with the near-white
+   \`color-mix(--fg 92%)\` above covering the quiet one. That was right while
+   the quiet fill was a 22%-over-transparent wash (near-white on a composited
+   88,87,89 measures 6.0:1) and is wrong now that it is a 52% plate: white on
+   138,137,136 is 3.03:1, under the 4.5:1 a 24px mono value wants, while the
+   ground token on the same plate is 5.1:1. Both fills are now solid and both
+   are light, so both take dark type. The accent pairing is unchanged and is
+   still a reported fact (assessContrastFacts) rather than a hope.
+   Only \`.dv-bar-row--inset\` rows put a value inside the fill at all
+   (share >= DEVICE_VALUE_INSIDE_BAR_THRESHOLD); every other value sits on the
+   plate outside the track and keeps the \`--fg\` 80% below. */
 .dv-bar-value { font-family: var(--f-mono); font-weight: 600; font-size: calc(24px * var(--ts, 1)); white-space: nowrap; }
 .dv-bar-row:not(.dv-bar-row--inset) .dv-bar-value { color: color-mix(in srgb, var(--fg) 80%, transparent); }
 

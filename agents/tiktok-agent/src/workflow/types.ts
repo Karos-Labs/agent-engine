@@ -156,6 +156,16 @@ export interface TikTokIntake {
   sourceTier: ClipSourceTier;
   /** Where harvested/attached footage came from — the honest basis for the caption's source credit. */
   sourceContext?: { title?: string; channel?: string; url?: string; label?: string };
+  /**
+   * What every tier ABOVE the one that served said (2026-09-10). Present on a
+   * `stock` intake: the client's own footage was not used, and the reviewer
+   * should see why ("web-harvest: content_fail (no allowed source yielded a
+   * usable video…)") rather than infer it from "8 stock shots". Until now
+   * these notes were kept only for the hold message of a fully dry cascade,
+   * so a sourcePool naming a show that does not exist on YouTube fell to
+   * stock silently, run after run.
+   */
+  sourceNotes?: string[];
   /** The discovery step's brief for the reserved topic, when the topic came from discovery. */
   discovered?: TopicCandidate;
 }
@@ -253,6 +263,14 @@ export const ScriptBeatSchema = z.object({
    * only when nothing real matches. Optional so a v3-era script still parses.
    */
   stockQuery: z.string().min(2).max(60).optional(),
+  /**
+   * When the whole beat is ONE number the brief supports ("47%", "3 of 4",
+   * "$2"), the number and a short label. The beat is then a stat card on the
+   * brand ground instead of footage (2026-09-10): footage under a number is
+   * wallpaper, the number set large is the picture. Never invented: a number
+   * that is not in the brief or the client's own intel is not a stat.
+   */
+  stat: z.object({ value: z.string().min(1).max(12), label: z.string().min(1).max(60) }).optional(),
   /** How long this beat holds on screen. */
   seconds: z.union([z.literal(4), z.literal(6), z.literal(8)]),
 });
