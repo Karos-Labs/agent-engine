@@ -12,17 +12,20 @@
 
   Two details are the whole look:
 
-  1. The bullet is a 7px square rotated 45deg (`.diamond`), not a glyph. A real
-     bullet character sits on the text baseline and inherits its font's own
-     idea of size; a rotated box is optically identical at every row and can be
-     nudged with `margin-top` to align to a 41px cap-height, which is what the
-     `margin-top: 18px` is doing.
+  1. The marker is the row's RANK, not a bullet — `01`, `02`, `03` in the mono
+     face, drawn with a CSS counter on the same empty `<span class="diamond">`
+     the row builder has always emitted (2026-09-12; the legacy rotated square
+     survives on `comparison-card.html`, which has no order to count). A
+     bullet is furniture; a rank is content the copy already carries, and this
+     archetype's rows had a blank right column and nothing else in them. See
+     `.diamond` below.
   2. Row separators are `border-top` with `:first-child` zeroed, never `<hr>`
      elements. That way N rows produce N-1 rules with no conditional markup.
 
-  Row count is capped at four upstream (`SlideListSchema`), because these rows
-  are pinned at `top: 460px` with 46px of vertical padding each inside a fixed
-  1440px plate — a fifth row runs off the bottom rather than compressing.
+  Row count is capped at four upstream (`SlideListSchema`), because the rows
+  are sized by their own copy inside a fixed 1440px plate — a fifth row takes
+  the space from the head rather than compressing, and past four there is no
+  head left to take it from.
 
   The rows themselves arrive as one pre-assembled `{{html:itemRows}}` fragment.
   `publish.renderCarousel`'s substitution is flat string replacement with no
@@ -35,10 +38,20 @@
 
   Two to four rows of type on bare ground measured 4.7% of the frame occupied
   with a 27% contiguous empty rectangle — a list nobody would stop for. The
-  rows now sit in a graded, textured PANEL under a kicker rail, the row rules
-  are heavier, and the diamond marker is a real accent square rather than a
-  7px speck. The panel is also what carries this archetype when a run routes a
-  list to position 1.
+  rows now sit in a graded, textured PANEL under a kicker rail and the row
+  rules are heavier. The panel is also what carries this archetype when a run
+  routes a list to position 1.
+
+  ── 2026-09-12: THE PANEL STOPPED BEING THE PLATE ──
+
+  That panel then over-corrected: it stretched into whatever the head left it,
+  which put 75.5% of a 968px panel — 67% of the frame — under bare tint, and
+  the archetype cleared its floor on AREA rather than on anything a reader
+  gets. It is now sized to its rows, the plate's slack goes to the head where
+  the headline centres in it, the head carries the ledger's own column ruling
+  so the space it got back is occupied rather than merely empty, and each row
+  carries its rank. `.me-rows` and `.lt-head` below have the before/after
+  measurements.
 
   Three mechanical rules the whole bundled set now keeps, learned from the
   renderer's own instruments rather than from taste:
@@ -132,7 +145,8 @@
     position: absolute; inset: 0; z-index: 0;
     background-image: radial-gradient(58% 26% at 100% 0%, color-mix(in srgb, var(--wash) 8%, transparent) 0%, transparent 72%);
   }
-  /* ── THERE IS NO L2 ON THIS PLATE ANY MORE, and that is the point. ──
+  /* ── THERE IS NO FULL-BLEED L2 ON THIS PLATE ANY MORE, and that is the
+        point. ──
      A full-bleed texture inset 16px used to paint ink in every cell of the
      frame. It made `occupiedShare` and `largestEmptyRectShare` constants —
      measured through `measureSlidePng` over real Chromium, every
@@ -140,11 +154,64 @@
      empty rectangle with the full copy on it and with every slot empty (the
      16px gutter the inset did not paint), which is the one clause the
      measurement's own module header calls "the metric that names the
-     complaint". The texture now lives only on the rows panel, which is the
-     region the composition actually occupies — see `cover.html`'s header for
-     the rule and `headline-focus.html`'s for the pitch it is derived at. ── */
+     complaint". The ink now lives in the two regions the composition
+     occupies and nowhere else: the rows panel, and (since 2026-09-12, when
+     the panel stopped being the plate's leftover) the HEAD — both bound to
+     content, both switched off when that content is missing. See
+     `cover.html`'s header for the rule and `.lt-head` below for the head's
+     own pitch and the measurement that set it. ── */
 
-  .lt-head { position: relative; z-index: 3; flex: 0 0 auto; }
+  /* ── THE HEAD TAKES THE PLATE'S SLACK, AND THE PANEL TAKES ITS ROWS. ──
+     See `.me-rows` for the measurement that moved the slack here. The head is
+     the elastic item now, and the headline centres inside it (`margin-block:
+     auto` below) so the leftover lands as two even bands around the type
+     rather than as one hole. `flex: 1 1 auto` with no `min-block-size: 0`:
+     the head grows into whatever the panel leaves and may never shrink below
+     its own content, so a four-row list at `l` takes the space back rather
+     than pushing the headline off the plate. */
+  .lt-head { position: relative; z-index: 3; flex: 1 1 auto; display: flex; flex-direction: column; }
+  /* ── THE HEAD IS A FIELD NOW, AND IT HAS TO BE. ──
+     Shrinking the panel to its rows (see `.me-rows`) moved 300-500px of plate
+     from "tinted panel nobody reads" to "bare ground nobody reads", which is
+     not a fix — measured the moment the panel hugged, this plate reported
+     `dead-space` at `s` (23.9% empty rectangle against the cover ceiling of
+     22%) and clause D at every scale (24.2% occupied at `s` against a 30%
+     interior floor). The area the panel gave back has to be OCCUPIED by the
+     half of the composition that lives there.
+
+     So the head carries the same COLUMN RULING the panel does, with no tint
+     under it: the ledger's columns run the whole plate and the panel is where
+     they are inked in. The pitch is 9px rather than the panel's 15px, and it
+     is measured rather than chosen. The emptiest plate this archetype can
+     produce is a TWO-row list at the `s` type scale, and it is what set the
+     pitch:
+
+       head rule   flat    occupied   verdict at the cover role (floor 0.42,
+                                       clause D's flat ceiling 0.70)
+       none        81.6%    16.9%     dead-space AND clause D
+       2px / 15px  74.1%    35.4%     clause D
+       2px / 11px  71.4%    42.2%     passes by 0.2 points — fragile
+       2px /  9px  69.2%    47.5%     clear of both
+
+     THE RULE STAYS 2px WIDE, AND A 3px ONE IS A DIFFERENT KIND OF THING. A
+     cell is 4 design px and `CELL_COVERED_INK_SHARE` is 48/64, so a 3px rule
+     fills three of a cell's four sample columns — exactly the coverage that
+     makes a low-colour cell count as a DRAWN DEVICE. Tried at 3px/13px this
+     head measured 30.3% imagery-or-device against the panel-only 24.1%: the
+     decoration had started scoring as the device, which is the defect one
+     level up from the one this block is fixing. At 2px the maximum is 32 of
+     64 and the head can never reach it, so `imageryOrDeviceShare` on this
+     plate stays the PANEL's — the number that should be carrying it.
+
+     Bound to the headline, like every other ink-bearing layer in this
+     directory: no headline, no field, and the empty-plate case in
+     `interest-floor-calibration.test.ts` still fails on the pixels alone. */
+  body:has(#head:not(:empty)) .lt-head {
+    background-image:
+      repeating-linear-gradient(to right,
+        color-mix(in srgb, var(--fg) 16%, transparent) 0 2px,
+        transparent 2px 9px);
+  }
   /* `inline-block` so a client's `pill`/`brackets` badge variant wraps the
      words rather than painting a full-measure bar. */
   .eyebrow {
@@ -153,28 +220,76 @@
     letter-spacing: 0.22em; text-transform: uppercase; color: var(--accent);
   }
   .eyebrow:empty { display: none; }
-  .lt-rail { block-size: 2px; background: color-mix(in srgb, var(--fg) 48%, transparent); margin-block-start: calc(24px * var(--ts, 1)); }
+  .lt-rail {
+    block-size: 2px; background: color-mix(in srgb, var(--fg) 48%, transparent);
+    margin-block: calc(24px * var(--ts, 1)) calc(40px * var(--ts, 1));
+  }
 
   .me-head {
     z-index: 3;
     font-family: var(--f-display); font-weight: 600; font-size: calc(66px * var(--ts, 1));
     line-height: 1.3; letter-spacing: -0.012em; text-wrap: balance;
-    margin-block-start: calc(40px * var(--ts, 1)); padding-block-end: 0.12em;
+    /* `auto` block margins inside the elastic head: the headline sits
+       optically between the rail and the panel, and the plate's slack is two
+       bands around it instead of one band of bare tint at the panel's foot.
+       The minimum gap under the rail is the rail's own `margin-block-end`, so
+       a plate with no slack left (four rows at `l`) still sets the headline
+       clear of it — an `auto` margin resolves to 0 when there is nothing to
+       distribute. */
+    margin-block: auto;
+    padding-block-end: 0.12em;
   }
   .me-head.small { font-size: calc(52px * var(--ts, 1)); }
 
   /* The rows panel: graded and textured for the reason in the header, capped
      with a full-weight accent rule. */
+  /* ── 2026-09-12: THE PANEL IS SIZED TO ITS ROWS, NOT TO THE LEFTOVER. ──
+
+     It used to be `flex: 1 1 auto` — it took whatever the head left it and
+     the rows spread inside. That is how this archetype "earned" its floor by
+     AREA: measured on this tree with the calibration's own three-row fixture
+     (`.local/rvw-honesty.mjs`), the panel spanned y 376-1344, 67% of the
+     plate, and 237px of those 968 carried any type at all. 75.5% of the panel
+     was bare tint, and `imageryOrDeviceShare` read 41.8% against a 0.10
+     floor — a number that is the TINT'S AREA, on the archetype whose floor is
+     supposed to be about what a reader gets.
+
+     The pass before this one tried to fix it inside the panel, with
+     `flex: 1 1 0` rows and `align-items: center`, and the instrument said
+     exactly what it had said before: `largestEmptyRectShare` 7.8% before and
+     7.8% after, byte-identical, because redistributing a hole is not closing
+     one. The ~300px band at the panel's foot became 122px above the last
+     row's copy and 120px below it plus 225px and 242px between rows.
+
+     So the panel hugs: `flex: 0 0 auto`, rows at their own intrinsic height,
+     `padding-block` setting the rhythm. The slack goes up to `.lt-head`,
+     where the headline centres in it — the clause the slack moves to is
+     `largestEmptyRectShare`, and it is measured at the cover role across
+     s/m/l in `interest-floor-calibration.test.ts`, which is the case this
+     panel is judged at hardest (0.22 rather than 0.28).
+
+     Measured after, same fixture, same instrument:
+
+                          panel span   of plate   type inside it   emptyRect
+       before (`m`)        376-1344       67%      237 of 968px      7.8%
+       after  (`m`)        823-1344       36%      237 of 521px      6.7%
+       after  (`s`)        929-1344       29%      174 of 415px      6.7%
+
+     The type did not move; the tint stopped being the plate. 45% of the panel
+     carries copy where 24.5% did, `imageryOrDeviceShare` came down from 41.8%
+     to 24.1% — still 2.4x the floor it has to clear, and now mostly the
+     ledger rather than mostly empty tint — and the rectangle the emptiness
+     clause finds went DOWN rather than up, because the slack landed where the
+     head's own field covers it instead of pooling under the last row.
+
+     `flex: 0 0 auto` rather than `0 1 auto`: the panel may never shrink below
+     its rows. A four-row list at `l` takes the space from the head instead,
+     which is elastic, and if even that runs out the overflow is OUT of the
+     body's padding box where the DOM probe's own limbs report it. A panel
+     quietly shrinking under its rows is the failure mode with no symptom. */
   .me-rows {
-    /* The panel STRETCHES into whatever the head leaves it, and the rows
-       spread inside it. Letting the panel hug two or three rows parked a
-       500px band of bare texture between the headline and the list — a hole
-       by any reader's reckoning, whatever the empty-rectangle measurement
-       says about a plate that has a ground. Spreading also makes a two-row
-       list and a four-row list compose the same way, which is the property
-       that matters when the row count is decided per run. */
-    position: relative; z-index: 3; flex: 1 1 auto; min-block-size: 0;
-    display: flex; flex-direction: column; justify-content: space-evenly;
+    position: relative; z-index: 3; flex: 0 0 auto;
+    display: flex; flex-direction: column;
     margin-block-start: calc(44px * var(--ts, 1));
     padding: calc(12px * var(--ts, 1)) calc(44px * var(--ts, 1)) calc(20px * var(--ts, 1));
   }
@@ -184,29 +299,74 @@
      it — which is how a plate with every slot empty used to clear the role
      floors it exists to fail. `:empty` is exact here: `buildListRows` emits
      one fragment or nothing at all. */
+  /* ── THE PANEL IS RULED IN COLUMNS, AND THAT IS THIS ARCHETYPE'S MARK. ──
+     The whole bundled set used to carry one 45-degree hairline field, so six
+     of the eight plates read as the same wallpaper with different words on it
+     — the owner's second complaint verbatim. Every archetype now spends a
+     different MARK (`headline-focus.html`'s header lists the set and states
+     why a mark is needed at all rather than a flat tint or clean ground).
+     A list's is a COLUMN RULING: fine vertical rules every 15px, crossed by
+     the row separators this archetype already draws. That is ledger paper —
+     columns one way, rows the other — and it is the one ground in the set
+     whose texture is part of the same system as the content on top of it.
+
+     2px rules on a 15px pitch, by the cell arithmetic every mark in this
+     directory answers to: a 2px rule marks (2+4)/15 of the cell COLUMNS it
+     crosses and can never fill three quarters of a 4px cell, so the rules add
+     no drawn-device coverage and the panel's device share stays the TINT's.
+     A vertical rule set is also mirror-symmetric, so `dir="rtl"` needs no
+     second declaration — which a diagonal hatch does not give you for free.
+     And a cell crossed by a rule is not FLAT, which is what stops a panel
+     covering half the frame from out-voting the real ground for
+     `backgroundHex` (the third rule in this file's header). */
   .me-rows:not(:empty) {
     border-block-start: calc(8px * var(--ts, 1)) solid var(--accent);
     background-image:
-      repeating-linear-gradient(45deg,
+      repeating-linear-gradient(to right,
         color-mix(in srgb, var(--fg) 14%, transparent) 0 2px,
-        transparent 2px 11px),
+        transparent 2px 15px),
       linear-gradient(164deg,
         color-mix(in srgb, var(--accent) 28%, var(--bg)) 0%,
         color-mix(in srgb, var(--accent) 15%, var(--bg)) 100%);
   }
-  /* The rows are sized to FILL the panel they are measured inside. At the
-     previous 41px/27px pair three rows occupied 450px of a 930px panel, which
-     left a 15%-tall band of empty tint above the first row and an 18%-tall
-     one below the last — decoration being scored as content, one level down
-     from the defect this pass is removing. The panel is not capped instead,
-     because capping it moves the same space onto the plate as one gap and
-     puts a 15% rectangle between the headline and the panel, which is over
-     the cover role's ceiling once the calibration margin is applied. */
+  /* ── THE ROW IS SIZED BY ITS OWN COPY, AND IT IS A NUMBERED ROW. ──
+
+     Two changes, and they answer the two halves of the same finding.
+
+       1. `flex: 0 0 auto` with a `padding-block` that sets the rhythm. The
+          previous `flex: 1 1 0` made every row an equal share of a panel that
+          was itself the plate's leftover, which is how a three-row list ended
+          up with 310px row boxes carrying 101px of type. The row is now its
+          copy plus 40px of air at each end, and the panel is the sum of them.
+       2. A RANK NUMERAL where the diamond was. The reviewer's complaint about
+          this plate was not only the tint's area: each row was a short title,
+          a short note, and a wide blank field, so the ledger had nothing in
+          it a reader gets value from. The numeral is the list's own ORDER —
+          information the copy already carries and the plate was throwing
+          away — and it is drawn with a CSS counter, so `buildListRows`
+          (`slides-data.ts`) still emits the same `<span class="diamond">` and
+          nothing on the authoring side changes.
+
+     The title and the note stay two columns on one baseline, which is how a
+     definition row is set and what puts the panel's width to work. A
+     note-less row keeps a short title and a clear right column, which in a
+     ledger reads as a blank field rather than as a hole. */
+  .me-rows { counter-reset: me-rank; }
   .me-row {
-    display: flex; gap: 34px; padding: 46px 0;
-    border-top: 2px solid var(--line); align-items: flex-start;
+    display: flex; gap: 28px; padding: calc(40px * var(--ts, 1)) 0;
+    border-top: 2px solid var(--line); align-items: center;
+    flex: 0 0 auto; counter-increment: me-rank;
   }
   .me-row:first-child { border-top: 0; }
+  /* The row's copy block: title and note side by side on one baseline. `min-
+     inline-size: 0` is load-bearing — without it a long note refuses to wrap
+     and the row reports `scrollWidth > clientWidth`, which the renderer's DOM
+     probe calls an overflowing element and clause B fails the slide on. */
+  .me-row > div {
+    flex: 1 1 auto; min-inline-size: 0;
+    display: flex; flex-direction: row; align-items: baseline;
+    gap: calc(30px * var(--ts, 1));
+  }
   /* FOUR rows is the schema's cap (`SlideListSchema`) and it is the case that
      does not fit at the reviewer's `l` type scale: four rows of 54px titles
      and 34px notes need 864px inside an 829px panel, and the DOM probe
@@ -220,20 +380,54 @@
      panel holds 829, so four need 864 — the tighter row is 189px, 757 for
      four, with 72px to spare for a note that wraps. Everything still scales
      off `--ts`, so all three reviewer size steps keep their relationship. */
-  .me-rows:has(.me-row:nth-child(4)) .me-row { padding: calc(26px * var(--ts, 1)) 0; }
+  .me-rows:has(.me-row:nth-child(4)) .me-row { padding: calc(24px * var(--ts, 1)) 0; }
   .me-rows:has(.me-row:nth-child(4)) .me-title { font-size: calc(40px * var(--ts, 1)); }
   .me-rows:has(.me-row:nth-child(4)) .me-note { font-size: calc(26px * var(--ts, 1)); }
+  /* THE MARKER IS THE RANK, and on this archetype only — `comparison-card.html`
+     keeps the set's rotated square, because a two-column comparison has no
+     order to count. A fixed column so every numeral starts at the same x and
+     the titles align down the panel; `tabular-nums` so 01/02/03/04 are the
+     same width whatever the face does with figures. The element itself is the
+     empty `<span class="diamond">` the row builder already emits — the
+     counter is what puts a glyph in it. */
   .diamond {
-    display: inline-block; width: 18px; height: 18px; background: var(--accent);
-    transform: rotate(45deg); flex-shrink: 0; margin-top: 16px;
+    /* `min-inline-size` rather than a flex BASIS: a basis that the numeral's
+       own glyphs outgrow makes the span report `scrollWidth > clientWidth`,
+       which the renderer's DOM probe calls an overflowing element and clause
+       B fails the slide on — measured at `l`, where "01" plus its tracking is
+       wider than 62px. The column still aligns; it just cannot be too small. */
+    display: inline-block; flex: 0 0 auto; min-inline-size: calc(62px * var(--ts, 1));
+    font-family: var(--f-mono); font-weight: 600; font-size: calc(30px * var(--ts, 1));
+    /* No tracking: a trailing letter-space on an inline-block is advance the
+       box does not include, and the span then reports `scrollWidth >
+       clientWidth` — an overflowing element to the DOM probe, on two
+       characters that fit. */
+    font-variant-numeric: tabular-nums;
+    /* The same allowance every type block in this directory carries, and for
+       the same reason: a glyph box taller than its line box makes the element
+       report `scrollHeight > clientHeight` (measured 44 against 42 at `l`),
+       which the DOM probe calls an overflowing element and clause B fails the
+       slide on. In `em` so it tracks every size step. */
+    line-height: 1.2; padding-block-end: 0.14em; color: var(--accent);
   }
+  .diamond::before { content: counter(me-rank, decimal-leading-zero); }
   .me-title {
+    /* A FIXED column, not `auto`: the notes have to start at the same x on
+       every row or they are three ragged fragments rather than a second
+       column. 56% rather than the 52% this shipped with, because the rank
+       numeral's column took 44px off the copy block's own measure and
+       "Measure the queue" — a title from the calibration's own fixture —
+       started wrapping to two lines. At 56% the schema's longest fixture
+       title sets on one line and the note keeps a readable ~34-character
+       measure. */
+    flex: 0 0 56%; min-inline-size: 0;
     font-family: var(--f-display); font-weight: 500; font-size: calc(46px * var(--ts, 1));
     line-height: 1.3; letter-spacing: -0.01em; text-wrap: balance; padding-block-end: 0.18em;
   }
   .me-note {
+    flex: 1 1 auto; min-inline-size: 0;
     font-family: var(--f-body); font-weight: 400; font-size: calc(29px * var(--ts, 1)); line-height: 1.5;
-    color: color-mix(in srgb, var(--fg) 85%, transparent); margin-top: 12px; max-width: 820px; text-wrap: pretty;
+    color: color-mix(in srgb, var(--fg) 85%, transparent); text-wrap: pretty;
   }
   .me-note:empty { display: none; }
 

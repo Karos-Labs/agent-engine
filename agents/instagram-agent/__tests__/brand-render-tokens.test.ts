@@ -180,6 +180,34 @@ describe("buildBrandHeadHtml", () => {
     expect(buildBrandHeadHtml(tokens)).not.toContain("--accent:");
   });
 
+  /**
+   * THE ONE DECLARATION THE KIT DOES NOT GET TO OWN.
+   *
+   * This fragment lands AFTER the template's own `<style>` (`composeDocument`
+   * splices the brand head last, so a kit beats a template on a specificity
+   * tie — the point of a brand kit). A bare `color: var(--accent)` on
+   * `.brand-badge` therefore won against every template in the directory, and
+   * on `cover.html` — whose badge stands on the head of an ACCENT ramp rather
+   * than on the plate's dark ground — it painted accent on accent: 1.51:1
+   * measured on the ramp head, 1.63:1 over a light photograph, while the
+   * template's own `--badge-ink` fix sat inert underneath it.
+   *
+   * `var(--badge-ink, var(--accent))` is the whole fix: the template names the
+   * one thing only the template knows (what colour its badge's ground is), the
+   * kit keeps everything else, and the seven templates that declare no
+   * `--badge-ink` resolve to the same accent they always did. The pixel proof
+   * is in `interest-floor-calibration.test.ts`; this is the guard that stops
+   * the declaration quietly going back to a bare accent.
+   */
+  it("defers the badge's ink to the template's --badge-ink, falling back to the accent", () => {
+    const tokens = deriveBrandRenderTokens(geektimeishBrand(), baseTokens)!;
+    const badgeBlock = /\.brand-badge \{([^}]*)\}/.exec(buildBrandHeadHtml(tokens))?.[1] ?? "";
+    expect(badgeBlock, "buildBrandHeadHtml emitted no .brand-badge block").toMatch(/color\s*:/);
+    expect(badgeBlock, "the kit's badge colour must defer to --badge-ink, or it overrides every template's own choice").toMatch(
+      /color\s*:\s*var\(\s*--badge-ink\s*,\s*var\(\s*--accent\s*\)\s*\)/,
+    );
+  });
+
   it("stamps the badge variant css from brand vars only", () => {
     const tokens = deriveBrandRenderTokens(geektimeishBrand(), { ...baseTokens, renderTokens: { badgeStyle: "brackets" } })!;
     const head = buildBrandHeadHtml(tokens);

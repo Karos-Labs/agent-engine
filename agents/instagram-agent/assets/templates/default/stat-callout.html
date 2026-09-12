@@ -208,11 +208,49 @@
      unconditional tinted block scores its whole area whether or not anything
      is standing on it — which is how a plate with every slot empty used to
      clear the role floors it exists to fail. */
+  /* ── THE SLAB IS GRAPH PAPER, AND THAT IS THIS ARCHETYPE'S MARK. ──
+     The whole bundled set used to carry one 45-degree hairline field, so six
+     of the eight plates read as the same wallpaper with different words on it
+     — the owner's second complaint verbatim. Every archetype now spends a
+     different MARK (`headline-focus.html`'s header lists the set and states
+     why a mark is needed at all rather than a flat tint). A stat slab's is a
+     GRID: a plotting grid, which is the one ground in the directory that says
+     something about the content standing on it — this archetype exists to
+     carry a measurement, and a measurement belongs on squared paper.
+
+     A single-direction ruling was tried first and rejected on the pixels
+     rather than on taste: rendered beside `cover.html`, a horizontally ruled
+     orange slab and a horizontally screened orange plate are the same object
+     at feed size, and `resolveLayout` will happily put a `stat_callout` at
+     position 2, directly under the cover. Two adjacent slides wearing one
+     treatment is exactly what this pass exists to stop.
+
+     THE TWO RATES ARE DELIBERATELY UNEQUAL — 2px every 13px across, 1.5px
+     every 17px down — and that is the whole reason this can be a grid at all
+     rather than a device. A covered cell is 48 of its 64 samples, and on the
+     measurement's 4px cell a 2px rule is 4 of the 8 sample rows: two 2px
+     rules crossing inside one cell union to 32 + 32 - 16 = exactly 48, which
+     is the covered test's own `>=`. Every intersection would have counted as
+     a drawn device, and a grid has a lot of intersections. At 2px by 1.5px
+     the union is 32 + 24 - 12 = 44 of 64, comfortably under, and the unequal
+     PITCHES mean the intersections do not line up into a lattice a reader
+     reads as dots. Away from the crossings neither rule can fill three
+     quarters of a cell on its own, so the slab's device share stays the
+     TINT's.
+
+     Both rates are also what keep the slab's cells off "flat" —
+     `measureSlidePng` reads the slide's ground colour off the modal FLAT
+     cell, and an untextured panel over 40% of the frame is the largest flat
+     region on the plate, so it wins that vote and the brand ground is
+     measured as brown (see the note below). */
   body:has(#figure:not(:empty)) .num-zone {
     background-image:
-      repeating-linear-gradient(45deg,
-        color-mix(in srgb, var(--fg) 14%, transparent) 0 2px,
-        transparent 2px 11px),
+      repeating-linear-gradient(to right,
+        color-mix(in srgb, var(--fg) 15%, transparent) 0 1.5px,
+        transparent 1.5px 17px),
+      repeating-linear-gradient(to bottom,
+        color-mix(in srgb, var(--fg) 15%, transparent) 0 2px,
+        transparent 2px 13px),
       linear-gradient(158deg,
         color-mix(in srgb, var(--accent) 32%, var(--bg)) 0%,
         color-mix(in srgb, var(--accent) 17%, var(--bg)) 100%);

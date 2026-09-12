@@ -399,6 +399,21 @@ export function probePage(canvas: { n: number; w: number; h: number }): {
     //    block-start corner, and that is art direction;
     //  * a 2px tolerance, because a display face's glyph box routinely sits
     //    a subpixel or two above its line box.
+    //
+    // WHAT IS STILL BLIND, MEASURED RATHER THAN ASSUMED. `scrollWidth` has
+    // the identical gap on the INLINE axis: the overflow region grows away
+    // from the inline-start edge, so a box escaping the inline-START of its
+    // parent (left in ltr, right in rtl) leaves `scrollWidth ===
+    // clientWidth`. There is no third limb here because the gap was measured
+    // before deciding. Swept across all eight bundled templates x s/m/l x
+    // ltr/rtl (48 renders, 2026-09-12), an inline-start limb at this same 2px
+    // tolerance would report 30 escapes — and all 30 are `.diamond`, the list
+    // and comparison bullet hung 3-4px outside its row for optical
+    // alignment, which is typography doing its job. A limb that fires only on
+    // deliberate hanging punctuation would be switched off within a week, and
+    // a switched-off limb is worse than a documented gap. If an inline escape
+    // ever ships, it will be one of real size: add the limb then, with a
+    // tolerance above the hang (measured at 4px here) rather than at 2.
     const parent: ProbeElement | null = element.parentElement ?? null;
     if (!spills && parent !== null && rect.height > 0 && typeof parent.getBoundingClientRect === "function") {
       const placed = getComputedStyle(element).position === "absolute" || getComputedStyle(element).position === "fixed";

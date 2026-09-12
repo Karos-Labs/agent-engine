@@ -145,29 +145,85 @@
      `(2+4)/p` of the cells it crosses, and the 14-16px pitches this set shipped
      first marked under half of them. It stays a TEXTURE and not a device at
      any pitch, because a 2px rule cannot fill three quarters of a 4px cell. */
+  /* ── THE FIELD IS A STACK OF BANDS, AND THAT IS THIS ARCHETYPE'S MARK. ──
+     The whole bundled set used to carry one 45-degree hairline field, so six
+     of the eight plates read as the same wallpaper with different words on it
+     — the owner's second complaint verbatim ("בנוסף בגלל שזה חזרתי זה נראה
+     AI"). Every archetype now spends a different MARK, and
+     `headline-focus.html`'s header lists the set and states why a mark is
+     needed at all rather than a flat tint or clean ground.
+
+     A closer's mark is ARCHITECTURAL rather than fine: 6px bars on a 30px
+     pitch, which is banding a reader sees as geometry rather than a texture
+     they read as tone. That is the right register for the last slide — it
+     rhymes with the footer band the ask sits on and with the recap strip's
+     own plates, so the whole plate reads as a stack of horizontal masses. It
+     is the only mark in the directory whose individual marks are visible at
+     feed size, which is what a closer wants and what a hook slide does not.
+
+     THE PITCH IS MEASURED, not chosen. The first try was 6px on a 68px pitch
+     — genuinely architectural, and it marked only 15% of the cell rows it
+     crossed at an 8.8% duty cycle, so this plate went from 47.4% flat to
+     64.3% and a Hebrew closer to 66.4%, three points under clause D's 70%
+     ceiling on a slide carrying a full recap strip. A ground whose margin
+     against "flat and idle" is three points is a ground that will trip on the
+     next copy length. At 6px/30px the duty is 20% — the same order as the
+     22% of the 2px/9px hatch it replaces — and the bars are still individually
+     countable, which is the property that makes this a band stack and not a
+     texture.
+
+     It stays a rule system and not a drawn device because of the same cell
+     arithmetic every mark in this set answers to, applied to the RULE rather
+     than the pitch: a covered cell needs 48 of its 64 samples, so only the
+     cell rows a 6px bar spans outright can ever be covered — a third of the
+     rows it touches, and `imageryOrDeviceShare` here stays the ASK BAND's and
+     the recap strip's, which are the closer's real devices. The pitch also
+     bounds the largest empty rectangle inside the field to one 24px band,
+     against a 22% ceiling at the closer role.
+
+     The TONE is the set's standing 20% of the foreground — the same weight
+     the hairline field it replaces carried — and deliberately not the 26% a
+     first pass reached for: at 26% a 6px bar competes with the takeaway it is
+     supposed to sit behind. Softening it costs nothing here, and that is
+     worth stating because it is not obvious: `flatBackgroundShare` counts
+     pixels within 12 units of the ground and a 20% bar is 44 units off it, so
+     the bars are INK at either tone, and every number this ground answers for
+     is the GEOMETRY's rather than the alpha's. 20% also keeps this mark
+     inside the 12-34% band the rest of the directory uses — the range that
+     still clears the ink line for a client whose derived neutrals sit closer
+     together than the bundled pair.
+
+     The accent is spent on ONE solid rule capping the field's head, not on a
+     diagonal band: a diagonal band is `headline-focus.html`'s signature, and
+     two archetypes sharing a signature is the defect this pass removes. */
   .cl-art {
     background-image:
-      repeating-linear-gradient(45deg,
-        var(--accent) 0 3px, transparent 3px 46px),
-      repeating-linear-gradient(45deg,
-        color-mix(in srgb, var(--fg) 20%, transparent) 0 2px,
-        transparent 2px 9px);
-    background-size: 100% 280px, auto;
+      linear-gradient(to bottom, var(--accent) 0 calc(10px * var(--ts, 1)), transparent 0),
+      repeating-linear-gradient(to bottom,
+        color-mix(in srgb, var(--fg) 20%, transparent) 0 6px,
+        transparent 6px 30px);
+    background-size: 100% 100%, auto;
     background-repeat: no-repeat, repeat;
     background-position: 0 0, 0 0;
   }
-  /* The alternative ground: the texture mirrored, plus a display-face numeral
-     bleeding off the start corner. OUTLINE ONLY — a filled numeral at any
-     tint that reads is a filled SHAPE, and every cell inside it then counts
-     as a drawn device; the budget goes into stroke CONTRAST instead, which
-     costs no coverage at all. */
+  /* The alternative ground: a display-face numeral bleeding off the start
+     corner, over a TIGHTER band rhythm — 4px bars every 20px, so the two
+     closers differ in the weight and the count of their bands as well as in
+     whether a numeral is present. Finer here on purpose: the numeral is the
+     thing to see on this variant, and a 6px bar competes with it. This used to be the same 135-degree hatch
+     the grid variant ran at 45, which is one mark at two angles: two
+     consecutive slides wearing it still read as one wallpaper, which is the
+     defect the variant exists to break.
+     OUTLINE ONLY on the numeral — a filled numeral at any tint that reads is
+     a filled SHAPE, and every cell inside it then counts as a drawn device;
+     the budget goes into stroke CONTRAST instead, which costs no coverage at
+     all. */
   body.gr-glyph .cl-art {
     background-image:
-      repeating-linear-gradient(135deg,
-        var(--accent) 0 3px, transparent 3px 46px),
-      repeating-linear-gradient(135deg,
-        color-mix(in srgb, var(--fg) 20%, transparent) 0 2px,
-        transparent 2px 9px);
+      linear-gradient(to bottom, var(--accent) 0 calc(10px * var(--ts, 1)), transparent 0),
+      repeating-linear-gradient(to bottom,
+        color-mix(in srgb, var(--fg) 22%, transparent) 0 4px,
+        transparent 4px 20px);
   }
   /* The guards. No takeaway, no field; and furniture that paints ink answers
      to the same rule, so the numeral goes with it. */
@@ -205,7 +261,25 @@
     margin-block-start: calc(28px * var(--ts, 1));
     padding-block: calc(40px * var(--ts, 1));
   }
-  .cl-wrap { display: flex; flex-direction: column; justify-content: flex-end; }
+  /* THE WRAP NEVER SHRINKS BELOW ITS OWN CONTENT, the same correctness rule
+     `headline-focus.html`'s `.copy` states at length and the one this file
+     was still breaking. With no `flex` declared it defaulted to `0 1 auto`,
+     so when `.cl-ask` grew the flex algorithm shrank this box under its
+     content and `.cl-field`'s `justify-content: flex-end` pushed the excess
+     out of the BLOCK-START edge — measured at `m` with the calibration's own
+     LONG body in the `cta` slot and a three-plate recap, the wrap rendered
+     105px above its own field; with that body in the `question` slot, 304px
+     above it, and `.cl-recap`, `.rc-strip`, `.rc-plate` and `.rc-n` all
+     rendered above y=0 (`.local/fx-cl-fit.mjs`).
+
+     At `flex: 0 0 auto` the box is exactly its content, so the fit question
+     is answered by the ladders below rather than by silent clipping. What
+     residual overflow remains still leaves through the block-start edge —
+     `.cl-field` stays `flex-end`, because the breathing room collecting under
+     the accent geometry at the top is this plate's composition — and
+     `probePage`'s block-start limb is what reports it. Overflow that cannot
+     be designed away must at least be visible. */
+  .cl-wrap { flex: 0 0 auto; display: flex; flex-direction: column; justify-content: flex-end; }
   /* ── THE ASK, AND THE BAND UNDER IT. ──
      The band is this archetype's drawn device: a filled, low-colour-count
      region of about a fifth of the frame, which is what carries a closer over
@@ -225,10 +299,14 @@
   }
   .cl-ask:has(.cl-question:not(:empty)), .cl-ask:has(.cl-cta:not(:empty)) {
     border-block-start: calc(6px * var(--ts, 1)) solid var(--accent);
+    /* The ask's band is ruled HORIZONTALLY, on the same axis as the field's
+       band stack above it — this plate has one direction and everything on it
+       obeys it. Fine here rather than architectural: the band is only 400px
+       tall and a 68px rhythm inside it would read as two stripes. */
     background-image:
-      repeating-linear-gradient(45deg,
+      repeating-linear-gradient(to bottom,
         color-mix(in srgb, var(--fg) 12%, transparent) 0 2px,
-        transparent 2px 9px),
+        transparent 2px 11px),
       linear-gradient(to top,
         color-mix(in srgb, var(--accent) 40%, transparent) 0%,
         color-mix(in srgb, var(--accent) 24%, transparent) 100%);
@@ -256,7 +334,7 @@
      against the real `--bg`) exactly zero ink in the bleed band. */
   .cl-recap:not(:empty) {
     background-image:
-      repeating-linear-gradient(45deg,
+      repeating-linear-gradient(to bottom,
         color-mix(in srgb, var(--fg) 12%, transparent) 0 2px,
         transparent 2px 11px),
       linear-gradient(162deg,
@@ -332,16 +410,39 @@
   /* The one accent moment above the ask. */
   .cl-rule { inline-size: calc(240px * var(--ts, 1)); block-size: calc(14px * var(--ts, 1)); background: var(--accent); margin-block: calc(40px * var(--ts, 1)) 0; }
 
+  /* ── THE ASK HAS A LADDER NOW, and it is the piece that was missing. ──
+     `.cl-ask` is `flex: 0 0 auto` with a 400px floor, so its height is its
+     copy's height and it takes that height from `.cl-field` — the elastic
+     middle holding the recap and the takeaway. Nothing bounded it.
+     `InstagramSlideCopySchema` puts no maximum on `body`, and
+     `slides-data.ts` routes a body with no '?' into `cta` and one with a '?'
+     into `question`, so the calibration's own 306-character LONG body is a
+     producible ask. Measured (`.local/fx-cl-fit.mjs`, real Chromium): it took
+     `.cl-ask` from 400px to 504px in the `cta` slot and to 989px in the
+     `question` slot at `l`, which left the field 234px for a 722px wrap.
+     Every other type block in this directory picks its size from its own
+     string's length; these two now do too, on the same `~15%` lower
+     thresholds at `l` that `quote-card.html`'s script explains. */
   .cl-question {
     font-family: var(--f-display); font-weight: 500; font-size: calc(52px * var(--ts, 1));
     line-height: 1.3; letter-spacing: -0.012em; text-wrap: balance; padding-block-end: 0.16em;
   }
+  .cl-question.small { font-size: calc(42px * var(--ts, 1)); line-height: 1.32; }
+  .cl-question.tiny { font-size: calc(34px * var(--ts, 1)); line-height: 1.36; }
+  /* The ladder's bottom step, and the case that needs it is the worst one the
+     schema admits: a 306-character body with a '?' in it, so it routes to the
+     question slot, at `l`, over a four-plate recap. At `tiny` the ask still
+     came to 490px and the wrap escaped its field by 47px; at `micro` the ask
+     is back on its 400px floor and the wrap clears by 101px. */
+  .cl-question.micro { font-size: calc(28px * var(--ts, 1)); line-height: 1.4; }
   .cl-question:empty { display: none; }
   .cl-cta {
     font-family: var(--f-body); font-weight: 500; font-size: calc(36px * var(--ts, 1));
     line-height: 1.45; color: color-mix(in srgb, var(--fg) 94%, transparent);
     max-inline-size: 860px; text-wrap: pretty;
   }
+  .cl-cta.small { font-size: calc(31px * var(--ts, 1)); line-height: 1.45; }
+  .cl-cta.tiny { font-size: calc(27px * var(--ts, 1)); line-height: 1.5; }
   .cl-cta:empty { display: none; }
 
   /* Standing brand furniture. The brand head fragment (`buildBrandHeadHtml`)
@@ -399,12 +500,45 @@
     // 97-character takeaway over a three-plate recap fits at `m` with 113px
     // of clearance under the eyebrow rail and overlaps it by 20px at `l`.
     // `s` keeps the `m` thresholds: a smaller scale never overflows.
+    //
+    // AND THEY MOVE WITH THE RECAP TOO, which is the second competitor for
+    // the same field. A recap strip takes 447-646px of the middle at `m`
+    // (`.local/fx-cl-fit.mjs`), so how much room the takeaway has depends on
+    // whether one is present as much as on the type scale. Measured: the
+    // 90-character takeaway took the `small` step (80px) and needed 798px of
+    // a 783px field with a three-plate recap under it — 15px over, on a plate
+    // every instrument in the tree called clean before `probePage` grew its
+    // block-start limb. One step down is 726px and fits.
+    //
+    // The ask's own two ladders are new here and are the same shape, on their
+    // own lengths. A long ask is what pushes the field down; a long takeaway
+    // is what fills it; both have to give.
     (function () {
-      var t = document.getElementById("takeaway");
-      var len = (t.textContent || "").trim().length;
       var big = document.body.classList.contains("ts-l");
-      if (len > (big ? 44 : 90)) t.className = "headline tiny";
-      else if (len > (big ? 30 : 46)) t.className = "headline small";
+      var recap = document.querySelector(".cl-recap");
+      // The recap's factor is MULTIPLICATIVE on whatever the scale already
+      // asked for, and it is 0.85 rather than the scale's own step because it
+      // is a different quantity: `l` grows every glyph on the plate by 18%,
+      // while a recap takes a fixed 447-646px out of the middle.
+      var r = recap !== null && recap.textContent.trim() !== "" ? 0.85 : 1;
+      var at = function (m, l) { return Math.round((big ? l : m) * r); };
+      var len = function (el) { return el === null ? 0 : (el.textContent || "").trim().length; };
+
+      var t = document.getElementById("takeaway");
+      // 90/44 and 46/30 are the measured pair this file already carried; only
+      // the recap factor is new.
+      if (len(t) > at(90, 44)) t.className = "headline tiny";
+      else if (len(t) > at(46, 30)) t.className = "headline small";
+
+      var q = document.querySelector(".cl-question");
+      if (len(q) > at(190, 160)) q.className = "cl-question micro";
+      else if (len(q) > at(120, 102)) q.className = "cl-question tiny";
+      else if (len(q) > at(60, 51)) q.className = "cl-question small";
+
+      var c = document.querySelector(".cl-cta");
+      if (len(c) > at(200, 170)) c.className = "cl-cta tiny";
+      else if (len(c) > at(110, 94)) c.className = "cl-cta small";
+
       window.__CAROUSEL_READY__ = true;
     })();
   </script>

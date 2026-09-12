@@ -400,24 +400,162 @@ export const OCCUPIED_SHARE_FLOOR: Readonly<Record<SlideRole, number>> = { cover
  * Both files now bind their field to the content that justifies it (see
  * `cover.html`'s header for the rule the whole directory keeps).
  *
- * ## 2026-09-11, third pass: the band, re-measured on the current templates
+ * ## 2026-09-12, fourth pass: THE GAP HAS CLOSED, AND THE FLOOR IS INSIDE IT
  *
- * The second pass's table was written against an intermediate state of the
- * directory and its summary — "a factor of 1.6 above the loudest type-only
- * plate and a factor of 2 below the quietest field-bearing one" — did not
- * survive the templates that shipped with it. Re-measured, the loudest
- * type-only plate was 9.0% (`headline_focus` at the reviewer's `l` type
- * scale, a case the old table never sampled because it only rendered `m`) and
- * the quietest field-bearing one 13.5%: a 1.0-point margin above and a 1.35x
- * factor below, neither of them the stated number. A comment that is wrong
- * about the gap is worse than no comment, because the gap is the entire
- * argument for the constant.
+ * Every earlier pass sampled the type-only family thinly — one or two copy
+ * lengths, one ground variant, and (before the third pass) only the `m` type
+ * scale. The type-only CEILING is the number this constant has to clear, so a
+ * thin sample there is the one place a sweep cannot afford to be thin: a
+ * single un-rendered combination is all it takes to put the floor inside the
+ * band it claims to sit above. Swept exhaustively instead — both bundled
+ * type-only archetypes x three copy lengths x three type scales x both ground
+ * variants x both slide-index parities, plus Hebrew, the bars device and the
+ * empty/hollow guards, against the field-bearing family at all three scales —
+ * that is exactly what had happened.
  *
- * So: the full sweep, every bundled archetype at every type scale, both
- * ground variants, Hebrew, the pale-accent kit and the empty/hollow guards —
- * 56 plates through `measureSlidePng` over real Chromium
- * (`.local/probe-template.mjs`, 2026-09-11, against this working tree). Every
- * row, sorted, with nothing omitted between the two ends of the gap:
+ * The measurement, through the repo's own `measureSlidePng` over real
+ * Chromium (2026-09-12, this working tree). Only the two ends are reproduced;
+ * the rows in the middle are uncontested:
+ *
+ *   ── the loud end of TYPE AND TEXTURE ONLY ──
+ *   headline_focus, short copy, `l`, glyph ground          9.1-9.2%
+ *   headline_focus + a three-row bars device, `l`              9.4%
+ *   headline_focus, medium copy, `l`, glyph ground       10.7-10.8%
+ *   slide.html heroless, long copy, `l`, index even      10.8%
+ *   headline_focus, long copy, `l`, glyph ground         11.0-11.1%
+ *   slide.html heroless, long copy, `l`, index odd            11.7%  <- ceiling
+ *   ── the gap, such as it is: 11.7% to 11.9% ──
+ *   comparison_card, Hebrew, `s`                              11.9%  <- floor
+ *   comparison_card, `s`                                      13.4%
+ *   comparison_card, Hebrew, `m`                              14.2%
+ *   cover, colour field, no hero, `l`                         14.6%
+ *
+ * **0.10 no longer sits in a gap. It sits 1.7 points BELOW the type-only
+ * ceiling**, and EIGHT type-only plates now measure at or above it — every one
+ * of them at the reviewer's `l` type scale:
+ *
+ *   10.7  headline_focus medium `l` glyph      11.0  headline_focus long `l` glyph
+ *   10.8  headline_focus medium `l` glyph i04  11.1  headline_focus long `l` glyph i04
+ *   10.8  slide.html long `l` grid i04         11.7  slide.html long `l` grid
+ *   10.8  slide.html long `l` glyph i04        11.7  slide.html long `l` glyph
+ *
+ * That is precisely the condition the move from 0.03 to 0.10 existed to end:
+ * whether an all-type plate is judged to "carry a device" is once again
+ * decided by how large the type happens to be rather than by whether anything
+ * was drawn. At `m` the loudest type-only plate is 8.3% and at `s` it is 5.7%,
+ * so the defect is localised to `l` — which is also why three passes missed
+ * it.
+ *
+ * THE CONSTANT IS NOT THE THING TO MOVE, and the attribution says why. A bare
+ * document painting nothing but this ground and the same headline/body type
+ * measures 5.8% at `l` (2.7% at `s`, 3.9% at `m`) — typography alone does NOT
+ * clear the floor. `slide.html` heroless at `l` measures 11.7%, so about 5.9
+ * of those points are the template's own ground layers. The plates are the
+ * movable part, exactly as the standing rule requires: the `l`-scale grounds
+ * on `slide.html` and on `headline_focus`'s glyph variant have to give back
+ * ~2 points to restore any gap at all, and ~4 to restore one worth the name.
+ * Raising 0.10 to clear 11.7% would be manufacturing the margin out of the
+ * constant, and would re-admit every plate the floor exists to refuse.
+ *
+ * ## 2026-09-12, fifth pass: THE GROUNDS GAVE THE POINTS BACK
+ *
+ * They did, and the cause turned out to be one line of CSS repeated in two
+ * files rather than a density that needed tuning. Every length in both
+ * `l`-scale offenders — `headline-focus.html`'s dash tile and its numeral,
+ * `slide.html`'s dot tile — was written `calc(Npx * var(--ts))`, so the
+ * reviewer's TYPE scale resized the GROUND along with the copy. A measurement
+ * cell is 4 DESIGN px and does not scale: at `--ts: 1.18` a 2.6px dash becomes
+ * 3.07px, 77% of a cell's rows instead of 65%, and where the mark crosses a
+ * glyph stem the two SUM past the 48-of-64 coverage that makes a cell count as
+ * drawn. The marks are now in fixed px in both files (each file's own note
+ * carries the argument and the per-scale numbers), `slide.html`'s heroless
+ * statement gained the length ladder it was the only archetype missing, and
+ * both grounds' contrast was re-chosen by READING them at feed size rather
+ * than by the metric — `headline-focus.html`'s dash screen down from 34% of
+ * `--fg` to 22%, `slide.html`'s dot screen up from 22% to 30% (it had become
+ * invisible, which is a defect in the other direction). The measurement is
+ * indifferent to both moves: a mark pixel is INK at 18 units off the ground,
+ * and 22% of `--fg` is 47 units while 30% is 64.
+ *
+ * `slide.html`'s heroless mark also moved from the whole plate to a FIELD
+ * with real margins in the same pass, which is why its rows below sit a
+ * little differently from the fourth-pass table: see that file's own note for
+ * the reason (its `largestEmptyRectShare` was a constant 1.5% on every
+ * heroless render it could produce) and for the dot tile's phase arithmetic.
+ *
+ * The same exhaustive sweep, re-run on this tree (`.local/band-sweep.mjs`,
+ * 141 plates: both type-only archetypes x three copy lengths x three type
+ * scales x both ground variants x both index parities, plus Hebrew, the bars
+ * device and the empty/hollow guards, against the field-bearing family at all
+ * three scales):
+ *
+ *   ── TYPE AND TEXTURE ONLY, and NO device slot ──
+ *   slide.html heroless, long, `s`, index odd / even     3.4 / 4.5%
+ *   headline_focus, long, `s`, grid / glyph              4.9 / 5.2%
+ *   slide.html heroless, long, `m`, index odd / even     5.1 / 5.8%
+ *   headline_focus, long, `m`, grid / glyph              6.7 / 6.9%
+ *   headline_focus, long, `l`, grid / glyph              7.0 / 7.1%
+ *   slide.html heroless, long, `l`, index odd                  7.4%
+ *   slide.html heroless, long, `l`, index even                 7.9%  <- ceiling
+ *   ── the gap: 7.9% to 11.9%, and 0.10 is inside it ──
+ *   comparison_card, Hebrew, `s`                              11.9%  <- floor
+ *   comparison_card, `s` / Hebrew `m`                   13.4 / 14.2%
+ *   comparison_card, `l` / `m` / Hebrew `l`             15.6-16.1%
+ *   cover, colour field, no hero, `s` / `m` / `l`       18.0-20.8%
+ *   stat_callout, quote_card, closer, list_takeaway     21.5-44.0%
+ *   a full-bleed photograph                                  ~100%
+ *
+ * 0.10 is 2.1 points above the type-only ceiling (a factor of 1.27) and 1.9
+ * points below the quietest field-bearing plate (a factor of 1.19). That is
+ * a real gap rather than a generous one, and the row that keeps it narrow at
+ * the top is the same one it always was — see the note on `comparison_card`
+ * below.
+ *
+ * A THIRD FAMILY, AND THE SUMMARY ABOVE DELIBERATELY EXCLUDES IT. A
+ * `headline_focus` carrying a three-row bars device measures 5.1 / 7.1 / 9.4%
+ * at `s` / `m` / `l` — it crosses most of the gap without crossing the floor.
+ * `band-sweep.mjs` used to count it in the TYPE-ONLY family, so the script
+ * printed a ceiling of 9.4% and a margin of 0.6 points while this comment
+ * printed 7.7% and 2.3 — the same number arrived at two ways, which is a
+ * comment and a tool disagreeing about the fact they are both describing. The
+ * script now classifies it as its own `device` family and reports all three
+ * bands, so "loudest TYPE-ONLY plate" there and "ceiling" here are the same
+ * row. Run it and the two agree line for line.
+ *
+ * WHY IT IS ITS OWN FAMILY RATHER THAN PART OF THE CEILING: this plate's
+ * device slot is FILLED. Clause E asks whether a slide carries imagery or a
+ * drawn device, and this one does, so clause E accepting it at a positional
+ * role is the clause working rather than failing — it does not belong in a
+ * ceiling that exists to describe plates carrying NOTHING but type.
+ *
+ * WHAT THAT LEAVES OPEN, SAID PLAINLY RATHER THAN BURIED: at 9.4% the bars
+ * plate is still 0.6 points UNDER the floor, so a slide whose device slot is
+ * filled with bars is refused at a positional role anyway — the metric
+ * declines to score strokes and labels as drawn area (see the `comparison_card`
+ * note below, which is the same physics). That is a false refusal and it is
+ * the one this band cannot fix by moving 0.10: raising the floor to admit it
+ * re-admits every type-only plate the floor exists to refuse. The fix, when
+ * somebody wants it, is in `dv-bars-block` — filled bar tracks rather than
+ * outlined ones — not here. No guard in the suite requires this plate to be
+ * refused, and the cover sweep renders `headline_focus` with an EMPTY device
+ * slot precisely so that what it measures is the ground.
+ *
+ * The three things this must not break all hold now. A cover or closer with
+ * copy on it clears the floor (18.0-20.8% for a photoless cover at s/m/l, and
+ * that figure is now a constant of the template rather than a function of how
+ * little copy arrived — see `cover.html`'s third-pass note). A hero that
+ * contributed no pixels is still caught. And `headline_focus` judged at the
+ * cover role — the pixel half of `default:cover-carries-device` — reports
+ * `no-device` at EVERY type scale on EITHER ground: replayed through
+ * `assembleSlidesData` + `measureSlidePng` + `checkInterestFloor` + the
+ * shipped `probePage`, the six combinations measure 4.9 / 6.7 / 7.0% on the
+ * grid ground and 5.2 / 6.9 / 7.1% on the glyph ground at s / m / l, and all
+ * six report the clause.
+ *
+ * Kept for the record, the THIRD-PASS sweep (2026-09-11, 56 plates, an
+ * intermediate state of the directory that never shipped). It is the evidence
+ * that this band moves when the grounds move, which is the whole reason it
+ * has to be re-measured rather than remembered:
  *
  *   ── TYPE AND TEXTURE ONLY (no field, no photograph) ──
  *   every slot empty (cover / closer / headline_focus)   0.2%
@@ -452,29 +590,31 @@ export const OCCUPIED_SHARE_FLOOR: Readonly<Record<SlideRole, number>> = { cover
  *   list_takeaway (rows panel)                     37.5-44.1%
  *   a full-bleed photograph (dark / light plate)   58.0/64.2%
  *
- * The band is bipartite with nothing between 7.1% and 13.5%, and 0.10 sits
- * 2.9 points above the loudest type-only plate (a factor of 1.41) and 3.5
- * points below the quietest field-bearing one (a factor of 1.35). That is
- * the honest statement of the margin: it is not symmetric, it is not the 1.6x
- * and 2x the second pass claimed, and it is real.
+ * At that intermediate state the band was bipartite with nothing between 7.1%
+ * and 13.5%. The fourth-pass sweep above is the state that produced the
+ * defect, and the fifth-pass sweep is the state of this tree — that one is the
+ * one to read.
  *
- * TWO ROWS THAT LOOK LIKE ANOMALIES AND ARE NOT.
- * `headline_focus + a three-row bars device` is the loudest type-only row at
- * 7.1% and it is carrying a rendered device — the bars are strokes and labels
- * rather than filled area, so the metric correctly declines to score them as
- * one. That is why the constant is stated as a floor on IMAGERY OR DEVICE
- * SHARE and not as "does this slide have a device slot": a device the pixels
- * cannot see is not one. And `comparison_card` at 13.5-15.6% is the quietest
- * field-bearing archetype because its two cards are outlined rather than
- * filled; it is also the row that sets this constant's ceiling, so a future
- * revision that lightens those cards moves the floor, not the other way round.
+ * TWO ROWS THAT LOOK LIKE ANOMALIES AND ARE NOT, in every sweep.
+ * `headline_focus + a three-row bars device` sits high in the TYPE-ONLY half
+ * while carrying a rendered device — the bars are strokes and labels rather
+ * than filled area, so the metric correctly declines to score them as one.
+ * That is why the constant is stated as a floor on IMAGERY OR DEVICE SHARE
+ * and not as "does this slide have a device slot": a device the pixels cannot
+ * see is not one. And `comparison_card` is the quietest field-bearing
+ * archetype because its two cards are outlined rather than filled; it is the
+ * row that sets this constant's ceiling, so a revision that lightens those
+ * cards lowers the ceiling rather than raising the floor.
  *
- * The three things this must not break are all still true: a cover or closer
- * WITH COPY ON IT clears the floor with 1.4-6.4x of margin; `headline_focus`
- * judged at the cover role still reports `no-device`, which is the pixel half
- * of `default:cover-carries-device`; and a hero that contributed no pixels is
- * still caught. What changed in the second pass is that an EMPTY cover now
- * fails it too.
+ * WHAT WOULD PUT THE FLOOR BACK INSIDE THE BAND, stated so the next revision
+ * can see it coming: any change that makes a type-only plate's GROUND cover
+ * more of a measurement cell. The two that did it were expressed in `--ts`;
+ * a heavier stroke weight on a display face does it too (`headline-focus.html`
+ * records measuring 3.9% of drawn device from its typography alone at weight
+ * 600, which is why it sets 500). The check is one command —
+ * `.local/band-sweep.mjs` prints the two ceilings and names every type-only
+ * plate at or above the floor — and the guard that fails in CI if it is
+ * skipped is the cover sweep in `interest-floor-calibration.test.ts`.
  */
 export const IMAGERY_OR_DEVICE_FLOOR = 0.1;
 

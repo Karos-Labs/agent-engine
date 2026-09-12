@@ -691,6 +691,13 @@ const BADGE_VARIANT_CSS: Record<BadgeStyle, string> = {
     "  border: 1px solid var(--accent); color: var(--accent);",
     "  padding: 6px 14px; border-radius: 4px; letter-spacing: 0.14em;",
     "}",
+    // The badge follows the template's `--badge-ink` for the same reason the
+    // base rule above does — a bracketed badge in the accent is just as
+    // invisible on an accent ramp head as a plain one (1.51:1, measured). The
+    // border moves with it so the variant still reads as one object. Where no
+    // template declares the token, both fall back to the accent and the
+    // variant is unchanged.
+    ".brand-badge { border-color: var(--badge-ink, var(--accent)); color: var(--badge-ink, var(--accent)); }",
     '.eyebrow::before, .kicker::before, .brand-badge::before { content: "{ "; }',
     '.eyebrow::after, .kicker::after, .brand-badge::after { content: " }"; }',
   ].join("\n"),
@@ -753,7 +760,28 @@ export function buildBrandHeadHtml(tokens: BrandRenderTokens, options: { logo?: 
       ".brand-badge {",
       "  position: absolute; top: 56px; inset-inline-start: var(--mx, 64px); z-index: 6;",
       "  font-family: var(--f-mono); font-weight: 600; font-size: 19px;",
-      "  letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent);",
+      // THE INK IS THE TEMPLATE'S TO NAME, AND THIS LINE IS WHY.
+      //
+      // This block lands AFTER the template's own <style> (`composeDocument`
+      // splices the brand head last, so a kit beats a template on a
+      // specificity tie — the whole point of a brand kit). A bare
+      // `color: var(--accent)` here therefore won against every template's
+      // own badge rule in every branded run, and on `cover.html` — the one
+      // template whose badge stands on an ACCENT ramp head rather than on the
+      // plate's dark ground — that painted accent on accent: measured 1.51:1
+      // on the ramp head and 1.63:1 over a light photograph, orange on orange
+      // and unreadable at the masthead, while the template's own fix sat
+      // inert underneath it (`.local/fx-badge-kit.mts` renders the document
+      // production composes, with and without this fragment; the badge note
+      // in `cover.html` carries the whole table).
+      //
+      // `var(--badge-ink, var(--accent))` keeps the kit in charge of
+      // everything a kit should own and lets the template name the one thing
+      // only the template knows: what colour the badge's own ground is.
+      // Seven of the eight bundled templates declare no `--badge-ink`, so the
+      // fallback resolves to `var(--accent)` and their badges are
+      // byte-identical to before.
+      "  letter-spacing: 0.14em; text-transform: uppercase; color: var(--badge-ink, var(--accent));",
       "}",
     ].join("\n"),
   );
