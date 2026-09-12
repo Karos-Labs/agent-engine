@@ -25,6 +25,7 @@ import {
 } from "../src/workflow/style-lock.js";
 import { InstagramSlideCopySchema, type ImageSelection, type InstagramCopyOutput, type InstagramSlideCopy } from "../src/workflow/types.js";
 import { VisualDirectionSchema, type VisualDirection } from "../src/workflow/visual-direction.js";
+import { syntheticPhotograph } from "./synthetic-photograph.js";
 import { isChromiumInstalled } from "./test-helpers.js";
 
 /**
@@ -369,49 +370,29 @@ function chunk(type: string, data: Buffer): Buffer {
   return Buffer.concat([length, typed, crc]);
 }
 
-/**
- * A synthetic PHOTOGRAPH: a two-axis hue ramp with an ordered dither on top,
- * 8-bit truecolour, filter None on every row.
+/*
+ * THE HERO FIXTURE COMES FROM `./synthetic-photograph.js`, AND THIS FILE USED
+ * TO CARRY ITS OWN.
  *
- * It has to be a real photographic plate rather than the solid magenta the
- * calibration test uses, because the two numbers under test —
- * `imageryShare` (which needs per-cell colour variety AND tonal spread) and
- * `quantisedColourCount` (which needs eight 5-bit colours each holding half a
- * percent of the frame) — are exactly the numbers a flat fill cannot produce
- * and a real photo can. Deterministic: no random source, so a failure here
- * is reproducible.
+ * The private copy had the right intent — its note said the plate "has to be
+ * a real photographic plate … because `imageryShare` needs per-cell colour
+ * variety AND tonal spread" — and two implementation defects that only a real
+ * Chromium render could expose, which is why it survived until this branch's
+ * first CI run: a two-axis ramp carrying an ordered dither of ±5, generated at
+ * 270x360 and blown up 8x to the screenshot by `object-fit: cover`. Bilinear
+ * smoothing removes what little per-cell variety ±5 provides, so the plate
+ * landed in the `graphic` bucket and measured **0.3% imagery** against this
+ * file's own `FULL_BLEED_IMAGERY_SHARE` of 0.5, while `imageryOrDeviceShare`
+ * passed on the strength of the same pixels counted as a device.
+ *
+ * The shared helper exists for exactly this and documents the measurements
+ * (its table: a small fixture upscaled reads 2.9% imagery, the same generator
+ * at canvas size reads 66.7%). Generated at `CANVAS.w`/`CANVAS.h` per its
+ * note — the grain has to survive the 2x screenshot scale, not be created by
+ * it. Nothing about the treatments under test changed; the fixture was never
+ * a photograph by the measurement's definition, and the measurement is the
+ * thing this file is here to trust.
  */
-function syntheticPhotograph(width: number, height: number): Buffer {
-  const stride = width * 3;
-  const raw = Buffer.alloc(height * (stride + 1));
-  for (let y = 0; y < height; y++) {
-    const rowStart = y * (stride + 1);
-    raw[rowStart] = 0; // filter: None
-    for (let x = 0; x < width; x++) {
-      const u = x / (width - 1);
-      const v = y / (height - 1);
-      const dither = ((x * 7 + y * 13) % 11) - 5;
-      const r = Math.max(0, Math.min(255, Math.round(40 + 190 * u + dither)));
-      const g = Math.max(0, Math.min(255, Math.round(30 + 170 * v + dither)));
-      const b = Math.max(0, Math.min(255, Math.round(200 - 150 * ((u + v) / 2) + dither)));
-      const at = rowStart + 1 + x * 3;
-      raw[at] = r;
-      raw[at + 1] = g;
-      raw[at + 2] = b;
-    }
-  }
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(width, 0);
-  ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8;
-  ihdr[9] = 2; // truecolour
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk("IHDR", ihdr),
-    chunk("IDAT", zlib.deflateSync(raw, { level: 1 })),
-    chunk("IEND", Buffer.alloc(0)),
-  ]);
-}
 
 // ─────────────────────────────────────────────────────────────────────────
 // The grade's colour maths, measured through the REAL slide metrics
@@ -746,7 +727,7 @@ describe.skipIf(!isChromiumInstalled())("a treated photograph is still a photogr
     outDir = path.join(workDir, "out");
     heroPath = path.join(workDir, "hero.png");
     await fs.mkdir(outDir, { recursive: true });
-    await fs.writeFile(heroPath, syntheticPhotograph(270, 360));
+    await fs.writeFile(heroPath, syntheticPhotograph(CANVAS.w, CANVAS.h));
   }, 120_000);
 
   afterAll(async () => {
