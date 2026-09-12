@@ -14,6 +14,12 @@ export const LEGACY_ARCHETYPE_IDS: ReadonlySet<string> = new Set([
   "comparison_card",
   "list_takeaway",
   "headline_focus",
+  // Phase 2, item M: `cover` and `closer` ship as bundled files in exactly
+  // the same per-run directory, so the collision guard has to know them or a
+  // `custom_`-prefixed archetype could overwrite one mid-run — the hazard
+  // this set exists for, now with two more files to protect.
+  "cover",
+  "closer",
 ]);
 
 /**
@@ -57,6 +63,40 @@ function placeholderKeys(bodyHtml: string): string[] {
   return [...bodyHtml.matchAll(/\{\{([A-Za-z0-9_]+)\}\}/g)].map((m) => m[1]!);
 }
 
+/** Every `{{html:key}}` / `{{image:key}}` name a fragment reaches for, with its form, so a refusal can name the offending slot rather than the whole class. */
+function privilegedPlaceholders(bodyHtml: string): Array<{ form: "html" | "image"; key: string }> {
+  return [...bodyHtml.matchAll(/\{\{(html|image):([A-Za-z0-9_]+)\}\}/gi)].map((m) => ({
+    form: m[1]!.toLowerCase() as "html" | "image",
+    key: m[2]!,
+  }));
+}
+
+/**
+ * The OPT-IN half of the privileged-slot contract (Phase 2, item N gate 3).
+ *
+ * `{{html:...}}` and `{{image:...}}` are the renderer's own privileged
+ * substitution forms — raw unescaped markup and a bounds-checked local file
+ * path — and a run-authored `custom` archetype must never reach for either
+ * (see `assertSafeMarkup`'s doc comment). A Template Studio cover, though,
+ * cannot exist without `{{image:hero}}`, and a studio template that carries a
+ * number device cannot exist without `{{html:device}}`: the ground and the
+ * device fragment are BUILT BY CODE, and the slot is how code hands its own
+ * output to the document.
+ *
+ * So the caller states, per template, exactly which privileged names it is
+ * prepared to fill — `{ allowImageSlots: ["hero"] }` only when that template
+ * declared an image ground, `{ allowHtmlSlots: ["device"] }` only when it
+ * declared that slot. Passing NOTHING keeps today's stricter contract, which
+ * is what every run-authored custom archetype keeps doing: the permission is
+ * a decision at one call site, never a property of the markup.
+ */
+export interface SafeMarkupOptions {
+  /** `{{image:<name>}}` names this template is allowed to read. Anything else is still refused. */
+  allowImageSlots?: readonly string[];
+  /** `{{html:<name>}}` names this template is allowed to read. Anything else is still refused. */
+  allowHtmlSlots?: readonly string[];
+}
+
 /**
  * The machine-enforced half of a custom archetype's safety boundary — the
  * other half is that `promoteTemplate` is only ever reachable from a human
@@ -80,11 +120,18 @@ function placeholderKeys(bodyHtml: string): string[] {
  * slots, reserved for first-party fragment builders and image selection
  * respectively; letting a model reach for either would reopen exactly the
  * injection surface `fillTemplate`'s escaped/raw split exists to close.
+ *
+ * `options` is the ONE way past that (see `SafeMarkupOptions`), and it is
+ * per-call rather than per-fragment: a Template Studio template whose ground
+ * is an image opts `hero` in explicitly, while a run-authored custom
+ * archetype passes no options at all and keeps the stricter contract
+ * verbatim.
  */
 export function assertSafeMarkup(
   bodyHtml: string,
   css: string,
   slots: readonly string[],
+  options: SafeMarkupOptions = {},
 ): { ok: true } | { ok: false; reason: string } {
   if (css.includes("<")) {
     return { ok: false, reason: "css must not contain '<' — CSS never legitimately needs it, and it is how a value could break out of the <style> block composeDocument splices it into" };
@@ -102,8 +149,22 @@ export function assertSafeMarkup(
   if (hasDangerousUrlScheme(bodyHtml)) {
     return { ok: false, reason: "bodyHtml must not contain 'javascript:', '@import', or 'url('" };
   }
-  if (/\{\{(?:html|image):/i.test(bodyHtml)) {
-    return { ok: false, reason: "bodyHtml must not use {{html:...}} or {{image:...}} — those are reserved, first-party-only substitution forms" };
+  const allowedImageSlots = new Set(options.allowImageSlots ?? []);
+  const allowedHtmlSlots = new Set(options.allowHtmlSlots ?? []);
+  for (const { form, key } of privilegedPlaceholders(bodyHtml)) {
+    const allowed = form === "image" ? allowedImageSlots : allowedHtmlSlots;
+    if (!allowed.has(key)) {
+      const option = form === "image" ? "allowImageSlots" : "allowHtmlSlots";
+      const permitted = [...allowed];
+      return {
+        ok: false,
+        reason:
+          `bodyHtml uses {{${form}:${key}}}, a reserved first-party-only substitution form. ` +
+          (permitted.length > 0
+            ? `This template opted in to ${option}: ${permitted.join(", ")} — "${key}" is not one of them.`
+            : `Only a caller that fills the slot itself may opt in via ${option}, and this one did not.`),
+      };
+    }
   }
 
   const allowed = new Set([...slots, "kicker", "dir"]);
@@ -129,11 +190,37 @@ export function assertSafeMarkup(
  * harness's to write, not the model's.
  */
 export function buildCustomArchetypeDocument(bodyHtml: string): string {
+  return buildTemplateShell("instagram-agent custom archetype", bodyHtml);
+}
+
+/**
+ * The same code-owned shell, for a Template Studio row (Phase 2, item N).
+ *
+ * The studio's designer agent authors a `bodyHtml` fragment and a stylesheet
+ * — never a document, and never the ready-flag script. That split is not
+ * style: `publish.renderCarousel` waits on `window.__CAROUSEL_READY__`
+ * before it screenshots, so a model that forgot the flag would hang the
+ * render, and one that set it too early would screenshot an unpainted page.
+ * Neither is a content judgment a validation gate could make, so the flag is
+ * never the model's to write.
+ *
+ * Deliberately a separate export from `buildCustomArchetypeDocument` rather
+ * than a shared alias: the two differ in provenance (a run's one-off
+ * proposal vs a stored, human-approvable asset), the trace names which one
+ * built a document, and a future divergence in the shell — a studio row is
+ * allowed an `{{image:hero}}` ground, a custom archetype is not — has a
+ * place to land that does not touch the run-authored path.
+ */
+export function buildStudioTemplateDocument(bodyHtml: string): string {
+  return buildTemplateShell("instagram-agent studio template", bodyHtml);
+}
+
+function buildTemplateShell(title: string, bodyHtml: string): string {
   return `<!doctype html>
 <html lang="en" dir="{{dir}}">
 <head>
 <meta charset="utf-8" />
-<title>instagram-agent custom archetype</title>
+<title>${title}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -161,7 +248,14 @@ export function buildCustomArchetypeDocument(bodyHtml: string): string {
 </head>
 <body class="ts-{{fontScale}} ta-{{textAlign}}">
 <div class="brand-badge">{{seriesBadge}}</div>
-<div class="brand-handle">{{brandHandle}}</div>
+<!-- The handle slot is bidi-ISOLATED, the same way the bundled archetypes do
+     it. An @handle, a URL and a #hashtag are LTR strings whose leading
+     character is a bidi neutral, so inside a Hebrew or Arabic document they
+     take the paragraph's own RTL embedding level and lay out as "karoslabs@".
+     dir on the <bdi> rather than on the <div>, because the div's own
+     inset-inline-start would re-resolve with it and move the watermark to
+     the opposite corner. -->
+<div class="brand-handle"><bdi dir="ltr">{{brandHandle}}</bdi></div>
 ${bodyHtml}
 <script>
   window.__CAROUSEL_READY__ = true;

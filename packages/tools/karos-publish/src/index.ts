@@ -10,6 +10,7 @@ export * from "./draft.js";
 export * from "./schedule.js";
 export * from "./status.js";
 export * from "./render-carousel.js";
+export * from "./slide-metrics.js";
 
 /**
  * `mediaStore`, when supplied (wire it via `GCS_MEDIA_BUCKET` at your

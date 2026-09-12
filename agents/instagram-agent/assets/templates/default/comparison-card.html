@@ -42,9 +42,29 @@
     --bg: #17181C;
     --fg: #F4F2EC;
     --accent: {{accentColor}};
+    /* THE WASH TONE, and it is a mix rather than the accent itself.
+       A ground wash has to land in the measurement's 12-18 band — visible
+       tone that is not a mark — for EVERY accent the palette walk admits,
+       and the accent alone cannot do that. The only gate on --accent is
+       ACCENT_GROUND_CONTRAST_FLOOR = 3 against the ground, so a dark accent
+       sits ~92 units from the bundled ground and a pale one ~159: the same
+       14% alpha that measures 12.9 on the first measures 22.3 on the second,
+       which is INK. Rendered with a pale kit every template in this
+       directory then put ink in the 8px bleed band (clippedEdgeShare 0.5-0.7%
+       against a 0.4% ceiling) and counted its own wash as content.
+       Mixing the accent halfway into the foreground compresses that spread:
+       the mix is ~170 units from the ground on a dark accent and ~195 on a
+       pale one, so 8% of it is 13.6 and 15.6 — inside the band on both, with
+       the accent's hue still in it. */
+    --wash: color-mix(in srgb, var(--accent) 45%, var(--fg));
     --accent-ink: #141414;
-    --line: color-mix(in srgb, var(--fg) 14%, transparent);
-    --card: color-mix(in srgb, var(--fg) 3%, transparent);
+    --line: color-mix(in srgb, var(--fg) 26%, transparent);
+    /* 8%, not 3%. At 3% of the foreground a card sits 6 units off the ground
+       — inside the measurement's own ground tolerance, and invisible to a
+       reader on a phone. 8% is 17 units: a surface you can see, and still
+       under the 18-unit ink line, so the quiet side of the comparison stays
+       quiet while the accented side carries the argument. */
+    --card: color-mix(in srgb, var(--fg) 8%, transparent);
     --f-display: 'Fraunces', Georgia, 'Times New Roman', serif;
     --f-body: 'Inter', system-ui, -apple-system, sans-serif;
     --f-mono: 'IBM Plex Mono', ui-monospace, monospace;
@@ -66,35 +86,117 @@
   body {
     position: relative; overflow: hidden; background: var(--bg); color: var(--fg);
     font-family: var(--f-body);
-    /* Centred, not pinned at legacy's fixed offsets — see
+    /* Distributed, not pinned at legacy's fixed offsets — see
        `stat-callout.html`'s note. Here the variable is how long each side's
        body copy runs, which changes the cards' height. */
-    display: flex; flex-direction: column; justify-content: center;
-    padding: 0 var(--mx);
+    display: flex; flex-direction: column; justify-content: space-between;
+    padding: 96px var(--mx) 96px;
   }
 
-  /* `inset-inline-end`, not `right` — see `stat-callout.html`'s note. */
-  .eyebrow {
-    position: absolute; top: 56px; inset-inline-end: var(--mx); z-index: 4;
-    font-family: var(--f-mono); font-weight: 500; font-size: calc(19px * var(--ts, 1));
-    letter-spacing: 0.2em; text-transform: uppercase; color: var(--accent);
+  /* ── L1: the tonal wash, full bleed, inside the 12-18 band. A pixel is
+        GROUND within 12 of the ground colour and INK beyond 18, so a wash
+        between the two is visible tone that is not a mark: it may reach the
+        frame edge without putting ink in the band `clippedEdgeShare` reads,
+        and it takes the plate off "flat". ── */
+  .ground {
+    position: absolute; inset: 0; z-index: 0;
+    background-image: linear-gradient(188deg, transparent 54%, color-mix(in srgb, var(--wash) 8%, transparent) 100%);
   }
+  /* ── THERE IS NO L2 ON THIS PLATE ANY MORE, and that is the point. ──
+     A full-bleed texture inset 16px used to paint ink in every cell of the
+     frame, which made `occupiedShare` and `largestEmptyRectShare` constants:
+     every ground-bearing template in this directory reported the same 1.5%
+     largest empty rectangle with the full copy on it and with every slot
+     empty. The texture now lives only on the two cards, which are the region
+     the composition actually occupies — see `cover.html`'s header for the
+     rule and `headline-focus.html`'s for the pitch. ── */
+
+  .cmp-top { position: relative; z-index: 3; flex: 0 0 auto; }
+  /* `inline-block` so a client's `pill`/`brackets` badge variant wraps the
+     words rather than painting a full-measure bar. */
+  .eyebrow {
+    display: inline-block;
+    font-family: var(--f-mono); font-weight: 600; font-size: calc(22px * var(--ts, 1));
+    letter-spacing: 0.22em; text-transform: uppercase; color: var(--accent);
+  }
+  .eyebrow:empty { display: none; }
+  .cmp-rail { block-size: 2px; background: color-mix(in srgb, var(--fg) 48%, transparent); margin-block-start: calc(24px * var(--ts, 1)); }
 
   .cmp-head {
     z-index: 3;
     font-family: var(--f-display); font-weight: 600; font-size: calc(66px * var(--ts, 1));
     line-height: 1.3; letter-spacing: -0.012em; text-wrap: balance;
+    margin-block-start: calc(40px * var(--ts, 1)); padding-block-end: 0.12em;
   }
   .cmp-head.small { font-size: calc(52px * var(--ts, 1)); }
 
   .cmp-row {
-    margin-top: 72px; z-index: 3;
+    /* `1 1 auto`, so the cards STRETCH into whatever the head and the footnote
+       leave them. Hugging their content left a short comparison sitting in the
+       middle of a mostly empty plate — 42% occupied against a cover role's
+       floor of 42%, which is not a margin. */
+    position: relative; z-index: 3; flex: 1 1 auto; min-block-size: 0;
+    /* CAPPED, for the reason `stat-callout.html`'s slab is. Uncapped, the
+       cards took 878px for ~250px of content: a 28%-tall band of empty tint
+       above each label and another under each body, inside the region that
+       supplies this archetype's device score. Capped at 720px — with the
+       label and the body set larger to meet it — the same plate carries about
+       half that, and the space the cap gives back becomes two even gaps on
+       the ground rather than one hole. */
+    max-block-size: calc(720px * var(--ts, 1));
     display: flex; gap: 22px; align-items: stretch;
+    margin-block: calc(44px * var(--ts, 1));
   }
+  /* The two cards are the archetype's device, so they have to be visible
+     surfaces rather than a 3% tint nobody can see. Both are GRADED and
+     TEXTURED rather than flat-filled: `measureSlidePng` reads the slide's
+     ground colour off the modal FLAT cell, so a pair of large flat panels can
+     out-vote the real ground and be measured AS it, after which every dark
+     pixel at the frame edge counts as clipped ink. */
   .cmp-col {
+    /* The cards STRETCH to the row, and their content is optically centred
+       inside them. Top-aligned content in a stretched card left a column of
+       dead tint under every label — the hole this rework exists to close,
+       painted brown — while letting the cards hug their content left the
+       plate itself half empty. Centring is the composition that holds at
+       both extremes of copy length. */
     flex: 1 1 0; min-width: 0;
-    border: 1px solid var(--line); border-radius: 6px;
-    background: var(--card); padding: 44px 40px;
+    display: flex; flex-direction: column; justify-content: center;
+    border: 2px solid var(--line); border-radius: 6px;
+    padding: 52px 40px;
+  }
+  /* THE CARDS PAINT ONLY WHEN THEY HAVE LABELS. `imageryOrDeviceShare` counts
+     a covered, low-colour-count cell as a drawn device, so unconditional
+     tinted blocks score their whole area whether or not anything is standing
+     on them — which is how a plate with every slot empty used to clear the
+     role floors it exists to fail. */
+  /* ── THE TWO CARDS ARE HATCHED IN OPPOSITE DIRECTIONS, AND THAT IS THIS
+        ARCHETYPE'S MARK. ──
+     The whole bundled set used to carry one 45-degree hairline field, so six
+     of the eight plates read as the same wallpaper with different words on it
+     — the owner's second complaint verbatim. Every archetype now spends a
+     different MARK (`headline-focus.html`'s header lists the set and states
+     why a mark is needed at all rather than a flat tint or clean ground).
+
+     This is the one place in the directory where a DIAGONAL still earns its
+     keep, because here the mirroring means something: the quiet side runs at
+     45 degrees and the recommended side at 135, so the pair leans into each
+     other and the slide's argument is legible before a word of it is read.
+     Nothing else in the set is a mirrored pair, and `headline-focus.html` is
+     the only other file that hatches at all — one field, never two.
+
+     The pitch is the set's standing one and it answers to the same cell
+     arithmetic: a 2px rule marks (2+4)/11 of the cells it crosses and can
+     never fill three quarters of a 4px cell, so the hatch adds no drawn-device
+     coverage and each card's device share stays its TINT's. A cell crossed by
+     the hatch is also not FLAT, which is what stops two panels covering half
+     the frame from out-voting the real ground for `backgroundHex`. */
+  body:has(.cmp-label:not(:empty)) .cmp-col {
+    background-image:
+      repeating-linear-gradient(45deg,
+        color-mix(in srgb, var(--fg) 12%, transparent) 0 2px,
+        transparent 2px 11px),
+      linear-gradient(166deg, var(--card) 0%, color-mix(in srgb, var(--fg) 4%, transparent) 100%);
   }
   /* The "after" / recommended side. `.ab.win`'s treatment, scaled up to a card.
      It is always the SECOND `.cmp-row` child in markup order, never pinned to
@@ -104,42 +206,91 @@
      marker's own corner uses `inset-inline-end` for the same reason — "the
      outward corner, away from the other card" is a directional description,
      not a physical `right`. */
+  /* The winning side is the one accent-tinted panel on the plate — the
+     archetype's whole argument in one surface, rather than a 1px border. */
   .cmp-col.win { border-color: var(--accent); position: relative; }
+  body:has(.cmp-label:not(:empty)) .cmp-col.win {
+    background-image:
+      repeating-linear-gradient(135deg,
+        color-mix(in srgb, var(--fg) 12%, transparent) 0 2px,
+        transparent 2px 11px),
+      linear-gradient(166deg,
+        color-mix(in srgb, var(--accent) 30%, var(--bg)) 0%,
+        color-mix(in srgb, var(--accent) 16%, var(--bg)) 100%);
+  }
+  /* INSIDE the card, not hanging off its corner. A decoration that leaves its
+     parent's box makes that parent report `scrollWidth > clientWidth`, which
+     the renderer's DOM probe reports as an overflowing element — and clause B
+     of the interest floor fails a slide on `probe.overflow` alone. The old
+     `-7px` offsets put both `.cmp-col.win` and `.cmp-row` on that list on
+     every comparison slide ever rendered. */
   .cmp-col.win::after {
-    content: ""; position: absolute; top: -7px; inset-inline-end: -7px;
-    width: 14px; height: 14px; background: var(--accent); transform: rotate(45deg);
+    content: ""; position: absolute; top: 16px; inset-inline-end: 16px;
+    width: 20px; height: 20px; background: var(--accent); transform: rotate(45deg);
   }
   .cmp-label {
-    font-family: var(--f-display); font-weight: 600; font-size: calc(44px * var(--ts, 1));
+    font-family: var(--f-display); font-weight: 600; font-size: calc(54px * var(--ts, 1));
     line-height: 1.2; letter-spacing: -0.01em; text-wrap: balance;
+    /* A glyph box taller than its line box makes the block report
+       `scrollHeight > clientHeight`, which the DOM probe reports as an
+       overflowing element and clause B of the interest floor fails on. */
+    padding-block-end: 0.14em;
   }
-  .cmp-rule { width: 56px; height: 4px; background: var(--line); margin: 24px 0; }
+  .cmp-rule { width: 72px; height: 5px; background: var(--line); margin: 30px 0; }
   .cmp-col.win .cmp-rule { background: var(--accent); }
   .cmp-body {
-    font-family: var(--f-body); font-weight: 400; font-size: calc(27px * var(--ts, 1)); line-height: 1.5;
+    font-family: var(--f-body); font-weight: 400; font-size: calc(32px * var(--ts, 1)); line-height: 1.5;
     color: color-mix(in srgb, var(--fg) 78%, transparent); text-wrap: pretty;
   }
 
   .cmp-foot {
-    margin-top: 64px; z-index: 3;
+    position: relative; z-index: 3; flex: 0 0 auto;
     display: flex; gap: 22px; align-items: flex-start;
   }
   .diamond {
-    display: inline-block; width: 7px; height: 7px; background: var(--accent);
-    transform: rotate(45deg); flex-shrink: 0; margin-top: 14px;
+    display: inline-block; width: 16px; height: 16px; background: var(--accent);
+    transform: rotate(45deg); flex-shrink: 0; margin-top: 12px;
   }
   .cmp-foot-text {
     font-family: var(--f-body); font-weight: 400; font-size: calc(27px * var(--ts, 1)); line-height: 1.5;
     color: color-mix(in srgb, var(--fg) 78%, transparent); text-wrap: pretty;
   }
   .cmp-foot:has(.cmp-foot-text:empty) { display: none; }
+
+  /* Standing brand furniture. The brand head fragment (`buildBrandHeadHtml`)
+     restates both rules and lands AFTER this sheet, so a client with a kit
+     keeps its own placement; these defaults exist because a brandless render
+     otherwise lays the handle out in normal flow, between the cards. */
+  .brand-handle {
+    position: absolute; bottom: 34px; inset-inline-start: 44px; z-index: 6;
+    font-family: var(--f-mono); font-size: calc(19px * var(--ts, 1)); letter-spacing: 0.08em;
+    color: color-mix(in srgb, var(--fg) 55%, transparent);
+  }
+  .brand-badge {
+    position: absolute; top: 36px; inset-inline-end: var(--mx); z-index: 6;
+    font-family: var(--f-mono); font-weight: 600; font-size: calc(19px * var(--ts, 1));
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent);
+  }
+  /* An @handle, a URL and a #hashtag are LTR strings, and a Hebrew or Arabic
+     slide lays them out inside an RTL paragraph: the leading `@` is a bidi
+     NEUTRAL, so it takes the paragraph embedding level and ends up on the
+     wrong side — every Hebrew slide in the tree shipped `karoslabs@`. The
+     `<bdi dir="ltr">` in the markup is the fix; `dir` on the DIV would also
+     have re-resolved its own `inset-inline-start` and moved the watermark to
+     the other corner. The extra :has() selector is what keeps an empty slot
+     hidden now that the div always has an element child. */
+  .brand-badge:empty, .brand-handle:empty, .brand-handle:has(> bdi:empty) { display: none; }
 </style>
 </head>
 <body class="ts-{{fontScale}} ta-{{textAlign}}">
+  <div class="ground" aria-hidden="true"></div>
   <div class="brand-badge">{{seriesBadge}}</div>
-  <div class="brand-handle">{{brandHandle}}</div>
-  <div class="eyebrow">{{kicker}}</div>
-  <div class="cmp-head" id="head">{{headline}}</div>
+  <div class="brand-handle"><bdi dir="ltr">{{brandHandle}}</bdi></div>
+  <div class="cmp-top">
+    <div class="eyebrow">{{kicker}}</div>
+    <div class="cmp-rail"></div>
+    <div class="cmp-head" id="head">{{headline}}</div>
+  </div>
   <div class="cmp-row">
     <div class="cmp-col">
       <div class="cmp-label">{{leftLabel}}</div>

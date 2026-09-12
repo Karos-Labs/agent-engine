@@ -5,6 +5,7 @@ import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-a
 import {
   goodRelevanceVerdict,
   goodTrendScoutOutput,
+  boringSlideMetrics,
   fakeRenderCarousel,
   fakeRouterSequence,
   finalTurn,
@@ -15,6 +16,7 @@ import {
   goodVisualQaOutput,
   makePromptStore,
   setupTestEnvironment,
+  type FakeRenderCarouselOptions,
   type TestEnvironment,
 } from "./test-helpers.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
@@ -46,7 +48,12 @@ import { goodAngleProposal } from "./angle-fixtures.js";
  *   non-compliant copy is a worse outcome than shipping nothing.
  *
  * Each of those is asserted below too, so the boundary is pinned rather than
- * assumed.
+ * assumed. THREE, not four — and RFC-14 item L's visual-interest floor
+ * deliberately does not make it four: an empty-looking slide is a
+ * picture/layout problem, exactly the class this file's opening promise
+ * covers, so a permanently-failing floor ships `degraded` with the measured
+ * finding on the deliverable rather than holding. The last test below is that
+ * proof.
  */
 
 const base = { clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
@@ -63,10 +70,10 @@ function deadTool(name: string, outcome: unknown): AgentTool {
   } as unknown as AgentTool;
 }
 
-function tools(env: TestEnvironment, overrides: Record<string, AgentTool>): AgentToolRegistry {
+function tools(env: TestEnvironment, overrides: Record<string, AgentTool>, renderOpts: FakeRenderCarouselOptions = {}): AgentToolRegistry {
   return {
     ...env.tools,
-    "publish.renderCarousel": fakeRenderCarousel(env.tools["publish.renderCarousel"]!),
+    "publish.renderCarousel": fakeRenderCarousel(env.tools["publish.renderCarousel"]!, renderOpts),
     ...overrides,
   };
 }
@@ -440,6 +447,76 @@ describe("zero-held guarantee: a picture problem never costs the post", () => {
     expect(message).toMatch(/accent #ff5b5f on ground/);
     expect(message).toMatch(/floor 3:1/);
   }, 30000);
+
+  // ── RFC-14 item L: a permanently-failing visual-interest floor DELIVERS ──
+  //
+  // This file's opening promise is that a carousel never fails to ship
+  // because of a picture. An "empty-looking slide" verdict is a picture and
+  // layout problem — measured on the rendered pixels, fixable only by a
+  // redraft or a re-layout — so item L's floor is explicitly NOT a fourth
+  // hold cause: attempts 1..n-1 return to `05-write-copy` with the measured
+  // numbers, and the final attempt ships `degraded` with the finding on the
+  // gate, the deliverable and a ledger warn.
+  //
+  // Both halves assert unconditionally now that `08a1` is wired: "never
+  // held" is the invariant, and the measured numbers reaching the
+  // deliverable and the ledger is what keeps "shipped degraded"
+  // distinguishable from "shipped fine".
+  it("completes (never holds) when the interest floor fails on every single attempt, and records the finding", async () => {
+    const copy = goodCopyOutput();
+    const registry = tools(
+      env,
+      {
+        "media.findImages": deadTool("media.findImages", { status: "not_available", reason: "no image-search provider is available" }),
+        "media.scrapeImages": deadTool("media.scrapeImages", { status: "not_available", reason: "no scraper configured" }),
+        "image.generate": deadTool("image.generate", { status: "content_fail", reason: "image.generate: produced nothing" }),
+      },
+      // The 2026-09-08 audit's own measured Karos Labs cover, on every slide
+      // of every render: 93% ground, 18% occupied, a hole over half the plate.
+      { metrics: () => boringSlideMetrics() },
+    );
+    // Three drafting attempts' worth of turns, so the run cannot end early on
+    // an exhausted router rather than on the floor's own final-attempt
+    // degrade. Unused turns are simply never pulled.
+    const router = fakeRouterSequence([
+      finalTurn(goodTrendScoutOutput()),
+      finalTurn(goodResearchOutput()),
+      finalTurn(goodAngleProposal()),
+      ...[1, 2, 3].flatMap(() => [finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]),
+    ]);
+    const durableStore = new MemoryDurableStepStore();
+    const runId = "zero_held_interest_floor";
+    const result = await new WorkflowEngine(durableStore).run(
+      createInstagramAgentWorkflow({
+        tools: registry,
+        promptStore: makePromptStore(),
+        router,
+        repoRoot: env.repoRoot,
+        autoApprove: true,
+      }),
+      { ...base, runId },
+    );
+
+    // The invariant, whether or not `08a1` is wired: an empty-looking slide
+    // is never a hold.
+    expect(result.status).toBe("completed");
+    expect((await env.store.listJson("acme", ["ledger", "deliverables", runId, "_"])).length).toBe(1);
+
+    // The numbers have to be visible to a human, on the deliverable
+    // and in the ledger, or "shipped degraded" is indistinguishable from
+    // "shipped fine".
+    const record = await env.store.readJson<{ deliverable: { visualInterest?: { findings: Array<{ slide: number; kind: string }> } } }>(
+      "acme",
+      ["ledger", "deliverables", runId, "_", "instagram-carousel"],
+    );
+    const findings = record?.deliverable.visualInterest?.findings ?? [];
+    expect(findings.length).toBeGreaterThan(0);
+    expect(findings.some((f) => f.slide === 1)).toBe(true);
+
+    const events = await env.store.listJson("acme", ["ledger", "events", runId]);
+    const interestWarns = events.filter((e) => (e.data as { level: string }).level === "warn" && String(e.id).includes("interest-floor-a"));
+    expect(interestWarns.length).toBeGreaterThanOrEqual(1);
+  }, 60000);
 
   it("emits no contrast warning at all for a client whose kit clears every floor", async () => {
     await env.store.writeJson("acme", ["client", "brand"], {

@@ -200,10 +200,19 @@ describe("02i / 04a / 07g — the grounding gate in the instagram workflow", () 
     expect(deliverables[0]!.data.deliverable.grounding?.relevance?.score).toBe(5);
   }, 60000);
 
-  it("three off-brief verdicts exhaust the self-check budget and HOLD, naming relevance — never a render, never a delivery", async () => {
+  it("off-brief verdicts exhaust the self-check budget the PLAN allowed and HOLD, naming relevance — never a render, never a delivery", async () => {
+    // TWO rounds, not three, and the reason is the budget rather than this
+    // gate: a first run for a new client writes its Client Brief (00b1 +
+    // 00b2, $0.155 of the $1.00 target before a single slide is drafted), so
+    // `02j` pulls every lever it has and the last one it needs is "one return
+    // to step 05 instead of two". That is the owner's amendment working as
+    // written — the plan adapts, the run still delivers or holds on its own
+    // merits — and it is why the third round would never be reached. The
+    // assertions below are the ones that matter and none of them is relaxed:
+    // the run HOLDS naming relevance, nothing renders, nothing is delivered,
+    // and every queued turn was consumed.
     const router = fakeRouterSequence([
       ...auditTurns({ relevance: OFF_BRIEF_VERDICT, qa: undefined }),
-      ...standardTurns({ copy: goodCopyOutput(), vet: goodImageVettingOutput(), relevance: OFF_BRIEF_VERDICT }),
       ...standardTurns({ copy: goodCopyOutput(), vet: goodImageVettingOutput(), relevance: OFF_BRIEF_VERDICT }),
     ]);
     const params = { runId: "instagram_run_grounding_hold", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
@@ -219,7 +228,14 @@ describe("02i / 04a / 07g — the grounding gate in the instagram workflow", () 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).toContain("07g-relevance-attempt-1");
     expect(stepIds).toContain("07g-relevance-attempt-2");
-    expect(stepIds).toContain("07g-relevance-attempt-3");
+    // The plan is what decided there were two rounds and not three, and the
+            // reason is on the record: a budget adaptation, never a hold cause.
+    const plan = (await durableStore.listSteps(params.runId)).find((s) => s.stepId === "02j-plan-run-budget")?.output as
+      | { plan: { maxSelfCheckAttempts: number }; adaptations: string[] }
+      | undefined;
+    expect(plan?.plan.maxSelfCheckAttempts).toBe(2);
+    expect(plan?.adaptations).toContain("one return to step 05 instead of two");
+    expect(stepIds).not.toContain("07g-relevance-attempt-3");
     expect(stepIds.some((id) => id.startsWith("08-render-carousel"))).toBe(false);
     // Every queued turn was consumed: nothing skipped the judge.
     await expect(router.complete({} as never, {} as never, [] as never, {} as never)).rejects.toThrow(/exhausted/);

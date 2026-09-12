@@ -94,8 +94,43 @@ describe("DEFAULT_RENDER_RULES + resolveRenderRules — Phase 0 item D's rule so
     expect(resolveRenderRules([])).toEqual({ source: "default", rules: DEFAULT_RENDER_RULES });
   });
 
-  it("LAYOUT_FIELD_KEYS is exactly the workflow's former NON_PROSE_FIELD_KEYS", () => {
-    expect([...LAYOUT_FIELD_KEYS].sort()).toEqual(["accentColor", "brandHandle", "dir", "fontScale", "seriesBadge", "textAlign"]);
+  it("LAYOUT_FIELD_KEYS holds the workflow's former NON_PROSE_FIELD_KEYS plus item M's three code-derived fields", () => {
+    // The three additions are metadata a person never wrote: which ground
+    // treatment the slide paints, the numeral the glyph ground sets, and the
+    // figures a rendered device paints. Counting any of them as CONTENT
+    // would let `default:two-elements-per-slide` pass on a slide with no
+    // prose at all — which is why they belong in this set rather than being
+    // filtered case by case at each consumer.
+    expect([...LAYOUT_FIELD_KEYS].sort()).toEqual([
+      "accentColor",
+      "brandHandle",
+      "deviceFigures",
+      "deviceKind",
+      "dir",
+      "fontScale",
+      "groundStyle",
+      "seriesBadge",
+      "slideIndex",
+      "textAlign",
+    ]);
+  });
+
+  it("the four rule ids are unchanged — only their texts grew to name the new archetypes and devices", () => {
+    // A finding in the ledger or on the gate payload is keyed by rule id, so
+    // renaming one would silently orphan every historical finding.
+    expect(DEFAULT_RENDER_RULES.map((r) => r.id)).toEqual([
+      "default:cover-carries-device",
+      "default:two-elements-per-slide",
+      "default:numbers-are-devices",
+      "default:closer-carries-cta",
+    ]);
+    const byId = new Map(DEFAULT_RENDER_RULES.map((r) => [r.id, r.description]));
+    expect(byId.get("default:cover-carries-device")).toContain("cover");
+    expect(byId.get("default:closer-carries-cta")).toContain("closer");
+    expect(byId.get("default:numbers-are-devices")).toContain("figure_pair");
+    // The apologetic clause is gone: with `device` on every archetype there
+    // is no longer any such thing as a numeric fact with nowhere to go.
+    expect(byId.get("default:numbers-are-devices")).not.toContain("leads with the noun");
   });
 });
 

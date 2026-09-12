@@ -18,21 +18,32 @@ import {
   makePromptStore,
   setupTestEnvironment,
   type TestEnvironment,
+  pendingStudioRow,
 } from "./test-helpers.js";
 import {
   assembleSlidesData,
   buildListRows,
   buildVariationPlan,
+  collectDeviceIssues,
   eligibleAlternateTemplates,
+  fallbackArchetypeFor,
+  HERO_IMAGE_LAYOUTS,
   invertedTemplateFileName,
   isVariationSlot,
   pickAlternateTemplate,
   resolveLayout,
   VARIATION_MIX,
+  type SlidePosition,
 } from "../src/workflow/slides-data.js";
 import { deriveBrandRenderTokens, paletteForSlide } from "../src/workflow/brand-render-tokens.js";
 import { checkPaletteWithinKit } from "../src/workflow/visual-qa-pre-checks.js";
-import { InstagramSlideCopySchema, type InstagramCopyOutput, type ImageSelection } from "../src/workflow/types.js";
+import {
+  InstagramSlideCopySchema,
+  type ImageSelection,
+  type InstagramCopyOutput,
+  type InstagramSlideCopy,
+  type InstagramSlideLayout,
+} from "../src/workflow/types.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 
 const CANVAS = { w: 1080, h: 1440, scale: 2, slides_min: 6, slides_max: 8 };
@@ -293,18 +304,43 @@ describe("archetype layouts (legacy port)", () => {
   // The model picks `layout` and fills the content block separately, so those
   // are two chances to disagree. A mismatch must not render an empty 300px
   // figure, and must not fail the whole draft either.
-  it("degrades an archetype whose required content the model omitted, rather than rendering it empty", () => {
+  //
+  // 2026-09-10 (item M): what it degrades TO changed, and that is the point.
+  // Every degrade path used to converge on `text_only` — the client's own
+  // base template with no photograph, i.e. the mostly-grey plate the owner
+  // named as the defect — so the failure mode of every content mismatch WAS
+  // the defect. It now degrades through `fallbackArchetypeFor` to the best
+  // archetype the slide's content can actually fill.
+  it("degrades an archetype whose required content the model omitted to a real archetype, never to the grey plate", () => {
     for (const layout of ["stat_callout", "quote_card", "comparison_card", "list_takeaway"] as const) {
       const s = slide({ layout });
-      expect(resolveLayout(s).layout, layout).toBe("text_only");
-      expect(resolveLayout(s).downgradedFrom, layout).toContain(layout);
+      const resolved = resolveLayout(s);
+      expect(resolved.layout, layout).toBe("headline_focus");
+      expect(resolved.downgradedFrom, layout).toContain(layout);
+      expect(resolved.downgradedFrom, layout).toContain("rendering as headline_focus");
 
-      const data = assemble({ slides: [s] } as InstagramCopyOutput);
-      // Falls back to the client's own template on headline/body, which every
-      // slide is schema-guaranteed to have.
-      expect(data.slides[0]!.template).toBe("slide.html");
-      expect(data.slides[0]!.fields).toMatchObject({ headline: "A headline", body: "Some body copy." });
+      // Assembled at an INTERIOR position, so this stays a question about
+      // content shape. Position 1 has its own answer — see below.
+      const data = assemble({ slides: [slide({ n: 1 }), { ...s, n: 2 }] } as InstagramCopyOutput);
+      expect(data.slides[1]!.template).toBe("headline-focus.html");
+      expect(data.slides[1]!.fields).toMatchObject({ headline: "A headline", body: "Some body copy." });
+
+      // ...and on SLIDE 1 the same content-shape degrade lands on the cover
+      // archetype instead, because position 1 is a cover whatever the content
+      // says and `cover.html`'s colour-block ground carries the frame with no
+      // photograph (33.1% imagery-or-device, measured; `headline-focus.html`
+      // manages 3.9% and fails the cover role's clause E on it).
+      const atCover = assemble({ slides: [s] } as InstagramCopyOutput);
+      expect(atCover.slides[0]!.template, layout).toBe("cover.html");
     }
+  });
+
+  it("still reaches text_only when the client's templateDir holds nothing else — the guaranteed-delivery floor is unchanged", () => {
+    const onlySlideHtml = new Set<string>();
+    const s = slide({ layout: "stat_callout" });
+    const resolved = resolveLayout(s, onlySlideHtml);
+    expect(resolved.layout).toBe("text_only");
+    expect(resolved.downgradedFrom).toContain("rendering as text_only");
   });
 
   it("degrades a list_takeaway that arrived with only one item, since the layout needs at least two rows", () => {
@@ -312,7 +348,7 @@ describe("archetype layouts (legacy port)", () => {
     // sees this shape only when the model omitted `items` entirely or the array
     // was built downstream -- resolveLayout is the backstop either way.
     const s = { ...slide({ layout: "list_takeaway" }), items: [{ title: "Only one" }] };
-    expect(resolveLayout(s).layout).toBe("text_only");
+    expect(resolveLayout(s).layout).toBe("headline_focus");
   });
 
   // A real prep run (2VFCw79Wu8xfJOKXC7zP) shipped two `stat_callout`s and two
@@ -325,7 +361,9 @@ describe("archetype layouts (legacy port)", () => {
     const second = slide({ n: 2, layout: "stat_callout", stat: { figure: "4.2x", subLabel: "faster", source: "Acme, 2026" } });
     const data = assemble({ slides: [first, second] } as InstagramCopyOutput);
     expect(data.slides[0]!.template).toBe("stat-callout.html");
-    expect(data.slides[1]!.template).toBe("slide.html");
+    // The repeat still degrades — but to the typographic archetype, not to
+    // the client's bare base template (item M's degrade-target change).
+    expect(data.slides[1]!.template).toBe("headline-focus.html");
     expect(data.slides[1]!.fields).toMatchObject({ headline: "A headline", body: "Some body copy." });
   });
 
@@ -368,6 +406,271 @@ describe("archetype layouts (legacy port)", () => {
   it("defaults to photo for a slide that names no layout at all, so pre-archetype callers are unchanged", () => {
     const data = assemble({ slides: [slide({})] } as InstagramCopyOutput);
     expect(data.slides[0]!.template).toBe("slide.html");
+  });
+});
+
+/**
+ * Phase 2, item M — the two POSITIONAL archetypes, the degrade ladder that
+ * replaced the blanket `text_only` fallback, and devices.
+ */
+describe("cover and closer (item M)", () => {
+  const slide = (over: Record<string, unknown>) =>
+    InstagramSlideCopySchema.parse({
+      n: typeof over["n"] === "number" ? over["n"] : 1,
+      headline: "A headline",
+      body: "Some body copy.",
+      visualNeed: "a need",
+      sourceRef: "a claim",
+      ...over,
+    });
+
+  const FIGURE_DEVICE = { kind: "figure" as const, value: "73%", label: "of teams file by hand", source: "Acme, 2026" };
+
+  const hero = (n: number): ImageSelection => ({
+    n,
+    imagePath: `photos/n${n}.jpg`,
+    reason: "matches",
+    license: "CC0",
+    rightsUsable: true,
+    watermarkFree: true,
+    claimMatch: 5,
+    claimMatchReason: "shows the claimed subject",
+  });
+  const noHero = (n: number): ImageSelection => ({
+    n,
+    imagePath: null,
+    reason: "no candidate qualified",
+    license: "n/a",
+    rightsUsable: false,
+    watermarkFree: false,
+    claimMatch: 1,
+    claimMatchReason: "no candidate qualified",
+  });
+
+  function assemble(slides: InstagramSlideCopy[], selections: ImageSelection[]) {
+    return assembleSlidesData({
+      clientSlug: "acme",
+      postId: "post_m",
+      repoRoot: "/repo",
+      brandTokens: { templateDir: "fixtures/templates", slideTemplate: "slide.html", accentColor: "#C4552F" },
+      copy: { format: "carousel", caption: "c", slides } as InstagramCopyOutput,
+      selections,
+      canvas: CANVAS,
+    });
+  }
+
+  it("routes cover and closer to their own template files, and gives the cover its hero image", () => {
+    const slides = [
+      slide({ n: 1, layout: "cover", kicker: "THE SHIFT" }),
+      slide({ n: 2 }),
+      slide({ n: 3, layout: "closer", body: "Which one would you change first?" }),
+    ];
+    const data = assemble(slides, [hero(1), hero(2), noHero(3)]);
+    expect(data.slides[0]!.template).toBe("cover.html");
+    // `cover` is the SECOND layout that consumes a photograph — a cover that
+    // could not hold one would put every carousel's first slide back on
+    // typography alone.
+    expect(data.slides[0]!.images).toEqual({ hero: "photos/n1.jpg" });
+    expect(data.slides[0]!.fields).toMatchObject({ eyebrow: "THE SHIFT", title: "A headline", subtitle: "Some body copy." });
+    expect(data.slides[2]!.template).toBe("closer.html");
+  });
+
+  /**
+   * 2026-09-11: this used to assert the opposite — that a cover with neither
+   * a hero nor a device DEGRADES, to `headline_focus`. That rule was written
+   * against the `cover.html` item M first shipped, whose ground treatment sat
+   * inside `INK_DELTA` on purpose and really was a headline on flat ground.
+   * Against the template in the tree it is false, and expensively so.
+   * Measured on real 2160x2880 renders, for a slide 1 with no hero and no
+   * device (`.local/probe-template.mjs`):
+   *
+   *   cover.html              33.1% imagery+device   62.0% occupied   passes the cover role
+   *   headline-focus.html      3.9%                  47.2%           fails clause E
+   *   slide.html               4.3%                  43.8%           fails clause E
+   *
+   * So the degrade was routing slide 1 away from the only plate that clears
+   * the role it is judged at. See `slides-data.ts`'s own note for the four
+   * other modules that had already reached the opposite conclusion, and for
+   * what the change gives up.
+   */
+  it("a cover with NEITHER a hero nor a device IS still a cover — its ground layer is what carries the frame", () => {
+    const slides = [slide({ n: 1, layout: "cover" }), slide({ n: 2 })];
+    const resolved = resolveLayout(slides[0]!, undefined, undefined, undefined, { index: 0, lastIndex: 1, hasHeroImage: false });
+    expect(resolved.layout).toBe("cover");
+    expect(resolved.downgradedFrom, "nothing was missing, so nothing was downgraded").toBeUndefined();
+
+    const data = assemble(slides, [noHero(1), hero(2)]);
+    expect(data.slides[0]!.template).toBe("cover.html");
+    // The rule that has not changed, and the one this test was always really
+    // about: slide 1 never lands on the client's own bare base template.
+    expect(data.slides[0]!.template).not.toBe("slide.html");
+    expect(data.slides[0]!.images).toEqual({});
+  });
+
+  it("...but a client whose templateDir has no cover.html still takes the next rung down, never slide.html", () => {
+    const slides = [slide({ n: 1, layout: "cover" }), slide({ n: 2 })];
+    const legacyDir = new Set(["headline-focus.html", "stat-callout.html"]);
+    const resolved = resolveLayout(slides[0]!, legacyDir, undefined, undefined, { index: 0, lastIndex: 1, hasHeroImage: false });
+    expect(resolved.layout).toBe("headline_focus");
+    expect(resolved.downgradedFrom).toContain("no cover.html");
+  });
+
+  it("a cover with a DEVICE and no hero stays a cover — the device carries the frame", () => {
+    const slides = [slide({ n: 1, layout: "cover", device: FIGURE_DEVICE }), slide({ n: 2 })];
+    const data = assemble(slides, [noHero(1), hero(2)]);
+    expect(data.slides[0]!.template).toBe("cover.html");
+    expect(data.slides[0]!.htmlFragments["device"]).toContain("dv-figure");
+    expect(data.slides[0]!.images).toEqual({});
+  });
+
+  it("a cover survives resolveLayout BEFORE image sourcing has run, or it would never be offered a photograph", () => {
+    // `photoSlideNs` calls resolveLayout with no position at all; an
+    // `undefined` hasHeroImage means "not known yet", which must not read as
+    // "no picture" or the downgrade would be self-fulfilling.
+    const cover = slide({ n: 1, layout: "cover" });
+    expect(resolveLayout(cover).layout).toBe("cover");
+    expect(resolveLayout(cover, undefined, undefined, undefined, { index: 0, lastIndex: 5 }).layout).toBe("cover");
+    expect(HERO_IMAGE_LAYOUTS.has("cover")).toBe(true);
+    expect(HERO_IMAGE_LAYOUTS.has("photo")).toBe(true);
+    expect(HERO_IMAGE_LAYOUTS.has("headline_focus")).toBe(false);
+  });
+
+  it("builds the closer's recap strip BY CODE from the carousel's own earlier slides", () => {
+    const slides = [
+      slide({ n: 1, headline: "The setup" }),
+      slide({ n: 2, layout: "stat_callout", stat: { figure: "73%", subLabel: "of teams", source: "Acme, 2026" } }),
+      slide({ n: 3, headline: "A much longer headline than any recap plate could ever hold in one glance" }),
+      slide({ n: 4, layout: "closer", headline: "That is the pattern", body: "Save this for your next planning cycle." }),
+    ];
+    const data = assemble(slides, [hero(1), noHero(2), hero(3), noHero(4)]);
+    const recap = data.slides[3]!.htmlFragments["recap"]!;
+    expect(recap).toContain("rc-strip");
+    expect(recap.match(/rc-plate/g)).toHaveLength(3);
+    // A figure beats a headline on a plate — a recap is a strip of numbers
+    // where the post has them.
+    expect(recap).toContain("73%");
+    expect(recap).toContain('<div class="rc-n">02</div>');
+    // ...and a long headline is cut at a word boundary rather than wrapped.
+    expect(recap).toContain("…");
+    expect(data.slides[3]!.fields).toMatchObject({ takeaway: "That is the pattern", cta: "Save this for your next planning cycle." });
+  });
+
+  it("sets a closing QUESTION in its own slot and a CTA in the other, never both", () => {
+    const question = assemble(
+      [slide({ n: 1 }), slide({ n: 2 }), slide({ n: 3, layout: "closer", body: "Which one would you change first?" })],
+      [hero(1), hero(2), noHero(3)],
+    );
+    expect(question.slides[2]!.fields["question"]).toBe("Which one would you change first?");
+    expect(question.slides[2]!.fields["cta"]).toBeUndefined();
+
+    const cta = assemble(
+      [slide({ n: 1 }), slide({ n: 2 }), slide({ n: 3, layout: "closer", body: "Save this for your next planning cycle." })],
+      [hero(1), hero(2), noHero(3)],
+    );
+    expect(cta.slides[2]!.fields["cta"]).toBe("Save this for your next planning cycle.");
+    expect(cta.slides[2]!.fields["question"]).toBeUndefined();
+  });
+
+  it("degrades a closer with nothing to close on, and a SECOND closer in one carousel", () => {
+    // Slide 2 of two, no recap-able pair, no device, and copy that neither
+    // asks nor invites.
+    const bare = resolveLayout(slide({ n: 2, layout: "closer", headline: "That was the quarter", body: "It changed a lot." }), undefined, undefined, undefined, {
+      index: 1,
+      lastIndex: 1,
+      earlier: [slide({ n: 1 })],
+    });
+    expect(bare.layout).toBe("headline_focus");
+    expect(bare.downgradedFrom).toContain("recap, device, or closing line");
+
+    const slides = [
+      slide({ n: 1 }),
+      slide({ n: 2 }),
+      slide({ n: 3, layout: "closer", body: "Which one first?" }),
+      slide({ n: 4, layout: "closer", body: "And which one last?" }),
+    ];
+    const data = assemble(slides, [hero(1), hero(2), noHero(3), noHero(4)]);
+    expect(data.slides[2]!.template).toBe("closer.html");
+    expect(data.slides[3]!.template).not.toBe("closer.html");
+  });
+
+  it("fallbackArchetypeFor: the whole table, content shape first, then position", () => {
+    const position = (over: Partial<SlidePosition> = {}): SlidePosition => ({ index: 2, lastIndex: 5, ...over });
+    const cases: Array<[Record<string, unknown>, Partial<SlidePosition>, InstagramSlideLayout]> = [
+      [{ stat: { figure: "73%", subLabel: "of teams", source: "Acme, 2026" } }, {}, "stat_callout"],
+      [{ quote: { text: "Ship it.", attribution: "A lead" } }, {}, "quote_card"],
+      [{ comparison: { leftLabel: "Before", leftBody: "b", rightLabel: "After", rightBody: "a" } }, {}, "comparison_card"],
+      [{ items: [{ title: "One" }, { title: "Two" }] }, {}, "list_takeaway"],
+      [{}, { hasHeroImage: true }, "photo"],
+      // Position only decides once content has nothing to say.
+      [{}, { index: 0, hasHeroImage: true }, "photo"],
+      [{ device: FIGURE_DEVICE }, { index: 0, hasHeroImage: false }, "cover"],
+      [{ body: "Which one would you change first?" }, { index: 5, lastIndex: 5 }, "closer"],
+      [{}, {}, "headline_focus"],
+      // The last slide with nothing to close on is NOT a closer.
+      [{}, { index: 5, lastIndex: 5 }, "headline_focus"],
+    ];
+    for (const [over, pos, expected] of cases) {
+      expect(fallbackArchetypeFor(slide(over), position(pos)), JSON.stringify({ over, pos })).toBe(expected);
+    }
+    // Slide 1 is a cover even with no photograph of its own, as long as
+    // sourcing has not yet said otherwise.
+    expect(fallbackArchetypeFor(slide({}), { index: 0, lastIndex: 5 })).toBe("cover");
+    // With no position at all (the pre-sourcing call), the positional
+    // entries are simply not on the table.
+    expect(fallbackArchetypeFor(slide({}))).toBe("headline_focus");
+  });
+
+  it("a device reaches htmlFragments on a device-slot archetype, and is dropped where nothing would render it", () => {
+    const withDevice = assemble([slide({ n: 1, layout: "headline_focus", device: FIGURE_DEVICE }), slide({ n: 2 })], [noHero(1), hero(2)]);
+    expect(withDevice.slides[0]!.htmlFragments["device"]).toContain("dv-figure");
+    expect(withDevice.slides[0]!.fields["deviceFigures"]).toBe("73%");
+
+    // A quote card's template declares no device slot, so emitting a
+    // fragment would let `default:numbers-are-devices` pass on a figure the
+    // reader never sees.
+    const quote = assemble(
+      [slide({ n: 1, layout: "quote_card", quote: { text: "Ship it.", attribution: "A lead" }, device: FIGURE_DEVICE }), slide({ n: 2 })],
+      [noHero(1), hero(2)],
+    );
+    expect(quote.slides[0]!.htmlFragments["device"]).toBeUndefined();
+    expect(quote.slides[0]!.fields["deviceFigures"]).toBeUndefined();
+  });
+
+  it("drops an unrenderable device rather than failing the draft, and reports it as a fact", () => {
+    const flush = { kind: "bars" as const, max: 40, rows: [{ label: "a", value: 40, display: "40" }, { label: "b", value: 10, display: "10" }], source: "Acme" };
+    const slides = [slide({ n: 1, layout: "headline_focus", device: flush }), slide({ n: 2 })];
+    const copy = { format: "carousel", caption: "c", slides } as InstagramCopyOutput;
+    const data = assemble(slides, [noHero(1), hero(2)]);
+    expect(data.slides[0]!.htmlFragments["device"]).toBeUndefined();
+
+    const issues = collectDeviceIssues(copy);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatchObject({ slide: 1, kind: "bars" });
+    expect(issues[0]!.reason).toContain("fills its whole track");
+  });
+
+  it("picks a ground treatment per slide from the EXISTING seeded walk — deterministic in a run, phase-shifted across runs", () => {
+    const slides = [slide({ n: 1 }), slide({ n: 2, layout: "headline_focus" }), slide({ n: 3 })];
+    const groundsFor = (seed: string) =>
+      assembleSlidesData({
+        clientSlug: "acme",
+        postId: "post_m",
+        repoRoot: "/repo",
+        brandTokens: { templateDir: "t", slideTemplate: "slide.html" },
+        copy: { format: "carousel", caption: "c", slides } as InstagramCopyOutput,
+        selections: [noHero(1), noHero(2), noHero(3)],
+        canvas: CANVAS,
+        paletteSeed: seed,
+      }).slides.map((s) => s.fields["groundStyle"]);
+
+    // Deterministic for a fixed seed...
+    expect(groundsFor("run-a")).toEqual(groundsFor("run-a"));
+    // ...only ever the two documented values...
+    for (const ground of groundsFor("run-a")) expect(["grid", "glyph"]).toContain(ground);
+    // ...and the walk's phase moves with the seed, so two runs of the same
+    // client do not paint identical grounds.
+    const seeds = ["run-a", "run-b", "run-c", "run-d", "run-e", "run-f"].map((s) => groundsFor(s).join(","));
+    expect(new Set(seeds).size).toBeGreaterThan(1);
   });
 });
 
@@ -453,6 +756,12 @@ describe("template registry integration (Approach a)", () => {
     // A curated quote-card that lives ONLY in the store, outscoring anything
     // bundled, with markup recognisable in the output.
     const store = new MemoryTemplateStore([
+      // Item N: one DISABLED studio row so `00c-check-template-studio`
+      // resolves `awaiting-approval` and the studio's paid block is skipped
+      // (this fixture's router queues no studio turns). Invisible to
+      // `materializeTemplates`, which lists only enabled rows, so the render
+      // is byte-identical to before.
+      pendingStudioRow(),
       TemplateDefinitionSchema.parse({
         id: "curated:quote",
         archetypeId: "quote_card",
@@ -576,9 +885,17 @@ describe("template registry integration (Approach a)", () => {
 
     expect(result.status).toBe("completed");
     const resolved = (await durableStore.listSteps("registry_broken")).find((s) => s.stepId === "04c-resolve-templates")
-      ?.output as { templateDir: string } | undefined;
-    // Fell back to the on-disk path, so rendering never depended on the store.
-    expect(resolved?.templateDir).toBe("fixtures/templates");
+      ?.output as { templateDir: string; files: string[] } | undefined;
+    // Fell back to the LOCAL path, so rendering never depended on the store.
+    // ...but not to the client's read-only directory itself. The fallback is
+    // a local copy-and-compose of that directory, because item M's device
+    // stylesheet has to reach the documents on this path too: `.dv-*` lives
+    // only in `deviceCssBlock()` and no bundled template file defines it, so
+    // returning the raw directory rendered every number device unstyled.
+    expect(resolved?.templateDir).toBe(".template-cache/registry_broken");
+    expect(resolved?.files).toContain("stat-callout.html");
+    const written = await fsp.readFile(pathMod.join(env.repoRoot, ".template-cache", "registry_broken", "headline-focus.html"), "utf8");
+    expect(written).toContain(".dv-figure");
   }, 30000);
 
   it("re-materializes templates that vanished from disk before a revision's render, instead of failing the run", async () => {
@@ -589,7 +906,10 @@ describe("template registry integration (Approach a)", () => {
     // named was never written to THIS instance's disk. Simulated here by
     // deleting the materialized directory between the two `engine.run` calls,
     // standing in for a resume that lands on a fresh Cloud Run instance.
-    const store = new MemoryTemplateStore([]);
+    // The registry has NO usable archetype row (the point of this case) plus
+    // one disabled studio row, so `00c` resolves `awaiting-approval` and the
+    // studio's paid block is skipped without changing what materializes.
+    const store = new MemoryTemplateStore([pendingStudioRow()]);
     const first = goodCopyOutput();
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),

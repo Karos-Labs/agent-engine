@@ -242,7 +242,35 @@ export function buildScriptFontHeadHtml(script: string, spec: ScriptTypography, 
     const s = String(spec.typeScale);
     css.push(`body { --ts: ${s} }`, `body.ts-s { --ts: calc(0.85 * ${s}) }`, `body.ts-l { --ts: calc(1.18 * ${s}) }`);
   }
-  css.push(`${DISPLAY_SELECTORS.join(", ")} { line-height: ${spec.lineHeight.display}; }`);
+  // The leading AND the descender allowance, emitted together, because the
+  // second is a consequence of the first.
+  //
+  // A display face's glyph box is taller than a sub-1.15 line box, so a block
+  // set at this leading reports `scrollHeight > clientHeight` — which the
+  // renderer's DOM probe calls an overflowing element, and clause B of the
+  // interest floor fails a slide on `probe.overflow` alone, on a slide whose
+  // type fits perfectly. The bundled templates each carry their own
+  // `padding-block-end` for the Latin case, and that is the right place for
+  // it there: it is a property of the template's own leading.
+  //
+  // It is the WRONG place for it here, and shipping it that way is what this
+  // line fixes. The per-template constants were picked against Latin leadings
+  // of 1.2-1.3; this rule overrides all of them to 1.12 for Hebrew, at which
+  // point the allowance each template happened to choose is either enough or
+  // not. Measured in real Chromium, Heebo at 1.12 needs ~0.177em
+  // (padding-block-end 0 -> scrollHeight-clientHeight 11px at 62px type;
+  // 0.12em -> 3px; 0.32em -> 0), and five of the ten display selectors shipped
+  // between 0.10em and 0.14em: `list_takeaway`, `quote_card`,
+  // `comparison_card` and the base `slide.html` reported `probe.overflow` on
+  // EVERY Hebrew render, at every copy length, which put a false `clipped`
+  // finding on the slide and told the writer to shorten a headline that fit.
+  //
+  // 0.22em rather than 0.18em: it is what the two templates that always passed
+  // (`cover.html`'s `.headline`, `headline-focus.html`'s `.hf-headline`)
+  // already use, and it leaves room for a script whose descenders are deeper
+  // than Hebrew's. It is emitted with the leading it answers to, so a future
+  // script added to `SCRIPT_TYPOGRAPHY` cannot get one without the other.
+  css.push(`${DISPLAY_SELECTORS.join(", ")} { line-height: ${spec.lineHeight.display}; padding-block-end: 0.22em; }`);
   css.push(`${BODY_SELECTORS.join(", ")} { line-height: ${spec.lineHeight.body}; }`);
 
   return `${link}\n<style>\n${css.join("\n")}\n</style>`;

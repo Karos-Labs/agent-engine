@@ -1,0 +1,679 @@
+<!doctype html>
+<html lang="en" dir="{{dir}}">
+<head>
+<meta charset="utf-8" />
+<title>instagram-agent cover slide template</title>
+<!--
+  `cover` — slide 1. The grid thumbnail, and the only slide most people ever
+  decide about.
+
+  THE STRUCTURAL POINT OF THIS FILE: it is incapable of rendering as a
+  headline on flat ground. The owner's complaint (2026-09-10, verbatim: "אתה
+  רואה מסך אפור ברובו") was about exactly that slide — a statement in the
+  lower third of an otherwise empty plate — and a template that can produce
+  it will eventually produce it, whatever the prompt says. So the plate is a
+  LAYER STACK with three fallbacks:
+
+    1. a full-bleed `<img class="hero">`, when image sourcing found one;
+    2. an accent COLOUR FIELD behind the eyebrow and the device, revealed by
+       the image's own `onerror` removing itself;
+    3. a two-token tonal wash underneath both, so even the field's own edges
+       sit on modulated ground rather than a single flat colour.
+
+  ── 2026-09-11 (second pass), THE THING THE FIRST PASS GOT WRONG ──
+
+  The first pass made the field unconditional: `.ground-art` painted
+  `linear-gradient(accent 88% 0 48%, …)` across the top half of every cover
+  whatever the slots held. It cleared item L's floors and it was measuring
+  the WALLPAPER rather than the slide. Measured through `measureSlidePng`
+  over real Chromium (`.local/probe-template.mjs`):
+
+      case                   flat  occupied  content  imagery+device
+      cover, full copy      43.7%    62.0%     56.1%      33.1%
+      cover, EVERY SLOT EMPTY 48.2%  55.8%     49.1%      29.7%
+
+  A cover with nothing on it cleared the cover role's 42% occupancy floor and
+  its 10% device floor, because neither number was reading the content. That
+  is the same defect the interest floor exists to catch, one level down: an
+  instrument measuring its own decoration.
+
+  So the standing rule for this whole directory, stated once here and kept by
+  every file in it:
+
+    **A ground layer may paint TONE (below the measurement's ink threshold)
+    anywhere on the plate. It may paint INK only inside a region the
+    composition actually occupies, and only when the content that justifies
+    that region is present.**
+
+  Here that means:
+
+    * the field is `.cov-field` — a real flex block that CARRIES the eyebrow
+      and the device, not a background div behind them. It is painted only
+      when `#title` is non-empty (`body:has(#title:empty)` switches the paint
+      off), so an empty cover measures as an empty plate and clauses D and G
+      of the interest floor catch it on the pixels alone;
+    * the field is a GRADED ramp that dissolves into the ground rather than a
+      flat swatch. The previous flat 88% rectangle read as a colour sample in
+      a grid — "the owner's complaint with the grey repainted". A ramp also
+      keeps two measurements honest: only the part of it above the ink
+      threshold counts as a drawn device (about 36% of the plate, comfortably
+      under `FULL_BLEED_IMAGERY_SHARE`'s 50%, so clause B's clipped-edge limb
+      stays live), and only the part above ~0.78 alpha counts as ACCENT —
+      about 7% of the plate against `ACCENT_MAX_SHARE`'s 45%, which is what
+      gives a pale brand accent the headroom the flat field did not have (a
+      `#EFC75E` kit measured 45.7% on the old field, over the ceiling, on
+      every cover it would ever ship).
+
+  Everything decorative is painted as BACKGROUND LAYERS rather than as
+  positioned children. A positioned decoration that leaves its parent's box
+  makes that parent report `scrollWidth > clientWidth`, which the renderer's
+  DOM probe reports as an overflowing element — and clause B of the interest
+  floor fails a slide on `probe.overflow` alone, whatever the pixels say. The
+  16px margin on `.cov-field` is the other half of the same care:
+  `clippedEdgeShare` counts ink inside an 8px bleed band and fails a slide
+  over 0.4%, and a full-bleed colour field puts its edges squarely in it.
+  `.ground`'s wash may bleed, because every stop in it stays below the ink
+  threshold.
+
+  The scrims are deliberately NOT one full-frame layer, unlike `slide.html`'s.
+  The bottom one covers 52% and fades out — the legacy design system's own
+  hard rule, because a scrim over the whole plate turns a photograph into a
+  texture. The top one is a short band that exists so the SERIES BADGE at
+  y=56 stays legible when it is sitting on a photograph instead of on the
+  field's ramp head.
+
+  It does NOT protect the eyebrow, and this header claimed for one revision
+  that it did. The eyebrow is anchored to the FOOT of `.cov-field` (y~740 on
+  a 1440 plate), roughly 590px below where `.scrim-top` has faded out, and on
+  the photograph path the field's own paint is switched off under it —
+  measured 1.28:1 over a light overcast plate. What protects it there is the
+  label chip on `body:has(.hero) .eyebrow:not(:empty)`; that rule carries the
+  numbers, and the two approaches it beat.
+
+  Slots: `eyebrow`, `title`, `subtitle`, `image:hero`, `html:device`, plus
+  the standing furniture (`accentColor`, `dir`, `fontScale`, `textAlign`,
+  `brandHandle`, `seriesBadge`, `groundStyle`, `slideIndex`). `eyebrow` is
+  fed from the copy's own `kicker` — see `contentFor` — so a cover never ends
+  up with two competing eyebrows.
+
+  See `stat-callout.html`'s header for why the token block is duplicated.
+-->
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600;1,400;1,500;1,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #17181C;
+    --fg: #F4F2EC;
+    --accent: {{accentColor}};
+    /* THE WASH TONE, and it is a mix rather than the accent itself.
+       A ground wash has to land in the measurement's 12-18 band — visible
+       tone that is not a mark — for EVERY accent the palette walk admits,
+       and the accent alone cannot do that. The only gate on --accent is
+       ACCENT_GROUND_CONTRAST_FLOOR = 3 against the ground, so a dark accent
+       sits ~92 units from the bundled ground and a pale one ~159: the same
+       14% alpha that measures 12.9 on the first measures 22.3 on the second,
+       which is INK. Rendered with a pale kit every template in this
+       directory then put ink in the 8px bleed band (clippedEdgeShare 0.5-0.7%
+       against a 0.4% ceiling) and counted its own wash as content.
+       Mixing the accent halfway into the foreground compresses that spread:
+       the mix is ~170 units from the ground on a dark accent and ~195 on a
+       pale one, so 8% of it is 13.6 and 15.6 — inside the band on both, with
+       the accent's hue still in it. */
+    --wash: color-mix(in srgb, var(--accent) 45%, var(--fg));
+    --accent-ink: #141414;
+    --f-display: 'Fraunces', Georgia, 'Times New Roman', serif;
+    --f-body: 'Inter', system-ui, -apple-system, sans-serif;
+    --f-mono: 'IBM Plex Mono', ui-monospace, monospace;
+    --mx: 64px;
+    --ts: 1;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  /* Reviewer typography controls (Phase 2): a discrete type-scale multiplier
+     and logical text alignment, applied per slide via body classes. Classes,
+     never a {{fontScale}} CSS var: a stripped placeholder degrades to a
+     harmless "ts-" class token, whereas an EMPTY-but-defined custom property
+     substitutes as empty (not the var() fallback) and would invalidate every
+     font-size on an older checkpointed slides-data re-rendered post-deploy. */
+  body.ts-s { --ts: 0.85; }
+  body.ts-l { --ts: 1.18; }
+  body.ta-center { text-align: center; }
+  body.ta-end { text-align: end; }
+  html, body { width: 1080px; height: 1440px; }
+  body {
+    position: relative; overflow: hidden;
+    background: var(--bg); color: var(--fg); font-family: var(--f-body);
+    display: flex; flex-direction: column;
+  }
+
+  /* ── L1: the tonal wash, full bleed, inside the 12-18 band. ──
+     The measurement calls a pixel GROUND within 12 of the ground colour and
+     INK beyond 18. A wash placed between the two is visible tone that is not
+     a mark: it may bleed to the frame edge without putting ink in the band
+     `clippedEdgeShare` reads, and it takes the lower half of the plate off
+     "flat" so the type never sits on a dead field.
+
+     ONE wash layer, not two. Two 15-unit tones that overlap sum past 18 and
+     become a drawn field — which, on a layer that bleeds, also puts ink in
+     the band `clippedEdgeShare` reads (measured: 2.6% against a 0.4%
+     ceiling). A single layer can never do that to itself.
+
+     A PLATEAU, not a ramp, and that distinction was measured. A linear ramp
+     from transparent to 14% accent only leaves the flat tolerance in its last
+     few per cent — 0.14 alpha over a ~92-unit accent-to-ground distance is
+     12.9 units, so a ramp is under 12 for almost its whole length and the
+     plate still measures ~77% flat. That is how a cover at the reviewer's `l`
+     type scale, carrying a full plate of 78px display type, reported clause
+     D's "flat and idle" conjunction: 77.3% flat against a 70% ceiling and
+     29.1% occupied against a 42% floor, on a slide that is anything but idle.
+     Held at 16% across the lower half the wash sits at 14.7 units — visible
+     tone, still not a mark — and the plate is honestly not flat. */
+  .ground {
+    position: absolute; inset: 0; z-index: 0;
+    background-image: linear-gradient(178deg,
+      color-mix(in srgb, var(--wash) 2%, transparent) 0%,
+      color-mix(in srgb, var(--wash) 8%, transparent) 26%,
+      color-mix(in srgb, var(--wash) 8%, transparent) 100%);
+  }
+  /* Layer 1: the photograph. `onerror="this.remove()"` rather than
+     `display:none` (slide.html's older approach) because a removed node
+     cannot leave a broken-image glyph or an alt-text box behind — and
+     removing it is what reveals the colour field underneath. */
+  .hero { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; object-fit: cover; display: block; }
+
+  /* Bottom-anchored scrim, 52% tall, fading to fully transparent. */
+  .scrim {
+    position: absolute; inset-block-end: 0; inset-inline: 0; block-size: 52%;
+    z-index: 2; pointer-events: none;
+    background: linear-gradient(to top,
+      color-mix(in srgb, var(--bg) 94%, transparent) 0%,
+      color-mix(in srgb, var(--bg) 74%, transparent) 42%,
+      color-mix(in srgb, var(--bg) 0%, transparent) 100%);
+  }
+  /* WHAT THIS BAND PROTECTS IS `.brand-badge`, at y=56. It is 16% tall and
+     fades out, so it costs the photograph nothing a reader would notice, and
+     nothing else on the plate is inside it — the eyebrow is anchored 590px
+     lower, at the field's foot, and has a plinth of its own (see
+     `.cov-field`'s hero branch). This comment used to name the eyebrow, and
+     that claim was simply false about the layout.
+
+     THE HEAD STOP IS 92% AND THAT NUMBER IS MEASURED, not chosen. The band's
+     alpha at the badge's own y=68 is `head * (1 - 68/230)`, so the head stop
+     is the only lever on it. `--fg` glyph core against the median of the
+     badge's text band, real Chromium at 1080x1440 @2
+     (`.local/cover-contrast.mjs`, 2026-09-11):
+
+       head stop   #E1E6EC overcast   #F8F9FA near-white   #242428 dark
+          78%           4.00:1             3.78:1            14.85:1
+          86%           4.70:1             4.18:1            14.98:1
+          92%           5.32:1             4.78:1            15.08:1
+
+     4.5:1 is the bar for a 19px label, so 78% and 86% both miss it on a
+     bright plate and 92% clears it on every plate tested. The cost is the
+     top 16% of a photograph being a few points darker at its first row and
+     fading to nothing by y=230, which is what a photo-header scrim is. */
+  .scrim-top {
+    position: absolute; inset-block-start: 0; inset-inline: 0; block-size: 16%;
+    z-index: 2; pointer-events: none;
+    background: linear-gradient(to bottom,
+      color-mix(in srgb, var(--bg) 92%, transparent) 0%,
+      color-mix(in srgb, var(--bg) 0%, transparent) 100%);
+  }
+
+  /* ── THE FIELD. A block that CARRIES, not a background that decorates. ──
+
+     It holds the eyebrow at its head and the device at its foot, it is
+     painted only when the cover has a title, and its paint is switched off
+     entirely when a photograph loaded (the photograph IS the field then).
+     Those two guards are what make every number on this plate a fact about
+     the slide rather than about the template — see the file header.
+
+     The ramp, stop by stop, against the measurement's own lines (a pixel is
+     GROUND within 12 of the ground colour, INK beyond 18, and ACCENT within
+     20 of the accent token; on the bundled accent/ground pair the accent is
+     ~92 units from the ground, so an alpha `a` lands `92a` away):
+
+       a = 0.95 at   0%  — 87 units: deep, covered, and inside the accent band
+       a = 0.42 at  28%  — 39 units: still ink, no longer the accent colour
+       a = 0.16 at  50%  — 15 units: the 12-18 band, tone that is not a mark
+       a = 0.04 at  76%
+       a = 0    at 100%
+
+     so the part that measures as a DRAWN DEVICE is the top ~47% of the field
+     and the part that measures as ACCENT is the top ~9% of it. On a field
+     that runs 60-75% of the plate that is ~33-36% of device (floor 10%,
+     full-bleed exemption 50% — the ramp is what keeps it clear of BOTH) and
+     ~5-7% of accent (ceiling 45%). The accent number stays mid-band for a
+     pale kit too, which the flat 88% field it replaces did not: `#EFC75E`
+     measured 45.7% there, over the ceiling, on every cover that kit shipped.
+
+     The texture runs the field's FULL extent rather than the ramp's, because
+     the field's extent is the region the composition occupies and the mask
+     the empty-rectangle clause reads should say so. Below the field it stops
+     dead — there is no full-plate texture in this directory any more.
+
+     ── 2026-09-12, THIRD PASS: THE RAMP IS 480px, NOT "WHATEVER IS LEFT". ──
+
+     The second pass bound the field's paint to the CONTENT (no title, no
+     paint). It left the field's SIZE bound to the leftover space, and that is
+     the other half of the same defect. `.cov-field` is `flex: 1 1 auto`, so it
+     absorbs every pixel the lockup does not use — and the ramp was expressed
+     in PERCENTAGES of it, so the shorter the copy, the more of the frame the
+     decoration bought. Measured through `measureSlidePng` over real Chromium
+     on the previous revision:
+
+       cover, no hero, MEDIUM copy   field 668px (46%)   29.5% img+dev
+       cover, no hero, SHORT  copy   field 908px (63%)   38.4% img+dev
+       cover, no hero, LONG copy, `l`  field ~310px      14.6% img+dev
+
+     The score tracked the emptiness: the less the slide had to say, the
+     better it measured. At the short-copy end that is 908px of orange-to-dark
+     ramp carrying one 32px line of type ("MARKET SIGNAL") at its very foot and
+     nothing else — and a probe row reading 52.0% occupied, one of the fullest
+     plates in a 58-case table. The plate, not the slide, was clearing the
+     cover's device floor.
+
+     It is worth being precise about what was NOT the cause, because the
+     obvious suspect is innocent: re-rendered with only the hairline screen
+     removed, the bare ramp measured 41.1% of imagery-or-device on its own
+     (against 38.4% with the screen). The mark is not what buys the number.
+     The ramp's AREA is.
+
+     So the ramp is now a BOUNDED BAND: 480 design px measured from the
+     field's block-start, `no-repeat`, with the stops re-derived as px against
+     that height rather than as percentages of an elastic box. What follows:
+
+       * the masthead is 33% of the frame at every copy length instead of
+         46-63%, so the region is sized by the design and not by what the
+         copy failed to use;
+       * the part of it that measures as a drawn device is its own top ~47%,
+         about 15-16% of the frame — still clear of the 10% floor and of the
+         50% full-bleed exemption at BOTH ends, but now a constant of the
+         template rather than a function of the headline's length;
+       * when the copy is long enough that the field is shorter than 480px,
+         `overflow: hidden` crops the band exactly as the elastic field
+         already cropped the ramp — that end of the range is unchanged;
+       * the screen still runs the field's FULL extent, so the region below
+         the band reads as a screened tint rather than as bare plate and the
+         largest empty rectangle stays broken up by a real mark rather than by
+         a ramp nobody asked for.
+
+     THE BOX ITSELF IS DELIBERATELY STILL ELASTIC, and that is the one part of
+     the review's prescription this file does NOT take, on a measurement. The
+     suggestion was to cap `.cov-field` too ("a max-block-size, so a
+     three-word cover cannot buy 63% of the frame in decoration"). Capping the
+     paint does that; capping the BOX as well does something else — it hands
+     the slack to a bare-ground gap between the band and the title, and a bare
+     gap is a contiguous full-width rectangle, which is precisely what clause
+     C measures. Six capped geometries were built and measured through
+     `measureSlidePng` over real Chromium, each with the lockup made elastic
+     and CENTRED (bottom-anchoring it is worse again) and with the title's new
+     `huge` step sized up to take the space back:
+
+       band / box / lockup pad / huge      worst largestEmptyRect
+        480 / 520 /  52 / 132px                21.9%   (short copy, `s`)
+        480 / 520 /  24 / 144px                18.6%
+        500 / 560 /  24 / 144px                18.0%
+        520 / 580 /  20 / 148px                16.5%
+        540 / 600 /  20 / 148px                16.0%
+        560 / 620 /  16 / 152px                15.0%
+
+     Clause C's ceiling for a cover is 0.22 and the calibration asserts it with
+     an 8-point margin, so the bar is 0.14 — every one of them is over it, and
+     the `s` type scale is where they fail because at `--ts: 0.85` every block
+     on the plate is 15% shorter and the air is 15% taller. The elastic box
+     scores 6.4-11.3% across the same matrix. Capping the box would trade a
+     defect the instrument caught for one it also catches, which is not a
+     trade worth making; what the cap was FOR — decoration that stops growing
+     when the copy shrinks — the bounded ramp already delivers on its own.
+
+     What is left below the band is therefore a screened tint rather than a
+     colour plate: a 2px/14px rule system on ground, which is the same
+     treatment every other archetype's field carries and which the measurement
+     scores as a mark rather than as a device. The honest statement of what
+     this file now does is "a bounded masthead plate over a screened field",
+     not "a colour field sized by whatever the copy left over".
+
+     AND THE SCREEN IS NOW LOAD-BEARING FOR CLAUSE C, which it was not before,
+     so it is worth saying plainly rather than leaving for the next reviewer to
+     find. Re-rendered with only the `repeating-linear-gradient` layer removed
+     (short copy, `m`): `largestEmptyRectShare` goes from 9.8% to 29.4% and
+     `edgeDensity` from 0.127 to 0.055. Before this pass the same experiment
+     moved it 10.4% -> 12.5%, because the RAMP was the thing covering that
+     region. What changed is which layer holds the region, not whether one
+     does — and a screened region genuinely is the directory's standing answer
+     to "how does a plate occupy space without pretending to be a picture"
+     (see the WHY A MARK AT ALL note below, and the identical argument in
+     `headline-focus.html` and `slide.html`). What a photoless, deviceless
+     cover with a 24-character title does NOT have is more content to put
+     there; the three honest options are a screened field, a bare field that
+     clause C fails, or a bigger title, and this file now does the first and
+     the third.
+
+     `.headline` also gained a `huge` step upward, the first time this ladder
+     has stepped UP. A cover with a 24-character title was setting it at 104px
+     with two thirds of the plate below the band to fill; that is the same
+     "the type had to carry the frame and it was not big enough to" the
+     statement archetype's own ladder was corrected for. It also feeds back
+     into the field: a bigger title makes the lockup taller, so the elastic
+     field is shorter, so the screened tail shrinks with it.
+
+     WHERE THE TYPE SITS IN IT is not a free choice. The eyebrow and the
+     device are anchored to the field's FOOT, where the ramp has already
+     dissolved to within a few units of the ground, because that is the one
+     band whose contrast does not depend on the brand accent's lightness:
+     `--fg` measures 10.7:1 there on the reference kit and 6.6:1 on the
+     lightest accent the palette walk admits (`#EFC75E`), against 4.5:1 on the
+     ramp's own head for the first and a failure for the second. A template
+     cannot run `color-contrast()` in Chrome stable, so it has to compose
+     around the problem instead. */
+  .cov-field {
+    position: relative; z-index: 3; flex: 1 1 auto; min-block-size: 0;
+    margin: 16px 16px 0;
+    padding: calc(84px * var(--ts, 1)) calc(var(--mx) - 16px) calc(44px * var(--ts, 1));
+    display: flex; flex-direction: column; justify-content: flex-end;
+    overflow: hidden;
+    /* ── THE MARK ON THE PLATE IS A HORIZONTAL SCREEN, AND THE ANGLE IS THE
+          POINT. ──
+       Every archetype in this directory used to carry the same 45-degree
+       hairline field: six of the eight bundled plates rendered side by side
+       were one wallpaper with different words on it, which is the owner's
+       second complaint verbatim ("בנוסף בגלל שזה חזרתי זה נראה AI" —
+       repetition is what reads as machine-made). The set now spends a
+       different MARK per archetype — see each file's own note — and this one
+       is the cover's: fine horizontal rules across a colour ramp, which is
+       what a screen-printed tint looks like. It is the mark that belongs on a
+       masthead, and at a glance it is not the statement slide's diagonal.
+
+       WHY A MARK AT ALL, rather than the bare ramp. The measurement has no
+       state between "invisible" and "a drawn device": a uniform tone either
+       sits under the 18-unit ink line, where no pixel is ink and the cell's
+       mean has not left the ground, so the cell is UNOCCUPIED — or it clears
+       it, and then all 64 samples are ink, the cell is COVERED, and it counts
+       as a drawn device. Only a partial-coverage mark can occupy a region
+       without becoming one. That is why the whole set reached for hairlines,
+       and it is why the honest variety is in the mark's SHAPE (rules, dots,
+       dashes, a glyph's outline) rather than in taking the mark away. A 2px
+       rule on a 14px pitch marks (2+4)/14 of the cell rows it crosses and can
+       never fill three quarters of a 4px cell, so the plate's device share
+       stays the RAMP's and the largest empty rectangle inside the field stays
+       one 12px band (under 1% of the frame).
+
+       The screen REPEATS over the whole field; the ramp does not repeat and
+       is 480px tall. That difference is the third pass's whole change — see
+       the block above for the measurement. The ramp's stops are the same five
+       it always had, restated as px against 480 (0.95 at 0, 0.42 at 134,
+       wash at 240, 0.04 at 365, gone at 480), so the colour reads exactly as
+       it did; only its extent stopped being a function of the copy. */
+    background-image:
+      repeating-linear-gradient(to bottom,
+        color-mix(in srgb, var(--fg) 20%, transparent) 0 2px,
+        transparent 2px 14px),
+      linear-gradient(to bottom,
+        color-mix(in srgb, var(--accent) 95%, transparent) 0px,
+        color-mix(in srgb, var(--accent) 42%, transparent) 134px,
+        color-mix(in srgb, var(--wash) 8%, transparent) 240px,
+        color-mix(in srgb, var(--accent) 4%, transparent) 365px,
+        transparent 480px);
+    background-size: auto, 100% 480px;
+    background-repeat: repeat, no-repeat;
+    background-position: 0 0, 0 0;
+  }
+  /* The two guards. A photograph replaces the field; a cover with no title is
+     not a title card and must not measure as one. */
+  body:has(.hero) .cov-field,
+  body:has(#title:empty) .cov-field { background-image: none; }
+
+  /* ── THE EYEBROW'S OWN GROUND, on the photograph path only ──────────────
+     The eyebrow and its rail are anchored to the field's FOOT (see
+     `justify-content: flex-end` above). On the no-photograph path that foot
+     is where the ramp has dissolved, and `--fg` measures 11.8:1 there. On the
+     photograph path the guard above switches the whole field paint off, and
+     the eyebrow is then standing on bare photograph, roughly 70px above the
+     field's bottom edge — far below `.scrim-top`, which ends at 16% of the
+     plate, and high up `.scrim`'s `to top` ramp, where it has faded to ~0.23
+     alpha. Measured through `.local/cover-contrast.mjs` (2026-09-11, real
+     Chromium, 1080x1440 @2, glyph core against the median of the eyebrow's
+     own text band):
+
+       eyebrow ground                 before      with this chip
+       dark photograph (#242428)      11.90:1       13.27:1
+       light photograph (#E1E6EC)      1.28:1        9.72:1
+       near-white photograph (#F8F9FA) 1.2:1         9.39:1
+
+     1.28:1 is a label a reader cannot see, and the file header used to claim
+     `.scrim-top` protected it — it does not and never could, since it ends
+     roughly 590px above where the eyebrow renders. (What `.scrim-top` does
+     protect is `.brand-badge` at y=56; the header now says so.)
+
+     A short band at the field's foot rather than a taller scrim, because the
+     legacy rule the bottom scrim obeys is the right one: a scrim over the
+     whole plate turns a photograph into a texture. This one is measured from
+     the block-end in `px * --ts`, so it tracks the eyebrow it is protecting
+     rather than the field's elastic height, and it fades out over the same
+     distance again so there is no drawn edge across the picture.
+
+     A CHIP THAT HUGS THE LABEL, and the two attempts it replaces are worth
+     recording, because each of them would have shipped on its number alone.
+
+     1. A gradient band on `.cov-field`'s own background measured 8.39:1 and
+        looked like a grey rectangle pasted onto the photograph. The field is
+        inset 16px and clipped to its own box, so the band arrived with two
+        vertical edges and a hard horizontal cut across the picture at the
+        field's foot. The plate was worse than the one it fixed. There is no
+        way to paint a soft-edged band from here either: anything anchored to
+        `.lockup` paints INSIDE that element's z-index-4 stacking context and
+        would cover the eyebrow rather than sit behind it, and the fixed
+        bottom `.scrim` cannot reach — it is at 0.23 alpha where the eyebrow
+        renders, and getting it to the 0.61 a bright plate needs would mean a
+        near-opaque scrim over the bottom half of every photograph, which is
+        the one thing this file's scrim rule forbids.
+     2. A three-stop `text-shadow` halo. It is the right instinct for type on
+        photography and it is simply too small at 24px: 1.68:1 on the overcast
+        plate and 1.44:1 on the near-white one. Light type on a light
+        photograph cannot be saved by a glow.
+
+     So the label gets a ground of its own, sized to the label. It is the same
+     device `BADGE_VARIANT_CSS`'s `pill` variant already gives branded clients
+     — a chip is a normal editorial move for a kicker over a picture — and it
+     is small enough (~0.9% of the plate) that it changes no measurement the
+     interest floor reads. The negative inline margin cancels the padding, so
+     not one glyph moves between the two paths.
+
+     It paints only when there IS an eyebrow, for the reason the field's own
+     `#title:empty` guard exists: an empty plate must not acquire ink it has
+     no content to justify. The rail gets a soft dark spread rather than a
+     chip, because a 2px hairline at 46% is the first thing a bright plate
+     erases and a chip around a hairline would be a box around nothing. */
+  body:has(.hero) .eyebrow:not(:empty) {
+    align-self: flex-start;
+    padding: calc(11px * var(--ts, 1)) calc(20px * var(--ts, 1));
+    margin-inline-start: calc(-20px * var(--ts, 1));
+    background: color-mix(in srgb, var(--bg) 86%, transparent);
+  }
+  body:has(.hero):has(.eyebrow:not(:empty)) .cov-rail {
+    box-shadow: 0 0 calc(16px * var(--ts, 1)) calc(4px * var(--ts, 1)) color-mix(in srgb, var(--bg) 82%, transparent);
+  }
+
+  .cov-device { inline-size: 100%; }
+  .cov-device:empty { display: none; }
+
+  .lockup {
+    position: relative; z-index: 4; flex: 0 0 auto;
+    padding-inline: var(--mx); padding-block: calc(52px * var(--ts, 1)) 104px;
+  }
+  .eyebrow {
+    font-family: var(--f-mono); font-weight: 600; font-size: calc(24px * var(--ts, 1));
+    letter-spacing: 0.24em; text-transform: uppercase;
+    color: color-mix(in srgb, var(--fg) 92%, transparent);
+    margin-block-start: calc(36px * var(--ts, 1));
+  }
+  .eyebrow:empty { display: none; }
+  /* The keyline under the eyebrow runs the full measure of the field and is
+     what gives the field a drawn bottom edge instead of a raw cut — the job
+     the previous revision's 40px accent-ink shelf did, at a hundredth of the
+     coverage and with no accent budget spent on it. */
+  .cov-rail { block-size: 2px; background: color-mix(in srgb, var(--fg) 46%, transparent); margin-block-start: calc(22px * var(--ts, 1)); }
+
+  /* `.headline` rather than a cover-specific class name on purpose: it is one
+     of `script-fonts.ts`'s DISPLAY_SELECTORS, so a Hebrew or Arabic cover
+     picks up that script's own leading instead of Latin leading on a
+     script whose ascenders and nikud need more room. */
+  .headline {
+    font-family: var(--f-display); font-weight: 600; font-size: calc(104px * var(--ts, 1));
+    line-height: 1.07; letter-spacing: -0.02em; text-wrap: balance;
+    /* Not cosmetic: a display face's glyph box is taller than a sub-1.15 line
+       box, so the block reports `scrollHeight > clientHeight` and the DOM
+       probe calls it an overflowing element — which fails clause B of the
+       interest floor on a slide that fits perfectly. In `em`, so it tracks
+       every size step and every per-script type scale. */
+    padding-block-end: 0.22em;
+  }
+  /* The ladder now steps UP as well as down. `huge` is the step a short title
+     was missing: with the field capped at 520px the lockup has 920px to fill,
+     and a 24-character title at 104px used two lines of it. */
+  .headline.huge { font-size: calc(132px * var(--ts, 1)); line-height: 1.04; }
+  /* Over a photograph the title stays at the base size: it has to fit inside
+     the bottom scrim, which does not grow with it. */
+  body:has(.hero) .headline.huge { font-size: calc(104px * var(--ts, 1)); line-height: 1.07; }
+  .headline.small { font-size: calc(84px * var(--ts, 1)); line-height: 1.1; }
+  .headline.tiny { font-size: calc(66px * var(--ts, 1)); line-height: 1.14; }
+
+  /* One accent mark under the title, sized to the plate rather than to the
+     legacy 132x12 detail. */
+  .stat-band { inline-size: calc(200px * var(--ts, 1)); block-size: calc(14px * var(--ts, 1)); background: var(--accent); margin-block-start: calc(28px * var(--ts, 1)); }
+
+  .body-text {
+    font-family: var(--f-body); font-weight: 400; font-size: calc(32px * var(--ts, 1)); line-height: 1.5;
+    color: color-mix(in srgb, var(--fg) 92%, transparent);
+    margin-block-start: calc(26px * var(--ts, 1)); max-inline-size: 880px; text-wrap: pretty;
+  }
+  .body-text:empty { display: none; }
+
+  /* Standing brand furniture. The brand head fragment (`buildBrandHeadHtml`)
+     restates both rules and lands AFTER this sheet, so a client with a kit
+     keeps its own placement; these defaults exist because a brandless render
+     otherwise lays the handle out in normal flow, on top of the copy. */
+  .brand-handle {
+    position: absolute; bottom: 44px; inset-inline-start: 44px; z-index: 6;
+    font-family: var(--f-mono); font-size: calc(19px * var(--ts, 1)); letter-spacing: 0.08em;
+    color: color-mix(in srgb, var(--fg) 55%, transparent);
+  }
+  /* THE BADGE IS THE ONE PIECE OF FURNITURE WHOSE GROUND CHANGES UNDER IT,
+     and it is why this file is the only one in the directory that does not
+     simply set `color: var(--accent)`.
+
+     It sits at y=56, which on a cover with no photograph is the HEAD of the
+     field's ramp — `color-mix(accent 95%)`, very nearly the accent itself —
+     and on a cover WITH one it is standing on somebody's photograph. Three
+     candidate inks, all three measured on the same plate rather than argued
+     about (`.local/rvw-badge.mjs`: the identical no-hero document rendered
+     three times with only `--badge-ink` overridden, real Chromium at
+     1080x1440 @2, the glyph core against the median of the badge's own text
+     band; the photograph rows from `.local/cover-contrast.mjs`):
+
+       ground under the badge        --accent-ink   --fg    --accent
+       ramp head, no photograph          2.81:1    5.60:1     1.51:1
+       dark grained photograph           1.09:1   15.03:1     3.76:1
+       light grained photograph          3.83:1    6.52:1     1.63:1  (scrimmed)
+       near-white photograph             3.70:1    4.80:1        —    (scrimmed)
+
+     The `--fg` and `--accent` rows come from `.local/fx-badge-kit.mts`, which
+     composes the document PRODUCTION composes — this file, the shared device
+     sheet, and a real `buildBrandHeadHtml` — and measures the badge's own
+     band in the screenshot; the `--accent` column is that same document with
+     the kit's pre-fix `color: var(--accent)` forced back on. The
+     `--accent-ink` column and the near-white row are
+     `.local/cover-contrast.mjs`'s, on its own grained fixtures. Three
+     instruments, said so rather than blended.
+
+     ── 2026-09-12: THE FIRST ROW USED TO READ `3.20:1 / 1.3:1`, AND BOTH
+        HALVES OF IT WERE WRONG. ──
+
+     The table argued that `--accent-ink` was the legible choice on the ramp
+     head by a factor of 2.5 over `--fg`. Re-measured with the instrument the
+     table itself cites, `--accent-ink` is 2.81:1 — under the 3:1 large-text
+     floor, let alone the 4.5:1 a 19px mono label wants — and `--fg` is
+     5.60:1, so the row was wrong by 4.3x on the second figure and it argued
+     for the worse option. Looked at, at feed width, "THE SIGNAL" in
+     `#141414` sinks into the orange ramp head and is gone at a glance.
+     `--accent-ink` is text ON AN ACCENT CHIP (`BADGE_VARIANT_CSS`'s `pill`,
+     where the chip is painted behind it) and a bare badge has no chip; the
+     ramp head is not a chip, it is a gradient that happens to be accent at
+     the top. So the token is `--fg` on every path this file can render, which
+     is also the one that needs no branch: 4.80:1 is the worst of the four
+     rows above and it is over the floor.
+
+     THE INK IS A CUSTOM PROPERTY ON `body`, NOT A `body:has(...)
+     .brand-badge` RULE, and that is deliberate in both directions.
+     `buildBrandHeadHtml` splices a client's own `.brand-badge { ... }` block
+     in AFTER this sheet, so a compound selector here would outrank every
+     brand kit in the tree and silently repaint their badges — and a BARE
+     `.brand-badge` here loses to that kit unconditionally, which is how this
+     fix was dead in every branded run for one revision: the kit's block said
+     `color: var(--accent)` and the badge measured 1.51:1 on the ramp head and
+     1.63:1 over a light photograph — orange on orange at the masthead. The
+     kit's block now reads
+     `color: var(--badge-ink, var(--accent))`, so the template names the ink
+     and the kit still decides everything else. The pixel proof is
+     `interest-floor-calibration.test.ts`'s "a series badge stays legible
+     through a client's own brand head" case, which renders this file through
+     `composeRawDocument` WITH `buildBrandHeadHtml` and measures the badge's
+     own band. */
+  body { --badge-ink: var(--fg); }
+  .brand-badge {
+    position: absolute; top: 56px; inset-inline-start: var(--mx); z-index: 6;
+    font-family: var(--f-mono); font-weight: 600; font-size: calc(19px * var(--ts, 1));
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--badge-ink);
+  }
+  /* An @handle, a URL and a #hashtag are LTR strings, and a Hebrew or Arabic
+     slide lays them out inside an RTL paragraph: the leading `@` is a bidi
+     NEUTRAL, so it takes the paragraph embedding level and ends up on the
+     wrong side — every Hebrew slide in the tree shipped `karoslabs@`. The
+     `<bdi dir="ltr">` in the markup is the fix; `dir` on the DIV would also
+     have re-resolved its own `inset-inline-start` and moved the watermark to
+     the other corner. The extra :has() selector is what keeps an empty slot
+     hidden now that the div always has an element child. */
+  .brand-badge:empty, .brand-handle:empty, .brand-handle:has(> bdi:empty) { display: none; }
+</style>
+</head>
+<body class="ts-{{fontScale}} ta-{{textAlign}}">
+  <div class="ground" aria-hidden="true"></div>
+  <img class="hero" src="{{image:hero}}" onerror="this.remove()" alt="" />
+  <div class="scrim-top" aria-hidden="true"></div>
+  <div class="brand-badge">{{seriesBadge}}</div>
+  <div class="brand-handle"><bdi dir="ltr">{{brandHandle}}</bdi></div>
+  <div class="scrim" aria-hidden="true"></div>
+  <div class="cov-field">
+    <div class="cov-device">{{html:device}}</div>
+    <div class="eyebrow">{{eyebrow}}</div>
+    <div class="cov-rail"></div>
+  </div>
+  <div class="lockup">
+    <div class="headline" id="title">{{title}}</div>
+    <div class="stat-band"></div>
+    <div class="body-text">{{subtitle}}</div>
+  </div>
+  <script>
+    // The same character-count ladder the rest of the set uses (legacy
+    // `_cf-core.js`'s approach), with a cover's own breakpoints: a cover
+    // title is shorter than a `headline_focus` statement, and the lockup is
+    // the elastic item, so a long title grows into the middle of the plate
+    // rather than off it.
+    //
+    // `huge` only applies on the NO-PHOTOGRAPH path, where the title has the
+    // whole lower two thirds to itself. Over a photograph the title has to
+    // stay inside the bottom scrim, so the step is declared under that branch
+    // only and the class is inert there.
+    (function () {
+      var t = document.getElementById("title");
+      var len = (t.textContent || "").trim().length;
+      if (len > 64) t.className = "headline tiny";
+      else if (len > 34) t.className = "headline small";
+      else if (len <= 26) t.className = "headline huge";
+      window.__CAROUSEL_READY__ = true;
+    })();
+  </script>
+</body>
+</html>

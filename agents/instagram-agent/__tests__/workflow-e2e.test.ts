@@ -22,6 +22,10 @@ import {
   type TestEnvironment,
 } from "./test-helpers.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
+import { syntheticPhotograph } from "./synthetic-photograph.js";
+import { SKELETON_BELIEF_KEY, readSkeletonHistory, skeletonSignature } from "../src/workflow/skeleton-memory.js";
+import { CUSTOM_ARCHETYPE_BELIEF_KEY } from "../src/workflow/custom-archetype-memory.js";
+import { RUN_BUDGET_BELIEF_KEY } from "../src/workflow/run-budget.js";
 
 const params = { runId: "instagram_run_1", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
@@ -72,6 +76,11 @@ const HAPPY_PATH_STEP_IDS = [
   // Phase 0 cost controls (owner's rule, 2026-09-09): the run's budget plan,
   // estimated and adapted BEFORE the first paid call — never a hold.
   "02j-plan-run-budget",
+  // Phase 2 (item P): the client's shipped-skeleton history, a free
+  // `memory.read({ scope: "beliefs" })`. Its own step id rather than a share
+  // of 02j's read, so "why did this run avoid a stat cover" is legible in the
+  // trace. Inert on a first run, which this fixture is.
+  "02k-read-structural-memory",
   "03-claim-topic",
   // Phase 0 (RFC-13 §E): the trend scout runs on EVERY run now — also with a
   // planned catalog row, as an "alternatives" signal — then the content mode
@@ -141,7 +150,22 @@ const HAPPY_PATH_STEP_IDS = [
   // render is spent — present because this fixture's config declares no
   // render rules of its own.
   "07h-default-render-rules-attempt-1",
+  // Phase 2 (item P): the cross-run variety check, deliberately PRE-RENDER so
+  // a repeated skeleton costs no Chromium launch at all. Passes and consumes
+  // nothing here: this fixture seeds no skeleton history.
+  "07k-skeleton-variety-attempt-1",
   "08-render-carousel-attempt-1",
+  // Phase 2 (item L): the visual-interest floor, measured on the rendered
+  // pixels, immediately after the render and STRICTLY BEFORE `08a2` — that
+  // ordering is the zero-model-call cost claim. Passes here (the fake
+  // renderer reports passing metrics by default), so no `08a1b`/`08a1c`/
+  // `08a1d` re-layout steps follow.
+  "08a1-interest-floor-attempt-1",
+  // Item P.2's within-carousel adjacency clause, re-run against the MEASURED
+  // occupancy: `07k` is pre-render and has no shares to read, so without this
+  // step `skeletonWarnings` was structurally always empty and never reached
+  // `08b`.
+  "08a1e-skeleton-occupancy-attempt-1",
   // Deterministic pre-checks (SCRUM-324/AU40) — logo presence/contrast and
   // palette-within-kit — answered in code before the model is ever asked to
   // grade composition/font-hierarchy/brand-asset-integration/colour-harmony.
@@ -150,6 +174,14 @@ const HAPPY_PATH_STEP_IDS = [
   // Revision-scoped: `-r0` is the first review round. A `revise` decision
   // registers `-r1` after re-drafting.
   "09a-batch-review-r0",
+  // NOTE: this list is set-equal to the happy path, so it is the one place
+  // every Phase 2 step id is reconciled. `02k`, `07k` and `08a1` are above.
+  // `00c*` (item N) must NOT appear: this fixture passes no `templateStore`
+  // at all, so there is nowhere to store a generated template and the whole
+  // studio block is skipped. `09f-auto-promote-templates` (item O) must NOT
+  // appear either: it is conditional on this run having shipped a custom
+  // archetype, and this fixture ships none (`auto-promote-template.test.ts`
+  // is where it is asserted present).
   "09b-deliver-and-log",
 ];
 
@@ -441,6 +473,82 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     expect(deliverables).toHaveLength(0);
   }, 60000);
 
+  it("09b writes all THREE belief keys in ONE memory.updateBeliefs diff, and the gate payload carries the skeleton", async () => {
+    // Green once the integrator lands WP-C5 notes (g) and (h): one
+    // `memory.updateBeliefs({ diff })` carrying RUN_BUDGET_BELIEF_KEY,
+    // SKELETON_BELIEF_KEY and CUSTOM_ARCHETYPE_BELIEF_KEY together, plus
+    // `skeleton` on the gate payload and the deliverable.
+    //
+    // ONE call, not three, is the point: `updateBeliefs` shallow-merges a
+    // diff, so three separate calls would each read-modify-write the same
+    // document and the last writer would win. Counting the calls is the only
+    // way to assert that from outside.
+    const promptStore = makePromptStore();
+    const router = happyRouter();
+    const updates: Array<Record<string, unknown>> = [];
+    const realUpdate = env.tools["memory.updateBeliefs"]!;
+    const tools: AgentToolRegistry = {
+      ...testTools(env),
+      "memory.updateBeliefs": {
+        ...realUpdate,
+        async execute(args: unknown, opts: never) {
+          updates.push((args as { diff: Record<string, unknown> }).diff);
+          return realUpdate.execute(args, opts);
+        },
+      },
+    };
+    const workflowFn = createInstagramAgentWorkflow({
+      tools,
+      promptStore,
+      router,
+      repoRoot: env.repoRoot,
+      imageCandidatePool: goodImageCandidatePool(),
+    });
+
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+    const runId = "instagram_run_beliefs";
+    const first = await engine.run(workflowFn, { ...params, runId });
+    expect(first.status).toBe("awaiting_gate");
+    if (first.status !== "awaiting_gate") throw new Error("unreachable");
+
+    // The gate payload answers "are we shipping the same post every week"
+    // (item P.3) — the first time that is visible from the portal at all.
+    const gate = await durableStore.getGate(first.pendingGateId);
+    const payload = gate?.payload as { skeleton?: { signature: string; previous?: string; repeatedPrevious: boolean; recent: string[] } } | undefined;
+    expect(payload?.skeleton).toBeDefined();
+    expect(payload?.skeleton?.repeatedPrevious).toBe(false);
+    expect(payload?.skeleton?.previous).toBeUndefined();
+    expect(payload?.skeleton?.recent).toEqual([]);
+    expect(payload?.skeleton?.signature).toBe(
+      skeletonSignature(goodCopyOutput().slides.map((slide) => ({ n: slide.n, template: "slide.html", hasImage: true }))),
+    );
+
+    await engine.resolveGate(runId, "09a-batch-review-r0", { decision: "approve", actor: "jane@karoslabs.com", at: new Date().toISOString() });
+    expect((await engine.run(workflowFn, { ...params, runId })).status).toBe("completed");
+
+    const beliefUpdates = updates.filter((diff) => RUN_BUDGET_BELIEF_KEY in diff || SKELETON_BELIEF_KEY in diff || CUSTOM_ARCHETYPE_BELIEF_KEY in diff);
+    expect(beliefUpdates).toHaveLength(1);
+    expect(Object.keys(beliefUpdates[0]!).sort()).toEqual([CUSTOM_ARCHETYPE_BELIEF_KEY, RUN_BUDGET_BELIEF_KEY, SKELETON_BELIEF_KEY].sort());
+
+    const beliefs = await env.store.readJson<Record<string, unknown>>("acme", ["memory", "beliefs"]);
+    const history = readSkeletonHistory(beliefs);
+    expect(history.entries).toHaveLength(1);
+    expect(history.entries[0]!.runId).toBe(runId);
+    expect(history.entries[0]!.archetypes).toEqual(["photo", "photo", "photo", "photo", "photo", "photo"]);
+    expect(history.entries[0]!.roles).toEqual(["cover", "interior", "interior", "interior", "interior", "closer"]);
+    expect(history.entries[0]!.edited).toBe(false);
+    expect(beliefs?.[RUN_BUDGET_BELIEF_KEY]).toBeDefined();
+
+    // One operator-visible ledger row carries the ordered signature, so the
+    // run trace answers the question without a beliefs read.
+    const events = await env.store.listJson("acme", ["ledger", "events", runId]);
+    // `listJson` returns `{ id, data }` wrappers, so the row itself is `.data`
+    // (the same shape every other ledger assertion in this package reads).
+    const skeletonEvent = events.find((e) => String((e.data as { message?: string }).message ?? "").includes(history.entries[0]!.signature));
+    expect(skeletonEvent).toBeDefined();
+  }, 90000);
+
   // Skips itself when Chromium hasn't actually been downloaded for Playwright
   // in this environment (RFC-03 §5's documented "known gap": "playwright is
   // not installed... the render step will exit 2 until this is fixed") —
@@ -449,7 +557,49 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
   // `publish.renderCarousel` tool (real Chromium, real screenshot) slots in
   // without any change to the workflow at all, whenever a real browser
   // binary happens to be available.
+  /**
+   * REAL TEMPLATES AND A REAL PHOTOGRAPH, for this test only.
+   *
+   * Every other test in this file renders through `fakeRenderCarousel`, which
+   * never opens the files — so `__tests__/fixtures/` has always held thin
+   * stand-ins: a 39-line `slide.html` that is a white page with centred text,
+   * and 68-byte 1x1 hero images. That was fine until item L started MEASURING
+   * the pixels. Measured through the real renderer
+   * (`.local/e2e-fixture-probe.mjs`, 2026-09-11), those fixtures are
+   * indistinguishable from the defect the floor exists to catch:
+   *
+   *   fixture template            flat   occupied  emptyRect  img+dev   verdict
+   *   slide.html + fixture hero  98.0%      3.4%      40.6%      1.2%   dead-space, empty, no-device, empty
+   *   headline-focus.html        95.6%      6.6%      53.9%      3.0%   dead-space, empty
+   *   list-takeaway.html         98.1%      2.9%      44.3%      1.3%   dead-space, empty, no-device, empty
+   *
+   * So `08a1` fails, `returnToCopyWith` sends the attempt back to `05` for a
+   * redraft, `happyRouter()`'s queued turns run out, and the run ends
+   * `degraded` — for reasons that are entirely about the fixtures and say
+   * nothing about the workflow this test exists to prove. The answer is not
+   * to accept `degraded` (that would delete the only end-to-end check that
+   * the real renderer produces a shippable carousel) and not to queue extra
+   * turns (that would assert the redraft loop rather than the wiring). It is
+   * to hand this one test what a real run actually gets: the bundled
+   * templates, and a hero with variety in its pixels.
+   */
+  async function installRealRenderFixtures(repoRoot: string): Promise<void> {
+    const bundled = path.resolve(__dirname, "..", "assets", "templates", "default");
+    const into = path.join(repoRoot, "fixtures", "templates");
+    for (const file of (await fs.readdir(bundled)).filter((f) => f.endsWith(".html"))) {
+      await fs.copyFile(path.join(bundled, file), path.join(into, file));
+    }
+    // The design canvas's own size — see `syntheticPhotograph` for why a
+    // small image upscaled cannot stand in for a photograph here.
+    const photograph = syntheticPhotograph(1080, 1440);
+    const imageDir = path.join(repoRoot, "fixtures", "images");
+    for (const file of (await fs.readdir(imageDir)).filter((f) => f.endsWith(".png"))) {
+      await fs.writeFile(path.join(imageDir, file), photograph);
+    }
+  }
+
   it.skipIf(!isChromiumInstalled())("(real Chromium) renders and delivers using the actual publish.renderCarousel tool, unmodified", async () => {
+    await installRealRenderFixtures(env.repoRoot);
     const promptStore = makePromptStore();
     const router = happyRouter();
     const workflowFn = createInstagramAgentWorkflow({
@@ -468,6 +618,12 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     expect(result.status).toBe("completed");
     if (result.status !== "completed") throw new Error("unreachable");
     expect(result.output.renderedCount).toBe(6);
+    // AND IT SHIPPED CLEAN. `completed` alone does not say the carousel was
+    // worth shipping — item L's floor never holds a run, it marks it. This is
+    // the assertion that the real renderer, the real templates and a real
+    // photograph produce a post with no interest finding on it, which is the
+    // whole claim the fixture rework above exists to make honest.
+    expect(result.output.visualInterest, "the real-Chromium carousel shipped with an interest finding").toBeUndefined();
 
     const outDir = path.join(env.repoRoot, "instagram-output", "acme", "instagram_run_real_chromium");
     for (let n = 1; n <= 6; n++) {

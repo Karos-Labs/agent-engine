@@ -154,6 +154,6 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyOutput> {
     // the writer the scout had "found a live story", which turned every
     // evergreen subject's `whyNow` into an invented timeliness claim no
     // downstream check could catch.
-    skillRef: "instagram-copy@13",
+    skillRef: "instagram-copy@14",
   };
 }

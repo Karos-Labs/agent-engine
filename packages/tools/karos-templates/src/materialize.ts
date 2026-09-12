@@ -69,6 +69,14 @@ export async function materializeTemplates(options: {
   brandHeadHtml?: string;
   /** The client's brand body fragment (the logo `<img>`), spliced before `</body>` in every written document. */
   brandBodyHtml?: string;
+  /**
+   * A shared stylesheet fragment spliced into EVERY written document —
+   * registry rows, the copied client base template, and (via the caller)
+   * custom archetypes too. Brand-INDEPENDENT on purpose: see
+   * `composeDocument`'s own doc comment for why this is not folded into
+   * `brandHeadHtml`.
+   */
+  extraHeadHtml?: string;
 }): Promise<MaterializeResult> {
   const relDir = `${TEMPLATE_CACHE_PREFIX}/${options.runId}`;
   const absDir = path.resolve(options.repoRoot, relDir);
@@ -95,7 +103,7 @@ export async function materializeTemplates(options: {
     // the registry, so the `photo` archetype is skipped here.
     if (archetypeId === "photo") continue;
     const file = templateFileName(archetypeId);
-    await fs.writeFile(path.join(absDir, file), composeDocument(definition, options.brandHeadHtml, options.brandBodyHtml), "utf8");
+    await fs.writeFile(path.join(absDir, file), composeDocument(definition, options.brandHeadHtml, options.brandBodyHtml, options.extraHeadHtml), "utf8");
     files[archetypeId] = file;
     if (definition.layoutType === "typographic") typographicArchetypes.push(archetypeId);
     chosen.push({ archetypeId, templateId: definition.id, source: definition.source, qualityScore: definition.qualityScore });
@@ -110,7 +118,11 @@ export async function materializeTemplates(options: {
     const from = path.resolve(options.repoRoot, options.clientTemplateDir, options.clientTemplateFile);
     try {
       const html = await fs.readFile(from, "utf8");
-      await fs.writeFile(path.join(absDir, options.clientTemplateFile), composeRawDocument(html, options.brandHeadHtml, options.brandBodyHtml), "utf8");
+      await fs.writeFile(
+        path.join(absDir, options.clientTemplateFile),
+        composeRawDocument(html, options.brandHeadHtml, options.brandBodyHtml, options.extraHeadHtml),
+        "utf8",
+      );
       files["photo"] = options.clientTemplateFile;
     } catch {
       // Absent is survivable and the caller finds out by `files` lacking a
@@ -139,9 +151,24 @@ export async function materializeTemplates(options: {
  * A definition whose `cssStyles` is empty (every bundled row, whose CSS is
  * already inside its file) and no brand fragment is returned untouched, so
  * materializing the bundled set is byte-identical to reading it from disk.
+ *
+ * ## Why `extraHeadHtml` is its own parameter and not part of the brand head
+ *
+ * Phase 2, item M needs one shared stylesheet (the number-device sheet) in
+ * every rendered document. Splicing it through `brandHeadHtml` looks
+ * cheaper and is wrong: that fragment only exists when the client HAS a
+ * derivable brand kit, so the clients with no kit — the ones already
+ * rendering on the bare default tokens — would be exactly the ones whose
+ * devices silently lost their CSS. So it rides its own, brand-independent
+ * parameter, spliced BETWEEN the two: after the template's own `<style>`
+ * (later wins on a tie, which is what lets a shared sheet reach a
+ * self-contained template at all) and before the row's own `cssStyles` and
+ * `brandHeadHtml` (so a template authored against these classes, and a
+ * client's brand, both still beat the shared sheet).
  */
-export function composeDocument(definition: TemplateDefinition, brandHeadHtml?: string, brandBodyHtml?: string): string {
+export function composeDocument(definition: TemplateDefinition, brandHeadHtml?: string, brandBodyHtml?: string, extraHeadHtml?: string): string {
   const fragments: string[] = [];
+  if (extraHeadHtml !== undefined && extraHeadHtml.trim().length > 0) fragments.push(extraHeadHtml);
   if (definition.cssStyles.trim().length > 0) fragments.push(`<style>\n${definition.cssStyles}\n</style>`);
   if (brandHeadHtml !== undefined && brandHeadHtml.trim().length > 0) fragments.push(brandHeadHtml);
   if (fragments.length === 0 && (brandBodyHtml === undefined || brandBodyHtml.trim().length === 0)) return definition.htmlTemplate;
@@ -167,10 +194,13 @@ export function composeDocument(definition: TemplateDefinition, brandHeadHtml?: 
  * than a `TemplateDefinition` (the client's own base template, a bespoke
  * templateDir's files).
  */
-export function composeRawDocument(html: string, brandHeadHtml?: string, brandBodyHtml?: string): string {
+export function composeRawDocument(html: string, brandHeadHtml?: string, brandBodyHtml?: string, extraHeadHtml?: string): string {
   let out = html;
-  if (brandHeadHtml !== undefined && brandHeadHtml.trim().length > 0) {
-    out = out.includes("</head>") ? out.replace("</head>", `${brandHeadHtml}\n</head>`) : `${brandHeadHtml}\n${out}`;
+  // Same ordering as `composeDocument`: the shared sheet first, the client's
+  // brand last, so a brand kit still beats it on a tie.
+  for (const fragment of [extraHeadHtml, brandHeadHtml]) {
+    if (fragment === undefined || fragment.trim().length === 0) continue;
+    out = out.includes("</head>") ? out.replace("</head>", `${fragment}\n</head>`) : `${fragment}\n${out}`;
   }
   return spliceBody(out, brandBodyHtml);
 }

@@ -4,6 +4,7 @@ export * from "./duration.js";
 export * from "./text-preview.js";
 export * from "./anti-tell.js";
 export * from "./http.js";
+export * from "./png.js";
 export * from "./idempotency.js";
 export * from "./adapters/file-git/index.js";
 export * from "./adapters/gcs/index.js";

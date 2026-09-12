@@ -9,8 +9,7 @@
   Ported from karos-agents' legacy `products/live/instagram-agent/assets/
   templates/marketing-services/by-the-numbers.html` (the `hook` slide type)
   plus the `.stat-band` / `.source-line` devices in `_cf-devices.css`. The type
-  scale, the 132x12 accent band, and the top:320px zone offset are the legacy
-  values verbatim.
+  scale and the figure's character-count ladder are the legacy values.
 
   Two legacy decisions carried over deliberately, both of which look like
   mistakes until you know why:
@@ -26,6 +25,33 @@
   Type size is picked from the figure's own character count, in-page, exactly
   as legacy `_cf-core.js` did it — a character-count breakpoint, never a
   measure-and-fit loop.
+
+  ── 2026-09-11, the visual rework ──
+
+  This was the emptiest plate in the bundled set, and by a long way: a figure
+  and a caption optically centred on bare ground measured 7% of the frame
+  occupied with a single contiguous empty rectangle covering 26-30% of it.
+  Every clause of the interest floor failed it at a positional role, and a
+  reader would have called it unfinished before any of them did.
+
+  The fix is a composition rather than a decoration. The figure now sits in a
+  STAT SLAB — a full-measure accent-tinted card, capped with an accent rule,
+  elastic so it fills whatever height the kicker and the footnote leave it —
+  and the plate reads top to bottom: label, slab, evidence. The slab is also
+  what carries this archetype over the imagery-or-device floor when it is
+  routed to position 1, which `interest-floor-calibration.test.ts` measures
+  at both the cover and closer roles.
+
+  The decorative layers follow the same two rules as the rest of the set, both
+  learned from the DOM probe rather than from the pixels: every decoration is
+  a BACKGROUND LAYER rather than a positioned child (a positioned decoration
+  that leaves its parent's box makes that parent report `scrollWidth >
+  clientWidth`, which the renderer's probe reports as overflow, and clause B
+  of the interest floor fails on `probe.overflow` alone); and display type
+  carries a small `padding-block-end` in `em`, because a display face's glyph
+  box is taller than a sub-1.15 line box and trips the same clause. The legacy
+  figure at `line-height: 0.95` measured a 143px line box against 163px of
+  content — an overflow on a slide that fits perfectly.
 
   The design tokens below are duplicated across each archetype template in
   this directory, because `publish.renderCarousel` reads one self-contained
@@ -43,6 +69,21 @@
     --bg: #17181C;
     --fg: #F4F2EC;
     --accent: {{accentColor}};
+    /* THE WASH TONE, and it is a mix rather than the accent itself.
+       A ground wash has to land in the measurement's 12-18 band — visible
+       tone that is not a mark — for EVERY accent the palette walk admits,
+       and the accent alone cannot do that. The only gate on --accent is
+       ACCENT_GROUND_CONTRAST_FLOOR = 3 against the ground, so a dark accent
+       sits ~92 units from the bundled ground and a pale one ~159: the same
+       14% alpha that measures 12.9 on the first measures 22.3 on the second,
+       which is INK. Rendered with a pale kit every template in this
+       directory then put ink in the 8px bleed band (clippedEdgeShare 0.5-0.7%
+       against a 0.4% ceiling) and counted its own wash as content.
+       Mixing the accent halfway into the foreground compresses that spread:
+       the mix is ~170 units from the ground on a dark accent and ~195 on a
+       pale one, so 8% of it is 13.6 and 15.6 — inside the band on both, with
+       the accent's hue still in it. */
+    --wash: color-mix(in srgb, var(--accent) 45%, var(--fg));
     --accent-ink: #141414;
     --f-display: 'Fraunces', Georgia, 'Times New Roman', serif;
     --f-body: 'Inter', system-ui, -apple-system, sans-serif;
@@ -65,66 +106,238 @@
   body {
     position: relative; overflow: hidden; background: var(--bg); color: var(--fg);
     font-family: var(--f-body);
-    /* Optically centred rather than pinned at legacy's `top: 320px`.
-       Legacy could top-anchor because its slides also carried a logo lockup
-       top-left and a ticker rail along the bottom; without that furniture a
-       fixed top offset leaves a quarter of a 1440px plate empty, and how much
-       depends on how long the label and body happen to run. Centring composes
-       at any content length, which is the property that actually matters when
-       the copy is generated per run. */
-    display: flex; align-items: center;
-    padding: 0 var(--mx);
+    display: flex; flex-direction: column; justify-content: space-between;
+    padding: 96px var(--mx) 88px;
   }
 
-  /* `inset-inline-end`, not `right` — this corner is defined relative to
-     reading direction (the far corner from where the eye starts), so it has
-     to flip along with `dir="{{dir}}"` rather than stay pinned to the right
-     for a client whose posts are RTL. */
+  /* ── L1: the tonal wash, full bleed, inside the 12-18 band, and CONFINED
+        TO A CORNER on this archetype alone. ──
+     A pixel is GROUND within 12 of the ground colour and INK beyond 18; a
+     wash between the two is visible tone that is not a mark, so it may bleed
+     to the frame edge without putting ink in the band `clippedEdgeShare`
+     reads.
+
+     Every other template in this set washes half the plate. This one cannot,
+     and the reason is the slab. `measureSlidePng` decides what colour the
+     slide's ground IS by taking the modal FLAT cell, and a full-plate wash
+     splits the real ground's vote across several tones while the slab pools
+     its own — so the slab won, the brand ground was measured as brown, and
+     every dark pixel at the frame edge counted as clipped ink (1.4% against a
+     0.4% ceiling) on a slide with nothing clipped anywhere. A corner wash
+     leaves the ground one dominant tone and keeps the plate off flat. */
+  .ground {
+    position: absolute; inset: 0; z-index: 0;
+    background-image: radial-gradient(58% 26% at 100% 0%, color-mix(in srgb, var(--wash) 8%, transparent) 0%, transparent 72%);
+  }
+  /* ── THERE IS NO L2 ON THIS PLATE ANY MORE, and that is the point. ──
+     A full-bleed texture inset 16px used to paint ink in every cell of the
+     frame, which made `occupiedShare` and `largestEmptyRectShare` constants:
+     every ground-bearing template in this directory reported the same 1.5%
+     largest empty rectangle with the full copy on it and with every slot
+     empty. The texture now lives only on the stat slab, which is the region
+     the composition actually occupies — see `cover.html`'s header for the
+     rule and `headline-focus.html`'s for the pitch. ── */
+
+  .sc-head { position: relative; z-index: 3; flex: 0 0 auto; }
+  /* `inline-block` so a client's `pill` or `brackets` badge variant
+     (`BADGE_VARIANT_CSS`) wraps the words rather than painting a full-measure
+     bar — the variant sheet sets background and padding but never a display. */
   .eyebrow {
-    position: absolute; top: 56px; inset-inline-end: var(--mx); z-index: 4;
-    font-family: var(--f-mono); font-weight: 500; font-size: calc(19px * var(--ts, 1));
-    letter-spacing: 0.2em; text-transform: uppercase; color: var(--accent);
+    display: inline-block;
+    font-family: var(--f-mono); font-weight: 600; font-size: calc(22px * var(--ts, 1));
+    letter-spacing: 0.22em; text-transform: uppercase; color: var(--accent);
   }
+  .sc-rail { block-size: 2px; background: color-mix(in srgb, var(--fg) 48%, transparent); margin-block-start: calc(24px * var(--ts, 1)); }
 
-  .num-zone { width: 100%; z-index: 3; }
+  /* ── The stat slab. A FILLED, low-colour-count region is what the
+        measurement calls a drawn device, and this one is about 40% of the
+        frame — which is what makes a stat callout a legitimate cover when a
+        run routes one to position 1, instead of a figure floating on ground.
+        Elastic, so it composes at any label length rather than leaving a hole
+        above or below it. ── */
+  .num-zone {
+    /* `1 1 auto`, so the slab STRETCHES into the space between the kicker
+       rail and the footnote, with the figure and its label centred inside it.
+       It hugged its content until the full-plate texture came off this
+       directory, and hugging only looked right while a full-bleed decoration
+       was hiding what it left behind: measured on real Chromium once the
+       texture was bound to the composition, a hugged slab parked a 330px band
+       of bare ground above itself and a 310px band below — a 16.9% largest
+       empty rectangle against the cover role's 22% ceiling, i.e. inside the
+       calibration's own 8-point margin. Stretched, the same plate reports
+       under 3%.
+       The counter-risk is the one `quote-card.html` names: a panel at or over
+       half the frame makes the interest floor treat the slide as carrying a
+       FULL-BLEED element and switches clause B's `clippedEdgeShare` limb off.
+       Measured, this slab lands at ~34% of drawn device stretched (from
+       28.8% hugged), because the type cells inside it are not graphic cells
+       and the texture over the tint lifts several cells past the three
+       distinct colours a graphic may have. */
+    position: relative; z-index: 3; flex: 1 1 auto; min-block-size: 0;
+    /* ...but CAPPED, and the cap is the number the full-bleed exemption sets.
+       Uncapped, the slab took the whole 826px between the rail and the
+       footnote and measured 51% of drawn device — over
+       `FULL_BLEED_IMAGERY_SHARE`, which would have switched clause B's pixel
+       limb off on every stat plate. At 660px it measures ~40%, and the 170px
+       it gives back becomes two ~85px gaps under `space-between`, which is
+       breathing room rather than a hole (largest empty rectangle ~8%, ceiling
+       22% at the cover role). Scaled by `--ts` so a reviewer's size step
+       moves the cap with the type it has to hold. */
+    max-block-size: calc(660px * var(--ts, 1));
+    display: flex; flex-direction: column; justify-content: center;
+    margin-block: calc(40px * var(--ts, 1));
+    padding: calc(52px * var(--ts, 1)) calc(48px * var(--ts, 1));
+    /* The slab carries the SAME texture as the ground, and that is not only
+       taste. `measureSlidePng` takes the slide's ground colour from the modal
+       FLAT cell — and a cell crossed by the texture is not flat. An untextured
+       slab covering 40% of the plate was therefore the only large flat region
+       in the frame, so it won the vote and became "the background": every dark
+       pixel at the frame edge was then measured as ink against a brown ground,
+       and this slide reported 1.6% of clipped edge against a 0.4% ceiling with
+       nothing clipped anywhere. Texturing the slab puts the ground back in
+       charge of its own identity, and the panel reads as the same surface as
+       the rest of the plate rather than as a sticker on it.
+
+       The tint underneath it is a GRADIENT rather than a flat fill, for the
+       same reason and belt-and-braces: a graded panel has no single flat bin
+       to win that vote with, whatever its size. It also simply looks better
+       at this scale — a 950x700 swatch of one value reads as a placeholder. */
+  }
+  /* THE SLAB PAINTS ONLY WHEN THERE IS A FIGURE ON IT. `imageryOrDeviceShare`
+     counts a covered, low-colour-count cell as a drawn device, so an
+     unconditional tinted block scores its whole area whether or not anything
+     is standing on it — which is how a plate with every slot empty used to
+     clear the role floors it exists to fail. */
+  /* ── THE SLAB IS GRAPH PAPER, AND THAT IS THIS ARCHETYPE'S MARK. ──
+     The whole bundled set used to carry one 45-degree hairline field, so six
+     of the eight plates read as the same wallpaper with different words on it
+     — the owner's second complaint verbatim. Every archetype now spends a
+     different MARK (`headline-focus.html`'s header lists the set and states
+     why a mark is needed at all rather than a flat tint). A stat slab's is a
+     GRID: a plotting grid, which is the one ground in the directory that says
+     something about the content standing on it — this archetype exists to
+     carry a measurement, and a measurement belongs on squared paper.
+
+     A single-direction ruling was tried first and rejected on the pixels
+     rather than on taste: rendered beside `cover.html`, a horizontally ruled
+     orange slab and a horizontally screened orange plate are the same object
+     at feed size, and `resolveLayout` will happily put a `stat_callout` at
+     position 2, directly under the cover. Two adjacent slides wearing one
+     treatment is exactly what this pass exists to stop.
+
+     THE TWO RATES ARE DELIBERATELY UNEQUAL — 2px every 13px across, 1.5px
+     every 17px down — and that is the whole reason this can be a grid at all
+     rather than a device. A covered cell is 48 of its 64 samples, and on the
+     measurement's 4px cell a 2px rule is 4 of the 8 sample rows: two 2px
+     rules crossing inside one cell union to 32 + 32 - 16 = exactly 48, which
+     is the covered test's own `>=`. Every intersection would have counted as
+     a drawn device, and a grid has a lot of intersections. At 2px by 1.5px
+     the union is 32 + 24 - 12 = 44 of 64, comfortably under, and the unequal
+     PITCHES mean the intersections do not line up into a lattice a reader
+     reads as dots. Away from the crossings neither rule can fill three
+     quarters of a cell on its own, so the slab's device share stays the
+     TINT's.
+
+     Both rates are also what keep the slab's cells off "flat" —
+     `measureSlidePng` reads the slide's ground colour off the modal FLAT
+     cell, and an untextured panel over 40% of the frame is the largest flat
+     region on the plate, so it wins that vote and the brand ground is
+     measured as brown (see the note below). */
+  body:has(#figure:not(:empty)) .num-zone {
+    background-image:
+      repeating-linear-gradient(to right,
+        color-mix(in srgb, var(--fg) 15%, transparent) 0 1.5px,
+        transparent 1.5px 17px),
+      repeating-linear-gradient(to bottom,
+        color-mix(in srgb, var(--fg) 15%, transparent) 0 2px,
+        transparent 2px 13px),
+      linear-gradient(158deg,
+        color-mix(in srgb, var(--accent) 32%, var(--bg)) 0%,
+        color-mix(in srgb, var(--accent) 17%, var(--bg)) 100%);
+    border-block-start: calc(8px * var(--ts, 1)) solid var(--accent);
+  }
 
   /* Legacy `.num-figure`: 300px default, stepping down by figure length. */
   .num-figure {
     font-family: var(--f-display); font-weight: 600; font-size: calc(300px * var(--ts, 1));
-    line-height: 0.95; letter-spacing: -0.025em;
+    line-height: 1; letter-spacing: -0.025em;
+    /* See the header: a line box tighter than the glyph box makes the block
+       report `scrollHeight > clientHeight`, which the DOM probe reports as an
+       overflowing element and clause B of the interest floor fails on. Legacy
+       set this at 0.95 and measured a 143px line box against 163px of content.
+       Heebo (a Hebrew run's display face) is deeper than Fraunces again, so
+       the leading goes back to 1 and the padding is set for the deeper of the
+       two faces; `.stat-band`'s own margin is trimmed to keep the optical gap
+       where it was. */
+    padding-block-end: 0.28em;
   }
   .num-figure.mid { font-size: calc(220px * var(--ts, 1)); }
   .num-figure.small { font-size: calc(150px * var(--ts, 1)); }
 
-  /* The one accent moment on the slide. */
-  .stat-band { width: 132px; height: 12px; background: var(--accent); margin-top: 34px; }
+  /* The one full-strength accent mark inside the slab. */
+  .stat-band { inline-size: calc(200px * var(--ts, 1)); block-size: calc(14px * var(--ts, 1)); background: var(--accent); margin-block-start: calc(8px * var(--ts, 1)); }
 
   .num-label {
-    font-family: var(--f-display); font-weight: 500; font-size: calc(56px * var(--ts, 1));
-    line-height: 1.3; letter-spacing: -0.012em; margin-top: 44px;
-    max-width: 920px; text-wrap: balance;
+    font-family: var(--f-display); font-weight: 500; font-size: calc(54px * var(--ts, 1));
+    line-height: 1.28; letter-spacing: -0.012em; margin-block-start: calc(38px * var(--ts, 1));
+    max-inline-size: 820px; text-wrap: balance; padding-block-end: 0.14em;
   }
+
+  .sc-foot { position: relative; z-index: 3; flex: 0 0 auto; }
   .num-body {
     font-family: var(--f-body); font-weight: 400; font-size: calc(31px * var(--ts, 1)); line-height: 1.55;
-    color: color-mix(in srgb, var(--fg) 85%, transparent); margin-top: 30px; max-width: 880px; text-wrap: pretty;
+    color: color-mix(in srgb, var(--fg) 90%, transparent); max-inline-size: 880px; text-wrap: pretty;
+    border-inline-start: calc(4px * var(--ts, 1)) solid color-mix(in srgb, var(--accent) 80%, transparent);
+    padding-inline-start: calc(28px * var(--ts, 1));
   }
   .source-line {
-    font-family: var(--f-body); font-weight: 400; font-size: calc(16px * var(--ts, 1));
-    color: color-mix(in srgb, var(--fg) 55%, transparent); line-height: 1.6; margin-top: 46px;
+    font-family: var(--f-body); font-weight: 400; font-size: calc(17px * var(--ts, 1));
+    color: color-mix(in srgb, var(--fg) 58%, transparent); line-height: 1.6; margin-block-start: calc(30px * var(--ts, 1));
   }
   /* Collapses to nothing when the slot was left empty. */
   .source-line:empty { display: none; }
   .num-body:empty { display: none; }
+  .eyebrow:empty { display: none; }
+
+  /* Standing brand furniture. The brand head fragment (`buildBrandHeadHtml`)
+     restates both rules and lands AFTER this sheet, so a client with a kit
+     keeps its own placement; these defaults exist because a brandless render
+     otherwise lays the handle out in normal flow, in the middle of the copy. */
+  .brand-handle {
+    position: absolute; bottom: 34px; inset-inline-start: 44px; z-index: 6;
+    font-family: var(--f-mono); font-size: calc(19px * var(--ts, 1)); letter-spacing: 0.08em;
+    color: color-mix(in srgb, var(--fg) 55%, transparent);
+  }
+  .brand-badge {
+    position: absolute; top: 36px; inset-inline-end: var(--mx); z-index: 6;
+    font-family: var(--f-mono); font-weight: 600; font-size: calc(19px * var(--ts, 1));
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent);
+  }
+  /* An @handle, a URL and a #hashtag are LTR strings, and a Hebrew or Arabic
+     slide lays them out inside an RTL paragraph: the leading `@` is a bidi
+     NEUTRAL, so it takes the paragraph embedding level and ends up on the
+     wrong side — every Hebrew slide in the tree shipped `karoslabs@`. The
+     `<bdi dir="ltr">` in the markup is the fix; `dir` on the DIV would also
+     have re-resolved its own `inset-inline-start` and moved the watermark to
+     the other corner. The extra :has() selector is what keeps an empty slot
+     hidden now that the div always has an element child. */
+  .brand-badge:empty, .brand-handle:empty, .brand-handle:has(> bdi:empty) { display: none; }
 </style>
 </head>
 <body class="ts-{{fontScale}} ta-{{textAlign}}">
+  <div class="ground" aria-hidden="true"></div>
   <div class="brand-badge">{{seriesBadge}}</div>
-  <div class="brand-handle">{{brandHandle}}</div>
-  <div class="eyebrow">{{kicker}}</div>
+  <div class="brand-handle"><bdi dir="ltr">{{brandHandle}}</bdi></div>
+  <div class="sc-head">
+    <div class="eyebrow">{{kicker}}</div>
+    <div class="sc-rail"></div>
+  </div>
   <div class="num-zone">
     <div class="num-figure" id="figure">{{figure}}</div>
     <div class="stat-band"></div>
     <div class="num-label">{{subLabel}}</div>
+  </div>
+  <div class="sc-foot">
     <div class="num-body">{{body}}</div>
     <div class="source-line">{{sourceLine}}</div>
   </div>

@@ -12,17 +12,26 @@ import { InstagramCopyAgent } from "../agent/instagram-copy-agent.js";
 import { InstagramImageVettingAgent } from "../agent/instagram-image-vetting-agent.js";
 import { InstagramResearchAgent } from "../agent/instagram-research-agent.js";
 import { InstagramVisualQaAgent } from "../agent/instagram-visual-qa-agent.js";
+// Phase 2, item N — the Template Studio's three setup-time agents.
+import { InstagramDesignBriefAgent } from "../agent/instagram-design-brief-agent.js";
+import { InstagramTemplateDesignerAgent } from "../agent/instagram-template-designer-agent.js";
+import { InstagramTemplateSetReviewAgent } from "../agent/instagram-template-set-review-agent.js";
 import {
   assertSafeMarkup,
   buildCustomArchetypeDocument,
+  buildStudioTemplateDocument,
   composeDocument,
   composeRawDocument,
+  DEFAULT_QUALITY_STUDIO,
+  extractSupportedFields,
   LEGACY_ARCHETYPE_IDS,
   materializeTemplates,
   promoteTemplate,
   reviewTemplate,
+  setTemplateEnabled,
   TemplateDefinitionSchema,
   templateFileName,
+  type TemplateDefinition,
   type TemplateStore,
 } from "@agent-engine/tool-karos-templates";
 import { brandLogoDataUri, downloadBrandLogo, parseBrandLogoDataUri, type BrandLogoPlacement } from "@agent-engine/tool-karos-media";
@@ -82,18 +91,103 @@ import {
   summarizeRunBudget,
   targetCrossedNote,
   type RunBudgetDecision,
+  // Phase 2, item N — the SEPARATE per-client setup budget (target $2.00,
+  // hard max $3.00). Same module, so no new import graph; its own meter, so
+  // `02j`'s `meter.totalUsd` never sees a dollar of setup spend.
+  DEFAULT_SETUP_SHAPE,
+  MAX_SETUP_SPEND_USD,
+  planSetupBudget,
+  readSetupBudgetHistory,
+  recordSetupInHistory,
+  SETUP_BUDGET_BELIEF_KEY,
+  SETUP_STEP_COST_ESTIMATES_USD,
+  setupEstimateVsActualLine,
+  summarizeSetupBudget,
+  TARGET_SETUP_SPEND_USD,
+  type SetupBudgetDecision,
+  type SetupBudgetSummary,
 } from "./run-budget.js";
 import {
   ARCHETYPE_TEMPLATE_FILES,
   assembleSlidesData,
   buildVariationPlan,
   checkSlidesData,
+  collectDeviceIssues,
+  fallbackArchetypeFor,
+  HERO_IMAGE_LAYOUTS,
   INVERTED_TEMPLATE_SUFFIX,
   invertedTemplateFileName,
   resolveLayout,
   type GroundFgInversionConfig,
+  type SlideStyleOverride,
   type VariationPlanEntry,
 } from "./slides-data.js";
+import { deviceCssBlock } from "./slide-devices.js";
+// ── Phase 2 (RFC-14) — the four modules the integrator wires ──
+import {
+  checkInterestFloor,
+  checkSlidesInterestFloor,
+  FLAT_BACKGROUND_CEILING,
+  formatInterestFailures,
+  IMAGERY_OR_DEVICE_FLOOR,
+  interestDegradedReason,
+  LARGEST_EMPTY_RECT_CEILING,
+  OCCUPIED_SHARE_FLOOR,
+  summarizeInterestFindings,
+  TEXT_SHARE_CEILING,
+  type InterestFloorReport,
+} from "./interest-floor.js";
+import { planInterestRelayout, type InterestRelayoutPlan } from "./interest-relayout.js";
+import {
+  buildSkeletonEntry,
+  checkSkeletonVariety,
+  readSkeletonHistory,
+  recordSkeleton,
+  rolesForSlideCount,
+  skeletonAvoidList,
+  skeletonGateFacts,
+  SKELETON_BELIEF_KEY,
+  SKELETON_RULE_SENTENCE,
+  withMeasuredOccupancy,
+  type SkeletonHistory,
+  type SkeletonVarietyVerdict,
+} from "./skeleton-memory.js";
+import {
+  buildAutoPromotionRequest,
+  cleanShipsFor,
+  CUSTOM_ARCHETYPE_BELIEF_KEY,
+  readCustomArchetypeHistory,
+  recordCleanShip,
+  type CustomArchetypeHistory,
+  type ShippedCustomArchetype,
+} from "./custom-archetype-memory.js";
+import { validateCustomArchetypeSlots } from "./custom-archetype-checks.js";
+import {
+  buildDesignBriefInput,
+  buildDesignerInput,
+  buildSetReviewInput,
+  buildStudioPromotion,
+  checkTemplateStudio,
+  formatStudioFailures,
+  isStudioTemplateId,
+  planStudioTemplates,
+  rankReferenceFormats,
+  studioNote,
+  studioSampleSeedFromBrief,
+  summarizeStudio,
+  validateStudioTemplate,
+  type StudioCheck,
+  type StudioEvidenceBundle,
+  type StudioPromotion,
+  type StudioReferencePost,
+  type StudioReport,
+  type StudioSetupAttempt,
+  type StudioSlideMetrics,
+  type StudioSlideProbe,
+  type StudioTemplateDraft,
+  type StudioTemplateValidation,
+  type StudioValidationDeps,
+} from "./template-studio.js";
 import { checkCraftHygiene } from "./craft-hygiene.js";
 import { checkExpectedScript, languageGateText, runLanguageFluency, LANGUAGE_FLUENCY_STEP_ID, LANGUAGE_SCRIPT_STEP_ID } from "./language-gate.js";
 import {
@@ -106,6 +200,7 @@ import {
   formatDefaultRenderRuleFailures,
   LAYOUT_FIELD_KEYS,
   resolveRenderRules,
+  templateBasename,
   type ContrastFact,
 } from "./visual-qa-pre-checks.js";
 import { parseStyleDirective, applyIntents, type StyleDirectiveResult, type StyleIntent, type StyleRefusal } from "./style-directive.js";
@@ -296,13 +391,40 @@ export function validateCustomArchetypes(copy: InstagramCopyOutput): SlideCustom
       console.error(`validateCustomArchetypes: "${archetype.archetypeId}" failed its markup safety check: ${safety.reason}`);
       continue;
     }
+    // Phase 2, item O (RFC-14): the slot contract, free and pre-render.
+    // `fillTemplate` substitutes what it is handed and leaves the rest, so a
+    // `{{price}}` nothing supplies reaches the slide as literal text and
+    // nothing downstream fails — it just ships a hole. Refusing here sends
+    // the slide down the same degrade ladder a `stat_callout` with no `stat`
+    // takes, which is the honest outcome.
+    const slots = validateCustomArchetypeSlots(archetype);
+    if (!slots.ok) {
+      console.error(`validateCustomArchetypes: "${archetype.archetypeId}" failed its slot contract: ${slots.reason}`);
+      continue;
+    }
     validated.push(archetype);
   }
   return validated;
 }
 
-/** Builds the full, self-contained document `composeDocument`/the renderer expect, from a validated custom archetype — branded like every other template when the run has brand fragments. */
-export function composeCustomArchetypeDocument(archetype: SlideCustomArchetype, brandHeadHtml?: string, brandBodyHtml?: string): string {
+/**
+ * Builds the full, self-contained document `composeDocument`/the renderer
+ * expect, from a validated custom archetype — branded like every other
+ * template when the run has brand fragments.
+ *
+ * `extraHeadHtml` (Phase 2, item M) is the shared device stylesheet, passed
+ * on every path so a custom archetype that renders a `{{html:device}}`
+ * fragment is styled exactly as a bundled archetype's device is. It is a
+ * parameter rather than part of the brand head for the reason
+ * `composeDocument`'s own doc comment gives: a brandless client has no brand
+ * head at all, and that is precisely the client this must not silently skip.
+ */
+export function composeCustomArchetypeDocument(
+  archetype: SlideCustomArchetype,
+  brandHeadHtml?: string,
+  brandBodyHtml?: string,
+  extraHeadHtml?: string,
+): string {
   const definition = TemplateDefinitionSchema.parse({
     id: customArchetypeTemplateId("preview", archetype.archetypeId),
     archetypeId: archetype.archetypeId,
@@ -312,7 +434,7 @@ export function composeCustomArchetypeDocument(archetype: SlideCustomArchetype, 
     cssStyles: archetype.css,
     source: "ai_generated" as const,
   });
-  return composeDocument(definition, brandHeadHtml, brandBodyHtml);
+  return composeDocument(definition, brandHeadHtml, brandBodyHtml, extraHeadHtml);
 }
 
 async function persistReviewFeedback(
@@ -413,6 +535,30 @@ async function persistReviewFeedback(
         // ordinary review path instead — `promoteTemplate` has no
         // existence check of its own and would otherwise blind-overwrite the
         // row, resetting its quality score back to 40.
+        // Phase 2, item N — APPROVING A STUDIO ROW IS FLIPPING `enabled`.
+        //
+        // A studio template is already IN the store (written disabled at
+        // `00c8`), so the promotion path above is the wrong mechanism twice
+        // over: `promoteTemplate` would blind-overwrite the row's markup and
+        // reset its score, and `reviewTemplate` would move the score without
+        // ever making the row eligible. `setTemplateEnabled` writes the flag
+        // and appends the reviewer's own feedback entry, moves no score, and
+        // is idempotent — so a second approval in a later revision round is a
+        // no-op rather than a double count. A `revise` verdict on a studio id
+        // keeps going to `reviewTemplate` below, exactly as today: −15, the
+        // row stays disabled, two revises and it stops being picked at all.
+        if (entry.promote && entry.verdict === "approved" && isStudioTemplateId(entry.templateId)) {
+          const flipped = await setTemplateEnabled(
+            store,
+            entry.templateId,
+            true,
+            input.response.actor,
+            entry.note,
+            Date.now(),
+          );
+          return { templateId: entry.templateId, verdict: entry.verdict, enabled: true, changed: flipped.changed };
+        }
+
         const customArchetype = input.customArchetypesByTemplateId?.get(entry.templateId);
         if (entry.promote && customArchetype !== undefined && (await store.get(entry.templateId)) === undefined) {
           await promoteTemplate({
@@ -1043,6 +1189,37 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     const budgetPlan = budgetDecision.plan;
     budgetNotes.push(budgetDecision.note);
 
+    // ── 02k: the client's STRUCTURAL memory (Phase 2, item P) ──
+    //
+    // One free `memory.read({ scope: "beliefs" })`, parsed twice: the
+    // shipped-skeleton history the `07k` variety check and the `05` avoid-list
+    // read, and the run-authored-archetype ledger `09f`'s auto-promotion
+    // counts against. Two parses of one read rather than two reads, so `09f`
+    // needs no second round trip.
+    //
+    // Its own step id rather than a share of `02j`'s read, deliberately:
+    // "why did this run avoid a stat cover" has to be legible in the run
+    // trace, and a fact folded into the budget step's output is a fact
+    // nobody debugging repetition will ever find. Inert on a first run —
+    // `readSkeletonHistory(undefined)` is an empty history — so a client with
+    // no history, or a registry with no `memory.read` at all, drafts exactly
+    // as it did before item P.
+    const structuralMemory = await wf.step.code("02k-read-structural-memory", async () => {
+      let beliefs: unknown;
+      try {
+        const read = await tools["memory.read"]?.execute({ scope: "beliefs" }, { ctx });
+        if (read?.status === "success") beliefs = (read.result as { beliefs?: unknown }).beliefs;
+      } catch (error) {
+        console.error("02k-read-structural-memory: could not read the beliefs document, planning from an empty history", error);
+      }
+      return { skeletons: readSkeletonHistory(beliefs), customArchetypes: readCustomArchetypeHistory(beliefs) };
+    });
+    const skeletonHistory: SkeletonHistory = structuralMemory.skeletons;
+    /** The last five shipped layout sequences, newest first — the copy prompt's avoid-list (item P, prompt @14 §21). Empty on a first run. */
+    const recentSkeletons = skeletonAvoidList(skeletonHistory);
+    /** Item O's ledger of run-authored designs, advanced by `09f` and written back at `09b`. */
+    let customArchetypeHistory: CustomArchetypeHistory = structuralMemory.customArchetypes;
+
     /**
      * What the brief lifecycle did this run — `undefined` when the stored
      * brief was reused (the overwhelming majority of runs). A non-`written`
@@ -1565,6 +1742,652 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // decide handed to the 08b judge. A client with its own render rules sees
     // zero change (`renderRuleSource === "client"`).
     const { source: renderRuleSource, rules: renderRules } = resolveRenderRules(frozen.styleConfig.rules);
+
+    // ── 00c*: the Template Studio — 4-6 templates generated PER CLIENT, once ──
+    //
+    // Phase 2, item N (RFC-14). The owner's complaint was that the templates
+    // are boring: a mostly-grey plate with a headline in the lower third is a
+    // post nobody saves, and it is what the bundled typographic set renders
+    // for a client whose brief has nothing photographable in it. The answer
+    // is not a better prompt — it is a per-client SET of templates, each
+    // derived from a format that measurably performs in that client's niche,
+    // and each refused before it is stored unless a real Chromium render
+    // MEASURES as something (the eight gates in `validateStudioTemplate`).
+    //
+    // Placed here, after `02i-resolve-client-brief` and `02i`'s language
+    // adoption and before `03-claim-topic`, so the studio reads a fresh
+    // brief, the frozen brand kit (02c) and the run's one target language —
+    // and so a normal weekly run reaches `03` having spent nothing, because
+    // `00c` resolves `reuse`.
+    //
+    // THREE INVARIANTS, and they are why this block looks the way it does:
+    //
+    //  1. **Nothing here may throw.** Every failure is a `ledger.appendEvent`
+    //     warn and the block falls through; the bundled eight archetypes are
+    //     always underneath, so a setup that goes badly costs variety and
+    //     never a delivery. Setup never blocks a run (the roster-setup
+    //     precedent, the same rule `00b1`/`00b2`/`00b3` already follow).
+    //  2. **Its own meter.** `setupMeter` carries the owner's SECOND pair of
+    //     numbers (target $2.00, hard max $3.00 per client per setup). The
+    //     run meter never sees a dollar of it, so `02j`'s `spentUsd:
+    //     meter.totalUsd` is unaffected regardless of ordering — which is
+    //     what makes running after `02j` harmless.
+    //  3. **Stored disabled.** `resolveBest` already skips `!enabled`, so
+    //     until a human approves the set at `09a` this run and every run
+    //     after it renders on the bundled archetypes while the portal can
+    //     still see exactly what was generated.
+    //
+    // Gated on a configured `templateStore`: with no registry there is
+    // nowhere to store a template and nothing that could ever route to one.
+    /** Item N's report, for the `09a` payload and the deliverable. Absent on a run that resolved `reuse` with no store, i.e. most runs. */
+    let studioReport: StudioReport | undefined;
+    /** The setup budget's own estimate-vs-actual, reported exactly the way a run's is. Absent unless this run actually generated a set. */
+    let setupBudgetSummary: SetupBudgetSummary | undefined;
+    /** What `09b` records under `SETUP_BUDGET_BELIEF_KEY` so the NEXT setup starts calibrated. */
+    let setupBudgetRecord: { estimatedUsd: number; actualUsd: number; templatesStored: number; templatesDropped: number; crossedTarget: boolean; crossedMax: boolean; adaptations: number } | undefined;
+
+    if (options.templateStore !== undefined) {
+      const templateStore = options.templateStore;
+      /** One warn row per studio problem. Best-effort inside a best-effort block: losing the row costs visibility, never the run. */
+      const studioWarn = async (eventId: string, message: string): Promise<void> => {
+        try {
+          await tools["ledger.appendEvent"]?.execute({ runId: wf.runId, eventId: `${wf.runId}__${eventId}`, level: "warn", message }, { ctx });
+        } catch (error) {
+          console.error(`00c: could not record the studio warn "${eventId}"`, error);
+        }
+      };
+
+      const studioCheck: StudioCheck = await wf.step.code("00c-check-template-studio", async (): Promise<StudioCheck> => {
+        try {
+          // `includeDisabled: true` is load-bearing, not defensive: a set
+          // awaiting approval is invisible to the default query, so without
+          // it the studio would regenerate over the exact rows a human has
+          // been asked to look at — and bill for it again.
+          const rows = await templateStore.list({ clientSlug: wf.clientSlug, includeDisabled: true });
+          // The setup history, because a setup that STORED NOTHING leaves the
+          // store exactly as it found it — so without this "no rows" reads as
+          // "never tried" and the whole per-client setup bill is re-paid on
+          // every subsequent run instead of once per 120 days. A free beliefs
+          // read, and a failed one degrades to today's behaviour rather than
+          // suppressing a setup that should happen.
+          let setupHistory: readonly StudioSetupAttempt[] = [];
+          try {
+            const read = await tools["memory.read"]?.execute({ scope: "beliefs" }, { ctx });
+            if (read?.status === "success") {
+              setupHistory = readSetupBudgetHistory((read.result as { beliefs?: unknown }).beliefs).setups.map((setup) => ({
+                at: setup.at,
+                templatesStored: setup.templatesStored,
+              }));
+            }
+          } catch (error) {
+            console.error("00c-check-template-studio: could not read the setup history; a zero-store setup will not be remembered", error);
+          }
+          return checkTemplateStudio({
+            setupHistory,
+            rows: rows.map((row) => ({
+              id: row.id,
+              archetypeId: row.archetypeId,
+              enabled: row.enabled,
+              ...(row.updatedAt !== undefined ? { updatedAt: row.updatedAt } : {}),
+              ...(row.createdAt !== undefined ? { createdAt: row.createdAt } : {}),
+              ...(row.role !== undefined ? { role: row.role } : {}),
+              ...(row.derivedFrom !== undefined ? { derivedFrom: { formatLabel: row.derivedFrom.formatLabel } } : {}),
+            })),
+            refreshRequested: (wf.input ?? {})["refreshTemplates"] === true,
+          });
+        } catch (error) {
+          // A registry outage must never trigger a generate: "I could not
+          // read the rows" is not "there are no rows", and confusing the two
+          // is how an outage bills a setup and overwrites a good set.
+          const reason = `the template store could not be listed (${(error as Error).message}) — this run renders on whatever the registry already holds`;
+          console.error(`00c-check-template-studio: ${reason}`);
+          return { action: "reuse", reason, rows: [], archetypeIds: [], staleArchetypeIds: [], freshArchetypeIds: [] };
+        }
+      });
+
+      if (studioCheck.action !== "generate") {
+        studioReport = summarizeStudio({ check: studioCheck, stored: [], dropped: [] });
+      } else {
+        const setupNotes: string[] = [];
+        const setupMeter = new RunSpendMeter({ targetUsd: TARGET_SETUP_SPEND_USD, maxUsd: MAX_SETUP_SPEND_USD, scope: "setup" });
+        const setupCrossed = { target: false, max: false };
+        /** `setupMeter.add` plus the one-time crossing notes — the setup twin of `spend`, reading the setup meter's own $2.00/$3.00. */
+        const setupSpend = (label: string, measuredUsd: number | undefined, estimateUsd: number): void => {
+          setupMeter.add(label, measuredUsd, estimateUsd);
+          if (!setupCrossed.target && setupMeter.crossedTarget) {
+            setupCrossed.target = true;
+            setupNotes.push(targetCrossedNote(setupMeter, label));
+          }
+          if (!setupCrossed.max && setupMeter.crossedMax) {
+            setupCrossed.max = true;
+            setupNotes.push(maxCrossedNote(setupMeter, label));
+          }
+        };
+
+        // ── 00c1: the setup plan, BEFORE the first paid setup call ──
+        //
+        // `planSetupBudget` never refuses (owner's standing amendment applied
+        // to setup): it fits the plan by dropping the reference-image pass,
+        // then the set review, then templates down to four, then repairs,
+        // then — past the hard max only — below four with the reason
+        // recorded. `visualDirection: false` because item Q ships in PR-D:
+        // pricing work this branch cannot do would tighten every lever
+        // against a bill that never arrives.
+        const setupDecision: SetupBudgetDecision = await wf.step.code("00c1-plan-setup-budget", async () => {
+          let history = readSetupBudgetHistory(undefined);
+          try {
+            const read = await tools["memory.read"]?.execute({ scope: "beliefs" }, { ctx });
+            if (read?.status === "success") history = readSetupBudgetHistory((read.result as { beliefs?: unknown }).beliefs);
+          } catch (error) {
+            console.error("00c1-plan-setup-budget: could not read the setup history, planning from the defaults", error);
+          }
+          return planSetupBudget(
+            { ...DEFAULT_SETUP_SHAPE, referenceAccounts: brief.referenceAccounts.length, visualDirection: false },
+            history,
+          );
+        });
+        const setupPlan = setupDecision.plan;
+        setupNotes.push(setupDecision.note);
+
+        // ── 00c2: what actually performs in this niche, and what was missing ──
+        //
+        // ScrappyCoco only (owner's rule): the brief's own reference accounts
+        // through `research.socialHistory` (a 24h window, sharing the cache
+        // `00b1`/`03e`/`04e` already warm), and up to three pages of the
+        // client's own site through `research.fetchPages`. The ranking is
+        // CODE (`rankReferenceFormats`), per-account z-normalised, and it
+        // states which engagement signals were present and which were
+        // absent — `signalsAbsent` is required on every row, so a hole in the
+        // evidence is visible rather than fillable.
+        const evidence = await wf.step.code("00c2-gather-format-evidence", async () => {
+          const problems: string[] = [];
+          let scraperExecutions = 0;
+
+          let posts: StudioReferencePost[] = [];
+          const accounts = brief.referenceAccounts.slice(0, 6).map((row) => ({ platform: row.platform, username: row.handle }));
+          const socialHistory = tools["research.socialHistory"];
+          if (accounts.length === 0) {
+            problems.push("the client brief names no reference accounts, so no competitor formats could be read");
+          } else if (socialHistory === undefined) {
+            problems.push("research.socialHistory is not registered, so no reference-account posts were read");
+          } else {
+            try {
+              const outcome = await socialHistory.execute({ accounts, window: "24h" }, { ctx });
+              if (outcome.status === "success") {
+                const result = outcome.result as { posts: StudioReferencePost[]; problems: string[]; fromCache: boolean };
+                posts = result.posts;
+                if (!result.fromCache) scraperExecutions += accounts.length;
+                for (const problem of result.problems) problems.push(`reference account: ${problem}`);
+              } else {
+                problems.push(`the reference accounts could not be read (${outcome.status}${"reason" in outcome ? `: ${outcome.reason}` : ""})`);
+              }
+            } catch (error) {
+              problems.push(`the reference accounts could not be read: ${(error as Error).message}`);
+            }
+          }
+
+          let sitePages: Array<{ url: string; title?: string; text: string }> = [];
+          // The client's own site: home, /about, /pricing — the same three
+          // `00b1` reads, so a refresh run's fetch is warm in the same cache.
+          // Read from the profile here rather than threaded from `00b1`,
+          // which only ran on a brief create/refresh.
+          let profileForSite: ClientProfile | undefined;
+          try {
+            const got = await tools["client.getProfile"]?.execute({}, { ctx });
+            if (got?.status === "success" && got.result !== null && typeof got.result === "object") profileForSite = got.result as ClientProfile;
+          } catch (error) {
+            problems.push(`the client profile could not be read: ${(error as Error).message}`);
+          }
+          const urls = gatherBriefSourceUrls(profileForSite).slice(0, 3);
+          const fetchPages = tools["research.fetchPages"];
+          if (urls.length === 0) {
+            problems.push("the client's profile and brief name no website, so their own pages were not read");
+          } else if (fetchPages === undefined) {
+            problems.push("research.fetchPages is not registered, so the client's own site was not read");
+          } else {
+            try {
+              const outcome = await fetchPages.execute({ urls, maxChars: 4000 }, { ctx });
+              if (outcome.status === "success") {
+                const result = outcome.result as { pages: Array<{ url: string; title?: string; text: string; fromCache: boolean }>; problems: string[] };
+                sitePages = result.pages.map((p) => ({ url: p.url, ...(p.title !== undefined ? { title: p.title } : {}), text: p.text }));
+                scraperExecutions += result.pages.filter((p) => !p.fromCache).length;
+                for (const problem of result.problems) problems.push(`site: ${problem}`);
+              } else {
+                problems.push(`the client's own site could not be read (${outcome.status}${"reason" in outcome ? `: ${outcome.reason}` : ""})`);
+              }
+            } catch (error) {
+              problems.push(`the client's own site could not be read: ${(error as Error).message}`);
+            }
+          }
+
+          // The reference-post IMAGE pass the spec priced is not reachable on
+          // a ScrappyCoco-only stack: `research.socialHistory` returns
+          // `{ platform, username, url, excerpt, publishedAt?, engagement? }`
+          // and no image URL at all, so there is nothing to hand
+          // `media.inspectImages`. Named as an absent signal rather than
+          // filled with a guess (`plan.referenceImages` is therefore never
+          // billed here — the vision line this setup does spend is the one
+          // look at OUR OWN rendered samples at `00c5`).
+          if (setupPlan.referenceImages > 0) {
+            problems.push(
+              "no reference-post images were inspected: research.socialHistory returns post text and engagement, never image URLs, so there is nothing for media.inspectImages to look at — formats were ranked from post text alone",
+            );
+          }
+
+          const ranked = rankReferenceFormats(posts);
+          return { evidence: ranked, problems, postCount: posts.length, sitePages, scraperExecutions };
+        });
+        if (evidence.scraperExecutions > 0) {
+          setupSpend("00c2-gather-format-evidence", undefined, evidence.scraperExecutions * SETUP_STEP_COST_ESTIMATES_USD.scraperExecution);
+        }
+        setupNotes.push(...evidence.evidence.notes);
+
+        const fragments = await brandFragments();
+        const studioKit = effectiveKit !== undefined ? { cssVars: effectiveKit.cssVars, palette: effectiveKit.palette } : undefined;
+        const bundle: StudioEvidenceBundle = {
+          clientSlug: wf.clientSlug,
+          brief,
+          ...(studioKit !== undefined ? { kit: studioKit } : {}),
+          sitePages: evidence.sitePages,
+          referenceFormats: evidence.evidence,
+          ...(targetLanguage !== undefined ? { targetLanguage } : {}),
+          problems: evidence.problems,
+        };
+        const designBriefBuild = buildDesignBriefInput(bundle, setupPlan.templates);
+
+        // ── The render seam (gates 5, 6 and 8) ──
+        //
+        // The document code built is written into this run's own template
+        // cache and rendered through the SAME `publish.renderCarousel` the
+        // carousel itself uses — `measure: true, probe: true`, `canvas.scale:
+        // 2` (`validateRenderInputs` refuses anything else, which is what
+        // makes every measured PNG exactly 2160x2880). Not `createRenderCarousel()`
+        // directly: a caller that swapped the renderer for this run must have
+        // its validation renders go through the same one, or the studio is
+        // measuring a different renderer than the run.
+        const studioRenderDir = `.template-cache/${wf.runId}/studio`;
+        const studioDeps: StudioValidationDeps = {
+          assertSafeMarkup,
+          buildStudioTemplateDocument,
+          composeDocument,
+          interest: {
+            // `slide: 1` because a validation render IS one slide: the
+            // findings' sentences name "slide 1" and that is honest — the
+            // sample is the only slide there is.
+            check: ({ metrics, probe, role }) => checkInterestFloor(metrics, probe, role, { slide: 1 }),
+            thresholds: {
+              largestEmptyRectCeiling: LARGEST_EMPTY_RECT_CEILING,
+              occupiedShareFloor: OCCUPIED_SHARE_FLOOR,
+              flatBackgroundCeiling: FLAT_BACKGROUND_CEILING,
+              imageryOrDeviceFloor: IMAGERY_OR_DEVICE_FLOOR,
+              textShareCeiling: TEXT_SHARE_CEILING,
+            },
+          },
+          render: async (request) => {
+            try {
+              const absDir = path.resolve(options.repoRoot, studioRenderDir);
+              const rootResolved = path.resolve(options.repoRoot);
+              if (!absDir.startsWith(rootResolved + path.sep)) return { ok: false, reason: `the studio render directory escaped repoRoot (runId="${wf.runId}")` };
+              await fs.mkdir(absDir, { recursive: true });
+              const file = `studio-${request.archetypeId}-${request.dir}.html`;
+              await fs.writeFile(path.join(absDir, file), request.document, "utf8");
+              const outcome = await tools["publish.renderCarousel"]!.execute(
+                {
+                  client: wf.clientSlug,
+                  postId: `studio-${request.archetypeId}-${request.dir}`,
+                  templateDir: studioRenderDir,
+                  outDir: `${studioRenderDir}/out`,
+                  repoRoot: options.repoRoot,
+                  slides: [
+                    {
+                      n: 1,
+                      template: file,
+                      fields: request.content.fields,
+                      images: request.content.imagePaths,
+                      htmlFragments: request.content.htmlFragments,
+                    },
+                  ],
+                  canvas: { w: 1080, h: 1440, scale: 2, slides_min: 1, slides_max: 8 },
+                  readyFlag: "__CAROUSEL_READY__",
+                  measure: true,
+                  probe: true,
+                },
+                { ctx },
+              );
+              if (outcome.status !== "success") {
+                return { ok: false, reason: `publish.renderCarousel reported ${outcome.status}${"reason" in outcome ? `: ${outcome.reason}` : ""}` };
+              }
+              const first = (outcome.result as RenderCarouselResult).rendered[0] as
+                | (RenderCarouselResult["rendered"][number] & { metrics?: StudioSlideMetrics; probe?: StudioSlideProbe; measureFailure?: string })
+                | undefined;
+              if (first === undefined) return { ok: false, reason: "the renderer returned no slide" };
+              if (first.metrics === undefined || first.probe === undefined) {
+                // A template whose sample cannot be MEASURED cannot be
+                // stored: gate 6 is the whole answer to "is this template
+                // boring", and storing a design nobody measured would be the
+                // defect with extra steps.
+                return { ok: false, reason: first.measureFailure ?? "the render produced no measurement, so the interest floor could not be applied to it" };
+              }
+              return { ok: true, metrics: first.metrics, probe: first.probe, slideUrl: first.path };
+            } catch (error) {
+              return { ok: false, reason: `the validation render failed: ${(error as Error).message}` };
+            }
+          },
+        };
+
+        const seedFor = (dir: "ltr" | "rtl") =>
+          studioSampleSeedFromBrief({
+            brief,
+            ...(studioKit !== undefined ? { kit: studioKit } : {}),
+            clientSlug: wf.clientSlug,
+            ...(targetLanguage !== undefined ? { targetLanguage } : {}),
+            dir,
+          });
+
+        /** The one look a vision model takes at OUR OWN rendered sample, for `00c6`'s set review. Best-effort and skipped on the cheapest path. */
+        const describeSample = async (slideRef: string | undefined): Promise<string | undefined> => {
+          const inspect = tools["media.inspectImages"];
+          if (inspect === undefined || slideRef === undefined || setupMeter.posture === "cheapest-path") return undefined;
+          try {
+            const isUrl = /^https?:\/\//i.test(slideRef);
+            const relative = isUrl ? undefined : path.isAbsolute(slideRef) ? path.relative(options.repoRoot, slideRef) : slideRef;
+            if (relative !== undefined && relative.startsWith("..")) return undefined;
+            const outcome = await inspect.execute(
+              {
+                repoRoot: options.repoRoot,
+                images: [isUrl ? { ref: "sample", url: slideRef } : { ref: "sample", path: relative!.replace(/\\/g, "/") }],
+                purpose: "candidate-vetting",
+                brief: "a slide template's sample render: does it read as a designed plate a reader would stop on, or as a headline on an empty ground",
+              },
+              { ctx },
+            );
+            setupSpend("00c5-validate-template-sample-inspect", undefined, SETUP_STEP_COST_ESTIMATES_USD.sampleInspect);
+            if (outcome.status !== "success") return undefined;
+            const inspections = (outcome.result as { inspections: Array<Record<string, unknown>> }).inspections;
+            const description = inspections[0]?.["description"];
+            return typeof description === "string" ? description : undefined;
+          } catch (error) {
+            console.error("00c5-validate-template: the sample inspection failed, continuing without a description", error);
+            return undefined;
+          }
+        };
+
+        const dropped: Array<{ archetypeId: string; reason: string }> = [];
+        const stored: Array<{ promotion: StudioPromotion; validation: StudioTemplateValidation }> = [];
+
+        // ── 00c3: the format thesis, once for the whole set ──
+        const designBriefAgent = new InstagramDesignBriefAgent({ router: options.router, tools, promptStore: options.promptStore });
+        const designBriefExec = await wf.step.agent("00c3-write-design-brief", designBriefAgent, {
+          ...designBriefBuild.input,
+          gaps: designBriefBuild.gaps,
+        });
+        setupSpend("00c3-write-design-brief", designBriefExec.totalCostUsd, SETUP_STEP_COST_ESTIMATES_USD.designBrief);
+
+        if (designBriefExec.status !== "completed" || designBriefExec.finalOutput === undefined || designBriefExec.finalOutput === null) {
+          await studioWarn(
+            "template-studio-brief-failed",
+            `the template studio's design brief resolved to "${designBriefExec.status}" — no templates were generated this run, and the bundled archetypes carried it`,
+          );
+          setupNotes.push(`the design brief resolved to "${designBriefExec.status}", so no templates were authored`);
+          studioReport = summarizeStudio({ check: studioCheck, stored: [], dropped: [], evidence: evidence.evidence, notes: setupNotes });
+        } else {
+          const designBrief = designBriefExec.finalOutput;
+          const plan = planStudioTemplates(designBrief, {
+            budgetTemplates: setupPlan.templates,
+            // FRESH rows only. `archetypeIds` carries the stale rows too, and
+            // a TTL refresh exists to re-author exactly those — passing the
+            // full list makes every proposal a "duplicate" and the refresh
+            // authors nothing while re-paying the setup bill on every run.
+            existingArchetypeIds: studioCheck.freshArchetypeIds,
+          });
+          for (const rejection of plan.rejected) {
+            setupNotes.push(`${rejection.archetypeId}: ${rejection.reason}`);
+            await studioWarn(`template-studio-rejected-${rejection.archetypeId}`, `template studio: ${rejection.archetypeId} was not authored — ${rejection.reason}`);
+          }
+
+          const designerAgent = new InstagramTemplateDesignerAgent({ router: options.router, tools, promptStore: options.promptStore });
+
+          /** One planned template as it moves through the battery: authored, validated, reviewed, maybe repaired, maybe stored. */
+          interface StudioCandidate {
+            planned: (typeof plan.templates)[number];
+            draft: StudioTemplateDraft;
+            validation: StudioTemplateValidation;
+            sampleDescription?: string | undefined;
+            /** Set the moment it is out: a gate it could not clear after its repair, a `drop` verdict, a refused write. */
+            dropReason?: string;
+            /** The set review asked for a repair even though the eight gates passed. */
+            reviewRepair?: string;
+          }
+
+          /** Re-usable because a repair re-runs the SAME battery on new markup: identical inputs, so a pass means the same thing both times. */
+          const validateDraft = async (stepId: string, draft: StudioTemplateDraft, alreadyTaken: readonly string[]): Promise<StudioTemplateValidation> =>
+            wf.step.code(stepId, async () =>
+              validateStudioTemplate(
+                {
+                  draft,
+                  clientSlug: wf.clientSlug,
+                  // Fresh rows plus the ids this setup has already authored —
+                  // a stale row is the thing being replaced, not a collision.
+                  existingArchetypeIds: [...studioCheck.freshArchetypeIds, ...alreadyTaken],
+                  ...(studioKit !== undefined ? { kit: studioKit } : {}),
+                  ...(targetLanguage !== undefined ? { targetLanguage } : {}),
+                  seed: seedFor("ltr"),
+                  rtlSeed: seedFor("rtl"),
+                  evidenceBlock: designBriefBuild.input.formatEvidence,
+                  ...(fragments.head !== undefined ? { brandHeadHtml: fragments.head } : {}),
+                  extraHeadHtml: deviceCssBlock(),
+                },
+                studioDeps,
+              ),
+            );
+
+          // Phase A (00c4/00c5): author each template, then MEASURE it.
+          //
+          // ONE call per template, never one for the set: at ~$0.051 a call
+          // six cost $0.31 of a $2.00 budget, and in exchange a schema
+          // failure or a refused gate costs ONE template instead of six.
+          const candidates: StudioCandidate[] = [];
+          for (const planned of plan.templates) {
+            const designExec = await wf.step.agent(
+              `00c4-design-template-${planned.archetypeId}`,
+              designerAgent,
+              buildDesignerInput({ planned, brief: designBrief, bundle }),
+            );
+            setupSpend(`00c4-design-template-${planned.archetypeId}`, designExec.totalCostUsd, SETUP_STEP_COST_ESTIMATES_USD.templateDesign);
+            if (designExec.status !== "completed" || designExec.finalOutput === undefined || designExec.finalOutput === null) {
+              const reason = `the designer turn resolved to "${designExec.status}"`;
+              dropped.push({ archetypeId: planned.archetypeId, reason });
+              await studioWarn(`template-studio-design-${planned.archetypeId}`, `template studio: dropped ${planned.archetypeId} — ${reason}`);
+              continue;
+            }
+            const draft: StudioTemplateDraft = designExec.finalOutput;
+            // Gate 1s duplicate half is per (client, archetype), and every
+            // candidate authored so far this setup has already claimed its id.
+            const taken = candidates.map((row) => row.draft.archetypeId);
+            const validation = await validateDraft(`00c5-validate-template-${planned.archetypeId}`, draft, taken);
+            candidates.push({ planned, draft, validation });
+          }
+
+          // The vision look at OUR OWN rendered samples, for the set review.
+          // Only for candidates that actually rendered: there is nothing to
+          // describe for one that never got past gate 2.
+          for (const candidate of candidates) {
+            if (!candidate.validation.ok) continue;
+            const sampleDescription = await describeSample(candidate.validation.ltr?.slideUrl);
+            if (sampleDescription !== undefined) candidate.sampleDescription = sampleDescription;
+          }
+
+          // Phase B (00c6): does the SET read as one system?
+          //
+          // The only judgment left after eight deterministic gates: the
+          // factual half is already answered, so this is a cheap Flash call
+          // over rendered samples it can see DESCRIBED, with each row's
+          // measured numbers travelling alongside it. Optional spend — the
+          // second lever `planSetupBudget` pulls.
+          const reviewable = candidates.filter((row) => row.validation.ok);
+          if (setupPlan.setReview && reviewable.length > 0) {
+            const reviewAgent = new InstagramTemplateSetReviewAgent({ router: options.router, tools, promptStore: options.promptStore });
+            const setExec = await wf.step.agent(
+              "00c6-review-template-set",
+              reviewAgent,
+              buildSetReviewInput({
+                clientSlug: wf.clientSlug,
+                brief: designBrief,
+                validated: reviewable.map((row) => ({ draft: row.draft, validation: row.validation, sampleDescription: row.sampleDescription })),
+              }),
+            );
+            setupSpend("00c6-review-template-set", setExec.totalCostUsd, SETUP_STEP_COST_ESTIMATES_USD.setReview);
+            if (setExec.status === "completed" && setExec.finalOutput !== undefined && setExec.finalOutput !== null) {
+              setupNotes.push(setExec.finalOutput.setNote);
+              for (const verdict of setExec.finalOutput.perTemplate) {
+                const candidate = reviewable.find((row) => row.draft.archetypeId === verdict.archetypeId);
+                if (candidate === undefined) continue;
+                if (verdict.verdict === "drop") {
+                  candidate.dropReason = `the set review dropped it: ${verdict.reason}`;
+                  await studioWarn(`template-studio-set-drop-${verdict.archetypeId}`, `template studio: the set review dropped ${verdict.archetypeId} — ${verdict.reason}`);
+                } else if (verdict.verdict === "repair") {
+                  candidate.reviewRepair = verdict.reason;
+                }
+              }
+            } else {
+              setupNotes.push(`the set review resolved to "${setExec.status}", so every validated template was kept on its own gate results`);
+            }
+          }
+
+          // Phase C (00c7): ONE repair per template, at most `plan.repairsAllowed`.
+          //
+          // The repair call is handed the refused gates BY NUMBER with their
+          // measured figures verbatim, which is why a repair is worth $0.048
+          // rather than a drop: the model is not guessing what went wrong.
+          // Still failing afterwards — or no repair budget left — is a DROP
+          // with the reason recorded, never a failed setup.
+          let repairsSpent = 0;
+          for (const candidate of candidates) {
+            if (candidate.dropReason !== undefined) continue;
+            const needsRepair = !candidate.validation.ok || candidate.reviewRepair !== undefined;
+            if (!needsRepair) continue;
+            if (repairsSpent >= setupPlan.repairsAllowed) {
+              if (!candidate.validation.ok) {
+                candidate.dropReason = `${formatStudioFailures(candidate.validation).join("; ") || "the validation battery refused it"} (no repair turn left in this setups budget)`;
+              }
+              continue;
+            }
+            repairsSpent += 1;
+            const findings = candidate.validation.ok
+              ? [`the set review asked for a repair: ${candidate.reviewRepair}`]
+              : formatStudioFailures(candidate.validation);
+            const repairExec = await wf.step.agent(
+              `00c7-repair-template-${candidate.planned.archetypeId}`,
+              designerAgent,
+              buildDesignerInput({
+                planned: candidate.planned,
+                brief: designBrief,
+                bundle,
+                repair: { findings, previous: { bodyHtml: candidate.draft.bodyHtml, css: candidate.draft.css } },
+              }),
+            );
+            setupSpend(`00c7-repair-template-${candidate.planned.archetypeId}`, repairExec.totalCostUsd, SETUP_STEP_COST_ESTIMATES_USD.templateRepair);
+            if (repairExec.status !== "completed" || repairExec.finalOutput === undefined || repairExec.finalOutput === null) {
+              if (!candidate.validation.ok) candidate.dropReason = `the repair turn resolved to "${repairExec.status}"`;
+              continue;
+            }
+            const repaired = repairExec.finalOutput;
+            const taken = candidates.filter((row) => row !== candidate).map((row) => row.draft.archetypeId);
+            const revalidated = await validateDraft(`00c5-validate-template-${candidate.planned.archetypeId}-repaired`, repaired, taken);
+            if (revalidated.ok) {
+              candidate.draft = repaired;
+              candidate.validation = revalidated;
+            } else if (!candidate.validation.ok) {
+              candidate.dropReason = formatStudioFailures(revalidated).join("; ") || "the validation battery refused the repaired template too";
+            } else {
+              // The gates had already passed and only the SET review asked
+              // for a change: a repair that measures worse is discarded and
+              // the original stands, rather than throwing away a template
+              // that was already good enough to store.
+              setupNotes.push(`${candidate.planned.archetypeId}: the repair measured worse than the original, so the original was kept`);
+            }
+          }
+
+          for (const candidate of candidates) {
+            if (candidate.dropReason === undefined) continue;
+            dropped.push({ archetypeId: candidate.planned.archetypeId, reason: candidate.dropReason });
+            await studioWarn(`template-studio-dropped-${candidate.planned.archetypeId}`, `template studio: dropped ${candidate.planned.archetypeId} — ${candidate.dropReason}`);
+          }
+
+          // Phase D (00c8): store the survivors, DISABLED, at the studio score.
+          //
+          // The id is derived (`studio_<client>_<archetype>`), so a resumed
+          // run replaying this step upserts the same rows rather than
+          // duplicating them. `enabled: false` IS the approval mechanism:
+          // `resolveBest` already skips a disabled candidate, so this run and
+          // every run until a human approves the set render on the bundled
+          // archetypes while the portal can still show what was generated.
+          const survivors = candidates.filter((row) => row.dropReason === undefined && row.validation.ok);
+          if (survivors.length > 0) {
+            await wf.step.code("00c8-store-template-set", async () => {
+              const written: string[] = [];
+              for (const row of survivors) {
+                const promotion = buildStudioPromotion({
+                  draft: row.draft,
+                  validation: row.validation,
+                  clientSlug: wf.clientSlug,
+                  document: row.validation.document!,
+                  qualityScore: DEFAULT_QUALITY_STUDIO,
+                  now: Date.now(),
+                });
+                try {
+                  await promoteTemplate({ store: templateStore, ...promotion });
+                  stored.push({ promotion, validation: row.validation });
+                  written.push(promotion.id);
+                } catch (error) {
+                  const reason = `the registry refused the write: ${(error as Error).message}`;
+                  dropped.push({ archetypeId: row.planned.archetypeId, reason });
+                  console.error(`00c8-store-template-set: ${reason}`);
+                }
+              }
+              return { stored: written, dropped: dropped.map((d) => d.archetypeId) };
+            });
+          }
+          studioReport = summarizeStudio({ check: studioCheck, stored, dropped, evidence: evidence.evidence, notes: setupNotes });
+        }
+
+        const setupSummary = summarizeSetupBudget(setupDecision, setupMeter, setupNotes);
+        setupBudgetSummary = setupSummary;
+        setupBudgetRecord = {
+          estimatedUsd: setupSummary.estimatedUsd,
+          actualUsd: setupSummary.actualUsd,
+          templatesStored: stored.length,
+          templatesDropped: dropped.length,
+          crossedTarget: setupSummary.crossedTarget,
+          crossedMax: setupSummary.crossedMax,
+          adaptations: setupSummary.adaptations.length,
+        };
+        try {
+          await tools["ledger.appendEvent"]?.execute(
+            {
+              runId: wf.runId,
+              eventId: `${wf.runId}__setup-budget`,
+              level: setupSummary.crossedTarget ? "warn" : "info",
+              message: setupEstimateVsActualLine(setupSummary),
+            },
+            { ctx },
+          );
+        } catch (error) {
+          console.error("00c: could not record the setup-budget ledger row", error);
+        }
+      }
+
+      if (studioReport !== undefined) {
+        try {
+          await tools["ledger.appendEvent"]?.execute(
+            { runId: wf.runId, eventId: `${wf.runId}__template-studio`, level: "info", message: studioNote(studioReport) },
+            { ctx },
+          );
+        } catch (error) {
+          console.error("00c: could not record the template-studio ledger row", error);
+        }
+      }
+    }
 
     // ── 03: claim the subject — the catalog first, then the same fallbacks every other channel already has ──
     const claimedTopic = await wf.step.code("03-claim-topic", async (): Promise<InstagramTopicClaim> => {
@@ -2361,7 +3184,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       const htmlFiles = (await fs.readdir(srcDir)).filter((f) => f.endsWith(".html"));
       for (const file of htmlFiles) {
         const html = await fs.readFile(path.join(srcDir, file), "utf8");
-        await fs.writeFile(path.join(absDir, file), composeRawDocument(html, fragments.head, fragments.body), "utf8");
+        // The no-store branded path is the one a BRANDLESS client takes, i.e.
+        // exactly the client `extraHeadHtml` exists for (spec finding 10).
+        await fs.writeFile(path.join(absDir, file), composeRawDocument(html, fragments.head, fragments.body, deviceCssBlock()), "utf8");
       }
       return { templateDir: relDir, files: htmlFiles.filter((f) => ARCHETYPE_TEMPLATE_FILES.includes(f)) };
     };
@@ -2406,6 +3231,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             clientTemplateFile: frozen.brandTokens.slideTemplate,
             ...(fragments.head !== undefined ? { brandHeadHtml: fragments.head } : {}),
             ...(fragments.body !== undefined ? { brandBodyHtml: fragments.body } : {}),
+            // Phase 2, item M: the shared device stylesheet, on EVERY written
+            // document. Brand-independent and always passed — a client with no
+            // brand kit has no head fragment at all, so folding it into
+            // `brandHeadHtml` would silently lose devices on exactly the
+            // clients this parameter exists for.
+            extraHeadHtml: deviceCssBlock(),
           });
           const files = Object.values(materialized.files);
           return {
@@ -2420,24 +3251,36 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           console.error("04c-resolve-templates: registry materialization failed, falling back to the client's templateDir", error);
         }
       }
-      // No registry, but SOMETHING to splice into the head — a brand kit, or
-      // (Phase 0, item A) a script-font sheet for a non-Latin target language
-      // even with no kit at all: the client's read-only templateDir is copied
-      // into the run's own directory with the fragments spliced in. Keyed on
-      // the fragments rather than on `brandKit`, otherwise a brandless Hebrew
-      // client's font sheet would be computed and never written anywhere.
-      if (brandKit !== undefined || (await brandFragments()).head !== undefined) {
-        try {
-          const branded = await materializeBrandedClientDir();
-          return {
-            ...branded,
-            chosen: [],
-            ...(brandKit !== undefined ? { brandTokenDrift: await brandTokenDrift(branded.templateDir) } : {}),
-          };
-        } catch (error) {
-          console.error("04c-resolve-templates: branded copy of the client templateDir failed, falling back to the unbranded original", error);
-        }
+      // No registry — copy the client's read-only templateDir into this run's
+      // own directory, splicing in whatever belongs in the head. This is now
+      // UNCONDITIONAL, and that is Phase 2's correction to it.
+      //
+      // It used to be gated on "is there something to splice": a brand kit,
+      // or (Phase 0, item A) a script-font sheet for a non-Latin target
+      // language even with no kit at all. Item M put a third fragment on
+      // every document — `deviceCssBlock()`, where every `.dv-*` rule lives —
+      // and that one is brand-independent and language-independent. Under the
+      // old gate a client with no template registry, no brand kit and a Latin
+      // target language fell through to the raw read-only dir, whose
+      // `cover.html` defines only `.cov-device`: every number device on that
+      // client rendered as unstyled default-size text over the ground. Which
+      // is the brandless client `extraHeadHtml` was added for in the first
+      // place (spec finding 10) — the gate just happened to spell the
+      // condition as "has a brand or a non-Latin script".
+      try {
+        const branded = await materializeBrandedClientDir();
+        return {
+          ...branded,
+          chosen: [],
+          ...(brandKit !== undefined ? { brandTokenDrift: await brandTokenDrift(branded.templateDir) } : {}),
+        };
+      } catch (error) {
+        console.error("04c-resolve-templates: branded copy of the client templateDir failed, falling back to the unbranded original", error);
       }
+      // Last resort only: the client's own read-only dir, with no device
+      // sheet and no brand fragment. Reached when the copy itself failed
+      // (a read-only or full filesystem), where rendering unstyled devices
+      // still beats not rendering at all.
       const dir = path.resolve(options.repoRoot, frozen.brandTokens.templateDir);
       try {
         const present = (await fs.readdir(dir)).filter((f) => ARCHETYPE_TEMPLATE_FILES.includes(f));
@@ -2510,6 +3353,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                 clientTemplateFile: frozen.brandTokens.slideTemplate,
                 ...(fragments.head !== undefined ? { brandHeadHtml: fragments.head } : {}),
                 ...(fragments.body !== undefined ? { brandBodyHtml: fragments.body } : {}),
+                extraHeadHtml: deviceCssBlock(),
               });
             } else {
               // The branded no-store copy: pure local disk work, no registry
@@ -2542,7 +3386,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           try {
             await fs.writeFile(
               path.join(absDir, templateFileName(archetype.archetypeId)),
-              composeCustomArchetypeDocument(archetype, fragments.head, fragments.body),
+              composeCustomArchetypeDocument(archetype, fragments.head, fragments.body, deviceCssBlock()),
               "utf8",
             );
           } catch (error) {
@@ -2727,6 +3571,46 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        * already past the hard max and finished on the cheapest complete path.
        */
       angleDecision?: AngleDecision;
+      /**
+       * Phase 2, item L — the SHIPPED attempt's visual-interest floor: the
+       * per-slide measurement, every finding, the clause-E waivers, the
+       * warnings, and the slides the measurement could not read. Always
+       * present (it is measured on every attempt at $0), so the gate payload
+       * and the deliverable carry the numbers whether or not anything failed.
+       */
+      interest: InterestFloorReport;
+      /**
+       * The free deterministic re-layout this attempt ran, when the floor
+       * failed and the remedy table had something to try. Absent on the
+       * overwhelming majority of attempts — the floor passed — which is what
+       * makes its presence on the gate meaningful: CODE fixed something the
+       * writer got wrong.
+       */
+      interestRelayout?: InterestRelayoutPlan;
+      /**
+       * Set only when the floor was STILL failing on the final attempt (or
+       * past the run's hard max): the post ships `degraded` with these
+       * numbers rather than holding. An empty-looking slide is a
+       * picture/layout problem, and this workflow's opening promise is that
+       * one never costs the post — see `zero-held-guarantee.test.ts`.
+       */
+      interestDegraded?: InterestFloorReport;
+      /**
+       * Phase 2, item P — the layout sequence this attempt shipped, the
+       * previous post's, and how far apart they measured. The first time
+       * "are we shipping the same post every week" is answerable from the
+       * portal.
+       */
+      skeleton: SkeletonVarietyVerdict;
+      /**
+       * Phase 2, item M — devices this attempt's copy authored that could not
+       * render HONESTLY (a bar filling its whole track, a half-empty
+       * before/after) and were therefore dropped from the render by
+       * `contentFor`. A WARN-only fact: furniture must never be able to hold
+       * a run, so this is surfaced rather than gated — without it the drop is
+       * silent.
+       */
+      deviceIssues: Array<{ slide: number; kind: string; reason: string }>;
     }
 
     /**
@@ -3028,6 +3912,14 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       let finalRendered: RenderCarouselResult | undefined;
       /** SCRUM-393 (IGSTYLE-8) — the winning attempt's contrast facts, carried into the gate payload. */
       let finalContrastFacts: ContrastFact[] = [];
+      /** Phase 2, item L — the shipped attempt's measured interest report, its free re-layout (if one ran), and the degrade marker when the floor never cleared. */
+      let finalInterest: InterestFloorReport | undefined;
+      let finalInterestRelayout: InterestRelayoutPlan | undefined;
+      /** Set on the last attempt when the floor was still failing: the post ships flagged, never held. Attempt-scoped and reset per attempt so a fixed attempt is not reported as degraded. */
+      let interestDegraded: InterestFloorReport | undefined;
+      /** Phase 2, item P — this attempt's skeleton verdict, for the gate payload, the deliverable, `08b` and `09b`'s write-back. */
+      let skeletonForGate: SkeletonVarietyVerdict | undefined;
+      let finalSkeleton: SkeletonVarietyVerdict | undefined;
       let finalOutcomeOk = false;
       let lastSelfCheckReason = "no attempt completed";
       /** Set by a failed 07d similarity check, so the NEXT attempt's prompt names exactly which published post to move away from. */
@@ -3060,6 +3952,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // steers, and a stale render-rule finding must not ride along with them.
       const priorFindings = selfCheckSteer;
       selfCheckSteer = undefined;
+      // Item L's degrade marker is ATTEMPT-scoped: an attempt whose free
+      // re-layout fixed the floor must not ship carrying the previous
+      // attempt's finding.
+      interestDegraded = undefined;
       const copyExec = await wf.step.agent(rev(`05-write-copy-attempt-${attempt}`), copyAgent, {
         ...runDirectionField(runDirection),
         topic: topicClaim.topic,
@@ -3130,6 +4026,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // with an instruction someone just gave.
         ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
         ...(directive !== undefined ? { revisionRequest: directive } : {}),
+        // Phase 2, item P (prompt @14 §21): the last five shipped layout
+        // sequences, newest first, and the rule sentence that makes them an
+        // avoid-list rather than decoration. Empty on a client's first post,
+        // so the field is omitted and the prompt reads exactly as it did.
+        // This is the CHEAP half of "repetition reads as AI" — `07k` is the
+        // half that enforces it.
+        ...(recentSkeletons.length > 0 ? { recentSkeletons, skeletonRule: SKELETON_RULE_SENTENCE } : {}),
       });
       spend(rev(`05-write-copy-attempt-${attempt}`), copyExec.totalCostUsd, STEP_COST_ESTIMATES_USD.copyAttempt);
       if (copyExec.status === "tooling_error") {
@@ -3208,7 +4111,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // archetype is missing its content block degrades to `text_only`, which
       // also needs no photo. Asking the resolved layout keeps this decision
       // consistent with what `assembleSlidesData` will actually render.
-      const photoSlideNs = new Set(copy.slides.filter((s) => resolveLayout(s, availableTemplates).layout === "photo").map((s) => s.n));
+      // Phase 2, item M: `HERO_IMAGE_LAYOUTS`, not `=== "photo"`. `cover`
+      // consumes a hero image exactly as `photo` does, so testing for `photo`
+      // alone meant a cover was never offered one — and then degraded for
+      // want of the picture nobody went looking for, which is a
+      // self-fulfilling downgrade straight into the defect item M exists to
+      // remove.
+      const photoSlideNs = new Set(copy.slides.filter((s) => HERO_IMAGE_LAYOUTS.has(resolveLayout(s, availableTemplates).layout)).map((s) => s.n));
       // Phase 0, item F: Tier-0 slots are harvested for TOO on a system-managed
       // run. The vet may move a client's upload to the slide it honestly fits,
       // and the slot it left behind then has alternatives instead of a forced
@@ -3653,15 +4562,59 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         });
         const downgradedNs = new Set(unfillable.map((s) => s.n));
         downgradedForImagesThisAttempt = downgradedNs;
+        // Phase 2, item M: the downgrade goes through the LADDER, not
+        // straight to `text_only`.
+        //
+        // Item M widened image sourcing to covers (`HERO_IMAGE_LAYOUTS`), so
+        // slide 1 now lands here whenever no picture survived the tiers. A
+        // forced `text_only` routes to the client's own `slide.html`, which
+        // got none of item M.3's ground rework (`grep ground
+        // assets/templates/default/slide.html` finds only
+        // `background: var(--bg)`) — i.e. the exact mostly-grey plate the
+        // owner named, reached by the one path that cannot be redrafted out
+        // of it: `07h` waives the cover rule for a lost photograph, clause E
+        // of the interest floor is waived by `downgradedForImages`, and
+        // clause C then fails the bare plate on every attempt until the run
+        // ships it `degraded`. `resolveLayout` also HONOURS an explicit
+        // `text_only` rather than laddering it, so nothing downstream
+        // recovered it either.
+        //
+        // `fallbackArchetypeFor` with a KNOWN-absent hero instead: slide 1
+        // keeps `cover` when it carries a device (the archetype's own
+        // colour-block ground plus keyline is purpose-built for the no-hero
+        // case) and otherwise takes the ground-reworked `headline_focus`;
+        // an interior or closing slide takes the best archetype its own
+        // content can fill. `text_only` stays reachable only through
+        // `resolveLayout`'s own floor, for a client whose `templateDir`
+        // holds nothing else.
+        const lastIndex = copy.slides.length - 1;
+        const downgradeTargets = new Map(
+          copy.slides
+            .map((s, index) =>
+              downgradedNs.has(s.n)
+                ? ([s.n, fallbackArchetypeFor(s, { index, lastIndex, hasHeroImage: false, earlier: copy.slides.slice(0, index) })] as const)
+                : undefined,
+            )
+            .filter((entry): entry is readonly [number, InstagramSlideLayout] => entry !== undefined),
+        );
         await wf.step.code(rev(`07a-downgrade-unfillable-slides-attempt-${attempt}`), () => ({
           downgraded: [...downgradedNs],
-          reason: `slide(s) ${[...downgradedNs].join(", ")} shipping text-only — no viable image survived retrieval, social-scrape, and generation (${detail.join("; ")})`,
+          archetypes: [...downgradeTargets].map(([n, layout]) => ({ slide: n, layout })),
+          reason:
+            `slide(s) ${[...downgradeTargets].map(([n, layout]) => `${n} → ${layout}`).join(", ")} re-laid-out without a photograph — ` +
+            `no viable image survived retrieval, social-scrape, and generation (${detail.join("; ")})`,
         }));
         // Never a rights-encumbered/watermarked/reused image, regardless of
         // which of those disqualified the candidate — the slide gets NO
         // photo, not a demoted one.
         selections = selections.map((sel) => (downgradedNs.has(sel.n) ? { ...sel, imagePath: null } : sel));
-        copy = { ...copy, slides: copy.slides.map((s) => (downgradedNs.has(s.n) ? { ...s, layout: "text_only" } : s)) };
+        copy = {
+          ...copy,
+          slides: copy.slides.map((s) => {
+            const target = downgradeTargets.get(s.n);
+            return target === undefined ? s : { ...s, layout: target };
+          }),
+        };
       }
 
       const attemptChecked = await wf.step.code(rev(`07-self-check-attempt-${attempt}`), () =>
@@ -3851,21 +4804,53 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // `assembleSlidesData`) downgrades anything that didn't pass to
       // `text_only`, and `ensureTemplatesOnDisk` below writes exactly the
       // slides that did.
-      const validatedCustomArchetypes = validateCustomArchetypes(copy);
-      const validatedCustomArchetypeIds = new Set(validatedCustomArchetypes.map((a) => a.archetypeId));
+      let validatedCustomArchetypes = validateCustomArchetypes(copy);
+      let validatedCustomArchetypeIds = new Set(validatedCustomArchetypes.map((a) => a.archetypeId));
 
-      const slidesDataAttempt = await wf.step.code(rev(`07c-emit-slides-data-attempt-${attempt}`), () =>
-        assembleSlidesData({
+      /**
+       * Per-slide typography for THIS attempt, so item L's free re-layout can
+       * step a slide's `fontScale` without a redraft.
+       *
+       * Attempt-scoped (declared inside the loop) rather than run-scoped: a
+       * scale step is a remedy for what one attempt's copy measured, and
+       * carrying it into a wholly-rewritten draft would be applying a fix to
+       * a defect that no longer exists.
+       */
+      let slideStyleOverrides = new Map<number, SlideStyleOverride>();
+
+      /**
+       * The assembled slides-data for one candidate copy/selection pair, with
+       * item L's per-slide measurement anchors attached.
+       *
+       * A closure rather than three copies of the same 20-line literal: this
+       * attempt assembles up to three times (07c, the typographic fallback at
+       * 08a, and the free re-layout's re-render at 08a1c), and the ONE thing
+       * that must never differ between them is which tokens the measurement
+       * is anchored on.
+       *
+       * Every input the caller can vary is a PARAMETER, including the style
+       * overrides: the free re-layout at `08a1b` has to be able to assemble a
+       * candidate without committing it (see there), and a map read out of
+       * the closure cannot be handed a candidate value.
+       */
+      const assembleForAttempt = (
+        copyForAssembly: InstagramCopyOutput,
+        selectionsForAssembly: ImageSelection[],
+        customIds: ReadonlySet<string>,
+        overridesForAssembly: ReadonlyMap<number, SlideStyleOverride> = slideStyleOverrides,
+      ): RenderCarouselInput => {
+        const assembled = assembleSlidesData({
           clientSlug: wf.clientSlug,
           postId: runClaim.postId,
           repoRoot: options.repoRoot,
           brandTokens: frozen.brandTokens,
-          copy,
-          selections,
+          copy: copyForAssembly,
+          selections: selectionsForAssembly,
           canvas: frozen.styleConfig.canvas,
           availableTemplates,
           templateDirOverride: effectiveTemplateDir,
-          validatedCustomArchetypeIds,
+          validatedCustomArchetypeIds: customIds,
+          slideStyleOverrides: overridesForAssembly,
           ...(effectiveKit?.brandAccent !== undefined ? { brandAccentFallback: effectiveKit.brandAccent } : {}),
           ...(effectiveKit?.handle !== undefined ? { brandHandle: effectiveKit.handle } : {}),
           // IGSTYLE-7, §7a — wires `paletteForSlide`'s already-built, already-
@@ -3875,7 +4860,39 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           accentRing: effectiveKit?.palette ?? [],
           paletteSeed: wf.runId,
           ...(groundFgInversion !== undefined ? { groundFgInversion } : {}),
-        }),
+          // Phase 2, item M: the one string in the device library that is
+          // neither a numeral nor model-authored copy — an unsourced
+          // timeline/unit_grid's "illustrative, not measured" note.
+          ...(targetLanguage !== undefined ? { targetLanguage } : {}),
+        });
+        // Phase 2, item L: the measurement's anchors, per slide.
+        //
+        // `groundHex` is the one that matters: on a full-bleed photograph the
+        // MODAL colour is the photograph, so a flat-background share measured
+        // against it means nothing — naming the brand's own ground is what
+        // makes `flatBackgroundShare` a fact about the design rather than
+        // about the picture. Without `accentHex` every slide's `accentShare`
+        // is 0 and the accent warning fires on all of them.
+        //
+        // `foregroundHex` is declared on the tool's schema and passed here
+        // for completeness, but no emitted metric anchors on it: ink is
+        // measured as "not the ground", because a photograph and a scrim are
+        // ink as much as a glyph is.
+        return {
+          ...assembled,
+          slides: assembled.slides.map((slide) => ({
+            ...slide,
+            measure: {
+              ...(typeof slide.fields["accentColor"] === "string" ? { accentHex: slide.fields["accentColor"] } : {}),
+              ...(effectiveKit?.cssVars["--fg"] !== undefined ? { foregroundHex: effectiveKit.cssVars["--fg"] } : {}),
+              ...(effectiveKit?.cssVars["--bg"] !== undefined ? { groundHex: effectiveKit.cssVars["--bg"] } : {}),
+            },
+          })),
+        };
+      };
+
+      const slidesDataAttempt = await wf.step.code(rev(`07c-emit-slides-data-attempt-${attempt}`), () =>
+        assembleForAttempt(copy, selections, validatedCustomArchetypeIds),
       );
 
       // ── 07h: the default render rules, checked in code BEFORE any render is spent (Phase 0, item D) ──
@@ -3888,24 +4905,40 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // question mark or lexicon CTA, a custom-archetype cover) is `residue`
       // for the 08b judge — so "no render rules provided" never happens again.
       //
-      // One deliberate waiver, for the zero-held guarantee above: the cover
-      // rule is NOT failed when slide 1 lost its photograph to sourcing (07a
-      // downgraded it this attempt). A redraft cannot conjure a picture the
-      // tiers could not find, and holding for it would be exactly the
-      // "held because of a picture" this workflow promises never to do — the
-      // rule joins the residue with the reason, so the judge and the reviewer
-      // still see it.
+      // One deliberate waiver, for the zero-held guarantee above: slide 1's
+      // cover rules are NOT failed when slide 1 lost its photograph to
+      // sourcing (07a downgraded it this attempt). A redraft cannot conjure a
+      // picture the tiers could not find, and holding for it would be exactly
+      // the "held because of a picture" this workflow promises never to do —
+      // the rules join the residue with the reason, so the judge and the
+      // reviewer still see them.
+      //
+      // TWO rules, not one, and both for the same reason. `07a` now re-lays a
+      // hero-less cover out through `fallbackArchetypeFor` rather than forcing
+      // the client's bare `slide.html`, which for a cover with no device means
+      // the ground-reworked `headline_focus`. `countContentElements` subtracts
+      // one there ("a statement and its sub-line are ONE lockup"), and its own
+      // doc comment calls that subtraction "belt and braces rather than the
+      // deciding check" precisely because `default:cover-carries-device`
+      // already fails such a slide. Waive only the cover rule and the belt
+      // becomes the decider: a kicker-less cover that lost its photograph
+      // would return to `05` on every attempt for a picture no redraft can
+      // produce — the hold this waiver exists to prevent, re-created one rule
+      // over. Scoped to slide 1, because no other slide's count depends on
+      // the hero: an interior plate reads headline + body as two.
+      const COVER_WAIVED_RULE_IDS = ["default:cover-carries-device", "default:two-elements-per-slide"] as const;
       let residueRules: typeof DEFAULT_RENDER_RULES = [];
       if (renderRuleSource === "default") {
         const drr = await wf.step.code(rev(`07h-default-render-rules-attempt-${attempt}`), () => {
           const checked = checkDefaultRenderRules(slidesDataAttempt, copy);
-          const coverLostToSourcing = downgradedForImagesThisAttempt.has(slidesDataAttempt.slides[0]?.n ?? -1);
-          const failures = checked.failures.filter((f) => !(coverLostToSourcing && f.ruleId === "default:cover-carries-device"));
-          const waived = checked.failures.filter((f) => coverLostToSourcing && f.ruleId === "default:cover-carries-device");
-          const residue = [
-            ...checked.residue,
-            ...(waived.length > 0 ? DEFAULT_RENDER_RULES.filter((r) => r.id === "default:cover-carries-device") : []),
-          ];
+          const coverN = slidesDataAttempt.slides[0]?.n ?? -1;
+          const coverLostToSourcing = downgradedForImagesThisAttempt.has(coverN);
+          const isWaived = (f: { ruleId: string; slide?: number | undefined }): boolean =>
+            coverLostToSourcing && f.slide === coverN && (COVER_WAIVED_RULE_IDS as readonly string[]).includes(f.ruleId);
+          const failures = checked.failures.filter((f) => !isWaived(f));
+          const waived = checked.failures.filter(isWaived);
+          const waivedIds = new Set(waived.map((w) => w.ruleId));
+          const residue = [...checked.residue, ...DEFAULT_RENDER_RULES.filter((r) => waivedIds.has(r.id))];
           return {
             failures,
             residue,
@@ -3921,9 +4954,94 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         residueRules = drr.residue;
       }
 
+      // ── 07k: the cross-run variety check (Phase 2, item P) ──
+      //
+      // The owner's second complaint: "בנוסף בגלל שזה חזרתי זה נראה AI" — the
+      // repetition itself is the tell. Variety inside one carousel was
+      // already enforced (`resolveLayout`'s once-per-archetype rule); this is
+      // the half that measures it ACROSS runs, against the last five
+      // signatures this client shipped.
+      //
+      // PRE-RENDER, deliberately, and that placement is the cost claim: a
+      // repeated skeleton is knowable from the assembled slides-data alone,
+      // so refusing it here costs no Chromium launch and no model call at
+      // all. `07k` sits after `07h` (which already passed) and before `08`.
+      //
+      // Three clauses, and none of them can hold the run: a signature
+      // IDENTICAL to the previous post's returns to 05 with both sequences
+      // named; a near-match under `MIN_SKELETON_DISTANCE` returns on attempt
+      // 1 only and warns after that; and on the final attempt
+      // `checkSkeletonVariety` self-demotes to a warning, so this never
+      // becomes a fourth hold cause.
+      // Two clauses here are cross-run and answerable from the assembled
+      // slides-data alone. The third — two ADJACENT slides that share an
+      // archetype AND fill the plate to the same degree — is a fact about
+      // pixels, so it cannot be answered at this placement and is re-run at
+      // `08a1e` once `08a1` has measured the render. `let`, because that
+      // merge replaces this verdict for everything downstream.
+      let skeletonVerdict: SkeletonVarietyVerdict = await wf.step.code(rev(`07k-skeleton-variety-attempt-${attempt}`), () => {
+        const roles = rolesForSlideCount(slidesDataAttempt.slides.length);
+        const entry = buildSkeletonEntry({
+          runId: wf.runId,
+          at: new Date().toISOString(),
+          // The ASSEMBLED slides, not the copy's requested layouts: a slide
+          // that degraded for want of a picture records what actually
+          // rendered, which is the only thing a future run can avoid.
+          slides: slidesDataAttempt.slides.map((s) => ({ n: s.n, template: s.template, hasImage: s.images?.["hero"] !== undefined })),
+          roles,
+          // The RENDERED device kind (`fields.deviceKind`, emitted by
+          // `contentFor` beside the fragment), not `copy.slides[].device`.
+          // Only three archetypes declare a device slot, so reading the
+          // request let a slide claim a device it never painted — and the
+          // variety check would then be satisfied by a difference invisible
+          // in the carousel.
+          devices: slidesDataAttempt.slides.map((s) => s.fields?.["deviceKind"]),
+          edited: false,
+        });
+        return checkSkeletonVariety(skeletonHistory, { signature: entry.signature }, { attempt, maxAttempts });
+      });
+      skeletonForGate = skeletonVerdict;
+      if (skeletonVerdict.action === "return" && meter.posture !== "cheapest-path") {
+        // `returnToCopyWith`, never a bare `continue`: the reason names BOTH
+        // sequences, and it only reaches the writer through `selfCheckSteer`.
+        returnToCopyWith(skeletonVerdict.reason ?? "this carousel repeats the previous post's layout sequence");
+        continue;
+      }
+      if (skeletonVerdict.action === "return") {
+        // PAST THE RUN'S HARD MAX: the standing amendment says finish on the
+        // cheapest complete path and deliver. A repeated layout sequence is
+        // the definition of optional work to drop here — this module's own
+        // reasoning is that "there is no `hold`: repetition is a design
+        // defect, not a compliance one", and a redraft for one costs a copy
+        // attempt plus its vet, relevance and inspect legs (~$0.19) on a run
+        // that has already crossed $1.50 (generated images bill measured, not
+        // estimated, so `05b` alone can cross it on attempt 1). Demoted to
+        // the `warn` shape the final attempt already produces, with the
+        // reason recorded on the gate and in the ledger rather than paid for.
+        const suppressed = `${skeletonVerdict.reason ?? "this carousel repeats the previous post's layout sequence"} — past the run's hard max, so it ships with the finding recorded rather than redrafted`;
+        skeletonVerdict = { ...skeletonVerdict, ok: true, action: "warn", reason: suppressed };
+        skeletonForGate = skeletonVerdict;
+        try {
+          await tools["ledger.appendEvent"]?.execute(
+            { runId: wf.runId, eventId: `${wf.runId}__skeleton-variety-a${attempt}`, level: "warn", message: suppressed },
+            { ctx },
+          );
+        } catch (error) {
+          console.error(`07k-skeleton-variety-attempt-${attempt}: could not record the suppressed-escalation warn`, error);
+        }
+      }
+
       // ── 08: render via the shared, already-tested publish.renderCarousel tool ──
+      //
+      // `measure`/`probe` (item L, `publish.renderCarousel` 1.1.0): both free
+      // — the measurement runs on the screenshot buffer the tool already
+      // holds (with a mediaStore configured that is the only place those
+      // bytes ever exist), and the probe is one `page.evaluate` in the page
+      // that is already open. Their per-slide anchors were attached at 07c.
       await ensureTemplatesOnDisk(validatedCustomArchetypes);
-      const renderOutcome = await wf.step.code(rev(`08-render-carousel-attempt-${attempt}`), async () => tools["publish.renderCarousel"]!.execute(slidesDataAttempt, { ctx }));
+      const renderOutcome = await wf.step.code(rev(`08-render-carousel-attempt-${attempt}`), async () =>
+        tools["publish.renderCarousel"]!.execute({ ...slidesDataAttempt, measure: true, probe: true }, { ctx }),
+      );
 
       // ── The last image-caused hold, now a degrade ──
       //
@@ -3946,29 +5064,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         };
         const strippedSelections = selections.map((sel) => ({ ...sel, imagePath: null }));
         slidesDataResolved = await wf.step.code(rev(`08a-render-fallback-typographic-attempt-${attempt}`), () =>
-          assembleSlidesData({
-            clientSlug: wf.clientSlug,
-            postId: runClaim.postId,
-            repoRoot: options.repoRoot,
-            brandTokens: frozen.brandTokens,
-            copy: strippedCopy,
-            selections: strippedSelections,
-            canvas: frozen.styleConfig.canvas,
-            availableTemplates,
-            templateDirOverride: effectiveTemplateDir,
-            validatedCustomArchetypeIds,
-            ...(effectiveKit?.brandAccent !== undefined ? { brandAccentFallback: effectiveKit.brandAccent } : {}),
-          ...(effectiveKit?.handle !== undefined ? { brandHandle: effectiveKit.handle } : {}),
-            accentRing: effectiveKit?.palette ?? [],
-            paletteSeed: wf.runId,
-            ...(groundFgInversion !== undefined ? { groundFgInversion } : {}),
-          }),
+          assembleForAttempt(strippedCopy, strippedSelections, validatedCustomArchetypeIds),
         );
         copy = strippedCopy;
         selections = strippedSelections;
         await ensureTemplatesOnDisk(validatedCustomArchetypes);
         renderResolved = await wf.step.code(rev(`08-render-carousel-typographic-attempt-${attempt}`), async () =>
-          tools["publish.renderCarousel"]!.execute(slidesDataResolved, { ctx }),
+          tools["publish.renderCarousel"]!.execute({ ...slidesDataResolved, measure: true, probe: true }, { ctx }),
         );
       }
 
@@ -3989,8 +5091,356 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             : `render step reported a tooling failure: ${detail}`,
         );
       }
-      const renderedAttempt = renderResolved.result as RenderCarouselResult;
-      const slidesDataForQa = slidesDataResolved;
+      let renderedAttempt = renderResolved.result as RenderCarouselResult;
+      let slidesDataForQa = slidesDataResolved;
+
+      // ── 08a1: the visual-interest floor, measured on the pixels ──
+      //
+      // The owner's first complaint, made enforceable: "טמפלייטים משעממים...
+      // מסך אפור ברובו" — a mostly-grey plate with a headline in the lower
+      // third is technically correct and empty, and "technically correct and
+      // empty must fail, not pass". `checkSlidesInterestFloor` reads the
+      // numbers `publish.renderCarousel` just measured and answers per slide,
+      // at the slide's ROLE (slide 1 is a cover, the last slide is a closer,
+      // the rest interior — assigned from carousel position inside the
+      // policy, never here).
+      //
+      // WHERE it sits is the whole cost claim: immediately after the render
+      // and STRICTLY BEFORE `08a2`'s palette gate, `08a4`'s vision pass
+      // (~$0.008) and `08b`'s Flash judge ($0.004). A failing attempt
+      // therefore spends a render and **zero model calls**, and then gets a
+      // second free chance from the deterministic re-layout below before the
+      // $0.126 redraft is spent at all.
+      const measuredArchetypes = (assembled: RenderCarouselInput, copyNow: InstagramCopyOutput, customIds: ReadonlySet<string>): Map<number, string> =>
+        new Map(
+          assembled.slides.map((slide) => {
+            const from = copyNow.slides.find((c) => c.n === slide.n);
+            const customId =
+              from?.layout === "custom" && from.customArchetype !== undefined && customIds.has(from.customArchetype.archetypeId)
+                ? from.customArchetype.archetypeId
+                : undefined;
+            // A run-authored layout is named `custom-<archetypeId>` rather
+            // than by its filename, so item O's designs are identifiable in
+            // the ledger by the id the copy model chose for them.
+            return [slide.n, customId !== undefined ? `custom-${customId}` : templateBasename(slide.template)] as const;
+          }),
+        );
+
+      let floor: InterestFloorReport = await wf.step.code(rev(`08a1-interest-floor-attempt-${attempt}`), () =>
+        // Passed straight in, with no cast: `rendered[]`'s rows ARE the
+        // module's `MeasuredSlide` shape, so this call site is the
+        // compile-time join between `slide-metrics.ts`'s real `SlideMetrics`
+        // and `interest-floor.ts`'s structural mirror of it. A field rename
+        // in the tool package fails to compile HERE, which is the point.
+        checkSlidesInterestFloor(renderedAttempt.rendered, {
+          downgradedForImages: downgradedForImagesThisAttempt,
+          archetypeBySlide: measuredArchetypes(slidesDataForQa, copy, validatedCustomArchetypeIds),
+        }),
+      );
+      let interestRelayout: InterestRelayoutPlan | undefined;
+
+      // An unmeasurable PNG is a TOOLING oddity, never an editorial verdict:
+      // one warn row naming the reason, and the attempt continues. Turning
+      // "the decoder refused this buffer" into "this slide is boring" would
+      // be the held-because-of-a-picture failure mode in a new costume.
+      if (floor.notMeasured.length > 0) {
+        try {
+          await tools["ledger.appendEvent"]?.execute(
+            {
+              runId: wf.runId,
+              eventId: `${wf.runId}__interest-not-measured`,
+              level: "warn",
+              message:
+                `attempt ${attempt}: ${floor.notMeasured.length} slide(s) could not be measured for visual interest — ` +
+                floor.notMeasured.map((n) => `slide ${n.slide}: ${n.reason}`).join("; "),
+            },
+            { ctx },
+          );
+        } catch (error) {
+          console.error("08a1-interest-floor: could not record the not-measured warn", error);
+        }
+      }
+
+      if (!floor.ok) {
+        // ── 08a1b/08a1c/08a1d: the FREE remedy, once ──
+        //
+        // A render is $0; a Sonnet redraft is $0.12. `planInterestRelayout`
+        // returns at most ONE change per failing slide from a fixed, tested
+        // table — promote an already-vetted image to the cover, build a
+        // device from a figure the slide already states, switch to the
+        // archetype its own content calls for, step the type scale, move a
+        // sentence to the caption. `undefined` means the table had nothing
+        // to try, which is exactly what the paid redraft is for.
+        const plan = planInterestRelayout(copy, selections, promptFacts, floor.findings, { styleOverrides: slideStyleOverrides });
+        if (plan !== undefined) {
+          interestRelayout = await wf.step.code(rev(`08a1b-relayout-for-interest-attempt-${attempt}`), () => plan);
+          // Every mutation the re-layout makes is built into a CANDIDATE and
+          // committed only after `08a1c` renders it — the copy, the image
+          // selections, the type-scale overrides and the validated custom
+          // set, all four.
+          //
+          // Committing first and keeping the edits when the render failed is
+          // how the deliverable's text stops matching its own PNGs: the else
+          // branch below keeps `renderedAttempt`/`slidesDataForQa` on the
+          // FIRST render, and on the final attempt (or past the hard max)
+          // there is no `continue`, so `finalCopy`/`finalRendered` ship
+          // together. A `move-sentence-to-caption` would then publish the
+          // sentence in the caption AND still burned into slide N's picture;
+          // a `promote-image-to-cover` pointing at a path this instance does
+          // not hold is a very reachable way to get there (`content_fail`).
+          let nextCopy = copy;
+          let nextSelections = selections;
+          const nextStyleOverrides = new Map(slideStyleOverrides);
+          const patchSlide = (n: number, patch: Partial<InstagramCopyOutput["slides"][number]>): void => {
+            nextCopy = { ...nextCopy, slides: nextCopy.slides.map((s) => (s.n === n ? { ...s, ...patch } : s)) };
+          };
+          for (const change of plan.changes) {
+            switch (change.kind) {
+              case "re-render":
+                // Nothing to change — the remedy IS rendering again.
+                break;
+              case "font-scale":
+                nextStyleOverrides.set(change.slide, { ...nextStyleOverrides.get(change.slide), fontScale: change.to });
+                break;
+              case "attach-device":
+                // The archetype rides along when the slide's current one has
+                // no device slot — `contentFor` drops the fragment for every
+                // archetype but `cover`/`headline_focus` (and a recap-less
+                // `closer`), so setting the device alone there re-renders
+                // byte-identically and burns the attempt's one free chance.
+                patchSlide(change.slide, {
+                  device: change.device,
+                  ...(change.archetype !== undefined ? { layout: change.archetype as InstagramSlideLayout } : {}),
+                });
+                break;
+              case "switch-archetype":
+                // The planner already refuses a target another slide has
+                // claimed, so `resolveLayout` will not degrade it straight
+                // back — which is what would make this a no-op dressed as a
+                // fix.
+                patchSlide(change.slide, { layout: change.to as InstagramSlideLayout });
+                break;
+              case "promote-image-to-cover":
+                // The whole per-image record moves, not only the path. One
+                // selection row per slide is the compliance artefact for the
+                // image that slide ships, so writing a new `imagePath` over
+                // the cover's old verdict (on the reachable path, the
+                // typographic stand-in: "n/a — typographic layout, no image
+                // used", claimMatch 5, "no photograph to judge") would ship a
+                // real third-party photograph described as something else —
+                // and `09b` persists exactly this array on the deliverable.
+                // `record.claimMatch` is capped because nothing re-vets the
+                // picture against the cover's own headline at this point.
+                nextSelections = nextSelections.map((sel) => (sel.n === change.slide ? { ...sel, imagePath: change.imagePath, ...change.record } : sel));
+                patchSlide(change.slide, { layout: change.archetype as InstagramSlideLayout });
+                break;
+              case "build-recap":
+                // `closer`'s recap strip is built BY CODE inside `contentFor`
+                // from the carousel's own earlier slides (item M), so the
+                // plan's `rows` are the reason, not the payload: switching
+                // the archetype is what makes the strip render.
+                patchSlide(change.slide, { layout: change.archetype as InstagramSlideLayout });
+                break;
+              case "add-question-block": {
+                // The question is lifted from the post's OWN words (the
+                // closer's headline, its body, or the caption) — the planner
+                // never invents one. `contentFor` routes a closer's body into
+                // the `question` slot when it actually asks something, so a
+                // question that came from the CAPTION is appended to the body
+                // verbatim; one already in the body needs nothing.
+                const closerSlide = nextCopy.slides.find((s) => s.n === change.slide);
+                const body =
+                  closerSlide !== undefined && !closerSlide.body.includes(change.question)
+                    ? `${closerSlide.body} ${change.question}`.trim()
+                    : closerSlide?.body;
+                patchSlide(change.slide, { layout: "closer", ...(body !== undefined ? { body } : {}) });
+                break;
+              }
+              case "colour-block-ground":
+                patchSlide(change.slide, { layout: change.archetype as InstagramSlideLayout });
+                break;
+              case "move-sentence-to-caption": {
+                const from = nextCopy.slides.find((s) => s.n === change.slide);
+                if (from !== undefined) {
+                  patchSlide(change.slide, { body: from.body.replace(change.sentence, "").replace(/\s{2,}/gu, " ").trim() });
+                  nextCopy = { ...nextCopy, caption: `${nextCopy.caption}\n\n${change.sentence}`.trim() };
+                }
+                break;
+              }
+            }
+          }
+          // A `switch-archetype` off a `custom` slide changes which custom
+          // designs this attempt still renders, so the validated set is
+          // re-derived rather than reused — off the CANDIDATE copy.
+          const nextValidatedCustomArchetypes = validateCustomArchetypes(nextCopy);
+          const nextValidatedCustomArchetypeIds = new Set(nextValidatedCustomArchetypes.map((a) => a.archetypeId));
+
+          // Outside the step, deliberately: a checkpointed step replayed on a
+          // recycled instance returns its cached value without re-writing the
+          // files, which is the exact 9qkTWlg7e9ZLiVIZUok4 defect
+          // `ensureTemplatesOnDisk`'s own doc comment exists to close.
+          //
+          // Safe to run before the commit decision because every write here
+          // is additive — the first render's own files are never removed — so
+          // abandoning the candidate leaves the earlier render's templates
+          // exactly where they were.
+          await ensureTemplatesOnDisk(nextValidatedCustomArchetypes);
+          const relayoutRender = await wf.step.code(rev(`08a1c-render-relayout-attempt-${attempt}`), async () => {
+            const assembled = assembleForAttempt(nextCopy, nextSelections, nextValidatedCustomArchetypeIds, nextStyleOverrides);
+            const outcome = await tools["publish.renderCarousel"]!.execute({ ...assembled, measure: true, probe: true }, { ctx });
+            return { slidesData: assembled, outcome };
+          });
+          if (relayoutRender.outcome.status === "success") {
+            // THE COMMIT. Text and pixels move together or not at all.
+            copy = nextCopy;
+            selections = nextSelections;
+            slideStyleOverrides = nextStyleOverrides;
+            validatedCustomArchetypes = nextValidatedCustomArchetypes;
+            validatedCustomArchetypeIds = nextValidatedCustomArchetypeIds;
+            slidesDataForQa = relayoutRender.slidesData;
+            renderedAttempt = relayoutRender.outcome.result as RenderCarouselResult;
+            floor = await wf.step.code(rev(`08a1d-interest-floor-recheck-attempt-${attempt}`), () =>
+              checkSlidesInterestFloor(renderedAttempt.rendered, {
+                downgradedForImages: downgradedForImagesThisAttempt,
+                archetypeBySlide: measuredArchetypes(slidesDataForQa, copy, validatedCustomArchetypeIds),
+              }),
+            );
+            // A SECOND `render-integrity` failure after a re-render is not a
+            // content verdict at all: no copy change can make a font load.
+            if (
+              plan.changes.some((c) => c.kind === "re-render") &&
+              floor.findings.some((f) => f.kind === "render-integrity")
+            ) {
+              throw new WorkflowToolingFailure(
+                `the carousel measured almost no ink twice in a row (${floor.findings
+                  .filter((f) => f.kind === "render-integrity")
+                  .map((f) => f.sentence)
+                  .join("; ")}) — a re-render did not fix it, so this is a rendering failure and not a copy defect`,
+              );
+            }
+          } else {
+            // The candidate is ABANDONED, not half-kept: `copy`,
+            // `selections`, `slideStyleOverrides` and the validated custom
+            // set are all still the ones the first render actually painted,
+            // so whatever ships is internally consistent. The findings stay
+            // the first render's too, which is what routes this attempt to
+            // the paid redraft (or to `degraded` on the last one).
+            console.error(
+              `08a1c-render-relayout-attempt-${attempt}: the re-layout's render reported ${relayoutRender.outcome.status} — ` +
+                "discarding the re-layout's copy/selection changes and keeping the first render, its copy and its findings",
+            );
+            // Recomputed rather than checkpointed: `08a1b` and `08a1c` are
+            // both steps, so on a resume this is a pure function of two
+            // cached values and needs no step id of its own.
+            interestRelayout = {
+              ...plan,
+              discarded: true,
+              discardedReason: `the re-layout's render reported ${relayoutRender.outcome.status}, so its copy and selection changes were rolled back`,
+            };
+          }
+        }
+      }
+
+      if (!floor.ok) {
+        // One warn per FAILED attempt, keyed on the attempt so a retried
+        // attempt overwrites its own row rather than stacking.
+        try {
+          await tools["ledger.appendEvent"]?.execute(
+            {
+              runId: wf.runId,
+              eventId: `${wf.runId}__interest-floor-a${attempt}`,
+              level: "warn",
+              message: summarizeInterestFindings(floor.findings),
+            },
+            { ctx },
+          );
+        } catch (error) {
+          console.error("08a1-interest-floor: could not record the interest-floor warn", error);
+        }
+
+        // NO FOURTH HOLD. Attempts 1..n-1 return to `05` with the measured
+        // numbers through `returnToCopyWith` — never the bare `continue`
+        // `08a2`'s palette gate does, or the numbers never reach
+        // `selfCheckSteer` and the redraft is blind. On the final attempt, or
+        // past the run's hard max where escalation is suppressed, the post
+        // ships `degraded` with the finding recorded.
+        if (attempt < maxAttempts && meter.posture !== "cheapest-path") {
+          // A DROPPED DEVICE goes with the numbers. `collectDeviceIssues`
+          // otherwise only ever reached the gate payload and the deliverable,
+          // so a writer that DID set a device the archetype has no slot for
+          // was told "this slide measured empty, give it a device" and had no
+          // way to learn that it already had — it would set the same field
+          // again and measure the same. Here the drop is stated with the
+          // archetype that dropped it, which is the fact that makes the
+          // remedy actionable.
+          const drops = collectDeviceIssues(copy, slidesDataForQa);
+          returnToCopyWith(
+            drops.length > 0
+              ? `${formatInterestFailures(floor.findings)} Devices this attempt set that did not render: ${drops.map((d) => `slide ${d.slide} (${d.kind}) — ${d.reason}`).join("; ")}`
+              : formatInterestFailures(floor.findings),
+          );
+          continue;
+        }
+        interestDegraded = floor;
+      }
+
+      // ── 08a1e: the SHIPPED skeleton, and the pixel half of it (item P.2) ──
+      //
+      // Two jobs, and the first one is the reason this step re-derives rather
+      // than decorates.
+      //
+      // 1. **The signature is recomputed from what is about to ship.** `07k`
+      //    is pre-render and reads `slidesDataAttempt`; `08a1b` then mutates
+      //    layouts, devices and type scales and commits a new
+      //    `slidesDataForQa`. Every remedy kind changes the signature —
+      //    `attach-device` appends `+<kind>`, and `switch-archetype`,
+      //    `promote-image-to-cover`, `colour-block-ground`, `build-recap` and
+      //    `add-question-block` all change an archetype token. Carrying
+      //    `07k`'s tokens past a re-layout put a carousel that did not ship
+      //    on the gate payload, on the deliverable and into the `08a1e`
+      //    adjacency warnings (old tokens paired with new measured shares),
+      //    while `09b` independently recorded the real one under
+      //    `SKELETON_BELIEF_KEY` — so item P's whole purpose ("are we
+      //    shipping the same post every week") answered wrong exactly when a
+      //    re-layout ran. It is rebuilt the same way `09b` rebuilds it, off
+      //    the same committed `slidesDataForQa`.
+      //
+      // 2. **The adjacency clause finally has pixels.** `07k` had no
+      //    occupancy to read, so `adjacentRepeatWarnings` was structurally
+      //    unreachable and `skeletonWarnings` never reached `08b`. Now that
+      //    `08a1` (or `08a1d`, after a re-layout) has measured every slide,
+      //    it is re-run against the real `occupiedShare` values.
+      //
+      // The re-run verdict can never `return`: the render is already paid
+      // for, `08a1`'s own escalation decision has already been taken above,
+      // and a second return point here would be a fifth hold cause in all
+      // but name. So the cross-run clauses are re-evaluated for their
+      // REASON and their numbers, and the action is demoted to `warn`.
+      //
+      // Positional, with holes: `floor.perSlide` skips a slide whose PNG
+      // could not be decoded, so the array is built by slide number against
+      // the ASSEMBLED order rather than from `perSlide`'s own length. A
+      // compacted list would pair slide 3 with slide 5 and invent a
+      // repetition that is not there.
+      skeletonVerdict = await wf.step.code(rev(`08a1e-skeleton-occupancy-attempt-${attempt}`), () => {
+        const byNumber = new Map(floor.perSlide.map((verdict) => [verdict.slide, verdict.metrics.occupiedShare]));
+        const occupancy = slidesDataForQa.slides.map((s) => byNumber.get(s.n));
+        const shipped = buildSkeletonEntry({
+          runId: wf.runId,
+          at: new Date().toISOString(),
+          slides: slidesDataForQa.slides.map((s) => ({ n: s.n, template: s.template, hasImage: s.images?.["hero"] !== undefined })),
+          roles: rolesForSlideCount(slidesDataForQa.slides.length),
+          devices: slidesDataForQa.slides.map((s) => s.fields?.["deviceKind"]),
+          edited: false,
+        });
+        const reChecked = checkSkeletonVariety(skeletonHistory, { signature: shipped.signature }, { attempt, maxAttempts });
+        return withMeasuredOccupancy(
+          // `ok: true` and `action: "warn"`/`"pass"` — never `return`. See above.
+          { ...reChecked, ok: true, action: reChecked.action === "return" ? "warn" : reChecked.action },
+          occupancy,
+        );
+      });
+      skeletonForGate = skeletonVerdict;
 
       // ── 08a2: deterministic visual-QA pre-checks (SCRUM-324/AU40) —
       //         code answers every question that HAS a factual answer,
@@ -4143,6 +5593,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         finalRendered = renderedAttempt;
         finalContrastFacts = preChecks.contrastFacts;
         finalRelevance = attemptRelevance;
+        finalInterest = floor;
+        finalInterestRelayout = interestRelayout;
+        finalSkeleton = skeletonVerdict;
         finalOutcomeOk = true;
         break;
       }
@@ -4161,6 +5614,18 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           ? { brandAssetContext: { corner: preChecks.brandAsset.corner, scrimmed: preChecks.brandAsset.scrimmed } }
           : {}),
         ...(effectiveKit !== undefined && effectiveKit.palette.length > 0 ? { brandPalette: effectiveKit.palette } : {}),
+        // Phase 2, item L (prompt @4 §6): the measured interest report for the
+        // attempt about to ship, so the judge grades only the RESIDUE — does
+        // the sequence have rhythm — rather than re-deciding emptiness that
+        // `08a1` already measured in code. The same residue split `07h`/`08a2`
+        // already established.
+        interest: { perSlide: floor.perSlide, findings: floor.findings, waived: floor.waived, warnings: floor.warnings, notMeasured: floor.notMeasured },
+        // Phase 2, item P: composition variety against the PREVIOUS POST, not
+        // only within this carousel — the half of "repetition reads as AI" a
+        // deterministic distance cannot judge.
+        thisSkeleton: skeletonVerdict.signature,
+        ...(skeletonVerdict.previous !== undefined ? { previousSkeleton: skeletonVerdict.previous } : {}),
+        ...(skeletonVerdict.warnings.length > 0 ? { skeletonWarnings: skeletonVerdict.warnings } : {}),
       });
       spend(rev(`08b-visual-qa-attempt-${attempt}`), qaExec.totalCostUsd, STEP_COST_ESTIMATES_USD.visualQa);
       if (qaExec.status === "tooling_error") {
@@ -4183,6 +5648,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       finalRendered = renderedAttempt;
       finalContrastFacts = preChecks.contrastFacts;
       finalRelevance = attemptRelevance;
+      finalInterest = floor;
+      finalInterestRelayout = interestRelayout;
+      finalSkeleton = skeletonVerdict;
       finalOutcomeOk = true;
       break;
     }
@@ -4220,6 +5688,18 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         contrastFacts: finalContrastFacts,
         ...(finalRelevance !== undefined ? { relevance: finalRelevance } : {}),
         ...(angleDecision !== undefined ? { angleDecision } : {}),
+        // Phase 2, items L/M/P — measured on the attempt that actually ships.
+        // `interest` and `skeleton` are non-optional because both are
+        // computed on every attempt at $0, so "absent" would only ever mean a
+        // bug; the two markers below are absent on the common case.
+        interest: finalInterest ?? { ok: true, perSlide: [], findings: [], waived: [], warnings: [], notMeasured: [] },
+        ...(finalInterestRelayout !== undefined ? { interestRelayout: finalInterestRelayout } : {}),
+        ...(interestDegraded !== undefined ? { interestDegraded } : {}),
+        skeleton: finalSkeleton ?? { ok: true, action: "pass", signature: "", repeatedPrevious: false, warnings: [], recent: [] },
+        // With the assembled slides, so a device that was valid and still
+        // DROPPED (an archetype with no slot, a closer whose recap took the
+        // middle) is reported as a fact rather than vanishing silently.
+        deviceIssues: collectDeviceIssues(finalCopy, finalSlidesData),
       };
     };
 
@@ -4350,6 +5830,62 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           spendUsd: meter.totalUsd,
           budget: summarizeRunBudget(budgetDecision, meter, budgetNotes),
           budgetLine: estimateVsActualLine(summarizeRunBudget(budgetDecision, meter, budgetNotes)),
+          // Phase 2, item N — what the Template Studio did for this client,
+          // and the SEPARATE setup budget it ran on (target $2.00, hard max
+          // $3.00), reported exactly the way a run's is. This is also where a
+          // reviewer APPROVES the set: a `templateFeedback` entry with
+          // `verdict: "approved", promote: true` on a studio `templateId`
+          // flips `enabled` (`persistReviewFeedback`), and only then does
+          // `resolveBest` start picking it.
+          ...(studioReport !== undefined ? { templateStudio: studioReport } : {}),
+          ...(setupBudgetSummary !== undefined
+            ? { setup: { budget: setupBudgetSummary, budgetLine: setupEstimateVsActualLine(setupBudgetSummary) } }
+            : {}),
+          // Phase 2, item L — what the shipped attempt's pixels MEASURED:
+          // per-slide shares, every finding, the clause-E waivers, the
+          // warnings that never gate, and the slides that could not be read.
+          interest: {
+            perSlide: draft.interest.perSlide,
+            findings: draft.interest.findings,
+            waived: draft.interest.waived,
+            warnings: draft.interest.warnings,
+            notMeasured: draft.interest.notMeasured,
+          },
+          // Present only when the free re-layout actually ran: a reviewer can
+          // then see that CODE fixed something the writer got wrong, rather
+          // than the post silently improving.
+          ...(draft.interestRelayout !== undefined
+            ? {
+                interestRelayout: {
+                  changes: draft.interestRelayout.changes,
+                  notes: draft.interestRelayout.notes,
+                  unremedied: draft.interestRelayout.unremedied,
+                  // Load-bearing on the gate: without it a plan whose
+                  // re-render FAILED (and whose changes were therefore rolled
+                  // back) reads exactly like one that worked.
+                  ...(draft.interestRelayout.discarded === true
+                    ? { discarded: true, discardedReason: draft.interestRelayout.discardedReason ?? "the re-layout's render did not succeed" }
+                    : {}),
+                },
+              }
+            : {}),
+          // Present only when the floor never cleared: the post shipped
+          // flagged rather than held.
+          ...(draft.interestDegraded !== undefined
+            ? {
+                visualInterest: {
+                  findings: draft.interestDegraded.findings,
+                  reason: interestDegradedReason(draft.interestDegraded.findings, { pastHardMax: meter.posture === "cheapest-path" }),
+                },
+              }
+            : {}),
+          // Phase 2, item P — the layout sequence this post ships, the
+          // previous one, and the measured distance between them.
+          skeleton: skeletonGateFacts(draft.skeleton),
+          // Phase 2, item M — devices that could not render honestly and were
+          // dropped. WARN-only: furniture must never hold a run, and without
+          // surfacing it the drop is invisible.
+          ...(draft.deviceIssues.length > 0 ? { deviceIssues: draft.deviceIssues } : {}),
           // IGSTYLE-3, §2.3's "loud refusals" requirement — what THIS round's
           // style-directive resolution did, including any refusal, so a
           // silently-dropped colour instruction is never indistinguishable
@@ -4694,6 +6230,157 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       });
     }
 
+    /**
+     * Phase 2, item L — the degrade marker for the shipped draft, computed
+     * once so the deliverable, the ledger row and the workflow's own return
+     * value all carry the SAME sentence. Absent on the overwhelming majority
+     * of runs: the floor passed, or the free re-layout fixed it.
+     */
+    const interestDegradedMarker =
+      review.output.interestDegraded !== undefined
+        ? {
+            status: "degraded" as const,
+            reason: interestDegradedReason(review.output.interestDegraded.findings, { pastHardMax: meter.posture === "cheapest-path" }),
+          }
+        : undefined;
+
+    // ── 09f: the pool that grows (Phase 2, item O) ──
+    //
+    // A run-authored layout that shipped through the HUMAN gate twice with no
+    // edit to the slide it renders, and no `revise` verdict on the design
+    // itself, is promoted into that client's own template pool. This is the
+    // "generator that updates the pool" the owner asked for, and the evidence
+    // is two clean human ships rather than a model's opinion of its own work.
+    //
+    // The row is stored under a ROUTABLE archetype id — the design becomes
+    // this client's own `headline_focus`/`closer`/`cover` — so that the third
+    // run picks it the ordinary way through `resolveBest` and
+    // `templateForLayout`. Stored under its authored `custom_*` id it could
+    // never be picked at all: `templateForLayout` maps only the fixed layout
+    // enum, and `custom` requires model-authored markup that attempt. A
+    // design that reads its own invented slot names has no routable
+    // archetype, so it is recorded with the reason and not stored; see
+    // `buildAutoPromotionRequest`.
+    //
+    // Deliberately NOT a parallel scoring mechanism: the existing
+    // `promoteTemplate` writes the row, `AUTO_PROMOTE_QUALITY_SCORE` (55) is
+    // its opening score, and `reviewTemplate`'s `QUALITY_DELTA` moves it from
+    // there exactly as it moves a human-promoted row's.
+    //
+    // Conditional on this run having actually shipped a custom design, so a
+    // normal carousel's trace does not grow a step that never does anything.
+    // `store.get` first (the same don't-blind-overwrite guard
+    // `persistReviewFeedback` applies) plus `recordCleanShip`'s per-runId
+    // idempotence is what makes a resumed run safe. Nothing here throws.
+    const shippedCustomArchetypes: ShippedCustomArchetype[] = review.output.copy.slides
+      .filter((slide) => slide.layout === "custom" && slide.customArchetype !== undefined)
+      .map((slide) => {
+        const archetype = slide.customArchetype!;
+        const basename = templateBasename(templateFileName(archetype.archetypeId));
+        return {
+          templateId: customArchetypeTemplateId(wf.clientSlug, archetype.archetypeId),
+          archetypeId: archetype.archetypeId,
+          name: archetype.name,
+          bodyHtml: archetype.bodyHtml,
+          css: archetype.css,
+          // Which slides it ACTUALLY rendered on, read off the assembled
+          // slides-data rather than off the requested layout: a custom
+          // archetype that degraded (a repeat, a failed slot contract) never
+          // reached the pixels and must not earn a clean ship.
+          slides: slidesData.slides.filter((s) => templateBasename(s.template) === basename).map((s) => s.n),
+        };
+      })
+      .filter((row) => row.slides.length > 0);
+
+    if (shippedCustomArchetypes.length > 0) {
+      try {
+        const promotionOutcome = await wf.step.code("09f-auto-promote-templates", async () => {
+          const { ships, skipped } = cleanShipsFor({
+            runId: wf.runId,
+            at: new Date().toISOString(),
+            delivered: true,
+            decision: review.response.decision,
+            editedSlides: (review.response.edits?.slides ?? []).map((edit) => edit.n),
+            templateFeedback: (review.response.templateFeedback ?? []).map((entry) => ({ templateId: entry.templateId, verdict: entry.verdict })),
+            shipped: shippedCustomArchetypes,
+          });
+          let history = customArchetypeHistory;
+          const promoted: string[] = [];
+          const problems: string[] = [];
+          for (const ship of ships) {
+            const advanced = recordCleanShip(history, ship);
+            history = advanced.history;
+            const promote = advanced.promote;
+            if (promote === undefined) continue;
+            if (options.templateStore === undefined) {
+              problems.push(`${promote.templateId} earned promotion but no template registry is configured for this deployment`);
+              continue;
+            }
+            if ((await options.templateStore.get(promote.templateId)) !== undefined) continue;
+            const source = shippedCustomArchetypes.find((row) => row.templateId === promote.templateId);
+            if (source === undefined) continue;
+            // The design is stored as the ROUTABLE archetype it can fill, not
+            // under its authored `custom_*` id: a row nothing in the layout
+            // enum names can never be picked again, so promoting one would
+            // ship a promise the code cannot keep. A design that reads its own
+            // invented slot names has no such archetype, and that is recorded
+            // rather than stored — see `buildAutoPromotionRequest`.
+            const decision = buildAutoPromotionRequest(promote, {
+              clientSlug: wf.clientSlug,
+              now: Date.now(),
+              readSlots: extractSupportedFields(`${source.bodyHtml}\n${source.css}`),
+            });
+            if (!decision.promote) {
+              problems.push(decision.reason);
+              continue;
+            }
+            try {
+              await promoteTemplate({
+                store: options.templateStore,
+                htmlTemplate: buildCustomArchetypeDocument(source.bodyHtml),
+                cssStyles: source.css,
+                ...decision.request,
+              });
+              promoted.push(promote.templateId);
+            } catch (error) {
+              problems.push(`${promote.templateId} could not be promoted: ${(error as Error).message}`);
+            }
+          }
+          // The advanced history is RETURNED rather than assigned inside the
+          // step: a checkpointed step replayed on a resume hands back its
+          // cached value without re-running the body, so a closure mutation
+          // would silently be lost and `09b` would write a stale ledger.
+          return { history, cleanShips: ships.map((s) => s.templateId), skipped, promoted, problems };
+        });
+        customArchetypeHistory = promotionOutcome.history;
+        // Why a design that EARNED promotion was not stored — most often
+        // because it reads its own invented slot names and no routable
+        // archetype could supply them. On the ledger rather than only in the
+        // step output, because "we approved this design twice and it never
+        // joined the pool" is a question an operator asks from the run trace.
+        if (promotionOutcome.problems.length > 0) {
+          try {
+            await tools["ledger.appendEvent"]?.execute(
+              {
+                runId: wf.runId,
+                eventId: `${wf.runId}__custom-archetype-promotion`,
+                level: "warn",
+                message: `09f: ${promotionOutcome.problems.length} run-authored design(s) were not promoted — ${promotionOutcome.problems.join("; ")}`,
+              },
+              { ctx },
+            );
+          } catch (error) {
+            console.error("09f-auto-promote-templates: could not record the promotion warn", error);
+          }
+        }
+      } catch (error) {
+        // Item O's flywheel is best-effort like every other `09b`-adjacent
+        // write: losing a promotion costs the pool one design, failing an
+        // approved post over it would cost the post.
+        console.error("09f-auto-promote-templates: the auto-promotion pass failed", error);
+      }
+    }
+
     // ── 09b: deliver + log — the count invariant is real and checked, not just documented ──
     const deliverableId = await wf.step.code("09b-deliver-and-log", async () => {
       if (rendered.rendered.length !== slidesData.slides.length) {
@@ -4728,6 +6415,53 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             evidence: evidenceNotesForGate(),
             spendUsd: meter.totalUsd,
             budget: summarizeRunBudget(budgetDecision, meter, budgetNotes),
+            // Phase 2 (items L/M/N/P): the same measured facts the reviewer
+            // saw on the gate payload, on the PERSISTED record — what the
+            // studio generated and what the setup cost, what the shipped
+            // pixels measured, what code re-laid-out for free, the layout
+            // sequence this post used, and any device that could not render
+            // honestly.
+            ...(studioReport !== undefined ? { templateStudio: studioReport } : {}),
+            ...(setupBudgetSummary !== undefined ? { setup: { budget: setupBudgetSummary } } : {}),
+            interest: {
+              perSlide: review.output.interest.perSlide,
+              findings: review.output.interest.findings,
+              waived: review.output.interest.waived,
+              warnings: review.output.interest.warnings,
+              notMeasured: review.output.interest.notMeasured,
+            },
+            ...(review.output.interestRelayout !== undefined
+              ? {
+                  interestRelayout: {
+                    changes: review.output.interestRelayout.changes,
+                    notes: review.output.interestRelayout.notes,
+                    unremedied: review.output.interestRelayout.unremedied,
+                    ...(review.output.interestRelayout.discarded === true
+                      ? {
+                          discarded: true,
+                          discardedReason: review.output.interestRelayout.discardedReason ?? "the re-layout's render did not succeed",
+                        }
+                      : {}),
+                  },
+                }
+              : {}),
+            ...(interestDegradedMarker !== undefined
+              ? { visualInterest: { findings: review.output.interestDegraded!.findings, reason: interestDegradedMarker.reason } }
+              : {}),
+            skeleton: skeletonGateFacts(review.output.skeleton),
+            ...(review.output.deviceIssues.length > 0 ? { deviceIssues: review.output.deviceIssues } : {}),
+            // THE PER-IMAGE COMPLIANCE RECORD, on the persisted deliverable.
+            //
+            // One row per slide naming that image's source reason, its
+            // licence, its rights and watermark verdicts, and whether the
+            // picture carries THAT slide's claim — `ImageSelectionSchema`'s
+            // own doc comment calls it exactly that. It was reaching
+            // `ledger.recordUsedImages` (paths only) and nothing else, so the
+            // one artefact that says *under what licence* each shipped
+            // picture was used lived only in memory. A row that a free
+            // re-layout moved a photograph into (`promote-image-to-cover`)
+            // is the case that makes this load-bearing rather than tidy.
+            selections: review.output.selections,
             caption,
             slides: slidesData.slides,
             rendered: rendered.rendered,
@@ -4815,8 +6549,16 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       const budgetSummary = summarizeRunBudget(budgetDecision, meter, budgetNotes);
       try {
         let history = readBudgetHistory(undefined);
+        // The raw document, kept as well as the parsed budget history: the
+        // setup history is a sibling key in the SAME document (item N.5), and
+        // re-reading it would be a second round trip for a value already in
+        // hand.
+        let beliefsForSetup: unknown;
         const read = await tools["memory.read"]?.execute({ scope: "beliefs" }, { ctx });
-        if (read?.status === "success") history = readBudgetHistory((read.result as { beliefs?: unknown }).beliefs);
+        if (read?.status === "success") {
+          beliefsForSetup = (read.result as { beliefs?: unknown }).beliefs;
+          history = readBudgetHistory(beliefsForSetup);
+        }
         const next = recordRunInHistory(history, {
           runId: wf.runId,
           at: new Date().toISOString(),
@@ -4826,7 +6568,75 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           crossedMax: budgetSummary.crossedMax,
           adaptations: budgetSummary.adaptations.length,
         });
-        await tools["memory.updateBeliefs"]?.execute({ diff: { [RUN_BUDGET_BELIEF_KEY]: next } }, { ctx });
+        // ONE call carrying every belief key this run learned something about,
+        // not one call per key: `memory.updateBeliefs` shallow-merges a diff, so
+        // N separate calls each read-modify-write the SAME document and the last
+        // writer wins — which would silently drop two of the three.
+        // `workflow-e2e.test.ts` counts the calls for exactly that reason.
+        //
+        // `occupancy` is left EMPTY rather than zero-filled when the measurement
+        // did not happen: a zero-filled row is indistinguishable from six
+        // genuinely empty slides, and this history is what a future run reasons
+        // about.
+        const shippedOccupancy = review.output.interest.perSlide.map((verdict) => verdict.metrics.occupiedShare);
+        const skeletonEntry = buildSkeletonEntry({
+          runId: wf.runId,
+          at: new Date().toISOString(),
+          slides: slidesData.slides.map((slide) => ({ n: slide.n, template: slide.template, hasImage: slide.images?.["hero"] !== undefined })),
+          roles: rolesForSlideCount(slidesData.slides.length),
+          // The rendered device kind, for the same reason `07k` reads it: the
+          // stored signature has to describe what the client's audience saw,
+          // or the next run avoids a skeleton this one never actually shipped.
+          devices: slidesData.slides.map((slide) => slide.fields?.["deviceKind"]),
+          ...(shippedOccupancy.length === slidesData.slides.length ? { occupancy: shippedOccupancy } : {}),
+          edited: hasReviewEdits,
+        });
+        await tools["memory.updateBeliefs"]?.execute(
+          {
+            diff: {
+              [RUN_BUDGET_BELIEF_KEY]: next,
+              [SKELETON_BELIEF_KEY]: recordSkeleton(skeletonHistory, skeletonEntry),
+              [CUSTOM_ARCHETYPE_BELIEF_KEY]: customArchetypeHistory,
+              // The setup history is a fourth SIBLING key, written only on a
+               // run that actually generated a set, so the next setup for this
+               // client starts calibrated (item N.5).
+              ...(setupBudgetRecord !== undefined
+                ? {
+                    [SETUP_BUDGET_BELIEF_KEY]: recordSetupInHistory(readSetupBudgetHistory(beliefsForSetup), {
+                      runId: wf.runId,
+                      at: new Date().toISOString(),
+                      ...setupBudgetRecord,
+                    }),
+                  }
+                : {}),
+            },
+          },
+          { ctx },
+        );
+        // One operator-visible row carrying the ordered signature VERBATIM, so
+        // "are we shipping the same post every week" is answerable from the run
+        // trace without a beliefs read.
+        try {
+          await tools["ledger.appendEvent"]?.execute(
+            {
+              runId: wf.runId,
+              eventId: `${wf.runId}__skeleton`,
+              level: review.output.skeleton.repeatedPrevious ? "warn" : "info",
+              message:
+                `layout sequence ${skeletonEntry.signature}` +
+                (review.output.skeleton.previous !== undefined ? ` (previous post: ${review.output.skeleton.previous}` : "") +
+                (review.output.skeleton.previous !== undefined
+                  ? review.output.skeleton.distance !== undefined
+                    ? `, distance ${review.output.skeleton.distance.toFixed(2)})`
+                    : ")"
+                  : "") +
+                (review.output.skeleton.warnings.length > 0 ? `; ${review.output.skeleton.warnings.join("; ")}` : ""),
+            },
+            { ctx },
+          );
+        } catch (error) {
+          console.error("09b-deliver-and-log: could not record the skeleton ledger row", error);
+        }
       } catch (error) {
         console.error("09b-deliver-and-log: could not record the run's budget history for the next run's estimate", error);
       }
@@ -4890,6 +6700,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       ...(meter.crossedMax
         ? { budget: { status: "degraded" as const, reason: `${estimateVsActualLine(summarizeRunBudget(budgetDecision, meter, budgetNotes))}; ${budgetNotes.at(-1) ?? "hard max crossed"}` } }
         : {}),
+      // Phase 2, item L — beside the budget marker, and for the same
+      // reason: the run COMPLETED and delivered, and the marker is what keeps a
+      // post that shipped with a measured defect distinguishable from one that
+      // shipped clean. Never a hold.
+      ...(interestDegradedMarker !== undefined ? { visualInterest: interestDegradedMarker } : {}),
     };
   };
 }

@@ -381,6 +381,99 @@ describe("05b-source-images", () => {
     expect(output?.reason).toContain("no candidate matched this visual need");
   });
 
+  /**
+   * A LOST PHOTOGRAPH MUST NOT LAND ON THE AUDITED GREY PLATE.
+   *
+   * Item M widened image sourcing to covers, so slide 1 reaches `07a`
+   * whenever no picture survives the tiers. `07a` used to force
+   * `layout: "text_only"`, `resolveLayout` HONOURS an explicit `text_only`
+   * rather than laddering it, and `text_only` routes to the client's own
+   * `slide.html` — which got none of item M.3's ground rework. Nothing
+   * downstream recovers it either: `07h` waives the cover rule for a lost
+   * photograph and the interest floor waives its cover clause for the same
+   * reason, while the dead-space clause fails the bare plate on every
+   * attempt until the run ships it `degraded`. So the one slide the whole
+   * audience sees was reachable, by design, as the exact defect the owner
+   * pointed at.
+   */
+  it("re-lays a hero-less COVER out through the degrade ladder instead of forcing the client's bare slide.html", async () => {
+    const copy = goodCopyOutput();
+    const pool = goodImageCandidatePool();
+    const tools = testTools({
+      ...env.tools,
+      "media.findImages": stubFindImages({ status: "success", result: { provider: "unsplash", providersUsed: ["unsplash"], candidates: pool, unmet: [] } }),
+    });
+    const router = fakeRouterSequence([
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(copy),
+      // Only slide 1 loses its picture, so the ladder is exercised on the cover
+      // without `resolveLayout`'s once-per-carousel rule masking the result.
+      finalTurn(selectionsWithGaps(copy, pool[0]!.path, [1])),
+      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+    ]);
+
+    const durableStore = new MemoryDurableStepStore();
+    const result = await new WorkflowEngine(durableStore).run(
+      createInstagramAgentWorkflow({ tools, promptStore: makePromptStore(), router, repoRoot: env.repoRoot, autoApprove: true }),
+      { ...params, runId: "instagram_run_cover_lost_photo" },
+    );
+
+    expect(result.status, JSON.stringify(result)).toBe("completed");
+    const steps = await durableStore.listSteps("instagram_run_cover_lost_photo");
+    const downgrade = steps.find((s) => s.stepId === "07a-downgrade-unfillable-slides-attempt-1")?.output as
+      | { downgraded: number[]; archetypes: Array<{ slide: number; layout: string }>; reason: string }
+      | undefined;
+    expect(downgrade?.downgraded).toEqual([1]);
+    // The ladder, not `text_only` — and on slide 1 the ladder's answer is
+    // `cover`, not `headline_focus`.
+    //
+    // It used to be `headline_focus`, because `fallbackArchetypePreferences`
+    // gated its slide-1 entry on a hero-or-device being present. Measured on
+    // real renders of the bundled templates, that gate was routing away from
+    // the only plate that works: with no hero and no device
+    // `cover.html` measures 33.1% imagery-or-device against the cover role's
+    // 10% floor, while `headline-focus.html` measures 3.9% and the client's
+    // bare `slide.html` 4.3% — both of which fail clause E. The whole reason
+    // this slide reaches 07a is that no photograph could be found, so there
+    // is no writer left to ask for one; the degrade takes the best plate the
+    // pipeline can build. (`interest-relayout`'s `colour-block-ground`
+    // remedy already moved slide 1 onto `cover` for exactly this finding, one
+    // paid render later — this is that answer, reached first.)
+    expect(downgrade?.archetypes).toEqual([{ slide: 1, layout: "cover" }]);
+    expect(downgrade?.reason).toContain("1 → cover");
+
+    // And what actually rendered says the same thing.
+    const slidesData = steps.find((s) => s.stepId === "07c-emit-slides-data-attempt-1")?.output as
+      | { slides: Array<{ n: number; template: string; images?: Record<string, string> }> }
+      | undefined;
+    // ...and lands one rung DOWN from what 07a named, because this client's
+    // templateDir is `__tests__/fixtures/templates/`, which holds no
+    // `cover.html`. That is `resolveLayout`'s availability floor doing its
+    // job — the guaranteed-delivery rule that keeps a client configured
+    // before the archetype set shipped from turning its next carousel into a
+    // `tooling_error` — and the two values differing here is the pin on it.
+    // A client whose directory does hold `cover.html` renders slide 1 as a
+    // cover; this one takes the next rung, `headline_focus`, and NOT the bare
+    // `slide.html` the ladder exists to avoid.
+    expect(slidesData?.slides[0]?.template).toBe("headline-focus.html");
+    // No hero on it either, so `slide.html` here would have been the bare
+    // plate rather than a photo slide's ground.
+    expect(slidesData?.slides[0]?.images ?? {}).toEqual({});
+
+    // The waiver that keeps this from becoming a hold covers BOTH cover-facing
+    // rules. `countContentElements` subtracts one from a `headline_focus`
+    // cover ("a statement and its sub-line are one lockup") precisely because
+    // the cover rule already fails such a slide — so waiving only the cover
+    // rule would let the belt-and-braces clause become the decider and send
+    // the draft back for a picture no redraft can produce.
+    const drr = steps.find((s) => s.stepId === "07h-default-render-rules-attempt-1")?.output as
+      | { failures: Array<{ ruleId: string }>; waived?: Array<{ ruleId: string; reason: string }> }
+      | undefined;
+    expect(drr?.failures).toEqual([]);
+    expect((drr?.waived ?? []).map((w) => w.ruleId).sort()).toEqual(["default:cover-carries-device", "default:two-elements-per-slide"]);
+    expect(drr?.waived?.[0]?.reason).toContain("lost its photograph");
+  });
+
   it("does not let a rescue image that fails its own gate overwrite the original verdict", async () => {
     const copy = goodCopyOutput();
     const pool = goodImageCandidatePool();

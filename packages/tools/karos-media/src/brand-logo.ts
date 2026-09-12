@@ -27,7 +27,7 @@
  * never silent even when nothing upstream already reported it.
  */
 
-import zlib from "node:zlib";
+import { decodePngRows } from "@agent-engine/tool-common";
 
 /** Logos are small; anything past this is not a logo, whatever it claims to be. Data URIs also count against the rendered document's size. */
 export const BRAND_LOGO_MAX_BYTES = 1_500_000;
@@ -136,9 +136,6 @@ const SIGNIFICANT_MASS = 0.05;
 /** 4 bits per channel: the histogram bins that decide what "one of the mark's colors" means. */
 const QUANT_BITS = 4;
 
-/** Above this the decode is refused rather than attempted — a logo is not a 16-megapixel image, whatever the header claims. */
-const MAX_LOGO_PIXELS = 16_000_000;
-
 /** At most this many pixels are sampled, on a fixed stride. Deterministic, and bounds the work for a large mark. */
 const MAX_SAMPLES = 100_000;
 
@@ -217,180 +214,45 @@ export interface BrandLogoInkProfile {
   samples: BrandLogoInkSample[];
 }
 
-function channelsForColorType(colorType: number): number | undefined {
-  switch (colorType) {
-    case 0:
-      return 1; // grayscale
-    case 2:
-      return 3; // truecolor
-    case 3:
-      return 1; // palette index
-    case 4:
-      return 2; // grayscale + alpha
-    case 6:
-      return 4; // truecolor + alpha
-    default:
-      return undefined;
-  }
-}
-
-function paeth(a: number, b: number, c: number): number {
-  const p = a + b - c;
-  const pa = Math.abs(p - a);
-  const pb = Math.abs(p - b);
-  const pc = Math.abs(p - c);
-  if (pa <= pb && pa <= pc) return a;
-  return pb <= pc ? b : c;
-}
-
-const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-
 /**
- * A real PNG decoder — chunk walk, zlib inflate, per-scanline unfilter — over
- * `node:zlib` only. No dependency is added for this: the alternative to
- * decoding is trusting a declared "logo color" field that no BrandKit
- * actually ships, and a contrast check against a declared color is a check
- * against a claim rather than against the asset.
+ * The colors a PNG mark is made of — a 4-bit-per-channel histogram over an
+ * alpha-weighted sample of the asset's own pixels.
  *
- * Deliberately narrow: 8- and 16-bit non-interlaced PNGs, which is what every
- * logo exporter emits. Anything else returns `undefined` (unreadable ink),
- * which the placement plan reports rather than papers over.
+ * THE DECODER USED TO LIVE HERE. Chunk walk, `zlib.inflateSync`, the
+ * five-filter unfilter and the 16-megapixel cap are now `decodePngRows` in
+ * `@agent-engine/tool-common` — same physics, same refusals, lifted verbatim
+ * so a second caller (`karos-publish`'s `measureSlidePng`, which reads the
+ * rendered slide's pixels) uses one decoder instead of a second copy. What
+ * remains here is the part that was always specific to a logo: the binning
+ * fold below.
+ *
+ * The fold is deliberately unchanged, down to the sampling stride and the
+ * bin key, because `brand-logo-*.test.ts` asserts real hex values read out
+ * of real PNGs and those assertions are the regression pin for the lift. A
+ * decoder returning `undefined` (not a PNG, interlaced, sub-byte depth,
+ * truncated, over the pixel cap) still means "unreadable ink", which the
+ * placement plan reports rather than papers over.
  */
 function decodePngSamples(bytes: Uint8Array): BrandLogoInkSample[] | undefined {
-  if (bytes.byteLength < 8) return undefined;
-  for (let i = 0; i < 8; i++) if (bytes[i] !== PNG_SIGNATURE[i]) return undefined;
-
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  let width = 0;
-  let height = 0;
-  let bitDepth = 0;
-  let colorType = 0;
-  let interlace = 0;
-  let sawIhdr = false;
-  let palette: Uint8Array | undefined;
-  let paletteAlpha: Uint8Array | undefined;
-  const idat: Uint8Array[] = [];
-
-  let offset = 8;
-  while (offset + 8 <= bytes.byteLength) {
-    const length = view.getUint32(offset);
-    const type = String.fromCharCode(bytes[offset + 4]!, bytes[offset + 5]!, bytes[offset + 6]!, bytes[offset + 7]!);
-    const start = offset + 8;
-    if (!Number.isSafeInteger(length) || start + length > bytes.byteLength) return undefined;
-    if (type === "IHDR") {
-      if (length < 13) return undefined;
-      width = view.getUint32(start);
-      height = view.getUint32(start + 4);
-      bitDepth = bytes[start + 8]!;
-      colorType = bytes[start + 9]!;
-      interlace = bytes[start + 12]!;
-      sawIhdr = true;
-    } else if (type === "PLTE") {
-      palette = bytes.subarray(start, start + length);
-    } else if (type === "tRNS") {
-      paletteAlpha = bytes.subarray(start, start + length);
-    } else if (type === "IDAT") {
-      idat.push(bytes.subarray(start, start + length));
-    } else if (type === "IEND") {
-      break;
-    }
-    offset = start + length + 4;
-  }
-
-  if (!sawIhdr || idat.length === 0) return undefined;
-  if (interlace !== 0) return undefined; // Adam7 — not emitted by logo exporters, not worth a wrong answer.
-  if (bitDepth !== 8 && bitDepth !== 16) return undefined; // sub-byte packing: unreadable rather than guessed.
-  if (width <= 0 || height <= 0 || width * height > MAX_LOGO_PIXELS) return undefined;
-  const channels = channelsForColorType(colorType);
-  if (channels === undefined) return undefined;
-  if (colorType === 3 && (palette === undefined || bitDepth !== 8)) return undefined;
-
-  const sampleBytes = bitDepth === 16 ? 2 : 1;
-  const bpp = channels * sampleBytes;
-  const stride = width * bpp;
-
-  let raw: Buffer;
-  try {
-    raw = zlib.inflateSync(Buffer.concat(idat.map((c) => Buffer.from(c.buffer, c.byteOffset, c.byteLength))));
-  } catch {
-    return undefined;
-  }
-  if (raw.byteLength < height * (stride + 1)) return undefined;
-
-  // Unfilter in place into a flat pixel buffer.
-  const out = Buffer.allocUnsafe(height * stride);
-  for (let y = 0; y < height; y++) {
-    const filter = raw[y * (stride + 1)]!;
-    const rowIn = (y * (stride + 1)) + 1;
-    const rowOut = y * stride;
-    const prevOut = rowOut - stride;
-    for (let x = 0; x < stride; x++) {
-      const rawByte = raw[rowIn + x]!;
-      const left = x >= bpp ? out[rowOut + x - bpp]! : 0;
-      const up = y > 0 ? out[prevOut + x]! : 0;
-      const upLeft = y > 0 && x >= bpp ? out[prevOut + x - bpp]! : 0;
-      let value: number;
-      switch (filter) {
-        case 0:
-          value = rawByte;
-          break;
-        case 1:
-          value = rawByte + left;
-          break;
-        case 2:
-          value = rawByte + up;
-          break;
-        case 3:
-          value = rawByte + ((left + up) >> 1);
-          break;
-        case 4:
-          value = rawByte + paeth(left, up, upLeft);
-          break;
-        default:
-          return undefined;
-      }
-      out[rowOut + x] = value & 0xff;
-    }
-  }
-
-  // A fixed stride, so the same PNG always samples the same pixels.
-  const step = Math.max(1, Math.ceil(Math.sqrt((width * height) / MAX_SAMPLES)));
   const bins = new Map<number, { weight: number; r: number; g: number; b: number }>();
   let totalWeight = 0;
+  // A fixed stride, so the same PNG always samples the same pixels. It
+  // depends on the frame's size, which is only known once the decoder hands
+  // over the first row — hence the lazy initialisation rather than a
+  // separate header-reading pass.
+  let step: number | undefined;
+  const shift = 8 - QUANT_BITS;
 
-  for (let y = 0; y < height; y += step) {
-    const rowOut = y * stride;
-    for (let x = 0; x < width; x += step) {
-      const px = rowOut + x * bpp;
-      let r: number;
-      let g: number;
-      let b: number;
-      let alpha = 255;
-      if (colorType === 3) {
-        const index = out[px]!;
-        const base = index * 3;
-        if (base + 2 >= palette!.byteLength) continue;
-        r = palette![base]!;
-        g = palette![base + 1]!;
-        b = palette![base + 2]!;
-        alpha = paletteAlpha !== undefined && index < paletteAlpha.byteLength ? paletteAlpha[index]! : 255;
-      } else if (colorType === 0) {
-        r = g = b = out[px]!;
-      } else if (colorType === 4) {
-        r = g = b = out[px]!;
-        alpha = out[px + sampleBytes]!;
-      } else if (colorType === 2) {
-        r = out[px]!;
-        g = out[px + sampleBytes]!;
-        b = out[px + 2 * sampleBytes]!;
-      } else {
-        r = out[px]!;
-        g = out[px + sampleBytes]!;
-        b = out[px + 2 * sampleBytes]!;
-        alpha = out[px + 3 * sampleBytes]!;
-      }
-      if (alpha === 0) continue;
-      const shift = 8 - QUANT_BITS;
+  const header = decodePngRows(bytes, (row, y, hdr) => {
+    step ??= Math.max(1, Math.ceil(Math.sqrt((hdr.width * hdr.height) / MAX_SAMPLES)));
+    if (y % step !== 0) return;
+    for (let x = 0; x < hdr.width; x += step) {
+      const px = x * 4;
+      const alpha = row[px + 3]!;
+      if (alpha === 0) continue; // fully transparent: not part of the mark
+      const r = row[px]!;
+      const g = row[px + 1]!;
+      const b = row[px + 2]!;
       const key = ((r >> shift) << (2 * QUANT_BITS)) | ((g >> shift) << QUANT_BITS) | (b >> shift);
       const bin = bins.get(key) ?? { weight: 0, r: 0, g: 0, b: 0 };
       bin.weight += alpha;
@@ -400,8 +262,9 @@ function decodePngSamples(bytes: Uint8Array): BrandLogoInkSample[] | undefined {
       bins.set(key, bin);
       totalWeight += alpha;
     }
-  }
+  });
 
+  if (header === undefined) return undefined;
   if (totalWeight === 0) return undefined; // fully transparent: no mark to check
   return finalizeSamples(
     [...bins.entries()].map(([key, bin]) => ({

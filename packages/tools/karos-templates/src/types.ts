@@ -25,6 +25,51 @@ export const TemplateLayoutTypeSchema = z.enum(["photo", "typographic"]);
 export type TemplateLayoutType = z.infer<typeof TemplateLayoutTypeSchema>;
 
 /**
+ * What justified a generated template, recorded on the row itself.
+ *
+ * Written by the per-client Template Studio (instagram-agent item N): the
+ * measured format the design was derived from, the accounts and posts that
+ * evidence came from, and — load-bearing — WHICH ENGAGEMENT SIGNALS WERE
+ * AVAILABLE AND WHICH WERE NOT.
+ *
+ * `normalisedScore` is optional while `signalsAbsent` is required, and that
+ * asymmetry is the whole point: `research.socialHistory` returns
+ * `engagement { likes?, comments?, views? }` and only for x/instagram/reddit/
+ * tiktok, so a ranking over it is frequently a ranking with a hole in it. A
+ * schema that made the score required would force every caller to produce a
+ * number, and the only way to produce a number you were not given is to
+ * invent one. A row with no score and a named absence is an honest row; a row
+ * with an invented score is a lie that outlives the run that told it.
+ */
+export const TemplateDerivedFromSchema = z.object({
+  /** The ranker's own label for the format ("stat-led cover", "numbered listicle") — never a claim about the platform's taxonomy. */
+  formatLabel: z.string().min(1),
+  accounts: z.array(z.string()).default([]),
+  postCount: z.number().int().nonnegative(),
+  /** Per-account z-normalised engagement, averaged across accounts. ABSENT when no numeric field existed anywhere. */
+  normalisedScore: z.number().optional(),
+  signalsAvailable: z.array(z.string()).default([]),
+  /** Named, not counted: "views absent for 4 of 6 accounts". */
+  signalsAbsent: z.array(z.string()).default([]),
+  exampleUrls: z.array(z.string()).max(6).default([]),
+  why: z.string().min(1).max(400),
+});
+export type TemplateDerivedFrom = z.infer<typeof TemplateDerivedFromSchema>;
+
+/**
+ * Which slide role a template is JUDGED at — the interest-floor role
+ * (instagram-agent item L), not a routing key.
+ *
+ * A cover and a closer are the grid thumbnail and the save moment, so they
+ * must carry imagery or a device; an interior slide is allowed to be one
+ * quiet all-type turn. The role travels with the row because a stored
+ * template is judged again on every render, and re-deriving it from the
+ * archetype id at each call site is how two call sites end up disagreeing.
+ */
+export const TemplateRoleSchema = z.enum(["cover", "interior", "closer"]);
+export type TemplateRole = z.infer<typeof TemplateRoleSchema>;
+
+/**
  * One slide template, stored rather than compiled in.
  *
  * ## Why `htmlTemplate` and `cssStyles` are separate columns
@@ -74,8 +119,26 @@ export const TemplateDefinitionSchema = z.object({
    * client, which is what a promoted template becomes.
    */
   clientSlug: z.string().min(1).optional(),
-  /** Set false to retire a template without deleting its history. */
+  /**
+   * Set false to retire a template without deleting its history.
+   *
+   * Also the APPROVAL mechanism for a Template Studio row (item N): a
+   * generated template is stored `enabled: false`, which `resolveBest`
+   * already skips, so until a human approves it in the portal the bundled
+   * set is used — with no new filter, no new field and no change to
+   * `materializeTemplates`. The row still exists for the portal to show,
+   * which a "don't store it yet" design could not offer.
+   */
   enabled: z.boolean().default(true),
+  /**
+   * What measured format justified this design, for a generated row.
+   *
+   * Additive and optional: every bundled, curated and previously promoted
+   * row parses byte-identically without it.
+   */
+  derivedFrom: TemplateDerivedFromSchema.optional(),
+  /** The interest-floor role this template is judged at. Absent on rows that predate the studio. */
+  role: TemplateRoleSchema.optional(),
   /** Epoch millis, matching the rest of this codebase's timestamp convention. */
   createdAt: z.number().int().nonnegative().optional(),
   updatedAt: z.number().int().nonnegative().optional(),
@@ -115,6 +178,34 @@ export const DEFAULT_QUALITY_BY_SOURCE: Record<TemplateSource, number> = {
   curated: 60,
   ai_generated: 40,
 };
+
+/**
+ * The opening `qualityScore` for a Template Studio row — a per-client
+ * template generated at setup, validated by the eight-gate battery.
+ *
+ * **65, and it must stay strictly below the bundled floor of 70.** Studio
+ * rows reuse the ROUTABLE archetype ids (`cover`, `closer`, `stat_callout`,
+ * …) rather than inventing new ones, because `templateForLayout` maps only
+ * the caller's fixed layout enum to filenames and a new id is a routing dead
+ * end nothing can pick. Reusing the ids is what makes a studio row
+ * pickable — and it also puts it head-to-head with the bundled row of the
+ * same id inside `resolveBest`. At 65 a per-client generated design never
+ * silently displaces a design whose rendering has been verified across the
+ * whole fleet; a human approval (`enabled`) plus `QUALITY_DELTA.approved`
+ * reviews are how it earns the right to.
+ *
+ * Above `DEFAULT_QUALITY_BY_SOURCE.ai_generated` (40) for an equally precise
+ * reason: 40 prices an UNVALIDATED fragment a run invented mid-draft, while a
+ * studio row has already passed a real Chromium render, the interest floor
+ * with a calibration margin, contrast, and an RTL/script-font render where
+ * the client's language needs one.
+ *
+ * 70 would be actively wrong rather than merely generous: `beats()` awards an
+ * equal score to the `clientSlug`-scoped row, so a studio row at 70 would
+ * beat the bundled row it ties with and the approval gate would be
+ * decorative.
+ */
+export const DEFAULT_QUALITY_STUDIO = 65;
 
 export interface TemplateQuery {
   /** Only templates for this client, plus every unscoped (global) one. */

@@ -16,8 +16,12 @@ import { goodAngleProposal } from "./angle-fixtures.js";
  * Execution order (omitted keys are skipped — a test that stops before a step,
  * or a run whose pool is empty and so skips `06`, simply leaves the key out):
  *
- *   brief      00b2-write-client-brief    (Phase 1; only when the client has no fresh brief — `setupTestEnvironment` seeds one, so most fixtures omit it)
- *   scout      03c-trend-scout            (every run; skipped by the workflow only when 03b fetched no documents)
+ *   brief          00b2-write-client-brief    (Phase 1; only when the client has no fresh brief — `setupTestEnvironment` seeds one, so most fixtures omit it)
+ *   designBrief    00c3-write-design-brief    (Phase 2 item N, SETUP budget; only when `00c` resolved `generate`)
+ *   templateDesign 00c4-design-template-<id>  (Phase 2 item N; ONE PER TEMPLATE, so this key takes an ARRAY)
+ *   setReview      00c6-review-template-set   (Phase 2 item N; skipped when the setup budget turned the set review off)
+ *   templateRepair 00c7-repair-template-<id>  (Phase 2 item N; at most two per setup, so this key takes an ARRAY too)
+ *   scout          03c-trend-scout            (every run; skipped by the workflow only when 03b fetched no documents)
  *   research   04b-research-extract-facts
  *   angle      04i-propose-angles         (Phase 1; once per REVISION, not per attempt)
  *   copy       05-write-copy-attempt-N
@@ -33,6 +37,14 @@ import { goodAngleProposal } from "./angle-fixtures.js";
  */
 export interface StandardTurnFixtures {
   brief?: unknown;
+  /** RFC-14 item N, `00c3`. */
+  designBrief?: unknown;
+  /** RFC-14 item N, `00c4` — one turn PER TEMPLATE (4-6 of them), so the fixture is an array and `standardTurns` emits one turn per entry. */
+  templateDesign?: readonly unknown[];
+  /** RFC-14 item N, `00c6`. */
+  setReview?: unknown;
+  /** RFC-14 item N, `00c7` — at most two repairs per setup, one turn each. */
+  templateRepair?: readonly unknown[];
   scout?: unknown;
   research?: unknown;
   angle?: unknown;
@@ -43,14 +55,49 @@ export interface StandardTurnFixtures {
   qa?: unknown;
 }
 
-/** The order `standardTurns` emits its fixtures in — the order the workflow consumes them. */
-export const TURN_ORDER = ["brief", "scout", "research", "angle", "copy", "vet", "relevance", "fluency", "qa"] as const satisfies ReadonlyArray<keyof StandardTurnFixtures>;
+/**
+ * The order `standardTurns` emits its fixtures in — the order the workflow
+ * consumes them.
+ *
+ * The four Template Studio keys sit immediately AFTER `brief` and before
+ * `scout`, because that is where they actually run: the studio steps are
+ * `00c*`, which the workflow places after `00b3-persist-client-brief` (so the
+ * studio reads a fresh brief and the frozen brand kit) and before
+ * `03-claim-topic`. Putting them at the front would be wrong in exactly the
+ * way this module exists to prevent — a fixture whose turn list is off by one
+ * because a new step was assumed to run first.
+ */
+export const TURN_ORDER = [
+  "brief",
+  "designBrief",
+  "templateDesign",
+  "setReview",
+  "templateRepair",
+  "scout",
+  "research",
+  "angle",
+  "copy",
+  "vet",
+  "relevance",
+  "fluency",
+  "qa",
+] as const satisfies ReadonlyArray<keyof StandardTurnFixtures>;
+
+/** Which keys carry a LIST of turns rather than one. Named explicitly rather than sniffed with `Array.isArray`, so a fixture whose model output happens to be an array is never silently spread into several turns. */
+const VARIADIC_TURN_KEYS: ReadonlySet<keyof StandardTurnFixtures> = new Set(["templateDesign", "templateRepair"]);
 
 /** `finalTurn(...)` entries for the supplied fixtures, in execution order. */
 export function standardTurns(fixtures: StandardTurnFixtures): Array<() => CompletionResult<unknown>> {
   const turns: Array<() => CompletionResult<unknown>> = [];
   for (const key of TURN_ORDER) {
-    if (key in fixtures && fixtures[key] !== undefined) turns.push(finalTurn(fixtures[key]));
+    if (!(key in fixtures)) continue;
+    const value = fixtures[key];
+    if (value === undefined) continue;
+    if (VARIADIC_TURN_KEYS.has(key)) {
+      for (const entry of value as readonly unknown[]) turns.push(finalTurn(entry));
+      continue;
+    }
+    turns.push(finalTurn(value));
   }
   return turns;
 }
@@ -65,6 +112,12 @@ export function standardTurns(fixtures: StandardTurnFixtures): Array<() => Compl
  * brief, so `00b-check-client-brief` resolves to `reuse` and `00b2` never
  * runs. A fixture that wants the create path passes `seedBrief: false` there
  * AND a `brief` fixture here.
+ *
+ * No Template Studio turns by default either, for the same reason and the
+ * same shape: `setupTestEnvironment` seeds a fresh APPROVED studio set, so
+ * `00c-check-template-studio` resolves to `reuse` and `00c3`-`00c7` never
+ * run. A fixture that wants the generate path passes `seedStudio: false`
+ * there AND `designBrief`/`templateDesign`/`setReview` fixtures here.
  *
  * The `angle` IS in the default, because `04i-propose-angles` runs on every
  * revision of every run (once per revision, never per attempt).

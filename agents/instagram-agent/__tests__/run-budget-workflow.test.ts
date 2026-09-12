@@ -104,15 +104,23 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     // free store read) and the writing.
     expect(stepIds.indexOf("02j-plan-run-budget")).toBeGreaterThan(stepIds.indexOf("00b-check-client-brief"));
     expect(stepIds.indexOf("02j-plan-run-budget")).toBeLessThan(stepIds.indexOf("03c-trend-scout"));
-    // A cold, uncalibrated Phase 1 carousel estimates $1.14 (03e's signal
+    // A cold, uncalibrated Phase 2 carousel estimates $1.22 (03e's signal
     // pulls, 04a2's three lanes, 04a3's fetches, the angle, the re-priced
-    // scout and extraction), so the first lever fires exactly as the owner's
-    // amendment asks — no hold, and no attempt given up for a picture.
-    expect(plan?.adaptations).toEqual(["images capped at 4"]);
-    expect(plan?.plan).toEqual({ maxSelfCheckAttempts: 3, generatedImagesCap: 4, evidencePulls: "full", optionalRevets: true });
-    expect(plan?.note).toMatch(/^budget: estimate \$1\.\d\d > \$1\.00 → images capped at 4 \(now \$0\.\d\d\)$/);
+    // scout and extraction, and the @14 copy draft priced on BOTH sides of
+    // the call), so the FIRST lever fires exactly as the owner's amendment
+    // asks and it steps twice: an image cap of 4 still reads $1.0613, so the
+    // cap goes to 2 and the estimate lands at $0.9833. No hold, and no
+    // attempt given up for a picture.
+    expect(plan?.adaptations).toEqual(["images capped at 4", "images capped at 2"]);
+    expect(plan?.plan).toEqual({ maxSelfCheckAttempts: 3, generatedImagesCap: 2, evidencePulls: "full", optionalRevets: true });
+    expect(plan?.note).toMatch(/^budget: estimate \$1\.\d\d > \$1\.00 → images capped at 4, images capped at 2 \(now \$0\.\d\d\)$/);
     expect(plan?.spentBeforePlanUsd).toBe(0);
-    expect(deliverable?.budget).toMatchObject({ crossedTarget: false, crossedMax: false, posture: "normal", adaptations: ["images capped at 4"] });
+    expect(deliverable?.budget).toMatchObject({
+      crossedTarget: false,
+      crossedMax: false,
+      posture: "normal",
+      adaptations: ["images capped at 4", "images capped at 2"],
+    });
     expect(deliverable?.budget.estimatedUsd).toBe(plan!.estimate.estimatedUsd);
     expect(deliverable?.budget.actualUsd).toBe(deliverable?.spendUsd);
     expect(deliverable?.budget.actualUsd).toBeGreaterThan(0);
@@ -123,7 +131,7 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     expect(history.map((r) => r.runId)).toEqual(["budget_fresh"]);
     const budgetEvent = await env.store.readJson<{ level: string; message: string }>("acme", ["ledger", "events", "budget_fresh", "budget_fresh__budget"]);
     expect(budgetEvent?.level).toBe("info");
-    expect(budgetEvent?.message).toMatch(/^budget: estimated \$0\.\d\d, actual \$0\.\d\d \(under target\); adaptations: images capped at 4$/);
+    expect(budgetEvent?.message).toMatch(/^budget: estimated \$0\.\d\d, actual \$0\.\d\d \(under target\); adaptations: images capped at 4, images capped at 2$/);
   });
 
   it("a client whose runs come in UNDER the estimate gets the full plan back, and the note says so", async () => {
@@ -140,9 +148,14 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
   });
 
   it("a client whose runs run HOT pulls further rungs of the image ladder, never a shorter run and never a hold", async () => {
-    // 1.15x reads the cold plan as $1.31, so the ladder runs to its last rung
-    // — stock and text-only pictures, with all three attempts intact.
-    await env.tools["memory.updateBeliefs"]!.execute({ diff: { [RUN_BUDGET_BELIEF_KEY]: { version: 1, ewmaRatio: 1.15, overrunStreak: 0, underTargetStreak: 0, runs: [] } } }, { ctx });
+    // 1.08x reads the cold plan as $1.31, so the ladder runs to the last rung
+    // of the IMAGE lever — stock and text-only pictures, with all three
+    // attempts intact. (The ratio moved from 1.15 when `copyAttempt` was
+    // re-priced on the @14 call's output as well as its input: at $0.1455 a
+    // draft, 1.15x pulls two further rungs and gives up an attempt, which is
+    // the opposite of what this test is about. The rung ORDER — pictures
+    // before attempts — is what it pins, and that is unchanged.)
+    await env.tools["memory.updateBeliefs"]!.execute({ diff: { [RUN_BUDGET_BELIEF_KEY]: { version: 1, ewmaRatio: 1.08, overrunStreak: 0, underTargetStreak: 0, runs: [] } } }, { ctx });
     const { result, plan, deliverable } = await run(env, "budget_adapted", fakeRouterSequence(happyTurns()));
     expect(result.status, JSON.stringify(result)).toBe("completed");
     expect(plan?.initialEstimateUsd).toBeGreaterThan(1);
@@ -191,7 +204,9 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     expect(copyLine?.measuredUsd).toBeGreaterThanOrEqual(1.8);
     const budgetEvent = await env.store.readJson<{ level: string; message: string }>("acme", ["ledger", "events", "budget_overrun", "budget_overrun__budget"]);
     expect(budgetEvent?.level).toBe("warn");
-    expect(budgetEvent?.message).toMatch(/\(over the hard max\); adaptations: images capped at 4; delivered degraded on the cheapest complete path$/);
+    expect(budgetEvent?.message).toMatch(
+      /\(over the hard max\); adaptations: images capped at 4, images capped at 2; delivered degraded on the cheapest complete path$/,
+    );
 
     // The next run reads the history and starts tight: images capped at 4 before any estimate, and the calibration ratio now reflects the overrun.
     // (A different post than run 1's, so 07d's dedupe check against the shipped-output window does not spend an attempt.)
@@ -333,7 +348,13 @@ describe("default render rules through the workflow (WP0-4's workflow-level proo
     const steer = copyInputAt(router, 1)["selfCheckSteer"];
     expect(steer).toMatch(/default:numbers-are-devices \(slide 4\)/);
     expect(steer).toMatch(/"25%"/);
-    expect(steer).toMatch(/stat_callout or comparison_card/);
+    // The remedy has to name a mechanism THIS archetype can perform. Slide 4
+    // renders through the client's own `slide.html` (the `photo`/`text_only`
+    // route), which declares no `{{html:device}}` slot at all, so "give the
+    // slide a device" would be advice for the exact thing `withDevice` drops.
+    expect(steer).toMatch(/has no device slot/);
+    expect(steer).toMatch(/set this slide as a stat_callout or a comparison_card/);
+    expect(steer).not.toMatch(/give the slide a device carrying that figure/);
   });
 });
 

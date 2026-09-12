@@ -52,6 +52,6 @@ export class InstagramVisualQaAgent extends BaseAgent<VisualQaOutput> {
     // Pinned to "3" (2026-09): v3 adds §5, `renderedInspections` — what a
     // vision model saw in the actual rendered PNGs, when the run had a vision
     // backend — as evidence for the config's own render rules. v2 stays frozen.
-    skillRef: "instagram-visual-qa@3",
+    skillRef: "instagram-visual-qa@4",
   };
 }

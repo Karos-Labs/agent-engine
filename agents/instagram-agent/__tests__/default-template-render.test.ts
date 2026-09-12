@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { createRenderCarousel } from "@agent-engine/tool-karos-publish";
 import { isChromiumInstalled } from "./test-helpers.js";
+import { syntheticPhotograph } from "./synthetic-photograph.js";
 
 /**
  * A real, un-mocked Chromium render of the actual production default
@@ -23,9 +24,26 @@ import { isChromiumInstalled } from "./test-helpers.js";
 describe("default templates are token-driven, not literal-colored", () => {
   const TEMPLATE_DIR = path.resolve(__dirname, "..", "assets", "templates", "default");
 
+  it("ships the whole routable archetype set, so a client's templateDir can hold all of it", async () => {
+    // Phase 2, item M added `cover` and `closer`. `LAYOUT_TEMPLATE_FILES`
+    // routes to these filenames byte-identically, so a missing file here is a
+    // routing dead end that only shows up as a render tooling error.
+    const files = (await fs.readdir(TEMPLATE_DIR)).filter((f) => f.endsWith(".html"));
+    expect(files.sort()).toEqual([
+      "closer.html",
+      "comparison-card.html",
+      "cover.html",
+      "headline-focus.html",
+      "list-takeaway.html",
+      "quote-card.html",
+      "slide.html",
+      "stat-callout.html",
+    ]);
+  });
+
   it("no template carries a hardcoded bg/fg-derived rgba literal", async () => {
     const files = (await fs.readdir(TEMPLATE_DIR)).filter((f) => f.endsWith(".html"));
-    expect(files.length).toBeGreaterThanOrEqual(6);
+    expect(files.length).toBeGreaterThanOrEqual(8);
     for (const file of files) {
       const html = await fs.readFile(path.join(TEMPLATE_DIR, file), "utf8");
       // Only the STYLE half matters — a doc comment describing the legacy
@@ -41,6 +59,139 @@ describe("default templates are token-driven, not literal-colored", () => {
       const html = await fs.readFile(path.join(TEMPLATE_DIR, file), "utf8");
       const styles = [...html.matchAll(/<style>[\s\S]*?<\/style>/g)].map((m) => m[0]).join("\n");
       expect(styles, `${file} sizes type off a bare px literal instead of calc(...* var(--ts, 1))`).not.toMatch(/font-size:\s*\d+px/);
+    }
+  });
+
+  /**
+   * The `@handle` watermark is an LTR string whose leading character is a
+   * BIDI NEUTRAL, so dropped raw into a Hebrew or Arabic document it takes the
+   * paragraph's own RTL embedding level and lays out as `karoslabs@` — with
+   * the `@` on the wrong side, on every slide of every non-Latin run. A URL
+   * and a `#hashtag` break identically, so the SLOT is isolated rather than
+   * the one string.
+   *
+   * Asserted on the source rather than on a render because no pixel metric
+   * can see it (every Hebrew calibration case reported `ok` while the plates
+   * carried it) and because the renderer's DOM probe does not report computed
+   * `direction`. What the source can say, and what matters, is that the slot
+   * is isolated in every file that has one — including the scaffold
+   * `karos-templates`' `buildTemplateShell` writes for a custom archetype.
+   *
+   * `dir` on the `<bdi>` and never on the `<div>`: the div's own
+   * `inset-inline-start` would re-resolve with it and move the watermark to
+   * the opposite corner of an RTL plate.
+   */
+  it("every template bidi-ISOLATES the brand handle slot, so an @handle does not reorder in an RTL document", async () => {
+    const files = (await fs.readdir(TEMPLATE_DIR)).filter((f) => f.endsWith(".html"));
+    expect(files.length).toBeGreaterThanOrEqual(8);
+    for (const file of files) {
+      const html = await fs.readFile(path.join(TEMPLATE_DIR, file), "utf8");
+      expect(html, `${file} drops {{brandHandle}} into an RTL paragraph with no bidi isolation`).toContain(
+        '<div class="brand-handle"><bdi dir="ltr">{{brandHandle}}</bdi></div>',
+      );
+      // ...and an isolated slot is never `:empty`, so the rule that hides a
+      // handle-less client's watermark has to look inside it.
+      const styles = [...html.matchAll(/<style>[\s\S]*?<\/style>/g)].map((m) => m[0]).join("\n");
+      expect(styles, `${file} hides an empty handle with :empty alone, which a <bdi> child defeats`).toMatch(/\.brand-handle:has\(\s*>\s*bdi:empty\s*\)/);
+    }
+  });
+
+  /**
+   * THE SERIES BADGE MUST NOT BE PAINTED IN A TOKEN ITS OWN GROUND SWALLOWS.
+   *
+   * `--accent-ink` (#141414) exists to be the text ON an accent chip —
+   * `BADGE_VARIANT_CSS`'s `pill` is where it belongs. Seven of the eight
+   * bundled templates therefore colour a bare `.brand-badge` in `var(--accent)`
+   * and stand it on the plate's own dark ground. `cover.html` cannot: its
+   * badge sits at y=56, which on a cover with no photograph is the head of
+   * the field's accent ramp, where an accent-coloured badge is invisible. So
+   * it is the one file that reaches for `--accent-ink` — and for exactly one
+   * revision it did so UNCONDITIONALLY, on the only template whose field
+   * paint is switched off when a photograph loads. Over a dark plate that
+   * badge measured 1.10:1 (`.local/cover-contrast.mjs`).
+   *
+   * Re-measured 2026-09-12 with the same instrument: `--accent-ink` on that
+   * ramp head is **2.81:1**, not the 3.20:1 the file's own table claimed, and
+   * `--fg` there is **5.60:1** rather than 1.3:1 — so the table was wrong by
+   * 4.3x on the row it used to justify the choice, and it argued for the
+   * option a reader cannot see. `cover.html` now declares `--badge-ink: var(--fg)`
+   * on every path (4.80:1 is the worst of the four grounds it can render on),
+   * which needs no branch at all.
+   *
+   * WHAT THIS TEST IS FOR NOW. It is the SOURCE half: a template may not
+   * colour a bare badge straight off `--accent-ink`, and a template that
+   * reaches for the `--badge-ink` indirection must declare the token's value
+   * itself rather than leaving it to a fallback. The PIXEL half — the badge's
+   * real contrast, on the document production composes, with a client's brand
+   * head spliced in after the template's sheet — is
+   * `interest-floor-calibration.test.ts`'s "a series badge stays legible
+   * through a client's own brand head", which exists because this scan went
+   * green for a whole revision while the shipped badge measured 1.51:1.
+   */
+  it("no template paints its series badge in an ink token without a branch for the ground that ink needs", async () => {
+    const files = (await fs.readdir(TEMPLATE_DIR)).filter((f) => f.endsWith(".html"));
+    expect(files.length).toBeGreaterThanOrEqual(8);
+    for (const file of files) {
+      const html = await fs.readFile(path.join(TEMPLATE_DIR, file), "utf8");
+      // CSS COMMENTS STRIPPED FIRST. These sheets carry long rationale
+      // comments that quote selectors verbatim — `cover.html`'s badge note
+      // quotes `.brand-badge { ... }` while explaining what the brand head
+      // splices in — and a scan that reads those reads prose as CSS.
+      const styles = [...html.matchAll(/<style>[\s\S]*?<\/style>/g)].map((m) => m[0]).join("\n").replace(/\/\*[\s\S]*?\*\//g, "");
+      // The `.brand-badge { ... }` declaration block, not the `:empty` rule.
+      const block = /\.brand-badge\s*\{([^}]*)\}/.exec(styles)?.[1] ?? "";
+      expect(block, `${file} has no .brand-badge rule, so a brandless render lays the badge out in normal flow`).toMatch(/color\s*:/);
+      if (/--accent-ink/.test(block)) {
+        expect.fail(`${file} colours .brand-badge straight off --accent-ink; that token is text ON an accent chip and this badge has no chip`);
+      }
+      if (/var\(\s*--badge-ink/.test(block)) {
+        // The indirection is only honest if the template DECLARES the token.
+        // Left undeclared it falls through to `buildBrandHeadHtml`'s
+        // `var(--badge-ink, var(--accent))` fallback, which is the accent —
+        // and the accent is what is invisible on this file's own ramp head.
+        expect(styles, `${file} reads --badge-ink but never declares its value`).toMatch(/body\s*\{[^}]*--badge-ink\s*:/);
+        // And it may not be declared as the chip ink: `--accent-ink` is text
+        // ON an accent chip, and a bare badge has no chip (2.81:1 measured on
+        // the ramp head it was chosen for).
+        expect(styles, `${file} declares --badge-ink as --accent-ink; that token is text ON an accent chip and this badge has no chip`).not.toMatch(
+          /body\s*\{[^}]*--badge-ink\s*:\s*var\(\s*--accent-ink/,
+        );
+      } else {
+        expect(block, `${file} should colour a bare badge in var(--accent) like its seven siblings`).toMatch(/color\s*:\s*var\(\s*--accent\s*\)/);
+      }
+    }
+  });
+
+  /**
+   * THE RULE THE WHOLE DIRECTORY KEEPS, pinned where it cannot rot: **a
+   * ground layer may paint TONE anywhere; it may paint INK only inside a
+   * region the composition occupies.**
+   *
+   * Every template used to carry a full-bleed `<div class="ground-art">`
+   * inset 16px painting a pinstripe over the entire plate. A texture that
+   * marks a cell in every position on the frame makes `occupiedShare` and
+   * `largestEmptyRectShare` CONSTANTS — measured through the real
+   * `measureSlidePng`, each of these files reported the same 1.5% largest
+   * empty rectangle with the full copy on it and with every slot empty — so
+   * the one clause `slide-metrics.ts`'s own header calls "the metric that
+   * names the complaint" could not fire on any plate this directory produced.
+   *
+   * The pixel half of this is asserted in `interest-floor-calibration.test.ts`
+   * (the empty-plate and hollow-middle cases). This is the cheap structural
+   * half, and it is the one that runs without Chromium: no `.ground-art`
+   * element may come back.
+   */
+  it("no template paints a full-bleed ink layer — ground art is bound to the composition, not to the frame", async () => {
+    const files = (await fs.readdir(TEMPLATE_DIR)).filter((f) => f.endsWith(".html"));
+    for (const file of files) {
+      const html = await fs.readFile(path.join(TEMPLATE_DIR, file), "utf8");
+      const body = html.slice(html.indexOf("<body"));
+      expect(body, `${file} re-introduced a full-bleed ground-art layer; bind the texture to the block whose content justifies it`).not.toMatch(
+        /class="[^"]*\bground-art\b/,
+      );
+      expect(body, `${file} re-introduced a full-bleed accent-rules layer; bind it to the block whose content justifies it`).not.toMatch(
+        /class="[^"]*\bground-rules\b/,
+      );
     }
   });
 });
@@ -109,21 +260,35 @@ describe.skipIf(!isChromiumInstalled())("instagram-agent's default template rend
    * shipped eight flat slides with vetted images sitting unused on disk.
    *
    * Rendering the SAME slide with and without the hero and requiring the bytes
-   * to DIFFER catches it without decoding a PNG: if the image is blocked, both
-   * renders draw identical text on an identical background and come out
-   * byte-identical. A pixel decoder would be more direct and much heavier for
-   * the one bit of information that matters.
+   * to DIFFER catches the blocked-load case without decoding a PNG: if the
+   * image is blocked, both renders draw identical text on an identical
+   * background and come out byte-identical.
+   *
+   * ── 2026-09-11: WHAT THE SECOND ASSERTION USED TO BE, AND WHY IT WENT ──
+   *
+   * It used to be `withHero.byteLength > withoutHero.byteLength`, on the
+   * stated premise that "a full-bleed photograph compresses to more bytes
+   * than a flat background". Both halves of that premise are now false and
+   * the assertion failed in CI at 124,956 against 1,072,883 bytes. The hero
+   * was a SOLID MAGENTA 8x8 upscaled by `object-fit: cover` — a flat fill,
+   * which compresses to almost nothing — and the heroless ground stopped
+   * being flat when this directory's grounds became visible, so the
+   * text-only plate is now the bigger PNG. The comparison was measuring
+   * which of the two was flatter, in a direction that reversed the moment
+   * the templates were fixed.
+   *
+   * So the second assertion is now the thing it was always standing in for,
+   * measured rather than inferred: the renderer's own `measure` reports
+   * `imageryShare`, the share of the frame carrying per-cell tonal variety,
+   * and a photograph is the only thing that produces it. The hero fixture is
+   * `syntheticPhotograph` at the design canvas's own size for the same
+   * reason — see that file's header for what a solid or upscaled stand-in
+   * measures as instead. A blocked `file://` load now fails BOTH assertions.
    */
   it("renders differently with a hero image than without one", async () => {
     outDir = await fs.mkdtemp(path.join(REPO_ROOT, ".tmp-render-test-"));
-    // Solid magenta, 8x8. `object-fit: cover` blows it up to the full canvas,
-    // so a loaded hero changes almost every pixel above the scrim.
-    const magenta = Buffer.from(
-      "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFElEQVR4nGP8z/CfARtgwio6aCUAkYsCDoRKzmMAAAAASUVORK5CYII=",
-      "base64",
-    );
     const imageAbsPath = path.join(outDir, "hero.png");
-    await fs.writeFile(imageAbsPath, magenta);
+    await fs.writeFile(imageAbsPath, syntheticPhotograph(1080, 1440));
 
     const tool = createRenderCarousel();
     const ctx = { ctx: { runId: "r", clientSlug: "smoke-test", productId: "instagram-agent", runKind: "setup" as const, metadata: {} } };
@@ -137,28 +302,37 @@ describe.skipIf(!isChromiumInstalled())("instagram-agent's default template rend
       fields: { headline: "Identical copy on both", body: "Only the hero differs.", accentColor: "#2F6FC4" },
     };
 
-    async function render(postId: string, images: Record<string, string>): Promise<Buffer> {
+    async function render(postId: string, images: Record<string, string>): Promise<{ bytes: Buffer; imageryShare: number | undefined }> {
       const outcome = await tool.execute(
         {
           ...base,
           postId,
+          measure: true,
           slides: [{ n: 1, template: "slide.html", fields: base.fields, images, htmlFragments: {} }],
         },
         ctx,
       );
       if (outcome.status !== "success") throw new Error(JSON.stringify(outcome));
-      return fs.readFile(outcome.result.rendered[0]!.path);
+      const entry = outcome.result.rendered[0]!;
+      return { bytes: await fs.readFile(entry.path), imageryShare: entry.metrics?.imageryShare };
     }
 
     const withHero = await render("with-hero", { hero: path.relative(REPO_ROOT, imageAbsPath) });
     const withoutHero = await render("without-hero", {});
 
-    expect(withHero.equals(withoutHero)).toBe(false);
-    // And the hero render is the bigger one: a full-bleed photograph compresses
-    // to more bytes than a flat background. Not a strict law of PNG, but with a
-    // solid colour against solid colour it is a real signal, and it fails in the
-    // right direction if the two ever drift apart for some other reason.
-    expect(withHero.byteLength).toBeGreaterThan(withoutHero.byteLength);
+    expect(withHero.bytes.equals(withoutHero.bytes)).toBe(false);
+
+    // And the difference is the PHOTOGRAPH, not some other drift. `imagery`
+    // is the bucket for cells with per-cell tonal variety, which only a
+    // photograph produces: the template's own ground is a texture over a
+    // flat fill and scores as `graphic` instead. Measured on real Chromium,
+    // this hero lands at 0.655 and the heroless plate at 0.006 (the same
+    // plate, same copy, `.local/hero-imagery.mts`, 2026-09-11). The bounds
+    // below sit well inside that gap, so they pin the fact without pinning a
+    // number that a future ground rework would move.
+    expect(withoutHero.imageryShare, "the renderer reported no metrics — `measure: true` is not being honoured").toBeDefined();
+    expect(withoutHero.imageryShare!).toBeLessThan(0.05);
+    expect(withHero.imageryShare!).toBeGreaterThan(0.4);
   }, 60_000);
 
   it("produces a real, non-empty PNG for a slide WITH a hero image", async () => {
