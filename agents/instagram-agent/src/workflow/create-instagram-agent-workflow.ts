@@ -4611,6 +4611,55 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         reason?: string;
       };
       /**
+       * Phase 5 (RFC-18 §5.8) — what the VALUE gate concluded about the WINNING attempt, mirroring
+       * `language` above and routed the same way: through the one shared `groundingFor(draft)` to both the
+       * `09a` gate payload and the `09b` deliverable.
+       *
+       * Present on every run that reached `07j`, clean ones included, because the axes per attempt are what
+       * a later phase reads to find out whether the bet paid — the gap RFC-15 §9.4 named about its own
+       * phase, closed here for this one.
+       *
+       * Every value is a DELIVERY. `keepable` is above the bar; `below-bar` is "shipped marked, with the
+       * axes and the judge's named fixes on the review payload"; `unjudged` is "the judge could not be
+       * reached, or the budget could not afford it, and NO redraft was burned on it" (the relevance judge's
+       * fail-OPEN posture, `relevance-gate.ts:71-79` — unlike a Hebrew fluency failure, "this post is
+       * boring" is not invisible to the human at `09a`). **There is no `held` and no `failed`, by design:
+       * `WorkflowHeld` is never thrown on any value path.**
+       */
+      value?: {
+        status: "keepable" | "below-bar" | "unjudged";
+        /**
+         * Which stage produced this status. `signals` is the free floor at `07i`/`07i2` refusing on the
+         * final attempt; `judge` is `07j`. Named on the record because "below the bar" for a mechanical
+         * reason a regex found and "below the bar" because a judge could not find a position are two
+         * different notes for the reviewer.
+         */
+        stage: "signals" | "numbers" | "judge" | "budget";
+        /**
+         * The four axes, as `normaliseValueVerdict` left them. ABSENT — not faked — when no judged verdict
+         * exists: an unjudged delivery, or a free-floor refusal that never reached `07j`. A reviewer has to
+         * be able to tell "judged and found wanting" from "never judged", which is the same rule
+         * `relevance` follows one field up.
+         */
+        axes?: { newFact: string; position: string; payload: string; action: string };
+        /** Recorded but excluded from the decision — today `newFact` under thin grounding (§5.4 rule 3). */
+        advisoryAxes?: string[];
+        /** How many of this round's attempts a value refusal caused. Bounded by `VALUE_MAX_RETURNS`. */
+        returns: number;
+        /** The judge's one sentence naming what a reader would save this post for. */
+        keepLine?: string;
+        /** Present when `below-bar`: which axis, which target, and what to write instead — so the reviewer sees exactly why. */
+        fixes?: Array<{ axis: string; target: string; instruction: string }>;
+        /** `07i1`'s verdict on the card the cover rests on. Absent when the verification did not run at all. */
+        leadClaim?: "confirmed" | "not-found-on-page" | "unreachable" | "no-url";
+        /** Stamped on every verdict so telemetry can tell rubric eras apart (`NATIVE_EDITOR_RUBRIC_VERSION` precedent). */
+        rubricVersion: string;
+        /** Why this is not `keepable`, in a sentence a human can act on. Present on `below-bar` and `unjudged`. */
+        reason?: string;
+        /** Anything relaxed or capped on the way to this verdict (thin grounding, an unverified lead claim). */
+        notes?: string[];
+      };
+      /**
        * Phase 1, item K — what `04i`/`04j` decided for THIS round: the chosen
        * angle, the two rejected ones with their scores, or
        * `status: "unavailable"` when the proposer could not run (fail-open).
@@ -5242,6 +5291,19 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        */
       let nativeSteer: string | undefined;
       /**
+       * Phase 5 (RFC-18 §5.6) — the value judge's named fixes, as a REWRITE INSTRUCTION rather than an
+       * anchored span, for exactly the next attempt.
+       *
+       * A FIFTH typed steer, declared here beside the other four and kept apart from every one of them for
+       * the reason `nativeSteer`'s comment already gives: a value refusal, a language correction, a failed
+       * render rule, an off-brief verdict and a dedupe hit are five different remedies, several can be true
+       * of the same draft, and one overwriting another loses a finding the next attempt was supposed to
+       * fix. Prompt @17 §16 tells the writer to apply all of them when several arrive, and carries the
+       * `KEEP AS WRITTEN` line's own instruction ("text quoted under KEEP AS WRITTEN has already been
+       * accepted; reproduce it unchanged"), which is the anti-thrash half of this steer.
+       */
+      let valueSteer: string | undefined;
+      /**
        * Phase 4 — set on the FINAL attempt when the native editor was still flagging, or could not run at
        * all: the post ships flagged, never held. Attempt-scoped and reset per attempt exactly as
        * `interestDegraded` is, so an attempt that was fixed is never reported as degraded.
@@ -5249,6 +5311,37 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       let languageDegraded: DraftResult["language"] | undefined;
       /** The shipped attempt's language verdict, for the gate payload and the deliverable. */
       let finalLanguage: DraftResult["language"] | undefined;
+      /**
+       * Phase 5 — set on the attempt that SHIPS when the value gate could not clear it: below the bar on
+       * the final attempt, below the bar with no axis improved, or never judged at all.
+       *
+       * Attempt-scoped and reset at the top of every attempt, exactly as `languageDegraded` and
+       * `interestDegraded` are, so an attempt that was fixed never ships reported as degraded.
+       */
+      let valueDegraded: DraftResult["value"] | undefined;
+      /** This attempt's value verdict, clean or not. The shipped attempt's copy of it becomes `finalValue`. */
+      let valueVerdictForAttempt: DraftResult["value"];
+      /** The shipped attempt's value verdict, for the gate payload and the deliverable. */
+      let finalValue: DraftResult["value"] | undefined;
+      /**
+       * How many of this round's attempts a value refusal has caused, bounded by `VALUE_MAX_RETURNS`.
+       *
+       * ROUND-scoped rather than attempt-scoped: the bound is "at most two of this run's attempts may be
+       * caused by a value refusal", which is a statement about the round and would mean nothing if it reset
+       * every attempt.
+       */
+      let valueReturns = 0;
+      /** The PREVIOUS attempt's axes, for the no-improvement stop (§5.7 bound 2). Undefined before the first judged attempt. */
+      let previousValueAxes: ValueAxes | undefined;
+      /**
+       * `07i1-verify-lead-claim`'s verdict, ONCE PER ROUND.
+       *
+       * Run-scoped, not attempt-scoped, because the verification is of a FACT CARD and the cards do not
+       * change between attempts — re-asking would be a second scraper execution for a byte-identical
+       * answer. `undefined` means the step did not run at all (no angle, no plan for it, or past the hard
+       * max), which is different from `no-url`, which means it ran and there was nothing to fetch.
+       */
+      let leadClaim: LeadClaimStatus | undefined;
       /**
        * Every OTHER self-check finding the next draft must fix — 07's slide
        * check, 07b craft hygiene, 07e script, 07f fluency, 07h default render
@@ -5282,6 +5375,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // to and a post to move away from, neither of which is anchored to a byte range.)
       const priorNativeSteer = nativeSteer;
       nativeSteer = undefined;
+      // Phase 5 — the same one-attempt lifetime, declared and consumed in the same two places as the other
+      // four. A value fix names what to write instead of THIS draft's cover, THIS draft's slide 3; once the
+      // draft it was written about has been replaced, the instruction is about text that no longer exists.
+      const priorValueSteer = valueSteer;
+      valueSteer = undefined;
       // Item L's degrade marker is ATTEMPT-scoped: an attempt whose free
       // re-layout fixed the floor must not ship carrying the previous
       // attempt's finding.
@@ -5295,6 +5393,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // attempt whose corrections landed must not ship carrying the previous attempt's "still flagged after
       // 2 rounds".
       languageDegraded = undefined;
+      // Phase 5 — the value markers are attempt-scoped for exactly the reason the two above are: an attempt
+      // that answered the judge's fixes must not ship carrying the previous attempt's "below the bar".
+      // `valueReturns`, `previousValueAxes` and `leadClaim` are NOT reset here, deliberately: the first two
+      // are statements about the ROUND (how many attempts a value refusal has cost it, and what the last
+      // draft scored), and the third is a fact about a fact card, which no redraft changes.
+      valueDegraded = undefined;
+      valueVerdictForAttempt = undefined;
       const copyExec = await wf.step.agent(rev(`05-write-copy-attempt-${attempt}`), copyAgent, {
         ...runDirectionField(runDirection),
         topic: topicClaim.topic,
@@ -5311,6 +5416,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // correction as `slide N · field · "span" → "replacement" (why)`. Applied, not argued with, and
         // never at the cost of a number, a date, a name or a claim.
         ...(priorNativeSteer !== undefined ? { nativeSteer: priorNativeSteer } : {}),
+        // Phase 5 (prompt @17 §16): what the value judge refused on the previous attempt — the numbered
+        // fixes it named, then the `KEEP AS WRITTEN` line built in code from the axes that PASSED and their
+        // verified quotes. The second half is the anti-thrash mechanism: without it the classic redraft
+        // regression is fixing one axis by destroying another, and after three rounds the post is worse
+        // than attempt 1.
+        ...(priorValueSteer !== undefined ? { valueSteer: priorValueSteer } : {}),
         // What the previous attempt's self-check found (prompt §16) — the
         // fluency judge's issues, the failed render rule and slide, the
         // banned phrase — so the redraft fixes the finding instead of

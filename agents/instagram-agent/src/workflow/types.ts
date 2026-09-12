@@ -605,10 +605,87 @@ export const INSTAGRAM_FORMATS = ["carousel", "single"] as const;
 export const InstagramFormatSchema = z.enum(INSTAGRAM_FORMATS);
 export type InstagramFormat = z.infer<typeof InstagramFormatSchema>;
 
+/**
+ * Phase 5 (RFC-18 §3.7) — WHAT the post gives a reader, declared by the
+ * writer.
+ *
+ * The 2026-09-08 audit's charge had two halves. Phase 0 answered "is this
+ * relevant to what the client does?"; this enum is part of the answer to
+ * "will anyone save this?". A reader keeps a glossary, a ranking or a
+ * comparison; they do not keep six true sentences. Declaring the payload up
+ * front gives the carousel a STRUCTURAL REASON for its slide count — the
+ * count is whatever the declared structure needs — instead of "N slides
+ * because N was configured", and it is the first editorial input that has
+ * ever existed anywhere near the format decision.
+ *
+ * Eight output tokens on the copy step (priced in `STEP_COST_ESTIMATES_USD.
+ * copyAttempt`'s @16 → @17 note as ≈ +$0.00015 an attempt). Deliberately NOT
+ * a per-slide `soWhat` field, which RFC-18 §3.2 declines at ≈ +250 output
+ * tokens on every attempt for text nothing renders.
+ *
+ * `single-claim` is the DEFAULT so no existing fixture, no in-flight
+ * checkpoint and no stored copy output breaks: a draft written before this
+ * field existed parses unchanged and reads as the kind it actually was.
+ * `07i-value-signals`' `payloadShape` check is what holds a carousel to a
+ * kind its structure can actually carry.
+ */
+export const INSTAGRAM_PAYLOAD_KINDS = [
+  "glossary",
+  "ranking",
+  "comparison",
+  "checklist",
+  "timeline",
+  "myth-vs-fact",
+  "walkthrough",
+  "single-claim",
+] as const;
+export const InstagramPayloadKindSchema = z.enum(INSTAGRAM_PAYLOAD_KINDS);
+export type InstagramPayloadKind = z.infer<typeof InstagramPayloadKindSchema>;
+
+/** What a draft that does not declare one is: the default RFC-18 §3.7 names, in ONE place so every reader agrees. */
+export const DEFAULT_INSTAGRAM_PAYLOAD_KIND: InstagramPayloadKind = "single-claim";
+
+/**
+ * The declared payload kind of a draft, defaulted.
+ *
+ * Read through this rather than off the field, because the field is
+ * `.optional()` and not `.default()` — see `InstagramCopyOutputSchema`'s
+ * `payloadKind` comment for why. `undefined` means "written before this field
+ * existed" (a resumed checkpoint, or any of the ~30 test fixtures), and that
+ * draft is exactly what `single-claim` describes.
+ */
+export function payloadKindOf(copy: Pick<InstagramCopyOutput, "payloadKind">): InstagramPayloadKind {
+  return copy.payloadKind ?? DEFAULT_INSTAGRAM_PAYLOAD_KIND;
+}
+
 /** `InstagramCopyAgent`'s output — six to eight slides for a carousel (RFC-03 §3 step 05), exactly one for a single-image post; `checkSlidesData` enforces the count per format. */
 export const InstagramCopyOutputSchema = z.object({
   /** The format this copy was written for. Defaults to `carousel` so every existing caller and fixture keeps its shape. */
   format: InstagramFormatSchema.default("carousel"),
+  /**
+   * Phase 5 (RFC-18 §3.7) — the structure this post's slides ARE, declared by
+   * the writer and checked for nothing but consistency at `07i`.
+   *
+   * ## `.optional()`, not `.default("single-claim")`, and the difference matters
+   *
+   * RFC-18 §3.7 asks for `.default("single-claim")` and states the goal in the
+   * same sentence: *"so no existing fixture or in-flight checkpoint breaks"*.
+   * A `.default()` delivers half of that and breaks the other half. Zod's
+   * OUTPUT type for a defaulted key is REQUIRED — `z.infer` strips the
+   * `undefined` — so while a stored draft written before this field existed
+   * still parses, every object literal annotated `: InstagramCopyOutput`
+   * stops compiling: `test-helpers.ts`'s `goodCopyOutput()`,
+   * `bidi-isolation.test.ts`'s `hebrewCopy()` and
+   * `language-compliance-gate.test.ts`'s `hebrewCopy()` are three such
+   * literals in files this package does not own, and a fixture that no longer
+   * compiles is a fixture break by any reading.
+   *
+   * `.optional()` delivers the whole goal: absent parses, absent compiles, and
+   * the one thing `.default()` bought — a defaulted READ — is bought instead
+   * by `payloadKindOf(copy)` above, which every consumer goes through. The
+   * default value itself is unchanged and lives in one exported constant.
+   */
+  payloadKind: InstagramPayloadKindSchema.optional(),
   slides: z.array(InstagramSlideCopySchema).min(1).max(8),
   /**
    * The post's own caption — the text Instagram shows below the carousel,

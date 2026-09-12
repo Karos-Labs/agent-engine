@@ -617,8 +617,18 @@ export type NativeAxisVerdict = z.infer<typeof NativeAxisVerdictSchema>;
  * the per-axis failure mix means nothing unless you know which rubric produced
  * it. Bumped whenever `prompts/instagram-native-editor/N.md` changes what an
  * axis MEANS, not when it gains an example.
+ *
+ * **`"1"` -> `"2"` (Phase 5, RFC-18 §6.5).** The six axes are unchanged and
+ * the rubric's wording on disk is unchanged. What changed is the CORRECTION
+ * TARGET VOCABULARY: the same judge now also runs over the post package's
+ * prose — the first comment and the alt texts — under
+ * `08c2-package-native-round`, so `NativeCorrectionSchema.target` admits
+ * `comment` and `alt:N` and its field enum admits `"comment"` and `"alt"`.
+ * Telemetry that cannot tell those two eras apart would read the resulting
+ * shift in the per-axis correction mix as a change in the MODEL, which is the
+ * one thing a rubric stamp exists to prevent.
  */
-export const NATIVE_EDITOR_RUBRIC_VERSION = "1";
+export const NATIVE_EDITOR_RUBRIC_VERSION = "2";
 
 /**
  * How many `minor` axes make a draft not-native. Any `major` fails on its own.
@@ -643,8 +653,28 @@ export const NATIVE_EDITOR_MINOR_FAIL_COUNT = 3;
  * of a $0.24 redraft.
  */
 export const NativeCorrectionSchema = z.object({
-  /** `"caption"`, or `"slide:3"` for the slide whose `n` is 3. */
-  target: z.string().regex(/^(caption|slide:[1-8])$/),
+  /**
+   * `"caption"`, or `"slide:3"` for the slide whose `n` is 3 — the CAROUSEL
+   * round's vocabulary. Phase 5 (RFC-18 §6.5) adds the POST PACKAGE round's:
+   * `"comment"` for the first comment's prose and `"alt:3"` for slide 3's alt
+   * text.
+   *
+   * **One vocabulary, two contexts, and neither able to reach into the
+   * other.** The judge is the same agent with the same rubric, so a widened
+   * enum is the honest shape; what stops a package correction from landing on
+   * a caption (and vice versa) is `resolveField`'s context guard in
+   * `native-corrections.ts`, which REJECTS a cross-context target rather than
+   * coercing it. A schema that admitted only one context per round would have
+   * needed two schemas, two parsers and two prompts to say the same thing.
+   *
+   * Note what is still unreachable, which is the point of the enum being a
+   * closed list at all: there is no target for a `sourceRef`, a `stat.figure`,
+   * a `source`, or — added here — `firstComment.sources[].url`. The sources
+   * are built in code from the run's own fact cards (`post-package.ts`), so a
+   * language correction cannot change a URL because there is no way to name
+   * one.
+   */
+  target: z.string().regex(/^(caption|comment|alt:[1-8]|slide:[1-8])$/),
   /**
    * `"archetype"` covers the copy blocks four archetypes render instead of
    * `headline`/`body` — the pull-quote, the stat sub-label, the two
@@ -652,7 +682,13 @@ export const NativeCorrectionSchema = z.object({
    * name: the SPAN picks the slot, and a span appearing in two slots is as
    * ambiguous as one appearing twice in a body. See `archetypeTextSlots`.
    */
-  field: z.enum(["headline", "body", "kicker", "caption", "device", "custom", "archetype"]),
+  /**
+   * `"comment"` and `"alt"` are the post package's two prose fields (Phase 5).
+   * Each pairs with exactly one target shape — `comment`/`"comment"` and
+   * `alt:N`/`"alt"` — the same way `caption` already pairs with `"caption"`,
+   * and `resolveField` refuses any other pairing.
+   */
+  field: z.enum(["headline", "body", "kicker", "caption", "device", "custom", "archetype", "comment", "alt"]),
   /** Which `customArchetype.fields` key, when `field` is `"custom"`. */
   customKey: z.string().max(64).optional(),
   span: z.string().min(1).max(240),
@@ -928,11 +964,26 @@ export async function runNativeEditor(
  */
 export function nativeSteerFor(corrections: readonly NativeCorrection[]): string {
   return corrections
-    .map((c) => {
-      const where = c.target === "caption" ? "caption" : `slide ${c.target.slice("slide:".length)} · ${fieldLabel(c)}`;
-      return `${where} · "${c.span}" → "${c.replacement}" (${c.why})`;
-    })
+    .map((c) => `${correctionWhere(c)} · "${c.span}" → "${c.replacement}" (${c.why})`)
     .join("\n");
+}
+
+/**
+ * Where a correction points, in words.
+ *
+ * The `slide:`-prefix strip used to be the else-branch of a two-way test, so
+ * Phase 5's `comment` and `alt:N` targets would have rendered as
+ * `slide t · comment` — a steer naming a slide that does not exist, in the one
+ * artefact whose whole job is to say WHERE unambiguously. The package targets
+ * never reach a carousel redraft (`resolveField`'s context guard refuses them
+ * first), but a label function that produces nonsense off its happy path is a
+ * bug waiting for the next caller.
+ */
+function correctionWhere(c: NativeCorrection): string {
+  if (c.target === "caption") return "caption";
+  if (c.target === "comment") return "first comment";
+  if (c.target.startsWith("alt:")) return `slide ${c.target.slice("alt:".length)} · alt text`;
+  return `slide ${c.target.slice("slide:".length)} · ${fieldLabel(c)}`;
 }
 
 function fieldLabel(correction: NativeCorrection): string {
