@@ -29,7 +29,7 @@ import {
  * phase could quietly stop working:
  *
  * 1. **The estimate is unconditional.** `02j-plan-run-budget` runs long before
- *    `04l-concept-eligibility`, so it cannot know whether the selector will
+ *    `04m-concept-eligibility`, so it cannot know whether the selector will
  *    fire. `run-budget.ts`'s own rule is that an estimate which flatters
  *    itself pulls no lever, so the worst case is priced on every run the mode
  *    is reachable on — and the test below proves the $0.030 actually reaches

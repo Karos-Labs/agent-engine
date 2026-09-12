@@ -17,3 +17,11 @@ export * from "./context-document-routing.js";
 // carries it — a recommender whose export nobody can reach is as untestable
 // from outside this package as one trapped inside a view.
 export * from "./model-recommender.js";
+// Phase 4 (RFC-15 §8). The AU33 catalog itself, finally on the barrel — the gap the AU35 comment above has
+// been pointing at. Two Phase 4 test files needed `MODEL_CAPABILITIES` / `assertModelCatalogued` to assert
+// against the REAL cost tiers rather than a restatement of them, and with no barrel export the only way to
+// reach them was `@agent-engine/core/dist/router/model-capabilities.js` — a deep import into a build artifact,
+// which is both the repo's first and a dependency on `dist/`'s internal layout rather than on this package's
+// public surface. Additive: every name here was already reachable through that path, and nothing else on this
+// barrel re-declares one.
+export * from "./model-capabilities.js";

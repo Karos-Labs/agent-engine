@@ -175,6 +175,39 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyOutput> {
     // inspections ($0.006), so a carousel with two of them gives back
     // roughly what the prompt growth costs — but the estimator does not
     // bank that, because `DEFAULT_RUN_SHAPE.photoSlides` stays at 6.
-    skillRef: "instagram-copy@15",
+    //
+    // v16 (Phase 4, RFC-15 §4, 2026-09-12): §23 "Writing in the target
+    // language as a native". The writer receives a new `languageBrief` field
+    // — a persona derived from the client's own profile, a register card
+    // MEASURED from their real posts, a term policy, a convention pack and up
+    // to six of their own published posts as exemplars — and §23 makes it
+    // BINDING and superior to every stylistic instinct in §1-§14 when it is
+    // present. §1 is DEMOTED rather than deleted ("when `languageBrief` is
+    // absent, do this"), so an English run reads identically to @15 and the
+    // registry's `requires.languageDirective` marker, which looks for the
+    // literal `clientVoiceContext`, stays satisfied. §16 gains `nativeSteer`
+    // beside `selfCheckSteer`: a correction arrives as an anchored quote and
+    // a proposed replacement, is applied rather than argued with, and never
+    // moves a number, a date, a name or a claim while being applied.
+    //
+    // Cost, BOTH halves stated separately — and this time the OUTPUT half is
+    // ZERO, which is the whole point of stating them apart. Input: +3,020
+    // prompt characters (43,519 → 46,539) ≈ +760 tokens ≈ +$0.0023 per
+    // attempt, paid on English runs too because the prompt file is one file.
+    // Output: UNCHANGED. §23 changes how the copy reads, not how much of it
+    // there is — no new output field, no new per-slide object, nothing that
+    // scales with the slide count. The @14→@15 note above records the
+    // opposite error (an output-heavy bump priced on input alone,
+    // under-counting by nine tenths); the guard against repeating it is to
+    // count both sides every time, including the times one side is zero.
+    // `STEP_COST_ESTIMATES_USD.copyAttempt` is re-priced 0.159 → 0.161 in the
+    // same commit, which is the rule `run-budget.ts` states about itself.
+    //
+    // The `languageBrief` FIELD is priced separately, as
+    // `STEP_COST_ESTIMATES_USD.copyLanguageBrief` ($0.009 ≈ 3,000 in-tokens),
+    // and only on runs with a resolved `targetLanguage` — the field is
+    // conditional, the prompt section is not, and charging an English run for
+    // a payload it does not carry would pull an image lever for nothing.
+    skillRef: "instagram-copy@16",
   };
 }

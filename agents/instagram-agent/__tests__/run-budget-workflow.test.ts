@@ -161,25 +161,21 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     // opposite of what this test is about. The rung ORDER — pictures before
     // evidence before attempts — is what it pins, and that is unchanged.
     //
-    // HEADROOM, re-measured 2026-09-12 after the concept line was gated on the
-    // rungs where the mode can actually fire: **1.05** is now the last ratio
-    // that stops at three rungs (1.06 pulls the evidence lever), and the
-    // fully-adapted cold plan lands at $0.9503 — $0.0497 under target.
+    // HEADROOM, re-measured 2026-09-12 with the concept line gated on the rungs where the mode can
+    // actually fire: **1.05** is the last ratio that stops at three rungs (1.06 pulls the evidence lever),
+    // and the fully-adapted cold plan lands at $0.9518 — $0.0482 under target, i.e. EXACTLY where the
+    // native-language phase left it. The concept mode costs this plan nothing, because its $0.030 is
+    // booked only while `generatedImagesCap > 0` and this ladder has already zeroed it.
     //
-    // An earlier measurement on this line read 1.02 and $0.9758, $0.024 under
-    // target, and called that a warning. It was a real one, and the cause was
-    // mechanical rather than inherent: `fixed` booked the concept's $0.030 on
-    // EVERY rung, including the cap-0 rung where `conceptEligibility` declines
-    // outright because "the run budget bought no generated images". The
-    // estimate was charging for spend the chosen plan had just made
-    // impossible, and on the saturated ladder for $0.030 x the ratio. Gating
-    // it restored more than the `vetCall` re-price in the same commit took.
+    // An earlier cut of that phase booked the $0.030 unconditionally and measured 1.02 / $0.9758 / $0.024
+    // under target here, which read as a warning. The warning was real and the cause was mechanical: the
+    // estimate was charging for spend the chosen plan had just made impossible.
     //
-    // The warning still stands in its general form: the next UNCONDITIONAL
-    // addition to `fixed` will take the evidence lever on a nearly-cold
-    // client, and at that point the honest fix is to re-examine the fixed
-    // line — either gating the term on the plan the way this one now is, or
-    // re-pricing it — NOT walking this ratio again.)
+    // The general warning still stands, and the Hebrew ladder is where it bites first — a cold Hebrew run
+    // clears rung 4 by $0.0002, so the NEXT unconditional addition to `fixed` fires the attempt lever and
+    // produces a budget-caused HOLD. `run-budget.test.ts` asserts that margin. The honest fix at that point
+    // is to gate the new term on the plan the way this one is, or to re-order the rungs — never to walk
+    // this ratio again.)
     await env.tools["memory.updateBeliefs"]!.execute({ diff: { [RUN_BUDGET_BELIEF_KEY]: { version: 1, ewmaRatio: 1.01, overrunStreak: 0, underTargetStreak: 0, runs: [] } } }, { ctx });
     const { result, plan, deliverable } = await run(env, "budget_adapted", fakeRouterSequence(happyTurns()));
     expect(result.status, JSON.stringify(result)).toBe("completed");
@@ -188,7 +184,19 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     expect(plan?.adaptations).toEqual(["images capped at 4", "images capped at 2", "no generated images (stock or text-only)"]);
     expect(plan?.plan.generatedImagesCap).toBe(0);
     expect(plan?.plan.maxSelfCheckAttempts).toBe(3);
-    expect(plan?.note).toMatch(/^budget: estimate \$1\.\d\d > \$1\.00 → images capped at 4, images capped at 2, no generated images \(stock or text-only\) \(now \$0\.\d\d\)$/);
+    // Phase 4 re-priced the non-English path (`copyLanguageBrief` +
+    // `nativeJudge` x2 on a revision), which moves the post-adaptation figure
+    // to exactly $1.00. `\$0\.\d\d` was never the claim — it was an accident
+    // of where the old arithmetic happened to land. The claim is that the
+    // ladder stopped AT OR UNDER the $1.00 target (`fits()` is `<=`), so read
+    // the figure out and assert that, rather than widening the pattern to
+    // `[01]` — which would also accept "$1.99", i.e. a ladder that ran every
+    // rung and still never adapted enough.
+    const adaptedNote = plan?.note ?? "";
+    const adapted = /^budget: estimate \$(\d+\.\d\d) > \$1\.00 → images capped at 4, images capped at 2, no generated images \(stock or text-only\) \(now \$(\d+\.\d\d)\)$/.exec(adaptedNote);
+    expect(adapted, `the note did not have the adapted shape: ${adaptedNote}`).not.toBeNull();
+    expect(Number(adapted![1]), "the cold estimate must be over target, or there was nothing to adapt").toBeGreaterThan(1);
+    expect(Number(adapted![2]), "the adapted estimate must land at or under the $1.00 target").toBeLessThanOrEqual(1);
     expect(deliverable?.budget.plan.generatedImagesCap).toBe(0);
   });
 

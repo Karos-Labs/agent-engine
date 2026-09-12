@@ -53,6 +53,11 @@ export const KNOWN_SLOT_NAMES: ReadonlySet<string> = new Set([
   // Standing furniture — present on every archetype, whatever its layout.
   "accentColor",
   "dir",
+  // Phase 4 (RFC-15 §7.2). All eight bundled templates now open
+  // `<html lang="{{lang}}" dir="{{dir}}">`, so this set stops being the
+  // promised superset without it — and a model-authored archetype whose
+  // markup reads `{{lang}}` would be wrongly refused as "unsuppliable".
+  "lang",
   "fontScale",
   "textAlign",
   "kicker",

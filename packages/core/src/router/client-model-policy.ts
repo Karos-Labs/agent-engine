@@ -153,20 +153,60 @@ export function isRightToLeftContentLanguage(language: string): boolean {
 export interface ContentLanguageRequirement {
   readonly multilingualStrong: boolean;
   readonly rtlStrong: boolean;
+  /**
+   * The most expensive tier this re-point may select. Defaults to
+   * `CONTENT_LANGUAGE_MAX_COST_TIER`; a caller who genuinely wants the whole
+   * catalog passes `"premium"` explicitly and says so at the call site.
+   */
+  readonly maxCostTier?: ModelCostTier;
 }
+
+/**
+ * The most expensive tier a content-language re-point may select (owner's rule, 2026-09-12: no premium-tier
+ * model in a routine content run). A vendor whose only capable rows are premium keeps the step's own model
+ * and logs — the existing, documented `selected === undefined` path at :234-240, which was always a
+ * degradation and never a failure.
+ *
+ * ## Why this constant exists, concretely
+ *
+ * `selectModelForContentLanguage` picks the CHEAPEST same-vendor row rated `multilingual-strong`. In the
+ * Anthropic half of `MODEL_CAPABILITIES` those rows are ONLY `claude-opus-4-8` and `claude-opus-4-7`, both
+ * `costTier: "premium"` — `claude-sonnet-4-6` is rated `strong`, which `satisfies` rejects. So for an
+ * Anthropic-pinned step, "cheapest capable" and "Opus" are the same answer, and every
+ * `contentLanguageSensitive` step in the repo silently becomes an Opus step the moment its client's
+ * `brand.json` grows a non-English `language` field. Five Instagram steps are pinned to Sonnet and carry the
+ * flag; that one field edit takes a 3-attempt Hebrew run from ~$0.94 to ~$2.9, against a $1.50 hard max, with
+ * no code change and no warning.
+ *
+ * Capping rather than deleting the flags: the flags say something true (this step writes reader-facing copy),
+ * the cap fixes the trap repo-wide instead of for one agent, and a future cheap `multilingual-strong` row
+ * would still be picked up automatically. Gemini-wired steps are unaffected — `gemini-2.5-pro` is `standard`
+ * and is still selected. The escape hatch for a deployment that really does want Opus is unchanged:
+ * `MODEL_STEP_<ID>_VENDOR` / `MODEL_STEP_<ID>_MODEL`.
+ */
+export const CONTENT_LANGUAGE_MAX_COST_TIER: ModelCostTier = "standard";
 
 export function requirementForContentLanguage(language: string): ContentLanguageRequirement | undefined {
   if (language.trim().length === 0 || isEnglishContentLanguage(language)) return undefined;
-  return { multilingualStrong: true, rtlStrong: isRightToLeftContentLanguage(language) };
+  return {
+    multilingualStrong: true,
+    rtlStrong: isRightToLeftContentLanguage(language),
+    maxCostTier: CONTENT_LANGUAGE_MAX_COST_TIER,
+  };
 }
+
+const COST_TIER_ORDER: Record<ModelCostTier, number> = { budget: 0, standard: 1, premium: 2 };
 
 function satisfies(capabilities: ModelCapabilities, requirement: ContentLanguageRequirement): boolean {
   if (requirement.multilingualStrong && capabilities.languageStrength !== "multilingual-strong") return false;
   if (requirement.rtlStrong && capabilities.rtlSupport !== "strong") return false;
+  // The cost cap is part of "does this model satisfy the requirement", not a post-filter, so a step ALREADY
+  // pinned to a premium model at :231 is not read as "already fine" and then left there by a caller who has
+  // just said premium is out of budget.
+  const maxCostTier = requirement.maxCostTier ?? CONTENT_LANGUAGE_MAX_COST_TIER;
+  if (COST_TIER_ORDER[capabilities.costTier] > COST_TIER_ORDER[maxCostTier]) return false;
   return true;
 }
-
-const COST_TIER_ORDER: Record<ModelCostTier, number> = { budget: 0, standard: 1, premium: 2 };
 
 /**
  * The cheapest catalogued model that meets `requirement` AND is served by
@@ -185,6 +225,11 @@ const COST_TIER_ORDER: Record<ModelCostTier, number> = { budget: 0, standard: 1,
  * unpriced-but-capable model is a reason to keep looking, not a reason to
  * fail a run. Ties on cost tier fall back to catalog declaration order, so
  * the choice is deterministic across processes and across runs.
+ *
+ * Rows above `requirement.maxCostTier` (default `CONTENT_LANGUAGE_MAX_COST_TIER`) are skipped for the same
+ * reason an unpriced row is: this is a preference, and a preference that blows the run's budget is not one
+ * worth expressing. See `CONTENT_LANGUAGE_MAX_COST_TIER` for why "cheapest capable" and "Opus" are the same
+ * answer in the Anthropic half of the catalog.
  */
 export function selectModelForContentLanguage(
   vendor: ModelPolicy["vendor"],
@@ -211,7 +256,12 @@ export function selectModelForContentLanguage(
  * with it". That covers: a step that never opted in
  * (`ModelPolicy.contentLanguageSensitive`), a client who has stated nothing, an
  * English-language client, a step already pointed at a capable model, and a
- * vendor with no capable catalogued alternative.
+ * vendor with no capable catalogued alternative *at or below
+ * `CONTENT_LANGUAGE_MAX_COST_TIER`* — which, for vendor `anthropic`, is every
+ * case, because that vendor's only `multilingual-strong` rows are the two Opus
+ * rows and both are `premium`. An Anthropic-pinned `contentLanguageSensitive`
+ * step therefore keeps its own model and emits the warning below; that warning
+ * is the visible, informative form of what used to be a silent ~2x overspend.
  *
  * The last of those logs and continues rather than throwing. This is a routing
  * preference derived from a tenant's configuration, not a correctness guard
@@ -232,9 +282,10 @@ export function applyClientLanguagePolicy(stepId: string, policy: ModelPolicy, c
 
   const selected = selectModelForContentLanguage(policy.vendor, requirement);
   if (selected === undefined) {
+    const maxCostTier = requirement.maxCostTier ?? CONTENT_LANGUAGE_MAX_COST_TIER;
     logWarning(
-      `applyClientLanguagePolicy("${stepId}"): no catalogued model from vendor "${resolveModelVendor(policy)}" meets this client's content-language requirement — the step keeps its own model`,
-      { stepId, contentLanguage, model: policy.model, vendor: resolveModelVendor(policy) },
+      `applyClientLanguagePolicy("${stepId}"): no catalogued model from vendor "${resolveModelVendor(policy)}" at or below cost tier "${maxCostTier}" meets this client's content-language requirement — the step keeps its own model`,
+      { stepId, contentLanguage, model: policy.model, vendor: resolveModelVendor(policy), maxCostTier },
     );
     return policy;
   }

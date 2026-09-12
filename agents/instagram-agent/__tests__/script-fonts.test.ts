@@ -142,6 +142,46 @@ describe("buildScriptFontHeadHtml: the Hebrew fragment", () => {
     }
   });
 
+  /**
+   * PHASE 4, RFC-15 §7.1 — TRACKING, CASE (a).
+   *
+   * The bundled templates track their display type the way a Latin display
+   * face wants it (`-0.008em` to `-0.04em`) and their uppercase mono eyebrows
+   * the way a Latin label wants it (`+0.14em` to `+0.24em`). Both are wrong
+   * for Hebrew and in opposite directions: negative tracking walks the final
+   * forms (ך ן ף ץ) into the next word, and positive tracking shreds a Hebrew
+   * word, which has no tradition of letter spacing at all.
+   *
+   * Break the emission (delete the `if (spec.letterSpacing !== undefined)`
+   * block) and the Hebrew case below fails; add a `letterSpacing` row to a
+   * script nobody has measured and the second case fails.
+   */
+  it("emits tracking on both role lists for a script whose row carries it", () => {
+    const head = buildScriptFontHeadHtml("Hebrew", HEBREW, {});
+    expect(HEBREW.letterSpacing).toEqual({ display: "normal", body: "normal" });
+    expect(head).toMatch(/\.headline, \.hf-headline, \.quote-text, \.cmp-head[^{]*\{ letter-spacing: normal; \}/);
+    expect(head).toMatch(/\.body-text, \.body, \.num-body[^{]*\.kicker, \.eyebrow \{ letter-spacing: normal; \}/);
+    // The stat digit's lockup and the Latin `@handle` watermark are in
+    // neither list, so neither is re-tracked.
+    expect(head).not.toContain(".num-figure");
+    expect(head).not.toContain(".brand-handle");
+  });
+
+  it("emits NOTHING for a script whose row has no measured tracking — absent means 'not measured', never 'normal'", () => {
+    for (const [script, spec] of Object.entries(SCRIPT_TYPOGRAPHY)) {
+      const head = buildScriptFontHeadHtml(script, spec, {});
+      if (spec.letterSpacing === undefined) {
+        expect(head, `${script} emits a tracking rule it never measured`).not.toContain("letter-spacing");
+      } else {
+        expect(head, `${script} carries a measured tracking row and emits no rule for it`).toContain("letter-spacing");
+      }
+    }
+    // …and at least one row on each side of that branch, so the loop above is
+    // never vacuously true.
+    expect(SCRIPT_TYPOGRAPHY["Hebrew"]!.letterSpacing).toBeDefined();
+    expect(SCRIPT_TYPOGRAPHY["Arabic"]!.letterSpacing).toBeUndefined();
+  });
+
   it("drops a client family that fails the shared family-name rule rather than quoting it into the sheet", () => {
     const head = buildScriptFontHeadHtml("Hebrew", HEBREW, { display: "Fraunces'); @import url(evil" });
     expect(head).not.toContain("evil");
@@ -214,6 +254,66 @@ describe("composition with the bundled templates and the brand kit", () => {
     const brandHead = buildBrandHeadHtml(kit);
     const head = [buildScriptFontHeadForLanguage("en", kit.cssVars), brandHead].filter((s): s is string => s !== undefined).join("\n");
     expect(head).toBe(brandHead);
+  });
+});
+
+/**
+ * PHASE 4, RFC-15 §7.2 — ALIGNMENT IS PINNED, NOT CHANGED. CASE (c).
+ *
+ * `textAlign` already defaults to `"start"`, and every bundled template
+ * declares only `body.ta-center` / `body.ta-end` — leaving `start` to CSS's
+ * logical initial value, which under `dir="rtl"` is already the right edge.
+ * So Phase 4 adds NO new control. What it adds is the guard that keeps that
+ * true: a physical `left`/`right` on a display or body role would silently
+ * pin a Hebrew slide's text to the wrong edge, and nothing measures it —
+ * every pixel metric reports `ok` on a perfectly legible slide flush against
+ * the wrong margin.
+ *
+ * The role selectors are read back OUT of the emitted sheet rather than
+ * re-listed here, so this guard can never drift from the list it is meant to
+ * cover.
+ *
+ * BREAK-THE-CODE CHECK (run 2026-09-12): add `text-align: left;` to
+ * `slide.html`'s `.headline` rule and this fails, naming the file and the
+ * selector.
+ */
+describe("alignment stays logical: no physical left/right on a display or body role", () => {
+  /** `.headline`, `.hf-headline`, … — exactly the selectors the script sheet re-tracks and re-leads. */
+  const roleSelectors = (): string[] => {
+    const head = buildScriptFontHeadHtml("Hebrew", HEBREW, {});
+    const rules = [...head.matchAll(/^([^{\n]+)\{ line-height:/gm)].map((m) => m[1]!);
+    expect(rules).toHaveLength(2);
+    return rules.flatMap((r) => r.split(",").map((s) => s.trim())).filter((s) => s.startsWith("."));
+  };
+
+  /**
+   * A physical box/alignment keyword. `inset-inline-start`, `border-inline-start`,
+   * `text-align: start|center|end` and `margin-block-*` are all logical and all fine —
+   * this matches only the four-corner physical forms.
+   */
+  const PHYSICAL = /text-align\s*:\s*(?:left|right)\b|\b(?:margin|padding|border|inset)-(?:left|right)\b|(?:^|[;{])\s*(?:left|right)\s*:/;
+
+  it("no bundled template carries one", async () => {
+    const selectors = roleSelectors();
+    expect(selectors.length).toBeGreaterThanOrEqual(10);
+    const files = (await fs.readdir(TEMPLATES)).filter((f) => f.endsWith(".html"));
+    expect(files.length).toBeGreaterThanOrEqual(8);
+
+    for (const file of files) {
+      const html = await fs.readFile(path.join(TEMPLATES, file), "utf8");
+      const styles = [...html.matchAll(/<style>[\s\S]*?<\/style>/g)].map((m) => m[0]).join("\n");
+      for (const [, selector, declarations] of styles.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        const touchesRole = selectors.some((s) => new RegExp(`\\${s}(?![\\w-])`).test(selector!));
+        if (!touchesRole) continue;
+        expect(declarations!, `${file}: "${selector!.trim()}" pins a display/body role to a physical edge, which lands on the wrong side in RTL`).not.toMatch(PHYSICAL);
+      }
+    }
+  });
+
+  it("and neither does the emitted script sheet", () => {
+    for (const [script, spec] of Object.entries(SCRIPT_TYPOGRAPHY)) {
+      expect(buildScriptFontHeadHtml(script, spec, {}), script).not.toMatch(PHYSICAL);
+    }
   });
 });
 

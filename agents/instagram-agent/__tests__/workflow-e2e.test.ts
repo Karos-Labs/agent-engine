@@ -26,6 +26,7 @@ import { syntheticPhotograph } from "./synthetic-photograph.js";
 import { SKELETON_BELIEF_KEY, readSkeletonHistory, skeletonSignature } from "../src/workflow/skeleton-memory.js";
 import { CUSTOM_ARCHETYPE_BELIEF_KEY } from "../src/workflow/custom-archetype-memory.js";
 import { RUN_BUDGET_BELIEF_KEY } from "../src/workflow/run-budget.js";
+import { NATIVE_EDITOR_RUBRIC_VERSION, okAxes } from "../src/workflow/language-gate.js";
 
 const params = { runId: "instagram_run_1", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
@@ -154,13 +155,13 @@ const HAPPY_PATH_STEP_IDS = [
   "04i-propose-angles",
   "04j-select-angle",
   // Phase 4 (RFC-16 item D): the concept SELECTOR — free code, unconditional,
-  // immediately after the angle. `04m-design-concept` (the paid Sonnet call),
-  // `04n-apply-concept` and `06d1-inspect-concept-image` correctly do NOT
+  // immediately after the angle. `04n-design-concept` (the paid Sonnet call),
+  // `04o-apply-concept` and `06d1-inspect-concept-image` correctly do NOT
   // appear here: this happy-path story has no rivalry, no reversal and no
   // recognised entity, so the selector declines and nothing downstream fires.
   // That absence is the "sometimes, not always" constraint measured on the
   // default story.
-  "04l-concept-eligibility",
+  "04m-concept-eligibility",
   "05-write-copy-attempt-1",
   "06-vet-images-attempt-1",
   // Zero-held guarantee: confirms every selected image is still on disk, so a
@@ -313,13 +314,18 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     const promptStore = makePromptStore();
     // Phase 0 (item B): "publishes exclusively in Spanish" now RESOLVES the
     // target language from the profile prose (02d), so this client gets the
-    // language gate — one fluency-judge turn after the relevance judge.
+    // language gate — one judge turn after the relevance judge.
+    //
+    // Phase 4 (RFC-15 §6) replaced that judge's `{ fluent, issues }` shape
+    // with the native editor's verdict. Still ONE turn here and not two: the
+    // second round is reached only when round 1 comes back not-native WITH
+    // corrections to apply, and this draft is clean on every axis.
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()),
-      finalTurn({ fluent: true, issues: [] }),
+      finalTurn({ native: true, axes: okAxes(), corrections: [], rubricVersion: NATIVE_EDITOR_RUBRIC_VERSION }),
       finalTurn(goodVisualQaOutput()),
     ]);
     const workflowFn = createInstagramAgentWorkflow({

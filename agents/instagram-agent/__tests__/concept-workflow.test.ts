@@ -57,7 +57,7 @@ import { createGetLikenessConsent } from "@agent-engine/tool-karos-media";
  *     because the measured selection rate §1.6 refuses to guess needs a
  *     denominator.
  *
- * NOTE ON TURN ORDER. `04m-design-concept` sits between `04j-select-angle` and
+ * NOTE ON TURN ORDER. `04n-design-concept` sits between `04j-select-angle` and
  * `05-write-copy-attempt-1`, so its router turn goes between the `angle` and
  * `copy` fixtures. `turns.ts`'s `TURN_ORDER` has no `concept` key yet, so the
  * turn is spliced in here by calling `standardTurns` twice around it. When
@@ -186,7 +186,7 @@ function conceptResearch() {
 }
 
 /**
- * `04m-design-concept`'s output, shaped to clear all ten legibility clauses
+ * `04n-design-concept`'s output, shaped to clear all ten legibility clauses
  * against `goodClientBrief()`:
  *
  *  L1 `restsOn` is `SIX_RESEARCH_FACTS[0]`'s claim VERBATIM.
@@ -295,7 +295,7 @@ function conceptTurns(fixtures: {
       ...(fixtures.research !== undefined ? { research: fixtures.research } : {}),
       ...(fixtures.angle !== undefined ? { angle: fixtures.angle } : {}),
     }),
-    // 04m-design-concept — the one model call the concept mode adds.
+    // 04n-design-concept — the one model call the concept mode adds.
     ...(fixtures.concept !== undefined ? [finalTurn(fixtures.concept)] : []),
     ...standardTurns({
       ...(fixtures.copy !== undefined ? { copy: fixtures.copy } : {}),
@@ -457,8 +457,8 @@ describe("RFC-16 Phase 4 — the concept mode's workflow wiring", () => {
     // that "the concept did not replace the photograph" passes trivially on a
     // run where no concept was ever designed or generated.
     const stepIds = (await durableStore.listSteps(runId)).map((s) => s.stepId);
-    expect(stepIds).toContain("04m-design-concept");
-    expect(stepIds).toContain("04n-apply-concept-attempt-1");
+    expect(stepIds).toContain("04n-design-concept");
+    expect(stepIds).toContain("04o-apply-concept-attempt-1");
     expect(stepIds).toContain("06d-generate-images-attempt-1");
 
     // THE PROPERTY. A tie is not a win.
@@ -693,9 +693,9 @@ describe("RFC-16 Phase 4 — the concept mode's workflow wiring", () => {
 
     const stepIds = (await durableStore.listSteps(runId)).map((s) => s.stepId);
     // The free verdict still ran and still recorded itself...
-    expect(stepIds).toContain("04l-concept-eligibility");
+    expect(stepIds).toContain("04m-concept-eligibility");
     // ...and the paid step did not.
-    expect(stepIds).not.toContain("04m-design-concept");
+    expect(stepIds).not.toContain("04n-design-concept");
 
     const deliverable = await deliverableFor(env, runId);
     const conceptReport = deliverable?.["conceptReport"] as ConceptReport | undefined;
@@ -881,8 +881,8 @@ describe("RFC-16 Phase 4 — the concept mode's workflow wiring", () => {
 
     // And the paid step genuinely never ran.
     const stepIds = (await durableStore.listSteps(runId)).map((s) => s.stepId);
-    expect(stepIds).toContain("04l-concept-eligibility");
-    expect(stepIds).not.toContain("04m-design-concept");
+    expect(stepIds).toContain("04m-concept-eligibility");
+    expect(stepIds).not.toContain("04n-design-concept");
   }, 60000);
 
   // ───────────────────────────────────────────────────────────────────────
@@ -992,7 +992,7 @@ describe("RFC-16 Phase 4 — the concept mode's workflow wiring", () => {
     // THE PREMISE: without this the `art` assertions below are vacuous,
     // because an `undefined` art block trivially "names no figure".
     const stepIds = (await durableStore.listSteps(runId)).map((s) => s.stepId);
-    expect(stepIds, "the concept step never ran, so this test proves nothing about the brief").toContain("04m-design-concept");
+    expect(stepIds, "the concept step never ran, so this test proves nothing about the brief").toContain("04n-design-concept");
     expect(stepIds).toContain("06d-generate-images-attempt-1");
     expect(art, "image.generate was never called, so there is no brief to assert on").toBeDefined();
     return art;

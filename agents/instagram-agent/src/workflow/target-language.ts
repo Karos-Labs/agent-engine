@@ -1,4 +1,4 @@
-import { MIN_LETTERS_TO_JUDGE, scriptTableEntries, type ScriptTableEntry } from "./language-gate.js";
+import { MIN_LETTERS_TO_JUDGE, resolveExpectedScript, scriptTableEntries, type ScriptTableEntry } from "./language-gate.js";
 
 /**
  * Target-language resolution for step `02d-load-target-language` (Instagram
@@ -18,7 +18,8 @@ import { MIN_LETTERS_TO_JUDGE, scriptTableEntries, type ScriptTableEntry } from 
  *
  * ## What this does instead
  *
- * Four sources, strictly ordered, first decisive one wins:
+ * Five sources, strictly ordered, first decisive one wins (source 3 is
+ * Phase 4 / RFC-15 §2; the rest are unchanged):
  *
  * 1. `brand.language` — the structured field, verbatim. Explicit beats
  *    inferred, always; a portal user who set it is not overruled by prose.
@@ -30,7 +31,19 @@ import { MIN_LETTERS_TO_JUDGE, scriptTableEntries, type ScriptTableEntry } from 
  *    shapes are deliberately narrow — "we work with Hebrew-speaking
  *    founders" describes who the client sells to, not what it publishes,
  *    and must NOT resolve (pinned by test).
- * 3. A SCRIPT SNIFF of that same prose: when at least half of its letters
+ * 3. A PERSISTED BELIEF (`instagramLanguage`, written at `09b`): a previous
+ *    run's DECISIVE resolution for this client. It ranks above the sniff
+ *    because it is a record of a run MEASURING WHAT THE CLIENT PUBLISHED,
+ *    which outranks an inference from a self-description blurb; and below
+ *    both explicit statements so a human who later sets `brand.language`
+ *    always wins and the belief can never become unfixable.
+ *
+ *    The decisiveness filter is the whole point: a belief recorded from a
+ *    `sniff` is persisted for observability and NEVER re-read (see
+ *    `readLanguageBelief`). A once-guessed answer must not calcify into
+ *    permanent truth for a client.
+ *
+ * 4. A SCRIPT SNIFF of that same prose: when at least half of its letters
  *    are in one non-Latin script, a client whose own profile is written in
  *    Hebrew publishes in Hebrew. Scripts that carry exactly one language in
  *    the gate's table (Hebrew, Greek, Thai, Armenian, Georgian; Japanese
@@ -41,7 +54,7 @@ import { MIN_LETTERS_TO_JUDGE, scriptTableEntries, type ScriptTableEntry } from 
  *    return `unresolved-non-english` with the table's candidates, and 02d
  *    HOLDS the run asking for `brand.language`. That is intake, not a copy
  *    problem, and it costs zero model calls.
- * 4. Otherwise `english-default`: no evidence of any non-English language
+ * 5. Otherwise `english-default`: no evidence of any non-English language
  *    anywhere. This is the only status for which 07e/07f are skipped.
  *
  * ## English is not a target
@@ -74,7 +87,7 @@ import { MIN_LETTERS_TO_JUDGE, scriptTableEntries, type ScriptTableEntry } from 
  * the values in, so this is unit-testable against plain fixtures.
  */
 
-export type TargetLanguageSource = "brand" | "profile" | "voice-rules" | "brand-voice-doc" | "script-sniff";
+export type TargetLanguageSource = "brand" | "profile" | "voice-rules" | "brand-voice-doc" | "belief" | "script-sniff";
 
 export type TargetLanguageResolution =
   | {
@@ -118,6 +131,14 @@ export interface TargetLanguageInput {
   voiceRules?: Record<string, unknown> | undefined;
   /** `client.getContextDoc({ docType: "brand-voice" }).markdown`, when the client has one. */
   brandVoiceDoc?: string | undefined;
+  /**
+   * `memory.read({ scope: "beliefs" })`'s document, for source 3. Absent —
+   * which is every caller that has not been taught to read it, and every
+   * existing test — makes this function behave EXACTLY as it did before
+   * Phase 4: `readLanguageBelief(undefined)` is `undefined`, and no evidence
+   * line about beliefs is pushed.
+   */
+  beliefs?: Record<string, unknown> | undefined;
 }
 
 /**
@@ -136,7 +157,7 @@ export const MIN_SNIFF_SHARE = 0.5;
  * decided separately (kana / Hangul presence) because their table tests
  * include Han, which they share with Chinese.
  */
-const SINGLE_LANGUAGE_SCRIPTS: ReadonlySet<string> = new Set(["Hebrew", "Greek", "Thai", "Armenian", "Georgian"]);
+export const SINGLE_LANGUAGE_SCRIPTS: ReadonlySet<string> = new Set(["Hebrew", "Greek", "Thai", "Armenian", "Georgian"]);
 
 /** Script rows the sniff scores individually; CJK and Latin are handled by name. */
 const CJK_SCRIPT_NAMES: ReadonlySet<string> = new Set(["Japanese", "Korean", "Chinese"]);
@@ -373,6 +394,192 @@ function collectProse(input: TargetLanguageInput): ProseSource[] {
 
 const pct = (share: number) => `${Math.round(share * 100)}%`;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Source 3 — the persisted belief (Phase 4, RFC-15 §2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The key under which `memory.updateBeliefs` / `memory.read({scope:"beliefs"})`
+ * carry this client's settled language, beside `RUN_BUDGET_BELIEF_KEY` and the
+ * skeleton/visual-direction histories. `updateBeliefs` shallow-merges a diff,
+ * so a sibling key needs no schema and no migration.
+ */
+export const LANGUAGE_BELIEF_KEY = "instagramLanguage";
+
+/**
+ * How a run came to believe a client's language. Ordered by how much the next
+ * run should trust it, and NOT interchangeable: `own-posts` is a measurement
+ * of what the client published, `sniff` is a guess about what a self-
+ * description blurb is written in, and only the first four are decisive
+ * enough to be re-read (`DECISIVE_BELIEF_SOURCES`).
+ */
+export const LANGUAGE_BELIEF_SOURCES = ["own-posts", "brand-language", "explicit-mention", "brief", "sniff"] as const;
+export type LanguageBeliefSource = (typeof LANGUAGE_BELIEF_SOURCES)[number];
+
+/**
+ * What `09b-deliver-and-log` writes and `02d-load-target-language` reads.
+ *
+ * Free-form under the beliefs document — no zod schema, no `ClientBriefSchema`
+ * bump, no migration. `parseLanguageBelief` is therefore the only reader and
+ * tolerates anything a past version or a hand edit left behind.
+ */
+export interface InstagramLanguageBelief {
+  /** The run's adopted target language, verbatim — `"Hebrew"` or `"he-IL"`, whichever the run actually used. */
+  language: string;
+  /** `"Hebrew"` — from `resolveExpectedScript`, never a second table. Empty when the shared table has no opinion. */
+  script: string;
+  source: LanguageBeliefSource;
+  /** The sentence or the corpus count that decided it, for a trace reader. */
+  evidence: string;
+  /** How many in-script posts of the client's own were measured. */
+  corpusPosts: number;
+  /** Which `LANGUAGE_REGISTER_PACKS` row was applied (`language-register.ts`). */
+  registerKey: string;
+  resolvedAt: string;
+}
+
+/**
+ * The sources a LATER run may act on.
+ *
+ * `sniff` is deliberately absent, and that absence is load-bearing. A sniff
+ * is an inference from the client's self-description prose; re-reading it as
+ * source 3 would make it outrank the very sniff it came from, so a single
+ * guess on a thin profile would become this client's permanent language and
+ * no amount of new evidence below source 2 could move it. Persisted for
+ * observability, never re-read. `__tests__/target-language.test.ts` pins it
+ * by deleting the filter and watching the case go green.
+ */
+export const DECISIVE_BELIEF_SOURCES: ReadonlySet<LanguageBeliefSource> = new Set<LanguageBeliefSource>([
+  "own-posts",
+  "brand-language",
+  "explicit-mention",
+  "brief",
+]);
+
+/**
+ * The belief as it was written, WHATEVER its source — for evidence lines and
+ * for `09b` to compare against before it rewrites the key.
+ *
+ * NEVER call this to decide a run's language: that is `readLanguageBelief`,
+ * which applies the decisiveness filter. This one exists so the trace can say
+ * "there was a remembered Hebrew and it was not used, because it was a guess".
+ */
+export function parseLanguageBelief(beliefs: Record<string, unknown> | undefined): InstagramLanguageBelief | undefined {
+  const raw = beliefs?.[LANGUAGE_BELIEF_KEY];
+  if (raw === null || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  const language = typeof r["language"] === "string" ? r["language"].trim() : "";
+  if (language.length === 0) return undefined;
+  // An unrecognised source is not "probably fine": it is a record this build
+  // cannot reason about, and the safe reading of a language nobody can date
+  // is to fall through to the live evidence.
+  const source = LANGUAGE_BELIEF_SOURCES.find((s) => s === r["source"]);
+  if (source === undefined) return undefined;
+  const str = (value: unknown, fallback: string): string => (typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback);
+  const rawCorpus = r["corpusPosts"];
+  return {
+    language,
+    script: str(r["script"], resolveExpectedScript(language)?.name ?? ""),
+    source,
+    evidence: str(r["evidence"], ""),
+    corpusPosts: typeof rawCorpus === "number" && Number.isFinite(rawCorpus) ? Math.max(0, Math.floor(rawCorpus)) : 0,
+    registerKey: str(r["registerKey"], ""),
+    resolvedAt: str(r["resolvedAt"], ""),
+  };
+}
+
+/**
+ * The belief `resolveTargetLanguage` is allowed to act on: a parsed record
+ * whose `source` is in `DECISIVE_BELIEF_SOURCES`. `undefined` for a
+ * sniff-sourced entry, for an unparseable one, and for no beliefs at all.
+ */
+export function readLanguageBelief(beliefs: Record<string, unknown> | undefined): InstagramLanguageBelief | undefined {
+  const belief = parseLanguageBelief(beliefs);
+  if (belief === undefined) return undefined;
+  return DECISIVE_BELIEF_SOURCES.has(belief.source) ? belief : undefined;
+}
+
+export interface BuildLanguageBeliefInput {
+  /** The run's adopted target language. `undefined`, empty or English returns `undefined`: there is nothing to remember. */
+  language: string | undefined;
+  source: LanguageBeliefSource;
+  evidence: string;
+  /** In-script posts of the client's own that were measured; `0` when the corpus was empty. */
+  corpusPosts?: number;
+  /** `LanguageBrief.conventions.key`, so a trace can say which pack this run's copy was judged against. */
+  registerKey?: string;
+  /** Injectable clock, for a deterministic `resolvedAt` in tests. */
+  now?: Date;
+}
+
+/**
+ * The record `09b` writes — or `undefined` when there is nothing worth
+ * remembering, which the caller must treat as "make no `memory.updateBeliefs`
+ * call for this key".
+ *
+ * Two refusals, both of them the RFC's rules made mechanical rather than
+ * hoped for:
+ *
+ * - **English is never persisted.** `english-default` is a decision with
+ *   recorded evidence, not a language; writing it would switch a future run's
+ *   source 3 on for a client the gate has nothing to check for.
+ * - **`own-posts` with an empty corpus is refused.** `research.socialHistory`
+ *   drops textless posts silently and caches the empty result, so "zero posts
+ *   came back" is a fact about the scrape, not about the client. A belief
+ *   that claims to have measured a corpus of none is exactly the guess this
+ *   whole mechanism exists to keep out.
+ */
+export function buildLanguageBelief(input: BuildLanguageBeliefInput): InstagramLanguageBelief | undefined {
+  const language = typeof input.language === "string" ? input.language.trim() : "";
+  if (language.length === 0 || isEnglishTarget(language)) return undefined;
+  const corpusPosts = Math.max(0, Math.floor(input.corpusPosts ?? 0));
+  if (input.source === "own-posts" && corpusPosts < 1) return undefined;
+  return {
+    language,
+    script: resolveExpectedScript(language)?.name ?? "",
+    source: input.source,
+    evidence: input.evidence.trim(),
+    corpusPosts,
+    registerKey: (input.registerKey ?? "").trim(),
+    resolvedAt: (input.now ?? new Date()).toISOString(),
+  };
+}
+
+/**
+ * The BCP-47 primary subtag for a target language — `"he"` for `"Hebrew"`,
+ * `"he-IL"` and `"he"` alike — or `undefined` when the shared table cannot
+ * name one honestly.
+ *
+ * Resolved THROUGH `resolveExpectedScript` and the row it came from, so there
+ * is no second table to drift (the discipline `script-fonts.ts` follows for
+ * its typography rows). Two cases, and the second is the careful one:
+ *
+ * 1. The value already IS a tag (`"he-IL"`, `"pt-BR"`, `"es"`): its own
+ *    primary subtag is the answer, whatever else the row carries.
+ * 2. The value is a NAME. `tags[0]` is only the language's tag when every
+ *    name in the row denotes the SAME language — the single-language scripts
+ *    and the CJK rows. For a row several languages share, `tags[0]` is
+ *    whichever one happens to be listed first: the Latin row's is `"en"`, and
+ *    returning it for `"Spanish"` would mark Spanish copy as English in the
+ *    `lang` attribute, picking the wrong fallback face and the wrong
+ *    hyphenation. `undefined` — no opinion — is the honest answer, and the
+ *    caller omits the attribute rather than lying in it. A client who needs
+ *    one sets `brand.language` to a tag, which is case 1.
+ */
+export function bcp47For(targetLanguage: string | undefined): string | undefined {
+  if (targetLanguage === undefined) return undefined;
+  const normalized = targetLanguage.trim().toLowerCase();
+  if (normalized.length === 0) return undefined;
+  const expected = resolveExpectedScript(targetLanguage);
+  if (expected === undefined) return undefined;
+  const row = scriptTableEntries().find((e) => e.script.name === expected.name);
+  if (row === undefined) return undefined;
+  const primary = normalized.split(/[-_]/)[0] ?? normalized;
+  if (row.tags.includes(primary)) return primary;
+  if (SINGLE_LANGUAGE_SCRIPTS.has(row.script.name) || CJK_SCRIPT_NAMES.has(row.script.name)) return row.tags[0];
+  return undefined;
+}
+
 /**
  * Resolve the language the client publishes in. See the module doc comment
  * for the four sources and their order; this function is that order and
@@ -395,10 +602,6 @@ export function resolveTargetLanguage(input: TargetLanguageInput): TargetLanguag
   evidence.push("brand.language unset");
 
   const sources = collectProse(input);
-  if (sources.length === 0) {
-    evidence.push("no profile description, voice-rules guidelines/doList or brand-voice document to read");
-    return { status: "english-default", evidence };
-  }
 
   // 2. An explicit statement of the output language, in precedence order of
   //    source; within a source, the earliest statement.
@@ -419,9 +622,37 @@ export function resolveTargetLanguage(input: TargetLanguageInput): TargetLanguag
     for (const other of rest) evidence.push(`${src.label} also mentions "${other.match}" (later in the text; not used)`);
     return { status: "resolved", language: first.language, source: src.source, evidence };
   }
-  evidence.push(`no explicit language statement in ${sources.map((s) => s.label).join(", ")}`);
+  if (sources.length > 0) evidence.push(`no explicit language statement in ${sources.map((s) => s.label).join(", ")}`);
 
-  // 3. The script the prose itself is written in — the whole of it first
+  // 3. What a previous run settled for this client, if it settled it
+  //    DECISIVELY. Above the sniff because it is a measurement rather than an
+  //    inference; below both explicit statements so a human editing the
+  //    portal always wins.
+  const remembered = readLanguageBelief(input.beliefs);
+  if (remembered !== undefined) {
+    const trail = remembered.evidence.length > 0 ? `: ${remembered.evidence}` : "";
+    if (isEnglishTarget(remembered.language)) {
+      // `buildLanguageBelief` refuses to write one, so this is a hand edit or
+      // an older shape. Same posture as sources 1 and 2: recorded, not gated.
+      evidence.push(`a remembered language "${remembered.language}" (${LANGUAGE_BELIEF_KEY}, from ${remembered.source}${trail}), which needs no language gate`);
+      return { status: "english-default", evidence };
+    }
+    evidence.push(`a remembered language "${remembered.language}" (${LANGUAGE_BELIEF_KEY}, from ${remembered.source}${trail})`);
+    return { status: "resolved", language: remembered.language, source: "belief", evidence };
+  }
+  const guessed = parseLanguageBelief(input.beliefs);
+  if (guessed !== undefined) {
+    evidence.push(
+      `a remembered language "${guessed.language}" was NOT re-used: it was recorded from a script sniff, and a once-guessed answer is kept for observability only`,
+    );
+  }
+
+  if (sources.length === 0) {
+    evidence.push("no profile description, voice-rules guidelines/doList or brand-voice document to read");
+    return { status: "english-default", evidence };
+  }
+
+  // 4. The script the prose itself is written in — the whole of it first
   //    (the spec's "that prose"), then each source alone, so an agency that
   //    wrote a client's voice rules in English cannot dilute a profile the
   //    client wrote in Hebrew below the floor.
@@ -478,7 +709,7 @@ export function resolveTargetLanguage(input: TargetLanguageInput): TargetLanguag
     );
   }
 
-  // 4. Nothing pointed anywhere but English.
+  // 5. Nothing pointed anywhere but English.
   const whole = wholeSniff;
   evidence.push(
     whole.kind === "latin"
@@ -498,8 +729,12 @@ export function resolveTargetLanguage(input: TargetLanguageInput): TargetLanguag
 export interface TargetLanguageAdoption {
   /** The run's target language: `undefined` means English, and no script check, fluency judge or script font stack. */
   language: string | undefined;
-  /** How it was decided — `"resolved"` is 02d's answer, `"brief"` is a brief-declared language 02d could not see, `"english-default"` is neither. */
-  source: "resolved" | "brief" | "english-default";
+  /**
+   * How it was decided — `"resolved"` is 02d's answer, `"own-posts"` is the
+   * script of the client's own captions, `"brief"` is a brief-declared
+   * language 02d could not see, `"english-default"` is none of them.
+   */
+  source: "resolved" | "own-posts" | "brief" | "english-default";
   /** Present only for `"brief"`: the line the gate payload and the ledger carry, so a reviewer knows why this run is being judged in a language nothing in the brand record mentions. */
   note?: string;
 }
@@ -522,6 +757,13 @@ export interface TargetLanguageAdoption {
  * 1. **02d's answer wins.** It is the documented precedence, it is what
  *    `stampAgentBrief` writes into the brief, and a brief cannot outrank the
  *    brand record a human set in the portal.
+ * 1b. **Then the client's OWN POSTS** (Phase 4, RFC-15 §2): the script of the
+ *    captions `00b1-gather-brief-sources` already fetched, sniffed for free
+ *    with `sniffDominantScript`. It sits above the brief because it is a
+ *    measurement of what this client actually published, where the brief's
+ *    `language.target` is a model's reading of the same sources plus others.
+ *    The 2026-09-08 audit's finding is that those posts were fetched on every
+ *    run and never once read as a language source.
  * 2. **Otherwise a brief-declared non-English language is adopted** — by the
  *    whole run, not just the writer: the script check, the fluency judge and
  *    the script font stack all see it, because a language worth writing in is
@@ -532,9 +774,40 @@ export interface TargetLanguageAdoption {
  *    fluency gate on for English copy would add a per-attempt Haiku call and
  *    an outage hold path the brief scoped to non-English targets.
  */
-export function adoptBriefTargetLanguage(resolved: string | undefined, briefTarget: unknown): TargetLanguageAdoption {
+export interface LateTargetLanguageSources {
+  /**
+   * The language `sniffDominantScript` names over the client's own post
+   * captions (`00b1`'s `ownPosts`, or `crossChannel.entries` with
+   * `origin: "social"`), as a display name — `"Hebrew"`. `undefined` when the
+   * corpus was empty, too short, or in a script that names no single language.
+   *
+   * Deliberately a value the CALLER computes: this module stays pure and the
+   * caller already holds the captions.
+   */
+  ownPostsLanguage?: unknown;
+  /** `brief.language.target`. */
+  briefLanguage?: unknown;
+}
+
+/**
+ * The run's ONE target language, resolved after the Client Brief is known.
+ * See `TargetLanguageAdoption`'s doc comment for the precedence and the why.
+ */
+export function adoptLateTargetLanguage(resolved: string | undefined, sources: LateTargetLanguageSources): TargetLanguageAdoption {
   if (resolved !== undefined) return { language: resolved, source: "resolved" };
-  const declared = typeof briefTarget === "string" ? briefTarget.trim() : "";
+
+  const own = typeof sources.ownPostsLanguage === "string" ? sources.ownPostsLanguage.trim() : "";
+  if (own.length > 0 && !isEnglishTarget(own)) {
+    return {
+      language: own,
+      source: "own-posts",
+      note:
+        `target language ${own} comes from the client's OWN recent posts, not from the brand record: 02d resolved none, and their captions are written in ${own}. ` +
+        `The copy is written, script-checked, natively judged and rendered in ${own} — set brand.language in the portal to make it explicit.`,
+    };
+  }
+
+  const declared = typeof sources.briefLanguage === "string" ? sources.briefLanguage.trim() : "";
   if (declared.length === 0 || isEnglishTarget(declared)) return { language: undefined, source: "english-default" };
   return {
     language: declared,
@@ -543,4 +816,13 @@ export function adoptBriefTargetLanguage(resolved: string | undefined, briefTarg
       `target language ${declared} comes from the client brief, not from the brand record: 02d resolved none, and the brief was written from sources 02d does not read ` +
       `(the client's own site and recent posts). The copy is written, script-checked, fluency-judged and rendered in ${declared} — set brand.language in the portal to make it explicit.`,
   };
+}
+
+/**
+ * The pre-Phase-4 two-argument form, kept exported so no existing caller
+ * breaks. A thin wrapper: identical behaviour, because a caller that supplies
+ * no own-posts language falls straight through to the brief branch.
+ */
+export function adoptBriefTargetLanguage(resolved: string | undefined, briefTarget: unknown): TargetLanguageAdoption {
+  return adoptLateTargetLanguage(resolved, { briefLanguage: briefTarget });
 }

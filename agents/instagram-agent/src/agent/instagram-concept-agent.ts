@@ -18,7 +18,7 @@ import { ConceptSchema } from "../workflow/concept-direction.js";
 export type ConceptOutput = z.infer<typeof ConceptSchema>;
 
 /**
- * RFC-16 §2.2, step `04m-design-concept`: the one step in the pipeline that
+ * RFC-16 §2.2, step `04n-design-concept`: the one step in the pipeline that
  * asks what the VISUAL METAPHOR for this story is.
  *
  * ## What it adds that Phase 3 did not
@@ -30,7 +30,7 @@ export type ConceptOutput = z.infer<typeof ConceptSchema>;
  * writer's scene brief describes a scene; nothing asked for the metaphor, and
  * a metaphor is what makes an image arresting rather than merely on-brand.
  * This step answers that question, for one slide, on the minority of runs
- * where `04l-concept-eligibility` found a story whose SHAPE can carry one
+ * where `04m-concept-eligibility` found a story whose SHAPE can carry one
  * (§1.5's nine preconditions, ceiling 25% of posts, one slide per carousel).
  *
  * ## Everything it reads is hand-assembled

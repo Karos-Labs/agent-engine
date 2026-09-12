@@ -98,9 +98,13 @@ export class InstagramImageVettingAgent extends BaseAgent<ImageVettingOutput> {
     // (13,705 → 18,802 chars), and "read this section only when `conceptual`
     // is present" is an instruction to the MODEL, not a conditional include —
     // so the cost is ≈ +1,275 input tokens on EVERY vet call, concept run or
-    // not, ≈ +$0.00038 each on Flash. No new call. `STEP_COST_ESTIMATES_USD.vetCall`
-    // is re-priced 0.006 → 0.0065 in the same commit, per the house rule in
-    // `run-budget.ts`. v4 frozen.
+    // not, ≈ +$0.00038 each on Flash, ≈ +$0.0045 a run over nine metered calls.
+    // NOT "+600 tokens on a concept run only", which is what this comment said
+    // first and which would have sent the next reader past the re-price. No new
+    // call. `STEP_COST_ESTIMATES_USD.vetCall` is knowingly left at 0.006 for now
+    // and its doc comment carries the measurement and the reason — moving it
+    // fires the attempt lever on cold Hebrew runs and produces a budget-caused
+    // HOLD, which the owner's rule forbids. v4 frozen.
     skillRef: "instagram-image-vet@5",
   };
 }

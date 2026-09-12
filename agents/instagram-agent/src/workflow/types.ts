@@ -810,7 +810,7 @@ export interface ConceptReport {
   modeSource: string;
   /** Did the story clear §1.5's nine preconditions? */
   eligible: boolean;
-  /** Did `04m-design-concept` actually run — i.e. was the $0.029 Sonnet call bought? */
+  /** Did `04n-design-concept` actually run — i.e. was the $0.029 Sonnet call bought? */
   fired: boolean;
   /** Did a concept image end up on the shipped slide? Strictly narrower than `fired` (§6.4): the concept has to WIN. */
   shipped: boolean;

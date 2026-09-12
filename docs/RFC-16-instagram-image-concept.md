@@ -125,9 +125,9 @@ Three free code steps and one model step. Nothing here is on the setup meter.
 | id | kind | position | cost |
 |---|---|---|---|
 | `00e-check-likeness-consent` | `wf.step.code` | after `00d-check-visual-direction` (`workflow:2483`), outside the attempt loop, frozen into the run | $0.000 |
-| `04l-concept-eligibility` | `wf.step.code` | immediately after `04j-select-angle` (`workflow:4608`), above the attempt loop at `:4678` | $0.000 |
-| `04m-design-concept` | `wf.step.agent` | only when `04l` returned `eligible` | $0.029 |
-| `04n-apply-concept` | `wf.step.code` | inside the attempt loop, after copy is accepted (`workflow:~4779`) and before `photoSlideNs` (`:4863`) | $0.000 |
+| `04m-concept-eligibility` | `wf.step.code` | immediately after `04j-select-angle` (`workflow:4608`), above the attempt loop at `:4678` | $0.000 |
+| `04n-design-concept` | `wf.step.agent` | only when `04l` returned `eligible` | $0.029 |
+| `04o-apply-concept` | `wf.step.code` | inside the attempt loop, after copy is accepted (`workflow:~4779`) and before `photoSlideNs` (`:4863`) | $0.000 |
 
 **Why after `04j` and not frozen at `04k`.** The surveys named the ordering conflict correctly:
 `04k-freeze-generation-style` runs once per RUN (`workflow:3858`), while `04i`/`04j` run once per REVISION
@@ -329,7 +329,7 @@ export const CONCEPT_PATTERNS = [
 An empty eligible set returns `eligible: false` — a concept with no pattern the story supports is the "cool image
 about nothing the client does" failure in embryo.
 
-### 2.2 `04m-design-concept` — the model step, and what it costs
+### 2.2 `04n-design-concept` — the model step, and what it costs
 
 Agent `InstagramConceptAgent`, `agents/instagram-agent/src/agent/instagram-concept-agent.ts`:
 
@@ -416,7 +416,7 @@ L2 and L4 keep that step pointed at the client's world and this slide's claim; L
 remaining failure — anchor fine, situation fine, but the *drawn* result unreadable — is not a text problem and is
 caught by measurement on pixels in §6.3.
 
-### 2.4 `04n-apply-concept` — what actually changes
+### 2.4 `04o-apply-concept` — what actually changes
 
 **Chosen slide:** the cover, when `resolveLayout` puts it in `HERO_IMAGE_LAYOUTS` and it is not covered by a client
 upload (`tier0Slots`); otherwise the lowest-numbered slide that is. If neither exists the concept is discarded with
@@ -808,12 +808,12 @@ it is discarded, and a control that passes.
 | line | arithmetic | $ |
 |---|---|---|
 | `00e-check-likeness-consent` | `wf.step.code`, one store read via a tool, no egress | 0.000 |
-| `04l-concept-eligibility` | `wf.step.code` | 0.000 |
-| `04m-design-concept` | Sonnet 4.6: 6,200 in × $3/1M + 650 out × $15/1M = $0.0186 + $0.00975 | **0.029** |
+| `04m-concept-eligibility` | `wf.step.code` | 0.000 |
+| `04n-design-concept` | Sonnet 4.6: 6,200 in × $3/1M + 650 out × $15/1M = $0.0186 + $0.00975 | **0.029** |
 | the concept image | 1 × `generatedImage` (`perNeed: 1`, no shortlist) | **0.039** |
 | `06d1-inspect-concept-image` | 1 × `visionInspectPerImage` | **0.001** |
 | re-vet prompt growth | ~200 extra tokens on an existing Flash call | 0.0001 |
-| `04n-apply-concept` | `wf.step.code` | 0.000 |
+| `04o-apply-concept` | `wf.step.code` | 0.000 |
 | **worst case when it fires** | | **$0.069** |
 
 The $0.039 is only genuinely additive when the concept slide had no gap of its own; when retrieval had already
@@ -910,7 +910,7 @@ deliberate property of the design, not an omission.
 
 **New workflow step ids, for the PR body.** `agent-middleware/scripts/generate_engine_stages.py --check` must be
 re-run **after merge**, not in the worktree:
-`00e-check-likeness-consent`, `04l-concept-eligibility`, `04m-design-concept`, `04n-apply-concept`,
+`00e-check-likeness-consent`, `04m-concept-eligibility`, `04n-design-concept`, `04o-apply-concept`,
 `06d1-inspect-concept-image-attempt-N` — the last three also appear `rev()`-keyed per revision.
 
 **New agent class id for Studio `stageModels`:** `instagram-concept`.

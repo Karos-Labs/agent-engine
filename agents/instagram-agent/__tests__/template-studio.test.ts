@@ -498,7 +498,14 @@ describe("the sample content is built by CODE", () => {
     // RTL-validated with Latin glyphs, which proves nothing about whether the
     // script font loaded — the exact defect gate 8 exists to catch.
     const probe = studioSampleSeedFromBrief({ brief, kit, clientSlug: "geektime", targetLanguage: "he-IL", dir: "rtl" });
-    expect(probe.headline).toBe(SCRIPT_GLYPH_PROBE["Hebrew"]);
+    // Phase 4 (RFC-15 §7.4) appends a mixed-direction fragment (a Latin
+    // product name, a parenthesised term, a percentage, a year range) to the
+    // seed so gate 8 also exercises bidi. The probe must still LEAD the
+    // string — `startsWith`, not `toContain` — because gate 8's other half
+    // asks "did the script font load", and that is answered by the glyph
+    // probe rendering at the head of the headline, not by it appearing
+    // somewhere after a run of Latin.
+    expect(probe.headline.startsWith(SCRIPT_GLYPH_PROBE["Hebrew"]!)).toBe(true);
     expect(probe.cta).toBe("שמרו את הפוסט");
     expect(probe.dir).toBe("rtl");
   });

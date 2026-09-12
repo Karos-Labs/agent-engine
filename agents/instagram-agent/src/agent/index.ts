@@ -11,4 +11,8 @@ export * from "./instagram-art-director-agent.js";
 export * from "./instagram-research-agent.js";
 export * from "./instagram-copy-agent.js";
 export * from "./instagram-image-vetting-agent.js";
+// Phase 4, RFC-15 §6 — the native editor. Replaces the Phase 0 Haiku fluency
+// judge (`instagram-language-fluency`, a `DynamicAgent`): a new class id
+// because the step moves vendor `anthropic` -> `gemini`.
+export * from "./instagram-native-editor-agent.js";
 export * from "./instagram-visual-qa-agent.js";

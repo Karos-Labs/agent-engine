@@ -34,7 +34,7 @@ import {
 // singles this file out: a new model step anywhere in the instagram workflow
 // shifts every turn after it, and the local instagram suites do not catch it
 // because they build their own lists. Only CI does. See the instagram leg
-// below for how that is closed for `04m-design-concept`.
+// below for how that is closed for `04n-design-concept`.
 import { happyTurns as instagramHappyTurns } from "../../../agents/instagram-agent/__tests__/turns.js";
 
 import { createBrandedShortsAgentWorkflow } from "../../../agents/branded-shorts-agent/src/workflow/create-branded-shorts-agent-workflow.js";
@@ -118,8 +118,8 @@ describe("SCRUM-242 (T-A10) — one fixture, all four grounded agents, every con
       // RFC-16 Phase 4 — `conceptMode: "off"`, and it is load-bearing rather
       // than tidy.
       //
-      // `04m-design-concept` is a CONDITIONAL model step: it runs only when
-      // `04l-concept-eligibility` finds the story earns the concept treatment.
+      // `04n-design-concept` is a CONDITIONAL model step: it runs only when
+      // `04m-concept-eligibility` finds the story earns the concept treatment.
       // A positional turn list cannot express "and possibly one more turn
       // here" — queue the extra turn and a run that declines feeds the concept
       // fixture to the copy step; omit it and a run that fires exhausts the

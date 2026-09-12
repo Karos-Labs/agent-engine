@@ -217,7 +217,7 @@ export function buildStudioTemplateDocument(bodyHtml: string): string {
 
 function buildTemplateShell(title: string, bodyHtml: string): string {
   return `<!doctype html>
-<html lang="en" dir="{{dir}}">
+<html lang="{{lang}}" dir="{{dir}}">
 <head>
 <meta charset="utf-8" />
 <title>${title}</title>
