@@ -512,15 +512,15 @@ export const OCCUPIED_SHARE_FLOOR: Readonly<Record<SlideRole, number>> = { cover
  * below.
  *
  * A THIRD FAMILY, AND THE SUMMARY ABOVE DELIBERATELY EXCLUDES IT. A
- * `headline_focus` carrying a three-row bars device measures 5.1 / 7.1 / 9.4%
- * at `s` / `m` / `l` — it crosses most of the gap without crossing the floor.
- * `band-sweep.mjs` used to count it in the TYPE-ONLY family, so the script
- * printed a ceiling of 9.4% and a margin of 0.6 points while this comment
- * printed 7.7% and 2.3 — the same number arrived at two ways, which is a
- * comment and a tool disagreeing about the fact they are both describing. The
- * script now classifies it as its own `device` family and reports all three
- * bands, so "loudest TYPE-ONLY plate" there and "ceiling" here are the same
- * row. Run it and the two agree line for line.
+ * `headline_focus` carrying a three-row bars device measures 7.5 / 9.2 / 11.1%
+ * at `s` / `m` / `l`, so it straddles the floor: refused at `s` and `m`,
+ * admitted at `l`. `band-sweep.mjs` used to count it in the TYPE-ONLY family,
+ * so the script printed a ceiling of 9.4% and a margin of 0.6 points while
+ * this comment printed 7.7% and 2.3 — the same number arrived at two ways,
+ * which is a comment and a tool disagreeing about the fact they are both
+ * describing. The script now classifies it as its own `device` family and
+ * reports all three bands, so "loudest TYPE-ONLY plate" there and "ceiling"
+ * here are the same row. Run it and the two agree line for line.
  *
  * WHY IT IS ITS OWN FAMILY RATHER THAN PART OF THE CEILING: this plate's
  * device slot is FILLED. Clause E asks whether a slide carries imagery or a
@@ -528,17 +528,53 @@ export const OCCUPIED_SHARE_FLOOR: Readonly<Record<SlideRole, number>> = { cover
  * role is the clause working rather than failing — it does not belong in a
  * ceiling that exists to describe plates carrying NOTHING but type.
  *
- * WHAT THAT LEAVES OPEN, SAID PLAINLY RATHER THAN BURIED: at 9.4% the bars
- * plate is still 0.6 points UNDER the floor, so a slide whose device slot is
- * filled with bars is refused at a positional role anyway — the metric
- * declines to score strokes and labels as drawn area (see the `comparison_card`
- * note below, which is the same physics). That is a false refusal and it is
- * the one this band cannot fix by moving 0.10: raising the floor to admit it
- * re-admits every type-only plate the floor exists to refuse. The fix, when
- * somebody wants it, is in `dv-bars-block` — filled bar tracks rather than
- * outlined ones — not here. No guard in the suite requires this plate to be
- * refused, and the cover sweep renders `headline_focus` with an EMPTY device
- * slot precisely so that what it measures is the ground.
+ * ── 2026-09-12, sixth pass: THE BARS ARE FILLED NOW, AND THE BAND MOVED
+ *    WITHOUT THE CONSTANT MOVING. ──
+ *
+ * This paragraph used to read "at 9.4% the bars plate is still 0.6 points
+ * UNDER the floor … the fix, when somebody wants it, is in `dv-bars-block` —
+ * filled bar tracks rather than outlined ones — not here." Somebody wanted it.
+ * `slide-devices.ts` now paints the track and the quiet fill as OPAQUE plates
+ * (`color-mix(… var(--bg))`) instead of 8%/22% washes over `transparent`, for
+ * a reader's reason rather than a metric's: on `headline_focus`'s dash screen
+ * the ground's accent hairlines ran straight through the bars and the quiet
+ * fill measured 1.04:1 against its own track, so the three lengths a bar chart
+ * exists to compare could not be compared. That file carries the sampled
+ * colours and the choice between three candidate mixes.
+ *
+ * The band followed: 5.3 / 7.1 / 9.3% before, 7.5 / 9.2 / 11.1% after
+ * (`.local/band-sweep.mjs`, this tree). The two ceilings either side of the
+ * floor did not move at all — 7.9% type-only, 11.9% field — because no
+ * type-only plate has a device on it and no field-bearing archetype uses
+ * `dv-bars-block`. 0.10 is untouched and is still 2.1 points above the
+ * type-only ceiling.
+ *
+ * WHAT IS STILL OPEN, SAID PLAINLY RATHER THAN BURIED: at `s` and `m` the
+ * bars plate is 7.5% and 9.2%, so it is STILL refused at a positional role
+ * even though its device slot is filled. The false refusal is narrowed, not
+ * closed — one of three scales now passes where none did. It cannot be closed
+ * by moving 0.10: raising the floor to admit 7.5% re-admits every type-only
+ * plate the floor exists to refuse (the ceiling is 7.9%). Closing it properly
+ * means more drawn AREA in the device — a taller track, or bars that fill the
+ * measure — which is a typographic decision about the device and not a
+ * threshold decision about the floor. No guard in the suite requires this
+ * plate to be refused, and the cover sweep renders `headline_focus` with an
+ * EMPTY device slot precisely so that what it measures is the ground.
+ *
+ * AND THE NUMBERS IN THE PARAGRAPH THIS REPLACED WERE MEASURED THROUGH A
+ * BROKEN INSTRUMENT. `5.1 / 7.1 / 9.4%` came out of the `.local` probes, whose
+ * shared `deviceCss()` helper returned `deviceCssBlock()`'s whole
+ * `<style>…</style>` element and whose every caller then wrapped it in a
+ * second `<style>`. Inside a style element `<style>` is raw text, so the CSS
+ * parser hit a stray token, error-recovered by discarding the qualified rule
+ * up to the next `{…}` block, and the rule it ate was the first in the sheet:
+ * `.dv { --dv-quiet: … }`. Every non-accent device part — bar fills, rules,
+ * timeline dots, versus borders, unit cells — computed to the
+ * guaranteed-invalid value and painted TRANSPARENT in every local probe, while
+ * production painted them. The helper unwraps now (both copies carry the
+ * note). Corrected on the pre-fix templates the band was 5.3 / 7.1 / 9.3%, so
+ * the conclusion the old paragraph drew survives its instrument by luck;
+ * nothing else in this file's tables touches a device slot.
  *
  * The three things this must not break all hold now. A cover or closer with
  * copy on it clears the floor (18.0-20.8% for a photoless cover at s/m/l, and
@@ -596,15 +632,19 @@ export const OCCUPIED_SHARE_FLOOR: Readonly<Record<SlideRole, number>> = { cover
  * one to read.
  *
  * TWO ROWS THAT LOOK LIKE ANOMALIES AND ARE NOT, in every sweep.
- * `headline_focus + a three-row bars device` sits high in the TYPE-ONLY half
- * while carrying a rendered device — the bars are strokes and labels rather
- * than filled area, so the metric correctly declines to score them as one.
- * That is why the constant is stated as a floor on IMAGERY OR DEVICE SHARE
- * and not as "does this slide have a device slot": a device the pixels cannot
- * see is not one. And `comparison_card` is the quietest field-bearing
- * archetype because its two cards are outlined rather than filled; it is the
- * row that sets this constant's ceiling, so a revision that lightens those
- * cards lowers the ceiling rather than raising the floor.
+ * `headline_focus + a three-row bars device` used to sit inside the TYPE-ONLY
+ * band while carrying a rendered device, because the bars were strokes and
+ * washes rather than filled area and the metric correctly declined to score
+ * them as one. That is why the constant is stated as a floor on IMAGERY OR
+ * DEVICE SHARE and not as "does this slide have a device slot": a device the
+ * pixels cannot see is not one. Filling the tracks (sixth pass, above) moved
+ * that row from 5.3-9.3% to 7.5-11.1%, which is the anomaly answering to the
+ * same physics rather than to a threshold. And `comparison_card` is the
+ * quietest field-bearing archetype because its two cards are outlined rather
+ * than filled; it is the row that sets this constant's ceiling, so a revision
+ * that lightens those cards lowers the ceiling rather than raising the floor.
+ * (A revision that FILLS them the way the bars are now filled raises the field
+ * floor instead, which widens this gap — the same change, the other direction.)
  *
  * WHAT WOULD PUT THE FLOOR BACK INSIDE THE BAND, stated so the next revision
  * can see it coming: any change that makes a type-only plate's GROUND cover
