@@ -108,9 +108,25 @@ describe("Layer 3 tool registry — cross-cutting", () => {
     // are what this count is actually asserting. See
     // packages/tools/karos-client/src/brief.ts and
     // packages/tools/karos-research/src/fetch-pages.ts.)
+    // (62 → 62, RFC-14 item T: media.libraryAdd / media.libraryList are new in
+    // this PR — the client media library that turns a single-run upload into a
+    // persistent, content-addressed archive — but they land in
+    // `createKarosMediaTools`, and `media.*` is deliberately EXCLUDED from this
+    // bundle (see createAllKarosTools' own doc comment: it reaches a third-party
+    // image library on a credential, so asking for "all karos tools" must not
+    // silently acquire that egress). The RFC predicted 64 by assuming this
+    // count covered every registered tool in the repo; it covers the ten
+    // bundled servers only, and the two new tools are asserted in
+    // packages/tools/karos-media/__tests__/media-library.test.ts instead. The
+    // assertion below makes that exclusion enforceable rather than a comment:
+    // if `media.*` is ever folded into the bundle, this fails and the count
+    // above has to be revisited deliberately.
     expect(names.length).toBe(62);
     for (const prefix of expectedPrefixes) {
       expect(names.some((n) => n.startsWith(prefix))).toBe(true);
+    }
+    for (const prefix of ["media.", "video.", "landing.", "connectors.", "intake."]) {
+      expect(names.some((n) => n.startsWith(prefix)), `${prefix}* must stay out of createAllKarosTools`).toBe(false);
     }
     expect(new Set(names).size).toBe(names.length);
   });

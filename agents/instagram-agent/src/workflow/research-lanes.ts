@@ -215,6 +215,53 @@ export interface ResearchLaneOutcome {
   queries: ResearchLaneQueryOutcome[];
 }
 
+/**
+ * RFC-13 Phase 3, item Q — the client's own learned house style, as
+ * `research.pull` folds it into its payload under `includeVisualPatterns`.
+ *
+ * Declared structurally rather than imported from `karos-research`: this
+ * package does not depend on that one, and the four strings are not worth a
+ * dependency. The shape is `ResearchVisualPatterns` (payload.ts) and is
+ * assignable to `visual-direction.ts`'s `VisualPatternEvidence`, which is
+ * what actually consumes it.
+ */
+export interface LaneVisualPatterns {
+  readonly versionId: string;
+  readonly generatedAt: string;
+  readonly reviewStatus: string;
+  /** The rendered prose block — the same words a reviewer reads in the stored profile. */
+  readonly reference: string;
+  readonly templateHints?: readonly string[];
+}
+
+/**
+ * Reads the visual-pattern block off one pull's payload, or `undefined`.
+ *
+ * Hand-narrowed because `ResearchPullResult.result` (a `@agent-engine/workflow`
+ * type) declares only `provider`/`documents`/`history` — and because
+ * `mergeResearchPulls` keeps exactly those three, so the merged payload drops
+ * this key. Surfacing it as its own field of `DeepResearchResult` is what
+ * makes it reach the caller without changing a shared primitive that x and
+ * linkedin also run through.
+ */
+function readLaneVisualPatterns(result: unknown): LaneVisualPatterns | undefined {
+  const payload = result !== null && typeof result === "object" ? (result as Record<string, unknown>)["result"] : undefined;
+  const raw = payload !== null && typeof payload === "object" ? (payload as Record<string, unknown>)["visualPatterns"] : undefined;
+  if (raw === null || typeof raw !== "object") return undefined;
+  const row = raw as Record<string, unknown>;
+  if (typeof row["versionId"] !== "string" || typeof row["reference"] !== "string") return undefined;
+  return {
+    versionId: row["versionId"],
+    generatedAt: typeof row["generatedAt"] === "string" ? row["generatedAt"] : "",
+    // An absent review state must not read as reviewed: `unreviewed` is the
+    // weaker of the two and therefore the safe default (see
+    // `visual-direction.ts`'s evidence precedence).
+    reviewStatus: typeof row["reviewStatus"] === "string" ? row["reviewStatus"] : "unreviewed",
+    reference: row["reference"],
+    ...(Array.isArray(row["templateHints"]) ? { templateHints: (row["templateHints"] as unknown[]).filter((h): h is string => typeof h === "string") } : {}),
+  };
+}
+
 /** How many unique documents a carousel's research base should reach. Below it the step still succeeds — with a note. */
 export const DEEP_RESEARCH_DOCUMENT_FLOOR = 12;
 
@@ -225,6 +272,18 @@ export interface DeepResearchResult {
   documentCount: number;
   /** How many queries actually reached the vendor (a cache hit is free) — what the run's spend meter bills. */
   billedPulls: number;
+  /**
+   * Phase 3, item Q. The client's own visual-pattern profile, when one has
+   * been ingested AND their consent is currently granted — `research.pull`
+   * re-checks consent on every read, so a client who withdraws it stops
+   * steering their own runs immediately.
+   *
+   * Absent for most clients, which is the honest common case rather than a
+   * fault: consent is usually not on file. Omitted entirely rather than
+   * present-and-empty, because an empty shell would read as "this client has
+   * no house style", which is a different claim from "nobody has looked".
+   */
+  visualPatterns?: LaneVisualPatterns;
   /** Set when the base came in thin or a query failed. Never a hold: thin research is a quality note, an outage is a `WorkflowToolingFailure`. */
   note?: string;
 }
@@ -265,6 +324,7 @@ export async function pullResearchLanes(
     const pulls: ResearchPullResult[] = [];
     const failures: string[] = [];
     let billedPulls = 0;
+    let visualPatterns: LaneVisualPatterns | undefined;
 
     for (const lane of options.lanes) {
       const queries: ResearchLaneQueryOutcome[] = [];
@@ -277,6 +337,15 @@ export async function pullResearchLanes(
             maxResults: lane.maxResults,
             contentChars: lane.contentChars,
             historyAgentId: options.historyAgentId,
+            // Phase 3, item Q: wire the option that shipped dark in
+            // `research.pull` 1.2.0 and never had a caller. Free and local —
+            // it reads the client's own workspace, reaches no network and
+            // bills nothing — and it is the only route by which this
+            // workflow, which holds no `WorkspaceStore` handle, can see the
+            // profile `media.ingestVisualPatterns` wrote. The tool gates it
+            // on consent itself and simply omits the key when there is none,
+            // so passing it unconditionally is safe for every client.
+            includeVisualPatterns: true,
             ...(lane.includeDomains && lane.includeDomains.length > 0 ? { includeDomains: lane.includeDomains } : {}),
           },
           { ctx },
@@ -288,6 +357,9 @@ export async function pullResearchLanes(
         }
         const result = outcome.result as ResearchPullResult;
         pulls.push(result);
+        // First one wins: every lane asks the same client's workspace for the
+        // same current profile, so the later reads are the same document.
+        visualPatterns ??= readLaneVisualPatterns(result);
         if (!result.fromCache) billedPulls++;
         queries.push({ query, status: "success", documents: result.result?.documents?.length ?? 0, fromCache: result.fromCache });
       }
@@ -311,6 +383,7 @@ export async function pullResearchLanes(
       merged,
       documentCount,
       billedPulls,
+      ...(visualPatterns !== undefined ? { visualPatterns } : {}),
       ...(notes.length > 0 ? { note: notes.join("; ") } : {}),
     };
   });

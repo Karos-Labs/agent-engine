@@ -68,15 +68,17 @@ describe("ImageSelectionSchema: claimMatch is required on every selection", () =
   });
 });
 
-describe("InstagramImageVettingAgent @3", () => {
-  it("is pinned to instagram-image-vet@3, whose 3.md is byte-identical to latest.md and titled v3 with the two new sections", () => {
+describe("InstagramImageVettingAgent @4", () => {
+  it("is pinned to instagram-image-vet@4, and @4 keeps every v3 rule the claim-match belt depends on", () => {
+    // Phase 3, item R bumped the pin to @4 (the scene brief). What this test
+    // has always been about is the RUBRIC, and v4 restates all of it — so the
+    // assertions below run against the version the agent actually reads.
+    // `prompt-resolution.test.ts` owns the `N.md === latest.md` byte check.
     const agent = new InstagramImageVettingAgent({ router: fakeRouterSequence([]), tools: {}, promptStore: makePromptStore() });
-    expect((agent as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-image-vet@3");
+    expect((agent as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-image-vet@4");
 
-    const v3 = readFileSync(path.join(PROMPTS_ROOT, "instagram-image-vet", "3.md"), "utf8");
-    const latest = readFileSync(path.join(PROMPTS_ROOT, "instagram-image-vet", "latest.md"), "utf8");
-    expect(v3).toBe(latest);
-    expect(v3.split(/\r?\n/)[0]).toBe("# Instagram Image Vetting Craft Guide — v3");
+    const v3 = readFileSync(path.join(PROMPTS_ROOT, "instagram-image-vet", "4.md"), "utf8");
+    expect(v3.split(/\r?\n/)[0]).toBe("# Instagram Image Vetting Craft Guide — v4");
     expect(v3).toMatch(/## 1b\. CLAIM MATCH/);
     expect(v3).toMatch(/## 6\. CLIENT PHOTOS/);
     expect(v3).toMatch(/\[client upload, slot N\]/);
@@ -186,6 +188,52 @@ describe("workflow: claimMatch is re-checked deterministically", () => {
     const slidesData = steps.find((s) => s.stepId === "07c-emit-slides-data-attempt-1")?.output as { slides: Array<{ n: number; template: string; images: Record<string, string> }> };
     expect(slidesData.slides.find((s) => s.n === 2)?.images["hero"]).toBeUndefined();
     expect(slidesData.slides.find((s) => s.n === 1)?.images["hero"]).toBeDefined();
+  });
+
+  it("Phase 3, item R: the vet is handed the SCENE and the WHY, never the twelve-word need", async () => {
+    // `instagram-image-vet@4` judges whether a candidate is evidence for the
+    // CLAIM, and the field it reads is the scene brief the writer authored.
+    // A slide that still sends a legacy bare string carries `scene` alone —
+    // the union is what keeps an in-flight checkpoint parsing.
+    const copy = goodCopyOutput();
+    copy.slides[0] = {
+      ...copy.slides[0]!,
+      visualNeed: { scene: "a founder alone at a kitchen table at 6am, laptop open", why: "the slide claims the work happens before the day starts", source: "stock" },
+    };
+    const router = fakeRouterSequence(happyTurns({ copy, vet: goodImageVettingOutput() }));
+    const workflowFn = createInstagramAgentWorkflow({
+      tools: testTools(env),
+      promptStore: makePromptStore(),
+      router,
+      repoRoot: env.repoRoot,
+      imageCandidatePool: goodImageCandidatePool(),
+      autoApprove: true,
+    });
+    await new WorkflowEngine(new MemoryDurableStepStore()).run(workflowFn, { ...params, runId: "ig_semantic_vet_scene" });
+
+    // The vet turn is the one whose input carries `candidatePool`.
+    const complete = router.complete as unknown as { mock: { calls: unknown[][] } };
+    const vetInputs = complete.mock.calls.flatMap((call) => {
+      if (typeof call[0] !== "string") return [];
+      try {
+        const parsed = JSON.parse(call[0] as string) as { input?: Record<string, unknown> };
+        return parsed.input && "candidatePool" in parsed.input ? [parsed.input] : [];
+      } catch {
+        return [];
+      }
+    });
+    expect(vetInputs.length).toBeGreaterThan(0);
+    const slides = vetInputs[0]!["slides"] as Array<{ n: number; scene?: string; why?: string; visualNeed?: unknown }>;
+    const first = slides.find((slide) => slide.n === 1)!;
+    expect(first.scene).toBe("a founder alone at a kitchen table at 6am, laptop open");
+    expect(first.why).toBe("the slide claims the work happens before the day starts");
+    // The old key is gone, not shadowed: two names for the same field is how
+    // a prompt ends up reading the one nobody updated.
+    expect(first.visualNeed).toBeUndefined();
+    // A legacy bare string still reaches the vet, as `scene` with no `why`.
+    const second = slides.find((slide) => slide.n === 2)!;
+    expect(typeof second.scene).toBe("string");
+    expect(second.why).toBeUndefined();
   });
 
   it("a claimMatch of exactly 3 is accepted — the floor is inclusive", async () => {

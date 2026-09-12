@@ -81,6 +81,11 @@ const HAPPY_PATH_STEP_IDS = [
   // of 02j's read, so "why did this run avoid a stat cover" is legible in the
   // trace. Inert on a first run, which this fixture is.
   "02k-read-structural-memory",
+  // Phase 3 (item Q): the client's standing visual direction, checked on every
+  // run against its 90-day TTL. `setupTestEnvironment` seeds a fresh one, so
+  // this resolves `reuse` and `00d1`/`00d2`/`00d3` never run — the same shape
+  // `00b`/`00c` already have.
+  "00d-check-visual-direction",
   "03-claim-topic",
   // Phase 0 (RFC-13 §E): the trend scout runs on EVERY run now — also with a
   // planned catalog row, as an "alternatives" signal — then the content mode
@@ -128,6 +133,16 @@ const HAPPY_PATH_STEP_IDS = [
   "05a-list-used-images",
   // Tier 0: the client's own uploads, resolved before any sourcing tier.
   "05z-attach-user-media",
+  // Phase 3 (item T): tier 0.5 — the client's own media LIBRARY, read once per
+  // run after the fresh uploads and before any harvester. Present on every
+  // run: an archive that is empty, unreadable or unregistered still reports
+  // that it looked, because a run that skipped the read entirely could not
+  // tell an empty archive from a broken one.
+  "05y-read-media-library",
+  // Phase 3 (item S): the run's ONE generation style and image treatment,
+  // frozen before the attempt loop so every attempt, every revision and every
+  // generated image inherit the identical line.
+  "04k-freeze-generation-style",
   // Phase 1 (RFC-13 item K): the angle this carousel argues — one Sonnet
   // proposal per REVISION (never per attempt), then the deterministic pick.
   "04i-propose-angles",

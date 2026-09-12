@@ -34,7 +34,7 @@ import {
   type TemplateDefinition,
   type TemplateStore,
 } from "@agent-engine/tool-karos-templates";
-import { brandLogoDataUri, downloadBrandLogo, parseBrandLogoDataUri, type BrandLogoPlacement } from "@agent-engine/tool-karos-media";
+import { brandLogoDataUri, downloadBrandLogo, parseBrandLogoDataUri, renderVisualPatternReference, type BrandLogoPlacement, type MediaLibraryEntry, type VisualPatternProfile } from "@agent-engine/tool-karos-media";
 import { buildBrandHeadHtml, buildBrandLogoBodyHtml, deriveBrandRenderTokens, filterLearnedStyleToRing, planBrandLogo, type BrandRenderTokens } from "./brand-render-tokens.js";
 import { buildScriptFontHeadForLanguage } from "./script-fonts.js";
 import { adoptBriefTargetLanguage, resolveTargetLanguage } from "./target-language.js";
@@ -106,6 +106,7 @@ import {
   TARGET_SETUP_SPEND_USD,
   type SetupBudgetDecision,
   type SetupBudgetSummary,
+  type SetupShape,
 } from "./run-budget.js";
 import {
   ARCHETYPE_TEMPLATE_FILES,
@@ -188,6 +189,34 @@ import {
   type StudioTemplateValidation,
   type StudioValidationDeps,
 } from "./template-studio.js";
+// ── Phase 3 (RFC-14 items Q-T) — the four modules the integrator wires ──
+import { InstagramArtDirectorAgent } from "../agent/instagram-art-director-agent.js";
+import {
+  buildArtDirection,
+  buildVisualDirectionInput,
+  checkVisualDirection,
+  fallbackVisualDirection,
+  finaliseVisualDirection,
+  VISUAL_DIRECTION_ATTEMPT_BELIEF_KEY,
+  VISUAL_DIRECTION_BELIEF_KEY,
+  VISUAL_DIRECTION_RETRY_DAYS,
+  type VisualDirection,
+  type VisualDirectionAttempt,
+  type VisualDirectionEvidenceBundle,
+  type VisualPatternEvidence,
+} from "./visual-direction.js";
+import { generationPromptFor, needsImageSourcing, normaliseVisualNeed, retrievalQueryFor, vetSubjectFor } from "./scene-brief.js";
+import { imageTreatmentCssBlock, resolveGenerationStyle, type GenerationStyle } from "./style-lock.js";
+import {
+  buildLibraryEntry,
+  CLIENT_UPLOAD_RIGHTS,
+  describeLibraryCandidate,
+  groupShippedUses,
+  ingestedSlotOf,
+  libraryIngestRequest,
+  selectLibraryCandidates,
+  sceneTagsFor,
+} from "./media-library.js";
 import { checkCraftHygiene } from "./craft-hygiene.js";
 import { checkExpectedScript, languageGateText, runLanguageFluency, LANGUAGE_FLUENCY_STEP_ID, LANGUAGE_SCRIPT_STEP_ID } from "./language-gate.js";
 import {
@@ -1781,21 +1810,88 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // nowhere to store a template and nothing that could ever route to one.
     /** Item N's report, for the `09a` payload and the deliverable. Absent on a run that resolved `reuse` with no store, i.e. most runs. */
     let studioReport: StudioReport | undefined;
+    /**
+     * The client's own pages, as `00c2-gather-format-evidence` fetched them —
+     * hoisted so `00d`'s art director reads evidence this run ALREADY PAID
+     * ScrappyCoco for.
+     *
+     * `undefined` means no fetch was made for this run (the studio resolved
+     * `reuse`, so `00c2` never ran); `[]` means one was made and came back
+     * with nothing. `buildVisualDirectionInput` reports those as two different
+     * gaps, because "the site was not fetched" and "the site could not be
+     * read" send a reviewer to two different places.
+     */
+    let clientSitePages: Array<{ url: string; title?: string; text: string }> | undefined;
     /** The setup budget's own estimate-vs-actual, reported exactly the way a run's is. Absent unless this run actually generated a set. */
     let setupBudgetSummary: SetupBudgetSummary | undefined;
     /** What `09b` records under `SETUP_BUDGET_BELIEF_KEY` so the NEXT setup starts calibrated. */
     let setupBudgetRecord: { estimatedUsd: number; actualUsd: number; templatesStored: number; templatesDropped: number; crossedTarget: boolean; crossedMax: boolean; adaptations: number } | undefined;
 
+    // ── The setup meter, hoisted: ONE per-client setup budget over items N and Q ──
+    //
+    // Phase 3 (item Q) puts a second piece of setup work — the visual
+    // direction at `00d*` — on the same $2.00 target / $3.00 hard max the
+    // Template Studio spends against, and on the same plan (`00c1`'s fifth
+    // lever is "visual direction off"). The meter therefore cannot live
+    // inside the studio's `generate` branch any more: the 90-day direction
+    // TTL expires inside the 120-day studio TTL, so the commonest Phase 3
+    // setup is a direction derived on a run whose studio resolved `reuse`.
+    // One meter, one plan, one estimate-vs-actual line, whichever halves ran.
+    const setupNotes: string[] = [];
+    const setupMeter = new RunSpendMeter({ targetUsd: TARGET_SETUP_SPEND_USD, maxUsd: MAX_SETUP_SPEND_USD, scope: "setup" });
+    const setupCrossed = { target: false, max: false };
+    /** `setupMeter.add` plus the one-time crossing notes — the setup twin of `spend`, reading the setup meter's own $2.00/$3.00. */
+    const setupSpend = (label: string, measuredUsd: number | undefined, estimateUsd: number): void => {
+      setupMeter.add(label, measuredUsd, estimateUsd);
+      if (!setupCrossed.target && setupMeter.crossedTarget) {
+        setupCrossed.target = true;
+        setupNotes.push(targetCrossedNote(setupMeter, label));
+      }
+      if (!setupCrossed.max && setupMeter.crossedMax) {
+        setupCrossed.max = true;
+        setupNotes.push(maxCrossedNote(setupMeter, label));
+      }
+    };
+    /** One warn row per setup problem. Best-effort inside a best-effort block: losing the row costs visibility, never the run. */
+    const setupWarn = async (eventId: string, message: string): Promise<void> => {
+      try {
+        await tools["ledger.appendEvent"]?.execute({ runId: wf.runId, eventId: `${wf.runId}__${eventId}`, level: "warn", message }, { ctx });
+      } catch (error) {
+        console.error(`setup: could not record the warn "${eventId}"`, error);
+      }
+    };
+    /**
+     * `00c1-plan-setup-budget` — the setup plan, BEFORE the first paid setup
+     * call of EITHER item.
+     *
+     * One step id and one call site reached from two places, because a setup
+     * that builds templates and a setup that only re-derives the direction
+     * are the same budget decision with a different `shape`. `planSetupBudget`
+     * never refuses (owner's standing amendment applied to setup): it fits the
+     * plan by dropping the reference-image pass, then the set review, then
+     * templates down to four, then repairs, then the visual direction, then —
+     * past the hard max only — below four templates with the reason recorded.
+     */
+    let setupDecision: SetupBudgetDecision | undefined;
+    const planSetup = async (shape: SetupShape): Promise<SetupBudgetDecision> =>
+      wf.step.code("00c1-plan-setup-budget", async () => {
+        let history = readSetupBudgetHistory(undefined);
+        try {
+          const read = await tools["memory.read"]?.execute({ scope: "beliefs" }, { ctx });
+          if (read?.status === "success") history = readSetupBudgetHistory((read.result as { beliefs?: unknown }).beliefs);
+        } catch (error) {
+          console.error("00c1-plan-setup-budget: could not read the setup history, planning from the defaults", error);
+        }
+        return planSetupBudget(shape, history);
+      });
+    /** Templates this setup actually stored / dropped — read by the one setup-budget report below, which now runs after `00d*`. */
+    let setupTemplatesStored = 0;
+    let setupTemplatesDropped = 0;
+
     if (options.templateStore !== undefined) {
       const templateStore = options.templateStore;
-      /** One warn row per studio problem. Best-effort inside a best-effort block: losing the row costs visibility, never the run. */
-      const studioWarn = async (eventId: string, message: string): Promise<void> => {
-        try {
-          await tools["ledger.appendEvent"]?.execute({ runId: wf.runId, eventId: `${wf.runId}__${eventId}`, level: "warn", message }, { ctx });
-        } catch (error) {
-          console.error(`00c: could not record the studio warn "${eventId}"`, error);
-        }
-      };
+      /** The studio's half of the shared setup warn row. Kept as a local alias so every `00c*` call site reads unchanged. */
+      const studioWarn = setupWarn;
 
       const studioCheck: StudioCheck = await wf.step.code("00c-check-template-studio", async (): Promise<StudioCheck> => {
         try {
@@ -1848,46 +1944,18 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       if (studioCheck.action !== "generate") {
         studioReport = summarizeStudio({ check: studioCheck, stored: [], dropped: [] });
       } else {
-        const setupNotes: string[] = [];
-        const setupMeter = new RunSpendMeter({ targetUsd: TARGET_SETUP_SPEND_USD, maxUsd: MAX_SETUP_SPEND_USD, scope: "setup" });
-        const setupCrossed = { target: false, max: false };
-        /** `setupMeter.add` plus the one-time crossing notes — the setup twin of `spend`, reading the setup meter's own $2.00/$3.00. */
-        const setupSpend = (label: string, measuredUsd: number | undefined, estimateUsd: number): void => {
-          setupMeter.add(label, measuredUsd, estimateUsd);
-          if (!setupCrossed.target && setupMeter.crossedTarget) {
-            setupCrossed.target = true;
-            setupNotes.push(targetCrossedNote(setupMeter, label));
-          }
-          if (!setupCrossed.max && setupMeter.crossedMax) {
-            setupCrossed.max = true;
-            setupNotes.push(maxCrossedNote(setupMeter, label));
-          }
-        };
-
         // ── 00c1: the setup plan, BEFORE the first paid setup call ──
         //
-        // `planSetupBudget` never refuses (owner's standing amendment applied
-        // to setup): it fits the plan by dropping the reference-image pass,
-        // then the set review, then templates down to four, then repairs,
-        // then — past the hard max only — below four with the reason
-        // recorded. `visualDirection: false` because item Q ships in PR-D:
-        // pricing work this branch cannot do would tighten every lever
-        // against a bill that never arrives.
-        const setupDecision: SetupBudgetDecision = await wf.step.code("00c1-plan-setup-budget", async () => {
-          let history = readSetupBudgetHistory(undefined);
-          try {
-            const read = await tools["memory.read"]?.execute({ scope: "beliefs" }, { ctx });
-            if (read?.status === "success") history = readSetupBudgetHistory((read.result as { beliefs?: unknown }).beliefs);
-          } catch (error) {
-            console.error("00c1-plan-setup-budget: could not read the setup history, planning from the defaults", error);
-          }
-          return planSetupBudget(
-            { ...DEFAULT_SETUP_SHAPE, referenceAccounts: brief.referenceAccounts.length, visualDirection: false },
-            history,
-          );
-        });
-        const setupPlan = setupDecision.plan;
-        setupNotes.push(setupDecision.note);
+        // `visualDirection: true` since Phase 3: item Q's `00d*` block spends
+        // against this same plan, and lever 5 is what turns it off. It is
+        // planned here even though `00d` may later resolve `reuse` and spend
+        // nothing — the estimate must not flatter itself (the same rule that
+        // keeps `DEFAULT_RUN_SHAPE.photoSlides` at 6), and an unspent $0.075
+        // shows up as an under-target actual that relaxes the next setup.
+        const decision = await planSetup({ ...DEFAULT_SETUP_SHAPE, referenceAccounts: brief.referenceAccounts.length, visualDirection: true });
+        setupDecision = decision;
+        const setupPlan = decision.plan;
+        setupNotes.push(decision.note);
 
         // ── 00c2: what actually performs in this niche, and what was missing ──
         //
@@ -1980,6 +2048,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         if (evidence.scraperExecutions > 0) {
           setupSpend("00c2-gather-format-evidence", undefined, evidence.scraperExecutions * SETUP_STEP_COST_ESTIMATES_USD.scraperExecution);
         }
+        // Paid for once, read twice: the same three pages feed the design
+        // brief here and the art director at `00d2`. Assigned even when the
+        // fetch returned nothing, so `00d` can tell "fetched and empty" from
+        // "never fetched".
+        clientSitePages = evidence.sitePages;
         setupNotes.push(...evidence.evidence.notes);
 
         const fragments = await brandFragments();
@@ -2175,6 +2248,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                   rtlSeed: seedFor("rtl"),
                   evidenceBlock: designBriefBuild.input.formatEvidence,
                   ...(fragments.head !== undefined ? { brandHeadHtml: fragments.head } : {}),
+                  // The device sheet only, deliberately: item S's image
+                  // treatment is frozen at `04k`, after this block, and a
+                  // studio template is validated as a TEMPLATE — its interest
+                  // floor and contrast must hold on the ungraded photograph,
+                  // since the treatment is a per-client decision that can
+                  // change under it without re-authoring the set.
                   extraHeadHtml: deviceCssBlock(),
                 },
                 studioDeps,
@@ -2351,30 +2430,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           studioReport = summarizeStudio({ check: studioCheck, stored, dropped, evidence: evidence.evidence, notes: setupNotes });
         }
 
-        const setupSummary = summarizeSetupBudget(setupDecision, setupMeter, setupNotes);
-        setupBudgetSummary = setupSummary;
-        setupBudgetRecord = {
-          estimatedUsd: setupSummary.estimatedUsd,
-          actualUsd: setupSummary.actualUsd,
-          templatesStored: stored.length,
-          templatesDropped: dropped.length,
-          crossedTarget: setupSummary.crossedTarget,
-          crossedMax: setupSummary.crossedMax,
-          adaptations: setupSummary.adaptations.length,
-        };
-        try {
-          await tools["ledger.appendEvent"]?.execute(
-            {
-              runId: wf.runId,
-              eventId: `${wf.runId}__setup-budget`,
-              level: setupSummary.crossedTarget ? "warn" : "info",
-              message: setupEstimateVsActualLine(setupSummary),
-            },
-            { ctx },
-          );
-        } catch (error) {
-          console.error("00c: could not record the setup-budget ledger row", error);
-        }
+        setupTemplatesStored = stored.length;
+        setupTemplatesDropped = dropped.length;
+        // The estimate-vs-actual line now waits for `00d*` below: one setup,
+        // one meter, one report covering both halves.
       }
 
       if (studioReport !== undefined) {
@@ -2386,6 +2445,383 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         } catch (error) {
           console.error("00c: could not record the template-studio ledger row", error);
         }
+      }
+    }
+
+    // ── 00d*: this client's standing VISUAL DIRECTION (Phase 3, item Q) ──
+    //
+    // What this replaces is one sentence. `image.generate`'s brief falls back
+    // to `"Style: realistic photography, natural lighting, clean
+    // composition."` whenever the caller supplies nothing, and until now the
+    // Instagram caller always did: `artDirectionFor` read four `BrandTokens`
+    // fields no client config in the fleet sets. Every generated slide for
+    // every client was drawn to the same twelve words.
+    //
+    // The same three invariants as `00c*`, for the same reasons:
+    //
+    //  1. **Nothing here may throw.** Every failure is a `ledger.appendEvent`
+    //     warn and the block falls through to `fallbackVisualDirection`,
+    //     which derives at least four grounded lines from the brand kit and
+    //     the brief. Setup never blocks a run.
+    //  2. **The setup meter, shared with the studio.** Lever 5 of
+    //     `planSetupBudget` turns this whole block off; when it does, a
+    //     stored-but-stale direction is still reused and the fallback catches
+    //     the rest.
+    //  3. **Deriving is once per client per 90 days**
+    //     (`VISUAL_DIRECTION_TTL_DAYS`), not once per run.
+    //
+    // NOT gated on `options.templateStore`: a client with no template
+    // registry still generates images, and the 90-day direction TTL expires
+    // inside the studio's 120-day one, so the commonest Phase 3 setup is a
+    // direction derived on a run whose studio resolved `reuse`.
+    /** The direction every `image.generate` call this run inherits. Never `undefined` for a client with either a brand kit or a brief. */
+    let visualDirection: VisualDirection | undefined;
+    /** For the `09a` payload and the deliverable — a reviewer's one question is "where did these lines come from". */
+    let visualDirectionReport: { action: string; reason: string; source?: string; generatedBy?: string; generatedAt?: string; styleLockId?: string; lines?: number; gaps?: string[] } | undefined;
+    {
+      const now = new Date();
+      const directionCheck = await wf.step.code("00d-check-visual-direction", async () => {
+        let beliefs: unknown;
+        try {
+          const read = await tools["memory.read"]?.execute({ scope: "beliefs" }, { ctx });
+          if (read?.status === "success") beliefs = (read.result as { beliefs?: unknown }).beliefs;
+        } catch (error) {
+          // A beliefs read that failed is not "no direction on file" — but it
+          // has to resolve to something, and `derive` is the honest one: the
+          // worst case is one $0.075 re-derivation on the setup meter.
+          console.error("00d-check-visual-direction: could not read the beliefs document", error);
+        }
+        // Lever 5. With no studio plan nothing has been spent on setup at
+        // all, so the direction is affordable by construction — which is the
+        // whole reason this reads a plan that may not exist rather than
+        // demanding one.
+        return checkVisualDirection(beliefs, { now, allowDerive: setupDecision?.plan.visualDirection ?? true });
+      });
+      visualDirection = directionCheck.direction;
+      visualDirectionReport = { action: directionCheck.action, reason: directionCheck.reason };
+
+      if (directionCheck.action === "derive") {
+        // The plan, if the studio did not already make one. Same step id and
+        // the same decision — a setup that only re-derives the direction is
+        // the studio's budget question with `templates: 0`.
+        if (setupDecision === undefined) {
+          setupDecision = await planSetup({
+            templates: 0,
+            repairs: 0,
+            referenceAccounts: 0,
+            sitePages: 0,
+            referenceImages: 0,
+            setReview: false,
+            visualDirection: true,
+          });
+          setupNotes.push(setupDecision.note);
+        }
+
+        // ── The LIVE meter, not only the plan ──
+        //
+        // `setupDecision.plan` was made before a cent was spent. `setupSpend`
+        // records MEASURED costs, so the studio's own turns (`00c3`/`00c4`/
+        // `00c7`) can overrun their estimates and push the setup meter past
+        // the $2.00 target or the $3.00 hard max while this block still
+        // believes its lever is on. The standing amendment is "past the
+        // target stop optional work, past the hard max finish on the cheapest
+        // complete path", and `planSetupBudget`'s lever 5 names THIS block as
+        // the optional one — so it has to read the meter the way `describeSample`
+        // already does, not the plan alone.
+        //
+        // The two halves degrade separately because they are not equally
+        // optional: `00d1`'s pattern ingest is the cheaper, more skippable
+        // half (the direction can be derived from the brand kit and the brief
+        // alone, which is the `brand+brief` source most clients land on
+        // anyway), so it stops at the target; `00d2` is the direction itself,
+        // so it runs until the hard max and only then falls through to
+        // `fallbackVisualDirection`. Every skip is a `setupNotes` line, so the
+        // adaptation is reported like every other lever.
+        const directionPosture = setupMeter.posture;
+        if (!setupDecision.plan.visualDirection) {
+          setupNotes.push("the setup budget turned the visual-direction step off — this run's generated images use the brand-kit fallback");
+          visualDirectionReport = { action: "unavailable", reason: "the setup budget turned the art-direction step off" };
+        } else if (directionPosture === "cheapest-path") {
+          setupNotes.push(
+            `the setup meter crossed its $${MAX_SETUP_SPEND_USD.toFixed(2)} hard max before the art-direction step (${setupMeter.totalUsd.toFixed(3)} spent), so no direction was derived — this client's generated images use the brand-kit fallback and the direction is derived on the next setup`,
+          );
+          visualDirectionReport = { action: "unavailable", reason: `the setup meter crossed its hard max ($${setupMeter.totalUsd.toFixed(3)} of $${MAX_SETUP_SPEND_USD.toFixed(2)}) before the art-direction step` };
+        } else {
+          // ── 00d1: the evidence, assembled by code ──
+          //
+          // The free read first. `media.getVisualPatterns` reads a profile
+          // already stored in the client's own workspace and costs nothing;
+          // only when there is none does `media.ingestVisualPatterns` pay for
+          // one, and that tool gates on the client's recorded consent itself
+          // — no consent means `not_available`, which is a NAMED problem in
+          // the bundle, never a failure.
+          const bundle = await wf.step.code("00d1-ingest-visual-patterns", async (): Promise<{ patterns?: VisualPatternEvidence; problems: string[]; accounts: number }> => {
+            const problems: string[] = [];
+            let patterns: VisualPatternEvidence | undefined;
+            try {
+              const got = await tools["media.getVisualPatterns"]?.execute({}, { ctx });
+              if (got?.status === "success") {
+                const result = got.result as { profile: { versionId: string; generatedAt: string; review: { status: string }; templateHints?: readonly string[] }; reference: string };
+                patterns = {
+                  versionId: result.profile.versionId,
+                  generatedAt: result.profile.generatedAt,
+                  reviewStatus: result.profile.review.status,
+                  reference: result.reference,
+                  ...(result.profile.templateHints !== undefined ? { templateHints: [...result.profile.templateHints] } : {}),
+                };
+              }
+            } catch (error) {
+              problems.push(`the stored visual-pattern profile could not be read (${(error as Error).message})`);
+            }
+
+            if (patterns === undefined && directionPosture !== "normal") {
+              // Past the setup target: the optional half stops. The free read
+              // above already happened, so a client who HAS a stored profile
+              // still gets it; what is skipped is paying to build one.
+              const skipped = `the setup meter is past its $${TARGET_SETUP_SPEND_USD.toFixed(2)} target ($${setupMeter.totalUsd.toFixed(3)} spent), so the client's own feed was not ingested — the direction rests on the brand kit, the brief and the site`;
+              problems.push(skipped);
+              setupNotes.push(skipped);
+              return { problems, accounts: 0 };
+            }
+
+            if (patterns === undefined) {
+              const ingest = tools["media.ingestVisualPatterns"];
+              const accounts = await (async () => {
+                try {
+                  const configOutcome = await tools["client.getConfig"]?.execute({}, { ctx });
+                  const brandOutcome = await tools["client.getBrand"]?.execute({}, { ctx });
+                  return socialAccountsFromClient(
+                    configOutcome?.status === "success" ? (configOutcome.result as Record<string, unknown>) : undefined,
+                    brandOutcome?.status === "success" ? (brandOutcome.result as Record<string, unknown>) : undefined,
+                  );
+                } catch (error) {
+                  problems.push(`the client's own accounts could not be read (${(error as Error).message})`);
+                  return [];
+                }
+              })();
+              if (ingest === undefined) {
+                problems.push("media.ingestVisualPatterns is not registered on this deployment, so the client's own feed was not read");
+              } else if (accounts.length === 0) {
+                problems.push("the client's config and brand kit name no social account of their own, so there was no feed to learn from");
+              } else {
+                // Up to four, which is the tool's own ceiling.
+                const outcome = await ingest.execute({ accounts: accounts.slice(0, 4).map((a) => ({ platform: a.platform, username: a.username })) }, { ctx });
+                setupSpend("00d1-ingest-visual-patterns", undefined, SETUP_STEP_COST_ESTIMATES_USD.visualPatterns);
+                if (outcome.status === "success") {
+                  const result = outcome.result as { profile: VisualPatternProfile };
+                  patterns = {
+                    versionId: result.profile.versionId,
+                    generatedAt: result.profile.generatedAt,
+                    reviewStatus: result.profile.review.status,
+                    reference: renderVisualPatternReference(result.profile),
+                    ...(result.profile.templateHints !== undefined ? { templateHints: [...result.profile.templateHints] } : {}),
+                  };
+                } else {
+                  // The commonest outcome in the fleet, and not an error:
+                  // visual-pattern consent is usually absent, so most clients
+                  // land on `brand+brief`. Named, so the gate says so.
+                  problems.push(
+                    `the client's own feed was not read (${outcome.status}${"reason" in outcome ? `: ${outcome.reason}` : ""}) — the direction rests on the brand kit, the brief and the site`,
+                  );
+                }
+              }
+              return { ...(patterns !== undefined ? { patterns } : {}), problems, accounts: accounts.length };
+            }
+            return { patterns, problems, accounts: 0 };
+          });
+
+          const evidenceBundle: VisualDirectionEvidenceBundle = {
+            clientSlug: wf.clientSlug,
+            brandTokens: frozen.brandTokens,
+            ...(effectiveKit !== undefined ? { renderTokens: effectiveKit.cssVars } : {}),
+            brief,
+            ...(bundle.patterns !== undefined ? { patterns: bundle.patterns } : {}),
+            // `sitePages` when this run's studio block fetched them at
+            // `00c2` — already paid for, already cached, and the prompt
+            // documents them as an input and lets a line cite one as its
+            // `basis`. Never re-fetched here: a second ScrappyCoco pass to
+            // re-read the pages the brief was derived FROM would buy the
+            // prompt nothing the brief does not already carry, and the gap
+            // now says which of the two happened.
+            //
+            // Still no `companyName`/`ownImageNotes`: the profile read
+            // belongs to `03a`, and nothing in this workflow produces a
+            // vision pass over the client's own post images — which is why
+            // the prompt no longer advertises `ownImageNotes` as an input.
+            ...(clientSitePages !== undefined ? { sitePages: clientSitePages } : {}),
+            ...(targetLanguage !== undefined ? { targetLanguage } : {}),
+            problems: bundle.problems,
+          };
+          const assembled = buildVisualDirectionInput(evidenceBundle);
+
+          // ── 00d2: the six-to-ten lines ──
+          const artDirectorAgent = new InstagramArtDirectorAgent({ router: options.router, tools, promptStore: options.promptStore });
+          const directionExec = await wf.step.agent("00d2-derive-visual-direction", artDirectorAgent, assembled.input);
+          setupSpend("00d2-derive-visual-direction", directionExec.totalCostUsd, SETUP_STEP_COST_ESTIMATES_USD.artDirection);
+
+          /**
+           * `00d3` on either path: the direction when there is one, the
+           * failure marker when there is not.
+           *
+           * The failure marker is not bookkeeping. Without it `00d` resolves
+           * `derive` again on the NEXT run, and the one after that, re-paying
+           * `00d1` + `00d2` (~$0.075) every week for a step whose whole
+           * premise is "once per client per 90 days" — recurring spend on the
+           * one-off setup budget, invisible to the run's $1.00/$1.50
+           * accounting because the setup meter is a different meter. Inside
+           * `VISUAL_DIRECTION_RETRY_DAYS` the marker makes `00d` answer
+           * `unavailable`, `fallbackVisualDirection` carries the run exactly
+           * as it does now, and the 90-day re-derive is untouched.
+           *
+           * Best-effort in both directions, and the success path CLEARS the
+           * marker (`updateBeliefs` shallow-merges, so `null` is how a key is
+           * retired) — otherwise a client who failed once would carry a stale
+           * failure alongside a good direction.
+           */
+          const persistDirection = async (diff: Record<string, unknown>, what: string): Promise<{ persisted: boolean }> => {
+            try {
+              const written = await tools["memory.updateBeliefs"]?.execute({ diff }, { ctx });
+              if (written?.status !== "success") {
+                await setupWarn(
+                  "visual-direction-not-persisted",
+                  `${what} could not be stored (${written?.status ?? "memory.updateBeliefs is not registered"}) — this run uses what it has and the next run retries`,
+                );
+                return { persisted: false };
+              }
+              return { persisted: true };
+            } catch (error) {
+              await setupWarn("visual-direction-not-persisted", `${what} could not be stored (${(error as Error).message}) — this run uses what it has and the next run retries`);
+              return { persisted: false };
+            }
+          };
+
+          /**
+           * The turn's answer, or `undefined` when nothing storable came back.
+           *
+           * `finaliseVisualDirection` returns `undefined` for three reasons,
+           * and all three are the same fact: this turn produced no document
+           * the NEXT run could read. It demotes a line whose `basis` cites a
+           * URL the evidence never carried, and it re-parses what it built
+           * through the very schema `readVisualDirection` will parse it with
+           * — so a direction that would be refused on the read is never
+           * written. A document that cannot be read back is the expensive
+           * failure: `00d` resolves `derive` again on every later run and
+           * `00d1` + `00d2` are re-paid every week, on the success path,
+           * where no failure marker is written.
+           */
+          const derived =
+            directionExec.status === "completed" && directionExec.finalOutput !== undefined && directionExec.finalOutput !== null
+              ? finaliseVisualDirection(directionExec.finalOutput, {
+                  source: assembled.source,
+                  generatedBy: "instagram-art-director@1",
+                  now,
+                  gaps: assembled.gaps,
+                  evidenceUrls: assembled.evidenceUrls,
+                })
+              : undefined;
+
+          if (derived === undefined) {
+            const failedWith =
+              directionExec.status === "completed" && directionExec.finalOutput !== undefined && directionExec.finalOutput !== null
+                ? "00d2-derive-visual-direction returned a direction that could not be stored (too few grounded lines, or a document the schema refuses)"
+                : `00d2-derive-visual-direction resolved to "${directionExec.status}"`;
+            await setupWarn(
+              "visual-direction-failed",
+              `${failedWith} — this run's generated images use the brand-kit fallback direction, and the next ${VISUAL_DIRECTION_RETRY_DAYS} day(s) of runs use it too rather than re-paying for the same failure`,
+            );
+            setupNotes.push(`${failedWith}, so no visual direction was persisted — the failure is recorded for ${VISUAL_DIRECTION_RETRY_DAYS} day(s) so the next run does not re-pay for it`);
+            visualDirectionReport = { action: "failed", reason: failedWith };
+            await wf.step.code("00d3-persist-visual-direction", async () =>
+              persistDirection(
+                { [VISUAL_DIRECTION_ATTEMPT_BELIEF_KEY]: { version: 1, attemptedAt: now.toISOString(), failedWith } satisfies VisualDirectionAttempt },
+                "the failed visual-direction attempt",
+              ),
+            );
+          } else {
+            visualDirection = derived;
+
+            // ── 00d3: persist, best-effort ──
+            //
+            // Written here rather than folded into `09b`'s diff because a
+            // quarter's direction that cost a Sonnet call must survive a run
+            // that never reaches delivery. `updateBeliefs` merges a diff, so
+            // the sibling keys `09b` writes never fight with this one — and
+            // the same diff retires any failure marker an earlier run left.
+            await wf.step.code("00d3-persist-visual-direction", async () => {
+              const wrote = await persistDirection(
+                { [VISUAL_DIRECTION_BELIEF_KEY]: derived, [VISUAL_DIRECTION_ATTEMPT_BELIEF_KEY]: null },
+                "the visual direction",
+              );
+              if (wrote.persisted) return wrote;
+              // The write itself is the failure now, and it re-bills exactly
+              // like a failed turn: next run reads no direction, resolves
+              // `derive`, and pays for the same Sonnet call again. So the
+              // marker is tried on its own — a smaller write, which is worth
+              // one attempt even against a store that just refused a larger
+              // one.
+              const marked = await persistDirection(
+                {
+                  [VISUAL_DIRECTION_ATTEMPT_BELIEF_KEY]: {
+                    version: 1,
+                    attemptedAt: now.toISOString(),
+                    failedWith: "00d3-persist-visual-direction could not write the derived direction",
+                  } satisfies VisualDirectionAttempt,
+                },
+                "the failed visual-direction write",
+              );
+              return { persisted: false, retryHeld: marked.persisted };
+            });
+          }
+        }
+      }
+
+      // The insurance. With either a brand kit or a brief this returns at
+      // least four grounded lines, which is what makes `image.generate`'s
+      // neutral one-liner unreachable in practice — including when lever 5
+      // turned the block off entirely.
+      if (visualDirection === undefined) visualDirection = fallbackVisualDirection(frozen.brandTokens, brief, { now });
+      if (visualDirection !== undefined) {
+        visualDirectionReport = {
+          ...(visualDirectionReport ?? { action: "fallback", reason: "no stored or derived direction" }),
+          source: visualDirection.source,
+          generatedBy: visualDirection.generatedBy,
+          generatedAt: visualDirection.generatedAt,
+          styleLockId: visualDirection.styleLock.id,
+          lines: visualDirection.lines.length,
+          gaps: visualDirection.gaps,
+        };
+      }
+    }
+
+    // ── The setup budget's own estimate-vs-actual, reported exactly as a run's is ──
+    //
+    // One report over BOTH setup halves (item N's studio and item Q's
+    // direction), which is why it waits until here. Absent on a run that
+    // planned no setup at all, i.e. most runs.
+    if (setupDecision !== undefined) {
+      const setupSummary = summarizeSetupBudget(setupDecision, setupMeter, setupNotes);
+      setupBudgetSummary = setupSummary;
+      setupBudgetRecord = {
+        estimatedUsd: setupSummary.estimatedUsd,
+        actualUsd: setupSummary.actualUsd,
+        templatesStored: setupTemplatesStored,
+        templatesDropped: setupTemplatesDropped,
+        crossedTarget: setupSummary.crossedTarget,
+        crossedMax: setupSummary.crossedMax,
+        adaptations: setupSummary.adaptations.length,
+      };
+      try {
+        await tools["ledger.appendEvent"]?.execute(
+          {
+            runId: wf.runId,
+            eventId: `${wf.runId}__setup-budget`,
+            level: setupSummary.crossedTarget ? "warn" : "info",
+            message: setupEstimateVsActualLine(setupSummary),
+          },
+          { ctx },
+        );
+      } catch (error) {
+        console.error("setup: could not record the setup-budget ledger row", error);
       }
     }
 
@@ -3077,6 +3513,17 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // or a failed call, leaves the upload exactly as it was.
       const inspect = tools["media.inspectImages"];
       let analyses: Array<{ slot: number; description: string; subjects: string[]; textInImage: string[]; mood: string; suggestedAngle?: string }> = [];
+      /**
+       * The same inspections, keyed by the staged PATH rather than by a
+       * position.
+       *
+       * `analyses[].slot` is the slide the upload was attached for, and
+       * `result.candidates` is the successfully-ingested SUBSET of the request
+       * (`ingest-assets` drops an unreadable object into `unmet` and carries
+       * on), so after one failure the two no longer share an index. The path
+       * is the one key both halves genuinely agree on.
+       */
+      const analysisByPath = new Map<string, { description: string; subjects: string[]; textInImage: string[]; mood: string }>();
       let candidates = result.candidates;
       let visionNote: string | undefined;
       if (inspect !== undefined && result.candidates.length > 0) {
@@ -3086,16 +3533,27 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         );
         if (inspected.status === "success") {
           const byRef = new Map(((inspected.result as { inspections: Array<Record<string, unknown>> }).inspections).map((i) => [i["ref"] as string, i]));
-          analyses = result.candidates.flatMap((_, i) => {
+          analyses = result.candidates.flatMap((candidate, i) => {
             const found = byRef.get(`attached-${i + 1}`);
             if (!found) return [];
+            const analysis = {
+              description: String(found["description"] ?? ""),
+              subjects: (found["subjects"] as string[] | undefined) ?? [],
+              textInImage: (found["textInImage"] as string[] | undefined) ?? [],
+              mood: String(found["mood"] ?? ""),
+            };
+            analysisByPath.set(candidate.path, analysis);
             return [
               {
-                slot: i + 1,
-                description: String(found["description"] ?? ""),
-                subjects: (found["subjects"] as string[] | undefined) ?? [],
-                textInImage: (found["textInImage"] as string[] | undefined) ?? [],
-                mood: String(found["mood"] ?? ""),
+                // The slide this upload was actually attached for, read back
+                // out of the name `media.ingestAssets` wrote — NOT `i + 1`,
+                // which is this candidate's position in the surviving subset
+                // and drifts by one for every attachment that failed. It
+                // reaches the copy prompt as `attachedMedia[].slot`, so a
+                // drifted number would tell the writer slide 1 holds a
+                // photograph that is really on slide 2.
+                slot: ingestedSlotOf(candidate.path) ?? i + 1,
+                ...analysis,
                 ...(typeof found["suggestedAngle"] === "string" ? { suggestedAngle: found["suggestedAngle"] as string } : {}),
               },
             ];
@@ -3115,22 +3573,106 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         }
       }
 
+      // ── Item T: the upload joins the client's MEDIA LIBRARY ──
+      //
+      // Best-effort by contract. The run already holds the description a
+      // vision call was paid for this attempt; filing it means the next post
+      // can reuse the frame for nothing. A failed write is a note on this
+      // step and changes nothing else — the upload still works as a run
+      // attachment exactly as it did before this existed.
+      let libraryNote: string | undefined;
+      const libraryAdd = tools["media.libraryAdd"];
+      if (libraryAdd !== undefined && result.candidates.length > 0) {
+        // ── Paired by SLOT, never by position ──
+        //
+        // `result.candidates` is the successfully-ingested subset of `usable`:
+        // `ingest-assets` pushes an unreadable object, an empty object or an
+        // unsupported scheme into `unmet` and continues, and only fails
+        // wholesale when NOTHING ingested. So `usable[index]` is the wrong
+        // asset the moment one upload fails, and what gets filed is one
+        // photograph's bytes and description under a DIFFERENT upload's
+        // `gcsUri`. That corruption is durable: `media.libraryAdd` keeps the
+        // first sighting and only overwrites `gcsUri` when a later call
+        // supplies one, so a later run would re-ingest the wrong object and
+        // hand the vet a sentence about a picture it is not looking at.
+        //
+        // The slot `media.ingestAssets` wrote into the filename is the only
+        // key that survives a partial failure. A candidate whose name carries
+        // no slot is SKIPPED with a note — filing a frame whose provenance
+        // cannot be established is exactly the thing this comment is about.
+        const unpairedPaths: string[] = [];
+        const entries = result.candidates.flatMap((candidate) => {
+          const slot = ingestedSlotOf(candidate.path);
+          const asset = slot === undefined ? undefined : usable[slot - 1];
+          const analysis = analysisByPath.get(candidate.path);
+          if (asset === undefined) {
+            unpairedPaths.push(candidate.path);
+            return [];
+          }
+          // No description means no row: a library entry whose whole purpose
+          // is a stored sentence is worth nothing without one, and writing a
+          // placeholder would make the next run believe it had been described.
+          if (analysis === undefined || analysis.description.trim().length === 0) return [];
+          return [
+            buildLibraryEntry(
+              {
+                description: analysis.description,
+                subjects: analysis.subjects,
+                textInImage: analysis.textInImage,
+                mood: analysis.mood,
+                ...(inspect?.version !== undefined ? { toolVersion: inspect.version } : {}),
+              },
+              { path: candidate.path, uri: asset.uri, ...(asset.label ? { label: asset.label } : {}) },
+              CLIENT_UPLOAD_RIGHTS,
+            ),
+          ];
+        });
+        const libraryNotes: string[] = [];
+        if (unpairedPaths.length > 0) {
+          libraryNotes.push(
+            `${unpairedPaths.length} staged file(s) could not be matched back to the attachment they came from and were not filed (${unpairedPaths.join(", ")})`,
+          );
+        }
+        if (entries.length > 0) {
+          try {
+            const filed = await libraryAdd.execute({ repoRoot: options.repoRoot, entries }, { ctx });
+            if (filed.status !== "success") {
+              libraryNotes.push(`the media library write did not complete (${filed.status}${"reason" in filed ? `: ${filed.reason}` : ""})`);
+            }
+          } catch (error) {
+            libraryNotes.push(`the media library write did not complete (${(error as Error).message})`);
+          }
+        }
+        if (libraryNotes.length > 0) libraryNote = libraryNotes.join("; ");
+      }
+
       const notes = [
         ...(result.unmet.length > 0 ? [result.unmet.map((u) => `slide ${u.slot}: ${u.reason}`).join("; ")] : []),
         ...(visionNote !== undefined ? [visionNote] : []),
+        ...(libraryNote !== undefined ? [libraryNote] : []),
       ];
       // Phase 0, item F: the vet (`instagram-image-vet@3`) may re-offer a
       // client's upload to the slide it honestly fits rather than the slot
       // upload order assigned it — and it can only do that if it can tell a
       // client photo apart from a harvested one. `ImageCandidate` has no
       // source field, so the tag rides on the description the vet reads.
-      candidates = candidates.map((c, i) => ({ ...c, description: `[client upload, slot ${i + 1}] ${c.description}` }));
+      //
+      // The slot in that tag is the one `media.ingestAssets` wrote into the
+      // filename, not this candidate's position: with one attachment unread,
+      // position N is the upload the client attached for slide N+1, and the
+      // vet would be told the client asked for it on a slide they did not.
+      candidates = candidates.map((c, i) => ({ ...c, description: `[client upload, slot ${ingestedSlotOf(c.path) ?? i + 1}] ${c.description}` }));
       return {
         candidates,
         // Only the slides an asset actually landed on. An attachment that
         // failed to ingest must not reserve a slide the harvesters would then
-        // skip, which would leave it empty for the rest of the run.
-        slots: result.candidates.map((_, index) => index + 1),
+        // skip, which would leave it empty for the rest of the run — which is
+        // exactly what an index-derived list did, because `result.candidates`
+        // is the surviving subset and its indices close over the gap.
+        slots: result.candidates.flatMap((candidate) => {
+          const slot = ingestedSlotOf(candidate.path);
+          return slot === undefined ? [] : [slot];
+        }),
         attached: usable.length,
         analyses,
         ...(notes.length > 0 ? { note: notes.join("; ") } : {}),
@@ -3139,6 +3681,193 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
 
     /** Slides already carrying a client upload, so no tier below wastes a call on them. */
     const tier0Slots = new Set(tier0Pool.slots);
+
+    // ── 05y: Tier 0.5 — the client's own media LIBRARY (Phase 3, item T) ──
+    //
+    // Uploads used to be single-run attachments on an in-memory volume. They
+    // are now filed (at `05z`, below) with the description the run's vision
+    // pass already paid for, so a later post can draw on the archive — and,
+    // because that description is on file, a library frame costs NO vision
+    // call to offer. It is the only tier that is strictly cheaper than doing
+    // nothing: a straight saving against sourcing a stock image.
+    //
+    // Two exclusion rules, neither invented here, and both applied to every
+    // frame: `ledger.listUsedImages` (never twice, ever — read at `05a`,
+    // matched against every `.media-cache/` path a frame has been known by,
+    // because `05y` re-ingests an archived object under a fresh path) is
+    // AUTHORITATIVE, per item T; the immediately previous post's run id
+    // (never back to back), which item P's skeleton history already read at
+    // `02k` is the one source for, is the second filter and the one that
+    // still bites once an entry's capped `knownPaths` have rolled over.
+    //
+    // SKIPPED ENTIRELY on a client-media-only run. `mediaSource: "client"`
+    // means "only media I upload for THIS job": the archive is media they
+    // uploaded for an earlier one, so offering it would put pictures the
+    // client did not supply for this post on slides they chose to have
+    // degrade typographically — and would spend a `media.ingestAssets`
+    // download per archived frame to do it. The step still runs and still
+    // says so, because a skipped read and an empty archive are different
+    // facts about a run.
+    //
+    // NO scene filter here, deliberately: the copy that names each slide's
+    // scene has not been written yet (it is `05`, inside the attempt loop),
+    // and a step that runs once per run cannot filter on it without either
+    // guessing or moving into the loop and re-reading the archive on every
+    // attempt. The archive is offered as a POOL and the vet decides per
+    // slide, exactly as it does for every harvested candidate.
+    const previousPostRunId = skeletonHistory.entries.at(-1)?.runId;
+    const libraryRead = await wf.step.code("05y-read-media-library", async () => {
+      const list = tools["media.libraryList"];
+      const ingest = tools["media.ingestAssets"];
+      /** `selected` is what the archive HELD for this post; `offered` is what actually reached the pool. They differ when a frame's object could not be re-read. */
+      const empty = (note: string) => ({ candidates: [] as ImageCandidate[], selected: [] as string[], offered: [] as string[], excluded: [] as string[], considered: 0, note });
+      if (clientMediaOnly) {
+        return empty(
+          "this run is set to client-provided media only, so the archive of earlier uploads was not read — tier 0 is the only tier and an uncovered photo slide takes the typographic downgrade",
+        );
+      }
+      if (list === undefined) return empty("media.libraryList is not registered on this deployment");
+      // Best-effort in every branch: `not_available` (no workspace),
+      // `tooling_error` (an unparseable document) and an empty archive all
+      // mean "no tier-0.5 candidates" and nothing else changes.
+      try {
+        const outcome = await list.execute({ ...(previousPostRunId !== undefined ? { excludeUsedInRunIds: [previousPostRunId] } : {}) }, { ctx });
+        if (outcome.status !== "success") return empty(`the media library could not be read (${outcome.status}${"reason" in outcome ? `: ${outcome.reason}` : ""})`);
+        const entries = (outcome.result as { entries: MediaLibraryEntry[] }).entries;
+        const selection = selectLibraryCandidates(entries, "", {
+          ...(previousPostRunId !== undefined ? { excludeUsedInRunIds: [previousPostRunId] } : {}),
+          ledgerUsed: usedImages,
+        });
+        const selected = selection.candidates.map((c) => c.entry.assetId);
+        if (selection.candidates.length === 0) {
+          return {
+            ...empty(`${entries.length} archived frame(s) on file, none offerable for this post`),
+            considered: entries.length,
+            // The reasons, without their asset ids: an id in this step's
+            // output is the record of what was OFFERED, and a refused frame
+            // listed beside them would read as one.
+            excluded: selection.excluded.map((e) => e.reason),
+          };
+        }
+        // A library entry is a durable URI, not a file — the `.media-cache/`
+        // directory it was first read from belongs to a run that finished
+        // months ago. Re-ingested through the same tool every other tier
+        // uses, so one set of content-type, size and `assertInside`
+        // guarantees covers library media too. With no ingester registered
+        // the archive is still REPORTED (a trace that says nothing cannot be
+        // told from an empty archive) and simply offers nothing.
+        if (ingest === undefined) {
+          return {
+            ...empty(`${selected.length} archived frame(s) matched, but media.ingestAssets is not registered so none could be re-read`),
+            selected,
+            considered: entries.length,
+            excluded: selection.excluded.map((e) => e.reason),
+          };
+        }
+        // Slots start above EVERY tier-0 slot (`attached` is the number of
+        // attachments requested, not the number that survived), so a library
+        // frame and an upload can never be staged under the same `n<slot>-`
+        // name, and the slot below is a key unique to this request.
+        const requests = selection.candidates.map((candidate, index) => ({
+          candidate,
+          request: libraryIngestRequest(candidate, tier0Pool.attached + index + 1),
+        }));
+        const requestedBySlot = new Map(requests.map(({ candidate, request }) => [request.slot, candidate] as const));
+        const ingested = await ingest.execute(
+          {
+            repoRoot: options.repoRoot,
+            runId: wf.runId,
+            assets: requests.map((r) => r.request),
+          },
+          { ctx },
+        );
+        if (ingested.status !== "success") {
+          return {
+            ...empty(`${selection.candidates.length} archived frame(s) could not be re-ingested (${ingested.status}${"reason" in ingested ? `: ${ingested.reason}` : ""})`),
+            selected,
+            considered: entries.length,
+            excluded: selection.excluded.map((e) => e.reason),
+          };
+        }
+        const staged = (ingested.result as { candidates: ImageCandidate[] }).candidates;
+        // ── Each staged file re-joined to the ENTRY it came from, by slot ──
+        //
+        // Not by array index. `media.ingestAssets` returns the frames it could
+        // read, not one per request: the risk `libraryIngestRequest`'s own doc
+        // comment names — an archived frame whose object a lifecycle rule has
+        // since deleted — drops out of `candidates`, and every later frame
+        // then shifts up one. Index-pairing would hand frame 2's pixels frame
+        // 1's stored sentence, and `06-vet-images` would score `claimMatch`
+        // against a description of a different photograph: the gate built to
+        // catch "the picture does not show the claim" returning a confident
+        // lie, with `offered` naming the wrong asset ids in the trace too.
+        //
+        // A staged file whose name carries no recognisable slot is DROPPED
+        // rather than offered with the generic ingest description: its bytes
+        // are a real client frame, but which one is unknown, and a candidate
+        // the vet cannot judge is worse than one slide fewer.
+        const paired = staged.map((candidate) => {
+          const slot = ingestedSlotOf(candidate.path);
+          return { candidate, entry: slot === undefined ? undefined : requestedBySlot.get(slot)?.entry };
+        });
+        const unpaired = paired.filter((p) => p.entry === undefined).length;
+        // The stored inspection, in the words the vet reads — built by the
+        // same annotator a freshly inspected candidate goes through, so the
+        // `claimMatch` identity rubric gets the named subjects either way.
+        const candidates = paired.flatMap(({ candidate, entry }) =>
+          entry === undefined ? [] : [{ ...candidate, description: describeLibraryCandidate(entry) }],
+        );
+        const offered = paired.flatMap(({ entry }) => (entry === undefined ? [] : [entry.assetId]));
+        const missed = selected.filter((assetId) => !offered.includes(assetId));
+        return {
+          candidates,
+          selected,
+          offered,
+          excluded: selection.excluded.map((e) => e.reason),
+          considered: entries.length,
+          note: [
+            `${candidates.length} archived frame(s) offered at tier 0.5, with no vision call`,
+            ...(missed.length > 0 ? [`${missed.length} matched frame(s) could not be re-read from their durable URI and were skipped`] : []),
+            ...(unpaired > 0 ? [`${unpaired} staged file(s) could not be matched back to the archive entry they came from and were skipped`] : []),
+          ].join("; "),
+        };
+      } catch (error) {
+        return empty(`the media library could not be read (${(error as Error).message})`);
+      }
+    });
+    /** Tier-0.5 paths, so `05c` never pays to re-inspect a frame whose description is already on file. That saving IS this tier. */
+    const libraryPaths = new Set(libraryRead.candidates.map((c) => c.path));
+
+    // ── 04k: freeze this run's ONE generation style (Phase 3, item S) ──
+    //
+    // Resolved ONCE, here, and inherited by every attempt, every revision and
+    // every `image.generate` call — which is the entire promise: a set of
+    // generated images has to read as one set, and re-resolving per attempt
+    // is exactly how the third slide ends up in a different world from the
+    // first. Checkpointed, so a resumed run replays the identical line.
+    //
+    // Placed immediately BEFORE `04c-resolve-templates` rather than after it
+    // (a deliberate deviation from the spec's ordering): the renderer-side
+    // half of item S is a stylesheet, and `04c` is where the documents this
+    // run renders are written. A style frozen after `04c` would reach the
+    // generator and miss the templates.
+    //
+    // The middle argument is the DERIVED kit, not the configured
+    // `BrandTokens`: both treatment gates need `cssVars["--bg"]` and the
+    // accent ring, and neither exists on `BrandTokens`.
+    const frozenStyle: GenerationStyle = await wf.step.code("04k-freeze-generation-style", async () =>
+      resolveGenerationStyle(visualDirection, effectiveKit, brief),
+    );
+    /**
+     * The head fragments every rendered document receives: item M's device
+     * stylesheet and item S's image-treatment sheet, in that order.
+     *
+     * One helper so the two can never arrive apart, and so a client with no
+     * treatment (`"none"` — the default, and forced for a kit with no
+     * treatment latitude) gets a byte-identical document to Phase 2's:
+     * `imageTreatmentCssBlock` returns `""` there.
+     */
+    const headExtras = (): string => [deviceCssBlock(), imageTreatmentCssBlock(frozenStyle)].filter((s) => s.length > 0).join("\n");
 
     // ── 04c: resolve which archetype templates this run can actually render ──
     //
@@ -3186,7 +3915,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         const html = await fs.readFile(path.join(srcDir, file), "utf8");
         // The no-store branded path is the one a BRANDLESS client takes, i.e.
         // exactly the client `extraHeadHtml` exists for (spec finding 10).
-        await fs.writeFile(path.join(absDir, file), composeRawDocument(html, fragments.head, fragments.body, deviceCssBlock()), "utf8");
+        await fs.writeFile(path.join(absDir, file), composeRawDocument(html, fragments.head, fragments.body, headExtras()), "utf8");
       }
       return { templateDir: relDir, files: htmlFiles.filter((f) => ARCHETYPE_TEMPLATE_FILES.includes(f)) };
     };
@@ -3236,7 +3965,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             // brand kit has no head fragment at all, so folding it into
             // `brandHeadHtml` would silently lose devices on exactly the
             // clients this parameter exists for.
-            extraHeadHtml: deviceCssBlock(),
+            extraHeadHtml: headExtras(),
           });
           const files = Object.values(materialized.files);
           return {
@@ -3353,7 +4082,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                 clientTemplateFile: frozen.brandTokens.slideTemplate,
                 ...(fragments.head !== undefined ? { brandHeadHtml: fragments.head } : {}),
                 ...(fragments.body !== undefined ? { brandBodyHtml: fragments.body } : {}),
-                extraHeadHtml: deviceCssBlock(),
+                extraHeadHtml: headExtras(),
               });
             } else {
               // The branded no-store copy: pure local disk work, no registry
@@ -3386,7 +4115,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           try {
             await fs.writeFile(
               path.join(absDir, templateFileName(archetype.archetypeId)),
-              composeCustomArchetypeDocument(archetype, fragments.head, fragments.body, deviceCssBlock()),
+              composeCustomArchetypeDocument(archetype, fragments.head, fragments.body, headExtras()),
               "utf8",
             );
           } catch (error) {
@@ -4080,7 +4809,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       let attemptPool =
         imageCandidatePool.length > 0
           ? imageCandidatePool
-          : tier0Pool.candidates;
+          // Phase 3, item T: tier 0.5 — the client's own archive — sits after
+          // this run's fresh uploads (a fresh upload is a fresh instruction)
+          // and before 05b's harvesters. It is absent on a client-media-only
+          // run for the reason `05y` states: `mediaSource: "client"` is "only
+          // media I upload for THIS job", and `05y` returns nothing there.
+          : [...tier0Pool.candidates, ...(clientMediaOnly ? [] : libraryRead.candidates)];
       // Why the pool is empty, in the sourcing layer's own words. Without it
       // the hold below could only say "no candidate qualified", which reads as
       // an editorial verdict on the topic and sent whoever debugged prep run
@@ -4117,7 +4851,18 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // want of the picture nobody went looking for, which is a
       // self-fulfilling downgrade straight into the defect item M exists to
       // remove.
-      const photoSlideNs = new Set(copy.slides.filter((s) => HERO_IMAGE_LAYOUTS.has(resolveLayout(s, availableTemplates).layout)).map((s) => s.n));
+      // Phase 3, item R: AND the scene brief actually asked for a picture.
+      // `source: "none"` is the writer saying this idea is not photographable
+      // — it then gets `typographicSelection(...)` below instead of an
+      // unfillable entry, so it costs no search, no vision inspection and no
+      // vet slot, and (this is the load-bearing half) it never enters
+      // `downgradedForImagesThisAttempt`: it lost nothing, so it must not be
+      // waived by the cover/interest-floor waivers that exist for a LOST
+      // photograph. `default:no-image-means-device` is what keeps the lever
+      // honest — a slide that chose no picture must carry a device.
+      const photoSlideNs = new Set(
+        copy.slides.filter((s) => HERO_IMAGE_LAYOUTS.has(resolveLayout(s, availableTemplates).layout) && needsImageSourcing(normaliseVisualNeed(s))).map((s) => s.n),
+      );
       // Phase 0, item F: Tier-0 slots are harvested for TOO on a system-managed
       // run. The vet may move a client's upload to the slide it honestly fits,
       // and the slot it left behind then has alternatives instead of a forced
@@ -4145,7 +4890,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               // Only the slides Tier 0 did not already fill. Searching for a
             // slide that already has the client's own photo on it would be
             // paying a harvester to produce a candidate that must lose.
-            needs: slidesNeedingSource.map((s) => ({ n: s.n, query: s.visualNeed })),
+            needs: slidesNeedingSource.map((s) => ({ n: s.n, query: retrievalQueryFor(normaliseVisualNeed(s)) })),
             },
             { ctx },
           ),
@@ -4265,42 +5010,48 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // Cheapest path (budget): over the hard max the per-candidate vision
         // pass is optional spend and is skipped; the vet still judges every
         // candidate, and rights/watermark/claim-match are still enforced.
-        if (inspectTool !== undefined && meter.posture !== "cheapest-path") {
+        // Phase 3, item T: a tier-0.5 frame is ALREADY described — that is the
+        // whole saving — so it is passed through rather than re-inspected,
+        // and a pool made only of archived frames costs no vision call at all.
+        const needsInspection = attemptPool.filter((c) => !libraryPaths.has(c.path));
+        if (inspectTool !== undefined && meter.posture !== "cheapest-path" && needsInspection.length > 0) {
           attemptPool = await wf.step.code(rev(`05c-inspect-candidates-attempt-${attempt}`), async (): Promise<ImageCandidate[]> => {
-            const enriched: ImageCandidate[] = [];
+            // Keyed by path and re-assembled in the ORIGINAL pool order at
+            // the end, so passing a tier-0.5 frame through does not promote
+            // it above this run's own uploads.
+            const inspectedByPath = new Map<string, ImageCandidate | null>();
             let dropped = 0;
-            for (let start = 0; start < attemptPool.length; start += 12) {
-              const batch = attemptPool.slice(start, start + 12);
+            for (let start = 0; start < needsInspection.length; start += 12) {
+              const batch = needsInspection.slice(start, start + 12);
               const inspected = await inspectTool.execute(
                 { repoRoot: options.repoRoot, images: batch.map((c, i) => ({ ref: `c-${start + i}`, path: c.path })), purpose: "candidate-vetting" },
                 { ctx },
               );
-              if (inspected.status !== "success") {
-                enriched.push(...batch);
-                continue;
-              }
+              if (inspected.status !== "success") continue;
               const byRef = new Map(((inspected.result as { inspections: Array<Record<string, unknown>> }).inspections).map((i) => [i["ref"] as string, i]));
               batch.forEach((c, i) => {
                 const found = byRef.get(`c-${start + i}`);
-                if (!found) {
-                  enriched.push(c);
-                  return;
-                }
+                if (!found) return;
                 if (found["quality"] === "unusable" || found["hasWatermark"] === true) {
                   dropped += 1;
+                  inspectedByPath.set(c.path, null);
                   return;
                 }
                 // Same annotation the tier-0 path builds, flags included:
                 // description, then the NAMED subjects the vet's claimMatch
                 // rubric is written against, then legible text, then the
                 // screenshot / AI-generated flags.
-                enriched.push({ ...c, description: describeWithVision(c.description, found, { includeFlags: true }) });
+                inspectedByPath.set(c.path, { ...c, description: describeWithVision(c.description, found, { includeFlags: true }) });
               });
             }
             if (dropped > 0) sourcingReason = `${sourcingReason ? `${sourcingReason}; ` : ""}${dropped} candidate(s) dropped by vision inspection (watermarked or unusable)`;
-            return enriched;
+            return attemptPool.flatMap((c) => {
+              if (!inspectedByPath.has(c.path)) return [c];
+              const enrichedCandidate = inspectedByPath.get(c.path);
+              return enrichedCandidate === null || enrichedCandidate === undefined ? [] : [enrichedCandidate];
+            });
           });
-          spend(rev(`05c-inspect-candidates-attempt-${attempt}`), undefined, attemptPool.length * STEP_COST_ESTIMATES_USD.visionInspectPerImage);
+          spend(rev(`05c-inspect-candidates-attempt-${attempt}`), undefined, needsInspection.length * STEP_COST_ESTIMATES_USD.visionInspectPerImage);
         }
         const imageExec = await wf.step.agent(rev(`06-vet-images-attempt-${attempt}`), imageAgent, {
           // Only the photo slides are put in front of the gate. A typographic
@@ -4313,7 +5064,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // slide it honestly fits.
           slides: copy.slides
             .filter((s) => photoSlideNs.has(s.n))
-            .map((s) => ({ n: s.n, headline: s.headline, body: s.body, visualNeed: s.visualNeed, isClientPhotoSlot: tier0Slots.has(s.n) })),
+            .map((s) => ({ n: s.n, headline: s.headline, body: s.body, ...vetSubjectFor(normaliseVisualNeed(s)), isClientPhotoSlot: tier0Slots.has(s.n) })),
           candidatePool: attemptPool,
           usedImages,
         });
@@ -4401,7 +5152,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             // renders at a different ratio to the template gets cropped, and a
             // crop is exactly how a carefully-composed frame loses its subject.
             aspectRatio: aspectRatioForCanvas(frozen.styleConfig.canvas),
-            art: artDirectionFor(frozen.brandTokens),
+            // Phase 3, items Q + S: this client's own direction, with the
+            // run's FROZEN style lock winning over whatever the direction
+            // says — `buildArtDirection` re-reads a direction that can drift
+            // between attempts, `frozenStyle` cannot.
+            art: { ...buildArtDirection(frozen.brandTokens, visualDirection), ...(frozenStyle.line !== undefined ? { styleLock: frozenStyle.line } : {}) },
           }),
         },
       ];
@@ -4417,7 +5172,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         if (clientMediaOnly || unfillable.length === 0 || tier.tool === undefined) continue;
 
         let gaps: ImageGap[] = unfillable
-          .map((u) => ({ n: u.n, prompt: copy.slides.find((sl) => sl.n === u.n)?.visualNeed }))
+          .map((u) => {
+            // Phase 3, item R: the FULL scene brief is what `image.generate`
+            // interpolates, and it is the field that was starved — a twelve-word
+            // keyword string was never a brief for a generator.
+            const slide = copy.slides.find((sl) => sl.n === u.n);
+            return { n: u.n, prompt: slide === undefined ? undefined : generationPromptFor(normaliseVisualNeed(slide)) };
+          })
           .filter((g): g is ImageGap => g.prompt !== undefined);
         if (gaps.length === 0) continue;
 
@@ -4473,7 +5234,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // rescue candidates against the slide's claim too.
           slides: gaps.map((g) => {
             const slide = copy.slides.find((sl) => sl.n === g.n);
-            return { n: g.n, headline: slide?.headline ?? "", body: slide?.body ?? "", visualNeed: g.prompt, isClientPhotoSlot: tier0Slots.has(g.n) };
+            return { n: g.n, headline: slide?.headline ?? "", body: slide?.body ?? "", scene: g.prompt, isClientPhotoSlot: tier0Slots.has(g.n) };
           }),
           candidatePool: tierPool,
           usedImages,
@@ -4864,6 +5625,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // neither a numeral nor model-authored copy — an unsourced
           // timeline/unit_grid's "illustrative, not measured" note.
           ...(targetLanguage !== undefined ? { targetLanguage } : {}),
+          // Phase 3, item S: the run's ONE frozen treatment, per slide, for
+          // reporting and trace. The grade itself is applied by the
+          // stylesheet `headExtras()` splices into every document, so this is
+          // additive and `"none"` emits nothing.
+          imageTreatment: frozenStyle.treatment,
         });
         // Phase 2, item L: the measurement's anchors, per slide.
         //
@@ -5841,6 +6607,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           ...(setupBudgetSummary !== undefined
             ? { setup: { budget: setupBudgetSummary, budgetLine: setupEstimateVsActualLine(setupBudgetSummary) } }
             : {}),
+          // Phase 3, items Q + S — where this client's generated images get
+          // their look, and what the whole set was graded with. `source` is
+          // the field a reviewer needs: for most clients it reads
+          // `brand+brief`, because visual-pattern consent is usually absent.
+          ...(visualDirectionReport !== undefined ? { visualDirection: visualDirectionReport } : {}),
+          styleLock: { id: frozenStyle.id, ...(frozenStyle.line !== undefined ? { line: frozenStyle.line } : {}), source: frozenStyle.source, treatment: frozenStyle.treatment, treatmentReason: frozenStyle.treatmentReason, ...(frozenStyle.tintHex !== undefined ? { tintHex: frozenStyle.tintHex } : {}) },
           // Phase 2, item L — what the shipped attempt's pixels MEASURED:
           // per-slide shares, every finding, the clause-E waivers, the
           // warnings that never gate, and the slides that could not be read.
@@ -6423,6 +7195,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             // honestly.
             ...(studioReport !== undefined ? { templateStudio: studioReport } : {}),
             ...(setupBudgetSummary !== undefined ? { setup: { budget: setupBudgetSummary } } : {}),
+          // Phase 3, items Q + S — where this client's generated images get
+          // their look, and what the whole set was graded with. `source` is
+          // the field a reviewer needs: for most clients it reads
+          // `brand+brief`, because visual-pattern consent is usually absent.
+          ...(visualDirectionReport !== undefined ? { visualDirection: visualDirectionReport } : {}),
+          styleLock: { id: frozenStyle.id, ...(frozenStyle.line !== undefined ? { line: frozenStyle.line } : {}), source: frozenStyle.source, treatment: frozenStyle.treatment, treatmentReason: frozenStyle.treatmentReason, ...(frozenStyle.tintHex !== undefined ? { tintHex: frozenStyle.tintHex } : {}) },
             interest: {
               perSlide: review.output.interest.perSlide,
               findings: review.output.interest.findings,
@@ -6685,6 +7463,36 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       return id;
     });
 
+    // ── 09g: the shipped frames, recorded as LIBRARY uses (Phase 3, item T) ──
+    //
+    // Beside `ledger.recordUsedImages`, never instead of it: that ledger is
+    // the "never twice, ever" rule and stays authoritative. This records
+    // `{ runId, slide, at }` per frame, which is what makes "never twice in a
+    // row" answerable next run — and what lets a frame that HAS shipped
+    // survive eviction ahead of one that never has. Outside `09b` because a
+    // step may not nest inside another; after it, because a use is only real
+    // once the post is delivered — the same rule `recordUsedImages` follows.
+    // Best-effort and idempotent per `(runId, slide)`, so a resumed delivery
+    // counts nothing twice; `groupShippedUses` drops every path outside
+    // `.media-cache/`, which is every rendered slide PNG.
+    const shippedLibraryUses = groupShippedUses(
+      review.output.selections.flatMap((sel) => (sel.imagePath === null ? [] : [{ path: sel.imagePath, slide: sel.n }])),
+    );
+    if (shippedLibraryUses.length > 0 && tools["media.libraryAdd"] !== undefined) {
+      await wf.step.code("09g-record-media-library-use", async () => {
+        try {
+          const outcome = await tools["media.libraryAdd"]!.execute({ repoRoot: options.repoRoot, entries: shippedLibraryUses }, { ctx });
+          if (outcome.status !== "success") {
+            return { recorded: 0, note: `the media library use was not recorded (${outcome.status}${"reason" in outcome ? `: ${outcome.reason}` : ""})` };
+          }
+          const result = outcome.result as { usesAppended: number; skipped: Array<{ path: string; reason: string }> };
+          return { recorded: result.usesAppended, skipped: result.skipped.length };
+        } catch (error) {
+          return { recorded: 0, note: `the media library use was not recorded (${(error as Error).message})` };
+        }
+      });
+    }
+
     return {
       postId: runClaim.postId,
       topic: topicClaim.topic,
@@ -6748,22 +7556,7 @@ function aspectRatioForCanvas(canvas: { w: number; h: number }): "1:1" | "3:4" |
   ).id;
 }
 
-/**
- * Art direction assembled from the client's own brand tokens, or undefined
- * when they have declared none.
- *
- * Undefined rather than a set of tasteful defaults, deliberately: invented
- * direction would make every client's generated slides look like whatever this
- * function happened to prefer, which is worse than the neutral brief the
- * generator already falls back to. Only what the client actually declared.
- */
-function artDirectionFor(tokens: BrandTokens): Record<string, unknown> | undefined {
-  const art = {
-    ...(tokens.aesthetic ? { aesthetic: tokens.aesthetic } : {}),
-    ...(tokens.lighting ? { lighting: tokens.lighting } : {}),
-    ...(tokens.palette && tokens.palette.length > 0 ? { palette: tokens.palette } : {}),
-    ...(tokens.accentColor ? { accentColor: tokens.accentColor } : {}),
-    ...(tokens.visualMood ? { mood: tokens.visualMood } : {}),
-  };
-  return Object.keys(art).length > 0 ? art : undefined;
-}
+// `artDirectionFor` lived here until Phase 3, item Q. It is now
+// `buildArtDirection(tokens, direction?)` in `visual-direction.ts` — the same
+// function widened by one argument, with a test of its own pinning that
+// `direction === undefined` is byte-identical to what this returned.

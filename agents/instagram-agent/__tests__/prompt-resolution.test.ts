@@ -8,6 +8,7 @@ import { InstagramCopyAgent } from "../src/agent/instagram-copy-agent.js";
 import { InstagramImageVettingAgent } from "../src/agent/instagram-image-vetting-agent.js";
 import { InstagramAngleAgent } from "../src/agent/instagram-angle-agent.js";
 import { InstagramVisualQaAgent } from "../src/agent/instagram-visual-qa-agent.js";
+import { InstagramArtDirectorAgent } from "../src/agent/instagram-art-director-agent.js";
 import { SKELETON_RULE_SENTENCE } from "../src/workflow/skeleton-memory.js";
 import { fakeRouterSequence, finalTurn, goodCopyOutput, goodImageVettingOutput, goodResearchOutput, makePromptStore, PROMPTS_ROOT } from "./test-helpers.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
@@ -205,14 +206,14 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     expect(added).not.toMatch(/[—–]|--/);
   });
 
-  it("instagram-copy@14 resolves, latest.md is byte-identical to 14.md, the H1 says v14, and v14 is v13 plus items L/M/O/P", async () => {
+  it("instagram-copy@14 still resolves frozen, the H1 says v14, and v14 is v13 plus items L/M/O/P", async () => {
+    // Phase 3 bumped the pointer: `latest.md` now carries @15's bytes (the
+    // test two below asserts that), so this one no longer compares against
+    // it. v14 itself must keep resolving unchanged — an in-flight checkpoint
+    // pinned to it still reads this exact file.
     const promptStore = makePromptStore();
     const v13 = await promptStore.getPrompt("instagram-copy", "13");
     const v14 = await promptStore.getPrompt("instagram-copy", "14");
-    expect(v14).toBe(await promptStore.getPrompt("instagram-copy"));
-    expect(readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "14.md"), "utf8")).toBe(
-      readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "latest.md"), "utf8"),
-    );
     expect(v14.split(/\r?\n/)[0]).toBe("# Instagram Copy Craft Guide, v14");
 
     // v14 changes exactly three regions of v13: §7 (the menu, the degrade
@@ -457,25 +458,50 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // this asserts is that the rows exist at all, which is the step a prompt
     // bump most often forgets.
     const registry = readFileSync(path.join(PROMPTS_ROOT, "..", "..", "..", "scripts", "prompt-registry.ts"), "utf8");
-    expect(registry).toContain(`"13", "14"`);
-    expect(registry).toMatch(/promptId: "instagram-copy"[\s\S]{0,400}latestVersion: "14"/);
+    expect(registry).toContain(`"13", "14", "15"`);
+    expect(registry).toMatch(/promptId: "instagram-copy"[\s\S]{0,400}latestVersion: "15"/);
+    // Phase 3 (items Q and R).
+    expect(registry).toContain(`{ promptId: "instagram-image-vet", agent: "instagram-agent", versions: ["1", "2", "3", "4"], latestVersion: "4" }`);
+    expect(registry).toContain(`{ promptId: "instagram-art-director", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
     expect(registry).toContain(`{ promptId: "instagram-visual-qa", agent: "instagram-agent", versions: ["1", "2", "3", "4"], latestVersion: "4" }`);
     expect(registry).toContain(`{ promptId: "instagram-design-brief", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
     expect(registry).toContain(`{ promptId: "instagram-template-designer", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
     expect(registry).toContain(`{ promptId: "instagram-template-set-review", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
   });
 
-  it("RED UNTIL WIRED — the copy and visual-QA agents are pinned to @14 and @4 (integrator: WP-C5 notes (b) and (d))", async () => {
-    // `instagram-copy-agent.ts` and `instagram-visual-qa-agent.ts` are not
-    // WP-C5's files: the prompt versions, the registry rows and this pin are.
-    // Until the integrator bumps the two `skillRef` literals, both prompts
-    // exist and resolve but no run reads them, so this is the forcing
-    // function for the last two lines of the wiring.
+  it("every agent reads the version this phase shipped: copy @15, visual QA @4, image vet @4, art director @1", async () => {
+    // The last line of a prompt bump, and the one most often forgotten: a new
+    // prompt file that no `skillRef` points at exists, resolves, and is read
+    // by nothing.
     const promptStore = makePromptStore();
     const copy = new InstagramCopyAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
-    expect((copy as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-copy@14");
+    expect((copy as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-copy@15");
     const qa = new InstagramVisualQaAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
     expect((qa as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-visual-qa@4");
+    const vet = new InstagramImageVettingAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
+    expect((vet as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-image-vet@4");
+    const director = new InstagramArtDirectorAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
+    expect((director as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-art-director@1");
+  });
+
+  it("instagram-copy@15, instagram-image-vet@4 and instagram-art-director@1 resolve, each byte-identical to its own latest.md", async () => {
+    // Phase 3 (items Q and R). The byte comparison is the one `check:prompts`
+    // makes too, and it is here as well because a drifted `latest.md` is the
+    // failure mode where a run silently reads a DIFFERENT prompt from the one
+    // its version pin names.
+    const promptStore = makePromptStore();
+    for (const [promptId, version, h1] of [
+      ["instagram-copy", "15", "# Instagram Copy Craft Guide, v15"],
+      ["instagram-image-vet", "4", "# Instagram Image Vetting Craft Guide — v4"],
+      ["instagram-art-director", "1", "# Instagram Art Direction Guide — v1"],
+    ] as const) {
+      const pinned = await promptStore.getPrompt(promptId, version);
+      expect(pinned, `${promptId}@${version} must be what "latest" resolves to`).toBe(await promptStore.getPrompt(promptId));
+      expect(readFileSync(path.join(PROMPTS_ROOT, promptId, `${version}.md`), "utf8")).toBe(
+        readFileSync(path.join(PROMPTS_ROOT, promptId, "latest.md"), "utf8"),
+      );
+      expect(pinned.split(/\r?\n/)[0]).toBe(h1);
+    }
   });
 
   it("instagram-angle@1 resolves, latest.md is byte-identical to 1.md, and the agent that reads it is pinned to Sonnet", async () => {
@@ -535,13 +561,16 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // shifts thirty files' turn lists at once.
     // Phase 2 item N inserted the four Template Studio turns immediately
     // after `brief` (they run at `00c*`, after `00b2` and before `03c`), so
-    // they belong there and nowhere else in this list.
+    // they belong there and nowhere else in this list. Phase 3 item Q's art
+    // director (`00d2`) follows them, on the same setup meter, still before
+    // `03-claim-topic`.
     expect([...TURN_ORDER]).toEqual([
       "brief",
       "designBrief",
       "templateDesign",
       "setReview",
       "templateRepair",
+      "artDirection",
       "scout",
       "research",
       "angle",
@@ -566,6 +595,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
       templateDesign: ["design1", "design2"],
       setReview: "setReview",
       templateRepair: ["repair1"],
+      artDirection: "artDirection",
     });
     const outputs = labelled.map((turn) => (turn().output as { output: unknown }).output);
     expect(outputs).toEqual([
@@ -575,6 +605,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
       "design2",
       "setReview",
       "repair1",
+      "artDirection",
       "scout",
       "research",
       "angle",

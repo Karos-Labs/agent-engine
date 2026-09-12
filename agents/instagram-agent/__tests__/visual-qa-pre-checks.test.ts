@@ -65,7 +65,8 @@ describe("checkPaletteWithinKit — an includes() check, never a model judgment"
 
 describe("DEFAULT_RENDER_RULES + resolveRenderRules — Phase 0 item D's rule source", () => {
   it("every default rule is check:'render', schema-valid, with a unique 'default:'-namespaced id", () => {
-    expect(DEFAULT_RENDER_RULES.length).toBe(4);
+    // Five since Phase 3, item R appended `default:no-image-means-device`.
+    expect(DEFAULT_RENDER_RULES.length).toBe(5);
     for (const rule of DEFAULT_RENDER_RULES) {
       expect(rule.check).toBe("render");
       expect(rule.id.startsWith("default:")).toBe(true);
@@ -115,14 +116,16 @@ describe("DEFAULT_RENDER_RULES + resolveRenderRules — Phase 0 item D's rule so
     ]);
   });
 
-  it("the four rule ids are unchanged — only their texts grew to name the new archetypes and devices", () => {
+  it("the original four rule ids are unchanged and still first — item R's is APPENDED", () => {
     // A finding in the ledger or on the gate payload is keyed by rule id, so
-    // renaming one would silently orphan every historical finding.
+    // renaming one would silently orphan every historical finding — and
+    // INSERTING one would do the same to anything that reads them by index.
     expect(DEFAULT_RENDER_RULES.map((r) => r.id)).toEqual([
       "default:cover-carries-device",
       "default:two-elements-per-slide",
       "default:numbers-are-devices",
       "default:closer-carries-cta",
+      "default:no-image-means-device",
     ]);
     const byId = new Map(DEFAULT_RENDER_RULES.map((r) => [r.id, r.description]));
     expect(byId.get("default:cover-carries-device")).toContain("cover");

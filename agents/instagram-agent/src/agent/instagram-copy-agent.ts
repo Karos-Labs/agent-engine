@@ -154,6 +154,27 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyOutput> {
     // the writer the scout had "found a live story", which turned every
     // evergreen subject's `whyNow` into an invented timeliness claim no
     // downstream check could catch.
-    skillRef: "instagram-copy@14",
+    // v15 (Phase 3, item R, 2026-09): `visualNeed` becomes a scene brief —
+    // what is in frame, why the slide is weaker without it, an explicit
+    // source choice (client-upload / stock / generate / none) and optional
+    // `searchTerms`. §6's keyword-search prose shrank because the split made
+    // it obsolete: retrieval reads `searchTerms`, generation and vetting read
+    // the scene. §22 documents the new field and states the bias — photo-
+    // driven is the default, `"none"` is for ideas that are not
+    // photographable, and a `"none"` slide must carry a device
+    // (`default:no-image-means-device`).
+    //
+    // Cost, BOTH halves — the input one is the smaller one. Input: +1,822
+    // prompt characters ≈ +455 tokens ≈ +$0.0014 per attempt. Output: the
+    // four-key `visualNeed` object replaces a ~12-word string on EVERY
+    // slide, ≈115-130 tokens against ≈18, so ≈+800 output tokens per draft ≈
+    // +$0.012 at $15/1M — nine tenths of the growth, and invisible to an
+    // input-only count. `STEP_COST_ESTIMATES_USD.copyAttempt` is re-priced
+    // 0.1455 → 0.159 in the same commit, which is the rule `run-budget.ts`
+    // states about itself. A `"none"` slide still saves six vision
+    // inspections ($0.006), so a carousel with two of them gives back
+    // roughly what the prompt growth costs — but the estimator does not
+    // bank that, because `DEFAULT_RUN_SHAPE.photoSlides` stays at 6.
+    skillRef: "instagram-copy@15",
   };
 }

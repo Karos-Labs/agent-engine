@@ -261,8 +261,38 @@ function ownAssetsFrom(knowledge: ClientKnowledge | undefined): ClientBrief["own
  * fingerprint them and stopped recognising a thin brief the moment an agent
  * wrote one, so it reads `sources` instead.
  */
-const GENERIC_ICP_PREFIX = "practitioners in ";
-const GENERIC_ICP_NO_INDUSTRY = "this client's customers (no target-audience document or industry on file)";
+export const GENERIC_ICP_PREFIX = "practitioners in ";
+export const GENERIC_ICP_NO_INDUSTRY = "this client's customers (no target-audience document or industry on file)";
+
+/**
+ * The one-liner written when the client profile carries no description, no
+ * tagline, no name and no industry.
+ *
+ * Exported for the same reason the two ICP constants above are: it is a
+ * SENTENCE ABOUT MISSING DATA, not a fact about a business, and a consumer
+ * that treats it as prose will say something absurd. `fallbackVisualDirection`
+ * is the one that bit — it piped this string into an image model's brief
+ * ("Photograph the work itself: an unnamed business: no profile description,
+ * tagline, name or industry on file") and into the run-wide style lock. Any
+ * consumer that turns brief prose into instructions must skip a value that
+ * matches one of these and record a gap instead.
+ */
+export const PLACEHOLDER_ONE_LINER = "an unnamed business: no profile description, tagline, name or industry on file";
+
+/**
+ * True when a brief field is one of the placeholders above rather than
+ * something a human wrote about this client.
+ *
+ * `GENERIC_ICP_PREFIX` is deliberately NOT treated as one: "practitioners in
+ * fintech" names a real declared industry and is a legitimate, if generic,
+ * subject for a photograph. The two hard placeholders are the ones whose text
+ * is a statement that data is missing.
+ */
+export function isPlaceholderBriefValue(value: string | undefined): boolean {
+  const tidy = value?.trim();
+  if (tidy === undefined || tidy.length === 0) return true;
+  return tidy === PLACEHOLDER_ONE_LINER || tidy === GENERIC_ICP_NO_INDUSTRY;
+}
 
 /**
  * The context documents that carry what a post has to be legible AS: what
@@ -382,7 +412,7 @@ export function deriveClientBrief(input: DeriveClientBriefInput): ClientBrief {
     if (name && industry) oneLiner = `${name}, ${industry}`;
     else oneLiner = name ?? industry;
     if (oneLiner === undefined) {
-      oneLiner = "an unnamed business: no profile description, tagline, name or industry on file";
+      oneLiner = PLACEHOLDER_ONE_LINER;
       gaps.push("no profile description, brand tagline, name or industry: the one-liner is a placeholder statement of that fact");
     } else {
       gaps.push("no profile description or brand tagline: the one-liner is the client's name and industry only");

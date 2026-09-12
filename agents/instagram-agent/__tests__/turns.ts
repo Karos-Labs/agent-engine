@@ -21,6 +21,7 @@ import { goodAngleProposal } from "./angle-fixtures.js";
  *   templateDesign 00c4-design-template-<id>  (Phase 2 item N; ONE PER TEMPLATE, so this key takes an ARRAY)
  *   setReview      00c6-review-template-set   (Phase 2 item N; skipped when the setup budget turned the set review off)
  *   templateRepair 00c7-repair-template-<id>  (Phase 2 item N; at most two per setup, so this key takes an ARRAY too)
+ *   artDirection   00d2-derive-visual-direction (Phase 3 item Q, SETUP budget; only when `00d` resolved `derive` — `setupTestEnvironment` seeds a fresh direction, so most fixtures omit it)
  *   scout          03c-trend-scout            (every run; skipped by the workflow only when 03b fetched no documents)
  *   research   04b-research-extract-facts
  *   angle      04i-propose-angles         (Phase 1; once per REVISION, not per attempt)
@@ -45,6 +46,8 @@ export interface StandardTurnFixtures {
   setReview?: unknown;
   /** RFC-14 item N, `00c7` — at most two repairs per setup, one turn each. */
   templateRepair?: readonly unknown[];
+  /** RFC-14 item Q, `00d2` — one turn per client per 90 days, on the SETUP budget. */
+  artDirection?: unknown;
   scout?: unknown;
   research?: unknown;
   angle?: unknown;
@@ -73,6 +76,10 @@ export const TURN_ORDER = [
   "templateDesign",
   "setReview",
   "templateRepair",
+  // Phase 3 item Q's `00d2` runs immediately after the studio block and
+  // before `03-claim-topic`, on the same setup meter — so its turn sits here,
+  // after `templateRepair` and before `scout`.
+  "artDirection",
   "scout",
   "research",
   "angle",

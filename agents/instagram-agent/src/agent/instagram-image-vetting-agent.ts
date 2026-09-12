@@ -72,6 +72,14 @@ export class InstagramImageVettingAgent extends BaseAgent<ImageVettingOutput> {
     // `[client upload, slot N]` candidate serve whichever photo slide it
     // honestly fits, instead of being forced onto slot N. Costs ~1k more
     // input tokens per call (≈ $0.0003 on Flash) and no new call. v2 frozen.
-    skillRef: "instagram-image-vet@3",
+    // v4 (Phase 3, item R, 2026-09): the slide arrives as a SCENE BRIEF —
+    // `scene` (what is in frame) plus, when the writer authored one, `why`
+    // (why the slide is weaker without it) — in place of the old twelve-word
+    // `visualNeed`. The rubric is restated around it: judge whether the
+    // candidate is EVIDENCE FOR THE CLAIM, not whether it contains the listed
+    // objects. The `claimMatch` floor is unchanged and the workflow still
+    // re-checks it deterministically. ≈ +250 input tokens per call
+    // (≈ $0.0002 on Flash) and no new call. v3 frozen.
+    skillRef: "instagram-image-vet@4",
   };
 }

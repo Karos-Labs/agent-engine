@@ -64,7 +64,7 @@ export const MAX_RUN_SPEND_USD = 1.5;
 /**
  * Per-unit estimates the meter falls back to when a step reports no cost (or
  * under-reports), and the pre-run estimator multiplies by the plan. Keys name
- * the unit: `copyAttempt` is one Sonnet copy draft at the `instagram-copy@14`
+ * the unit: `copyAttempt` is one Sonnet copy draft at the `instagram-copy@15`
  * input size; `generatedImage` and `scraperExecution` are billed per unit,
  * not per step; `angle` and `brief` are Phase 1's Sonnet steps, priced into
  * `rawEstimate` through `RunShape.angleRounds` and `RunShape.briefRefresh`.
@@ -77,8 +77,30 @@ export const MAX_RUN_SPEND_USD = 1.5;
  */
 export const STEP_COST_ESTIMATES_USD = {
   /**
-   * Sonnet, ~21k in / ~5.5k out, one draft of copy: $0.063 in + $0.0825 out
-   * at $3/$15 per 1M = $0.1455.
+   * Sonnet, ~21.5k in / ~6.3k out, one draft of copy: $0.0645 in + $0.0945
+   * out at $3/$15 per 1M = $0.159.
+   *
+   * ## Phase 3 (`instagram-copy@14` → `@15`), and why the output moved again
+   *
+   * **Input** (≈+455 tokens, ≈+$0.0014): the prompt went 41,727 → 43,549
+   * characters — §22 (the scene brief and the source choice) and §6's
+   * rewrite around it.
+   *
+   * **Output** (≈+800 tokens, ≈+$0.012), which is again the larger half.
+   * §22 replaces a ~12-word `visualNeed` STRING with an object carrying four
+   * keys on EVERY slide: `scene` (≤240 chars), `why` (≤200 chars), `source`,
+   * and two to four `searchTerms`. That is ≈115-130 output tokens a slide
+   * against ≈18 before, so ≈+100-115 per slide and ≈+800 across an
+   * eight-slide draft.
+   *
+   * The agent-side note on `instagram-copy-agent.ts` counted only the input
+   * half at first, which is the same mistake @13 → @14 made: on Sonnet an
+   * output token costs 5x an input one, so an input-only re-price
+   * under-counts a prompt that asks for MORE STRUCTURE by roughly nine
+   * tenths of the real growth. Over three attempts the difference between
+   * $0.1455 and $0.159 is $0.0405 — most of an image-cap step.
+   *
+   * ## Phase 2 (`@13` → `@14`), kept because the arithmetic composes
    *
    * Phase 2 grew this call on BOTH sides, and the output side is the larger
    * of the two — which is the half an input-only re-price missed, because on
@@ -107,13 +129,13 @@ export const STEP_COST_ESTIMATES_USD = {
    * authored layouts would pull an image lever on the majority of runs that
    * author none. The live meter's posture and `ewmaRatio` close the rest.
    *
-   * **These numbers must describe the call `instagram-copy@14` actually
+   * **These numbers must describe the call `instagram-copy@15` actually
    * makes.** At 3 attempts the difference between 0.126 and 0.15 is $0.072 —
    * more than the whole first image lever — and an estimate that flatters
    * itself pulls no lever, so the plan the planner chooses is not the plan
    * the run can afford (`__tests__/run-budget.test.ts` pins the arithmetic).
    */
-  copyAttempt: 0.1455,
+  copyAttempt: 0.159,
   /** Flash image vet, ~6k in / 1.5k out — the 06 call or one rescue-tier re-vet. */
   vetCall: 0.006,
   /** Flash vision inspection, per image (05c candidate batches, 08a4 rendered slides). */
@@ -928,8 +950,10 @@ function rawSetupEstimate(plan: SetupBudgetPlan, shape: SetupShape): SetupCostEs
   // warm — the 24h cache is shared with 03e/04e and 00b1), plus one Flash
   // vision look per reference image.
   const evidence = (count(shape.referenceAccounts) + count(shape.sitePages)) * c.scraperExecution + count(plan.referenceImages) * c.sampleInspect;
-  // 00c3 + 00c4: the thesis once, then one Sonnet call per template.
-  const design = c.designBrief + templates * c.templateDesign;
+  // 00c3 + 00c4: the thesis once, then one Sonnet call per template. Zero
+  // templates means no studio work at all this setup (see `planSetupBudget`),
+  // and then the thesis every designer call reads is not written either.
+  const design = templates === 0 ? 0 : c.designBrief + templates * c.templateDesign;
   // 00c5: the eight gates and their Chromium renders are FREE; only the one
   // vision look per rendered sample bills.
   const validation = templates * c.sampleInspect;
@@ -1063,9 +1087,21 @@ export function planSetupBudget(
   const ratio = history.ewmaRatio;
   const spent = roundUsd(count(options.spentUsd));
   const adaptations: string[] = [];
-  const requestedTemplates = Math.max(0, Math.floor(count(shape.templates)));
+  // A NON-FINITE value is nonsense (a replayed or hand-written shape), not an
+  // instruction: it reads as "the usual number of templates" and the floor
+  // below then applies. A finite ZERO is an instruction — see the plan's own
+  // comment — so the two cannot share `count()`, which maps both to 0.
+  const requestedTemplates = typeof shape.templates === "number" && Number.isFinite(shape.templates) ? Math.max(0, Math.floor(shape.templates)) : STUDIO_TEMPLATES_TARGET;
   let plan: SetupBudgetPlan = {
-    templates: Math.min(STUDIO_TEMPLATES_TARGET, Math.max(MIN_STUDIO_TEMPLATES, requestedTemplates)),
+    // Zero asked for is zero planned. The floor exists so a setup that IS
+    // building a template set never builds a useless one of two — it must not
+    // invent four templates for a setup that has no studio work at all, which
+    // is the real case where the 90-day visual-direction TTL (item Q) expires
+    // inside the 120-day studio TTL (item N): the direction re-derives alone.
+    // Inventing the four would put ~$0.25 of design work into the estimate
+    // that no step can spend, and the estimate-vs-actual it recorded would
+    // then mis-calibrate the NEXT setup downwards.
+    templates: requestedTemplates === 0 ? 0 : Math.min(STUDIO_TEMPLATES_TARGET, Math.max(MIN_STUDIO_TEMPLATES, requestedTemplates)),
     repairsAllowed: Math.max(0, Math.floor(count(shape.repairs))),
     referenceImages: Math.max(0, Math.floor(count(shape.referenceImages))),
     setReview: shape.setReview,

@@ -4,6 +4,7 @@ import type { RenderCarouselInput, Slide } from "@agent-engine/tool-karos-publis
 import { templateFileName } from "@agent-engine/tool-karos-templates";
 import { contrastRatio, paletteForSlide } from "./brand-render-tokens.js";
 import { buildDeviceFragment, deviceFigureValues, validateDevice, type SlideDevice } from "./slide-devices.js";
+import { imageTreatmentFields, type ImageTreatment } from "./style-lock.js";
 import type {
   BrandTokens,
   ImageSelection,
@@ -1336,6 +1337,16 @@ export function assembleSlidesData(params: {
    * English note — never a guessed translation baked into a rendered slide.
    */
   targetLanguage?: string | undefined;
+  /**
+   * Phase 3, item S — the run's ONE frozen image treatment (`04k`).
+   *
+   * Reporting and trace only: the grade itself is applied by the stylesheet
+   * `imageTreatmentCssBlock` splices into every document through the
+   * `extraHeadHtml` channel, so a template that never reads this field still
+   * renders the treatment. Absent (or `"none"`) emits nothing, which is what
+   * keeps every existing slides-data fixture byte-identical.
+   */
+  imageTreatment?: ImageTreatment | undefined;
 }): RenderCarouselInput {
   const selectionByN = new Map(params.selections.map((s) => [s.n, s]));
 
@@ -1419,7 +1430,7 @@ export function assembleSlidesData(params: {
     return {
       n: slide.n,
       template: inverted ? invertedTemplateFileName(primaryTemplate) : primaryTemplate,
-      fields,
+      fields: { ...fields, ...imageTreatmentFields({ treatment: params.imageTreatment ?? "none" }) },
       images: imagePath ? { hero: imagePath } : {},
       htmlFragments,
     };
