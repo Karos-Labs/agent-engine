@@ -1,10 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
+  LANGUAGE_BELIEF_KEY,
   MIN_SNIFF_LETTERS,
+  adoptBriefTargetLanguage,
+  adoptLateTargetLanguage,
+  bcp47For,
+  buildLanguageBelief,
   findExplicitLanguageMentions,
   isEnglishTarget,
+  parseLanguageBelief,
+  readLanguageBelief,
   resolveTargetLanguage,
   sniffDominantScript,
+  type InstagramLanguageBelief,
 } from "../src/workflow/target-language.js";
 import { resolveExpectedScript, scriptTableEntries } from "../src/workflow/language-gate.js";
 
@@ -357,5 +365,271 @@ describe("scriptTableEntries — the shared table", () => {
       if (result.status !== "resolved") throw new Error("unreachable");
       expect(resolveExpectedScript(result.language)).toBeDefined();
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 4 (RFC-15 §2) — the persisted belief, source 3
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A belief document as `memory.read({ scope: "beliefs" })` returns it, with only the keys this module reads. */
+function beliefsWith(belief: Partial<InstagramLanguageBelief> & Pick<InstagramLanguageBelief, "language" | "source">): Record<string, unknown> {
+  return {
+    // A sibling key, to prove the reader picks its own out of a shared document.
+    instagramRunBudget: { version: 1, ewmaRatio: 1 },
+    [LANGUAGE_BELIEF_KEY]: {
+      script: "",
+      evidence: "",
+      corpusPosts: 0,
+      registerKey: "",
+      resolvedAt: "2026-09-11T09:00:00.000Z",
+      ...belief,
+    },
+  };
+}
+
+describe("resolveTargetLanguage — source 3, the persisted belief", () => {
+  it("a belief ranks ABOVE the script sniff: a previous run's measurement beats an inference from a blurb", () => {
+    // The prose sniffs Hebrew and nothing else. The belief says Greek, and it
+    // says so from an explicit statement a previous run read — which outranks
+    // what this run can infer from a self-description.
+    const result = resolveTargetLanguage({
+      profile: { name: "Acme" },
+      voiceRules: { guidelines: HEBREW_GUIDELINES },
+      beliefs: beliefsWith({ language: "Greek", source: "explicit-mention", evidence: 'their site states "published in Greek"' }),
+    });
+    expect(result).toMatchObject({ status: "resolved", language: "Greek", source: "belief" });
+    if (result.status !== "resolved") throw new Error("unreachable");
+    expect(result.evidence.join("\n")).toMatch(/remembered language "Greek"/);
+    expect(result.evidence.join("\n")).toMatch(/published in Greek/);
+
+    // ...and with the belief taken away, the same input resolves Hebrew from
+    // the sniff. Without this line the case above proves nothing about order.
+    expect(resolveTargetLanguage({ profile: { name: "Acme" }, voiceRules: { guidelines: HEBREW_GUIDELINES } })).toMatchObject({
+      status: "resolved",
+      language: "Hebrew",
+      source: "script-sniff",
+    });
+  });
+
+  it("a belief is IGNORED when brand.language is set — a human editing the portal always wins", () => {
+    const result = resolveTargetLanguage({
+      brandLanguage: "Spanish",
+      beliefs: beliefsWith({ language: "Greek", source: "explicit-mention" }),
+    });
+    expect(result).toMatchObject({ status: "resolved", language: "Spanish", source: "brand" });
+  });
+
+  it("a belief is IGNORED when the prose states a language explicitly — the belief can never become unfixable", () => {
+    const result = resolveTargetLanguage({
+      profile: { description: "The region's leading Arabic-language business daily." },
+      beliefs: beliefsWith({ language: "Greek", source: "own-posts", corpusPosts: 9 }),
+    });
+    expect(result).toMatchObject({ status: "resolved", language: "Arabic", source: "profile" });
+  });
+
+  it("a SNIFF-sourced belief is NEVER re-used — the anti-calcification guard", () => {
+    // Delete the `DECISIVE_BELIEF_SOURCES` filter in `readLanguageBelief` and
+    // this case goes green as `{ language: "Greek", source: "belief" }`: that
+    // is the break-the-code proof. A guess about a thin profile would
+    // otherwise outrank the very sniff it came from and become permanent.
+    const result = resolveTargetLanguage({
+      profile: { name: "Acme" },
+      voiceRules: { guidelines: HEBREW_GUIDELINES },
+      beliefs: beliefsWith({ language: "Greek", source: "sniff", evidence: "profile.description: 61% Greek script" }),
+    });
+    expect(result).toMatchObject({ status: "resolved", language: "Hebrew", source: "script-sniff" });
+    // It is still visible in the trace — persisted for observability, never acted on.
+    if (result.status !== "resolved") throw new Error("unreachable");
+    expect(result.evidence.join("\n")).toMatch(/was NOT re-used/);
+  });
+
+  it("a decisive belief resolves a client with no prose at all to read", () => {
+    // karoslabs-shaped absence of every prose field, plus one run that DID
+    // measure the client's own posts. Before Phase 4 this returned
+    // english-default before any belief could be consulted.
+    const result = resolveTargetLanguage({ beliefs: beliefsWith({ language: "he-IL", source: "own-posts", corpusPosts: 7 }) });
+    expect(result).toMatchObject({ status: "resolved", language: "he-IL", source: "belief" });
+  });
+
+  it("a belief naming English is english-default, not a resolved English target", () => {
+    const result = resolveTargetLanguage({ beliefs: beliefsWith({ language: "en-US", source: "brief" }) });
+    expect(result.status).toBe("english-default");
+    if (result.status !== "english-default") throw new Error("unreachable");
+    expect(result.evidence.join("\n")).toMatch(/needs no language gate/);
+  });
+
+  it("behaves EXACTLY as before when no beliefs are supplied, and when the document holds nothing readable", () => {
+    // An English profile on purpose: it falls all the way THROUGH source 3,
+    // so an unreadable record has to leave no trace at all.
+    const ENGLISH = { description: "Acme Analytics is a business intelligence platform for retail operators. We publish practitioner guides for the people who run stores." };
+    const baseline = resolveTargetLanguage({ profile: ENGLISH });
+    for (const beliefs of [
+      undefined,
+      {},
+      { instagramRunBudget: { version: 1 } },
+      { [LANGUAGE_BELIEF_KEY]: null },
+      { [LANGUAGE_BELIEF_KEY]: "Hebrew" },
+      { [LANGUAGE_BELIEF_KEY]: { language: "Greek" } }, // no source
+      { [LANGUAGE_BELIEF_KEY]: { language: "Greek", source: "vibes" } }, // unknown source
+      { [LANGUAGE_BELIEF_KEY]: { language: "   ", source: "own-posts" } },
+    ]) {
+      expect(resolveTargetLanguage({ profile: ENGLISH, ...(beliefs !== undefined ? { beliefs } : {}) }), JSON.stringify(beliefs)).toEqual(baseline);
+    }
+  });
+
+  it("null brand.language + English prose + English own posts stays english-default, with the evidence saying why", () => {
+    // The karoslabs case, named in RFC-15 §2: a decision with recorded
+    // evidence, not a silent skip. 04l, 07e, 07e2 and 07f are all skipped and
+    // nothing is spent.
+    const result = resolveTargetLanguage({
+      brandLanguage: undefined,
+      profile: { description: "AI marketing agency for B2B founders. We run the whole funnel so the founder can run the company." },
+      voiceRules: { doList: ["lead with the number", "one idea per slide"] },
+    });
+    expect(result.status).toBe("english-default");
+    if (result.status !== "english-default") throw new Error("unreachable");
+    expect(result.evidence[0]).toBe("brand.language unset");
+    expect(result.evidence.join("\n")).toMatch(/Latin script/);
+
+    const late = adoptLateTargetLanguage(undefined, { ownPostsLanguage: undefined, briefLanguage: "English" });
+    expect(late).toEqual({ language: undefined, source: "english-default" });
+  });
+});
+
+describe("readLanguageBelief — the decisiveness filter", () => {
+  it.each(["own-posts", "brand-language", "explicit-mention", "brief"] as const)("re-reads a %s belief", (source) => {
+    expect(readLanguageBelief(beliefsWith({ language: "Hebrew", source }))?.source).toBe(source);
+  });
+
+  it("refuses a sniff belief, while parseLanguageBelief still returns it for the trace", () => {
+    const beliefs = beliefsWith({ language: "Hebrew", source: "sniff" });
+    expect(readLanguageBelief(beliefs)).toBeUndefined();
+    expect(parseLanguageBelief(beliefs)).toMatchObject({ language: "Hebrew", source: "sniff" });
+  });
+
+  it("fills the script from the shared table when the stored record has none", () => {
+    expect(readLanguageBelief({ [LANGUAGE_BELIEF_KEY]: { language: "he-IL", source: "own-posts" } })).toMatchObject({
+      language: "he-IL",
+      script: "Hebrew",
+      corpusPosts: 0,
+      registerKey: "",
+    });
+  });
+
+  it("is undefined for an absent, null, non-object or unnamed record", () => {
+    expect(readLanguageBelief(undefined)).toBeUndefined();
+    expect(readLanguageBelief({})).toBeUndefined();
+    expect(readLanguageBelief({ [LANGUAGE_BELIEF_KEY]: null })).toBeUndefined();
+    expect(readLanguageBelief({ [LANGUAGE_BELIEF_KEY]: 42 })).toBeUndefined();
+    expect(readLanguageBelief({ [LANGUAGE_BELIEF_KEY]: { source: "own-posts" } })).toBeUndefined();
+  });
+});
+
+describe("buildLanguageBelief — what 09b is allowed to write", () => {
+  const now = new Date("2026-09-12T10:00:00.000Z");
+
+  it("builds the record, with the script from the shared table", () => {
+    expect(buildLanguageBelief({ language: "he-IL", source: "own-posts", evidence: "7 of 9 own posts in Hebrew", corpusPosts: 7, registerKey: "Hebrew", now })).toEqual({
+      language: "he-IL",
+      script: "Hebrew",
+      source: "own-posts",
+      evidence: "7 of 9 own posts in Hebrew",
+      corpusPosts: 7,
+      registerKey: "Hebrew",
+      resolvedAt: "2026-09-12T10:00:00.000Z",
+    });
+  });
+
+  it("refuses to remember English, or nothing at all", () => {
+    for (const language of ["English", "en-US", "  ", undefined]) {
+      expect(buildLanguageBelief({ language, source: "brief", evidence: "the brief says so", now }), String(language)).toBeUndefined();
+    }
+  });
+
+  it("refuses an own-posts belief with an empty corpus — a zero is a fact about the scrape, not about the client", () => {
+    expect(buildLanguageBelief({ language: "Hebrew", source: "own-posts", evidence: "none readable", corpusPosts: 0, now })).toBeUndefined();
+    // ...but the same fact recorded honestly as a sniff is writable (and, by
+    // `readLanguageBelief`, never re-read).
+    expect(buildLanguageBelief({ language: "Hebrew", source: "sniff", evidence: "profile is 96% Hebrew", corpusPosts: 0, now })).toMatchObject({ source: "sniff" });
+  });
+
+  it("round-trips through readLanguageBelief for every decisive source", () => {
+    for (const source of ["own-posts", "brand-language", "explicit-mention", "brief"] as const) {
+      const built = buildLanguageBelief({ language: "Hebrew", source, evidence: "e", corpusPosts: 3, registerKey: "Hebrew", now });
+      expect(built, source).toBeDefined();
+      expect(readLanguageBelief({ [LANGUAGE_BELIEF_KEY]: built })).toEqual(built);
+    }
+  });
+});
+
+describe("adoptLateTargetLanguage — the client's own posts, then the brief", () => {
+  it("02d's answer still wins over both", () => {
+    expect(adoptLateTargetLanguage("he-IL", { ownPostsLanguage: "Greek", briefLanguage: "Thai" })).toEqual({ language: "he-IL", source: "resolved" });
+  });
+
+  it("own posts beat the brief, and say so in the note", () => {
+    const adoption = adoptLateTargetLanguage(undefined, { ownPostsLanguage: "Hebrew", briefLanguage: "Greek" });
+    expect(adoption).toMatchObject({ language: "Hebrew", source: "own-posts" });
+    expect(adoption.note).toMatch(/OWN recent posts/);
+    expect(adoption.note).toMatch(/set brand\.language in the portal/);
+  });
+
+  it("falls through to the brief when the own-post corpus named nothing", () => {
+    for (const ownPostsLanguage of [undefined, "", "   ", "English", "en-US", 42]) {
+      expect(adoptLateTargetLanguage(undefined, { ownPostsLanguage, briefLanguage: "Hebrew" }), String(ownPostsLanguage)).toMatchObject({
+        language: "Hebrew",
+        source: "brief",
+      });
+    }
+  });
+
+  it("English anywhere resolves to no target at all", () => {
+    expect(adoptLateTargetLanguage(undefined, { ownPostsLanguage: "English", briefLanguage: "en-US" })).toEqual({ language: undefined, source: "english-default" });
+    expect(adoptLateTargetLanguage(undefined, {})).toEqual({ language: undefined, source: "english-default" });
+  });
+
+  it("adoptBriefTargetLanguage is the same function with no own-posts source — existing callers are unchanged", () => {
+    for (const [resolved, briefTarget] of [
+      ["he-IL", "Greek"],
+      [undefined, "Hebrew"],
+      [undefined, "English"],
+      [undefined, undefined],
+      [undefined, 42],
+    ] as const) {
+      expect(adoptBriefTargetLanguage(resolved, briefTarget)).toEqual(adoptLateTargetLanguage(resolved, { briefLanguage: briefTarget }));
+    }
+    expect(adoptBriefTargetLanguage(undefined, "Hebrew")).toMatchObject({ language: "Hebrew", source: "brief" });
+  });
+});
+
+describe("bcp47For — one tag, resolved through the shared table", () => {
+  it.each([
+    ["Hebrew", "he"],
+    ["hebrew", "he"],
+    ["he", "he"],
+    ["he-IL", "he"],
+    ["he_IL", "he"],
+    ["עברית", "he"],
+    ["Greek", "el"],
+    ["Thai", "th"],
+    ["Japanese", "ja"],
+    ["Korean", "ko"],
+    ["Chinese", "zh"],
+    ["es", "es"],
+    ["pt-BR", "pt"],
+    ["ru", "ru"],
+  ])("%j -> %j", (language, tag) => {
+    expect(bcp47For(language)).toBe(tag);
+  });
+
+  it("has NO opinion for a bare name in a script several languages share", () => {
+    // The Latin row's first tag is "en": returning it for Spanish would mark
+    // Spanish copy as English in the lang attribute. No opinion beats a wrong
+    // one, and a client who needs a tag sets brand.language to one.
+    for (const name of ["Spanish", "Portuguese", "Russian", "Farsi", "Hindi", "Klingon", "", "   "]) {
+      expect(bcp47For(name), name).toBeUndefined();
+    }
+    expect(bcp47For(undefined)).toBeUndefined();
   });
 });

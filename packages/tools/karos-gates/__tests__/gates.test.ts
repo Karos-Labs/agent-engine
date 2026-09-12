@@ -739,6 +739,16 @@ function defaultArgsFor(toolName: string): unknown {
       return { text: "fine" };
     case "gate.subredditRules":
       return { text: "fine", subreddit: "smallbusiness" };
+    case "gate.nativeLanguage":
+      // Unlike every gate above, this one refuses a script pattern it cannot
+      // recognise rather than passing — so "minimal args" here still has to be
+      // a coherent (language, script, pattern) triple, not `{ text: "fine" }`.
+      return {
+        language: "Hebrew",
+        scriptName: "Hebrew",
+        scriptPattern: "\\p{Script=Hebrew}",
+        fields: [{ id: "caption", text: "בדיקה" }],
+      };
     default:
       throw new Error(`no default args for ${toolName}`);
   }

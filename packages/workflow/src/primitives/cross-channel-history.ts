@@ -39,12 +39,30 @@ export interface CrossChannelEntry extends DedupeHistoryEntry {
   origin: "ledger" | "social";
   recordedAt?: string;
   url?: string;
+  /**
+   * Only ever present on an `origin: "social"` entry — a ledger excerpt is
+   * something WE drafted, and it has no public reception to report.
+   *
+   * `research.socialHistory` has always returned this and this reader was the
+   * one place that dropped it. RFC-15 §3.3 ranks a client's own posts for
+   * few-shot selection by engagement first, and without the field that rank
+   * silently falls through to prose length and then recency — which selects
+   * the client's LONGEST recent posts as the model of their voice rather than
+   * their best-received ones.
+   */
+  engagement?: { likes?: number; comments?: number; views?: number };
 }
 
 export interface CrossChannelHistory {
   entries: CrossChannelEntry[];
   /** Per-source notes: what could not be read and why. Empty when everything answered. */
   notes: string[];
+  /**
+   * True when the social read was served from `research.socialHistory`'s
+   * cache, so a caller metering a billed scrape can tell a real scrape from a
+   * free cache hit. `undefined` when no social accounts were read at all.
+   */
+  socialFromCache?: boolean;
 }
 
 export interface SocialAccountRef {
@@ -89,6 +107,18 @@ export interface ReadCrossChannelHistoryOptions {
   /** Defaults to every channel agent. */
   agentIds?: readonly string[];
   socialAccounts?: readonly SocialAccountRef[];
+  /**
+   * Freshness bar for the social read, passed straight through to
+   * `research.socialHistory` (whose schema default is `"6h"`).
+   *
+   * It matters because the cache is keyed by the ACCOUNT SET, not by the
+   * window: several callers in the same run share one scrape only if they
+   * also agree on how stale a scrape they will accept. A caller that meters
+   * "did this cost a scrape?" must pass the same window as the caller it
+   * expects to have paid, or it can under-count on a long-running or resumed
+   * run.
+   */
+  window?: string;
 }
 
 /**
@@ -106,6 +136,7 @@ export async function readCrossChannelHistory(
   return wf.step.code(options.stepId, async (): Promise<CrossChannelHistory> => {
     const entries: CrossChannelEntry[] = [];
     const notes: string[] = [];
+    let socialFromCache: boolean | undefined;
 
     const list = tools["ledger.listOutputExcerpts"];
     if (!list) {
@@ -138,9 +169,14 @@ export async function readCrossChannelHistory(
         notes.push("research.socialHistory is not registered; the client's own accounts were not read");
       } else {
         try {
-          const outcome = await social.execute({ accounts: [...accounts] }, { ctx });
+          const outcome = await social.execute({ accounts: [...accounts], ...(options.window ? { window: options.window } : {}) }, { ctx });
           if (outcome.status === "success") {
-            const result = outcome.result as { posts: Array<{ platform: string; username: string; url: string; excerpt: string; publishedAt?: string }>; problems: string[] };
+            const result = outcome.result as {
+              posts: Array<{ platform: string; username: string; url: string; excerpt: string; publishedAt?: string; engagement?: { likes?: number; comments?: number; views?: number } }>;
+              problems: string[];
+              fromCache?: boolean;
+            };
+            socialFromCache = result.fromCache === true;
             for (const post of result.posts) {
               entries.push({
                 runId: `social:${post.platform}:${post.url}`,
@@ -149,6 +185,7 @@ export async function readCrossChannelHistory(
                 origin: "social",
                 url: post.url,
                 ...(post.publishedAt ? { recordedAt: post.publishedAt } : {}),
+                ...(post.engagement ? { engagement: post.engagement } : {}),
               });
             }
             notes.push(...result.problems);
@@ -161,7 +198,7 @@ export async function readCrossChannelHistory(
       }
     }
 
-    return { entries, notes };
+    return { entries, notes, ...(socialFromCache === undefined ? {} : { socialFromCache }) };
   });
 }
 

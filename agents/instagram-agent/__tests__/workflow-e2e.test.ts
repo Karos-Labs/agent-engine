@@ -26,6 +26,7 @@ import { syntheticPhotograph } from "./synthetic-photograph.js";
 import { SKELETON_BELIEF_KEY, readSkeletonHistory, skeletonSignature } from "../src/workflow/skeleton-memory.js";
 import { CUSTOM_ARCHETYPE_BELIEF_KEY } from "../src/workflow/custom-archetype-memory.js";
 import { RUN_BUDGET_BELIEF_KEY } from "../src/workflow/run-budget.js";
+import { NATIVE_EDITOR_RUBRIC_VERSION, okAxes } from "../src/workflow/language-gate.js";
 
 const params = { runId: "instagram_run_1", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
@@ -299,13 +300,18 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     const promptStore = makePromptStore();
     // Phase 0 (item B): "publishes exclusively in Spanish" now RESOLVES the
     // target language from the profile prose (02d), so this client gets the
-    // language gate — one fluency-judge turn after the relevance judge.
+    // language gate — one judge turn after the relevance judge.
+    //
+    // Phase 4 (RFC-15 §6) replaced that judge's `{ fluent, issues }` shape
+    // with the native editor's verdict. Still ONE turn here and not two: the
+    // second round is reached only when round 1 comes back not-native WITH
+    // corrections to apply, and this draft is clean on every axis.
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()),
-      finalTurn({ fluent: true, issues: [] }),
+      finalTurn({ native: true, axes: okAxes(), corrections: [], rubricVersion: NATIVE_EDITOR_RUBRIC_VERSION }),
       finalTurn(goodVisualQaOutput()),
     ]);
     const workflowFn = createInstagramAgentWorkflow({

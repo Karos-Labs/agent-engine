@@ -167,7 +167,19 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     expect(plan?.adaptations).toEqual(["images capped at 4", "images capped at 2", "no generated images (stock or text-only)"]);
     expect(plan?.plan.generatedImagesCap).toBe(0);
     expect(plan?.plan.maxSelfCheckAttempts).toBe(3);
-    expect(plan?.note).toMatch(/^budget: estimate \$1\.\d\d > \$1\.00 → images capped at 4, images capped at 2, no generated images \(stock or text-only\) \(now \$0\.\d\d\)$/);
+    // Phase 4 re-priced the non-English path (`copyLanguageBrief` +
+    // `nativeJudge` x2 on a revision), which moves the post-adaptation figure
+    // to exactly $1.00. `\$0\.\d\d` was never the claim — it was an accident
+    // of where the old arithmetic happened to land. The claim is that the
+    // ladder stopped AT OR UNDER the $1.00 target (`fits()` is `<=`), so read
+    // the figure out and assert that, rather than widening the pattern to
+    // `[01]` — which would also accept "$1.99", i.e. a ladder that ran every
+    // rung and still never adapted enough.
+    const adaptedNote = plan?.note ?? "";
+    const adapted = /^budget: estimate \$(\d+\.\d\d) > \$1\.00 → images capped at 4, images capped at 2, no generated images \(stock or text-only\) \(now \$(\d+\.\d\d)\)$/.exec(adaptedNote);
+    expect(adapted, `the note did not have the adapted shape: ${adaptedNote}`).not.toBeNull();
+    expect(Number(adapted![1]), "the cold estimate must be over target, or there was nothing to adapt").toBeGreaterThan(1);
+    expect(Number(adapted![2]), "the adapted estimate must land at or under the $1.00 target").toBeLessThanOrEqual(1);
     expect(deliverable?.budget.plan.generatedImagesCap).toBe(0);
   });
 

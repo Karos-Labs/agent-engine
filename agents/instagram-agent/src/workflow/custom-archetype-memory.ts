@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { LAYOUT_FIELD_KEYS } from "./visual-qa-pre-checks.js";
 
 /**
  * RFC-13 Phase 2, item O — THE POOL THAT GROWS.
@@ -360,19 +361,20 @@ export interface AutoPromotionRequest {
  * (`slides-data.ts`), not a guess, and `default-template-render.test.ts`'s
  * source scan over the bundled templates is what catches a drift.
  */
-export const STANDING_FURNITURE_SLOTS: readonly string[] = [
-  "accentColor",
-  "dir",
-  "fontScale",
-  "textAlign",
-  "kicker",
-  "brandHandle",
-  "seriesBadge",
-  "groundStyle",
-  "slideIndex",
-  "deviceFigures",
-  "deviceKind",
-];
+/**
+ * DERIVED, not re-listed. This was a hand-maintained literal and it drifted
+ * the moment Phase 4 added `lang` to `LAYOUT_FIELD_KEYS` (and so to
+ * `custom-archetype-checks.ts`'s `KNOWN_SLOT_NAMES`, which now accepts a
+ * model-authored archetype whose markup reads `{{lang}}`): a design that was
+ * explicitly permitted to read its own `{{lang}}` was then refused promotion
+ * at `09f` with "reads its own slot name(s) {{lang}}, which no routable
+ * archetype's fields supply".
+ *
+ * `LAYOUT_FIELD_KEYS` plus the per-slide `kicker` — byte-for-byte the same
+ * derivation `template-studio.ts`'s own `STANDING_FURNITURE_SLOTS` uses, so
+ * the two lists can no longer disagree about what furniture is.
+ */
+export const STANDING_FURNITURE_SLOTS: readonly string[] = [...LAYOUT_FIELD_KEYS, "kicker"];
 
 /**
  * The routable archetypes an auto-promotion may land on, best first.

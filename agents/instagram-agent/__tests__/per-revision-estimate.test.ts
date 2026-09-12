@@ -28,13 +28,23 @@ describe("PER_REVISION_ESTIMATE_USD / revisionEstimateUsd", () => {
     expect(STEP_COST_ESTIMATES_USD.brief).toBe(0.113);
   });
 
-  it("scales with the attempts the plan allows, adds the fluency judge for a non-English target, and can drop the angle", () => {
+  it("scales with the attempts the plan allows, adds the languageBrief field and BOTH native-editor rounds for a non-English target, and can drop the angle", () => {
     const one = revisionEstimateUsd({ attempts: 1 });
     const three = revisionEstimateUsd({ attempts: 3 });
     // The angle is paid ONCE for the round, so three attempts is not three angles.
     expect(three - one).toBeCloseTo(2 * (DRAFT_ATTEMPT_ESTIMATE_USD + STEP_COST_ESTIMATES_USD.relevance), 6);
 
-    expect(revisionEstimateUsd({ attempts: 1, targetLanguage: true }) - one).toBeCloseTo(STEP_COST_ESTIMATES_USD.fluency, 6);
+    // Phase 4 (RFC-15 §6.5): a reviewer's round on a non-English target now
+    // costs the `languageBrief` prompt field plus TWO judge rounds, not one
+    // Haiku fluency call. Two, not one, deliberately: a revision round is
+    // spend the meter has already committed to, so it must be priced at what
+    // the round COULD cost — and the second round is reached by exactly the
+    // draft a reviewer most often sends back. (The PLANNER prices one round;
+    // that asymmetry is asserted in run-budget.test.ts, not here.)
+    expect(revisionEstimateUsd({ attempts: 1, targetLanguage: true }) - one).toBeCloseTo(
+      STEP_COST_ESTIMATES_USD.copyLanguageBrief + 2 * STEP_COST_ESTIMATES_USD.nativeJudge,
+      6,
+    );
     expect(revisionEstimateUsd({ attempts: 1, angle: false })).toBeCloseTo(one - STEP_COST_ESTIMATES_USD.angle, 6);
 
     // Nonsense inputs floor at one attempt rather than returning a figure

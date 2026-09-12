@@ -2,6 +2,7 @@ import type { AgentContext, AgentToolRegistry, GateVerdict } from "@agent-engine
 import { WorkflowToolingFailure } from "@agent-engine/workflow";
 import type { RenderCarouselInput, Slide } from "@agent-engine/tool-karos-publish";
 import { templateFileName } from "@agent-engine/tool-karos-templates";
+import { isolateForeignRuns } from "./bidi-isolate.js";
 import { contrastRatio, paletteForSlide } from "./brand-render-tokens.js";
 import { buildDeviceFragment, deviceFigureValues, validateDevice, type SlideDevice } from "./slide-devices.js";
 import { imageTreatmentFields, type ImageTreatment } from "./style-lock.js";
@@ -485,6 +486,46 @@ function esc(value: string): string {
  * from `border-top` with `:first-child` zeroed, so nothing conditional is
  * needed per row.
  */
+/**
+ * A device with its LABELS bidi-isolated for an RTL render (Phase 4, RFC-15
+ * §7.3), and nothing else touched.
+ *
+ * Labels are rendered slide text and reorder exactly like a headline does —
+ * `שימוש ב-API v2` in a bar row is the same defect as the same phrase in a
+ * body line, and device labels were never covered by anything.
+ *
+ * The FIGURES are deliberately untouched (`value`, `display`, a timeline's
+ * `at`): a bare numeral in a figure lockup is the same designed relationship
+ * as `stat.figure`, it is a lone run with nothing to reorder against inside
+ * its own element, and `deviceFigureValues` reads those same strings as
+ * LAYOUT METADATA (`deviceFigures`, which `default:numbers-are-devices`
+ * matches against the copy). A control character in that field would silently
+ * stop that rule matching. `source` is left alone for the same reason
+ * `sourceRef` is: it is a verbatim attribution, usually Latin in its
+ * entirety, and it is checked by eye against the research fact it names.
+ */
+function isolateDeviceLabels(device: SlideDevice, dir: "rtl" | "ltr"): SlideDevice {
+  const iso = (text: string): string => isolateForeignRuns(text, dir);
+  switch (device.kind) {
+    case "figure":
+      return { ...device, label: iso(device.label) };
+    case "figure_pair":
+      return { ...device, before: { ...device.before, label: iso(device.before.label) }, after: { ...device.after, label: iso(device.after.label) } };
+    case "bars":
+      return { ...device, rows: device.rows.map((row) => ({ ...row, label: iso(row.label) })) };
+    case "timeline":
+      return { ...device, points: device.points.map((point) => ({ ...point, what: iso(point.what) })) };
+    case "versus":
+      return {
+        ...device,
+        left: { ...device.left, label: iso(device.left.label), body: iso(device.left.body) },
+        right: { ...device.right, label: iso(device.right.label), body: iso(device.right.body) },
+      };
+    case "unit_grid":
+      return { ...device, label: iso(device.label) };
+  }
+}
+
 export function buildListRows(items: readonly { title: string; note?: string | undefined }[]): string {
   return items
     .map(
@@ -937,11 +978,46 @@ function contentFor(
     position?: SlidePosition | undefined;
     groundStyle?: SlideGroundStyle | undefined;
     targetLanguage?: string | undefined;
+    /**
+     * Phase 4, RFC-15 §7.2 — the run's language as a BCP-47 tag, for the
+     * document's own `lang` attribute. INJECTED rather than derived here: the
+     * resolution lives with the language brief (`bcp47For`), and a second
+     * spelling table owned by the renderer is precisely the drift
+     * `scriptTypographyFor` refuses to introduce. Absent means `"en"`, which
+     * is byte-identical to the literal every template carried before.
+     */
+    bcp47?: string | undefined;
   },
 ): { fields: Record<string, string>; htmlFragments: Record<string, string> } {
+  /**
+   * Phase 4, RFC-15 §7.3 — every RENDERED text field goes through this, and
+   * nothing else does.
+   *
+   * A no-op for an LTR carousel, so an English post's fields are byte-identical
+   * to before. For an RTL one it wraps each Latin/digit run in FSI…PDI so a
+   * product name, a parenthesised acronym or a `2020-2024` range does not drag
+   * the punctuation around it onto the wrong side of the line.
+   *
+   * WHAT IT MUST NEVER REACH, and why the call sites are explicit rather than
+   * a blanket map over `fields`: the published caption, `sourceRef`,
+   * `visualNeed`, `checkCraftHygiene`'s input, `07d`'s dedupe corpus and the
+   * language judge's fields all read the model's ORIGINAL copy — this runs at
+   * composition time, on the way into the document, and the copy object itself
+   * is never mutated. And it must never reach `stat.figure` or any
+   * `LAYOUT_FIELD_KEY`: a figure is a bare numeral inside a `line-height: 0.95`
+   * lockup (the same designed relationship that keeps `.num-figure` out of
+   * `DISPLAY_SELECTORS`), and a layout key is matched by code, not read by a
+   * person.
+   */
+  const iso = (text: string): string => isolateForeignRuns(text, dir);
   const base: Record<string, string> = {
     accentColor,
     dir,
+    // The document's own language, so Chromium picks the right fallback face
+    // for a glyph the declared stack does not carry — a Hebrew document that
+    // declares `lang="en"` gets a LATIN fallback, which was the whole of the
+    // audit's finding 6.
+    lang: context?.bcp47 ?? "en",
     fontScale: style?.fontScale ?? "m",
     textAlign: style?.textAlign ?? "start",
     // Layout metadata, never prose: the code-picked ground treatment and the
@@ -950,7 +1026,7 @@ function contentFor(
     // slide's CONTENT ever sees them.
     groundStyle: context?.groundStyle ?? "grid",
     slideIndex: String(slide.n).padStart(2, "0"),
-    ...(slide.kicker ? { kicker: slide.kicker } : {}),
+    ...(slide.kicker ? { kicker: iso(slide.kicker) } : {}),
     ...(brand?.handle !== undefined ? { brandHandle: brand.handle } : {}),
     ...(brand?.seriesBadge !== undefined ? { seriesBadge: brand.seriesBadge } : {}),
   };
@@ -967,9 +1043,11 @@ function contentFor(
    */
   const deviceFragment = (): { device: string; deviceFigures: string; deviceKind: string } | undefined => {
     if (slide.device === undefined) return undefined;
+    // Validated on the ORIGINAL device, and `deviceFigureValues` reads the
+    // ORIGINAL too: only the fragment that paints gets isolated labels.
     if (!validateDevice(slide.device).ok) return undefined;
     return {
-      device: buildDeviceFragment(slide.device, dir, context?.targetLanguage),
+      device: buildDeviceFragment(isolateDeviceLabels(slide.device, dir), dir, context?.targetLanguage),
       deviceFigures: deviceFigureValues(slide.device).join("|"),
       // Layout metadata, emitted so that every consumer of "did this slide
       // paint a device" reads the ASSEMBLED slide rather than the copy's
@@ -997,35 +1075,38 @@ function contentFor(
       return {
         fields: {
           ...base,
+          // `figure` alone is NOT isolated — see `iso`'s doc comment.
           figure: slide.stat!.figure,
-          subLabel: slide.stat!.subLabel,
-          body: slide.body,
-          sourceLine: slide.stat!.source,
+          subLabel: iso(slide.stat!.subLabel),
+          body: iso(slide.body),
+          sourceLine: iso(slide.stat!.source),
         },
         htmlFragments: {},
       };
     case "quote_card":
       return {
-        fields: { ...base, quoteText: slide.quote!.text, attribution: slide.quote!.attribution },
+        fields: { ...base, quoteText: iso(slide.quote!.text), attribution: iso(slide.quote!.attribution) },
         htmlFragments: {},
       };
     case "comparison_card":
       return {
         fields: {
           ...base,
-          headline: slide.headline,
-          body: slide.body,
-          leftLabel: slide.comparison!.leftLabel,
-          leftBody: slide.comparison!.leftBody,
-          rightLabel: slide.comparison!.rightLabel,
-          rightBody: slide.comparison!.rightBody,
+          headline: iso(slide.headline),
+          body: iso(slide.body),
+          leftLabel: iso(slide.comparison!.leftLabel),
+          leftBody: iso(slide.comparison!.leftBody),
+          rightLabel: iso(slide.comparison!.rightLabel),
+          rightBody: iso(slide.comparison!.rightBody),
         },
         htmlFragments: {},
       };
     case "list_takeaway":
       return {
-        fields: { ...base, headline: slide.headline },
-        htmlFragments: { itemRows: buildListRows(slide.items!) },
+        fields: { ...base, headline: iso(slide.headline) },
+        htmlFragments: {
+          itemRows: buildListRows(slide.items!.map((item) => ({ ...item, title: iso(item.title), ...(item.note !== undefined ? { note: iso(item.note) } : {}) }))),
+        },
       };
     case "cover": {
       // `eyebrow` is fed from the copy's own `kicker` rather than a new copy
@@ -1035,9 +1116,9 @@ function contentFor(
       return withDevice({
         fields: {
           ...base,
-          ...(slide.kicker ? { eyebrow: slide.kicker } : {}),
-          title: slide.headline,
-          subtitle: slide.body,
+          ...(slide.kicker ? { eyebrow: iso(slide.kicker) } : {}),
+          title: iso(slide.headline),
+          subtitle: iso(slide.body),
         },
         htmlFragments: {},
       });
@@ -1054,13 +1135,16 @@ function contentFor(
       return {
         fields: {
           ...base,
-          ...(slide.kicker ? { eyebrow: slide.kicker } : {}),
-          takeaway: slide.headline,
+          ...(slide.kicker ? { eyebrow: iso(slide.kicker) } : {}),
+          takeaway: iso(slide.headline),
           // A question is set as an invitation in the display face, a CTA as
           // a line in the text face — two different typographic jobs, so the
           // body goes to whichever slot matches what it actually is, and the
           // other collapses.
-          ...(closes && /[?؟]/u.test(slide.body) ? { question: slide.body } : { cta: slide.body }),
+          // The question/CTA branch reads the RAW body — the isolate characters
+          // are `\p{Cf}` and would not defeat this test, but a routing decision
+          // made on composed bytes is a decision made on the wrong value.
+          ...(closes && /[?؟]/u.test(slide.body) ? { question: iso(slide.body) } : { cta: iso(slide.body) }),
           ...(built !== undefined && fragment === built.device ? { deviceFigures: built.deviceFigures, deviceKind: built.deviceKind } : {}),
         },
         htmlFragments: fragment.length > 0 ? { recap: fragment } : {},
@@ -1071,11 +1155,26 @@ function contentFor(
       // `{{key}}` path as every other archetype's fields — no raw/`html:`
       // form exists for this content (see `SlideCustomArchetypeSchema`'s own
       // doc comment).
-      return { fields: { ...base, ...slide.customArchetype!.fields }, htmlFragments: {} };
+      //
+      // Isolated the same way every other archetype's prose is, with ONE
+      // exception: a key `base` already emitted is passed through untouched.
+      // Those keys are exactly the layout metadata and the standing furniture
+      // (`STANDING_FURNITURE_SLOTS`), which Template Studio gate 2 already
+      // refuses as a model-declared slot — so this branch is unreachable in a
+      // validated archetype, and where it is reached the value keeps today's
+      // meaning instead of quietly acquiring control characters in a field
+      // that code matches on.
+      return {
+        fields: {
+          ...base,
+          ...Object.fromEntries(Object.entries(slide.customArchetype!.fields).map(([key, value]) => [key, key in base ? value : iso(value)])),
+        },
+        htmlFragments: {},
+      };
     case "photo":
     case "text_only":
     case "headline_focus":
-      return withDevice({ fields: { ...base, headline: slide.headline, body: slide.body }, htmlFragments: {} });
+      return withDevice({ fields: { ...base, headline: iso(slide.headline), body: iso(slide.body) }, htmlFragments: {} });
   }
 }
 
@@ -1338,6 +1437,18 @@ export function assembleSlidesData(params: {
    */
   targetLanguage?: string | undefined;
   /**
+   * Phase 4, RFC-15 §7.2 — the run's language as a BCP-47 tag, for every
+   * slide document's `lang` attribute (`{{lang}}`).
+   *
+   * Supplied by the caller (`languageBrief.bcp47`) rather than derived from
+   * `targetLanguage` here: the language brief owns the resolution, and a
+   * second spelling table in the renderer is exactly the drift
+   * `scriptTypographyFor` exists to prevent. Absent yields `"en"` — the
+   * literal every bundled template carried before this phase, so an English
+   * run's document is byte-identical.
+   */
+  bcp47?: string | undefined;
+  /**
    * Phase 3, item S — the run's ONE frozen image treatment (`04k`).
    *
    * Reporting and trace only: the grade itself is applied by the stylesheet
@@ -1413,6 +1524,7 @@ export function assembleSlidesData(params: {
         // different run starts the walk at a different phase.
         groundStyle: isVariationSlot(slide.n, GROUND_VARIATION_MIX, `${params.paletteSeed ?? ""}:ground`) ? "glyph" : "grid",
         ...(params.targetLanguage !== undefined ? { targetLanguage: params.targetLanguage } : {}),
+        ...(params.bcp47 !== undefined ? { bcp47: params.bcp47 } : {}),
       },
     );
     // Only `photo` and `cover` consume a hero image (`HERO_IMAGE_LAYOUTS`).

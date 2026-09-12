@@ -110,6 +110,12 @@ describe("DEFAULT_RENDER_RULES + resolveRenderRules — Phase 0 item D's rule so
       "dir",
       "fontScale",
       "groundStyle",
+      // Phase 4 (RFC-15 §7.2). The BCP-47 tag every template now writes into
+      // `<html lang="{{lang}}">`. It is layout metadata for exactly the same
+      // reason `dir` is — the code derives it from the resolved target
+      // language, nobody writes it, and a slide carrying only a `lang` has no
+      // prose on it.
+      "lang",
       "seriesBadge",
       "slideIndex",
       "textAlign",
