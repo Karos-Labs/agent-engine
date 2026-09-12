@@ -75,7 +75,9 @@ export type SceneSource = z.infer<typeof SceneSourceSchema>;
  *
  * `why` is REQUIRED and it is not decoration. It is the field the vet reads
  * to decide which clauses of `scene` are central and which are decorative
- * (`instagram-image-vet@4` §1), and it is the only place the writer states
+ * (`instagram-image-vet@5` §1 — @5 is RFC-16's conceptual-slide revision and
+ * §1 carries over from @4 byte-identically), and it is the only place the
+ * writer states
  * what the picture is FOR. A brief with no stated purpose is a shopping list,
  * and judging a shopping list is exactly the failure mode v3 was written to
  * escape.

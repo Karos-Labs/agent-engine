@@ -152,14 +152,35 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
   });
 
   it("a client whose runs run HOT pulls further rungs of the image ladder, never a shorter run and never a hold", async () => {
-    // 1.05x reads the cold plan as $1.32, so the ladder runs to the last rung
+    // 1.01x reads the cold plan as $1.30, so the ladder runs to the last rung
     // of the IMAGE lever — stock and text-only pictures, with all three
-    // attempts intact. (The ratio moved 1.15 -> 1.08 -> 1.05 as `copyAttempt`
-    // was re-priced on the @14 and then the @15 call's OUTPUT as well as its
-    // input: a hotter ratio now pulls the evidence lever too, which is the
+    // attempts intact. (The ratio moved 1.15 -> 1.08 -> 1.05 -> 1.01 as
+    // `copyAttempt` was re-priced on the @14 and then the @15 call's OUTPUT as
+    // well as its input, and then as RFC-16 put its $0.030 concept line on the
+    // fixed row: a hotter ratio now pulls the evidence lever too, which is the
     // opposite of what this test is about. The rung ORDER — pictures before
-    // evidence before attempts — is what it pins, and that is unchanged.)
-    await env.tools["memory.updateBeliefs"]!.execute({ diff: { [RUN_BUDGET_BELIEF_KEY]: { version: 1, ewmaRatio: 1.05, overrunStreak: 0, underTargetStreak: 0, runs: [] } } }, { ctx });
+    // evidence before attempts — is what it pins, and that is unchanged.
+    //
+    // HEADROOM, re-measured 2026-09-12 after the concept line was gated on the
+    // rungs where the mode can actually fire: **1.05** is now the last ratio
+    // that stops at three rungs (1.06 pulls the evidence lever), and the
+    // fully-adapted cold plan lands at $0.9503 — $0.0497 under target.
+    //
+    // An earlier measurement on this line read 1.02 and $0.9758, $0.024 under
+    // target, and called that a warning. It was a real one, and the cause was
+    // mechanical rather than inherent: `fixed` booked the concept's $0.030 on
+    // EVERY rung, including the cap-0 rung where `conceptEligibility` declines
+    // outright because "the run budget bought no generated images". The
+    // estimate was charging for spend the chosen plan had just made
+    // impossible, and on the saturated ladder for $0.030 x the ratio. Gating
+    // it restored more than the `vetCall` re-price in the same commit took.
+    //
+    // The warning still stands in its general form: the next UNCONDITIONAL
+    // addition to `fixed` will take the evidence lever on a nearly-cold
+    // client, and at that point the honest fix is to re-examine the fixed
+    // line — either gating the term on the plan the way this one now is, or
+    // re-pricing it — NOT walking this ratio again.)
+    await env.tools["memory.updateBeliefs"]!.execute({ diff: { [RUN_BUDGET_BELIEF_KEY]: { version: 1, ewmaRatio: 1.01, overrunStreak: 0, underTargetStreak: 0, runs: [] } } }, { ctx });
     const { result, plan, deliverable } = await run(env, "budget_adapted", fakeRouterSequence(happyTurns()));
     expect(result.status, JSON.stringify(result)).toBe("completed");
     expect(plan?.initialEstimateUsd).toBeGreaterThan(1);

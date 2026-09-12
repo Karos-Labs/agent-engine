@@ -136,8 +136,21 @@ export const STEP_COST_ESTIMATES_USD = {
    * the run can afford (`__tests__/run-budget.test.ts` pins the arithmetic).
    */
   copyAttempt: 0.159,
-  /** Flash image vet, ~6k in / 1.5k out — the 06 call or one rescue-tier re-vet. */
-  vetCall: 0.006,
+  /**
+   * Flash image vet, ~7.3k in / 1.5k out — the 06 call or one rescue-tier re-vet.
+   *
+   * Re-priced 0.006 → 0.0065 with the `instagram-image-vet@4 → @5` bump in
+   * this phase, per the rule at the top of this block. §1c is plain markdown
+   * in a STATIC system prompt (13,705 → 18,802 chars, ≈ +1,275 input tokens):
+   * its own first line tells the model to read it only when `conceptual` is
+   * present, which is an instruction to the model, not a conditional include,
+   * so EVERY vet call pays it — ordinary runs included, not just the minority
+   * the concept mode fires on. At $0.30/1M input (`pricing.ts:65`) that is
+   * ≈ +$0.00038 a call, and the vet is metered at up to nine calls a run
+   * (one per attempt plus two rescue re-vets per attempt), so ≈ +$0.0034 of
+   * input per run was going unpriced.
+   */
+  vetCall: 0.0065,
   /** Flash vision inspection, per image (05c candidate batches, 08a4 rendered slides). */
   visionInspectPerImage: 0.001,
   /** Flash relevance judge (07g), ~4k in / 0.3k out. */
@@ -178,6 +191,24 @@ export const STEP_COST_ESTIMATES_USD = {
   angle: 0.036,
   /** Phase 1 — Sonnet client brief (00b2), ~25k in / 2.5k out, at most once per 30 days. */
   brief: 0.113,
+  /**
+   * Phase 4 — Sonnet concept design (`04m-design-concept`), ~6.2k in / ~0.65k
+   * out, at most once per revision and only on a run the selector found
+   * eligible: 6,200 × $3/1M + 650 × $15/1M = $0.0186 + $0.00975 = $0.0284,
+   * priced 0.029.
+   *
+   * **Why Sonnet and not Flash ($0.0033).** The same reason the art director
+   * is Sonnet: this is the one call in the run that is pure judgment, it fires
+   * on at most a quarter of runs, and a flat concept is worse than no concept
+   * — it spends a $0.039 image on a picture nobody decodes. No Opus, per the
+   * owner's rule.
+   *
+   * The concept's IMAGE is not priced here: it is already inside
+   * `plan.generatedImagesCap * c.generatedImage` in `rawEstimate`, and adding
+   * it again would be the mirror of the flattering estimate this table warns
+   * about — an over-count pulls a lever the run did not need.
+   */
+  concept: 0.029,
 } as const;
 
 export type StepCostKey = keyof typeof STEP_COST_ESTIMATES_USD;
@@ -468,6 +499,24 @@ export interface RunShape {
    * ceiling (8), because an estimate that flatters itself pulls no lever.
    */
   slideCount: number;
+  /**
+   * Phase 4 (RFC-16) — whether the CONCEPT mode could fire at all on this run.
+   *
+   * `false` only when something switched the mode off before the run started:
+   * the client config's `instagramConceptMode: "off"`, or the run input's
+   * `conceptMode: "off"`. Anything else — including `"auto"`, where the
+   * selector declines on most runs — is `true`.
+   *
+   * It is deliberately NOT "will the selector fire". `02j-plan-run-budget`
+   * runs long before `04l-concept-eligibility` and cannot know that, and this
+   * module's own rule (see `STEP_COST_ESTIMATES_USD`) is that an estimate
+   * which flatters itself pulls no lever. So the worst case is priced
+   * UNCONDITIONALLY on every run where the mode is reachable: an estimator
+   * that priced the concept only on the runs it hoped would fire would arm no
+   * image lever on the runs that do, and the concept step plus its one vision
+   * inspection is $0.030 — most of an image-cap step.
+   */
+  conceptPossible: boolean;
 }
 
 export const DEFAULT_RUN_SHAPE: Readonly<RunShape> = {
@@ -481,6 +530,10 @@ export const DEFAULT_RUN_SHAPE: Readonly<RunShape> = {
   researchLaneQueries: RESEARCH_LANE_QUERIES,
   pageFetches: PRIMARY_SOURCE_PAGE_FETCHES,
   angleRounds: 1,
+  // The default is the worst case, like every other field here: the mode is
+  // reachable unless a client config or a run input has turned it off, and the
+  // planner is handed the shape it cannot yet disprove.
+  conceptPossible: true,
 };
 
 /** The estimate, itemised so the gate summary and the ledger can show where the money is expected to go. */
@@ -520,7 +573,30 @@ function rawEstimate(plan: RunBudgetPlan, shape: RunShape): RunCostEstimate["bre
     // 04b extraction, then 04i's angle: one per revision round, and the plan
     // covers the initial round.
     c.extraction +
-    count(shape.angleRounds) * c.angle;
+    count(shape.angleRounds) * c.angle +
+    // Phase 4 (RFC-16): the concept step and the ONE vision inspection of the
+    // frame it produces, priced on every run the mode is reachable on rather
+    // than on the ~1-in-6 the selector is expected to fire on. 02j runs long
+    // before 04l, so "will it fire?" is unanswerable here and the only honest
+    // answer is the worst case (+$0.030) — the same rule the rest of this
+    // function follows for cold caches and eight-slide carousels.
+    //
+    // "Unanswerable" is true of the STORY, not of the PLAN. Two of the
+    // selector's preconditions are decided by the very plan being priced, and
+    // on a rung that fails either of them the concept costs exactly $0:
+    // `conceptEligibility` declines with "the run budget bought no generated
+    // images" when `generatedImagesCap <= 0`, and the workflow declines
+    // outright when `optionalRevets` is false. Booking $0.030 there charged
+    // the estimate for spend the chosen plan had just made impossible, and it
+    // compounds — on the saturated ladder the same line costs $0.030 x the
+    // calibration ratio — which is what pushed the target headroom down. The
+    // full plan, where the concept really can be bought, still carries the
+    // honest worst case.
+    //
+    // The concept's IMAGE is NOT added here: it is one of the
+    // `plan.generatedImagesCap` pictures priced in `images` below, and
+    // double-counting it would pull an image lever a run does not need.
+    (shape.conceptPossible && plan.generatedImagesCap > 0 && plan.optionalRevets ? c.concept + c.visionInspectPerImage : 0);
   const photos = Math.max(0, shape.photoSlides);
   // A carousel cannot have more photo slides than slides; a shape that says
   // so is priced at the larger of the two rather than under-counting 08a4.
@@ -573,6 +649,22 @@ export interface RunBudgetRunRecord {
   crossedTarget: boolean;
   crossedMax: boolean;
   adaptations: number;
+  /**
+   * Phase 4 (RFC-16 §1.6) — did the concept selector fire, and did a concept
+   * image actually reach the shipped post?
+   *
+   * OPTIONAL because every run recorded before Phase 4 has neither, and an
+   * absent field has to stay distinguishable from a recorded `false`: the
+   * whole point of these two is to MEASURE the selection rate against the
+   * RFC's design-intent ~17% and its 25% ceiling, and a missing row counted
+   * as a decline would bias that measurement downwards exactly when the
+   * history is thinnest. A reader must count only the runs where the field is
+   * present. `readBudgetHistory` below preserves that distinction.
+   *
+   * Nothing in the estimator reads these — they are observation, not input.
+   */
+  conceptFired?: boolean;
+  conceptShipped?: boolean;
 }
 
 export interface RunBudgetHistory {
@@ -605,6 +697,15 @@ export function readBudgetHistory(beliefs: unknown): RunBudgetHistory {
         if (entry === null || typeof entry !== "object") return [];
         const e = entry as Record<string, unknown>;
         if (typeof e["runId"] !== "string") return [];
+        // Phase 4: the two concept booleans round-trip ONLY when the stored
+        // row actually carries a boolean. `e["conceptFired"] === true` would
+        // have been shorter and wrong — it turns "this run predates Phase 4"
+        // into "this run declined", which is the one distinction §1.6's
+        // selection-rate measurement rests on. Absent stays absent.
+        const conceptFields: { conceptFired?: boolean; conceptShipped?: boolean } = {
+          ...(typeof e["conceptFired"] === "boolean" ? { conceptFired: e["conceptFired"] } : {}),
+          ...(typeof e["conceptShipped"] === "boolean" ? { conceptShipped: e["conceptShipped"] } : {}),
+        };
         return [
           {
             runId: e["runId"],
@@ -614,6 +715,7 @@ export function readBudgetHistory(beliefs: unknown): RunBudgetHistory {
             crossedTarget: e["crossedTarget"] === true,
             crossedMax: e["crossedMax"] === true,
             adaptations: Math.max(0, Math.floor(num(e["adaptations"], 0))),
+            ...conceptFields,
           },
         ];
       })

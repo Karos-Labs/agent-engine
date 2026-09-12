@@ -11,6 +11,7 @@ import { createYtDlpHarvestProvider } from "./providers/yt-dlp-harvest.js";
 import { createScrapeImages } from "./scrape-images.js";
 import { createIngestAssets, type ObjectReader } from "./ingest-assets.js";
 import { createGetVisualPatterns, createIngestVisualPatterns, type VisionAnalysisClient } from "./visual-patterns.js";
+import { createGetLikenessConsent } from "./get-likeness-consent.js";
 import { createMediaLibraryAdd, createMediaLibraryList } from "./media-library.js";
 import { createVisualQaGate } from "./visual-qa-gate.js";
 import { createInspectImages } from "./inspect-images.js";
@@ -38,6 +39,8 @@ export * from "./harvest-video.js";
 // which exports a runner factory of the same name (TS2308 on the barrel).
 export type { ProcessResultLike, ProcessRunnerLike } from "./process-runner.js";
 export * from "./visual-patterns.js";
+export * from "./likeness-consent.js";
+export * from "./get-likeness-consent.js";
 export * from "./visual-qa-gate.js";
 export * from "./inspect-images.js";
 export * from "./harvest-article-images.js";
@@ -255,6 +258,15 @@ export function createKarosMediaTools(options: KarosMediaToolsOptions = {}): Age
       ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
     }),
     "media.getVisualPatterns": createGetVisualPatterns(clientWorkspaceStore),
+    // ── RFC-16 §5.2: the owner's recorded permission for third-party marks and
+    // real public figures in GENERATED imagery. Read-only, no egress, and
+    // registered on the SAME workspace handle as every other client document
+    // here — the consent record it reads is a sibling of `client/brand` and
+    // `client/config`, not a store of its own. Registered unconditionally, like
+    // every other capability in this file: an absent record, not an absent
+    // registration, is what says no — and it says no for the entire fleet until
+    // an owner writes one. No agent may ever write this block.
+    "media.getLikenessConsent": createGetLikenessConsent(clientWorkspaceStore),
     // ── RFC-14 item T: the client media library. Uploads stop being single-run
     // attachments — they are filed by content hash with the description the
     // run's vision pass already produced, so a later post can draw on the

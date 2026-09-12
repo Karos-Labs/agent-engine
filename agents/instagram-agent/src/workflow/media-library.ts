@@ -290,7 +290,9 @@ export function selectLibraryCandidates(
  * vet, `isUnfillable` would drop it, and the slide it was offered for would
  * take a typographic downgrade — the whole tier silently unusable. So the
  * stored `rights` are restated in the words `ingest-assets` uses for the
- * client's own media, and §4 of `instagram-image-vet@4` names this prefix.
+ * client's own media, and §4 of `instagram-image-vet@5` names this prefix.
+ * (@5 is RFC-16's conceptual-slide revision; §4 carries over from @4
+ * byte-identically, so the rule this comment depends on has not moved.)
  */
 export function describeLibraryCandidate(entry: MediaLibraryEntry): string {
   const filed = entry.addedAt.slice(0, 10);

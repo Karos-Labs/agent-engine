@@ -317,11 +317,11 @@ describe("image.generate", () => {
   // RFC-13 Phase 3, item Q — `forbid` and `styleLock` (TOOL_VERSION 1.1.0)
   // ───────────────────────────────────────────────────────────────────────
 
-  it("declares 1.1.0, because the brief it composes changed shape", () => {
+  it("declares 1.2.0, because the brief it composes changed shape again for RFC-16's permitted marks and figures", () => {
     // The tool-version gate on main diffs this against the merge base; a
     // prompt change that keeps its version is exactly what that gate exists
     // to catch (PR #95 is the precedent).
-    expect(tool(null).version).toBe("1.1.0");
+    expect(tool(null).version).toBe("1.2.0");
   });
 
   it("emits the style lock and the 'Do not include:' block in the documented order: direction, lock, negatives, constraints", async () => {

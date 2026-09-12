@@ -80,6 +80,27 @@ export class InstagramImageVettingAgent extends BaseAgent<ImageVettingOutput> {
     // objects. The `claimMatch` floor is unchanged and the workflow still
     // re-checks it deterministically. ≈ +250 input tokens per call
     // (≈ $0.0002 on Flash) and no new call. v3 frozen.
-    skillRef: "instagram-image-vet@4",
+    //
+    // v5 (RFC-16 §6.1, Phase 4, 2026-09): one slide per carousel, on the
+    // minority of runs where the concept mode fires, arrives with a
+    // `conceptual` block (`pattern`/`anchor`/`decodesTo`/`restsOn`) and is
+    // scored by a new §1c. Metaphor tolerance is DECLARED by the pipeline for
+    // that one slide and never inferred by the vet, so every other slide on
+    // every other run reads the byte-identical v4 rubric — including the
+    // unnamed-subject belt, which §1c suspends for a declared metaphor only
+    // and only because `decodesTo` checked against the vision note tests the
+    // same thing directly. §1c is STRICTER, not looser: a picture that could
+    // illustrate any story is a 2 where the literal rubric would honestly
+    // call it a 3, and an assertion in a generated candidate's own
+    // description is not evidence — the `[vision: …]` note is. No threshold
+    // moves: `MIN_CLAIM_MATCH` is still 3 and the workflow still re-checks it
+    // deterministically. §1c is plain markdown in a STATIC system prompt
+    // (13,705 → 18,802 chars), and "read this section only when `conceptual`
+    // is present" is an instruction to the MODEL, not a conditional include —
+    // so the cost is ≈ +1,275 input tokens on EVERY vet call, concept run or
+    // not, ≈ +$0.00038 each on Flash. No new call. `STEP_COST_ESTIMATES_USD.vetCall`
+    // is re-priced 0.006 → 0.0065 in the same commit, per the house rule in
+    // `run-budget.ts`. v4 frozen.
+    skillRef: "instagram-image-vet@5",
   };
 }

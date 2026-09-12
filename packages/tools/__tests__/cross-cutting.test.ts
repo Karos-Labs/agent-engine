@@ -121,6 +121,20 @@ describe("Layer 3 tool registry — cross-cutting", () => {
     // assertion below makes that exclusion enforceable rather than a comment:
     // if `media.*` is ever folded into the bundle, this fails and the count
     // above has to be revisited deliberately.
+    // (62 → 62 AGAIN, RFC-16 §5.2, Instagram Phase 4: media.getLikenessConsent
+    // is new in this PR — the fail-closed read of a client's recorded
+    // permission for third-party marks and public figures in generated imagery
+    // — and it lands in `createKarosMediaTools` exactly as media.libraryAdd/
+    // media.libraryList did, so this count does not move. The RFC predicted
+    // 62 → 63 by repeating the same assumption RFC-14 item T made and this
+    // comment block already corrects: the number covers the ten BUNDLED
+    // servers, and `media.*` is deliberately excluded from them. Verified by
+    // running this test unchanged against the registered tool: the karos-media
+    // registry goes 16 → 17 and `createAllKarosTools` is unchanged at 62.
+    // The new tool is asserted in
+    // packages/tools/karos-media/__tests__/likeness-consent.test.ts instead,
+    // and the `media.` line in the exclusion loop below is what keeps that
+    // true rather than a comment saying so.)
     expect(names.length).toBe(62);
     for (const prefix of expectedPrefixes) {
       expect(names.some((n) => n.startsWith(prefix))).toBe(true);

@@ -4,10 +4,13 @@ import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentTool, AgentToolRegistry, GateResponse, ModelRouter, PromptStore, StyleEdit, TemplateFeedback } from "@agent-engine/core";
 import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField, buildClientIntelContext, buildClientVoiceContext, readCrossChannelHistory, crossChannelDirective, crossChannelAvoidTopics, socialAccountsFromClient, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, readContextDoc, enforceContextDocPolicy, toAgentContext, distillStylePreferences, varyLearnedStyle, buildTrendQueries, hasTopicSignalMaterial, pullTrendResearch, runTrendScout, researchDigestForScout, selectContentMode, trendCandidateForDrafting, type ContentMode, type DistilledStyle, type FeedbackEntryLike, type StyleVariationEntry, type TrendResearch, type TrendScoutOutput } from "@agent-engine/workflow";
 import type { ClientBrand, ClientBrief, ClientKnowledge, ClientProfile, VoiceRules } from "@agent-engine/tools";
-import type { InstagramFormat, InstagramTopicClaim as InstagramTopicClaimShape } from "./types.js";
+import type { ConceptMode, ConceptReport, InstagramFormat, InstagramTopicClaim as InstagramTopicClaimShape } from "./types.js";
+import { readConceptMode } from "./types.js";
 import type { RenderCarouselInput, RenderCarouselResult } from "@agent-engine/tool-karos-publish";
 import { InstagramAngleAgent } from "../agent/instagram-angle-agent.js";
 import { InstagramBriefAgent } from "../agent/instagram-brief-agent.js";
+// Phase 4, RFC-16 — the one model step the concept mode adds (`04m`).
+import { InstagramConceptAgent, type ConceptOutput } from "../agent/instagram-concept-agent.js";
 import { InstagramCopyAgent } from "../agent/instagram-copy-agent.js";
 import { InstagramImageVettingAgent } from "../agent/instagram-image-vetting-agent.js";
 import { InstagramResearchAgent } from "../agent/instagram-research-agent.js";
@@ -34,7 +37,7 @@ import {
   type TemplateDefinition,
   type TemplateStore,
 } from "@agent-engine/tool-karos-templates";
-import { brandLogoDataUri, downloadBrandLogo, parseBrandLogoDataUri, renderVisualPatternReference, type BrandLogoPlacement, type MediaLibraryEntry, type VisualPatternProfile } from "@agent-engine/tool-karos-media";
+import { brandLogoDataUri, downloadBrandLogo, LIKENESS_FAIL_CLOSED, parseBrandLogoDataUri, renderVisualPatternReference, type BrandLogoPlacement, type GeneratedLikenessDecision, type MediaLibraryEntry, type VisualPatternProfile } from "@agent-engine/tool-karos-media";
 import { buildBrandHeadHtml, buildBrandLogoBodyHtml, deriveBrandRenderTokens, filterLearnedStyleToRing, planBrandLogo, type BrandRenderTokens } from "./brand-render-tokens.js";
 import { buildScriptFontHeadForLanguage } from "./script-fonts.js";
 import { adoptBriefTargetLanguage, resolveTargetLanguage } from "./target-language.js";
@@ -74,6 +77,29 @@ import {
   type RelevanceVerdict,
 } from "./relevance-gate.js";
 import { rankTopicCandidates, recentModesFromDecisions, resolveTopicClaim, topicDecisionForGate, topicDecisionSummary } from "./topic-selection.js";
+// ── Phase 4 (RFC-16) — the CONCEPT mode ──
+//
+// Everything in this module is PURE: the selector, the recognition lexicon,
+// the subject palette, the pattern preconditions, the ledger codec and the
+// two guards. The workflow contributes the four steps and nothing else, which
+// is what lets `concept-direction.test.ts` prove the arithmetic without a
+// harness and lets this file's own tests stay about WIRING.
+import {
+  checkConceptLegibility,
+  conceptPermittedSubjects,
+  checkConceptRendered,
+  conceptDecisionSummary,
+  conceptEligibility,
+  conceptSubjectPalette,
+  namedEntities,
+  pastConceptsFromDecisions,
+  NO_LIKENESS_PERMIT,
+  type ConceptBriefView,
+  type ConceptPattern,
+  type ConceptEligibility,
+  type ConceptLikenessPermit,
+  type ConceptSignals,
+} from "./concept-direction.js";
 import {
   CANDIDATES_PER_PHOTO_SLIDE,
   DEFAULT_RUN_SHAPE,
@@ -193,6 +219,11 @@ import {
 import { InstagramArtDirectorAgent } from "../agent/instagram-art-director-agent.js";
 import {
   buildArtDirection,
+  // Phase 4 (RFC-16 §4.3): `buildArtDirection` with the anti-metaphor line
+  // dropped BY IDENTITY and the concept's own `paletteRole` /
+  // `productionNote` appended. Palette, accentColor, forbid and styleLock are
+  // byte-identical — a concept may never shorten the forbid list.
+  buildConceptArtDirection,
   buildVisualDirectionInput,
   checkVisualDirection,
   fallbackVisualDirection,
@@ -800,6 +831,15 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // the direction steers copy, and the attachments become Tier 0 below.
     const runDirection = readRunDirection(wf.input);
 
+    // Phase 4 (RFC-16 §1.7) — this run's own concept override, read from the
+    // same place `mediaSource` is and ignored unless it is one of the three
+    // known values. `"on"` bypasses the score, the recognition gate and the
+    // cooldown; it does NOT bypass the grounding floor, the palette/colour
+    // gates, the budget gates or the safety policy. The CLIENT's standing
+    // `instagramConceptMode` is read at `02` and, when it says `"off"`, beats
+    // this — a per-run request may not overrule a standing opt-out.
+    const runConceptMode = readConceptMode((wf.input ?? {})["conceptMode"]);
+
     // ── 00a: "Only media I upload for this job" with nothing uploaded ──
     //
     // Refused FIRST, before auto-setup, the topic claim and the research pull
@@ -934,12 +974,30 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         );
       }
 
+      // Phase 4 (RFC-16 §1.7 level 1): the client's standing concept setting,
+      // off the SAME read as `forbiddenTopics` — a second `client.getConfig`
+      // for one enum would be a round trip for a value already in hand, and
+      // freezing it here means a config edited mid-run cannot change the
+      // verdict between `04l` and `04n`.
+      const clientConceptMode = readConceptMode(config["instagramConceptMode"]);
       return {
         forbiddenTopics: readForbiddenTopics(configOutcome.result),
         styleConfig: styleConfigParse.data,
         brandTokens: brandTokensParse.data,
+        ...(clientConceptMode !== undefined ? { conceptMode: clientConceptMode } : {}),
       };
     });
+
+    // RFC-16 §1.7's three override levels, resolved ONCE, here, so every later
+    // reader sees the same answer and the reviewer sees which level decided.
+    //
+    // A client-level `"off"` beats a per-run `"on"`: the standing setting is
+    // the one somebody made deliberately about this client's whole feed, and
+    // a run dialog must not be able to overrule it. Everything else is
+    // most-specific-first.
+    const conceptMode: ConceptMode = frozen.conceptMode === "off" ? "off" : (runConceptMode ?? frozen.conceptMode ?? "auto");
+    const conceptModeSource =
+      frozen.conceptMode === "off" ? "client config" : runConceptMode !== undefined ? "run input" : frozen.conceptMode !== undefined ? "client config" : "default";
 
     // ── The per-run budget: an estimate, an adapted plan, a live meter — never a hold (Phase 0 cost controls) ──
     //
@@ -1210,6 +1268,15 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // Phase 1, item H: the Sonnet brief call and its source scrapes are
           // this run's cost only when `00b` asked for a fresh document.
           briefRefresh: briefCheck.action !== "reuse",
+          // Phase 4 (RFC-16 §7.2): the estimator runs long before `04l` and
+          // cannot know whether the concept will fire, so per `run-budget.ts`'s
+          // own rule — an estimate that flatters itself pulls no lever — it
+          // prices the worst case UNCONDITIONALLY whenever the mode is not
+          // switched off outright. On a run already near target this trips a
+          // tighter image cap where it previously fitted; that is the
+          // adaptation working, and it is exactly why the concept image is
+          // ordered FIRST into a partial cap.
+          conceptPossible: conceptMode !== "off",
         },
         history,
         { spentUsd: meter.totalUsd },
@@ -2793,6 +2860,58 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       }
     }
 
+    // ── 00e: the client's LIKENESS CONSENT — read once, frozen, fail-closed (Phase 4, RFC-16 §5) ──
+    //
+    // Third-party marks and public figures are a trademark, right-of-publicity
+    // and brand-safety decision. The owner makes it, in a
+    // `generatedLikeness` block in `clients/<slug>/client/consent.json`; no
+    // agent may ever write that block, and nothing here can grant itself
+    // anything.
+    //
+    // FREE, and outside the attempt loop on purpose: it is a store read with
+    // no egress, and a permit that could be re-read per attempt is a permit
+    // that could change between the concept being designed (`04m`) and the
+    // rendered frame being checked against it (`06d1`).
+    //
+    // `media.*` is legitimately absent from some registries —
+    // `createAllKarosTools()` deliberately excludes it — so an absent tool
+    // yields NO permit, which is the conservative default rather than an
+    // error. Every other failure path resolves the same way: an unreadable
+    // record, an absent block, a non-`granted` status, and a `granted` status
+    // that names nothing all read as no permission at all. That last one is
+    // the important one: "permission to use third-party marks" that does not
+    // say WHICH marks cannot be checked, so it grants nothing.
+    const likenessDecision = await wf.step.code("00e-check-likeness-consent", async (): Promise<{ granted: boolean; reason: string; thirdPartyMarks: string[]; publicFigures: string[]; ownMarks: boolean; scopeNote?: string }> => {
+      const absent = { granted: false, reason: `media.getLikenessConsent is not registered on this deployment — ${LIKENESS_FAIL_CLOSED}`, thirdPartyMarks: [], publicFigures: [], ownMarks: false };
+      const consentTool = tools["media.getLikenessConsent"];
+      if (consentTool === undefined) return absent;
+      try {
+        const outcome = await consentTool.execute({}, { ctx });
+        if (outcome.status !== "success") return absent;
+        const decision = outcome.result as GeneratedLikenessDecision;
+        return {
+          granted: decision.granted,
+          reason: decision.reason,
+          thirdPartyMarks: [...decision.thirdPartyMarks],
+          publicFigures: [...decision.publicFigures],
+          ownMarks: decision.ownMarks,
+          ...(decision.scopeNote !== undefined ? { scopeNote: decision.scopeNote } : {}),
+        };
+      } catch (error) {
+        // Never a failure. A consent read that threw is not "granted" and is
+        // not "denied with a reason" either — it is simply no permit, which
+        // is the same shape every other path produces.
+        console.error("00e-check-likeness-consent: could not read the client's generatedLikeness consent; no permit", error);
+        return absent;
+      }
+    });
+    /** The permit the pure module reads. `NO_LIKENESS_PERMIT` by identity whenever nothing was granted, which is the whole fleet on day one. */
+    const likenessPermit: ConceptLikenessPermit = likenessDecision.granted
+      ? { thirdPartyMarks: likenessDecision.thirdPartyMarks, publicFigures: likenessDecision.publicFigures, ownMarks: likenessDecision.ownMarks }
+      : NO_LIKENESS_PERMIT;
+    /** The permit's own words, surfaced verbatim in the gate payload so a reviewer sees WHY the conservative default applied. */
+    const likenessReason: string = likenessDecision.scopeNote ?? likenessDecision.reason;
+
     // ── The setup budget's own estimate-vs-actual, reported exactly as a run's is ──
     //
     // One report over BOTH setup halves (item N's studio and item Q's
@@ -4182,6 +4301,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     //           budget capped at two returns to step 05 (RFC-03 §3 step 07,
     //           extended by Fixes 2/3 to cover the two new checks) ──
     const angleAgent = new InstagramAngleAgent({ router: options.router, tools, promptStore: options.promptStore });
+    // Phase 4 (RFC-16 §2.2) — constructed unconditionally like every other
+    // agent here; whether it is ever CALLED is `04l`'s decision alone.
+    const conceptAgent = new InstagramConceptAgent({ router: options.router, tools, promptStore: options.promptStore });
     const copyAgent = new InstagramCopyAgent({ router: options.router, tools, promptStore: options.promptStore });
     const imageAgent = new InstagramImageVettingAgent({ router: options.router, tools, promptStore: options.promptStore });
     const qaAgent = new InstagramVisualQaAgent({ router: options.router, tools, promptStore: options.promptStore });
@@ -4300,6 +4422,17 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        * already past the hard max and finished on the cheapest complete path.
        */
       angleDecision?: AngleDecision;
+      /**
+       * Phase 4 (RFC-16 §1.7) — the concept decision and its arithmetic for
+       * THIS round.
+       *
+       * ALWAYS present, including on the overwhelming majority of rounds
+       * where the mode declined, because "this client never gets concept
+       * images" and "this client's stories never qualify" have to be
+       * distinguishable on the gate payload — and because the measured
+       * selection rate §1.6 refuses to guess in advance needs a denominator.
+       */
+      conceptReport: ConceptReport;
       /**
        * Phase 2, item L — the SHIPPED attempt's visual-interest floor: the
        * per-slide measurement, every finding, the clause-E waivers, the
@@ -4635,6 +4768,207 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       /** `{ chosen, rejected }` for the copy prompt (§17) — `undefined` on the fail-open path, which the prompt documents as an unchanged drafting path. */
       const angleForCopy = angleDecision !== undefined ? angleForCopyInput(angleDecision) : undefined;
 
+      // ── 04l: does THIS STORY earn the concept treatment? (Phase 4, RFC-16 §1) ──
+      //
+      // Free, deterministic, and the whole "sometimes, not always" mechanism.
+      // The score is arithmetic over properties of the STORY — a reversal, a
+      // figure that reframes, a named contest, a moment, a measured interest
+      // proxy, numbers, novelty against what this account just posted — and
+      // nine hard preconditions every one of which fails OFF. A story with
+      // none of the three 2-point shape terms maxes at 4 and cannot reach the
+      // threshold of 5 whatever else is true of it.
+      //
+      // ── Why HERE, and not frozen at `04k` ──
+      //
+      // `04k-freeze-generation-style` runs once per RUN; `04i`/`04j` run once
+      // per REVISION. Those are two different kinds of decision and must not
+      // be frozen together. STYLE is a property of the CLIENT and stays
+      // frozen at `04k` for the whole run — `04k` is not moved, not re-run
+      // and not touched by any of this. CONCEPT is a property of the
+      // ARGUMENT, and a reviewer's `revise` legitimately changes the
+      // argument, so the verdict is revision-scoped and keyed through the
+      // same `rev()` helper `04i`/`04j` use.
+      //
+      // Above the attempt loop for the same reason the angle is: three
+      // redrafts of one round argue the same story, so re-deciding per
+      // attempt would buy three verdicts that cannot differ and, worse, could
+      // buy three $0.029 Sonnet calls.
+      //
+      // Everything the selector reads is ALREADY typed, checkpointed and in
+      // scope: the angle decision, the trend the scout already scored, the
+      // deduped fact cards, the art direction Phase 3's setup derived, the
+      // decision ledger the mode rotation already reads. No new field on
+      // `TrendCandidate`, no re-priced scout, no model call to classify the
+      // story.
+      /** The art direction as `image.generate` will actually receive it — the source of both the colour gate (precondition 6, L8) and the forbid list (L7). */
+      const conceptArt = buildArtDirection(frozen.brandTokens, visualDirection);
+      const conceptPalette = Array.isArray(conceptArt?.["palette"]) ? (conceptArt!["palette"] as string[]) : [];
+      const conceptAccentColor = typeof conceptArt?.["accentColor"] === "string" ? (conceptArt["accentColor"] as string) : undefined;
+      const conceptForbid = Array.isArray(conceptArt?.["forbid"]) ? (conceptArt!["forbid"] as string[]) : [];
+      const conceptHasBrandColour = conceptAccentColor !== undefined || conceptPalette.length > 0;
+      /** The brief, as the pure module reads it. A real `ClientBrief` is assignable as-is; the view exists so the module needs no workflow import. */
+      const conceptBriefView: ConceptBriefView = brief;
+      const conceptChosenAngle = angleDecision?.status === "selected" ? angleDecision.chosen : undefined;
+      /**
+       * RECOGNITION (§1.3) — item 1 of the observed recipe and the gate the
+       * selector leans on hardest, built from the story's OWN artefacts:
+       * organisations named in fact-card `source` fields and registrable host
+       * labels from the evidence. Both are language-independent, which is the
+       * entire point: a Hebrew story about Apple and Samsung recognises Apple
+       * and Samsung because its SOURCES say so, not because its headline
+       * happens to be capitalised — and `HEADING_HAS_PROPER_NOUN`'s own
+       * comment admits that a capitalisation heuristic is silent in Hebrew.
+       */
+      const conceptEntities = namedEntities(
+        topicClaim.trend,
+        conceptChosenAngle === undefined ? undefined : { title: conceptChosenAngle.title, rememberLine: conceptChosenAngle.rememberLine, whyThisClient: conceptChosenAngle.whyThisClient },
+        promptFacts,
+        brief,
+      );
+      /** `angleFit` is the chosen angle's own deterministic `fit` — half brief fit, half the ledger's novelty — not the model's self-reported `briefFit`. */
+      const conceptAngleFit = angleDecision?.status === "selected" ? angleDecision.scores.find((s) => s.id === angleDecision.chosen.id)?.fit : undefined;
+      const conceptSignals: ConceptSignals = {
+        ...(conceptChosenAngle !== undefined ? { angleId: conceptChosenAngle.id, briefFit: conceptChosenAngle.briefFit } : {}),
+        ...(conceptAngleFit !== undefined ? { angleFit: conceptAngleFit } : {}),
+        ...(topicClaim.trend !== undefined ? { trend: topicClaim.trend } : {}),
+        // `bestCandidateScore` is `brandFit × interest × distance`, so it is
+        // not `distance` and must not be passed as one. The scout's own
+        // per-candidate distance is not carried onto the claim, so the
+        // novelty term is simply absent here rather than approximated — it is
+        // one of the four 1-point terms, and a story that needs it to reach 5
+        // is a story the selector should not be reaching for.
+        facts: promptFacts,
+        entities: conceptEntities.entities,
+        entityBasis: conceptEntities.basis,
+      };
+      const conceptVerdict: ConceptEligibility = await wf.step.code(rev("04l-concept-eligibility"), () =>
+        conceptEligibility({
+          signals: conceptSignals,
+          brief: conceptBriefView,
+          permit: likenessPermit,
+          // The cooldown reads back from the decision ledger through the same
+          // codec pattern `pastAnglesFromDecisions` uses. A cooldown states a
+          // guarantee — never two concepts within three shipped posts — where
+          // a bare window would permit a burst of two and then silence.
+          pastConcepts: pastConceptsFromDecisions(recentDecisions),
+          // The angle decision AS IT STANDS, including the documented
+          // fail-open `unavailable` status — which §1.5.3 turns into "not
+          // eligible". The concept mode fails OFF, always: a run that could
+          // not even decide what it is arguing has no business dramatising it.
+          angleStatus: angleDecision?.status ?? "unavailable",
+          trendTookSlot: topicClaim.trend !== undefined,
+          hasBrandColour: conceptHasBrandColour,
+          // Precondition 7, evaluated LIVE rather than off the plan. This is
+          // what makes the hard max unreachable by this feature: past the
+          // $1.00 target the meter is `essential-only` and the Sonnet call is
+          // never bought, so the mode cannot push a run from $1.40 to $1.50.
+          generatedImagesCap: budgetPlan.generatedImagesCap,
+          meterPosture: meter.posture,
+          // Precondition 8: a client-media-only run has no generation tier at
+          // all, so a concept would be authored and then discarded unspent.
+          mediaSource: runDirection.mediaSource,
+          ...(frozen.conceptMode !== undefined ? { clientMode: frozen.conceptMode } : {}),
+          ...(runConceptMode !== undefined ? { runMode: runConceptMode } : {}),
+        }),
+      );
+
+      /**
+       * The report a reviewer reads, as of the decision that is fixed for the
+       * whole revision. `04n` and the rescue tier narrow a per-ATTEMPT copy of
+       * it below, which is why this one is a base rather than the live value:
+       * a second attempt must not inherit the first attempt's slide number or
+       * its decline reason.
+       */
+      let conceptReportBase: ConceptReport = {
+        mode: conceptVerdict.mode,
+        modeSource: conceptModeSource,
+        eligible: conceptVerdict.eligible,
+        fired: false,
+        shipped: false,
+        rule: conceptVerdict.rule,
+        score: conceptVerdict.score,
+        threshold: conceptVerdict.threshold,
+        terms: conceptVerdict.terms,
+        recognition: conceptVerdict.recognition,
+        grounding: conceptVerdict.grounding,
+        cooldown: conceptVerdict.cooldown,
+        patterns: conceptVerdict.patterns,
+        likeness: {
+          status: likenessPermit === NO_LIKENESS_PERMIT ? "absent" : "granted",
+          marks: likenessPermit.thirdPartyMarks,
+          figures: likenessPermit.publicFigures,
+          ownMarks: likenessPermit.ownMarks,
+          ...(likenessReason !== undefined ? { scopeNote: likenessReason } : {}),
+        },
+        ...(conceptVerdict.eligible ? {} : { declineReason: conceptVerdict.reason ?? conceptVerdict.skipped ?? conceptVerdict.rule }),
+      };
+
+      // ── 04m: the one model call — what is the VISUAL METAPHOR for this story? ──
+      //
+      // ~$0.029 (Sonnet 4.6, ~6.2k in / ~0.65k out), bought at most once per
+      // revision and only on a story that already cleared every precondition.
+      // Sonnet rather than Flash for the same reason the art director is
+      // Sonnet: this is the one call in the run that is pure judgment, and a
+      // FLAT concept is worse than no concept — it spends a $0.039 image on a
+      // picture nobody decodes. No Opus anywhere in this run (owner's rule).
+      //
+      // `allowedTools: []`, and it is handed no request, no query and no web
+      // access. It receives six fact cards, the eligible pattern subset, a
+      // subject palette drawn from the client's own brief, the art direction
+      // and the permit — and the pair it names is re-checked in code. That is
+      // what makes the original audit failure (a real-estate carousel for an
+      // AI marketing agency, because a step took a request verbatim as a web
+      // query) structurally unreachable here rather than merely unlikely.
+      //
+      // Fails to NOTHING. A malformed output, an exhausted turn budget or an
+      // outage leaves `concept` undefined and the run proceeds on exactly
+      // today's path with the writer's own scene brief. Never a hold.
+      let concept: ConceptOutput | undefined;
+      if (conceptVerdict.eligible) {
+        const conceptExec = await wf.step.agent(rev("04m-design-concept"), conceptAgent, {
+          // The client's world, and the only world the concept may be set in.
+          clientBrief: briefForPrompt(brief),
+          // The argument this post is making. Present by construction: an
+          // unselected angle is precondition 3's decline.
+          ...(conceptChosenAngle !== undefined ? { angle: { title: conceptChosenAngle.title, rememberLine: conceptChosenAngle.rememberLine, whyThisClient: conceptChosenAngle.whyThisClient, id: conceptChosenAngle.id } } : {}),
+          // The SAME ordered slice `04i` proposed over and `05` will write
+          // from, so `restsOn` can be checked verbatim in code against what
+          // the concept step actually saw.
+          facts: factsForAnglePrompt(promptFacts),
+          ...(topicClaim.trend !== undefined ? { trend: trendCandidateForDrafting(topicClaim.trend) } : {}),
+          entities: conceptVerdict.recognition.entities,
+          // The ELIGIBLE SUBSET, never the full seven — the same discipline as
+          // `selectAngle` checking `restsOn` against the cards that exist. A
+          // model handed all seven proposes three flavours of the same move.
+          patterns: conceptVerdict.patterns,
+          // The concrete nouns the anchor must be built from, all of them
+          // drawn from the client's own brief and every one already past
+          // `isPlaceholderBriefValue`. This is the SUBJECT wire, and it is why
+          // "a cool image about something the client does not do" is
+          // unreachable rather than unlikely.
+          subjectPalette: conceptVerdict.subjects,
+          ...(visualDirection !== undefined ? { direction: { lines: visualDirection.lines.map((l) => l.line), forbid: visualDirection.forbid } } : {}),
+          // The run's frozen style lock, verbatim: the concept chooses WHAT is
+          // in the frame and never HOW it is shot.
+          ...(frozenStyle.line !== undefined ? { styleLock: frozenStyle.line } : {}),
+          ...(conceptPalette.length > 0 ? { palette: conceptPalette } : {}),
+          ...(conceptAccentColor !== undefined ? { accentColor: conceptAccentColor } : {}),
+          // Almost always two empty lists and `ownMarks: false` — the
+          // conservative default the whole fleet ships with.
+          permit: { thirdPartyMarks: likenessPermit.thirdPartyMarks, publicFigures: likenessPermit.publicFigures, ownMarks: likenessPermit.ownMarks },
+          targetLanguage: targetLanguage ?? "English",
+        });
+        spend(rev("04m-design-concept"), conceptExec.totalCostUsd, STEP_COST_ESTIMATES_USD.concept);
+        conceptReportBase = { ...conceptReportBase, fired: true };
+        if (conceptExec.status === "completed" && conceptExec.finalOutput !== undefined && conceptExec.finalOutput !== null) {
+          concept = conceptExec.finalOutput;
+        } else {
+          conceptReportBase = { ...conceptReportBase, declineReason: `the concept step did not complete (${conceptExec.status}) — the slide keeps the writer's own scene brief` };
+        }
+      }
+      /** The live, per-ATTEMPT report. Reset from the base at the top of every attempt; what the last attempt leaves here is what ships. */
+      let conceptReport: ConceptReport = { ...conceptReportBase };
+
       let finalCopy: InstagramCopyOutput | undefined;
       let finalSelections: ImageSelection[] | undefined;
       let finalSlidesData: RenderCarouselInput | undefined;
@@ -4685,6 +5019,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // re-layout fixed the floor must not ship carrying the previous
       // attempt's finding.
       interestDegraded = undefined;
+      // Same reasoning for the concept report: the REVISION's verdict and the
+      // authored concept carry over, but which slide it landed on and whether
+      // it shipped are facts about THIS attempt's copy and this attempt's
+      // images, so they are re-decided from the base every time.
+      conceptReport = { ...conceptReportBase };
       const copyExec = await wf.step.agent(rev(`05-write-copy-attempt-${attempt}`), copyAgent, {
         ...runDirectionField(runDirection),
         topic: topicClaim.topic,
@@ -4780,6 +5119,98 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // image-sourcing tier with nothing usable, to record its downgrade to
       // the "text_only" archetype (never mutated for any other reason).
       let copy = copyExec.finalOutput!;
+
+      // ── 04n: bind the concept to ONE slide — or discard it, silently and for free (RFC-16 §2.3/§2.4) ──
+      //
+      // Free, deterministic, and it runs per attempt because the slide set it
+      // binds to is this attempt's copy.
+      //
+      // THE SLIDE. The cover, when `resolveLayout` puts it in
+      // `HERO_IMAGE_LAYOUTS` and a client upload has not already claimed it;
+      // otherwise the lowest-numbered slide that is. The cover is the
+      // scroll-stop and that is the entire point of the mode. If neither
+      // exists the concept is discarded with that as the reason — it never
+      // invents a slide.
+      //
+      // WHAT IS *NOT* DONE, and this is the load-bearing half of the whole
+      // design: `slide.visualNeed` is NOT mutated. `retrievalQueryFor` still
+      // reads the writer's own `searchTerms`, so the retrieval query is not
+      // poisoned and the slide keeps whatever photograph tier 1 found for it
+      // as a LIVE fallback. That is what makes §6.4's strictly-better
+      // replacement rule possible, and it is why this mode cannot make a
+      // slide worse: a concept image has to out-score the picture the slide
+      // already had, on the same rubric, or the picture stays.
+      //
+      // The copy prompt is not bumped either. `instagram-copy@15` §6's "No
+      // named real people, brands, products or logos" stays absolutely true
+      // OF THE WRITER, because the writer never authors a concept.
+      /** The slide `04n` bound the concept to, when it bound one. Consumed by the GENERATE tier only. */
+      let conceptSlideN: number | undefined;
+      /** The generation brief for that slide — `concept.scene`, never the writer's. */
+      let conceptPrompt: string | undefined;
+      if (concept !== undefined) {
+        const bound = await wf.step.code(rev(`04n-apply-concept-attempt-${attempt}`), () => {
+          // The legibility guard first, because a concept that fails it costs
+          // nothing to drop and the fallback is the current working
+          // behaviour. Ten deterministic clauses: the claim it rests on is a
+          // real card, the anchor comes from the client's own world and is a
+          // photographable object, the decode is about THIS slide and names a
+          // recognised entity, exactly one metaphorical move, `readsAs` is not
+          // simply `decodesTo`, nothing on the forbid list, a brand colour to
+          // obey, every permitted mark actually permitted, and a scene short
+          // enough to round-trip `SlideVisualNeedSchema`.
+          const legible = checkConceptLegibility(concept!, {
+            facts: promptFacts,
+            brief: conceptBriefView,
+            permit: likenessPermit,
+            entities: conceptVerdict.recognition.entities,
+            ...(conceptChosenAngle !== undefined ? { rememberLine: conceptChosenAngle.rememberLine } : {}),
+            forbid: conceptForbid,
+            hasBrandColour: conceptHasBrandColour,
+          });
+          // `discarded` broke a rule; `demoted` (L6) is a model that wrote a
+          // perfectly good LITERAL scene and labelled it a concept. Both leave
+          // the slide on the writer's own brief and its retrieved picture, and
+          // both are reported in their own words — a reviewer reading
+          // "demoted" should not think something went wrong.
+          if (legible.verdict !== "accepted") return { n: undefined, reason: `${legible.verdict} (${legible.clause}): ${legible.reason}` };
+
+          const eligibleSlide = copy.slides
+            .filter((s) => HERO_IMAGE_LAYOUTS.has(resolveLayout(s, availableTemplates).layout) && !tier0Slots.has(s.n))
+            .map((s) => s.n)
+            .sort((a, b) => a - b);
+          // The cover when it is one of them, else the lowest-numbered one.
+          const chosen = eligibleSlide.includes(1) ? 1 : eligibleSlide[0];
+          if (chosen === undefined) {
+            return { n: undefined, reason: "no hero-image slide was free for a concept (every one is typographic or already covered by a client upload)" };
+          }
+          return { n: chosen, reason: undefined };
+        });
+        if (bound.n === undefined) {
+          conceptReport = { ...conceptReport, declineReason: bound.reason ?? "the concept was discarded before it reached the generator" };
+        } else {
+          conceptSlideN = bound.n;
+          conceptPrompt = concept.scene;
+          conceptReport = {
+            ...conceptReport,
+            slideN: bound.n,
+            concept: {
+              pattern: concept.pattern,
+              anchor: concept.anchor,
+              situation: concept.situation,
+              readsAs: concept.readsAs,
+              decodesTo: concept.decodesTo,
+              restsOn: concept.restsOn,
+              paletteRole: concept.paletteRole,
+              typeZone: concept.typeZone,
+              usesPermittedMarks: concept.usesPermittedMarks,
+            },
+            // Replaced below if the image is actually generated AND wins the
+            // re-vet; until then the honest state is "authored, not shipped".
+            declineReason: "the concept image was authored but has not been generated yet",
+          };
+        }
+      }
 
       // ── 05b: source real candidate images for THIS attempt's copy ──
       //
@@ -5131,7 +5562,50 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // Each tier re-vets only the slides still missing, against only its own
       // new candidates. Re-judging settled slides would pay for verdicts that
       // are not going to change.
-      const rescueTiers: Array<{ id: string; tool: AgentTool | undefined; buildArgs: (gaps: ImageGap[]) => unknown }> = [
+      //
+      // ── Phase 4 (RFC-16 §4.1/§4.3), on the `art` block of the generate tier ──
+      //
+      // On the CONCEPT call, and only there, the direction is rebuilt with the
+      // anti-metaphor line dropped BY IDENTITY and the concept's own
+      // `paletteRole` and RELATIVE `productionNote` appended. Palette,
+      // accentColor, forbid and the style lock stay byte-identical: a concept
+      // may never shorten the forbid list, and it never chooses how the frame
+      // is shot — the run's frozen style lock still does that.
+      //
+      // The ordinary direction is spread FIRST and the concept's over it,
+      // rather than the two being a ternary. Both calls return the same key
+      // set (the concept's differs only in `notes`), so the result is
+      // identical either way — and `art-direction.test.ts`'s source pin, which
+      // exists to stop an `image.generate` call carrying no art at all, reads
+      // a 1,200-character window from the tool lookup, so the first term after
+      // `art:` has to stay `...buildArtDirection(` AND stay close to it. Long
+      // rationale therefore lives here, above the literal, rather than inside
+      // it.
+      //
+      // ── `permitted`: the concept's declared subjects, not the permit ──
+      //
+      // `conceptPermittedSubjects` splits the concept's own
+      // `usesPermittedMarks` — one list, because L9 validates it against the
+      // UNION of the record's marks and figures — into the two lists
+      // `image.generate` 1.2.0 takes. It is deliberately NOT
+      // `likenessPermit.thirdPartyMarks` / `.publicFigures`.
+      //
+      // The permit is the CEILING ("this client may use these names"); the
+      // concept is the INSTRUCTION ("this is what I am drawing"). The
+      // difference is a rights problem, not a tidiness one:
+      // `generate-image.ts`'s `describeGenerated` writes the description the
+      // image VET reads, and a non-empty `permittedFigures` makes it assert "a
+      // deliberate, recorded-permission likeness of <names>" — a sentence that
+      // exists precisely because the vet has no pixels on the generate tier
+      // and therefore believes it. Handing over the ceiling would make that
+      // assertion false for a figure the concept never asked for, on EVERY
+      // need in the call rather than just the concept's slide, and
+      // `buildConstraintLine` would licence the model to draw them as well.
+      // Both lists are empty for the entire fleet today (no client has a
+      // consent record), so the composed brief stays byte-identical to the
+      // pre-Phase-4 one — this is the code that runs the FIRST time an owner
+      // grants the permission, which is why it has to be right now.
+      const rescueTiers: Array<{ id: string; tool: AgentTool | undefined; buildArgs: (gaps: ImageGap[], forConcept?: ConceptOutput) => unknown }> = [
         {
           id: "scrape",
           tool: tools["media.scrapeImages"],
@@ -5144,7 +5618,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         {
           id: "generate",
           tool: tools["image.generate"],
-          buildArgs: (gaps) => ({
+          buildArgs: (gaps, forConcept) => {
+            // Computed once, above the literal, per this block's own rule.
+            const permitted = forConcept !== undefined ? conceptPermittedSubjects(forConcept, likenessPermit) : { marks: [], figures: [] };
+            return {
             repoRoot: options.repoRoot,
             runId: wf.runId,
             needs: gaps,
@@ -5152,24 +5629,45 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             // renders at a different ratio to the template gets cropped, and a
             // crop is exactly how a carefully-composed frame loses its subject.
             aspectRatio: aspectRatioForCanvas(frozen.styleConfig.canvas),
-            // Phase 3, items Q + S: this client's own direction, with the
-            // run's FROZEN style lock winning over whatever the direction
-            // says — `buildArtDirection` re-reads a direction that can drift
-            // between attempts, `frozenStyle` cannot.
-            art: { ...buildArtDirection(frozen.brandTokens, visualDirection), ...(frozenStyle.line !== undefined ? { styleLock: frozenStyle.line } : {}) },
-          }),
+            // Phase 3, items Q + S, and Phase 4's concept override — see the
+            // block above `rescueTiers` for both.
+            art: {
+              ...buildArtDirection(frozen.brandTokens, visualDirection),
+              ...(forConcept !== undefined ? buildConceptArtDirection(frozen.brandTokens, visualDirection, forConcept) : {}),
+              ...(frozenStyle.line !== undefined ? { styleLock: frozenStyle.line } : {}),
+              // §5.3/§5.4 — see the `permitted` note above `rescueTiers`.
+              ...(permitted.marks.length > 0 ? { permittedMarks: permitted.marks } : {}),
+              ...(permitted.figures.length > 0 ? { permittedFigures: permitted.figures } : {}),
+            },
+            };
+          },
         },
       ];
 
       /** Slides a rescue tier could not even ask for this attempt, with the budget reason: the run's image cap was spent, or the meter/plan stopped optional work (Phase 0 cost controls). */
       const rescueSkipped = new Map<number, string>();
 
+      /**
+       * Phase 4 (RFC-16 §6.4.1) — is there a concept image still to be made
+       * on this attempt?
+       *
+       * This is the ONE state that makes the generate tier run with no gap at
+       * all. A concept slide usually has a perfectly good retrieved
+       * photograph (that is the point — it is the live fallback), so it is
+       * not in `unfillable`, so without this flag the tier's own
+       * `unfillable.length === 0` guard would skip it and the concept could
+       * never be drawn on the run where it matters most.
+       */
+      let conceptPending = conceptSlideN !== undefined && conceptPrompt !== undefined;
+
       let tierIndex = 0;
       for (const tier of rescueTiers) {
         tierIndex += 1;
+        /** The generate tier runs for a pending concept even when nothing is unfillable; the scrape tier never does — a concept is drawn, never scraped. */
+        const conceptOnThisTier = tier.id === "generate" && conceptPending;
         // Client-only runs never scrape or generate: the gaps stay gaps and
         // take the downgrade path with the sourcing reason recorded above.
-        if (clientMediaOnly || unfillable.length === 0 || tier.tool === undefined) continue;
+        if (clientMediaOnly || (unfillable.length === 0 && !conceptOnThisTier) || tier.tool === undefined) continue;
 
         let gaps: ImageGap[] = unfillable
           .map((u) => {
@@ -5180,6 +5678,16 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             return { n: u.n, prompt: slide === undefined ? undefined : generationPromptFor(normaliseVisualNeed(slide)) };
           })
           .filter((g): g is ImageGap => g.prompt !== undefined);
+        // CONCEPT-FIRST ORDERING (§6.4.2). The concept slide goes to the head
+        // of the list — replacing its unfillable entry if it had one, since
+        // `conceptPrompt` is the brief we actually want drawn — so that
+        // `gaps.slice(0, budget)` below keeps it when the image cap is
+        // partial. It is the one image in the run whose loss cannot be
+        // recovered by retrieval: every other gap can still be answered by a
+        // photograph, and this one cannot.
+        if (conceptOnThisTier) {
+          gaps = [{ n: conceptSlideN!, prompt: conceptPrompt! }, ...gaps.filter((g) => g.n !== conceptSlideN)];
+        }
         if (gaps.length === 0) continue;
 
         // Budget (owner's rule): the rescue tiers are OPTIONAL spend. They are
@@ -5188,10 +5696,18 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // (lever 4) or the live meter has crossed the target. Never a hold.
         if (!budgetPlan.optionalRevets) {
           for (const g of gaps) rescueSkipped.set(g.n, "optional rescue re-vets skipped by the run budget plan");
+          if (conceptOnThisTier) {
+            conceptPending = false;
+            conceptReport = { ...conceptReport, declineReason: "the run budget plan turned optional rescue work off, so the concept image was never generated — the slide keeps its own scene brief and its retrieved picture" };
+          }
           continue;
         }
         if (meter.posture !== "normal") {
           for (const g of gaps) rescueSkipped.set(g.n, `run budget ${meter.crossedMax ? "hard max" : "target"} crossed (${formatUsd(meter.totalUsd)}) — no more ${tier.id === "generate" ? "generated images" : "rescue re-vets"}`);
+          if (conceptOnThisTier) {
+            conceptPending = false;
+            conceptReport = { ...conceptReport, declineReason: `the run budget ${meter.crossedMax ? "hard max" : "target"} was crossed (${formatUsd(meter.totalUsd)}) before the concept image could be generated — the slide keeps its own scene brief and its retrieved picture` };
+          }
           continue;
         }
 
@@ -5205,52 +5721,293 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           const budget = remainingGenerationBudget(generatedSoFar, budgetPlan.generatedImagesCap);
           for (const over of gaps.slice(budget)) rescueSkipped.set(over.n, `generation budget for this run spent (${budgetPlan.generatedImagesCap} images)`);
           gaps = gaps.slice(0, budget);
-          if (gaps.length === 0) continue;
+          if (gaps.length === 0) {
+            if (conceptOnThisTier) {
+              conceptPending = false;
+              conceptReport = { ...conceptReport, declineReason: `this run's generation budget (${budgetPlan.generatedImagesCap} images) was already spent, so the concept image was never generated — the slide keeps its own scene brief and its retrieved picture` };
+            }
+            continue;
+          }
         }
 
-        const sourced = await wf.step.code(rev(`06${"bd"[tierIndex - 1]}-${tier.id}-images-attempt-${attempt}`), async () =>
-          tier.tool!.execute(tier.buildArgs(gaps), { ctx }),
-        );
+        // Did the concept gap actually survive the cap? The concept-first
+        // ordering above means `slice(0, budget)` kept it if it kept anything
+        // at all — but a cap of zero drops everything, and a concept sliced
+        // away must not still be reported as pending.
+        //
+        // ONE call carries both the concept and the ordinary gaps, which is
+        // deliberate: `image.generate` bills per need, and splitting would
+        // buy a second call for no extra image. The cost is that the whole
+        // call shares one `art` block, so a mixed call carries the concept's
+        // art direction (§4.3: the anti-metaphor line dropped, `paletteRole`
+        // and the relative production note appended) for every need in it.
+        // That is the RFC's own shape and it is noted as a known limit.
+        /** The concept this generate call is carrying, when it is carrying one. `undefined` on every scrape call and on every ordinary generate call. */
+        const batchConcept: ConceptOutput | undefined = conceptOnThisTier && gaps.some((g) => g.n === conceptSlideN) ? concept : undefined;
+        {
+          const batch = { gaps, concept: batchConcept };
+          const isConceptBatch = batch.concept !== undefined;
+          const sourced = await wf.step.code(rev(`06${"bd"[tierIndex - 1]}-${tier.id}-images-attempt-${attempt}`), async () =>
+            tier.tool!.execute(tier.buildArgs(batch.gaps, batch.concept), { ctx }),
+          );
 
-        if (sourced.status !== "success") {
-          // `not_available` on an unconfigured deployment, `content_fail` when
-          // the tier honestly found nothing, `tooling_error` on an outage: all
-          // three leave `unfillable` as it was and let the next tier try. Only
-          // an exhausted cascade holds the post.
-          continue;
+          if (sourced.status !== "success") {
+            // `not_available` on an unconfigured deployment, `content_fail` when
+            // the tier honestly found nothing, `tooling_error` on an outage: all
+            // three leave `unfillable` as it was and let the next tier try. Only
+            // an exhausted cascade holds the post.
+            //
+            // On the concept batch this is the ladder's own rung: the slide
+            // falls back to its ORIGINAL, never-discarded scene brief and the
+            // photograph retrieval already found for it. The ordinary brief is
+            // a complete deliverable, so the run is not even `degraded` — and
+            // it is certainly never held.
+            if (isConceptBatch) {
+              conceptPending = false;
+              conceptReport = { ...conceptReport, declineReason: `the concept image could not be generated (${sourced.status}) — the slide keeps its own scene brief and its retrieved picture` };
+            }
+            continue;
+          }
+
+          let tierPool = (sourced.result as { candidates: ImageCandidate[] }).candidates;
+          if (tier.id === "generate") {
+            generatedSoFar += tierPool.length;
+            spend(rev(`06d-generate-images-attempt-${attempt}`), undefined, tierPool.length * STEP_COST_ESTIMATES_USD.generatedImage);
+          } else {
+            spend(rev(`06b-scrape-images-attempt-${attempt}`), undefined, batch.gaps.length * STEP_COST_ESTIMATES_USD.scraperExecution);
+          }
+          if (tierPool.length === 0) {
+            if (isConceptBatch) {
+              conceptPending = false;
+              conceptReport = { ...conceptReport, declineReason: "the generator returned no concept candidate — the slide keeps its own scene brief and its retrieved picture" };
+            }
+            continue;
+          }
+
+          // ── 06d1: LOOK at the concept frame — $0.001, and the whole mode depends on it (RFC-16 §6.3) ──
+          //
+          // On the generate tier `describeGenerated(prompt)` restates the
+          // brief INTO the candidate description, so the vet compares the
+          // brief against itself. For an ordinary generated image that is
+          // merely weak; for a concept image it is fatal — the concept would
+          // score 5 against its own words every time and §6.1's stricter
+          // rubric would be theatre.
+          //
+          // One `media.inspectImages` call, on the one concept candidate. Its
+          // output REPLACES the echo, so the vet judges what was actually
+          // drawn. `looksAiGenerated: true` is expected here and is
+          // explicitly not a rejection reason.
+          //
+          // The same call is the safety check in code: a mark the permit does
+          // not name, a recognised person with no permitted figures, or any
+          // legible text in frame drops the candidate. Badges and
+          // throne-rooms invite signage, which is why the standing
+          // no-lettering constraint is finally VERIFIED on the one image most
+          // likely to violate it.
+          //
+          // Best-effort on the plumbing, strict on the verdict: no vision
+          // backend, or a failed call, leaves the candidate as it was and the
+          // strictly-better rule below still protects the slide.
+          //
+          // WHICH candidate is the concept's, and what happens to the others
+          // ────────────────────────────────────────────────────────────────
+          // A concept batch is a MIXED batch: `gaps` is the concept slide
+          // followed by every ordinary unfillable slide, and one
+          // `image.generate` call answers all of them, billing per need. So
+          // `tierPool` holds candidates for several slides and only ONE of
+          // them is the concept's.
+          //
+          // It is found by the slide it was generated FOR, not by its position
+          // in the array. `image.generate` pushes candidates in `needs` order
+          // and the concept need is first, so index 0 is usually right — but
+          // "usually" is doing real work there: the tool reports per-need
+          // failures in `unmet` and simply does not push a candidate for a
+          // need it could not fill, so a partially-failed generation slides
+          // ANOTHER slide's picture into index 0. That picture would then be
+          // safety-checked as the concept, given the concept's vision note,
+          // and handed to the strictly-better rule for the CONCEPT slide.
+          //
+          // `ImageCandidate` carries no slide number (`types.ts:640`), so the
+          // only association that exists is the `slide <n> candidate — ` stem
+          // `describeGenerated` writes. Matching it is a coupling to that
+          // format and is stated as one; the alternative is the positional
+          // guess above. If nothing matches, the concept is treated as NOT
+          // GENERATED rather than guessed at — a rung of the ladder that
+          // already exists — and the other slides keep their candidates.
+          //
+          // The other candidates SURVIVE both outcomes. They were generated
+          // and BILLED for (`generatedSoFar` and the `spend` above already
+          // counted them), the re-vet below is handed every gap in the batch
+          // as a slide, and dropping them would mean paying for images and
+          // then downgrading those slides to text-only — money spent for
+          // nothing, which is the one thing the budget doctrine forbids.
+          /**
+           * Is the concept's own frame still in this pool?
+           *
+           * False once inspection drops it. Everything downstream that is
+           * ABOUT the concept — the `conceptual` block on the re-vet input,
+           * the strictly-better rule, the shipped/declined verdict — has to
+           * read this rather than `isConceptBatch`, because a mixed batch goes
+           * on to re-vet the OTHER slides after the concept is gone. Telling
+           * the vet a slide is conceptual when the metaphor it names was never
+           * drawn asks it to judge an ordinary picture against §6.1's stricter
+           * rubric, and letting the verdict block run would overwrite the real
+           * drop reason with "it did not beat the picture the slide already
+           * had" — a sentence that would send a reviewer looking in entirely
+           * the wrong place.
+           */
+          let conceptInPool = isConceptBatch;
+          if (isConceptBatch) {
+            const inspectConceptTool = tools["media.inspectImages"];
+            if (inspectConceptTool !== undefined && meter.posture === "normal") {
+              const inspected = await wf.step.code(rev(`06d1-inspect-concept-image-attempt-${attempt}`), async (): Promise<{ pool: ImageCandidate[]; dropped?: string }> => {
+                const isConceptCandidate = (c: ImageCandidate): boolean => new RegExp(`^slide ${conceptSlideN} candidate\\b`, "u").test(c.description.trim());
+                const candidate = tierPool.find(isConceptCandidate);
+                const others = tierPool.filter((c) => !isConceptCandidate(c));
+                if (candidate === undefined) {
+                  return { pool: others, dropped: `the generator returned candidates for slides other than ${conceptSlideN}, so no concept frame was produced` };
+                }
+                const outcome = await inspectConceptTool.execute(
+                  { repoRoot: options.repoRoot, images: [{ ref: "concept", path: candidate.path }], purpose: "candidate-vetting" },
+                  { ctx },
+                );
+                if (outcome.status !== "success") return { pool: tierPool };
+                const analysis = ((outcome.result as { inspections: Array<Record<string, unknown>> }).inspections).find((i) => i["ref"] === "concept");
+                if (analysis === undefined) return { pool: tierPool };
+                const safety = checkConceptRendered(analysis, likenessPermit, conceptBriefView.brandName);
+                if (!safety.ok) return { pool: others, dropped: safety.reason };
+                // `includeFlags: false`: `looksAiGenerated` on a deliberately
+                // generated image is not information, and naming it to the
+                // vet invites a rejection for the one property every
+                // candidate on this tier shares.
+                return { pool: [{ ...candidate, description: describeWithVision(candidate.description, analysis, { includeFlags: false }) }, ...others] };
+              });
+              spend(rev(`06d1-inspect-concept-image-attempt-${attempt}`), undefined, STEP_COST_ESTIMATES_USD.visionInspectPerImage);
+              tierPool = inspected.pool;
+              // The CONCEPT is what was dropped, which is not the same thing
+              // as an empty pool: a mixed batch keeps the other slides'
+              // candidates and must still run the re-vet for them.
+              if (inspected.dropped !== undefined) {
+                conceptPending = false;
+                conceptInPool = false;
+                conceptReport = { ...conceptReport, declineReason: `the generated concept frame was dropped on inspection: ${inspected.dropped} — the slide keeps its own scene brief and its retrieved picture` };
+              }
+              if (tierPool.length === 0) continue;
+            }
+          }
+
+          const revet = await wf.step.agent(rev(`06${"ce"[tierIndex - 1]}-vet-${tier.id}-attempt-${attempt}`), imageAgent, {
+            // Same shape as 06's input (Phase 0, item F): the re-vet judges the
+            // rescue candidates against the slide's claim too.
+            //
+            // `...vetSubjectFor(need)` is Phase 4's §6.2 fix and it is a
+            // correctness fix independent of the concept mode. This input
+            // used to be `{ n, headline, body, scene, isClientPhotoSlot }`
+            // with NO `why`, and the vet's own prompt says a slide arriving
+            // without `why` falls back to v3 literalism — so the generate
+            // tier, the only tier a concept image can arrive on, was exactly
+            // the tier where the metaphor-tolerant discriminator was
+            // stripped. `scene` still overrides with the generation prompt,
+            // which is what was actually drawn.
+            slides: batch.gaps.map((g) => {
+              const slide = copy.slides.find((sl) => sl.n === g.n);
+              const need = slide === undefined ? undefined : normaliseVisualNeed(slide);
+              return {
+                n: g.n,
+                headline: slide?.headline ?? "",
+                body: slide?.body ?? "",
+                ...(need !== undefined ? vetSubjectFor(need) : {}),
+                scene: g.prompt,
+                isClientPhotoSlot: tier0Slots.has(g.n),
+                // Metaphor tolerance is DECLARED by the pipeline for exactly
+                // the one slide `04n` gave a concept to, never inferred by
+                // the vet. Every other slide on every other run reads the
+                // byte-identical literal rubric, which is what stops this
+                // from quietly loosening the literalism Phase 0 and Phase 3
+                // bought.
+                // `conceptInPool`, not `batch.concept !== undefined`: once
+                // inspection has dropped the frame, this slide's candidates
+                // are ordinary generated pictures and declaring a metaphor
+                // that was never drawn would have the vet judge them against
+                // §6.1's stricter conceptual rubric.
+                ...(conceptInPool && batch.concept !== undefined && g.n === conceptSlideN
+                  ? { conceptual: { pattern: batch.concept.pattern, anchor: batch.concept.anchor, decodesTo: batch.concept.decodesTo, restsOn: batch.concept.restsOn } }
+                  : {}),
+              };
+            }),
+            candidatePool: tierPool,
+            usedImages,
+          });
+          spend(rev(`06${"ce"[tierIndex - 1]}-vet-${tier.id}-attempt-${attempt}`), revet.totalCostUsd, STEP_COST_ESTIMATES_USD.vetCall);
+          if (revet.status !== "completed") {
+            // `conceptInPool`: a concept already dropped at inspection has its
+            // own, more specific reason recorded — this one would replace it
+            // with a re-vet failure that had nothing to do with why it went.
+            if (conceptInPool) {
+              conceptPending = false;
+              conceptReport = { ...conceptReport, declineReason: `the concept re-vet did not complete (${revet.status}) — the slide keeps its own scene brief and its retrieved picture` };
+            }
+            continue;
+          }
+
+          const rescued = new Map(revet.finalOutput!.selections.map((sel) => [sel.n, sel]));
+          /** Set when the concept candidate actually beat what the slide already had. */
+          let conceptWon = false;
+          selections = selections.map((sel) => {
+            const replacement = rescued.get(sel.n);
+            // Only an actually-fillable replacement wins. A rescue that failed
+            // its own gate must not overwrite the original verdict with a
+            // second, equally unusable one.
+            if (replacement === undefined || isUnfillable(replacement)) return sel;
+            // ── STRICTLY BETTER (RFC-16 §6.4.3) ──
+            //
+            // The property the whole spine rests on. Every OTHER slide here
+            // had nothing (it is in `unfillable` by definition), so any
+            // fillable replacement is an improvement. The concept slide is
+            // the one case where the slide may already hold a perfectly good
+            // photograph — because `04n` deliberately did not touch
+            // `visualNeed`, so retrieval still ran for it — and a concept
+            // image takes that slot ONLY by out-scoring the photograph on the
+            // same `claimMatch` rubric. A 4 does not lose its slot to a 4.
+            // The mode therefore cannot make a slide worse, and the selection
+            // rate is a ceiling on the shipping rate, not equal to it.
+            // `isConceptBatch`, deliberately NOT `conceptInPool`. What earns
+            // this slide the stricter rule is that `04n` force-added it to
+            // `gaps` WITHOUT it being unfillable, so unlike every other slide
+            // here it may already hold a perfectly good photograph. That is
+            // true whether or not the concept frame survived inspection — and
+            // if it did not, the remaining pool is other slides' pictures,
+            // which must certainly not take this slide's photograph. Only the
+            // BOOKKEEPING below is conditional: a win by something that is not
+            // the concept is not the concept shipping.
+            if (isConceptBatch && sel.n === conceptSlideN) {
+              if (sel.imagePath === null || replacement.claimMatch > sel.claimMatch) {
+                conceptWon = conceptInPool;
+                return replacement;
+              }
+              return sel;
+            }
+            return replacement;
+          });
+          // `conceptInPool`: when inspection dropped the frame this whole
+          // verdict is already settled and recorded with its real reason. The
+          // re-vet that just ran was for the OTHER slides in the batch.
+          if (conceptInPool) {
+            conceptPending = false;
+            const shippedSel = selections.find((s) => s.n === conceptSlideN);
+            // `declineReason` is DROPPED rather than set to `undefined`:
+            // `exactOptionalPropertyTypes` is on, and "shipped, with a reason
+            // it did not ship" is nonsense on a reviewer's screen either way.
+            const { declineReason: _dropped, ...shippedReport } = conceptReport;
+            conceptReport = conceptWon
+              ? { ...shippedReport, shipped: true }
+              : {
+                  ...conceptReport,
+                  declineReason: `the concept image did not beat the picture the slide already had (claimMatch ${rescued.get(conceptSlideN!)?.claimMatch ?? "n/a"} vs ${shippedSel?.claimMatch ?? "n/a"}) — the photograph stays`,
+                };
+          }
+          unfillable = selections.filter(isUnfillable);
         }
-
-        const tierPool = (sourced.result as { candidates: ImageCandidate[] }).candidates;
-        if (tier.id === "generate") {
-          generatedSoFar += tierPool.length;
-          spend(rev(`06d-generate-images-attempt-${attempt}`), undefined, tierPool.length * STEP_COST_ESTIMATES_USD.generatedImage);
-        } else {
-          spend(rev(`06b-scrape-images-attempt-${attempt}`), undefined, gaps.length * STEP_COST_ESTIMATES_USD.scraperExecution);
-        }
-        if (tierPool.length === 0) continue;
-
-        const revet = await wf.step.agent(rev(`06${"ce"[tierIndex - 1]}-vet-${tier.id}-attempt-${attempt}`), imageAgent, {
-          // Same shape as 06's input (Phase 0, item F): the re-vet judges the
-          // rescue candidates against the slide's claim too.
-          slides: gaps.map((g) => {
-            const slide = copy.slides.find((sl) => sl.n === g.n);
-            return { n: g.n, headline: slide?.headline ?? "", body: slide?.body ?? "", scene: g.prompt, isClientPhotoSlot: tier0Slots.has(g.n) };
-          }),
-          candidatePool: tierPool,
-          usedImages,
-        });
-        spend(rev(`06${"ce"[tierIndex - 1]}-vet-${tier.id}-attempt-${attempt}`), revet.totalCostUsd, STEP_COST_ESTIMATES_USD.vetCall);
-        if (revet.status !== "completed") continue;
-
-        const rescued = new Map(revet.finalOutput!.selections.map((sel) => [sel.n, sel]));
-        selections = selections.map((sel) => {
-          const replacement = rescued.get(sel.n);
-          // Only an actually-fillable replacement wins. A rescue that failed
-          // its own gate must not overwrite the original verdict with a
-          // second, equally unusable one.
-          return replacement && !isUnfillable(replacement) ? replacement : sel;
-        });
-        unfillable = selections.filter(isUnfillable);
       }
 
       // ── Pre-flight: does every selected image still EXIST on disk? ──
@@ -6454,6 +7211,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         contrastFacts: finalContrastFacts,
         ...(finalRelevance !== undefined ? { relevance: finalRelevance } : {}),
         ...(angleDecision !== undefined ? { angleDecision } : {}),
+        // Phase 4 (RFC-16 §1.7) — non-optional for the same reason `interest`
+        // and `skeleton` are: the verdict is computed on every revision at
+        // $0, so "absent" would only ever mean a bug, and a reviewer has to
+        // be able to tell "declined" from "never considered".
+        conceptReport,
         // Phase 2, items L/M/P — measured on the attempt that actually ships.
         // `interest` and `skeleton` are non-optional because both are
         // computed on every attempt at $0, so "absent" would only ever mean a
@@ -6557,7 +7319,15 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         await runTopicGuardrail(
           wf,
           { tools, promptStore: options.promptStore, router: options.router },
-          `${draft.copy.caption}\n\n${slidesTextFor(draft)}`,
+          // Phase 4 (RFC-16 §3.3) — the terminal belt gains one entry on a
+          // concept run: `decodesTo`, the sentence the picture and the
+          // headline assert together. The guardrail has only ever seen COPY,
+          // so a concept that drifted to a forbidden subject would be the one
+          // claim in the post nobody checked. Two lines, and the concept then
+          // throws `GuardrailViolationError` exactly as off-topic copy does.
+          // Empty on every run where no concept was authored, so the checked
+          // text is byte-identical there.
+          `${draft.copy.caption}\n\n${slidesTextFor(draft)}${draft.conceptReport.concept !== undefined ? `\n\n${draft.conceptReport.concept.decodesTo}` : ""}`,
           frozen.forbiddenTopics,
           revision === 0 ? undefined : `-r${revision}`,
         );
@@ -6613,6 +7383,14 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // `brand+brief`, because visual-pattern consent is usually absent.
           ...(visualDirectionReport !== undefined ? { visualDirection: visualDirectionReport } : {}),
           styleLock: { id: frozenStyle.id, ...(frozenStyle.line !== undefined ? { line: frozenStyle.line } : {}), source: frozenStyle.source, treatment: frozenStyle.treatment, treatmentReason: frozenStyle.treatmentReason, ...(frozenStyle.tintHex !== undefined ? { tintHex: frozenStyle.tintHex } : {}) },
+          // Phase 4 (RFC-16 §1.7) — the concept decision and the arithmetic
+          // behind it, ON EVERY RUN INCLUDING THE ONES WHERE IT DECLINED, so
+          // a reviewer sees the decision and its reasons before approving,
+          // and the measured selection rate has a denominator. `likeness`
+          // reads `status: "absent"` with two empty lists for the whole fleet
+          // on day one — which is the conservative default, and is exactly
+          // the thing the owner is being asked to look at.
+          conceptReport: draft.conceptReport,
           // Phase 2, item L — what the shipped attempt's pixels MEASURED:
           // per-slide shares, every finding, the clause-E waivers, the
           // warnings that never gate, and the slides that could not be read.
@@ -7201,6 +7979,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // `brand+brief`, because visual-pattern consent is usually absent.
           ...(visualDirectionReport !== undefined ? { visualDirection: visualDirectionReport } : {}),
           styleLock: { id: frozenStyle.id, ...(frozenStyle.line !== undefined ? { line: frozenStyle.line } : {}), source: frozenStyle.source, treatment: frozenStyle.treatment, treatmentReason: frozenStyle.treatmentReason, ...(frozenStyle.tintHex !== undefined ? { tintHex: frozenStyle.tintHex } : {}) },
+            // Phase 4 (RFC-16 §1.7) — the same decision the reviewer saw, on
+            // the PERSISTED record, on every run including the declines. This
+            // is the artefact the first prep sweep of ten runs measures the
+            // real selection rate from.
+            conceptReport: review.output.conceptReport,
             interest: {
               perSlide: review.output.interest.perSlide,
               findings: review.output.interest.findings,
@@ -7301,14 +8084,31 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             // week's proposal knows what this account already said.
             // `parseContentModeFromSummary`'s `/mode: ([a-z-]+)/` still
             // matches, so the mode rotation is untouched.
-            summary: angleDecisionSummary(
-              topicDecisionSummary({
-                topic: topicClaim.topic,
-                mode: topicClaim.mode ?? modeSelection.mode,
-                source: topicClaim.source,
-                archetypes: slidesData.slides.map((s) => s.template.replace(/(-inv)?\.html$/, "")),
-              }),
-              review.output.angleDecision?.status === "selected" ? review.output.angleDecision.chosen : undefined,
+            // Phase 4 (RFC-16 §1.7) — the concept marker is APPENDED to the
+            // same summary string, by the same codec pattern the angle uses,
+            // so `pastConceptsFromDecisions` can read the cooldown back next
+            // week without a second store and without a schema migration.
+            // Appended LAST so `parseContentModeFromSummary`'s
+            // `/mode: ([a-z-]+)/` and `angleFromDecisionSummary` still match
+            // exactly what they matched before.
+            //
+            // Keyed on SHIPPED, not on fired: the cooldown exists to stop two
+            // concept IMAGES landing close together, and a concept that was
+            // authored and then lost the re-vet put no concept image in the
+            // feed at all.
+            summary: conceptDecisionSummary(
+              angleDecisionSummary(
+                topicDecisionSummary({
+                  topic: topicClaim.topic,
+                  mode: topicClaim.mode ?? modeSelection.mode,
+                  source: topicClaim.source,
+                  archetypes: slidesData.slides.map((s) => s.template.replace(/(-inv)?\.html$/, "")),
+                }),
+                review.output.angleDecision?.status === "selected" ? review.output.angleDecision.chosen : undefined,
+              ),
+              review.output.conceptReport.shipped && review.output.conceptReport.concept !== undefined && review.output.conceptReport.slideN !== undefined
+                ? { n: review.output.conceptReport.slideN, pattern: review.output.conceptReport.concept.pattern as ConceptPattern, anchor: review.output.conceptReport.concept.anchor }
+                : undefined,
             ),
             ...(topicClaim.weighting?.rule !== undefined ? { rationale: topicClaim.weighting.rule } : {}),
           },
@@ -7337,6 +8137,25 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           beliefsForSetup = (read.result as { beliefs?: unknown }).beliefs;
           history = readBudgetHistory(beliefsForSetup);
         }
+        // Phase 4 (RFC-16 §1.6) — the two booleans that make the selection
+        // rate MEASURABLE rather than asserted.
+        //
+        // `conceptFired` is "the selector said yes and the Sonnet call was
+        // bought"; `conceptShipped` is "a concept image is actually on the
+        // shipped slide", which is strictly narrower because a concept has to
+        // BEAT the photograph the slide already had. The RFC states a
+        // design-intent ~17% and an arithmetic ceiling of 25% and explicitly
+        // refuses to pretend the distribution is known in advance — these two
+        // rows are how the first prep sweep of ten runs answers it. If
+        // selection comes in over 25% the lever is one constant.
+        //
+        // Spread from a named object rather than written inline: the fields
+        // are additive to `RunBudgetRunRecord` and this keeps the call honest
+        // about which of them are Phase 4's.
+        const conceptHistoryFields: { conceptFired?: boolean; conceptShipped?: boolean } = {
+          conceptFired: review.output.conceptReport.fired,
+          conceptShipped: review.output.conceptReport.shipped,
+        };
         const next = recordRunInHistory(history, {
           runId: wf.runId,
           at: new Date().toISOString(),
@@ -7345,6 +8164,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           crossedTarget: budgetSummary.crossedTarget,
           crossedMax: budgetSummary.crossedMax,
           adaptations: budgetSummary.adaptations.length,
+          ...conceptHistoryFields,
         });
         // ONE call carrying every belief key this run learned something about,
         // not one call per key: `memory.updateBeliefs` shallow-merges a diff, so

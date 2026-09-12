@@ -57,7 +57,7 @@ describe("RunSpendMeter.add — max(measured, estimate), never trusting a $0 rea
   it("counts the estimate when the step reported exactly $0 — a Vertex step that certainly ran a model", () => {
     const meter = new RunSpendMeter();
     meter.add("06-vet-images-attempt-1", 0, STEP_COST_ESTIMATES_USD.vetCall);
-    expect(meter.totalUsd).toBe(0.006);
+    expect(meter.totalUsd).toBe(0.0065);
     expect(meter.lines[0]!.basis).toBe("estimate");
   });
 
@@ -144,8 +144,12 @@ describe("RunSpendMeter.canAfford — flips exactly at the $1.50 ceiling", () =>
     expect(meter.canAfford(MAX_RUN_SPEND_USD + 0.01).ok).toBe(false);
   });
 
-  it("the pre-attempt bundle is copy + vet + visual QA, at the @15/@4 prompt sizes", () => {
-    expect(DRAFT_ATTEMPT_ESTIMATE_USD).toBeCloseTo(0.159 + 0.006 + 0.0041, 10);
+  it("the pre-attempt bundle is copy + vet + visual QA, at the @15/@5 prompt sizes", () => {
+    // `vetCall` moved 0.006 -> 0.0065 with `instagram-image-vet@4 -> @5`.
+    // §1c is plain markdown in a STATIC system prompt (13,705 -> 18,802
+    // chars), so every vet call pays its ~1,275 input tokens — not only the
+    // minority of runs the concept mode fires on.
+    expect(DRAFT_ATTEMPT_ESTIMATE_USD).toBeCloseTo(0.159 + 0.0065 + 0.0041, 10);
   });
 
   // `copyAttempt` is priced on BOTH sides of the call, and both times the
@@ -216,28 +220,60 @@ describe("estimateRunCost — every term priced off what the run actually bills"
   });
 
   it("the cold Phase 1 carousel does not fit the target, so the first lever fires on this phase's own spend", () => {
-    // $1.14 cold English. Every term of the $0.2015 fixed line is Phase 1
+    // $1.14 cold English. Every term of the $0.2015 Phase 1 fixed line is
     // spend the estimator used to be blind to: 03e's eight signal
     // executions, 04a2's six lane queries, 04a3's two page fetches, the
     // re-priced scout and extraction, and 04i's angle. Priced at Phase 0's
     // `fixed` ($0.049) the same run read as $0.99, `fits()` was true, and the
     // adaptation the owner's amendment exists to trigger never fired.
+    //
+    // Phase 4 (RFC-16 §7.2) adds $0.030 on top — 04m's Sonnet concept call
+    // plus 06d1's vision inspect — priced UNCONDITIONALLY, because 02j builds
+    // the run shape long before 04l knows whether this story is eligible.
+    // That is deliberately the worst case, the same convention every other
+    // field of DEFAULT_RUN_SHAPE follows, and `ewmaRatio` washes it back out
+    // for a client whose selector keeps declining.
     const cold = estimateRunCost(DEFAULT_RUN_BUDGET_PLAN, DEFAULT_RUN_SHAPE);
-    expect(cold.breakdown.fixed).toBeCloseTo(0.2015, 6);
+    expect(cold.breakdown.fixed).toBeCloseTo(0.2315, 6);
     expect(cold.estimatedUsd).toBeGreaterThan(TARGET_RUN_SPEND_USD);
     const decision = planRunBudget(DEFAULT_RUN_SHAPE);
     // Phase 3's own arithmetic, and the reason `copyAttempt` had to be
     // re-priced to the @15 call on BOTH sides: at an image cap of 4 the cold
-    // English shape estimates $1.1018, so `fits()` is FALSE and the first
+    // English shape estimates $1.1318, so `fits()` is FALSE and the first
     // lever has to step three times — 4, then 2, then 0 — to land at
-    // $0.9458. Priced at @13's $0.12 the same shape read as $0.9845, `fits()`
+    // $0.9758. Priced at @13's $0.12 the same shape read as $0.9845, `fits()`
     // was true after one step, and the run still billed over the target.
     // Priced at @14's $0.1455 it stopped at cap 2 and $0.9833, with $0.0405
     // of §22 scene briefs unbudgeted behind it.
-    expect(estimateRunCost({ ...DEFAULT_RUN_BUDGET_PLAN, generatedImagesCap: 4 }, DEFAULT_RUN_SHAPE).estimatedUsd).toBeCloseTo(1.1018, 6);
+    //
+    // The ladder's SHAPE is what this pins and it has not moved across either
+    // phase: still three steps, still 4 -> 2 -> 0, still landing under target.
+    //
+    // The two figures differ because Phase 4 charges each rung for what that
+    // rung can actually buy:
+    //
+    //  - at cap 4 the concept mode is reachable, so the $0.030 is booked and
+    //    the estimate is Phase 3's $1.1018 plus that and the `vetCall`
+    //    re-price ($0.006 -> $0.0065, ~9 metered calls) = $1.1363;
+    //  - at cap 0 the mode is UNREACHABLE — `conceptEligibility` declines with
+    //    "the run budget bought no generated images" — so the $0.030 is not
+    //    booked at all, and the landing figure is $0.9503, BELOW Phase 3's
+    //    $0.9458 + the vet re-price rather than above it.
+    //
+    // Booking the concept on every rung cost $0.030 of spend the chosen plan
+    // had just made impossible, and on the saturated ladder $0.030 x the
+    // calibration ratio. Headroom under target is back to $0.0497 from the
+    // $0.0242 that unconditional pricing left.
+    expect(estimateRunCost({ ...DEFAULT_RUN_BUDGET_PLAN, generatedImagesCap: 4 }, DEFAULT_RUN_SHAPE).estimatedUsd).toBeCloseTo(1.1363, 6);
     expect(decision.adaptations).toEqual(["images capped at 4", "images capped at 2", "no generated images (stock or text-only)"]);
     expect(decision.plan.generatedImagesCap).toBe(0);
-    expect(decision.estimate.estimatedUsd).toBeCloseTo(0.9458, 6);
+    expect(decision.estimate.estimatedUsd).toBeCloseTo(0.9503, 6);
+    // The mechanism, asserted rather than described: the same shape prices
+    // $0.030 less in `fixed` once the plan can no longer buy the concept.
+    expect(estimateRunCost({ ...DEFAULT_RUN_BUDGET_PLAN, generatedImagesCap: 4 }, DEFAULT_RUN_SHAPE).breakdown.fixed - decision.estimate.breakdown.fixed).toBeCloseTo(
+      STEP_COST_ESTIMATES_USD.concept + STEP_COST_ESTIMATES_USD.visionInspectPerImage,
+      6,
+    );
     expect(decision.estimate.estimatedUsd).toBeLessThanOrEqual(TARGET_RUN_SPEND_USD);
     // A Hebrew client pays the fluency judge on every attempt — $0.0165 more
     // over three — and the same two image steps still absorb it, so nothing
@@ -343,13 +379,17 @@ describe("planRunBudget — the owner's levers, in order, never a hold", () => {
     // once the optional re-vets go too — so every rung of the ladder is needed
     // and the last one fits.
     //
-    // The ratio moved 1.8 -> 1.7 -> 1.6 with each of `copyAttempt`'s honest
-    // re-prices (the @14 and @15 calls' OUTPUT grew, and output costs 5x
-    // input on Sonnet): the ladder saturates sooner when a copy attempt
-    // really costs $0.159, which is the point of pricing it that way. Above
-    // ~1.63 the tightest plan no longer fits — that regime is the next test,
-    // which asserts the run proceeds anyway.
-    const history = { ...EMPTY_RUN_BUDGET_HISTORY, ewmaRatio: 1.6, runs: [] };
+    // The ratio moved 1.8 -> 1.7 -> 1.6 -> 1.55 with each of `copyAttempt`'s
+    // honest re-prices (the @14 and @15 calls' OUTPUT grew, and output costs
+    // 5x input on Sonnet) and then with RFC-16's $0.030 concept line: the
+    // ladder saturates sooner when a copy attempt really costs $0.159, which
+    // is the point of pricing it that way. Above ~1.56 the tightest plan no
+    // longer fits — that regime is the next test, which asserts the run
+    // proceeds anyway. (Measured, not derived: the tightest plan's raw is
+    // $0.6407, so saturation is at ratio 1.5608 exactly; at 1.55 all six rungs
+    // fire and it lands at $0.9931, at 1.6 it would be $1.0251 and this test
+    // would be asserting the NEXT test's regime by accident.)
+    const history = { ...EMPTY_RUN_BUDGET_HISTORY, ewmaRatio: 1.55, runs: [] };
     const decision = planRunBudget(DEFAULT_RUN_SHAPE, history);
     expect(decision.adaptations).toEqual([
       "images capped at 4",
@@ -468,6 +508,7 @@ describe("the estimate table", () => {
       [
         "angle",
         "brief",
+        "concept",
         "copyAttempt",
         "extraction",
         "fluency",

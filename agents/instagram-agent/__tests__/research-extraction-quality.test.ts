@@ -310,10 +310,15 @@ describe("instagram-research@2 — the prompt", () => {
     const latest = await promptStore.getPrompt("instagram-research");
 
     expect(v2).toBe(latest);
-    expect(v2.split("\n")[0]).toBe("# Instagram Research Craft Guide — v2");
+    // `/\r?\n/`, not `"\n"`: the prompts on disk are CRLF, so splitting on the
+    // bare newline leaves a trailing `\r` on the H1 and this assertion failed
+    // on every Windows checkout while passing in CI. The prompt file is
+    // untouched — the test was reading it wrong. The assertion is unchanged in
+    // strength: still exact equality against the full H1.
+    expect(v2.split(/\r?\n/)[0]).toBe("# Instagram Research Craft Guide — v2");
     expect(v2).toContain("Extract, don't invent");
     // v1 stays on disk, frozen.
-    expect((await promptStore.getPrompt("instagram-research", "1")).split("\n")[0]).toContain("v1");
+    expect((await promptStore.getPrompt("instagram-research", "1")).split(/\r?\n/)[0]).toContain("v1");
   });
 
   it("states every rule §J requires of it", async () => {

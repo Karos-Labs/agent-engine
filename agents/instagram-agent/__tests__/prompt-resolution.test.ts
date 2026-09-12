@@ -9,6 +9,7 @@ import { InstagramImageVettingAgent } from "../src/agent/instagram-image-vetting
 import { InstagramAngleAgent } from "../src/agent/instagram-angle-agent.js";
 import { InstagramVisualQaAgent } from "../src/agent/instagram-visual-qa-agent.js";
 import { InstagramArtDirectorAgent } from "../src/agent/instagram-art-director-agent.js";
+import { InstagramConceptAgent } from "../src/agent/instagram-concept-agent.js";
 import { SKELETON_RULE_SENTENCE } from "../src/workflow/skeleton-memory.js";
 import { fakeRouterSequence, finalTurn, goodCopyOutput, goodImageVettingOutput, goodResearchOutput, makePromptStore, PROMPTS_ROOT } from "./test-helpers.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
@@ -461,15 +462,17 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     expect(registry).toContain(`"13", "14", "15"`);
     expect(registry).toMatch(/promptId: "instagram-copy"[\s\S]{0,400}latestVersion: "15"/);
     // Phase 3 (items Q and R).
-    expect(registry).toContain(`{ promptId: "instagram-image-vet", agent: "instagram-agent", versions: ["1", "2", "3", "4"], latestVersion: "4" }`);
+    expect(registry).toContain(`{ promptId: "instagram-image-vet", agent: "instagram-agent", versions: ["1", "2", "3", "4", "5"], latestVersion: "5" }`);
     expect(registry).toContain(`{ promptId: "instagram-art-director", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
     expect(registry).toContain(`{ promptId: "instagram-visual-qa", agent: "instagram-agent", versions: ["1", "2", "3", "4"], latestVersion: "4" }`);
     expect(registry).toContain(`{ promptId: "instagram-design-brief", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
     expect(registry).toContain(`{ promptId: "instagram-template-designer", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
     expect(registry).toContain(`{ promptId: "instagram-template-set-review", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
+    // Phase 4 (RFC-16): the concept direction prompt.
+    expect(registry).toContain(`{ promptId: "instagram-concept", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
   });
 
-  it("every agent reads the version this phase shipped: copy @15, visual QA @4, image vet @4, art director @1", async () => {
+  it("every agent reads the version this phase shipped: copy @15, visual QA @4, image vet @5, art director @1, concept @1", async () => {
     // The last line of a prompt bump, and the one most often forgotten: a new
     // prompt file that no `skillRef` points at exists, resolves, and is read
     // by nothing.
@@ -479,12 +482,14 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     const qa = new InstagramVisualQaAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
     expect((qa as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-visual-qa@4");
     const vet = new InstagramImageVettingAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
-    expect((vet as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-image-vet@4");
+    expect((vet as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-image-vet@5");
     const director = new InstagramArtDirectorAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
     expect((director as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-art-director@1");
+    const concept = new InstagramConceptAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
+    expect((concept as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-concept@1");
   });
 
-  it("instagram-copy@15, instagram-image-vet@4 and instagram-art-director@1 resolve, each byte-identical to its own latest.md", async () => {
+  it("instagram-copy@15, instagram-image-vet@5, instagram-art-director@1 and instagram-concept@1 resolve, each byte-identical to its own latest.md", async () => {
     // Phase 3 (items Q and R). The byte comparison is the one `check:prompts`
     // makes too, and it is here as well because a drifted `latest.md` is the
     // failure mode where a run silently reads a DIFFERENT prompt from the one
@@ -492,8 +497,9 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     const promptStore = makePromptStore();
     for (const [promptId, version, h1] of [
       ["instagram-copy", "15", "# Instagram Copy Craft Guide, v15"],
-      ["instagram-image-vet", "4", "# Instagram Image Vetting Craft Guide — v4"],
+      ["instagram-image-vet", "5", "# Instagram Image Vetting Craft Guide — v5"],
       ["instagram-art-director", "1", "# Instagram Art Direction Guide — v1"],
+      ["instagram-concept", "1", "# Instagram Concept Direction Guide — v1"],
     ] as const) {
       const pinned = await promptStore.getPrompt(promptId, version);
       expect(pinned, `${promptId}@${version} must be what "latest" resolves to`).toBe(await promptStore.getPrompt(promptId));
@@ -563,7 +569,12 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // after `brief` (they run at `00c*`, after `00b2` and before `03c`), so
     // they belong there and nowhere else in this list. Phase 3 item Q's art
     // director (`00d2`) follows them, on the same setup meter, still before
-    // `03-claim-topic`.
+    // `03-claim-topic`. Phase 4 (RFC-16) put `concept` (`04m`) between `angle`
+    // and `copy`, which is where the workflow buys it: `04l` scores the story
+    // off the CHOSEN angle, so it cannot precede `04j`, and `04n` applies the
+    // result only after copy is accepted. Unlike every other key here it is
+    // CONDITIONAL — the selector declines most stories — so it is absent from
+    // `happyTurns` and a fixture must opt in.
     expect([...TURN_ORDER]).toEqual([
       "brief",
       "designBrief",
@@ -574,6 +585,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
       "scout",
       "research",
       "angle",
+      "concept",
       "copy",
       "vet",
       "relevance",
@@ -586,6 +598,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
       copy: "copy",
       brief: "brief",
       angle: "angle",
+      concept: "concept",
       research: "research",
       scout: "scout",
       vet: "vet",
@@ -609,6 +622,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
       "scout",
       "research",
       "angle",
+      "concept",
       "copy",
       "vet",
       "relevance",
@@ -619,6 +633,11 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // Omitted keys are skipped, not defaulted: a run that stops before the
     // renderer queues no QA turn.
     expect(standardTurns({ copy: "copy", vet: "vet" })).toHaveLength(2);
+    // And `concept` in particular is skipped when omitted — the case every
+    // existing fixture is in, since `04l` declines the canonical story. If it
+    // ever defaulted, every workflow fixture in the package would consume its
+    // turns one out of step.
+    expect(standardTurns({ angle: "angle", copy: "copy" }).map((t) => (t().output as { output: unknown }).output)).toEqual(["angle", "copy"]);
   });
 
   it("produces tooling_error, not a crash, when skillRef names a prompt the store doesn't have", async () => {

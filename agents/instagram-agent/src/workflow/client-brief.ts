@@ -280,6 +280,22 @@ export const GENERIC_ICP_NO_INDUSTRY = "this client's customers (no target-audie
 export const PLACEHOLDER_ONE_LINER = "an unnamed business: no profile description, tagline, name or industry on file";
 
 /**
+ * The single core term written when nothing at all could be derived — see the
+ * `coreTerms.length === 0` branch of `deriveClientBrief` below.
+ *
+ * It is deliberately NOT folded into `isPlaceholderBriefValue`: that predicate
+ * is documented as covering the two PROSE one-liners, several callers treat a
+ * `true` from it as "this field is a sentence about missing data", and a core
+ * term is neither prose nor a field those callers read. It is exported
+ * instead so a consumer that needs to recognise it — `concept-direction.ts`'s
+ * subject palette is the first — imports the literal rather than retyping it.
+ * The schema requires at least one core term, so this string is the only
+ * thing standing between an ungrounded client and a search query about
+ * nothing.
+ */
+export const PLACEHOLDER_CORE_TERM = "unknown business";
+
+/**
  * True when a brief field is one of the placeholders above rather than
  * something a human wrote about this client.
  *
@@ -442,7 +458,7 @@ export function deriveClientBrief(input: DeriveClientBriefInput): ClientBrief {
   if (coreTerms.length === 0) {
     // The schema requires one term; the only honest one left is the client's
     // own name, and failing that the literal fact that nothing is known.
-    coreTerms.push(name ? name.toLowerCase() : "unknown business");
+    coreTerms.push(name ? name.toLowerCase() : PLACEHOLDER_CORE_TERM);
     gaps.push("no industry, description or documents: core terms could not be derived, so grounded search queries are weak for this run");
   }
 

@@ -68,30 +68,69 @@ describe("ImageSelectionSchema: claimMatch is required on every selection", () =
   });
 });
 
-describe("InstagramImageVettingAgent @4", () => {
-  it("is pinned to instagram-image-vet@4, and @4 keeps every v3 rule the claim-match belt depends on", () => {
-    // Phase 3, item R bumped the pin to @4 (the scene brief). What this test
-    // has always been about is the RUBRIC, and v4 restates all of it — so the
+describe("InstagramImageVettingAgent @5", () => {
+  it("is pinned to instagram-image-vet@5, and @5 keeps every v4 rule the claim-match belt depends on", () => {
+    // Phase 3, item R bumped the pin to @4 (the scene brief); RFC-16 §6.1
+    // bumps it to @5 (a DECLARED metaphor, §1c). What this test has always
+    // been about is the RUBRIC, and each version restates all of it — so the
     // assertions below run against the version the agent actually reads.
     // `prompt-resolution.test.ts` owns the `N.md === latest.md` byte check.
     const agent = new InstagramImageVettingAgent({ router: fakeRouterSequence([]), tools: {}, promptStore: makePromptStore() });
-    expect((agent as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-image-vet@4");
+    expect((agent as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-image-vet@5");
 
-    const v3 = readFileSync(path.join(PROMPTS_ROOT, "instagram-image-vet", "4.md"), "utf8");
-    expect(v3.split(/\r?\n/)[0]).toBe("# Instagram Image Vetting Craft Guide — v4");
-    expect(v3).toMatch(/## 1b\. CLAIM MATCH/);
-    expect(v3).toMatch(/## 6\. CLIENT PHOTOS/);
-    expect(v3).toMatch(/\[client upload, slot N\]/);
-    expect(v3).toMatch(/`claimMatch` of 3 or more/);
+    const v5 = readFileSync(path.join(PROMPTS_ROOT, "instagram-image-vet", "5.md"), "utf8");
+    expect(v5.split(/\r?\n/)[0]).toBe("# Instagram Image Vetting Craft Guide — v5");
+    expect(v5).toMatch(/## 1b\. CLAIM MATCH/);
+    expect(v5).toMatch(/## 6\. CLIENT PHOTOS/);
+    expect(v5).toMatch(/\[client upload, slot N\]/);
+    expect(v5).toMatch(/`claimMatch` of 3 or more/);
     // The gap the rubric alone left open: with no legible club text in
     // frame, "football supporters in a floodlit stadium" honestly scores a 3
     // against a Juventus headline, and 3 is the selection floor. So a slide
     // that names a specific subject and a description that names none is a 2.
-    expect(v3).toMatch(/\*\*An unnamed subject is not a match for a slide that names one\.\*\*/);
-    expect(v3).toMatch(/the score is \*\*2, not 3\*\*/);
-    expect(v3).toMatch(/including its `subjects`/);
+    expect(v5).toMatch(/\*\*An unnamed subject is not a match for a slide that names one\.\*\*/);
+    expect(v5).toMatch(/the score is \*\*2, not 3\*\*/);
+    expect(v5).toMatch(/including its `subjects`/);
     // v2 stays frozen for the runs that were judged by it.
     expect(readFileSync(path.join(PROMPTS_ROOT, "instagram-image-vet", "2.md"), "utf8").split(/\r?\n/)[0]).toBe("# Instagram Image Vetting Craft Guide — v2");
+
+    // The belt itself is carried over BYTE-IDENTICALLY, not merely present in
+    // paraphrase: §1c suspends it for one declared slide, and a bump that
+    // quietly softened its wording for every other slide would be invisible
+    // to the `toMatch` assertions above.
+    const v4 = readFileSync(path.join(PROMPTS_ROOT, "instagram-image-vet", "4.md"), "utf8");
+    const belt = (text: string): string => {
+      const start = text.indexOf("**An unnamed subject is not a match");
+      const end = text.indexOf("**A selection needs `claimMatch` of 3 or more.**");
+      expect(start, "the belt must be present").toBeGreaterThan(0);
+      expect(end, "the floor must follow it").toBeGreaterThan(start);
+      return text.slice(start, end);
+    };
+    expect(belt(v5)).toBe(belt(v4));
+    // …and v4 is frozen: §1c exists only in @5.
+    expect(v4).not.toContain("## 1c.");
+    expect(v4).not.toContain("conceptual");
+
+    // §1c is reachable ONLY through the pipeline's declaration. Without this
+    // gating sentence the vet would be free to decide for itself that a
+    // figurative-looking slide earns metaphor tolerance, which is exactly the
+    // literalism Phase 0 and Phase 3 bought back.
+    const v5Lf = v5.replace(/\r\n/gu, "\n");
+    expect(v5Lf).toContain("## 1c. A DECLARED metaphor — this section applies ONLY to a slide carrying `conceptual`");
+    expect(v5Lf).toContain("**Read this section only when `conceptual` is present on the slide you\nare scoring.** On every other slide it does not exist.");
+    expect(v5Lf).toContain("is judged by sections 1 and 1b exactly as v4 wrote them, including the\nunnamed-subject rule.");
+    // Stricter, not looser — and no threshold moves anywhere.
+    expect(v5Lf).toContain("**A picture that could illustrate any story is a 2 on a conceptual slide,\neven though the same picture would be a 3 on a literal one.**");
+    expect(v5Lf).toContain("**An assertion in the description is not evidence; the vision note is.**");
+    expect(v5Lf).toContain("the floor is the\nsame: a selection still needs 3 or more, here as everywhere.");
+    expect(MIN_CLAIM_MATCH).toBe(3);
+    // The suspension is named and reasoned, and scoped to one slide.
+    expect(v5Lf).toContain("**The unnamed-subject rule in section 1b is suspended for a `conceptual`\nslide, and only for one.**");
+    expect(v5Lf).toContain("The belt is\nsuspended because something stronger is holding the same trousers up.");
+    // No artificial ceiling: a metaphor that lands is the best evidence this
+    // gate sees, and capping it at 4 would make the run prefer a weaker
+    // literal photograph.
+    expect(v5Lf).toContain("A conceptual slide can score 5. There is no ceiling here");
   });
 
   it("fails its own output validation (content_fail, never a crash) when the model omits claimMatch", async () => {

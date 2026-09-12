@@ -168,7 +168,7 @@ function collapse(text: string): string {
  * The place where "verbatim" is load-bearing is `sourceRef` on a SLIDE, which
  * `checkSlidesData` still enforces byte-for-byte against the same cards.
  */
-function cardKey(claim: string): string {
+export function cardKey(claim: string): string {
   return collapse(claim).toLowerCase();
 }
 
@@ -492,7 +492,7 @@ export function angleFromDecisionSummary(summary: string): PastAngle | undefined
   const rest = summary.slice(match.index + match[0].length);
   const close = rest.lastIndexOf(")");
   let body = close === -1 ? rest : rest.slice(0, close);
-  const laterKey = /;\s(?:archetypes|mode|source|lane|angle):\s/u.exec(body);
+  const laterKey = /;\s(?:archetypes|mode|source|lane|angle|concept):\s/u.exec(body);
   if (laterKey) body = body.slice(0, laterKey.index);
   const rememberLine = collapse(body);
   if (rememberLine.length === 0) return undefined;

@@ -86,6 +86,12 @@ const HAPPY_PATH_STEP_IDS = [
   // this resolves `reuse` and `00d1`/`00d2`/`00d3` never run — the same shape
   // `00b`/`00c` already have.
   "00d-check-visual-direction",
+  // Phase 4 (RFC-16 item C): the likeness/mark permit, read once per run and
+  // free. It is UNCONDITIONAL — it runs on the happy path even though this
+  // client has no consent record, because the fail-closed permit it resolves
+  // to is what every later concept clause is judged against. A run where it
+  // silently did not happen could not tell "no permission" from "never asked".
+  "00e-check-likeness-consent",
   "03-claim-topic",
   // Phase 0 (RFC-13 §E): the trend scout runs on EVERY run now — also with a
   // planned catalog row, as an "alternatives" signal — then the content mode
@@ -147,6 +153,14 @@ const HAPPY_PATH_STEP_IDS = [
   // proposal per REVISION (never per attempt), then the deterministic pick.
   "04i-propose-angles",
   "04j-select-angle",
+  // Phase 4 (RFC-16 item D): the concept SELECTOR — free code, unconditional,
+  // immediately after the angle. `04m-design-concept` (the paid Sonnet call),
+  // `04n-apply-concept` and `06d1-inspect-concept-image` correctly do NOT
+  // appear here: this happy-path story has no rivalry, no reversal and no
+  // recognised entity, so the selector declines and nothing downstream fires.
+  // That absence is the "sometimes, not always" constraint measured on the
+  // default story.
+  "04l-concept-eligibility",
   "05-write-copy-attempt-1",
   "06-vet-images-attempt-1",
   // Zero-held guarantee: confirms every selected image is still on disk, so a
