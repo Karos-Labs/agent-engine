@@ -28,6 +28,13 @@ import {
 // unconditional model steps (the trend scout at 03c, the relevance judge at
 // 07g), and a positional list of four turns here would silently feed the copy
 // output to the scout and hold the run. See that helper's own doc comment.
+//
+// `happyTurns()` is named, but the SEQUENCE it produces is still consumed
+// positionally by the fake router, which is why RFC-16 §8's cross-package note
+// singles this file out: a new model step anywhere in the instagram workflow
+// shifts every turn after it, and the local instagram suites do not catch it
+// because they build their own lists. Only CI does. See the instagram leg
+// below for how that is closed for `04n-design-concept`.
 import { happyTurns as instagramHappyTurns } from "../../../agents/instagram-agent/__tests__/turns.js";
 
 import { createBrandedShortsAgentWorkflow } from "../../../agents/branded-shorts-agent/src/workflow/create-branded-shorts-agent-workflow.js";
@@ -108,7 +115,32 @@ describe("SCRUM-242 (T-A10) — one fixture, all four grounded agents, every con
     // ── instagram-agent: DEGRADED + visible marker ──
     const instagramEnv = await setupInstagramEnv();
     try {
-      const instagramParams = { runId: "fixture_instagram", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
+      // RFC-16 Phase 4 — `conceptMode: "off"`, and it is load-bearing rather
+      // than tidy.
+      //
+      // `04n-design-concept` is a CONDITIONAL model step: it runs only when
+      // `04m-concept-eligibility` finds the story earns the concept treatment.
+      // A positional turn list cannot express "and possibly one more turn
+      // here" — queue the extra turn and a run that declines feeds the concept
+      // fixture to the copy step; omit it and a run that fires exhausts the
+      // router. Either way this test starts failing for a reason that has
+      // nothing to do with context docs, and (RFC-16 §8's own note) it fails in
+      // CI rather than locally, because the instagram package's own suites
+      // build their turn lists by hand.
+      //
+      // Turning the mode OFF for this fixture removes the coupling at its root
+      // instead of chasing it: this run's turn sequence is now independent of
+      // what the concept selector decides about `acme`'s story, today and
+      // after any future change to the selector's arithmetic. The concept
+      // mode's own wiring is covered where it belongs, in
+      // `agents/instagram-agent/__tests__/concept-workflow.test.ts`.
+      const instagramParams = {
+        runId: "fixture_instagram",
+        clientSlug: "acme",
+        productId: "instagram-agent",
+        runKind: "recurring" as const,
+        input: { conceptMode: "off" },
+      };
       const instagramRouter = instagramFakeRouterSequence(instagramHappyTurns());
       const instagramWorkflowFn = createInstagramAgentWorkflow({
         tools: { ...instagramEnv.tools, "publish.renderCarousel": fakeRenderCarousel(instagramEnv.tools["publish.renderCarousel"]!) },

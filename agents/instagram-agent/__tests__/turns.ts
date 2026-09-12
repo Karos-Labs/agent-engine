@@ -25,6 +25,7 @@ import { goodAngleProposal } from "./angle-fixtures.js";
  *   scout          03c-trend-scout            (every run; skipped by the workflow only when 03b fetched no documents)
  *   research   04b-research-extract-facts
  *   angle      04i-propose-angles         (Phase 1; once per REVISION, not per attempt)
+ *   concept    04n-design-concept         (Phase 4; once per REVISION, and ONLY when `04l` found the story eligible — most fixtures omit it)
  *   copy       05-write-copy-attempt-N
  *   vet        06-vet-images-attempt-N    (skipped by the workflow when the candidate pool is empty)
  *   relevance  07g-relevance-attempt-N
@@ -64,6 +65,16 @@ export interface StandardTurnFixtures {
   scout?: unknown;
   research?: unknown;
   angle?: unknown;
+  /**
+   * RFC-16 Phase 4, `04m` — the concept direction, once per REVISION.
+   *
+   * Deliberately NOT in `happyTurns`: `04m-concept-eligibility` declines on
+   * the canonical story (no rivalry, no reversal, no recognised entity), so
+   * the workflow buys no turn and a queued one would desynchronise every
+   * later fixture. A test that wants the concept path must both make its
+   * story eligible AND pass this key.
+   */
+  concept?: unknown;
   copy?: unknown;
   vet?: unknown;
   relevance?: unknown;
@@ -97,6 +108,10 @@ export const TURN_ORDER = [
   "scout",
   "research",
   "angle",
+  // Phase 4's `04n-design-concept` sits between the angle and the copy
+  // because that is where the workflow places it: `04l` scores the story off
+  // the CHOSEN angle, and `04n` applies the result after copy is accepted.
+  "concept",
   "copy",
   "vet",
   "relevance",

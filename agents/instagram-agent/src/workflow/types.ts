@@ -213,6 +213,13 @@ export interface InstagramFrozenConfig {
   forbiddenTopics: string[];
   styleConfig: StyleConfig;
   brandTokens: BrandTokens;
+  /**
+   * Phase 4 (RFC-16 §1.7 level 1) — the client's standing `instagramConceptMode`,
+   * frozen from the SAME config read as `forbiddenTopics` so the concept
+   * selector needs no second one. `undefined` for every client in the fleet
+   * today, which resolves to `"auto"`.
+   */
+  conceptMode?: ConceptMode;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -745,6 +752,108 @@ export const VisualQaOutputSchema = z.object({
   findings: z.array(VisualQaFindingSchema).default([]),
 });
 export type VisualQaOutput = z.infer<typeof VisualQaOutputSchema>;
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase 4 (RFC-16) — the CONCEPT mode's run-surface types
+//
+// The DECISION types (`ConceptSignals`, the pattern vocabulary, the
+// legibility verdicts) live in `concept-direction.ts`, which is pure and
+// imports nothing from the workflow. What lives HERE is the two things the
+// run's own surface needs: the override the run/client can set, and the
+// audit trail a reviewer reads on the gate payload and the deliverable.
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * RFC-16 §1.7's override, most specific first.
+ *
+ * `"off"` on the CLIENT config is a standing opt-out and beats any per-run
+ * request. `"on"` on the RUN INPUT bypasses the score, the recognition gate
+ * and the cooldown — and nothing else: not the grounding floor, not the
+ * palette/colour gates, not the budget gates, not the safety policy. Those
+ * are not preferences, which is why this is a three-value enum rather than a
+ * boolean that could read as "force it".
+ */
+export const INSTAGRAM_CONCEPT_MODES = ["auto", "on", "off"] as const;
+export type ConceptMode = (typeof INSTAGRAM_CONCEPT_MODES)[number];
+
+/**
+ * Anything but the three known values is ignored, exactly as `01-open-run`
+ * ignores an unknown `requestedFormat`: a typo in a run dialog or a client
+ * config must not switch a whole feed into (or out of) the concept mode.
+ */
+export function readConceptMode(value: unknown): ConceptMode | undefined {
+  return typeof value === "string" && (INSTAGRAM_CONCEPT_MODES as readonly string[]).includes(value) ? (value as ConceptMode) : undefined;
+}
+
+/** One scoring term of RFC-16 §1.4, itemised the way `AngleScore.rule` and `RankComponents` are. */
+export interface ConceptScoreTerm {
+  term: string;
+  points: number;
+  why?: string;
+}
+
+/**
+ * RFC-16 §1.7 — the concept decision and its arithmetic, surfaced in the gate
+ * payload beside `visualDirection` and on the persisted deliverable **on
+ * every run, including the ones where it declined**.
+ *
+ * Present-on-every-run is the load-bearing half. A report that appeared only
+ * when the mode fired would make "this client never gets concept images" and
+ * "this client's stories never qualify" look identical to a reviewer, and the
+ * measured selection rate — the number §1.6 refuses to guess in advance — would
+ * have no denominator.
+ */
+export interface ConceptReport {
+  /** The mode that actually governed, after the client config and the run input were resolved against each other. */
+  mode: ConceptMode;
+  /** Which of the three levels decided it: `"client config"`, `"run input"` or `"default"`. */
+  modeSource: string;
+  /** Did the story clear §1.5's nine preconditions? */
+  eligible: boolean;
+  /** Did `04n-design-concept` actually run — i.e. was the $0.029 Sonnet call bought? */
+  fired: boolean;
+  /** Did a concept image end up on the shipped slide? Strictly narrower than `fired` (§6.4): the concept has to WIN. */
+  shipped: boolean;
+  /** The one sentence that states the decision and its arithmetic. Always present, on both verdicts. */
+  rule: string;
+  score?: number;
+  threshold?: number;
+  terms?: readonly ConceptScoreTerm[];
+  recognition?: { entities: readonly string[]; basis: string };
+  grounding?: { basis: string; floor: number; brandFit?: number; briefFit?: number; angleFit?: number };
+  /** `postsSinceLastConcept` is `null`, not `0`, when this account has never shipped one — "never" and "the most recent post" are opposite facts. */
+  cooldown?: { postsSinceLastConcept: number | null; required: number; usedInWindow: number; window: number; ceiling: number };
+  /** The eligible pattern subset `04l` computed and handed to `04m` — never the full seven. */
+  patterns?: readonly string[];
+  /**
+   * What the client's `generatedLikeness` consent record permits, in the
+   * reviewer's own view. For the whole fleet on day one this reads
+   * `status: "absent"` with two empty lists, which is the conservative
+   * default and is exactly what the owner is being asked to look at.
+   */
+  likeness?: { status: string; marks: readonly string[]; figures: readonly string[]; ownMarks: boolean; scopeNote?: string };
+  /** Present once `04m` returned something the legibility guard accepted. */
+  concept?: {
+    pattern: string;
+    anchor: string;
+    situation: string;
+    readsAs: string;
+    decodesTo: string;
+    restsOn: string;
+    paletteRole: string;
+    typeZone: string;
+    usesPermittedMarks: readonly string[];
+  };
+  /** The slide `04n` chose, when it chose one. */
+  slideN?: number;
+  /**
+   * Why no concept image shipped, in the house style — the declined
+   * precondition, the failed legibility clause, the budget posture, the
+   * generation outcome, or "the photograph already on the slide scored as
+   * well or better". Absent only when `shipped` is true.
+   */
+  declineReason?: string;
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 // Step 07 — emit slides-data.json (the publish.renderCarousel input contract)

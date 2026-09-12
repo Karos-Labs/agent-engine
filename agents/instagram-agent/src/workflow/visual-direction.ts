@@ -470,6 +470,47 @@ const MAX_SITE_PAGES = 3;
 const MAX_IMAGE_NOTES = 8;
 const IMAGE_NOTE_CHARS = 400;
 
+/**
+ * The one sentence the deterministic fallback direction ships that a CONCEPT
+ * image must never receive (RFC-16 §4.3).
+ *
+ * `fallbackVisualDirection` emits it for every client whose brief has a
+ * `positioning.whatWeSell`, and `buildArtDirection` joins it into `art.notes`,
+ * which `image.generate` appends VERBATIM. It is exactly the right instruction
+ * for the other 5-in-6 runs and exactly the wrong one for the frame whose
+ * whole job is to be a metaphor, so `buildConceptArtDirection` drops it BY
+ * IDENTITY — a `startsWith` against this constant rather than a regex over
+ * prose that would also catch an author's own literalism line.
+ *
+ * **This constant and the sentence below it are a pair.** Nothing in the type
+ * system ties them together, so `concept-budget-and-art.test.ts` pins that the
+ * line `fallbackVisualDirection` actually emits still starts with this prefix:
+ * editing the sentence without editing the constant would leave the drop
+ * silently doing nothing, which is the failure mode a `startsWith` is worth
+ * having a test for. Change one, change both.
+ */
+export const ANTI_METAPHOR_LINE_PREFIX = "Show what is actually sold as a real object, screen or workplace rather than an abstract metaphor:";
+
+/**
+ * The standing product policy every generated image carries, on BOTH
+ * direction paths (RFC-16 §4.4).
+ *
+ * `instagram-art-director@1` §4.3 tells the agent to put these in `forbid`
+ * ("legible text or signage in frame, logos and brand marks, recognisable real
+ * people …") and says they are standing product policy needing no basis — so
+ * an AUTHORED direction has them. `fallbackVisualDirection` populated `forbid`
+ * solely from `brief.forbidden.topics`, so every client on the brand-kit
+ * fallback path — which is most of the fleet, since visual-pattern consent is
+ * usually absent — had **no** brand-mark or real-person entry at all. That was
+ * live from Phase 3 until this fix.
+ *
+ * Kept to the two entries that are a rights question rather than a taste one.
+ * `image.generate`'s own constraint line already bans text, lettering and
+ * watermarks unconditionally, so repeating those here would spend two of the
+ * ten `forbid` slots on something already enforced.
+ */
+export const STANDING_IMAGE_FORBID: readonly string[] = ["logos and brand marks", "recognisable real people"];
+
 function clamp(value: string, max: number): string {
   const tidy = value.replace(/\s+/gu, " ").trim();
   return tidy.length <= max ? tidy : `${tidy.slice(0, max - 1).trimEnd()}…`;
@@ -809,6 +850,18 @@ export function fallbackVisualDirection(tokens: BrandTokens | undefined, brief?:
     });
   }
 
+  // The standing product policy, FIRST and unconditionally — before the
+  // brief's own topics and outside the `brief !== undefined` block below.
+  //
+  // First, because `forbid` is capped at ten entries by the schema and a
+  // client with a long forbidden-topics list must not be the client whose
+  // images may draw a recognisable face. Unconditionally, because the hole
+  // this closes was widest on exactly the clients with no brief at all: a
+  // brand-kit-only direction had an empty `forbid`.
+  for (const entry of STANDING_IMAGE_FORBID) {
+    if (!forbid.includes(entry)) forbid.push(entry);
+  }
+
   if (brief !== undefined) {
     const oneLiner = groundable(brief.positioning.oneLiner, "positioning.oneLiner", gaps);
     const whatWeSell = groundable(brief.positioning.whatWeSell, "positioning.whatWeSell", gaps);
@@ -822,6 +875,10 @@ export function fallbackVisualDirection(tokens: BrandTokens | undefined, brief?:
     if (whatWeSell !== undefined) {
       if (subject.length < 4) subject.push(clamp(whatWeSell, 160));
       lines.push({
+        // KEEP IN SYNC with `ANTI_METAPHOR_LINE_PREFIX`, which
+        // `buildConceptArtDirection` drops this line by. Written out rather
+        // than interpolated so the constant stays a pin with a test that can
+        // fail rather than a tautology.
         line: clamp(`Show what is actually sold as a real object, screen or workplace rather than an abstract metaphor: ${whatWeSell}`, 200),
         basis: "client brief: positioning.whatWeSell",
         confidence: "medium",
@@ -947,4 +1004,62 @@ export function buildArtDirection(tokens: BrandTokens | undefined, direction?: V
     ...(styleLock !== undefined ? { styleLock } : {}),
   };
   return Object.keys(art).length > 0 ? art : undefined;
+}
+
+/**
+ * What the ONE slide carrying a concept (RFC-16) hands `image.generate`:
+ * `buildArtDirection`'s object with three differences, and no others.
+ *
+ * 1. The anti-metaphor line is dropped, by identity against
+ *    `ANTI_METAPHOR_LINE_PREFIX` — see that constant. It is dropped from
+ *    `lines` BEFORE they are joined, because `notes` is one joined string by
+ *    the time `buildArtDirection` is done with it and a substring surgery on
+ *    prose is exactly the fragile thing the constant exists to avoid.
+ * 2. `paletteRole` is appended: the concept's own answer to WHICH object in
+ *    the frame carries the brand accent. The generic path says "carry the
+ *    accent somewhere as a real object"; this path names it.
+ * 3. `productionNote` is appended when the concept wrote one. It is RELATIVE
+ *    by schema and by prompt ("push the locked style to its most dramatic
+ *    end"), never a style of its own — a client whose style lock is flat and
+ *    bright gets a flat, bright metaphor, which is the correct outcome.
+ *
+ * Everything else is byte-identical to `buildArtDirection`: the same palette,
+ * the same `forbid` (which a concept can only ever ADD to, never shorten), the
+ * same `styleLock` — and the same `accentColor`, which stays un-overridable
+ * because it is a brand FACT rather than an art-direction opinion. The owner's
+ * "brand colours still govern, absolutely" is that sentence, in code.
+ *
+ * Returns `undefined` in the one case `buildArtDirection` does — nothing at
+ * all to say. Unreachable on the concept path, where eligibility precondition
+ * 6 and legibility clause L8 both require a palette or an accent before a
+ * concept is authored at all, and kept honest rather than papered over with an
+ * art object that is only a note.
+ */
+export function buildConceptArtDirection(
+  tokens: BrandTokens | undefined,
+  direction: VisualDirection | undefined,
+  // Structural rather than an import of `Concept`: this module is read by the
+  // setup path too and must not depend on the concept module. `| undefined` is
+  // explicit because the repo runs `exactOptionalPropertyTypes`, and a
+  // zod-inferred `.optional()` field is `string | undefined` — a caller
+  // handing over a whole validated concept object must just typecheck.
+  concept: { readonly paletteRole: string; readonly productionNote?: string | undefined },
+): Record<string, unknown> | undefined {
+  const withoutAntiMetaphor =
+    direction === undefined ? undefined : { ...direction, lines: direction.lines.filter((l) => !l.line.trimStart().startsWith(ANTI_METAPHOR_LINE_PREFIX)) };
+  const art = buildArtDirection(tokens, withoutAntiMetaphor);
+  if (art === undefined) return undefined;
+
+  const additions = [nonEmpty(concept.paletteRole), nonEmpty(concept.productionNote)]
+    .filter((part): part is string => part !== undefined)
+    .map((part) => sentence(clamp(part, 200)));
+  if (additions.length === 0) return art;
+
+  const base = typeof art.notes === "string" ? art.notes : undefined;
+  return { ...art, notes: [base, ...additions].filter((part): part is string => part !== undefined && part.length > 0).join(" ") };
+}
+
+/** A phrase the generator reads as an instruction rather than as a fragment: `notes` is appended verbatim, so the punctuation is ours to get right. */
+function sentence(value: string): string {
+  return /[.!?…]$/u.test(value) ? value : `${value}.`;
 }

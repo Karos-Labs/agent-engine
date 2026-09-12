@@ -14,7 +14,18 @@ import { MEDIA_CACHE_PREFIX, type FindImagesCandidate } from "./find-images.js";
 // exists precisely so that a prompt change is legible in the version (PR #95
 // is the precedent). Both fields are optional and additive, so every existing
 // caller's brief is byte-identical.
-const TOOL_VERSION = "1.1.0";
+// 1.2.0 (RFC-16 §5.3, Instagram Phase 4): `art` gains `permittedMarks` and
+// `permittedFigures` — the names an owner's `generatedLikeness` consent record
+// actually listed. MINOR for the same reason 1.1.0 was, and the reasoning is
+// worth restating because this is the field where getting it wrong is
+// expensive: both are optional and additive, and with neither present (every
+// client in the fleet on day one) the composed brief and the generated image's
+// description are BYTE-IDENTICAL to 1.1.0's — that is the property
+// `generate-image-concept.test.ts` asserts as an exact string rather than a
+// set of `toContain`s. But when a list IS non-empty the standing constraint
+// line changes shape, and the tool-version gate on main exists precisely so a
+// prompt change is legible in the version.
+const TOOL_VERSION = "1.2.0";
 
 /**
  * The image-generation call, narrowed to what this tool uses so the package
@@ -105,6 +116,41 @@ export const GenerateImageInputSchema = z.object({
         .min(1)
         .optional()
         .describe("One sentence, identical for every image in a run, so the generated images read as one set. Placed after the art direction and before the constraints."),
+      /**
+       * RFC-16 §5.3 — the third-party marks this client's OWNER has recorded a
+       * permission for, in `clients/<slug>/client/consent.json`.
+       *
+       * Absent for every client in the fleet until such a record exists, and
+       * absent is the point: with nothing here the standing constraint below
+       * stays `no logos`, byte-for-byte as it has always read. A caller must
+       * never populate this from anything but a `granted` consent record that
+       * NAMES these marks — this tool takes the list on trust, exactly as it
+       * takes `forbid` on trust, because a tool cannot verify a permission it
+       * did not witness being granted.
+       *
+       * Six, not unbounded: a badge treatment stops reading at three or four
+       * marks in one frame, and a longer list is a sign the caller is passing
+       * the whole permit rather than the names this one concept uses.
+       */
+      permittedMarks: z
+        .array(z.string().min(1))
+        .max(6)
+        .optional()
+        .describe("Third-party brand marks this client has a RECORDED, NAMED permission for. Omitted (the fleet-wide default) leaves the standing 'no logos' constraint unchanged. Named marks are permitted only as clean flat circular badges or wordless silhouettes, never as a photographed product or a likeness."),
+      /**
+       * The real public figures the same record names. A separate list from
+       * `permittedMarks` because it is a separate body of law — a trademark
+       * question and a right-of-publicity question are not the same question
+       * and are not granted by the same sentence.
+       *
+       * Three, not six: a frame containing four recognisable people is a
+       * composite, and the standing constraints forbid composites anyway.
+       */
+      permittedFigures: z
+        .array(z.string().min(1))
+        .max(3)
+        .optional()
+        .describe("Real, identifiable public figures this client has a RECORDED, NAMED permission to depict. Omitted (the fleet-wide default) keeps the generated image's description asserting no identifiable real person, which is what the rights vet reads."),
     })
     .optional()
     .describe(
@@ -180,9 +226,27 @@ const GENERATED_LICENSE =
  * `rightsUsable`/`watermarkFree` from the description and cannot inspect
  * pixels. Without this it would default to sceptical — correctly, for a
  * web-sourced hit — and refuse an image we own outright.
+ *
+ * ## The likeness clause (1.2.0)
+ *
+ * With `permittedFigures` empty — every client, every run, until an owner
+ * writes a consent record — this returns the byte-identical 1.1.0 sentence,
+ * ending "no identifiable real person unless described above".
+ *
+ * With names in it, that trailing assertion would be a LIE told to the one
+ * reader who cannot check it: the vet has no pixels on the generate tier, so
+ * it believes this sentence. An image that deliberately contains Tim Cook must
+ * not be described to the rights vet as containing no identifiable real
+ * person — the vet would clear it on a false premise, which is worse than it
+ * refusing. So the clause is replaced, not appended to, and it says the
+ * likeness is intentional and recorded.
  */
-function describeGenerated(prompt: string): string {
-  return `AI-generated illustration created specifically for this slide, to the brief: "${prompt}". Not a stock photo — no third-party copyright, no watermark, no identifiable real person unless described above.`;
+function describeGenerated(prompt: string, permittedFigures: readonly string[] = []): string {
+  const likeness =
+    permittedFigures.length > 0
+      ? `a deliberate, recorded-permission likeness of ${permittedFigures.join(", ")} and no other identifiable real person`
+      : "no identifiable real person unless described above";
+  return `AI-generated illustration created specifically for this slide, to the brief: "${prompt}". Not a stock photo — no third-party copyright, no watermark, ${likeness}.`;
 }
 
 /**
@@ -363,7 +427,7 @@ export function createGenerateImage(options: {
 
           candidates.push({
             path: relative,
-            description: `slide ${need.n} candidate — ${describeGenerated(need.prompt)} [licence: ${GENERATED_LICENSE}]`,
+            description: `slide ${need.n} candidate — ${describeGenerated(need.prompt, input.art?.permittedFigures ?? [])} [licence: ${GENERATED_LICENSE}]`,
             provider: "gemini-image",
             licenseConfidence: "generated",
           });
@@ -469,11 +533,57 @@ function buildBrief(visualNeed: string, art?: GenerateImageInputParsed["art"]): 
     lines.push("", "Do not include:", ...forbid.map((f) => `- ${f}`));
   }
 
-  lines.push(
-    "",
-    "Constraints: no text, no words, no lettering, no numbers rendered in the image, " +
-      "no logos, no watermarks, no borders or frames, no collage or split panels.",
-  );
+  lines.push("", buildConstraintLine(art?.permittedMarks ?? [], art?.permittedFigures ?? []));
 
   return lines.join("\n");
+}
+
+/**
+ * The standing constraints — this pipeline's own, as distinct from the
+ * client's `Do not include:` list.
+ *
+ * ## The default is the whole point
+ *
+ * With both permits empty it returns the 1.1.0 string byte for byte. That is
+ * not a nicety: it is what every client in the fleet gets, on every run, and
+ * it is the single assertion in `generate-image-concept.test.ts` written as an
+ * exact literal rather than a `toContain`.
+ *
+ * ## What a permitted mark changes, and what it must not
+ *
+ * Only the `no logos` clause. `no text, no words, no lettering, no numbers`
+ * stays exactly as it was, and a mark is explicitly NOT a licence to render
+ * lettering — a wordmark is lettering, so the permitted form is stated as a
+ * badge or a wordless silhouette. That framing is not decoration: it is what
+ * the reference account actually does, it keeps the mark out of the
+ * photographic content where a rights question is sharpest, and it is the only
+ * form that renders legibly at feed size anyway.
+ *
+ * ## Why figures get their own sentence instead of editing the first
+ *
+ * The 1.1.0 constraint line says nothing about people, so there is no clause
+ * for a figure permit to narrow — appending it to that sentence would mean
+ * rewriting a line that has nothing to do with the permission. A second
+ * sentence leaves the marks clause at its default when only figures are
+ * permitted, which is the composition this has to get right: the two permits
+ * are independent, and either one alone must leave the other's default intact.
+ */
+function buildConstraintLine(permittedMarks: readonly string[], permittedFigures: readonly string[]): string {
+  const marksClause =
+    permittedMarks.length > 0
+      ? `no logos or brand marks other than: ${permittedMarks.join(", ")} — those may appear only as clean flat ` +
+        "circular badges or plain wordless silhouettes, never as a photographed product, a packaged good or a " +
+        "person's likeness;"
+      : "no logos,";
+
+  const constraints =
+    "Constraints: no text, no words, no lettering, no numbers rendered in the image, " +
+    `${marksClause} no watermarks, no borders or frames, no collage or split panels.`;
+
+  if (permittedFigures.length === 0) return constraints;
+
+  return (
+    `${constraints} No identifiable real person other than: ${permittedFigures.join(", ")} — ` +
+    "no other recognisable face, likeness or public figure may appear in the frame."
+  );
 }

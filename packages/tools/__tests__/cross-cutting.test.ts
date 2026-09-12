@@ -128,6 +128,18 @@ describe("Layer 3 tool registry — cross-cutting", () => {
     // step, not a tool. RFC-14 predicted 64 for the count above and the real
     // value was 62, so this one was read off the assertion rather than
     // remembered. See packages/tools/karos-gates/src/native-language.ts.)
+    //
+    // (RFC-16 §5.2, Instagram's concept direction, adds media.getLikenessConsent
+    // — the fail-closed read of a client's recorded permission for third-party
+    // marks and public figures in generated imagery — and that one does NOT
+    // move this count. It lands in `createKarosMediaTools` exactly as
+    // media.libraryAdd/media.libraryList did, and `media.*` is deliberately
+    // excluded from the ten bundled servers this number covers. Measured, not
+    // assumed: the karos-media registry goes 16 -> 17 while
+    // `createAllKarosTools` is unchanged by it. The new tool is asserted in
+    // packages/tools/karos-media/__tests__/likeness-consent.test.ts instead,
+    // and the `media.` line in the exclusion loop below is what keeps that
+    // true rather than a comment saying so.)
     expect(names.length).toBe(63);
     for (const prefix of expectedPrefixes) {
       expect(names.some((n) => n.startsWith(prefix))).toBe(true);

@@ -145,7 +145,14 @@ describe("RunSpendMeter.canAfford — flips exactly at the $1.50 ceiling", () =>
     expect(meter.canAfford(MAX_RUN_SPEND_USD + 0.01).ok).toBe(false);
   });
 
-  it("the pre-attempt bundle is copy + vet + visual QA, at the @16/@4 prompt sizes", () => {
+  it("the pre-attempt bundle is copy + vet + visual QA, at the @16/@5 prompt sizes", () => {
+    // `vetCall` is knowingly ~$0.0005 low after `instagram-image-vet@4 -> @5`
+    // — §1c is plain markdown in a STATIC system prompt, so every call pays
+    // its ~1,275 input tokens, not only concept runs. It is NOT re-priced
+    // here: doing so fires the attempt lever on cold Hebrew runs and produces
+    // a budget-caused HOLD. The measurement and the reason are in the key's
+    // own doc comment in `run-budget.ts`, and it is in the PR body as a
+    // follow-up that must land with the rung-order change.
     expect(DRAFT_ATTEMPT_ESTIMATE_USD).toBeCloseTo(0.161 + 0.006 + 0.0041, 10);
     // The bundle is the three lines EVERY attempt pays regardless of language. Phase 4's two new keys are
     // deliberately NOT in it: `copyLanguageBrief` and `nativeJudge` are conditional on a resolved
@@ -236,33 +243,73 @@ describe("estimateRunCost — every term priced off what the run actually bills"
   });
 
   it("the cold Phase 1 carousel does not fit the target, so the first lever fires on this phase's own spend", () => {
-    // $1.14 cold English. Every term of the $0.2015 fixed line is Phase 1
+    // $1.14 cold English. Every term of the $0.2015 Phase 1 fixed line is
     // spend the estimator used to be blind to: 03e's eight signal
     // executions, 04a2's six lane queries, 04a3's two page fetches, the
     // re-priced scout and extraction, and 04i's angle. Priced at Phase 0's
     // `fixed` ($0.049) the same run read as $0.99, `fits()` was true, and the
     // adaptation the owner's amendment exists to trigger never fired.
+    //
+    // Phase 4 (RFC-16 §7.2) adds $0.030 on top — 04m's Sonnet concept call
+    // plus 06d1's vision inspect — priced UNCONDITIONALLY, because 02j builds
+    // the run shape long before 04l knows whether this story is eligible.
+    // That is deliberately the worst case, the same convention every other
+    // field of DEFAULT_RUN_SHAPE follows, and `ewmaRatio` washes it back out
+    // for a client whose selector keeps declining.
     const cold = estimateRunCost(DEFAULT_RUN_BUDGET_PLAN, DEFAULT_RUN_SHAPE);
-    expect(cold.breakdown.fixed).toBeCloseTo(0.2015, 6);
+    expect(cold.breakdown.fixed).toBeCloseTo(0.2315, 6);
     expect(cold.estimatedUsd).toBeGreaterThan(TARGET_RUN_SPEND_USD);
     const decision = planRunBudget(DEFAULT_RUN_SHAPE);
     // Phase 3's own arithmetic, and the reason `copyAttempt` had to be
     // re-priced to the @15 call on BOTH sides: at an image cap of 4 the cold
-    // English shape estimates $1.1018, so `fits()` is FALSE and the first
+    // English shape estimates $1.1318, so `fits()` is FALSE and the first
     // lever has to step three times — 4, then 2, then 0 — to land at
-    // $0.9458. Priced at @13's $0.12 the same shape read as $0.9845, `fits()`
+    // $0.9758. Priced at @13's $0.12 the same shape read as $0.9845, `fits()`
     // was true after one step, and the run still billed over the target.
     // Priced at @14's $0.1455 it stopped at cap 2 and $0.9833, with $0.0405
     // of §22 scene briefs unbudgeted behind it.
-    expect(estimateRunCost({ ...DEFAULT_RUN_BUDGET_PLAN, generatedImagesCap: 4 }, DEFAULT_RUN_SHAPE).estimatedUsd).toBeCloseTo(1.1078, 6);
+    //
+    // The ladder's SHAPE is what this pins and it has not moved across either
+    // phase: still three steps, still 4 -> 2 -> 0, still landing under target.
+    //
+    // The two figures differ because Phase 4 charges each rung for what that
+    // rung can actually buy:
+    //
+    //  - at cap 4 the concept mode is reachable, so its $0.030 is booked and
+    //    the estimate is the native-language phase's $1.1078 + $0.030 = $1.1378;
+    //  - at cap 0 the mode is UNREACHABLE — `conceptEligibility` declines with
+    //    "the run budget bought no generated images" — so the $0.030 is not
+    //    booked at all and the landing figure is **unchanged at $0.9518**.
+    //
+    // That equality is the point, and it is worth reading twice: the concept
+    // mode costs the fully-adapted cold plan NOTHING. Booking it on every rung
+    // instead would have charged $0.030 of spend the chosen plan had just made
+    // impossible — and $0.030 x the calibration ratio on the saturated ladder
+    // — dragging the landing figure to $0.9758 and the last three-rung ratio
+    // from 1.05 down to 1.02 for a mode that cannot fire there.
+    expect(estimateRunCost({ ...DEFAULT_RUN_BUDGET_PLAN, generatedImagesCap: 4 }, DEFAULT_RUN_SHAPE).estimatedUsd).toBeCloseTo(1.1378, 6);
     expect(decision.adaptations).toEqual(["images capped at 4", "images capped at 2", "no generated images (stock or text-only)"]);
     expect(decision.plan.generatedImagesCap).toBe(0);
     expect(decision.estimate.estimatedUsd).toBeCloseTo(0.9518, 6);
+    // The mechanism, asserted rather than described: the same shape prices
+    // $0.030 less in `fixed` once the plan can no longer buy the concept.
+    expect(estimateRunCost({ ...DEFAULT_RUN_BUDGET_PLAN, generatedImagesCap: 4 }, DEFAULT_RUN_SHAPE).breakdown.fixed - decision.estimate.breakdown.fixed).toBeCloseTo(
+      STEP_COST_ESTIMATES_USD.concept + STEP_COST_ESTIMATES_USD.visionInspectPerImage,
+      6,
+    );
     expect(decision.estimate.estimatedUsd).toBeLessThanOrEqual(TARGET_RUN_SPEND_USD);
-    // Phase 4 costs a cold Hebrew run $0.069 more over three attempts, against Phase 0's $0.0165, and the
-    // English plan had only $0.048 of headroom left after the image levers. So it does NOT fit inside them,
-    // and the honest thing to pin is what actually happens rather than a claim that it was absorbed: ONE
-    // further lever fires, the cheapest one left, and the three drafting attempts survive.
+    // The cold HEBREW plan is UNCHANGED by this phase, and that took a decision to keep true.
+    //
+    // It sits $0.0002 under target at rung 4 ($0.9998) with all three drafting attempts intact, which the
+    // native-language phase asserted here must stay that way: the attempt lever is the last one before the
+    // deliverable itself gets worse. Two things could have broken it and neither does.
+    //
+    // The concept mode adds $0.00 here, because its $0.030 is booked only while `generatedImagesCap > 0`
+    // and rungs 3 onward have already zeroed it. Re-pricing `vetCall` to its honest 0.0065 WOULD have
+    // broken it — measured: 9 metered calls x $0.0005 takes rung 4 to $1.0043, fires rung 5, drops
+    // attempts 3 -> 2, and `language-compliance-gate.test.ts` then produces `status: "held"` runs in the
+    // two cases named "NEVER holds". So the re-price is documented at the key and deferred to the
+    // follow-up that fixes the real defect underneath: that the attempt lever can produce a held run at all.
     const hebrew = planRunBudget({ ...DEFAULT_RUN_SHAPE, targetLanguage: true });
     expect(hebrew.adaptations).toEqual([
       "images capped at 4",
@@ -271,12 +318,12 @@ describe("estimateRunCost — every term priced off what the run actually bills"
       "trend evidence reduced to the one cached industry query",
     ]);
     expect(hebrew.estimate.estimatedUsd).toBeLessThanOrEqual(TARGET_RUN_SPEND_USD);
-    // The attempt lever is the one that must NOT fire. It is the last lever before the deliverable itself
-    // gets worse, and firing it would buy $0.25 of headroom nobody asked for by taking a whole redraft away
-    // from the clients this phase exists to serve — the failure mode that made the planner price the
-    // conditional second judge round at one round rather than two (`rawEstimate`'s note).
+    // The attempt lever is the one that must NOT fire, and the margin it holds by is $0.0002 — asserted
+    // here so the next person to add an unconditional line to `fixed` finds out from this test rather than
+    // from a held Hebrew run in prep.
     expect(hebrew.plan.maxSelfCheckAttempts).toBe(decision.plan.maxSelfCheckAttempts);
     expect(hebrew.adaptations).not.toContain("one return to step 05 instead of two");
+    expect(TARGET_RUN_SPEND_USD - hebrew.estimate.estimatedUsd).toBeLessThan(0.001);
     const perAttemptLanguage = STEP_COST_ESTIMATES_USD.copyLanguageBrief + STEP_COST_ESTIMATES_USD.nativeJudge;
     expect(3 * perAttemptLanguage).toBeCloseTo(0.069, 6);
     // And `fluency` is NOT what a Hebrew run is priced at any more — it is the cheapest-path degraded tier.
@@ -429,13 +476,17 @@ describe("planRunBudget — the owner's levers, in order, never a hold", () => {
     // once the optional re-vets go too — so every rung of the ladder is needed
     // and the last one fits.
     //
-    // The ratio moved 1.8 -> 1.7 -> 1.6 with each of `copyAttempt`'s honest
-    // re-prices (the @14 and @15 calls' OUTPUT grew, and output costs 5x
-    // input on Sonnet): the ladder saturates sooner when a copy attempt
-    // really costs $0.159, which is the point of pricing it that way. Above
-    // ~1.63 the tightest plan no longer fits — that regime is the next test,
-    // which asserts the run proceeds anyway.
-    const history = { ...EMPTY_RUN_BUDGET_HISTORY, ewmaRatio: 1.6, runs: [] };
+    // The ratio moved 1.8 -> 1.7 -> 1.6 -> 1.55 with each of `copyAttempt`'s
+    // honest re-prices (the @14 and @15 calls' OUTPUT grew, and output costs
+    // 5x input on Sonnet) and then with RFC-16's $0.030 concept line: the
+    // ladder saturates sooner when a copy attempt really costs $0.159, which
+    // is the point of pricing it that way. Above ~1.56 the tightest plan no
+    // longer fits — that regime is the next test, which asserts the run
+    // proceeds anyway. (Measured, not derived: the tightest plan's raw is
+    // $0.6407, so saturation is at ratio 1.5608 exactly; at 1.55 all six rungs
+    // fire and it lands at $0.9931, at 1.6 it would be $1.0251 and this test
+    // would be asserting the NEXT test's regime by accident.)
+    const history = { ...EMPTY_RUN_BUDGET_HISTORY, ewmaRatio: 1.55, runs: [] };
     const decision = planRunBudget(DEFAULT_RUN_SHAPE, history);
     expect(decision.adaptations).toEqual([
       "images capped at 4",
@@ -554,6 +605,7 @@ describe("the estimate table", () => {
       [
         "angle",
         "brief",
+        "concept",
         "copyAttempt",
         "copyLanguageBrief",
         "extraction",

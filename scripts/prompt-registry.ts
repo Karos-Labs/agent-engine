@@ -155,6 +155,14 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   // English generation brief for an image model, never client-facing copy),
   // and it names no `gate.*`.
   { promptId: "instagram-art-director", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
+  // Phase 4 (RFC-16 §2.2), the concept direction. No `requires` flags for the
+  // same reason `instagram-art-director` has none: it receives the resolved
+  // `targetLanguage` and never `clientVoiceContext` (so the `languageDirective`
+  // marker, which looks for that literal, would be unsatisfiable — its output
+  // is an English generation brief for an image model, never client-facing
+  // copy), it names no `gate.*`, and every figure it can touch is copied
+  // verbatim out of a fact card the research already sourced.
+  { promptId: "instagram-concept", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
   {
     promptId: "instagram-copy",
     agent: "instagram-agent",
@@ -183,7 +191,9 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   // exactly the "unenforced instruction dressed as an enforced one" this
   // registry's own doc comment warns about.
   { promptId: "instagram-design-brief", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
-  { promptId: "instagram-image-vet", agent: "instagram-agent", versions: ["1", "2", "3", "4"], latestVersion: "4" },
+  // Phase 4 (RFC-16 §6.1): @5 adds §1c, reachable only on a slide the pipeline
+  // declared `conceptual`. @4 stays frozen and is what every other slide reads.
+  { promptId: "instagram-image-vet", agent: "instagram-agent", versions: ["1", "2", "3", "4", "5"], latestVersion: "5" },
   { promptId: "instagram-research", agent: "instagram-agent", versions: ["1", "2"], latestVersion: "2" },
   { promptId: "instagram-template-designer", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
   { promptId: "instagram-template-set-review", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
