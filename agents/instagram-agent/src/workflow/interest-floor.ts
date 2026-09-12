@@ -108,6 +108,53 @@ export interface SlideMetrics {
   quantisedColourCount: number;
   /** Ink inside an 8-design-px band at any canvas edge. */
   clippedEdgeShare: number;
+
+  /*
+   * ── RFC-17's five, and why every one of them is OPTIONAL here ──────────
+   *
+   * `measureSlidePng` emits all five on every measured slide, unconditionally
+   * — so on the carousel path they are always present and the `?? 0` defaults
+   * below are never taken. The optionality is for the OTHER caller: the
+   * Template Studio (`template-studio.ts`) keeps its own narrower structural
+   * mirror of these same numbers and hands it to `checkInterestFloor` for a
+   * one-slide validation render, and requiring fields that mirror does not
+   * declare would make a per-client template's validation depend on a metric
+   * the studio never asked for.
+   *
+   * It is not a weakening, and the probe half below is the reason: a consumer
+   * that does not measure mark runs reports no mark runs, and a clause about
+   * marks MUST abstain on a document that declares none. Absent and zero mean
+   * the same thing here on purpose — "nobody asked for emphasis on this
+   * plate" — and both abstain. See `marks-missing`.
+   */
+
+  /**
+   * Cells that are COVERED, FLAT, off the ground and off the supplied ink
+   * token — painted emphasis (RFC-17 §5.6). 0 when the renderer was handed no
+   * `foregroundHex`, because without the ink token a display stroke's
+   * interior is indistinguishable from a highlighter swatch.
+   */
+  markedShare?: number | undefined;
+  /**
+   * Distinct 5-bit colours among those cells, counting bins holding at least
+   * 16 cells.
+   *
+   * **It is not a gate and it must not become one**, and the control that
+   * settles the argument is in RFC-17 finding 5: the owner's grey screen with
+   * two marks stuck on it scores 2, and a third takes it to 3. A floor of 3
+   * would sit one mark above the very defect the floor exists to catch. It
+   * feeds `marks-not-visible`, which is a warning.
+   */
+  markColourCount?: number | undefined;
+  /**
+   * The ink-weighted centre of mass, as FRACTIONS of the frame. Composition
+   * evidence, compared against nothing — see `composition-evidence`.
+   */
+  contentCentroid?: { x: number; y: number } | undefined;
+  /** The bounding box of every ink-carrying cell, in DESIGN px. Zero-area when nothing painted. */
+  contentBBox?: { x: number; y: number; w: number; h: number } | undefined;
+  /** WCAG ratio between the measured ground and the SUPPLIED `--fg`, in [1,21]. 0 when none was supplied. */
+  groundInkContrast?: number | undefined;
 }
 
 /**
@@ -134,6 +181,22 @@ export interface SlideProbe {
   textBoxShare: number;
   /** The families actually resolved in the page, not the ones requested. */
   fontFamiliesUsed: string[];
+  /**
+   * Elements carrying the `mk` class — the emphasis runs the DOCUMENT ASKED
+   * FOR, whether or not anything painted them.
+   *
+   * **0 is a fact, never a fault.** A client on a Template Studio template
+   * with no `*Runs` slot emits no runs and can never be refused by the clause
+   * below; that is what makes the clause DOM-anchored rather than
+   * copy-anchored, and it is why it can only ever refuse MORE than today.
+   *
+   * Optional for the same reason the five metrics above are — a consumer with
+   * its own narrower probe mirror (the Template Studio) reports no mark runs,
+   * and absent is treated exactly like 0: abstain.
+   */
+  markRuns?: number | undefined;
+  /** Of those, the ones a computed style actually paints — a background image, or a transparent colour clipped to the text. */
+  markRunsPainted?: number | undefined;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -775,10 +838,16 @@ export const FULL_BLEED_IMAGERY_SHARE = 0.5;
  * (`interest-relayout.ts`) can switch on it and the ledger row can be
  * grouped by it.
  */
-export type InterestFailureKind = "render-integrity" | "clipped" | "dead-space" | "empty" | "no-device" | "text-wall";
+export type InterestFailureKind = "render-integrity" | "marks-missing" | "clipped" | "dead-space" | "empty" | "no-device" | "text-wall";
 
 /** Facts a reviewer and `08b` should see, that must never fail an attempt. */
-export type InterestWarningKind = "accent-out-of-band" | "background-not-brand-ground" | "low-colour-count" | "low-edge-density";
+export type InterestWarningKind =
+  | "accent-out-of-band"
+  | "background-not-brand-ground"
+  | "low-colour-count"
+  | "low-edge-density"
+  | "marks-not-visible"
+  | "composition-evidence";
 
 export interface InterestFinding {
   slide: number;
@@ -950,6 +1019,55 @@ export function checkInterestFloor(
     };
   }
 
+  // ── A2 — the emphasis stylesheet did not arrive. ──
+  //
+  // RFC-17 §5.6. The ONE new failing clause this phase adds, and everything
+  // about its shape is chosen so it can never refuse a plate that is fine.
+  //
+  // DOM-ANCHORED, NOT COPY-ANCHORED. It compares what the document ASKED for
+  // against what a computed style PAINTS. A template with no `*Runs` slot —
+  // every Template Studio template a client authored before this phase, and
+  // `stat-callout`/`comparison-card`, which deliberately have none — emits
+  // `markRuns === 0` and the clause abstains. A slide whose copy simply
+  // carried no emphasis does the same. **This clause can only ever refuse
+  // MORE than today; it removes nothing and it exempts nothing.**
+  //
+  // It does NOT short-circuit the way clause A does, and the difference is
+  // real: clause A fires when nothing painted, so every other share is
+  // measured against a frame that never rendered and reporting them would be
+  // three findings about one defect. Here the plate rendered fully and
+  // measured honestly — only its emphasis is missing — so a hole or a wall of
+  // text on the same slide is a separate, true fact the writer should get in
+  // the same steer.
+  //
+  // ITS REMEDY IS A RE-RENDER, clause A's posture rather than clause C's. The
+  // copy is correct: the writer named the right words and `resolveSlideMarks`
+  // found them, or there would be no runs in the DOM to count. What failed is
+  // `markCssBlock()` reaching `extraHeadHtml`, and no redraft can fix that.
+  // It is also the cheap direction — a re-render is $0 against a $0.171
+  // redraft.
+  //
+  // The PIXEL half of the same question ships as a warning and not as a
+  // second limb here: see `marks-not-visible`, and RFC-17 finding 5 for why
+  // `markColourCount` cannot gate until CI has published the band.
+  const markRuns = probe?.markRuns ?? 0;
+  const markRunsPainted = probe?.markRunsPainted ?? 0;
+  const markedShare = metrics.markedShare ?? 0;
+  const markColourCount = metrics.markColourCount ?? 0;
+  if (markRuns > 0 && markRunsPainted === 0) {
+    findings.push({
+      slide,
+      role,
+      kind: "marks-missing",
+      measured: { markRuns, markRunsPainted, markedShare, markColourCount },
+      // Not a share and not a ceiling: the comparison is "none of them", and
+      // 0 is the number the clause actually compared against.
+      threshold: 0,
+      sentence: `${where} — ${markRuns} emphasis run(s) are in the document and none of them painted (markedShare ${pct(markedShare)}, ${markColourCount} mark colour(s)); the mark stylesheet did not reach the page.`,
+      steer: `Do not rewrite slide ${slide}: the words to emphasise are correct and they are in the markup. The mark stylesheet did not arrive — re-render it.`,
+    });
+  }
+
   // ── B — clipped. The type does not fit at the size the template chose. ──
   //
   // TWO limbs, and only one of them is exemptible. `probe.overflow` is a DOM
@@ -1101,7 +1219,7 @@ export function checkInterestFloor(
     });
   }
 
-  return { slide, role, ok: findings.length === 0, findings, waived, warnings: interestWarningsFor(metrics, role, slide), metrics };
+  return { slide, role, ok: findings.length === 0, findings, waived, warnings: interestWarningsFor(metrics, role, slide, probe), metrics };
 }
 
 /**
@@ -1110,7 +1228,7 @@ export function checkInterestFloor(
  * Separated from the clause list rather than mixed into it, so "this can hold
  * a run" is answerable by reading which function a threshold appears in.
  */
-export function interestWarningsFor(metrics: SlideMetrics, role: SlideRole, slide: number): InterestWarning[] {
+export function interestWarningsFor(metrics: SlideMetrics, role: SlideRole, slide: number, probe?: SlideProbe | undefined): InterestWarning[] {
   const warnings: InterestWarning[] = [];
   if (metrics.accentShare < ACCENT_MIN_SHARE) {
     warnings.push({
@@ -1163,6 +1281,81 @@ export function interestWarningsFor(metrics: SlideMetrics, role: SlideRole, slid
       sentence: `slide ${slide} — ${pct(metrics.inkShare)} ink at an edge density of ${metrics.edgeDensity.toFixed(3)} (under ${EDGE_DENSITY_FLOOR}); the ink is a solid wash rather than content.`,
     });
   }
+  // ── The PIXEL half of the emphasis question, and it is a warning. ──
+  //
+  // The clause above proves the stylesheet ARRIVED (a computed style paints).
+  // This proves the marks are VISIBLE (they left a colour in the frame the
+  // ground and the ink do not account for), and the two are provably
+  // different instruments: set every ring colour to the ground hex and the
+  // computed styles still paint — `markRunsPainted === markRuns`, the clause
+  // abstains — while nothing lands more than `INK_DELTA` off the ground and
+  // this warning fires.
+  //
+  // It cannot be promoted to a second limb of the clause until CI has
+  // published the per-kind/per-scale band, and RFC-17 finding 5 records the
+  // control that says why: a grey screen with two marks stuck on it scores 2
+  // on `markColourCount`, so any floor that admits a real plate also admits
+  // that one.
+  const markRuns = probe?.markRuns ?? 0;
+  const markRunsPainted = probe?.markRunsPainted ?? 0;
+  const markedShare = metrics.markedShare ?? 0;
+  const markColourCount = metrics.markColourCount ?? 0;
+  if (markRuns > 0 && markColourCount === 0) {
+    warnings.push({
+      slide,
+      role,
+      kind: "marks-not-visible",
+      measured: { markRuns, markRunsPainted, markedShare, markColourCount },
+      sentence:
+        `slide ${slide} — ${markRuns} emphasis run(s) are in the document and ${markRunsPainted} of them paint, ` +
+        `but no mark colour holds a measurable area of the frame (markedShare ${pct(markedShare)}); the marks may be the ground, the ink, or too small to read at feed size.`,
+    });
+  }
+  // ── Composition evidence: five numbers, compared against NOTHING. ──
+  //
+  // RFC-17 §3.3. Emitted on every measured slide, unconditionally, because
+  // the point is a BAND and a band needs the passing plates in it as much as
+  // the failing ones. A warning cannot admit a grey screen, which is the
+  // property that made shipping these free.
+  //
+  // What they are for is stated in §3.4 so a later phase cannot move the
+  // goalposts: collect this across eight archetypes x three type scales x
+  // LTR/RTL on real Chromium PNGs for one release, and only then argue about
+  // whether "empty with one perfect line" is separable from "empty because
+  // nothing was said". Two candidates were tested against controls and both
+  // failed — `imageryOrDeviceShare / contentOccupiedShare` scored the owner's
+  // decorated grey screen BETTER than both good reference plates, and a
+  // content-span ratio read 1.00 on every real reference plate. Until a third
+  // survives its controls, **no threshold in this file moves.**
+  //
+  // `probe.elementCount` rides along because it is the "few elements placed
+  // with intent" half, it has been measured on every slide since 1.1.0, and
+  // until now it was read by nobody.
+  const centroid = metrics.contentCentroid ?? { x: 0.5, y: 0.5 };
+  const bbox = metrics.contentBBox ?? { x: 0, y: 0, w: 0, h: 0 };
+  const groundInkContrast = metrics.groundInkContrast ?? 0;
+  warnings.push({
+    slide,
+    role,
+    kind: "composition-evidence",
+    measured: {
+      centroidX: centroid.x,
+      centroidY: centroid.y,
+      contentBBoxX: bbox.x,
+      contentBBoxY: bbox.y,
+      contentBBoxW: bbox.w,
+      contentBBoxH: bbox.h,
+      groundInkContrast,
+      markedShare,
+      markColourCount,
+      ...(probe !== undefined ? { elementCount: probe.elementCount, markRuns, markRunsPainted } : {}),
+    },
+    sentence:
+      `slide ${slide} — composition evidence (gates nothing): centroid ${centroid.x.toFixed(3)},${centroid.y.toFixed(3)}, ` +
+      `content box ${bbox.w}x${bbox.h} at ${bbox.x},${bbox.y}, ` +
+      `ground/ink contrast ${groundInkContrast.toFixed(2)}:1, ${markColourCount} mark colour(s) over ${pct(markedShare)} of the frame` +
+      `${probe !== undefined ? `, ${probe.elementCount} elements` : ""}.`,
+  });
   return warnings;
 }
 

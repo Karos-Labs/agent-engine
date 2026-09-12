@@ -208,6 +208,38 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyOutput> {
     // and only on runs with a resolved `targetLanguage` — the field is
     // conditional, the prompt section is not, and charging an English run for
     // a payload it does not carry would pull an image lever for nothing.
-    skillRef: "instagram-copy@16",
+    //
+    // v17 (Phase 5, RFC-17 §5.7, 2026-09-13): §24 "Marking". The writer names
+    // one to five spans per slide whose MEANING carries it — the noun a list
+    // row defines, the clause carrying the surprise, the term the reader will
+    // screenshot — copied VERBATIM out of the field it already wrote, because
+    // a span that does not occur exactly is dropped rather than resolved to
+    // the wrong words. It chooses WHICH words and never the colour, the weight
+    // or how the mark is drawn: code picks the kind from the slide's ground
+    // luminance and rotates the ring, which is the one thing the model cannot
+    // see (RFC-17 finding 2). §24 also carries the topic rule verbatim
+    // (execution transfers, subject matter never does) and states its own
+    // interaction with §10: `checkSentenceCase` still refuses shouting, and
+    // marking is now the sanctioned way to emphasise.
+    //
+    // Cost, BOTH halves counted — and here BOTH are non-zero, which is why
+    // neither the @14→@15 shape (output-heavy, priced on input alone) nor the
+    // @15→@16 shape (input-only) is the right template for it:
+    //
+    //   Input:  +2,665 prompt characters (46,587 → 49,252) ≈ 650 tokens
+    //           x $3/1e6  = $0.00195. Paid on English runs too — one prompt
+    //           file, no conditional include.
+    //   Output: the `emphasis` array itself, ≈65 tokens a slide (3.6 marks at
+    //           ≈17 tokens each, the rf-05 mean, plus 4 array overhead) x 8
+    //           slides = 520 tokens x $15/1e6 = $0.00780.
+    //   Total:  $0.00975 an attempt, rounded UP.
+    //
+    // `STEP_COST_ESTIMATES_USD.copyAttempt` is re-priced 0.161 → 0.171 in the
+    // SAME commit, which is the rule `run-budget.ts` states about itself. At
+    // the 3-attempt cap that is +$0.030 against the owner's $1.00 target (3.0%)
+    // and the $1.50 hard max (2.0%), and no new model step at run time or at
+    // setup: the mark ring is derived in code from the kit's accent ring, so
+    // per-client setup moves by exactly $0.000 (RFC-17 §6.2).
+    skillRef: "instagram-copy@17",
   };
 }

@@ -166,11 +166,23 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "instagram-copy",
     agent: "instagram-agent",
-    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16"],
-    latestVersion: "16",
+    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17"],
+    latestVersion: "17",
     // `requires` is UNCHANGED at @16. §23 makes `languageBrief` binding when it is present, but §1 is
     // demoted rather than deleted, so the `languageDirective` marker — which looks for the literal
     // `clientVoiceContext` — is still satisfied, and an English run reads identically to @15.
+    //
+    // Phase 5 (RFC-17 §5.7): `requires` is UNCHANGED again at @17, and that is a claim, not an
+    // oversight. §24 "Marking" names which words in copy the model has ALREADY WRITTEN carry the
+    // slide. It names no `gate.*` — the mark system is enforced by `resolveSlideMarks`, by the DOM
+    // clause `marks-missing` and by a dropped span, none of which is a gate tool a prompt could be
+    // told to satisfy — so the `numbersSourced` flag would fail its own `gate.numberssourced`
+    // marker and would be the "unenforced instruction dressed as an enforced one" this registry's
+    // doc comment warns about. It touches neither §1 nor the literal `clientVoiceContext`, so
+    // `languageDirective` stays satisfied and satisfiable exactly as at @16. And it adds no
+    // required output field: `emphasis` is OPTIONAL on every slide (a slide with nothing worth
+    // marking correctly carries none), so a `structuredOutput` flag would assert a field the
+    // schema does not require. Claiming any new flag here would be dishonest about what §24 is.
     requires: { languageDirective: true },
   },
   // Phase 4 (RFC-15 §6). The native judge: six axes, worked examples, and a correction contract that makes

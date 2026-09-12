@@ -363,7 +363,13 @@
     --gr-tile: auto, auto;
     --gr-repeat: repeat, repeat;
   }
-  body:has(.bg:empty) .copy:has(.headline:not(:empty)) .copy-art {
+  /* The statement's own guard, asked of the headline's CHILDREN. `.headline`
+     is a twin-slot pair now (see the twin-slot block below), so it has two
+     element children on every render and `:not(:empty)` on the host itself
+     would be true on a plate with no statement on it — the ground mark would
+     paint on an empty plate, which is the one thing this guard exists to
+     prevent. "Has a non-empty twin" is the same question one level down. */
+  body:has(.bg:empty) .copy:has(.headline > span:not(:empty)) .copy-art {
     background-image: var(--gr-mark);
     background-size: var(--gr-tile);
     background-repeat: var(--gr-repeat);
@@ -428,6 +434,27 @@
      rather than to the legacy 96x10 detail. */
   .stat-band { width: 200px; height: 14px; background: var(--accent); margin-top: 30px; }
 
+  /* ── TWIN SLOTS: THE MARKED COPY AND ITS PLAIN FALLBACK (RFC-17 §5.4). ──
+     `cover.html`'s twin-slot block is the canonical note — why a pair rather
+     than a straight swap (`fillTemplate` erases an unfilled slot, so a run
+     resumed across a deploy would render an empty headline), why both twins
+     stay in the DOM on every render (`probePage` counts a text-bearing LEAF,
+     so wrapping one path and not the other moves `textBoxShare` and
+     `fontFamiliesUsed` between two renders of the same copy), and why every
+     `:empty` guard in the file had to be restated against the children.
+
+     This file's pairs: `.headline` takes `{{html:headlineRuns}}` +
+     `{{headline}}`, `.body-text` takes `{{html:bodyRuns}}` + `{{body}}`.
+
+     ONE THING IS SPECIFIC TO THIS ARCHETYPE. The heroless plate's ground mark
+     keys off `.copy:has(.headline > span:not(:empty))` above, which means the
+     twin pair is now what decides whether the dot screen or the column ruling
+     paints at all. That guard and these two rules have to agree about which
+     span carries the copy, and the source-scan suite
+     (`__tests__/template-mark-slots.test.ts`) is what holds them together. */
+  .headline:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
+  .body-text:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
+
   /* Standing brand furniture. The brand head fragment (`buildBrandHeadHtml`)
      restates both rules and lands AFTER this sheet, so a client with a kit
      keeps its own placement; these defaults exist because a brandless render
@@ -466,8 +493,8 @@
   <div class="scrim"></div>
   <div class="copy">
     <div class="copy-art">
-      <div class="headline" id="headline">{{headline}}</div>
-      <div class="body-text">{{body}}</div>
+      <div class="headline" id="headline"><span class="mk-runs">{{html:headlineRuns}}</span><span class="mk-plain">{{headline}}</span></div>
+      <div class="body-text"><span class="mk-runs">{{html:bodyRuns}}</span><span class="mk-plain">{{body}}</span></div>
       <div class="stat-band"></div>
     </div>
   </div>
@@ -485,9 +512,25 @@
     // The render tool's `readyFlagCheck` waits for `__CAROUSEL_READY__`
     // (default `readyFlag`, publish.renderCarousel's own schema default)
     // before it ever screenshots the page, so it is set last.
+    //
+    // THE LADDER MEASURES THE VISIBLE TWIN, NOT BOTH OF THEM — `cover.html`'s
+    // script carries the full note. In short: `textContent` reads a
+    // `display: none` subtree too, so on a marked render the host holds its
+    // copy twice and a naive count steps the type down a class or two on
+    // exactly the slides that got marks. On THIS archetype that would also
+    // move the pixels the interest floor reads, because the statement's size
+    // is what the `imageryOrDeviceShare` band above was calibrated against.
+    // Zero-width bidi controls are stripped for the reason stated there.
     (function () {
+      function mkLen(el) {
+        if (el === null) return 0;
+        var runs = el.querySelector(".mk-runs");
+        var src = runs !== null && runs.textContent.trim() !== "" ? runs : el.querySelector(".mk-plain");
+        var text = ((src === null ? el : src).textContent || "").replace(/[\u2066-\u2069\u200E\u200F]/g, "");
+        return text.trim().length;
+      }
       var h = document.getElementById("headline");
-      var len = (h.textContent || "").trim().length;
+      var len = mkLen(h);
       var big = document.body.classList.contains("ts-l");
       if (len > (big ? 56 : 66)) h.className = "headline tiny";
       else if (len > (big ? 30 : 36)) h.className = "headline small";

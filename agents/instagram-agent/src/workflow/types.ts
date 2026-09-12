@@ -535,6 +535,60 @@ export const SlideCustomArchetypeSchema = z.object({
 });
 export type SlideCustomArchetype = z.infer<typeof SlideCustomArchetypeSchema>;
 
+/**
+ * The copy fields a mark may be aimed at — the COPY's OWN field names, never
+ * a template slot.
+ *
+ * That distinction is load-bearing (RFC-17 §5.1). The model wrote `headline`
+ * and `body`; it does not know that `contentFor` routes `headline` to `title`
+ * on a cover and to `takeaway` on a closer, or that a `photo` slide that lost
+ * its picture becomes `text_only`. Keeping the contract on the copy's fields
+ * puts that mapping in exactly one place, and a layout downgrade keeps the
+ * marks working instead of aiming them at a slot that no longer exists.
+ */
+export const EMPHASIS_FIELDS = ["headline", "body", "quote", "item"] as const;
+
+/**
+ * RFC-17 (Phase 5) — which words on a slide carry a MARK.
+ *
+ * The owner's reference accounts mark emphasis per word, in rotating colours
+ * and mixed kinds, and that is what makes their type read as considered
+ * rather than generated. This is the only new field the whole phase adds to
+ * the copy contract, and it is optional, so every existing gate, dedupe
+ * corpus, language judge and hygiene check keeps reading exactly the string
+ * it reads today.
+ *
+ * **Verbatim text, never offsets.** `isolateForeignRuns` inserts two
+ * `\p{Cf}` characters per Latin run into every rendered RTL field, and the
+ * Phase 4 native editor rewrites copy after drafting — so any character
+ * offset authored against the model's own string is wrong by the time the
+ * field reaches the document. A span that no longer occurs is DROPPED and
+ * reported, never resolved to the wrong words.
+ *
+ * **`.max(8)` here, `MAX_MARKS_PER_SLIDE = 5` in `emphasis-marks.ts`.** The
+ * gap is deliberate and follows the philosophy already written into this
+ * schema's siblings: FURNITURE MUST NEVER BE ABLE TO REJECT A DRAFT. A hard
+ * `.max(5)` would fail an entire $0.171 copy attempt over a sixth mark. A
+ * ninth mark degrades — the extras are dropped in code, where a drop is free.
+ *
+ * The model chooses WHICH WORDS. It never chooses the colour, the weight, or
+ * how the mark is drawn: it cannot see the ground, and `rf-6/slide-01` — a
+ * near-black plate whose emphasis is a gradient in the glyphs, with no
+ * swatch anywhere — proves the ground is what decides.
+ */
+export const SlideEmphasisSchema = z
+  .array(
+    z.object({
+      field: z.enum(EMPHASIS_FIELDS),
+      /** Required when `field` is `"item"`: which list row this span is in. Ignored otherwise. */
+      itemIndex: z.number().int().min(0).max(3).optional(),
+      /** The exact words to mark, copied VERBATIM out of the field. If they do not appear exactly, the mark is dropped. */
+      text: z.string().min(2).max(48),
+    }),
+  )
+  .max(8);
+export type SlideEmphasis = z.infer<typeof SlideEmphasisSchema>;
+
 export const InstagramSlideCopySchema = z.object({
   n: z.number().int().positive(),
   headline: z.string().min(1),
@@ -588,6 +642,15 @@ export const InstagramSlideCopySchema = z.object({
    * must never be able to reach it.
    */
   device: SlideDeviceSchema.optional(),
+  /**
+   * RFC-17 (Phase 5) — which words on this slide carry a mark. See
+   * `SlideEmphasisSchema` for the whole contract.
+   *
+   * Optional, and dropped silently when absent: a draft with no `emphasis`
+   * renders exactly as it does today. Nothing downstream of this field can
+   * hold or fail a run.
+   */
+  emphasis: SlideEmphasisSchema.optional(),
 });
 export type InstagramSlideCopy = z.infer<typeof InstagramSlideCopySchema>;
 

@@ -459,8 +459,8 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // this asserts is that the rows exist at all, which is the step a prompt
     // bump most often forgets.
     const registry = readFileSync(path.join(PROMPTS_ROOT, "..", "..", "..", "scripts", "prompt-registry.ts"), "utf8");
-    expect(registry).toContain(`"13", "14", "15", "16"`);
-    expect(registry).toMatch(/promptId: "instagram-copy"[\s\S]{0,400}latestVersion: "16"/);
+    expect(registry).toContain(`"13", "14", "15", "16", "17"`);
+    expect(registry).toMatch(/promptId: "instagram-copy"[\s\S]{0,400}latestVersion: "17"/);
     // Phase 4 (RFC-15 §6). The native editor's prompt is the one this phase
     // added; a row that never lands is exactly what this test exists to catch.
     expect(registry).toContain(`{ promptId: "instagram-native-editor", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
@@ -475,13 +475,13 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     expect(registry).toContain(`{ promptId: "instagram-concept", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
   });
 
-  it("every agent reads the version this phase shipped: copy @16, visual QA @4, image vet @5, art director @1, concept @1", async () => {
+  it("every agent reads the version this phase shipped: copy @17, visual QA @4, image vet @5, art director @1, concept @1", async () => {
     // The last line of a prompt bump, and the one most often forgotten: a new
     // prompt file that no `skillRef` points at exists, resolves, and is read
     // by nothing.
     const promptStore = makePromptStore();
     const copy = new InstagramCopyAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
-    expect((copy as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-copy@16");
+    expect((copy as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-copy@17");
     const qa = new InstagramVisualQaAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
     expect((qa as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-visual-qa@4");
     const vet = new InstagramImageVettingAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
@@ -492,14 +492,14 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     expect((concept as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-concept@1");
   });
 
-  it("instagram-copy@16, instagram-image-vet@5, instagram-art-director@1 and instagram-concept@1 resolve, each byte-identical to its own latest.md", async () => {
+  it("instagram-copy@17, instagram-image-vet@5, instagram-art-director@1 and instagram-concept@1 resolve, each byte-identical to its own latest.md", async () => {
     // Phase 3 (items Q and R). The byte comparison is the one `check:prompts`
     // makes too, and it is here as well because a drifted `latest.md` is the
     // failure mode where a run silently reads a DIFFERENT prompt from the one
     // its version pin names.
     const promptStore = makePromptStore();
     for (const [promptId, version, h1] of [
-      ["instagram-copy", "16", "# Instagram Copy Craft Guide, v16"],
+      ["instagram-copy", "17", "# Instagram Copy Craft Guide, v17"],
       ["instagram-image-vet", "5", "# Instagram Image Vetting Craft Guide — v5"],
       ["instagram-art-director", "1", "# Instagram Art Direction Guide — v1"],
       ["instagram-concept", "1", "# Instagram Concept Direction Guide — v1"],
@@ -511,6 +511,92 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
       );
       expect(pinned.split(/\r?\n/)[0]).toBe(h1);
     }
+  });
+
+  it("instagram-copy/latest.md is BYTE-identical to 17.md, and 17.md is exactly 16.md plus §24", () => {
+    // Phase 5 (RFC-17 §5.7), step 2 of the five-step checklist.
+    //
+    // A Buffer comparison, not a decoded-string one. `readFileSync(..., "utf8")`
+    // above is what `check:prompts` does and it is the right check for DRIFT,
+    // but it cannot see a BOM, a lone CR, or an invalid sequence that decodes
+    // to the same replacement character on both sides — and this repo's files
+    // are CRLF, so a tool that normalises line endings on one of the two would
+    // pass a decoded comparison while shipping a different file to the model.
+    const v17 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "17.md"));
+    const latest = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "latest.md"));
+    expect(latest.equals(v17), "latest.md must be byte-identical to 17.md, not merely equivalent").toBe(true);
+
+    // Published versions are IMMUTABLE: @16 is what every in-flight run and
+    // every pinned fixture still resolves, so the bump must be additive. This
+    // reconstructs 17.md from 16.md and fails if anything between the two
+    // section 1 and section 23 lines was edited in passing.
+    const v16 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "16.md"), "utf8");
+    expect(v16, "@16 is published and frozen; §24 belongs to @17 alone").not.toContain("## 24.");
+    const v17Text = v17.toString("utf8");
+    const bumped = v16.replace("# Instagram Copy Craft Guide, v16", "# Instagram Copy Craft Guide, v17");
+    expect(v17Text.startsWith(bumped), "17.md must be 16.md (h1 bumped) with §24 APPENDED, nothing else touched").toBe(true);
+    const section24 = v17Text.slice(bumped.length);
+    // ≈2,600 characters, the figure `run-budget.ts` prices the input half on.
+    // A section that quietly doubled would make that re-price wrong.
+    expect(section24.length).toBeGreaterThan(2300);
+    expect(section24.length).toBeLessThan(3000);
+  });
+
+  it("§24 carries the TOPIC RULE, the verbatim contract, and its own interaction with checkSentenceCase", () => {
+    // Phase 5 (RFC-17 Part 1). THE ONE RULE THAT OVERRIDES EVERY OTHER RULE IN
+    // THIS PHASE. §24 teaches the model an EXECUTION borrowed from reference
+    // accounts that post about AI and marketing, and the failure it could
+    // cause is not a broken render — it is a beautiful, well-marked slide
+    // about a subject the client does not do, which is the original audit
+    // failure repeating with better typography. The sentence is load-bearing
+    // enough that its absence must be a red build, not a review comment.
+    const v17 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "17.md"), "utf8");
+    const section24 = v17.slice(v17.indexOf("## 24."));
+    expect(section24.startsWith("## 24."), "§24 must exist in 17.md").toBe(true);
+
+    expect(section24).toContain("Do not reach for a subject the client's brief and topic engines did not give");
+    expect(section24).toContain("Reference EXECUTION transfers; reference SUBJECT MATTER never");
+
+    // The span contract. A span is located by exact match and DROPPED when it
+    // does not occur (RFC-17 finding 6: character offsets cannot survive
+    // `iso()` or the Phase 4 native editor), so the prompt has to say both
+    // halves — copy verbatim, and what silently happens when you do not.
+    expect(section24).toContain("VERBATIM");
+    expect(section24).toContain("DROPPED");
+
+    // The split RFC-17 finding 2 turns on: the model cannot see the ground, so
+    // it never chooses how a mark is painted.
+    expect(section24).toContain("You choose WHICH words. You never choose the colour, the weight, or how the");
+    // Part 4 obs. 5 — rf-05 S3 marks `Handwritten notes` and leaves `2-` bare.
+    expect(section24).toContain("Never the numeral");
+    // The floor's own complaint, restated for copy: a mark over everything
+    // marks nothing, and an invented phrase is a fabricated reason to mark.
+    expect(section24).toContain("Never a whole line");
+    expect(section24).toContain("Do not invent a phrase in order to have something to mark");
+
+    // §10 vs §24. Before this phase the system had a rule AGAINST emphasis
+    // (`checkSentenceCase` + `EMPHASIS_DENYLIST`) and no rule FOR it, so a
+    // model that wanted to stress a word had only shouting available and got
+    // the whole draft returned for it. §24 has to name the mechanism it does
+    // not replace, or it reads as permission to shout.
+    expect(section24).toContain("checkSentenceCase");
+    expect(section24).toContain("Shouting is still refused");
+    expect(section24).toContain("sanctioned way to emphasise");
+
+    // §24 obeys the prompt's own craft rules (§10): no em/en dashes, no
+    // double hyphens, no exclamation marks. A section that breaks the rules it
+    // sits beside teaches the model that they are negotiable.
+    expect(section24).not.toMatch(/[—–]/);
+    expect(section24).not.toContain("--");
+    expect(section24).not.toContain("!");
+
+    // The four `field` values are the COPY's own field names, never a template
+    // slot (RFC-17 §5.1): `contentFor` routes `headline` to `title` on a cover
+    // and to `takeaway` on a closer, and the model must not know that.
+    for (const field of ["`headline`", "`body`", "`quote`", "`item`", "`itemIndex`", "`emphasis`"]) {
+      expect(section24).toContain(field);
+    }
+    expect(section24, "§24 must not name a template slot").not.toContain("Runs`");
   });
 
   it("instagram-angle@1 resolves, latest.md is byte-identical to 1.md, and the agent that reads it is pinned to Sonnet", async () => {

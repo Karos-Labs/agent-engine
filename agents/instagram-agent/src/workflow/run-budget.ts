@@ -17,8 +17,13 @@
  *      runs (`RunBudgetHistory`: EWMA of actual/estimate). Over the target,
  *      the levers are pulled IN ORDER until it fits: cap generated images
  *      (tier-0/stock first, then text-only), evidence pulls down to the one
- *      most-cacheable query, self-check returns 2 -> 1, optional re-vets
- *      off. Every adaptation is a run note the reviewer sees.
+ *      most-cacheable query, optional re-vets off, and only THEN self-check
+ *      returns 2 -> 1. Every adaptation is a run note the reviewer sees.
+ *      The last two were the other way round until Phase 5, where the
+ *      `instagram-copy@17` re-price made the attempt lever reachable enough to
+ *      HOLD a cold Hebrew run — see the rung-3 note in `planRunBudget`.
+ *      Optional work is dropped before quality is, which is the order the
+ *      owner's amendment states and the old order inverted.
  *   2. The METER (`RunSpendMeter`) — `max(measured, estimate)` per step
  *      (a Gemini-on-Vertex step may report $0; spec §0), consulted at every
  *      OPTIONAL spend point. Over the target: stop optional work (no more
@@ -64,7 +69,7 @@ export const MAX_RUN_SPEND_USD = 1.5;
 /**
  * Per-unit estimates the meter falls back to when a step reports no cost (or
  * under-reports), and the pre-run estimator multiplies by the plan. Keys name
- * the unit: `copyAttempt` is one Sonnet copy draft at the `instagram-copy@15`
+ * the unit: `copyAttempt` is one Sonnet copy draft at the `instagram-copy@17`
  * input size; `generatedImage` and `scraperExecution` are billed per unit,
  * not per step; `angle` and `brief` are Phase 1's Sonnet steps, priced into
  * `rawEstimate` through `RunShape.angleRounds` and `RunShape.briefRefresh`.
@@ -77,8 +82,43 @@ export const MAX_RUN_SPEND_USD = 1.5;
  */
 export const STEP_COST_ESTIMATES_USD = {
   /**
-   * Sonnet, ~22.26k in / ~6.3k out, one draft of copy: $0.0668 in + $0.0945
-   * out at $3/$15 per 1M = $0.1613, entered as **0.161**.
+   * Sonnet, ~22.9k in / ~6.8k out, one draft of copy: $0.0687 in + $0.1023
+   * out at $3/$15 per 1M = $0.1710, entered as **0.171**.
+   *
+   * ## Phase 5 (`instagram-copy@16` → `@17`), and BOTH halves are non-zero
+   *
+   * §24 "Marking" (RFC-17 §5.7) asks the writer to name one to five spans per
+   * slide whose meaning carries it, copied verbatim out of the field it just
+   * wrote. That grows the prompt AND the draft, so neither of the two shapes
+   * already recorded below is the right template for it: @15→@16 was
+   * input-only, @14→@15 was output-heavy and was first priced on input alone.
+   *
+   * **Input** (≈+650 tokens, ≈+$0.00195): the prompt went 46,587 → 49,252
+   * characters — §24 alone, ≈2,665 characters. Paid on English runs too: one
+   * prompt file, every draft carries all of it, no conditional include.
+   *
+   *     650 in-tokens x $3/1e6  = $0.00195
+   *
+   * **Output** (≈+520 tokens, ≈+$0.00780), the larger half at 4x, because on
+   * Sonnet an output token costs 5x an input one. The `emphasis` array is a
+   * NEW PER-SLIDE OBJECT ARRAY: 3.6 marks a slide (the rf-05 reference mean)
+   * at ≈17 tokens each — `field`, an optional `itemIndex`, and a `text` span
+   * of one to four words — plus ≈4 tokens of array overhead is ≈65 tokens a
+   * slide, across an eight-slide carousel.
+   *
+   *     520 out-tokens x $15/1e6 = $0.00780
+   *
+   * **Total: $0.00975 an attempt**, and the key is rounded **UP** from
+   * $0.17105 to **0.171** rather than truncated. This file's header says an
+   * estimate that flatters itself pulls no lever; rounding a re-price down is
+   * the smallest possible way to flatter one. At the 3-attempt cap the delta
+   * is +$0.030 — 3.0% of the owner's $1.00 target and 2.0% of the $1.50 hard
+   * max — and it flows into `planRunBudget`'s sums automatically, so the
+   * adaptation levers see it BEFORE the first paid call rather than after.
+   *
+   * No new model step pays for §24 at run time, and per-client setup moves by
+   * exactly $0.000: the mark ring is derived in code from the accent ring the
+   * kit already produces (RFC-17 finding 7), and no Opus appears anywhere.
    *
    * ## Phase 4 (`instagram-copy@15` → `@16`), input-only and paid on EVERY run
    *
@@ -93,11 +133,13 @@ export const STEP_COST_ESTIMATES_USD = {
    * because the @14→@15 note below records the same mistake being made in the
    * opposite direction — an output-heavy bump priced on input alone.
    *
-   * The table carries three decimals, so $0.1613 is entered as $0.161 and
-   * this key under-counts by $0.0003 an attempt, $0.0009 over a three-attempt
-   * run. The direction is named rather than waved at, because this file's own
+   * The table carries three decimals, so $0.1613 WAS entered as $0.161 and
+   * the key under-counted by $0.0003 an attempt, $0.0009 over a three-attempt
+   * run. The direction was named rather than waved at, because this file's own
    * header says an estimate that flatters itself pulls no lever — $0.0009 is
-   * three orders of magnitude below the smallest lever there is.
+   * three orders of magnitude below the smallest lever there is. Phase 5 above
+   * ends the truncation and rounds UP instead; there is no longer a standing
+   * under-count on this key.
    *
    * The +$0.0023 is paid on English runs too: the prompt file is one file and
    * every draft carries all of it. What English runs do NOT pay is
@@ -159,7 +201,7 @@ export const STEP_COST_ESTIMATES_USD = {
    * itself pulls no lever, so the plan the planner chooses is not the plan
    * the run can afford (`__tests__/run-budget.test.ts` pins the arithmetic).
    */
-  copyAttempt: 0.161,
+  copyAttempt: 0.171,
   /**
    * Phase 4 — the `languageBrief` input FIELD on `05-write-copy-attempt-N`,
    * added per attempt on non-English runs only (the same conditional shape
@@ -1017,17 +1059,57 @@ export function planRunBudget(
     estimate = estimateRunCost(plan, shape, ratio);
     adaptations.push("trend evidence reduced to the one cached industry query");
   }
-  // 3. Allowed self-check returns 2 -> 1.
-  if (!fits() && plan.maxSelfCheckAttempts > 2) {
-    plan = { ...plan, maxSelfCheckAttempts: 2 };
-    estimate = estimateRunCost(plan, shape, ratio);
-    adaptations.push("one return to step 05 instead of two");
-  }
-  // 4. Optional re-vets off.
+  // 3. Optional rescue re-vets off.
+  //
+  // ## Phase 5: rungs 3 and 4 are SWAPPED, and this is a defect fix, not a re-ordering
+  //
+  // These two used to run the other way round — attempts were cut BEFORE
+  // optional rescue work was dropped. That inverted the owner's own wording.
+  // The 2026-09-09 amendment says "past target drop OPTIONAL work"; rescue
+  // re-vets are named optional in this very module (`RunBudgetPlan.optionalRevets`,
+  // "whether the optional rescue tiers may run at all"), and a drafting attempt
+  // is not optional work at all — it is the quality loop, the thing that makes
+  // the post good. Cutting the quality loop first to protect optional rescue
+  // work is the opposite of what the owner asked for.
+  //
+  // It was also REACHABLE, which is why it is fixed here rather than filed.
+  // The `instagram-copy@16 -> @17` re-price below (+$0.010 an attempt) is what
+  // exposed it. Measured against this function, at the OLD order:
+  //
+  //   cold Hebrew shape, `copyAttempt` 0.161: $1.3628 -> $0.9998, 3 attempts
+  //   cold Hebrew shape, `copyAttempt` 0.171: $1.3928 -> $0.7467, 2 attempts
+  //
+  // The Hebrew plan sat $0.0002 under target. Thirty cents of prompt growth
+  // fired the attempt lever, which then overshot by $0.25 buying back an
+  // attempt nothing needed — and `__tests__/language-compliance-gate.test.ts`
+  // returned `status: "held"` with the reason "the run budget plan allowed one
+  // return instead of two", on two cases named for never holding. A
+  // budget-caused hold is forbidden outright by the owner's amendment.
+  //
+  // At the NEW order the same shape lands at $0.9308 with all three attempts,
+  // because dropping optional rescue re-vets is worth $0.099 on it. No shape
+  // in the estimator's range loses an attempt to the target any more.
+  //
+  // The real finding is not the price. It is that the ATTEMPT LEVER COULD
+  // PRODUCE A HELD RUN AT ALL, which `vetCall`'s doc comment above identified,
+  // declined an unrelated re-price over, and deferred to "a follow-up that
+  // lands WITH the rung-order change". This is that follow-up. The fix removes
+  // the reachable held case rather than pricing around it — `vetCall`'s own
+  // deferred +$0.0045 can now be re-priced on its merits by whoever takes it.
+  //
+  // Rung 4 stays LAST deliberately: it is the only rung that makes the
+  // DELIVERABLE itself worse. Every rung above it spends less on optional
+  // work; this one spends less on getting the post right.
   if (!fits() && plan.optionalRevets) {
     plan = { ...plan, optionalRevets: false };
     estimate = estimateRunCost(plan, shape, ratio);
     adaptations.push("optional rescue re-vets skipped");
+  }
+  // 4. Allowed self-check returns 2 -> 1. LAST — see the note on rung 3.
+  if (!fits() && plan.maxSelfCheckAttempts > 2) {
+    plan = { ...plan, maxSelfCheckAttempts: 2 };
+    estimate = estimateRunCost(plan, shape, ratio);
+    adaptations.push("one return to step 05 instead of two");
   }
 
   const note =

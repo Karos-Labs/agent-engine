@@ -36,8 +36,26 @@ import { measureSlidePng, type SlideMetrics, type SlideProbe } from "./slide-met
  * "obviously harmless" exemption stops being a rule. A patch digit is the
  * honest way to satisfy it — semver already means "nothing a caller can
  * observe moved", which is exactly the claim being made here.
+ *
+ * 1.4.0 — RFC-17's measurement half. Four things move on the wire, all of
+ * them additive: `slide.measure.markHexes` (a new input, forwarded as
+ * `expected.marks`); `slide.measure.foregroundHex`, which used to anchor
+ * nothing and is now forwarded as `expected.ink` — limb (iv) of the mark
+ * definition and the anchor for `groundInkContrast`; five new `metrics`
+ * fields (`markedShare`, `markColourCount`, `contentCentroid`,
+ * `contentBBox`, `groundInkContrast`); and two new `probe` fields
+ * (`markRuns`, `markRunsPainted`).
+ *
+ * MINOR rather than PATCH because `foregroundHex` changed MEANING: a caller
+ * that has been passing it as documentation now gets three numbers computed
+ * from it. Nothing a caller reads today reports a different value — the
+ * existing metrics and probe fields are untouched — so it is not a MAJOR.
+ *
+ * This file is the only `TOOL_VERSION` in `karos-publish`; `slide-metrics.ts`
+ * declares none, and the push gate diffs against the previous PUSH rather
+ * than against `origin/main`.
  */
-const TOOL_VERSION = "1.3.1";
+const TOOL_VERSION = "1.4.0";
 
 // n/template/fields/images have no existing TSDoc to transcribe (SCRUM-293 flag) — descriptions
 // below synthesized from fillTemplate's/validateRenderInputs' usage of each field.
@@ -60,7 +78,14 @@ export const SlideSchema = z.object({
         .string()
         .optional()
         .describe(
-          "This slide's foreground token, accepted so a caller can pass the whole token triple it already holds. No emitted metric anchors on it: ink is measured as 'not the ground', because a photograph and a scrim are ink too, not only glyph colour.",
+          "This slide's foreground token (`--fg`), forwarded as measurement's `expected.ink`. The ink SHARES are still measured as 'not the ground' (a photograph and a scrim are ink too, not only glyph colour) — this token anchors three different numbers: limb (iv) of markedShare/markColourCount, which is what stops a heavy display stroke's interior reading as a highlighter swatch, and groundInkContrast. Supplied rather than inferred because inferring it off the frame's histogram picked a decoration's tint and reported 2.54 for a pair that really measures 15.84.",
+        ),
+      markHexes: z
+        .array(z.string())
+        .max(6)
+        .optional()
+        .describe(
+          "The mark colours this slide was painted with, at most six (the kit's accent ring is six). Forwarded as measurement's `expected.marks` for a band sweep to join declared colours to measured bins; markedShare and markColourCount are deliberately defined WITHOUT it, because a within-tolerance-of-an-expected-hex test passes on antialiased glyph fringes.",
         ),
     })
     .optional()
@@ -313,7 +338,19 @@ declare const document: {
   fonts: { ready: Promise<unknown> };
   querySelectorAll(selector: string): ProbeElement[];
 };
-declare function getComputedStyle(element: ProbeElement): { fontFamily: string; overflow: string; position: string };
+declare function getComputedStyle(element: ProbeElement): {
+  fontFamily: string;
+  overflow: string;
+  position: string;
+  // The four RFC-17 reads. Typed optional because a FAKE `getComputedStyle`
+  // in a Chromium-free test supplies only what the case under test needs, and
+  // a probe that throws on a partial style object would be untestable in
+  // exactly the environment it was exported to be testable in.
+  backgroundImage?: string;
+  backgroundClip?: string;
+  webkitBackgroundClip?: string;
+  color?: string;
+};
 
 function readyFlagCheck(flag: string): boolean {
   return window[flag] === true || document.body?.dataset?.["ready"] === flag;
@@ -340,6 +377,9 @@ function fontsReady(): Promise<unknown> {
  *   screenshot by definition.
  * - `fontFamiliesUsed`, the first real evidence that a script font LOADED
  *   rather than that its `<link>` was emitted.
+ * - `markRuns`/`markRunsPainted`, the same kind of evidence for the emphasis
+ *   stylesheet: the document asked for N marked runs and the computed styles
+ *   paint M of them. See "MARK RUNS" in the loop below.
  *
  * Selectors are truncated to six because they exist to name a culprit in a
  * steer sentence, not to enumerate a DOM.
@@ -360,6 +400,8 @@ export function probePage(canvas: { n: number; w: number; h: number }): {
   elementCount: number;
   textBoxShare: number;
   fontFamiliesUsed: string[];
+  markRuns: number;
+  markRunsPainted: number;
 } {
   const describe = (element: ProbeElement): string => {
     const tag = String(element.tagName || "").toLowerCase();
@@ -378,10 +420,50 @@ export function probePage(canvas: { n: number; w: number; h: number }): {
   const offscreen: string[] = [];
   const families: string[] = [];
   let textArea = 0;
+  let markRuns = 0;
+  let markRunsPainted = 0;
 
   for (const element of all) {
     const tag = String(element.tagName || "").toLowerCase();
     if (nonVisual.indexOf(tag) !== -1) continue;
+
+    // ── MARK RUNS: proof that the emphasis STYLESHEET arrived ───────────
+    //
+    // The DOM half of RFC-17 §5.6, and it answers a question no PNG can. A
+    // run is emitted by a first-party fragment builder whatever happens, so
+    // `markRuns` counts what the document ASKED for; `markRunsPainted` counts
+    // what a computed style actually draws. The two coming apart means one
+    // thing only — `markCssBlock()` did not reach `extraHeadHtml` — and no
+    // redraft can fix that, which is why the clause it feeds steers a
+    // re-render.
+    //
+    // The class is read off `className` rather than through
+    // `element.matches(".mk")` deliberately. `className` is already parsed
+    // three lines away in `describe`, it is the one property this probe's
+    // fake-DOM tests already supply, and `matches` on an SVG element inside a
+    // device fragment is a live source of surprises. Same answer, no new DOM
+    // surface.
+    //
+    // FIVE KINDS, TWO PAINTING MECHANISMS. `block`, `underline`, `swish` and
+    // `double` all draw a gradient behind or under the run, so
+    // `backgroundImage !== "none"` catches them. The `ink` kind — the one the
+    // dark-ground case is forced onto, because a pastel swatch behind
+    // near-white type is illegible — puts the gradient IN the glyphs with
+    // `background-clip: text` and a transparent `color`, and on that one the
+    // background image is also set, so the first limb already catches it. The
+    // second limb exists for a flat-colour implementation of the same kind,
+    // where there is no image to find and the only evidence is the clip plus
+    // a see-through colour.
+    const className = typeof element.className === "string" ? element.className : "";
+    if (className !== "" && ` ${className.trim().replace(/\s+/g, " ")} `.indexOf(" mk ") !== -1) {
+      markRuns += 1;
+      const style = getComputedStyle(element);
+      const image = String(style.backgroundImage ?? "none");
+      const clip = String(style.backgroundClip ?? style.webkitBackgroundClip ?? "border-box");
+      const colour = String(style.color ?? "").replace(/\s+/g, "");
+      const seeThrough = colour === "transparent" || colour === "rgba(0,0,0,0)";
+      if ((image !== "" && image !== "none") || (clip === "text" && seeThrough)) markRunsPainted += 1;
+    }
 
     const rect = element.getBoundingClientRect();
     let spills = element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1;
@@ -460,6 +542,8 @@ export function probePage(canvas: { n: number; w: number; h: number }): {
     elementCount: all.length,
     textBoxShare: Math.min(1, textArea / (canvas.w * canvas.h)),
     fontFamiliesUsed: families.sort(),
+    markRuns,
+    markRunsPainted,
   };
 }
 
@@ -602,6 +686,8 @@ export function createRenderCarousel(mediaStore?: GcsArtifactStoreLike) {
               expected: {
                 ...(slide.measure?.groundHex !== undefined ? { ground: slide.measure.groundHex } : {}),
                 ...(slide.measure?.accentHex !== undefined ? { accent: slide.measure.accentHex } : {}),
+                ...(slide.measure?.foregroundHex !== undefined ? { ink: slide.measure.foregroundHex } : {}),
+                ...(slide.measure?.markHexes !== undefined ? { marks: slide.measure.markHexes } : {}),
               },
             });
             if (outcome.ok) metrics = outcome.metrics;

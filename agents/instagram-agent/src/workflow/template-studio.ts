@@ -121,15 +121,43 @@ export const STANDING_FURNITURE_SLOTS: ReadonlySet<string> = new Set([...LAYOUT_
  * the pipeline will ever fill it, and `supportedFields` exists precisely to
  * expose that before a render rather than after.
  */
+/**
+ * RFC-17 (Phase 5) — the eight marked-runs fragments `contentFor` can build,
+ * one per prose slot that carries clauses.
+ *
+ * TWIN SLOTS, NOT A SWAP (finding 9). Each of these sits BESIDE the plain
+ * escaped field it mirrors, never instead of it: `fillTemplate` erases any
+ * slot nobody filled, so a run resumed across a deploy — which has happened
+ * on this project — carries checkpointed slides data with no fragment and a
+ * straight swap would render an empty headline. The plain field is always
+ * emitted and is always the fallback, collapsed by the template's own
+ * `:has()` rule when the fragment is present.
+ *
+ * `stat_callout` and `comparison_card` get none: labels and figures, not
+ * clauses. `list_takeaway`'s ROW marks need no slot at all — `buildListRows`
+ * already owns `.me-title`'s markup — so only its headline appears here.
+ */
+export const RUNS_SLOTS_BY_ARCHETYPE: Readonly<Record<string, readonly string[]>> = {
+  cover: ["titleRuns", "subtitleRuns"],
+  closer: ["takeawayRuns", "ctaRuns", "questionRuns"],
+  quote_card: ["quoteRuns"],
+  list_takeaway: ["headlineRuns"],
+  headline_focus: ["headlineRuns", "bodyRuns"],
+  photo: ["headlineRuns", "bodyRuns"],
+};
+
+/** The eight `*Runs` names, for `PRIVILEGED_HTML_SLOTS` and for a message that can name the whole vocabulary. */
+export const RUNS_SLOT_NAMES: readonly string[] = [...new Set(Object.values(RUNS_SLOTS_BY_ARCHETYPE).flat())];
+
 export const SLOTS_BY_ARCHETYPE: Readonly<Record<string, readonly string[]>> = {
-  cover: ["eyebrow", "title", "subtitle", "hero", "device"],
-  closer: ["takeaway", "cta", "question", "recap", "device"],
+  cover: ["eyebrow", "title", "subtitle", "hero", "device", ...RUNS_SLOTS_BY_ARCHETYPE["cover"]!],
+  closer: ["takeaway", "cta", "question", "recap", "device", ...RUNS_SLOTS_BY_ARCHETYPE["closer"]!],
   stat_callout: ["figure", "subLabel", "body", "sourceLine", "device"],
-  quote_card: ["quoteText", "attribution", "device"],
+  quote_card: ["quoteText", "attribution", "device", ...RUNS_SLOTS_BY_ARCHETYPE["quote_card"]!],
   comparison_card: ["headline", "body", "leftLabel", "leftBody", "rightLabel", "rightBody", "device"],
-  list_takeaway: ["headline", "itemRows", "device"],
-  headline_focus: ["headline", "body", "device"],
-  photo: ["headline", "body", "hero", "device"],
+  list_takeaway: ["headline", "itemRows", "device", ...RUNS_SLOTS_BY_ARCHETYPE["list_takeaway"]!],
+  headline_focus: ["headline", "body", "device", ...RUNS_SLOTS_BY_ARCHETYPE["headline_focus"]!],
+  photo: ["headline", "body", "hero", "device", ...RUNS_SLOTS_BY_ARCHETYPE["photo"]!],
 };
 
 /** Every slot name any archetype can supply — the union of `SLOTS_BY_ARCHETYPE`, for a message that can name the whole vocabulary. */
@@ -138,8 +166,24 @@ export const KNOWN_SLOT_NAMES: ReadonlySet<string> = new Set(Object.values(SLOTS
 /** Slots that may be filled through the renderer's privileged `{{image:...}}` form. Only the hero: it is the only image a slide's content model has. */
 export const PRIVILEGED_IMAGE_SLOTS: readonly string[] = ["hero"];
 
-/** Slots that may be filled through the privileged `{{html:...}}` form, because code (never a model) builds their markup. */
-export const PRIVILEGED_HTML_SLOTS: readonly string[] = ["device", "recap", "itemRows"];
+/**
+ * Slots that may be filled through the privileged `{{html:...}}` form,
+ * because code (never a model) builds their markup.
+ *
+ * The eight `*Runs` names join it for RFC-17 (Phase 5). **The escape rule
+ * does not move.** Copy still reaches templates escaped through `{{key}}`;
+ * the only new thing is that a first-party builder writes one more kind of
+ * fragment, exactly as `buildListRows` already does — `buildMarkedRuns` is
+ * the sole author of a `*Runs` value and it escapes every run itself.
+ *
+ * Membership here is only half the permission. Gate 3 additionally requires
+ * the slot to be DECLARED by the template, and gate 2 requires it to be one
+ * `SLOTS_BY_ARCHETYPE` can supply FOR THAT ARCHETYPE — so a `stat_callout`
+ * reading `{{html:headlineRuns}}` is still refused, and the permission stays
+ * a per-template decision at one call site, which is what `allowHtmlSlots`
+ * exists for.
+ */
+export const PRIVILEGED_HTML_SLOTS: readonly string[] = ["device", "recap", "itemRows", ...RUNS_SLOT_NAMES];
 
 /**
  * How long a generated set stands before the studio regenerates it.

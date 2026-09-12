@@ -211,7 +211,13 @@
      not an option here — a cell crossed by a ring is not FLAT, which is what
      stops a panel covering half the frame from out-voting the real ground for
      `backgroundHex` (see the third rule in this file's header). */
-  .quote-block:has(.quote-text:not(:empty)) {
+  /* Asked of the quote's CHILDREN. `.quote-text` is a twin-slot pair now (see
+     the twin-slot block below), so it has two element children on every render
+     and `:not(:empty)` on the host itself would be true on a plate with no
+     quote on it — the panel would paint, and the panel IS this archetype's
+     drawn device, so an empty quote card would have cleared the role floors
+     this guard exists to make it fail. */
+  .quote-block:has(.quote-text > span:not(:empty)) {
     border-inline-start: calc(14px * var(--ts, 1)) solid var(--accent);
     background-image:
       repeating-radial-gradient(circle at 50% 50%,
@@ -246,6 +252,29 @@
     font-family: var(--f-body); font-size: calc(27px * var(--ts, 1)); font-weight: 500;
     letter-spacing: 0.01em; color: color-mix(in srgb, var(--fg) 82%, transparent);
   }
+
+  /* ── TWIN SLOTS: THE MARKED COPY AND ITS PLAIN FALLBACK (RFC-17 §5.4). ──
+     `cover.html`'s twin-slot block is the canonical note — why a pair rather
+     than a straight swap (`fillTemplate` erases an unfilled slot, so a run
+     resumed across a deploy would render an empty quote), why both twins stay
+     in the DOM on every render (`probePage` counts a text-bearing LEAF, so
+     wrapping one path and not the other moves `textBoxShare` and
+     `fontFamiliesUsed` between two renders of the same copy), and why the
+     panel-paint guard above had to be restated against the children.
+
+     One pair here: `.quote-text` takes `{{html:quoteRuns}}` + `{{quoteText}}`.
+     The attribution is not a clause and takes no marks, so `.quote-attr` and
+     its `.qc-foot:has(.quote-attr:empty)` guard are untouched.
+
+     WHAT THE PAIR DOES NOT BUY ON THIS ARCHETYPE, stated here so nobody
+     reaches for it: `.quote-text` is set ITALIC at 84px, and an italic run's
+     background box is an upright rectangle while the glyphs it is meant to
+     sit behind lean. `block` is therefore refused on this file whatever the
+     ground's luminance says (RFC-17 §5.4) — the kinds that work here are the
+     ones drawn from the baseline or in the glyphs themselves. That is a
+     decision for the shared mark sheet, not for this file; what this file
+     owes it is the slot, and the slot is here. */
+  .quote-text:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
 
   /* Standing brand furniture. The brand head fragment (`buildBrandHeadHtml`)
      restates both rules and lands AFTER this sheet, so a client with a kit
@@ -282,7 +311,7 @@
   </div>
   <div class="quote-block">
     <div class="quote-mark">&ldquo;</div>
-    <div class="quote-text" id="quote">{{quoteText}}</div>
+    <div class="quote-text" id="quote"><span class="mk-runs">{{html:quoteRuns}}</span><span class="mk-plain">{{quoteText}}</span></div>
   </div>
   <div class="qc-foot">
     <div class="quote-attr">{{attribution}}</div>
@@ -317,9 +346,26 @@
     // `scrollHeight` cannot follow it (see `probePage`'s block-start limb).
     // 90 keeps four characters of margin under the last length that measured
     // clean, which is the room a wide-glyph string needs.
+    //
+    // THE LADDER MEASURES THE VISIBLE TWIN, NOT BOTH OF THEM — `cover.html`'s
+    // script carries the full note. `textContent` reads a `display: none`
+    // subtree too, so on a marked render the host holds its copy twice, and on
+    // THIS archetype a doubled count is the worst case in the set: the sweep
+    // recorded above put the 90-character breakpoint four characters from the
+    // last length that measured clean inside the 860px cap, so a doubled count
+    // does not overflow — it silently drops a five-line quote to `tiny` and
+    // throws away the composition the cap was tuned around. Zero-width bidi
+    // controls are stripped for the reason stated there.
     (function () {
+      function mkLen(el) {
+        if (el === null) return 0;
+        var runs = el.querySelector(".mk-runs");
+        var src = runs !== null && runs.textContent.trim() !== "" ? runs : el.querySelector(".mk-plain");
+        var text = ((src === null ? el : src).textContent || "").replace(/[\u2066-\u2069\u200E\u200F]/g, "");
+        return text.trim().length;
+      }
       var q = document.getElementById("quote");
-      var len = (q.textContent || "").trim().length;
+      var len = mkLen(q);
       var big = document.body.classList.contains("ts-l");
       if (len > (big ? 130 : 190)) q.className = "quote-text tiny";
       else if (len > (big ? 70 : 90)) q.className = "quote-text small";

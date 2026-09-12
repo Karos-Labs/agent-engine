@@ -1,0 +1,986 @@
+/**
+ * MARKED EMPHASIS — RFC-17 (Phase 5), the mark engine.
+ *
+ * ── WHAT THE REFERENCE PIXELS ACTUALLY DO ────────────────────────────────
+ *
+ * Read directly off the owner's reference slides, not inferred from a brief:
+ *
+ * - `rf-05/slide-01`: FOUR marks in FOUR colours and at least THREE kinds on
+ *   one plate — a lilac swatch behind `Anti-AI`, a red pencil rule under
+ *   `clients`, a cyan swatch behind `human,`, a green rule under `AI slop`.
+ *   What never repeats is the colour of two CONSECUTIVE marks.
+ * - `rf-11-terms/slide-01`: ten rows, yellow → chartreuse → cyan → lilac,
+ *   the swatch sitting LOW — covering the baseline and roughly the lower
+ *   60% of the cap, with ascenders standing clear above it. This is not a
+ *   centred `background-color`.
+ * - `rf-6/slide-01`: a near-BLACK ground carrying NO swatch behind any word.
+ *   The emphasis is a yellow→orange gradient IN THE GLYPHS of `FOLDABLE` and
+ *   `DUOLINGO JUST JUMPED IN`. **Our default ground is `#17181C`, so this is
+ *   our case, not an exotic one** — which is the whole reason mark KIND is
+ *   computed here from ground luminance rather than chosen by the model.
+ *
+ * What this module refuses to take from those accounts is their SUBJECT
+ * MATTER (RFC-17 Part 1). Nothing here touches topic selection; it decides
+ * only how words the client's own brief already produced are painted.
+ *
+ * ── THE SPLIT OF AUTHORITY ───────────────────────────────────────────────
+ *
+ * The copy model says WHICH WORDS matter (`SlideEmphasisSchema`, verbatim
+ * substrings). Code says everything else — which colour, which kind, whether
+ * the mark is legible at all, and whether it is drawn. That is the same split
+ * `slide-devices.ts` established for number devices, and finding 2 of the
+ * RFC's adjudication is why: the model cannot see the ground, and `rf-6`
+ * proves the ground decides.
+ *
+ * ── NOTHING HERE CAN HOLD OR FAIL A RUN ──────────────────────────────────
+ *
+ * Every failure in this module degrades to plain type and is REPORTED as a
+ * fact (`collectEmphasisIssues`), never gated. A span that no longer occurs
+ * is dropped. An illegible ring means no marks this run. A template with no
+ * `*Runs` slot renders the plain field. That posture is the binding owner
+ * decision ("budgets adapt, never hold") applied to furniture, and it is the
+ * same one `collectDeviceIssues` takes.
+ *
+ * Model cost: $0.00 — this module makes no model call. The only cost this
+ * phase carries is the `emphasis` array the copy prompt now emits.
+ */
+
+import { isolateForeignRuns } from "./bidi-isolate.js";
+import { contrastRatio } from "./brand-render-tokens.js";
+import type { SlideEmphasis } from "./types.js";
+
+// ─────────────────────────────────────────────────────────────────────────
+// Constants — the resolution budget
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * How many marks one slide may actually PAINT.
+ *
+ * Five, against `SlideEmphasisSchema`'s `.max(8)`, and the gap is deliberate
+ * (RFC-17 §5.1). The schema is the CONTRACT with a model that costs $0.171
+ * per attempt; a ninth mark must degrade, never reject the draft. This is the
+ * furniture budget, enforced here where a drop is free.
+ */
+export const MAX_MARKS_PER_SLIDE = 5;
+
+/** How many marks one FIELD may paint. Three is `rf-11`'s own per-row ceiling and `rf-05 S1`'s per-block ceiling. */
+export const MAX_MARKS_PER_FIELD = 3;
+
+/** A mark longer than this is not emphasis, it is a second sentence. `rf-05 S1`'s longest is `AI slop` at two. */
+export const MAX_MARK_WORDS = 6;
+
+/** A mark covering more than this share of its field marks nothing — the eye reads an evenly-painted line as unmarked. */
+export const MAX_MARKED_SHARE = 0.35;
+
+/**
+ * Two colours this far apart on `slide-metrics.ts`'s own weighted-RGB scale
+ * (0-255) are separable by the MEASUREMENT, not merely by eye.
+ *
+ * The number matters because `markColourCount` counts distinct 5-bit bins
+ * among marked cells: a ring whose members land in one bin would report "one
+ * colour" for a plate carrying four, and the metric would be a guard that
+ * cannot fail. Measurability is a SELECTION CRITERION here, not an
+ * afterthought.
+ */
+export const MARK_TOL = 20;
+
+/**
+ * How far a mark colour must sit from the slide's accent.
+ *
+ * `2 x MARK_TOL`. A mark colour pixel-indistinguishable from accent furniture
+ * would make `markedShare`/`markColourCount` report "the mark painted" on a
+ * slide where the accent rule, the badge or the device ink painted instead.
+ * The exclusion is checked against EVERY accent the run can rotate through
+ * (see `buildMarkRing`), not just slide 1's, because the ring walks.
+ */
+export const ACCENT_EXCLUSION = 2 * MARK_TOL;
+
+/** Pairwise separability inside the ring itself, same scale and same reason. */
+export const MARK_SEPARATION = 2 * MARK_TOL;
+
+/** Matches `ACCENT_RING_MAX` in `brand-render-tokens.ts`, and therefore the six `.mk-c*` classes `markCssBlock` emits. */
+export const MARK_RING_MAX = 6;
+
+/** Below this, a mark is invisible against the ground for every kind that draws NEXT TO the glyphs. */
+const MARK_GROUND_CONTRAST_FLOOR = 3;
+
+/** Above this, a mark may carry the glyphs themselves (`ink`) or stand behind them (`block`). WCAG AA for normal text. */
+const MARK_TEXT_CONTRAST_FLOOR = 4.5;
+
+/**
+ * Whether the ground is LIGHTER than the ink — the one fact the whole kind
+ * system turns on (RFC-17 finding 2).
+ *
+ * A lighter ground is paper: a highlighter swatch sits BEHIND dark glyphs and
+ * what has to be readable is the ink ON the swatch. A darker ground is ours
+ * (`#17181C`): a pastel swatch behind near-white ink is illegible, `rf-6`
+ * shows the correct answer is a gradient IN the glyphs, and `block` is
+ * refused by computation rather than by taste.
+ */
+function groundIsLighterThanInk(groundHex: string, fgHex: string): boolean {
+  // `contrastRatio(x, "#FFFFFF")` is monotonically DECREASING in x's
+  // luminance, so the lighter colour is the one with the smaller ratio.
+  return contrastRatio(groundHex, "#FFFFFF") < contrastRatio(fgHex, "#FFFFFF");
+}
+
+/** The tint ladder a one-hue kit falls back to — `color-mix(in srgb, <member> N%, var(--bg))`. */
+const TINT_STEPS = [92, 74, 55] as const;
+
+/** Below this many separable hues, the ring falls back to tints of what it has. */
+const MIN_HUE_RING = 3;
+
+// ─────────────────────────────────────────────────────────────────────────
+// Kinds
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * The five ways a mark is drawn. Chosen by CODE from ground luminance
+ * (RFC-17 finding 2) — the model never sees this vocabulary.
+ *
+ * | id          | what it is                                    | precondition                                |
+ * |-------------|-----------------------------------------------|---------------------------------------------|
+ * | `block`     | a highlighter swatch behind the run, sitting low | contrast(ink, mark) >= 4.5 AND ground lighter than ink |
+ * | `underline` | a 2-3px pencil rule                           | contrast(mark, ground) >= 3                 |
+ * | `swish`     | a marker stroke, thick in the middle, overshooting both ends | contrast(mark, ground) >= 3 |
+ * | `double`    | two rules of different weight                 | contrast(mark, ground) >= 3                 |
+ * | `ink`       | the run's glyphs take the mark colour (`rf-6`) | contrast(mark, ground) >= 4.5              |
+ */
+export const MARK_KINDS = ["block", "underline", "swish", "double", "ink"] as const;
+export type MarkKind = (typeof MARK_KINDS)[number];
+
+// ─────────────────────────────────────────────────────────────────────────
+// Small local utilities — mirrored, not imported, and each says why
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * `slide-metrics.ts`'s weighted-RGB distance, re-declared here rather than
+ * imported from `@agent-engine/tool-karos-publish`.
+ *
+ * Mirrored deliberately: this module runs in the COMPOSITION path, which must
+ * not take a dependency on the renderer package to decide a colour, and the
+ * formula is the published one (`colourDistance`, `slide-metrics.ts:227`).
+ * It is re-derived here so that the number this module selects on is the same
+ * number the pixel measurement will later report on — that identity is the
+ * whole accent-exclusion argument, so a test pins it (`emphasis-marks.test.ts`).
+ */
+export function markColourDistance(a: string, b: string): number {
+  const pa = parseHex(a);
+  const pb = parseHex(b);
+  if (pa === undefined || pb === undefined) return 0;
+  const dr = pa[0] - pb[0];
+  const dg = pa[1] - pb[1];
+  const db = pa[2] - pb[2];
+  return Math.sqrt(2 * dr * dr + 4 * dg * dg + 3 * db * db) / 3;
+}
+
+/** `#abc`/`#aabbcc` -> an RGB triple. `undefined` for anything else — never repaired, never guessed. */
+function parseHex(value: string | undefined): [number, number, number] | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(trimmed)) return undefined;
+  let h = trimmed.slice(1);
+  if (h.length === 3) h = [...h].map((c) => c + c).join("");
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+}
+
+function toHex(rgb: readonly [number, number, number]): string {
+  return `#${rgb.map((c) => Math.max(0, Math.min(255, Math.round(c))).toString(16).padStart(2, "0")).join("")}`;
+}
+
+/**
+ * What `color-mix(in srgb, <a> N%, <b>)` actually resolves to.
+ *
+ * `in srgb` mixes in GAMMA-ENCODED sRGB, so it is a plain channel-wise lerp
+ * of the 0-255 values — which is why this can be computed here and reported
+ * as the measurable hex while the stylesheet keeps the `color-mix()` form.
+ */
+function mixSrgb(a: string, b: string, percentA: number): string | undefined {
+  const pa = parseHex(a);
+  const pb = parseHex(b);
+  if (pa === undefined || pb === undefined) return undefined;
+  const t = percentA / 100;
+  return toHex([pa[0] * t + pb[0] * (1 - t), pa[1] * t + pb[1] * (1 - t), pa[2] * t + pb[2] * (1 - t)]);
+}
+
+/**
+ * FNV-1a 32, the seed hash every seeded choice in this agent already uses
+ * (`paletteForSlide`, `isVariationSlot`). Re-declared for the same reason
+ * those two each declare their own: it is six lines, and the alternative is
+ * exporting a hash from a module whose public surface is colours.
+ */
+function fnv1a32(input: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+
+/**
+ * Escapes a value for interpolation into a `{{html:...}}` fragment.
+ *
+ * Mirrors `escapeHtmlText` in `karos-publish` — and `slides-data.ts`'s own
+ * `esc` — rather than importing either, for the reason that file already
+ * records: the `{{html:}}` substitution form is deliberately NOT escaped by
+ * the renderer, which makes escaping HERE the only thing standing between a
+ * model-authored mark and live markup in a rendered slide.
+ */
+function esc(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// The ring
+// ─────────────────────────────────────────────────────────────────────────
+
+/** The colours one RUN may mark with, and how they were arrived at. */
+export interface MarkRing {
+  /** In-kit hexes, pairwise separable, none confusable with the run's accent. Empty means NO MARKS THIS RUN. */
+  hexes: readonly string[];
+  /**
+   * The CSS value for each member, positionally.
+   *
+   * Identical to `hexes` on the hue path. On the tint path this carries the
+   * `color-mix(in srgb, <member> N%, var(--bg))` form so the tint tracks a
+   * template that repaints `--bg`, while `hexes` carries what that mix
+   * resolves to against the kit's own ground — the value the pixel
+   * measurement is told to expect.
+   */
+  readonly cssValues: readonly string[];
+  /** `hue` — genuinely different colours. `tint` — one hue at three strengths. `none` — nothing legible survived. */
+  rotation: "hue" | "tint" | "none";
+  /** Every candidate that did not make it, and why. Reported, never gated. */
+  notes: readonly string[];
+}
+
+/**
+ * The colours this run may mark with, derived IN CODE from the kit's own
+ * accent ring (RFC-17 finding 7).
+ *
+ * Why not let an art director or the copy model name a mark palette: a
+ * palette invented outside the accent ring is stripped by
+ * `filterLearnedStyleToRing` and then fails `checkPaletteWithinKit` three
+ * attempts later — a recorded $0.30 hold for a worse result. Deriving here
+ * costs $0.00 and cannot produce an out-of-kit hex by construction.
+ *
+ * ── WHY THE ACCENT EXCLUSION IS NOT APPLIED HERE ─────────────────────────
+ *
+ * The candidate pool IS the kit's accent ring — `brandAccent` plus
+ * `palette[]` is exactly what `deriveBrandRenderTokens` hands the accent
+ * rotation. Excluding "anything near the accent" at RUN level would therefore
+ * annihilate the ring: every candidate is an accent on some slide.
+ *
+ * The accent a slide paints ROTATES (`paletteForSlide`'s seeded walk), so the
+ * exclusion is a PER-SLIDE fact and lives in `ringIndexesFor`. This function
+ * builds the positional 6-slot ring — the one the six `.mk-c*` classes carry,
+ * emitted once per run — and each slide then marks with the members its own
+ * accent is not using. That is a better design than a filtered pool as well
+ * as a workable one: a slide's marks are the kit colours its accent furniture
+ * has left free, which is precisely what makes `markColourCount` able to tell
+ * the two apart on the pixels.
+ *
+ * `accentHex` is still taken, and applied, for the one case where an accent
+ * IS constant across the whole run: a client whose ring has a single member
+ * paints `ring[0]` on every slide (`resolveSlideAccent`'s `rotates: false`),
+ * and excluding it once here produces better trace notes than excluding it
+ * eight times downstream. Callers with a rotating ring pass `[]`.
+ */
+export function buildMarkRing(
+  tokens: { brandAccent?: string | undefined; palette?: readonly string[] | undefined },
+  groundHex: string,
+  fgHex: string,
+  accentHex: string | readonly string[],
+  options?: {
+    /**
+     * True when IGSTYLE-10's ground/fg inversion is live this round, so some
+     * slides render with `fgHex` AS the ground. A ring member then has to be
+     * legible on BOTH members of the pair, or a quarter of the carousel
+     * carries an invisible mark.
+     */
+    groundMayInvert?: boolean | undefined;
+  },
+): MarkRing {
+  const notes: string[] = [];
+  const accents = (typeof accentHex === "string" ? [accentHex] : [...accentHex]).filter((h) => parseHex(h) !== undefined);
+  const grounds = [groundHex, ...(options?.groundMayInvert === true ? [fgHex] : [])];
+
+  const raw = [tokens.brandAccent, ...(tokens.palette ?? [])].filter((h): h is string => typeof h === "string" && parseHex(h) !== undefined);
+  const seen = new Set<string>();
+  const candidates: string[] = [];
+  for (const hex of raw) {
+    const key = hex.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    candidates.push(hex);
+  }
+
+  const accepted: string[] = [];
+  for (const hex of candidates) {
+    if (accepted.length >= MARK_RING_MAX) break;
+    // The ground and the ink themselves are not mark colours: a "mark" the
+    // same colour as what it sits on is nothing at all.
+    if (grounds.some((g) => markColourDistance(hex, g) <= MARK_TOL) || markColourDistance(hex, fgHex) <= MARK_TOL) {
+      notes.push(`${hex} was dropped — it is within ${MARK_TOL} of the ground or the ink`);
+      continue;
+    }
+    // Legibility: every kind that draws NEXT TO the glyphs needs 3:1 against
+    // whatever ground this member can land on.
+    const failing = grounds.find((g) => contrastRatio(hex, g) < MARK_GROUND_CONTRAST_FLOOR);
+    if (failing !== undefined) {
+      notes.push(`${hex} was dropped — ${contrastRatio(hex, failing).toFixed(2)}:1 against ${failing} is below the ${MARK_GROUND_CONTRAST_FLOOR}:1 mark floor`);
+      continue;
+    }
+    // Accent exclusion — see ACCENT_EXCLUSION.
+    const clash = accents.find((a) => markColourDistance(hex, a) < ACCENT_EXCLUSION);
+    if (clash !== undefined) {
+      notes.push(`${hex} was dropped — it is within ${ACCENT_EXCLUSION} of the accent ${clash} and a mark must never be pixel-confused with accent furniture`);
+      continue;
+    }
+    // Pairwise separability: the LATER member drops, so the ring's order is
+    // the kit's own order and the result is stable under re-derivation.
+    const near = accepted.find((prev) => markColourDistance(hex, prev) < MARK_SEPARATION);
+    if (near !== undefined) {
+      notes.push(`${hex} was dropped — it is within ${MARK_SEPARATION} of ${near}, already in the ring`);
+      continue;
+    }
+    accepted.push(hex);
+  }
+
+  if (accepted.length >= MIN_HUE_RING) {
+    return { hexes: accepted, cssValues: accepted, rotation: "hue", notes };
+  }
+
+  // ── Tint fallback: a one-hue kit still gets a rotation (RFC-17 §5.2).
+  //
+  // Same hue, in-kit by construction. The extremes (92% and 55%) are what has
+  // to clear `MARK_SEPARATION`; consecutive steps need not, and any step that
+  // collapses into one already accepted is simply not added — so a kit whose
+  // accent sits close to its own ground yields a SHORTER ring rather than a
+  // ring of colours the measurement cannot tell apart.
+  const tintHexes = [...accepted];
+  const tintCss = [...accepted];
+  for (const member of accepted.length > 0 ? accepted : []) {
+    for (const step of TINT_STEPS) {
+      if (tintHexes.length >= MARK_RING_MAX) break;
+      const resolved = mixSrgb(member, groundHex, step);
+      if (resolved === undefined) continue;
+      if (contrastRatio(resolved, groundHex) < MARK_GROUND_CONTRAST_FLOOR) continue;
+      if (accents.some((a) => markColourDistance(resolved, a) < ACCENT_EXCLUSION)) continue;
+      if (tintHexes.some((prev) => markColourDistance(resolved, prev) < MARK_SEPARATION)) continue;
+      tintHexes.push(resolved);
+      tintCss.push(`color-mix(in srgb, ${member} ${step}%, var(--bg))`);
+    }
+  }
+
+  if (tintHexes.length === 0) {
+    notes.push("no candidate survived — this run marks nothing and every field renders plain");
+    return { hexes: [], cssValues: [], rotation: "none", notes };
+  }
+  if (tintHexes.length === accepted.length) {
+    // Nothing was added: the ring is what the hues gave, however short.
+    return { hexes: tintHexes, cssValues: tintCss, rotation: "hue", notes };
+  }
+  notes.push(`the kit offered ${accepted.length} separable hue(s), so the ring rotates through tints of them instead`);
+  return { hexes: tintHexes, cssValues: tintCss, rotation: "tint", notes };
+}
+
+/**
+ * Which of the run ring's slots THIS SLIDE may mark with — the accent
+ * exclusion, applied where the accent is actually known.
+ *
+ * A mark colour pixel-indistinguishable from this slide's accent would make
+ * `markedShare` / `markColourCount` report "the mark painted" on a slide
+ * where the accent rule, the badge or the device ink painted instead: the
+ * metric would be a guard that cannot fail. **Measurability is a selection
+ * criterion, not an afterthought.**
+ *
+ * Returns INDEXES rather than hexes so the caller keeps the positional
+ * relationship with the six `.mk-c*` classes, which are emitted once per run
+ * and cannot vary per slide.
+ *
+ * An empty result means this slide marks nothing — reported, never gated.
+ */
+export function ringIndexesFor(ring: MarkRing, accentHex: string | undefined): number[] {
+  const allowed: number[] = [];
+  ring.hexes.forEach((hex, index) => {
+    if (accentHex !== undefined && markColourDistance(hex, accentHex) < ACCENT_EXCLUSION) return;
+    allowed.push(index);
+  });
+  return allowed;
+}
+
+/**
+ * Which of the five kinds are LEGIBLE for this slide's ground/ink pair and
+ * this ring — computed, not chosen.
+ *
+ * Conservative on purpose: a kind is in the set only when its precondition
+ * holds for EVERY ring member, so any (colour, kind) pairing the rotation can
+ * produce is legible. The alternative — a per-member kind set — would make
+ * the rotation's kind depend on its colour and the two would stop being
+ * independent axes.
+ *
+ * On our bundled `#17181C` ground against a light ink, `block` is refused by
+ * its own precondition and the set is `{underline, swish, double, ink}`. That
+ * is the honest answer to "the references are paper and we are not", and it
+ * is a computation rather than a taste call. A pale kit gets `block` back
+ * automatically.
+ */
+export function markKindsFor(
+  groundHex: string,
+  fgHex: string,
+  ring: readonly string[],
+  options?: {
+    /**
+     * `quote_card` sets this. `.quote-text` is italic at 84px, and an italic
+     * run's background box is a PARALLELOGRAM the CSS cannot follow — a
+     * rectangular swatch behind slanted glyphs reads as a printing error.
+     * Refused regardless of ground (RFC-17 §5.4).
+     */
+    refuseBlock?: boolean | undefined;
+  },
+): MarkKind[] {
+  if (ring.length === 0) return [];
+  const kinds: MarkKind[] = [];
+  const every = (fn: (hex: string) => boolean): boolean => ring.every(fn);
+
+  // `block` — the swatch sits BEHIND the glyphs, so what must be readable is
+  // the INK ON THE MARK, and the swatch only reads as a highlighter when it
+  // is lighter than the type it sits under.
+  const groundIsLighter = contrastRatio(groundHex, "#FFFFFF") < contrastRatio(fgHex, "#FFFFFF");
+  if (options?.refuseBlock !== true && groundIsLighter && every((hex) => contrastRatio(fgHex, hex) >= MARK_TEXT_CONTRAST_FLOOR)) {
+    kinds.push("block");
+  }
+  // The three that draw NEXT TO the glyphs — the ring already guarantees this
+  // floor, so they are in whenever the ring is non-empty. Kept as an explicit
+  // test anyway: `buildMarkRing` is not the only possible caller, and a kind
+  // set that assumed its input had been filtered would be a guard that cannot
+  // fail.
+  for (const kind of ["underline", "swish", "double"] as const) {
+    if (every((hex) => contrastRatio(hex, groundHex) >= MARK_GROUND_CONTRAST_FLOOR)) kinds.push(kind);
+  }
+  // `ink` — the glyphs THEMSELVES take the mark colour (`rf-6`'s mechanism),
+  // so the mark is the text and needs text contrast.
+  if (every((hex) => contrastRatio(hex, groundHex) >= MARK_TEXT_CONTRAST_FLOOR)) kinds.push("ink");
+  return kinds;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Resolution
+// ─────────────────────────────────────────────────────────────────────────
+
+/** One piece of a field: the text, and the mark painted on it (absent for the prose between marks). */
+export interface MarkRun {
+  text: string;
+  mark?: { /** Position in the slide's rotation, 0-based. */ ordinal: number; colourIndex: number; kind: MarkKind };
+}
+
+/** A declared mark this module refused, and the reason — for `collectEmphasisIssues`. */
+export interface MarkDrop {
+  field: string;
+  text: string;
+  reason: string;
+}
+
+/** Everything the rotation needs that is fixed for one SLIDE. */
+export interface SlideMarkContext {
+  dir: "rtl" | "ltr";
+  /** The run ring's slots THIS slide may use, from `ringIndexesFor`. Empty means this slide marks nothing. */
+  allowedIndexes: readonly number[];
+  kinds: readonly MarkKind[];
+  /** `fnv1a32(`${paletteSeed}|mk|${slide.n}`)`, computed once per slide by `slideMarkSeed`. */
+  seed: number;
+}
+
+/** The per-slide seed the rotation walks. Separate so a caller can compute it once and a test can pin it. */
+export function slideMarkSeed(paletteSeed: string | undefined, slideN: number): number {
+  return fnv1a32(`${paletteSeed ?? ""}|mk|${slideN}`);
+}
+
+/**
+ * The (colour, kind) one mark takes, by ORDINAL within the slide.
+ *
+ * Seeded, never random — the `paletteForSlide` contract. Two invariants the
+ * formula is built to give, both tested:
+ *
+ * - **Consecutive marks never share a colour** when the slide has >= 2
+ *   allowed slots (`allowed[(b + k) mod R]` steps by exactly one each time).
+ *   With a single allowed slot they necessarily do, and the KIND alternation
+ *   below is what still keeps two adjacent marks from being identical.
+ * - **At least two kinds appear** whenever at least two marks do, when the
+ *   kind set has >= 2 members: `kindB`'s offset is drawn from `[1, K-1]`, so
+ *   it can never land back on `kindA`.
+ *
+ * `undefined` when this slide has no allowed slot at all — the caller renders
+ * the field plain and reports it.
+ */
+export function markRotation(
+  seed: number,
+  ordinal: number,
+  allowedIndexes: readonly number[],
+  kinds: readonly MarkKind[],
+): { colourIndex: number; kind: MarkKind } | undefined {
+  const r = allowedIndexes.length;
+  const k = kinds.length;
+  if (r === 0 || k === 0) return undefined;
+  const colourIndex = allowedIndexes[(seed + ordinal) % r]!;
+  const kindA = kinds[seed % k]!;
+  const kindB = k >= 2 ? kinds[(seed + 1 + ((seed >>> 3) % (k - 1))) % k]! : kindA;
+  return { colourIndex, kind: ordinal % 2 === 0 ? kindA : kindB };
+}
+
+/**
+ * Where each FOREIGN RUN sits in `text`, as `bidi-isolate.ts` itself defines
+ * a foreign run — derived by CALLING `isolateForeignRuns` and reading back
+ * where it put its isolates, never by re-declaring its pattern here.
+ *
+ * That indirection is the point. `foreignRunPattern` is private, it has
+ * already been wrong once (the `⁨API⁩ ⁨v2⁩` regression its own doc comment
+ * records), and a second copy of it in this file would drift the moment
+ * anyone fixes the first. Reading the output of the real function cannot
+ * drift.
+ */
+function foreignRunRanges(text: string): { start: number; end: number }[] {
+  const isolated = isolateForeignRuns(text, "rtl");
+  const ranges: { start: number; end: number }[] = [];
+  let original = 0;
+  let open = -1;
+  for (const ch of isolated) {
+    if (ch === "⁨") {
+      open = original;
+      continue;
+    }
+    if (ch === "⁩") {
+      if (open >= 0) ranges.push({ start: open, end: original });
+      open = -1;
+      continue;
+    }
+    original += ch.length;
+  }
+  return ranges;
+}
+
+/** A boundary is INSIDE a run when it splits it — touching either edge is fine. */
+function splitsAForeignRun(ranges: readonly { start: number; end: number }[], at: number): { start: number; end: number } | undefined {
+  return ranges.find((r) => at > r.start && at < r.end);
+}
+
+const WORD_CHAR = /[\p{L}\p{N}]/u;
+
+/**
+ * The first occurrence of `needle` in `haystack` bounded on BOTH sides by a
+ * non-word character or a string edge, or `-1`.
+ *
+ * Without the bounds, `"AI"` marks the middle of `"SAID"` — which is this
+ * rule's falsification test and the reason the search is written out rather
+ * than delegated to `indexOf`.
+ */
+export function boundedFirstOccurrence(haystack: string, needle: string): number {
+  if (needle.length === 0) return -1;
+  let from = 0;
+  for (;;) {
+    const at = haystack.indexOf(needle, from);
+    if (at < 0) return -1;
+    const before = at > 0 ? haystack[at - 1]! : "";
+    const after = at + needle.length < haystack.length ? haystack[at + needle.length]! : "";
+    // A boundary only has to hold on a side where the MARK ITSELF is a word
+    // character: a span that legitimately starts with `(` or ends with `.`
+    // must not be refused because its neighbour is a letter.
+    const startOk = before === "" || !WORD_CHAR.test(before) || !WORD_CHAR.test(needle[0]!);
+    const endOk = after === "" || !WORD_CHAR.test(after) || !WORD_CHAR.test(needle[needle.length - 1]!);
+    if (startOk && endOk) return at;
+    from = at + 1;
+  }
+}
+
+/**
+ * Resolve one FIELD's declared marks into alternating runs.
+ *
+ * Pure, deterministic and total: every input produces runs whose joined text
+ * is byte-identical to `text`, and any span that cannot be marked honestly is
+ * dropped with a reason.
+ *
+ * THE ORDER OF OPERATIONS IS LOAD-BEARING (RFC-17 §5.2):
+ *
+ * 1. **Bounded first occurrence in the ORIGINAL string, before `iso()`.**
+ *    `isolateForeignRuns` inserts two `\p{Cf}` characters per foreign run, so
+ *    any position authored against the model's own string is wrong by the
+ *    time the field reaches the document. This is also why the contract is
+ *    verbatim TEXT and not offsets (finding 6).
+ * 2. **Order by POSITION, not by the model's array order** — "consecutive
+ *    marks differ" is meaningless against an arbitrary order.
+ * 3. **Drop** on overlap, on more than `MAX_MARK_WORDS` words, or once the
+ *    total marked share would pass `MAX_MARKED_SHARE`.
+ * 4. **Cap** at `MAX_MARKS_PER_FIELD`, and at `MAX_MARKS_PER_SLIDE` across
+ *    the slide (via `alreadyAccepted`).
+ * 5. **The RTL foreign-run boundary rule, which is what protects Phase 4.**
+ *    A span edge falling INSIDE a foreign run would split that run across two
+ *    spans, each isolated separately — precisely the `⁨API⁩ ⁨v2⁩` regression
+ *    `bidi-isolate.ts` documents. The span is EXTENDED to the run's own
+ *    boundary when it still fits, and DROPPED otherwise.
+ *
+ * Splitting happens here; isolating and escaping happen per-run in
+ * `buildMarkedRuns`, in that order. Isolating BEFORE splitting would put an
+ * FSI on one side of a span boundary and its PDI on the other.
+ */
+export function resolveSlideMarks(
+  field: string,
+  text: string,
+  declared: readonly { text: string }[],
+  ctx: SlideMarkContext & { alreadyAccepted: number },
+): { runs: MarkRun[]; accepted: number; drops: MarkDrop[] } {
+  const drops: MarkDrop[] = [];
+  const plain = (): { runs: MarkRun[]; accepted: number; drops: MarkDrop[] } => ({ runs: [{ text }], accepted: 0, drops });
+
+  if (text.length === 0) return plain();
+  if (declared.length === 0) return plain();
+  if (ctx.allowedIndexes.length === 0 || ctx.kinds.length === 0) {
+    for (const d of declared) drops.push({ field, text: d.text, reason: "no legible mark colour survived this slide's kit and accent, so nothing is marked" });
+    return plain();
+  }
+
+  const ranges = ctx.dir === "rtl" ? foreignRunRanges(text) : [];
+  const totalWordChars = [...text].filter((c) => WORD_CHAR.test(c)).length;
+
+  // ── Locate every declared span, then order by position (step 2).
+  interface Located { start: number; end: number; declaredText: string }
+  const located: Located[] = [];
+  for (const d of declared) {
+    const needle = d.text;
+    if (needle.trim().length === 0) {
+      drops.push({ field, text: needle, reason: "the span is blank" });
+      continue;
+    }
+    const at = boundedFirstOccurrence(text, needle);
+    if (at < 0) {
+      drops.push({ field, text: needle, reason: `the span does not occur in "${field}" on a word boundary — copy it verbatim out of the field` });
+      continue;
+    }
+    let start = at;
+    let end = at + needle.length;
+
+    // Step 5 — the RTL foreign-run boundary rule.
+    if (ranges.length > 0) {
+      const splitStart = splitsAForeignRun(ranges, start);
+      const splitEnd = splitsAForeignRun(ranges, end);
+      if (splitStart !== undefined) start = splitStart.start;
+      if (splitEnd !== undefined) end = splitEnd.end;
+      if (start !== at || end !== at + needle.length) {
+        const extended = text.slice(start, end);
+        if (wordCount(extended) > MAX_MARK_WORDS) {
+          drops.push({
+            field,
+            text: needle,
+            reason: `the span cuts a Latin run in "${field}" and extending it to that run's own boundary would pass ${MAX_MARK_WORDS} words — marking it would split one bidi isolate across two spans`,
+          });
+          continue;
+        }
+      }
+    }
+
+    if (wordCount(text.slice(start, end)) > MAX_MARK_WORDS) {
+      drops.push({ field, text: needle, reason: `the span is longer than ${MAX_MARK_WORDS} words — a mark that long is a second sentence, not emphasis` });
+      continue;
+    }
+    located.push({ start, end, declaredText: needle });
+  }
+  located.sort((a, b) => a.start - b.start || a.end - b.end);
+
+  // ── Accept in position order, enforcing overlap / share / caps.
+  const chosen: Located[] = [];
+  let markedWordChars = 0;
+  let accepted = 0;
+  for (const span of located) {
+    if (ctx.alreadyAccepted + accepted >= MAX_MARKS_PER_SLIDE) {
+      drops.push({ field, text: span.declaredText, reason: `the slide already carries ${MAX_MARKS_PER_SLIDE} marks` });
+      continue;
+    }
+    if (accepted >= MAX_MARKS_PER_FIELD) {
+      drops.push({ field, text: span.declaredText, reason: `"${field}" already carries ${MAX_MARKS_PER_FIELD} marks` });
+      continue;
+    }
+    const last = chosen[chosen.length - 1];
+    if (last !== undefined && span.start < last.end) {
+      drops.push({ field, text: span.declaredText, reason: `the span overlaps "${text.slice(last.start, last.end)}", which is already marked` });
+      continue;
+    }
+    const spanWordChars = [...text.slice(span.start, span.end)].filter((c) => WORD_CHAR.test(c)).length;
+    if (totalWordChars > 0 && (markedWordChars + spanWordChars) / totalWordChars > MAX_MARKED_SHARE) {
+      drops.push({
+        field,
+        text: span.declaredText,
+        reason: `marking it would take "${field}" past ${Math.round(MAX_MARKED_SHARE * 100)}% marked — a mark covering everything marks nothing`,
+      });
+      continue;
+    }
+    markedWordChars += spanWordChars;
+    chosen.push(span);
+    accepted++;
+  }
+
+  if (chosen.length === 0) return plain();
+
+  // ── Split into alternating runs (step 6's first half).
+  const runs: MarkRun[] = [];
+  let cursor = 0;
+  chosen.forEach((span, i) => {
+    if (span.start > cursor) runs.push({ text: text.slice(cursor, span.start) });
+    const ordinal = ctx.alreadyAccepted + i;
+    const rotated = markRotation(ctx.seed, ordinal, ctx.allowedIndexes, ctx.kinds);
+    // Unreachable: the empty-allowed / empty-kinds case returned `plain()`
+    // above. Handled rather than asserted so a future caller that skips that
+    // guard degrades to plain type instead of throwing inside composition.
+    if (rotated === undefined) runs.push({ text: text.slice(span.start, span.end) });
+    else runs.push({ text: text.slice(span.start, span.end), mark: { ordinal, ...rotated } });
+    cursor = span.end;
+  });
+  if (cursor < text.length) runs.push({ text: text.slice(cursor) });
+  return { runs, accepted, drops };
+}
+
+function wordCount(text: string): number {
+  return text.trim().split(/\s+/u).filter((w) => w.length > 0).length;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// The fragment
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * The runs of one field as one `{{html:...}}` fragment.
+ *
+ * ── EVERY RUN IS WRAPPED. THIS IS MANDATORY, NOT TIDINESS. ───────────────
+ *
+ * `probePage` counts a text-bearing LEAF as an element with words and no
+ * element children (`render-carousel.ts:455-462`). Wrapping only the marked
+ * runs would leave
+ *
+ *     <h1 class="headline">Plot <span class="mk ...">twist</span>.</h1>
+ *
+ * where the `h1` has an element child and is no longer a leaf, while `Plot `
+ * and `.` sit in no leaf at all. Two things then break silently: the `h1`'s
+ * box stops counting toward `textBoxShare` (clause G limb 2, floor 0.01), and
+ * its family stops entering `fontFamiliesUsed` — which is the ONLY proof a
+ * Phase 0 script font actually loaded. Wrapping every run puts every text
+ * node back inside a leaf and both measurements recover.
+ *
+ * The classes are split so the probe can count what it means to count: a
+ * MARKED run carries `.mk`, an unmarked one carries `.mk-t` and paints
+ * nothing. If both carried `.mk`, then `markRuns > 0 && markRunsPainted === 0`
+ * — the `marks-missing` clause — would fire on every slide whose fields
+ * happen to be wrapped but unmarked, which is most of them.
+ *
+ * Order inside each run: split (already done) → ISOLATE → ESCAPE. Isolating
+ * the whole field before splitting would put an FSI on one side of a span
+ * boundary and its PDI on the other; escaping before isolating would let the
+ * isolate characters land inside an entity.
+ */
+export function buildMarkedRuns(runs: readonly MarkRun[], dir: "rtl" | "ltr"): string {
+  if (runs.length === 0) return "";
+  if (!runs.some((r) => r.mark !== undefined)) return "";
+  return runs
+    .map((run) => {
+      const inner = esc(isolateForeignRuns(run.text, dir));
+      if (run.mark === undefined) return `<span class="mk-t">${inner}</span>`;
+      return `<span class="mk mk-c${run.mark.colourIndex + 1} mk-k-${run.mark.kind}">${inner}</span>`;
+    })
+    .join("");
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// The stylesheet
+// ─────────────────────────────────────────────────────────────────────────
+
+/** `script-fonts.ts`'s own name for the one script whose mark geometry differs. Imported read-only; this module never edits that file. */
+const HEBREW_SCRIPT = "Hebrew";
+
+/**
+ * The shared mark stylesheet, delivered through `extraHeadHtml` — the same
+ * channel `deviceCssBlock()` uses, so it reaches a brandless client too.
+ *
+ * ── EVERY SIZE IS IN `em`, NEVER `px` ────────────────────────────────────
+ *
+ * `--ts` scales `font-size` on every template, so an `em`-based mark scales
+ * at `s`, `m` and `l` for free and there is no second ladder to keep in sync
+ * with the type ladder. A source scan pins this.
+ *
+ * ── THE MARK BLEEDS, THE MEASURE DOES NOT MOVE ───────────────────────────
+ *
+ * `padding-inline: .06em` against `margin-inline: -.06em` returns exactly
+ * what the padding took. If the measure moved, a marked headline would pick a
+ * different length-ladder class than the one the copy gate measured — the
+ * mark would silently change the layout it was only supposed to decorate.
+ *
+ * ── `box-decoration-break: clone` IS THE WHOLE TRICK ──────────────────────
+ *
+ * `rf-05 S3`'s chartreuse runs across `Messy,` at the end of one line and
+ * resumes on `crossed out` at the start of the next. Without `clone` the mark
+ * is ONE box spanning the wrap and paints straight through the gutter.
+ *
+ * ── LOGICAL PROPERTIES ONLY, AND NO `text-decoration` ────────────────────
+ *
+ * No `left`/`right` anywhere, so `dir="rtl"` mirrors every mark on its own
+ * and there is no second stylesheet for Hebrew to drift from this one — the
+ * rule `slide-devices-rtl.test.ts` already pins for devices. `text-decoration`
+ * is deliberately unused for every kind: its skip-ink and offset behaviour
+ * differs across scripts, and it cannot draw the swish or the double at all.
+ *
+ * ── NO INLINE `style=` ───────────────────────────────────────────────────
+ *
+ * `assertSafeMarkup` refuses it, correctly. The ring's values reach the
+ * document through the six `.mk-c*` classes this block emits.
+ */
+export function markCssBlock(script?: string | undefined, ring?: MarkRing | undefined): string {
+  const isHebrew = script === HEBREW_SCRIPT;
+  const values = ring?.cssValues ?? [];
+  const colourClasses = Array.from({ length: MARK_RING_MAX }, (_, i) =>
+    // `var(--accent)` is the fallback ONLY so this block is well-formed with
+    // no ring. It is unreachable in a render: an empty ring emits no marks at
+    // all, so no element ever carries a `.mk-c*` class in that case.
+    `.mk-c${i + 1} { --mk-c: ${values[i] ?? "var(--accent)"}; }`,
+  ).join("\n");
+
+  return `<style>
+/* instagram-agent marked emphasis (RFC-17 §5.3) — built by emphasis-marks.ts. */
+:root {
+  /* The swatch's height, and how far its top sits below the em box's top.
+     Latin ascenders stand clear above it — the reference's own geometry
+     (rf-11: the swatch covers the baseline and roughly the lower 60% of the
+     cap). Starting values, calibrated in CI by the band sweep. */
+  --mk-block-h: .50em;
+  --mk-block-y: .56em;
+  /* Where a rule sits: just under the baseline of a 1em box. */
+  --mk-rule-y: .92em;
+  --mk-swish-y: .78em;
+}
+${isHebrew ? HEBREW_GEOMETRY : ""}/* An UNMARKED run. It paints nothing and changes no metric — it exists only
+   so that no text node is ever stranded outside a text-bearing leaf. See
+   buildMarkedRuns. */
+.mk-t { }
+/* A MARKED run. This is the class the probe counts. */
+.mk {
+  /* One mark may span a line break. */
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  /* Bleed past the glyphs without moving the measure. */
+  padding-inline: .06em;
+  margin-inline: -.06em;
+  /* Every kind draws with a background IMAGE, never a background shorthand:
+     the probe's painted limb reads \`backgroundImage !== "none"\`, and a
+     gradient is the only way to place a band at a chosen height. */
+  background-repeat: no-repeat;
+  background-origin: content-box;
+}
+${colourClasses}
+/* block — a highlighter swatch behind the run, sitting LOW over the baseline.
+   Refused in code on a ground darker than the ink, and on quote_card's
+   italic, where the background box is a parallelogram the CSS cannot follow. */
+.mk-k-block {
+  background-image: linear-gradient(var(--mk-c), var(--mk-c));
+  background-size: 100% var(--mk-block-h);
+  background-position-y: var(--mk-block-y);
+}
+/* underline — one pencil rule. */
+.mk-k-underline {
+  background-image: linear-gradient(var(--mk-c), var(--mk-c));
+  background-size: 100% .07em;
+  background-position-y: var(--mk-rule-y);
+}
+/* swish — a marker stroke, thick in the middle, overshooting both ends.
+   Centred on both axes so it mirrors under dir="rtl" without a second rule. */
+.mk-k-swish {
+  background-image: radial-gradient(ellipse 60% 100% at 50% 50%, var(--mk-c) 60%, transparent 74%);
+  background-size: 112% .20em;
+  background-position: center var(--mk-swish-y);
+}
+/* double — two rules of different weight. */
+.mk-k-double {
+  background-image: linear-gradient(var(--mk-c), var(--mk-c)), linear-gradient(var(--mk-c), var(--mk-c));
+  background-size: 100% .09em, 100% .04em;
+  background-position-y: var(--mk-rule-y), calc(var(--mk-rule-y) + .17em);
+}
+/* ink — the run's GLYPHS take the mark colour, as a two-stop gradient.
+   This is rf-6's mechanism and our default #17181C ground's answer: a pastel
+   swatch behind near-white ink is illegible, and the reference set already
+   shows what a dark ground does instead. The second stop is a same-hue lift
+   toward the ink, in-kit by construction. */
+.mk-k-ink {
+  background-image: linear-gradient(100deg, var(--mk-c), color-mix(in srgb, var(--mk-c) 68%, var(--fg)));
+  background-size: 100% 100%;
+  background-position-y: 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+</style>`;
+}
+
+/**
+ * Hebrew geometry, SET rather than inherited.
+ *
+ * Hebrew has no ascenders and a full-height letter body, so a Latin block at
+ * `.50em/.56em` would cover the glyphs rather than sit under them, and the
+ * underline family has to come up to meet a baseline that carries the whole
+ * letter. **Hebrew keeps all five kinds** — first-class, not degraded.
+ *
+ * These are STARTING VALUES, to be corrected by the CI band sweep against
+ * measured cap height, not guessed once and left (RFC-17 §5.3, test 12).
+ */
+const HEBREW_GEOMETRY = `/* Hebrew (Phase 0 script fonts): no ascenders, full-height letter body. */
+:root {
+  --mk-block-h: .44em;
+  --mk-block-y: .60em;
+  --mk-rule-y: .92em;
+  --mk-swish-y: .82em;
+}
+`;
+
+// ─────────────────────────────────────────────────────────────────────────
+// Reporting
+// ─────────────────────────────────────────────────────────────────────────
+
+/** One reportable fact about this run's emphasis. Facts, never findings. */
+export interface EmphasisIssue {
+  slide: number;
+  field: string;
+  text: string;
+  reason: string;
+}
+
+/**
+ * Everything this run's emphasis could not do, as facts.
+ *
+ * The same posture `collectDeviceIssues` takes, and for the same reason: a
+ * mark is FURNITURE, and a redraft loop over furniture would spend the whole
+ * self-check budget on a slide whose copy was fine. `resolveSlideMarks`
+ * drops; this is how the drop becomes visible on the gate payload and in the
+ * run trace instead of being silent.
+ *
+ * **This never gates.** A drop reported here raises no finding, fails no
+ * clause, and cannot hold a run.
+ */
+export function collectEmphasisIssues(
+  perSlide: readonly { slide: number; drops: readonly MarkDrop[] }[],
+  ringNotes: readonly string[] = [],
+): EmphasisIssue[] {
+  const issues: EmphasisIssue[] = [];
+  for (const note of ringNotes) issues.push({ slide: 0, field: "ring", text: "", reason: note });
+  for (const row of perSlide) {
+    for (const drop of row.drops) issues.push({ slide: row.slide, field: drop.field, text: drop.text, reason: drop.reason });
+  }
+  return issues;
+}
+
+/** Narrow a `SlideEmphasis` entry set to the ones aimed at one field, preserving the model's order (position ordering happens in `resolveSlideMarks`). */
+export function declaredFor(emphasis: SlideEmphasis | undefined, field: "headline" | "body" | "quote" | "item", itemIndex?: number): { text: string }[] {
+  if (emphasis === undefined) return [];
+  return emphasis
+    .filter((e) => e.field === field && (field !== "item" || (e.itemIndex ?? 0) === (itemIndex ?? 0)))
+    .map((e) => ({ text: e.text }));
+}
