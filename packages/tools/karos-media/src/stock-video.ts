@@ -25,7 +25,34 @@ import { DEFAULT_VISION_MODEL, stripCodeFence, type VisionAnalysisClient, type V
 // Vertex billing hold) that road opened a short about offices. The title
 // check costs nothing and decides the order the vision model sees candidates
 // in, and the pick whenever the model cannot judge.
-const TOOL_VERSION = "1.2.0";
+// 1.2.1 (2026-09-10) — a title that says the clip is an aerial, a drone
+// pass, a time-lapse, an animation or a render loses a point of fit unless
+// the query asked for that: prep run pubsub-21156937744383149 got "aerial
+// view of industrial warehouse area" (a road from above) for "warehouse
+// concrete floor industrial lamp" on two matched words.
+// 1.2.2 (2026-09-10) — `avoidTitleLike`: a page URL whose title a result may
+// not resemble. A long beat's second shot is searched with the same query
+// and the first clip's id excluded, which on 2026-09-10 returned the same
+// scene twice (two clocks, two empty classrooms): same title words, other
+// id. Now a candidate whose title shares 60% or more of its words with the
+// first shot's is skipped, so the second shot is a different picture.
+const TOOL_VERSION = "1.2.2";
+
+/** Two Pexels titles this alike (Jaccard on content words) are the same scene shot twice. */
+export const NEAR_TWIN_TITLE_SIMILARITY = 0.6;
+
+/** Jaccard similarity of two Pexels titles' content words, 0 when either is unknown. Exported for the test. */
+export function titleSimilarity(urlA: unknown, urlB: unknown): number {
+  const a = new Set(pexelsTitleWords(urlA));
+  const b = new Set(pexelsTitleWords(urlB));
+  if (a.size === 0 || b.size === 0) return 0;
+  let shared = 0;
+  for (const w of a) if (b.has(w)) shared += 1;
+  return shared / (a.size + b.size - shared);
+}
+
+/** Title words that describe a KIND of shot a spoken line rarely wants under it; each costs a point of fit unless the query asked for it. */
+const TITLE_PENALTIES = ["aerial", "drone", "timelapse", "time-lapse", "hyperlapse", "animation", "animated", "cartoon", "3d", "render", "rendering", "cgi", "slideshow", "screen", "screencast"];
 
 /** Query words too common to say anything about a clip. `broadeningVariants` drops the same kind. */
 const QUERY_NOISE = new Set(["a", "an", "and", "the", "of", "on", "in", "at", "to", "for", "with", "from", "by", "as", "shot", "close", "up", "closeup", "view", "angle", "footage", "video", "clip", "stock", "person", "people", "background"]);
@@ -58,7 +85,10 @@ function sameWord(a: string, b: string): boolean {
 export function lexicalFit(query: string, url: unknown): number {
   const title = pexelsTitleWords(url);
   if (title.length === 0) return 0;
-  return contentWords(query).filter((q) => title.some((t) => sameWord(q, t))).length;
+  const asked = contentWords(query);
+  const matched = asked.filter((q) => title.some((t) => sameWord(q, t))).length;
+  const penalties = TITLE_PENALTIES.filter((w) => title.includes(w) && !asked.some((q) => sameWord(q, w))).length;
+  return matched - penalties;
 }
 
 /** How many portrait, long-enough candidates per query are shown to the vision model. Each thumbnail is ~260 tokens; eight is about a tenth of a cent. */
@@ -99,6 +129,10 @@ export const FindStockClipInputSchema = z.object({
     .regex(/^[a-z0-9-]+$/)
     .default("stock-clip")
     .describe("File stem inside the run cache (`<outputName>.mp4`)."),
+  avoidTitleLike: z
+    .string()
+    .optional()
+    .describe("A Pexels page URL whose title the result must not resemble (60% or more of its words shared): a beat's second shot passes its first shot's URL, so the same scene is not shown twice."),
   relevance: z
     .object({
       brief: z.string().min(1).max(600).describe("The beat's visual brief: the scene the clip should show."),
@@ -236,7 +270,7 @@ export function pickPortraitFile(files: readonly PexelsVideoFile[]): { link: str
  * 6-second beat is a smaller download and less to trim than a 45-second one).
  * Without a `query`, or when no title says anything, the order is shortest-first as in 1.0.0.
  */
-export function rankStockVideos(videos: readonly PexelsVideo[], minDurationSeconds: number, excludeIds: readonly number[], query?: string): PexelsVideo[] {
+export function rankStockVideos(videos: readonly PexelsVideo[], minDurationSeconds: number, excludeIds: readonly number[], query?: string, avoidTitleLike?: string): PexelsVideo[] {
   const excluded = new Set(excludeIds);
   const fit = (v: PexelsVideo): number => (query === undefined ? 0 : lexicalFit(query, v.url));
   return videos
@@ -245,6 +279,7 @@ export function rankStockVideos(videos: readonly PexelsVideo[], minDurationSecon
       const w = num(v.width);
       const h = num(v.height);
       const d = num(v.duration);
+      if (avoidTitleLike !== undefined && titleSimilarity(v.url, avoidTitleLike) >= NEAR_TWIN_TITLE_SIMILARITY) return false;
       return id !== undefined && !excluded.has(id) && w !== undefined && h !== undefined && h > w && d !== undefined && d >= minDurationSeconds;
     })
     .sort((a, b) => fit(b) - fit(a) || (num(a.duration) ?? 0) - (num(b.duration) ?? 0));
@@ -313,7 +348,7 @@ export function createFindStockClip(options: StockVideoOptions = {}) {
         // Ranked against the caller's FULL query, not the broadened variant
         // that was searched: the words the variant dropped still say what the
         // beat is about ("empty open plan office dusk" → the office, not the dusk).
-        const usable = rankStockVideos(body.videos ?? [], input.minDurationSeconds, input.excludeIds, input.query)
+        const usable = rankStockVideos(body.videos ?? [], input.minDurationSeconds, input.excludeIds, input.query, input.avoidTitleLike)
           .map((video) => ({ video, file: pickPortraitFile(video.video_files ?? []) }))
           .filter((c): c is { video: PexelsVideo; file: { link: string; width: number; height: number } } => c.file !== undefined);
         if (usable.length === 0) continue;

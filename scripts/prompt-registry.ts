@@ -284,8 +284,8 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "tiktok-script",
     agent: "tiktok-agent",
-    versions: ["1", "2", "3", "4", "5", "6", "7", "8"],
-    latestVersion: "8",
+    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9"],
+    latestVersion: "9",
     requires: { languageDirective: true, structuredOutput: true },
     structuredOutputFields: ["hook", "beats", "narration", "onScreenText", "visualBrief", "stockQuery", "seconds", "caption", "about", "format", "formatRationale", "voiceover", "voiceoverRationale", "language"],
   },

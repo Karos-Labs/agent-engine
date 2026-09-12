@@ -100,6 +100,38 @@ describe("buildComposeSequenceArgs", () => {
     expect(filter).toContain("atrim=duration=10.5[aout]");
   });
 
+  it("a move zooms the held plate 6% over its hold on a 2x-oversampled frame, after the hold is fixed; a plate without a hold stays static", () => {
+    const input = ComposeSequenceInputSchema.parse({
+      clips: [
+        { path: "a.mp4", holdSeconds: 3, move: "push-in" },
+        { path: "b.mp4", holdSeconds: 3, move: "pull-back" },
+        { path: "c.mp4", move: "push-in" },
+        { path: "d.mp4", holdSeconds: 3 },
+      ],
+      outputPath: "out.mp4",
+    });
+    const filter = filterOf(
+      buildComposeSequenceArgs(input, {
+        clips: [
+          { durationSeconds: 3, hasAudio: false },
+          { durationSeconds: 2, hasAudio: false },
+          { durationSeconds: 3, hasAudio: false },
+          { durationSeconds: 3, hasAudio: false },
+        ],
+        voiceoverDurationSeconds: null,
+      }),
+    );
+    // 3 s at 30 fps = 90 frames, 0.06 over 89 steps.
+    const step = (0.06 / 89).toFixed(6);
+    expect(filter).toContain(`[0:v]${VIDEO_LEG},trim=duration=3,scale=2160:3840,zoompan=z='min(1+on*${step},1.060)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30,setsar=1,format=yuv420p[v0]`);
+    // The freeze comes first, then the move, so the frozen tail keeps moving.
+    expect(filter).toContain(`[1:v]${VIDEO_LEG},trim=duration=3,tpad=stop_mode=clone:stop_duration=1,scale=2160:3840,zoompan=z='max(1.060-on*${step},1)'`);
+    // No hold: nothing to pace the move over, so none.
+    expect(filter).toContain(`[2:v]${VIDEO_LEG}[v2]`);
+    // The default is static.
+    expect(filter).toContain(`[3:v]${VIDEO_LEG},trim=duration=3[v3]`);
+  });
+
   it("with a voiceover: ducks the ambient, mixes voiceover-first without normalising, and freezes the video out to voiceover + tail", () => {
     const input = ComposeSequenceInputSchema.parse({
       clips: [{ path: "a.mp4" }, { path: "b.mp4" }],

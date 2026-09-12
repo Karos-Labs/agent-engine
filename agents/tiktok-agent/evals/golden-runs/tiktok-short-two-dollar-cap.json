@@ -1,0 +1,60 @@
+{
+  "id": "tiktok-short-two-dollar-cap",
+  "description": "The script prep run pubsub-21156937744383149 shipped on 2026-09-10 (prompt v9, $0.19, 4.5 min to the gate) after one redraft the voice lint asked for (an 18-word hook, a 16-word sentence). Kept as endorsed: a figure the client's own rule states ($2 a short), stated in the hook and on screen, four different places, no pitch in the last beat. Also the regression fixture for numbersSourced: the $2 rests on the one source listed.",
+  "agentId": "tiktok-agent",
+  "language": "en",
+  "input": {
+    "topic": "Why we cap a short-form video at $2 to produce: what a two-dollar budget forces a marketing team to decide first",
+    "clientSlug": "karoslabs",
+    "voiceRules": { "tone": "clear and precise, confident without being arrogant", "signature": "No pitch, just a plan.", "hashtags": "#CMO #KarosLabs plus two topical" },
+    "brand": { "handle": "karoslabs", "language": "en-US" },
+    "voiceoverPolicy": "auto",
+    "allowPeople": false
+  },
+  "endorsedOutput": {
+    "hook": "We cap every short at two dollars to produce. On purpose.",
+    "format": "footage",
+    "formatRationale": "The concept has a concrete place in it (the production context, the empty studio, the decision before the shoot) so real footage gives the argument texture that a text-led layout would flatten.",
+    "beats": [
+      {
+        "narration": "We cap every short at two dollars to produce. On purpose.",
+        "onScreenText": "$2 to produce. On purpose.",
+        "visualBrief": "A single coin resting on a worn wooden table surface, late-afternoon window light raking across the grain. Shot directly overhead, tight frame. No text, no hands, no other objects.",
+        "stockQuery": "coin worn wooden table close-up",
+        "seconds": 6
+      },
+      {
+        "narration": "You can't hide behind a beautiful shot at two dollars. You have to know your point first.",
+        "onScreenText": "No budget. No hiding.",
+        "visualBrief": "A small empty studio, two softboxes switched off, black backdrop partly rolled up, a folded tripod leaning against the wall. Overhead fluorescent light. No people, no screens, no text.",
+        "stockQuery": "empty film studio softbox lights tripod",
+        "seconds": 6
+      },
+      {
+        "narration": "The cap forces two questions. Who is this for? What do you want them to do?",
+        "onScreenText": "Two questions before one frame.",
+        "visualBrief": "A long conference table, no people, a dry-erase marker resting on the whiteboard ledge, morning light from a row of windows on one side. Wide shot, clean and still. No text on the whiteboard.",
+        "stockQuery": "empty conference room whiteboard morning",
+        "seconds": 6
+      },
+      {
+        "narration": "Most video spend buys production. Not clarity. The two-dollar cap is a strategy tool.",
+        "onScreenText": "Production isn't the point.",
+        "visualBrief": "Bare concrete warehouse floor, a single overhead industrial lamp illuminated, the rest of the space in deep shadow. Wide shot, early morning. No people, no text, no machinery in frame.",
+        "stockQuery": "warehouse concrete floor industrial lamp",
+        "seconds": 6
+      }
+    ],
+    "caption": "A production budget doesn't tell you what to say. That decision comes first. The $2 cap keeps the strategy question from getting buried under production decisions. karoslabs.com. No pitch, just a plan. #ContentStrategy #AIMarketing #CMO #KarosLabs",
+    "about": "This short explains Karos Labs' internal $2 short-form video production cap as a strategic forcing function, not a cost constraint. It argues that stripping out budget pressure forces clarity on audience and intent before a single frame is shot. Four beats, 24 seconds, voiceover. No CTA in the video itself; CTA lives in the caption.",
+    "voiceover": true,
+    "voiceoverRationale": "This piece is an explanation with a 'because' in it: a mechanism (the cap forces a decision) and a turn (production is not the point). A spoken voice carries the logical sequence; captions alone would read as a list.",
+    "language": "en-US"
+  },
+  "gateArgs": {
+    "brandCompliance": { "forbiddenTerms": ["game-changer", "unlock", "seamless", "leverage", "guaranteed", "#1"] },
+    "numbersSourced": { "sources": ["Karos Labs production rule (2026-09-09): every original short is capped at $2 to produce, enforced by the workflow's cost ceiling."] }
+  },
+  "endorsedBy": "claude-code, from prep run pubsub-21156937744383149 as shipped; awaiting a human endorsement",
+  "endorsedAt": "2026-09-10T13:30:00Z"
+}

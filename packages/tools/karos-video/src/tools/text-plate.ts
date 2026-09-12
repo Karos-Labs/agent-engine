@@ -13,7 +13,22 @@ import { assertToolPath, filterPath, hexToAss, hexToFfmpeg, probeDuration, sanit
 // two seconds. Now a line that needs more than three lines at the full size
 // is set smaller and wrapped wider, down to 65% of the size, and past that
 // simply takes more lines. `fitPlateText` is exported for the test.
-const TOOL_VERSION = "1.1.0";
+// 1.2.0 (2026-09-10) — `stat`: the plate as a STAT CARD, the number set at
+// 2.5x the line size with its label under it, for a beat whose whole point is
+// one figure ("47%"). The plan's phase 2 asked for a stat-card format through
+// the branded-shorts Python engine; that engine is unvendored, and libass
+// already sets any figure in any script, so the card is this tool with one
+// more layout. `statLayout` is exported for the test.
+const TOOL_VERSION = "1.2.0";
+
+/** The figure of a stat card relative to the line size: big enough to be the picture, small enough for "$1,250,000" to fit. */
+export const STAT_VALUE_SCALE = 2.5;
+
+/** The ASS text of a stat card: the figure at STAT_VALUE_SCALE times the fitted label size, the label fitted under it. */
+export function statLayout(stat: { value: string; label: string }, label: { text: string; fontSize: number }): string {
+  const big = Math.round(label.fontSize * STAT_VALUE_SCALE);
+  return `{\\fs${big}}${sanitizeAssText(stat.value)}{\\fs${label.fontSize}}\\N${label.text}`;
+}
 
 /** Characters per line at the full size: a 12-word hook is three lines. Scales with the size below. */
 const BASE_WRAP_CHARS = 18;
@@ -70,6 +85,10 @@ export const TextPlateInputSchema = z.object({
     .object({ w: z.number().int().positive(), h: z.number().int().positive() })
     .default(() => ({ w: 1080, h: 1920 }))
     .describe("Output canvas in pixels. Defaults to 1080x1920 (9:16)."),
+  stat: z
+    .object({ value: z.string().min(1).max(12).describe("The figure, as written: 47%, $2, 3 of 4."), label: z.string().min(1).max(60).describe("What the figure is, in a few words.") })
+    .optional()
+    .describe("Renders a STAT CARD instead of a plain line: the figure set at 2.5x the line size with the label under it. `text` still sets the fallback line and the wrap size."),
   fps: z.number().int().min(24).max(60).default(30).describe("Output frame rate. 30 matches the composer's normalisation."),
 });
 export type TextPlateInput = z.infer<typeof TextPlateInputSchema>;
@@ -86,7 +105,9 @@ export interface TextPlateResult {
  */
 export function buildTextPlateAss(input: TextPlateInput): string {
   const { w, h } = input.canvas;
-  const { text, fontSize } = fitPlateText(input.text, Math.round(h * 0.052));
+  const fit = fitPlateText(input.stat?.label ?? input.text, Math.round(h * 0.052));
+  const fontSize = fit.fontSize;
+  const text = input.stat !== undefined ? statLayout(input.stat, fit) : fit.text;
   const end = (() => {
     const s = input.durationSeconds;
     const hh = Math.floor(s / 3600);
