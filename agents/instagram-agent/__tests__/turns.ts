@@ -28,8 +28,21 @@ import { goodAngleProposal } from "./angle-fixtures.js";
  *   copy       05-write-copy-attempt-N
  *   vet        06-vet-images-attempt-N    (skipped by the workflow when the candidate pool is empty)
  *   relevance  07g-relevance-attempt-N
- *   fluency    07f-language-fluency-attempt-N (non-English targets only)
+ *   nativeEditor 07f-language-fluency-attempt-N (+ `-round-2`) (non-English targets only; ARRAY — one entry per judge round)
  *   qa         08b-visual-qa-attempt-N
+ *
+ * Phase 4 (RFC-15 §6.5) RENAMED `fluency` to `nativeEditor` IN PLACE and made
+ * it variadic. The position in `TURN_ORDER` is unchanged and no key was
+ * inserted, which is the whole point: the ~30 files this module's warning is
+ * about queue their turns through `standardTurns`, and a reorder or an
+ * insertion shifts every one of them by a turn. A rename is a compile error in
+ * the files that used the old key and a no-op everywhere else.
+ *
+ * It is an ARRAY because `07f` now runs up to twice inside one attempt: round
+ * 1 judges the draft, and when it proposes corrections they are applied in
+ * place and round 2 judges the patched copy under
+ * `07f-language-fluency-attempt-N-round-2`. `[verdict]` is a one-round
+ * fixture; `[round1, round2]` is a two-round one.
  *
  * A test that needs a SECOND attempt appends another `standardTurns({ copy, vet, … })`
  * without `scout`/`research`/`angle` — those run once per run (or, for the
@@ -54,7 +67,8 @@ export interface StandardTurnFixtures {
   copy?: unknown;
   vet?: unknown;
   relevance?: unknown;
-  fluency?: unknown;
+  /** RFC-15 §6.5, `07f` — ONE ENTRY PER JUDGE ROUND (round 1, optionally round 2 on the corrected copy). */
+  nativeEditor?: readonly unknown[];
   qa?: unknown;
 }
 
@@ -86,12 +100,14 @@ export const TURN_ORDER = [
   "copy",
   "vet",
   "relevance",
-  "fluency",
+  // Phase 4 renamed this slot `fluency` -> `nativeEditor` and made it variadic. It did NOT move, and nothing
+  // was inserted around it: `07f` still runs where it ran, between the relevance judge and the visual QA.
+  "nativeEditor",
   "qa",
 ] as const satisfies ReadonlyArray<keyof StandardTurnFixtures>;
 
 /** Which keys carry a LIST of turns rather than one. Named explicitly rather than sniffed with `Array.isArray`, so a fixture whose model output happens to be an array is never silently spread into several turns. */
-const VARIADIC_TURN_KEYS: ReadonlySet<keyof StandardTurnFixtures> = new Set(["templateDesign", "templateRepair"]);
+const VARIADIC_TURN_KEYS: ReadonlySet<keyof StandardTurnFixtures> = new Set(["templateDesign", "templateRepair", "nativeEditor"]);
 
 /** `finalTurn(...)` entries for the supplied fixtures, in execution order. */
 export function standardTurns(fixtures: StandardTurnFixtures): Array<() => CompletionResult<unknown>> {

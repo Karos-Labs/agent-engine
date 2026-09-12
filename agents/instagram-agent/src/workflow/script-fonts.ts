@@ -59,6 +59,25 @@ export interface ScriptTypography {
   readonly typeScale: number;
   /** Line heights for the display and body roles — taller scripts (Arabic, Thai, Devanagari) need more leading than the templates' Latin defaults. */
   readonly lineHeight: { readonly display: number; readonly body: number };
+  /**
+   * Tracking for the display and body roles (Phase 4, RFC-15 §7.1).
+   *
+   * The bundled templates track their Latin type the way a Latin display face
+   * wants: `-0.02em`/`-0.04em`/`-0.018em`/`-0.012em`/`-0.008em` on the display
+   * roles, and `+0.22em`/`+0.24em`/`+0.16em`/`+0.14em` on the uppercase mono
+   * eyebrows and kickers. Both are WRONG for Hebrew, in opposite directions:
+   * negative tracking walks the final forms (ך ן ף ץ), whose whole job is to
+   * mark a word's end, into the first letter of the next word; positive
+   * tracking shreds a Hebrew word, because Hebrew has no tradition of letter
+   * spacing for emphasis and the reader parses the word as one shape.
+   *
+   * OPTIONAL, and absent means "not measured for this script — emit nothing
+   * rather than guess". The same refuse-to-guess posture `scriptTypographyFor`
+   * takes for a language `SCRIPT_TABLE` has never heard of: a tracking value
+   * invented for a script nobody here reads would be a silent, unfalsifiable
+   * change to every slide that script ever renders.
+   */
+  readonly letterSpacing?: { readonly display: string; readonly body: string };
 }
 
 /**
@@ -73,7 +92,19 @@ export interface ScriptTypography {
  * need room for them.
  */
 export const SCRIPT_TYPOGRAPHY: Readonly<Record<string, ScriptTypography>> = {
-  Hebrew: { display: ["Heebo", "Rubik"], body: ["Assistant", "Heebo"], mono: ["Rubik"], typeScale: 0.94, lineHeight: { display: 1.12, body: 1.6 } },
+  // `letterSpacing: normal` on both roles is not a "no opinion" default — it
+  // is the measured answer for Hebrew, and it is what overrides the
+  // templates' own Latin tracking. Every other row deliberately omits the
+  // field: nobody has measured tracking for Arabic, Devanagari or Thai here,
+  // and those scripts' templates keep whatever the template author chose.
+  Hebrew: {
+    display: ["Heebo", "Rubik"],
+    body: ["Assistant", "Heebo"],
+    mono: ["Rubik"],
+    typeScale: 0.94,
+    lineHeight: { display: 1.12, body: 1.6 },
+    letterSpacing: { display: "normal", body: "normal" },
+  },
   Arabic: {
     display: ["Noto Sans Arabic", "Cairo"],
     body: ["Noto Sans Arabic"],
@@ -272,6 +303,24 @@ export function buildScriptFontHeadHtml(script: string, spec: ScriptTypography, 
   // script added to `SCRIPT_TYPOGRAPHY` cannot get one without the other.
   css.push(`${DISPLAY_SELECTORS.join(", ")} { line-height: ${spec.lineHeight.display}; padding-block-end: 0.22em; }`);
   css.push(`${BODY_SELECTORS.join(", ")} { line-height: ${spec.lineHeight.body}; }`);
+  // Tracking, on the SAME two selector lists and for the same reason the
+  // leading is: the templates' values were chosen for Latin display faces and
+  // are actively harmful to Hebrew (see `ScriptTypography.letterSpacing`).
+  //
+  // Emitted ONLY when the script's row carries the field, so a script nobody
+  // has measured keeps every template's own tracking rather than inheriting
+  // Hebrew's answer. Emitted as its own rule rather than folded into the
+  // leading rule above so that the two remain separately greppable and a
+  // script can be given one without the other.
+  //
+  // `.num-figure` is excluded with the rest of the display list: the 300px
+  // stat digit is script-neutral, and its tracking is part of the same
+  // designed lockup as its `line-height: 0.95`. `.brand-handle` is in neither
+  // list, so the Latin `@handle` watermark keeps its own `0.08em`.
+  if (spec.letterSpacing !== undefined) {
+    css.push(`${DISPLAY_SELECTORS.join(", ")} { letter-spacing: ${spec.letterSpacing.display}; }`);
+    css.push(`${BODY_SELECTORS.join(", ")} { letter-spacing: ${spec.letterSpacing.body}; }`);
+  }
 
   return `${link}\n<style>\n${css.join("\n")}\n</style>`;
 }

@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { readForbiddenTopics } from "@agent-engine/core";
-import type { AgentContext, AgentTool, AgentToolRegistry, GateResponse, ModelRouter, PromptStore, StyleEdit, TemplateFeedback } from "@agent-engine/core";
+import type { AgentContext, AgentTool, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore, StyleEdit, TemplateFeedback } from "@agent-engine/core";
 import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField, buildClientIntelContext, buildClientVoiceContext, readCrossChannelHistory, crossChannelDirective, crossChannelAvoidTopics, socialAccountsFromClient, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, readContextDoc, enforceContextDocPolicy, toAgentContext, distillStylePreferences, varyLearnedStyle, buildTrendQueries, hasTopicSignalMaterial, pullTrendResearch, runTrendScout, researchDigestForScout, selectContentMode, trendCandidateForDrafting, type ContentMode, type DistilledStyle, type FeedbackEntryLike, type StyleVariationEntry, type TrendResearch, type TrendScoutOutput } from "@agent-engine/workflow";
 import type { ClientBrand, ClientBrief, ClientKnowledge, ClientProfile, VoiceRules } from "@agent-engine/tools";
 import type { InstagramFormat, InstagramTopicClaim as InstagramTopicClaimShape } from "./types.js";
@@ -37,7 +37,16 @@ import {
 import { brandLogoDataUri, downloadBrandLogo, parseBrandLogoDataUri, renderVisualPatternReference, type BrandLogoPlacement, type MediaLibraryEntry, type VisualPatternProfile } from "@agent-engine/tool-karos-media";
 import { buildBrandHeadHtml, buildBrandLogoBodyHtml, deriveBrandRenderTokens, filterLearnedStyleToRing, planBrandLogo, type BrandRenderTokens } from "./brand-render-tokens.js";
 import { buildScriptFontHeadForLanguage } from "./script-fonts.js";
-import { adoptBriefTargetLanguage, resolveTargetLanguage } from "./target-language.js";
+import {
+  adoptLateTargetLanguage,
+  bcp47For,
+  buildLanguageBelief,
+  resolveTargetLanguage,
+  sniffDominantScript,
+  LANGUAGE_BELIEF_KEY,
+  type LanguageBeliefSource,
+  type TargetLanguageSource,
+} from "./target-language.js";
 import {
   BRIEF_AGENT_SKILL_REF,
   briefForPrompt,
@@ -218,7 +227,22 @@ import {
   sceneTagsFor,
 } from "./media-library.js";
 import { checkCraftHygiene } from "./craft-hygiene.js";
-import { checkExpectedScript, languageGateText, runLanguageFluency, LANGUAGE_FLUENCY_STEP_ID, LANGUAGE_SCRIPT_STEP_ID } from "./language-gate.js";
+import {
+  checkExpectedScript,
+  languageGateFields,
+  languageGateText,
+  nativeSteerFor,
+  resolveExpectedScript,
+  runNativeEditor,
+  LANGUAGE_FLUENCY_ROUND2_SUFFIX,
+  LANGUAGE_FLUENCY_STEP_ID,
+  LANGUAGE_SCRIPT_STEP_ID,
+  type NativeAxis,
+  type NativeAxisVerdict,
+  type NativeEditorInput,
+} from "./language-gate.js";
+import { applyNativeCorrections } from "./native-corrections.js";
+import { buildLanguageBrief, judgeFewShot, renderLanguageBrief, renderRegisterCard } from "./language-register.js";
 import {
   assessBrandAssetPresence,
   assessContrastFacts,
@@ -1085,8 +1109,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // language is decided once the brief is known (`adoptBriefTargetLanguage`,
     // just after 02i) — a brief may declare a language 02d cannot see, because
     // 02d does not read the client's site and `00b1` does.
-    const resolvedTargetLanguage =
-      (await wf.step.code("02d-load-target-language", async () => {
+    const resolvedLanguageStep: { language: string; source: TargetLanguageSource } | string | null =
+      await wf.step.code("02d-load-target-language", async () => {
         const brandOutcome = await tools["client.getBrand"]?.execute({}, { ctx });
         const profileOutcome = await tools["client.getProfile"]?.execute({}, { ctx });
         const voiceOutcome = await tools["client.getVoiceRules"]?.execute({}, { ctx });
@@ -1094,7 +1118,26 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // step of its own, and this step's id/shape must not change.
         const brandVoiceOutcome = await tools["client.getContextDoc"]?.execute({ docType: "brand-voice" }, { ctx });
         const brandVoiceDoc = brandVoiceOutcome?.status === "success" ? (brandVoiceOutcome.result as { markdown?: unknown }).markdown : undefined;
+        // Phase 4 (RFC-15 §2, source 3): a previous run's DECISIVE resolution for this client, persisted at
+        // 09b under the `instagramLanguage` belief. Free — `memory.read` is a store read, not a model call,
+        // and 02j makes the identical read a few steps later.
+        //
+        // Guarded exactly as 02j's read is (:1196-1201), and for the same reason: this is a routing
+        // preference derived from stored state, and a store that is missing, empty, or not carrying
+        // `memory.read` at all must leave 02d behaving precisely as it did before this line existed. That is
+        // not a hypothetical — ~30 test files here hand the workflow a partial tool registry.
+        let beliefs: Record<string, unknown> | undefined;
+        try {
+          const read = await tools["memory.read"]?.execute({ scope: "beliefs" }, { ctx });
+          if (read?.status === "success") {
+            const doc = (read.result as { beliefs?: unknown }).beliefs;
+            if (doc !== null && typeof doc === "object") beliefs = doc as Record<string, unknown>;
+          }
+        } catch (error) {
+          console.error("02d-load-target-language: could not read the remembered language belief, resolving from the client record alone", error);
+        }
         const resolution = resolveTargetLanguage({
+          ...(beliefs !== undefined ? { beliefs } : {}),
           brandLanguage: brandOutcome?.status === "success" ? (brandOutcome.result as { language?: unknown }).language : undefined,
           profile: profileOutcome?.status === "success" ? (profileOutcome.result as Record<string, unknown>) : undefined,
           voiceRules: voiceOutcome?.status === "success" ? (voiceOutcome.result as Record<string, unknown>) : undefined,
@@ -1111,8 +1154,17 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               `(candidates: ${resolution.candidates.join(", ")}) — set brand.language in the portal`,
           );
         }
-        return resolution.status === "resolved" ? resolution.language : null;
-      })) ?? undefined;
+        // Phase 4 returns the SOURCE alongside the language, because `09b`'s belief write needs it and
+        // getting it wrong is the one way this mechanism can hurt: `readLanguageBelief` refuses to re-read a
+        // `sniff`-sourced entry, and a guess mislabelled as an explicit statement is precisely the guess
+        // calcifying into permanent truth that the decisiveness filter exists to prevent.
+        return resolution.status === "resolved" ? { language: resolution.language, source: resolution.source } : null;
+      });
+    // An older checkpoint, written before this step returned an object, holds the bare language string. Read
+    // both shapes rather than re-running 02d: an in-flight run resuming across this deploy must not have its
+    // language re-resolved from a store that may since have changed.
+    const resolvedTargetLanguage = typeof resolvedLanguageStep === "string" ? resolvedLanguageStep : (resolvedLanguageStep?.language ?? undefined);
+    const resolvedTargetLanguageSource = typeof resolvedLanguageStep === "string" ? undefined : resolvedLanguageStep?.source;
 
     // ── 00b-00b3: the persisted Client Brief, written by an agent (Phase 1, item H) ──
     //
@@ -1192,6 +1244,25 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // The id is unchanged, so an in-flight run resumes onto its own plan.
     const budgetDecision: RunBudgetDecision = await wf.step.code("02j-plan-run-budget", async () => {
       let history = readBudgetHistory(undefined);
+      // 04e's own-account scrapes, priced from the SAME two free reads
+      // `04e0-load-social-accounts` uses further down. Read here rather than
+      // hoisting that step, so no step id moves and a resumed run keeps its
+      // trace order. Both calls are free (`client.getConfig`/`client.getBrand`
+      // are store reads), so this costs the plan nothing and closes the one
+      // `fixed` term the estimator was missing once 04e started metering.
+      let socialAccounts = 0;
+      try {
+        const configOutcome = await tools["client.getConfig"]?.execute({}, { ctx });
+        const brandOutcome = await tools["client.getBrand"]?.execute({}, { ctx });
+        socialAccounts = socialAccountsFromClient(
+          configOutcome?.status === "success" ? (configOutcome.result as Record<string, unknown>) : undefined,
+          brandOutcome?.status === "success" ? (brandOutcome.result as Record<string, unknown>) : undefined,
+        ).length;
+      } catch (error) {
+        // An unreadable config means the OLD behaviour (this term absent), not
+        // a failed plan. The live meter still books 04e when it runs.
+        console.error("02j-plan-run-budget: could not count the client's social accounts, pricing 04e at zero", error);
+      }
       try {
         const read = await tools["memory.read"]?.execute({ scope: "beliefs" }, { ctx });
         if (read?.status === "success") history = readBudgetHistory((read.result as { beliefs?: unknown }).beliefs);
@@ -1201,15 +1272,20 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       return planRunBudget(
         {
           ...DEFAULT_RUN_SHAPE,
-          // The fluency judge runs on every attempt for any non-English
-          // target, and the target can come from the stored brief as well as
-          // from 02d (`adoptBriefTargetLanguage`).
+          // The `languageBrief` field and the native editor run on every attempt for any non-English target,
+          // and the target can come from the stored brief as well as from 02d (`adoptLateTargetLanguage`).
+          //
+          // 02j runs BEFORE `00b1`, so the own-posts source cannot be consulted here — this predicate has
+          // always been an under-estimate of the same shape (a brief-declared language 02d could not see),
+          // and a plan that budgets for English and then meets Hebrew is corrected by the LIVE meter, which
+          // is the mechanism that exists for exactly this.
           targetLanguage:
             resolvedTargetLanguage !== undefined ||
-            (briefCheck.languageTarget !== undefined && adoptBriefTargetLanguage(undefined, briefCheck.languageTarget).language !== undefined),
+            (briefCheck.languageTarget !== undefined && adoptLateTargetLanguage(undefined, { briefLanguage: briefCheck.languageTarget }).language !== undefined),
           // Phase 1, item H: the Sonnet brief call and its source scrapes are
           // this run's cost only when `00b` asked for a fresh document.
           briefRefresh: briefCheck.action !== "reuse",
+          socialAccounts,
         },
         history,
         { spentUsd: meter.totalUsd },
@@ -1248,6 +1324,15 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     const recentSkeletons = skeletonAvoidList(skeletonHistory);
     /** Item O's ledger of run-authored designs, advanced by `09f` and written back at `09b`. */
     let customArchetypeHistory: CustomArchetypeHistory = structuralMemory.customArchetypes;
+    /**
+     * Phase 4 (RFC-15 §2) — what `04l` measured, for `09b`'s `instagramLanguage` belief. Set inside
+     * `draftOnce`, read at `09b`, `undefined` on an English run and on a run that never reached `04l`.
+     *
+     * A small record rather than the whole `LanguageBrief`: `09b` needs two numbers and a key, and carrying
+     * six 400-character exemplars across the review cycle to reach them would put ~2.4kB of prose in a
+     * closure for nothing.
+     */
+    let languageCorpusFacts: { registerKey: string; corpusPosts: number } | undefined;
 
     /**
      * What the brief lifecycle did this run — `undefined` when the stored
@@ -1256,6 +1341,17 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
      * from the deterministic stand-in.
      */
     let briefWriteOutcome: { status: "written" | "brief-agent-failed" | "brief-write-refused"; reason?: string; sourceNotes?: string[] } | undefined;
+    /**
+     * Phase 4 (RFC-15 §2, late-adoption source 1b). The language the client's OWN published captions are
+     * written in, sniffed for free from the `ownPosts` `00b1` already fetched. `undefined` on a brief-reuse
+     * run (00b1 did not run), on a client with no social accounts, and whenever the corpus is too short or
+     * too mixed to name one language — all of which fall through to the brief's declaration, which is
+     * exactly today's behaviour.
+     *
+     * The 2026-09-08 audit's finding, in one variable: these posts were fetched on every brief-refresh run
+     * and never once read as a language source.
+     */
+    let ownPostsLanguage: string | undefined;
     if (briefCheck.action !== "reuse") {
       // Every source read INLINE rather than through `readContextDoc`: that
       // helper is a checkpointed step of its own, and five more step ids for
@@ -1378,8 +1474,18 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           targetLanguage: resolvedTargetLanguage,
           forbiddenTopics: frozen.forbiddenTopics,
         });
-        return { ...build, scraperExecutions };
+        // Phase 4 — free, pure, and over the captions this step already holds. Sniffed across the WHOLE
+        // corpus concatenated rather than per post: `sniffDominantScript` needs >= 24 letters to say
+        // anything at all, and a three-word caption on its own is `insufficient` where the account as a
+        // whole is unambiguous. `resolved` only; `ambiguous`, `latin`, `mixed` and `insufficient` all leave
+        // it undefined, because a guess that reaches `adoptLateTargetLanguage` outranks the brief.
+        const ownPostsSniff = sniffDominantScript(ownPosts.map((post) => post.excerpt).join("\n"));
+        return { ...build, scraperExecutions, ownPostsLanguage: ownPostsSniff.kind === "resolved" ? ownPostsSniff.language : undefined };
       });
+      // Read off the CHECKPOINTED step result, so a resume gets the same answer without re-scraping. An
+      // older checkpoint written before this field existed simply has no `ownPostsLanguage` and behaves as
+      // it did before.
+      ownPostsLanguage = gathered.ownPostsLanguage;
       if (gathered.scraperExecutions > 0) {
         spend("00b1-gather-brief-sources", undefined, gathered.scraperExecutions * STEP_COST_ESTIMATES_USD.scraperExecution);
       }
@@ -1611,8 +1717,45 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // pages (which 02d does not read and `00b1` does) therefore shipped
     // Hebrew copy in a Chromium fallback face with no script check and no
     // fluency judge at all. One value from here down.
-    const languageAdoption = adoptBriefTargetLanguage(resolvedTargetLanguage, brief.language.target);
+    //
+    // Phase 4 (RFC-15 §2) generalises this to `adoptLateTargetLanguage` and inserts ONE source above the
+    // brief: the script of the client's own published captions. It ranks above the brief because it is a
+    // MEASUREMENT of what this client actually published, where `brief.language.target` is a model's reading
+    // of those same posts plus others — and it ranks below 02d for the unchanged reason, that a human who
+    // sets `brand.language` always wins.
+    const languageAdoption = adoptLateTargetLanguage(resolvedTargetLanguage, {
+      ...(ownPostsLanguage !== undefined ? { ownPostsLanguage } : {}),
+      briefLanguage: brief.language.target,
+    });
     const targetLanguage = languageAdoption.language;
+    /**
+     * Phase 4 (RFC-15 §2) — WHICH of the five sources decided this run's language, in the belief record's
+     * own vocabulary, and the sentence a trace reader gets. Computed here, where both halves of the
+     * resolution are in scope, and read once at `09b`.
+     *
+     * The mapping is the point: `readLanguageBelief` re-reads `own-posts`, `brand-language`,
+     * `explicit-mention` and `brief`, and REFUSES `sniff`. So a script sniff must arrive here labelled
+     * `sniff` and nothing else, or the one guardrail against a guess calcifying is gone. 02d's own
+     * `script-sniff` source is therefore mapped straight across, and its three prose sources
+     * (`profile`/`voice-rules`/`brand-voice-doc`) all collapse to `explicit-mention`, which is what they are.
+     *
+     * `belief` maps to `explicit-mention` rather than round-tripping as itself: a belief that was re-read is
+     * being RE-CONFIRMED by this run, and re-writing it under its own provenance would lose the fact that
+     * something decisive originally produced it.
+     */
+    const languageBeliefSource: LanguageBeliefSource =
+      languageAdoption.source === "own-posts"
+        ? "own-posts"
+        : languageAdoption.source === "brief"
+          ? "brief"
+          : resolvedTargetLanguageSource === "brand"
+            ? "brand-language"
+            : resolvedTargetLanguageSource === "script-sniff"
+              ? "sniff"
+              : "explicit-mention";
+    const languageBeliefEvidence =
+      languageAdoption.note ??
+      `02d resolved ${targetLanguage ?? "no target language"} from ${resolvedTargetLanguageSource ?? "an unrecorded source"}`;
     if (languageAdoption.note !== undefined) {
       // A run note, not a gate: the language is now consistent everywhere, and
       // what an operator needs to know is that it came from a document rather
@@ -2154,6 +2297,15 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             ...(studioKit !== undefined ? { kit: studioKit } : {}),
             clientSlug: wf.clientSlug,
             ...(targetLanguage !== undefined ? { targetLanguage } : {}),
+            // Phase 4 (RFC-15 §7.2). Derived here from `bcp47For` rather than read off `languageBrief`,
+            // which does not exist yet — `04l` is ~2,500 lines below this and the studio runs at setup.
+            // Without it the studio's Hebrew sample renders inside a document declaring `lang="en"`, which
+            // is precisely the defect the slot exists to close, on the ONE path whose job is to prove the
+            // script fonts load: gate 8 asks "did a Hebrew face actually paint these glyphs", and asking it
+            // of an English document answers a different question. `bcp47For` returns undefined rather than
+            // guessing for a multi-language script row, and the slot then falls back to "en" in
+            // `buildStudioSampleContent` exactly as it does for an English client.
+            ...(bcp47For(targetLanguage) !== undefined ? { bcp47: bcp47For(targetLanguage)! } : {}),
             dir,
           });
 
@@ -2958,7 +3110,30 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         brandOutcome.status === "success" ? (brandOutcome.result as Record<string, unknown>) : undefined,
       );
     });
-    const crossChannel = await readCrossChannelHistory(wf, tools, ctx, { stepId: "04e-read-cross-channel-history", socialAccounts });
+    // `window: "24h"` is not a tuning choice — it is the same bar `00b1`, `03e` and `00c2` pass, and the
+    // cache is keyed by the ACCOUNT SET rather than by the window. Sharing the key without sharing the
+    // freshness bar means a seven-hour-old entry is a hit for them and a miss here, which is exactly the
+    // case the metering below would get wrong.
+    const crossChannel = await readCrossChannelHistory(wf, tools, ctx, { stepId: "04e-read-cross-channel-history", socialAccounts, window: "24h" });
+    // ── 04e's scraper spend, RECORDED for the first time (Phase 4, RFC-15 §3.4) ──
+    //
+    // This step has called `research.socialHistory` on the client's own accounts, one billed ScrappyCoco
+    // execution each, since it was written, with no `spend(...)` line anywhere. That is not new money; it is
+    // money the meter has never seen, which means every lever it pulled was pulled against an estimate that
+    // was short by up to $0.042 on a multi-account client.
+    //
+    // Charged on what the tool REPORTED, not on what the run inferred. `research.socialHistory` returns
+    // `fromCache`, which `readCrossChannelHistory` now surfaces as `socialFromCache`, so the meter books a
+    // scrape exactly when one was actually billed.
+    //
+    // This replaces a proxy — "charge when `briefCheck.action === "reuse"`, because that is when `00b1` did
+    // not run". That proxy was right about the common case and wrong about two real ones: a resumed run
+    // whose `00b1` scrape has aged past the window (a miss the proxy calls free), and a run whose accounts
+    // were warmed by ANOTHER agent the same afternoon (a hit the proxy charges for). Both callers agree on
+    // `window: "24h"` above, so the cache is genuinely shared; `socialFromCache` is what says whether it hit.
+    if (crossChannel.socialFromCache === false && socialAccounts.length > 0) {
+      spend("04e-read-cross-channel-history", undefined, socialAccounts.length * STEP_COST_ESTIMATES_USD.scraperExecution);
+    }
     const outputHistory = crossChannel.entries;
     /** This agent's OWN shipped posts — what the format and mode rotations count on. */
     const ownShippedCount = crossChannel.entries.filter((e) => e.channel === "instagram-agent").length;
@@ -4293,6 +4468,27 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        */
       relevance?: { score: number; reason: string; note?: string };
       /**
+       * Phase 4 (RFC-15 §6.5) — what the native editor concluded about the WINNING attempt, for the `09a`
+       * gate payload and the `09c` deliverable, beside `contextGrounding`, `visualInterest` and `budget`.
+       * Absent on an English run, where none of `04l`, `07e2` or `07f` ran.
+       *
+       * Every value is a DELIVERY. `verified` is round 1 clean; `corrected` is round 2 clean after
+       * corrections were applied in place; `degraded` is "still flagged after two rounds, shipping the best
+       * version"; `unverified` is "the judge could not be reached". The last two carry a `reason` and a
+       * ledger warn, and both reach a human at `09a` who can reject what a hold would never have let them
+       * see. There is no `held` and no `failed`, by design.
+       */
+      language?: {
+        status: "verified" | "corrected" | "degraded" | "unverified";
+        rounds: 1 | 2;
+        axes: Record<NativeAxis, NativeAxisVerdict>;
+        correctionsProposed: number;
+        /** Below `correctionsProposed` when a span did not match verbatim exactly once, or a replacement broke a schema cap or the script check. */
+        correctionsApplied: number;
+        /** Present on `degraded` and `unverified`. */
+        reason?: string;
+      };
+      /**
        * Phase 1, item K — what `04i`/`04j` decided for THIS round: the chosen
        * angle, the two rejected ones with their scores, or
        * `status: "unavailable"` when the proposer could not run (fail-open).
@@ -4635,6 +4831,51 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       /** `{ chosen, rejected }` for the copy prompt (§17) — `undefined` on the fail-open path, which the prompt documents as an unchanged drafting path. */
       const angleForCopy = angleDecision !== undefined ? angleForCopyInput(angleDecision) : undefined;
 
+      // ── 04l: the register card, the persona and the few-shot (Phase 4, RFC-15 §3) ──
+      //
+      // `wf.step.code`. NO MODEL CALL, no tool call, no network, no new fetch. $0.00. Everything it reads is
+      // already in scope and already checkpointed: `targetLanguage`, `brief`, `clientVoiceContext`,
+      // `profile` and `crossChannel.entries` — the client's own posts `04e` already pulled and stored with
+      // their full 600-character excerpt, tagged `origin: "social"`. The change here is FRAMING, not
+      // FETCHING: those posts have been the run's only observed evidence of this client's register since
+      // cross-channel history shipped, and nothing has ever read them as one.
+      //
+      // Revision-scoped via `rev()` like `04g` and `04i`, and OUTSIDE the attempt loop: the register does
+      // not change between two attempts at the same revision, and re-deriving it per attempt would put three
+      // identical checkpoints in the trace.
+      //
+      // A new step id rather than a fold into `04g-style-directive`, which is the closest call — same scope,
+      // same kind, also free. Rejected because `04g` means "how this carousel should LOOK", and one step id
+      // meaning two things is the exact trace ambiguity the 2026-09-08 audit opened on. WHICH of the
+      // client's posts were shown as register exemplars, and WHICH register row was applied, are the two
+      // facts somebody will argue about when a Hebrew post reads wrong, and a fact computed inline is a fact
+      // nobody debugging can find.
+      //
+      // Returns `undefined` — the step does not run at all — when `targetLanguage` is undefined or English.
+      const languageBrief =
+        targetLanguage === undefined
+          ? undefined
+          : await wf.step.code(rev("04l-language-register"), () =>
+              buildLanguageBrief({
+                language: targetLanguage,
+                brief,
+                ...(clientVoiceContext !== undefined ? { clientVoiceContext } : {}),
+                // `03a`'s already-checkpointed read, not a fresh `client.getProfile` call: the persona is
+                // derived from `companyName ?? name`, which is exactly what `03a` already holds, and a
+                // second read of the same record inside a step that is supposed to cost nothing is a step
+                // that quietly costs something.
+                profile: trendProfile.profile,
+                ownPosts: crossChannel.entries,
+                mode: topicClaim.mode ?? modeSelection.mode,
+                socialAccounts: socialAccounts.length,
+              }),
+            );
+      /** The rendered block the writer receives (prompt @16 §23) — absent on English runs, so an English payload is unchanged. */
+      const languageBriefForCopy = languageBrief !== undefined ? renderLanguageBrief(languageBrief) : undefined;
+      if (languageBrief !== undefined) {
+        languageCorpusFacts = { registerKey: languageBrief.conventions.key, corpusPosts: languageBrief.register.measured?.posts ?? 0 };
+      }
+
       let finalCopy: InstagramCopyOutput | undefined;
       let finalSelections: ImageSelection[] | undefined;
       let finalSlidesData: RenderCarouselInput | undefined;
@@ -4655,6 +4896,25 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       let dedupeRetrySteer: string | undefined;
       /** Set by an off-brief 07g verdict (Phase 0, item C), so the NEXT attempt's prompt names the bridge the judge could not find. */
       let relevanceSteer: string | undefined;
+      /**
+       * Phase 4 (RFC-15 §4) — the native editor's corrections, quoted span by quoted span, for exactly the
+       * next attempt.
+       *
+       * A FOURTH typed steer beside `dedupeRetrySteer` and `relevanceSteer`, and kept SEPARATE from
+       * `selfCheckSteer` for the reason that field's own comment already gives: a language correction and a
+       * failed render rule are different remedies, they can both be true of the same draft, and one
+       * overwriting the other loses a finding the next attempt was supposed to fix. Prompt @16 §16 tells the
+       * writer to apply both when both arrive.
+       */
+      let nativeSteer: string | undefined;
+      /**
+       * Phase 4 — set on the FINAL attempt when the native editor was still flagging, or could not run at
+       * all: the post ships flagged, never held. Attempt-scoped and reset per attempt exactly as
+       * `interestDegraded` is, so an attempt that was fixed is never reported as degraded.
+       */
+      let languageDegraded: DraftResult["language"] | undefined;
+      /** The shipped attempt's language verdict, for the gate payload and the deliverable. */
+      let finalLanguage: DraftResult["language"] | undefined;
       /**
        * Every OTHER self-check finding the next draft must fix — 07's slide
        * check, 07b craft hygiene, 07e script, 07f fluency, 07h default render
@@ -4681,10 +4941,20 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // steers, and a stale render-rule finding must not ride along with them.
       const priorFindings = selfCheckSteer;
       selfCheckSteer = undefined;
+      // Phase 4 — consumed here, on the same one-attempt lifetime as `selfCheckSteer` and for a sharper
+      // version of the same reason: a correction is an ANCHORED QUOTE, and after one redraft the text it
+      // quotes is gone. Carrying it into a third attempt would ask the writer to find a span that no longer
+      // exists. (`relevanceSteer` and `dedupeRetrySteer` legitimately persist — they name a subject to bridge
+      // to and a post to move away from, neither of which is anchored to a byte range.)
+      const priorNativeSteer = nativeSteer;
+      nativeSteer = undefined;
       // Item L's degrade marker is ATTEMPT-scoped: an attempt whose free
       // re-layout fixed the floor must not ship carrying the previous
       // attempt's finding.
       interestDegraded = undefined;
+      // Phase 4's marker is attempt-scoped for the same reason and reset in the same place: an attempt whose
+      // corrections landed must not ship carrying the previous attempt's "still flagged after 2 rounds".
+      languageDegraded = undefined;
       const copyExec = await wf.step.agent(rev(`05-write-copy-attempt-${attempt}`), copyAgent, {
         ...runDirectionField(runDirection),
         topic: topicClaim.topic,
@@ -4697,6 +4967,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // fail-open path, which the prompt documents as an unchanged path.
         ...(angleForCopy !== undefined ? { angle: angleForCopy } : {}),
         ...(relevanceSteer !== undefined ? { relevanceSteer } : {}),
+        // Phase 4 (prompt @16 §16): the native editor's corrections on the previous attempt, one line per
+        // correction as `slide N · field · "span" → "replacement" (why)`. Applied, not argued with, and
+        // never at the cost of a number, a date, a name or a claim.
+        ...(priorNativeSteer !== undefined ? { nativeSteer: priorNativeSteer } : {}),
         // What the previous attempt's self-check found (prompt §16) — the
         // fluency judge's issues, the failed render rule and slide, the
         // banned phrase — so the redraft fixes the finding instead of
@@ -4735,6 +5009,15 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // verbatim — this is where a language requirement like Geektime's
         // "Hebrew-language technology site" actually lives. See step 02b.
         ...(clientVoiceContext !== undefined ? { clientVoiceContext } : {}),
+        // Phase 4, RFC-15 §4 (prompt @16 §23): the persona, the MEASURED register card, the term policy,
+        // the convention pack and up to six of this client's own published posts as exemplars. §23 makes it
+        // BINDING and superior to every stylistic instinct in §1-§14 when it is present.
+        //
+        // Absent on English runs, so an English run's prompt payload is byte-for-byte what it was at @15 —
+        // which is why `copyLanguageBrief` is a separate cost key from `copyAttempt`. This also closes the
+        // survey's §5-7: until now the writer received the resolved language only as a CLAUSE inside
+        // `briefForPrompt`, never as a field of its own.
+        ...(languageBriefForCopy !== undefined ? { languageBrief: languageBriefForCopy } : {}),
         // The client's projected branding-guidelines context doc (C1,
         // T-A9) — visual-identity rules distinct from the voice/tone
         // `clientVoiceContext` already carries. See step 02e.
@@ -4763,7 +5046,21 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // half that enforces it.
         ...(recentSkeletons.length > 0 ? { recentSkeletons, skeletonRule: SKELETON_RULE_SENTENCE } : {}),
       });
-      spend(rev(`05-write-copy-attempt-${attempt}`), copyExec.totalCostUsd, STEP_COST_ESTIMATES_USD.copyAttempt);
+      // The estimate FLOOR mirrors the estimator's own conditional
+      // (`rawEstimate`: `shape.targetLanguage ? c.copyLanguageBrief + …`).
+      // `copyLanguageBrief` exists as a separate key precisely because the
+      // `languageBrief` field is charged per attempt on non-English runs, so
+      // metering 05 at `copyAttempt` alone made the meter and the estimator
+      // disagree about the price of the same step: on any attempt where the
+      // router reports no usable cost, `RunSpendMeter.add`'s
+      // `max(measured, estimate)` booked $0.161 where the plan said $0.170 —
+      // $0.027 short over three attempts, on exactly the runs this phase
+      // exists for.
+      spend(
+        rev(`05-write-copy-attempt-${attempt}`),
+        copyExec.totalCostUsd,
+        STEP_COST_ESTIMATES_USD.copyAttempt + (languageBriefForCopy !== undefined ? STEP_COST_ESTIMATES_USD.copyLanguageBrief : 0),
+      );
       if (copyExec.status === "tooling_error") {
         throw new WorkflowToolingFailure(`copy step resolved to "${copyExec.status}" on attempt ${attempt}/${maxAttempts}`);
       }
@@ -5427,10 +5724,26 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // this loop are already not monotonic in execution order — 07d runs
       // before 07c — because they name what a step is, not when it runs.
       //
-      // Order within the paid checks (Phase 0): 07e (free) -> 07g relevance
-      // (Flash, ~$0.002) -> 07f fluency (Haiku, ~$0.0055) — cheapest paid
-      // rejection first.
+      // Order within the paid checks (Phase 0, extended by Phase 4): 07e (free) -> 07e2
+      // `gate.nativeLanguage` (free) -> 07g relevance (Flash, ~$0.002) -> 07f native editor (Gemini Pro,
+      // ~$0.014) — cheapest rejection first, and BOTH free rejections before any of them. Phase 4 makes the
+      // paid half four times dearer, which is exactly why the free half grew to match: everything about
+      // nativeness a machine can decide is decided at 07e2, for nothing, so the judge spends its tokens only
+      // on the two things it cannot — idiom and register.
       const gateText = targetLanguage !== undefined ? languageGateText(copy) : undefined;
+      const expectedScript = targetLanguage !== undefined ? resolveExpectedScript(targetLanguage) : undefined;
+      /** 07e2's CANDIDATE findings — never a failure on their own, handed to the judge to confirm or reject with a corrected string. */
+      let nativeSoftTells: readonly string[] = [];
+      /** This attempt's language verdict. Set on every terminating branch of 07f, because every branch of 07f terminates by DELIVERING. */
+      let languageVerdict: DraftResult["language"];
+      /**
+       * `gate.nativeLanguage`, resolved once for the attempt: 07e2 runs it on the raw draft and 07f runs its
+       * HARD FAILS again on the corrected copy. `undefined` on the ~30 partial test registries, where both
+       * calls are skipped and `07e`'s `checkExpectedScript` stands alone exactly as it does today.
+       */
+      const nativeGate = tools["gate.nativeLanguage"];
+      const scriptPattern = expectedScript?.test.source ?? "";
+      const scriptPatternUsable = /^\\p\{Script=[A-Za-z]+\}$/.test(scriptPattern);
       if (targetLanguage !== undefined && gateText !== undefined) {
         // Stage 1 — deterministic, no model call, no tools. Runs first so
         // the catastrophic case (an entirely wrong-script post) never pays
@@ -5441,6 +5754,70 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         if (!scriptCheck.ok) {
           returnToCopyWith(`slide copy failed the deterministic language/script check: ${scriptCheck.reason}`);
           continue;
+        }
+
+        // ── 07e2: `gate.nativeLanguage`, the deterministic half of nativeness (Phase 4, RFC-15 §5) ──
+        //
+        // Free. No model call. Called exactly the way `checkCraftHygiene` calls `gate.lintPost` — the tool
+        // registry with `{ ctx }`. It checks, mechanically, the four of the six things a native reader
+        // clocks that a machine CAN decide: per-field script coverage (07e measures one concatenated blob
+        // against a 0.3 floor, so a carousel with two English slides out of eight measures ~0.75 aggregate
+        // and passes today), forbidden transliterations and purisms, curly quotation marks, nikud, foreign
+        // digits, Latin month names, impossible date orders, and bidi control characters in
+        // model-authored text.
+        //
+        // It runs on the RAW copy, before `isolateForeignRuns` composes the rendered fields: the only legal
+        // U+2068/U+2069 in this pipeline are the ones the isolater inserts AFTER this gate, so a control
+        // character here is a leak or a layout hack, and there is no state in which this gate should be
+        // looking at its own downstream output.
+        //
+        // SKIPPED when the registry does not carry the tool. ~30 existing test files hand this workflow a
+        // partial registry, and a gate that turns a missing tool into a failing draft would rewrite all of
+        // them to say nothing new. `07e`'s `checkExpectedScript` then stands alone, exactly as it does today.
+        // The gate owns NO script table: it takes the expected script from here, so `SCRIPT_TABLE` stays the
+        // single source of truth and RFC-13's "the language gate is agent-local" layering decision stands.
+        // `scriptPattern` is constrained to the literal `\p{Script=Xxxx}` form and re-validated inside the
+        // tool before it is compiled, so a caller cannot weaken the gate by passing `.` — which means a
+        // caller that cannot produce that exact form must not call it at all. `SCRIPT_TABLE`'s Japanese and
+        // Korean rows are multi-script ALTERNATIONS (`[\p{Script=Hiragana}\p{Script=Katakana}…]`), so their
+        // `source` is not the literal form and they get no 07e2 rather than a guessed pattern.
+        if (nativeGate !== undefined && expectedScript !== undefined && scriptPatternUsable) {
+          const conventions = await wf.step.code(rev(`07e2-native-conventions-attempt-${attempt}`), async () => {
+            const outcome = await nativeGate.execute(
+              {
+                language: targetLanguage,
+                scriptName: expectedScript.name,
+                scriptPattern,
+                fields: languageGateFields(copy),
+                allowedLatinTerms: languageBrief?.terms.allowedLatinTerms ?? [],
+                forbiddenTransliterations: languageBrief?.terms.forbiddenTransliterations ?? [],
+              },
+              { ctx },
+            );
+            if (outcome.status !== "success") {
+              // A gate that could not RUN is not a verdict on the draft, and this one is free — there is no
+              // spend to justify failing a run over. It degrades to "no opinion" and the paid judge, which
+              // covers the same ground less cheaply, still runs.
+              return { ok: true as const, evidence: [] as string[], reason: undefined };
+            }
+            const verdict = outcome.result as GateVerdict;
+            // A `tooling_error` verdict is the same "no opinion" as a non-success outcome, for the same
+            // reason: this gate is free, so there is no spend to justify failing a draft over a gate that
+            // could not form a view.
+            if (verdict.verdict === "pass") return { ok: true as const, evidence: verdict.evidence, reason: undefined };
+            if (verdict.verdict === "tooling_error") return { ok: true as const, evidence: [] as string[], reason: undefined };
+            return { ok: false as const, evidence: verdict.evidence, reason: verdict.reason };
+          });
+          if (!conventions.ok) {
+            // FREE, and it consumes ZERO relevance turns and ZERO judge turns: this `continue` is above both
+            // paid steps. That ordering is the whole cost argument of this phase.
+            returnToCopyWith(`slide copy failed the deterministic ${targetLanguage} conventions gate: ${conventions.reason}`);
+            continue;
+          }
+          // Soft tells never fail a draft. They travel into the judge's input as CANDIDATE findings it must
+          // confirm or reject with a corrected string, which is what makes the free half and the paid half
+          // one instrument rather than two opinions.
+          nativeSoftTells = conventions.evidence;
         }
       }
 
@@ -5502,40 +5879,237 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           ? undefined
           : { score: relevance.score, reason: relevance.reason, ...(relevance.status === "relevant" && relevance.note !== undefined ? { note: relevance.note } : {}) };
 
+      // ── 07f: the native editor, two rounds, then DELIVER (Phase 4, RFC-15 §6) ──
+      //
+      // ~$0.014/attempt on non-English runs only: `gemini-2.5-pro` at $1.25/$10 per 1M, ~6.0k in (rubric 1.5k
+      // + register card 0.45k + 4 few-shot posts 2.0k + the draft 1.7k + `gate.nativeLanguage`'s soft tells
+      // 0.2k + scaffolding 0.15k) and ~0.65k out (up to 8 corrections at ~70 tokens each plus the verdict).
+      // It is the CHEAPEST non-premium row in the catalog rated `multilingual-strong` + `rtlSupport: "strong"`
+      // (`gemini-3.1-pro-preview` also qualifies, at $2/$12); the two Opus rows qualify and are banned. It replaces a
+      // $0.0055 Haiku call rated `basic` on BOTH dimensions — +$0.0085/attempt to stop asking a basic model
+      // about idiom, against $0.240 for the redraft a wrong verdict costs.
+      //
+      // NOT Opus, at any tier. `claude-opus-4-8` on this call is $0.046, and on the five steps that carry
+      // `contentLanguageSensitive` it is a ~$2.9 run against a $1.50 hard max. That is the trap
+      // `CONTENT_LANGUAGE_MAX_COST_TIER` closes, and this step does not reopen it: it is PINNED to the model
+      // the requirement would have selected anyway, with `contentLanguageSensitive: false`, so letting the
+      // policy move it could only move it somewhere worse.
+      //
+      // ## Two rounds, at SENTENCE granularity, and every branch delivers
+      //
+      // The plan's "two rounds" is two JUDGE rounds inside one attempt, not two paid redrafts. A
+      // translationese finding costs $0.014 to fix in place and $0.240 to redraft, and the judge has already
+      // written the better sentence. Round 1 judges the draft; if it proposes corrections they are applied
+      // in place, the free checks are re-run on the PATCHED text, and round 2 judges the result.
+      //
+      // NO `WorkflowHeld` ON ANY LANGUAGE PATH. Language is a mandatory gate for a non-English client; the
+      // TIER is the optional part. A hold delivers nothing and a person cannot reject what they never
+      // received, so unverified copy ships FLAGGED — to a run that still has a human gate at `09a`. The
+      // original geektime failure shipped because nothing told anyone, not because something shipped.
       if (targetLanguage !== undefined && gateText !== undefined) {
-        // Stage 2 — one commodity-tier judge call. Hebrew-shaped nonsense is
-        // still Hebrew characters, so stage 1 cannot see it.
-        const fluency = await runLanguageFluency(
-          wf,
-          { tools, promptStore: options.promptStore, router: options.router },
-          gateText,
-          targetLanguage,
-          rev(`${LANGUAGE_FLUENCY_STEP_ID}-attempt-${attempt}`),
-        );
-        // An `error` verdict means the judge ran twice (the call and its one
-        // in-step retry) and could not answer: the meter counts both calls.
-        spend(rev(`${LANGUAGE_FLUENCY_STEP_ID}-attempt-${attempt}`), undefined, (fluency.status === "error" ? 2 : 1) * STEP_COST_ESTIMATES_USD.fluency);
-        // FAILS CLOSED (Phase 0, item B). `error` used to be a pass — the same
-        // fail-open posture as `runTopicGuardrail` — which is exactly what
-        // let unverified Hebrew ship: copy in a language nothing else in the
-        // pipeline reads does not go out on the strength of an outage.
-        // `runLanguageFluency` already retried the judge once inside the
-        // same step, so a transient 429 costs nothing here; a real outage
-        // costs the attempt, bounded by MAX_SELF_CHECK_ATTEMPTS -> the
-        // existing WorkflowHeld, whose reason names the outage so an operator
-        // does not chase a copy problem.
-        if (fluency.status !== "fluent") {
-          // The judge's own findings (issues + evidence) travel into the
-          // redraft prompt — a "reads translated" verdict with no steer was
-          // a blind redraft of the same sentences.
-          returnToCopyWith(
-            fluency.status === "error"
-              ? `the fluency judge could not run (${fluency.error ?? "unknown error"}): refusing to ship unverified ${targetLanguage} copy on attempt ${attempt}`
-              : `slide copy is not fluent ${targetLanguage} on attempt ${attempt}: ` +
-                  `${fluency.issues.length > 0 ? fluency.issues.join("; ") : "no specific issues given"}` +
-                  `${fluency.evidence ? ` (e.g. "${fluency.evidence}")` : ""}`,
-          );
-          continue;
+        const judgeDeps = { tools, promptStore: options.promptStore, router: options.router };
+        const judgeStepId = rev(`${LANGUAGE_FLUENCY_STEP_ID}-attempt-${attempt}`);
+        const registerCard = languageBrief !== undefined ? renderRegisterCard(languageBrief.register, languageBrief.target) : undefined;
+        const judgeFewShotPosts = languageBrief !== undefined ? judgeFewShot(languageBrief).map((p) => p.text) : [];
+        const isFinalAttempt = attempt === maxAttempts;
+        /** Past the hard max the judge is NOT skipped — it degrades to the Haiku tier with the rubric and no few-shot, round 1 only. */
+        const cheapestPath = meter.posture === "cheapest-path";
+
+        const judgeInputFor = (judged: InstagramCopyOutput): NativeEditorInput => ({
+          language: targetLanguage,
+          ...(expectedScript !== undefined ? { script: expectedScript.name } : {}),
+          // On the cheapest path the rubric still travels and the few-shot does not: the rubric is what the
+          // check IS, the exemplars are what make it generous. Dropping the exemplars is the degradation.
+          ...(registerCard !== undefined && !cheapestPath ? { registerCard } : {}),
+          ...(judgeFewShotPosts.length > 0 && !cheapestPath ? { fewShot: judgeFewShotPosts } : {}),
+          ...(nativeSoftTells.length > 0 ? { softTells: nativeSoftTells } : {}),
+          fields: languageGateFields(judged),
+        });
+
+        // ── Round 1 ──
+        const round1 = await runNativeEditor(wf, judgeDeps, judgeInputFor(copy), judgeStepId);
+        // BILLED ON THE FACTS THE JUDGE RETURNS, not on a proxy for them. `calls` is 2 whenever the in-step
+        // retry ran — including the retry-then-SUCCEED path, which `status === "error"` cannot see and which
+        // therefore used to book two vendor calls as one. `costUsd` is the vendor's own reading summed
+        // across both; passing it makes this line behave like every other agent step in this file (compare
+        // the `<x>Exec.totalCostUsd` arguments at 04a/04b/05/07a…) instead of being the one step whose
+        // `ewmaRatio` contribution is guaranteed to be the estimate it started from.
+        // METERED AT THE GEMINI PRO RATE ON BOTH PATHS, deliberately, and this is NOT what RFC-15 §6.5's
+        // termination table describes. The table's `cheapest-path` row degrades the judge to the Haiku tier
+        // ($0.0055), and what is implemented here is only the half this step can reach: the payload shrinks
+        // (no register card, no few-shot) and there is no round 2 and no language-driven redraft. The MODEL
+        // does not move, because `runNativeEditor` constructs `InstagramNativeEditorAgent` with its own
+        // pinned policy and takes no tier argument.
+        //
+        // So the meter books what the call actually costs. Booking `fluency` here would be the estimate
+        // flattering itself by $0.0085 on precisely the runs that have already crossed the hard max — the
+        // one moment the meter's reading has to be right. `STEP_COST_ESTIMATES_USD.fluency` is kept as the
+        // priced tier for when `runNativeEditor` can accept one.
+        const judgeUnit = STEP_COST_ESTIMATES_USD.nativeJudge;
+        spend(judgeStepId, round1.costUsd, round1.calls * judgeUnit);
+
+        if (round1.status === "error") {
+          // The judge could not run. With attempts left, return to 05 naming the OUTAGE — a redraft is free
+          // to succeed where a transient failure did not, and the reason says so, so an operator does not
+          // chase a copy problem. On the final attempt: SHIP, flagged `unverified`, with a ledger warn.
+          if (!isFinalAttempt) {
+            returnToCopyWith(`the native ${targetLanguage} editor could not run (${round1.error ?? "unknown error"}) on attempt ${attempt}`);
+            continue;
+          }
+          languageDegraded = {
+            status: "unverified",
+            rounds: 1,
+            axes: round1.axes,
+            correctionsProposed: 0,
+            correctionsApplied: 0,
+            reason:
+              `the native ${targetLanguage} editor could not be reached on the final attempt (${round1.error ?? "unknown error"}), so this post's language was never verified. ` +
+              `A ${targetLanguage} reader should read the slides before this publishes.`,
+          };
+        } else if (round1.status === "native") {
+          languageVerdict = { status: "verified", rounds: 1, axes: round1.axes, correctionsProposed: 0, correctionsApplied: 0 };
+        } else if (cheapestPath || round1.corrections.length === 0) {
+          // Two cases that both stop after round 1. Past the hard max there IS no round 2 and no
+          // language-driven redraft — the run finishes on the cheapest complete path and delivers. And a
+          // "not native" verdict carrying no corrections has nothing to apply: the parser discards a finding
+          // without a correction, which is what makes "report without correcting" structurally
+          // unrepresentable, so an empty list means the judge produced nothing actionable.
+          const why = cheapestPath
+            ? `past the run's hard max, so the native ${targetLanguage} editor ran on the degraded tier with no exemplars and no second round`
+            : `the native ${targetLanguage} editor flagged this draft but proposed no applicable correction`;
+          if (!isFinalAttempt && !cheapestPath) {
+            returnToCopyWith(`${why} on attempt ${attempt}`);
+            continue;
+          }
+          languageDegraded = {
+            status: "degraded",
+            rounds: 1,
+            axes: round1.axes,
+            correctionsProposed: round1.corrections.length,
+            correctionsApplied: 0,
+            reason: `${why}. A ${targetLanguage} reader should read the slides before this publishes.`,
+          };
+        } else {
+          // ── The correction pass: pure, free, no step id of its own ──
+          //
+          // `applyNativeCorrections` is a pure function of two CHECKPOINTED values (05's output and round
+          // 1's verdict), so it is deterministic across a resume; the corrected copy is itself checkpointed
+          // one step later at `07c-emit-slides-data-attempt-N`. It re-runs craft hygiene and the per-field
+          // script check on the patched text internally, and discards the WHOLE patch if either refuses —
+          // `07b` and `07e2` ran BEFORE the corrections existed, and copy that ships must have passed every
+          // free check in the state it ships in, or a judge's proposal could smuggle an em dash past
+          // `gate.lintPost`.
+          const patch = await applyNativeCorrections(copy, round1.corrections, {
+            checkHygiene: (candidate) => checkCraftHygiene(tools, ctx, candidate),
+            language: targetLanguage,
+          });
+
+          // The gate re-run is the caller's half: `applyNativeCorrections` re-runs hygiene and the script
+          // check, and `gate.nativeLanguage`'s HARD FAILS are re-run here, on the patched copy, for exactly
+          // the same reason.
+          let patchRefused = patch.discardReason;
+          if (patchRefused === undefined && patch.applied > 0 && nativeGate !== undefined && expectedScript !== undefined && scriptPatternUsable) {
+            const recheck = await wf.step.code(rev(`07e2-native-conventions-attempt-${attempt}-corrected`), async () => {
+              const outcome = await nativeGate.execute(
+                {
+                  language: targetLanguage,
+                  scriptName: expectedScript.name,
+                  scriptPattern,
+                  fields: languageGateFields(patch.copy),
+                  allowedLatinTerms: languageBrief?.terms.allowedLatinTerms ?? [],
+                  forbiddenTransliterations: languageBrief?.terms.forbiddenTransliterations ?? [],
+                },
+                { ctx },
+              );
+              if (outcome.status !== "success") return undefined;
+              const verdict = outcome.result as GateVerdict;
+              // Only a `content_fail` refuses the patch. A `tooling_error` here would otherwise throw away a
+              // set of corrections that had already passed craft hygiene and the script check, on the
+              // strength of an outage — the fail-closed-into-nothing posture this phase exists to remove.
+              return verdict.verdict === "content_fail" ? verdict.reason : undefined;
+            });
+            patchRefused = recheck;
+          }
+          /** The copy round 2 judges, and the copy that ships if it passes: the patch, or the raw draft when the patch was refused. */
+          const corrected = patchRefused === undefined && patch.applied > 0 ? patch.copy : copy;
+          const appliedCount = patchRefused === undefined ? patch.applied : 0;
+
+          // ── Round 2, on the CORRECTED copy ──
+          const round2StepId = `${judgeStepId}${LANGUAGE_FLUENCY_ROUND2_SUFFIX}`;
+          const round2 = await runNativeEditor(wf, judgeDeps, judgeInputFor(corrected), round2StepId);
+          spend(round2StepId, round2.costUsd, round2.calls * judgeUnit);
+
+          const droppedAxes = [...new Set(round2.corrections.map((c) => c.axis))].join(", ");
+          if (round2.status === "native") {
+            copy = corrected;
+            languageVerdict = {
+              status: appliedCount > 0 ? "corrected" : "verified",
+              rounds: 2,
+              axes: round2.axes,
+              correctionsProposed: round1.corrections.length,
+              correctionsApplied: appliedCount,
+            };
+          } else if (round2.status === "error") {
+            if (!isFinalAttempt) {
+              returnToCopyWith(`the native ${targetLanguage} editor could not run its second round (${round2.error ?? "unknown error"}) on attempt ${attempt}`);
+              continue;
+            }
+            copy = corrected;
+            languageDegraded = {
+              status: "unverified",
+              rounds: 2,
+              axes: round2.axes,
+              correctionsProposed: round1.corrections.length,
+              correctionsApplied: appliedCount,
+              reason:
+                `the native ${targetLanguage} editor could not be reached for its second round on the final attempt ` +
+                `(${round2.error ?? "unknown error"}); ${appliedCount} of its first-round corrections were applied in place but never re-checked. ` +
+                `A ${targetLanguage} reader should read the slides before this publishes.`,
+            };
+          } else if (!isFinalAttempt) {
+            // Still not native, and there is an attempt left: back to 05 with the corrections as a steer,
+            // so the writer fixes the sentences rather than redrafting blind.
+            nativeSteer = nativeSteerFor(round2.corrections);
+            returnToCopyWith(
+              `the native ${targetLanguage} editor still reads attempt ${attempt} as translated after two rounds ` +
+                `(${round2.corrections.length} phrase(s); ${droppedAxes || "no axis named"})`,
+            );
+            continue;
+          } else {
+            // FINAL attempt, still not native. SHIP THE BEST VERSION — the corrected copy when the patch
+            // applied cleanly, otherwise the raw draft — flagged `degraded`. Never held.
+            copy = corrected;
+            languageDegraded = {
+              status: "degraded",
+              rounds: 2,
+              axes: round2.axes,
+              correctionsProposed: round1.corrections.length,
+              correctionsApplied: appliedCount,
+              reason:
+                `the native ${targetLanguage} editor still flagged ${round2.corrections.length} phrase(s) after 2 rounds; ` +
+                `${appliedCount} of its corrections were applied in place and ${round1.corrections.length - appliedCount} could not be ` +
+                `(${droppedAxes || "no axis named"})${patchRefused !== undefined ? ` — the whole patch was discarded because ${patchRefused}` : ""}. ` +
+                `A ${targetLanguage} reader should read the slides before this publishes.`,
+            };
+          }
+        }
+
+        // One ledger warn per degraded/unverified delivery, keyed so a RESUME writes exactly one row.
+        if (languageDegraded !== undefined) {
+          languageVerdict = languageDegraded;
+          try {
+            await tools["ledger.appendEvent"]?.execute(
+              {
+                runId: wf.runId,
+                eventId: `${wf.runId}__language-${languageDegraded.status}-r${revision}`,
+                level: "warn",
+                message: languageDegraded.reason ?? `this post's ${targetLanguage} was not verified`,
+              },
+              { ctx },
+            );
+          } catch (error) {
+            console.error(`${judgeStepId}: could not record the language-${languageDegraded.status} warn`, error);
+          }
         }
       }
 
@@ -5625,6 +6199,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // neither a numeral nor model-authored copy — an unsourced
           // timeline/unit_grid's "illustrative, not measured" note.
           ...(targetLanguage !== undefined ? { targetLanguage } : {}),
+          // Phase 4, RFC-15 §7.2 — fills every slide document's `{{lang}}` slot, so a Hebrew document stops
+          // declaring `lang="en"` and picking a LATIN fallback face for a glyph the stack does not carry.
+          // Taken from `04l`'s brief, which owns the name-or-tag resolution, rather than re-derived here: a
+          // second spelling table in the renderer is exactly the drift `scriptTypographyFor` exists to
+          // prevent. Absent on an English run, where the fallback is the literal `"en"` every bundled
+          // template already carried, so an English document is byte-identical.
+          ...(languageBrief?.bcp47 !== undefined ? { bcp47: languageBrief.bcp47 } : {}),
           // Phase 3, item S: the run's ONE frozen treatment, per slide, for
           // reporting and trace. The grade itself is applied by the
           // stylesheet `headExtras()` splices into every document, so this is
@@ -6359,6 +6940,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         finalRendered = renderedAttempt;
         finalContrastFacts = preChecks.contrastFacts;
         finalRelevance = attemptRelevance;
+        // Phase 4 — this attempt's native-editor verdict travels with the attempt that WON. Attempt-scoped, so
+        // an earlier attempt's `degraded` never rides along with a later attempt that came back clean.
+        finalLanguage = languageVerdict;
         finalInterest = floor;
         finalInterestRelayout = interestRelayout;
         finalSkeleton = skeletonVerdict;
@@ -6414,6 +6998,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       finalRendered = renderedAttempt;
       finalContrastFacts = preChecks.contrastFacts;
       finalRelevance = attemptRelevance;
+      finalLanguage = languageVerdict;
       finalInterest = floor;
       finalInterestRelayout = interestRelayout;
       finalSkeleton = skeletonVerdict;
@@ -6453,6 +7038,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         ...(variationPlan !== undefined && variationPlan.length > 0 ? { variationPlan } : {}),
         contrastFacts: finalContrastFacts,
         ...(finalRelevance !== undefined ? { relevance: finalRelevance } : {}),
+        // Phase 4 — absent on an English run, where 04l/07e2/07f never ran. Present on EVERY non-English
+        // run, including the degraded and unverified ones, because that is the whole point: a flagged
+        // delivery is a decision the human at 09a can make, and a hold is not.
+        ...(finalLanguage !== undefined ? { language: finalLanguage } : {}),
         ...(angleDecision !== undefined ? { angleDecision } : {}),
         // Phase 2, items L/M/P — measured on the attempt that actually ships.
         // `interest` and `skeleton` are non-optional because both are
@@ -6502,6 +7091,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         ? { briefSourceNotes: briefWriteOutcome.sourceNotes }
         : {}),
       ...(draft.relevance !== undefined ? { relevance: draft.relevance } : {}),
+      // Phase 4 — the native editor's verdict on the shipped draft, beside the relevance verdict, so it
+      // reaches BOTH the 09a gate payload and the 09c deliverable through the one function they share.
+      // Carried on EVERY non-English delivery, clean ones included: the per-axis verdicts and the round
+      // count are what the next phase reads to find out whether RFC-15 section 9.4's bet - that the register
+      // card and the in-place corrections remove one redraft in four - actually paid.
+      ...(draft.language !== undefined ? { language: draft.language } : {}),
     });
 
     /**
@@ -7016,6 +7611,20 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           }
         : undefined;
 
+    /**
+     * Phase 4 (RFC-15 §6.5) — the language marker, computed once beside the interest one and for the same
+     * reason: the deliverable, the gate payload and the workflow's own return value must all carry the SAME
+     * sentence. Absent on an English run and on every non-English run the native editor cleared.
+     *
+     * `degraded` and `unverified` are BOTH markers, and neither is a hold. `unverified` is the one that
+     * matters most here: it is the exact state the original geektime carousel shipped in, and the only thing
+     * that has changed is that it now says so, to a person who can still reject it.
+     */
+    const languageDegradedMarker =
+      review.output.language !== undefined && review.output.language.status !== "verified" && review.output.language.status !== "corrected"
+        ? { status: "degraded" as const, reason: review.output.language.reason ?? `this post's language was not verified (${review.output.language.status})` }
+        : undefined;
+
     // ── 09f: the pool that grows (Phase 2, item O) ──
     //
     // A run-authored layout that shipped through the HUMAN gate twice with no
@@ -7345,6 +7954,14 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           crossedTarget: budgetSummary.crossedTarget,
           crossedMax: budgetSummary.crossedMax,
           adaptations: budgetSummary.adaptations.length,
+          // RFC-15 §9.4's measurement channel. The same numbers reach the
+          // per-run deliverable, but nothing ever reads a deliverable BACK —
+          // so without this line the phase's stated bet ("round 1 usually
+          // settles it; the in-place patch usually holds") was unfalsifiable
+          // by the next run. Absent on English runs, where the loop never ran.
+          ...(review.output.language !== undefined
+            ? { language: { rounds: review.output.language.rounds, status: review.output.language.status, axes: { ...review.output.language.axes } } }
+            : {}),
         });
         // ONE call carrying every belief key this run learned something about,
         // not one call per key: `memory.updateBeliefs` shallow-merges a diff, so
@@ -7369,10 +7986,35 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           ...(shippedOccupancy.length === slidesData.slides.length ? { occupancy: shippedOccupancy } : {}),
           edited: hasReviewEdits,
         });
+        /**
+         * Phase 4 — the belief this run earned. Built here rather than at `04l` so it records what actually
+         * SHIPPED: a run that was held or never delivered writes nothing, and `09b` is the one step that
+         * only runs on a delivery.
+         */
+        const languageBelief = buildLanguageBelief({
+          language: targetLanguage,
+          source: languageBeliefSource,
+          evidence: languageBeliefEvidence,
+          corpusPosts: languageCorpusFacts?.corpusPosts ?? 0,
+          registerKey: languageCorpusFacts?.registerKey ?? "",
+        });
         await tools["memory.updateBeliefs"]?.execute(
           {
             diff: {
               [RUN_BUDGET_BELIEF_KEY]: next,
+              // Phase 4 (RFC-15 §2) — this run's resolved language, so the NEXT run reads it as source 3
+              // and a client whose Hebrew lives only in their own posts stops being re-derived from scratch
+              // every week. `memory.updateBeliefs` is free-form and shallow-merged: no schema, no migration,
+              // no `ClientBriefSchema` bump, and a sibling key beside `instagramRunBudget`.
+              //
+              // `buildLanguageBelief` refuses two cases itself — English (a decision with evidence, not a
+              // language) and `own-posts` with an empty corpus (a fact about the scrape, not about the
+              // client) — and returns `undefined`, which spreads to nothing here.
+              //
+              // A `sniff`-sourced entry IS written, deliberately: it is worth having in the trace, and
+              // `readLanguageBelief` refuses to re-read it, so a guess is observable without ever becoming
+              // permanent truth. That split is the whole decisiveness filter.
+              ...(languageBelief !== undefined ? { [LANGUAGE_BELIEF_KEY]: languageBelief } : {}),
               [SKELETON_BELIEF_KEY]: recordSkeleton(skeletonHistory, skeletonEntry),
               [CUSTOM_ARCHETYPE_BELIEF_KEY]: customArchetypeHistory,
               // The setup history is a fourth SIBLING key, written only on a
@@ -7513,6 +8155,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // post that shipped with a measured defect distinguishable from one that
       // shipped clean. Never a hold.
       ...(interestDegradedMarker !== undefined ? { visualInterest: interestDegradedMarker } : {}),
+      // Phase 4 — same shape, same rule, same reason. A run whose Hebrew the native editor still flagged
+      // after two rounds, or could not judge at all, COMPLETED and delivered; the marker is what keeps it
+      // distinguishable from one that shipped clean. Never a hold.
+      ...(languageDegradedMarker !== undefined ? { language: languageDegradedMarker } : {}),
     };
   };
 }

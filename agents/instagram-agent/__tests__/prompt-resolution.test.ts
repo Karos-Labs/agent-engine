@@ -458,8 +458,11 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // this asserts is that the rows exist at all, which is the step a prompt
     // bump most often forgets.
     const registry = readFileSync(path.join(PROMPTS_ROOT, "..", "..", "..", "scripts", "prompt-registry.ts"), "utf8");
-    expect(registry).toContain(`"13", "14", "15"`);
-    expect(registry).toMatch(/promptId: "instagram-copy"[\s\S]{0,400}latestVersion: "15"/);
+    expect(registry).toContain(`"13", "14", "15", "16"`);
+    expect(registry).toMatch(/promptId: "instagram-copy"[\s\S]{0,400}latestVersion: "16"/);
+    // Phase 4 (RFC-15 §6). The native editor's prompt is the one this phase
+    // added; a row that never lands is exactly what this test exists to catch.
+    expect(registry).toContain(`{ promptId: "instagram-native-editor", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
     // Phase 3 (items Q and R).
     expect(registry).toContain(`{ promptId: "instagram-image-vet", agent: "instagram-agent", versions: ["1", "2", "3", "4"], latestVersion: "4" }`);
     expect(registry).toContain(`{ promptId: "instagram-art-director", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
@@ -469,13 +472,13 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     expect(registry).toContain(`{ promptId: "instagram-template-set-review", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
   });
 
-  it("every agent reads the version this phase shipped: copy @15, visual QA @4, image vet @4, art director @1", async () => {
+  it("every agent reads the version this phase shipped: copy @16, visual QA @4, image vet @4, art director @1", async () => {
     // The last line of a prompt bump, and the one most often forgotten: a new
     // prompt file that no `skillRef` points at exists, resolves, and is read
     // by nothing.
     const promptStore = makePromptStore();
     const copy = new InstagramCopyAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
-    expect((copy as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-copy@15");
+    expect((copy as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-copy@16");
     const qa = new InstagramVisualQaAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
     expect((qa as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-visual-qa@4");
     const vet = new InstagramImageVettingAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
@@ -484,14 +487,14 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     expect((director as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-art-director@1");
   });
 
-  it("instagram-copy@15, instagram-image-vet@4 and instagram-art-director@1 resolve, each byte-identical to its own latest.md", async () => {
+  it("instagram-copy@16, instagram-image-vet@4 and instagram-art-director@1 resolve, each byte-identical to its own latest.md", async () => {
     // Phase 3 (items Q and R). The byte comparison is the one `check:prompts`
     // makes too, and it is here as well because a drifted `latest.md` is the
     // failure mode where a run silently reads a DIFFERENT prompt from the one
     // its version pin names.
     const promptStore = makePromptStore();
     for (const [promptId, version, h1] of [
-      ["instagram-copy", "15", "# Instagram Copy Craft Guide, v15"],
+      ["instagram-copy", "16", "# Instagram Copy Craft Guide, v16"],
       ["instagram-image-vet", "4", "# Instagram Image Vetting Craft Guide — v4"],
       ["instagram-art-director", "1", "# Instagram Art Direction Guide — v1"],
     ] as const) {
@@ -577,7 +580,12 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
       "copy",
       "vet",
       "relevance",
-      "fluency",
+      // Phase 4 (RFC-15 §6.5) renamed this slot `fluency` -> `nativeEditor`
+      // and made it VARIADIC (one entry per judge round). It did not move:
+      // the native editor runs at the same point in the run the fluency judge
+      // did, which is what keeps every existing workflow fixture's turn order
+      // valid.
+      "nativeEditor",
       "qa",
     ]);
 
@@ -590,7 +598,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
       scout: "scout",
       vet: "vet",
       relevance: "relevance",
-      fluency: "fluency",
+      nativeEditor: ["nativeEditor"],
       designBrief: "designBrief",
       templateDesign: ["design1", "design2"],
       setReview: "setReview",
@@ -612,7 +620,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
       "copy",
       "vet",
       "relevance",
-      "fluency",
+      "nativeEditor",
       "qa",
     ]);
 

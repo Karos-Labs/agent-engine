@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { TemplateDefinitionSchema, extractSupportedFields, type TemplateDefinition } from "@agent-engine/tool-karos-templates";
 import type { ClientBrief } from "@agent-engine/tools";
+import { isolateForeignRuns } from "./bidi-isolate.js";
 import { resolveExpectedScript } from "./language-gate.js";
 import { scriptTypographyFor } from "./script-fonts.js";
 import { assessContrastFacts, checkPaletteWithinKit, LAYOUT_FIELD_KEYS, LEADS_WITH_FIGURE, type ContrastFact } from "./visual-qa-pre-checks.js";
@@ -1080,6 +1081,14 @@ export interface StudioSampleSeed {
   /** A repo-relative image path for a `hero` slot, when the caller has one. Absent means the ground layer must hold the frame on its own. */
   heroPath?: string | undefined;
   dir: "ltr" | "rtl";
+  /**
+   * Phase 4, RFC-15 §7.2 — the BCP-47 tag for the document's `{{lang}}` slot.
+   *
+   * Optional, and absent fills `"en"`: that is the literal every template and
+   * the code-written shell carried before this phase, so a caller that knows
+   * nothing about the language renders exactly what it rendered before.
+   */
+  lang?: string | undefined;
 }
 
 /**
@@ -1122,6 +1131,60 @@ function firstWords(text: string, words: number): string {
   return parts.slice(0, words).join(" ");
 }
 
+function wordCount(text: string): number {
+  return text.split(/\s+/u).filter((w) => w.length > 0).length;
+}
+
+/**
+ * THE SHAPE GATE 8 HAS NEVER MEASURED (Phase 4, RFC-15 §7.4).
+ *
+ * Every RTL seed until now was Hebrew and nothing but Hebrew — the client's
+ * own brief sentence, or `SCRIPT_GLYPH_PROBE`. So gate 8 has proved that the
+ * script font loads and that pure Hebrew fits, and has never once rendered
+ * the thing a real Hebrew tech post is actually made of: a Latin product
+ * name mid-sentence, a parenthesised Latin acronym, a percentage and a year
+ * range, all inside a Hebrew line.
+ *
+ * That shape is harder than either pure script on its own, in two ways the
+ * existing seeds cannot expose:
+ *
+ *  1. It is the only shape the bidi isolates apply to, so it is the only one
+ *     that measures the BYTES a real run renders (two extra characters per
+ *     Latin run).
+ *  2. `headline-focus.html` and `stat-callout.html` size display type from an
+ *     in-page `textContent.length` breakpoint picked against Latin glyph
+ *     widths. A mixed line moves that count, which can tip the slide onto a
+ *     larger step — and the step that catches that is `probe.overflow`, which
+ *     gate 8 already fails on.
+ *
+ * A template that clips this is the bug. The threshold is not.
+ */
+const MIXED_DIRECTION_SEED_RTL = {
+  /** A Latin product name mid-sentence, ending in a full stop — the case that puts the period on the wrong side of the line. */
+  headline: "גוגל השיקה את Gemini 3.",
+  /** A parenthesised Latin acronym, a percentage and a year range in one Hebrew sentence. */
+  body: "הדיפלוי של API v2 (GPT-4) ירד ב-38% בין 2020-2024, והצוות ממשיך למדוד.",
+  /** A device/figure label, where the label sits under a numeral in a tight lockup. */
+  deviceLabel: "שימוש ב-API v2, 2020-2024",
+} as const;
+
+/**
+ * `base` with the mixed-direction fragment appended, held to the SAME word
+ * budget the seed already used.
+ *
+ * Held to `maxWords` wherever there is room, so a longer seed cannot fail a
+ * template for a LENGTH reason that has nothing to do with bidi. Two things
+ * are never traded away for that budget, and `minBaseWords` is the floor that
+ * says so: the mixed fragment is always present in full (it is the point),
+ * and at least a couple of words of the base survive — the base is the
+ * client's own script, and a seed with no in-script words left would stop
+ * proving that the script font loaded, which is gate 8's other half.
+ */
+function withMixedDirection(base: string, mixed: string, maxWords: number, minBaseWords = 2): string {
+  const keep = Math.max(maxWords - wordCount(mixed), minBaseWords);
+  return `${firstWords(base, keep)} ${mixed}`.trim();
+}
+
 /**
  * Derive the sample seed from what this client's own brief and kit actually
  * say.
@@ -1130,6 +1193,12 @@ function firstWords(text: string, words: number): string {
  * they are in the target script, the script probe when they are not. That
  * distinction matters because a Hebrew client whose brief happens to be
  * written in English would otherwise be RTL-validated with Latin glyphs.
+ *
+ * Phase 4 adds two things to the RTL half, both so gate 8 measures what a
+ * real run renders rather than an easier cousin of it: the mixed-direction
+ * fragment (`MIXED_DIRECTION_SEED_RTL`), and the SAME bidi isolates
+ * `contentFor` composes into a real slide. Neither touches the LTR seed, so
+ * an English client's studio render is byte-identical to before.
  */
 export function studioSampleSeedFromBrief(input: {
   brief?: ClientBrief | undefined;
@@ -1138,6 +1207,8 @@ export function studioSampleSeedFromBrief(input: {
   targetLanguage?: string | undefined;
   dir?: "ltr" | "rtl";
   heroPath?: string | undefined;
+  /** The BCP-47 tag for the `{{lang}}` slot, injected by the caller (the language brief owns the resolution). Absent fills `"en"`. */
+  bcp47?: string | undefined;
 }): StudioSampleSeed {
   const dir = input.dir ?? "ltr";
   const brief = input.brief;
@@ -1148,6 +1219,7 @@ export function studioSampleSeedFromBrief(input: {
   let headline = firstWords(positioning, SAMPLE_HEADLINE_WORDS);
   let body = `${positioning} ${icp}`.trim();
   let eyebrow = term;
+  let figureLabel = firstWords(icp, 5);
   if (dir === "rtl") {
     const script = input.targetLanguage !== undefined ? resolveExpectedScript(input.targetLanguage) : undefined;
     const inScript = script !== undefined && script.test.test(positioning);
@@ -1159,25 +1231,40 @@ export function studioSampleSeedFromBrief(input: {
         eyebrow = probe.split(/\s+/u)[0] ?? probe;
       }
     }
+    // Phase 4, RFC-15 §7.4 — headline, body and the device label each carry
+    // the mixed-direction shape, held to their own existing word budget.
+    // The headline keeps the seed's own named budget rather than whatever the
+    // probe happened to be, so the full glyph probe survives in front of the
+    // mixed fragment and gate 8's "did the script font load" half is intact.
+    headline = withMixedDirection(headline, MIXED_DIRECTION_SEED_RTL.headline, SAMPLE_HEADLINE_WORDS);
+    body = withMixedDirection(body, MIXED_DIRECTION_SEED_RTL.body, wordCount(body));
+    figureLabel = withMixedDirection(figureLabel, MIXED_DIRECTION_SEED_RTL.deviceLabel, wordCount(figureLabel));
   }
 
+  // The same isolation `contentFor` applies to a real slide's rendered text,
+  // over the same scope: prose only. `figure` is excluded for the reason
+  // `.num-figure` is excluded from `DISPLAY_SELECTORS` — a bare numeral in a
+  // lockup. `accentHex` is a hex code, and `brandHandle`/`seriesBadge` are
+  // standing furniture the templates already isolate with `<bdi>`.
+  const iso = (text: string): string => isolateForeignRuns(text, dir);
+
   return {
-    headline,
-    body,
-    eyebrow,
+    headline: iso(headline),
+    body: iso(body),
+    eyebrow: iso(eyebrow),
     figure: "63%",
-    figureLabel: firstWords(icp, 5),
-    source: "internal data, 2026",
-    quote: firstWords(positioning, 14),
-    attribution: `— ${input.clientSlug}`,
-    items: [firstWords(positioning, 5), firstWords(icp, 5), firstWords(`${term} in practice`, 5)],
+    figureLabel: iso(figureLabel),
+    source: iso("internal data, 2026"),
+    quote: iso(firstWords(positioning, 14)),
+    attribution: iso(`— ${input.clientSlug}`),
+    items: [firstWords(positioning, 5), firstWords(icp, 5), firstWords(`${term} in practice`, 5)].map(iso),
     comparison: {
-      leftLabel: "before",
-      leftBody: firstWords(icp, 6),
-      rightLabel: "after",
-      rightBody: firstWords(positioning, 6),
+      leftLabel: iso("before"),
+      leftBody: iso(firstWords(icp, 6)),
+      rightLabel: iso("after"),
+      rightBody: iso(firstWords(positioning, 6)),
     },
-    takeaway: firstWords(positioning, 7),
+    takeaway: iso(firstWords(positioning, 7)),
     cta: dir === "rtl" ? "שמרו את הפוסט" : "Save this for your next planning round",
     question: dir === "rtl" ? "מה הייתם משנים?" : "Which of these would you change first?",
     accentHex: input.kit?.cssVars["--accent"] ?? input.kit?.palette?.[0] ?? "#C8FF4D",
@@ -1185,6 +1272,7 @@ export function studioSampleSeedFromBrief(input: {
     seriesBadge: dir === "rtl" ? "מדריך" : "playbook",
     ...(input.heroPath !== undefined ? { heroPath: input.heroPath } : {}),
     dir,
+    lang: input.bcp47 ?? "en",
   };
 }
 
@@ -1224,6 +1312,9 @@ export function buildStudioSampleContent(draft: Pick<StudioTemplateDraft, "slots
   const fields: Record<string, string> = {
     accentColor: seed.accentHex,
     dir: seed.dir,
+    // Phase 4, RFC-15 §7.2 — the shell's `{{lang}}`. A seed that carries no
+    // tag fills `"en"`, which is the literal the shell hardcoded before.
+    lang: seed.lang ?? "en",
     fontScale: "m",
     textAlign: "start",
     kicker: seed.eyebrow,

@@ -121,7 +121,14 @@ describe("Layer 3 tool registry — cross-cutting", () => {
     // assertion below makes that exclusion enforceable rather than a comment:
     // if `media.*` is ever folded into the bundle, this fails and the count
     // above has to be revisited deliberately.
-    expect(names.length).toBe(62);
+    // (62 -> 63, RFC-15 §5: gate.nativeLanguage — the deterministic half of
+    // Phase 4's native-language check (per-field script coverage, unexplained
+    // Latin clauses, forbidden transliterations, quotes, diacritics, digits,
+    // dates, bidi controls). Free, no model call; the paid half is an agent
+    // step, not a tool. RFC-14 predicted 64 for the count above and the real
+    // value was 62, so this one was read off the assertion rather than
+    // remembered. See packages/tools/karos-gates/src/native-language.ts.)
+    expect(names.length).toBe(63);
     for (const prefix of expectedPrefixes) {
       expect(names.some((n) => n.startsWith(prefix))).toBe(true);
     }

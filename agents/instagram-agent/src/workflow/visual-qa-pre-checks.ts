@@ -424,6 +424,14 @@ export const LAYOUT_FIELD_KEYS: ReadonlySet<string> = new Set([
   "slideIndex",
   "deviceFigures",
   "deviceKind",
+  // Phase 4, RFC-15 §7.2. The document's BCP-47 `lang` attribute — layout
+  // metadata in the strictest sense: it is read by Chromium's font fallback
+  // and by nothing else. It must not be counted by the two-elements rule (a
+  // slide whose only other field is a headline would otherwise read as two
+  // elements and pass a rule it fails), must not enter the topic-guardrail
+  // corpus (`slidesTextFor`), and must not appear in the reviewer's
+  // editable-fields view — "he" is not a thing a person edits on a slide.
+  "lang",
 ]);
 
 /**

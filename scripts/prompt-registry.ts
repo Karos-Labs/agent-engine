@@ -115,6 +115,12 @@ export const KNOWN_GATES = [
   "gate.leakCheck",
   "gate.numbersSourced",
   "gate.subredditRules",
+  // Phase 4 (RFC-15 §5). The deterministic half of the plan's `gate.nativeLanguage`: per-field script
+  // coverage, forbidden transliterations, curly quotes, nikud, foreign digits, Latin month names and bidi
+  // control characters — no model call. It is listed here the instant `instagram-copy@16` §23 names it,
+  // because `check-prompts.ts` cross-checks this literal against `createKarosGatesTools()`'s actual returns
+  // and either half alone is a CI failure.
+  "gate.nativeLanguage",
 ] as const;
 
 /**
@@ -152,10 +158,19 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "instagram-copy",
     agent: "instagram-agent",
-    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"],
-    latestVersion: "15",
+    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16"],
+    latestVersion: "16",
+    // `requires` is UNCHANGED at @16. §23 makes `languageBrief` binding when it is present, but §1 is
+    // demoted rather than deleted, so the `languageDirective` marker — which looks for the literal
+    // `clientVoiceContext` — is still satisfied, and an English run reads identically to @15.
     requires: { languageDirective: true },
   },
+  // Phase 4 (RFC-15 §6). The native judge: six axes, worked examples, and a correction contract that makes
+  // "report without correcting" structurally unrepresentable. No `requires` flags, for the reason
+  // `instagram-angle` already records — the judge receives `languageBrief`, never `clientVoiceContext`, so
+  // the `languageDirective` marker would be unsatisfiable. It names no `gate.*` either: it READS
+  // `gate.nativeLanguage`'s findings as input, it does not instruct a model to satisfy that gate.
+  { promptId: "instagram-native-editor", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
   // Phase 2, item N. The Template Studio's three setup-time prompts. None of
   // them carries `requires` flags, for the same reason `instagram-brief` and
   // `instagram-angle` do not: they receive the resolved `targetLanguage`

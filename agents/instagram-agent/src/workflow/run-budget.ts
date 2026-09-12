@@ -77,8 +77,32 @@ export const MAX_RUN_SPEND_USD = 1.5;
  */
 export const STEP_COST_ESTIMATES_USD = {
   /**
-   * Sonnet, ~21.5k in / ~6.3k out, one draft of copy: $0.0645 in + $0.0945
-   * out at $3/$15 per 1M = $0.159.
+   * Sonnet, ~22.26k in / ~6.3k out, one draft of copy: $0.0668 in + $0.0945
+   * out at $3/$15 per 1M = $0.1613, entered as **0.161**.
+   *
+   * ## Phase 4 (`instagram-copy@15` → `@16`), input-only and paid on EVERY run
+   *
+   * **Input** (≈+760 tokens, ≈+$0.0023): the prompt went 43,519 → 46,539
+   * characters — §23 "Writing in the target language as a native" (≈2,200),
+   * §16's `nativeSteer` paragraph (≈480) and §1's demotion header (≈340).
+   *
+   * **Output: unchanged.** §23 changes how the copy READS, not how much of it
+   * there is: no new output field, no new per-slide object, no new per-slide
+   * anything. This is the first re-price in this file's history where the
+   * input half is the whole delta, and it is stated that way on purpose,
+   * because the @14→@15 note below records the same mistake being made in the
+   * opposite direction — an output-heavy bump priced on input alone.
+   *
+   * The table carries three decimals, so $0.1613 is entered as $0.161 and
+   * this key under-counts by $0.0003 an attempt, $0.0009 over a three-attempt
+   * run. The direction is named rather than waved at, because this file's own
+   * header says an estimate that flatters itself pulls no lever — $0.0009 is
+   * three orders of magnitude below the smallest lever there is.
+   *
+   * The +$0.0023 is paid on English runs too: the prompt file is one file and
+   * every draft carries all of it. What English runs do NOT pay is
+   * `copyLanguageBrief` — the `languageBrief` FIELD is conditional on a
+   * resolved `targetLanguage`, the prompt section is not.
    *
    * ## Phase 3 (`instagram-copy@14` → `@15`), and why the output moved again
    *
@@ -135,14 +159,65 @@ export const STEP_COST_ESTIMATES_USD = {
    * itself pulls no lever, so the plan the planner chooses is not the plan
    * the run can afford (`__tests__/run-budget.test.ts` pins the arithmetic).
    */
-  copyAttempt: 0.159,
+  copyAttempt: 0.161,
+  /**
+   * Phase 4 — the `languageBrief` input FIELD on `05-write-copy-attempt-N`,
+   * added per attempt on non-English runs only (the same conditional shape
+   * `fluency` has at :234 and :532, and now `nativeJudge` has).
+   *
+   * ~3,000 in-tokens x $3/1M = **$0.0090**: persona 60 + register card 450 +
+   * term policy 180 + convention pack 200 + six few-shot posts at up to 400
+   * chars ≈ 2,000 + `gate.nativeLanguage`'s soft tells 110.
+   *
+   * Input only, and no output delta: the brief tells the writer HOW to
+   * sound, not to write more. Separate from `copyAttempt` rather than folded
+   * into it because an English run must not be charged for a field its
+   * payload does not carry — folding it in would flatter the English plan by
+   * nothing and over-state it by $0.027 over three attempts, which is enough
+   * to pull an image lever that did not need pulling.
+   */
+  copyLanguageBrief: 0.009,
   /** Flash image vet, ~6k in / 1.5k out — the 06 call or one rescue-tier re-vet. */
   vetCall: 0.006,
   /** Flash vision inspection, per image (05c candidate batches, 08a4 rendered slides). */
   visionInspectPerImage: 0.001,
   /** Flash relevance judge (07g), ~4k in / 0.3k out. */
   relevance: 0.002,
-  /** Haiku fluency judge (07f), ~4k in / 0.3k out, non-English targets only. */
+  /**
+   * Phase 4 — the native editor (07f), `gemini-2.5-pro`, non-English targets
+   * only, once per attempt and again for round 2 when round 1 proposed
+   * corrections.
+   *
+   * In: rubric 1,500 + register card 450 + 4 few-shot posts 2,000 + the draft
+   * 1,700 + `gate.nativeLanguage`'s findings 200 + scaffolding 150 =
+   * **6,000** x $1.25/1M = $0.0075. Out: up to 8 corrections at ~70 tokens
+   * each + the verdict 90 ≈ **650** x $10/1M = $0.0065. **= $0.0140.**
+   *
+   * It replaces a $0.0055 Haiku call — +$0.0085 an attempt — and the trade is
+   * against $0.2401, the cost of the redraft a wrong verdict causes. Gemini
+   * 2.5 Pro is the CHEAPEST non-premium row in `model-capabilities.ts` rated
+   * `multilingual-strong` + `rtlSupport: "strong"` (`gemini-3.1-pro-preview`
+   * also qualifies, at $2/$12); Haiku 4.5, which has been
+   * judging Hebrew nativeness since Phase 0, is rated `basic` on both.
+   */
+  nativeJudge: 0.014,
+  /**
+   * Haiku fluency judge, ~4k in / 0.3k out, non-English targets only.
+   *
+   * Phase 4 keeps this key at its Phase 0 price as the `cheapest-path`
+   * DEGRADED TIER of `nativeJudge` (RFC-15 §6.5): past the hard max, 07f is
+   * meant to run the rubric on Haiku with no few-shot, round 1 only. **The
+   * judge is never skipped** — budget degrades the TIER, it does not remove a
+   * mandatory gate for a non-English client.
+   *
+   * NOT YET REACHABLE, and the key is kept rather than deleted for that
+   * reason. `runNativeEditor` builds `InstagramNativeEditorAgent` with its own
+   * pinned policy and takes no tier argument, so what the workflow can
+   * currently degrade on the cheapest path is the PAYLOAD (no register card,
+   * no few-shot) and the round count, not the model. 07f therefore meters at
+   * `nativeJudge` on both paths — see the note at its call site. When
+   * `runNativeEditor` accepts a tier, this is the number that becomes true.
+   */
   fluency: 0.0055,
   /**
    * Flash visual QA (08b), ~5.5k in / 1k out.
@@ -231,7 +306,14 @@ export function formatUsd(value: number): string {
  */
 export function revisionEstimateUsd(input: { attempts?: number; targetLanguage?: boolean; angle?: boolean } = {}): number {
   const attempts = Number.isFinite(input.attempts) ? Math.max(1, Math.floor(input.attempts!)) : 1;
-  const perAttempt = DRAFT_ATTEMPT_ESTIMATE_USD + STEP_COST_ESTIMATES_USD.relevance + (input.targetLanguage === true ? STEP_COST_ESTIMATES_USD.fluency : 0);
+  // Phase 4 — a non-English attempt now carries three language lines, not one: the `languageBrief` field on
+  // the draft, and the native editor TWICE. The second judge round is priced on every non-English attempt
+  // rather than on the fraction that actually redrafts, because this figure is read BEFORE the round starts
+  // and must be the number the round could cost, not the number it usually does. `fluency` is no longer in
+  // this sum — it is the `cheapest-path` tier the live meter substitutes, and a pre-spend estimate that
+  // assumed the degraded tier would be the estimate flattering itself that this file's header warns about.
+  const language = input.targetLanguage === true ? STEP_COST_ESTIMATES_USD.copyLanguageBrief + 2 * STEP_COST_ESTIMATES_USD.nativeJudge : 0;
+  const perAttempt = DRAFT_ATTEMPT_ESTIMATE_USD + STEP_COST_ESTIMATES_USD.relevance + language;
   return roundUsd((input.angle === false ? 0 : STEP_COST_ESTIMATES_USD.angle) + attempts * perAttempt);
 }
 
@@ -424,7 +506,7 @@ export const PRIMARY_SOURCE_PAGE_FETCHES = 2;
 
 /** What is known about the run before the first paid call — the estimator's inputs. */
 export interface RunShape {
-  /** A resolved non-English target language means the fluency judge runs on every attempt. */
+  /** A resolved non-English target language means the `languageBrief` field and the native editor (both rounds) are priced into every attempt. */
   targetLanguage: boolean;
   /** Trend-evidence queries 03b would issue under a `full` plan (cold-cache worst case). */
   trendQueries: number;
@@ -448,6 +530,22 @@ export interface RunShape {
   researchLaneQueries: number;
   /** Phase 1, item J — `04a3-fetch-primary-sources` page fetches, cold. */
   pageFetches: number;
+  /**
+   * The client's OWN social accounts, one billed `research.socialHistory`
+   * execution each at `04e-read-cross-channel-history` (cold).
+   *
+   * Added when 04e's spend was metered for the first time: that step had been
+   * scraping since it was written with no `spend(...)` line, and fixing the
+   * METER without fixing the ESTIMATOR leaves the plan knowingly short by up
+   * to $0.042 on a multi-account client — enough to take the shipped Hebrew
+   * plan from $0.9998 to ~$1.04, i.e. over the very target it was fitted to.
+   * `spentUsd` cannot cover it either: 02j runs long before 04e.
+   *
+   * Knowable before the first paid call: the count comes from
+   * `client.getConfig` + `client.getBrand`, both free reads, which is exactly
+   * what `04e0-load-social-accounts` does later with the same inputs.
+   */
+  socialAccounts: number;
   /**
    * Phase 1, item K — angle proposals this plan pays for: one per revision
    * ROUND, and the plan covers the initial round only (a reviewer's `revise`
@@ -480,6 +578,9 @@ export const DEFAULT_RUN_SHAPE: Readonly<RunShape> = {
   signalExecutions: TOPIC_SIGNAL_EXECUTIONS,
   researchLaneQueries: RESEARCH_LANE_QUERIES,
   pageFetches: PRIMARY_SOURCE_PAGE_FETCHES,
+  // Zero, not a guess: a client with no configured social accounts pays 04e
+  // nothing, and the real count is read from free config at 02j.
+  socialAccounts: 0,
   angleRounds: 1,
 };
 
@@ -517,6 +618,8 @@ function rawEstimate(plan: RunBudgetPlan, shape: RunShape): RunCostEstimate["bre
     // 04a2's lanes (Phase 0's single `04a` pull was one execution) + 04a3's page fetches.
     count(shape.researchLaneQueries) * c.scraperExecution +
     count(shape.pageFetches) * c.scraperExecution +
+    // 04e's own-account history: one ScrappyCoco execution per account.
+    count(shape.socialAccounts) * c.scraperExecution +
     // 04b extraction, then 04i's angle: one per revision round, and the plan
     // covers the initial round.
     c.extraction +
@@ -529,7 +632,27 @@ function rawEstimate(plan: RunBudgetPlan, shape: RunShape): RunCostEstimate["bre
     c.copyAttempt +
     c.vetCall +
     c.relevance +
-    (shape.targetLanguage ? c.fluency : 0) +
+    // Phase 4 — the language lines, on non-English runs only: the `languageBrief` field on the draft and ONE
+    // native-editor round (RFC-15 §6.5, §9.3's headline arithmetic). `04l` and `07e2` are `wf.step.code`
+    // with no model call and no tool call, so they contribute nothing here BY CONSTRUCTION, not by omission.
+    //
+    // ## Why ONE round here and TWO in `revisionEstimateUsd`, deliberately
+    //
+    // Round 2 is conditional — it happens only when round 1 proposed corrections. The two functions are read
+    // at different moments and a wrong number costs something different at each:
+    //
+    // * This function CHOOSES THE PLAN, before a cent is spent. Pricing the conditional round here was
+    //   measured: it takes the cold Hebrew shape past the point where the image levers can absorb it, fires
+    //   the attempt lever, and lands the plan at $0.75 with `maxSelfCheckAttempts` cut 3 -> 2. That is the
+    //   lever overshooting by $0.25 and paying for it with a whole drafting attempt, on exactly the clients
+    //   this phase exists to serve. Priced at one round the same shape plans three attempts at $0.9998.
+    // * `revisionEstimateUsd` only INFORMS the pre-revision check, which degrades optional work and never
+    //   refuses the round, so its overshoot costs nothing and its under-shoot would be the estimate
+    //   flattering itself immediately before the spend. It prices both rounds.
+    //
+    // The live meter is what closes the gap either way: a second round that does happen is metered when it
+    // happens, and `ewmaRatio` teaches the next run what this client's Hebrew actually costs.
+    (shape.targetLanguage ? c.copyLanguageBrief + c.nativeJudge : 0) +
     c.visualQa +
     // 05c inspects the POOL, and the pool is `CANDIDATES_PER_PHOTO_SLIDE`
     // candidates for every slide that needs a picture (plus any tier-0
@@ -573,6 +696,26 @@ export interface RunBudgetRunRecord {
   crossedTarget: boolean;
   crossedMax: boolean;
   adaptations: number;
+  /**
+   * RFC-15 §9.4's measurement hook: what the native-language loop cost this
+   * run in ROUNDS, and what it actually found, per axis.
+   *
+   * The phase's stated bet is that round 1 usually settles it and the
+   * in-place patch usually holds — i.e. that `rounds: 2` is the exception and
+   * a given axis fails rarely. Nothing could check that: the per-run
+   * deliverable carried the numbers and no later run ever reads a deliverable
+   * back, so the next phase had no way to learn whether the bet paid. This is
+   * the belief a later run CAN read, beside the estimate-vs-actual it already
+   * reads.
+   *
+   * Absent on English runs, where the loop does not run at all — which is
+   * itself the signal, not a gap.
+   */
+  language?: {
+    rounds: 1 | 2;
+    status: "verified" | "corrected" | "degraded" | "unverified";
+    axes: Record<string, string>;
+  };
 }
 
 export interface RunBudgetHistory {
@@ -594,6 +737,30 @@ const EWMA_ALPHA = 0.5;
 /** Under-target runs needed before a tightened default relaxes again (owner: "relax again after two runs under target"). */
 export const RELAX_AFTER_UNDER_TARGET_RUNS = 2;
 
+/**
+ * One stored `language` record, or `undefined` for anything that is not one.
+ *
+ * Same posture as every other field in `readBudgetHistory`: a hand edit, a
+ * pre-Phase-4 entry or an English run all produce `undefined` rather than a
+ * zero-filled row, because "the loop did not run" and "the loop ran and found
+ * nothing" are different facts and a later run reasons about both.
+ */
+function readLanguageRecord(raw: unknown): RunBudgetRunRecord["language"] {
+  if (raw === null || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  const rounds = r["rounds"] === 2 ? 2 : r["rounds"] === 1 ? 1 : undefined;
+  if (rounds === undefined) return undefined;
+  const status = r["status"];
+  if (status !== "verified" && status !== "corrected" && status !== "degraded" && status !== "unverified") return undefined;
+  const axes: Record<string, string> = {};
+  if (r["axes"] !== null && typeof r["axes"] === "object") {
+    for (const [axis, verdict] of Object.entries(r["axes"] as Record<string, unknown>)) {
+      if (typeof verdict === "string") axes[axis] = verdict;
+    }
+  }
+  return { rounds, status, axes };
+}
+
 /** Reads the history back out of a beliefs document, tolerating anything a past version or a hand edit left there. */
 export function readBudgetHistory(beliefs: unknown): RunBudgetHistory {
   const raw = beliefs !== null && typeof beliefs === "object" ? (beliefs as Record<string, unknown>)[RUN_BUDGET_BELIEF_KEY] : undefined;
@@ -605,6 +772,7 @@ export function readBudgetHistory(beliefs: unknown): RunBudgetHistory {
         if (entry === null || typeof entry !== "object") return [];
         const e = entry as Record<string, unknown>;
         if (typeof e["runId"] !== "string") return [];
+        const language = readLanguageRecord(e["language"]);
         return [
           {
             runId: e["runId"],
@@ -614,6 +782,10 @@ export function readBudgetHistory(beliefs: unknown): RunBudgetHistory {
             crossedTarget: e["crossedTarget"] === true,
             crossedMax: e["crossedMax"] === true,
             adaptations: Math.max(0, Math.floor(num(e["adaptations"], 0))),
+            // Tolerated the way every other field here is: an entry written
+            // before this key existed simply carries no language record, which
+            // reads as "English run, or an older era" and never as zero.
+            ...(language !== undefined ? { language } : {}),
           },
         ];
       })

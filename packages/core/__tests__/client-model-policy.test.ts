@@ -2,9 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
   BaseAgent,
+  CONTENT_LANGUAGE_MAX_COST_TIER,
   applyClientLanguagePolicy,
   loadClientContentLanguage,
+  requirementForContentLanguage,
   resolveModelPolicy,
+  selectModelForContentLanguage,
   type AgentContext,
   type AgentStepConfig,
   type BaseAgentRuntime,
@@ -12,6 +15,10 @@ import {
   type ModelPolicy,
   type ModelRouter,
 } from "../src/index.js";
+// `model-capabilities.js` is deliberately not on the `router/index.js` barrel (see its note there), and this
+// suite reads the REAL catalog rather than a restatement of it — the premise assertion below is only worth
+// anything if it is measured against the table the router actually consults.
+import { MODEL_CAPABILITIES } from "../src/router/model-capabilities.js";
 
 /**
  * AU34 / SCRUM-312 — per-client model policy.
@@ -46,6 +53,19 @@ const COPY_POLICY: ModelPolicy = resolveModelPolicy(
 
 /** Same step, NOT marked as producing client-facing copy — the other 26 steps' shape. */
 const RESEARCH_POLICY: ModelPolicy = resolveModelPolicy("instagram-research", { policy: "pinned", model: "claude-sonnet-4-6" }, { env: {} });
+
+/**
+ * RFC-15 §8 — the same copy step, wired to the vendor whose catalog actually HAS a non-premium
+ * `multilingual-strong` row. AU34's two-clients-one-process property is demonstrated here rather than on the
+ * Anthropic policy above, because `CONTENT_LANGUAGE_MAX_COST_TIER` now (correctly) refuses to answer
+ * "which Anthropic model writes Hebrew" with "Opus, at $5/$25". The property AU34 exists to prove — that the
+ * re-point is per-client and per-run, not per-deployment — is unchanged and is still proven below.
+ */
+const GEMINI_COPY_POLICY: ModelPolicy = resolveModelPolicy(
+  "instagram-copy",
+  { policy: "pinned", model: "gemini-2.5-flash", vendor: "gemini", contentLanguageSensitive: true },
+  { env: {} },
+);
 
 class CopyStepAgent extends BaseAgent<CopyOutput> {
   protected readonly config: AgentStepConfig<CopyOutput>;
@@ -107,7 +127,7 @@ describe("per-client model policy (AU34 / SCRUM-312)", () => {
     // clients below cannot be AU32's deployment-global override pair.
     expect(process.env["MODEL_STEP_INSTAGRAM_COPY_MODEL"]).toBeUndefined();
     expect(process.env["MODEL_STEP_INSTAGRAM_COPY_VENDOR"]).toBeUndefined();
-    expect(COPY_POLICY.model).toBe("claude-sonnet-4-6");
+    expect(GEMINI_COPY_POLICY.model).toBe("gemini-2.5-flash");
 
     const store = fakeStore({
       // AU31/SCRUM-309's BrandKit `language` field — the only language field in
@@ -122,7 +142,7 @@ describe("per-client model policy (AU34 / SCRUM-312)", () => {
     expect(acmeLanguage).toBe("English");
 
     const { router, policies } = recordingRouter();
-    const agent = new CopyStepAgent({ router, tools: {} }, "instagram-copy", COPY_POLICY);
+    const agent = new CopyStepAgent({ router, tools: {} }, "instagram-copy", GEMINI_COPY_POLICY);
 
     await agent.run(ctxFor("geektime", geektimeLanguage), { topic: "t" });
     await agent.run(ctxFor("acme", acmeLanguage), { topic: "t" });
@@ -131,12 +151,12 @@ describe("per-client model policy (AU34 / SCRUM-312)", () => {
     // The Hebrew client's copy step went out on a model AU33's catalog rates
     // `multilingual-strong` + `rtlSupport: "strong"`; the English client's
     // stayed on the compiled default.
-    expect(policies[0]?.model).toBe("claude-opus-4-8");
-    expect(policies[1]?.model).toBe("claude-sonnet-4-6");
+    expect(policies[0]?.model).toBe("gemini-2.5-pro");
+    expect(policies[1]?.model).toBe("gemini-2.5-flash");
     expect(policies[0]?.model).not.toBe(policies[1]?.model);
     // Same compiled config object served both — the difference came from the
     // client record, not from two different step configurations.
-    expect(COPY_POLICY.model).toBe("claude-sonnet-4-6");
+    expect(GEMINI_COPY_POLICY.model).toBe("gemini-2.5-flash");
   });
 
   it("reads the client's language from the workspace store's client records, not from the environment", async () => {
@@ -146,7 +166,7 @@ describe("per-client model policy (AU34 / SCRUM-312)", () => {
     // The same tenant-scoped access path `client.getBrand`/`client.getConfig`
     // use — `readJson(clientSlug, segments)`, never a process-global read.
     expect(store.reads).toEqual([{ clientSlug: "geektime", segments: ["client", "brand"] }]);
-    expect(applyClientLanguagePolicy("instagram-copy", COPY_POLICY, language).model).toBe("claude-opus-4-8");
+    expect(applyClientLanguagePolicy("instagram-copy", GEMINI_COPY_POLICY, language).model).toBe("gemini-2.5-pro");
   });
 
   it("falls back to the same `language` field on client/config when a tenant has no brand kit yet", async () => {
@@ -177,8 +197,17 @@ describe("per-client model policy (AU34 / SCRUM-312)", () => {
   });
 
   it("keeps a model that is already capable of the client's language rather than upgrading for its own sake", () => {
+    const geminiProCopy: ModelPolicy = { policy: "pinned", model: "gemini-2.5-pro", vendor: "gemini", contentLanguageSensitive: true };
+    expect(applyClientLanguagePolicy("instagram-copy", geminiProCopy, "Hebrew")).toBe(geminiProCopy);
+  });
+
+  it("leaves a step a human deliberately pinned to a premium model on that model — the cap never downgrades, it only declines to upgrade", () => {
     const opusCopy: ModelPolicy = { policy: "pinned", model: "claude-opus-4-7", contentLanguageSensitive: true };
+    // Identical object reference: under the cap `satisfies` rejects the premium row, so selection finds no
+    // eligible alternative and takes the documented `selected === undefined` path, which returns `policy` as
+    // it stands. A deployment that has chosen Opus keeps Opus; what it does NOT get is Opus by accident.
     expect(applyClientLanguagePolicy("instagram-copy", opusCopy, "Hebrew")).toBe(opusCopy);
+    expect(applyClientLanguagePolicy("instagram-copy", opusCopy, "Hebrew").model).toBe("claude-opus-4-7");
   });
 
   it("still lets Studio's per-run stageModels have the last word over the per-client rule", async () => {
@@ -189,7 +218,84 @@ describe("per-client model policy (AU34 / SCRUM-312)", () => {
   });
 
   it("recognizes a language written in its own script, and a non-RTL non-English language", () => {
-    expect(applyClientLanguagePolicy("instagram-copy", COPY_POLICY, "עברית").model).toBe("claude-opus-4-8");
-    expect(applyClientLanguagePolicy("instagram-copy", COPY_POLICY, "Japanese").model).toBe("claude-opus-4-8");
+    // Recognition is the property under test, and it is still observable: both strings produce a
+    // `ContentLanguageRequirement`, and on a vendor with a non-premium capable row both re-point.
+    expect(requirementForContentLanguage("עברית")).toEqual({ multilingualStrong: true, rtlStrong: true, maxCostTier: "standard" });
+    expect(requirementForContentLanguage("Japanese")).toEqual({ multilingualStrong: true, rtlStrong: false, maxCostTier: "standard" });
+    expect(applyClientLanguagePolicy("instagram-copy", GEMINI_COPY_POLICY, "עברית").model).toBe("gemini-2.5-pro");
+    expect(applyClientLanguagePolicy("instagram-copy", GEMINI_COPY_POLICY, "Japanese").model).toBe("gemini-2.5-pro");
+  });
+});
+
+/**
+ * RFC-15 §8 — the content-language re-point's cost cap.
+ *
+ * The trap this closes was live and silent: `selectModelForContentLanguage` picks the CHEAPEST same-vendor
+ * `multilingual-strong` row, and in the Anthropic catalog the ONLY such rows are `claude-opus-4-8` and
+ * `claude-opus-4-7`, both `premium`. Five Instagram steps carry `contentLanguageSensitive` on a pinned
+ * Sonnet. Nothing had fired only because `loadClientContentLanguage` reads `client/brand.json`'s `language`
+ * and that field is null for exactly the clients Phase 4 targets — so the trap was armed by a portal field
+ * edit, not by a code change.
+ *
+ * The premise is asserted first, against the real catalog, so this suite fails loudly if a future cheap
+ * Anthropic multilingual-strong row lands and quietly makes the whole block vacuous.
+ */
+describe("the content-language re-point is capped below premium (RFC-15 §8)", () => {
+  it("the premise: Anthropic's ONLY multilingual-strong rows are premium, which is why 'cheapest capable' meant Opus", () => {
+    const anthropicCapable = Object.entries(MODEL_CAPABILITIES)
+      .filter(([, c]) => c.vendor === "anthropic" && c.languageStrength === "multilingual-strong")
+      .map(([id, c]) => [id, c.costTier]);
+    expect(anthropicCapable.length).toBeGreaterThan(0);
+    expect(anthropicCapable.every(([, tier]) => tier === "premium")).toBe(true);
+    expect(MODEL_CAPABILITIES["claude-sonnet-4-6"]?.languageStrength).toBe("strong");
+  });
+
+  it("a Hebrew Anthropic-vendor contentLanguageSensitive step keeps claude-sonnet-4-6 and logs", () => {
+    // `logWarning` emits `severity: "WARNING"` on stdout (structured-log.ts:38-41) — stderr is reserved for
+    // ERROR because Cloud Run maps the streams, not the payload. So the spy is on `console.log`.
+    const logged = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      for (const language of ["Hebrew", "he-IL"]) {
+        const resolved = applyClientLanguagePolicy("instagram-copy", COPY_POLICY, language);
+        expect(resolved.model).toBe("claude-sonnet-4-6");
+        expect(MODEL_CAPABILITIES[resolved.model ?? ""]?.costTier).not.toBe("premium");
+      }
+      // The degradation is visible, not silent — that is the whole difference between this and the old
+      // behaviour, which was also "no warning" but cost ~2x the hard max.
+      const lines = logged.mock.calls.map((c) => String(c[0]));
+      const warnings = lines.filter((l) => l.includes('"severity":"WARNING"') && l.includes("instagram-copy"));
+      expect(warnings).toHaveLength(2);
+      expect(warnings[0]).toContain("standard");
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  it("a Gemini-vendor contentLanguageSensitive step still selects gemini-2.5-pro — the cap is a ceiling, not an off switch", () => {
+    expect(MODEL_CAPABILITIES["gemini-2.5-pro"]?.costTier).toBe("standard");
+    expect(applyClientLanguagePolicy("instagram-copy", GEMINI_COPY_POLICY, "Hebrew").model).toBe("gemini-2.5-pro");
+    expect(applyClientLanguagePolicy("instagram-copy", GEMINI_COPY_POLICY, "he-IL").model).toBe("gemini-2.5-pro");
+  });
+
+  it("ANTI-TAUTOLOGY: lift the cap to premium and the very same call DOES select claude-opus-4-8", () => {
+    // Without this case the assertions above prove nothing — they would pass just as well against a
+    // `selectModelForContentLanguage` that had stopped selecting anything at all.
+    const uncapped = { multilingualStrong: true, rtlStrong: true, maxCostTier: "premium" as const };
+    expect(selectModelForContentLanguage("anthropic", uncapped)).toBe("claude-opus-4-8");
+    expect(selectModelForContentLanguage("anthropic", { multilingualStrong: true, rtlStrong: true })).toBeUndefined();
+    expect(CONTENT_LANGUAGE_MAX_COST_TIER).toBe("standard");
+  });
+
+  it("the default is the constant, not a literal duplicated at the call site", () => {
+    // Omitting `maxCostTier` must behave identically to passing the constant, or a future caller
+    // constructing a requirement by hand silently re-opens the trap.
+    const withConstant = selectModelForContentLanguage("anthropic", {
+      multilingualStrong: true,
+      rtlStrong: true,
+      maxCostTier: CONTENT_LANGUAGE_MAX_COST_TIER,
+    });
+    const omitted = selectModelForContentLanguage("anthropic", { multilingualStrong: true, rtlStrong: true });
+    expect(omitted).toBe(withConstant);
+    expect(requirementForContentLanguage("Hebrew")?.maxCostTier).toBe(CONTENT_LANGUAGE_MAX_COST_TIER);
   });
 });

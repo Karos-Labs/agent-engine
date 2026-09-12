@@ -5,14 +5,16 @@ import type { AgentToolRegistry } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import {
-  buildLanguageFluencySystemPrompt,
   checkExpectedScript,
   languageGateText,
+  okAxes,
   resolveExpectedScript,
-  LANGUAGE_FLUENCY_OUTPUT_FIELDS,
   LANGUAGE_FLUENCY_RETRY_SUFFIX,
+  LANGUAGE_FLUENCY_ROUND2_SUFFIX,
   MIN_EXPECTED_SCRIPT_RATIO,
+  NATIVE_EDITOR_RUBRIC_VERSION,
 } from "../src/workflow/language-gate.js";
+import { STEP_COST_ESTIMATES_USD } from "../src/workflow/run-budget.js";
 import type { InstagramCopyOutput } from "../src/workflow/types.js";
 import {
   goodRelevanceVerdict,
@@ -139,43 +141,83 @@ const badHebrewCopy = () => hebrewCopy(BAD_HEBREW_BODIES, "מבט של קצר ע
  * redraft steer.
  */
 const TRANSLATIONESE_VERDICT = {
-  fluent: false,
-  issues: ["reads as word by word translation of English marketing copy", "calqued idiom and English clause order throughout the slides"],
-  evidence: "אנחנו לוקחים את השיווק שלך לרמה הבאה",
+  native: false,
+  axes: { ...okAxes(), translationese: "major" as const },
+  corrections: [
+    {
+      target: "slide:1",
+      field: "body" as const,
+      // An EXACT substring of `GOOD_HEBREW_BODIES[0]`, occurring exactly once, because that is the contract
+      // `applyNativeCorrections` enforces: a span that does not resolve to one place is dropped, and a test
+      // that quoted a paraphrase would be testing the drop path while claiming to test the patch path.
+      span: "בממוצע ארבע שעות",
+      replacement: "ארבע שעות בממוצע",
+      axis: "translationese" as const,
+      severity: "major" as const,
+      why: "English clause order: a native writer puts the quantity before the qualifier here",
+    },
+  ],
+  rubricVersion: NATIVE_EDITOR_RUBRIC_VERSION,
 };
 
-const FLUENT_VERDICT = { fluent: true, issues: [] };
-const NOT_FLUENT_VERDICT = {
-  fluent: false,
-  issues: ["broken agreement and word order throughout", "reads as word-by-word machine translation"],
-  evidence: "צוותים אשר אוטומטי הדוח השבועי היה",
+/** The clean verdict. `corrections: []` and every axis `ok` — round 1 passes and no second round is paid for. */
+const NATIVE_VERDICT = { native: true, axes: okAxes(), corrections: [], rubricVersion: NATIVE_EDITOR_RUBRIC_VERSION };
+
+/**
+ * Not native, with a correction anchored in `BAD_HEBREW_BODIES[0]`.
+ *
+ * The correction is NOT optional decoration: `normaliseNativeEditorVerdict` resets any axis that carries no
+ * correction back to `ok` and recomputes `native` from the survivors, so a verdict that flags an axis and
+ * proposes nothing is read as having delivered nothing and PASSES. A fixture without a correction would
+ * therefore be testing the opposite of what its name claims.
+ */
+const NOT_NATIVE_VERDICT = {
+  native: false,
+  axes: { ...okAxes(), grammar: "major" as const },
+  corrections: [
+    {
+      target: "slide:1",
+      field: "body" as const,
+      span: "חסכה ארבע שעה",
+      replacement: "חסכו ארבע שעות",
+      axis: "grammar" as const,
+      severity: "major" as const,
+      why: "number and gender agreement: plural subject takes a plural verb and a plural noun",
+    },
+  ],
+  rubricVersion: NATIVE_EDITOR_RUBRIC_VERSION,
+};
+
+/** A round-2 verdict that is still not native, whose span is the one the round-1 patch WROTE. */
+const STILL_NOT_NATIVE_VERDICT = {
+  native: false,
+  axes: { ...okAxes(), register: "major" as const },
+  corrections: [
+    {
+      target: "slide:2",
+      field: "body" as const,
+      span: "אחרי המעבר",
+      replacement: "מאז המעבר",
+      axis: "register" as const,
+      severity: "major" as const,
+      why: "this publication writes the temporal relation, not the event",
+    },
+  ],
+  rubricVersion: NATIVE_EDITOR_RUBRIC_VERSION,
 };
 
 // ─────────────────────────────────────────────────────────────────────────
 // Stage 1, in isolation: pure, deterministic, no model, no workflow.
 // ─────────────────────────────────────────────────────────────────────────
 
-describe("stage 2's rubric — the questions the judge is actually asked", () => {
-  it("asks about translationese, the failure every other bullet passes", () => {
-    const prompt = buildLanguageFluencySystemPrompt("Hebrew");
-    expect(prompt).toMatch(/word-for-word translation of English rather than Hebrew as a native writer would say it/);
-    expect(prompt).toMatch(/calqued idiom/);
-    expect(prompt).toMatch(/English clause order that is grammatical but not natural/);
-    // The closing "say so if it reads well" line must not undo the bullet:
-    // grammar and phrasing are two bars, and a draft can pass one and fail
-    // the other.
-    expect(prompt).toMatch(/"natural" is the bar for phrasing/);
-    // The four older categories are unchanged.
-    expect(prompt).toMatch(/not in Hebrew at all/);
-    expect(prompt).toMatch(/grammatically broken/);
-    expect(prompt).toMatch(/word-salad or machine-translated nonsense/);
-    expect(prompt).toMatch(/transliterated into another script/);
-    // The structured output contract names it too, so the judge has a word
-    // for it in `issues` and the redraft steer quotes something actionable.
-    const issues = LANGUAGE_FLUENCY_OUTPUT_FIELDS.find((f) => f.name === "issues");
-    expect(issues?.description).toMatch(/translationese/);
-  });
-});
+/*
+ * The stage-2 RUBRIC used to be pinned here, against `buildLanguageFluencySystemPrompt`'s inline string.
+ * Phase 4 moved it into a versioned `PromptStore` file (`instagram-native-editor@1`) so a six-axis rubric
+ * with worked examples is reviewable, and the "a prompt in the same store as the drafting prompts can be
+ * edited to agree with them" risk is answered by a guard rather than by hiding the file:
+ * `__tests__/native-editor-rubric.test.ts` asserts all six axis names, the major/3x-minor verdict rule and
+ * the no-finding-without-a-correction rule are present in `latest.md`.
+ */
 
 describe("stage 1 — checkExpectedScript (deterministic, no model call)", () => {
   const goodHebrewText = languageGateText(goodHebrewCopy());
@@ -264,7 +306,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()),
-      finalTurn(FLUENT_VERDICT),
+      finalTurn(NATIVE_VERDICT),
       finalTurn(goodVisualQaOutput()),
     ]);
     const params = { runId: "instagram_run_lang_pass", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
@@ -283,14 +325,14 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     // One pass only: nothing sent it back to step 05.
     expect(stepIds).not.toContain("05-write-copy-attempt-2");
 
-    const language = (await durableStore.getStep(params.runId, "02d-load-target-language")) as { output: string };
-    expect(language.output).toBe("Hebrew");
+    const language = (await durableStore.getStep(params.runId, "02d-load-target-language")) as { output: { language: string; source: string } | null };
+    expect(language.output?.language).toBe("Hebrew");
     const script = (await durableStore.getStep(params.runId, "07e-language-script-attempt-1")) as { output: { ok: boolean } };
     expect(script.output.ok).toBe(true);
     const fluency = (await durableStore.getStep(params.runId, "07f-language-fluency-attempt-1")) as {
-      output: { finalOutput: { fluent: boolean } };
+      output: { finalOutput: { native: boolean } };
     };
-    expect(fluency.output.finalOutput.fluent).toBe(true);
+    expect(fluency.output.finalOutput.native).toBe(true);
     // The gate ran BEFORE the render, which is the whole point.
     expect(stepIds.indexOf("07f-language-fluency-attempt-1")).toBeLessThan(stepIds.indexOf("08-render-carousel-attempt-1"));
   }, 60000);
@@ -337,104 +379,115 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     expect(deliverables).toHaveLength(0);
   }, 60000);
 
-  it("FAILS stage 2: Hebrew-script nonsense clears the script check and is caught by the judge, then holds", async () => {
+  it("TWO ROUNDS THEN DELIVERS: a judge that still flags the final attempt ships the best version degraded, and NEVER holds", async () => {
     await env.store.writeJson("acme", ["client", "brand"], HEBREW_BRAND);
+    // Three attempts, each paying for BOTH judge rounds: round 1 proposes a correction, the correction is
+    // applied in place, round 2 judges the patched copy and is still not satisfied. On attempts 1 and 2 that
+    // returns to 05; on attempt 3 - the LAST one - it DELIVERS, flagged.
+    const attemptTurns = () => [
+      finalTurn(badHebrewCopy()),
+      finalTurn(goodImageVettingOutput()),
+      finalTurn(goodRelevanceVerdict()),
+      finalTurn(NOT_NATIVE_VERDICT),
+      finalTurn(STILL_NOT_NATIVE_VERDICT),
+    ];
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
-      finalTurn(badHebrewCopy()),
-      finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()),
-      finalTurn(NOT_FLUENT_VERDICT),
-      finalTurn(badHebrewCopy()),
-      finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()),
-      finalTurn(NOT_FLUENT_VERDICT),
-      finalTurn(badHebrewCopy()),
-      finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()),
-      finalTurn(NOT_FLUENT_VERDICT),
+      ...attemptTurns(), ...attemptTurns(), ...attemptTurns(),
+      finalTurn(goodVisualQaOutput()),
     ]);
-    const params = { runId: "instagram_run_lang_fluency_fail", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
+    const params = { runId: "instagram_run_lang_two_rounds_deliver", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
     const durableStore = new MemoryDurableStepStore();
     const result = await new WorkflowEngine(durableStore).run(workflowFor(router), params);
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/not fluent Hebrew on attempt 3/i);
-    expect(result.reason).toMatch(/machine translation/i);
-    // A `not_fluent` verdict is a verdict: no in-step retry is spent on it. scout + research + angle + 3 x (copy + vet + relevance + judge).
-    expect(router.complete).toHaveBeenCalledTimes(15);
+    // THE ASSERTION THIS WHOLE PHASE TURNS ON. A hold delivers nothing, and a person cannot reject what they
+    // never received. Make the loop hold at exhaustion and this line is what refuses.
+    expect(result.status, JSON.stringify(result)).toBe("completed");
 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
-    // Stage 1 passed on every attempt — the copy really is in Hebrew script.
+    // Round 2 is checkpointed under its own id, on every attempt.
+    expect(stepIds).toContain(`07f-language-fluency-attempt-1${LANGUAGE_FLUENCY_ROUND2_SUFFIX}`);
+    expect(stepIds).toContain(`07f-language-fluency-attempt-3${LANGUAGE_FLUENCY_ROUND2_SUFFIX}`);
+    // Stage 1 passed every time - the copy really is in Hebrew script, so this is stage 2's finding alone.
     const script = (await durableStore.getStep(params.runId, "07e-language-script-attempt-1")) as { output: { ok: boolean } };
     expect(script.output.ok).toBe(true);
-    expect(stepIds).toContain("07f-language-fluency-attempt-3");
+    // A `not_native` verdict is a verdict: no in-step retry is spent on it.
     expect(stepIds).not.toContain(`07f-language-fluency-attempt-1${LANGUAGE_FLUENCY_RETRY_SUFFIX}`);
-    expect(stepIds).not.toContain("08-render-carousel-attempt-1");
-    expect(stepIds).not.toContain("09b-deliver-and-log");
+    // It RENDERED and it DELIVERED - the two things the old hold path never reached.
+    expect(stepIds).toContain("08-render-carousel-attempt-3");
+    expect(stepIds).toContain("09b-deliver-and-log");
+
+    // And it is flagged, on the artefact a human reads, with the axes and the applied/dropped counts.
+    const deliverables = await env.store.listJson<{
+      deliverable: { grounding?: { language?: { status: string; rounds: number; correctionsProposed: number; correctionsApplied: number; reason?: string } } };
+    }>("acme", ["ledger", "deliverables", params.runId, "_"]);
+    expect(deliverables).toHaveLength(1);
+    const language = deliverables[0]!.data.deliverable.grounding?.language;
+    expect(language?.status).toBe("degraded");
+    expect(language?.rounds).toBe(2);
+    expect(language?.correctionsProposed).toBe(1);
+    expect(language?.reason).toMatch(/after 2 rounds/i);
+    expect(language?.reason).toMatch(/Hebrew reader should read the slides/i);
   }, 60000);
 
-  it("PASSES stage 2 on a redraft: bad Hebrew is sent back to step 05 and good Hebrew ships", async () => {
+  it("PASSES on a redraft: a still-flagged attempt returns to 05 with nativeSteer carrying the quote AND the replacement", async () => {
     await env.store.writeJson("acme", ["client", "brand"], HEBREW_BRAND);
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(badHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()),
-      finalTurn(NOT_FLUENT_VERDICT),
+      finalTurn(NOT_NATIVE_VERDICT),
+      finalTurn(STILL_NOT_NATIVE_VERDICT),
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()),
-      finalTurn(FLUENT_VERDICT),
+      finalTurn(NATIVE_VERDICT),
       finalTurn(goodVisualQaOutput()),
     ]);
     const params = { runId: "instagram_run_lang_redraft", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
     const durableStore = new MemoryDurableStepStore();
     const result = await new WorkflowEngine(durableStore).run(workflowFor(router), params);
+    expect(result.status, JSON.stringify(result)).toBe("completed");
 
-    // scout + research + angle + (copy + vet + relevance + judge) + (copy + vet + relevance + judge + QA).
-    expect(result.status).toBe("completed");
-    expect(router.complete).toHaveBeenCalledTimes(12);
+    const first = (await durableStore.getStep(params.runId, "07f-language-fluency-attempt-1")) as { output: { finalOutput: { native: boolean } } };
+    expect(first.output.finalOutput.native).toBe(false);
+    const second = (await durableStore.getStep(params.runId, "07f-language-fluency-attempt-2")) as { output: { finalOutput: { native: boolean } } };
+    expect(second.output.finalOutput.native).toBe(true);
+    // Attempt 2 was clean on round 1, so it paid for no second round.
+    const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
+    expect(stepIds).toContain(`07f-language-fluency-attempt-1${LANGUAGE_FLUENCY_ROUND2_SUFFIX}`);
+    expect(stepIds).not.toContain(`07f-language-fluency-attempt-2${LANGUAGE_FLUENCY_ROUND2_SUFFIX}`);
 
-    const first = (await durableStore.getStep(params.runId, "07f-language-fluency-attempt-1")) as { output: { finalOutput: { fluent: boolean } } };
-    expect(first.output.finalOutput.fluent).toBe(false);
-    const second = (await durableStore.getStep(params.runId, "07f-language-fluency-attempt-2")) as { output: { finalOutput: { fluent: boolean } } };
-    expect(second.output.finalOutput.fluent).toBe(true);
-
-    // The redraft is NOT blind (spec B: "returns the draft to 05 with the
-    // findings"): attempt 2's copy prompt carries the judge's issues and its
-    // evidence as `selfCheckSteer` (prompt §16); attempt 1's carried nothing.
+    // The redraft is not blind, and `nativeSteer` is a SEPARATE field from `selfCheckSteer`: a language
+    // correction and a failed render rule are different remedies and one must not overwrite the other.
     const copyInputs = copyTurnInputs(router);
     expect(copyInputs).toHaveLength(2);
-    expect(copyInputs[0]!["selfCheckSteer"]).toBeUndefined();
-    const steer = copyInputs[1]!["selfCheckSteer"];
+    expect(copyInputs[0]!["nativeSteer"]).toBeUndefined();
+    const steer = copyInputs[1]!["nativeSteer"];
     expect(typeof steer).toBe("string");
-    expect(steer).toMatch(/not fluent Hebrew/);
-    for (const issue of NOT_FLUENT_VERDICT.issues) expect(steer).toContain(issue);
-    expect(steer).toContain(NOT_FLUENT_VERDICT.evidence);
+    // Anchored quote THEN proposed replacement - the shape @16 section 16 tells the writer to apply.
+    expect(steer).toContain(STILL_NOT_NATIVE_VERDICT.corrections[0]!.span);
+    expect(steer).toContain(STILL_NOT_NATIVE_VERDICT.corrections[0]!.replacement);
+    expect(copyInputs[1]!["selfCheckSteer"]).toMatch(/still reads attempt 1 as translated after two rounds/);
     // The two prompts differ by exactly that: same brief, same facts, same topic.
     expect(copyInputs[1]!["clientBrief"]).toEqual(copyInputs[0]!["clientBrief"]);
     expect(copyInputs[1]!["topic"]).toEqual(copyInputs[0]!["topic"]);
   }, 60000);
 
-  it("TRANSLATIONESE: a grammatical but word-by-word Hebrew draft is returned to 05 with the finding the copy prompt promises", async () => {
+  it("CORRECTED IN PLACE: a translationese finding is patched and round 2 clears it, so the post ships corrected without a redraft", async () => {
     await env.store.writeJson("acme", ["client", "brand"], HEBREW_BRAND);
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
-      // Fluent Hebrew SCRIPT and fluent Hebrew GRAMMAR: stage 1 passes, and
-      // every pre-2026-09-10 rubric bullet passes it too. Only the
-      // translationese bullet can fail this draft.
+      // Fluent Hebrew SCRIPT and fluent Hebrew GRAMMAR: stage 1 passes and so does every mechanical check.
+      // Only the translationese axis can fail this draft - the failure a proofreader also passes.
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()),
       finalTurn(TRANSLATIONESE_VERDICT),
-      finalTurn(goodHebrewCopy()),
-      finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()),
-      finalTurn(FLUENT_VERDICT),
+      finalTurn(NATIVE_VERDICT),
       finalTurn(goodVisualQaOutput()),
     ]);
     const params = { runId: "instagram_run_lang_translationese", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
@@ -442,23 +495,28 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     const durableStore = new MemoryDurableStepStore();
     const result = await new WorkflowEngine(durableStore).run(workflowFor(router), params);
 
-    expect(result.status).toBe("completed");
+    expect(result.status, JSON.stringify(result)).toBe("completed");
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
-    // The script check had no complaint on either attempt: this is stage 2's
-    // finding alone.
-    const script = (await durableStore.getStep(params.runId, "07e-language-script-attempt-1")) as { output: { ok: boolean } };
-    expect(script.output.ok).toBe(true);
-    expect(stepIds).toContain("05-write-copy-attempt-2");
-    expect(stepIds).not.toContain("08-render-carousel-attempt-1");
+    // THE SAVING THIS PHASE IS BETTING ON: a sentence defect cost $0.014 to fix in place instead of $0.24 to
+    // redraft, and the judge had already written the better sentence. NO second attempt was started.
+    expect(stepIds).not.toContain("05-write-copy-attempt-2");
+    expect(stepIds).toContain(`07f-language-fluency-attempt-1${LANGUAGE_FLUENCY_ROUND2_SUFFIX}`);
+    expect(stepIds).toContain("08-render-carousel-attempt-1");
 
-    // The steer the writer receives is the one @12 §16 tells it how to act on
-    // ("a fluency finding that says the copy 'reads as word by word
-    // translation' means those slides are rewritten as a native writer would
-    // say them"), quoted verbatim rather than paraphrased.
-    const steer = copyTurnInputs(router)[1]!["selfCheckSteer"];
-    expect(steer).toMatch(/reads as word by word translation/);
-    expect(steer).toContain(TRANSLATIONESE_VERDICT.issues[1]);
-    expect(steer).toContain(TRANSLATIONESE_VERDICT.evidence);
+    const deliverables = await env.store.listJson<{
+      deliverable: { grounding?: { language?: { status: string; rounds: number; correctionsProposed: number; correctionsApplied: number } } };
+    }>("acme", ["ledger", "deliverables", params.runId, "_"]);
+    const language = deliverables[0]!.data.deliverable.grounding?.language;
+    expect(language?.status).toBe("corrected");
+    expect(language?.rounds).toBe(2);
+    expect(language?.correctionsProposed).toBe(1);
+    expect(language?.correctionsApplied).toBe(1);
+
+    // And the correction is really IN the shipped copy, not merely counted.
+    const shipped = (await durableStore.getStep(params.runId, "07c-emit-slides-data-attempt-1")) as { output: { slides: Array<{ fields?: Record<string, string> }> } };
+    const bodies = shipped.output.slides.map((slide) => slide.fields?.["body"] ?? "").join(" ");
+    expect(bodies).toContain(TRANSLATIONESE_VERDICT.corrections[0]!.replacement);
+    expect(bodies).not.toContain(TRANSLATIONESE_VERDICT.corrections[0]!.span);
   }, 60000);
 
   it("a transient judge failure is retried once inside the same 07f step: two router turns, no redraft, and the run passes", async () => {
@@ -469,7 +527,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()),
       finalTurn(JUDGE_ERROR_TURN),
-      finalTurn(FLUENT_VERDICT),
+      finalTurn(NATIVE_VERDICT),
       finalTurn(goodVisualQaOutput()),
     ]);
     const params = { runId: "instagram_run_lang_judge_retry", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
@@ -491,9 +549,63 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     const first = (await durableStore.getStep(params.runId, "07f-language-fluency-attempt-1")) as { status: string };
     expect(first.status).toBe("content_fail");
     const retry = (await durableStore.getStep(params.runId, `07f-language-fluency-attempt-1${LANGUAGE_FLUENCY_RETRY_SUFFIX}`)) as {
-      output: { finalOutput: { fluent: boolean } };
+      output: { finalOutput: { native: boolean } };
     };
-    expect(retry.output.finalOutput.fluent).toBe(true);
+    expect(retry.output.finalOutput.native).toBe(true);
+
+    // ── AND THE METER BOOKED BOTH CALLS ──
+    //
+    // This is the retry-then-SUCCEED path: the retry returned `native: true`,
+    // so the result's `status` is NOT `"error"`. The meter used to infer the
+    // call count from that status and therefore booked two vendor calls as
+    // one — up to $0.084 unseen across a three-attempt Hebrew run. It now
+    // bills `result.calls`, which the judge reports as a fact.
+    //
+    // Break it by restoring `(round1.status === "error" ? 2 : 1) * judgeUnit`
+    // at the call site and this drops to 1x.
+    const deliverables = await env.store.listJson<{
+      deliverable: { budget: { lines: Array<{ label: string; estimateUsd: number }> } };
+    }>("acme", ["ledger", "deliverables", params.runId, "_"]);
+    const judgeLine = deliverables[0]!.data.deliverable.budget.lines.find((l) => l.label === "07f-language-fluency-attempt-1");
+    expect(judgeLine, "the judge's own budget line").toBeDefined();
+    expect(judgeLine!.estimateUsd).toBeCloseTo(2 * STEP_COST_ESTIMATES_USD.nativeJudge, 6);
+  }, 60000);
+
+  it("a judge that completes on its FIRST call is billed for exactly one — the other side of the retry rule", async () => {
+    await env.store.writeJson("acme", ["client", "brand"], HEBREW_BRAND);
+    const router = fakeRouterSequence([
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodHebrewCopy()),
+      finalTurn(goodImageVettingOutput()),
+      finalTurn(goodRelevanceVerdict()),
+      finalTurn(NATIVE_VERDICT),
+      finalTurn(goodVisualQaOutput()),
+    ]);
+    const params = { runId: "instagram_run_lang_judge_single", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflowFor(router), params);
+    expect(result.status).toBe("completed");
+
+    const deliverables = await env.store.listJson<{
+      deliverable: { budget: { lines: Array<{ label: string; estimateUsd: number }> } };
+    }>("acme", ["ledger", "deliverables", params.runId, "_"]);
+    const judgeLine = deliverables[0]!.data.deliverable.budget.lines.find((l) => l.label === "07f-language-fluency-attempt-1");
+    expect(judgeLine!.estimateUsd).toBeCloseTo(STEP_COST_ESTIMATES_USD.nativeJudge, 6);
+
+    // ── AND 05'S ESTIMATE FLOOR CARRIES THE LANGUAGE BRIEF ──
+    //
+    // `copyLanguageBrief` exists as a separate key precisely because the
+    // `languageBrief` field is charged per attempt on non-English runs, and
+    // `rawEstimate` adds it under the same condition. Metering 05 at
+    // `copyAttempt` alone made the meter and the estimator disagree about the
+    // price of the same step: on an attempt where the router reports no usable
+    // cost, `max(measured, estimate)` books $0.161 where the plan said $0.170.
+    // Drop the conditional at the 05 `spend(...)` call and this fails.
+    const copyLine = deliverables[0]!.data.deliverable.budget.lines.find((l) => l.label === "05-write-copy-attempt-1");
+    expect(copyLine, "the copy step's own budget line").toBeDefined();
+    expect(copyLine!.estimateUsd).toBeCloseTo(STEP_COST_ESTIMATES_USD.copyAttempt + STEP_COST_ESTIMATES_USD.copyLanguageBrief, 6);
+    // The other side of the rule: the language term is a real addition, not a
+    // rename of `copyAttempt`.
+    expect(STEP_COST_ESTIMATES_USD.copyLanguageBrief).toBeGreaterThan(0);
   }, 60000);
 
   // ── Fail closed (inverts the former "a judge that cannot complete never blocks a draft") ──
@@ -503,7 +615,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
   // that lands they fail, which is the correct signal: the old fail-open
   // posture is exactly what let unverified Hebrew ship.
 
-  it("FAILS CLOSED: a judge that errors twice on attempt 1 sends the draft back to step 05, and a working judge on attempt 2 ships it", async () => {
+  it("OUTAGE WITH ATTEMPTS LEFT: a judge that errors twice on attempt 1 returns to 05 naming the OUTAGE, and attempt 2 ships", async () => {
     await env.store.writeJson("acme", ["client", "brand"], HEBREW_BRAND);
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
@@ -515,7 +627,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()),
-      finalTurn(FLUENT_VERDICT),
+      finalTurn(NATIVE_VERDICT),
       finalTurn(goodVisualQaOutput()),
     ]);
     const params = { runId: "instagram_run_lang_judge_error", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
@@ -523,9 +635,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     const durableStore = new MemoryDurableStepStore();
     const result = await new WorkflowEngine(durableStore).run(workflowFor(router), params);
 
-    // scout + research + angle + (copy + vet + relevance + judge + judge retry) + (copy + vet + relevance + judge + QA).
-    expect(result.status).toBe("completed");
-    expect(router.complete).toHaveBeenCalledTimes(13);
+    expect(result.status, JSON.stringify(result)).toBe("completed");
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).toContain("07f-language-fluency-attempt-1");
     expect(stepIds).toContain(`07f-language-fluency-attempt-1${LANGUAGE_FLUENCY_RETRY_SUFFIX}`);
@@ -534,38 +644,213 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     expect(stepIds).not.toContain(`07f-language-fluency-attempt-2${LANGUAGE_FLUENCY_RETRY_SUFFIX}`);
     expect(stepIds).not.toContain("08-render-carousel-attempt-1");
     expect(stepIds).toContain("08-render-carousel-attempt-2");
-    // The outage is named to the writer too, so a redraft after a judge
-    // failure is not mistaken for a copy problem by the model either.
+    // The outage is named to the writer, so a redraft after a judge failure is not mistaken for a copy
+    // problem by the model either.
     const copyInputs = copyTurnInputs(router);
     expect(copyInputs).toHaveLength(2);
-    expect(copyInputs[1]!["selfCheckSteer"]).toMatch(/fluency judge could not run/);
+    expect(copyInputs[1]!["selfCheckSteer"]).toMatch(/native Hebrew editor could not run/);
+    // Attempt 2 was judged and cleared, so nothing degraded rides along with the shipped post.
+    const deliverables = await env.store.listJson<{ deliverable: { grounding?: { language?: { status: string } } } }>(
+      "acme",
+      ["ledger", "deliverables", params.runId, "_"],
+    );
+    expect(deliverables[0]!.data.deliverable.grounding?.language?.status).toBe("verified");
   }, 60000);
 
-  it("FAILS CLOSED: a judge that errors on every attempt holds the run, and the reason names the outage, not the copy", async () => {
+  it("OUTAGE ON THE FINAL ATTEMPT: the post ships UNVERIFIED with a ledger warn - flagged, seen by a human, never held", async () => {
     await env.store.writeJson("acme", ["client", "brand"], HEBREW_BRAND);
-    const attemptTurns = () => [finalTurn(goodHebrewCopy()), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(JUDGE_ERROR_TURN), finalTurn(JUDGE_ERROR_TURN)];
-    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), ...attemptTurns(), ...attemptTurns(), ...attemptTurns()]);
+    // The judge is down for the whole run: the call AND its in-step retry fail on every attempt.
+    const attemptTurns = () => [
+      finalTurn(goodHebrewCopy()),
+      finalTurn(goodImageVettingOutput()),
+      finalTurn(goodRelevanceVerdict()),
+      finalTurn(JUDGE_ERROR_TURN),
+      finalTurn(JUDGE_ERROR_TURN),
+    ];
+    const router = fakeRouterSequence([
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      ...attemptTurns(), ...attemptTurns(), ...attemptTurns(),
+      finalTurn(goodVisualQaOutput()),
+    ]);
     const params = { runId: "instagram_run_lang_judge_outage", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
     const durableStore = new MemoryDurableStepStore();
     const result = await new WorkflowEngine(durableStore).run(workflowFor(router), params);
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/self-check never passed after 3 attempt/i);
-    expect(result.reason).toMatch(/could not run/i);
-    expect(result.reason).toMatch(/Hebrew/);
-    // scout + research + angle + 3 x (copy + vet + relevance + judge + judge retry). Every attempt
-    // paid for the retry before giving up on the judge.
-    expect(router.complete).toHaveBeenCalledTimes(18);
+    // Phase 0 held here, and that is exactly what shipped nothing while telling nobody. "Fails closed" is
+    // preserved in the sense that still matters: unverified Hebrew never ships SILENTLY. It ships FLAGGED,
+    // to a run that still has a human gate at 09a.
+    expect(result.status, JSON.stringify(result)).toBe("completed");
 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
+    // Every attempt paid for the in-step retry before giving up on the judge.
     expect(stepIds).toContain(`07f-language-fluency-attempt-3${LANGUAGE_FLUENCY_RETRY_SUFFIX}`);
-    expect(stepIds).not.toContain("08-render-carousel-attempt-1");
-    expect(stepIds).not.toContain("09b-deliver-and-log");
-    const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
-    expect(deliverables).toHaveLength(0);
+    // An outage produces no corrections, so there is nothing to patch and no second round to pay for.
+    expect(stepIds).not.toContain(`07f-language-fluency-attempt-3${LANGUAGE_FLUENCY_ROUND2_SUFFIX}`);
+    expect(stepIds).toContain("08-render-carousel-attempt-3");
+    expect(stepIds).toContain("09b-deliver-and-log");
+
+    const deliverables = await env.store.listJson<{ deliverable: { grounding?: { language?: { status: string; reason?: string } } } }>(
+      "acme",
+      ["ledger", "deliverables", params.runId, "_"],
+    );
+    expect(deliverables).toHaveLength(1);
+    const language = deliverables[0]!.data.deliverable.grounding?.language;
+    expect(language?.status).toBe("unverified");
+    expect(language?.reason).toMatch(/could not be reached/i);
+    expect(language?.reason).toMatch(/never verified/i);
+
+    // One ledger warn, keyed so a RESUME writes exactly one row - the thing that tells a person at all.
+    const events = await env.store.listJson<{ level: string; message: string }>("acme", ["ledger", "events", params.runId]);
+    const warns = events.filter((e) => e.data.level === "warn" && /never verified/i.test(e.data.message));
+    expect(warns).toHaveLength(1);
   }, 60000);
+
+
+  // ── Phase 4 (RFC-15): the ordering contract, and what each step is allowed to consume ──
+
+  it("ORDERING: 07e -> 07e2 -> 07g -> 07f, and a 07e2 content_fail consumes ZERO relevance and ZERO judge turns", async () => {
+    await env.store.writeJson("acme", ["client", "brand"], HEBREW_BRAND);
+    // Hebrew script throughout, so 07e passes - and CURLY QUOTATION MARKS, which `gate.nativeLanguage`
+    // rejects mechanically and no model is asked about. A draft that trips the free gate must die before the
+    // $0.002 relevance judge and the $0.014 native editor, which is the entire cost argument of this phase.
+    const curly = () => {
+      const base = badHebrewCopy();
+      return { ...base, slides: base.slides.map((slide, i) => (i === 0 ? { ...slide, headline: "\u201cהממצא הראשון\u201d" } : slide)) };
+    };
+    const router = fakeRouterSequence([
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(curly()), finalTurn(goodImageVettingOutput()),
+      finalTurn(curly()), finalTurn(goodImageVettingOutput()),
+      finalTurn(curly()), finalTurn(goodImageVettingOutput()),
+    ]);
+    const params = { runId: "instagram_run_lang_conventions", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
+
+    const durableStore = new MemoryDurableStepStore();
+    const result = await new WorkflowEngine(durableStore).run(workflowFor(router), params);
+
+    // Not a language DELIVERY path: the draft never got past a free gate, so this is the ordinary
+    // attempt-cap hold every other self-check shares, and the reason names the conventions gate.
+    expect(result.status).toBe("held");
+    if (result.status !== "held") throw new Error("unreachable");
+    expect(result.reason).toMatch(/deterministic Hebrew conventions gate/i);
+
+    const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
+    expect(stepIds).toContain("07e2-native-conventions-attempt-1");
+    expect(stepIds).toContain("07e2-native-conventions-attempt-3");
+    // ZERO paid turns spent on a draft a regex could refuse: scout + research + angle + 3 x (copy + vet).
+    expect(router.complete).toHaveBeenCalledTimes(9);
+    expect(stepIds).not.toContain("07g-relevance-attempt-1");
+    expect(stepIds).not.toContain("07f-language-fluency-attempt-1");
+    expect(stepIds).not.toContain("08-render-carousel-attempt-1");
+
+    // And the order is the one the comment claims, measured on the checkpoints rather than asserted in prose.
+    expect(stepIds.indexOf("07e-language-script-attempt-1")).toBeLessThan(stepIds.indexOf("07e2-native-conventions-attempt-1"));
+  }, 60000);
+
+  it("ORDERING, the other half: on a draft that PASSES the free gates, 07e2 runs before 07g and 07g before 07f", async () => {
+    await env.store.writeJson("acme", ["client", "brand"], HEBREW_BRAND);
+    const router = fakeRouterSequence([
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodHebrewCopy()),
+      finalTurn(goodImageVettingOutput()),
+      finalTurn(goodRelevanceVerdict()),
+      finalTurn(NATIVE_VERDICT),
+      finalTurn(goodVisualQaOutput()),
+    ]);
+    const params = { runId: "instagram_run_lang_order", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
+
+    const durableStore = new MemoryDurableStepStore();
+    const result = await new WorkflowEngine(durableStore).run(workflowFor(router), params);
+    expect(result.status, JSON.stringify(result)).toBe("completed");
+
+    const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
+    const at = (id: string) => {
+      const i = stepIds.indexOf(id);
+      expect(i, `${id} never ran`).toBeGreaterThanOrEqual(0);
+      return i;
+    };
+    // free -> free -> $0.002 -> $0.014. Reorder any pair and this fails.
+    expect(at("07e-language-script-attempt-1")).toBeLessThan(at("07e2-native-conventions-attempt-1"));
+    expect(at("07e2-native-conventions-attempt-1")).toBeLessThan(at("07g-relevance-attempt-1"));
+    expect(at("07g-relevance-attempt-1")).toBeLessThan(at("07f-language-fluency-attempt-1"));
+    // And every one of them ran before a single pixel was rendered, which is the older contract this phase
+    // extends rather than replaces: text baked into a 1080x1440 PNG is what a reviewer cannot fix in place.
+    expect(at("07f-language-fluency-attempt-1")).toBeLessThan(at("08-render-carousel-attempt-1"));
+
+    // A clean round 1 pays for NO second round.
+    expect(stepIds).not.toContain(`07f-language-fluency-attempt-1${LANGUAGE_FLUENCY_ROUND2_SUFFIX}`);
+    const deliverables = await env.store.listJson<{ deliverable: { grounding?: { language?: { status: string; rounds: number } } } }>(
+      "acme",
+      ["ledger", "deliverables", params.runId, "_"],
+    );
+    const language = deliverables[0]!.data.deliverable.grounding?.language;
+    expect(language?.status).toBe("verified");
+    expect(language?.rounds).toBe(1);
+  }, 60000);
+
+  it("04l-language-register runs once per REVISION, outside the attempt loop, and costs nothing", async () => {
+    await env.store.writeJson("acme", ["client", "brand"], HEBREW_BRAND);
+    const router = fakeRouterSequence([
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(badHebrewCopy()),
+      finalTurn(goodImageVettingOutput()),
+      finalTurn(goodRelevanceVerdict()),
+      finalTurn(NOT_NATIVE_VERDICT),
+      finalTurn(STILL_NOT_NATIVE_VERDICT),
+      finalTurn(goodHebrewCopy()),
+      finalTurn(goodImageVettingOutput()),
+      finalTurn(goodRelevanceVerdict()),
+      finalTurn(NATIVE_VERDICT),
+      finalTurn(goodVisualQaOutput()),
+    ]);
+    const params = { runId: "instagram_run_lang_register_step", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
+
+    const durableStore = new MemoryDurableStepStore();
+    const result = await new WorkflowEngine(durableStore).run(workflowFor(router), params);
+    expect(result.status, JSON.stringify(result)).toBe("completed");
+
+    const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
+    // ONE checkpoint across two attempts: the register does not change between two drafts of one revision,
+    // and re-deriving it per attempt would put identical checkpoints in the trace.
+    expect(stepIds.filter((id) => id === "04l-language-register")).toHaveLength(1);
+    expect(stepIds.indexOf("04l-language-register")).toBeLessThan(stepIds.indexOf("05-write-copy-attempt-1"));
+
+    // The writer really received it, as a FIELD - not only as a clause inside `briefForPrompt`, which is
+    // the survey gap this closes.
+    const copyInputs = copyTurnInputs(router);
+    expect(typeof copyInputs[0]!["languageBrief"]).toBe("string");
+    expect(copyInputs[0]!["languageBrief"]).toMatch(/Hebrew/);
+  }, 60000);
+
+  it("an ENGLISH run pays for none of it: no 04l, no 07e2, no judge, and no `languageBrief` in the writer's payload", async () => {
+    const router = fakeRouterSequence([
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodCopyOutput()),
+      finalTurn(goodImageVettingOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+    ]);
+    const params = { runId: "instagram_run_lang_english_free", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
+
+    const durableStore = new MemoryDurableStepStore();
+    const result = await new WorkflowEngine(durableStore).run(workflowFor(router), params);
+    expect(result.status, JSON.stringify(result)).toBe("completed");
+    // An eighth call would be the judge, and would exhaust the router.
+    expect(router.complete).toHaveBeenCalledTimes(7);
+
+    const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
+    expect(stepIds).not.toContain("04l-language-register");
+    expect(stepIds).not.toContain("07e2-native-conventions-attempt-1");
+    expect(stepIds).not.toContain("07f-language-fluency-attempt-1");
+    expect(copyTurnInputs(router)[0]!["languageBrief"]).toBeUndefined();
+
+    const deliverables = await env.store.listJson<{ deliverable: { grounding?: { language?: unknown } } }>(
+      "acme",
+      ["ledger", "deliverables", params.runId, "_"],
+    );
+    expect(deliverables[0]!.data.deliverable.grounding?.language).toBeUndefined();
+  }, 60000);
+
 
   // ── Always on: 02d resolves the language from more than `brand.language` ──
   //
@@ -583,7 +868,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()),
-      finalTurn(FLUENT_VERDICT),
+      finalTurn(NATIVE_VERDICT),
       finalTurn(goodVisualQaOutput()),
     ]);
     const params = { runId: "instagram_run_lang_from_profile", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
@@ -594,8 +879,8 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     // scout + research + angle + copy + vet + relevance + fluency judge + QA.
     expect(result.status).toBe("completed");
     expect(router.complete).toHaveBeenCalledTimes(8);
-    const language = (await durableStore.getStep(params.runId, "02d-load-target-language")) as { output: string | null };
-    expect(language.output).toBe("Hebrew");
+    const language = (await durableStore.getStep(params.runId, "02d-load-target-language")) as { output: { language: string; source: string } | null };
+    expect(language.output?.language).toBe("Hebrew");
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).toContain("07e-language-script-attempt-1");
     expect(stepIds).toContain("07f-language-fluency-attempt-1");
@@ -651,7 +936,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     const result = await new WorkflowEngine(durableStore).run(workflowFor(router), params);
 
     expect(result.status).toBe("completed");
-    const language = (await durableStore.getStep(params.runId, "02d-load-target-language")) as { output: string | null };
+    const language = (await durableStore.getStep(params.runId, "02d-load-target-language")) as { output: unknown };
     expect(language.output).toBeNull();
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).not.toContain("07f-language-fluency-attempt-1");
@@ -684,7 +969,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     // scout + research + angle + copy + vet + relevance + QA. An eighth call would be
     // the fluency judge, and would exhaust the router.
     expect(router.complete).toHaveBeenCalledTimes(7);
-    const language = (await durableStore.getStep(params.runId, "02d-load-target-language")) as { output: string | null };
+    const language = (await durableStore.getStep(params.runId, "02d-load-target-language")) as { output: unknown };
     expect(language.output).toBeNull();
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).not.toContain("07e-language-script-attempt-1");
@@ -756,7 +1041,7 @@ describe("a brief-declared language is the RUN's language, not just the writer's
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()),
-      finalTurn(FLUENT_VERDICT),
+      finalTurn(NATIVE_VERDICT),
       finalTurn(goodVisualQaOutput()),
     ]);
     const params = { runId: "instagram_run_lang_from_brief", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
@@ -767,7 +1052,7 @@ describe("a brief-declared language is the RUN's language, not just the writer's
 
     // 02d itself is unchanged: it still honestly reports that nothing IT
     // reads names a language.
-    const resolved = (await durableStore.getStep(params.runId, "02d-load-target-language")) as { output: string | null };
+    const resolved = (await durableStore.getStep(params.runId, "02d-load-target-language")) as { output: unknown };
     expect(resolved.output).toBeNull();
 
     // Both gate stages ran, on the language the writer was actually told to

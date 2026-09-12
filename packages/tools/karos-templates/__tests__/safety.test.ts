@@ -118,6 +118,21 @@ describe("buildStudioTemplateDocument", () => {
     expect(doc).toContain("instagram-agent studio template");
   });
 
+  it("declares the lang SLOT, not a hardcoded en, on both code-written shells", () => {
+    // Phase 4 (RFC-15 §7.2). The eight bundled templates are source files and
+    // `bidi-isolation.test.ts` scans them; this shell is written in CODE, so
+    // that scan cannot see it — and it is the shell behind BOTH Template
+    // Studio rows and model-authored custom archetypes. A `lang="en"` here
+    // means a Hebrew studio template renders as an English document: the
+    // browser picks Latin font fallback for Hebrew glyphs and hyphenates by
+    // English rules, which is the exact defect the slot exists to close, on
+    // the one path nothing else covers.
+    for (const doc of [buildStudioTemplateDocument("<div>{{title}}</div>"), buildCustomArchetypeDocument("<div>{{title}}</div>")]) {
+      expect(doc).toContain(`<html lang="{{lang}}" dir="{{dir}}">`);
+      expect(doc).not.toContain(`lang="en"`);
+    }
+  });
+
   it("differs from the custom-archetype document only in its title, so the trace names which path built it", () => {
     const studio = buildStudioTemplateDocument("<div>{{title}}</div>");
     const custom = buildCustomArchetypeDocument("<div>{{title}}</div>");
