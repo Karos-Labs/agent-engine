@@ -21,8 +21,23 @@ import { measureSlidePng, type SlideMetrics, type SlideProbe } from "./slide-met
  * grows downward. Not additive — a caller that gates on `probe.overflow` will
  * see slides fail that used to pass, and those slides were always broken. See
  * `probePage`'s "THE BLOCK-START LIMB" comment.
+ *
+ * 1.3.1 — NO BEHAVIOUR CHANGE, and the patch digit is the point. The only
+ * edit was `probePage`'s "WHAT IS STILL BLIND" comment, which records the
+ * 48-render sweep that decided AGAINST a third limb on the inline axis (all
+ * 30 escapes are `.diamond`, hung 3-4px for optical alignment). A rendered
+ * slide measures identically on 1.3.0 and 1.3.1.
+ *
+ * It is bumped anyway because `check-tool-versions.ts` compares a tool file
+ * against the PREVIOUS COMMIT on the branch, not against `origin/main` — so
+ * running the gate locally with `--base origin/main` passed while CI, which
+ * passes the push's before-sha, failed. The gate is right to be strict: it
+ * cannot read a diff and know a change was inert, and a rule with an
+ * "obviously harmless" exemption stops being a rule. A patch digit is the
+ * honest way to satisfy it — semver already means "nothing a caller can
+ * observe moved", which is exactly the claim being made here.
  */
-const TOOL_VERSION = "1.3.0";
+const TOOL_VERSION = "1.3.1";
 
 // n/template/fields/images have no existing TSDoc to transcribe (SCRUM-293 flag) — descriptions
 // below synthesized from fillTemplate's/validateRenderInputs' usage of each field.
