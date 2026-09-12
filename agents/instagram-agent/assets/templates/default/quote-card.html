@@ -185,12 +185,38 @@
      unconditional tinted block scores its whole area whether or not anything
      is standing on it — which is how a plate with every slot empty used to
      clear the role floors it exists to fail. */
+  /* ── THE CARD IS PRINTED IN CONCENTRIC ARCS, AND THAT IS THIS ARCHETYPE'S
+        MARK. ──
+     The whole bundled set used to carry one 45-degree hairline field, so six
+     of the eight plates read as the same wallpaper with different words on it
+     — the owner's second complaint verbatim. Every archetype now spends a
+     different MARK (`headline-focus.html`'s header lists the set and states
+     why a mark is needed at all rather than a flat tint or clean ground).
+     This one is the only CURVED mark in the directory: concentric rings
+     centred on the card, so the ground echoes the round shoulder of the one
+     glyph this archetype is built around. At a glance it is a ripple, not a
+     hatch — nothing else in the set can be mistaken for it.
+
+     Centred rather than struck from a corner, and that is a direction
+     decision rather than a compositional one: a mark anchored at `0% 0%` is
+     a PHYSICAL corner, so on an RTL card it would radiate from the far side
+     while the accent rule (`border-inline-start`) moved to the near one. A
+     centred ring set is mirror-symmetric and needs no second rule.
+
+     2px rings on a 22px pitch, by the same cell arithmetic every mark in this
+     directory answers to: a 2px stroke can never fill three quarters of a 4px
+     cell, so the rings add no drawn-device coverage and the card's device
+     share stays the TINT's. The pitch also bounds the largest empty rectangle
+     inside the card to one ~20px gap, and — the reason a bare graded panel is
+     not an option here — a cell crossed by a ring is not FLAT, which is what
+     stops a panel covering half the frame from out-voting the real ground for
+     `backgroundHex` (see the third rule in this file's header). */
   .quote-block:has(.quote-text:not(:empty)) {
     border-inline-start: calc(14px * var(--ts, 1)) solid var(--accent);
     background-image:
-      repeating-linear-gradient(45deg,
-        color-mix(in srgb, var(--fg) 14%, transparent) 0 2px,
-        transparent 2px 11px),
+      repeating-radial-gradient(circle at 50% 50%,
+        color-mix(in srgb, var(--fg) 15%, transparent) 0 2px,
+        transparent 2px 22px),
       linear-gradient(162deg,
         color-mix(in srgb, var(--accent) 30%, var(--bg)) 0%,
         color-mix(in srgb, var(--accent) 16%, var(--bg)) 100%);

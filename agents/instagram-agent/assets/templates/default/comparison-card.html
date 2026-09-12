@@ -170,6 +170,27 @@
      tinted blocks score their whole area whether or not anything is standing
      on them — which is how a plate with every slot empty used to clear the
      role floors it exists to fail. */
+  /* ── THE TWO CARDS ARE HATCHED IN OPPOSITE DIRECTIONS, AND THAT IS THIS
+        ARCHETYPE'S MARK. ──
+     The whole bundled set used to carry one 45-degree hairline field, so six
+     of the eight plates read as the same wallpaper with different words on it
+     — the owner's second complaint verbatim. Every archetype now spends a
+     different MARK (`headline-focus.html`'s header lists the set and states
+     why a mark is needed at all rather than a flat tint or clean ground).
+
+     This is the one place in the directory where a DIAGONAL still earns its
+     keep, because here the mirroring means something: the quiet side runs at
+     45 degrees and the recommended side at 135, so the pair leans into each
+     other and the slide's argument is legible before a word of it is read.
+     Nothing else in the set is a mirrored pair, and `headline-focus.html` is
+     the only other file that hatches at all — one field, never two.
+
+     The pitch is the set's standing one and it answers to the same cell
+     arithmetic: a 2px rule marks (2+4)/11 of the cells it crosses and can
+     never fill three quarters of a 4px cell, so the hatch adds no drawn-device
+     coverage and each card's device share stays its TINT's. A cell crossed by
+     the hatch is also not FLAT, which is what stops two panels covering half
+     the frame from out-voting the real ground for `backgroundHex`. */
   body:has(.cmp-label:not(:empty)) .cmp-col {
     background-image:
       repeating-linear-gradient(45deg,
@@ -190,7 +211,7 @@
   .cmp-col.win { border-color: var(--accent); position: relative; }
   body:has(.cmp-label:not(:empty)) .cmp-col.win {
     background-image:
-      repeating-linear-gradient(45deg,
+      repeating-linear-gradient(135deg,
         color-mix(in srgb, var(--fg) 12%, transparent) 0 2px,
         transparent 2px 11px),
       linear-gradient(166deg,

@@ -110,10 +110,23 @@ describe("default templates are token-driven, not literal-colored", () => {
    * paint is switched off when a photograph loads. Over a dark plate that
    * badge measured 1.10:1 (`.local/cover-contrast.mjs`).
    *
-   * No pixel metric in this repo measures contrast and every probe case
-   * rendered an empty badge, so this is asserted on the source: a template
-   * may use `--accent-ink` for the badge only if it ALSO switches the value
-   * on the same guards that switch its field paint off.
+   * Re-measured 2026-09-12 with the same instrument: `--accent-ink` on that
+   * ramp head is **2.81:1**, not the 3.20:1 the file's own table claimed, and
+   * `--fg` there is **5.60:1** rather than 1.3:1 — so the table was wrong by
+   * 4.3x on the row it used to justify the choice, and it argued for the
+   * option a reader cannot see. `cover.html` now declares `--badge-ink: var(--fg)`
+   * on every path (4.80:1 is the worst of the four grounds it can render on),
+   * which needs no branch at all.
+   *
+   * WHAT THIS TEST IS FOR NOW. It is the SOURCE half: a template may not
+   * colour a bare badge straight off `--accent-ink`, and a template that
+   * reaches for the `--badge-ink` indirection must declare the token's value
+   * itself rather than leaving it to a fallback. The PIXEL half — the badge's
+   * real contrast, on the document production composes, with a client's brand
+   * head spliced in after the template's sheet — is
+   * `interest-floor-calibration.test.ts`'s "a series badge stays legible
+   * through a client's own brand head", which exists because this scan went
+   * green for a whole revision while the shipped badge measured 1.51:1.
    */
   it("no template paints its series badge in an ink token without a branch for the ground that ink needs", async () => {
     const files = (await fs.readdir(TEMPLATE_DIR)).filter((f) => f.endsWith(".html"));
@@ -132,11 +145,17 @@ describe("default templates are token-driven, not literal-colored", () => {
         expect.fail(`${file} colours .brand-badge straight off --accent-ink; that token is text ON an accent chip and this badge has no chip`);
       }
       if (/var\(\s*--badge-ink/.test(block)) {
-        // The indirection is only honest if BOTH branches are declared, and
-        // the guards must be the field's own — a badge whose ink outlives the
-        // ground it was chosen for is the defect this test exists for.
-        expect(styles, `${file} reads --badge-ink but never declares its default`).toMatch(/body\s*\{[^}]*--badge-ink\s*:/);
-        expect(styles, `${file} never switches --badge-ink off the accent ramp`).toMatch(/body:has\(\.hero\)[^{]*\{[^}]*--badge-ink\s*:/);
+        // The indirection is only honest if the template DECLARES the token.
+        // Left undeclared it falls through to `buildBrandHeadHtml`'s
+        // `var(--badge-ink, var(--accent))` fallback, which is the accent —
+        // and the accent is what is invisible on this file's own ramp head.
+        expect(styles, `${file} reads --badge-ink but never declares its value`).toMatch(/body\s*\{[^}]*--badge-ink\s*:/);
+        // And it may not be declared as the chip ink: `--accent-ink` is text
+        // ON an accent chip, and a bare badge has no chip (2.81:1 measured on
+        // the ramp head it was chosen for).
+        expect(styles, `${file} declares --badge-ink as --accent-ink; that token is text ON an accent chip and this badge has no chip`).not.toMatch(
+          /body\s*\{[^}]*--badge-ink\s*:\s*var\(\s*--accent-ink/,
+        );
       } else {
         expect(block, `${file} should colour a bare badge in var(--accent) like its seven siblings`).toMatch(/color\s*:\s*var\(\s*--accent\s*\)/);
       }
