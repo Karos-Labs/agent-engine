@@ -57,7 +57,7 @@
   judged at the cover role must report `no-device`. That is not a metric being
   protected — it is this archetype's editorial identity. It is the one quiet,
   all-type turn in the set, the floor exempts interiors from clause E for
-  exactly that reason, and a slide that wants a device has `{{html:device}}`
+  exactly that reason, and a slide that wants a device has `html:device`
   or another archetype. So: every element on this plate is either type, a
   texture, or a rule — no filled block anywhere, and no outline heavy enough
   to cover a cell.
@@ -275,8 +275,12 @@
     background-repeat: no-repeat, no-repeat, repeat;
     background-position: 0 0, 0 100%, 0 0;
   }
-  /* The guard. No statement, no field — see the block above. */
-  body:has(#headline:empty) .copy-art { background-image: none; }
+  /* The guard. No statement, no field — see the block above. Asked of the
+     statement's CHILDREN, because `.hf-headline` is a twin-slot pair now (see
+     the twin-slot block below) and a host with two element children can never
+     match `:empty`. Left as `#headline:empty` the guard would have gone
+     permanently silent and an empty plate would have kept the field paint. */
+  body:not(:has(#headline > span:not(:empty))) .copy-art { background-image: none; }
 
   /* ── THE ALTERNATIVE GROUND: A LARGE TYPOGRAPHIC MARK ON A DASH SCREEN. ──
 
@@ -386,7 +390,7 @@
   .ground-glyph { display: none; }
   /* Furniture, but furniture that paints ink, so it answers to the same rule:
      a plate with no statement on it paints no numeral either. */
-  body:has(#headline:empty) .ground-glyph { display: none !important; }
+  body:not(:has(#headline > span:not(:empty))) .ground-glyph { display: none !important; }
   /* THE NUMERAL STILL SCALES WITH `--ts`, and that is deliberate even though
      the dash tile beside it no longer does. The two are different kinds of
      thing: the tile is a screen whose duty cycle has to stay put against a
@@ -531,7 +535,35 @@
     border-inline-start: calc(4px * var(--ts, 1)) solid color-mix(in srgb, var(--accent) 80%, transparent);
     padding-inline-start: calc(30px * var(--ts, 1));
   }
-  .body-text:empty { display: none; }
+  .body-text:not(:has(> span:not(:empty))) { display: none; }
+
+  /* ── TWIN SLOTS: THE MARKED COPY AND ITS PLAIN FALLBACK (RFC-17 §5.4). ──
+     `cover.html`'s twin-slot block is the canonical note — why a pair rather
+     than a straight swap (`fillTemplate` erases an unfilled slot, so a run
+     resumed across a deploy would render an empty statement), why both twins
+     stay in the DOM on every render (`probePage` counts a text-bearing LEAF,
+     so wrapping one path and not the other moves `textBoxShare` and
+     `fontFamiliesUsed` between two renders of the same copy), and why the two
+     `#headline:empty` guards above had to be restated against the children.
+
+     Slot names are written WITHOUT their braces throughout this file, because
+     `fillTemplate` is a `replaceAll` over the literal token and a token spelled
+     out in a stylesheet comment is a second substitution site — see `cover.html`'s
+     canonical copy of this note for the measurement and the failure it caused.
+
+     This file's pairs: `.hf-headline` takes `html:headlineRuns` +
+     `headline`, `.body-text` takes `html:bodyRuns` + `body`.
+
+     THE HOST IS `.hf-headline`, NOT `.headline`, and the collapse rule has to
+     name the host it is actually written under — this is the one file in the
+     set where the display slot carries an archetype-prefixed class. A rule
+     copied from a sibling template would select nothing here and both twins
+     would print, one under the other. */
+  /* The twin host's block-start bleed — see `cover.html` for the measurement
+     and why it is here rather than only in the shared mark sheet. */
+  :has(> span.mk-plain) { padding-block-start: var(--mk-twin-bleed, .22em); }
+  .hf-headline:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
+  .body-text:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
 
   /* Standing brand furniture. The brand head fragment
      (`buildBrandHeadHtml`) restates both rules and lands AFTER this sheet, so
@@ -571,11 +603,11 @@
   <div class="hf-field copy-art">
     <div class="copy">
       <div class="hf-device">{{html:device}}</div>
-      <div class="hf-headline" id="headline">{{headline}}</div>
+      <div class="hf-headline" id="headline"><span class="mk-runs">{{html:headlineRuns}}</span><span class="mk-plain">{{headline}}</span></div>
       <div class="stat-band"></div>
     </div>
     <div class="hf-foot">
-      <div class="body-text">{{body}}</div>
+      <div class="body-text"><span class="mk-runs">{{html:bodyRuns}}</span><span class="mk-plain">{{body}}</span></div>
     </div>
   </div>
   <script>
@@ -605,9 +637,22 @@
     // is the right trade — `l` is a reviewer asking for bigger type, and the
     // ladder gives it on everything that fits, but a statement printed on
     // top of its own kicker is not a bigger statement, it is a broken plate.
+    //
+    // THE LADDER MEASURES THE VISIBLE TWIN, NOT BOTH OF THEM — `cover.html`'s
+    // script carries the full note. `textContent` reads a `display: none`
+    // subtree too, so on a marked render the host holds its copy twice and a
+    // naive count would take a fitting statement straight to `micro`. Zero
+    // width bidi controls are stripped for the reason stated there.
     (function () {
+      function mkLen(el) {
+        if (el === null) return 0;
+        var runs = el.querySelector(".mk-runs");
+        var src = runs !== null && runs.textContent.trim() !== "" ? runs : el.querySelector(".mk-plain");
+        var text = ((src === null ? el : src).textContent || "").replace(/[\u2066-\u2069\u200E\u200F]/g, "");
+        return text.trim().length;
+      }
       var h = document.getElementById("headline");
-      var len = (h.textContent || "").trim().length;
+      var len = mkLen(h);
       var big = document.body.classList.contains("ts-l");
       if (len > (big ? 78 : 100)) h.className = "hf-headline micro";
       else if (len > (big ? 50 : 60)) h.className = "hf-headline tiny";

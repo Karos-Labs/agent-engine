@@ -460,8 +460,8 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // this asserts is that the rows exist at all, which is the step a prompt
     // bump most often forgets.
     const registry = readFileSync(path.join(PROMPTS_ROOT, "..", "..", "..", "scripts", "prompt-registry.ts"), "utf8");
-    expect(registry).toContain(`"14", "15", "16", "17"`);
-    expect(registry).toMatch(/promptId: "instagram-copy"[\s\S]{0,400}latestVersion: "17"/);
+    expect(registry).toContain(`"14", "15", "16", "17", "18"`);
+    expect(registry).toMatch(/promptId: "instagram-copy"[\s\S]{0,600}latestVersion: "18"/);
     // Phase 5 (RFC-18 §6.1). The packager's prompt is the one THIS phase added,
     // and the WIP commit this branch inherited had shipped both prompt files
     // with no registry row at all — which `check:prompts` fails on and which
@@ -484,13 +484,13 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     expect(registry).toContain(`{ promptId: "instagram-concept", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
   });
 
-  it("every agent reads the version this phase shipped: copy @17, post package @1, visual QA @4, image vet @5, art director @1, concept @1", async () => {
+  it("every agent reads the version this phase shipped: copy @18, post package @1, visual QA @4, image vet @5, art director @1, concept @1", async () => {
     // The last line of a prompt bump, and the one most often forgotten: a new
     // prompt file that no `skillRef` points at exists, resolves, and is read
     // by nothing.
     const promptStore = makePromptStore();
     const copy = new InstagramCopyAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
-    expect((copy as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-copy@17");
+    expect((copy as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-copy@18");
     const packager = new InstagramPostPackagerAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
     expect((packager as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-post-package@1");
     const qa = new InstagramVisualQaAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
@@ -503,14 +503,14 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     expect((concept as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-concept@1");
   });
 
-  it("instagram-copy@17, instagram-post-package@1, instagram-image-vet@5, instagram-art-director@1 and instagram-concept@1 resolve, each byte-identical to its own latest.md", async () => {
+  it("instagram-copy@18, instagram-post-package@1, instagram-image-vet@5, instagram-art-director@1 and instagram-concept@1 resolve, each byte-identical to its own latest.md", async () => {
     // Phase 3 (items Q and R). The byte comparison is the one `check:prompts`
     // makes too, and it is here as well because a drifted `latest.md` is the
     // failure mode where a run silently reads a DIFFERENT prompt from the one
     // its version pin names.
     const promptStore = makePromptStore();
     for (const [promptId, version, h1] of [
-      ["instagram-copy", "17", "# Instagram Copy Craft Guide, v17"],
+      ["instagram-copy", "18", "# Instagram Copy Craft Guide, v18"],
       ["instagram-post-package", "1", "# Instagram Post Package Guide, v1"],
       ["instagram-image-vet", "5", "# Instagram Image Vetting Craft Guide — v5"],
       ["instagram-art-director", "1", "# Instagram Art Direction Guide — v1"],
@@ -522,6 +522,125 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
         readFileSync(path.join(PROMPTS_ROOT, promptId, "latest.md"), "utf8"),
       );
       expect(pinned.split(/\r?\n/)[0]).toBe(h1);
+    }
+  });
+
+  it("instagram-copy/latest.md is BYTE-identical to 18.md, and 18.md is exactly 17.md plus §28", () => {
+    // The design system (RFC-17 §5.7), step 2 of the five-step checklist.
+    //
+    // The title and the section numbers below were `17.md`/`§24` until the
+    // Phase 5 merge, and the assertions underneath always read 18.md/§28 —
+    // this branch's bump was renumbered when main's own @17 arrived first. A
+    // test whose NAME describes a different file from the one it opens is how
+    // a reader comes to trust the wrong guard, so the name is corrected here
+    // rather than left as merge residue.
+    //
+    // A Buffer comparison, not a decoded-string one. `readFileSync(..., "utf8")`
+    // above is what `check:prompts` does and it is the right check for DRIFT,
+    // but it cannot see a BOM, a lone CR, or an invalid sequence that decodes
+    // to the same replacement character on both sides — and this repo's files
+    // are CRLF, so a tool that normalises line endings on one of the two would
+    // pass a decoded comparison while shipping a different file to the model.
+    const v18 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "18.md"));
+    const latest = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "latest.md"));
+    expect(latest.equals(v18), "latest.md must be byte-identical to 18.md, not merely equivalent").toBe(true);
+
+    // Published versions are IMMUTABLE: @17 shipped on main (Phase 5, PR #111)
+    // and is what every in-flight run and every pinned fixture still resolves,
+    // so the bump must be additive. This reconstructs 18.md from 17.md and
+    // fails if any of Phase 5's value sections was edited in passing.
+    const v17 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "17.md"), "utf8");
+    expect(v17, "@17 is published and frozen; §28 belongs to @18 alone").not.toContain("## 28.");
+    const v18Text = v18.toString("utf8");
+    // @18 = @17 with the h1 bumped, a v18 changelog note inserted under it, and
+    // §28 appended. Everything from §1 to §27 is inherited character for
+    // character, which is what this slice asserts.
+    const inherited = v17.slice(v17.indexOf("**What changed at v17.**")).trimEnd();
+    expect(v18Text, "@18 must inherit every byte of @17 from its changelog note onward").toContain(inherited);
+    expect(v18Text.split(/\r?\n/)[0]).toBe("# Instagram Copy Craft Guide, v18");
+    // Phase 5's value sections survive the merge; losing one is the defect this
+    // whole reconciliation exists to prevent.
+    for (const heading of ["## 24. Value:", "## 25. Take a position", "## 26. Rhythm", "## 27. The source's prose is not yours"]) {
+      expect(v18Text, `@18 must inherit Phase 5's ${heading}`).toContain(heading);
+    }
+    const section28 = v18Text.slice(v18Text.indexOf("## 28."));
+    // ≈2,600 characters, the figure `run-budget.ts` prices the input half on.
+    // A section that quietly doubled would make that re-price wrong.
+    expect(section28.length).toBeGreaterThan(2300);
+    expect(section28.length).toBeLessThan(3000);
+  });
+
+  it("§28 carries the TOPIC RULE, the verbatim contract, and its own interaction with checkSentenceCase", () => {
+    // The design system (RFC-17 Part 1). THE ONE RULE THAT OVERRIDES EVERY OTHER RULE IN
+    // THIS PHASE. §28 teaches the model an EXECUTION borrowed from reference
+    // accounts that post about AI and marketing, and the failure it could
+    // cause is not a broken render — it is a beautiful, well-marked slide
+    // about a subject the client does not do, which is the original audit
+    // failure repeating with better typography. The sentence is load-bearing
+    // enough that its absence must be a red build, not a review comment.
+    const v18 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "18.md"), "utf8");
+    const section28 = v18.slice(v18.indexOf("## 28."));
+    expect(section28.startsWith("## 28."), "§28 must exist in 18.md").toBe(true);
+
+    expect(section28).toContain("Do not reach for a subject the client's brief and topic engines did not give");
+    expect(section28).toContain("Reference EXECUTION transfers; reference SUBJECT MATTER never");
+
+    // The span contract. A span is located by exact match and DROPPED when it
+    // does not occur (RFC-17 finding 6: character offsets cannot survive
+    // `iso()` or the Phase 4 native editor), so the prompt has to say both
+    // halves — copy verbatim, and what silently happens when you do not.
+    expect(section28).toContain("VERBATIM");
+    expect(section28).toContain("DROPPED");
+
+    // The split RFC-17 finding 2 turns on: the model cannot see the ground, so
+    // it never chooses how a mark is painted.
+    expect(section28).toContain("You choose WHICH words. You never choose the colour, the weight, or how the");
+    // Part 4 obs. 5 — rf-05 S3 marks `Handwritten notes` and leaves `2-` bare.
+    expect(section28).toContain("Never the numeral");
+    // The floor's own complaint, restated for copy: a mark over everything
+    // marks nothing, and an invented phrase is a fabricated reason to mark.
+    expect(section28).toContain("Never a whole line");
+    expect(section28).toContain("Do not invent a phrase in order to have something to mark");
+
+    // §10 vs §28. Before this phase the system had a rule AGAINST emphasis
+    // (`checkSentenceCase` + `EMPHASIS_DENYLIST`) and no rule FOR it, so a
+    // model that wanted to stress a word had only shouting available and got
+    // the whole draft returned for it. §28 has to name the mechanism it does
+    // not replace, or it reads as permission to shout.
+    expect(section28).toContain("checkSentenceCase");
+    expect(section28).toContain("Shouting is still refused");
+    expect(section28).toContain("sanctioned way to emphasise");
+
+    // §28 obeys the prompt's own craft rules (§10): no em/en dashes, no
+    // double hyphens, no exclamation marks. A section that breaks the rules it
+    // sits beside teaches the model that they are negotiable.
+    expect(section28).not.toMatch(/[—–]/);
+    expect(section28).not.toContain("--");
+    expect(section28).not.toContain("!");
+
+    // THE READING ORDER, which replaced the field names (RFC-17 §6.4).
+    //
+    // Until the compact re-encode, §28 named a `field` and an `itemIndex` per
+    // mark and this loop pinned those six literals. The wire shape is now a
+    // bare string and CODE locates it, so the model no longer names a field at
+    // all — but the order it is searched in is now part of the contract the
+    // writer has to reason about, because a repeated word is marked at its
+    // FIRST unmarked occurrence and nowhere else. That order is the thing a
+    // reader of the prompt can get wrong, so it is what gets pinned.
+    expect(section28).toContain("`emphasis`");
+    // `\r?\n` because these files are CRLF and the sentence wraps: a literal
+    // "\n" here would never match and the guard would be decoration.
+    expect(section28, "§28 must state the search order, or a repeated word's mark lands somewhere the writer did not intend").toMatch(
+      /searching the headline, then the body, then\r?\nthe quote, then the list rows in order/,
+    );
+    expect(section28, "§28 must say a string is marked once, or the writer will name a repeated word twice").toContain("marked once per slide");
+
+    // The model must never be told a TEMPLATE SLOT name (RFC-17 §5.1):
+    // `contentFor` routes `headline` to `title` on a cover and to `takeaway`
+    // on a closer, and a prompt that leaked those would couple copy to layout.
+    expect(section28, "§28 must not name a template slot").not.toContain("Runs`");
+    for (const slot of ["`title`", "`takeaway`", "`itemIndex`"]) {
+      expect(section28, `§28 must not name ${slot}: code locates marks now, the writer does not`).not.toContain(slot);
     }
   });
 

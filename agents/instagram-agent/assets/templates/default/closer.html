@@ -226,10 +226,17 @@
         transparent 4px 20px);
   }
   /* The guards. No takeaway, no field; and furniture that paints ink answers
-     to the same rule, so the numeral goes with it. */
-  body:has(#takeaway:empty) .cl-art { background-image: none; }
+     to the same rule, so the numeral goes with it.
+
+     BOTH ARE ASKED OF THE TAKEAWAY'S CHILDREN. `.headline` is a twin-slot pair
+     now (see the twin-slot block below), so `#takeaway` has two element
+     children on every render and can never match `:empty` again — written the
+     old way these two guards would have gone permanently silent and a closer
+     with nothing to say would have kept both the field paint and the 720px
+     numeral, which is the ink an empty plate must not acquire. */
+  body:not(:has(#takeaway > span:not(:empty))) .cl-art { background-image: none; }
   .ground-glyph { display: none; }
-  body:has(#takeaway:empty) .ground-glyph { display: none !important; }
+  body:not(:has(#takeaway > span:not(:empty))) .ground-glyph { display: none !important; }
   body.gr-glyph .ground-glyph {
     display: block; position: absolute; z-index: 0;
     inset-block-start: calc(-210px * var(--ts, 1)); inset-inline-start: calc(-18px * var(--ts, 1));
@@ -313,7 +320,13 @@
     margin-inline: calc(16px - var(--mx)); padding-inline: calc(var(--mx) - 16px);
     padding-block: calc(40px * var(--ts, 1));
   }
-  .cl-ask:has(.cl-question:not(:empty)), .cl-ask:has(.cl-cta:not(:empty)) {
+  /* Asked of the two slots' CHILDREN — both are twin-slot pairs now (see the
+     twin-slot block below), and a host with two element children is never
+     `:not(:empty)`-false. This is the guard whose failure mode is the loudest
+     in the set: written the old way the ask's band would paint on a closer
+     with no question and no CTA, and that band is this archetype's drawn
+     device — an empty ask would have cleared clause E on its own decoration. */
+  .cl-ask:has(.cl-question > span:not(:empty)), .cl-ask:has(.cl-cta > span:not(:empty)) {
     border-block-start: calc(6px * var(--ts, 1)) solid var(--accent);
     /* The ask's band is ruled HORIZONTALLY, on the same axis as the field's
        band stack above it — this plate has one direction and everything on it
@@ -451,7 +464,7 @@
      came to 490px and the wrap escaped its field by 47px; at `micro` the ask
      is back on its 400px floor and the wrap clears by 101px. */
   .cl-question.micro { font-size: calc(28px * var(--ts, 1)); line-height: 1.4; }
-  .cl-question:empty { display: none; }
+  .cl-question:not(:has(> span:not(:empty))) { display: none; }
   .cl-cta {
     font-family: var(--f-body); font-weight: 500; font-size: calc(36px * var(--ts, 1));
     line-height: 1.45; color: color-mix(in srgb, var(--fg) 94%, transparent);
@@ -459,7 +472,43 @@
   }
   .cl-cta.small { font-size: calc(31px * var(--ts, 1)); line-height: 1.45; }
   .cl-cta.tiny { font-size: calc(27px * var(--ts, 1)); line-height: 1.5; }
-  .cl-cta:empty { display: none; }
+  .cl-cta:not(:has(> span:not(:empty))) { display: none; }
+
+  /* ── TWIN SLOTS: THE MARKED COPY AND ITS PLAIN FALLBACK (RFC-17 §5.4). ──
+     `cover.html`'s twin-slot block is the canonical note — why a pair rather
+     than a straight swap (`fillTemplate` erases an unfilled slot, so a run
+     resumed across a deploy would render an empty takeaway), why both twins
+     stay in the DOM on every render (`probePage` counts a text-bearing LEAF,
+     so wrapping one path and not the other moves `textBoxShare` and
+     `fontFamiliesUsed` between two renders of the same copy), and why every
+     `:empty` guard in this file had to be restated against the children.
+
+     A NOTE ON HOW THE SLOT NAMES ARE SPELLED BELOW. `fillTemplate` is a
+     `replaceAll` over the LITERAL token, and it does not know this is a
+     comment: a raw-fragment token written out in full here is a SECOND
+     substitution site, and a fragment carrying a style element of its own
+     closes this stylesheet early and dumps the rest of this file onto the
+     plate as body copy. Measured, on all six mark-bearing templates. So every
+     slot named in prose in this file drops its braces — `html:takeawayRuns`,
+     not the token — and only the real slot down in the markup can ever match.
+     For the same reason no comment here spells a style tag out in full; see
+     `cover.html`'s canonical copy of this note.
+
+     THREE PAIRS HERE, THE MOST IN THE SET: `.headline` takes
+     `html:takeawayRuns` + `takeaway`, `.cl-question` takes
+     `html:questionRuns` + `question`, `.cl-cta` takes
+     `html:ctaRuns` + `cta`. The question and the CTA are already
+     mutually exclusive upstream, so at most two of the three ever carry copy
+     on one plate — which is why each needs its OWN collapse rule rather than
+     one rule over a shared ancestor: the rule has to name the host whose runs
+     span it is collapsing, or a filled takeaway would hide an unmarked CTA's
+     only copy. */
+  /* The twin host's block-start bleed — see `cover.html` for the measurement
+     and why it is here rather than only in the shared mark sheet. */
+  :has(> span.mk-plain) { padding-block-start: var(--mk-twin-bleed, .22em); }
+  .headline:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
+  .cl-question:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
+  .cl-cta:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
 
   /* Standing brand furniture. The brand head fragment (`buildBrandHeadHtml`)
      restates both rules and lands AFTER this sheet, so a client with a kit
@@ -498,13 +547,13 @@
   <div class="cl-field cl-art">
     <div class="cl-wrap">
       <div class="cl-recap">{{html:recap}}</div>
-      <div class="headline" id="takeaway">{{takeaway}}</div>
+      <div class="headline" id="takeaway"><span class="mk-runs">{{html:takeawayRuns}}</span><span class="mk-plain">{{takeaway}}</span></div>
       <div class="cl-rule"></div>
     </div>
   </div>
   <div class="cl-ask">
-    <div class="cl-question">{{question}}</div>
-    <div class="cl-cta">{{cta}}</div>
+    <div class="cl-question"><span class="mk-runs">{{html:questionRuns}}</span><span class="mk-plain">{{question}}</span></div>
+    <div class="cl-cta"><span class="mk-runs">{{html:ctaRuns}}</span><span class="mk-plain">{{cta}}</span></div>
   </div>
   <script>
     // THE BREAKPOINTS MOVE WITH THE REVIEWER'S TYPE SCALE, for the reason
@@ -538,7 +587,23 @@
       // while a recap takes a fixed 447-646px out of the middle.
       var r = recap !== null && recap.textContent.trim() !== "" ? 0.85 : 1;
       var at = function (m, l) { return Math.round((big ? l : m) * r); };
-      var len = function (el) { return el === null ? 0 : (el.textContent || "").trim().length; };
+      // THE LADDERS MEASURE THE VISIBLE TWIN, NOT BOTH OF THEM —
+      // `cover.html`'s script carries the full note. All three of the slots
+      // this helper is called on are twin-slot pairs, and `textContent` reads
+      // a `display: none` subtree too, so on a marked render each host holds
+      // its copy twice: measured naively a 46-character takeaway would score
+      // 92 and drop two steps, on a plate whose middle is already competing
+      // with the recap strip. Zero-width bidi controls are stripped for the
+      // reason stated there. `.cl-recap` is NOT a twin pair — it is a
+      // code-built `html:recap` fragment — and it keeps its own plain
+      // `textContent` read above.
+      var len = function (el) {
+        if (el === null) return 0;
+        var runs = el.querySelector(".mk-runs");
+        var src = runs !== null && runs.textContent.trim() !== "" ? runs : el.querySelector(".mk-plain");
+        var text = ((src === null ? el : src).textContent || "").replace(/[\u2066-\u2069\u200E\u200F]/g, "");
+        return text.trim().length;
+      };
 
       var t = document.getElementById("takeaway");
       // 90/44 and 46/30 are the measured pair this file already carried; only

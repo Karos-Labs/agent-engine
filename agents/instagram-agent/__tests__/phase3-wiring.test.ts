@@ -436,14 +436,36 @@ describe("item S's treatment sheet reaches every document this run renders", () 
    */
   it("every run-path document is built with headExtras(), never the device sheet alone", () => {
     const source = readFileSync(WORKFLOW_SOURCE, "utf8");
-    // Exactly ONE `extraHeadHtml: deviceCssBlock()` survives, and on purpose:
-    // the Template Studio's validation render at `00c5`, which runs BEFORE
-    // `04k` freezes the style and which judges a template as a template — on
-    // the ungraded photograph.
-    expect(source.split("extraHeadHtml: deviceCssBlock()")).toHaveLength(2);
-    const studioCallSite = source.indexOf("extraHeadHtml: deviceCssBlock()");
+    // Exactly ONE `extraHeadHtml:` on the run path is not `headExtras()`, and
+    // on purpose: the Template Studio's validation render at `00c5`, which
+    // runs BEFORE `04k` freezes the style and which judges a template as a
+    // template — on the ungraded photograph.
+    //
+    // RFC-17 widened that one site from the bare device sheet to
+    // `[deviceCssBlock(), markCssBlock(...)]`: a studio template that declares
+    // a `*Runs` slot has to be validated with its marks PAINTED, or the studio
+    // refuses the template for missing exactly the pixels it asked for. So the
+    // claim this pins is no longer "the device sheet alone" — it is that the
+    // studio site carries the device AND mark sheets and still, deliberately,
+    // NOT `imageTreatmentCssBlock`.
+    const studioCallSite = source.indexOf("extraHeadHtml: [deviceCssBlock()");
     expect(studioCallSite).toBeGreaterThan(-1);
-    expect(source.slice(Math.max(0, studioCallSite - 500), studioCallSite)).toContain("validated as a TEMPLATE");
+    expect(source.split("extraHeadHtml: [deviceCssBlock()")).toHaveLength(2);
+    const studioArg = source.slice(studioCallSite, source.indexOf(".join(\"\\n\")", studioCallSite));
+    expect(studioArg).toContain("markCssBlock(");
+    expect(studioArg).not.toContain("imageTreatmentCssBlock");
+    // Anchored on the CALL, not on a comment phrase: the phrase this used to
+    // read ("validated as a TEMPLATE") is still in the file but got reflowed
+    // across a line by the RFC-17 edit, so the literal stopped matching and
+    // the assertion would have passed vacuously in the other direction.
+    // The enclosing call is `validateStudioTemplate(...)` and nothing else has
+    // opened an `extraHeadHtml:` in between, so this argument is provably the
+    // studio's and not some other render that drifted into the file.
+    const enclosing = source.lastIndexOf("validateStudioTemplate(", studioCallSite);
+    expect(enclosing).toBeGreaterThan(-1);
+    expect(source.slice(enclosing, studioCallSite)).not.toContain("extraHeadHtml:");
+    // …and no OTHER site may pass the device sheet alone.
+    expect(source.split("extraHeadHtml: deviceCssBlock()")).toHaveLength(1);
     // And the four that matter: `materializeTemplates` twice, the branded
     // no-store copy, and the custom-archetype writer.
     expect(source.split("headExtras()")).toHaveLength(6);

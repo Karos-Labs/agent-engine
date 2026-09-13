@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { TemplateDefinitionSchema, extractSupportedFields, type TemplateDefinition } from "@agent-engine/tool-karos-templates";
 import type { ClientBrief } from "@agent-engine/tools";
-import { isolateForeignRuns } from "./bidi-isolate.js";
+import { isolateForeignRuns, stripIsolates } from "./bidi-isolate.js";
+import { buildMarkedRuns, markKindsFor, resolveSlideMarks, ringIndexesFor, slideMarkSeed, type MarkRing } from "./emphasis-marks.js";
 import { resolveExpectedScript } from "./language-gate.js";
 import { scriptTypographyFor } from "./script-fonts.js";
 import { assessContrastFacts, checkPaletteWithinKit, LAYOUT_FIELD_KEYS, LEADS_WITH_FIGURE, type ContrastFact } from "./visual-qa-pre-checks.js";
@@ -121,15 +122,61 @@ export const STANDING_FURNITURE_SLOTS: ReadonlySet<string> = new Set([...LAYOUT_
  * the pipeline will ever fill it, and `supportedFields` exists precisely to
  * expose that before a render rather than after.
  */
+/**
+ * RFC-17 (Phase 5) — the eight marked-runs fragments `contentFor` can build,
+ * one per prose slot that carries clauses.
+ *
+ * TWIN SLOTS, NOT A SWAP (finding 9). Each of these sits BESIDE the plain
+ * escaped field it mirrors, never instead of it: `fillTemplate` erases any
+ * slot nobody filled, so a run resumed across a deploy — which has happened
+ * on this project — carries checkpointed slides data with no fragment and a
+ * straight swap would render an empty headline. The plain field is always
+ * emitted and is always the fallback, collapsed by the template's own
+ * `:has()` rule when the fragment is present.
+ *
+ * `stat_callout` and `comparison_card` get none: labels and figures, not
+ * clauses. `list_takeaway`'s ROW marks need no slot at all — `buildListRows`
+ * already owns `.me-title`'s markup — so only its headline appears here.
+ */
+export const RUNS_SLOTS_BY_ARCHETYPE: Readonly<Record<string, readonly string[]>> = {
+  cover: ["titleRuns", "subtitleRuns"],
+  closer: ["takeawayRuns", "ctaRuns", "questionRuns"],
+  quote_card: ["quoteRuns"],
+  list_takeaway: ["headlineRuns"],
+  headline_focus: ["headlineRuns", "bodyRuns"],
+  photo: ["headlineRuns", "bodyRuns"],
+};
+
+/** The eight `*Runs` names, for `PRIVILEGED_HTML_SLOTS` and for a message that can name the whole vocabulary. */
+export const RUNS_SLOT_NAMES: readonly string[] = [...new Set(Object.values(RUNS_SLOTS_BY_ARCHETYPE).flat())];
+
+/**
+ * The ESCAPED slot each `*Runs` name is the marked half of.
+ *
+ * Derived by dropping the suffix, but written out so the mapping is a fact a
+ * reader can check rather than a string operation — `quoteRuns` pairs with
+ * `quoteText`, not `quote`, and nothing in a suffix rule knows that.
+ */
+export const PLAIN_TWIN_OF: Readonly<Record<string, string>> = {
+  titleRuns: "title",
+  subtitleRuns: "subtitle",
+  headlineRuns: "headline",
+  bodyRuns: "body",
+  quoteRuns: "quoteText",
+  takeawayRuns: "takeaway",
+  ctaRuns: "cta",
+  questionRuns: "question",
+};
+
 export const SLOTS_BY_ARCHETYPE: Readonly<Record<string, readonly string[]>> = {
-  cover: ["eyebrow", "title", "subtitle", "hero", "device"],
-  closer: ["takeaway", "cta", "question", "recap", "device"],
+  cover: ["eyebrow", "title", "subtitle", "hero", "device", ...RUNS_SLOTS_BY_ARCHETYPE["cover"]!],
+  closer: ["takeaway", "cta", "question", "recap", "device", ...RUNS_SLOTS_BY_ARCHETYPE["closer"]!],
   stat_callout: ["figure", "subLabel", "body", "sourceLine", "device"],
-  quote_card: ["quoteText", "attribution", "device"],
+  quote_card: ["quoteText", "attribution", "device", ...RUNS_SLOTS_BY_ARCHETYPE["quote_card"]!],
   comparison_card: ["headline", "body", "leftLabel", "leftBody", "rightLabel", "rightBody", "device"],
-  list_takeaway: ["headline", "itemRows", "device"],
-  headline_focus: ["headline", "body", "device"],
-  photo: ["headline", "body", "hero", "device"],
+  list_takeaway: ["headline", "itemRows", "device", ...RUNS_SLOTS_BY_ARCHETYPE["list_takeaway"]!],
+  headline_focus: ["headline", "body", "device", ...RUNS_SLOTS_BY_ARCHETYPE["headline_focus"]!],
+  photo: ["headline", "body", "hero", "device", ...RUNS_SLOTS_BY_ARCHETYPE["photo"]!],
 };
 
 /** Every slot name any archetype can supply — the union of `SLOTS_BY_ARCHETYPE`, for a message that can name the whole vocabulary. */
@@ -138,8 +185,24 @@ export const KNOWN_SLOT_NAMES: ReadonlySet<string> = new Set(Object.values(SLOTS
 /** Slots that may be filled through the renderer's privileged `{{image:...}}` form. Only the hero: it is the only image a slide's content model has. */
 export const PRIVILEGED_IMAGE_SLOTS: readonly string[] = ["hero"];
 
-/** Slots that may be filled through the privileged `{{html:...}}` form, because code (never a model) builds their markup. */
-export const PRIVILEGED_HTML_SLOTS: readonly string[] = ["device", "recap", "itemRows"];
+/**
+ * Slots that may be filled through the privileged `{{html:...}}` form,
+ * because code (never a model) builds their markup.
+ *
+ * The eight `*Runs` names join it for RFC-17 (Phase 5). **The escape rule
+ * does not move.** Copy still reaches templates escaped through `{{key}}`;
+ * the only new thing is that a first-party builder writes one more kind of
+ * fragment, exactly as `buildListRows` already does — `buildMarkedRuns` is
+ * the sole author of a `*Runs` value and it escapes every run itself.
+ *
+ * Membership here is only half the permission. Gate 3 additionally requires
+ * the slot to be DECLARED by the template, and gate 2 requires it to be one
+ * `SLOTS_BY_ARCHETYPE` can supply FOR THAT ARCHETYPE — so a `stat_callout`
+ * reading `{{html:headlineRuns}}` is still refused, and the permission stays
+ * a per-template decision at one call site, which is what `allowHtmlSlots`
+ * exists for.
+ */
+export const PRIVILEGED_HTML_SLOTS: readonly string[] = ["device", "recap", "itemRows", ...RUNS_SLOT_NAMES];
 
 /**
  * How long a generated set stands before the studio regenerates it.
@@ -1089,6 +1152,23 @@ export interface StudioSampleSeed {
    * nothing about the language renders exactly what it rendered before.
    */
   lang?: string | undefined;
+  /**
+   * RFC-17 (Phase 5) — what a `*Runs` slot is filled with on the VALIDATION
+   * plate, so the marked path is exercised by the same render that decides
+   * whether the template ships.
+   *
+   * Absent means "no ring was derivable for this kit", and every `*Runs` slot
+   * then fills with nothing — which is the run-time behaviour too, and which
+   * `fillTemplate` erases, leaving the plain twin to show. It is never a
+   * silent skip of a slot that WOULD have marked.
+   *
+   * The RING IS PASSED IN, NEVER RE-DERIVED HERE. `markCssBlock` emits six
+   * positional `.mk-c*` classes from one ring, and `buildMarkedRuns` writes
+   * positional `mk-c{n}` class names against it. A second derivation reached
+   * with slightly different arguments would paint the sample's mark in a
+   * colour the stylesheet gave to a different slot.
+   */
+  marks?: { ring: MarkRing; groundHex: string; fgHex: string } | undefined;
 }
 
 /**
@@ -1209,6 +1289,14 @@ export function studioSampleSeedFromBrief(input: {
   heroPath?: string | undefined;
   /** The BCP-47 tag for the `{{lang}}` slot, injected by the caller (the language brief owns the resolution). Absent fills `"en"`. */
   bcp47?: string | undefined;
+  /**
+   * RFC-17 — the run ring the studio's own `markCssBlock` is emitting for this
+   * client, so a `*Runs` slot on the validation plate paints in the colours
+   * that stylesheet defines. Passed in rather than derived here: the six
+   * `.mk-c*` classes are positional, and two derivations of the same ring is
+   * the drift `buildMarkRing`'s one-call-site rule exists to prevent.
+   */
+  markRing?: MarkRing | undefined;
 }): StudioSampleSeed {
   const dir = input.dir ?? "ltr";
   const brief = input.brief;
@@ -1273,6 +1361,15 @@ export function studioSampleSeedFromBrief(input: {
     ...(input.heroPath !== undefined ? { heroPath: input.heroPath } : {}),
     dir,
     lang: input.bcp47 ?? "en",
+    // Present only when the caller has BOTH a ring and the ground/ink pair
+    // that ring was built against — `markKindsFor` needs the pair, and a kind
+    // set derived against a guessed ground is the exact failure `measure.
+    // groundHex` is supplied for elsewhere. Absent means every `*Runs` slot
+    // fills with nothing and the plain twin shows, which is what a run with no
+    // derivable ring does too.
+    ...(input.markRing !== undefined && input.kit?.cssVars["--bg"] !== undefined && input.kit.cssVars["--fg"] !== undefined
+      ? { marks: { ring: input.markRing, groundHex: input.kit.cssVars["--bg"], fgHex: input.kit.cssVars["--fg"] } }
+      : {}),
   };
 }
 
@@ -1286,6 +1383,57 @@ export interface StudioSampleContent {
 /** A code-built device fragment for a `device` slot, so a template that declares one is measured WITH it. Deliberately minimal: item M's `slide-devices.ts` owns the real library. */
 function sampleDeviceFragment(seed: StudioSampleSeed): string {
   return `<div class="device device-figure"><span class="device-figure-value">${seed.figure}</span><span class="device-figure-label">${escapeText(seed.figureLabel)}</span></div>`;
+}
+
+/**
+ * RFC-17 — the marked fragment a `*Runs` slot is validated with.
+ *
+ * Goes through `resolveSlideMarks` + `buildMarkedRuns`, the SAME two
+ * functions a real run goes through, rather than hand-writing a `<span
+ * class="mk ...">`. A hand-written fragment would validate a template against
+ * markup no run can produce, and every rule the resolver applies (the 35%
+ * share cap, `MAX_MARK_WORDS`, the RTL foreign-run boundary rule that is what
+ * protects Phase 4) would go unexercised on the one plate whose job is to
+ * decide whether this template ships.
+ *
+ * ONE SPAN, THE FIRST TWO WORDS. The studio is measuring the TEMPLATE, not
+ * the copy: two words is inside every cap, so the fragment is the same shape
+ * for every slot and every archetype, and a slot's plate differs from its
+ * neighbour's only by the template. `slideMarkSeed(clientSlug, 1)` makes the
+ * (colour, kind) pairing deterministic per client, so re-validating the same
+ * draft twice renders the same pixels.
+ *
+ * Returns `""` — which `fillTemplate` erases, leaving the plain twin to show
+ * — whenever no ring is derivable, the kit admits no legible kind, or the
+ * sample is too short to carry a span. Every one of those is a real run-time
+ * outcome, not a skipped check.
+ */
+function sampleMarkedRuns(seed: StudioSampleSeed, archetypeId: string, text: string): string {
+  const marks = seed.marks;
+  if (marks === undefined || marks.ring.hexes.length === 0) return "";
+  const kinds = markKindsFor(marks.groundHex, marks.fgHex, marks.ring.hexes, { refuseBlock: archetypeId === "quote_card" });
+  if (kinds.length === 0) return "";
+  const allowedIndexes = ringIndexesFor(marks.ring, seed.accentHex);
+  if (allowedIndexes.length === 0) return "";
+  // THE RESOLVER TAKES RAW COPY, and the seed's fields have already been
+  // through `iso()`. `slides-data.ts` hands `markRuns` the model's own
+  // `slide.headline` and isolates the PLAIN twin separately, precisely
+  // because `resolveSlideMarks` matches a span against the original string
+  // and `buildMarkedRuns` then isolates each run on its own. Feeding an
+  // already-isolated string in would nest a second FSI/PDI pair inside the
+  // first — so the two `\p{Cf}` pairs come back out here, and the fragment
+  // that ships is isolated exactly once, like a real run's.
+  const raw = stripIsolates(text);
+  const span = firstWords(raw, 2);
+  if (span.length === 0) return "";
+  const { runs } = resolveSlideMarks("studio-sample", raw, [{ text: span }], {
+    dir: seed.dir,
+    allowedIndexes,
+    kinds,
+    seed: slideMarkSeed(seed.brandHandle, 1),
+    alreadyAccepted: 0,
+  });
+  return buildMarkedRuns(runs, seed.dir);
 }
 
 function sampleRecapFragment(seed: StudioSampleSeed): string {
@@ -1385,9 +1533,50 @@ export function buildStudioSampleContent(draft: Pick<StudioTemplateDraft, "slots
       case "hero":
         if (seed.heroPath !== undefined) imagePaths[slot] = seed.heroPath;
         break;
+      // ── RFC-17 (Phase 5): the eight `*Runs` twins. ──
+      //
+      // These were admitted to `SLOTS_BY_ARCHETYPE` and `PRIVILEGED_HTML_SLOTS`
+      // — so gates 2 and 3 pass a draft that declares one — before this switch
+      // had any case for them. The result was that every `*Runs` slot fell
+      // through to `default:` and was filled with NOTHING, so the validation
+      // plate carried zero `.mk` elements and the mark sheet spliced into that
+      // render painted nothing. A studio template could declare `titleRuns`,
+      // render a plate where that slot was blank, and ship.
+      //
+      // Each is filled from the SAME copy its plain twin carries, which is
+      // what a real run does (`markRuns("headline", slide.headline)` feeds the
+      // fragment; `iso(slide.headline)` feeds `{{headline}}`), and it is what
+      // makes the twins' collapse rule meaningful on this plate: the marked
+      // path shows, the plain one is hidden, and the interest floor measures
+      // the plate the client will actually get.
+      case "titleRuns":
+      case "headlineRuns":
+        htmlFragments[slot] = sampleMarkedRuns(seed, draft.archetypeId, seed.headline);
+        break;
+      case "subtitleRuns":
+      case "bodyRuns":
+        htmlFragments[slot] = sampleMarkedRuns(seed, draft.archetypeId, seed.body);
+        break;
+      case "quoteRuns":
+        htmlFragments[slot] = sampleMarkedRuns(seed, draft.archetypeId, seed.quote);
+        break;
+      case "takeawayRuns":
+        htmlFragments[slot] = sampleMarkedRuns(seed, draft.archetypeId, seed.takeaway);
+        break;
+      case "ctaRuns":
+        htmlFragments[slot] = sampleMarkedRuns(seed, draft.archetypeId, seed.cta);
+        break;
+      case "questionRuns":
+        htmlFragments[slot] = sampleMarkedRuns(seed, draft.archetypeId, seed.question);
+        break;
       default:
-        // Unreachable while gate 2 runs first; a slot nobody can fill is a
-        // hole, and reporting it beats rendering it.
+        // Gate 2 refuses any slot outside `SLOTS_BY_ARCHETYPE`, so reaching
+        // here means this switch has fallen behind that table — which is
+        // exactly what happened to the eight `*Runs` names above, silently,
+        // for a whole phase. A slot nobody can fill is a hole, and a hole on
+        // the validation plate is worse than a refusal: it validates a
+        // template against a render no run produces. `__tests__/
+        // template-studio.test.ts` pins the two lists against each other.
         break;
     }
   }
@@ -1775,6 +1964,31 @@ export async function validateStudioTemplate(
     const sampleValue = draft.sample[name];
     if (typeof sampleValue !== "string" || sampleValue.trim().length === 0) {
       failures.push(fail(2, `the sample does not fill declared slot "${name}" — a template that cannot demonstrate its own slots has not been shown to work`));
+    }
+  }
+  // ── Gate 2, RFC-17: A `*Runs` SLOT IS HALF A PAIR, NEVER A SLOT. ──
+  //
+  // The marked fragment is not a replacement for the copy, it is one of two
+  // renderings of it, and the plain twin is the one that has to be there.
+  // `buildMarkedRuns` returns `""` whenever the slide declared no emphasis,
+  // the kit admits no legible mark kind, or every span was dropped — all
+  // ordinary outcomes — and `fillTemplate` erases an unfilled slot. A
+  // template declaring only the runs half therefore renders an EMPTY field on
+  // every unmarked slide, which is the majority of them, and neither gate 2's
+  // "declared but never read" check nor gate 3's privileged-slot check can
+  // see it: both halves are individually legal. The bundled six all carry the
+  // pair; this is what stops a studio draft shipping without it.
+  for (const name of declared) {
+    if (!RUNS_SLOT_NAMES.includes(name)) continue;
+    const twin = PLAIN_TWIN_OF[name];
+    if (twin === undefined) continue;
+    if (!declared.includes(twin)) {
+      failures.push(
+        fail(
+          2,
+          `slot "${name}" is declared without its plain twin "${twin}" — the marked fragment is empty on every slide that declares no emphasis, and an unfilled slot is ERASED, so this template would render that field blank on most slides. Declare both and hide the plain one with \`:has(.mk-runs:not(:empty))\`.`,
+        ),
+      );
     }
   }
 

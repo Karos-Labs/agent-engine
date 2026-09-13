@@ -315,12 +315,19 @@ export interface FakeRenderCarouselOptions {
 
 /**
  * One rendered slide as the fake reports it — `RenderCarouselResult`'s own
- * row widened with item L's two additive fields. Widened here rather than
- * imported so this helper compiles before/independently of
- * `packages/tools/karos-publish`'s own `TOOL_VERSION 1.1.0` change being
- * rebuilt into `dist/`; the shapes are structurally identical.
+ * row with `metrics`/`probe` REPLACED (not intersected) by the agent-side
+ * shapes. Replaced rather than intersected because RFC-17 made the five
+ * composition metrics (`markedShare`, `markColourCount`, `contentCentroid`,
+ * `contentBBox`, `groundInkContrast`) REQUIRED on the publish-side row but
+ * OPTIONAL on the agent-side `SlideMetrics`; an intersection resolves each to
+ * the required form, and `passingSlideMetrics()` — which deliberately omits
+ * them so `composition-evidence` abstains on hand-built fixtures — stops
+ * assigning. Do NOT "fix" that by adding the five to `passingSlideMetrics`:
+ * that re-breaks the seven zero-warning assertions in `interest-floor.test.ts`.
+ * Widened here rather than imported so this helper compiles before/independently
+ * of `packages/tools/karos-publish` being rebuilt into `dist/`.
  */
-type FakeRenderedSlide = RenderCarouselResult["rendered"][number] & {
+type FakeRenderedSlide = Omit<RenderCarouselResult["rendered"][number], "metrics" | "probe"> & {
   metrics?: SlideMetrics;
   measureFailure?: string;
   probe?: SlideProbe;

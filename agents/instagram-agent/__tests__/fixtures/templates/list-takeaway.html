@@ -24,11 +24,13 @@
   are pinned at `top: 460px` with 46px of vertical padding each inside a fixed
   1440px plate — a fifth row runs off the bottom rather than compressing.
 
-  The rows themselves arrive as one pre-assembled `{{html:itemRows}}` fragment.
+  The rows themselves arrive as one pre-assembled `html:itemRows` fragment.
+  (Braces dropped on purpose: `fillTemplate` is a `replaceAll` over the literal
+  token and does not skip comments — see `assets/templates/default/cover.html`.)
   `publish.renderCarousel`'s substitution is flat string replacement with no
   loop construct, so the repetition has to be built by the caller;
   `buildListRows` in `workflow/slides-data.ts` is the only producer, and it
-  HTML-escapes every title and note it interpolates (the `{{html:}}` form is
+  HTML-escapes every title and note it interpolates (the raw-fragment form is
   deliberately unescaped, so that escaping is load-bearing).
 
   See `stat-callout.html`'s header for why the token block is duplicated.

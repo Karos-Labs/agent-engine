@@ -558,6 +558,12 @@ function findingFor(kind: InterestFinding["kind"], slide: number, role: SlideRol
     empty: { flatBackgroundShare: 0.93, occupiedShare: 0.18, imageryOrDeviceShare: 0.2 },
     "no-device": { imageryShare: 0, graphicShare: 0, imageryOrDeviceShare: 0 },
     "text-wall": { textShare: 0.7 },
+    // Unreachable through this helper, and that is the clause's whole point:
+    // `marks-missing` is DOM-anchored (it reads the probe's `markRuns` /
+    // `markRunsPainted`), and `passingSlideProbe` declares no mark runs, so no
+    // metrics object can produce it. Its cases live in
+    // `interest-floor-marks.test.ts`.
+    "marks-missing": {},
   };
   const verdict = checkInterestFloor(metrics(byKind[kind]), passingSlideProbe(slide), role, { slide });
   const finding = verdict.findings.find((f) => f.kind === kind);

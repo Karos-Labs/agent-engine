@@ -12,9 +12,11 @@ import {
   CLIPPED_EDGE_SHARE_CEILING,
   INK_SHARE_FLOOR,
   LARGEST_EMPTY_RECT_CEILING,
+  TEXT_SHARE_CEILING,
   type SlideRole,
 } from "../src/workflow/interest-floor.js";
-import { buildScriptFontHeadForLanguage } from "../src/workflow/script-fonts.js";
+import { buildMarkRing, markCssBlock, type EmphasisIssue, type MarkRing } from "../src/workflow/emphasis-marks.js";
+import { buildScriptFontHeadForLanguage, scriptTypographyFor } from "../src/workflow/script-fonts.js";
 import { deviceCssBlock } from "../src/workflow/slide-devices.js";
 import { assembleSlidesData } from "../src/workflow/slides-data.js";
 import { templateBasename } from "../src/workflow/visual-qa-pre-checks.js";
@@ -115,6 +117,23 @@ let transparentHeroPath: string;
  */
 const groundTokens = new Map<string, { ground: string; foreground: string }>();
 
+/**
+ * The kit this calibration marks with.
+ *
+ * Four hues, which is `rf-11`'s own count — the reference cycles yellow →
+ * chartreuse → cyan → lilac down ten rows on one rule, and four is what makes
+ * "no two CONSECUTIVE marks share a colour" a real constraint rather than an
+ * arithmetic accident. They are stand-ins for a client's accent ring, not a
+ * brand: `buildMarkRing` filters them against the ground and the ink, so what
+ * actually reaches the stylesheet is whatever survives that, and the sweep
+ * prints the survivors.
+ */
+const CALIBRATION_ACCENT = "#C4552F";
+const CALIBRATION_RING = ["#E8C547", "#9BE6E0", "#D9BFF2", "#5BD1A0"] as const;
+
+/** Derived in `materialize`, from the ground the bundled set actually declares. The stylesheet and the composition share this object. */
+let markRing: MarkRing | undefined;
+
 /** The per-slide measure anchors for one template, or a throw naming the file whose token block could not be read. */
 function groundFor(template: string): { ground: string; foreground: string } {
   const file = template.split(/[\\/]/u).pop() ?? template;
@@ -129,17 +148,56 @@ function groundFor(template: string): { ground: string; foreground: string } {
  * spliced before `</head>` (the `extraHeadHtml` channel), and a non-Latin
  * run also gets the script-font sheet after it. Rendering the raw files
  * instead would measure a document no client ever receives.
+ *
+ * RFC-17 puts the MARK stylesheet on that same channel, and this harness
+ * carries it for exactly the reason the comment above gives — production
+ * emits it on every document unconditionally
+ * (`create-instagram-agent-workflow.ts`), so a calibration that left it out
+ * would be measuring a document no client receives.
+ *
+ * IT MOVES NO EXISTING NUMBER, and that is checkable rather than hoped for:
+ * the block declares four `:root` custom properties and a set of `.mk*` rules
+ * that match nothing until an element carries the class, and no element
+ * carries it until a slide's copy declares `emphasis` (`slides-data.ts`
+ * returns no runs fragment when nothing was declared, so the twin slot stays
+ * unfilled and the PLAIN field renders). Every case below that passes no
+ * `emphasis` therefore renders the same pixels it did before this phase. The
+ * marked cases are the two at the end of this file.
  */
 async function materialize(dir: string, scriptLanguage?: string, brandHeadHtml?: string): Promise<void> {
   await fs.mkdir(dir, { recursive: true });
-  const extra = [deviceCssBlock(), scriptLanguage !== undefined ? buildScriptFontHeadForLanguage(scriptLanguage, undefined) : undefined]
-    .filter((fragment): fragment is string => fragment !== undefined)
-    .join("\n");
+
+  // Read every template's token pair FIRST, because the mark ring is derived
+  // from the ground it has to be legible on — the same order production
+  // works in, where `buildMarkRing` runs once per RUN against the kit's
+  // resolved pair. `slide.html` is the anchor: the bundled set shares one
+  // token block, and `assertOneBundledGround` below fails loudly if that ever
+  // stops being true rather than letting a ring be derived against a ground
+  // half the set does not paint.
+  const sources = new Map<string, string>();
   for (const file of (await fs.readdir(SOURCE_TEMPLATE_DIR)).filter((f) => f.endsWith(".html"))) {
     const html = await fs.readFile(path.join(SOURCE_TEMPLATE_DIR, file), "utf8");
+    sources.set(file, html);
     const ground = /--bg\s*:\s*(#[0-9a-fA-F]{3,8})/u.exec(html)?.[1];
     const foreground = /--fg\s*:\s*(#[0-9a-fA-F]{3,8})/u.exec(html)?.[1];
     if (ground !== undefined && foreground !== undefined) groundTokens.set(file, { ground, foreground });
+  }
+  const anchor = groundFor("slide.html");
+  markRing = buildMarkRing({ brandAccent: CALIBRATION_ACCENT, palette: [...CALIBRATION_RING] }, anchor.ground, anchor.foreground, []);
+
+  const extra = [
+    deviceCssBlock(),
+    scriptLanguage !== undefined ? buildScriptFontHeadForLanguage(scriptLanguage, undefined) : undefined,
+    // The SAME ring object that `assembleMarked` indexes into positionally.
+    // Deriving it twice from the same inputs would agree today and is one
+    // argument away from painting slide 4's mark in slide 2's colour with
+    // nothing reporting it — which is exactly why production threads one
+    // ring through both the stylesheet and the composition.
+    markCssBlock(scriptLanguage !== undefined ? scriptTypographyFor(scriptLanguage)?.script : undefined, markRing),
+  ]
+    .filter((fragment): fragment is string => fragment !== undefined)
+    .join("\n");
+  for (const [file, html] of sources) {
     // `composeRawDocument` rather than a hand-rolled `</head>` replace: it is
     // the function `materializeTemplates` itself calls, and the ORDER it
     // imposes is the whole subject of the badge case below — the shared
@@ -182,17 +240,25 @@ const selection = (n: number, imagePath: string | null): ImageSelection => ({
  * colour IS the field. Both are what `assembleForAttempt` passes, so this is
  * the harness catching up to the pipeline, not a new measurement policy.
  */
-function withMeasureAnchors(assembled: RenderCarouselInput): RenderCarouselInput {
+function withMeasureAnchors(assembled: RenderCarouselInput, hexesBySlide?: ReadonlyMap<number, string[]>): RenderCarouselInput {
   return {
     ...assembled,
     slides: assembled.slides.map((slide) => {
       const { ground, foreground } = groundFor(slide.template);
+      const hexes = hexesBySlide?.get(slide.n);
       return {
         ...slide,
         measure: {
           ...(typeof slide.fields["accentColor"] === "string" ? { accentHex: slide.fields["accentColor"] } : {}),
           foregroundHex: foreground,
           groundHex: ground,
+          // RFC-17: the colours this slide BELIEVES it painted. It is not
+          // part of `markedShare`/`markColourCount`'s definition — those four
+          // limbs are colour-agnostic on purpose, because a
+          // within-tolerance-of-a-declared-hex test passes on antialiased
+          // glyph fringes — it rides the wire so the sweep below can join the
+          // declared ring to the measured bins.
+          ...(hexes !== undefined && hexes.length > 0 ? { markHexes: hexes } : {}),
         },
       };
     }),
@@ -213,6 +279,52 @@ function assemble(slides: InstagramSlideCopy[], selections: ImageSelection[], ov
     templateDirOverride: path.relative(REPO_ROOT, templateDir).replaceAll("\\", "/"),
     ...over,
   }));
+}
+
+/**
+ * The same carousel, assembled WITH emphasis on — RFC-17's marked path.
+ *
+ * Everything that differs from `assemble` is threaded through
+ * `assembleSlidesData`'s own parameters rather than reconstructed here: the
+ * ground/ink pair the ring was derived against, the ring object the
+ * stylesheet already carries, and the out-parameter that reports which hexes
+ * each slide actually painted. The marks themselves come from the copy, as
+ * `"h:…"`/`"b:…"` compact spans, which is the form a run really produces.
+ *
+ * It hands back the report as well as the input, because "which spans were
+ * DROPPED" is half of what the sweep has to print: a mark the resolver
+ * refused is a fact about the copy, and a mark that resolved but did not
+ * paint is a fact about the stylesheet, and a table that conflated them would
+ * be unreadable.
+ */
+function assembleMarked(
+  slides: InstagramSlideCopy[],
+  selections: ImageSelection[],
+  over: Partial<Parameters<typeof assembleSlidesData>[0]> = {},
+): { input: RenderCarouselInput; issues: EmphasisIssue[] } {
+  const anchor = groundFor("slide.html");
+  const report = { hexesBySlide: new Map<number, string[]>(), issues: [] as EmphasisIssue[] };
+  const assembled = assembleSlidesData({
+    clientSlug: "calibration",
+    postId: "interest-floor-marks",
+    repoRoot: REPO_ROOT,
+    brandTokens: { templateDir: path.relative(REPO_ROOT, templateDir).replaceAll("\\", "/"), slideTemplate: "slide.html", accentColor: CALIBRATION_ACCENT },
+    copy: { format: "carousel", caption: "A calibration caption.", slides } as InstagramCopyOutput,
+    selections,
+    canvas: CANVAS,
+    availableTemplates: new Set(["cover.html", "closer.html", "stat-callout.html", "quote-card.html", "comparison-card.html", "list-takeaway.html", "headline-focus.html"]),
+    templateDirOverride: path.relative(REPO_ROOT, templateDir).replaceAll("\\", "/"),
+    accentRing: [...CALIBRATION_RING],
+    paletteSeed: "calibration-marks",
+    groundHex: anchor.ground,
+    foregroundHex: anchor.foreground,
+    ...over,
+    // After `over`, so a case cannot accidentally detach the ring from the
+    // stylesheet the documents were materialized with.
+    ...(markRing !== undefined ? { markRing } : {}),
+    markReportOut: report,
+  });
+  return { input: withMeasureAnchors(assembled, report.hexesBySlide), issues: report.issues };
 }
 
 interface Measured {
@@ -931,13 +1043,33 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
           { n: 1, template: "cover.html", fields: { ...furniture }, images: {}, htmlFragments: {} },
           { n: 2, template: "headline-focus.html", fields: { ...furniture }, images: {}, htmlFragments: {} },
           { n: 3, template: "closer.html", fields: { ...furniture }, images: {}, htmlFragments: {} },
+          // ── THE TWO THE COVERAGE COMMENTS CLAIMED AND THIS ARRAY DID NOT. ──
+          //
+          // `list-takeaway.html:207` states "the empty-plate case in
+          // `interest-floor-calibration.test.ts` still fails on the pixels
+          // alone" and `quote-card.html:216` says the same of its own guard.
+          // Neither template was in this array. That is not a hypothetical
+          // gap: these are the two templates whose ground guards are written
+          // in the POSITIVE form (`body:has(#head > span:not(:empty))`,
+          // `.quote-block:has(.quote-text > span:not(:empty))`), which is the
+          // form where a silently-true selector PAINTS a decorated ground on
+          // a blank plate — the owner's grey screen wearing decoration, and
+          // passing the floor. This branch's own history proves the failure
+          // mode is live: `body:has(#head:not(:empty))` became permanently
+          // true the moment `#head` grew twin spans, and only a hand-run
+          // probe caught it. Nothing automated would have.
+          { n: 4, template: "list-takeaway.html", fields: { ...furniture }, images: {}, htmlFragments: {} },
+          { n: 5, template: "quote-card.html", fields: { ...furniture }, images: {}, htmlFragments: {} },
         ],
       } as unknown as RenderCarouselInput;
       // The SAME anchors every other case in this file measures against —
       // otherwise the one test whose job is to prove a decorated empty plate
       // fails would be the one measuring it differently from the rest.
       const measured = await render(withMeasureAnchors(blanks));
-      const roles: SlideRole[] = ["cover", "interior", "closer"];
+      // `list_takeaway` and `quote_card` are both INTERIOR archetypes — the
+      // role decides which floors apply, and judging either at the cover role
+      // would ask it for a device it is not supposed to carry.
+      const roles: SlideRole[] = ["cover", "interior", "closer", "interior", "interior"];
 
       for (const [index, entry] of measured.entries()) {
         report(`${entry.template} EMPTY`, roles[index]!, entry);
@@ -1141,7 +1273,11 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
           label: "list_takeaway",
           over: {
             layout: "list_takeaway",
-            items: [{ title: "Name the owner", note: "One person, not a channel" }, { title: "Measure the queue", note: "Weekly, not monthly" }, { title: "Cut a round" }],
+            items: [
+              { title: "Name a single accountable owner", note: "One person, not a channel" },
+              { title: "Measure the queue every week", note: "Weekly, not monthly" },
+              { title: "Cut one review round" },
+            ],
           },
         },
       ];
@@ -1566,4 +1702,258 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
     },
     600_000,
   );
+
+  // ───────────────────────────────────────────────────────────────────────
+  // RFC-17 — the same calibration, with MARKED emphasis on
+  // ───────────────────────────────────────────────────────────────────────
+
+  /**
+   * THE SEVERABILITY GATE FOR THE WHOLE OF RFC-17'S RENDERED HALF.
+   *
+   * Marks paint pixels the floor then measures, and the alignment walk moves
+   * the type block sideways on most slides. Both are therefore claims on the
+   * `CALIBRATION_MARGIN = 0.08` headroom, and RFC-17 §5.5 says in as many
+   * words that if they eat it, they are dropped rather than paid for with a
+   * threshold. This case is where that is decided, and it is why NO number in
+   * `interest-floor.ts` had to move for this phase: the marked set is
+   * asserted against the UNCHANGED constants at the UNCHANGED margin.
+   *
+   * Both directions are checked, because the failure could come from either:
+   * emphasis ADDS painted area (`occupiedShare` up, `largestEmptyRectShare`
+   * down, which is the safe direction) but it also adds ink, and `textShare`
+   * runs the other way against `TEXT_SHARE_CEILING`. A slide that gained a
+   * wall-of-text finding by being marked would be a real defect in the
+   * mechanism and the cheapest possible place to catch it.
+   */
+  it(
+    "the bundled archetypes still clear every floor with MARKED emphasis on, at the same margin and the same constants",
+    async () => {
+      for (const [lengthLabel, copy] of [["short", SHORT], ["medium", MEDIUM], ["long", LONG]] as const) {
+        // Two spans a slide, verbatim out of the fields these fixtures
+        // actually carry — `resolveSlideMarks` locates by bounded first
+        // occurrence and DROPS a span that does not occur, so a typo here
+        // would silently measure an unmarked plate. `assertActuallyMarked`
+        // below is what stops that being possible.
+        const marks = copy === SHORT ? ["Intake", "queue"] : ["calendars", "process"];
+        const slides = [
+          slide({ n: 1, layout: "cover", ...MEDIUM, kicker: "THE SHIFT", emphasis: ["calendars", "process"] }),
+          slide({ n: 2, layout: "text_only", ...copy, emphasis: marks }),
+          slide({ n: 3, layout: "headline_focus", ...copy, kicker: "THE TURN", emphasis: marks }),
+          slide({
+            n: 4,
+            layout: "list_takeaway",
+            ...copy,
+            items: [
+              { title: "Name a single accountable owner", note: "One person, not a channel" },
+              { title: "Measure the queue every week", note: "Weekly, not monthly" },
+              { title: "Cut one review round" },
+            ],
+            // The `rf-11` case: the row marks are free, because
+            // `buildListRows` already emits into `itemRows`.
+            emphasis: ["owner", "queue", "round"],
+          }),
+          slide({
+            n: 5,
+            layout: "quote_card",
+            ...copy,
+            quote: { text: "We stopped guessing and started measuring the queue.", attribution: "Head of Ops, 2026" },
+            // `quote_card` refuses `block` outright whatever the ground —
+            // `.quote-text` is italic and a background box on an italic run
+            // is a parallelogram the CSS cannot follow. It still marks.
+            emphasis: ["the queue"],
+          }),
+          slide({ n: 6, layout: "closer", headline: "That is the whole pattern", body: "Which review round would you cut first?", emphasis: ["pattern", "cut"] }),
+        ];
+        const { input, issues } = assembleMarked(slides, slides.map((s) => selection(s.n, null)));
+        const measured = await render(input);
+        const roles: SlideRole[] = ["cover", "interior", "interior", "interior", "interior", "closer"];
+
+        // THE PREMISE, asserted before anything is concluded from the
+        // numbers. A run where every span was dropped renders plain type and
+        // clears every floor trivially — it would be a green test that
+        // measured nothing, which is the failure mode this project keeps
+        // finding in its own suites.
+        const totalRuns = measured.reduce((sum, entry) => sum + (entry.probe.markRuns ?? 0), 0);
+        expect(totalRuns, `no slide carried a mark run at ${lengthLabel} — the fixtures' spans did not resolve: ${issues.map((i) => `${i.field}/${i.text}: ${i.reason}`).join("; ")}`).toBeGreaterThan(0);
+
+        for (const [index, entry] of measured.entries()) {
+          const role = roles[index]!;
+          const label = `${entry.template} marked (${lengthLabel})`;
+          report(label, role, entry);
+          expect(checkInterestFloor(entry.metrics, entry.probe, role, optsFor(entry)).findings, label).toEqual([]);
+          expect(findingsAtMargin(entry, role, CALIBRATION_MARGIN), `${label} has under ${CALIBRATION_MARGIN} margin`).toEqual([]);
+          expect(entry.probe.overflow, `${label} overflows: ${entry.probe.overflowing.join(", ")}`).toBe(false);
+          // The opposite failure from emptiness, and the one marks could
+          // plausibly cause: a marked headline bleeds `.06em` either side.
+          expect(entry.metrics.textShare, `${label} textShare ${entry.metrics.textShare} is at the wall-of-text ceiling`).toBeLessThan(TEXT_SHARE_CEILING - CALIBRATION_MARGIN);
+          // And the DOM half: every run the document asked for paints, or
+          // the shared stylesheet did not reach this document.
+          if ((entry.probe.markRuns ?? 0) > 0) {
+            expect(entry.probe.markRunsPainted, `${label}: ${entry.probe.markRuns} runs asked, ${entry.probe.markRunsPainted} painted`).toBe(entry.probe.markRuns);
+          }
+        }
+      }
+    },
+    600_000,
+  );
+
+  /**
+   * THE BAND SWEEP — the artefact RFC-17 §5.3 and §3.4 both defer to, and the
+   * only thing that can correct the two Hebrew geometry numbers.
+   *
+   * `--mk-block-h: .44em` and `--mk-block-y: .60em` were reasoned from the
+   * fact that Hebrew has no ascenders and a full-height letter body. That is
+   * a true fact and it is not a measurement, and the comment beside those
+   * values says so: *starting values, calibrated in CI by the band sweep*.
+   * This is that sweep.
+   *
+   * IT ASSERTS ALMOST NOTHING ON PURPOSE. The per-kind/per-scale
+   * `markedShare` band has never been observed on real Chromium renders, and
+   * `IMAGERY_OR_DEVICE_FLOOR` took six documented calibration passes before
+   * anybody was allowed to trust it. Asserting a band on its first sighting
+   * is how a number nobody measured becomes a constant everybody cites. So
+   * this prints the table and asserts only the two things that are true by
+   * construction — that the runs painted, and that the measured marks landed
+   * inside the frame.
+   *
+   * ## What the table will show, predicted here so the prediction is falsifiable
+   *
+   * `markedShare` is a HEADLINE-SCALE instrument and the sweep should say so.
+   * A marked cell has to be COVERED (48 of 64 samples non-ground), and every
+   * mark size is in `em`: on a display headline `.07em` of rule is ~6 design
+   * px, enough to cover a 4px cell row, while on body copy the same rule is
+   * ~2px and covers no cell at all. The `ink` kind — the one our default
+   * `#17181C` ground forces, since `block` is refused on a ground darker than
+   * the ink — paints only GLYPHS, which never cover a cell by definition.
+   *
+   * **So a zero `markedShare` on a body-copy or `ink`-kind slide is the
+   * instrument being right, not the marks being missing**, and that is
+   * precisely why the pixel limb ships as the `marks-not-visible` WARNING and
+   * the DOM limb is what gates. If the table below shows otherwise, the
+   * warning's band can be set; if it shows this, the warning is
+   * reporting-only for good reason and `markColourCount` must never be
+   * promoted to a clause.
+   */
+  it(
+    "band sweep: the measured mark geometry per archetype, type scale and script",
+    async () => {
+      const rows: string[] = [];
+      const sweep = async (label: string, input: RenderCarouselInput, roles: SlideRole[]): Promise<void> => {
+        const measured = await render(input);
+        for (const [index, entry] of measured.entries()) {
+          const runs = entry.probe.markRuns ?? 0;
+          const painted = entry.probe.markRunsPainted ?? 0;
+          const band = runs > 0 ? await markBand(entry.path) : undefined;
+          rows.push(
+            [
+              `${label}`.padEnd(28),
+              `→ ${templateBasename(entry.template)}`.padEnd(20),
+              `${roles[index] ?? "interior"}`.padEnd(9),
+              `runs ${painted}/${runs}`.padEnd(12),
+              `marked ${(entry.metrics.markedShare * 100).toFixed(2)}%`.padEnd(16),
+              `colours ${entry.metrics.markColourCount}`.padEnd(12),
+              `contrast ${entry.metrics.groundInkContrast.toFixed(2)}`.padEnd(15),
+              `centroid ${entry.metrics.contentCentroid.x.toFixed(3)},${entry.metrics.contentCentroid.y.toFixed(3)}`.padEnd(26),
+              `elements ${entry.probe.elementCount}`.padEnd(15),
+              band === undefined ? "band —" : `band rows ${band.top}-${band.bottom} of ${band.height} (${band.pixels}px)`,
+            ].join(" "),
+          );
+          // True by construction, and the two things a broken sweep would
+          // get wrong: the sheet reached the document, and whatever it
+          // painted is on the plate rather than off the edge of it.
+          if (runs > 0) expect(painted, `${label}: ${runs} runs asked, ${painted} painted`).toBe(runs);
+          if (band !== undefined && band.pixels > 0) {
+            expect(band.top, `${label}: mark band starts above the frame`).toBeGreaterThanOrEqual(0);
+            expect(band.bottom, `${label}: mark band runs past the frame`).toBeLessThan(band.height);
+          }
+        }
+      };
+
+      for (const fontScale of ["s", "m", "l"] as const) {
+        const slides = [
+          slide({ n: 1, layout: "cover", ...MEDIUM, kicker: "THE SHIFT", emphasis: ["calendars", "process"] }),
+          slide({ n: 2, layout: "text_only", ...MEDIUM, emphasis: ["calendars", "process"] }),
+          slide({ n: 3, layout: "headline_focus", ...MEDIUM, kicker: "THE TURN", emphasis: ["calendars"] }),
+          slide({ n: 4, layout: "closer", headline: "That is the whole pattern", body: "Which review round would you cut first?", emphasis: ["pattern", "cut"] }),
+        ];
+        const { input } = assembleMarked(slides, slides.map((s) => selection(s.n, null)), {
+          slideStyleOverrides: new Map(slides.map((s) => [s.n, { fontScale }] as const)),
+        });
+        await sweep(`latin ${fontScale}`, input, ["cover", "interior", "interior", "closer"]);
+      }
+
+      // HEBREW, on its own materialization — the script sheet AND the Hebrew
+      // branch of `markCssBlock`, which is the pair whose geometry this sweep
+      // exists to correct. Same shape as the Hebrew case above.
+      const previous = templateDir;
+      const hebrewDir = path.join(workDir, "templates-he-marks");
+      await materialize(hebrewDir, "he");
+      templateDir = hebrewDir;
+      try {
+        for (const fontScale of ["s", "m", "l"] as const) {
+          const slides = [
+            slide({ n: 1, layout: "cover", ...HEBREW, kicker: "המהלך", emphasis: ["התוכן", "התלהבות"] }),
+            slide({ n: 2, layout: "text_only", ...HEBREW, emphasis: ["התוכן", "התלהבות"] }),
+            slide({ n: 3, layout: "headline_focus", ...HEBREW, emphasis: ["התוכן"] }),
+            slide({ n: 4, layout: "closer", headline: "זה בעצם כל הדפוס שחוזר", body: "איזה סבב הייתם חותכים ראשון?", emphasis: ["הדפוס"] }),
+          ];
+          const { input } = assembleMarked(slides, slides.map((s) => selection(s.n, null)), {
+            slideStyleOverrides: new Map(slides.map((s) => [s.n, { fontScale }] as const)),
+          });
+          await sweep(`hebrew ${fontScale}`, input, ["cover", "interior", "interior", "closer"]);
+        }
+      } finally {
+        templateDir = previous;
+      }
+
+      console.log(["", "RFC-17 MARK BAND SWEEP", ...rows, ""].join("\n"));
+    },
+    900_000,
+  );
 });
+
+/**
+ * The rows a mark colour actually occupies in a rendered plate, and how many
+ * pixels it covers.
+ *
+ * KIND-AGNOSTIC by design. On the bundled `#17181C` ground `block` is refused
+ * outright — a pastel swatch behind near-white ink is illegible, which is
+ * RFC-17 finding 2 — so the kinds in play are the rules, the swish and the
+ * glyph fill, and a band finder that looked for a swatch would report nothing
+ * on every slide this project actually renders. Asking "where did the mark
+ * COLOUR land" answers the Hebrew geometry question (`--mk-rule-y`,
+ * `--mk-swish-y`) exactly as well as a swatch-shaped one would, and it also
+ * answers it for a pale kit that does get `block` back.
+ *
+ * The tolerance is deliberately generous: the sweep is looking for a band's
+ * extent, not counting cells, and a gradient stop or an antialiased rule edge
+ * that reads slightly off-hex is still part of the band. Nothing gates on
+ * this number.
+ */
+async function markBand(pngPath: string): Promise<{ top: number; bottom: number; height: number; pixels: number } | undefined> {
+  const wanted = (markRing?.hexes ?? []).map((h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)] as const);
+  if (wanted.length === 0) return undefined;
+  const bytes = await fs.readFile(path.resolve(REPO_ROOT, pngPath));
+  let top = Number.POSITIVE_INFINITY;
+  let bottom = -1;
+  let pixels = 0;
+  const header = decodePngRows(bytes, (row, y) => {
+    for (let i = 0; i < row.length; i += 4) {
+      const r = row[i]!;
+      const g = row[i + 1]!;
+      const b = row[i + 2]!;
+      for (const [wr, wg, wb] of wanted) {
+        if (Math.abs(r - wr) <= 24 && Math.abs(g - wg) <= 24 && Math.abs(b - wb) <= 24) {
+          pixels += 1;
+          if (y < top) top = y;
+          if (y > bottom) bottom = y;
+          break;
+        }
+      }
+    }
+  });
+  // A header this decoder could not read means the sweep has nothing to say
+  // about this plate — reported as an absent band, never as a zero one.
+  if (header === undefined) return undefined;
+  return { top: bottom < 0 ? 0 : top, bottom: bottom < 0 ? 0 : bottom, height: header.height, pixels };
+}

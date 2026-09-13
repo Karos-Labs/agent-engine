@@ -159,6 +159,9 @@ import {
   type VariationPlanEntry,
 } from "./slides-data.js";
 import { deviceCssBlock } from "./slide-devices.js";
+// ── Phase 5 (RFC-17) — marked emphasis. ──
+import { buildMarkRing, markCssBlock, type EmphasisIssue, type MarkRing } from "./emphasis-marks.js";
+import { scriptTypographyFor } from "./script-fonts.js";
 // ── Phase 2 (RFC-14) — the four modules the integrator wires ──
 import {
   checkInterestFloor,
@@ -2300,6 +2303,24 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
 
         const fragments = await brandFragments();
         const studioKit = effectiveKit !== undefined ? { cssVars: effectiveKit.cssVars, palette: effectiveKit.palette } : undefined;
+        /**
+         * RFC-17 — the mark ring the VALIDATION render paints with.
+         *
+         * Derived here rather than reusing `runMarkRing()`, which is declared
+         * further down (after `04k`) and is not in scope at setup time. Same
+         * function, same kit, same arguments — so a studio template is
+         * validated against the exact colours its client's runs will carry.
+         */
+        const studioMarkRing =
+          effectiveKit?.cssVars["--bg"] !== undefined && effectiveKit.cssVars["--fg"] !== undefined
+            ? buildMarkRing(
+                { ...(effectiveKit.brandAccent !== undefined ? { brandAccent: effectiveKit.brandAccent } : {}), palette: effectiveKit.palette ?? [] },
+                effectiveKit.cssVars["--bg"],
+                effectiveKit.cssVars["--fg"],
+                (effectiveKit.palette ?? []).length === 1 ? effectiveKit.palette![0]! : [],
+                { groundMayInvert: true },
+              )
+            : undefined;
         const bundle: StudioEvidenceBundle = {
           clientSlug: wf.clientSlug,
           brief,
@@ -2406,6 +2427,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             // guessing for a multi-language script row, and the slot then falls back to "en" in
             // `buildStudioSampleContent` exactly as it does for an English client.
             ...(bcp47For(targetLanguage) !== undefined ? { bcp47: bcp47For(targetLanguage)! } : {}),
+            // RFC-17 — the SAME ring `markCssBlock` below is emitting for this
+            // validation render. Without it every `*Runs` slot a studio draft
+            // declares filled with nothing, so the mark sheet spliced into the
+            // plate painted nothing and the marked path went unvalidated on the
+            // one render that decides whether a template ships.
+            ...(studioMarkRing !== undefined ? { markRing: studioMarkRing } : {}),
             dir,
           });
 
@@ -2500,13 +2527,30 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                   rtlSeed: seedFor("rtl"),
                   evidenceBlock: designBriefBuild.input.formatEvidence,
                   ...(fragments.head !== undefined ? { brandHeadHtml: fragments.head } : {}),
-                  // The device sheet only, deliberately: item S's image
-                  // treatment is frozen at `04k`, after this block, and a
-                  // studio template is validated as a TEMPLATE — its interest
-                  // floor and contrast must hold on the ungraded photograph,
-                  // since the treatment is a per-client decision that can
-                  // change under it without re-authoring the set.
-                  extraHeadHtml: deviceCssBlock(),
+                  // The device sheet and the MARK sheet — not item S's image
+                  // treatment, deliberately: that is frozen at `04k`, after
+                  // this block, and a studio template is validated as a
+                  // TEMPLATE, whose interest floor and contrast must hold on
+                  // the ungraded photograph since the treatment is a
+                  // per-client decision that can change under it without
+                  // re-authoring the set.
+                  //
+                  // THE MARK SHEET MUST BE HERE (RFC-17). It is not part of
+                  // the treatment's argument above: a studio template that
+                  // declares a `*Runs` slot is validated on a rendered plate,
+                  // and without this block its marks never paint on that
+                  // plate. The template would then be measured — and refused
+                  // — for missing exactly the pixels the studio just asked it
+                  // to draw, while rendering correctly in every real run.
+                  // Validate the document production composes, or validate
+                  // nothing.
+                  //
+                  // The ring is derived from the STUDIO kit for the same
+                  // reason: the validation render has to carry the colours
+                  // the client's own runs will carry.
+                  extraHeadHtml: [deviceCssBlock(), markCssBlock(targetLanguage !== undefined ? scriptTypographyFor(targetLanguage)?.script : undefined, studioMarkRing)]
+                    .filter((s) => s.length > 0)
+                    .join("\n"),
                 },
                 studioDeps,
               ),
@@ -4194,7 +4238,74 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
      * treatment latitude) gets a byte-identical document to Phase 2's:
      * `imageTreatmentCssBlock` returns `""` there.
      */
-    const headExtras = (): string => [deviceCssBlock(), imageTreatmentCssBlock(frozenStyle)].filter((s) => s.length > 0).join("\n");
+    /**
+     * RFC-17 (Phase 5) — this round's mark ring, derived from the EFFECTIVE
+     * kit and read by BOTH the stylesheet and the composition.
+     *
+     * One derivation, called from two places, rather than two derivations
+     * that agree today: the six `.mk-c*` classes are positional, and
+     * `assembleSlidesData` indexes into this ring to decide which class each
+     * run carries. A second derivation reached with slightly different
+     * arguments would paint slide 4's mark in slide 2's colour and nothing
+     * would report it.
+     *
+     * Lazy, and re-read on every call, because `effectiveKit` is a `let` that
+     * a revision reassigns — and `ensureTemplatesOnDisk` already
+     * re-materializes on `templatesMaterializedForKit !== effectiveKit`, so a
+     * kit change re-runs this and re-splices the new values.
+     *
+     * `groundMayInvert: true` whenever the kit HAS a pair: IGSTYLE-10 can
+     * paint a quarter of the carousel with the pair swapped, and a ring
+     * member legible on only one member of the pair would be invisible on
+     * those slides. It is an over-approximation for a round whose directive
+     * pinned a colour (inversion is suppressed there, so the second ground
+     * never appears) — a slightly smaller ring, never an illegible one,
+     * which is the right side to err on.
+     *
+     * "A SLIGHTLY SMALLER RING, NEVER AN ILLEGIBLE ONE" WAS NOT TRUE WHEN IT
+     * WAS WRITTEN, and this is the line that made it true. The intersection
+     * of "legible on a near-black ground" and "legible on a near-white ink"
+     * is EMPTY for every saturated kit we ship, not merely smaller: measured
+     * on five real fixture kits (both luminance extremes) the ring came back
+     * `[]` and `rotation: "none"`, so the whole emphasis system painted
+     * nothing and reported every declared span as a drop. `buildMarkRing`
+     * now falls back to the primary ground alone when the intersection is
+     * empty, and the per-slide `markKindsFor` check against the slide's
+     * EFFECTIVE ground is what keeps an inverted slide honest — it returns
+     * `[]` (that slide marks nothing) rather than painting an illegible
+     * mark. Deliberately NOT fixed by threading the derived
+     * `groundFgInversion` in here: that value is revision-scoped and this
+     * closure is also read by the head-extras builder at template-
+     * materialization time, so reading it here would let the stylesheet's
+     * `.mk-c*` values and the composition's positional indexes be built from
+     * two different rings — the exact drift this helper exists to prevent.
+     *
+     * Model cost: $0.00. No new step, no new prompt, no art-director bump.
+     */
+    const runMarkRing = (): MarkRing | undefined => {
+      const ground = effectiveKit?.cssVars["--bg"];
+      const fg = effectiveKit?.cssVars["--fg"];
+      if (effectiveKit === undefined || ground === undefined || fg === undefined) return undefined;
+      const palette = effectiveKit.palette ?? [];
+      return buildMarkRing(
+        { ...(effectiveKit.brandAccent !== undefined ? { brandAccent: effectiveKit.brandAccent } : {}), palette },
+        ground,
+        fg,
+        // A one-member ring paints ring[0] on EVERY slide, so that accent is
+        // a run-level constant worth excluding here; a rotating ring's accent
+        // is a per-slide fact and is excluded per slide instead.
+        palette.length === 1 ? palette[0]! : [],
+        { groundMayInvert: true },
+      );
+    };
+    /** The script whose mark geometry differs — Hebrew has no ascenders, so the block sits higher and shorter. `undefined` for Latin, which is a no-op. */
+    const markScript = scriptTypographyFor(targetLanguage)?.script;
+    /**
+     * The head fragments every rendered document receives: item M's device
+     * stylesheet, item S's image-treatment sheet, and RFC-17's mark sheet.
+     */
+    const headExtras = (): string =>
+      [deviceCssBlock(), imageTreatmentCssBlock(frozenStyle), markCssBlock(markScript, runMarkRing())].filter((s) => s.length > 0).join("\n");
 
     // ── 04c: resolve which archetype templates this run can actually render ──
     //
@@ -4783,6 +4894,14 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        * silent.
        */
       deviceIssues: Array<{ slide: number; kind: string; reason: string }>;
+      /**
+       * RFC-17 (Phase 5) — marks this attempt's copy declared that could not
+       * be painted honestly (a span that no longer occurs after an edit, one
+       * that would cut a Latin run in Hebrew copy, one past the per-slide
+       * cap) plus any ring candidate the kit could not offer. The same
+       * WARN-only footing as `deviceIssues`, for the same reason.
+       */
+      emphasisIssues: EmphasisIssue[];
     }
 
     /**
@@ -5330,6 +5449,33 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       let finalRendered: RenderCarouselResult | undefined;
       /** SCRUM-393 (IGSTYLE-8) — the winning attempt's contrast facts, carried into the gate payload. */
       let finalContrastFacts: ContrastFact[] = [];
+      /**
+       * RFC-17 (Phase 5) — every declared mark the LAST assembly could not
+       * paint, and why.
+       *
+       * Set by `assembleForAttempt` and read by the draft report, so the
+       * facts describe the document that actually shipped. WARN-only, on the
+       * same footing as `deviceIssues`: a mark is furniture, every failure
+       * degrades to plain type, and none of it can hold or fail a run.
+       */
+      let emphasisIssues: EmphasisIssue[] = [];
+      /**
+       * RFC-17 — the kinds each slide's ground actually admitted, from the
+       * assembly that built the document `08a1` is about to measure.
+       *
+       * Read by `checkSlidesInterestFloor` so `marks-not-visible` abstains on
+       * a kit where the pixel instrument is structurally blind: `markedShare`
+       * and `markColourCount` count COVERED, FLAT cells, which only `block`
+       * can produce, and `block` is refused outright on any ground darker
+       * than its ink. Without this the warning fired on every marked slide of
+       * every dark-kit run — measured 5 of 8 on a production-shaped carousel,
+       * with the marks painted, visible and correct.
+       *
+       * Same lifetime and same reason as `emphasisIssues` directly above:
+       * filled by `assembleForAttempt`, read after the render, replaced whole
+       * on a re-assembly so a re-layout reports its OWN document's kinds.
+       */
+      let markKindsBySlide: Map<number, string[]> = new Map();
       /** Phase 2, item L — the shipped attempt's measured interest report, its free re-layout (if one ran), and the degrade marker when the floor never cleared. */
       let finalInterest: InterestFloorReport | undefined;
       let finalInterestRelayout: InterestRelayoutPlan | undefined;
@@ -7504,6 +7650,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         customIds: ReadonlySet<string>,
         overridesForAssembly: ReadonlyMap<number, SlideStyleOverride> = slideStyleOverrides,
       ): RenderCarouselInput => {
+        // RFC-17 — fresh per assembly, so a re-assembly (the typographic
+        // fallback at 08a, the free re-layout's re-render at 08a1c) reports
+        // what THAT document did rather than accumulating three runs' drops.
+        const markReport = { hexesBySlide: new Map<number, string[]>(), issues: [] as EmphasisIssue[], kindsBySlide: new Map<number, string[]>() };
+        const markRingForAttempt = runMarkRing();
         const assembled = assembleSlidesData({
           clientSlug: wf.clientSlug,
           postId: runClaim.postId,
@@ -7541,6 +7692,21 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // stylesheet `headExtras()` splices into every document, so this is
           // additive and `"none"` emits nothing.
           imageTreatment: frozenStyle.treatment,
+          // ── RFC-17 (Phase 5): marked emphasis. ──
+          //
+          // The SAME ring the stylesheet carries (`headExtras`), passed in
+          // rather than re-derived, because the six `.mk-c*` classes are
+          // positional and the composition indexes into them.
+          //
+          // Ground and ink are SUPPLIED, never inferred — the same reason
+          // `measure.groundHex` is supplied: finding 8 measured the inferred
+          // path picking a decoration's tint and reporting 2.54:1 on a plate
+          // whose real contrast is 15.84:1. With no pair the ring is not
+          // derivable and the run simply marks nothing.
+          ...(markRingForAttempt !== undefined ? { markRing: markRingForAttempt } : {}),
+          ...(effectiveKit?.cssVars["--bg"] !== undefined ? { groundHex: effectiveKit.cssVars["--bg"] } : {}),
+          ...(effectiveKit?.cssVars["--fg"] !== undefined ? { foregroundHex: effectiveKit.cssVars["--fg"] } : {}),
+          markReportOut: markReport,
         });
         // Phase 2, item L: the measurement's anchors, per slide.
         //
@@ -7555,6 +7721,18 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // for completeness, but no emitted metric anchors on it: ink is
         // measured as "not the ground", because a photograph and a scrim are
         // ink as much as a glyph is.
+        // RFC-17 — every emphasis failure this assembly hit, as FACTS. Never
+        // a finding, never a gate: a mark is furniture, and a redraft loop
+        // over furniture would spend the whole self-check budget on a slide
+        // whose copy was fine. Same posture as `collectDeviceIssues`.
+        if (markReport.issues.length > 0) {
+          emphasisIssues = markReport.issues;
+        }
+        // Replaced WHOLE, never merged: a re-assembly (the typographic
+        // fallback at 08a, the free re-layout's re-render at 08a1c) can move
+        // a slide onto a different ground, and a stale kind set would make
+        // the warning speak about a document that is no longer on screen.
+        markKindsBySlide = markReport.kindsBySlide;
         return {
           ...assembled,
           slides: assembled.slides.map((slide) => ({
@@ -7563,6 +7741,15 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               ...(typeof slide.fields["accentColor"] === "string" ? { accentHex: slide.fields["accentColor"] } : {}),
               ...(effectiveKit?.cssVars["--fg"] !== undefined ? { foregroundHex: effectiveKit.cssVars["--fg"] } : {}),
               ...(effectiveKit?.cssVars["--bg"] !== undefined ? { groundHex: effectiveKit.cssVars["--bg"] } : {}),
+              // RFC-17 — the hexes this slide actually PAINTED, so
+              // `markedShare`/`markColourCount` are measured against what was
+              // drawn rather than against the whole ring. Omitted entirely
+              // for a slide that marked nothing, which is what lets the pixel
+              // limb abstain instead of reporting a miss.
+              ...((): { markHexes?: string[] } => {
+                const hexes = markReport.hexesBySlide.get(slide.n);
+                return hexes === undefined || hexes.length === 0 ? {} : { markHexes: hexes.slice(0, 6) };
+              })(),
             },
           })),
         };
@@ -7812,6 +7999,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         checkSlidesInterestFloor(renderedAttempt.rendered, {
           downgradedForImages: downgradedForImagesThisAttempt,
           archetypeBySlide: measuredArchetypes(slidesDataForQa, copy, validatedCustomArchetypeIds),
+          // RFC-17 — see `markKindsBySlide`'s declaration: without it the
+          // `marks-not-visible` warning is unconditional on every dark kit.
+          markKindsBySlide,
         }),
       );
       let interestRelayout: InterestRelayoutPlan | undefined;
@@ -7980,6 +8170,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               checkSlidesInterestFloor(renderedAttempt.rendered, {
                 downgradedForImages: downgradedForImagesThisAttempt,
                 archetypeBySlide: measuredArchetypes(slidesDataForQa, copy, validatedCustomArchetypeIds),
+                // The re-layout re-assembled, so this map is the RE-LAID
+                // document's own kind set, not the one 08a1 measured.
+                markKindsBySlide,
               }),
             );
             // A SECOND `render-integrity` failure after a re-render is not a
@@ -8615,6 +8808,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // DROPPED (an archetype with no slot, a closer whose recap took the
         // middle) is reported as a fact rather than vanishing silently.
         deviceIssues: collectDeviceIssues(finalCopy, finalSlidesData),
+        // RFC-17 — what the shipped assembly's marks could not do. Reported,
+        // never gated; an empty array is the ordinary case.
+        emphasisIssues,
       };
     };
 
@@ -8852,6 +9048,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // dropped. WARN-only: furniture must never hold a run, and without
           // surfacing it the drop is invisible.
           ...(draft.deviceIssues.length > 0 ? { deviceIssues: draft.deviceIssues } : {}),
+          // RFC-17 (Phase 5) — marks that could not be painted. WARN-only for
+          // the same reason `deviceIssues` is: every emphasis failure
+          // degrades to plain type, and surfacing it is the only thing that
+          // keeps the drop from being invisible.
+          ...(draft.emphasisIssues.length > 0 ? { emphasisIssues: draft.emphasisIssues } : {}),
           // IGSTYLE-3, §2.3's "loud refusals" requirement — what THIS round's
           // style-directive resolution did, including any refusal, so a
           // silently-dropped colour instruction is never indistinguishable

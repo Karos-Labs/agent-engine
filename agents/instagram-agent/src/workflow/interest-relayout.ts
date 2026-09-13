@@ -508,7 +508,19 @@ function recapRowsBefore(copy: InstagramCopyOutput, slideN: number): RelayoutRec
  * abandoned — the point is to spend zero dollars where possible, and a cover
  * that cannot be given an image may still be fixable by its own archetype.
  */
-const KIND_PRIORITY: readonly InterestFailureKind[] = ["render-integrity", "clipped", "no-device", "dead-space", "empty", "text-wall"];
+/*
+ * `marks-missing` sits SECOND, immediately after `render-integrity` and ahead
+ * of every pixel-shaped kind, and the reason is not that it is more serious.
+ * It is that when the mark stylesheet did not arrive, every OTHER finding on
+ * that slide was measured against a document that is not the one the pipeline
+ * meant to draw — the emphasis is unpainted, so `imageryOrDeviceShare`,
+ * `occupiedShare` and the empty rectangle are all reading a plate that is
+ * missing pixels it was supposed to have. Spending the attempt's one free
+ * change on a `no-device` remedy here would fix a number that may not be
+ * wrong once the sheet lands. The re-render is free and it re-measures
+ * everything.
+ */
+const KIND_PRIORITY: readonly InterestFailureKind[] = ["render-integrity", "marks-missing", "clipped", "no-device", "dead-space", "empty", "text-wall"];
 
 /**
  * At most one free change per failing slide, or `undefined` when the table
@@ -572,6 +584,11 @@ export function planInterestRelayout(
 /** Why a kind can run out of free remedies — the writer-facing half is the steer; this is the operator-facing half. */
 const UNREMEDIED_DETAIL: Readonly<Record<InterestFailureKind, string>> = {
   "render-integrity": "a re-render was already spent on it",
+  // Unreachable today — the branch below always returns a `re-render` — and
+  // present because the record is exhaustive over the kind union, which is
+  // what makes adding a kind without a remedy a compile error rather than an
+  // `undefined` in an operator's trace.
+  "marks-missing": "a re-render was already spent on it, and no copy change can make a stylesheet load",
   clipped: "its type is already at the smallest scale",
   "no-device": "no unused vetted image, no sourced figure, and no colour-block ground left to try",
   "dead-space": "no figure in its own text, no unclaimed content-shaped archetype, and its type is already at the largest scale",
@@ -598,6 +615,19 @@ function remedyFor(
     // honest classification: no copy change can make a font load.
     case "render-integrity":
       return { kind: "re-render", slide: slideN, reason: `slide ${slideN} measured almost no ink; re-rendering once before treating it as a tooling failure` };
+
+    // Same remedy as `render-integrity` and deliberately NOT the same
+    // escalation. The workflow turns a second `render-integrity` into a
+    // `WorkflowToolingFailure`, because a plate with no ink at all is
+    // unshippable; a plate whose emphasis did not paint is a COMPLETE post
+    // with plain type on it, so a second failure here degrades and ships with
+    // the finding recorded. Nothing in RFC-17 may hold or fail a run.
+    case "marks-missing":
+      return {
+        kind: "re-render",
+        slide: slideN,
+        reason: `slide ${slideN} carries emphasis runs that painted nothing; re-rendering once — the copy is right and the mark stylesheet did not arrive`,
+      };
 
     case "clipped": {
       const from = scaleOf(slideN, opts);

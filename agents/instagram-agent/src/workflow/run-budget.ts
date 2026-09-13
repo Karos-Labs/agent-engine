@@ -69,7 +69,7 @@ export const MAX_RUN_SPEND_USD = 1.5;
 /**
  * Per-unit estimates the meter falls back to when a step reports no cost (or
  * under-reports), and the pre-run estimator multiplies by the plan. Keys name
- * the unit: `copyAttempt` is one Sonnet copy draft at the `instagram-copy@15`
+ * the unit: `copyAttempt` is one Sonnet copy draft at the `instagram-copy@17`
  * input size; `generatedImage` and `scraperExecution` are billed per unit,
  * not per step; `angle` and `brief` are Phase 1's Sonnet steps, priced into
  * `rawEstimate` through `RunShape.angleRounds` and `RunShape.briefRefresh`.
@@ -82,8 +82,141 @@ export const MAX_RUN_SPEND_USD = 1.5;
  */
 export const STEP_COST_ESTIMATES_USD = {
   /**
-   * Sonnet, ~26.34k in / ~6.31k out, one draft of copy: $0.0790 in + $0.0947
-   * out at $3/$15 per 1M = $0.1737, entered as **0.174**.
+   * Sonnet, ~27.80k in / ~6.49k out, one draft of copy: $0.0841 in + $0.0973
+   * out at $3/$15 per 1M = $0.180699, entered as **0.181**.
+   *
+   * ## Design system (`instagram-copy@17` → `@18`), and BOTH halves are non-zero
+   *
+   * §28 "Marking" (RFC-17 §5.7) asks the writer to name one to five spans per
+   * slide whose meaning carries it, copied verbatim out of the field it just
+   * wrote. That grows the prompt AND the draft, so neither of the two shapes
+   * recorded below is the right template for it: @15→@16 was input-only,
+   * @16→@17 was overwhelmingly input, and @14→@15 was output-heavy and was
+   * first priced on input alone.
+   *
+   * **Input** (≈+819 tokens, ≈+$0.00246): the WHOLE @17 → @18 file growth,
+   * 3,276 characters LF-normalised. Paid on English runs too: one prompt file,
+   * every draft carries all of it, no conditional include.
+   *
+   *     819 in-tokens x $3/1e6  = $0.00246
+   *
+   * **MEASURE THE FILE, NOT THE SECTION.** This key was first entered against
+   * §28 ALONE (≈2,665 chars) and that was wrong: @18 also inserts a 1,307-char
+   * "What changed at v18" changelog block under the H1, and the model is sent
+   * every byte of the file. Counting only the section under-counted the input
+   * half by ≈153 tokens, ≈$0.00046 an attempt. The delta above is
+   * `len(18.md) - len(17.md)` with line endings normalised — 67,929 - 64,653 —
+   * which is the only definition that cannot omit a block someone added
+   * somewhere else in the file.
+   *
+   * RE-MEASURED 2026-09-13 on the shipped files. This paragraph previously
+   * read 4,143 / 68,796 / $0.00311, and the files refute all three:
+   * `len(18.md)` is 67,929 and the delta is **3,276**, which is what
+   * `instagram-copy-agent.ts:302` and `run-budget.test.ts`'s
+   * `EMPHASIS_CHAR_DELTA = 3_276` have said all along. A constant misstating a
+   * measurable fact is a lie inside a guard, and this file's own thesis is
+   * that the characters are the price — so a paragraph of this block quoting
+   * a character count nobody can reproduce is the exact failure it warns
+   * about. **The shipped key 0.181 is unaffected and was never in doubt**: it
+   * is priced on `len(18.md) - len(16.md)` (22,172), not on this delta.
+   *
+   * **Output** (≈+176 tokens, ≈+$0.00264). The `emphasis` array is a FLAT
+   * ARRAY OF VERBATIM STRINGS — `["Business", "Founder", "Know"]` — not the
+   * object array this section first priced. 3.6 marks a slide (the rf-05
+   * reference mean) at ≈5 tokens each (the mean marked span across rf-05 S1,
+   * S3 and S8 is 2.6 word-tokens, plus a quote pair and a comma), plus ≈4
+   * tokens of array overhead, is ≈22 tokens a slide across eight slides.
+   *
+   *     176 out-tokens x $15/1e6 = $0.00264
+   *
+   * **Total: $0.00510 an attempt** ($0.00246 in + $0.00264 out), which is what
+   * `run-budget.test.ts`'s `EMPHASIS_INPUT_DELTA + EMPHASIS_OUTPUT_DELTA`
+   * asserts to eight places.
+   *
+   * ## WHY THE ENCODING CHANGED, AND WHY IT IS NOT A WEAKENED ESTIMATE
+   *
+   * The first encoding named a `field`, an optional `itemIndex` and a `text`
+   * span per mark: ≈17 output tokens each, ≈520 a draft, ≈$0.00780. Priced
+   * honestly — input half including the changelog block — that comes to
+   * $0.184399 an attempt, so even the shipped 0.184 was BELOW the real call.
+   *
+   * More importantly it did not FIT. Measured on `planRunBudget`, the cold
+   * Hebrew plan sits at $0.9773 with three attempts before this bump, so the
+   * whole headroom to the $1.00 target is $0.0227 a run — $0.00757 an attempt,
+   * and a three-decimal CEILING key must therefore land at or below 0.181. The
+   * object encoding's OUTPUT HALF ALONE ($0.00780) exceeds that entire budget:
+   * deleting §28's prose completely still lands at 0.182 and still fires the
+   * attempt rung, cutting `maxSelfCheckAttempts` 3 → 2 and reproducing
+   * `status: "held"` on two cases named "NEVER holds".
+   *
+   * So the mechanism was made cheaper instead of the estimate. The marked
+   * words are ALREADY in the field; `field` and `itemIndex` were the model
+   * re-deriving, at 12 tokens a mark, a location code can find by searching —
+   * and re-deriving it WRONGLY was a silent drop, the worst failure mode the
+   * mechanism has. What was NOT done is cut the mark count: rf-05's
+   * deliberately near-empty closer carries four marks and rf-11 carries
+   * thirteen, so marking density is the execution this phase exists to copy,
+   * and trimming it to fit a budget would delete the phase. See RFC-17 §6.4.
+   *
+   * ## THE ARITHMETIC, SPELLED OUT, BECAUSE THIS KEY HAS A MERGE HAZARD
+   *
+   * **DO NOT DERIVE THIS KEY BY ADDING A BUMP TO THE PREVIOUS KEY.** That
+   * method produced every wrong answer in this file's history, because each
+   * base carries the previous measurement's error forward. Price the CALL:
+   *
+   *     input   (22,260 + 22,172/4) x $3/1e6   = $0.08406
+   *             where 22,172 is `len(18.md) - len(16.md)`, LF-normalised
+   *     output  (6,300 + 10 + 176) x $15/1e6   = $0.09729
+   *     -------------------------------------------------
+   *             $0.180699 exact; entered as **0.181**, rounded UP
+   *
+   * The chain-addition method gives 0.161 + 0.0125 + 0.00510 = 0.17860 and a
+   * key of 0.179, which is WRONG BY A FULL UNIT, because the 0.0125 term was
+   * itself measured with a `PROMPT_CHAR_DELTA` of 16,300 when the real @16 to
+   * @17 growth is **18,896** (`origin/main`: 16.md is 45,757 LF characters,
+   * 17.md is 64,653). That stale constant is corrected in
+   * `run-budget.test.ts` in this commit.
+   *
+   * **SIX wrong keys are in this branch's history.** Five sit BELOW the real
+   * call: 0.166 (RFC-18 §7.1's forecast of Phase 5 from "+6,000 characters",
+   * superseded before @17 shipped), 0.171 (§28 added to @16's 0.161 by a
+   * branch that never saw Phase 5), 0.176 (§28 added to the 0.166 forecast),
+   * and 0.179 / 0.180 (this encoding and the refused TAGGED one, both priced
+   * on a SECTION-only input delta instead of the whole file).
+   *
+   * **@17's OWN SHIPPED KEY, 0.174, is also below its call** for the same
+   * reason: priced on the measured 18,896 it comes to $0.175602, ceiling
+   * 0.176. That is inherited from `main` and is deliberately NOT fixed here,
+   * because re-pricing a shipped key changes every plan on main and deserves
+   * its own change. It is pinned in `run-budget.test.ts` so it cannot be
+   * forgotten or silently "corrected" in either direction.
+   *
+   * **The sixth is the only one ABOVE the call, and it is the one most likely
+   * to be "restored": 0.184.** That was this key while §28 declared marks as an
+   * OBJECT array, and it shipped in the merge commit. It is not a rounding
+   * disagreement — the encoding underneath it is gone. Anyone raising this key
+   * back to 0.184 should first check `SlideEmphasisSchema`: if it still
+   * accepts a bare string, the draft is not paying for `field`/`itemIndex` and
+   * 0.184 is over-counting by $0.0032 an attempt. Over-counting is not the
+   * safe direction here: the levers fire off the ESTIMATE, so an inflated key
+   * pulls a rung the run did not need and silently buys a smaller post.
+   *
+   * At the 3-attempt cap @18's delta is +$0.021 — 2.1% of the owner's $1.00
+   * target and 1.4% of the $1.50 hard max — and it flows into
+   * `planRunBudget`'s sums automatically, so the adaptation levers see it
+   * BEFORE the first paid call rather than after. No new model step pays for
+   * §28 at run time, and per-client setup moves by exactly $0.000: the mark
+   * ring is derived in code from the accent ring the kit already produces
+   * (RFC-17 finding 7), and no Opus appears anywhere.
+   *
+   * **MEASURED, not inferred** (`planRunBudget`, cold Hebrew, one probe each):
+   * 0.174 → $0.9773 / 3 attempts. 0.180 → $0.9953 / 3. **0.181 → $0.9983 /
+   * 3, which is THIS KEY AND THE EXACT CEILING: $0.0017 of margin, and no
+   * more, for every future change to this prompt or any per-attempt step.**
+   * 0.182 → $0.7327 / **2**, the cliff. 0.184 → $0.7367 / **2**. Note what
+   * the lever does at the cliff: it does not trim
+   * $0.007, it lands the run $0.263 UNDER target and pays for that by deleting
+   * a drafting attempt on exactly the client Phase 4 exists to serve.
    *
    * ## Phase 5 (`instagram-copy@16` → `@17`), BOTH SIDES, STATED SEPARATELY
    *
@@ -159,7 +292,8 @@ export const STEP_COST_ESTIMATES_USD = {
    * call on `claude-opus-4-8` ($5/$25 per 1M) is $0.2765 an attempt, $0.83
    * across three — 83% of the $1.00 target before the post has an image.
    * Phase 5 buys better writing with PROMPT and RUBRIC quality inside this
-   * key, not with a bigger model.
+   * key, not with a bigger model. @18 does not change that: §28 is a prompt
+   * section and an optional output array, still on `claude-sonnet-4-6`.
    *
    * ## Phase 4 (`instagram-copy@15` → `@16`), input-only and paid on EVERY run
    *
@@ -176,7 +310,17 @@ export const STEP_COST_ESTIMATES_USD = {
    *
    * At @16 the table's three decimals entered $0.1613 as $0.161, so the key
    * UNDER-counted by $0.0003 an attempt. Phase 5's re-price above ends that:
-   * $0.17366 rounds up to 0.174 and the rounding error changes sign.
+   * $0.17366 rounds up to 0.174 and the rounding error changes sign. @18
+   * keeps that direction: $0.180699 rounds up to **0.181**.
+   *
+   * (This sentence used to read "$0.18341 rounds up to 0.184", which was the
+   * OBJECT-encoding arithmetic and is dead. 0.184 is the key that shipped in
+   * the merge commit while `emphasis` was an array of `{field, itemIndex,
+   * text}` objects; that encoding is gone, and the paragraph above headed
+   * "The sixth is the only one ABOVE the call" explains why restoring 0.184
+   * would over-count by $0.0032 an attempt and pull a rung the run does not
+   * need. Two paragraphs of this block disagreeing about the same number is
+   * how a stale key gets "restored" by someone reading only one of them.)
    *
    * The +$0.0023 is paid on English runs too: the prompt file is one file and
    * every draft carries all of it. What English runs do NOT pay is
@@ -238,7 +382,43 @@ export const STEP_COST_ESTIMATES_USD = {
    * itself pulls no lever, so the plan the planner chooses is not the plan
    * the run can afford (`__tests__/run-budget.test.ts` pins the arithmetic).
    */
-  copyAttempt: 0.174,
+  // MEASURED off the files this commit ships, both halves, at Sonnet's $3/M
+  // in and $15/M out. Not derived by adding a bump to a previous key.
+  //
+  //   INPUT   the model is sent the WHOLE PROMPT FILE, so the delta is
+  //           `len(18.md) - len(16.md)` and NEVER one section's length:
+  //           45,757 -> 67,929 LF characters, +22,172, / 4 = 5,543 tokens.
+  //           A delta measured over section 28 alone reads +2,836 and misses
+  //           the changelog block the same file gained, which is exactly how
+  //           the superseded 0.184 came to sit BELOW the call it priced.
+  //   OUTPUT  the `emphasis` array, a flat list of verbatim spans: 3.6 marks
+  //           a slide (the rf-05 reference mean) at 4.8 tokens (counted
+  //           across the ten actual reference spans, not assumed) plus 4 of
+  //           array overhead = 22 a slide, x 8 slides = 176 tokens.
+  //
+  //   (22,260 + 5,543) x $3/1e6 + (6,300 + 10 + 176) x $15/1e6 = $0.180699
+  //
+  // Entered as 0.181, rounded UP, never truncated. This is the CEILING that
+  // keeps a cold Hebrew run at three drafting attempts: measured against
+  // `planRunBudget`, 0.181 lands it at $0.9983 and 0.182 at $0.7327 with the
+  // attempt rung fired. There is $0.0017 of margin and no more.
+  //
+  // Six wrong answers are in this branch's history, and 0.184 is the ONE
+  // ABOVE the real call — read that direction off the arithmetic above, not
+  // off this list: $0.180699 is the call, so 0.184 OVER-counts by $0.0033 an
+  // attempt and 0.180/0.179/0.176/0.171/0.166 all UNDER-count. (This comment
+  // read "Four wrong answers ... all four are below the real call" while
+  // listing six and putting 0.184 among them, directly contradicting the
+  // block above it. Over-counting is the more dangerous direction here: the
+  // adaptation levers fire off the ESTIMATE, so an inflated key pulls a rung
+  // the run did not need and silently buys a smaller post.)
+  //   0.184  the structured `{field,itemIndex,text}` encoding, ~17 tokens a
+  //          mark, refused on the SILENT-DROP argument in RFC-17 6.4. ABOVE.
+  //   0.180  the tagged `"h:span"` encoding, refused for the same reason plus
+  //          its bidi surface.
+  //   0.179  this encoding priced on a section-only input delta.
+  //   0.176 / 0.171 / 0.166  bumps added to stale or forecast bases.
+  copyAttempt: 0.181,
   /**
    * Phase 4 — the `languageBrief` input FIELD on `05-write-copy-attempt-N`,
    * added per attempt on non-English runs only (the same conditional shape

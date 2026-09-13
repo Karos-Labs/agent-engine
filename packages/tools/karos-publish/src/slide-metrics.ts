@@ -190,6 +190,56 @@ const CELL_INK_SHARE = 4 / 64;
  * keeps its promise of having no policy in it.
  */
 
+/*
+ * ── MARKED EMPHASIS, and why its definition reuses three tests that already
+ *    exist rather than inventing a fourth ──────────────────────────────────
+ *
+ * A mark is a highlighter swatch, a pencil rule, a marker swish or a glyph
+ * fill painted in a colour that is neither the ground nor the ink. The
+ * obvious way to measure one is "count pixels within tolerance of the hex the
+ * caller says it used", and that test is worthless here: an antialiased glyph
+ * edge ramps from ground to ink through every intermediate tone, so on a
+ * light plate with a warm ink it passes within tolerance of a warm mark hex
+ * on cells that carry nothing but type. It is a guard that cannot fail.
+ *
+ * So a marked cell is defined by FOUR limbs, all of them tests this file
+ * already applies somewhere else, and each one rejects a specific impostor:
+ *
+ *   (i)   COVERED at `CELL_COVERED_INK_SHARE` — 48 of 64 samples are
+ *         non-ground. Type does not cover a cell; a swatch does.
+ *   (ii)  FLAT under `flatCellStddev` — this is the limb that does the real
+ *         work. An AA fringe has an enormous per-cell spread, and a
+ *         photograph has more; a printed swatch has none. Nothing else in
+ *         this definition rejects photographic texture.
+ *   (iii) the cell's MEAN is more than `tol.ink` from the ground, so the
+ *         ground itself is not a mark.
+ *   (iv)  the cell's MEAN is more than `tol.ink` from the SUPPLIED ink token,
+ *         so the interior of a heavy display stroke — which is covered, flat
+ *         and off-ground — is not a mark either. Without this limb a plate
+ *         carrying nothing but big type reports marks it does not have.
+ *
+ * The ink token is SUPPLIED rather than inferred for the same reason `ground`
+ * is: inferring it from the frame's own histogram picked a decoration's tint
+ * on a decorated plate and reported a ground/ink contrast of 2.54 where the
+ * real pair measures 15.84. Without `expected.ink` limb (iv) cannot be
+ * applied at all, so `markedShare` and `markColourCount` report 0 — the same
+ * posture `accentShare` takes when no accent was named. Reporting the
+ * three-limb superset instead would count every display stroke as emphasis.
+ */
+
+/**
+ * A 5-bit colour bin is one of the slide's MARK colours once it holds this
+ * many marked cells — 16 cells is 256 design px², about a 16×16 patch.
+ *
+ * It exists so a stray covered-flat-off-both cell (the corner where a rule
+ * crosses a rule, a single antialiased tile inside a device) cannot add a
+ * colour to the count. It is NOT a threshold anybody may tune to change a
+ * verdict: `markColourCount` gates nothing — see `interest-floor.ts`'s
+ * `marks-not-visible` warning and RFC-17 finding 5 for why a floor of 3 sits
+ * one mark above the very defect it would exist to catch.
+ */
+const MARK_COLOUR_MIN_CELLS = 16;
+
 /** Imagery needs real colour variety, not a ramp: six distinct 5-bit colours in one covered cell. */
 const IMAGERY_MIN_DISTINCT_COLOURS = 6;
 
@@ -231,6 +281,35 @@ export function colourDistance(r1: number, g1: number, b1: number, r2: number, g
   return Math.sqrt(2 * dr * dr + 4 * dg * dg + 3 * db * db) / 3;
 }
 
+/**
+ * WCAG 2.x relative luminance and contrast ratio, on the sRGB transfer
+ * function, returning a number in `[1, 21]`.
+ *
+ * Here rather than imported because this module has no dependency but `zod`
+ * and the decoder, and because the pair it is applied to is unusual: one side
+ * is a MEASURED ground (the modal flat cell, which is not necessarily any
+ * token) and the other is a SUPPLIED token. `contrastRatio` in the instagram
+ * agent's `brand-render-tokens.ts` computes the same number over two tokens,
+ * and the two agree to the last decimal on any pair of hexes — but that one
+ * lives behind an agent's build and this file is adoptable as-is by
+ * tiktok/linkedin/x, which is the property that decided it.
+ */
+function relativeLuminance(r: number, g: number, b: number): number {
+  const channel = (value: number): number => {
+    const s = Math.min(255, Math.max(0, value)) / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+}
+
+export function wcagContrastRatio(a: readonly [number, number, number], b: readonly [number, number, number]): number {
+  const la = relativeLuminance(a[0], a[1], a[2]);
+  const lb = relativeLuminance(b[0], b[1], b[2]);
+  const light = Math.max(la, lb);
+  const dark = Math.min(la, lb);
+  return (light + 0.05) / (dark + 0.05);
+}
+
 const HEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
 /** `#abc`/`#aabbcc` -> an RGB triple; `undefined` for anything else. Never repaired, never guessed — an unparseable token means "no expectation was supplied", not "black". */
@@ -256,9 +335,15 @@ function rgbHex(r: number, g: number, b: number): string {
  * Every share is a fraction in `[0, 1]`. PIXEL shares (`flatBackgroundShare`,
  * `inkShare`, `accentShare`, `clippedEdgeShare`) are fractions of the full
  * frame's pixels; CELL shares (`occupiedShare`, `imageryShare`,
- * `graphicShare`, `textShare`, `largestEmptyRectShare`) are fractions of the
- * fixed cell grid. Both denominators are the whole canvas, so a share is
- * always readable as "this much of the plate".
+ * `graphicShare`, `textShare`, `largestEmptyRectShare`, `markedShare`) are
+ * fractions of the fixed cell grid. Both denominators are the whole canvas,
+ * so a share is always readable as "this much of the plate".
+ *
+ * The five fields added by RFC-17 — `markedShare`, `markColourCount`,
+ * `contentCentroid`, `contentBBox`, `groundInkContrast` — are REPORTING. One
+ * of them backs a warning and none of them backs a gate; see RFC-17 Part 3
+ * for the two emptiness discriminators that were tested against controls and
+ * failed, and why no threshold in `interest-floor.ts` moved.
  */
 export const SlideMetricsSchema = z.object({
   backgroundHex: z
@@ -299,6 +384,30 @@ export const SlideMetricsSchema = z.object({
       "5-bit colours each holding at least half a percent of the frame — the slide's PALETTE, not its colour range. A photograph spreads its pixels over so many bins that none reaches the floor and this is 0, so a caller treating a low count as 'monochrome' has to read imageryShare beside it.",
     ),
   clippedEdgeShare: z.number().describe("Ink inside the 8-design-px bleed band at any canvas edge, over all pixels."),
+  markedShare: z
+    .number()
+    .describe(
+      "Cells that are covered, FLAT, off the ground and off the supplied ink token — painted emphasis, over all cells. 0 when the caller supplied no `ink`: without it a display stroke's interior is indistinguishable from a swatch. See this file's 'MARKED EMPHASIS' comment for each limb and the impostor it rejects.",
+    ),
+  markColourCount: z
+    .number()
+    .int()
+    .describe(
+      "Distinct 5-bit colours among those marked cells' means, counting only bins holding at least 16 cells. Reports whether emphasis RENDERED, not whether composition was considered: a grey screen with two marks stuck on it scores 2, which is why nothing gates on this.",
+    ),
+  contentCentroid: z
+    .object({ x: z.number(), y: z.number() })
+    .describe(
+      "The ink-weighted centre of mass of the plate, as FRACTIONS of the frame in [0,1]. (0.5, 0.5) exactly when nothing painted — read `contentBBox.w === 0` to tell that case apart.",
+    ),
+  contentBBox: z
+    .object({ x: z.number(), y: z.number(), w: z.number(), h: z.number() })
+    .describe("The bounding box of every ink-carrying cell, in DESIGN px like the rectangles above. Zero-area when no cell carries ink."),
+  groundInkContrast: z
+    .number()
+    .describe(
+      "The WCAG ratio between the measured ground and the SUPPLIED ink token, in [1,21]. 0 when no `ink` was supplied — never inferred, because inferring it off the frame's own histogram picked a decoration's tint and reported 2.54 for a plate whose real pair is 15.84.",
+    ),
 });
 export type SlideMetrics = z.infer<typeof SlideMetricsSchema>;
 
@@ -325,7 +434,34 @@ export interface MeasureSlideExpectations {
   ground?: string;
   /** The slide's accent. Without it `accentShare` is 0 and `accentPresent` is false — an accent cannot be measured against an accent nobody named. */
   accent?: string;
+  /**
+   * The slide's FOREGROUND token (`--fg`), supplied for the same reason
+   * `ground` is rather than inferred from the pixels.
+   *
+   * It is limb (iv) of the mark definition: a covered, flat, off-ground cell
+   * is the interior of a heavy display stroke as often as it is a swatch, and
+   * only the token tells the two apart. Without it `markedShare`,
+   * `markColourCount` and `groundInkContrast` are all 0.
+   */
+  ink?: string;
+  /**
+   * The mark colours the caller BELIEVES this slide was painted with, capped
+   * at six (`ACCENT_RING_MAX`).
+   *
+   * Carried on the wire so a band sweep can join the declared ring to the
+   * measured bins without re-deriving the ring or re-rendering the plate.
+   * **It is deliberately not part of `markedShare`/`markColourCount`'s
+   * definition**, and that is the whole point of supplying it here rather
+   * than measuring against it: a "within tolerance of an expected hex" test
+   * passes on antialiased glyph fringes, so a metric built on it would report
+   * emphasis on a plate carrying nothing but type — a guard that cannot fail.
+   * The four limbs that DO define a mark are colour-agnostic by construction.
+   */
+  marks?: readonly string[];
 }
+
+/** `MeasureSlideExpectations.marks` is capped here — `ACCENT_RING_MAX` in the instagram agent's kit, and six colour classes in the mark stylesheet. */
+export const MAX_EXPECTED_MARKS = 6;
 
 export interface MeasureSlideOptions {
   /** Defaults to `DEFAULT_DESIGN_CANVAS`. The PNG must be an integer multiple of it, equally in both axes. */
@@ -359,6 +495,13 @@ export const SlideProbeSchema = z.object({
   elementCount: z.number().int().describe("Elements in the rendered document — a blank slide and a busy one are different numbers."),
   textBoxShare: z.number().describe("Summed area of the text-bearing leaf boxes over the canvas area. The DOM's own view of how much of the plate is type."),
   fontFamiliesUsed: z.array(z.string()).describe("The resolved first font family of every text-bearing leaf, deduplicated and sorted."),
+  markRuns: z.number().int().describe("Elements carrying the `mk` class — the emphasis runs this document ASKED for. 0 on a template with no *Runs slot, which is a fact and not a fault."),
+  markRunsPainted: z
+    .number()
+    .int()
+    .describe(
+      "Of those, the ones whose computed style actually paints: a background image other than `none`, or a transparent colour with `background-clip: text` (the dark-ground kind, where the mark is in the glyphs). `markRuns > 0 && markRunsPainted === 0` is the stylesheet not arriving, which no redraft can fix.",
+    ),
 });
 export type SlideProbe = z.infer<typeof SlideProbeSchema>;
 
@@ -598,6 +741,18 @@ export function measureSlidePng(bytes: Uint8Array, opts: MeasureSlideOptions = {
   const backgroundHex = rgbHex(bgR, bgG, bgB);
 
   const accent = parseHexRgb(opts.expected?.accent);
+  // Limb (iv) of the mark definition, and the anchor for `groundInkContrast`.
+  // An unparseable token is "no expectation was supplied", never "black" —
+  // `parseHexRgb`'s own contract — so a malformed `--fg` reports 0 marks
+  // rather than measuring everything against the origin of the colour cube.
+  const ink = parseHexRgb(opts.expected?.ink);
+  // `opts.expected.marks` is READ BY NOTHING BELOW, and that is the design
+  // rather than an omission — see `MeasureSlideExpectations.marks`. Requiring
+  // a marked cell to sit within tolerance of a declared hex is the test that
+  // passes on antialiased glyph fringes, so it would report emphasis on a
+  // plate carrying nothing but type. The four limbs are colour-agnostic on
+  // purpose; the field rides the wire so a band sweep can join the declared
+  // ring to the measured bins without re-deriving the ring.
 
   // ── Pass 2: everything measured against the ground ────────────────────
   const cellInk = new Int32Array(cellCount);
@@ -691,12 +846,61 @@ export function measureSlidePng(bytes: Uint8Array, opts: MeasureSlideOptions = {
   const empty = new Uint8Array(cellCount);
   const emptyOfContent = new Uint8Array(cellCount);
 
+  // ── The mark and composition accumulators ─────────────────────────────
+  //
+  // Every one of these is a counter over data the loop below already has in
+  // hand and today throws away, which is why the whole of RFC-17's
+  // measurement half costs $0 and about 6 ms on a ~200 ms pass. Nothing here
+  // opens a third decode and nothing retains a frame.
+  let markCells = 0;
+  const markBins = new Map<number, number>();
+  let inkWeight = 0;
+  let inkWeightedX = 0;
+  let inkWeightedY = 0;
+  let bboxMinX = cols;
+  let bboxMinY = rows;
+  let bboxMaxX = -1;
+  let bboxMaxY = -1;
+
   for (let cell = 0; cell < cellCount; cell++) {
     const inkShareOfCell = cellInk[cell]! / samplesPerCell;
     const distinct = colourCount[cell]!;
     const covered = inkShareOfCell >= CELL_COVERED_INK_SHARE;
     const carriesInk = inkShareOfCell >= CELL_INK_SHARE;
-    const nonGroundMean = colourDistance(cellMeanR[cell]!, cellMeanG[cell]!, cellMeanB[cell]!, bgR, bgG, bgB) > tol.ink;
+    const meanR = cellMeanR[cell]!;
+    const meanG = cellMeanG[cell]!;
+    const meanB = cellMeanB[cell]!;
+    const nonGroundMean = colourDistance(meanR, meanG, meanB, bgR, bgG, bgB) > tol.ink;
+
+    // ── The four limbs. See this file's "MARKED EMPHASIS" comment. ──
+    // (iv) is what `ink === undefined` switches off, and with it switched off
+    // the whole metric reports nothing rather than a three-limb superset that
+    // would count every display stroke's interior as emphasis.
+    if (ink !== undefined && covered && cellStddev[cell]! < tol.flatCellStddev && nonGroundMean && colourDistance(meanR, meanG, meanB, ink[0], ink[1], ink[2]) > tol.ink) {
+      markCells += 1;
+      const key = ((Math.round(meanR) >> QUANT_SHIFT) << (2 * QUANT_BITS)) | ((Math.round(meanG) >> QUANT_SHIFT) << QUANT_BITS) | (Math.round(meanB) >> QUANT_SHIFT);
+      markBins.set(key, (markBins.get(key) ?? 0) + 1);
+    }
+
+    // ── Composition evidence, reported and compared against nothing ──
+    // Weighted by the cell's own ink COUNT rather than by a boolean, so a
+    // display line pulls the centroid harder than a caption does — which is
+    // the half of "deliberately placed" that a bare occupancy centroid loses.
+    if (cellInk[cell]! > 0) {
+      const cx = cell % cols;
+      const cy = (cell / cols) | 0;
+      inkWeight += cellInk[cell]!;
+      inkWeightedX += cellInk[cell]! * (cx + 0.5);
+      inkWeightedY += cellInk[cell]! * (cy + 0.5);
+    }
+    if (carriesInk) {
+      const cx = cell % cols;
+      const cy = (cell / cols) | 0;
+      if (cx < bboxMinX) bboxMinX = cx;
+      if (cx > bboxMaxX) bboxMaxX = cx;
+      if (cy < bboxMinY) bboxMinY = cy;
+      if (cy > bboxMaxY) bboxMaxY = cy;
+    }
 
     const isImagery = covered && distinct >= IMAGERY_MIN_DISTINCT_COLOURS && cellStddev[cell]! >= IMAGERY_MIN_STDDEV;
     const isGraphic = covered && !isImagery && distinct <= GRAPHIC_MAX_DISTINCT_COLOURS;
@@ -723,6 +927,22 @@ export function measureSlidePng(bytes: Uint8Array, opts: MeasureSlideOptions = {
 
   const imageryShare = imageryCells / cellCount;
   const graphicShare = graphicCells / cellCount;
+
+  let markColourCount = 0;
+  for (const held of markBins.values()) if (held >= MARK_COLOUR_MIN_CELLS) markColourCount += 1;
+
+  // A zero-area bbox is the unambiguous "nothing painted" signal; the
+  // centroid falls back to the frame centre rather than to (0,0), which is a
+  // corner a caller could otherwise read as a real placement.
+  const painted = bboxMaxX >= 0;
+  const contentBBox = painted
+    ? {
+        x: bboxMinX * CELL_DESIGN_PX,
+        y: bboxMinY * CELL_DESIGN_PX,
+        w: (bboxMaxX - bboxMinX + 1) * CELL_DESIGN_PX,
+        h: (bboxMaxY - bboxMinY + 1) * CELL_DESIGN_PX,
+      }
+    : { x: 0, y: 0, w: 0, h: 0 };
 
   return {
     ok: true,
@@ -756,6 +976,12 @@ export function measureSlidePng(bytes: Uint8Array, opts: MeasureSlideOptions = {
       edgeDensity: inkPixels > 0 ? edgePixels / inkPixels : 0,
       quantisedColourCount,
       clippedEdgeShare: clippedInkPixels / totalPixels,
+      markedShare: markCells / cellCount,
+      markColourCount,
+      contentCentroid:
+        inkWeight > 0 ? { x: inkWeightedX / inkWeight / cols, y: inkWeightedY / inkWeight / rows } : { x: 0.5, y: 0.5 },
+      contentBBox,
+      groundInkContrast: ink === undefined ? 0 : wcagContrastRatio([bgR, bgG, bgB], ink),
     },
   };
 }

@@ -107,11 +107,12 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
       "images capped at 2",
       "no generated images (stock or text-only)",
       "trend evidence reduced to the one cached industry query",
+      "optional rescue re-vets skipped",
     ];
     expect(plan?.adaptations).toEqual(COLD_ADAPTATIONS);
-    expect(plan?.plan).toEqual({ maxSelfCheckAttempts: 3, generatedImagesCap: 0, evidencePulls: "reduced", optionalRevets: true });
+    expect(plan?.plan).toEqual({ maxSelfCheckAttempts: 3, generatedImagesCap: 0, evidencePulls: "reduced", optionalRevets: false });
     expect(plan?.note).toMatch(
-      /^budget: estimate \$1\.\d\d > \$1\.00 → images capped at 4, images capped at 2, no generated images \(stock or text-only\), trend evidence reduced to the one cached industry query \(now \$0\.\d\d\)$/,
+      /^budget: estimate \$1\.\d\d > \$1\.00 → images capped at 4, images capped at 2, no generated images \(stock or text-only\), trend evidence reduced to the one cached industry query, optional rescue re-vets skipped \(now \$0\.\d\d\)$/,
     );
     expect(plan?.spentBeforePlanUsd).toBe(0);
     expect(deliverable?.budget).toMatchObject({
@@ -131,7 +132,7 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     const budgetEvent = await env.store.readJson<{ level: string; message: string }>("acme", ["ledger", "events", "budget_fresh", "budget_fresh__budget"]);
     expect(budgetEvent?.level).toBe("info");
     expect(budgetEvent?.message).toMatch(
-      /^budget: estimated \$0\.\d\d, actual \$0\.\d\d \(under target\); adaptations: images capped at 4, images capped at 2, no generated images \(stock or text-only\), trend evidence reduced to the one cached industry query$/,
+      /^budget: estimated \$0\.\d\d, actual \$0\.\d\d \(under target\); adaptations: images capped at 4, images capped at 2, no generated images \(stock or text-only\), trend evidence reduced to the one cached industry query, optional rescue re-vets skipped$/,
     );
     // The ledger's adaptation list is the reviewer's copy of the plan's, so it
     // is asserted to be that list rather than a hand-retyped one — the two
@@ -251,7 +252,7 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     const budgetEvent = await env.store.readJson<{ level: string; message: string }>("acme", ["ledger", "events", "budget_overrun", "budget_overrun__budget"]);
     expect(budgetEvent?.level).toBe("warn");
     expect(budgetEvent?.message).toMatch(
-      /\(over the hard max\); adaptations: images capped at 4, images capped at 2, no generated images \(stock or text-only\), trend evidence reduced to the one cached industry query; delivered degraded on the cheapest complete path$/,
+      /\(over the hard max\); adaptations: images capped at 4, images capped at 2, no generated images \(stock or text-only\), trend evidence reduced to the one cached industry query, optional rescue re-vets skipped; delivered degraded on the cheapest complete path$/,
     );
 
     // The next run reads the history and starts tight: images capped at 4 before any estimate, and the calibration ratio now reflects the overrun.

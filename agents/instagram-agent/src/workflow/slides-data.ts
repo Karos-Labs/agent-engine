@@ -4,6 +4,22 @@ import type { RenderCarouselInput, Slide } from "@agent-engine/tool-karos-publis
 import { templateFileName } from "@agent-engine/tool-karos-templates";
 import { isolateForeignRuns } from "./bidi-isolate.js";
 import { contrastRatio, paletteForSlide } from "./brand-render-tokens.js";
+import {
+  buildMarkRing,
+  buildMarkedRuns,
+  collectEmphasisIssues,
+  assignSpansToFields,
+  markKindsFor,
+  normaliseEmphasis,
+  resolveSlideMarks,
+  ringIndexesFor,
+  slideMarkSeed,
+  type EmphasisIssue,
+  type MarkDrop,
+  type MarkField,
+  type MarkKind,
+  type MarkRing,
+} from "./emphasis-marks.js";
 import { buildDeviceFragment, deviceFigureValues, validateDevice, type SlideDevice } from "./slide-devices.js";
 import { imageTreatmentFields, type ImageTreatment } from "./style-lock.js";
 import type {
@@ -40,6 +56,21 @@ const LAYOUT_TEMPLATE_FILES: Record<Exclude<InstagramSlideLayout, "photo" | "tex
   cover: "cover.html",
   closer: "closer.html",
 };
+
+/**
+ * RFC-17 §5.4 — the archetypes that paint NO marks, whatever the copy
+ * declares.
+ *
+ * Their content is a figure and two labels, or two short columns under a pair
+ * of one-word headings. A highlighter stroke on furniture is not emphasis; it
+ * is decoration pretending to be meaning, and both plates are already the
+ * densest in the set. `contentFor` returns `htmlFragments: {}` for both, so
+ * `markRuns` is never reached — this constant is what lets the loss be
+ * REPORTED instead of merely happening, and it is read by
+ * `__tests__/emphasis-archetype-coverage.test.ts`, which pins the gap so it
+ * cannot widen silently.
+ */
+const UNMARKED_LAYOUTS: ReadonlySet<string> = new Set(["stat_callout", "comparison_card"]);
 
 function templateForLayout(layout: InstagramSlideLayout, slide: InstagramSlideCopy, clientTemplate: string): string {
   if (layout === "photo" || layout === "text_only") return clientTemplate;
@@ -249,10 +280,64 @@ export interface GroundFgInversionConfig {
 /** One axis's status for one slide, for the gate payload's `variationPlan` (§10e). */
 export interface VariationPlanEntry {
   slide: number;
-  axis: "groundFg" | "accent";
+  axis: "groundFg" | "accent" | "textAlign";
   used: boolean;
   /** Present only when `used` is false AND there's a specific reason to name — never invented for the ordinary "nothing to report" case. */
-  reason?: "ring=1" | "accent-fails-inverted-ground" | "directive-pinned" | "no-ground-pair";
+  reason?: "ring=1" | "accent-fails-inverted-ground" | "directive-pinned" | "no-ground-pair" | "reviewer-pinned";
+  /** The alignment this slide actually renders with. Only on the `textAlign` axis. */
+  value?: "start" | "center" | "end";
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// RFC-17 §5.5 — the composition walk
+// ─────────────────────────────────────────────────────────────────────────
+
+export type SlideTextAlign = "start" | "center" | "end";
+
+/**
+ * The reference carousels' own alignment sequence.
+ *
+ * The variety in the reference sets is (a) type-block vertical position,
+ * (b) ALIGNMENT, (c) mark colour and (d) imagery — over ONE unchanging
+ * ground. (c) is the mark system. Of the rest, alignment is the only one that
+ * is free today: every template already carries `body.ta-center` and
+ * `body.ta-end`, and `textAlign` has until now defaulted to `"start"` on
+ * every slide and only ever moved when a reviewer moved it. An eight-slide
+ * carousel therefore shipped eight left-aligned type blocks, which is exactly
+ * the repetition the owner called machine-made.
+ *
+ * Vertical migration is deliberately NOT built: it needs a `cw-*` trio in
+ * every template and it moves the type block relative to a FIXED painted
+ * field, which re-opens the clause E band that `IMAGERY_OR_DEVICE_FLOOR`'s
+ * calibration depends on. That is its own phase.
+ *
+ * The sequence is cyclic and — checked by test across every phase and every
+ * carousel length — never puts three consecutive slides on the same
+ * alignment, including across the wrap.
+ */
+const TEXT_ALIGN_WALK: readonly SlideTextAlign[] = ["start", "start", "center", "end", "center", "center", "start", "center"];
+
+/**
+ * This run's default alignment per slide — seeded, never random, on the same
+ * contract as every other seeded choice in this module: the same seed and the
+ * same carousel always produce the same walk, and a different run starts it
+ * at a different phase.
+ *
+ * The cover is PINNED to `start` or `center`. A cover set to `end` reads as a
+ * mistake rather than a choice: it is the one slide with a masthead, a badge
+ * and (usually) a hero, all of which are anchored to the start edge.
+ *
+ * Returned as a plain array indexed by POSITION, not by `slide.n`, so it is
+ * the same shape for a six-, seven- or eight-slide post.
+ */
+export function planTextAlign(slideCount: number, paletteSeed: string | undefined): SlideTextAlign[] {
+  const phase = paletteSeed !== undefined && paletteSeed.length > 0 ? fnv1a32ForVariation(`${paletteSeed}:textAlign`) % TEXT_ALIGN_WALK.length : 0;
+  const out: SlideTextAlign[] = [];
+  for (let i = 0; i < Math.max(0, slideCount); i++) {
+    const picked = TEXT_ALIGN_WALK[(phase + i) % TEXT_ALIGN_WALK.length]!;
+    out.push(i === 0 && picked === "end" ? "start" : picked);
+  }
+  return out;
 }
 
 /**
@@ -334,15 +419,35 @@ export function buildVariationPlan(params: {
   /** The same fallback `assembleSlidesData` resolves to when there is no ring at all (see `resolveSlideAccent`). */
   brandAccentFallback: string;
   groundFgInversion?: GroundFgInversionConfig | undefined;
+  /**
+   * RFC-17 §5.5 — the reviewer's own per-slide typography, so the alignment
+   * axis reports what the slide RENDERS with rather than what the walk would
+   * have picked. A reviewer override still wins, unchanged; this is only how
+   * the gate payload says so.
+   */
+  slideStyleOverrides?: ReadonlyMap<number, SlideStyleOverride> | undefined;
 }): VariationPlanEntry[] {
   const plan: VariationPlanEntry[] = [];
-  for (const n of params.slideNs) {
+  const alignments = planTextAlign(params.slideNs.length, params.paletteSeed);
+  params.slideNs.forEach((n, index) => {
     const { accent, rotates } = resolveSlideAccent(n, params.accentRing, params.paletteSeed, params.brandAccentFallback);
     plan.push({ slide: n, axis: "accent", used: rotates, ...(rotates ? {} : { reason: "ring=1" as const }) });
 
     const groundFg = decideGroundFgInversion(n, params.paletteSeed, accent, params.groundFgInversion);
     plan.push({ slide: n, axis: "groundFg", used: groundFg.used, ...(groundFg.reason !== undefined ? { reason: groundFg.reason } : {}) });
-  }
+
+    // RFC-17 §5.5. `used` means "the seeded walk decided this slide's
+    // alignment" — false when a reviewer pinned it, which is not a failure of
+    // the axis but the axis correctly standing aside.
+    const pinned = params.slideStyleOverrides?.get(n)?.textAlign;
+    plan.push({
+      slide: n,
+      axis: "textAlign",
+      used: pinned === undefined,
+      ...(pinned !== undefined ? { reason: "reviewer-pinned" as const } : {}),
+      value: pinned ?? alignments[index] ?? "start",
+    });
+  });
   return plan;
 }
 
@@ -526,12 +631,26 @@ function isolateDeviceLabels(device: SlideDevice, dir: "rtl" | "ltr"): SlideDevi
   }
 }
 
-export function buildListRows(items: readonly { title: string; note?: string | undefined }[]): string {
+/**
+ * `list_takeaway`'s rows as one markup fragment.
+ *
+ * `titleRuns` is RFC-17's `rf-11` case, and it costs the template nothing:
+ * this builder already owns `.me-title`'s markup, so a row's marked runs go
+ * straight in where the escaped title used to, and `list-takeaway.html` needs
+ * no new slot at all. That is why `SLOTS_BY_ARCHETYPE.list_takeaway` gains
+ * none of the eight `*Runs` names.
+ *
+ * The runs fragment is ALREADY escaped and isolated by `buildMarkedRuns`
+ * (which is the only thing licensed to build it); an absent or empty one
+ * falls back to the escaped plain title, so a row whose marks were all
+ * dropped is byte-identical to today's output.
+ */
+export function buildListRows(items: readonly { title: string; note?: string | undefined; titleRuns?: string | undefined }[]): string {
   return items
     .map(
       (item) =>
         `<div class="me-row"><span class="diamond"></span><div>` +
-        `<div class="me-title">${esc(item.title)}</div>` +
+        `<div class="me-title">${item.titleRuns !== undefined && item.titleRuns.length > 0 ? item.titleRuns : esc(item.title)}</div>` +
         `<div class="me-note">${item.note ? esc(item.note) : ""}</div>` +
         `</div></div>`,
     )
@@ -964,6 +1083,42 @@ export interface SlideStyleOverride {
   textAlign?: "start" | "center" | "end" | undefined;
 }
 
+/** Everything one slide's marks need that is fixed before `contentFor` runs (RFC-17 §5.2). */
+export interface SlideMarkPlan {
+  /** The RUN's derived mark ring, positional — its members are the six `.mk-c*` classes `markCssBlock` emits. An empty ring means this run marks nothing. */
+  ring: MarkRing;
+  /** Which of the ring's slots THIS slide may use, after the accent exclusion (`ringIndexesFor`). Empty means this slide marks nothing. */
+  allowedIndexes: readonly number[];
+  /** This slide's EFFECTIVE ground and ink, after IGSTYLE-10's ground/fg inversion — the pair the kind set is computed from. */
+  groundHex: string;
+  fgHex: string;
+  /** `slideMarkSeed(paletteSeed, slide.n)`. */
+  seed: number;
+}
+
+/** What one slide's marks actually did, for the trace and for the pixel measurement's `expected.marks`. */
+export interface SlideMarkResult {
+  /** The distinct hexes this slide actually painted, in rotation order. Empty when nothing was marked. */
+  hexes: string[];
+  /** Every declared span this slide could not mark, and why. Facts, never findings. */
+  drops: MarkDrop[];
+  /**
+   * The kinds `markKindsFor` admitted for THIS slide's effective ground.
+   *
+   * Carried so the pixel instrument knows what it is allowed to expect.
+   * `markedShare` / `markColourCount` count cells that are COVERED (48 of 64
+   * samples non-ground) and FLAT — a definition only `block`, the highlighter
+   * swatch, can ever satisfy. `underline` (.07em), `swish` (.20em), `double`
+   * (.09em + .04em) and `ink` (glyph-clipped) structurally cannot, so on any
+   * ground darker than its ink — where `markKindsFor` refuses `block` — both
+   * numbers are 0 on every slide no matter how well the marks painted. Without
+   * this field `interest-floor.ts`'s `marks-not-visible` warning fires on
+   * every marked slide of every dark-kit run, which is a warning reviewers
+   * learn to ignore.
+   */
+  kinds: MarkKind[];
+}
+
 function contentFor(
   layout: InstagramSlideLayout,
   slide: InstagramSlideCopy,
@@ -987,8 +1142,10 @@ function contentFor(
      * is byte-identical to the literal every template carried before.
      */
     bcp47?: string | undefined;
+    /** RFC-17 (Phase 5) — this slide's mark ring, ground pair and seed. Absent means no marks at all, and every field renders exactly as it did before this phase. */
+    marks?: SlideMarkPlan | undefined;
   },
-): { fields: Record<string, string>; htmlFragments: Record<string, string> } {
+): { fields: Record<string, string>; htmlFragments: Record<string, string>; marks: SlideMarkResult } {
   /**
    * Phase 4, RFC-15 §7.3 — every RENDERED text field goes through this, and
    * nothing else does.
@@ -1010,6 +1167,151 @@ function contentFor(
    * person.
    */
   const iso = (text: string): string => isolateForeignRuns(text, dir);
+
+  /**
+   * RFC-17 (Phase 5) — the ONE place a copy field is routed to a marked-runs
+   * fragment, and the reason the emphasis contract names the COPY's fields
+   * rather than template slots.
+   *
+   * `markRuns("headline", slide.headline)` produces the fragment that fills
+   * `{{html:titleRuns}}` on a cover, `{{html:takeawayRuns}}` on a closer and
+   * `{{html:headlineRuns}}` everywhere else — one mapping, here, so a layout
+   * downgrade keeps the marks working.
+   *
+   * TWIN SLOTS, NEVER A SWAP. The plain escaped field is ALWAYS emitted
+   * alongside the fragment and is always the fallback (`fillTemplate` erases
+   * any slot nobody filled, and a run resumed across a deploy carries
+   * checkpointed slides data with no fragment at all — a straight swap would
+   * render an empty headline). It also keeps `fields` byte-identical for
+   * `proseFieldsOf`, `contentElementCount`, the dedupe corpus and the
+   * reviewer's editable view.
+   *
+   * Returns `undefined` — no fragment, so the template's `:has()` collapse
+   * rule never fires and the plain field shows — whenever there is no plan,
+   * no ring, no declared span, or nothing survived resolution.
+   */
+  const markDrops: MarkDrop[] = [];
+  const markColourIndexes: number[] = [];
+  let marksAccepted = 0;
+  const plan = context?.marks;
+  // The kind set is a per-SLIDE computation from the slide's own effective
+  // ground (finding 2: `rf-6` proves the ground decides), with one
+  // archetype-level refusal: `quote_card`'s `.quote-text` is italic, and an
+  // italic run's background box is a parallelogram the CSS cannot follow.
+  const markKinds =
+    plan === undefined ? [] : markKindsFor(plan.groundHex, plan.fgHex, plan.ring.hexes, { refuseBlock: layout === "quote_card" });
+  /**
+   * RFC-17 — the wire's two declaration forms collapsed to one, ONCE per
+   * slide.
+   *
+   * ONCE PER SLIDE, NOT ONCE PER FIELD, AND THAT IS THE CONTRACT.
+   *
+   * The wire form is a flat array of verbatim spans with no field name on
+   * them (RFC-17 §6.4), so routing is a SEARCH across the slide's own fields
+   * in READING ORDER — headline, body, quote, then list rows. It has to
+   * happen once, with every field visible at the same time: a per-field call
+   * could not tell "this span belongs to a later field" from "this span is
+   * not on the slide at all", and would report the second for the first on
+   * every field it passed through.
+   *
+   * The reading-order list is built from the COPY, not from the layout,
+   * which is the same reason the emphasis contract names copy fields: a
+   * cover routes `headline` to `title` and a closer routes it to `takeaway`,
+   * and a layout downgrade must keep the marks working.
+   *
+   * Guarded on `plan` for the same reason the rest of the mark system is:
+   * with no plan the mark system is not running at all this render, and a
+   * "that span is not on the slide" fact about a slide that was never going
+   * to paint a mark is noise, not a finding.
+   */
+  const markFieldsInReadingOrder: MarkField[] = [
+    { field: "headline", text: slide.headline },
+    { field: "body", text: slide.body },
+    ...(slide.quote !== undefined ? [{ field: "quote", text: slide.quote.text }] : []),
+    // THE SEARCH HAS TO COVER EVERY FIELD THAT PRINTS PROSE, or the drop
+    // reason is a lie. `stat.subLabel` ("of calendars stall in month two")
+    // and `comparison.leftBody` / `rightBody` are rendered copy the writer
+    // reads back on the plate, but they were not in this list — so a span
+    // living only there matched nothing, and the writer was told `"stall"
+    // does not appear on this slide on a word boundary -- copy a mark
+    // verbatim out of the copy you just wrote`, which is false and advises
+    // them to do exactly what they already did. Claimed here, the span is
+    // reported against the real reason below (the archetype paints no marks).
+    //
+    // `stat.figure` is deliberately NOT here, and neither are the two
+    // comparison LABELS: a figure is a bare numeral in a `line-height: 0.95`
+    // lockup (the same designed relationship that keeps `.num-figure` out of
+    // `DISPLAY_SELECTORS` and `figure` out of `iso`), and a one-word column
+    // label is furniture. Neither is a clause, and a mark is a mark on a
+    // clause.
+    ...(slide.stat !== undefined ? [{ field: "stat.subLabel", text: slide.stat.subLabel }] : []),
+    ...(slide.comparison !== undefined
+      ? [
+          { field: "comparison.leftBody", text: slide.comparison.leftBody },
+          { field: "comparison.rightBody", text: slide.comparison.rightBody },
+        ]
+      : []),
+    ...(slide.items ?? []).map((item, i) => ({ field: `item[${i}]`, text: item.title })),
+  ];
+  const normalised = plan === undefined ? { spans: [], drops: [] } : normaliseEmphasis(slide.emphasis);
+  const assigned = plan === undefined ? { byField: new Map<string, string[]>(), drops: [] } : assignSpansToFields(markFieldsInReadingOrder, normalised.spans);
+  markDrops.push(...normalised.drops, ...assigned.drops);
+  // ── A SPAN THIS ARCHETYPE CANNOT PAINT IS A DROP, NOT A SILENCE. ──
+  //
+  // `stat_callout` and `comparison_card` return `htmlFragments: {}` — they are
+  // deliberately unmarked (RFC-17 §5.4) — so `markRuns` is never called for
+  // them. A span claimed against `headline` or `body` therefore produced no
+  // fragment AND no drop: `collectEmphasisIssues` reported nothing,
+  // `marks-missing` and `marks-not-visible` both abstain on `markRuns === 0`,
+  // and the mark simply evaporated with every instrument saying it was fine.
+  // The shipped prompt gives no archetype exception — §28 tells the writer a
+  // slide may carry emphasis, full stop — so the writer is doing as asked and
+  // deserves to be told where it went.
+  //
+  // Reported through `collectEmphasisIssues`, which NEVER gates: this is a
+  // note in the trace, not a reason to hold a run or spend another drafting
+  // attempt. Stating the exception in the prompt instead would move
+  // `EMPHASIS_CHAR_DELTA` and the `copyAttempt` budget key, which sits $0.0017
+  // under the rung that costs a cold Hebrew run an attempt — a far worse trade
+  // than a trace note for a rare, cosmetic loss.
+  if (plan !== undefined && UNMARKED_LAYOUTS.has(layout)) {
+    for (const [field, texts] of assigned.byField) {
+      for (const text of texts) {
+        markDrops.push({
+          field,
+          text,
+          reason: `the "${layout}" archetype paints no marks — its content is a figure and labels, not clauses, so this span renders as ordinary copy`,
+        });
+      }
+    }
+  }
+  const markRuns = (field: "headline" | "body" | "quote" | "item", text: string, itemIndex?: number): string | undefined => {
+    if (plan === undefined) return undefined;
+    const fieldName = field === "item" ? `item[${itemIndex ?? 0}]` : field;
+    const declared = (assigned.byField.get(fieldName) ?? []).map((t) => ({ text: t }));
+    if (declared.length === 0) return undefined;
+    const resolved = resolveSlideMarks(fieldName, text, declared, {
+      dir,
+      allowedIndexes: plan.allowedIndexes,
+      kinds: markKinds,
+      seed: plan.seed,
+      alreadyAccepted: marksAccepted,
+    });
+    markDrops.push(...resolved.drops);
+    marksAccepted += resolved.accepted;
+    for (const run of resolved.runs) if (run.mark !== undefined) markColourIndexes.push(run.mark.colourIndex);
+    const fragment = buildMarkedRuns(resolved.runs, dir);
+    return fragment.length > 0 ? fragment : undefined;
+  };
+  /** `{ titleRuns: "<span…>" }` when there is a fragment, `{}` when there is not — so the twin slot simply stays unfilled. */
+  const runsSlot = (name: string, fragment: string | undefined): Record<string, string> => (fragment === undefined ? {} : { [name]: fragment });
+  /** The distinct hexes this slide painted, in rotation order — `expected.marks` for the pixel measurement. */
+  const markResult = (): SlideMarkResult => ({
+    hexes: [...new Set(markColourIndexes)].map((i) => plan?.ring.hexes[i]).filter((h): h is string => typeof h === "string"),
+    drops: markDrops,
+    kinds: markKinds,
+  });
+
   const base: Record<string, string> = {
     accentColor,
     dir,
@@ -1058,13 +1360,12 @@ function contentFor(
       deviceKind: slide.device.kind,
     };
   };
-  const withDevice = (
-    result: { fields: Record<string, string>; htmlFragments: Record<string, string> },
-  ): { fields: Record<string, string>; htmlFragments: Record<string, string> } => {
+  const withDevice = <T extends { fields: Record<string, string>; htmlFragments: Record<string, string> }>(result: T): T => {
     if (!DEVICE_SLOT_LAYOUTS.has(layout)) return result;
     const built = deviceFragment();
     if (built === undefined) return result;
     return {
+      ...result,
       fields: { ...result.fields, deviceFigures: built.deviceFigures, deviceKind: built.deviceKind },
       htmlFragments: { ...result.htmlFragments, device: built.device },
     };
@@ -1081,12 +1382,17 @@ function contentFor(
           body: iso(slide.body),
           sourceLine: iso(slide.stat!.source),
         },
+        // `stat_callout` is deliberately unmarked (RFC-17 §5.4): its content
+        // is a figure and two labels, not clauses. `.num-figure` is outside
+        // `DISPLAY_SELECTORS` for the same reason.
         htmlFragments: {},
+        marks: markResult(),
       };
     case "quote_card":
       return {
         fields: { ...base, quoteText: iso(slide.quote!.text), attribution: iso(slide.quote!.attribution) },
-        htmlFragments: {},
+        htmlFragments: { ...runsSlot("quoteRuns", markRuns("quote", slide.quote!.text)) },
+        marks: markResult(),
       };
     case "comparison_card":
       return {
@@ -1099,14 +1405,34 @@ function contentFor(
           rightLabel: iso(slide.comparison!.rightLabel),
           rightBody: iso(slide.comparison!.rightBody),
         },
+        // `comparison_card` is deliberately unmarked (RFC-17 §5.4): labels and
+        // short bodies in two columns, not clauses.
         htmlFragments: {},
+        marks: markResult(),
       };
     case "list_takeaway":
       return {
         fields: { ...base, headline: iso(slide.headline) },
         htmlFragments: {
-          itemRows: buildListRows(slide.items!.map((item) => ({ ...item, title: iso(item.title), ...(item.note !== undefined ? { note: iso(item.note) } : {}) }))),
+          // RFC-17's `rf-11` case, and it costs the template NOTHING: this
+          // builder already owns `.me-title`, so a row's marks go where the
+          // escaped title used to and `list-takeaway.html` grows no slot.
+          // The headline's own marks are routed through `headlineRuns` like
+          // every other archetype's.
+          ...runsSlot("headlineRuns", markRuns("headline", slide.headline)),
+          itemRows: buildListRows(
+            slide.items!.map((item, itemIndex) => ({
+              ...item,
+              title: iso(item.title),
+              ...(item.note !== undefined ? { note: iso(item.note) } : {}),
+              ...((): { titleRuns?: string } => {
+                const runs = markRuns("item", item.title, itemIndex);
+                return runs === undefined ? {} : { titleRuns: runs };
+              })(),
+            })),
+          ),
         },
+        marks: markResult(),
       };
     case "cover": {
       // `eyebrow` is fed from the copy's own `kicker` rather than a new copy
@@ -1120,7 +1446,15 @@ function contentFor(
           title: iso(slide.headline),
           subtitle: iso(slide.body),
         },
-        htmlFragments: {},
+        // The cover routes the COPY's `headline`/`body` to `title`/`subtitle`
+        // — which is exactly why the emphasis contract names the copy's own
+        // fields and not a slot. `rf-05 S1` is a cover carrying four marks in
+        // four colours across both lines.
+        htmlFragments: {
+          ...runsSlot("titleRuns", markRuns("headline", slide.headline)),
+          ...runsSlot("subtitleRuns", markRuns("body", slide.body)),
+        },
+        marks: markResult(),
       });
     }
     case "closer": {
@@ -1147,7 +1481,16 @@ function contentFor(
           ...(closes && /[?؟]/u.test(slide.body) ? { question: iso(slide.body) } : { cta: iso(slide.body) }),
           ...(built !== undefined && fragment === built.device ? { deviceFigures: built.deviceFigures, deviceKind: built.deviceKind } : {}),
         },
-        htmlFragments: fragment.length > 0 ? { recap: fragment } : {},
+        htmlFragments: {
+          ...(fragment.length > 0 ? { recap: fragment } : {}),
+          // The closer routes `headline` -> `takeaway`, and `body` -> either
+          // `question` or `cta` — whichever the copy actually is. The marks
+          // follow the same branch, so the fragment can never end up in the
+          // slot that collapsed.
+          ...runsSlot("takeawayRuns", markRuns("headline", slide.headline)),
+          ...runsSlot(closes && /[?؟]/u.test(slide.body) ? "questionRuns" : "ctaRuns", markRuns("body", slide.body)),
+        },
+        marks: markResult(),
       };
     }
     case "custom":
@@ -1169,12 +1512,25 @@ function contentFor(
           ...base,
           ...Object.fromEntries(Object.entries(slide.customArchetype!.fields).map(([key, value]) => [key, key in base ? value : iso(value)])),
         },
+        // A `custom` archetype's slot VALUES are model-authored, and no raw
+        // `{{html:}}` form exists for them (see `SlideCustomArchetypeSchema`).
+        // Marks would need a second model-authored channel into the
+        // privileged form, which is the one thing the escaped path exists to
+        // prevent — so `custom` is unmarked, deliberately.
         htmlFragments: {},
+        marks: markResult(),
       };
     case "photo":
     case "text_only":
     case "headline_focus":
-      return withDevice({ fields: { ...base, headline: iso(slide.headline), body: iso(slide.body) }, htmlFragments: {} });
+      return withDevice({
+        fields: { ...base, headline: iso(slide.headline), body: iso(slide.body) },
+        htmlFragments: {
+          ...runsSlot("headlineRuns", markRuns("headline", slide.headline)),
+          ...runsSlot("bodyRuns", markRuns("body", slide.body)),
+        },
+        marks: markResult(),
+      });
   }
 }
 
@@ -1458,6 +1814,56 @@ export function assembleSlidesData(params: {
    * keeps every existing slides-data fixture byte-identical.
    */
   imageTreatment?: ImageTreatment | undefined;
+  /**
+   * RFC-17 (Phase 5) — the effective kit's `--bg` and `--fg`.
+   *
+   * The mark ring is derived from them: a mark has to be legible on the
+   * ground it lands on, and `block` is refused outright on a ground darker
+   * than the ink (finding 2 — `rf-6` is the proof, and our bundled `#17181C`
+   * is that case). ABSENT MEANS NO MARKS AT ALL: a ring cannot be derived
+   * without a ground to derive it against, and guessing one would be the
+   * inferred-ink mistake finding 8 already measured (a reported contrast of
+   * 2.54 on a plate whose real contrast is 15.84).
+   */
+  groundHex?: string | undefined;
+  foregroundHex?: string | undefined;
+  /**
+   * RFC-17 — the run's mark ring, when the caller has already derived it.
+   *
+   * The workflow does, because the SAME ring has to reach the stylesheet
+   * (`markCssBlock`, spliced into every document at materialization time) and
+   * this composition, which indexes into it positionally to decide which
+   * `.mk-c*` class each run carries. Deriving it twice from the same inputs
+   * would agree today and is one argument away from painting slide 4's mark
+   * in slide 2's colour with nothing reporting it.
+   *
+   * Absent, it is derived here from `groundHex`/`foregroundHex` — which is
+   * what a test or any caller without a stylesheet to keep in step does.
+   */
+  markRing?: MarkRing | undefined;
+  /**
+   * OUT-PARAMETER — this run's mark report, filled as the slides are
+   * assembled.
+   *
+   * An out-parameter rather than a return value for the reason
+   * `buildVariationPlan`'s own doc comment gives about the same problem:
+   * `RenderCarouselInput` is `publish.renderCarousel`'s exact input contract
+   * (RFC-03 §1), not a place to smuggle reporting metadata. And the numbers
+   * cannot be re-derived by a second pass either, because they depend on
+   * `resolveLayout`'s per-slide walk (`quote_card` refuses `block`; a
+   * downgraded `photo` marks through a different slot), so a standalone
+   * planner would be a second opinion that could disagree with the one the
+   * document was actually built from.
+   *
+   * `hexesBySlide` is what the caller forwards as `measure.markHexes`;
+   * `issues` is what the gate payload and the trace report as facts;
+   * `kindsBySlide` is what the caller forwards to `checkSlidesInterestFloor`
+   * so the `marks-not-visible` warning knows whether the pixel instrument was
+   * ever capable of seeing this slide's marks (only `block` paints an area a
+   * marked CELL can hold). Optional, and an absent map simply means the
+   * warning keeps its old unconditional behaviour for that caller.
+   */
+  markReportOut?: { hexesBySlide: Map<number, string[]>; issues: EmphasisIssue[]; kindsBySlide?: Map<number, string[]> | undefined } | undefined;
 }): RenderCarouselInput {
   const selectionByN = new Map(params.selections.map((s) => [s.n, s]));
 
@@ -1483,6 +1889,40 @@ export function assembleSlidesData(params: {
   // comment on `usedLayouts`.
   const usedLayouts = new Set<string>();
   const lastIndex = params.copy.slides.length - 1;
+
+  // ── RFC-17 (Phase 5): the run's mark ring, derived ONCE.
+  //
+  // Once per run rather than once per slide because the six `.mk-c*` classes
+  // that carry its values are emitted once, into the shared head block. The
+  // PER-SLIDE half of the decision — which of those six slots this slide's
+  // accent leaves free — is `ringIndexesFor`, below.
+  //
+  // Costs $0.00: no model call, no new step, no setup bump. Derived from the
+  // accent ring the kit already produces, which is also the only way to
+  // guarantee an in-kit hex (finding 7: a mark palette invented outside the
+  // ring is stripped by `filterLearnedStyleToRing` and then fails
+  // `checkPaletteWithinKit` three attempts later — a recorded $0.30 hold).
+  const markRing =
+    params.markRing ??
+    (params.groundHex !== undefined && params.foregroundHex !== undefined
+      ? buildMarkRing(
+          { ...(params.brandAccentFallback !== undefined ? { brandAccent: params.brandAccentFallback } : {}), palette: params.accentRing ?? [] },
+          params.groundHex,
+          params.foregroundHex,
+          // A ring with one member paints ring[0] on EVERY slide
+          // (`resolveSlideAccent`'s `rotates: false`), so that accent is a
+          // run-level constant and excluding it here gives a better trace
+          // note. A rotating ring's accent is a per-slide fact and is
+          // excluded per slide instead — see `buildMarkRing`'s own comment.
+          (params.accentRing ?? []).length === 1 ? params.accentRing![0]! : [],
+          { groundMayInvert: params.groundFgInversion !== undefined && !params.groundFgInversion.directivePinned },
+        )
+      : undefined);
+  const markDropsBySlide: { slide: number; drops: MarkDrop[] }[] = [];
+
+  // RFC-17 §5.5 — this run's seeded alignment walk, one entry per POSITION.
+  const alignments = planTextAlign(params.copy.slides.length, params.paletteSeed);
+
   const slides: Slide[] = params.copy.slides.map((slide, index) => {
     const selection = selectionByN.get(slide.n);
     // Phase 2, item M: the two positional archetypes need to know where the
@@ -1506,7 +1946,26 @@ export function assembleSlidesData(params: {
     // no ring at all paints the shared `accentColor` ladder above — see
     // `resolveSlideAccent` for why a one-member ring is no longer a fallback.
     const { accent: slideAccentColor } = resolveSlideAccent(slide.n, params.accentRing, params.paletteSeed, accentColor);
-    const { fields, htmlFragments } = contentFor(
+    // IGSTYLE-10, §10a/10c — this slide's ground/fg pairing. Resolved BEFORE
+    // `contentFor` now, because RFC-17's kind set is computed from the ground
+    // this slide actually renders on: an inverted slide's ground is the kit's
+    // `--fg`, and `block` is legal on one of the pair and refused on the
+    // other.
+    const { used: inverted } = decideGroundFgInversion(slide.n, params.paletteSeed, slideAccentColor, params.groundFgInversion);
+    const effectiveGround = inverted ? params.foregroundHex : params.groundHex;
+    const effectiveFg = inverted ? params.groundHex : params.foregroundHex;
+    const markPlan: SlideMarkPlan | undefined =
+      markRing !== undefined && effectiveGround !== undefined && effectiveFg !== undefined
+        ? {
+            ring: markRing,
+            allowedIndexes: ringIndexesFor(markRing, slideAccentColor),
+            groundHex: effectiveGround,
+            fgHex: effectiveFg,
+            seed: slideMarkSeed(params.paletteSeed, slide.n),
+          }
+        : undefined;
+    const reviewerStyle = params.slideStyleOverrides?.get(slide.n);
+    const { fields, htmlFragments, marks } = contentFor(
       layout,
       slide,
       slideAccentColor,
@@ -1515,9 +1974,16 @@ export function assembleSlidesData(params: {
         handle: params.brandHandle,
         seriesBadge: params.brandTokens.seriesBadge,
       },
-      params.slideStyleOverrides?.get(slide.n),
+      // RFC-17 §5.5 — the seeded walk supplies this slide's DEFAULT
+      // alignment; a reviewer's own `textAlign` still wins, unchanged, and
+      // `fontScale` is untouched by this phase.
+      {
+        ...(reviewerStyle?.fontScale !== undefined ? { fontScale: reviewerStyle.fontScale } : {}),
+        textAlign: reviewerStyle?.textAlign ?? alignments[index] ?? "start",
+      },
       {
         position,
+        ...(markPlan !== undefined ? { marks: markPlan } : {}),
         // Item M.3 — which token-driven ground this slide paints, on the
         // EXISTING seeded low-discrepancy walk under its own namespace. No
         // new randomness mechanism: same seed and index always agree, a
@@ -1534,11 +2000,14 @@ export function assembleSlidesData(params: {
     // needs a picture" coupling this set exists to break.
     const imagePath = HERO_IMAGE_LAYOUTS.has(layout) ? (selection?.imagePath ?? undefined) : undefined;
     const primaryTemplate = templateForLayout(layout, slide, params.brandTokens.slideTemplate);
-    // IGSTYLE-10, §10a/10c — this slide's ground/fg pairing: the inverted
-    // sibling file when the seeded walk lands here AND the accent still
-    // clears the floor against the ground that inversion would produce;
-    // the primary file (unchanged from before this ticket) otherwise.
-    const { used: inverted } = decideGroundFgInversion(slide.n, params.paletteSeed, slideAccentColor, params.groundFgInversion);
+    // `inverted` was resolved above, before `contentFor`, because the mark
+    // kind set is computed from the ground this slide actually renders on.
+    if (marks.drops.length > 0) markDropsBySlide.push({ slide: slide.n, drops: marks.drops });
+    if (marks.hexes.length > 0) params.markReportOut?.hexesBySlide.set(slide.n, marks.hexes);
+    // Always set, even when empty: "this slide admitted no kind at all" is
+    // exactly as load-bearing as "it admitted four", and an absent entry
+    // would be indistinguishable from a caller that supplied no map.
+    params.markReportOut?.kindsBySlide?.set(slide.n, [...marks.kinds]);
     return {
       n: slide.n,
       template: inverted ? invertedTemplateFileName(primaryTemplate) : primaryTemplate,
@@ -1547,6 +2016,10 @@ export function assembleSlidesData(params: {
       htmlFragments,
     };
   });
+
+  if (params.markReportOut !== undefined) {
+    params.markReportOut.issues.push(...collectEmphasisIssues(markDropsBySlide, markRing?.notes ?? []));
+  }
 
   return {
     client: params.clientSlug,
