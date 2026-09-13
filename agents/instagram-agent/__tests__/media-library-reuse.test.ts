@@ -6,6 +6,7 @@ import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createMediaLibraryTools, type MediaLibraryEntry, type MediaLibraryListResult } from "@agent-engine/tool-karos-media";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import {
+  fakeRenderCarousel,
   fakeRouterSequence,
   goodCopyOutput,
   goodResearchOutput,
@@ -357,6 +358,10 @@ describe("media library — 05y-read-media-library (pending the Phase 3 wiring)"
 
     const tools = {
       ...env.tools,
+      // The Chromium-free renderer (`workflow-e2e.test.ts`'s rationale). These runs reach the renderer at
+      // all only because a delivered run now walks the whole workflow; not one assertion here reads a
+      // rendered pixel, a PNG path or a render outcome — they read `05y`'s step output and the call list.
+      "publish.renderCarousel": fakeRenderCarousel(env.tools["publish.renderCarousel"]!),
       "media.libraryList": recording(libraryTools["media.libraryList"] as unknown as AgentTool, calls),
       "media.libraryAdd": recording(libraryTools["media.libraryAdd"] as unknown as AgentTool, calls),
       "media.inspectImages": inspect,
@@ -383,7 +388,7 @@ describe("media library — 05y-read-media-library (pending the Phase 3 wiring)"
     const calls: string[] = [];
     // The renderer records itself into the SAME list, purely as a position marker: it is the boundary
     // between "sourcing this post's pictures" and "photographing the finished slides".
-    const steps = await run({ "publish.renderCarousel": recording(env.tools["publish.renderCarousel"] as unknown as AgentTool, calls) }, calls);
+    const steps = await run({ "publish.renderCarousel": recording(fakeRenderCarousel(env.tools["publish.renderCarousel"]!) as AgentTool, calls) }, calls);
 
     const readLibrary = steps.find((s) => s.stepId === "05y-read-media-library");
     expect(readLibrary, "05y-read-media-library must run before 05b").toBeDefined();
