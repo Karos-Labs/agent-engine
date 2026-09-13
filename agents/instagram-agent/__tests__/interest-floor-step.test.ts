@@ -22,7 +22,7 @@ import {
   type TestEnvironment,
 } from "./test-helpers.js";
 import type { SlideMetrics } from "../src/workflow/interest-floor.js";
-import { happyTurns, standardTurns } from "./turns.js";
+import { VALUE_TURN_NO_FINDINGS, happyTurns, standardTurns } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 import { goodTrendScoutOutput, goodResearchOutput, goodImageVettingOutput, goodRelevanceVerdict, goodVisualQaOutput } from "./test-helpers.js";
 
@@ -337,7 +337,7 @@ describe("08a1-interest-floor: it can never become a fourth hold", () => {
       finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput(), { outputTokens: 120_000 }),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
       // No visual-QA turn: past the hard max the optional model QA is
       // skipped. A second copy turn would exhaust the router and fail here,
       // which is exactly the assertion.
@@ -465,7 +465,7 @@ describe("08a1-interest-floor: it can never become a fourth hold", () => {
       ...drafted,
       slides: drafted.slides.map((s) =>
         s.n === 1
-          ? { ...s, layout: "stat_callout" as const, stat: { figure: "42%", subLabel: "of teams onboard by hand", source: "internal survey" } }
+          ? { ...s, layout: "stat_callout" as const, stat: { figure: "30%", subLabel: "more tickets resolved", source: "support dashboard export" } }
           : s.n === 3
             ? { ...s, layout: "text_only" as const }
             : s,

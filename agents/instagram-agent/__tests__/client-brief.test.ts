@@ -27,6 +27,7 @@ import {
   type RelevanceJudgeInput,
 } from "../src/workflow/relevance-gate.js";
 import { fakeRouterSequence, finalTurn, goodClientBrief, goodCopyOutput, goodRelevanceVerdict, makePromptStore } from "./test-helpers.js";
+import { VALUE_TURN_NO_FINDINGS } from "./turns.js";
 
 /**
  * Instagram Phase 0 grounding gate — the pure half, standalone.
@@ -534,7 +535,7 @@ describe("isThinlyGrounded / relevanceFloor — the gate floor the grounding ear
 
 describe("runRelevanceJudge", () => {
   it("maps a score at or above the threshold to 'relevant'", async () => {
-    const router = fakeRouterSequence([finalTurn(goodRelevanceVerdict())]);
+    const router = fakeRouterSequence([finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS)]);
     const verdict = await runRelevanceJudge(fakeWorkflowContext(), { tools: {}, router, promptStore: makePromptStore() }, "07g-relevance-attempt-1", judgeInput());
     expect(verdict).toEqual({ status: "relevant", score: 5, reason: "every slide names the client's own process data and speaks to operations leads" });
     expect(MIN_RELEVANCE_SCORE).toBe(3);
@@ -577,7 +578,7 @@ describe("runRelevanceJudge", () => {
   });
 
   it("hands the judge the brief and the post (topic, caption, slides' headline+body only), never visualNeed or sourceRef", async () => {
-    const router = fakeRouterSequence([finalTurn(goodRelevanceVerdict())]);
+    const router = fakeRouterSequence([finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS)]);
     await runRelevanceJudge(fakeWorkflowContext(), { tools: {}, router, promptStore: makePromptStore() }, "s", judgeInput());
     const call = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!;
     const prompt = call[0] as string;

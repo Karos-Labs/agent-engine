@@ -22,7 +22,14 @@ describe("PER_REVISION_ESTIMATE_USD / revisionEstimateUsd", () => {
   it("prices a revision as one angle proposal plus its drafting attempts, not as an attempt alone", () => {
     expect(PER_REVISION_ESTIMATE_USD).toBe(revisionEstimateUsd());
     expect(PER_REVISION_ESTIMATE_USD).toBeGreaterThan(DRAFT_ATTEMPT_ESTIMATE_USD);
-    expect(PER_REVISION_ESTIMATE_USD).toBeCloseTo(STEP_COST_ESTIMATES_USD.angle + DRAFT_ATTEMPT_ESTIMATE_USD + STEP_COST_ESTIMATES_USD.relevance, 6);
+    // Phase 5 (RFC-18 §7.1): an attempt now also buys the VALUE JUDGE, one
+    // Flash call at $0.003 that `revisionEstimateUsd`'s `perAttempt` carries
+    // beside the relevance judge. Written as the key rather than as a number
+    // so a re-price moves both sides at once.
+    expect(PER_REVISION_ESTIMATE_USD).toBeCloseTo(
+      STEP_COST_ESTIMATES_USD.angle + DRAFT_ATTEMPT_ESTIMATE_USD + STEP_COST_ESTIMATES_USD.relevance + STEP_COST_ESTIMATES_USD.valueJudge,
+      6,
+    );
     // The spec's own figure for the Sonnet angle call.
     expect(STEP_COST_ESTIMATES_USD.angle).toBe(0.036);
     expect(STEP_COST_ESTIMATES_USD.brief).toBe(0.113);
@@ -32,7 +39,10 @@ describe("PER_REVISION_ESTIMATE_USD / revisionEstimateUsd", () => {
     const one = revisionEstimateUsd({ attempts: 1 });
     const three = revisionEstimateUsd({ attempts: 3 });
     // The angle is paid ONCE for the round, so three attempts is not three angles.
-    expect(three - one).toBeCloseTo(2 * (DRAFT_ATTEMPT_ESTIMATE_USD + STEP_COST_ESTIMATES_USD.relevance), 6);
+    expect(three - one).toBeCloseTo(
+      2 * (DRAFT_ATTEMPT_ESTIMATE_USD + STEP_COST_ESTIMATES_USD.relevance + STEP_COST_ESTIMATES_USD.valueJudge),
+      6,
+    );
 
     // Phase 4 (RFC-15 §6.5): a reviewer's round on a non-English target now
     // costs the `languageBrief` prompt field plus TWO judge rounds, not one

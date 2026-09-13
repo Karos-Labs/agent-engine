@@ -34,6 +34,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
+import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 
 /**
@@ -90,13 +91,25 @@ function testTools(env: TestEnvironment): AgentToolRegistry {
  * requires that, the field is never rendered, and the gate deliberately does
  * not read it.
  */
+/**
+ * Phase 5 note: the figures are ASCII DIGITS, not spelled out.
+ *
+ * `07i-value-signals`' `checkNamedSpecifics` needs at least `ceil(6 / 3) = 2`
+ * slides carrying a named, checkable specific, and in a script with no case the
+ * paths open to it are a numeral with a unit, a percent, a year, or one of the
+ * client's own `coreTerms` - there is no capitalised-run path in Hebrew.
+ * Spelling four as a word therefore reads to the floor as a slide with no
+ * specific on it at all. Digits are also what a real Hebrew post uses:
+ * `gate.nativeLanguage` flags FOREIGN digits, never ASCII ones, which is the
+ * same fact RFC-18 section 4.2 rests `gate.numbersSourced` on.
+ */
 const GOOD_HEBREW_BODIES = [
-  "צוותים שהפכו את הדוח השבועי לאוטומטי חסכו בממוצע ארבע שעות בכל שבוע.",
-  "צוות התמיכה שלנו סגר שלושים אחוז יותר פניות אחרי המעבר לתהליך המיון החדש.",
-  "לקוחות שעברו הטמעה עם רשימת הבדיקה החדשה הגיעו לערך הראשון שלהם מהר יותר בפעמיים.",
-  "סקרים פנימיים הראו עלייה של עשרים וחמישה אחוז בשביעות הרצון של הצוות אחרי שינוי התהליך.",
-  "צוות העיצוב צמצם את סבבי התיקונים מחמישה סבבים לשניים בממוצע.",
-  "זמן ההטמעה ירד מארבעה עשר ימים לשבעה ימים אחרי ההשקה.",
+  "צוותים שהפכו את הדוח השבועי לאוטומטי חסכו בממוצע 4 שעות בכל שבוע.",
+  "צוות התמיכה שלנו סגר 30% יותר פניות אחרי המעבר לתהליך המיון החדש.",
+  "לקוחות שעברו הטמעה עם רשימת הבדיקה החדשה הגיעו לערך הראשון שלהם 2 ימים מוקדם יותר.",
+  "סקרים פנימיים הראו עלייה של 25% בשביעות הרצון של הצוות אחרי שינוי התהליך.",
+  "צוות העיצוב צמצם את סבבי התיקונים מ 5 סבבים ל 2 בממוצע.",
+  "זמן ההטמעה ירד מ 14 ימים ל 7 ימים אחרי ההשקה.",
 ];
 
 /**
@@ -106,12 +119,33 @@ const GOOD_HEBREW_BODIES = [
  * is exactly what stage 2 exists to catch.
  */
 const BAD_HEBREW_BODIES = [
-  "צוותים אשר אוטומטי הדוח השבועי היה, חסכה ארבע שעה בתוך שבועות, וזה הוא טוב עבור של החברה.",
-  "התמיכה צוות סגרה שלושים האחוז יותר של פניות, אחרי אשר עברנו אל תהליך מיון החדשה מאוד.",
-  "לקוחות אשר הטמעה עשה עם הרשימה בדיקה, הגיע ערך ראשונה שלהם יותר מהר בשני של ימים.",
-  "סקר פנימי הראה עלייה של עשרים וחמש אחוזים בתוך שביעות רצון הצוות, אחרי אשר התהליך שונה היה.",
-  "העיצוב צוות צמצמה את הסבבים תיקונים, מן חמישה אל שניים, בתוך ממוצע של הרבעון האחרונה.",
-  "הזמן של ההטמעה ירדה מן ארבעה עשר של ימים, אל שבעה ימים, אחרי אשר ההשקה קרה.",
+  "צוותים אשר אוטומטי הדוח השבועי היה, חסכה 4 שעה בתוך שבועות, וזה הוא טוב עבור של החברה.",
+  "התמיכה צוות סגרה 30% האחוז יותר של פניות, אחרי אשר עברנו אל תהליך מיון החדשה מאוד.",
+  "לקוחות אשר הטמעה עשה עם הרשימה בדיקה, הגיע ערך ראשונה שלהם יותר מהר ב 2 של ימים.",
+  "סקר פנימי הראה עלייה של 25% אחוזים בתוך שביעות רצון הצוות, אחרי אשר התהליך שונה היה.",
+  "העיצוב צוות צמצמה את הסבבים תיקונים, מן 5 אל 2, בתוך ממוצע של הרבעון האחרונה.",
+  "הזמן של ההטמעה ירדה מן 14 של ימים, אל 7 ימים, אחרי אשר ההשקה קרה.",
+];
+
+/**
+ * Six DIFFERENT Hebrew headlines, and the difference is load-bearing.
+ *
+ * These used to be one phrase plus a slide number, six openings from one word.
+ * `07i-value-signals`' `checkRhythm` refuses that outright, and `07i` runs
+ * BEFORE `07e`/`07e2` - so a Hebrew fixture that keeps the old shape never
+ * reaches the language gate these tests are about at all. Slide 1 also carries
+ * the contrast marker the Hebrew half of `checkCoverTension` reads.
+ *
+ * No nikud, no transliterations, ASCII digits only: the three things
+ * `gate.nativeLanguage` reads on this same text one step later.
+ */
+const HEBREW_HEADLINES = [
+  "תפסיקו לכתוב את הדוח ביד",
+  "מיון פניות כבר בכניסה",
+  "רשימת בדיקה שווה יומיים",
+  "המספר שמנבא אם השינוי יחזיק",
+  "חמישה סבבים הפכו לשניים",
+  "קליטת לקוח בשבוע אחד",
 ];
 
 function hebrewCopy(bodies: readonly string[], caption: string): InstagramCopyOutput {
@@ -121,7 +155,7 @@ function hebrewCopy(bodies: readonly string[], caption: string): InstagramCopyOu
     caption,
     slides: base.slides.map((slide, i) => ({
       ...slide,
-      headline: `ממצא מספר ${slide.n}`,
+      headline: HEBREW_HEADLINES[i]!,
       body: bodies[i]!,
       // Unchanged on purpose: `sourceRef` must match a step-04 research
       // fact's claim verbatim, and `visualNeed` is a stock-photo query.
@@ -150,7 +184,7 @@ const TRANSLATIONESE_VERDICT = {
       // An EXACT substring of `GOOD_HEBREW_BODIES[0]`, occurring exactly once, because that is the contract
       // `applyNativeCorrections` enforces: a span that does not resolve to one place is dropped, and a test
       // that quoted a paraphrase would be testing the drop path while claiming to test the patch path.
-      span: "בממוצע ארבע שעות",
+      span: "בממוצע 4 שעות",
       replacement: "ארבע שעות בממוצע",
       axis: "translationese" as const,
       severity: "major" as const,
@@ -178,7 +212,7 @@ const NOT_NATIVE_VERDICT = {
     {
       target: "slide:1",
       field: "body" as const,
-      span: "חסכה ארבע שעה",
+      span: "חסכה 4 שעה",
       replacement: "חסכו ארבע שעות",
       axis: "grammar" as const,
       severity: "major" as const,
@@ -266,7 +300,7 @@ describe("stage 1 — checkExpectedScript (deterministic, no model call)", () =>
 
   it("reads the caption and on-image prose only — never sourceRef or visualNeed", () => {
     const text = languageGateText(goodHebrewCopy());
-    expect(text).toContain("ממצא מספר 1");
+    expect(text).toContain(HEBREW_HEADLINES[0]!);
     expect(text).toContain(GOOD_HEBREW_BODIES[0]);
     expect(text).not.toContain(SIX_RESEARCH_FACTS[0]!.claim);
     expect(text).not.toContain(goodCopyOutput().slides[0]!.visualNeed);
@@ -305,9 +339,9 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
       finalTurn(NATIVE_VERDICT),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const params = { runId: "instagram_run_lang_pass", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
@@ -316,7 +350,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
 
     expect(result.status).toBe("completed");
     // scout + research + angle + copy + vet + relevance + fluency judge + QA (Phase 0: the scout runs on every run and the relevance judge on every attempt; Phase 1 adds the angle proposal, once per revision).
-    expect(router.complete).toHaveBeenCalledTimes(8);
+    expect(router.complete).toHaveBeenCalledTimes(11);
 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).toContain("02d-load-target-language");
@@ -387,14 +421,14 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     const attemptTurns = () => [
       finalTurn(badHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
       finalTurn(NOT_NATIVE_VERDICT),
       finalTurn(STILL_NOT_NATIVE_VERDICT),
     ];
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       ...attemptTurns(), ...attemptTurns(), ...attemptTurns(),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const params = { runId: "instagram_run_lang_two_rounds_deliver", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
@@ -437,14 +471,14 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(badHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
       finalTurn(NOT_NATIVE_VERDICT),
       finalTurn(STILL_NOT_NATIVE_VERDICT),
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
       finalTurn(NATIVE_VERDICT),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const params = { runId: "instagram_run_lang_redraft", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
@@ -485,10 +519,10 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
       // Only the translationese axis can fail this draft - the failure a proofreader also passes.
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
       finalTurn(TRANSLATIONESE_VERDICT),
       finalTurn(NATIVE_VERDICT),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const params = { runId: "instagram_run_lang_translationese", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
@@ -525,10 +559,10 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
       finalTurn(JUDGE_ERROR_TURN),
       finalTurn(NATIVE_VERDICT),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const params = { runId: "instagram_run_lang_judge_retry", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
@@ -538,7 +572,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     expect(result.status).toBe("completed");
     // scout + research + angle + copy + vet + relevance + TWO judge calls + QA: the retry is a real
     // second model call, not a replay of the first checkpoint.
-    expect(router.complete).toHaveBeenCalledTimes(9);
+    expect(router.complete).toHaveBeenCalledTimes(12);
 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).toContain("07f-language-fluency-attempt-1");
@@ -577,9 +611,9 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
       finalTurn(NATIVE_VERDICT),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const params = { runId: "instagram_run_lang_judge_single", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
     const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflowFor(router), params);
@@ -621,14 +655,14 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
       finalTurn(JUDGE_ERROR_TURN),
       finalTurn(JUDGE_ERROR_TURN),
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
       finalTurn(NATIVE_VERDICT),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const params = { runId: "instagram_run_lang_judge_error", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
@@ -663,14 +697,14 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     const attemptTurns = () => [
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
       finalTurn(JUDGE_ERROR_TURN),
       finalTurn(JUDGE_ERROR_TURN),
     ];
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       ...attemptTurns(), ...attemptTurns(), ...attemptTurns(),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const params = { runId: "instagram_run_lang_judge_outage", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
@@ -716,7 +750,11 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     // $0.002 relevance judge and the $0.014 native editor, which is the entire cost argument of this phase.
     const curly = () => {
       const base = badHebrewCopy();
-      return { ...base, slides: base.slides.map((slide, i) => (i === 0 ? { ...slide, headline: "\u201cהממצא הראשון\u201d" } : slide)) };
+      // Phase 5 - the curly quotes now wrap the REAL cover headline instead of replacing it. `07i` runs
+      // BEFORE `07e2`, and its `checkCoverTension` reads the cover's contrast marker: a headline that
+      // dropped that marker to make room for the quotation marks would be refused one step earlier by a
+      // different gate, and this test would quietly stop being about `gate.nativeLanguage` at all.
+      return { ...base, slides: base.slides.map((slide, i) => (i === 0 ? { ...slide, headline: `“${HEBREW_HEADLINES[0]!}”` } : slide)) };
     };
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
@@ -754,9 +792,9 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
       finalTurn(NATIVE_VERDICT),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const params = { runId: "instagram_run_lang_order", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
@@ -795,14 +833,14 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(badHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
       finalTurn(NOT_NATIVE_VERDICT),
       finalTurn(STILL_NOT_NATIVE_VERDICT),
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
       finalTurn(NATIVE_VERDICT),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const params = { runId: "instagram_run_lang_register_step", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
@@ -828,7 +866,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const params = { runId: "instagram_run_lang_english_free", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
@@ -836,7 +874,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     const result = await new WorkflowEngine(durableStore).run(workflowFor(router), params);
     expect(result.status, JSON.stringify(result)).toBe("completed");
     // An eighth call would be the judge, and would exhaust the router.
-    expect(router.complete).toHaveBeenCalledTimes(7);
+    expect(router.complete).toHaveBeenCalledTimes(9);
 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).not.toContain("04l-language-register");
@@ -867,9 +905,9 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
       finalTurn(NATIVE_VERDICT),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const params = { runId: "instagram_run_lang_from_profile", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
@@ -878,7 +916,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
 
     // scout + research + angle + copy + vet + relevance + fluency judge + QA.
     expect(result.status).toBe("completed");
-    expect(router.complete).toHaveBeenCalledTimes(8);
+    expect(router.complete).toHaveBeenCalledTimes(11);
     const language = (await durableStore.getStep(params.runId, "02d-load-target-language")) as { output: { language: string; source: string } | null };
     expect(language.output?.language).toBe("Hebrew");
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
@@ -928,7 +966,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const params = { runId: "instagram_run_lang_one_cyrillic_line", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
@@ -958,7 +996,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const params = { runId: "instagram_run_lang_english_client", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
@@ -968,7 +1006,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     expect(result.status).toBe("completed");
     // scout + research + angle + copy + vet + relevance + QA. An eighth call would be
     // the fluency judge, and would exhaust the router.
-    expect(router.complete).toHaveBeenCalledTimes(7);
+    expect(router.complete).toHaveBeenCalledTimes(9);
     const language = (await durableStore.getStep(params.runId, "02d-load-target-language")) as { output: unknown };
     expect(language.output).toBeNull();
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
@@ -983,7 +1021,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const params = { runId: "instagram_run_lang_none", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
@@ -992,7 +1030,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
 
     // scout + research + angle + copy + vet + relevance + QA — and no fluency judge.
     expect(result.status).toBe("completed");
-    expect(router.complete).toHaveBeenCalledTimes(7);
+    expect(router.complete).toHaveBeenCalledTimes(9);
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).toContain("02d-load-target-language");
     expect(stepIds).not.toContain("07e-language-script-attempt-1");
@@ -1040,9 +1078,9 @@ describe("a brief-declared language is the RUN's language, not just the writer's
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
       finalTurn(NATIVE_VERDICT),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const params = { runId: "instagram_run_lang_from_brief", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
@@ -1063,7 +1101,7 @@ describe("a brief-declared language is the RUN's language, not just the writer's
     expect(stepIds).toContain("07f-language-fluency-attempt-1");
     const script = (await durableStore.getStep(params.runId, "07e-language-script-attempt-1")) as { output: { ok: boolean } };
     expect(script.output.ok).toBe(true);
-    expect(router.complete).toHaveBeenCalledTimes(8);
+    expect(router.complete).toHaveBeenCalledTimes(11);
     // Nothing sent it back to 05: the language is consistent, not contested.
     expect(stepIds).not.toContain("05-write-copy-attempt-2");
 
@@ -1075,15 +1113,35 @@ describe("a brief-declared language is the RUN's language, not just the writer's
 
     // The reviewer is told where the language came from and how to make it
     // explicit, rather than discovering a Hebrew post from an English client.
-    const deliverables = await env.store.listJson<{ deliverable: { grounding?: { targetLanguage?: string; targetLanguageSource?: string; targetLanguageNote?: string } } }>(
-      "acme",
-      ["ledger", "deliverables", params.runId, "_"],
-    );
+    const deliverables = await env.store.listJson<{
+      deliverable: {
+        grounding?: { targetLanguage?: string; targetLanguageSource?: string; targetLanguageNote?: string };
+        post?: { status: string; hashtags: string[] };
+      };
+    }>("acme", ["ledger", "deliverables", params.runId, "_"]);
     expect(deliverables).toHaveLength(1);
     const grounding = deliverables[0]!.data.deliverable.grounding;
     expect(grounding?.targetLanguage).toBe("Hebrew");
     expect(grounding?.targetLanguageSource).toBe("brief");
     expect(grounding?.targetLanguageNote).toMatch(/brand\.language/);
+
+    // ── WHAT THIS TEST HAS BEEN QUIETLY SHIPPING, asserted so it stops being quiet. ──
+    //
+    // The turn queue above inherits `DEFAULT_PACKAGE_TURN`, whose English hashtags cannot survive `08c1`'s
+    // script check on a Hebrew run — `turns.ts` says exactly that about itself ("there is no
+    // script-neutral hashtag"). So `08c1` refuses, the run buys `08c-package-post-retry` (that is the
+    // eleventh router call this test counts, not a packager success), the re-ask has no turn queued, and
+    // the post ships ABSENT: no hashtags, no alt text, no first comment. `08c2` never runs.
+    //
+    // This is correct fail-open behaviour and the carousel is unaffected, which is why nothing here ever
+    // noticed. It is pinned rather than fixed because this test is about LANGUAGE ADOPTION and giving it a
+    // real Hebrew package would change its router-call count and its subject; the block at the bottom of
+    // this file covers the package round properly. If someone gives this test a Hebrew `postPackager`
+    // turn, these two lines fail loudly and should simply be deleted.
+    // TOP LEVEL, not under `grounding` — RFC-18 §6.6 and §12's portal contract.
+    const absent = deliverables[0]!.data.deliverable.post;
+    expect(absent?.status).toBe("absent");
+    expect(absent?.hashtags).toEqual([]);
   }, 60000);
 
   it("a brief that declares English changes nothing: no gate steps, no extra model call", async () => {
@@ -1095,16 +1153,180 @@ describe("a brief-declared language is the RUN's language, not just the writer's
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const params = { runId: "instagram_run_lang_brief_english", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
     const durableStore = new MemoryDurableStepStore();
     const result = await new WorkflowEngine(durableStore).run(workflowFor(router), params);
     expect(result.status, JSON.stringify(result)).toBe("completed");
-    expect(router.complete).toHaveBeenCalledTimes(7);
+    expect(router.complete).toHaveBeenCalledTimes(9);
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).not.toContain("07e-language-script-attempt-1");
     expect(stepIds).not.toContain("07f-language-fluency-attempt-1");
+  }, 60000);
+});
+
+/**
+ * Phase 5 (RFC-18 §6.5) — `08c2-package-native-round`, THE ROUND NOTHING EVER RAN.
+ *
+ * This block did not exist before the integration pass, and its absence was load-bearing. Two separate
+ * defects lived inside the gap:
+ *
+ * 1. **`instagram-native-editor@1` never told the judge the package round's target vocabulary existed.**
+ *    `NativeCorrectionSchema.target` admitted `comment` and `alt:N`, `resolvePackageField` resolved them,
+ *    and `NATIVE_EDITOR_RUBRIC_VERSION` was stamped `"2"` — all for a prompt change nobody made. @1
+ *    documented `"caption"` and `"slide:3"` and nothing else, so the only spelling available to a judge on
+ *    a package round was a carousel target, which `resolveField`'s context guard then correctly dropped. A
+ *    `packageNativeJudge`-priced step that could not apply a correction on any run, in any language, ever.
+ * 2. **The workflow reported that as `verified`.** `applied > 0 ? "corrected" : "verified"` cannot tell
+ *    "the judge had nothing to say" from "the judge's entire opinion was thrown away" — and unlike `07e2`
+ *    one round up, this round has NO round 2, so nothing re-reads the prose afterwards. Defect 1 was
+ *    therefore invisible in prep telemetry by construction.
+ *
+ * Neither defect is detectable from inside the shipped code, and no fixture anywhere supplied a
+ * `packageNative` turn, so the whole path was dark. These two tests are the light.
+ */
+describe("08c2 — the post package's native round, and what it is allowed to call `verified`", () => {
+  let env: TestEnvironment;
+  afterEach(async () => {
+    await env.cleanup();
+  });
+
+  /**
+   * Hebrew core terms, so the package's hashtags satisfy BOTH of `08c1`'s free rules at once: at least one
+   * tag derived from a core term, and every tag in the target language's script. `defaultPackageTurnFor`
+   * is English by construction and `turns.ts` says so in as many words — a non-English run has to pass
+   * `postPackager` explicitly or `08c1` refuses the package, buys the re-ask turn, and `08c2` never runs.
+   */
+  const HEBREW_CORE_TERMS = ["ציוד מסעדות", "קירור מסחרי", "תחזוקת מטבח"];
+
+  /** An exact substring of `FIRST_COMMENT`, occurring exactly once — the contract `runPatch` enforces. */
+  const COMMENT_SPAN = "לפי סדר הופעתם";
+  const FIRST_COMMENT = `המקורות לשני הנתונים שמופיעים בשקופיות הראשונה והשנייה מופיעים כאן, ${COMMENT_SPAN}.`;
+  const COMMENT_REPLACEMENT = "לפי הסדר שבו הם מופיעים";
+
+  function hebrewPackageTurn(): Record<string, unknown> {
+    return {
+      hashtags: ["ציודמסעדות", "קירורמסחרי", "תחזוקתמטבח"],
+      altText: HEBREW_HEADLINES.map((headline, i) => ({ n: i + 1, alt: `שקופית ${i + 1}: ${headline}`.slice(0, 125) })),
+      firstCommentText: FIRST_COMMENT,
+    };
+  }
+
+  /**
+   * What `instagram-native-editor@1` produced on this round: a real objection to the first comment,
+   * addressed to `"caption"` — the only target the old rubric ever named. The span is quoted out of the
+   * FIRST COMMENT, because that is the text the judge was actually shown; it is the target that is wrong,
+   * not the reading.
+   */
+  const CAROUSEL_VOCABULARY_ON_A_PACKAGE_ROUND = {
+    native: false,
+    axes: { ...okAxes(), register: "major" as const },
+    corrections: [
+      {
+        target: "caption",
+        field: "caption" as const,
+        span: COMMENT_SPAN,
+        replacement: COMMENT_REPLACEMENT,
+        axis: "register" as const,
+        severity: "major" as const,
+        why: "compressed construct chain; the publication's own posts spell this out",
+      },
+    ],
+    rubricVersion: NATIVE_EDITOR_RUBRIC_VERSION,
+  };
+
+  /** The same objection, spelled the way `@2` teaches and `resolvePackageField` resolves. */
+  const PACKAGE_VOCABULARY = {
+    ...CAROUSEL_VOCABULARY_ON_A_PACKAGE_ROUND,
+    corrections: [{ ...CAROUSEL_VOCABULARY_ON_A_PACKAGE_ROUND.corrections[0]!, target: "comment", field: "comment" as const }],
+  };
+
+  async function runHebrewPackageRound(runId: string, packageNativeVerdict: unknown) {
+    env = await setupTestEnvironment({
+      seedBrief: goodClientBrief({
+        language: { target: "Hebrew", register: "ישיר, מקצועי, בגוף ראשון רבים" },
+        coreTerms: HEBREW_CORE_TERMS,
+      }),
+    });
+    const router = fakeRouterSequence([
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodHebrewCopy()),
+      finalTurn(goodImageVettingOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
+      finalTurn(NATIVE_VERDICT),
+      finalTurn(goodVisualQaOutput()),
+      finalTurn(hebrewPackageTurn()),
+      finalTurn(packageNativeVerdict),
+    ]);
+    const params = { runId, clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
+    const durableStore = new MemoryDurableStepStore();
+    const result = await new WorkflowEngine(durableStore).run(
+      createInstagramAgentWorkflow({
+        tools: testTools(env),
+        promptStore: makePromptStore(),
+        router,
+        repoRoot: env.repoRoot,
+        imageCandidatePool: goodImageCandidatePool(),
+        autoApprove: true,
+      }),
+      params,
+    );
+    const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
+    const deliverables = await env.store.listJson<{
+      deliverable: {
+        // TOP LEVEL — RFC-18 §6.6 and §12's cross-repo portal contract.
+        post?: {
+          status: string;
+          reason?: string;
+          firstComment: { text: string };
+          language?: { status: string; correctionsProposed: number; correctionsApplied: number; reason?: string };
+        };
+      };
+    }>("acme", ["ledger", "deliverables", params.runId, "_"]);
+    return { result, stepIds, post: deliverables[0]?.data.deliverable.post };
+  }
+
+  it("a round that proposed corrections and landed NONE of them is `unverified`, and the post is `partial`", async () => {
+    const { result, stepIds, post } = await runHebrewPackageRound("instagram_run_pkg_native_dropped", CAROUSEL_VOCABULARY_ON_A_PACKAGE_ROUND);
+
+    // Never held, never failed — the whole point of the phase.
+    expect(result.status, JSON.stringify(result)).toBe("completed");
+    expect(stepIds).toContain("08c2-package-native-round");
+
+    // The judge spoke and nothing it said reached the post.
+    expect(post?.language?.correctionsProposed).toBe(1);
+    expect(post?.language?.correctionsApplied).toBe(0);
+    // THE ASSERTION THIS BLOCK EXISTS FOR. Under `applied > 0 ? "corrected" : "verified"` this read
+    // `verified` with no reason at all — a total failure to apply, reported as a clean bill of health, on
+    // a round with no second pass to catch it.
+    expect(post?.language?.status).toBe("unverified");
+    expect(post?.language?.reason).toMatch(/applied none of them/);
+    expect(post?.language?.reason).toMatch(/Hebrew/);
+    // And because `post.status` keys off `unverified`, the honest value is also the one that reaches the
+    // human at `09a` instead of dying in a field nobody reads.
+    expect(post?.status).toBe("partial");
+    expect(post?.reason).toMatch(/applied none of them/);
+
+    // The prose is untouched, which is what "unverified" is claiming.
+    expect(post?.firstComment.text).toBe(FIRST_COMMENT);
+  }, 60000);
+
+  it("the SAME objection, spelled the way `@2` teaches, actually lands — so the test above is not merely asserting that patching is broken", async () => {
+    const { result, post } = await runHebrewPackageRound("instagram_run_pkg_native_applied", PACKAGE_VOCABULARY);
+
+    expect(result.status, JSON.stringify(result)).toBe("completed");
+    // One target word and one field word apart from the fixture above, and the outcome inverts. That
+    // difference IS the @1 -> @2 prompt bump, measured end to end rather than asserted about.
+    expect(post?.language?.correctionsProposed).toBe(1);
+    expect(post?.language?.correctionsApplied).toBe(1);
+    expect(post?.language?.status).toBe("corrected");
+    expect(post?.language?.reason).toBeUndefined();
+    expect(post?.status).toBe("complete");
+
+    // The first comment really was rewritten in place.
+    expect(post?.firstComment.text).not.toContain(COMMENT_SPAN);
+    expect(post?.firstComment.text).toContain(COMMENT_REPLACEMENT);
   }, 60000);
 });

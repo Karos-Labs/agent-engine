@@ -20,6 +20,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
+import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 
 /**
@@ -71,7 +72,7 @@ function tools(env: TestEnvironment): AgentToolRegistry {
 function draftTurns() {
   // The angle proposal (04i) leads each round: one per REVISION, before the
   // attempt loop, so a two-round fixture spends two of them.
-  return [finalTurn(goodAngleProposal()), finalTurn(goodCopyOutput()), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())];
+  return [finalTurn(goodAngleProposal()), finalTurn(goodCopyOutput()), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)];
 }
 
 type SlidesDataOutput = { slides: Array<{ n: number; fields: Record<string, string> }> };
@@ -122,7 +123,7 @@ describe("accent ring alignment (item G): the config/brand disagreement that use
     const result = await new WorkflowEngine(durableStore).run(workflowFn(env, router, true), { runId, ...base });
     expect(result.status).toBe("completed");
     // scout + research + angle + copy + vet + relevance + visual QA: the palette gate never short-circuited the QA turn.
-    expect(router.complete).toHaveBeenCalledTimes(7);
+    expect(router.complete).toHaveBeenCalledTimes(9);
 
     const kit = await stepOutput<KitOutput>(durableStore, runId, "02c-load-brand-kit");
     expect(kit?.palette[0]).toBe(CONFIG_ACCENT);
@@ -151,7 +152,7 @@ describe("accent ring alignment (item G): the config/brand disagreement that use
 
     const result = await new WorkflowEngine(durableStore).run(workflowFn(env, router, true), { runId, ...base });
     expect(result.status).toBe("completed");
-    expect(router.complete).toHaveBeenCalledTimes(7);
+    expect(router.complete).toHaveBeenCalledTimes(9);
 
     const kit = await stepOutput<KitOutput>(durableStore, runId, "02c-load-brand-kit");
     // No derivable ground means brand.json's hex is not promoted — the ring is

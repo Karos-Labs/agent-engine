@@ -209,24 +209,86 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyOutput> {
     // conditional, the prompt section is not, and charging an English run for
     // a payload it does not carry would pull an image lever for nothing.
     //
-    // v17 (Phase 5, RFC-17 §5.7, 2026-09-13): §24 "Marking". The writer names
-    // one to five spans per slide whose MEANING carries it — the noun a list
-    // row defines, the clause carrying the surprise, the term the reader will
-    // screenshot — copied VERBATIM out of the field it already wrote, because
-    // a span that does not occur exactly is dropped rather than resolved to
-    // the wrong words. It chooses WHICH words and never the colour, the weight
-    // or how the mark is drawn: code picks the kind from the slide's ground
-    // luminance and rotates the ring, which is the one thing the model cannot
-    // see (RFC-17 finding 2). §24 also carries the topic rule verbatim
-    // (execution transfers, subject matter never does) and states its own
-    // interaction with §10: `checkSentenceCase` still refuses shouting, and
-    // marking is now the sanctioned way to emphasise.
+    // v17 (Phase 5, RFC-18 §3, 2026-09-13): the guide is rewritten around
+    // VALUE. §2 makes the caption three jobs in one string (a hook of at most
+    // twelve words carrying the post's position, a body that pays off the
+    // cover's tension, and the ask as the final paragraph) rather than "two to
+    // four short sentences". §3 makes the slide count follow the declared
+    // payload instead of a configured constant. §5 is replaced: one claim a
+    // slide, and a body whose second half is a CONSEQUENCE for the reader
+    // rather than a restatement. §12 gains `payloadKind`. §16 gains
+    // `valueSteer`, a fifth typed steer that is a rewrite instruction rather
+    // than an anchored span, plus the sentence that stops the classic
+    // multi-attempt regression: text quoted under KEEP AS WRITTEN has already
+    // been accepted and is reproduced unchanged. §24-§27 are new: the payload
+    // and the named specific (carrying `gate.lintPost`'s banned-CTA bank
+    // verbatim, as wordings that fail the draft on contact), taking a
+    // position, rhythm, and the ban on reproducing a source's prose. The
+    // ground-truth discipline — reference EXECUTION transfers, reference
+    // SUBJECT MATTER never does — is written into BOTH §15 and §24 so an
+    // editor cannot drop it from one and leave the file looking complete, and
+    // every worked example is set in a neutral trade for the same reason.
+    // v16 stays frozen as the Phase 4 baseline.
+    //
+    // v17 also removes the last em dashes and double hyphens from the
+    // INHERITED sections (seventeen and nine of them, including §5's own
+    // editor's note, which was an HTML comment and therefore made of them).
+    // The file now contains none of the three characters anywhere, which is
+    // what §5's note has asked for since v3 and what `copy-prompt-v17.test.ts`
+    // asserts. A prompt that bans a character while using it teaches the model
+    // to ignore the ban, and prep run pubsub-21066191524607951 failed craft
+    // hygiene on exactly that character twice in three attempts.
+    //
+    // Cost, BOTH halves stated separately, and MEASURED rather than
+    // estimated. Input: +16,301 prompt characters (45,805 → 62,106, counted
+    // with line endings normalised, since a CRLF checkout would otherwise
+    // inflate the figure by one byte a line and make the same file price
+    // differently on two machines) ≈ +4,075 tokens ≈ +$0.0122 per attempt,
+    // paid on English runs too because the prompt file is one file. The same
+    // measurement is made independently in `run-budget.ts`'s `copyAttempt`
+    // block, from the same two files, and the two must agree.
+    // Output: `payloadKind` is one enum value, ≈ +10
+    // tokens ≈ +$0.00015 — and nothing else grows, deliberately: §5's so-what
+    // lives inside `body` and the caption's three jobs are structure inside
+    // the one `caption` string, so neither is a per-slide field. RFC-18 §7.1
+    // estimated +6,000 characters and priced `copyAttempt` at 0.166; the file
+    // is larger than the estimate, so `STEP_COST_ESTIMATES_USD.copyAttempt` is
+    // re-priced 0.161 → 0.174, and the prompt's own version ledger states the
+    // same measured numbers. Pricing a bump against the estimate rather than
+    // against the file is the @14→@15 error in the other direction.
+    //
+    // NOTE FOR THE INTEGRATOR, 2026-09-13: `run-budget.ts` carries this same
+    // argument in full — it has a comment section headed "WHY THIS IS 0.174
+    // AND NOT RFC-18 §7.1's 0.166" — but the CONSTANT it guards was still
+    // `copyAttempt: 0.166` when this package was written, so the file
+    // currently disagrees with its own comment. The pricing key is not this
+    // package's to edit; the correction is reported as a cross-file
+    // obligation rather than made here.
+    //
+    // RESOLVED before @17 shipped: `run-budget.ts` carries `copyAttempt: 0.174`
+    // on `main` and `run-budget.test.ts` pins it. The NOTE above is kept as the
+    // record of the obligation, not as a live statement of the constant.
+    //
+    // v18 (design system, RFC-17 §5.7, 2026-09-13): §28 "Marking", and @18 is
+    // @17 PLUS THAT ONE SECTION — every v17 value rule above is inherited
+    // verbatim, not re-opened. The writer names one to five spans per slide
+    // whose MEANING carries it — the noun a list row defines, the clause
+    // carrying the surprise, the term the reader will screenshot — copied
+    // VERBATIM out of the field it already wrote, because a span that does not
+    // occur exactly is dropped rather than resolved to the wrong words. It
+    // chooses WHICH words and never the colour, the weight or how the mark is
+    // drawn: code picks the kind from the slide's ground luminance and rotates
+    // the ring, which is the one thing the model cannot see (RFC-17 finding 2).
+    // §28 also carries the topic rule verbatim (execution transfers, subject
+    // matter never does) and states its own interaction with §10:
+    // `checkSentenceCase` still refuses shouting, and marking is now the
+    // sanctioned way to emphasise.
     //
     // Cost, BOTH halves counted — and here BOTH are non-zero, which is why
     // neither the @14→@15 shape (output-heavy, priced on input alone) nor the
     // @15→@16 shape (input-only) is the right template for it:
     //
-    //   Input:  +2,665 prompt characters (46,587 → 49,252) ≈ 650 tokens
+    //   Input:  +2,665 prompt characters ≈ 650 tokens
     //           x $3/1e6  = $0.00195. Paid on English runs too — one prompt
     //           file, no conditional include.
     //   Output: the `emphasis` array itself, ≈65 tokens a slide (3.6 marks at
@@ -234,12 +296,17 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyOutput> {
     //           slides = 520 tokens x $15/1e6 = $0.00780.
     //   Total:  $0.00975 an attempt, rounded UP.
     //
-    // `STEP_COST_ESTIMATES_USD.copyAttempt` is re-priced 0.161 → 0.171 in the
-    // SAME commit, which is the rule `run-budget.ts` states about itself. At
-    // the 3-attempt cap that is +$0.030 against the owner's $1.00 target (3.0%)
-    // and the $1.50 hard max (2.0%), and no new model step at run time or at
-    // setup: the mark ring is derived in code from the kit's accent ring, so
-    // per-client setup moves by exactly $0.000 (RFC-17 §6.2).
-    skillRef: "instagram-copy@17",
+    // `STEP_COST_ESTIMATES_USD.copyAttempt` is re-priced **0.174 → 0.184** in
+    // the SAME commit, which is the rule `run-budget.ts` states about itself.
+    // The base is @17's MEASURED 0.174, NOT RFC-18 §7.1's superseded 0.166
+    // forecast: this branch was written against 0.161 and computed 0.171, and
+    // both of those bases are now stale. 0.166 + 0.010 = 0.176 would under-count
+    // the real call by ~$0.008 an attempt. See `run-budget.ts`'s `copyAttempt`
+    // block for the full arithmetic. At the 3-attempt cap the @18 delta is
+    // +$0.030 against the owner's $1.00 target (3.0%) and the $1.50 hard max
+    // (2.0%), and no new model step at run time or at setup: the mark ring is
+    // derived in code from the kit's accent ring, so per-client setup moves by
+    // exactly $0.000 (RFC-17 §6.2).
+    skillRef: "instagram-copy@18",
   };
 }

@@ -18,7 +18,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
-import { happyTurns, standardTurns } from "./turns.js";
+import { VALUE_TURN_NO_FINDINGS, happyTurns, standardTurns } from "./turns.js";
 
 /**
  * The audit client has NO persisted brief, which is this whole suite's
@@ -258,7 +258,13 @@ describe("02i / 04a / 07g — the grounding gate in the instagram workflow", () 
       reason: "the post is about marketing automation for founders, which is this field, but nothing on the page is only this business",
       missingBridge: "name the client's own offer in the caption",
     };
-    const router = fakeRouterSequence(auditTurns({ relevance: GENERIC_BUT_ON_FIELD }));
+    // The value turn is passed EXPLICITLY here, and that is the documented
+    // escape rather than a workaround. `standardTurns` only guesses a default
+    // value turn when the relevance fixture clears the NORMAL floor of 3, and
+    // this test's whole subject is the RELAXED floor of 2 for an industry-only
+    // brief: `07g` passes on a 2 here, so `07j` really does run, and a fixture
+    // that guessed "no value turn" would hand the value judge the QA verdict.
+    const router = fakeRouterSequence(auditTurns({ relevance: GENERIC_BUT_ON_FIELD, valueJudge: VALUE_TURN_NO_FINDINGS }));
     const params = { runId: "instagram_run_grounding_thin", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
     const durableStore = new MemoryDurableStepStore();
 

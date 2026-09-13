@@ -6,21 +6,7 @@ import { DEFAULT_QUALITY_STUDIO } from "@agent-engine/tool-karos-templates";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import { StudioTemplateDraftSchema, studioTemplateId, type StudioTemplateDraft } from "../src/workflow/template-studio.js";
 import { readSetupBudgetHistory } from "../src/workflow/run-budget.js";
-import {
-  fakeRenderCarousel,
-  fakeRouterSequence,
-  finalTurn,
-  goodCopyOutput,
-  goodImageCandidatePool,
-  goodImageVettingOutput,
-  goodRelevanceVerdict,
-  goodResearchOutput,
-  goodTrendScoutOutput,
-  goodVisualQaOutput,
-  makePromptStore,
-  setupTestEnvironment,
-  type TestEnvironment,
-} from "./test-helpers.js";
+import { fakeRenderCarousel, fakeRouterSequence, finalTurn, fixtureHeadline, goodCopyOutput, goodImageCandidatePool, goodImageVettingOutput, goodRelevanceVerdict, goodResearchOutput, goodTrendScoutOutput, goodVisualQaOutput, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 import { standardTurns } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 
@@ -134,7 +120,7 @@ function secondPost() {
     caption: "A separate look at how the design department rebuilt its weekly critique, and what changed in the calendar afterwards.",
     slides: good.slides.map((slide, i) => ({
       ...slide,
-      headline: `A different angle ${i + 1}`,
+      headline: fixtureHeadline(i, "a different angle"),
       body: `An unrelated sentence ${i + 1} about the critique rebuild, which nobody has written about in this feed before now.`,
     })),
   };

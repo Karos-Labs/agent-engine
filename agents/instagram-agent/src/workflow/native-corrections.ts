@@ -7,6 +7,7 @@ import {
   withDeviceText,
   type NativeCorrection,
 } from "./language-gate.js";
+import { ALT_TEXT_MAX_CHARS, FIRST_COMMENT_MAX_CHARS, packageLanguageGateText, type PostPackage } from "./post-package.js";
 import type { InstagramCopyOutput, InstagramSlideCopy, SlidesDataSelfCheck } from "./types.js";
 import { LAYOUT_FIELD_KEYS } from "./visual-qa-pre-checks.js";
 
@@ -45,19 +46,25 @@ import { LAYOUT_FIELD_KEYS } from "./visual-qa-pre-checks.js";
  * 3. **The replacement must not push the field past its own schema cap.** A
  *    49-character kicker does not fail here; it fails at the next
  *    `InstagramSlideCopySchema` parse, several steps later, as a whole-output
- *    rejection that costs the attempt.
- * 4. **`sourceRef`, `visualNeed`, `stat.figure`, every `source` and every
- *    `LAYOUT_FIELD_KEY` are untouchable.** `sourceRef`/`visualNeed` are
- *    excluded from the gate's own corpus (a verbatim source claim and a
- *    stock-photo query); `stat.figure`, a device's or a stat's `source` and
- *    the layout keys are not prose. A language correction may never change a
- *    number, a date, a name or a claim, and the cheapest way to guarantee that
- *    is to make those fields unreachable from the correction schema rather
- *    than to ask the judge nicely. Everything a reader DOES see is reachable:
+ *    rejection that costs the attempt. Phase 5 adds two more caps this rule
+ *    now guards: alt text's 125 characters and the first comment's 600.
+ * 4. **`sourceRef`, `visualNeed`, `stat.figure`, every `source`, every
+ *    `LAYOUT_FIELD_KEY` and — Phase 5 — every `firstComment.sources[].url`
+ *    are untouchable.** `sourceRef`/`visualNeed` are excluded from the gate's
+ *    own corpus (a verbatim source claim and a stock-photo query);
+ *    `stat.figure`, a device's or a stat's `source` and the layout keys are
+ *    not prose. A language correction may never change a number, a date, a
+ *    name or a claim, and the cheapest way to guarantee that is to make those
+ *    fields unreachable from the correction schema rather than to ask the
+ *    judge nicely. The first comment's source URLs join that set for the same
+ *    reason and by the same mechanism: they are built in code from the run's
+ *    own fact cards (`post-package.ts`), they are not part of the document
+ *    this patcher operates on at all, and `NativeCorrectionSchema.target` has
+ *    no spelling that names one. Everything a reader DOES see is reachable:
  *    `headline`/`body`/`kicker`, a custom archetype's declared fields, device
- *    labels, and — since the archetype blocks were wired in — the pull-quote,
- *    the stat sub-label, the comparison columns and the list rows
- *    (`archetypeTextSlots`).
+ *    labels, the pull-quote, the stat sub-label, the comparison columns, the
+ *    list rows (`archetypeTextSlots`), and now the first comment's prose and
+ *    every slide's alt text.
  *
  * ## And then the free checks run again — this is not optional
  *
@@ -72,7 +79,35 @@ import { LAYOUT_FIELD_KEYS } from "./visual-qa-pre-checks.js";
  * the whole patch. The re-checks read the assembled copy, not one field, so
  * they cannot say which correction broke it, and a patcher that guesses would
  * be back to rule 2's problem.
+ *
+ * The package round (Phase 5) is the same shape with its own two re-checks:
+ * `08c1`'s free package rules, then the script gate over the package's prose.
+ *
+ * ## Phase 5 (RFC-18 §6.5): ONE VOCABULARY, TWO CONTEXTS
+ *
+ * `08c2-package-native-round` runs the SAME native editor over the post
+ * package's prose — the first comment and the alt texts — so the correction
+ * vocabulary widened rather than forked: `NativeCorrectionSchema.target` now
+ * admits `comment` and `alt:N` beside `caption` and `slide:N`.
+ *
+ * **What keeps the two contexts apart is `resolveField`'s context guard, and
+ * it is a refusal in both directions.** A `comment` or `alt:N` target arriving
+ * on a CAROUSEL round is dropped; a `caption`, `headline` or `slide:N` target
+ * arriving on a PACKAGE round is dropped. Not coerced, not best-effort
+ * resolved — dropped, counted and reported, in the same idiom as the existing
+ * "a caption correction named the field X" rejections.
+ *
+ * That guard is load-bearing rather than defensive. The two rounds patch two
+ * different documents that are checkpointed at different steps: a package
+ * correction that "resolved" against the carousel would rewrite approved,
+ * language-corrected, already-gated slide copy AFTER the drafting loop broke
+ * and after every gate that reads it has run — an edit nothing downstream
+ * would ever re-check. The judge does not need to be wrong for that to happen,
+ * only imprecise about which document it was handed.
  */
+
+/** Which document a round of corrections is patching. The two never mix; see the module doc comment. */
+export type NativeCorrectionRound = "carousel" | "package";
 
 /** What the patcher needs that it cannot compute itself. */
 export interface NativeCorrectionDeps {
@@ -87,6 +122,12 @@ export interface NativeCorrectionDeps {
    */
   readonly checkHygiene: (copy: InstagramCopyOutput) => Promise<SlidesDataSelfCheck>;
   /** The run's resolved target language, for `checkExpectedScript`. */
+  readonly language: string;
+}
+
+/** The package round's equivalent. `checkPackage` is `08c1`'s free rules, re-run on the PATCHED package for the same reason. */
+export interface PackageNativeCorrectionDeps {
+  readonly checkPackage: (pkg: PostPackage) => Promise<SlidesDataSelfCheck>;
   readonly language: string;
 }
 
@@ -108,12 +149,50 @@ export interface NativeCorrectionPatch {
   readonly discardReason?: string;
 }
 
+/** The package round's result. Same shape, different document. */
+export interface PackageNativeCorrectionPatch {
+  /** The patched package, or — when the whole patch was discarded, or nothing applied — the input, byte-identical. */
+  readonly pkg: PostPackage;
+  readonly applied: number;
+  readonly dropped: number;
+  readonly drops: readonly NativeCorrectionDrop[];
+  readonly appliedCorrections: readonly NativeCorrection[];
+  readonly discardReason?: string;
+}
+
+/**
+ * The document a round patches.
+ *
+ * A discriminated union rather than a generic, so `resolveField` can hold both
+ * contexts' branches in one function and therefore hold the guard between them
+ * in one place. A guard split across two resolvers is a guard that can be half
+ * deleted.
+ */
+type PatchDoc = { readonly round: "carousel"; readonly copy: InstagramCopyOutput } | { readonly round: "package"; readonly pkg: PostPackage };
+
 /** Where one correction resolves to: the current text, the cap it must respect, and how to write it back. */
 interface FieldTarget {
   readonly text: string;
   /** `Number.POSITIVE_INFINITY` where the schema states no maximum (headline, body, caption). */
   readonly max: number;
-  readonly write: (copy: InstagramCopyOutput, value: string) => InstagramCopyOutput;
+  /** The whole document with this one field replaced. Immutable — the input is never mutated, so a discarded patch leaves it byte-identical. */
+  readonly write: (value: string) => PatchDoc;
+}
+
+/** One named free check that the PATCHED document has to clear before the patch is kept. */
+interface Recheck {
+  /** Named in the discard reason a reviewer reads. */
+  readonly name: string;
+  readonly run: (doc: PatchDoc) => Promise<SlidesDataSelfCheck>;
+}
+
+interface PatchRun {
+  readonly doc: PatchDoc;
+  readonly applied: number;
+  readonly dropped: number;
+  readonly drops: readonly NativeCorrectionDrop[];
+  readonly appliedCorrections: readonly NativeCorrection[];
+  readonly discardReason?: string;
 }
 
 export async function applyNativeCorrections(
@@ -121,9 +200,59 @@ export async function applyNativeCorrections(
   corrections: readonly NativeCorrection[],
   deps: NativeCorrectionDeps,
 ): Promise<NativeCorrectionPatch> {
+  const out = await runPatch({ round: "carousel", copy }, corrections, "copy", [
+    { name: "craft-hygiene gate", run: (doc) => deps.checkHygiene(asCopy(doc)) },
+    { name: "script gate", run: async (doc) => checkExpectedScript(languageGateText(asCopy(doc)), deps.language) },
+  ], deps.language);
+  return {
+    copy: asCopy(out.doc),
+    applied: out.applied,
+    dropped: out.dropped,
+    drops: out.drops,
+    appliedCorrections: out.appliedCorrections,
+    ...(out.discardReason !== undefined ? { discardReason: out.discardReason } : {}),
+  };
+}
+
+/**
+ * `08c2-package-native-round`'s patch: the same four rules, the same span
+ * anchoring, the same whole-patch discard, applied to the post package.
+ *
+ * There is no round 2 and no redraft here (RFC-18 §6.5). Corrections apply or
+ * are dropped by the four refusal rules, and the package ships — which is why
+ * this function, like everything else in Phase 5's whole-post family, cannot
+ * produce a hold.
+ */
+export async function applyPackageNativeCorrections(
+  pkg: PostPackage,
+  corrections: readonly NativeCorrection[],
+  deps: PackageNativeCorrectionDeps,
+): Promise<PackageNativeCorrectionPatch> {
+  const out = await runPatch({ round: "package", pkg }, corrections, "post package", [
+    { name: "free post-package checks", run: (doc) => deps.checkPackage(asPackage(doc)) },
+    { name: "script gate", run: async (doc) => checkExpectedScript(packageLanguageGateText(asPackage(doc)), deps.language) },
+  ], deps.language);
+  return {
+    pkg: asPackage(out.doc),
+    applied: out.applied,
+    dropped: out.dropped,
+    drops: out.drops,
+    appliedCorrections: out.appliedCorrections,
+    ...(out.discardReason !== undefined ? { discardReason: out.discardReason } : {}),
+  };
+}
+
+/** The loop both rounds share: resolve, count, splice, cap, script, then the whole-patch re-checks. */
+async function runPatch(
+  start: PatchDoc,
+  corrections: readonly NativeCorrection[],
+  subject: string,
+  rechecks: readonly Recheck[],
+  language: string,
+): Promise<PatchRun> {
   const drops: NativeCorrectionDrop[] = [];
   const appliedCorrections: NativeCorrection[] = [];
-  let working = copy;
+  let working = start;
 
   for (const correction of corrections) {
     const resolved = resolveField(working, correction);
@@ -168,38 +297,35 @@ export async function applyNativeCorrections(
     // script does not. `checkExpectedScript` has no opinion on a language it
     // does not know or a field too short to judge, which is the right
     // asymmetry here as everywhere else it is used.
-    const script = checkExpectedScript(patched, deps.language);
+    const script = checkExpectedScript(patched, language);
     if (!script.ok) {
       drops.push({ correction, reason: `the replacement leaves ${describe(correction)} outside the client's script: ${script.reason ?? "script check failed"}` });
       continue;
     }
 
-    working = resolved.write(working, patched);
+    working = resolved.write(patched);
     appliedCorrections.push(correction);
   }
 
   if (appliedCorrections.length === 0) {
     // Nothing changed, so there is nothing for the free checks to re-approve —
-    // and the copy they already approved is the copy being returned.
-    return { copy, applied: 0, dropped: drops.length, drops, appliedCorrections: [] };
+    // and the document they already approved is the document being returned.
+    return { doc: start, applied: 0, dropped: drops.length, drops, appliedCorrections: [] };
   }
 
-  const hygiene = await deps.checkHygiene(working);
-  if (!hygiene.ok) {
-    return discardAll(copy, corrections, `the corrected copy no longer passes the craft-hygiene gate (${hygiene.reason ?? "no reason given"})`);
+  for (const recheck of rechecks) {
+    const verdict = await recheck.run(working);
+    if (!verdict.ok) {
+      return discardAll(start, corrections, `the corrected ${subject} no longer passes the ${recheck.name} (${verdict.reason ?? "no reason given"})`);
+    }
   }
 
-  const script = checkExpectedScript(languageGateText(working), deps.language);
-  if (!script.ok) {
-    return discardAll(copy, corrections, `the corrected copy no longer passes the script gate (${script.reason ?? "no reason given"})`);
-  }
-
-  return { copy: working, applied: appliedCorrections.length, dropped: drops.length, drops, appliedCorrections };
+  return { doc: working, applied: appliedCorrections.length, dropped: drops.length, drops, appliedCorrections };
 }
 
-function discardAll(copy: InstagramCopyOutput, corrections: readonly NativeCorrection[], reason: string): NativeCorrectionPatch {
+function discardAll(doc: PatchDoc, corrections: readonly NativeCorrection[], reason: string): PatchRun {
   return {
-    copy,
+    doc,
     applied: 0,
     dropped: corrections.length,
     drops: corrections.map((correction) => ({ correction, reason })),
@@ -208,37 +334,117 @@ function discardAll(copy: InstagramCopyOutput, corrections: readonly NativeCorre
   };
 }
 
+/** Narrowing helpers. `runPatch` never changes a document's round, so neither branch is reachable with the wrong shape. */
+function asCopy(doc: PatchDoc): InstagramCopyOutput {
+  if (doc.round !== "carousel") throw new Error("native-corrections: a carousel round produced a package document");
+  return doc.copy;
+}
+function asPackage(doc: PatchDoc): PostPackage {
+  if (doc.round !== "package") throw new Error("native-corrections: a package round produced a carousel document");
+  return doc.pkg;
+}
+
+/** True for the two targets that name the POST PACKAGE's prose rather than the carousel's. */
+function isPackageTarget(target: string): boolean {
+  return target === "comment" || target.startsWith("alt:");
+}
+
+/**
+ * THE CONTEXT GUARD (RFC-18 §6.5).
+ *
+ * One vocabulary, two contexts, neither able to reach into the other. A target
+ * from the wrong context is REFUSED — never coerced, never best-effort
+ * resolved — in both directions:
+ *
+ * - a `comment` / `alt:N` correction on a CAROUSEL round would otherwise have
+ *   to be silently dropped by `resolveField`'s `slide:` arithmetic producing
+ *   nonsense, or worse, resolved against a slide;
+ * - a `caption` / `headline` / `slide:N` correction on a PACKAGE round would
+ *   reach approved, already-gated slide copy AFTER the drafting loop broke and
+ *   after every gate that reads it has run.
+ *
+ * Delete this and both leak. That is the whole reason it is one function
+ * called from one place rather than two conditions in two resolvers.
+ */
+function contextMismatch(doc: PatchDoc, correction: NativeCorrection): string | undefined {
+  const packageTarget = isPackageTarget(correction.target);
+  if (doc.round === "carousel" && packageTarget) {
+    return `a "${correction.target}" correction arrived on a carousel round — the first comment and the alt texts are not part of the carousel's copy`;
+  }
+  if (doc.round === "package" && !packageTarget) {
+    return `a "${correction.target}" correction arrived on a post-package round — the caption and the slides were approved and gated before the package was written`;
+  }
+  return undefined;
+}
+
 /** A `FieldTarget`, or the reason this correction cannot be applied. */
-function resolveField(copy: InstagramCopyOutput, correction: NativeCorrection): FieldTarget | string {
+function resolveField(doc: PatchDoc, correction: NativeCorrection): FieldTarget | string {
+  const mismatch = contextMismatch(doc, correction);
+  if (mismatch !== undefined) return mismatch;
+
+  if (doc.round === "package") return resolvePackageField(doc.pkg, correction);
+  return resolveCarouselField(doc.copy, correction);
+}
+
+/** The post package's two prose fields. `hashtags` is deliberately not among them — a one-word tag has no span to anchor a correction into (RFC-18 §6.3). */
+function resolvePackageField(pkg: PostPackage, correction: NativeCorrection): FieldTarget | string {
+  if (correction.target === "comment") {
+    if (correction.field !== "comment") return `a first-comment correction named the field "${correction.field}"`;
+    return {
+      text: pkg.firstCommentText,
+      max: FIRST_COMMENT_MAX_CHARS,
+      write: (value) => ({ round: "package", pkg: { ...pkg, firstCommentText: value } }),
+    };
+  }
+
+  if (correction.field !== "alt") return `an alt-text correction named the field "${correction.field}"`;
+  const n = Number(correction.target.slice("alt:".length));
+  const index = pkg.altText.findIndex((entry) => entry.n === n);
+  if (index < 0) return `slide ${n} has no alt text in this package`;
+  return {
+    text: pkg.altText[index]!.alt,
+    // 125 — `PostPackageSchema.altText[].alt`'s own `.max()`. Rule 3 guards it
+    // here so an over-long replacement is one dropped correction rather than a
+    // whole-package schema rejection a step later.
+    max: ALT_TEXT_MAX_CHARS,
+    write: (value) => ({
+      round: "package",
+      pkg: { ...pkg, altText: pkg.altText.map((entry, i) => (i === index ? { ...entry, alt: value } : entry)) },
+    }),
+  };
+}
+
+function resolveCarouselField(copy: InstagramCopyOutput, correction: NativeCorrection): FieldTarget | string {
   if (correction.target === "caption") {
     if (correction.field !== "caption") return `a caption correction named the field "${correction.field}"`;
     return {
       text: copy.caption,
       max: Number.POSITIVE_INFINITY,
-      write: (c, value) => ({ ...c, caption: value }),
+      write: (value) => ({ round: "carousel", copy: { ...copy, caption: value } }),
     };
   }
 
   if (correction.field === "caption") return `a slide correction named the field "caption"`;
+  if (correction.field === "comment" || correction.field === "alt") return `a slide correction named the field "${correction.field}"`;
 
   const n = Number(correction.target.slice("slide:".length));
   const index = copy.slides.findIndex((slide) => slide.n === n);
   if (index < 0) return `slide ${n} does not exist in this carousel`;
   const slide = copy.slides[index]!;
-  const patchSlide = (c: InstagramCopyOutput, patch: Partial<InstagramSlideCopy>): InstagramCopyOutput => ({
-    ...c,
-    slides: c.slides.map((s, i) => (i === index ? { ...s, ...patch } : s)),
+  const patchSlide = (patch: Partial<InstagramSlideCopy>): PatchDoc => ({
+    round: "carousel",
+    copy: { ...copy, slides: copy.slides.map((s, i) => (i === index ? { ...s, ...patch } : s)) },
   });
 
   switch (correction.field) {
     case "headline":
-      return { text: slide.headline, max: Number.POSITIVE_INFINITY, write: (c, value) => patchSlide(c, { headline: value }) };
+      return { text: slide.headline, max: Number.POSITIVE_INFINITY, write: (value) => patchSlide({ headline: value }) };
     case "body":
-      return { text: slide.body, max: Number.POSITIVE_INFINITY, write: (c, value) => patchSlide(c, { body: value }) };
+      return { text: slide.body, max: Number.POSITIVE_INFINITY, write: (value) => patchSlide({ body: value }) };
     case "kicker":
       if (!slide.kicker || slide.kicker.length === 0) return `slide ${n} has no kicker`;
       // 48 — `InstagramSlideCopySchema.kicker`'s own `.max(48)`.
-      return { text: slide.kicker, max: 48, write: (c, value) => patchSlide(c, { kicker: value }) };
+      return { text: slide.kicker, max: 48, write: (value) => patchSlide({ kicker: value }) };
     case "custom": {
       const key = correction.customKey;
       if (key === undefined || key.length === 0) return `a custom-field correction on slide ${n} named no customKey`;
@@ -250,7 +456,7 @@ function resolveField(copy: InstagramCopyOutput, correction: NativeCorrection): 
       return {
         text: current,
         max: 2000,
-        write: (c, value) => patchSlide(c, { customArchetype: { ...archetype, fields: { ...archetype.fields, [key]: value } } }),
+        write: (value) => patchSlide({ customArchetype: { ...archetype, fields: { ...archetype.fields, [key]: value } } }),
       };
     }
     case "archetype": {
@@ -267,12 +473,14 @@ function resolveField(copy: InstagramCopyOutput, correction: NativeCorrection): 
       return {
         text: slot.text,
         max: slot.max,
-        write: (c, value) => {
+        write: (value) => {
           const next = withArchetypeText(slide, slot.path, value);
           // Unreachable: `slot.path` came from `archetypeTextSlots(slide)`.
           // A no-op rather than a throw, for the reason the device branch
           // gives below.
-          return next === undefined ? c : { ...c, slides: c.slides.map((s, i) => (i === index ? next : s)) };
+          return next === undefined
+            ? { round: "carousel", copy }
+            : { round: "carousel", copy: { ...copy, slides: copy.slides.map((s, i) => (i === index ? next : s)) } };
         },
       };
     }
@@ -291,20 +499,27 @@ function resolveField(copy: InstagramCopyOutput, correction: NativeCorrection): 
       return {
         text: slot.text,
         max: slot.max,
-        write: (c, value) => {
+        write: (value) => {
           const next = withDeviceText(device, slot.path, value);
           // Unreachable: `slot.path` came from `deviceTextSlots(device)`. Kept
           // as a no-op rather than a throw so a future device kind whose two
           // helpers disagree degrades to "the correction did not apply".
-          return next === undefined ? c : patchSlide(c, { device: next });
+          return next === undefined ? { round: "carousel", copy } : patchSlide({ device: next });
         },
       };
     }
   }
+
+  // `field` is a closed enum and every carousel member is handled above; the
+  // two package members were refused at the top of this function.
+  return `a slide correction named the field "${correction.field}"`;
 }
 
 function describe(correction: NativeCorrection): string {
-  const where = correction.target === "caption" ? "the caption" : `slide ${correction.target.slice("slide:".length)}'s ${correction.field}`;
+  if (correction.target === "caption") return "the caption";
+  if (correction.target === "comment") return "the first comment";
+  if (correction.target.startsWith("alt:")) return `slide ${correction.target.slice("alt:".length)}'s alt text`;
+  const where = `slide ${correction.target.slice("slide:".length)}'s ${correction.field}`;
   return correction.field === "custom" && correction.customKey ? `${where} "${correction.customKey}"` : where;
 }
 

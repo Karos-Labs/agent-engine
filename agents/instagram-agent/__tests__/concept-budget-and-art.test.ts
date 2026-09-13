@@ -142,7 +142,17 @@ describe("run-budget — the concept is priced before anyone knows whether it fi
     expect(MAX_RUN_SPEND_USD).toBe(1.5);
     // The image ladder is module-private, so it is pinned through the only
     // door it has: the adaptations a cold run's plan reports, in order.
-    expect(planRunBudget(DEFAULT_RUN_SHAPE).adaptations).toEqual(["images capped at 4", "images capped at 2", "no generated images (stock or text-only)"]);
+    // Phase 5 (RFC-18 §7.2) added $0.034 to $0.043 to a run, and a cold run had
+    // $0.0002 of headroom. So a cold plan now walks one rung FURTHER down the
+    // same ladder and reports the trend-evidence lever too. The ladder itself
+    // is unchanged in its first three rungs, which is what this assertion is
+    // for; the rung this line gains is the evidence lever, not an image one.
+    expect(planRunBudget(DEFAULT_RUN_SHAPE).adaptations).toEqual([
+      "images capped at 4",
+      "images capped at 2",
+      "no generated images (stock or text-only)",
+      "trend evidence reduced to the one cached industry query",
+    ]);
   });
 });
 

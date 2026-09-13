@@ -166,31 +166,61 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "instagram-copy",
     agent: "instagram-agent",
-    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17"],
-    latestVersion: "17",
+    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18"],
+    latestVersion: "18",
     // `requires` is UNCHANGED at @16. §23 makes `languageBrief` binding when it is present, but §1 is
     // demoted rather than deleted, so the `languageDirective` marker — which looks for the literal
     // `clientVoiceContext` — is still satisfied, and an English run reads identically to @15.
     //
-    // Phase 5 (RFC-17 §5.7): `requires` is UNCHANGED again at @17, and that is a claim, not an
-    // oversight. §24 "Marking" names which words in copy the model has ALREADY WRITTEN carry the
-    // slide. It names no `gate.*` — the mark system is enforced by `resolveSlideMarks`, by the DOM
-    // clause `marks-missing` and by a dropped span, none of which is a gate tool a prompt could be
-    // told to satisfy — so the `numbersSourced` flag would fail its own `gate.numberssourced`
-    // marker and would be the "unenforced instruction dressed as an enforced one" this registry's
-    // doc comment warns about. It touches neither §1 nor the literal `clientVoiceContext`, so
-    // `languageDirective` stays satisfied and satisfiable exactly as at @16. And it adds no
-    // required output field: `emphasis` is OPTIONAL on every slide (a slide with nothing worth
-    // marking correctly carries none), so a `structuredOutput` flag would assert a field the
-    // schema does not require. Claiming any new flag here would be dishonest about what §24 is.
+    // Phase 5 (RFC-18 §3), @17: the guide is rewritten around VALUE — §2's caption as three jobs in one
+    // string, §5's one claim plus its consequence, §12's `payloadKind`, §16's `valueSteer`, and the four new
+    // sections §24-§27. `requires` is UNCHANGED again, and for a reason worth stating rather than inferring:
+    // §1 and §15 both still carry the literal `clientVoiceContext`, so the `languageDirective` marker is
+    // satisfied by two independent sections. It names no NEW gate either — §23's `gate.nativeLanguage` is
+    // inherited verbatim from @16 and is already on `KNOWN_GATES`, so **`KNOWN_GATES` is untouched by Phase
+    // 5**. `numbersSourced` is deliberately still false: `07i2-numbers-in-facts` calls `gate.numbersSourced`
+    // on the FINISHED draft, but the copy prompt does not instruct the model to satisfy that gate by name,
+    // and setting the flag would demand a sentence the prompt does not carry.
+    //
+    // Design system (RFC-17 §5.7), @18: `requires` is UNCHANGED a third time, and that is a claim, not an
+    // oversight. @18 is @17 plus ONE additive section, §28 "Marking", which names which words in copy the
+    // model has ALREADY WRITTEN carry the slide. It names no `gate.*` — the mark system is enforced by
+    // `resolveSlideMarks`, by the DOM clause `marks-missing` and by a dropped span, none of which is a gate
+    // tool a prompt could be told to satisfy — so the `numbersSourced` flag would fail its own
+    // `gate.numberssourced` marker and would be the "unenforced instruction dressed as an enforced one"
+    // this registry's doc comment warns about. It touches neither §1 nor §15 nor the literal
+    // `clientVoiceContext`, so `languageDirective` stays satisfied and satisfiable exactly as at @17. And
+    // it adds no REQUIRED output field: `emphasis` is OPTIONAL on every slide (a slide with nothing worth
+    // marking correctly carries none), so a `structuredOutput` flag would assert a field the schema does
+    // not require. Claiming any new flag here would be dishonest about what §28 is.
     requires: { languageDirective: true },
   },
+  // Phase 5 (RFC-18 §6.1). The post packager: hashtags, per-slide alt text and the first comment's prose,
+  // written ONCE per revision after the drafting loop breaks, on a pinned `gemini-2.5-flash`.
+  //
+  // No `requires` flags, for the reason `instagram-native-editor` and `instagram-angle` already record: the
+  // packager receives the resolved `targetLanguage`, never `clientVoiceContext`, so the `languageDirective`
+  // marker — which looks for that literal — would be unsatisfiable by a prompt that is nonetheless entirely
+  // correct about language (its §1 says "write all three in the post's target language"). It names no
+  // `gate.*` at all: `08c1-package-checks` runs `gate.nativeLanguage` and `gate.lintPost` over what comes
+  // back, in code, and the prompt quotes the banned-phrase bank as wordings rather than naming the tool.
+  //
+  // `structuredOutput` is not set either. The prompt names all three output fields (`hashtags`, `altText`,
+  // `firstCommentText`) in its own section headings, so the flag would pass today — but it would pass
+  // vacuously, since a prompt organised one section per field cannot fail a "mentions its fields" check.
+  { promptId: "instagram-post-package", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
   // Phase 4 (RFC-15 §6). The native judge: six axes, worked examples, and a correction contract that makes
   // "report without correcting" structurally unrepresentable. No `requires` flags, for the reason
   // `instagram-angle` already records — the judge receives `languageBrief`, never `clientVoiceContext`, so
   // the `languageDirective` marker would be unsatisfiable. It names no `gate.*` either: it READS
   // `gate.nativeLanguage`'s findings as input, it does not instruct a model to satisfy that gate.
-  { promptId: "instagram-native-editor", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
+  //
+  // @2 (Phase 5, RFC-18 §6.5) teaches it the POST-PACKAGE round's vocabulary. `NativeCorrectionSchema` and
+  // `resolveField` were widened for `comment`/`alt:N` and `NATIVE_EDITOR_RUBRIC_VERSION` was stamped "2",
+  // but @1 was never told any of it existed — so on `08c2` the judge had only `"caption"`/`"slide:N"` to
+  // write, and every correction it produced was correctly dropped as cross-context. Prompt-only: no new
+  // step, no code change, no re-price beyond the file's own growth.
+  { promptId: "instagram-native-editor", agent: "instagram-agent", versions: ["1", "2"], latestVersion: "2" },
   // Phase 2, item N. The Template Studio's three setup-time prompts. None of
   // them carries `requires` flags, for the same reason `instagram-brief` and
   // `instagram-angle` do not: they receive the resolved `targetLanguage`

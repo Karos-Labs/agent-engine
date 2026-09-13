@@ -248,6 +248,65 @@ const HASHTAG = /#\S+/gu;
  * Reasons read "caption failed …" or "slide N failed …" so the redraft
  * prompt tells the model which text to fix.
  */
+
+/**
+ * THE HEBREW HALF OF THE LAZY-ASK BANK (Phase 5, RFC-18 §4.3).
+ *
+ * `gate.lintPost`'s own bank (`lint-post.ts:87-105`) is ASCII English: "comment
+ * below", "agree?", "thoughts?", "let me know your thoughts". It is matched as
+ * a case-insensitive substring, so a Hebrew caption closing on `תגיבו למטה` or
+ * `מה דעתכם?` matches NOTHING in it. Phase 5 is the phase that introduced the
+ * engineered ask and told the writer, without qualification, that eighteen lazy
+ * wordings "WILL fail your draft" — and on a Hebrew run that promise could not
+ * fire. A rule that never fires is worse than no rule: it reads as protection
+ * that is not there (`value-signals.ts`'s own words).
+ *
+ * The tool takes a per-call supplement and CONCATENATES it onto its own bank
+ * (`lint-post.ts:267`), so this closes the gap with no shared-package edit and
+ * no `TOOL_VERSION` story.
+ *
+ * **Passed unconditionally, not keyed off the resolved target language.** A
+ * Hebrew string cannot occur in an English caption, so there is nothing to gain
+ * from gating it — and gating it would reopen the hole for exactly the run this
+ * is for: one whose language resolution said English and whose writer wrote
+ * Hebrew anyway. Unconditional is both simpler and strictly stronger.
+ *
+ * Substrings are kept short enough to survive Hebrew's gender and number
+ * inflection where that is cheap (`דעתכם` / `דעתכן`), and every entry is a
+ * LAZY form of an ask or a pitch tell, matching the English bank's bar rather
+ * than raising a new one. Every phrase here is listed verbatim in
+ * `instagram-copy/17.md` §24.3 and `instagram-post-package/1.md` §5, so the
+ * writer is told the rule rather than trapped by it.
+ */
+export const HEBREW_BANNED_PHRASES = [
+  // engagement-bait: the Hebrew forms of "comment below", "thoughts?", "agree?"
+  "תגיבו למטה",
+  "תגיבי למטה",
+  "מה דעתכם",
+  "מה דעתכן",
+  "מה אתם חושבים",
+  "מה אתן חושבות",
+  "ספרו לנו בתגובות",
+  "כתבו לנו בתגובות",
+  "שתפו בתגובות",
+  "מסכימים?",
+  "מסכימות?",
+  "דעה לא פופולרית",
+  "אף אחד לא מדבר על",
+  // pitch tells: the Hebrew forms of "we offer", "our platform helps",
+  // "check out our", "link in my bio", "don't miss out", "limited time"
+  "אנחנו מציעים",
+  "הפלטפורמה שלנו",
+  "השירות שלנו עוזר",
+  "מוזמנים לפנות אלינו",
+  "מוזמנים לשלוח הודעה",
+  "לינק בביו",
+  "קישור בביו",
+  "אל תפספסו",
+  "זמן מוגבל",
+  "הזדמנות אחרונה",
+] as const;
+
 export async function checkCraftHygiene(tools: AgentToolRegistry, ctx: AgentContext, copy: InstagramCopyOutput): Promise<SlidesDataSelfCheck> {
   const lintTool = tools["gate.lintPost"];
   if (!lintTool) {
@@ -256,7 +315,7 @@ export async function checkCraftHygiene(tools: AgentToolRegistry, ctx: AgentCont
 
   const slideTexts = copy.slides.map(slideProse);
   const lintOutcome = await lintTool.execute(
-    { text: copy.caption, parts: slideTexts, platform: "instagram", checkAntiSlop: true, maxExclamationMarks: 0, bannedPhrases: [] },
+    { text: copy.caption, parts: slideTexts, platform: "instagram", checkAntiSlop: true, maxExclamationMarks: 0, bannedPhrases: [...HEBREW_BANNED_PHRASES] },
     { ctx },
   );
   if (lintOutcome.status !== "success") {

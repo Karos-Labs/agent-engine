@@ -8,6 +8,7 @@ import {
   fakeRenderCarousel,
   fakeRouterSequence,
   finalTurn,
+  goodCopyOutput,
   goodImageCandidatePool,
   goodRelevanceVerdict,
   goodResearchOutput,
@@ -238,10 +239,16 @@ function conceptCopy() {
     format: "carousel" as const,
     caption:
       "Two vendors shipped the same weekly report this week, and neither of them asked what the report was for. Here is what we changed instead.",
+    // Phase 5 — the HEADLINE and BODY come from `goodCopyOutput()` now rather
+    // than from `Finding #N` plus the card's own sentence. `07i-value-signals`
+    // refuses that shape twice over (`checkSourceProse`, `checkRhythm`), and a
+    // concept test whose draft never reaches `07j` would be testing a held run.
+    // Only the `visualNeed` is local, which is the one thing this fixture is
+    // actually about.
     slides: SIX_RESEARCH_FACTS.map((fact, i) => ({
       n: i + 1,
-      headline: `Finding #${i + 1}`,
-      body: fact.claim,
+      headline: goodCopyOutput().slides[i]!.headline,
+      body: goodCopyOutput().slides[i]!.body,
       visualNeed: {
         scene: `A real workspace scene for finding ${i + 1}: ${fact.claim.slice(0, 90)}`,
         why: `slide ${i + 1} claims ${fact.claim.slice(0, 60)} and the picture has to show that it is about real work, not a stock office`,

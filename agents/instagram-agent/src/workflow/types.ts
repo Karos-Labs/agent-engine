@@ -668,10 +668,93 @@ export const INSTAGRAM_FORMATS = ["carousel", "single"] as const;
 export const InstagramFormatSchema = z.enum(INSTAGRAM_FORMATS);
 export type InstagramFormat = z.infer<typeof InstagramFormatSchema>;
 
+/**
+ * Phase 5 (RFC-18 §3.7) — WHAT the post gives a reader, declared by the
+ * writer.
+ *
+ * The 2026-09-08 audit's charge had two halves. Phase 0 answered "is this
+ * relevant to what the client does?"; this enum is part of the answer to
+ * "will anyone save this?". A reader keeps a glossary, a ranking or a
+ * comparison; they do not keep six true sentences. Declaring the payload up
+ * front gives the carousel a STRUCTURAL REASON for its slide count — the
+ * count is whatever the declared structure needs — instead of "N slides
+ * because N was configured", and it is the first editorial input that has
+ * ever existed anywhere near the format decision.
+ *
+ * Eight output tokens on the copy step (priced in `STEP_COST_ESTIMATES_USD.
+ * copyAttempt`'s @16 → @17 note as ≈ +$0.00015 an attempt). Deliberately NOT
+ * a per-slide `soWhat` field, which RFC-18 §3.2 declines at ≈ +250 output
+ * tokens on every attempt for text nothing renders.
+ *
+ * `single-claim` is the DEFAULT so no existing fixture, no in-flight
+ * checkpoint and no stored copy output breaks: a draft written before this
+ * field existed parses unchanged and reads as the kind it actually was.
+ * `07i-value-signals`' `payloadShape` check is what holds a carousel to a
+ * kind its structure can actually carry.
+ */
+export const INSTAGRAM_PAYLOAD_KINDS = [
+  "glossary",
+  "ranking",
+  "comparison",
+  "checklist",
+  "timeline",
+  "myth-vs-fact",
+  "walkthrough",
+  "single-claim",
+] as const;
+export const InstagramPayloadKindSchema = z.enum(INSTAGRAM_PAYLOAD_KINDS);
+export type InstagramPayloadKind = z.infer<typeof InstagramPayloadKindSchema>;
+
+/**
+ * THERE IS NO DEFAULT, and that is the decision rather than an omission.
+ *
+ * RFC-18 §3.7 asked for `.default("single-claim")`, and an earlier cut of this
+ * file shipped both that constant and a `payloadKindOf()` reader for it. Both
+ * were dead — every consumer passed the raw field — and reviving them would
+ * have been worse than deleting them, because a defaulted read makes
+ * `checkPayloadShape`'s `single-claim` rule fire on any carousel that merely
+ * FAILED TO DECLARE: "a carousel is a structure; single-claim belongs to the
+ * single-image format". A resumed checkpoint written before this field existed,
+ * and every fixture that predates it, would be refused for a rule nobody wrote
+ * about them.
+ *
+ * So absent means NO OPINION, `checkPayloadShape` returns `{ ok: true }` for it
+ * (`value-signals.ts`), and the declaration is bought from the writer by the
+ * prompt rather than by a default here. The residual gap is real and named in
+ * the PR: a live writer that omits the field escapes the shape check, and
+ * closing that properly means requiring the declaration of a live draft without
+ * refusing the fixtures that predate it.
+ */
+
 /** `InstagramCopyAgent`'s output — six to eight slides for a carousel (RFC-03 §3 step 05), exactly one for a single-image post; `checkSlidesData` enforces the count per format. */
 export const InstagramCopyOutputSchema = z.object({
   /** The format this copy was written for. Defaults to `carousel` so every existing caller and fixture keeps its shape. */
   format: InstagramFormatSchema.default("carousel"),
+  /**
+   * Phase 5 (RFC-18 §3.7) — the structure this post's slides ARE, declared by
+   * the writer and checked for nothing but consistency at `07i`.
+   *
+   * ## `.optional()`, not `.default("single-claim")`, and the difference matters
+   *
+   * RFC-18 §3.7 asks for `.default("single-claim")` and states the goal in the
+   * same sentence: *"so no existing fixture or in-flight checkpoint breaks"*.
+   * A `.default()` delivers half of that and breaks the other half. Zod's
+   * OUTPUT type for a defaulted key is REQUIRED — `z.infer` strips the
+   * `undefined` — so while a stored draft written before this field existed
+   * still parses, every object literal annotated `: InstagramCopyOutput`
+   * stops compiling: `test-helpers.ts`'s `goodCopyOutput()`,
+   * `bidi-isolation.test.ts`'s `hebrewCopy()` and
+   * `language-compliance-gate.test.ts`'s `hebrewCopy()` are three such
+   * literals in files this package does not own, and a fixture that no longer
+   * compiles is a fixture break by any reading.
+   *
+   * `.optional()` delivers the whole goal: absent parses and absent compiles.
+   * The one thing `.default()` would have bought — a defaulted READ — is NOT
+   * bought anywhere, deliberately: see the block above this schema. Every
+   * consumer passes this field raw, and `checkPayloadShape` treats an absent
+   * declaration as "no opinion" rather than as `single-claim`.
+   */
+  payloadKind: InstagramPayloadKindSchema.optional(),
   slides: z.array(InstagramSlideCopySchema).min(1).max(8),
   /**
    * The post's own caption — the text Instagram shows below the carousel,

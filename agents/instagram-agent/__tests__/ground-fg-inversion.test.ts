@@ -20,6 +20,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
+import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 
 /**
@@ -65,7 +66,7 @@ function tools(env: TestEnvironment): AgentToolRegistry {
 function draftTurns(copyOutput: ReturnType<typeof goodCopyOutput>) {
   // The angle proposal (04i) leads each ROUND: one per revision, outside the
   // attempt loop, so a two-round fixture spends two of them.
-  return [finalTurn(goodAngleProposal()), finalTurn(copyOutput), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())];
+  return [finalTurn(goodAngleProposal()), finalTurn(copyOutput), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)];
 }
 
 describe("ground/fg inversion, end to end (IGSTYLE-10, §10a/10b/10c/10e)", () => {

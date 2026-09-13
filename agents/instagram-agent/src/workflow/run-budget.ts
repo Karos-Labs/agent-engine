@@ -17,13 +17,13 @@
  *      runs (`RunBudgetHistory`: EWMA of actual/estimate). Over the target,
  *      the levers are pulled IN ORDER until it fits: cap generated images
  *      (tier-0/stock first, then text-only), evidence pulls down to the one
- *      most-cacheable query, optional re-vets off, and only THEN self-check
- *      returns 2 -> 1. Every adaptation is a run note the reviewer sees.
- *      The last two were the other way round until Phase 5, where the
- *      `instagram-copy@17` re-price made the attempt lever reachable enough to
- *      HOLD a cold Hebrew run — see the rung-3 note in `planRunBudget`.
- *      Optional work is dropped before quality is, which is the order the
- *      owner's amendment states and the old order inverted.
+ *      most-cacheable query, optional re-vets off, self-check returns
+ *      2 -> 1. Every adaptation is a run note the reviewer sees.
+ *
+ *      The last two rungs were SWAPPED in Phase 5 (RFC-18 §7.3): optional
+ *      work is given up before a drafting attempt is, because an attempt is
+ *      what every quality gate in this workflow returns into and a rescue
+ *      re-vet is optional by its own name. See `planRunBudget`.
  *   2. The METER (`RunSpendMeter`) — `max(measured, estimate)` per step
  *      (a Gemini-on-Vertex step may report $0; spec §0), consulted at every
  *      OPTIONAL spend point. Over the target: stop optional work (no more
@@ -82,20 +82,21 @@ export const MAX_RUN_SPEND_USD = 1.5;
  */
 export const STEP_COST_ESTIMATES_USD = {
   /**
-   * Sonnet, ~22.9k in / ~6.8k out, one draft of copy: $0.0687 in + $0.1023
-   * out at $3/$15 per 1M = $0.1710, entered as **0.171**.
+   * Sonnet, ~26.99k in / ~6.83k out, one draft of copy: $0.0810 in + $0.1025
+   * out at $3/$15 per 1M = $0.18341, entered as **0.184**.
    *
-   * ## Phase 5 (`instagram-copy@16` → `@17`), and BOTH halves are non-zero
+   * ## Design system (`instagram-copy@17` → `@18`), and BOTH halves are non-zero
    *
-   * §24 "Marking" (RFC-17 §5.7) asks the writer to name one to five spans per
+   * §28 "Marking" (RFC-17 §5.7) asks the writer to name one to five spans per
    * slide whose meaning carries it, copied verbatim out of the field it just
    * wrote. That grows the prompt AND the draft, so neither of the two shapes
-   * already recorded below is the right template for it: @15→@16 was
-   * input-only, @14→@15 was output-heavy and was first priced on input alone.
+   * recorded below is the right template for it: @15→@16 was input-only,
+   * @16→@17 was overwhelmingly input, and @14→@15 was output-heavy and was
+   * first priced on input alone.
    *
-   * **Input** (≈+650 tokens, ≈+$0.00195): the prompt went 46,587 → 49,252
-   * characters — §24 alone, ≈2,665 characters. Paid on English runs too: one
-   * prompt file, every draft carries all of it, no conditional include.
+   * **Input** (≈+650 tokens, ≈+$0.00195): §28 alone, ≈2,665 characters. Paid
+   * on English runs too: one prompt file, every draft carries all of it, no
+   * conditional include.
    *
    *     650 in-tokens x $3/1e6  = $0.00195
    *
@@ -108,17 +109,117 @@ export const STEP_COST_ESTIMATES_USD = {
    *
    *     520 out-tokens x $15/1e6 = $0.00780
    *
-   * **Total: $0.00975 an attempt**, and the key is rounded **UP** from
-   * $0.17105 to **0.171** rather than truncated. This file's header says an
-   * estimate that flatters itself pulls no lever; rounding a re-price down is
-   * the smallest possible way to flatter one. At the 3-attempt cap the delta
-   * is +$0.030 — 3.0% of the owner's $1.00 target and 2.0% of the $1.50 hard
-   * max — and it flows into `planRunBudget`'s sums automatically, so the
-   * adaptation levers see it BEFORE the first paid call rather than after.
+   * **Total: $0.00975 an attempt.**
    *
-   * No new model step pays for §24 at run time, and per-client setup moves by
-   * exactly $0.000: the mark ring is derived in code from the accent ring the
-   * kit already produces (RFC-17 finding 7), and no Opus appears anywhere.
+   * ## THE ARITHMETIC, SPELLED OUT, BECAUSE THIS KEY HAS A MERGE HAZARD
+   *
+   *     0.161    @16, the last shipped key before Phase 5
+   *   + 0.0125   @16 → @17, Phase 5's VALUE rewrite, MEASURED off the shipped
+   *              file (+16,300 chars input, `payloadKind` output) — see below
+   *   ---------
+   *     0.174    @17, what `main` ships today and what `run-budget.test.ts`
+   *              pinned before this merge
+   *   + 0.00975  @17 → @18, §28's prompt section (+$0.00195 in) and the
+   *              `emphasis` array (+$0.00780 out)
+   *   ---------
+   *     0.18341  exact; entered as **0.184**, rounded UP, never truncated
+   *
+   * **Two stale bases exist in this history and BOTH give a wrong answer.**
+   * (1) The design-system branch was written against @16's 0.161 and computed
+   * 0.171; it never saw Phase 5. (2) RFC-18 §7.1 FORECAST Phase 5 at 0.166
+   * from an estimate of "+6,000 characters" and the shipped file was nearly
+   * three times that, so 0.166 was superseded by the measured 0.174 before
+   * @17 shipped — see "WHY THIS IS 0.174 AND NOT RFC-18 §7.1's 0.166" below.
+   * Adding §28's +$0.00975 to either stale base gives 0.171 or 0.176, and each
+   * under-counts the real call (by $0.013 and $0.008 an attempt, $0.039 and
+   * $0.023 over a three-attempt run). The base is the MEASURED SHIPPED KEY,
+   * 0.174. If you are reading this because a number looks wrong, the check is
+   * the addition above: 0.161 + 0.0125 + 0.00975 = 0.18341 → 0.184.
+   *
+   * At the 3-attempt cap @18's delta is +$0.030 — 3.0% of the owner's $1.00
+   * target and 2.0% of the $1.50 hard max — and it flows into
+   * `planRunBudget`'s sums automatically, so the adaptation levers see it
+   * BEFORE the first paid call rather than after. No new model step pays for
+   * §28 at run time, and per-client setup moves by exactly $0.000: the mark
+   * ring is derived in code from the accent ring the kit already produces
+   * (RFC-17 finding 7), and no Opus appears anywhere.
+   *
+   * ## Phase 5 (`instagram-copy@16` → `@17`), BOTH SIDES, STATED SEPARATELY
+   *
+   * The house rule this file keeps re-learning is that a prompt bump is priced
+   * on the input half AND the output half, each named on its own line. The
+   * @13 → @14 note below records what happens otherwise: that bump was priced
+   * on input alone and under-counted the real growth by roughly nine tenths,
+   * because on Sonnet an output token costs 5x an input one. So:
+   *
+   * **Input** (≈+4,075 tokens, **+$0.0122**): the prompt goes 45,757 →
+   * 62,057 characters, **+16,300** (measured 2026-09-13 on the shipped files
+   * with line endings normalised; `instagram-copy-agent.ts`'s own note counts
+   * the same two files as 46,539 → 63,056 under a different convention, and
+   * the two agree on the delta to within 300 characters and on this key to the
+   * third decimal) — §24 (value: the payload and the named specific, carrying
+   * `gate.lintPost`'s banned-CTA bank verbatim), §25 (take a position), §26
+   * (rhythm), §27 (the source's prose is not yours), §16's `valueSteer`
+   * paragraph, §2's rewrite of the caption into hook / body / CTA, §3's
+   * payload-driven slide count and §5's one-claim-plus-consequence rewrite.
+   * 16,300 chars / 4 ≈ 4,075 tokens x $3/1M = $0.012225.
+   *
+   * **Output** (≈+10 tokens, **+$0.00015**): exactly one new field,
+   * `payloadKind`, an enum of eight short literals, optional and with NO
+   * code-side default. §§24-27 change how the draft READS and what its
+   * slide count is FOR; they do not ask for another per-slide object. §3.2 of
+   * RFC-18 declines a per-slide `soWhat` field for precisely this reason — it
+   * would have been ≈+250 output tokens on every attempt, ≈+$0.0038, i.e. 25x
+   * the whole output delta priced here — and puts the so-what in the body where
+   * a reader sees it and the value judge checks it.
+   *
+   * **Total +$0.0124 an attempt**, +$0.0371 over a three-attempt run. Entered
+   * as 0.174 against an exact $0.17366, so the three-decimal table OVER-counts
+   * by $0.00035 an attempt. That direction is the safe one and is stated
+   * rather than waved at: this file's header says an estimate that flatters
+   * itself pulls no lever.
+   *
+   * @17 was measured three times while this was written and moved twice, by
+   * tens of characters, because the prompt is under active editing. The test
+   * therefore asserts a BAND (16,150-16,700 characters) rather than one count:
+   * everywhere in it, 0.174 is both the correct rounding and at-or-above the
+   * real call. ±300 characters is editorial noise and cannot move a
+   * three-decimal key; 5,000 is a section, and the test refuses that.
+   *
+   * ## WHY THIS IS 0.174 AND NOT RFC-18 §7.1's 0.166
+   *
+   * RFC-18 §7.1 priced this bump at **0.166**, from an estimate of "+6,000
+   * characters" made while the RFC was being written and before @17 existed.
+   * The file that shipped is **+16,300**, nearly three times the estimate,
+   * because §§24-27 landed as full worked sections and §16's steer, §2's
+   * caption rewrite, §3's slide-count rule and §5's rewrite all grew with them.
+   * Priced at the RFC's figure this key would under-count by **$0.0078 an
+   * attempt, $0.023 a run** — forty times the $0.0002 of headroom whose loss
+   * Phase 4 considered serious enough to defer `vetCall`'s re-price over an
+   * entire phase, and larger than Phase 5's whole English planner delta.
+   *
+   * So the key is priced against the FILE, not against the RFC's forecast of
+   * the file. That IS the house rule, stated one paragraph up and re-learned at
+   * @14 and again at @15: a bump is priced on what the call bills. Pricing a
+   * bump against the estimate rather than against the shipped prompt is the
+   * @14→@15 error wearing different clothes, and it is the error this comment
+   * block exists to stop. `instagram-copy-agent.ts`'s @17 note reaches the same
+   * figure independently from its own measurement of the same two files.
+   *
+   * This is a re-price, not a scope change: the plan still fits (`__tests__/run-budget.test.ts`
+   * pins the cold English and cold Hebrew landings), the rung swap below still
+   * absorbs it, and the cold Hebrew shape still keeps all three attempts.
+   *
+   * If @17 is edited again, RE-MEASURE. The characters are the price.
+   *
+   * **No Opus.** This key stays a `claude-sonnet-4-6` price. The owner's plan
+   * asked for the writer to "move to a stronger model"; the owner's later
+   * amendment forbids Opus in a run, and the arithmetic agrees: the identical
+   * call on `claude-opus-4-8` ($5/$25 per 1M) is $0.2765 an attempt, $0.83
+   * across three — 83% of the $1.00 target before the post has an image.
+   * Phase 5 buys better writing with PROMPT and RUBRIC quality inside this
+   * key, not with a bigger model. @18 does not change that: §28 is a prompt
+   * section and an optional output array, still on `claude-sonnet-4-6`.
    *
    * ## Phase 4 (`instagram-copy@15` → `@16`), input-only and paid on EVERY run
    *
@@ -133,13 +234,10 @@ export const STEP_COST_ESTIMATES_USD = {
    * because the @14→@15 note below records the same mistake being made in the
    * opposite direction — an output-heavy bump priced on input alone.
    *
-   * The table carries three decimals, so $0.1613 WAS entered as $0.161 and
-   * the key under-counted by $0.0003 an attempt, $0.0009 over a three-attempt
-   * run. The direction was named rather than waved at, because this file's own
-   * header says an estimate that flatters itself pulls no lever — $0.0009 is
-   * three orders of magnitude below the smallest lever there is. Phase 5 above
-   * ends the truncation and rounds UP instead; there is no longer a standing
-   * under-count on this key.
+   * At @16 the table's three decimals entered $0.1613 as $0.161, so the key
+   * UNDER-counted by $0.0003 an attempt. Phase 5's re-price above ends that:
+   * $0.17366 rounds up to 0.174 and the rounding error changes sign. @18
+   * keeps that direction: $0.18341 rounds up to 0.184.
    *
    * The +$0.0023 is paid on English runs too: the prompt file is one file and
    * every draft carries all of it. What English runs do NOT pay is
@@ -201,7 +299,12 @@ export const STEP_COST_ESTIMATES_USD = {
    * itself pulls no lever, so the plan the planner chooses is not the plan
    * the run can afford (`__tests__/run-budget.test.ts` pins the arithmetic).
    */
-  copyAttempt: 0.171,
+  // 0.161 (@16) + 0.0125 (@17, Phase 5 value rewrite, measured) + 0.00975
+  // (@18, §28 marking: $0.00195 in + $0.00780 out) = $0.18341, rounded UP.
+  // NOT 0.171 (that adds @18 to the stale @16 base and skips Phase 5) and NOT
+  // 0.176 (that adds @18 to RFC-18 §7.1's superseded 0.166 FORECAST instead of
+  // to the measured 0.174 that shipped). See the block above.
+  copyAttempt: 0.184,
   /**
    * Phase 4 — the `languageBrief` input FIELD on `05-write-copy-attempt-N`,
    * added per attempt on non-English runs only (the same conditional shape
@@ -222,7 +325,7 @@ export const STEP_COST_ESTIMATES_USD = {
   /**
    * Flash image vet — the 06 call or one rescue-tier re-vet.
    *
-   * ## THIS NUMBER IS KNOWN TO BE ~$0.0005 LOW, AND IS DELIBERATELY NOT MOVED YET
+   * ## Phase 5: the deferred re-price, 0.006 → 0.0065, landing WITH the rung swap
    *
    * `instagram-image-vet@4 → @5` grew the prompt 13,705 → 18,802 chars. §1c is
    * plain markdown in a STATIC system prompt, and its own first line — "read
@@ -231,43 +334,108 @@ export const STEP_COST_ESTIMATES_USD = {
    * tokens: ordinary runs included, not just the minority the concept mode
    * fires on. At $0.30/1M input (`pricing.ts:65`) that is ≈ +$0.00038 a call.
    * The vet is metered at up to nine calls a run (one per attempt plus two
-   * rescue re-vets per attempt), so the honest key is **0.0065** and the run
-   * really does bill ≈ +$0.0045 more than this says.
+   * rescue re-vets per attempt), so the honest key is **0.0065** and Phase 4's
+   * 0.006 really did under-count the run by ≈ $0.0045.
    *
-   * The rule at the top of this block says to re-price in the same commit, and
-   * that is the right rule. It is not applied here because doing so was
-   * MEASURED to break something worse than an under-estimate:
-   *
-   * A cold HEBREW run sits $0.0002 under target at ladder rung 4 ($0.9998).
-   * Adding $0.0045 takes it to $1.0043 and fires rung 5, the ATTEMPT lever,
-   * dropping `maxSelfCheckAttempts` 3 → 2. `__tests__/language-compliance-gate.test.ts`
-   * then produces runs with `status: "held"` and the reason "the run budget
-   * plan allowed one return instead of two" — including the two cases named
+   * Phase 4 measured the re-price and DECLINED it, for a reason that was
+   * correct at the time and is recorded here because the fix is what removed
+   * it: a cold HEBREW run sat $0.0002 under target at the bottom of the ladder
+   * ($0.9998), adding $0.0045 took it to $1.0043, and the next rung down was
+   * the ATTEMPT lever — `maxSelfCheckAttempts` 3 → 2. `language-compliance-gate.test.ts`
+   * then produced runs with `status: "held"` and the reason "the run budget
+   * plan allowed one return instead of two", INCLUDING the two cases named
    * "NEVER holds". A budget-caused hold is forbidden outright by the owner's
-   * 2026-09-09 amendment, and shipping one to buy a more accurate estimate is
-   * a bad trade in any direction you read it.
+   * 2026-09-09 amendment, so an under-estimate was the cheaper defect and the
+   * re-price was deferred to "a follow-up that lands WITH the rung-order
+   * change".
    *
-   * So the defect this phase actually fixes is the AGENT COMMENT that claimed
-   * the growth was "+600 input tokens on a concept run only", which would have
-   * made the next reader skip the re-price for the same wrong reason. The
-   * re-price itself belongs in a follow-up that lands WITH the rung-order
-   * change, because the real finding underneath is that the attempt lever can
-   * produce a held run at all. Both are in this PR's body for the owner.
+   * **This is that commit.** RFC-18 §7.3 swaps the last two rungs: optional
+   * rescue re-vets now go off BEFORE a drafting attempt is given up. On the
+   * cold default shape (six photo slides, three attempts) that rung is worth
+   * `3 × (3 × $0.007 + 2 × $0.0065)` = $0.102 of rescue plus `07i1`'s $0.007
+   * verification = **$0.109 of headroom**, where the attempt lever used to be
+   * fired to recover $0.0002. The reachable held case is therefore REMOVED,
+   * not merely avoided: the cold Hebrew plan carries Phase 5's whole +$0.043
+   * AND @17's measured +$0.0124 an attempt AND this re-price AND the
+   * `nativeJudge` re-price below ($0.014 -> $0.018, the first time that prompt
+   * was measured against the file rather than forecast), and still lands at
+   * **$0.9773** with all three attempts intact — **$0.0227 under the $1.00
+   * target**. `__tests__/run-budget.test.ts:468` pins that figure, and
+   * `:470-485` is where the headroom is read honestly rather than celebrated.
+   * (These two numbers were $0.9623 and $0.038 before `nativeJudge` moved; the
+   * test and RFC-18 §§7.1/7.4 were corrected and this comment was not, which is
+   * a file carrying a number its own test contradicts.)
+   *
+   * The deeper finding the Phase 4 note named — "the real finding underneath
+   * is that the attempt lever can produce a held run at all" — is what §7.3
+   * acts on. The lever still exists and still floors at 2; what changed is
+   * that every cheaper thing is now spent first, so no judgment gate in this
+   * workflow can be starved into a hold by a budget decision.
    */
-  vetCall: 0.006,
+  vetCall: 0.0065,
   /** Flash vision inspection, per image (05c candidate batches, 08a4 rendered slides). */
   visionInspectPerImage: 0.001,
   /** Flash relevance judge (07g), ~4k in / 0.3k out. */
   relevance: 0.002,
   /**
+   * Phase 5 (RFC-18 §5) — the VALUE judge (`07j-value-judge-attempt-N`),
+   * `gemini-2.5-flash`, once per attempt in every language.
+   *
+   * In: rubric 1,700 + `briefForPrompt` 600 + the post (caption + 8 headlines
+   * and bodies) 1,700 + fact-card digest 800 + scaffolding 300 = **5,100**
+   * x $0.30/1M = $0.00153. Out: 4 axis verdicts + 4 verbatim quotes + the
+   * three index-aligned fix arrays + `keepLine` ≈ **500** x $2.50/1M =
+   * $0.00125. **= $0.00278, entered as 0.003.**
+   *
+   * ## Why this is the cheapest tier and not a better model
+   *
+   * NO OPUS, per the owner's rule, and not Gemini 2.5 Pro either. Pro would be
+   * $0.014 an attempt — $0.042 across a three-attempt run, fourteen times this
+   * — and what it would buy is TASTE. The rubric is built so taste is not
+   * needed: every axis asks the judge to FIND AND QUOTE a span that satisfies
+   * a written test, `normaliseValueVerdict` re-checks the span against the
+   * draft IN CODE, and `decideValue` computes the bar in the repository. That
+   * is extraction, which is what Flash is good at, rather than judgment, which
+   * is what it is bad at (`relevance-gate.ts:50-54` already records Flash's
+   * tendency to award a competent 4/5 to generic copy — the exact copy this
+   * gate exists to refuse).
+   *
+   * `contentLanguageSensitive` is deliberately NOT set on this judge, the same
+   * way it is not set on `instagram-relevance-judge`: otherwise
+   * `applyClientLanguagePolicy` would silently re-point it at a
+   * multilingual-strong row and add ~$0.011 to every Hebrew attempt for a
+   * nuance this judge is explicitly told not to rule on.
+   *
+   * If rubric-v1 telemetry shows Flash passing drafts the reviewer then
+   * rejects, the escape is one line in `resolveModelPolicy` plus a re-price
+   * here, and `VALUE_RUBRIC_VERSION` says which era the data came from.
+   */
+  valueJudge: 0.003,
+  /**
    * Phase 4 — the native editor (07f), `gemini-2.5-pro`, non-English targets
    * only, once per attempt and again for round 2 when round 1 proposed
    * corrections.
    *
-   * In: rubric 1,500 + register card 450 + 4 few-shot posts 2,000 + the draft
-   * 1,700 + `gate.nativeLanguage`'s findings 200 + scaffolding 150 =
-   * **6,000** x $1.25/1M = $0.0075. Out: up to 8 corrections at ~70 tokens
-   * each + the verdict 90 ≈ **650** x $10/1M = $0.0065. **= $0.0140.**
+   * ## Phase 5 re-price, 0.014 -> 0.018, and a standing error corrected with it
+   *
+   * The old line read "rubric 1,500". **`instagram-native-editor@1` is 13,109
+   * characters — 3,277 tokens.** The rubric line has under-counted by 1,777
+   * tokens ($0.0022 a call) since Phase 4 shipped it; it was never measured
+   * against the file. That is the same error `copyAttempt` records at @14->@15
+   * and again at @17: a prompt priced from a forecast rather than from disk.
+   * Corrected here rather than carried, because this file's own header says an
+   * estimate that flatters itself pulls no lever.
+   *
+   * On top of it, `@2` (RFC-18 §6.5) adds the post-package round's target
+   * vocabulary: **16,573 chars = 4,143 tokens**, +866 over @1. Output is
+   * unchanged — no new schema field, same 12-correction cap.
+   *
+   * In: rubric **4,143** (measured, LF-normalised) + register card 450 + 4
+   * few-shot posts 2,000 + the draft 1,700 + `gate.nativeLanguage`'s findings
+   * 200 + scaffolding 150 = **8,643** x $1.25/1M = $0.01080. Out: up to 8
+   * corrections at ~70 tokens each + the verdict 90 ≈ **650** x $10/1M =
+   * $0.0065. **= $0.01730, entered as 0.018** — rounded UP, the only direction
+   * this table may round.
    *
    * It replaces a $0.0055 Haiku call — +$0.0085 an attempt — and the trade is
    * against $0.2401, the cost of the redraft a wrong verdict causes. Gemini
@@ -276,7 +444,7 @@ export const STEP_COST_ESTIMATES_USD = {
    * also qualifies, at $2/$12); Haiku 4.5, which has been
    * judging Hebrew nativeness since Phase 0, is rated `basic` on both.
    */
-  nativeJudge: 0.014,
+  nativeJudge: 0.018,
   /**
    * Haiku fluency judge, ~4k in / 0.3k out, non-English targets only.
    *
@@ -304,6 +472,85 @@ export const STEP_COST_ESTIMATES_USD = {
    * Small in absolute terms, re-priced for the same reason `copyAttempt` is.
    */
   visualQa: 0.0041,
+  /**
+   * Phase 5 (RFC-18 §6.1) — the WHOLE-POST packager (`08c-package-post`),
+   * `gemini-2.5-flash`, **once per revision**, after the drafting loop breaks:
+   * 3-5 bare hashtags, one alt text per slide, and the first comment's prose.
+   *
+   * In: shipped slides 1,700 + caption 300 + `briefForPrompt` 600 + register
+   * card 450 + fact cards 800 + `languageBrief.terms` 200 + instructions 1,250
+   * = **5,300** x $0.30/1M = $0.00159. Out: hashtags 40 + alt text 8 x 45 +
+   * first comment 120 + scaffolding 40 = **560** x $2.50/1M = $0.0014.
+   * **= $0.00299, entered as 0.003.**
+   *
+   * ## Why once per revision, and why not on the writer
+   *
+   * Authoring these fields at `05` instead would be ≈ +520 output tokens on
+   * EVERY attempt — ≈ $0.008 x 3 = $0.023 a run at Sonnet's $15/1M, most of it
+   * spent on drafts a redraft throws away. One Flash call after the loop is
+   * $0.003 once: **8x cheaper**, and more correct — alt text for a slide
+   * attempt 2 is about to replace is money burned.
+   *
+   * Priced in `fixed`, not in `perAttempt`, for exactly that reason. No Opus:
+   * this step writes short, highly constrained strings against deterministic
+   * checks (`08c1` re-checks the hashtag grammar, the coreTerm requirement,
+   * the alt-text length and the URL bans in code), which is the cheapest tier's
+   * best case, not its worst.
+   *
+   * Fail-open and free to lose: a packager that does not complete leaves
+   * `post: undefined`, writes one ledger warn and the carousel ships exactly as
+   * it does today. There is no state in which $0.003 costs us the post.
+   */
+  postPackage: 0.003,
+  /**
+   * Phase 5 (RFC-18 §6.1) — the native round over the PACKAGE
+   * (`08c2-package-native-round`), `gemini-2.5-pro`, non-English targets only,
+   * once per revision.
+   *
+   * In: rubric **4,143** + register card 450 + the package's prose 600 +
+   * scaffolding 150 = **5,343** x $1.25/1M = $0.00668. Out: up to 6
+   * corrections x 70 + the verdict 90 = **510** x $10/1M = $0.0051.
+   * **= $0.01178, entered as 0.012** — rounded UP rather than to nearest,
+   * which is the only direction a three-decimal table may round in a file
+   * whose header says an estimate that flatters itself pulls no lever.
+   *
+   * Re-priced from 0.009 in the same commit as `nativeJudge` and for the same
+   * two reasons: the shared "rubric 1,500" line was never measured against the
+   * file (@1 is 3,277 tokens), and `@2` adds 866 more. This key carries the
+   * FULL prompt exactly as `nativeJudge` does — the rubric is not the part that
+   * differs between the two rounds.
+   *
+   * ## Why it is cheaper than `nativeJudge` ($0.018) on the same model
+   *
+   * **No few-shot, and a much shorter draft.** `nativeJudge` carries four of
+   * the client's own recent posts (≈2,000 tokens) because it is judging
+   * whether a whole draft SOUNDS like this account. This round judges an alt
+   * text and a first comment — short, functional prose whose register was
+   * already settled on the copy the package was derived from. The gap is
+   * 3,300 tokens: few-shot 2,000, plus the carousel draft 1,700 against the
+   * package's 600, plus 200 of soft tells this round is not given. That is
+   * where the $0.006 goes.
+   *
+   * Note what is NOT in the gap: the rubric. Both rounds are the same agent on
+   * the same prompt file, so @2's 4,143 tokens are paid twice over on a Hebrew
+   * run and the two keys move together whenever it is bumped. Before this
+   * commit both derivations said "rubric 1,500" and both were wrong by the
+   * same 1,777 tokens — one mis-measurement, two under-counts.
+   *
+   * Same model as `nativeJudge` rather than a cheaper one: Hebrew is
+   * first-class here, and `gemini-2.5-pro` is the CHEAPEST row in
+   * `model-capabilities.ts` rated `multilingual-strong` + `rtlSupport:
+   * "strong"`. Haiku 4.5 is rated `basic` on both and is what this repo used to
+   * judge Hebrew with. No Opus: `claude-opus-4-8` ($5/$25) on the identical
+   * call is $0.0263, three times this, for a six-correction pass over two
+   * paragraphs.
+   *
+   * Booked in `fixed` and only when `shape.targetLanguage` — an English run's
+   * package is never sent to it, and pricing it unconditionally would
+   * over-state every English plan by $0.009 and pull an image lever that did
+   * not need pulling.
+   */
+  packageNativeJudge: 0.012,
   /**
    * Flash trend scout (03c), ~18k in / 2.5k out.
    *
@@ -407,7 +654,11 @@ export function revisionEstimateUsd(input: { attempts?: number; targetLanguage?:
   // this sum — it is the `cheapest-path` tier the live meter substitutes, and a pre-spend estimate that
   // assumed the degraded tier would be the estimate flattering itself that this file's header warns about.
   const language = input.targetLanguage === true ? STEP_COST_ESTIMATES_USD.copyLanguageBrief + 2 * STEP_COST_ESTIMATES_USD.nativeJudge : 0;
-  const perAttempt = DRAFT_ATTEMPT_ESTIMATE_USD + STEP_COST_ESTIMATES_USD.relevance + language;
+  // Phase 5 — the value judge is paid on every attempt of a revision round too: a reviewer's `revise`
+  // re-enters `draftOnce`, and `07j` sits inside the attempt loop it re-enters. $0.003 x 3 attempts is
+  // $0.009, which is under the rounding of this quote — and it is added anyway, because the rule this file
+  // keeps is that a quote read immediately before the spend may never be the cheap version of the truth.
+  const perAttempt = DRAFT_ATTEMPT_ESTIMATE_USD + STEP_COST_ESTIMATES_USD.relevance + STEP_COST_ESTIMATES_USD.valueJudge + language;
   return roundUsd((input.angle === false ? 0 : STEP_COST_ESTIMATES_USD.angle) + attempts * perAttempt);
 }
 
@@ -569,7 +820,12 @@ export interface RunBudgetPlan {
   generatedImagesCap: number;
   /** `full` = every trend-evidence query; `reduced` = only the first, most-cacheable one (the industry query repeats run to run, so it is usually warm). */
   evidencePulls: "full" | "reduced";
-  /** Whether the optional rescue tiers (scrape/generate + their re-vets) may run at all. */
+  /**
+   * Whether the optional rescue tiers (scrape/generate + their re-vets) may
+   * run at all — and, since Phase 5, whether `07i1-verify-lead-claim` spends
+   * its one ScrappyCoco execution. One flag, both rescue paths: see
+   * `rawEstimate` and `planRunBudget` rung 3.
+   */
   optionalRevets: boolean;
 }
 
@@ -762,7 +1018,30 @@ function rawEstimate(plan: RunBudgetPlan, shape: RunShape): RunCostEstimate["bre
     // The concept's IMAGE is NOT added here: it is one of the
     // `plan.generatedImagesCap` pictures priced in `images` below, and
     // double-counting it would pull an image lever a run does not need.
-    (shape.conceptPossible && plan.generatedImagesCap > 0 && plan.optionalRevets ? c.concept + c.visionInspectPerImage : 0);
+    (shape.conceptPossible && plan.generatedImagesCap > 0 && plan.optionalRevets ? c.concept + c.visionInspectPerImage : 0) +
+    // Phase 5 (RFC-18 §6, §4.3) — the three once-per-run lines the whole-post
+    // half adds, all of them OUTSIDE the attempt loop by design:
+    //
+    //  - `08c-package-post`, the Flash packager, once per revision and the
+    //    plan covers the initial round (the same convention `angleRounds`
+    //    follows). Authoring hashtags, alt text and the first comment at `05`
+    //    instead would be ≈+$0.008 on EVERY attempt — see the key's comment.
+    c.postPackage +
+    //  - `08c2-package-native-round`, only when a target language resolved.
+    //    An English run's package is never judged, so charging it here would
+    //    over-state every English plan by $0.009.
+    (shape.targetLanguage ? c.packageNativeJudge : 0) +
+    //  - `07i1-verify-lead-claim`, ONE ScrappyCoco execution per run (the
+    //    store's cache key makes a repeat of the same URL on attempt 2 free,
+    //    which is why this is a `fixed` line and not a `perAttempt` one).
+    //
+    //    It is tied to `plan.optionalRevets` because it IS rescue-shaped work:
+    //    a deterministic re-fetch of the one page the cover's claim rests on,
+    //    valuable when there is money for it and skippable when there is not.
+    //    That tie is load-bearing for RFC-18 §7.3's rung swap: the re-vet rung
+    //    now switches off BOTH rescue paths together, so it buys the rescue
+    //    line plus this $0.007 before the attempt lever is ever reached.
+    (plan.optionalRevets ? c.scraperExecution : 0);
   const photos = Math.max(0, shape.photoSlides);
   // A carousel cannot have more photo slides than slides; a shape that says
   // so is priced at the larger of the two rather than under-counting 08a4.
@@ -771,6 +1050,11 @@ function rawEstimate(plan: RunBudgetPlan, shape: RunShape): RunCostEstimate["bre
     c.copyAttempt +
     c.vetCall +
     c.relevance +
+    // Phase 5 (RFC-18 §5) — the value judge, once per attempt, in every
+    // language. `07i`, `07i2` and `08c1` are `wf.step.code` with no model call
+    // and no tool call, so they contribute nothing here BY CONSTRUCTION, the
+    // same way `04l` and `07e2` do not.
+    c.valueJudge +
     // Phase 4 — the language lines, on non-English runs only: the `languageBrief` field on the draft and ONE
     // native-editor round (RFC-15 §6.5, §9.3's headline arithmetic). `04l` and `07e2` are `wf.step.code`
     // with no model call and no tool call, so they contribute nothing here BY CONSTRUCTION, not by omission.
@@ -871,6 +1155,36 @@ export interface RunBudgetRunRecord {
     status: "verified" | "corrected" | "degraded" | "unverified";
     axes: Record<string, string>;
   };
+  /**
+   * Phase 5 (RFC-18 §5.8) — what the VALUE gate decided, what each axis said,
+   * and how many of this run's drafting attempts a value refusal caused.
+   *
+   * RFC-15 §9.4 named this gap about its own phase and then had to leave it
+   * open: the per-run deliverable carried the numbers and no later run ever
+   * reads a deliverable back, so there was no way to learn whether the bet
+   * paid. `language` above closed it for Phase 4. This closes it for Phase 5,
+   * and it is the measurement the phase is actually accountable to:
+   *
+   *  - `status` says whether the bar was met, missed or never asked;
+   *  - `axes` says WHICH of `newFact` / `position` / `payload` / `action` is
+   *    the one the writer keeps failing, which is the input to the next
+   *    rubric era (`VALUE_RUBRIC_VERSION`);
+   *  - `returns` says what the gate COST in redrafts — 0, 1 or 2. A gate that
+   *    is always 0 is decoration; a gate that is always 2 is an unwinnable
+   *    floor of the kind Phase 0 already had to correct, and §5.9's
+   *    pre-merge calibration is only a sample of eight.
+   *
+   * OPTIONAL for the same reason the two concept booleans are: a run recorded
+   * before Phase 5 has none of this, and an absent record must stay
+   * distinguishable from a recorded `below-bar`. A reader counts only the runs
+   * where the field is present. Nothing in the estimator reads it — it is
+   * observation, not input.
+   */
+  value?: {
+    status: "keepable" | "below-bar" | "unjudged";
+    axes: Record<string, string>;
+    returns: number;
+  };
 }
 
 export interface RunBudgetHistory {
@@ -916,6 +1230,32 @@ function readLanguageRecord(raw: unknown): RunBudgetRunRecord["language"] {
   return { rounds, status, axes };
 }
 
+/**
+ * One stored `value` record, or `undefined` for anything that is not one.
+ *
+ * Same posture as `readLanguageRecord`, and for the same reason: a pre-Phase-5
+ * entry, a hand edit and a run whose judge never ran are three different facts,
+ * and none of them may read as "the gate said `keepable`, 0 returns". A record
+ * survives only when it carries a known status; `returns` is floored at 0 and
+ * capped at `VALUE_MAX_RETURNS`'s ceiling of 2 the way every other count here
+ * is bounded, so a garbage row cannot make a later reader's average absurd.
+ */
+function readValueRecord(raw: unknown): RunBudgetRunRecord["value"] {
+  if (raw === null || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  const status = r["status"];
+  if (status !== "keepable" && status !== "below-bar" && status !== "unjudged") return undefined;
+  const axes: Record<string, string> = {};
+  if (r["axes"] !== null && typeof r["axes"] === "object") {
+    for (const [axis, verdict] of Object.entries(r["axes"] as Record<string, unknown>)) {
+      if (typeof verdict === "string") axes[axis] = verdict;
+    }
+  }
+  const rawReturns = r["returns"];
+  const returns = typeof rawReturns === "number" && Number.isFinite(rawReturns) ? Math.min(2, Math.max(0, Math.floor(rawReturns))) : 0;
+  return { status, axes, returns };
+}
+
 /** Reads the history back out of a beliefs document, tolerating anything a past version or a hand edit left there. */
 export function readBudgetHistory(beliefs: unknown): RunBudgetHistory {
   const raw = beliefs !== null && typeof beliefs === "object" ? (beliefs as Record<string, unknown>)[RUN_BUDGET_BELIEF_KEY] : undefined;
@@ -937,6 +1277,7 @@ export function readBudgetHistory(beliefs: unknown): RunBudgetHistory {
           ...(typeof e["conceptShipped"] === "boolean" ? { conceptShipped: e["conceptShipped"] } : {}),
         };
         const language = readLanguageRecord(e["language"]);
+        const value = readValueRecord(e["value"]);
         return [
           {
             runId: e["runId"],
@@ -951,6 +1292,10 @@ export function readBudgetHistory(beliefs: unknown): RunBudgetHistory {
             // before this key existed simply carries no language record, which
             // reads as "English run, or an older era" and never as zero.
             ...(language !== undefined ? { language } : {}),
+            // Phase 5, tolerated identically: a row written before the value
+            // gate existed simply carries no value record, which reads as "an
+            // older era" and never as a keepable post with zero returns.
+            ...(value !== undefined ? { value } : {}),
           },
         ];
       })
@@ -1059,53 +1404,47 @@ export function planRunBudget(
     estimate = estimateRunCost(plan, shape, ratio);
     adaptations.push("trend evidence reduced to the one cached industry query");
   }
-  // 3. Optional rescue re-vets off.
+  // 3. Optional re-vets off — AND, since Phase 5, `07i1`'s lead-claim
+  //    verification with them: one flag, both rescue paths.
   //
-  // ## Phase 5: rungs 3 and 4 are SWAPPED, and this is a defect fix, not a re-ordering
+  // ## RFC-18 §7.3 — this rung and the next one were SWAPPED, and it is a
+  // ## precondition of the value gate, not an optimisation
   //
-  // These two used to run the other way round — attempts were cut BEFORE
-  // optional rescue work was dropped. That inverted the owner's own wording.
-  // The 2026-09-09 amendment says "past target drop OPTIONAL work"; rescue
-  // re-vets are named optional in this very module (`RunBudgetPlan.optionalRevets`,
-  // "whether the optional rescue tiers may run at all"), and a drafting attempt
-  // is not optional work at all — it is the quality loop, the thing that makes
-  // the post good. Cutting the quality loop first to protect optional rescue
-  // work is the opposite of what the owner asked for.
+  // Until Phase 5 the attempt lever ran here and the re-vet lever ran last.
+  // That order gave up a whole drafting attempt before it gave up work whose
+  // own name is "optional", and `vetCall`'s comment above records what it
+  // cost: a cold Hebrew run sat $0.0002 under target with the re-vet rung
+  // still unspent, so an honest $0.0045 re-price fired the ATTEMPT lever and
+  // `language-compliance-gate.test.ts` started producing `status: "held"` runs
+  // in the two cases named "NEVER holds".
   //
-  // It was also REACHABLE, which is why it is fixed here rather than filed.
-  // The `instagram-copy@16 -> @17` re-price below (+$0.010 an attempt) is what
-  // exposed it. Measured against this function, at the OLD order:
+  // The owner's own ordering principle, applied consistently: DROP OPTIONAL
+  // WORK BEFORE DROPPING THE THING THAT MAKES THE POST GOOD. A rescue re-vet
+  // is optional by its own name; a drafting attempt is the mechanism every
+  // quality gate in this workflow returns INTO. Phase 5's value gate rides
+  // that same loop (`maxAttempts = min(MAX_SELF_CHECK_ATTEMPTS, plan.maxSelfCheckAttempts)`),
+  // so a plan that buys 2 attempts buys the value gate exactly one chance to
+  // send work back — i.e. the old order would have paid for the value gate by
+  // disabling the value gate's own retry loop.
   //
-  //   cold Hebrew shape, `copyAttempt` 0.161: $1.3628 -> $0.9998, 3 attempts
-  //   cold Hebrew shape, `copyAttempt` 0.171: $1.3928 -> $0.7467, 2 attempts
+  // It is also worth vastly more money, and in the right direction. On the
+  // cold default shape this rung frees $0.109 (`3 x (3 x $0.007 + 2 x
+  // $0.0065)` of rescue plus `07i1`'s $0.007) while the attempt rung frees
+  // $0.2906 — so the old order overshot by a quarter of the whole target to
+  // recover a few cents, and did it by deleting a draft.
   //
-  // The Hebrew plan sat $0.0002 under target. Thirty cents of prompt growth
-  // fired the attempt lever, which then overshot by $0.25 buying back an
-  // attempt nothing needed — and `__tests__/language-compliance-gate.test.ts`
-  // returned `status: "held"` with the reason "the run budget plan allowed one
-  // return instead of two", on two cases named for never holding. A
-  // budget-caused hold is forbidden outright by the owner's amendment.
-  //
-  // At the NEW order the same shape lands at $0.9308 with all three attempts,
-  // because dropping optional rescue re-vets is worth $0.099 on it. No shape
-  // in the estimator's range loses an attempt to the target any more.
-  //
-  // The real finding is not the price. It is that the ATTEMPT LEVER COULD
-  // PRODUCE A HELD RUN AT ALL, which `vetCall`'s doc comment above identified,
-  // declined an unrelated re-price over, and deferred to "a follow-up that
-  // lands WITH the rung-order change". This is that follow-up. The fix removes
-  // the reachable held case rather than pricing around it — `vetCall`'s own
-  // deferred +$0.0045 can now be re-priced on its merits by whoever takes it.
-  //
-  // Rung 4 stays LAST deliberately: it is the only rung that makes the
-  // DELIVERABLE itself worse. Every rung above it spends less on optional
-  // work; this one spends less on getting the post right.
+  // Not changed: the attempt lever still exists and still floors at 2, and the
+  // `WorkflowHeld` for genuine MECHANICAL exhaustion (07's slide check, craft
+  // hygiene) is untouched. What is guaranteed is narrower and exact: no
+  // judgment gate — value, relevance, language, numbers — can be starved into
+  // a hold by a budget decision.
   if (!fits() && plan.optionalRevets) {
     plan = { ...plan, optionalRevets: false };
     estimate = estimateRunCost(plan, shape, ratio);
     adaptations.push("optional rescue re-vets skipped");
   }
-  // 4. Allowed self-check returns 2 -> 1. LAST — see the note on rung 3.
+  // 4. Allowed self-check returns 2 -> 1. LAST, because it is the only rung
+  //    that makes the deliverable itself worse.
   if (!fits() && plan.maxSelfCheckAttempts > 2) {
     plan = { ...plan, maxSelfCheckAttempts: 2 };
     estimate = estimateRunCost(plan, shape, ratio);

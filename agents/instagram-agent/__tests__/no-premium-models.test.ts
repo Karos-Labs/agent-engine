@@ -1,3 +1,5 @@
+import { readdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import {
   applyClientLanguagePolicy,
@@ -18,10 +20,12 @@ import {
   InstagramAngleAgent,
   InstagramArtDirectorAgent,
   InstagramBriefAgent,
+  InstagramConceptAgent,
   InstagramCopyAgent,
   InstagramDesignBriefAgent,
   InstagramImageVettingAgent,
   InstagramNativeEditorAgent,
+  InstagramPostPackagerAgent,
   InstagramResearchAgent,
   InstagramTemplateDesignerAgent,
   InstagramTemplateSetReviewAgent,
@@ -45,7 +49,7 @@ import {
  * Nothing had fired only because `loadClientContentLanguage` reads `client/brand.json`'s `language` field and
  * nothing else, and that field is null for exactly the clients Phase 4 targets. **Phase 4 is the phase in
  * which somebody sets `brand.language: "Hebrew"` for geektime in the portal** — and at that moment, with no
- * code change and no warning, `copyAttempt` goes 0.161 -> 0.60, `angle` 0.036 -> 0.13, `brief` 0.113 -> 0.42,
+ * code change and no warning, `copyAttempt` goes 0.174 -> 0.60, `angle` 0.036 -> 0.13, `brief` 0.113 -> 0.42,
  * and a 3-attempt Hebrew run costs ~$2.9 against a $1.50 hard max.
  *
  * This file walks the COMPILED `modelPolicy` of every agent — the object the router is actually handed, not
@@ -64,16 +68,39 @@ function policyOf(agent: BaseAgent<unknown>): { id: string; policy: ModelPolicy 
   return { id: config.id, policy: config.modelPolicy ?? { policy: "pinned" } };
 }
 
-/** Every agent this package ships. A new agent that is not in this list is invisible to this guard, which is why the count is asserted below. */
+/**
+ * Every agent this package ships.
+ *
+ * ## Why this list is checked against the DISK and not against a floor
+ *
+ * The list used to carry a comment saying "a new agent that is not in this list
+ * is invisible to this guard, which is why the count is asserted below", and the
+ * count asserted below was `toBeGreaterThanOrEqual(12)` against a literal list
+ * of exactly 12. A floor cannot notice a thirteenth agent, and it had already
+ * failed to: `InstagramConceptAgent` is a live `claude-sonnet-4-6` step,
+ * constructed in every run, and it was not in this list, not exported from
+ * `src/agent/index.ts`, and not reachable by this suite at all. It was safe only
+ * because it happens to carry `contentLanguageSensitive: false`, which nothing
+ * here checked either. The comment that claimed protection was the problem.
+ *
+ * `everyInstagramAgentFile()` now reads `src/agent/` and the exact-count
+ * assertion holds this list against it, so adding `instagram-<x>-agent.ts`
+ * FAILS this suite until the class is constructed here. Break it by dropping any
+ * line below and watch the count refuse.
+ */
 function everyInstagramAgentPolicy(): Array<{ id: string; policy: ModelPolicy }> {
   return [
     new InstagramAngleAgent(noopRuntime),
     new InstagramArtDirectorAgent(noopRuntime),
     new InstagramBriefAgent(noopRuntime),
+    new InstagramConceptAgent(noopRuntime),
     new InstagramCopyAgent(noopRuntime),
     new InstagramDesignBriefAgent(noopRuntime),
     new InstagramImageVettingAgent(noopRuntime),
     new InstagramNativeEditorAgent(noopRuntime),
+    // Phase 5, RFC-18 §6.1. Added to this list the same commit the class was
+    // written.
+    new InstagramPostPackagerAgent(noopRuntime),
     new InstagramResearchAgent(noopRuntime),
     new InstagramTemplateDesignerAgent(noopRuntime),
     new InstagramTemplateSetReviewAgent(noopRuntime),
@@ -81,12 +108,26 @@ function everyInstagramAgentPolicy(): Array<{ id: string; policy: ModelPolicy }>
   ].map((agent) => policyOf(agent as unknown as BaseAgent<unknown>));
 }
 
+/** Every `instagram-*-agent.ts` on disk — the roster the list above is held against. */
+function everyInstagramAgentFile(): string[] {
+  const dir = fileURLToPath(new URL("../src/agent/", import.meta.url));
+  return readdirSync(dir)
+    .filter((f) => /^instagram-.*-agent\.ts$/.test(f))
+    .sort();
+}
+
 const tierOf = (model: string | undefined): string | undefined => (model === undefined ? undefined : MODEL_CAPABILITIES[model]?.costTier);
 
 describe("no Instagram step resolves to a premium model, in any language (RFC-15 §8)", () => {
   it("the premise: at least one Instagram step is contentLanguageSensitive on an Anthropic model, or this whole file is vacuous", () => {
     const policies = everyInstagramAgentPolicy();
-    expect(policies.length).toBeGreaterThanOrEqual(11);
+    // EXACT, against the disk. Not a floor: a floor is what let the concept
+    // agent sit outside this guard's reach while being a live model step.
+    const onDisk = everyInstagramAgentFile();
+    expect(policies.length, `src/agent/ holds ${onDisk.length} agents (${onDisk.join(", ")}) and this list constructs ${policies.length}`).toBe(onDisk.length);
+    // And every one of them really compiled a step id, so a constructor that
+    // silently produced nothing cannot pad the count.
+    expect(policies.filter((p) => typeof p.id === "string" && p.id.length > 0)).toHaveLength(onDisk.length);
     const sensitive = policies.filter((p) => p.policy.contentLanguageSensitive === true);
     // Five of them, on `claude-sonnet-4-6`. If a future change deletes these flags, this assertion fails and
     // says so, rather than the suite quietly passing because there is nothing left to re-point.
@@ -130,11 +171,39 @@ describe("no Instagram step resolves to a premium model, in any language (RFC-15
   });
 
   /**
+   * Phase 5, RFC-18 §6.1 and §8. The packager's own class comment claims two things about its model policy,
+   * and a comment is not a guard. It claims it is pinned to `gemini-2.5-flash`, and it claims
+   * `contentLanguageSensitive` is deliberately ABSENT so `applyClientLanguagePolicy` cannot re-point a
+   * non-English run onto a more expensive multilingual row.
+   *
+   * The second half is the one worth a test: the flag is a single word, it reads as an obviously correct
+   * thing to write on a step that produces Hebrew prose, and adding it costs ~$0.006 on every non-English
+   * run for a step whose nativeness `08c2-package-native-round` already judges with the real native editor.
+   * Set `contentLanguageSensitive: true` on the class and this case fails — as does the premise case above,
+   * which enumerates exactly which steps carry the flag.
+   */
+  it("the post packager is pinned to Flash and is NOT contentLanguageSensitive, so a Hebrew run does not silently buy a better model", () => {
+    const packager = everyInstagramAgentPolicy().find((p) => p.id === "instagram-post-packager");
+    expect(packager, "the packager must be in everyInstagramAgentPolicy() or this guard cannot see it").toBeDefined();
+    expect(packager!.policy.model).toBe("gemini-2.5-flash");
+    expect(packager!.policy.vendor).toBe("gemini");
+    expect(packager!.policy.contentLanguageSensitive).not.toBe(true);
+    // The consequence, asserted rather than assumed: the policy object comes back UNCHANGED for a Hebrew
+    // client, which is what "the flag is absent" actually buys.
+    const logged = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      expect(applyClientLanguagePolicy("instagram-post-packager", packager!.policy, "Hebrew")).toBe(packager!.policy);
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  /**
    * THE JUSTIFICATION, DERIVED — not restated.
    *
    * Four comments (`instagram-native-editor-agent.ts`,
    * `create-instagram-agent-workflow.ts`'s 07f block, `language-gate.ts` and
-   * `run-budget.ts`'s `nativeJudge` key) defend the judge's $0.014 on the
+   * `run-budget.ts`'s `nativeJudge` key) defend the judge's $0.018 on the
    * claim that `gemini-2.5-pro` is the cheapest non-premium row rated
    * `multilingual-strong` + `rtlSupport: "strong"`. They previously said
    * "the ONLY" such row, which the catalog contradicted —
