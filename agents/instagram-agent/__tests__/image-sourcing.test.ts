@@ -18,6 +18,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
+import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 
 /** Chromium-free `publish.renderCarousel` stand-in -- same rationale as `workflow-e2e.test.ts`. Needed now that an unfillable slide reaches rendering instead of holding before it. */
@@ -196,7 +197,7 @@ describe("05b-source-images", () => {
     });
 
     // No "vetting" turn: an empty pool skips step 06's model call entirely.
-    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)]);
 
     const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(
       createInstagramAgentWorkflow({ tools, promptStore: makePromptStore(), router, repoRoot: env.repoRoot, autoApprove: true }),
@@ -220,7 +221,7 @@ describe("05b-source-images", () => {
         reason: "media.findImages: no image-search backend configured — set UNSPLASH_ACCESS_KEY",
       }),
     });
-    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)]);
 
     const durableStore = new MemoryDurableStepStore();
     const result = await new WorkflowEngine(durableStore).run(
@@ -245,7 +246,7 @@ describe("05b-source-images", () => {
         reason: "media.findImages: no candidate images could be sourced. Chain tried: openverse, wikimedia. slide 1 (openverse: no results; wikimedia: no results)",
       }),
     });
-    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)]);
 
     const durableStore = new MemoryDurableStepStore();
     const result = await new WorkflowEngine(durableStore).run(
@@ -272,7 +273,7 @@ describe("05b-source-images", () => {
     // Only three turns are supplied: research, copy, visual QA. A vetting
     // call would exhaust the sequence and throw, so this passing proves it
     // never ran.
-    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)]);
 
     const durableStore = new MemoryDurableStepStore();
     const result = await new WorkflowEngine(durableStore).run(
@@ -388,7 +389,7 @@ describe("05b-source-images", () => {
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(copy),
       finalTurn(selectionsWithGaps(copy, pool[0]!.path, [5])),
-      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
 
     const durableStore = new MemoryDurableStepStore();
@@ -436,7 +437,7 @@ describe("05b-source-images", () => {
       // Only slide 1 loses its picture, so the ladder is exercised on the cover
       // without `resolveLayout`'s once-per-carousel rule masking the result.
       finalTurn(selectionsWithGaps(copy, pool[0]!.path, [1])),
-      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
 
     const durableStore = new MemoryDurableStepStore();
@@ -522,7 +523,7 @@ describe("05b-source-images", () => {
           { n: 3, imagePath: null, reason: "the generated image still does not match", license: "n/a", rightsUsable: false, watermarkFree: false, claimMatch: 1, claimMatchReason: "still not the claimed subject" },
         ],
       }),
-      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
 
     const durableStore = new MemoryDurableStepStore();
@@ -551,7 +552,7 @@ describe("05b-source-images", () => {
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(copy),
       finalTurn(selectionsWithGaps(copy, pool[0]!.path, [4])),
-      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
 
     const durableStore = new MemoryDurableStepStore();
@@ -579,7 +580,7 @@ describe("05b-source-images", () => {
     const copy = goodCopyOutput();
     // No "vetting" turn: an empty pool (no media.findImages tool at all)
     // skips step 06's model call entirely.
-    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)]);
 
     const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(
       createInstagramAgentWorkflow({
@@ -608,7 +609,7 @@ describe("05b-source-images", () => {
       ...env.tools,
       "media.findImages": stubFindImages({ status: "tooling_error", reason: "unsplash search returned 503" }),
     });
-    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)]);
 
     const durableStore = new MemoryDurableStepStore();
     const result = await new WorkflowEngine(durableStore).run(
@@ -685,7 +686,7 @@ describe("archetype-aware sourcing", () => {
       ...base,
       slides: base.slides.map((s) =>
         s.n === 2
-          ? { ...s, layout: "stat_callout" as const, stat: { figure: "73%", subLabel: "of teams", source: "Acme, 2026" } }
+          ? { ...s, layout: "stat_callout" as const, stat: { figure: "30%", subLabel: "more tickets resolved", source: "support dashboard export" } }
           : s.n === 4
             ? { ...s, layout: "quote_card" as const, quote: { text: "A thing was said.", attribution: "Someone, 2026" } }
             : s,
@@ -723,7 +724,7 @@ describe("archetype-aware sourcing", () => {
           claimMatchReason: "shows the claimed subject (instagram-image-vet@3 fixture)",
         })),
       }),
-      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
 
     const durableStore = new MemoryDurableStepStore();

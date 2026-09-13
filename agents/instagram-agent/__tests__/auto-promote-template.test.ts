@@ -9,22 +9,7 @@ import {
   readCustomArchetypeHistory,
 } from "../src/workflow/custom-archetype-memory.js";
 import type { InstagramCopyOutput } from "../src/workflow/types.js";
-import {
-  fakeRenderCarousel,
-  fakeRouterSequence,
-  finalTurn,
-  goodCopyOutput,
-  goodImageCandidatePool,
-  goodImageVettingOutput,
-  goodRelevanceVerdict,
-  goodResearchOutput,
-  goodTrendScoutOutput,
-  goodVisualQaOutput,
-  makePromptStore,
-  setupTestEnvironment,
-  type TestEnvironment,
-  pendingStudioRow,
-} from "./test-helpers.js";
+import { fakeRenderCarousel, fakeRouterSequence, finalTurn, fixtureHeadline, goodCopyOutput, goodImageCandidatePool, goodImageVettingOutput, goodRelevanceVerdict, goodResearchOutput, goodTrendScoutOutput, goodVisualQaOutput, makePromptStore, pendingStudioRow, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 import { standardTurns } from "./turns.js";
 
@@ -116,7 +101,7 @@ function copyWithCustomArchetype(seed: string, overrides: { bodyHtml?: string; s
     caption: `Where the ${seed} team put its attention this quarter, and which of those choices a reader can copy on Monday morning.`,
     slides: good.slides.map((slide, i) => ({
       ...slide,
-      headline: `${seed} note ${i + 1}`,
+      headline: fixtureHeadline(i, `${seed} note`),
       body: `Reading ${seed} number ${i + 1}: the ${seed} lane moved because somebody removed a step nobody owned, and the measurement followed a fortnight later.`,
       // The rotation above: one statement slide per run, carrying the one
       // device shape a typographic archetype renders. Its caps (value <= 12,

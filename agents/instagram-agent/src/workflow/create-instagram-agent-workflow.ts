@@ -273,6 +273,39 @@ import {
   type NativeEditorInput,
 } from "./language-gate.js";
 import { applyNativeCorrections } from "./native-corrections.js";
+// ── Phase 5 (RFC-18) — the value gate and the whole post ──
+//
+// Three modules, and the workflow contributes the WIRING and nothing else:
+// the free floor (`value-signals.ts`) is pure, the judge and its four
+// normalisation rules (`value-gate.ts`) are pure but for the one model call
+// `runValueJudge` makes, and the whole post's rules (`post-package.ts`) are
+// pure but for the two free gates `checkPostPackage` calls. That split is what
+// lets their own suites prove the arithmetic without a harness and lets this
+// file's tests stay about ORDER, TERMINATION and what reaches the reviewer.
+import { InstagramPostPackagerAgent } from "../agent/instagram-post-packager-agent.js";
+import { checkValueSignals } from "./value-signals.js";
+import {
+  buildFirstCommentSources,
+  buildTimingNote,
+  checkPostPackage,
+  packageLanguageGateFields,
+  resolveHashtagPlacement,
+  type PostPackage,
+} from "./post-package.js";
+import { applyPackageNativeCorrections } from "./native-corrections.js";
+import {
+  axesMovement,
+  runValueJudge,
+  valueDegradedEvent,
+  valueFailureReason,
+  valueSlidesFor,
+  valueSteerFor,
+  VALUE_MAX_RETURNS,
+  VALUE_RUBRIC_VERSION,
+  type LeadClaimStatus,
+  type ValueAxes,
+  type ValueVerdict,
+} from "./value-gate.js";
 import { buildLanguageBrief, judgeFewShot, renderLanguageBrief, renderRegisterCard } from "./language-register.js";
 import {
   assessBrandAssetPresence,
@@ -4611,6 +4644,87 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         reason?: string;
       };
       /**
+       * Phase 5 (RFC-18 §5.8) — what the VALUE gate concluded about the WINNING attempt, mirroring
+       * `language` above and routed the same way: through the one shared `groundingFor(draft)` to both the
+       * `09a` gate payload and the `09b` deliverable.
+       *
+       * Present on every run that reached `07j`, clean ones included, because the axes per attempt are what
+       * a later phase reads to find out whether the bet paid — the gap RFC-15 §9.4 named about its own
+       * phase, closed here for this one.
+       *
+       * Every value is a DELIVERY. `keepable` is above the bar; `below-bar` is "shipped marked, with the
+       * axes and the judge's named fixes on the review payload"; `unjudged` is "the judge could not be
+       * reached, or the budget could not afford it, and NO redraft was burned on it" (the relevance judge's
+       * fail-OPEN posture, `relevance-gate.ts:71-79` — unlike a Hebrew fluency failure, "this post is
+       * boring" is not invisible to the human at `09a`). **There is no `held` and no `failed`, by design:
+       * `WorkflowHeld` is never thrown on any value path.**
+       */
+      value?: {
+        status: "keepable" | "below-bar" | "unjudged";
+        /**
+         * Which stage produced this status. `signals` is the free floor at `07i`/`07i2` refusing on the
+         * final attempt; `judge` is `07j`. Named on the record because "below the bar" for a mechanical
+         * reason a regex found and "below the bar" because a judge could not find a position are two
+         * different notes for the reviewer.
+         */
+        stage: "signals" | "numbers" | "judge" | "budget";
+        /**
+         * The four axes, as `normaliseValueVerdict` left them. ABSENT — not faked — when no judged verdict
+         * exists: an unjudged delivery, or a free-floor refusal that never reached `07j`. A reviewer has to
+         * be able to tell "judged and found wanting" from "never judged", which is the same rule
+         * `relevance` follows one field up.
+         */
+        axes?: { newFact: string; position: string; payload: string; action: string };
+        /** Recorded but excluded from the decision — today `newFact` under thin grounding (§5.4 rule 3). */
+        advisoryAxes?: string[];
+        /** How many of this round's attempts a value refusal caused. Bounded by `VALUE_MAX_RETURNS`. */
+        returns: number;
+        /** The judge's one sentence naming what a reader would save this post for. */
+        keepLine?: string;
+        /** Present when `below-bar`: which axis, which target, and what to write instead — so the reviewer sees exactly why. */
+        fixes?: Array<{ axis: string; target: string; instruction: string }>;
+        /** `07i1`'s verdict on the card the cover rests on. Absent when the verification did not run at all. */
+        leadClaim?: "confirmed" | "not-found-on-page" | "unreachable" | "no-url";
+        /** Stamped on every verdict so telemetry can tell rubric eras apart (`NATIVE_EDITOR_RUBRIC_VERSION` precedent). */
+        rubricVersion: string;
+        /** Why this is not `keepable`, in a sentence a human can act on. Present on `below-bar` and `unjudged`. */
+        reason?: string;
+        /** Anything relaxed or capped on the way to this verdict (thin grounding, an unverified lead claim). */
+        notes?: string[];
+      };
+      /**
+       * Phase 5 (RFC-18 §6.6) — THE WHOLE POST: the parts of an Instagram post a carousel of eight PNGs
+       * and a caption has never had. Before `08c` existed a finished deliverable carried **no hashtags at
+       * all**, no alt text on any slide, and its sourcing visible nowhere a reader could reach.
+       *
+       * Routed through the one shared `postFor(draft)` to the TOP LEVEL of both the `09a` gate payload and
+       * the `09b` deliverable — `deliverable.post`, NOT `deliverable.grounding.post`. Unlike `value` and
+       * `language`, which are verdicts about the draft and ride `groundingFor`, this IS part of the
+       * deliverable, and RFC-18 §12's cross-repo portal obligation names `deliverable.post` as the path it
+       * will read. The reviewer at `09a` approves THE POST rather than the pixels.
+       *
+       * **Every field is additive and the whole thing fails open.** `status: "absent"` is a complete,
+       * delivering run whose packager did not come back; `partial` is one where a field was dropped
+       * because a free check refused it twice. The carousel ships identically in all three states. There
+       * is no state in which the whole post costs us the post.
+       */
+      post?: {
+        /** BARE, with no leading `#` — the portal prepends its own, and a tag stored with one double-hashes in the UI. */
+        hashtags: string[];
+        /** From the client's OWN measured `hashtagsPerPost`: an account whose feed never tags does not suddenly acquire a tag block under its caption. */
+        hashtagPlacement: "caption" | "firstComment";
+        altText: Array<{ n: number; alt: string }>;
+        /** `text` is the model's; `sources` is built in code from the cards the shipped slides cite, so an invented URL is unrepresentable rather than merely forbidden. */
+        firstComment: { text: string; sources: Array<{ label: string; url: string }> };
+        /** What the engine alone knows that the portal's scheduler cannot compute: whether this post perishes, and when. */
+        timing: { basis: "event-dated" | "evergreen"; staleAfter?: string; reason: string };
+        /** `08c2`'s one native round over the package's prose. Absent on an English run; `"unverified"` past the hard max. */
+        language?: { status: "verified" | "corrected" | "unverified"; correctionsProposed: number; correctionsApplied: number; reason?: string };
+        status: "complete" | "partial" | "absent";
+        /** Why this is not `complete`, in a sentence a human can act on. */
+        reason?: string;
+      };
+      /**
        * Phase 1, item K — what `04i`/`04j` decided for THIS round: the chosen
        * angle, the two rejected ones with their scores, or
        * `status: "unavailable"` when the proposer could not run (fail-open).
@@ -5242,6 +5356,19 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        */
       let nativeSteer: string | undefined;
       /**
+       * Phase 5 (RFC-18 §5.6) — the value judge's named fixes, as a REWRITE INSTRUCTION rather than an
+       * anchored span, for exactly the next attempt.
+       *
+       * A FIFTH typed steer, declared here beside the other four and kept apart from every one of them for
+       * the reason `nativeSteer`'s comment already gives: a value refusal, a language correction, a failed
+       * render rule, an off-brief verdict and a dedupe hit are five different remedies, several can be true
+       * of the same draft, and one overwriting another loses a finding the next attempt was supposed to
+       * fix. Prompt @17 §16 tells the writer to apply all of them when several arrive, and carries the
+       * `KEEP AS WRITTEN` line's own instruction ("text quoted under KEEP AS WRITTEN has already been
+       * accepted; reproduce it unchanged"), which is the anti-thrash half of this steer.
+       */
+      let valueSteer: string | undefined;
+      /**
        * Phase 4 — set on the FINAL attempt when the native editor was still flagging, or could not run at
        * all: the post ships flagged, never held. Attempt-scoped and reset per attempt exactly as
        * `interestDegraded` is, so an attempt that was fixed is never reported as degraded.
@@ -5249,6 +5376,38 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       let languageDegraded: DraftResult["language"] | undefined;
       /** The shipped attempt's language verdict, for the gate payload and the deliverable. */
       let finalLanguage: DraftResult["language"] | undefined;
+      /**
+       * This attempt's value verdict, clean or not. The shipped attempt's copy of it becomes `finalValue`.
+       *
+       * Attempt-scoped and reset at the top of every attempt, so an attempt that answered the judge's fixes
+       * never ships reported as degraded. There is deliberately NO separate `valueDegraded` mirror of
+       * `languageDegraded`: an earlier cut had one and nothing ever read it. `languageDegraded` earns its
+       * existence because the language verdict that SHIPS is chosen from it at `09b`; the value verdict that
+       * ships travels this variable to `finalValue` to `DraftResult.value`, so a mirror would have been a
+       * second copy of the same fact with no reader and one more way for the two to disagree.
+       */
+      let valueVerdictForAttempt: DraftResult["value"];
+      /** The shipped attempt's value verdict, for the gate payload and the deliverable. */
+      let finalValue: DraftResult["value"] | undefined;
+      /**
+       * How many of this round's attempts a value refusal has caused, bounded by `VALUE_MAX_RETURNS`.
+       *
+       * ROUND-scoped rather than attempt-scoped: the bound is "at most two of this run's attempts may be
+       * caused by a value refusal", which is a statement about the round and would mean nothing if it reset
+       * every attempt.
+       */
+      let valueReturns = 0;
+      /** The PREVIOUS attempt's axes, for the no-improvement stop (§5.7 bound 2). Undefined before the first judged attempt. */
+      let previousValueAxes: ValueAxes | undefined;
+      /**
+       * `07i1-verify-lead-claim`'s verdict, ONCE PER ROUND.
+       *
+       * Run-scoped, not attempt-scoped, because the verification is of a FACT CARD and the cards do not
+       * change between attempts — re-asking would be a second scraper execution for a byte-identical
+       * answer. `undefined` means the step did not run at all (no angle, no plan for it, or past the hard
+       * max), which is different from `no-url`, which means it ran and there was nothing to fetch.
+       */
+      let leadClaim: LeadClaimStatus | undefined;
       /**
        * Every OTHER self-check finding the next draft must fix — 07's slide
        * check, 07b craft hygiene, 07e script, 07f fluency, 07h default render
@@ -5270,6 +5429,18 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       let finalRelevance: DraftResult["relevance"];
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      /**
+       * Is this the last draft this run will ever get?
+       *
+       * **The single most important fact in this loop** (RFC-18 §5.7 bound 3). The loop's exit at
+       * `!finalOutcomeOk` throws `WorkflowHeld`, so EVERY `continue` on the last attempt is a hold, and a
+       * judgment gate that returns work on the final attempt is a hold generator wearing a gate's clothes.
+       * Phase 4's language branches each carried their own copy of this line; Phase 5 needs it in three more
+       * places (`07i`, `07i2`, `07j`), so it is computed ONCE here and the branches read it. `>=` rather
+       * than `===` for the same reason a loop bound is written defensively: a future `maxAttempts` that
+       * moves under the loop must not silently turn the last attempt into a non-final one.
+       */
+      const isFinalAttempt = attempt >= maxAttempts;
       // Consumed here so a finding from attempt 1 never outlives attempt 2:
       // an attempt that fails on relevance or dedupe instead carries THOSE
       // steers, and a stale render-rule finding must not ride along with them.
@@ -5282,6 +5453,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // to and a post to move away from, neither of which is anchored to a byte range.)
       const priorNativeSteer = nativeSteer;
       nativeSteer = undefined;
+      // Phase 5 — the same one-attempt lifetime, declared and consumed in the same two places as the other
+      // four. A value fix names what to write instead of THIS draft's cover, THIS draft's slide 3; once the
+      // draft it was written about has been replaced, the instruction is about text that no longer exists.
+      const priorValueSteer = valueSteer;
+      valueSteer = undefined;
       // Item L's degrade marker is ATTEMPT-scoped: an attempt whose free
       // re-layout fixed the floor must not ship carrying the previous
       // attempt's finding.
@@ -5295,6 +5471,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // attempt whose corrections landed must not ship carrying the previous attempt's "still flagged after
       // 2 rounds".
       languageDegraded = undefined;
+      // Phase 5 — the value verdict is attempt-scoped for exactly the reason the two above are: an attempt
+      // that answered the judge's fixes must not ship carrying the previous attempt's "below the bar".
+      // `valueReturns`, `previousValueAxes` and `leadClaim` are NOT reset here, deliberately: the first two
+      // are statements about the ROUND (how many attempts a value refusal has cost it, and what the last
+      // draft scored), and the third is a fact about a fact card, which no redraft changes.
+      valueVerdictForAttempt = undefined;
       const copyExec = await wf.step.agent(rev(`05-write-copy-attempt-${attempt}`), copyAgent, {
         ...runDirectionField(runDirection),
         topic: topicClaim.topic,
@@ -5311,6 +5493,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // correction as `slide N · field · "span" → "replacement" (why)`. Applied, not argued with, and
         // never at the cost of a number, a date, a name or a claim.
         ...(priorNativeSteer !== undefined ? { nativeSteer: priorNativeSteer } : {}),
+        // Phase 5 (prompt @17 §16): what the value judge refused on the previous attempt — the numbered
+        // fixes it named, then the `KEEP AS WRITTEN` line built in code from the axes that PASSED and their
+        // verified quotes. The second half is the anti-thrash mechanism: without it the classic redraft
+        // regression is fixing one axis by destroying another, and after three rounds the post is worse
+        // than attempt 1.
+        ...(priorValueSteer !== undefined ? { valueSteer: priorValueSteer } : {}),
         // What the previous attempt's self-check found (prompt §16) — the
         // fluency judge's issues, the failed render rule and slide, the
         // banned phrase — so the redraft fixes the finding instead of
@@ -6451,6 +6639,83 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         continue;
       }
 
+      // ── 07i/07i2: the FREE half of the value gate (Phase 5, RFC-18 §4) ──
+      //
+      // $0. No model call, no tool that bills. Placed here — after the two existing free gates and BEFORE
+      // `07e`/`07e2`, `07g` and `07j` — for this workflow's own ordering doctrine: every free rejection
+      // before any paid one. Everything about value a machine can decide is decided for nothing, and the
+      // judge at `07j` is then paid only to adjudicate what a regex cannot.
+      //
+      // **THE FINAL ATTEMPT NEVER RETURNS.** `07`'s slide check and `07b` above still `continue` on the
+      // last attempt and therefore still reach the `WorkflowHeld` at the bottom of this loop; that is
+      // pre-existing and RFC-18 §9 names it rather than fixing it. Nothing Phase 5 adds may behave that
+      // way: a judgment gate that holds a run delivers nothing, and a person cannot reject what they never
+      // received. So both free checks record their refusal and FALL THROUGH on the final attempt, and the
+      // post ships marked with the span or the slide the check named.
+      /**
+       * The free floor's refusal on the FINAL attempt, if it refused: the reason a human reads on the
+       * review payload. Block-scoped to this attempt, so nothing resets it and nothing can leak it into
+       * the next draft.
+       */
+      let valueFloorRefusal: { stage: "signals" | "numbers"; reason: string } | undefined;
+      const valueSignals = await wf.step.code(rev(`07i-value-signals-attempt-${attempt}`), () =>
+        checkValueSignals({
+          copy,
+          // The DEDUPED cards the writer itself was shown, so the 8-gram prose ban is measured against
+          // exactly the text the writer could have lifted from.
+          factCards: promptFacts,
+          brief: { coreTerms: brief.coreTerms, offers: brief.offers },
+          // Decides the 8-vs-6 token threshold: Hebrew fuses articles and prepositions into clitics, so an
+          // 8-gram rule in Hebrew is a rule that never fires.
+          ...(targetLanguage !== undefined ? { targetLanguage } : {}),
+          ...(copy.payloadKind !== undefined ? { payloadKind: copy.payloadKind } : {}),
+        }),
+      );
+      if (!valueSignals.ok) {
+        if (!isFinalAttempt) {
+          returnToCopyWith(`slide copy failed the free value floor: ${valueSignals.reason}`);
+          continue;
+        }
+        valueFloorRefusal = { stage: "signals", reason: valueSignals.reason };
+      }
+
+      // ── 07i2: `gate.numbersSourced`, a free gate instagram has never called ──
+      //
+      // Today an unsourced numeral invented INSIDE a body is unchecked: `07-self-check`'s `sourceRef`
+      // tracing proves a slide cites a card, never that the numbers in its prose came from one.
+      //
+      // **CONTENT, NEVER URLS.** `sources` is every fact card's `claim` and `quote` — the claim TEXT. The
+      // 2026-09-05 defect class across all five publishing agents was a numbers gate handed a URL as its
+      // only source, which made every figure unsourced and every hold meaningless. The gate itself is
+      // unchanged and NO `TOOL_VERSION` is bumped: its normaliser already folds magnitudes, ISO currency
+      // codes, ranges and negatives, and ASCII digits are what a Hebrew post uses anyway
+      // (`gate.nativeLanguage` flags foreign ones), so it works unmodified in both languages.
+      //
+      // SKIPPED when the registry does not carry the tool — ~30 test files hand this workflow a partial
+      // registry, and `07e2`'s posture applies for the same reason: a free gate that cannot run has not
+      // formed a view, and there is no spend here to justify failing a draft over an outage.
+      const numbersGate = tools["gate.numbersSourced"];
+      if (numbersGate !== undefined && valueFloorRefusal === undefined) {
+        const numbers = await wf.step.code(rev(`07i2-numbers-in-facts-attempt-${attempt}`), async () => {
+          const text = [copy.caption, ...copy.slides.flatMap((s) => [s.headline, s.body, s.stat ? `${s.stat.figure} ${s.stat.subLabel}` : ""])]
+            .filter((t) => t.trim().length > 0)
+            .join("\n");
+          const sources = promptFacts.flatMap((c) => (c.quote !== undefined && c.quote.length > 0 ? [c.claim, c.quote] : [c.claim]));
+          const outcome = await numbersGate.execute({ text, sources }, { ctx });
+          if (outcome.status !== "success") return { ok: true as const, reason: undefined };
+          const verdict = outcome.result as GateVerdict;
+          if (verdict.verdict === "content_fail") return { ok: false as const, reason: verdict.reason };
+          return { ok: true as const, reason: undefined };
+        });
+        if (!numbers.ok) {
+          if (!isFinalAttempt) {
+            returnToCopyWith(`a figure in the copy is not in any fact card this run fetched: ${numbers.reason}`);
+            continue;
+          }
+          valueFloorRefusal = { stage: "numbers", reason: numbers.reason };
+        }
+      }
+
       // ── 07e/07f: the language-compliance gate (SCRUM-310/AU32) ──
       //
       // Both stages run BEFORE step 08's render, deliberately: text baked
@@ -6579,6 +6844,86 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         }
       }
 
+      // ── 07i1: verify the ONE claim the cover rests on (Phase 5, RFC-18 §4.3) ──
+      //
+      // The owner's plan says the writer "gets a limited search tool for verification". It does not get
+      // one, and the reasoning is already measured in this repo: `instagram-copy-agent.ts` is
+      // `allowedTools: []` deliberately, and `tiktok-script-agent.ts:55-61` measured what tools cost a
+      // DRAFTING agent — three extra turns, $0.12 to $0.17 and 70 to 115 seconds per script. At a $1.00
+      // target that is the entire value gate plus the entire whole-post artifact, spent on a model deciding
+      // its own queries, and it makes the draft non-deterministic across a resume.
+      //
+      // What the plan actually wants is for a checkable claim to be CHECKED, and the budget-honest form of
+      // that is deterministic: one card, one URL, one already-wired `research.fetchPages` call (ScrappyCoco
+      // behind it, store-cached by normalised URL), one question asked in code. $0.007, ONCE PER RUN — the
+      // step id carries no `-attempt-N` and the guard below is `leadClaim === undefined`, so attempt 2
+      // inherits attempt 1's answer rather than paying for a byte-identical one. Nothing has ever proved
+      // the CARD: `07-self-check` only proves the writer quoted it.
+      //
+      // Levered as the rescue-shaped work it is (§7.3): off when the plan has switched optional re-vets
+      // off, and off past the hard max. It is the same flag rung 3 of the budget ladder pulls, so both
+      // rescue paths go together.
+      if (leadClaim === undefined && budgetPlan.optionalRevets && meter.posture !== "cheapest-path") {
+        const leadCard = (() => {
+          // The card the COVER rests on: the angle's first `restsOn` claim, which `selectAngle` has already
+          // proven names a card this run fetched. Falling back to slide 1's `sourceRef`, which
+          // `checkSlidesData` has already proven verbatim against the same set.
+          const claim =
+            angleDecision !== undefined && "chosen" in angleDecision ? angleDecision.chosen.restsOn[0] : copy.slides[0]?.sourceRef;
+          if (claim === undefined) return undefined;
+          const key = claim.trim().toLowerCase();
+          return research.facts.find((f) => f.claim.trim().toLowerCase() === key);
+        })();
+        const verified = await wf.step.code(rev("07i1-verify-lead-claim"), async () => {
+          const url = leadCard?.url?.trim();
+          if (leadCard === undefined || url === undefined || url.length === 0) {
+            return { status: "no-url" as LeadClaimStatus, note: "the card the cover rests on carries no URL, so there was nothing to re-read" };
+          }
+          const fetchPages = tools["research.fetchPages"];
+          if (fetchPages === undefined) {
+            return { status: "unreachable" as LeadClaimStatus, note: "research.fetchPages is not registered, so the lead claim was not re-read" };
+          }
+          try {
+            const outcome = await fetchPages.execute({ urls: [url], maxChars: 8000 }, { ctx });
+            if (outcome.status !== "success") {
+              return { status: "unreachable" as LeadClaimStatus, note: `the lead claim's source page could not be read (${outcome.status})` };
+            }
+            const result = outcome.result as { pages: Array<{ url: string; text: string }>; problems: string[] };
+            const page = result.pages[0];
+            if (page === undefined || page.text.trim().length === 0) {
+              return { status: "unreachable" as LeadClaimStatus, note: `nothing could be extracted from ${url}` };
+            }
+            // One question, asked in code. The whole claim first; failing that, its salient number AND its
+            // longest salient word, because a source states a figure in its own sentence far more often
+            // than it states ours. Whitespace-normalised and case-folded on both sides.
+            const flatten = (t: string) => t.replace(/\s+/gu, " ").trim().toLowerCase();
+            const haystack = flatten(page.text);
+            const claimText = flatten(leadCard.claim);
+            if (haystack.includes(claimText)) {
+              return { status: "confirmed" as LeadClaimStatus, note: undefined };
+            }
+            const figure = /\d[\d,.]*\s?%?/u.exec(leadCard.claim)?.[0]?.trim().toLowerCase();
+            const noun = [...leadCard.claim.matchAll(/\p{L}{5,}/gu)].map((m) => m[0].toLowerCase()).sort((a, b) => b.length - a.length)[0];
+            if (figure !== undefined && noun !== undefined && haystack.includes(figure) && haystack.includes(noun)) {
+              return { status: "confirmed" as LeadClaimStatus, note: undefined };
+            }
+            return {
+              status: "not-found-on-page" as LeadClaimStatus,
+              note: `the claim the cover rests on was not found on ${url}, the page it cites`,
+            };
+          } catch (error) {
+            // A paywall, a timeout or a dead PDF link is NOT the writer's fault and never a refusal.
+            return { status: "unreachable" as LeadClaimStatus, note: `the lead claim's source page could not be read: ${(error as Error).message}` };
+          }
+        });
+        leadClaim = verified.status;
+        // Metered whether or not the page came from the store's cache, for the same reason `04a3` meters
+        // only UNCACHED fetches in the other direction: this step buys at most one execution per RUN, and
+        // the estimator prices exactly one (`plan.optionalRevets ? c.scraperExecution : 0`). A cache hit
+        // here is a second attempt re-reading this step's own checkpoint, which never reaches the vendor.
+        if (verified.status !== "no-url") spend(rev("07i1-verify-lead-claim"), undefined, STEP_COST_ESTIMATES_USD.scraperExecution);
+      }
+
       // ── 07g: the relevance judge (Phase 0, item C) ──
       //
       // "Would a reader who follows this account see how this post connects
@@ -6637,11 +6982,239 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           ? undefined
           : { score: relevance.score, reason: relevance.reason, ...(relevance.status === "relevant" && relevance.note !== undefined ? { note: relevance.note } : {}) };
 
+      // ── 07j: THE VALUE GATE (Phase 5, RFC-18 §5) ──
+      //
+      // The 2026-09-08 audit's charge had two halves: "no step asks whether this is relevant to what the
+      // client actually does, and whether anyone will save this". `07g` above answers the first half. THIS
+      // STEP IS THE SECOND HALF, and it is the gate that was missing between "correct" and "good".
+      //
+      // ~$0.003 an attempt, pinned `gemini-2.5-flash` — the commodity tier, justified where the owner's
+      // amendment requires every new model step to justify itself. Gemini Pro would cost $0.014 an attempt
+      // ($0.042 across a three-attempt run) and would buy TASTE; the evidence-span design removes the need
+      // for taste. The judge never renders an opinion: every `pass` must carry a verbatim span, the span is
+      // re-checked IN CODE against the draft, and an axis whose span does not occur is downgraded. A
+      // commodity model is good at extraction, and extraction is all this asks for. The bar itself is
+      // computed in `decideValue`, in this repository, never read from the model's own opinion of itself.
+      //
+      // WHERE IT SITS, and all four reasons are load-bearing. AFTER both free gate families, so most of
+      // what a value refusal would have cost is refused for nothing. AFTER `07g`, because a post that is
+      // not this client's business is dead anyway and relevance is cheaper. BEFORE `07f`, because the
+      // native editor's corrections are ANCHORED SPANS into headline/body/caption, so a value-driven
+      // rewrite after `07f` would invalidate every applied correction and every span round 2 rests on —
+      // language is the last word on the sentences. BEFORE `07c-emit-slides-data`, the assembly checkpoint
+      // everything downstream reads.
+      //
+      // IT FAILS OPEN, unlike `07f`'s fail-closed, and that is the relevance judge's posture for the
+      // relevance judge's reason: the subject of this verdict is VISIBLE to the human reviewer at `09a`. A
+      // Hebrew fluency failure is invisible to a reviewer who does not read Hebrew. "This post is boring"
+      // is not invisible to anybody.
+      //
+      // **`WorkflowHeld` IS NEVER THROWN ON ANY VALUE PATH.** Every row of §5.7's termination table ends in
+      // a delivery: `keepable`, `below-bar` or `unjudged`. There is no `held` and no `failed`, by design.
+      const valueStepId = rev(`07j-value-judge-attempt-${attempt}`);
+      /** This attempt's judged verdict, or `undefined` when the judge was never asked (past the hard max). */
+      let judgedValue: ValueVerdict | undefined;
+      if (meter.posture === "cheapest-path") {
+        // Row 7 — past the hard max the judge is optional spend and is skipped outright. The free floor
+        // above still ran, because it costs nothing and refuses the mechanical half for $0. The post
+        // delivers `unjudged`, which is what "budgets adapt, never hold" means at this step.
+        valueVerdictForAttempt = {
+          status: "unjudged",
+          stage: "budget",
+          returns: valueReturns,
+          rubricVersion: VALUE_RUBRIC_VERSION,
+          reason: `past the run's hard max (${formatUsd(meter.totalUsd)} > ${formatUsd(budgetDecision.maxUsd)}), so the value judge was skipped on the cheapest complete path`,
+          ...(leadClaim !== undefined ? { leadClaim } : {}),
+        };
+      } else {
+        judgedValue = await runValueJudge(
+          wf,
+          { tools, promptStore: options.promptStore, router: options.router },
+          valueStepId,
+          {
+            brief: briefForPrompt(brief),
+            caption: copy.caption,
+            slides: valueSlidesFor(copy),
+            factCards: promptFacts,
+            ...(copy.payloadKind !== undefined ? { payloadKind: copy.payloadKind } : {}),
+          },
+          {
+            // §5.4 rule 3 — the relaxation. A client whose brief grounds the post in an industry rather
+            // than a business cannot answer `newFact` with any redraft, and failing it three times would
+            // reinvent the unwinnable floor Phase 0 already had to correct for exactly that client.
+            thinlyGrounded: isThinlyGrounded(brief),
+            factCards: promptFacts,
+            // §5.4 rule 4 — `07i1`'s cap. A cover whose figure could not be found on its own source page
+            // does not get a `pass` on the axis that figure is the evidence for.
+            ...(leadClaim !== undefined ? { leadClaim } : {}),
+          },
+        );
+        spend(valueStepId, undefined, STEP_COST_ESTIMATES_USD.valueJudge);
+      }
+
+      if (judgedValue !== undefined) {
+        if (judgedValue.status === "error") {
+          // Row 3 — the judge did not complete, or answered with an axis outside `{pass, weak, fail}`
+          // (never clamped: an axis outside the rubric is a judge that did not follow it, and a verdict
+          // built on it would be a guess dressed as a score). SHIP unjudged, and BURN NO REDRAFT: this is
+          // the fail-open half, and spending a $0.166 attempt on a judge outage would be paying for the
+          // outage twice.
+          //
+          // BUT the free floor's refusal is not lost to the outage. `07i`/`07i2` refuse for $0 and their
+          // finding is MECHANICAL — a named span of lifted prose, a slide with an unsourced figure — so it
+          // is true whether or not the judge answered. Reporting `unjudged` here would tell the reviewer
+          // "nobody looked" when in fact something did look, refused, and named the slide. That contradicts
+          // this step's own contract above ("both free checks record their refusal and FALL THROUGH on the
+          // final attempt, and the post ships marked with the span or the slide the check named") and
+          // §5.7's row 2. The sibling budget-skip branch below already preserves it; this branch now does
+          // too, and carries the judge outage as a note so the reviewer still learns the judge was down.
+          valueVerdictForAttempt =
+            valueFloorRefusal !== undefined
+              ? {
+                  status: "below-bar",
+                  stage: valueFloorRefusal.stage,
+                  returns: valueReturns,
+                  rubricVersion: VALUE_RUBRIC_VERSION,
+                  reason: valueFloorRefusal.reason,
+                  notes: [judgedValue.reason],
+                  ...(leadClaim !== undefined ? { leadClaim } : {}),
+                }
+              : {
+                  status: "unjudged",
+                  stage: "judge",
+                  returns: valueReturns,
+                  rubricVersion: VALUE_RUBRIC_VERSION,
+                  reason: judgedValue.reason,
+                  ...(leadClaim !== undefined ? { leadClaim } : {}),
+                };
+        } else {
+          const previousAxes: ValueAxes | undefined = previousValueAxes;
+          previousValueAxes = judgedValue.axes;
+          /** Everything a judged verdict carries, whichever side of the bar it landed on. */
+          const judgedFields = {
+            axes: { ...judgedValue.axes },
+            ...(judgedValue.advisoryAxes.length > 0 ? { advisoryAxes: [...judgedValue.advisoryAxes] } : {}),
+            ...(judgedValue.keepLine !== undefined ? { keepLine: judgedValue.keepLine } : {}),
+            ...(judgedValue.fixes.length > 0 ? { fixes: judgedValue.fixes.map((f) => ({ ...f })) } : {}),
+            ...(judgedValue.notes.length > 0 ? { notes: [...judgedValue.notes] } : {}),
+            ...(leadClaim !== undefined ? { leadClaim } : {}),
+            rubricVersion: judgedValue.rubricVersion,
+          };
+          if (judgedValue.status === "below-bar" && valueFloorRefusal === undefined) {
+            // The two bounds that are NOT the final-attempt guard, and both of them stop rather than hold.
+            //
+            // `VALUE_MAX_RETURNS` — at most two of this run's attempts may be caused by a value refusal,
+            // even if a future plan allows more attempts. Round-scoped, which is why `valueReturns` is not
+            // reset per attempt.
+            //
+            // The no-improvement stop — if NOTHING moved between this attempt and the previous one, the
+            // writer has nothing more to give on this rubric and a third $0.166 draft would buy a fourth
+            // identical verdict.
+            //
+            // `"flat"` ONLY. A regression (`"down"`) is not a stall and is not treated as one: the previous
+            // attempt's axes are recorded on EVERY judged attempt, including attempts that went back to `05`
+            // for a reason that had nothing to do with value, so a `keepable` attempt returned by `08b`'s
+            // visual QA and re-judged `below-bar` would otherwise be read as "the writer is stalled" and
+            // ship with a value return still unspent and the writer never once shown a value fix. A
+            // regression spends a return, bounded by `VALUE_MAX_RETURNS` and by `isFinalAttempt` like every
+            // other one.
+            const stalled = previousAxes !== undefined && axesMovement(previousAxes, judgedValue.axes) === "flat";
+            if (!isFinalAttempt && valueReturns < VALUE_MAX_RETURNS && !stalled) {
+              // Row 4 — the only path in this step that returns work, and it is unreachable on the final
+              // attempt by construction.
+              valueReturns += 1;
+              valueSteer = valueSteerFor(judgedValue);
+              lastSelfCheckReason = valueFailureReason(judgedValue);
+              continue;
+            }
+            // Rows 5 and 6 — SHIP MARKED. The axes and the judge's named fixes ride the `09a` payload, so
+            // the reviewer sees exactly why rather than being told a number.
+            valueVerdictForAttempt = {
+              status: "below-bar",
+              stage: "judge",
+              returns: valueReturns,
+              ...judgedFields,
+              reason: stalled
+                ? `${valueFailureReason(judgedValue)}; no axis improved on the previous attempt, so the next draft was not bought`
+                : valueReturns >= VALUE_MAX_RETURNS && !isFinalAttempt
+                  ? `${valueFailureReason(judgedValue)}; this run had already spent its ${VALUE_MAX_RETURNS} value returns`
+                  : `${valueFailureReason(judgedValue)} on the final attempt`,
+            };
+          } else if (valueFloorRefusal !== undefined) {
+            // Row 2 — the FREE floor refused on the final attempt. The judged axes still travel (they cost
+            // nothing extra and the reviewer wants both readings), but the stage and the reason name the
+            // mechanical finding, because "below the bar because a regex found lifted prose" and "below the
+            // bar because a judge could not find a position" are two different notes for a human.
+            valueVerdictForAttempt = {
+              status: "below-bar",
+              stage: valueFloorRefusal.stage,
+              returns: valueReturns,
+              ...judgedFields,
+              reason: valueFloorRefusal.reason,
+            };
+          } else {
+            // Rows 8 and 9 — above the bar.
+            valueVerdictForAttempt = { status: "keepable", stage: "judge", returns: valueReturns, ...judgedFields };
+          }
+        }
+      } else if (valueFloorRefusal !== undefined) {
+        // Past the hard max AND the free floor refused on the final attempt: the mechanical reason is the
+        // one there is, and it is the more specific of the two anyway.
+        valueVerdictForAttempt = {
+          status: "below-bar",
+          stage: valueFloorRefusal.stage,
+          returns: valueReturns,
+          rubricVersion: VALUE_RUBRIC_VERSION,
+          reason: valueFloorRefusal.reason,
+          ...(leadClaim !== undefined ? { leadClaim } : {}),
+        };
+      }
+
+      // ONE ledger warn per degraded delivery, keyed `${runId}__value-${status}-r${revision}` so a RESUME
+      // writes one row rather than a second one — `languageDegraded`'s key scheme exactly. The marker is
+      // attempt-scoped and was reset at the top of this attempt, so an attempt that answered the judge's
+      // fixes never ships reported as degraded.
+      if (valueVerdictForAttempt !== undefined && valueVerdictForAttempt.status !== "keepable") {
+        try {
+          await tools["ledger.appendEvent"]?.execute(
+            {
+              runId: wf.runId,
+              ...valueDegradedEvent(wf.runId, revision, valueVerdictForAttempt.status, valueVerdictForAttempt.reason ?? "no reason recorded"),
+            },
+            { ctx },
+          );
+        } catch (error) {
+          console.error(`${valueStepId}: could not record the value-${valueVerdictForAttempt.status} warn`, error);
+        }
+      } else if (valueVerdictForAttempt !== undefined && valueVerdictForAttempt.advisoryAxes !== undefined) {
+        // Row 8 — a PASS that only passed because an axis was relaxed for thin grounding is recorded where
+        // a reviewer will see it, on the ledger as well as on the gate payload. Same posture as
+        // `relevanceThinGroundingEvent`: the post ships, and the reason the usual bar could not be applied
+        // to this client is a sentence they can act on.
+        try {
+          await tools["ledger.appendEvent"]?.execute(
+            {
+              runId: wf.runId,
+              eventId: `${wf.runId}__value-keepable-r${revision}`,
+              level: "warn",
+              message: `this post cleared the value bar with ${valueVerdictForAttempt.advisoryAxes.join(", ")} recorded but not scored: ${(valueVerdictForAttempt.notes ?? []).join("; ")}`,
+            },
+            { ctx },
+          );
+        } catch (error) {
+          console.error(`${valueStepId}: could not record the value-relaxed warn`, error);
+        }
+      }
+
       // ── 07f: the native editor, two rounds, then DELIVER (Phase 4, RFC-15 §6) ──
       //
-      // ~$0.014/attempt on non-English runs only: `gemini-2.5-pro` at $1.25/$10 per 1M, ~6.0k in (rubric 1.5k
+      // ~$0.018/attempt on non-English runs only: `gemini-2.5-pro` at $1.25/$10 per 1M, ~8.6k in (rubric 4.1k
       // + register card 0.45k + 4 few-shot posts 2.0k + the draft 1.7k + `gate.nativeLanguage`'s soft tells
       // 0.2k + scaffolding 0.15k) and ~0.65k out (up to 8 corrections at ~70 tokens each plus the verdict).
+      // The rubric line was 1.5k here and in three other comments until Phase 5 MEASURED the file:
+      // `instagram-native-editor@1` is 13,109 characters and `@2` is 16,573, so the old figure under-counted
+      // by 1,777 tokens a call and had done since Phase 4 shipped. `run-budget.ts`'s `nativeJudge` block
+      // carries the full re-derivation; this comment cites it rather than a number the code stopped using.
       // It is the CHEAPEST non-premium row in the catalog rated `multilingual-strong` + `rtlSupport: "strong"`
       // (`gemini-3.1-pro-preview` also qualifies, at $2/$12); the two Opus rows qualify and are banned. It replaces a
       // $0.0055 Haiku call rated `basic` on BOTH dimensions — +$0.0085/attempt to stop asking a basic model
@@ -6669,7 +7242,6 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         const judgeStepId = rev(`${LANGUAGE_FLUENCY_STEP_ID}-attempt-${attempt}`);
         const registerCard = languageBrief !== undefined ? renderRegisterCard(languageBrief.register, languageBrief.target) : undefined;
         const judgeFewShotPosts = languageBrief !== undefined ? judgeFewShot(languageBrief).map((p) => p.text) : [];
-        const isFinalAttempt = attempt === maxAttempts;
         /** Past the hard max the judge is NOT skipped — it degrades to the Haiku tier with the rubric and no few-shot, round 1 only. */
         const cheapestPath = meter.posture === "cheapest-path";
 
@@ -7701,6 +8273,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // Phase 4 — this attempt's native-editor verdict travels with the attempt that WON. Attempt-scoped, so
         // an earlier attempt's `degraded` never rides along with a later attempt that came back clean.
         finalLanguage = languageVerdict;
+        // Phase 5 — and the same rule: the value verdict that ships is the one the WINNING attempt earned.
+        finalValue = valueVerdictForAttempt;
         finalInterest = floor;
         finalInterestRelayout = interestRelayout;
         finalSkeleton = skeletonVerdict;
@@ -7757,6 +8331,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       finalContrastFacts = preChecks.contrastFacts;
       finalRelevance = attemptRelevance;
       finalLanguage = languageVerdict;
+      finalValue = valueVerdictForAttempt;
       finalInterest = floor;
       finalInterestRelayout = interestRelayout;
       finalSkeleton = skeletonVerdict;
@@ -7769,6 +8344,217 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           `step 07's self-check never passed after ${maxAttempts} attempt(s) (initial + ${maxAttempts - 1} return(s) to step 05${maxAttempts < MAX_SELF_CHECK_ATTEMPTS ? ", the run budget plan allowed one return instead of two" : ""}) — last reason: ${lastSelfCheckReason}`,
         );
       }
+      // ── 08c*: THE WHOLE POST (Phase 5, RFC-18 §6) ──
+      //
+      // Four steps, ONCE PER REVISION, and every one of them runs AFTER THE ATTEMPT LOOP HAS BROKEN. That
+      // placement is the cost argument and the correctness argument at once: alt text written for a slide a
+      // redraft is about to throw away is money burned describing a picture nobody will ever see, and none
+      // of these fields is an input to any gate inside the loop. Authoring the same three fields at `05`
+      // would cost ~+520 output tokens on EVERY attempt (~$0.023 a run); one Flash call here costs $0.003.
+      //
+      // FAIL-OPEN, WHOLE. Every field is additive. A packager that does not complete leaves
+      // `post.status: "absent"`, writes one ledger warn, notes it on the gate payload, and the carousel
+      // ships exactly as it does today. Nothing in this family throws, and nothing in it can produce a
+      // hold: the run at this point already has an approved, gated, rendered carousel.
+      let post: DraftResult["post"];
+      {
+        /** The shipped slides, as the package family reads them: the number, the headline alt text may not restate, and the `sourceRef` that traces to a card. */
+        const packagedSlides = finalCopy.slides.map((s) => ({ n: s.n, headline: s.headline, sourceRef: s.sourceRef }));
+        const registerCard = languageBrief !== undefined ? renderRegisterCard(languageBrief.register, languageBrief.target) : undefined;
+        /**
+         * The script the package's prose is checked against — `07e2`'s own constraint, re-derived here
+         * because the attempt loop's copy of it is block-scoped to an attempt that has already ended.
+         *
+         * `gate.nativeLanguage` re-validates the pattern inside the tool and a caller that cannot produce
+         * the literal `\p{Script=Xxxx}` form must not call it at all, so the usability test is repeated
+         * rather than assumed: `SCRIPT_TABLE`'s Japanese and Korean rows are multi-script ALTERNATIONS and
+         * get no gate rather than a guessed pattern.
+         */
+        const packageScript = targetLanguage !== undefined ? resolveExpectedScript(targetLanguage) : undefined;
+        const packageScriptPattern =
+          packageScript !== undefined && /^\\p\{Script=[A-Za-z]+\}$/.test(packageScript.test.source) ? packageScript.test.source : undefined;
+        const packageCheckInput = {
+          slides: packagedSlides,
+          coreTerms: brief.coreTerms,
+          ...(languageBrief !== undefined ? { allowedLatinTerms: languageBrief.terms.allowedLatinTerms } : {}),
+          ...(targetLanguage !== undefined ? { targetLanguage } : {}),
+          ...(packageScript !== undefined && packageScriptPattern !== undefined
+            ? { scriptName: packageScript.name, scriptPattern: packageScriptPattern }
+            : {}),
+          ...(languageBrief !== undefined ? { forbiddenTransliterations: languageBrief.terms.forbiddenTransliterations } : {}),
+        };
+        const packagerInput = {
+          clientBrief: briefForPrompt(brief),
+          caption: finalCopy.caption,
+          slides: finalCopy.slides.map((s) => ({ n: s.n, headline: s.headline, body: s.body })),
+          coreTerms: brief.coreTerms,
+          industries: brief.icp.industries,
+          offers: brief.offers.map((o) => o.name),
+          factCards: promptFacts.map((c) => ({ claim: c.claim, source: c.source, date: c.date })),
+          ...(targetLanguage !== undefined ? { targetLanguage } : {}),
+          ...(registerCard !== undefined ? { registerCard } : {}),
+          ...(languageBrief !== undefined ? { allowedLatinTerms: languageBrief.terms.allowedLatinTerms } : {}),
+        };
+
+        const packagerAgent = new InstagramPostPackagerAgent({ router: options.router, tools, promptStore: options.promptStore });
+        const packageStepId = rev("08c-package-post");
+        const firstExec = await wf.step.agent(packageStepId, packagerAgent, packagerInput);
+        spend(packageStepId, firstExec.totalCostUsd, STEP_COST_ESTIMATES_USD.postPackage);
+        /** The reason the post ships without its package, when it does. */
+        let packageProblem: string | undefined =
+          firstExec.status === "completed" && firstExec.finalOutput ? undefined : `the post packager did not complete (${firstExec.status})`;
+        let pkg: PostPackage | undefined = firstExec.status === "completed" ? (firstExec.finalOutput ?? undefined) : undefined;
+
+        // ── 08c1: the free checks, and ONE re-ask ──
+        //
+        // All free, all `content_fail` -> one re-ask under a DISTINCT step id. Distinct because
+        // `step.agent` REPLAYS a checkpointed `content_fail`, so a re-call under the same id returns the
+        // first failure without ever touching the model (`language-gate.ts:565-572`).
+        if (pkg !== undefined) {
+          const drafted = pkg;
+          const firstCheck = await wf.step.code(rev("08c1-package-checks"), () => checkPostPackage(tools, ctx, { ...packageCheckInput, pkg: drafted }));
+          if (!firstCheck.ok) {
+            // `rev("...-retry")`, NOT `${rev("...")}-retry`. `rev` appends the revision suffix, so building
+            // the id the other way round yields `08c-package-post-r1-retry` on a revise round while its own
+            // sibling one line down is `08c1-package-checks-retry-r1` and `language-gate.ts` puts the
+            // retry suffix before the revision everywhere. The revision suffix is always LAST, which is
+            // also the only spelling `generate_engine_stages.py` will see a family in after merge.
+            const retryId = rev("08c-package-post-retry");
+            const retryExec = await wf.step.agent(retryId, packagerAgent, { ...packagerInput, previousAttemptProblem: firstCheck.reason });
+            spend(retryId, retryExec.totalCostUsd, STEP_COST_ESTIMATES_USD.postPackage);
+            const retried: PostPackage | undefined = retryExec.status === "completed" ? (retryExec.finalOutput ?? undefined) : undefined;
+            const secondCheck =
+              retried === undefined
+                ? { ok: false as const, reason: `the post packager's one re-ask did not complete (${retryExec.status})` }
+                : await wf.step.code(rev("08c1-package-checks-retry"), () => checkPostPackage(tools, ctx, { ...packageCheckInput, pkg: retried }));
+            if (secondCheck.ok && retried !== undefined) {
+              pkg = retried;
+            } else {
+              // Ship the carousel without the package rather than send an approved, rendered post back for
+              // a hashtag. §6.1: there is no state in which the whole post costs us the post.
+              pkg = undefined;
+              packageProblem = `the post package failed its free checks twice (${firstCheck.reason}; then ${secondCheck.ok ? "it passed on the re-ask but the re-ask is gone" : secondCheck.reason})`;
+            }
+          }
+        }
+
+        // ── 08c2: one native round over the PACKAGE's prose (non-English only) ──
+        //
+        // The owner's binding rule is that every prose field Phase 5 adds passes Phase 4's native judge.
+        // This honours it at two thirds of a full judge round: `runNativeEditor` unchanged, and WITHOUT the
+        // few-shot exemplars — those are the post's VOICE, and alt text and a sources line are utility
+        // prose. One round, no round 2, no redraft: corrections apply or are dropped by the patcher's four
+        // existing refusal rules, and the package ships either way.
+        let packageLanguage: NonNullable<DraftResult["post"]>["language"];
+        if (pkg !== undefined && targetLanguage !== undefined) {
+          if (meter.posture === "cheapest-path") {
+            packageLanguage = {
+              status: "unverified",
+              correctionsProposed: 0,
+              correctionsApplied: 0,
+              reason: `past the run's hard max, so the package's ${targetLanguage} was never judged`,
+            };
+          } else {
+            const nativeRoundId = rev("08c2-package-native-round");
+            const round = await runNativeEditor(
+              wf,
+              { tools, promptStore: options.promptStore, router: options.router },
+              {
+                language: targetLanguage,
+                ...(packageScript !== undefined ? { script: packageScript.name } : {}),
+                ...(registerCard !== undefined ? { registerCard } : {}),
+                fields: packageLanguageGateFields(pkg),
+              },
+              nativeRoundId,
+            );
+            spend(nativeRoundId, round.costUsd, round.calls * STEP_COST_ESTIMATES_USD.packageNativeJudge);
+            if (round.status === "error") {
+              packageLanguage = { status: "unverified", correctionsProposed: 0, correctionsApplied: 0, reason: round.error ?? "the native editor could not be reached" };
+            } else if (round.corrections.length === 0) {
+              packageLanguage = { status: "verified", correctionsProposed: 0, correctionsApplied: 0 };
+            } else {
+              const patched = await applyPackageNativeCorrections(pkg, round.corrections, {
+                checkPackage: (candidate) => checkPostPackage(tools, ctx, { ...packageCheckInput, pkg: candidate }),
+                language: targetLanguage,
+              });
+              const applied = patched.discardReason === undefined ? patched.applied : 0;
+              if (applied > 0) pkg = patched.pkg;
+              // A round that proposed corrections and landed NONE of them is `unverified`, never `verified`.
+              //
+              // Unlike the carousel's `07e2` two rounds up, this round has no round 2: nothing re-reads the
+              // prose after the patcher runs. So `applied === 0` here does not mean "the judge looked again
+              // and was happy" — it means the judge's entire opinion was dropped by the patcher's refusal
+              // rules and the shipping text is precisely the text it objected to. Calling that `verified`
+              // reports a total failure to apply as a clean bill of health, and because line 8490 keys
+              // `post.status` off `unverified`, the honest value is also the one that marks the post
+              // `partial` and puts the reason where a reviewer at `09a` reads it.
+              //
+              // This is the state a mis-specified judge vocabulary produces on EVERY run rather than
+              // rarely: `instagram-native-editor@2` exists because `@1` gave a package round no legal
+              // target and every correction it emitted was dropped as cross-context. Under the old
+              // ternary that failure mode was invisible in prep telemetry — a $0.012 step reporting
+              // `verified` forever. `correctionsProposed > 0 && correctionsApplied === 0` is the shape
+              // to watch.
+              packageLanguage = {
+                status: applied > 0 ? "corrected" : "unverified",
+                correctionsProposed: round.corrections.length,
+                correctionsApplied: applied,
+                ...(applied === 0
+                  ? {
+                      reason:
+                        patched.discardReason !== undefined
+                          ? `the native ${targetLanguage} editor proposed ${round.corrections.length} correction(s) to the package and the whole patch was discarded because ${patched.discardReason}; the package ships as first written`
+                          : `the native ${targetLanguage} editor proposed ${round.corrections.length} correction(s) to the package and the patcher applied none of them; the package ships as first written and a ${targetLanguage} reader should read the hashtags, alt text and first comment before this publishes`,
+                    }
+                  : {}),
+              };
+            }
+          }
+        }
+
+        // ── 08c3: the timing note — $0, no model ──
+        const timing = await wf.step.code(rev("08c3-timing-note"), () => buildTimingNote(research.facts));
+
+        if (pkg === undefined) {
+          post = {
+            hashtags: [],
+            hashtagPlacement: resolveHashtagPlacement(languageBrief?.register),
+            altText: [],
+            firstComment: { text: "", sources: buildFirstCommentSources(packagedSlides, research.facts) },
+            timing,
+            status: "absent",
+            reason: packageProblem ?? "the post package is absent",
+          };
+          try {
+            await tools["ledger.appendEvent"]?.execute(
+              {
+                runId: wf.runId,
+                eventId: `${wf.runId}__post-package-absent-r${revision}`,
+                level: "warn",
+                message: `this post shipped without its hashtags, alt text and first comment: ${post.reason}`,
+              },
+              { ctx },
+            );
+          } catch (error) {
+            console.error(`${packageStepId}: could not record the package-absent warn`, error);
+          }
+        } else {
+          post = {
+            hashtags: [...pkg.hashtags],
+            hashtagPlacement: resolveHashtagPlacement(languageBrief?.register),
+            altText: pkg.altText.map((a) => ({ n: a.n, alt: a.alt })),
+            // The model wrote the PROSE. The sources are built in code from the fact cards the shipped
+            // slides actually cite — the model's output is not a parameter to `buildFirstCommentSources`,
+            // which is what makes an invented URL unrepresentable rather than merely forbidden.
+            firstComment: { text: pkg.firstCommentText, sources: buildFirstCommentSources(packagedSlides, research.facts) },
+            timing,
+            ...(packageLanguage !== undefined ? { language: packageLanguage } : {}),
+            status: packageLanguage?.status === "unverified" ? "partial" : "complete",
+            ...(packageLanguage?.status === "unverified" ? { reason: packageLanguage.reason } : {}),
+          };
+        }
+      }
+
       // IGSTYLE-10, §10e — reconstructed from the SAME pure per-slide
       // decisions `assembleSlidesData` itself used to build `finalSlidesData`
       // (`buildVariationPlan`'s own doc comment), so the report can never
@@ -7800,6 +8586,17 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // run, including the degraded and unverified ones, because that is the whole point: a flagged
         // delivery is a decision the human at 09a can make, and a hold is not.
         ...(finalLanguage !== undefined ? { language: finalLanguage } : {}),
+        // Phase 5 (RFC-18 §5.8) — the value verdict of the attempt that WON, mirroring `language` above and
+        // for the same reason: attempt-scoped, so an earlier attempt's `below-bar` never rides along with a
+        // later attempt that came back keepable. Present on every run that reached `07j`, CLEAN ONES
+        // INCLUDED — the per-attempt axes are what a later phase reads to find out whether this bet paid,
+        // which is the gap RFC-15 §9.4 named about its own phase and this closes for Phase 5. Absent only
+        // when no attempt ever got as far as the value gate at all.
+        ...(finalValue !== undefined ? { value: finalValue } : {}),
+        // Phase 5 (RFC-18 §6.6) - the whole post. Present on every delivering run, `status: "absent"`
+        // included, because a reviewer has to be able to tell "the packager wrote nothing" from "nobody
+        // ever asked it" - the same rule `relevance` and `language` follow one field up.
+        ...(post !== undefined ? { post } : {}),
         ...(angleDecision !== undefined ? { angleDecision } : {}),
         // Phase 4 (RFC-16 §1.7) — non-optional for the same reason `interest`
         // and `skeleton` are: the verdict is computed on every revision at
@@ -7860,7 +8657,27 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // count are what the next phase reads to find out whether RFC-15 section 9.4's bet - that the register
       // card and the in-place corrections remove one redraft in four - actually paid.
       ...(draft.language !== undefined ? { language: draft.language } : {}),
+      // Phase 5 (RFC-18 §5.8) — the value verdict travels the SAME single road as the language verdict:
+      // this one function is what the `09a` gate payload and the `09b` deliverable both call, so there is
+      // no state in which a reviewer sees a verdict the persisted record does not carry, or the reverse.
+      // On a `below-bar` delivery this is where the axes and the judge's NAMED FIXES reach the human — the
+      // difference between telling somebody a post is weak and showing them the four sentences that would
+      // fix it.
+      ...(draft.value !== undefined ? { value: draft.value } : {}),
     });
+
+    /**
+     * Phase 5 (RFC-18 §6.6) — THE WHOLE POST, at the TOP LEVEL of both the `09a` gate payload and the `09b`
+     * deliverable, NOT inside `grounding`.
+     *
+     * `value` and `language` ride `groundingFor` because §5.8 routes verdicts about the draft that way. The
+     * post is not a verdict; it is part of the deliverable, and RFC-18 §6.6 and the cross-repo obligation in
+     * §12 both name the path the portal will read as `deliverable.post`. The portal PR is written from the
+     * RFC in a different repo, so the RFC is the contract and the code matches it: a `post` hidden one level
+     * down would have the portal find nothing and show no hashtags, which is the exact outcome §12 exists to
+     * prevent. One helper so the two call sites cannot drift.
+     */
+    const postFor = (draft: DraftResult) => (draft.post !== undefined ? { post: draft.post } : {});
 
     /**
      * Phase 1, items I and J — what the evidence gathering could and could not
@@ -7943,6 +8760,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // relevance verdict, so the reviewer knows whether "reads as this
           // client's" was judged and how.
           grounding: groundingFor(draft),
+          // Phase 5 (RFC-18 §6.6) — the whole post, so the reviewer approves THE POST — its hashtags, its
+          // alt text, its first comment and its timing note — rather than the pixels.
+          ...postFor(draft),
           // Phase 0, item E — the subject decision: source, mode, the stories
           // NOT chosen and the rule that decided, so the reviewer sees the
           // road not taken rather than only the destination.
@@ -8568,6 +9388,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             // topic decision and spend the reviewer saw on the gate payload,
             // on the persisted record.
             grounding: groundingFor(review.output),
+            // Phase 5 (RFC-18 §6.6, §12) — the whole post on the PERSISTED record, at the path the portal
+            // reads: `deliverable.post`. Identical object to the one the reviewer approved at `09a`.
+            ...postFor(review.output),
             topicDecision: topicDecisionForGate(topicClaim),
             // Phase 1 (items I/J/K): the angle the shipped post argues and
             // what the evidence gathering could read, on the persisted record.
@@ -8782,6 +9605,18 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // by the next run. Absent on English runs, where the loop never ran.
           ...(review.output.language !== undefined
             ? { language: { rounds: review.output.language.rounds, status: review.output.language.status, axes: { ...review.output.language.axes } } }
+            : {}),
+          // Phase 5's half of the SAME measurement channel, and for the same reason the line above exists:
+          // `RunBudgetRunRecord.value` was defined and parsed (`readValueRecord`) but nothing wrote it, so
+          // the phase's central bet — that a judge with a rubric refuses posts a relevance score does not —
+          // was as unfalsifiable by the next run as Phase 4's was before RFC-15 §9.4 was closed.
+          //
+          // Read off `review.output` rather than the loop's `finalValue` so it describes the draft that
+          // actually SHIPPED, exactly as `language` above does. `axes` is optional upstream and required
+          // here: absent on an unjudged delivery or a free-floor refusal that never reached `07j`, and
+          // flattened to `{}` rather than faked, because a reader counts only the runs that carry it.
+          ...(review.output.value !== undefined
+            ? { value: { status: review.output.value.status, axes: { ...(review.output.value.axes ?? {}) }, returns: review.output.value.returns } }
             : {}),
         });
         // ONE call carrying every belief key this run learned something about,

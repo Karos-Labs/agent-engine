@@ -17,6 +17,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
+import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 
 const base = { clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
@@ -26,7 +27,7 @@ function happyRouter() {
     finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
     finalTurn(goodCopyOutput()),
     finalTurn(goodImageVettingOutput()),
-    finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+    finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
   ]);
 }
 
@@ -98,7 +99,9 @@ describe("in-place review edits (Phase 2)", () => {
     // And the deltas became durable feedback for future drafts.
     const feedback = await env.store.listJson<{ note: string }>("acme", ["memory", "feedback"]);
     const editNote = feedback.map((f) => f.data.note).find((n) => n.includes("Reviewer edited before approving"));
-    expect(editNote).toContain(`headline: "Finding #2" -> "Reviewer's own headline"`);
+    // The ORIGINAL headline comes from the fixture, not from a literal: Phase 5
+    // rewrote `goodCopyOutput()` when `07i` began measuring it.
+    expect(editNote).toContain(`headline: "${goodCopyOutput().slides[1]!.headline}" -> "Reviewer's own headline"`);
     expect(editNote).toContain("font size -> s");
   }, 60000);
 
@@ -160,7 +163,7 @@ describe("in-place review edits (Phase 2)", () => {
     // Caption is post text, not pixels — it applies. Slide text stays the
     // ORIGINAL so text never disagrees with the delivered PNGs.
     expect(deliverable.caption).toBe("Edited caption survives");
-    expect(deliverable.slides.find((s) => s.n === 1)!.fields["headline"]).toBe("Finding #1");
+    expect(deliverable.slides.find((s) => s.n === 1)!.fields["headline"]).toBe(goodCopyOutput().slides[0]!.headline);
 
     const feedback = await env.store.listJson<{ note: string }>("acme", ["memory", "feedback"]);
     const editNote = feedback.map((f) => f.data.note).find((n) => n.includes("Reviewer edited before approving"));

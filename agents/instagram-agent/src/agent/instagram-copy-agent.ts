@@ -208,6 +208,62 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyOutput> {
     // and only on runs with a resolved `targetLanguage` — the field is
     // conditional, the prompt section is not, and charging an English run for
     // a payload it does not carry would pull an image lever for nothing.
-    skillRef: "instagram-copy@16",
+    //
+    // v17 (Phase 5, RFC-18 §3, 2026-09-13): the guide is rewritten around
+    // VALUE. §2 makes the caption three jobs in one string (a hook of at most
+    // twelve words carrying the post's position, a body that pays off the
+    // cover's tension, and the ask as the final paragraph) rather than "two to
+    // four short sentences". §3 makes the slide count follow the declared
+    // payload instead of a configured constant. §5 is replaced: one claim a
+    // slide, and a body whose second half is a CONSEQUENCE for the reader
+    // rather than a restatement. §12 gains `payloadKind`. §16 gains
+    // `valueSteer`, a fifth typed steer that is a rewrite instruction rather
+    // than an anchored span, plus the sentence that stops the classic
+    // multi-attempt regression: text quoted under KEEP AS WRITTEN has already
+    // been accepted and is reproduced unchanged. §24-§27 are new: the payload
+    // and the named specific (carrying `gate.lintPost`'s banned-CTA bank
+    // verbatim, as wordings that fail the draft on contact), taking a
+    // position, rhythm, and the ban on reproducing a source's prose. The
+    // ground-truth discipline — reference EXECUTION transfers, reference
+    // SUBJECT MATTER never does — is written into BOTH §15 and §24 so an
+    // editor cannot drop it from one and leave the file looking complete, and
+    // every worked example is set in a neutral trade for the same reason.
+    // v16 stays frozen as the Phase 4 baseline.
+    //
+    // v17 also removes the last em dashes and double hyphens from the
+    // INHERITED sections (seventeen and nine of them, including §5's own
+    // editor's note, which was an HTML comment and therefore made of them).
+    // The file now contains none of the three characters anywhere, which is
+    // what §5's note has asked for since v3 and what `copy-prompt-v17.test.ts`
+    // asserts. A prompt that bans a character while using it teaches the model
+    // to ignore the ban, and prep run pubsub-21066191524607951 failed craft
+    // hygiene on exactly that character twice in three attempts.
+    //
+    // Cost, BOTH halves stated separately, and MEASURED rather than
+    // estimated. Input: +16,301 prompt characters (45,805 → 62,106, counted
+    // with line endings normalised, since a CRLF checkout would otherwise
+    // inflate the figure by one byte a line and make the same file price
+    // differently on two machines) ≈ +4,075 tokens ≈ +$0.0122 per attempt,
+    // paid on English runs too because the prompt file is one file. The same
+    // measurement is made independently in `run-budget.ts`'s `copyAttempt`
+    // block, from the same two files, and the two must agree.
+    // Output: `payloadKind` is one enum value, ≈ +10
+    // tokens ≈ +$0.00015 — and nothing else grows, deliberately: §5's so-what
+    // lives inside `body` and the caption's three jobs are structure inside
+    // the one `caption` string, so neither is a per-slide field. RFC-18 §7.1
+    // estimated +6,000 characters and priced `copyAttempt` at 0.166; the file
+    // is larger than the estimate, so `STEP_COST_ESTIMATES_USD.copyAttempt` is
+    // re-priced 0.161 → 0.174, and the prompt's own version ledger states the
+    // same measured numbers. Pricing a bump against the estimate rather than
+    // against the file is the @14→@15 error in the other direction.
+    //
+    // NOTE FOR THE INTEGRATOR, 2026-09-13: `run-budget.ts` carries this same
+    // argument in full — it has a comment section headed "WHY THIS IS 0.174
+    // AND NOT RFC-18 §7.1's 0.166" — but the CONSTANT it guards was still
+    // `copyAttempt: 0.166` when this package was written, so the file
+    // currently disagrees with its own comment. The pricing key is not this
+    // package's to edit; the correction is reported as a cross-file
+    // obligation rather than made here.
+    skillRef: "instagram-copy@17",
   };
 }

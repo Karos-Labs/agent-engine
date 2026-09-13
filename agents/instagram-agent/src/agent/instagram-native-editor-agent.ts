@@ -68,6 +68,23 @@ export class InstagramNativeEditorAgent extends BaseAgent<NativeEditorVerdict> {
       model: "gemini-2.5-pro",
       contentLanguageSensitive: false,
     }),
-    skillRef: "instagram-native-editor@1",
+    // ── @1 → @2 (Phase 5, RFC-18 §6.5). Input +3,464 chars ≈ +866 tokens; OUTPUT delta ZERO. ──
+    //
+    // The version ledger this checklist's step 4 mandates, input and output stated separately because
+    // @14→@15 on `instagram-copy` recorded that an input-only re-price under-counts by ~9/10 — here the
+    // ratio runs the other way and the output really is unchanged: `NativeEditorVerdictSchema` gains no
+    // field, the 12-correction cap does not move, and the package round's own cap of 6 is below it.
+    // At $1.25/1M in, +866 tokens is +$0.00108 a call.
+    //
+    // WHAT @2 ADDS: the post-package round's target vocabulary. `NativeCorrectionSchema.target` already
+    // admitted `comment` and `alt:N`, `resolvePackageField` already resolved them, and
+    // `NATIVE_EDITOR_RUBRIC_VERSION` was already stamped "2" — for a prompt change that was never made.
+    // @1 documented only `"caption"`/`"slide:N"`, so on `08c2` this judge had no legal target to write
+    // and `resolveField`'s context guard correctly dropped everything it returned. A step billed at
+    // `packageNativeJudge` that structurally could not apply a correction.
+    //
+    // Both prices this prompt feeds are re-derived in `run-budget.ts` in this commit. Correcting the
+    // delta also surfaced a standing error in both derivations — see `nativeJudge`'s comment there.
+    skillRef: "instagram-native-editor@2",
   };
 }

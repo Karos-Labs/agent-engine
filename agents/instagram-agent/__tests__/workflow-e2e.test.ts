@@ -21,11 +21,12 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
+import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 import { syntheticPhotograph } from "./synthetic-photograph.js";
 import { SKELETON_BELIEF_KEY, readSkeletonHistory, skeletonSignature } from "../src/workflow/skeleton-memory.js";
 import { CUSTOM_ARCHETYPE_BELIEF_KEY } from "../src/workflow/custom-archetype-memory.js";
-import { RUN_BUDGET_BELIEF_KEY } from "../src/workflow/run-budget.js";
+import { RUN_BUDGET_BELIEF_KEY, readBudgetHistory } from "../src/workflow/run-budget.js";
 import { NATIVE_EDITOR_RUBRIC_VERSION, okAxes } from "../src/workflow/language-gate.js";
 
 const params = { runId: "instagram_run_1", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
@@ -180,6 +181,16 @@ const HAPPY_PATH_STEP_IDS = [
   // render is spent — present because this fixture's config declares no
   // render rules of its own.
   "07h-default-render-rules-attempt-1",
+  // Phase 5 (RFC-18 §2 and §4): the FREE half of the value gate, then the paid
+  // judge. `07i` and `07i2` are `wf.step.code` and cost nothing; `07i1` is the
+  // one deterministic ScrappyCoco re-read of the card the cover rests on, and
+  // it carries NO `-attempt-N` because it runs once per run. `07j` is the one
+  // Flash call. The ORDER these ran in is asserted by their own suite; this
+  // list is sorted and only pins that they ran at all.
+  "07i-value-signals-attempt-1",
+  "07i1-verify-lead-claim",
+  "07i2-numbers-in-facts-attempt-1",
+  "07j-value-judge-attempt-1",
   // Phase 2 (item P): the cross-run variety check, deliberately PRE-RENDER so
   // a repeated skeleton costs no Chromium launch at all. Passes and consumes
   // nothing here: this fixture seeds no skeleton history.
@@ -201,6 +212,12 @@ const HAPPY_PATH_STEP_IDS = [
   // grade composition/font-hierarchy/brand-asset-integration/colour-harmony.
   "08a2-visual-qa-pre-checks-attempt-1",
   "08b-visual-qa-attempt-1",
+  // Phase 5 (RFC-18 §6): the whole post, ONCE PER REVISION, after the attempt
+  // loop breaks. `08c2-package-native-round` is absent because this fixture is
+  // an English client, exactly as `07e2`/`07f` are absent above.
+  "08c-package-post",
+  "08c1-package-checks",
+  "08c3-timing-note",
   // Revision-scoped: `-r0` is the first review round. A `revise` decision
   // registers `-r1` after re-drafting.
   "09a-batch-review-r0",
@@ -220,7 +237,7 @@ function happyRouter() {
     finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
     finalTurn(goodCopyOutput()),
     finalTurn(goodImageVettingOutput()),
-    finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+    finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
   ]);
 }
 
@@ -272,7 +289,7 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     // scout runs on every run and the relevance judge on every attempt; Phase
     // 1 adds the angle proposal, once per revision). No brief turn: the
     // fixture seeds a fresh persisted brief, so `00b` resolves to `reuse`.
-    expect(router.complete).toHaveBeenCalledTimes(7);
+    expect(router.complete).toHaveBeenCalledTimes(9);
 
     const stepRecords = await durableStore.listSteps(params.runId);
     expect(stepRecords.map((s) => s.stepId).sort()).toEqual([...HAPPY_PATH_STEP_IDS].sort());
@@ -324,9 +341,9 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
       finalTurn({ native: true, axes: okAxes(), corrections: [], rubricVersion: NATIVE_EDITOR_RUBRIC_VERSION }),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: testTools(env),
@@ -468,7 +485,7 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     expect(second.status).toBe("completed");
     // scout + research + angle + copy + vet + relevance + QA: the resume replays
     // every checkpoint and spends no further model call.
-    expect(router.complete).toHaveBeenCalledTimes(7);
+    expect(router.complete).toHaveBeenCalledTimes(9);
 
     const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", "instagram_run_gate", "_"]);
     expect(deliverables.map((d) => d.id)).toEqual(["instagram-carousel"]);
@@ -574,6 +591,28 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     expect(history.entries[0]!.roles).toEqual(["cover", "interior", "interior", "interior", "interior", "closer"]);
     expect(history.entries[0]!.edited).toBe(false);
     expect(beliefs?.[RUN_BUDGET_BELIEF_KEY]).toBeDefined();
+
+    // ── Phase 5 (RFC-15 §9.4, closed for this phase) — the run-budget record's `value` field. ──
+    //
+    // `RunBudgetRunRecord.value` was defined and `readValueRecord` parsed it, and NOTHING WROTE IT: the
+    // `recordRunInHistory` call passed `language` and stopped. The per-run deliverable carried the same
+    // numbers, but nothing ever reads a deliverable BACK, so Phase 5's central bet — that a judge with a
+    // rubric refuses posts a relevance score does not — was as unfalsifiable by the next run as Phase 4's
+    // was before §9.4 was written. A unit test on the PARSER cannot see that; only a run can.
+    //
+    // English happy path, and `07j` runs in every language, so a clean verdict is expected here rather
+    // than merely tolerated.
+    const budgetHistory = readBudgetHistory(beliefs);
+    expect(budgetHistory.runs).toHaveLength(1);
+    const recorded = budgetHistory.runs[0]!;
+    expect(recorded.runId).toBe(runId);
+    expect(recorded.value).toBeDefined();
+    expect(recorded.value?.status).toBe("keepable");
+    expect(recorded.value?.returns).toBe(0);
+    // The axes are the payload, not the status: "keepable with four passes" and "keepable because the
+    // judge could not be reached" are the two readings this field has to keep apart, and an empty `axes`
+    // on a `keepable` row would be the second one wearing the first one's name.
+    expect(Object.keys(recorded.value?.axes ?? {}).sort()).toEqual(["action", "newFact", "payload", "position"]);
 
     // One operator-visible ledger row carries the ordered signature, so the
     // run trace answers the question without a beliefs read.
