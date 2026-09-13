@@ -9068,13 +9068,23 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // no" — which itself no longer bins it either.
       if (qaExec.status !== "completed") {
         const unjudged = `visual QA produced no usable verdict on attempt ${attempt}/${maxAttempts} (${qaExec.status})`;
-        if (!isFinalAttempt) {
-          // `returnToCopyWith`, not the bare `continue` this was: a redraft that is not told the judge went
-          // silent has nothing to change, and re-rolling the same draft against a flaky judge is the same
-          // guard-that-cannot-pass shape the palette gate had.
-          returnToCopyWith(unjudged);
-          continue;
-        }
+        // AN OUTAGE DOES NOT COST A DRAFTING ATTEMPT — ON ANY ATTEMPT (RFC-19 Mechanism C).
+        //
+        // This is the same exemption `07` gives `compliance-unverified` eight hundred lines above, in that
+        // branch's own words: a gate that could not RUN "is not a verdict about the copy at all", steering a
+        // redraft with it "asks the writer to fix a deployment", and falling through immediately "is also
+        // CHEAPER: it ends the loop at attempt 1 instead of burning attempts 1 and 2 on `copyAttempt` at
+        // $0.181 each". That comment already names THIS path as one it was modelled on; the code here did
+        // the opposite and re-drafted, which is the contradiction this line removes.
+        //
+        // It is the more expensive place to get it wrong, too, and by a wide margin: an abandoned attempt at
+        // `07` has only paid for copy, while an attempt abandoned HERE — after `08` — has already paid for
+        // copy, image sourcing, the vetting turn, any generative rescue and a full Chromium render, and the
+        // next attempt pays for every one of them again. A judge that went silent cannot be argued with by
+        // re-rolling the dice, and the pixels are already on disk.
+        //
+        // A judge that ANSWERED and refused is the opposite case and is untouched below: that is a verdict
+        // about this draft, and it still spends the next attempt on attempts 1..n-1.
         recordSelfCheckFinding({
           gate: "visual-qa",
           step: rev(`08b-visual-qa-attempt-${attempt}`),

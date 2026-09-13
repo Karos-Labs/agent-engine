@@ -140,9 +140,17 @@ describe("RFC-19: the workflow has exactly three WorkflowHeld sites, and each on
     // describes. A `>=` here let four be deleted before anything noticed, so this is pinned the way
     // `turns.ts`'s queues are: change the number only alongside the site you added or removed.
     //
-    // 16 = 12 bare `if (!isFinalAttempt)` + 4 compound `if (!isFinalAttempt && …)` (the `07`
+    // 15 = 11 bare `if (!isFinalAttempt)` + 4 compound `if (!isFinalAttempt && …)` (the `07`
     // `compliance-unverified` exemption among them).
+    //
+    // Was 16. The site REMOVED, deliberately and named here as this pin's own protocol requires: `08b`'s
+    // `qaExec.status !== "completed"` branch. That is a judge OUTAGE, not a verdict, and Mechanism C's rule
+    // is that an outage never costs a drafting attempt — the exemption `07` already grants
+    // `compliance-unverified` in its own compound guard above. Gating it on `isFinalAttempt` made attempts
+    // 1..n-1 re-draft against a judge that had gone silent, re-paying for copy, sourcing, vetting, any
+    // generative rescue and a full render each time. A judge that ANSWERED and refused is untouched and
+    // still holds its bare guard one branch below.
     const guards = source.match(/if \(!isFinalAttempt[ )]/g) ?? [];
-    expect(guards.length).toBe(16);
+    expect(guards.length).toBe(15);
   });
 });
