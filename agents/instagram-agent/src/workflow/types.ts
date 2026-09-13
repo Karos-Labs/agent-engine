@@ -6,6 +6,9 @@ import { SlideDeviceSchema } from "./slide-devices.js";
 // why (types.ts <- visual-qa-pre-checks.ts <- scene-brief.ts would otherwise
 // be a runtime cycle).
 import { VisualNeedFieldSchema } from "./scene-brief.js";
+// RFC-19 (Phase 6): the degrade marker a run carries when a QUALITY gate refused the attempt that shipped.
+// A TYPE-only import from a module that imports nothing at all, so it cannot create a cycle.
+import type { SelfCheckDegradeMarker } from "./self-check-degrade.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Style config + brand tokens (RFC-03 step 02 — "freeze the small files")
@@ -1073,4 +1076,34 @@ export interface InstagramAgentWorkflowResult {
    * measured numbers in the reason.
    */
   visualInterest?: { status: "degraded"; reason: string };
+  /**
+   * Phase 4 (RFC-15/16) — present only when the target language was NOT verified on the post that shipped:
+   * the native editor still flagged it after two rounds, it could not be judged at all, or (RFC-19 §4 item 4)
+   * the draft was in the wrong script entirely.
+   *
+   * The run COMPLETED and delivered, exactly as it does for `budget` and `visualInterest`. The `unverified`
+   * case is the one that matters most: it is the state the original geektime carousel shipped in, and what
+   * changed is that it now says so to a person who can still reject it.
+   *
+   * **Declared here late, and the gap is worth recording.** The workflow has emitted this field beside
+   * `visualInterest` since Phase 4, but the interface never listed it — so the one marker a reviewer most
+   * needs to read off the typed return was reachable only through a cast, and every test that wanted it read
+   * `deliverable.grounding.language` instead. The emit was right; the type was silent. Declaring it makes the
+   * two agree and lets RFC-19's wrong-script case assert the marker it sets.
+   */
+  language?: { status: "degraded"; reason: string };
+  /**
+   * RFC-19 (Phase 6) — present only when a QUALITY GATE refused the attempt that actually shipped: the
+   * slide self-check, craft hygiene, the script or conventions checks, the relevance judge, a default render
+   * rule, the palette gate, or visual QA.
+   *
+   * The run COMPLETED and delivered. The owner's rule is that a low score must produce a different attempt
+   * or a degraded delivery, never a dead run — so the gate still REFUSES (no bar moved), the attempt walks
+   * forward, and this marker carries which checks did not pass, in each gate's own words, with the step id
+   * that produced them.
+   *
+   * ABSENT, never empty, on a clean run. A marker attached unconditionally would be the "silently shipping a
+   * bad post" failure in reverse; `zero-held-quality.test.ts` asserts the absence as well as the presence.
+   */
+  selfCheck?: SelfCheckDegradeMarker;
 }

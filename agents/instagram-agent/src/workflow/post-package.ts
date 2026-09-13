@@ -679,11 +679,13 @@ export async function checkPostPackage(
 
   const lintTool = tools["gate.lintPost"];
   if (lintTool === undefined) {
-    // Unlike `checkCraftHygiene`, which throws: that gate runs inside the
-    // drafting loop on copy that must not ship unchecked, and its absence is
-    // a wiring bug. This one runs after the loop has already broken, on
-    // additive fields whose whole failure mode is "the post ships without
-    // them". Throwing here would turn a missing tool into a lost package.
+    // Unlike `checkCraftHygiene`, which throws on an UNREGISTERED tool (and
+    // only on that — since RFC-19 Mechanism C it no longer throws on an
+    // outage): that gate runs inside the drafting loop on copy that must not
+    // ship unchecked, and its absence is a wiring bug. This one runs after the
+    // loop has already broken, on additive fields whose whole failure mode is
+    // "the post ships without them". Throwing here would turn a missing tool
+    // into a lost package.
     return { ok: true };
   }
 
@@ -696,12 +698,23 @@ export async function checkPostPackage(
     { text: input.pkg.firstCommentText, parts: altTexts, platform: "instagram", checkAntiSlop: true, maxExclamationMarks: 0, bannedPhrases: [...HEBREW_BANNED_PHRASES] },
     { ctx },
   );
-  // A non-success outcome is the same "no opinion" as a missing tool, and for
-  // the same reason `checkCraftHygiene` — which DOES throw here — is the wrong
-  // precedent: that gate runs inside the drafting loop on copy that must not
-  // ship unchecked, so an outage there is a wiring failure worth stopping for.
-  // This one runs after the loop has already broken, on additive fields whose
-  // whole failure mode is "the post ships without them". A thrown
+  // A non-success outcome is the same "no opinion" as a missing tool: a gate
+  // that could not RUN is not a verdict on the text.
+  //
+  // This used to read "`checkCraftHygiene` — which DOES throw here — is the
+  // wrong precedent", and RFC-19 Mechanism C has since made that false. That
+  // gate now takes the SAME posture on the same event: a registered
+  // `gate.lintPost` returning a non-success outcome, or a `tooling_error`
+  // verdict, records a ledger warn and forms no opinion, on every attempt. The
+  // two are no longer opposites; this call site was simply the one that got it
+  // right first.
+  //
+  // What still differs is the OTHER branch, above: an UNREGISTERED tool is a
+  // throw in `checkCraftHygiene` and an `{ ok: true }` here, and that asymmetry
+  // is deliberate. A missing tool is a deploy defect either way, but `07b` runs
+  // inside the drafting loop on copy that must not ship unchecked, while `08c1`
+  // runs after the loop has already broken, on additive fields whose whole
+  // failure mode is "the post ships without them". A thrown
   // `WorkflowToolingFailure` out of `08c1` would take a run that already has an
   // approved, gated, rendered carousel and end it on a lint outage — the exact
   // state RFC-18 §6.1 says cannot exist ("there is no state in which the whole

@@ -21,6 +21,7 @@ import {
   scoreCandidate,
   topicDecisionForGate,
   topicDecisionSummary,
+  type BelowFloorWeighting,
 } from "../src/workflow/topic-selection.js";
 import type { InstagramTopicClaim } from "../src/workflow/types.js";
 import { goodTrendScoutOutput } from "./test-helpers.js";
@@ -28,8 +29,16 @@ import { goodTrendScoutOutput } from "./test-helpers.js";
 /**
  * `resolveTopicClaim` is the one place the subject precedence lives (RFC-13
  * §E): request > planned row (unless trend-jacking) > on-brand trend > real
- * headline > honest hold. Pure, so every rule is pinned here without a
- * workflow run.
+ * headline > the client's own declared industry. Pure, so every rule is pinned
+ * here without a workflow run.
+ *
+ * The last rung used to be an honest hold and is not one any more (RFC-19 §4
+ * item 16): a brand-fit floor refusing every scouted story is a QUALITY
+ * verdict about stories, and a quality verdict may not end a run. The floor
+ * itself is untouched — `belowFloor` records exactly what it refused — and the
+ * intake hold one step earlier (`WF:3286`, no row AND no request AND no
+ * declared industry) is deliberately still a hold, pinned by
+ * `topic-floor-breach.test.ts`.
  */
 
 const NO_HISTORY = { avoidTopics: [] as string[], recentExcerpts: [] as string[], scoutStatus: "ran" as const };
@@ -50,7 +59,6 @@ describe("resolveTopicClaim: a person's request stands", () => {
   it("keeps the requested topic and records every scouted story as outranked-by-request", () => {
     const strong = candidate({ brandFit: 5, interest: 5 });
     const result = resolveTopicClaim(requestedSeed, scoutWith(strong, goodTrendScoutOutput().candidates[1]!), "deep-value", NO_HISTORY);
-    if ("hold" in result) throw new Error(`unexpected hold: ${result.hold}`);
     expect(result.claim.topic).toBe("our new onboarding flow");
     expect(result.claim.source).toBe("requested");
     expect(result.releaseReservation).toBe(false);
@@ -68,7 +76,6 @@ describe("resolveTopicClaim: a planned catalog row", () => {
   it("is displaced by a 5/5 story only under trendJacking 'always', releasing the reservation and listing the row as outranked-by-trend", () => {
     const story = candidate({ topic: "the story of the week", brandFit: 5, interest: 5 });
     const result = resolveTopicClaim(reservedSeed, scoutWith(story, goodTrendScoutOutput().candidates[2]!), "deep-value", { ...NO_HISTORY, trendJacking: "always" });
-    if ("hold" in result) throw new Error(`unexpected hold: ${result.hold}`);
     expect(result.claim.source).toBe("trend");
     expect(result.claim.topic).toBe("the story of the week");
     expect(result.claim.trend).toBe(story);
@@ -83,7 +90,6 @@ describe("resolveTopicClaim: a planned catalog row", () => {
   it("stays when the best story scores exactly the planned row's worth (brand fit 4 × interest 3 = 12 is not > 12)", () => {
     const even = candidate({ brandFit: 4, interest: 3 });
     const result = resolveTopicClaim(reservedSeed, scoutWith(even), "deep-value", { ...NO_HISTORY, trendJacking: "always" });
-    if ("hold" in result) throw new Error(`unexpected hold: ${result.hold}`);
     expect(result.claim.source).toBe("reserved");
     expect(result.claim.reservationKey).toBe("run__topic");
     expect(result.releaseReservation).toBe(false);
@@ -95,7 +101,6 @@ describe("resolveTopicClaim: a planned catalog row", () => {
     const story = candidate({ brandFit: 5, interest: 5 });
     for (const trendJacking of [undefined, "fallback", "sometimes"]) {
       const result = resolveTopicClaim(reservedSeed, scoutWith(story), "deep-value", { ...NO_HISTORY, trendJacking });
-      if ("hold" in result) throw new Error(`unexpected hold: ${result.hold}`);
       expect(result.claim.source).toBe("reserved");
       expect(result.releaseReservation).toBe(false);
       expect(result.claim.alternatives![0]!.reason).toBe("outranked-by-catalog");
@@ -108,14 +113,12 @@ describe("resolveTopicClaim: a planned catalog row", () => {
     const recentExcerpts = ["automated weekly reporting replaces the Monday status meeting: teams that automated reporting reclaimed four hours a week"];
     expect(scoreCandidate(story, recentExcerpts)).toBeLessThan(PLANNED_ROW_SCORE);
     const result = resolveTopicClaim(reservedSeed, scoutWith(story), "deep-value", { ...NO_HISTORY, recentExcerpts, trendJacking: "always" });
-    if ("hold" in result) throw new Error(`unexpected hold: ${result.hold}`);
     expect(result.claim.source).toBe("reserved");
   });
 
   it("is not displaced by a story overlapping a subject another channel already covered", () => {
     const story = candidate({ topic: "AI triage for support tickets", brandFit: 5, interest: 5 });
     const result = resolveTopicClaim(reservedSeed, scoutWith(story), "deep-value", { ...NO_HISTORY, avoidTopics: ["ai triage"], trendJacking: "always" });
-    if ("hold" in result) throw new Error(`unexpected hold: ${result.hold}`);
     expect(result.claim.source).toBe("reserved");
   });
 });
@@ -124,7 +127,6 @@ describe("resolveTopicClaim: nothing planned (research seed)", () => {
   it("takes the strongest on-brand candidate in this run's mode and tags the rest lower-rank / off-mode", () => {
     const scout = goodTrendScoutOutput();
     const result = resolveTopicClaim(researchSeed, scout, "hot-news", NO_HISTORY);
-    if ("hold" in result) throw new Error(`unexpected hold: ${result.hold}`);
     expect(result.claim.source).toBe("trend");
     // brandFit 4 in-mode beats brandFit 5 off-mode: the rotation is a steer.
     expect(result.claim.trend?.mode).toBe("hot-news");
@@ -136,7 +138,6 @@ describe("resolveTopicClaim: nothing planned (research seed)", () => {
   it("falls back to any mode when nothing in the requested mode clears the floor, and says so", () => {
     const only = candidate({ mode: "deep-value", brandFit: 5 });
     const result = resolveTopicClaim(researchSeed, scoutWith(only), "open-discussion", NO_HISTORY);
-    if ("hold" in result) throw new Error(`unexpected hold: ${result.hold}`);
     expect(result.claim.source).toBe("trend");
     expect(result.claim.weighting?.rule).toMatch(/no candidate in this run's mode \(open-discussion\)/);
   });
@@ -155,7 +156,6 @@ describe("resolveTopicClaim: nothing planned (research seed)", () => {
       },
     };
     const result = resolveTopicClaim(researchSeed, scoutWith(weak), "deep-value", { ...NO_HISTORY, trendResearchMerged: merged });
-    if ("hold" in result) throw new Error(`unexpected hold: ${result.hold}`);
     expect(result.claim.source).toBe("research");
     expect(result.claim.topic).toBe("Ops teams report 40% fewer status meetings after reporting automation");
     expect(result.claim.topic).not.toMatch(/trends this week/);
@@ -163,29 +163,97 @@ describe("resolveTopicClaim: nothing planned (research seed)", () => {
     expect(result.claim.weighting?.rule).toMatch(/https:\/\/example\.test\/ops/);
   });
 
-  it("holds with the scout's counts when the research fetched nothing and no candidate is on-brand", () => {
-    const weak = candidate({ brandFit: 2 });
+  // ─────────────────────────────────────────────────────────────────────
+  // Branch 6 (RFC-19 §4 item 16): the brand-fit floor stopped ending runs
+  //
+  // These three cases HELD until Phase 6. The floor is unchanged — every
+  // story it refused is still refused, and `belowFloor` is where the refusal
+  // is now recorded — but a judgment about STORIES may not be the end of a
+  // run when the client has told us what business they are in.
+  // ─────────────────────────────────────────────────────────────────────
+
+  it("BRANCH 6, the exact return shape: a non-empty seed leads, the floor's counts ride along, and there is no hold", () => {
+    // The unit pin RFC-19 asks for by name, so this branch cannot rot into a
+    // dead guard the way a fall-through with no direct test does. Every field
+    // is asserted, not just the ones the workflow happens to read.
+    const weak = candidate({ topic: "a story the floor refused", brandFit: 2, interest: 5 });
     const scout: TrendScoutOutput = { candidates: [weak], skipped: [{ headline: "x", reason: "y" }, { headline: "z", reason: "w" }] };
     const empty: ResearchPullResult = { runId: "r0", query: "B2B SaaS", fromCache: false, result: { documents: [] } };
+
     const result = resolveTopicClaim(researchSeed, scout, "deep-value", { ...NO_HISTORY, trendResearchMerged: empty });
-    expect(result).toEqual({ hold: expect.stringMatching(/^no on-brand subject this week: catalog empty, nothing requested, scout considered 3 stories \(best brand fit 2\/5\) — add a catalog row or a requestedSubject$/) });
+
+    expect(result.releaseReservation).toBe(false);
+    expect(result.claim.topic).toBe("B2B SaaS");
+    expect(result.claim.source).toBe("research");
+    expect(result.claim.mode).toBe("deep-value");
+    expect(result.claim.scoutStatus).toBe("ran");
+    // The refused story is still carried to the gate — the reviewer sees what
+    // the floor turned down, which is the road not taken, not a secret.
+    expect(result.claim.alternatives).toEqual([expect.objectContaining({ topic: weak.topic, reason: "lower-rank" })]);
+    expect(result.claim.weighting?.rule).toMatch(/^no scouted story cleared brand fit 3 and no fetched headline was usable — the client's declared industry leads$/);
+    // `considered` is candidates + skipped: 1 + 2. `bestFit` is the best
+    // brand fit anything reached. `floor` is `MIN_BRAND_FIT`, unmoved.
+    expect((result.claim.weighting as BelowFloorWeighting).belowFloor).toEqual({ considered: 3, bestFit: 2, floor: 3 });
+    expect(result.claim.weighting?.bestCandidateScore).toBe(10);
+    // And the premise: the story really was below the floor. Without this the
+    // case would pass if branch 6 had silently become the only branch.
+    expect(weak.brandFit).toBeLessThan((result.claim.weighting as BelowFloorWeighting).belowFloor.floor);
   });
 
-  it("holds, naming the scout status, when the scout never ran and there are no documents", () => {
+  it("leads with the industry, naming the scout status, when the scout never ran and there are no documents", () => {
     const result = resolveTopicClaim(researchSeed, undefined, "deep-value", { ...NO_HISTORY, scoutStatus: "no-documents" });
-    expect(result).toEqual({ hold: expect.stringContaining("scout considered 0 stories (best brand fit n/a; scout no-documents)") });
+    expect(result.claim.topic).toBe("B2B SaaS");
+    expect(result.claim.source).toBe("research");
+    expect(result.claim.scoutStatus).toBe("no-documents");
+    expect(result.claim.alternatives).toEqual([]);
+    // Nothing was scored, so there is no score to report — absent, not zero.
+    expect(result.claim.weighting?.bestCandidateScore).toBeUndefined();
+    expect((result.claim.weighting as BelowFloorWeighting).belowFloor).toEqual({ considered: 0, bestFit: 0, floor: 3 });
   });
 
-  it("never turns the empty-search query into the subject: a merged pull whose only 'document' has no title is treated as nothing", () => {
-    const merged: ResearchPullResult = { runId: "r2", query: "B2B SaaS", fromCache: false, result: { documents: [{ url: "https://example.test/untitled", content: "…" }] } };
+  it("never turns the empty-search query into the subject: an untitled document is still treated as nothing", () => {
+    // The query is deliberately NOT the seed, so "the subject is the industry"
+    // and "the subject is the query" are distinguishable outcomes.
+    const merged: ResearchPullResult = { runId: "r2", query: "B2B SaaS trends this week", fromCache: false, result: { documents: [{ url: "https://example.test/untitled", content: "…" }] } };
     const result = resolveTopicClaim(researchSeed, scoutWith(), "deep-value", { ...NO_HISTORY, trendResearchMerged: merged });
-    expect("hold" in result).toBe(true);
+    // The half this branch must NOT change: branch 4 is still refused (an
+    // untitled document is not a headline), so the subject is the client's
+    // declared industry — never `merged.query`, which is what RFC-13 §E
+    // deleted and what a "just use what you have" fallback would resurrect.
+    expect(result.claim.topic).toBe("B2B SaaS");
+    expect(result.claim.topic).not.toBe(merged.query);
+    expect(result.claim.weighting?.rule).toMatch(/no fetched headline was usable/);
+  });
+
+  it("has no hold to return at all — the member is gone from the type, not merely unreachable", () => {
+    // Six shapes that used to reach the hold, one per reason. If a later
+    // change re-introduces a hold on any of them this fails on `claim`
+    // being undefined rather than by a type error nobody runs.
+    const shapes: Array<[string, ReturnType<typeof resolveTopicClaim>]> = [
+      ["nothing at all", resolveTopicClaim(researchSeed, undefined, "deep-value", NO_HISTORY)],
+      ["an empty scout", resolveTopicClaim(researchSeed, scoutWith(), "hot-news", NO_HISTORY)],
+      ["everything below the floor", resolveTopicClaim(researchSeed, scoutWith(candidate({ brandFit: 1 })), "deep-value", NO_HISTORY)],
+      ["a scout that could not run", resolveTopicClaim(researchSeed, undefined, "deep-value", { ...NO_HISTORY, scoutStatus: "unavailable" })],
+      [
+        "documents with no titles",
+        resolveTopicClaim(researchSeed, scoutWith(), "deep-value", {
+          ...NO_HISTORY,
+          trendResearchMerged: { runId: "r", query: "q", fromCache: false, result: { documents: [{ url: "https://x.test/1" }] } },
+        }),
+      ],
+      ["every story already covered", resolveTopicClaim(researchSeed, scoutWith(candidate({ topic: "AI triage" })), "deep-value", { ...NO_HISTORY, avoidTopics: ["ai triage"] })],
+    ];
+
+    for (const [why, result] of shapes) {
+      expect(result.claim, why).toBeDefined();
+      expect(result.claim.topic, why).toBe("B2B SaaS");
+      expect(Object.keys(result), why).not.toContain("hold");
+    }
   });
 
   it("caps the alternatives it carries to the gate", () => {
     const many = Array.from({ length: 9 }, (_, i) => candidate({ topic: `story ${i}`, headline: `headline ${i}`, brandFit: 4, interest: 3 }));
     const result = resolveTopicClaim(requestedSeed, scoutWith(...many), "deep-value", NO_HISTORY);
-    if ("hold" in result) throw new Error("unreachable");
     expect(result.claim.alternatives).toHaveLength(MAX_ALTERNATIVES);
   });
 });
@@ -321,7 +389,6 @@ describe("resolveTopicClaim with a pre-ranked field", () => {
   it("still lets a person's request stand, recording the ranked field with its engines and scores", () => {
     const pre = ranked();
     const result = resolveTopicClaim(requestedSeed, scoutWith(assetStory, questionStory), "deep-value", { ...NO_HISTORY, ranked: pre });
-    if ("hold" in result) throw new Error(`unexpected hold: ${result.hold}`);
     expect(result.claim.topic).toBe(requestedSeed.topic);
     expect(result.claim.alternatives).toEqual([
       expect.objectContaining({ topic: assetStory.topic, engine: "own-assets", reason: "outranked-by-request", score: pre.ranked[0]!.score }),
@@ -335,13 +402,11 @@ describe("resolveTopicClaim with a pre-ranked field", () => {
     expect(pre.ranked[0]!.score).toBeGreaterThan(PLANNED_ROW_SCORE);
 
     const kept = resolveTopicClaim(reservedSeed, scoutWith(assetStory, questionStory), "deep-value", { ...NO_HISTORY, ranked: pre });
-    if ("hold" in kept) throw new Error("unreachable");
     expect(kept.claim.source).toBe("reserved");
     expect(kept.claim.alternatives!.every((a) => a.reason === "outranked-by-catalog")).toBe(true);
     expect(kept.claim.alternatives![0]!.engine).toBe("own-assets");
 
     const jacked = resolveTopicClaim(reservedSeed, scoutWith(assetStory, questionStory), "deep-value", { ...NO_HISTORY, ranked: pre, trendJacking: "always" });
-    if ("hold" in jacked) throw new Error("unreachable");
     expect(jacked.claim.source).toBe("trend");
     expect(jacked.claim.topic).toBe(assetStory.topic);
     expect(jacked.releaseReservation).toBe(true);
@@ -351,7 +416,6 @@ describe("resolveTopicClaim with a pre-ranked field", () => {
   it("takes the ranking's winner for a research seed and states which engine won and why", () => {
     const pre = ranked();
     const result = resolveTopicClaim(researchSeed, scoutWith(assetStory, questionStory), "deep-value", { ...NO_HISTORY, ranked: pre });
-    if ("hold" in result) throw new Error(`unexpected hold: ${result.hold}`);
     expect(result.claim.source).toBe("trend");
     expect(result.claim.topic).toBe(assetStory.topic);
     expect(result.claim.trend).toBe(assetStory);
@@ -375,7 +439,6 @@ describe("resolveTopicClaim with a pre-ranked field", () => {
       ranked: pre,
       trendResearchMerged: merged,
     });
-    if ("hold" in result) throw new Error(`unexpected hold: ${result.hold}`);
     expect(result.claim.source).toBe("research");
     expect(result.claim.topic).toBe("Agencies report 30% of retainers lose money by month three");
   });
@@ -406,7 +469,6 @@ describe("content-mode rotation over the decision log", () => {
 
   it("topicDecisionForGate exposes the decision without the reservation key or the full trend candidate", () => {
     const result = resolveTopicClaim(reservedSeed, goodTrendScoutOutput(), "deep-value", NO_HISTORY);
-    if ("hold" in result) throw new Error("unreachable");
     const gate = topicDecisionForGate(result.claim);
     expect(gate).toEqual({
       topic: reservedSeed.topic,

@@ -4,6 +4,7 @@ import type { RenderCarouselInput, Slide } from "@agent-engine/tool-karos-publis
 import { templateFileName } from "@agent-engine/tool-karos-templates";
 import { isolateForeignRuns } from "./bidi-isolate.js";
 import { contrastRatio, paletteForSlide } from "./brand-render-tokens.js";
+import { noteGateOutage } from "./craft-hygiene.js";
 import {
   buildMarkRing,
   buildMarkedRuns,
@@ -29,7 +30,6 @@ import type {
   InstagramSlideCopy,
   InstagramSlideLayout,
   ResearchOutput,
-  SlidesDataSelfCheck,
   StyleConfig,
 } from "./types.js";
 
@@ -1585,6 +1585,44 @@ export function collectDeviceIssues(
   return issues;
 }
 
+/** The ledger/idempotency slug for the compliance gate's own "no opinion" warn. Exported so a test names the same string the code writes. */
+export const COMPLIANCE_GATE_OUTAGE_SLUG = "brand-compliance-gate-no-opinion";
+
+/**
+ * WHY `checkSlidesData` REFUSED, as a value rather than as prose (RFC-19 §6, P2).
+ *
+ * The workflow has to treat two of these six differently from the other four:
+ * a `compliance`/`compliance-unverified` refusal on a REGULATED client routes
+ * to RFC-19 §5.5 (the finding rides the top of `selfCheck.checks` with
+ * `severity: "blocking"` and `09a` is reconfigured to `{ duration: "24h",
+ * onTimeout: "hold" }`, so nothing regulated can auto-approve into publication
+ * while nobody is looking), while a count/pairing/source-ref/banned-term
+ * refusal is mechanical and ships recorded.
+ *
+ * **That split is STRUCTURAL on purpose, and it is the point of this type**
+ * (RFC-19 §11 item 3). The obvious alternative was to classify the refusal by
+ * matching `reason` — `/never say|required framing/` — which would work today
+ * and would silently reclassify a regulated refusal as mechanical the first
+ * time somebody improved the wording of a sentence. A wording change must
+ * break a test. It cannot be allowed to quietly downgrade a `never_say`
+ * finding to "we shipped it and made a note".
+ *
+ * Assignable to the house `SlidesDataSelfCheck` (`{ ok: true } | { ok: false;
+ * reason: string }`) — `kind` is additive, so every existing reader that only
+ * reads `ok`/`reason` is untouched, and `types.ts` needs no edit.
+ */
+export type SlidesCheckRefusalKind = "count" | "pairing" | "source-ref" | "banned-term" | "compliance" | "compliance-unverified";
+
+/**
+ * `outage` is the one thing `{ ok: true }` cannot say: *this check did not run*. See
+ * `craft-hygiene.ts`'s `CraftHygieneResult` for the full argument — for a NON-regulated client a
+ * `gate.brandCompliance` outage used to return a bare `{ ok: true }`, so a post whose `banned_words` and
+ * `banned_chars` were never measured looked, on every client- and reviewer-visible surface, exactly like one
+ * that passed them. It rides ALONGSIDE `ok`, because an outage is not a refusal. For a REGULATED client the
+ * outage is a refusal (`kind: "compliance-unverified"`) and is carried there instead — never twice.
+ */
+export type SlidesDataCheckResult = ({ ok: true } | { ok: false; reason: string; kind: SlidesCheckRefusalKind }) & { outage?: string };
+
 /**
  * RFC-03 §3 step 07's self-check, run before `slides-data.json` is ever
  * handed to the renderer: "every claim traces to a source, every config
@@ -1631,18 +1669,19 @@ export async function checkSlidesData(
   selections: ImageSelection[],
   research: ResearchOutput,
   styleConfig: StyleConfig,
-): Promise<SlidesDataSelfCheck> {
+): Promise<SlidesDataCheckResult> {
   const { canvas, banned_words: bannedWords, banned_chars: bannedChars, compliance } = styleConfig;
 
   // The slide count is held to the FORMAT (2026-09): a single-image post is
   // exactly one slide, a carousel stays inside the client's configured range.
   if (copy.format === "single") {
     if (copy.slides.length !== 1) {
-      return { ok: false, reason: `a single-image post carries exactly one slide, this draft carries ${copy.slides.length}` };
+      return { ok: false, kind: "count", reason: `a single-image post carries exactly one slide, this draft carries ${copy.slides.length}` };
     }
   } else if (copy.slides.length < canvas.slides_min || copy.slides.length > canvas.slides_max) {
     return {
       ok: false,
+      kind: "count",
       reason: `slide count ${copy.slides.length} is outside the configured range [${canvas.slides_min}, ${canvas.slides_max}]`,
     };
   }
@@ -1652,13 +1691,14 @@ export async function checkSlidesData(
   if (selections.length !== copy.slides.length) {
     return {
       ok: false,
+      kind: "pairing",
       reason: `image selection count (${selections.length}) does not match slide count (${copy.slides.length})`,
     };
   }
   const selectionNs = new Set(selections.map((s) => s.n));
   for (const slide of copy.slides) {
     if (!selectionNs.has(slide.n)) {
-      return { ok: false, reason: `slide ${slide.n} has no corresponding image selection` };
+      return { ok: false, kind: "pairing", reason: `slide ${slide.n} has no corresponding image selection` };
     }
   }
 
@@ -1669,6 +1709,7 @@ export async function checkSlidesData(
     if (!factClaims.has(slide.sourceRef)) {
       return {
         ok: false,
+        kind: "source-ref",
         reason: `slide ${slide.n}'s sourceRef does not match any research fact's claim verbatim: "${slide.sourceRef}"`,
       };
     }
@@ -1676,21 +1717,57 @@ export async function checkSlidesData(
 
   const brandComplianceTool = tools["gate.brandCompliance"];
   if (!brandComplianceTool) {
+    // KEPT AS A THROW (RFC-19 §6 item 8), for the reason `checkCraftHygiene`'s
+    // twin keeps its own: an UNREGISTERED tool is a deploy defect with nothing
+    // to measure the draft with. The REGISTERED tool that failed is the
+    // different thing, and it is handled below.
     throw new WorkflowToolingFailure(`"gate.brandCompliance" is not registered — step 07's banned-word/char and compliance checks cannot run without it`);
   }
-  const runBrandCompliance = async (text: string, forbiddenTerms: string[], requiredDisclaimer?: string): Promise<GateVerdict> => {
+  /**
+   * ── Mechanism C, the loop half (RFC-19 §3) ──
+   *
+   * This used to throw `WorkflowToolingFailure` on a non-success outcome, and
+   * it is called in a LOOP — once per slide, plus once per `required_framing`
+   * phrase, plus once for `never_say`. On an eight-slide regulated carousel
+   * that is ten-plus calls, and ONE flaky one out of ten ended a run that had
+   * already paid for its draft, its images and its vetting. A provider blip is
+   * not a verdict on the copy.
+   *
+   * `undefined` means "this call formed no view". The outage is remembered
+   * rather than returned, because what it means depends on the client, and
+   * only the code after the loops knows that: for an ordinary client it means
+   * nothing at all (the always-on promise floor and the client's banned words
+   * went unchecked this attempt, and a redraft cannot fix a provider outage);
+   * for a REGULATED client it means the one thing this gate exists for could
+   * not be verified, which is `kind: "compliance-unverified"` and travels to
+   * §5.5's blocking finding.
+   *
+   * A `tooling_error` VERDICT counts as the same outage as a non-success
+   * outcome. It used to fall through the `=== "content_fail"` tests below as
+   * if it were a pass — silently, so a regulated client's `never_say` list
+   * could go unchecked with nobody told. That is the failure this file is
+   * least allowed to have.
+   */
+  let complianceOutage: string | undefined;
+  const runBrandCompliance = async (text: string, forbiddenTerms: string[], requiredDisclaimer?: string): Promise<GateVerdict | undefined> => {
     const outcome = await brandComplianceTool.execute({ text, forbiddenTerms, ...(requiredDisclaimer !== undefined ? { requiredDisclaimer } : {}) }, { ctx });
     if (outcome.status !== "success") {
-      throw new WorkflowToolingFailure(`gate.brandCompliance failed: ${outcome.status}`);
+      complianceOutage ??= `outcome: ${outcome.status}`;
+      return undefined;
     }
-    return outcome.result as GateVerdict;
+    const verdict = outcome.result as GateVerdict;
+    if (verdict.verdict === "tooling_error") {
+      complianceOutage ??= `verdict: tooling_error — ${verdict.reason}`;
+      return undefined;
+    }
+    return verdict;
   };
 
   for (const slide of copy.slides) {
     const slideText = `${slide.headline} ${slide.body}`;
     const verdict = await runBrandCompliance(slideText, [...bannedWords, ...bannedChars]);
-    if (verdict.verdict === "content_fail") {
-      return { ok: false, reason: `slide ${slide.n} failed the banned word/character check (gate.brandCompliance): ${verdict.reason}` };
+    if (verdict?.verdict === "content_fail") {
+      return { ok: false, kind: "banned-term", reason: `slide ${slide.n} failed the banned word/character check (gate.brandCompliance): ${verdict.reason}` };
     }
   }
 
@@ -1699,20 +1776,143 @@ export async function checkSlidesData(
 
     for (const phrase of compliance.required_framing) {
       const verdict = await runBrandCompliance(combinedText, [], phrase);
-      if (verdict.verdict === "content_fail") {
-        return { ok: false, reason: `regulated client's required framing phrase is missing from the post: "${phrase}"` };
+      if (verdict?.verdict === "content_fail") {
+        return { ok: false, kind: "compliance", reason: `regulated client's required framing phrase is missing from the post: "${phrase}"` };
       }
     }
 
     if (compliance.never_say.length > 0) {
       const verdict = await runBrandCompliance(combinedText, compliance.never_say);
-      if (verdict.verdict === "content_fail") {
-        return { ok: false, reason: `regulated client's post contains a "never say" phrase (gate.brandCompliance): ${verdict.reason}` };
+      if (verdict?.verdict === "content_fail") {
+        return { ok: false, kind: "compliance", reason: `regulated client's post contains a "never say" phrase (gate.brandCompliance): ${verdict.reason}` };
       }
     }
   }
 
+  if (complianceOutage !== undefined) {
+    const message =
+      `gate.brandCompliance could not form a view (${complianceOutage}) — ` +
+      (compliance.regulated
+        ? "this client is REGULATED, so the draft ships with a blocking compliance-unverified finding rather than an unverified clean bill of health"
+        : "step 07's banned word/character check recorded NO OPINION on this draft");
+    await noteGateOutage(tools, ctx, COMPLIANCE_GATE_OUTAGE_SLUG, message);
+    if (compliance.regulated) {
+      return {
+        ok: false,
+        kind: "compliance-unverified",
+        reason:
+          `a regulated client's compliance checks could not be run against this draft: gate.brandCompliance ${complianceOutage}. ` +
+          "The gate formed no view — this is not a finding about the copy",
+      };
+    }
+    // Non-regulated: the draft ships, and it ships SAYING the check did not run. Same sentence as the warn.
+    return { ok: true, outage: message };
+  }
+
   return { ok: true };
+}
+
+/**
+ * ── Mechanism 0: ONE free repair, and only one (RFC-19 §3) ──
+ *
+ * A `source-ref` refusal is the one `checkSlidesData` refusal that is routinely
+ * NOT a defect in the draft. `checkSlidesData` matches a slide's `sourceRef`
+ * against a research fact's `claim` with `Set.has` — byte-for-byte — and a
+ * model that quoted the claim correctly but wrapped it in quotation marks, put
+ * a full stop on the end, or emitted a decomposed form of the same accented
+ * characters fails that test while having cited exactly the right card. Today
+ * that costs the whole attempt, and the redraft is told to fix a citation that
+ * was already right.
+ *
+ * **What this can and cannot do, because the difference is the whole design.**
+ * It can snap a `sourceRef` onto a claim that ALREADY EXISTS in the research
+ * set, when the two are the same string modulo NFC, surrounding whitespace,
+ * inner whitespace runs, one pair of wrapping quotes and one trailing `.`/`,`.
+ * It cannot invent a citation, and it is never fuzzy and never nearest-match:
+ * a normalised form shared by two different claims is ambiguous and is left
+ * alone, because a fabricated citation is strictly worse than the refusal it
+ * would have avoided. There is no edit distance anywhere in this function.
+ *
+ * **The patch is proved, not asserted.** The caller does not get a patched copy
+ * on trust: this re-runs the REAL `checkSlidesData` over the patched draft and
+ * discards the patch WHOLE if the gate still refuses — `applyNativeCorrections`'
+ * `patchRefused` shape and `interest-relayout`'s rollback, in this file. So a
+ * repair can only ever turn a refusal into the gate's own pass; it can never
+ * turn one refusal into a different one, and it can never ship a draft the gate
+ * did not clear.
+ *
+ * $0 and no model call: NFC normalisation plus one more free gate call.
+ */
+export type SourceRefRepair =
+  | { outcome: "repaired"; copy: InstagramCopyOutput; patched: Array<{ slide: number; from: string; to: string }> }
+  | { outcome: "discarded"; remedyNote: string };
+
+/**
+ * NFC · trim · collapse inner whitespace runs · strip ONE pair of wrapping
+ * quotes · strip ONE trailing `.`/`,` · trim again.
+ *
+ * Deliberately does NOT case-fold and does not touch inner punctuation: every
+ * step here is a difference a reader would not see, and case is not one of
+ * those. Exported for the test that pins each step separately — a normaliser
+ * nobody can enumerate is one nobody can argue with.
+ */
+export function normaliseSourceRef(value: string): string {
+  let out = value.normalize("NFC").trim().replace(/\s+/gu, " ");
+  const OPENERS = `"'‘’“”«»„‚`;
+  if (out.length >= 2 && OPENERS.includes(out[0]!) && OPENERS.includes(out[out.length - 1]!)) {
+    out = out.slice(1, -1).trim();
+  }
+  out = out.replace(/[.,]$/u, "").trim();
+  return out;
+}
+
+export async function repairSourceRefs(
+  tools: AgentToolRegistry,
+  ctx: AgentContext,
+  copy: InstagramCopyOutput,
+  selections: ImageSelection[],
+  research: ResearchOutput,
+  styleConfig: StyleConfig,
+): Promise<SourceRefRepair> {
+  const factClaims = new Set(research.facts.map((f) => f.claim));
+
+  // Normalised → the ONE claim that normalises to it. A key reached by two
+  // different claims is recorded as ambiguous and never snapped to.
+  const byNormalised = new Map<string, string | null>();
+  for (const claim of factClaims) {
+    const key = normaliseSourceRef(claim);
+    byNormalised.set(key, byNormalised.has(key) ? null : claim);
+  }
+
+  const patched: Array<{ slide: number; from: string; to: string }> = [];
+  const slides = copy.slides.map((slide) => {
+    if (factClaims.has(slide.sourceRef)) return slide;
+    const match = byNormalised.get(normaliseSourceRef(slide.sourceRef));
+    if (match === undefined || match === null || match === slide.sourceRef) return slide;
+    patched.push({ slide: slide.n, from: slide.sourceRef, to: match });
+    return { ...slide, sourceRef: match };
+  });
+
+  if (patched.length === 0) {
+    return {
+      outcome: "discarded",
+      remedyNote:
+        "no mis-cited sourceRef matched a research claim under NFC/whitespace/quote/trailing-punctuation normalisation — " +
+        "the citation is not in the research set at all, and snapping it to the nearest one would fabricate a source",
+    };
+  }
+
+  const candidate: InstagramCopyOutput = { ...copy, slides };
+  const recheck = await checkSlidesData(tools, ctx, candidate, selections, research, styleConfig);
+  if (!recheck.ok) {
+    return {
+      outcome: "discarded",
+      remedyNote:
+        `${patched.length} sourceRef(s) were snapped to the claim they normalise to, and the patch was discarded whole because ` +
+        `the real step-07 self-check still refuses it (${recheck.kind}): ${recheck.reason}`,
+    };
+  }
+  return { outcome: "repaired", copy: candidate, patched };
 }
 
 /**

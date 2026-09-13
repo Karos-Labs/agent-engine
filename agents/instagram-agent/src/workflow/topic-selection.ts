@@ -42,12 +42,23 @@ import type { InstagramTopicClaim, TopicAlternative, TopicAlternativeReason, Top
  *   request, or the bare industry) and the scout's candidates and decides the
  *   subject under ONE precedence order: a person's request > a planned row
  *   (unless the client opted into trend-jacking and a story clearly beats
- *   it) > the strongest on-brand trend > a real fetched headline > an honest
- *   hold. Everything not chosen is recorded as an alternative with the rule
- *   that outranked it, so the reviewer at the gate sees the road not taken.
+ *   it) > the strongest on-brand trend > a real fetched headline > the
+ *   client's own declared industry. Everything not chosen is recorded as an
+ *   alternative with the rule that outranked it, so the reviewer at the gate
+ *   sees the road not taken.
  * - `topicDecisionSummary` is the one line `09b` appends to the decision log,
  *   shaped so `parseContentModeFromSummary` reads the mode back next run and
  *   so the archetypes used are recorded at zero cost (audit finding 8).
+ *
+ * ## Phase 6 (RFC-19 §4 item 16)
+ *
+ * The last rung used to be `{ hold }` — "no on-brand subject this week" — and
+ * it fired whenever `MIN_BRAND_FIT` refused every scouted story. A floor
+ * refusing every candidate is a QUALITY verdict about STORIES, and under the
+ * owner's rule a quality verdict may not end a run. Branch 6 leads with the
+ * industry the client themselves declared and records what the floor refused
+ * in `weighting.belowFloor`. The floor does not move; what happens after it
+ * refuses does.
  *
  * ## Phase 1 (RFC-13 §I)
  *
@@ -364,13 +375,48 @@ export interface ResolveTopicOptions {
   ranked?: RankedTopics | undefined;
 }
 
-export type ResolvedTopic =
-  | {
-      claim: InstagramTopicClaim;
-      /** True when a trend displaced a reserved catalog row: the workflow must `topics.release` the reservation so the row is reservable again. */
-      releaseReservation: boolean;
-    }
-  | { hold: string };
+/** What the brand-fit floor refused, recorded on the claim rather than thrown as a hold (RFC-19 §4 item 16). */
+export interface TopicBelowFloor {
+  /** Stories the scout looked at, including the ones it skipped before scoring. */
+  considered: number;
+  /** The best brand fit any of them reached — 0 when there was nothing to score. */
+  bestFit: number;
+  /** The floor they were measured against. Unchanged by RFC-19: the gate still refuses exactly what it refused. */
+  floor: number;
+}
+
+/**
+ * Branch 6's weighting.
+ *
+ * A `TopicWeighting` plus the counts that explain WHY the industry seed is
+ * leading. Declared here rather than on `TopicWeighting` itself because
+ * `types.ts` belongs to another work package this phase (RFC-19 Part 3); the
+ * value is assignable to `TopicWeighting` and travels to the gate and the
+ * deliverable by reference through `topicDecisionForGate`, so nothing is lost
+ * at runtime. **NEEDED FROM `types.ts`: fold `belowFloor?: TopicBelowFloor`
+ * into `TopicWeighting`** so a reader can reach it without a cast.
+ */
+export interface BelowFloorWeighting extends TopicWeighting {
+  belowFloor: TopicBelowFloor;
+}
+
+/**
+ * `resolveTopicClaim`'s answer. There is no `{ hold }` member and there has
+ * not been one since RFC-19 Phase 6: every path through this function returns
+ * a subject.
+ *
+ * Deleting the member rather than leaving it unreachable is the point. A hold
+ * this function could still express is a hold a later branch would eventually
+ * reach for, and the one it used to throw — a brand-fit floor refusing every
+ * scouted story — is a QUALITY verdict, which under the owner's rule may never
+ * end a run. The holds that remain are the intake ones, and they belong to
+ * step 03 (`WF:3286`), where the seed genuinely does not exist.
+ */
+export interface ResolvedTopic {
+  claim: InstagramTopicClaim;
+  /** True when a trend displaced a reserved catalog row: the workflow must `topics.release` the reservation so the row is reservable again. */
+  releaseReservation: boolean;
+}
 
 /**
  * Decides this run's subject. See the module comment for the precedence
@@ -379,7 +425,10 @@ export type ResolvedTopic =
  * `seed` is step 03's claim: `requested` (a typed direction or the client's
  * standing `requestedSubject`), `reserved` (a catalog row, with its
  * `reservationKey`), or `research` (nothing planned — the bare industry, a
- * seed this function MUST replace or hold on; it is never a subject).
+ * seed this function replaces with a story or a headline wherever it can, and
+ * leads with only when nothing else was usable; branch 6).
+ *
+ * EVERY PATH RETURNS A SUBJECT. There is no hold here — see `ResolvedTopic`.
  */
 export function resolveTopicClaim(seed: InstagramTopicClaim, scout: TrendScoutOutput | undefined, mode: ContentMode, options: ResolveTopicOptions): ResolvedTopic {
   const candidates = scout?.candidates ?? [];
@@ -532,15 +581,48 @@ export function resolveTopicClaim(seed: InstagramTopicClaim, scout: TrendScoutOu
     }
   }
 
-  // 5. Genuinely nothing: no row, no request, and the scout either saw nothing
-  //    or found nothing on-brand. Holding with the counts is the honest
-  //    answer — a query dressed as a subject is what this replaces.
+  // 6. No row, no request, no on-brand story and no usable headline — and the
+  //    client's DECLARED INDUSTRY in hand the whole time (RFC-19 §4 item 16).
+  //
+  //    This used to hold. It is the earliest quality-driven exit in the agent
+  //    and the cheapest to fix: a brand-fit floor refusing every scouted story
+  //    is a judgment about STORIES, not evidence that there is nobody to write
+  //    for. The seed on this path is `source: "research"`, which step 03 only
+  //    produces from `client.getProfile().industry` — so reaching here means
+  //    the client told us what business they are in and three ranked sources
+  //    came back thin. Posting about the client's own declared field, with the
+  //    counts recorded, is strictly more honest than ending the run.
+  //
+  //    It costs nothing: no attempt has been paid for yet, no model call is
+  //    added, and `MIN_BRAND_FIT` does not move — every story the floor
+  //    refused is still refused, and `belowFloor` says so on the claim, at the
+  //    gate and in the deliverable.
+  //
+  //    THE HOLD THIS DOES NOT TOUCH is `WF:3286`: no catalog row, no
+  //    `requestedSubject` AND no declared industry. There the seed does not
+  //    exist and there is genuinely nobody to write for — the owner's own
+  //    carve-out, and `topic-floor-breach.test.ts` pins it from both sides.
+  //    `seed.topic` is non-empty on every path that reaches here for exactly
+  //    that reason, which is why this branch has no hold to fall back to.
   const considered = candidates.length + (scout?.skipped.length ?? 0);
   const bestFit = candidates.reduce((max, c) => Math.max(max, c.brandFit), 0);
+  const belowFloorWeighting: BelowFloorWeighting = {
+    ...(best !== undefined ? { bestCandidateScore: round3(best.score) } : {}),
+    rule:
+      `no scouted story cleared brand fit ${MIN_BRAND_FIT} and no fetched headline was usable — ` +
+      `the client's declared industry leads`,
+    belowFloor: { considered, bestFit, floor: MIN_BRAND_FIT },
+  };
   return {
-    hold:
-      `no on-brand subject this week: catalog empty, nothing requested, scout considered ${considered} stories ` +
-      `(best brand fit ${considered > 0 ? `${bestFit}/5` : "n/a"}${options.scoutStatus !== "ran" ? `; scout ${options.scoutStatus}` : ""}) — add a catalog row or a requestedSubject`,
+    claim: {
+      ...seed,
+      ...common,
+      topic: seed.topic,
+      source: "research",
+      alternatives: alternativesUnder("lower-rank"),
+      weighting: belowFloorWeighting,
+    },
+    releaseReservation: false,
   };
 }
 

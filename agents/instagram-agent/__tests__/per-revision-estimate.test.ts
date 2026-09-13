@@ -76,4 +76,49 @@ describe("PER_REVISION_ESTIMATE_USD / revisionEstimateUsd", () => {
     expect(meter.totalUsd).toBeLessThanOrEqual(MAX_RUN_SPEND_USD);
     expect(meter.posture).toBe("essential-only");
   });
+
+  /**
+   * ── RFC-19 §8.4, the second half of the rung guard ──
+   *
+   * `run-budget.test.ts` guards the PLANNER's per-attempt figure, which is the
+   * one that can fire rung 4 and delete a drafting attempt. This guards the
+   * other per-attempt figure, and it is a different function with a different
+   * failure mode: `revisionEstimateUsd` is read immediately BEFORE a reviewer's
+   * round is spent, so an omission here does not cut an attempt — it quotes the
+   * reviewer a cheaper round than the round costs, which is exactly the
+   * "estimate that flatters itself" this module's header refuses.
+   *
+   * RFC-19 §7.1 says this function is untouched: "revisionEstimateUsd (:775) is
+   * unchanged". Both quotes are pinned as literals so that claim is checkable
+   * in one line instead of by reading a diff.
+   */
+  it("pins both revision quotes as literals, with every term enumerated — RFC-19 adds nothing to a reviewer's round either", () => {
+    const c = STEP_COST_ESTIMATES_USD;
+
+    // The literals. English and Hebrew, before and after the language lines.
+    expect(PER_REVISION_ESTIMATE_USD).toBe(0.2326);
+    expect(revisionEstimateUsd({ attempts: 1, targetLanguage: true })).toBe(0.2776);
+
+    // The enumeration, beside them rather than instead of them: the literal
+    // catches a term that was ADDED to both the module and this list, and the
+    // enumeration says which term moved. Neither alone is a guard.
+    expect(DRAFT_ATTEMPT_ESTIMATE_USD).toBeCloseTo(c.copyAttempt + c.vetCall + c.visualQa, 10);
+    expect(PER_REVISION_ESTIMATE_USD).toBeCloseTo(c.angle + DRAFT_ATTEMPT_ESTIMATE_USD + c.relevance + c.valueJudge, 10);
+    // TWO native rounds here against the planner's one, and that asymmetry is
+    // deliberate and documented (`run-budget.ts:1176-1191`). Asserted as a
+    // difference so a future author who "harmonises" the two functions breaks
+    // this rather than quietly re-pricing every Hebrew revision.
+    expect(revisionEstimateUsd({ attempts: 1, targetLanguage: true }) - PER_REVISION_ESTIMATE_USD).toBeCloseTo(
+      c.copyLanguageBrief + 2 * c.nativeJudge,
+      10,
+    );
+
+    // A full three-attempt Hebrew round, which is what a reviewer's `revise`
+    // actually buys under the cold Hebrew plan: $0.7608. It is over half the
+    // $1.50 hard max on its own, and that is the honest reason the meter
+    // answers `canAfford` with "no" and the round runs anyway — the assertion
+    // directly above this one. RFC-19 adds no gate that can refuse it either.
+    expect(revisionEstimateUsd({ attempts: 3, targetLanguage: true })).toBe(0.7608);
+    expect(revisionEstimateUsd({ attempts: 3, targetLanguage: true })).toBeGreaterThan(MAX_RUN_SPEND_USD / 2);
+  });
 });

@@ -213,23 +213,56 @@ describe("03a-03c always run; 03g selects", () => {
     expect(selected?.topic).not.toMatch(/trends this week/);
   });
 
-  it("empty catalog + a search that returned no documents: holds honestly, and spends no model turn", async () => {
+  it("empty catalog + a search that returned no documents: the declared industry LEADS instead of holding (RFC-19 §4 item 16)", async () => {
     // A brief with NO signal material (Phase 1 item I): no reference
     // accounts, no own assets, no evergreen angles. Since the five engines
     // landed, the scout runs whenever there is ANY material — a quiet news
     // week can still be named from the brief — so "nothing at all to scout"
     // now means the news pull AND the other four engines came back empty.
     // That is what this test is about, and this is how it is arranged.
+    //
+    // ## What flipped, and why the flip is the proof
+    //
+    // This run HELD until Phase 6, on `resolveTopicClaim`'s old last rung.
+    // Nothing about the week changed: no story cleared `MIN_BRAND_FIT` then
+    // and none does now. What changed is that a floor refusing every story is
+    // a verdict about STORIES, not evidence that there is nobody to write for
+    // — and this fixture's client has told us, in their own profile, what
+    // business they are in.
+    //
+    // **The assertion that flips is `router.complete` `not.toHaveBeenCalled()`.**
+    // It is what makes this case load-bearing rather than decorative: a dead
+    // branch 6 would leave the run held at `03g` having spent zero turns, and
+    // a run that spends turns is a run that got past `03g` on branch 6's
+    // claim and went on to research, draft and deliver. `04b` running is the
+    // same fact from the other side.
     env = await setupTestEnvironment({ seedTopics: [], scraper: createOfflineScraper({ documentsPerQuery: 0 }), seedBrief: NO_SIGNAL_BRIEF });
     await env.store.writeJson("acme", ["client", "profile"], { name: "Acme", industry: "B2B SaaS" });
-    const { result, router, stepIds } = await runWorkflow(env, "ig_scout_nothing");
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/^no on-brand subject this week: catalog empty, nothing requested, scout considered 0 stories/);
-    expect(result.reason).toMatch(/add a catalog row or a requestedSubject/);
-    expect(router.complete).not.toHaveBeenCalled();
-    expect(stepIds).not.toContain("04b-research-extract-facts");
-  });
+    // `scout: undefined` drops the scout turn from the queue: with no signal
+    // material and no documents the workflow skips `03c` entirely, so a
+    // queued scout turn would be consumed by the RESEARCH step and land this
+    // fixture in an unrelated failure a turn downstream. Before Phase 6 the
+    // run held at `03g` before pulling a single turn, so the desync could not
+    // show; delivering is what exposes it.
+    const { result, router, stepIds, selected } = await runWorkflow(env, "ig_scout_nothing", fakeRouterSequence(happyTurns({ scout: undefined })));
+
+    expect(result.status).not.toBe("held");
+    expect(selected?.source).toBe("research");
+    expect(selected?.topic).toBe("B2B SaaS");
+    expect(selected?.weighting?.rule).toMatch(/no scouted story cleared brand fit/);
+    expect(selected?.weighting?.rule).toMatch(/the client's declared industry leads/);
+    // The premise, asserted rather than assumed: the floor really did refuse
+    // everything. Without this the case would pass if the scout had quietly
+    // started returning an on-brand story — a different run entirely.
+    expect(selected?.scoutStatus).not.toBe("ran");
+    expect((selected?.weighting as { belowFloor?: { considered: number; bestFit: number; floor: number } }).belowFloor).toEqual({ considered: 0, bestFit: 0, floor: 3 });
+    expect(selected?.alternatives).toEqual([]);
+
+    // The flip. `router.complete` was never called on this fixture before
+    // Phase 6, because `03g` threw before the first model turn.
+    expect(router.complete).toHaveBeenCalled();
+    expect(stepIds).toContain("04b-research-extract-facts");
+  }, 90000);
 
   it("no scraper configured on a planned run: the scout is recorded unavailable and the row still leads — never a hold for an outage", async () => {
     // A brief with NO signal material (Phase 1 item I): no reference

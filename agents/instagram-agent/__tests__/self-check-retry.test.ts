@@ -95,7 +95,28 @@ describe("07-emit-slides-data: self-check retry, capped at two returns to step 0
     expect(selfCheck2.output.ok).toBe(true);
   }, 60000);
 
-  it("holds the whole post after exhausting all 3 attempts (initial + 2 returns) with a self-check that never passes", async () => {
+  /**
+   * ── RFC-19 §8.6: THIS CASE USED TO END `held`, AND THAT WAS THE DEFECT ──
+   *
+   * It asserted `result.status === "held"`, `/self-check never passed after 3 attempt/`, and that ZERO
+   * deliverables existed. Read plainly: three drafts were paid for, all three were refused over one banned
+   * word, and the client received nothing at all. That is precisely what the owner ruled out — *"if the score
+   * is not good then it should repeat steps or do something else, but THE CLIENT CANNOT RECEIVE A FAILED RUN
+   * unless it is a real fault"* — and a banned word is not a real fault, it is a quality event.
+   *
+   * **The gate is NOT weakened.** `07-self-check-attempt-3` still refuses this draft, and the premise
+   * assertion below reads its checkpoint back and proves it did. What changed is only what happens after the
+   * refusal: the attempt walks on, the post ships `completed`, and the marker carries the gate's own sentence.
+   *
+   * **The turn count is what bites, and it is ENUMERATED rather than observed** (RFC-19 §8.2 assertion 9):
+   * delivering pulls the relevance, value, visual-QA and packager turns this fixture never queued when it
+   * held. 3 pre-loop (scout, research, angle) + 2 refused attempts × (copy, vetting) + the delivering
+   * attempt's 5 (copy, vetting, relevance, value, QA) + 1 packager = 13.
+   *
+   * `testTools(env)` rather than the bare registry, for the reason the first case uses it: this run now
+   * REACHES the render, and launching Chromium is not what this test is about.
+   */
+  it("delivers the post after all 3 attempts refused the same banned word, marked degraded, rather than holding", async () => {
     const promptStore = makePromptStore();
     const badCopy = copyOutputWithBannedWord();
     const router = fakeRouterSequence([
@@ -106,9 +127,10 @@ describe("07-emit-slides-data: self-check retry, capped at two returns to step 0
       finalTurn(goodImageVettingOutput()),
       finalTurn(badCopy),
       finalTurn(goodImageVettingOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const workflowFn = createInstagramAgentWorkflow({
-      tools: env.tools,
+      tools: testTools(env),
       promptStore,
       router,
       repoRoot: env.repoRoot,
@@ -118,23 +140,41 @@ describe("07-emit-slides-data: self-check retry, capped at two returns to step 0
 
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
-    const result = await engine.run(workflowFn, { ...params, runId: "instagram_run_selfcheck_exhausted" });
+    const runId = "instagram_run_selfcheck_exhausted";
+    const result = await engine.run(workflowFn, { ...params, runId });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/self-check never passed after 3 attempt/i);
-    // scout + research + angle + 3 x (copy + vet): the relevance judge and QA are never reached.
-    expect(router.complete).toHaveBeenCalledTimes(9);
+    expect(result.status).toBe("completed");
+    if (result.status !== "completed") throw new Error("unreachable");
+    expect(router.complete).toHaveBeenCalledTimes(13);
 
-    const stepIds = (await durableStore.listSteps("instagram_run_selfcheck_exhausted")).map((s) => s.stepId);
+    const stepIds = (await durableStore.listSteps(runId)).map((s) => s.stepId);
     expect(stepIds).toContain("05-write-copy-attempt-1");
     expect(stepIds).toContain("05-write-copy-attempt-2");
     expect(stepIds).toContain("05-write-copy-attempt-3");
     expect(stepIds).toContain("07-self-check-attempt-3");
-    expect(stepIds).not.toContain("07-emit-slides-data");
-    expect(stepIds).not.toContain("08-render-carousel");
+    // The half that could not happen before: the attempt got past `07` to a render and a judgment.
+    expect(stepIds).toContain("07c-emit-slides-data-attempt-3");
+    expect(stepIds).toContain("08-render-carousel-attempt-3");
 
-    const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", "instagram_run_selfcheck_exhausted", "_"]);
-    expect(deliverables).toHaveLength(0);
+    // THE PREMISE (RFC-19 §8.2). The gate refused on the final attempt; the delivery is AFTER that refusal,
+    // not instead of it. Without this assertion the case would pass just as happily if `checkSlidesData` had
+    // silently stopped running — six recorded instances of that shape in this codebase say so.
+    const selfCheck3 = (await durableStore.getStep(runId, "07-self-check-attempt-3")) as { output: { ok: boolean; reason?: string } };
+    expect(selfCheck3.output.ok).toBe(false);
+    expect(selfCheck3.output.reason).toMatch(/guaranteed/);
+
+    // The client gets the carousel, AND the truth about it.
+    const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", runId, "_"]);
+    expect(deliverables).toHaveLength(1);
+    const record = await env.store.readJson<{
+      deliverable: { selfCheck?: { status: string; reason: string; attempt: number; attemptsSpent: number; checks: Array<{ gate: string; detail: string }> } };
+    }>("acme", ["ledger", "deliverables", runId, "_", "instagram-carousel"]);
+    const marker = record?.deliverable.selfCheck;
+    expect(marker?.status).toBe("degraded");
+    expect(marker?.attempt).toBe(3);
+    expect(marker?.attemptsSpent).toBe(3);
+    expect(marker?.checks.find((c) => c.gate === "slides")?.detail).toMatch(/guaranteed/);
+    // ONE sentence across every destination.
+    expect((result.output as { selfCheck?: { reason: string } }).selfCheck?.reason).toBe(marker?.reason);
   }, 60000);
 });

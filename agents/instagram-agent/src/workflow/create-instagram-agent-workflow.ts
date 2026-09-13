@@ -153,6 +153,8 @@ import {
   HERO_IMAGE_LAYOUTS,
   INVERTED_TEMPLATE_SUFFIX,
   invertedTemplateFileName,
+  // RFC-19 Mechanism 0 — the ONE free repair. See its call site at `07`.
+  repairSourceRefs,
   resolveLayout,
   type GroundFgInversionConfig,
   type SlideStyleOverride,
@@ -177,6 +179,16 @@ import {
   type InterestFloorReport,
 } from "./interest-floor.js";
 import { planInterestRelayout, type InterestRelayoutPlan } from "./interest-relayout.js";
+// RFC-19 §4 item 17 — the deterministic headline fact cards `04b` falls back to, and the one hold it keeps.
+import { headlineFallbackResearch, NO_READABLE_SOURCE } from "./research-fallback.js";
+// RFC-19 (Phase 6) — the degraded contract. One reason string, four destinations, so they cannot drift.
+import {
+  hasBlockingFinding,
+  selfCheckDegradeMarker,
+  selfCheckDegradedEventId,
+  type SelfCheckDegradeMarker,
+  type SelfCheckFinding,
+} from "./self-check-degrade.js";
 import {
   buildSkeletonEntry,
   checkSkeletonVariety,
@@ -266,6 +278,7 @@ import {
   languageGateFields,
   languageGateText,
   nativeSteerFor,
+  okAxes,
   resolveExpectedScript,
   runNativeEditor,
   LANGUAGE_FLUENCY_ROUND2_SUFFIX,
@@ -1243,7 +1256,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // from the voice rules or the brand-voice document, and telling
           // somebody to look at the profile when the Cyrillic is in a do-list
           // line sends them to the wrong field.
-          throw new WorkflowHeld(
+          // RFC-19 §4 item 18 — `WorkflowBlockedIntake`, not `WorkflowHeld`, and the change is one word.
+          // This is not a quality event at all: it is a CONFIG GAP identical to its five siblings at
+          // `:913`/`:1012`/`:1021`/`:1027`/`:1032` — the client record does not say what language to write
+          // in, and no redraft, no judge and no retry can supply one. `zero-held-guarantee.test.ts` already
+          // asserts that class is `blocked_intake`, "a real blockage somebody must act on". The run still
+          // stops; it stops honestly, filed as the missing input it is rather than as a refused draft.
+          throw new WorkflowBlockedIntake(
             `target language could not be resolved for this client: ${resolution.sourceLabel} is written in the ${resolution.script} script ` +
               `(candidates: ${resolution.candidates.join(", ")}) — set brand.language in the portal`,
           );
@@ -3608,7 +3627,38 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // strongest, and supplies the score the trend-jack comparison uses.
         ranked: rankedTopics,
       });
-      if ("hold" in resolved) throw new WorkflowHeld(resolved.hold);
+      // RFC-19 §4 item 16 — a brand-fit floor is a QUALITY VERDICT, and a quality verdict may not end a run.
+      //
+      // `resolveTopicClaim`'s branch 5 held whenever `MIN_BRAND_FIT` refused every scouted story. That is NOT
+      // the owner's "nobody to write for" carve-out: the client HAS a declared industry (`03`'s seed, which
+      // on this path is always non-empty — a client with no industry never gets here, it holds at `03` with
+      // the three-things-missing message that IS the carve-out). A floor refusing every candidate means the
+      // scout found nothing on-brand, and the honest answer is to write from the industry the client
+      // declared, saying so, rather than to deliver nothing. Nothing has been paid for yet, so this costs
+      // literally zero — no attempt, no judge, no render.
+      //
+      // `MIN_BRAND_FIT` DOES NOT MOVE. The floor still refuses exactly the stories it refuses today; what
+      // changed is what happens after the refusal, and `weighting.rule` records it so a reviewer reads the
+      // sentence rather than guessing why the post is about an industry instead of a story.
+      //
+      // Superseded, harmlessly, by `resolveTopicClaim`'s own branch 6 (RFC-19 P3): once that lands this
+      // branch is unreachable, and it is kept as the call-site guarantee that the `{ hold }` member can
+      // never again become a `throw` here.
+      if ("hold" in resolved) {
+        const heldReason = String(resolved.hold);
+        return {
+          ...claimedTopic,
+          topic: claimedTopic.topic,
+          source: "research",
+          mode: modeSelection.mode,
+          scoutStatus,
+          weighting: {
+            rule:
+              `no scouted story cleared brand fit and no fetched headline was usable — the client's declared industry leads instead ` +
+              `(${heldReason})`,
+          },
+        };
+      }
       if (resolved.releaseReservation && claimedTopic.reservationKey !== undefined) {
         const release = await tools["topics.release"]?.execute({ reservationKey: claimedTopic.reservationKey }, { ctx });
         if (release !== undefined && release.status !== "success") {
@@ -3735,6 +3785,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     }
 
     const researchAgent = new InstagramResearchAgent({ router: options.router, tools, promptStore: options.promptStore });
+    /** The merged documents, ordered, held in a local so the `04b` fallback below can read the SAME list the extractor was given. */
+    const researchDocuments = orderDocumentsPrimaryFirst([...(deepResearch.merged.result?.documents ?? []), ...fetchedPages], clientDomain);
     const researchExec = await wf.step.agent("04b-research-extract-facts", researchAgent, {
       topic: topicClaim.topic,
       // `instagram-research@2`'s own field names. The raw payload is GONE from
@@ -3743,22 +3795,70 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // bill for nothing. `rawPayloadRef` is the "+"-joined list of the
       // underlying pull run ids, so a card still traces to the record its
       // document came from.
-      documents: orderDocumentsPrimaryFirst([...(deepResearch.merged.result?.documents ?? []), ...fetchedPages], clientDomain),
+      documents: researchDocuments,
       clientDocuments: primarySources.clientDocuments,
       clientBrief: briefForPrompt(brief),
       rawPayloadRef: deepResearch.merged.runId,
     });
     spend("04b-research-extract-facts", researchExec.totalCostUsd, STEP_COST_ESTIMATES_USD.extraction);
-    if (researchExec.status === "content_fail") {
-      throw new WorkflowHeld("research extraction did not produce output that cleared its own schema — nothing honestly cleared this run's research step");
-    }
+    /**
+     * RFC-19 §4 item 17 — the extraction did not complete, and the run does NOT die of it.
+     *
+     * Every merged document is still in hand one line above: titles, excerpts, URLs, publication dates. The
+     * only thing missing was the model's summary of them. Holding there ended a run that had already paid for
+     * sixteen real, fetched, citable sources because one schema came back malformed — a quality event, not a
+     * fault.
+     *
+     * **ALL THREE non-`completed` statuses route here, not just `content_fail`.** `AgentExecutionStatusSchema`
+     * (`packages/core/src/types/agent-step.ts`) has exactly four members, and until this change two of them
+     * threw `WorkflowToolingFailure` twenty-two lines above a free fallback that had every fetched document in
+     * hand. Neither is a tooling fault: `tooling_error` at an agent step is `loop.malformedTurns >
+     * maxMalformedTurns` (`base-agent.ts`, `maxMalformedTurns: 1`) — i.e. exactly two dropped `type`
+     * discriminators, the `opus-drops-type-discriminator` family — and `budget_exceeded` is turn exhaustion.
+     * Step `05` destructures the identical union into the identical three sentences one screen below (RFC-19 §4
+     * item 13); this is the last agent step in the workflow that threw on a status instead of degrading.
+     *
+     * **NO RE-ASK**, and that is a costed decision rather than a preference: one more extraction turn is
+     * `STEP_COST_ESTIMATES_USD.extraction` = $0.0135 on the FIXED leg, and `0.9983 + 0.0135 = $1.0118` against
+     * a $1.00 target fires `chooseRunBudget`'s rung 4 — three drafting attempts become two. Paying for a
+     * retry with a drafting attempt is the forbidden trade. `headlineFallbackResearch` is string slicing: $0.
+     *
+     * `zero-held-guarantee.test.ts`'s reasoning — *"shipping unsourced copy is worse than shipping nothing"* —
+     * survives intact, because these cards ARE sourced: each claim is a document's own title, verbatim, cited
+     * to its own URL. And when no document has a title, the hold is KEPT (RFC-19 §6 item 6): that is genuinely
+     * "no output exists at all".
+     */
+    let researchFallbackMarker: { status: "headline-fallback"; reason: string } | undefined;
+    let researchOutputRaw: unknown = researchExec.finalOutput;
     if (researchExec.status !== "completed") {
-      throw new WorkflowToolingFailure(`research extraction step resolved to "${researchExec.status}"`);
+      // The same three sentences step `05` gives the identical union, so a reviewer reading either surface
+      // reads one vocabulary. Verbatim into `research.reason`, never re-worded (RFC-19 §5.1).
+      const reason =
+        researchExec.status === "tooling_error"
+          ? "research extraction could not produce a turn this run could read (a malformed model turn)"
+          : researchExec.status === "budget_exceeded"
+            ? "research extraction ran out of turns"
+            : "research extraction did not produce output that cleared its own schema";
+      const fallback = await wf.step.code("04b1-headline-fact-cards", () =>
+        headlineFallbackResearch(researchDocuments, new Date().toISOString().slice(0, 10), {
+          topic: topicClaim.topic,
+          rawPayloadRef: deepResearch.merged.runId,
+          reason,
+        }) ?? null,
+      );
+      if (fallback === null) {
+        throw new WorkflowHeld(
+          `${NO_READABLE_SOURCE}: the extraction step resolved to "${researchExec.status}" and not one of the ${researchDocuments.length} fetched document(s) ` +
+            `carried a title to claim — there is nothing sourced to write from, and a carousel of unsourced copy is worse than none`,
+        );
+      }
+      researchOutputRaw = fallback.output;
+      researchFallbackMarker = fallback.research;
     }
     // Re-validate defensively — `finalOutput` is already schema-checked inside
     // BaseAgent, but this keeps step 07's self-check callers honestly typed
     // without a non-null assertion on a value this workflow never produced itself.
-    const researchExtracted: ResearchOutput = ResearchOutputSchema.parse(researchExec.finalOutput);
+    const researchExtracted: ResearchOutput = ResearchOutputSchema.parse(researchOutputRaw);
 
     // ── 04b2: one card per claim (Phase 1, item J) ──
     //
@@ -3799,10 +3899,29 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // vetting attempt — every prior post's shipped images for this client,
     // so step 06 can refuse to reselect one regardless of what the model does.
     const usedImagesOutcome = await wf.step.code("05a-list-used-images", async () => tools["ledger.listUsedImages"]!.execute({}, { ctx }));
+    // RFC-19, the bookkeeping cluster — a dedupe-bookkeeping READ may not end a run.
+    //
+    // This is the weakest possible reason to deliver nothing: the list exists so step 06 can avoid
+    // re-selecting a photograph a previous post used. Losing it costs this run its cross-post reuse check,
+    // which the human at `09a` can still catch and which `ledger.recordUsedImages` will repair next run.
+    // Failing the whole post over it trades a delivered carousel for a dedupe signal. Warn, treat as "no
+    // used images known", proceed — the posture `recordOutputExcerpt` and `topics.commit` already take.
     if (usedImagesOutcome.status !== "success") {
-      throw new WorkflowToolingFailure(`ledger.listUsedImages failed: ${usedImagesOutcome.status}`);
+      try {
+        await tools["ledger.appendEvent"]?.execute(
+          {
+            runId: wf.runId,
+            eventId: `${wf.runId}__used-images-unreadable`,
+            level: "warn",
+            message: `ledger.listUsedImages reported ${usedImagesOutcome.status}, so this run could not check its photographs against previous posts — a picture may repeat`,
+          },
+          { ctx },
+        );
+      } catch (error) {
+        console.error("05a-list-used-images: could not record the used-images-unreadable warn", error);
+      }
     }
-    const usedImages = (usedImagesOutcome.result as { imagePaths: string[] }).imagePaths;
+    const usedImages = usedImagesOutcome.status === "success" ? (usedImagesOutcome.result as { imagePaths: string[] }).imagePaths : [];
     const usedImagesSet = new Set(usedImages);
 
     // ── Tier 0: media the client attached to this run ──
@@ -4778,7 +4897,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
          * reason a regex found and "below the bar" because a judge could not find a position are two
          * different notes for the reviewer.
          */
-        stage: "signals" | "numbers" | "judge" | "budget";
+        stage: "signals" | "numbers" | "judge" | "budget" | "language";
         /**
          * The four axes, as `normaliseValueVerdict` left them. ABSENT — not faked — when no judged verdict
          * exists: an unjudged delivery, or a free-floor refusal that never reached `07j`. A reviewer has to
@@ -4902,6 +5021,18 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        * WARN-only footing as `deviceIssues`, for the same reason.
        */
       emphasisIssues: EmphasisIssue[];
+      /**
+       * RFC-19 (Phase 6) — every QUALITY GATE that refused the attempt that actually shipped.
+       *
+       * Absent, never empty, on a clean run: the marker's own asymmetry (`self-check-degrade.ts`). Present
+       * only when a gate refused ON THE FINAL ATTEMPT and the run walked forward and delivered anyway,
+       * which is the owner's rule — a low score produces a different attempt or a degraded delivery, never
+       * a dead run.
+       *
+       * `attempt` is which attempt shipped, which is NOT always the last one: Mechanism B ships an earlier
+       * attempt's draft when the final attempt's copy came back malformed.
+       */
+      selfCheck?: { attempt: number; attemptsSpent: number; checks: SelfCheckFinding[] };
     }
 
     /**
@@ -5573,6 +5704,62 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       };
       /** The winning attempt's relevance verdict, for `DraftResult.relevance`; undefined when the judge could not run on it. */
       let finalRelevance: DraftResult["relevance"];
+      /**
+       * ── RFC-19 (Phase 6): MECHANISM A — fall through, don't fall over ──
+       *
+       * THIS attempt's quality refusals. ATTEMPT-SCOPED and reset at the top of every attempt, for exactly
+       * the reason `interestDegraded`, `languageDegraded` and `valueVerdictForAttempt` are: an attempt that
+       * fixed what the previous one got wrong must never ship reported as degraded.
+       *
+       * Written ONLY on the final attempt (every gate below guards on `isFinalAttempt`, and attempts
+       * 1..n-1 still `returnToCopyWith` + `continue` exactly as they do today). A finding here means the
+       * gate REFUSED and the run chose to deliver anyway — never that the gate was skipped.
+       */
+      let selfCheckFindings: SelfCheckFinding[] = [];
+      /** The refusals carried by the attempt that actually SHIPPED, chosen in the same assignment block as `finalCopy`. */
+      let finalSelfCheckFindings: SelfCheckFinding[] = [];
+      /** How many drafting attempts this round actually entered — the denominator on the degrade marker. */
+      let attemptsSpent = 0;
+      /** Which attempt shipped. Not always the last: Mechanism B can ship an earlier one. */
+      let shippedAttempt = 0;
+      /**
+       * Records one refusal and hands its sentence to `lastSelfCheckReason` for the trace.
+       *
+       * `detail` is the gate's OWN sentence, passed through verbatim — never re-worded here. A paraphrase is
+       * a second opinion nobody asked for, and it makes a wording change in a gate invisible to its test.
+       */
+      const recordSelfCheckFinding = (finding: SelfCheckFinding): void => {
+        selfCheckFindings.push(finding);
+        lastSelfCheckReason = finding.detail;
+      };
+      /**
+       * ── RFC-19 (Phase 6): MECHANISM B — the salvage register ──
+       *
+       * The deepest draft any attempt of this round reached, and what gives *"deliver the best attempt you
+       * already paid for"* a DEFINITION rather than a vibe: greatest depth wins, and a tie goes to the later
+       * attempt.
+       *
+       * Read on exactly one path — the FINAL attempt's `05` came back malformed or out of turns, so that
+       * attempt has no draft of its own (RFC-19 §4 items 12/13). The salvaged copy is then substituted and
+       * the rest of the attempt runs on it normally.
+       *
+       * **Deviation from RFC-19 §3's Mechanism B, recorded rather than hidden.** The RFC re-assembles and
+       * re-renders the salvaged artifacts under two new code steps (`07s-salvage-slides-data`,
+       * `08s-salvage-render`). This implementation substitutes the salvaged COPY back into the live attempt
+       * instead, so assembly, render, QA and every gate run through the step ids that already exist and are
+       * already checkpointed. It is strictly less new machinery for the same guarantee, it stays inside the
+       * budget the plan already reserved for this attempt (`rawEstimate` prices EVERY attempt as a full
+       * attempt — §7.1), and it needs no artifact deeper than the copy, which is why only `copy` is stored.
+       */
+      let salvage: { attempt: number; depth: 1 | 2 | 3 | 4; copy: InstagramCopyOutput } | undefined;
+      /** Greatest depth wins; a tie goes to the later attempt (and, within one attempt, to the deeper checkpoint). */
+      const recordSalvage = (attempt: number, depth: 1 | 2 | 3 | 4, draft: InstagramCopyOutput): void => {
+        if (salvage === undefined || depth > salvage.depth || (depth === salvage.depth && attempt >= salvage.attempt)) {
+          salvage = { attempt, depth, copy: draft };
+        }
+      };
+      /** Why the most recent `05` did not produce a usable draft — the narrowed terminus quotes it. */
+      let lastCopyFailure = "no drafting attempt ran";
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       /**
@@ -5587,6 +5774,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        * moves under the loop must not silently turn the last attempt into a non-final one.
        */
       const isFinalAttempt = attempt >= maxAttempts;
+      attemptsSpent = attempt;
+      // RFC-19 — attempt-scoped for the same reason `interestDegraded` and `languageDegraded` are, and reset
+      // in the same place: an attempt that fixed the previous one's refusals must not ship carrying them.
+      selfCheckFindings = [];
       // Consumed here so a finding from attempt 1 never outlives attempt 2:
       // an attempt that fails on relevance or dedupe instead carries THOSE
       // steers, and a stale render-rule finding must not ride along with them.
@@ -5735,22 +5926,68 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         copyExec.totalCostUsd,
         STEP_COST_ESTIMATES_USD.copyAttempt + (languageBriefForCopy !== undefined ? STEP_COST_ESTIMATES_USD.copyLanguageBrief : 0),
       );
-      if (copyExec.status === "tooling_error") {
-        throw new WorkflowToolingFailure(`copy step resolved to "${copyExec.status}" on attempt ${attempt}/${maxAttempts}`);
-      }
-      if (copyExec.status !== "completed") {
-        // A malformed draft (failed its own output schema) or a draft that ran
-        // out of turns gets the same "return to 05" remedy as a step-07
-        // self-check failure below. `budget_exceeded` was a tooling failure
-        // here until 2026-09-07: a designed ceiling reported as a fault, with
-        // two attempts still unspent.
-        lastSelfCheckReason = `copy draft ${copyExec.status === "budget_exceeded" ? "ran out of turns" : "failed its own output validation"} on attempt ${attempt}`;
-        continue;
-      }
       // `let`, not `const`: reassigned once below if a slide survives every
       // image-sourcing tier with nothing usable, to record its downgrade to
-      // the "text_only" archetype (never mutated for any other reason).
-      let copy = copyExec.finalOutput!;
+      // the "text_only" archetype (never mutated for any other reason). RFC-19
+      // also assigns it from the salvage register on the one path below.
+      let copy: InstagramCopyOutput;
+      // RFC-19 §4 items 12 and 13 — ONE branch, where there were two, and neither of them throws.
+      //
+      // `tooling_error` here is the SECOND malformed turn (`base-agent.ts`, `maxMalformedTurns: 1`) — the
+      // `opus-drops-type-discriminator` family, which `structured-output.ts`'s truncation exemption can
+      // reach on attempt 1. Today two dropped `type` discriminators kill a run with two paid-for attempts
+      // still unspent, and they do it as a TOOLING FAILURE, which is not what happened: the model answered,
+      // and its answer did not clear a schema. That is a quality event and it is merged into the branch
+      // below, exactly as `budget_exceeded` was merged in 2026-09-07 for the same reason.
+      //
+      // ONE PRICE NOTE, on the record because the plan's headline figure does not carry it. A real
+      // `tooling_error` here is TWO billed copy turns, not one (`base-agent.ts`, `maxMalformedTurns: 1`
+      // retries the unreadable turn once before returning), while `STEP_COST_ESTIMATES_USD.copyAttempt`
+      // prices one. Before this change the run ENDED at the throw, so that second turn was the last thing it
+      // paid for; now it continues and pays the rest of the priced leg, which puts a cold Hebrew run on this
+      // path at roughly $0.9983 + $0.181 = $1.18 rather than $0.9983. That is not a rung risk and not a
+      // hidden overrun: `planRunBudget` is untouched (the plan is a pure function of
+      // `STEP_COST_ESTIMATES_USD`, the `RunShape` built at `02j` and history, and no hunk in this phase
+      // touches any of the three), the `spend(...)` above books `max(measured, estimate)` off
+      // `copyExec.totalCostUsd` — the agent's total ACROSS its internal turns, so the second turn IS
+      // measured — and crossing the $1.50 hard max degrades via `meter.posture === "cheapest-path"` rather
+      // than holding. The pathological case, all three attempts taking the two-turn route, lands ~$1.54:
+      // over the hard max and therefore on the cheapest complete path, which is exactly where the standing
+      // budget amendment says such a run should land.
+      if (copyExec.status !== "completed") {
+        const why =
+          copyExec.status === "tooling_error"
+            ? "could not produce a turn this run could read (a malformed model turn)"
+            : copyExec.status === "budget_exceeded"
+              ? "ran out of turns"
+              : "failed its own output validation";
+        lastCopyFailure = `copy draft ${why} on attempt ${attempt}/${maxAttempts}`;
+        // MECHANISM B, and this is its only reader. On attempts 1..n-1 a redraft is the right remedy and it
+        // is still what happens. On the FINAL attempt there is no redraft left to buy, and the choice is
+        // between the best draft an earlier attempt already paid for and delivering nothing at all. Only
+        // when NO attempt ever produced schema-valid copy does the narrowed terminus below fire — and that
+        // is the owner's own carve-out, "no output exists at all", rather than nine causes hiding behind
+        // one sentence.
+        if (!isFinalAttempt || salvage === undefined) {
+          lastSelfCheckReason = lastCopyFailure;
+          continue;
+        }
+        const salvaged = salvage;
+        recordSelfCheckFinding({
+          gate: "draft",
+          step: rev(`05-write-copy-attempt-${attempt}`),
+          kind: "final-attempt-malformed",
+          detail: `attempt ${attempt}'s draft ${why}, so attempt ${salvaged.attempt}'s draft shipped instead`,
+          remedy: "none",
+        });
+        shippedAttempt = salvaged.attempt;
+        copy = salvaged.copy;
+      } else {
+        copy = copyExec.finalOutput!;
+        shippedAttempt = attempt;
+        // Depth 1 — copy that cleared its own schema. Every deeper checkpoint below replaces it.
+        recordSalvage(attempt, 1, copy);
+      }
 
       // ── 04n: bind the concept to ONE slide — or discard it, silently and for free (RFC-16 §2.3/§2.4) ──
       //
@@ -6132,14 +6369,27 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           usedImages,
         });
         spend(rev(`06-vet-images-attempt-${attempt}`), imageExec.totalCostUsd, STEP_COST_ESTIMATES_USD.vetCall);
-        if (imageExec.status === "tooling_error") {
-          throw new WorkflowToolingFailure(`image vetting step resolved to "${imageExec.status}" on attempt ${attempt}/${maxAttempts}`);
-        }
+        // RFC-19 §4 items 14 and 15 — ONE branch, and it never throws and never holds.
+        //
+        // An empty vetted set is a PICTURE PROBLEM, and `zero-held-guarantee.test.ts`'s opening promise is
+        // that a picture problem never costs the post: `07a` below downgrades the unfillable slides to
+        // typographic archetypes and the run ships. That file proves a DEAD media tier ships; it never
+        // proved a MALFORMED vetting judge ships, and that is the gap this closes. $0, no hold, and
+        // deliberately NO degrade marker on any attempt — the slides are re-laid-out, not shipped broken.
+        //
+        // `tooling_error` from a REGISTERED judge is merged in here for Mechanism C's reason: a gate that
+        // could not RUN is not a verdict on the draft. (An UNREGISTERED tool stays a `WorkflowToolingFailure`
+        // elsewhere — that is a deploy defect with nothing to measure with, and the distinction is the whole
+        // of RFC-19 §6 item 8.)
         if (imageExec.status !== "completed") {
-          lastSelfCheckReason = `image vetting failed its own output validation on attempt ${attempt}`;
-          continue;
+          // Checkpointed under an id of its own, so the trace shows the judge was consciously fallen back
+          // from rather than never reached — the posture `08b`'s budget skip already takes.
+          await wf.step.code(rev(`06a-vetting-unavailable-attempt-${attempt}`), () => ({
+            status: imageExec.status,
+            reason: `image vetting resolved to "${imageExec.status}" on attempt ${attempt}/${maxAttempts} — every photo slide falls back to a typographic archetype`,
+          }));
         }
-        const vetting = imageExec.finalOutput!;
+        const vetting = { selections: imageExec.status === "completed" ? imageExec.finalOutput!.selections : [] };
 
         // Fix 4 extends "unfillable" to a selection that fails
         // rights/watermark, and Fix 3 extends it to a selection that
@@ -6767,22 +7017,156 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         };
       }
 
+      // RFC-19 Mechanism B, depth 2 — this attempt got a picture decision for every slide. The copy recorded
+      // here is the POST-DOWNGRADE copy (07a may have re-laid-out slides that lost their photograph), which
+      // is the version that would actually ship.
+      recordSalvage(attempt, 2, copy);
+
       const attemptChecked = await wf.step.code(rev(`07-self-check-attempt-${attempt}`), () =>
         checkSlidesData(tools, ctx, copy, selections, research, frozen.styleConfig),
       );
+      // RFC-19 §5.1's honesty rule, applied to a check that did NOT RUN. `outage` is set only for a
+      // non-regulated client whose `gate.brandCompliance` was down (the regulated case is a refusal and
+      // carries itself). Without this the draft returned a bare `ok: true` and shipped looking fully clean
+      // while the client's own `banned_words`/`banned_chars` went unmeasured — the deliverable claiming a
+      // bill of health the gate never gave. Non-blocking and `remedy: "none"`: nothing was repaired, nothing
+      // is being waived, and no redraft can bring a provider back up. $0 — no model call, no attempt spent.
+      // Attempt-scoped for free, because `selfCheckFindings` is reset at the top of every attempt, so only
+      // the attempt that actually SHIPS carries its own outage.
+      if (attemptChecked.outage !== undefined) {
+        recordSelfCheckFinding({
+          gate: "slides",
+          step: rev(`07-self-check-attempt-${attempt}`),
+          kind: "not-checked",
+          detail: attemptChecked.outage,
+          remedy: "none",
+        });
+      }
 
-      if (!attemptChecked.ok) {
-        returnToCopyWith(attemptChecked.reason);
-        continue;
+      // ── RFC-19 MECHANISM 0 — one free repair, and only one ──
+      //
+      // A mis-cited `sourceRef` is the one refusal in this gate that is routinely a PUNCTUATION defect rather
+      // than a sourcing defect: the writer quoted the claim properly and `Set.has` refused the quotation
+      // marks. `repairSourceRefs` snaps such a ref onto the claim it already matches modulo NFC, whitespace,
+      // one pair of wrapping quotes and one trailing `.`/`,` — only on a UNIQUE normalised match, never fuzzy,
+      // never nearest — and then re-runs the REAL `checkSlidesData` over the patch. The patch survives only if
+      // the gate itself now passes, and is discarded WHOLE otherwise (`applyNativeCorrections`' `patchRefused`
+      // shape, below). So this can only ever turn a refusal into the gate's own pass; it can never turn one
+      // refusal into a different one, and it cannot invent a citation.
+      //
+      // Runs on EVERY attempt, not just the final one: a repair that only fired at the end would spend two
+      // whole drafting attempts being told to fix citations that were already right.
+      //
+      // $0 and no model call — NFC normalisation plus one more free gate call (RFC-19 §7.6 item 1). It is
+      // checkpointed so a resume replays the decision rather than re-deriving it.
+      const sourceRefRepair =
+        !attemptChecked.ok && attemptChecked.kind === "source-ref"
+          ? await wf.step.code(rev(`07r-repair-source-refs-attempt-${attempt}`), () =>
+              repairSourceRefs(tools, ctx, copy, selections, research, frozen.styleConfig),
+            )
+          : undefined;
+      if (sourceRefRepair?.outcome === "repaired") {
+        // ── SHIP THE COPY THE GATE PASSED, NOT THE ONE IT REFUSED ──
+        //
+        // MEASURED, and recorded because it is a trap: removing this line breaks NO test today. `sourceRef`
+        // is consumed by `checkSlidesData` and by nothing else — it reaches no prompt, no render input, no
+        // deliverable field — so on a one-attempt run the repaired and unrepaired drafts are byte-identical
+        // everywhere a fixture can see them.
+        //
+        // It stays anyway, and not out of tidiness. `repairSourceRefs` proves that draft A clears the real
+        // gate; dropping this assignment would ship draft B, which the gate refused, with no finding attached
+        // — the one shape RFC-19 exists to forbid, arriving by way of a repair that was supposed to prevent
+        // it. It is invisible by luck (nothing surfaces citations yet), not by design, and the day the portal
+        // renders a source line it stops being invisible.
+        copy = sourceRefRepair.copy;
+        // The salvage register must hold the draft that would actually SHIP. `recordSalvage`'s tie rule
+        // (`attempt >= salvage.attempt`) lets this attempt replace its own depth-2 entry, so a later salvage
+        // reads the repaired citations rather than the ones the gate refused.
+        recordSalvage(attempt, 2, copy);
+      }
+
+      if (!attemptChecked.ok && sourceRefRepair?.outcome !== "repaired") {
+        // RFC-19 §4 item 2 — MECHANISM A. Attempts 1..n-1 are unchanged: the finding goes to the next draft
+        // through `returnToCopyWith` and the attempt is abandoned. On the FINAL attempt there is no next
+        // draft, so `continue` here IS a hold (`isFinalAttempt`'s own doc comment says so in its own words),
+        // and a slide-count or citation defect is not worth a run that delivers nothing.
+        //
+        // The gate is untouched: it refused exactly the drafts it refuses today, and the checkpointed step
+        // output still reads `ok: false` — which `zero-held-quality.test.ts`'s assertion 7 reads back,
+        // precisely so this cannot degenerate into a gate that silently stopped running.
+        //
+        // ONE kind is exempt from the redraft, on every attempt: `compliance-unverified` is not a verdict
+        // about the copy at all, it is `gate.brandCompliance` being DOWN for a regulated client. Steering a
+        // redraft with "the gate formed no view — this is not a finding about the copy" asks the writer to
+        // fix a deployment, and `returnToCopyWith` puts that sentence straight into `selfCheckSteer`. It is
+        // the guard-that-cannot-pass shape `08b`'s `unjudged` path and `checkCraftHygiene`'s own outage
+        // branch were both fixed for ("an outage is not more of a verdict on attempt 1 than on attempt 3"),
+        // and it is the last place in the loop it survived. Falling through immediately is also CHEAPER: it
+        // ends the loop at attempt 1 instead of burning attempts 1 and 2 on `copyAttempt` at $0.181 each.
+        // The finding, its `severity: "blocking"` and the 24h/hold routing at `09a` are all unchanged.
+        if (!isFinalAttempt && attemptChecked.kind !== "compliance-unverified") {
+          returnToCopyWith(attemptChecked.reason);
+          continue;
+        }
+        // `kind` is the discriminated refusal `checkSlidesData` returns (RFC-19 P2). It is read as a TYPED
+        // field, never sniffed off the prose: RISK NAMED IN §11.3 is that classifying a `never_say` refusal
+        // by regex over the gate's wording would let a wording change silently downgrade a regulated
+        // finding, which is the one mistake this routing cannot afford. Reading it typed also means a future
+        // rename of a kind is a compile error here rather than a silent reclassification.
+        const slideKind = attemptChecked.kind;
+        const regulated = slideKind === "compliance" || slideKind === "compliance-unverified";
+        recordSelfCheckFinding({
+          gate: "slides",
+          step: rev(`07-self-check-attempt-${attempt}`),
+          kind: slideKind,
+          detail: attemptChecked.reason,
+          // Mechanism 0's outcome, forwarded verbatim: `repairSourceRefs` snapped a `sourceRef` to a claim it
+          // already matched modulo whitespace, re-ran the REAL `checkSlidesData`, and the gate still refused
+          // — so the patch was discarded WHOLE. The note says WHY it was refused, not merely that a repair
+          // was attempted, because a fabricated citation is worse than the refusal it would have avoided.
+          ...(sourceRefRepair?.outcome === "discarded"
+            ? { remedy: "discarded" as const, remedyNote: sourceRefRepair.remedyNote }
+            : {}),
+          // RFC-19 §5.5 — a regulated-compliance finding does not hold the run, and does not auto-approve
+          // into publication either. It rides the top of the marker and reconfigures `09a` to 24h/hold.
+          ...(regulated ? { severity: "blocking" as const } : {}),
+        });
       }
 
       // Fix 3: the unconditional, mechanical craft-hygiene gate (em dash/
       // exclamation/sentence-case) — never client-config-driven, runs on
       // every attempt regardless of what the client's own style rules say.
       const craftHygiene = await wf.step.code(rev(`07b-craft-hygiene-attempt-${attempt}`), () => checkCraftHygiene(tools, ctx, copy));
+      // The twin of the `07` outage finding above, for `gate.lintPost`. The anti-slop half of this gate is
+      // the half that needs a provider; the sentence-case half is local code and still ran, so this says
+      // exactly that rather than "the craft gate did not run". Recorded whether or not the local half then
+      // refused — a draft can both fail sentence-case AND have gone unmeasured for slop.
+      if (craftHygiene.outage !== undefined) {
+        recordSelfCheckFinding({
+          gate: "craft",
+          step: rev(`07b-craft-hygiene-attempt-${attempt}`),
+          kind: "not-checked",
+          detail: craftHygiene.outage,
+          remedy: "none",
+        });
+      }
       if (!craftHygiene.ok) {
-        returnToCopyWith(craftHygiene.reason);
-        continue;
+        // RFC-19 §4 item 3 — MECHANISM A. An em dash, an exclamation mark, a Title Case headline: this is
+        // STYLE, and it is exactly the class the owner named. Attempts 1..n-1 redraft; the final attempt
+        // records the lint sentence VERBATIM and ships. The prose is never edited to beat the gate —
+        // `repairCraft` was designed and rejected (RFC-19 §9), because rewriting a headline's capitalisation
+        // to pass a check is weakening the gate by the back door. Record-and-ship is honest; a silent
+        // rewrite is not.
+        if (!isFinalAttempt) {
+          returnToCopyWith(craftHygiene.reason);
+          continue;
+        }
+        recordSelfCheckFinding({
+          gate: "craft",
+          step: rev(`07b-craft-hygiene-attempt-${attempt}`),
+          kind: "lint",
+          detail: craftHygiene.reason,
+        });
       }
 
       // ── 07i/07i2: the FREE half of the value gate (Phase 5, RFC-18 §4) ──
@@ -6792,12 +7176,15 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // before any paid one. Everything about value a machine can decide is decided for nothing, and the
       // judge at `07j` is then paid only to adjudicate what a regex cannot.
       //
-      // **THE FINAL ATTEMPT NEVER RETURNS.** `07`'s slide check and `07b` above still `continue` on the
-      // last attempt and therefore still reach the `WorkflowHeld` at the bottom of this loop; that is
-      // pre-existing and RFC-18 §9 names it rather than fixing it. Nothing Phase 5 adds may behave that
-      // way: a judgment gate that holds a run delivers nothing, and a person cannot reject what they never
-      // received. So both free checks record their refusal and FALL THROUGH on the final attempt, and the
-      // post ships marked with the span or the slide the check named.
+      // **THE FINAL ATTEMPT NEVER RETURNS**, and as of RFC-19 (Phase 6) that is true of EVERY gate in this
+      // loop rather than of the Phase 5 additions alone. `07`'s slide check and `07b` above used to
+      // `continue` on the last attempt and reach the terminus hold — RFC-18 §9 named that and deferred it —
+      // and both are now guarded on `isFinalAttempt` and record a finding instead. The bottom of this loop
+      // is no longer a self-check terminus at all: it is the narrow "no attempt produced schema-valid copy
+      // and nothing could be salvaged" carve-out. The rule the rest of this comment states is unchanged and
+      // now applies without exception: a judgment gate that holds a run delivers nothing, and a person
+      // cannot reject what they never received. Every free check records its refusal and FALLS THROUGH on
+      // the final attempt, and the post ships marked with the span or the slide the check named.
       /**
        * The free floor's refusal on the FINAL attempt, if it refused: the reason a human reads on the
        * review payload. Block-scoped to this attempt, so nothing resets it and nothing can leak it into
@@ -6910,6 +7297,16 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        * HARD FAILS again on the corrected copy. `undefined` on the ~30 partial test registries, where both
        * calls are skipped and `07e`'s `checkExpectedScript` stands alone exactly as it does today.
        */
+      /**
+       * RFC-19 §4 item 4 — set when `07e` measured this draft in the WRONG SCRIPT on the final attempt.
+       *
+       * It skips `07g` (relevance), `07j` (the value judge) and `07f` (the native editor). Three paid
+       * opinions about text in the wrong language are three opinions nobody can act on: the relevance judge
+       * would score a Hebrew brief against English slides, the value judge would grade a post the reader
+       * cannot read, and the native editor's whole subject is a language this draft is not in. Skipping them
+       * also SAVES $0.023 on the one path in this RFC that is cheaper than today's hold.
+       */
+      let wrongScript = false;
       const nativeGate = tools["gate.nativeLanguage"];
       const scriptPattern = expectedScript?.test.source ?? "";
       const scriptPatternUsable = /^\\p\{Script=[A-Za-z]+\}$/.test(scriptPattern);
@@ -6921,8 +7318,56 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           checkExpectedScript(gateText, targetLanguage),
         );
         if (!scriptCheck.ok) {
-          returnToCopyWith(`slide copy failed the deterministic language/script check: ${scriptCheck.reason}`);
-          continue;
+          // RFC-19 §4 item 4 — MECHANISM A, and the one that makes `07f`'s own invariant true as written.
+          // The comment 180 lines below says "NO `WorkflowHeld` ON ANY LANGUAGE PATH"; that was FALSE while
+          // this deterministic pre-check could `continue` on the final attempt into the terminus.
+          //
+          // The floor does not move: `checkExpectedScript`'s share is untouched and the step's checkpointed
+          // output still reads `ok: false`.
+          if (!isFinalAttempt) {
+            returnToCopyWith(`slide copy failed the deterministic language/script check: ${scriptCheck.reason}`);
+            continue;
+          }
+          wrongScript = true;
+          recordSelfCheckFinding({
+            gate: "script",
+            step: rev(`${LANGUAGE_SCRIPT_STEP_ID}-attempt-${attempt}`),
+            kind: "wrong-script",
+            detail: scriptCheck.reason,
+          });
+          // The language verdict a reviewer reads. `okAxes()` is this file's existing shape for "no axis
+          // verdict exists" (`language-gate.ts` calls it "the shape a clean draft, and an outage, both
+          // report") and it is used here for the same reason the outage path uses it: the native editor
+          // never ran on this draft, so there are no axes, and inventing per-axis grades would be the faked
+          // score RFC-19 §5.1 forbids. The REASON carries the truth, measured.
+          languageDegraded = {
+            status: "degraded",
+            rounds: 1,
+            axes: okAxes(),
+            correctionsProposed: 0,
+            correctionsApplied: 0,
+            reason:
+              `this draft is not in ${targetLanguage}: ${scriptCheck.reason}. It shipped on the final attempt rather than holding the run, and the ` +
+              `relevance judge, the value judge and the native ${targetLanguage} editor were all skipped — none of them can say anything actionable ` +
+              `about text in the wrong script. A ${targetLanguage} reader must read the slides before this publishes.`,
+          };
+          // `07f` below is skipped on this path, and it is the step that normally promotes `languageDegraded`
+          // into the verdict that SHIPS and writes the one ledger warn. Both are done here instead, keyed
+          // identically so a resume still writes exactly one row.
+          languageVerdict = languageDegraded;
+          try {
+            await tools["ledger.appendEvent"]?.execute(
+              {
+                runId: wf.runId,
+                eventId: `${wf.runId}__language-degraded-r${revision}`,
+                level: "warn",
+                message: languageDegraded.reason ?? `this post's ${targetLanguage} was not verified`,
+              },
+              { ctx },
+            );
+          } catch (error) {
+            console.error(`${LANGUAGE_SCRIPT_STEP_ID}-attempt-${attempt}: could not record the language-degraded warn`, error);
+          }
         }
 
         // ── 07e2: `gate.nativeLanguage`, the deterministic half of nativeness (Phase 4, RFC-15 §5) ──
@@ -6979,9 +7424,25 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           });
           if (!conventions.ok) {
             // FREE, and it consumes ZERO relevance turns and ZERO judge turns: this `continue` is above both
-            // paid steps. That ordering is the whole cost argument of this phase.
-            returnToCopyWith(`slide copy failed the deterministic ${targetLanguage} conventions gate: ${conventions.reason}`);
-            continue;
+            // paid steps. That ordering is the whole cost argument of Phase 4.
+            //
+            // RFC-19 §4 item 5 — MECHANISM A, and the irony it fixes is worth stating: this gate already has
+            // the right instinct twenty lines above, for OUTAGES ("a gate that could not RUN is not a verdict
+            // on the draft, and this one is free"), and did not have it for its own VERDICTS. A curly quote
+            // or a Latin month name is the cheapest defect in this pipeline and the one least worth a run
+            // that delivers nothing. `repairNativeConventions` was designed and DEFERRED rather than refused
+            // (RFC-19 §9): it edits the model's prose, and there is no prep evidence yet of how often this
+            // gate refuses on those findings alone.
+            if (!isFinalAttempt) {
+              returnToCopyWith(`slide copy failed the deterministic ${targetLanguage} conventions gate: ${conventions.reason}`);
+              continue;
+            }
+            recordSelfCheckFinding({
+              gate: "conventions",
+              step: rev(`07e2-native-conventions-attempt-${attempt}`),
+              kind: "conventions",
+              detail: `slide copy failed the deterministic ${targetLanguage} conventions gate: ${conventions.reason}`,
+            });
           }
           // Soft tells never fail a draft. They travel into the judge's input as CANDIDATE findings it must
           // confirm or reject with a corrected string, which is what makes the free half and the paid half
@@ -7091,42 +7552,69 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // on a verdict no redraft can answer. A 1 — the audit's own
       // real-estate carousel — is off-brief at either floor.
       const relevanceGateFloor = relevanceFloor(isThinlyGrounded(brief));
-      const relevance: RelevanceVerdict = await runRelevanceJudge(
-        wf,
-        { tools, promptStore: options.promptStore, router: options.router },
-        rev(`07g-relevance-attempt-${attempt}`),
-        { brief: briefForPrompt(brief), topic: topicClaim.topic, caption: copy.caption, slides: relevanceSlidesFor(copy) },
-        relevanceGateFloor,
-      );
-      spend(rev(`07g-relevance-attempt-${attempt}`), undefined, STEP_COST_ESTIMATES_USD.relevance);
-      if (relevance.status === "off-brief") {
-        lastSelfCheckReason = relevanceFailureReason(relevance);
-        relevanceSteer = relevanceSteerFor(relevance);
-        continue;
-      }
-      if (relevance.status === "error") {
-        try {
-          await tools["ledger.appendEvent"]?.execute({ runId: wf.runId, ...relevanceUnavailableEvent(wf.runId, attempt, relevance) }, { ctx });
-        } catch (error) {
-          console.error(`07g-relevance-attempt-${attempt}: could not record the judge-unavailable warn`, error);
+      /** The shipped attempt's relevance verdict. Absent when the judge could not run — or was not asked (RFC-19 §4 item 4). */
+      let attemptRelevance: DraftResult["relevance"];
+      // RFC-19 §4 item 4 — SKIPPED outright on a wrong-script final attempt. Scoring a Hebrew brief against
+      // English slides buys an answer nobody can act on, and NOT buying it is $0.002 of the $0.023 this one
+      // path saves against today's behaviour.
+      if (!wrongScript) {
+        const relevance: RelevanceVerdict = await runRelevanceJudge(
+          wf,
+          { tools, promptStore: options.promptStore, router: options.router },
+          rev(`07g-relevance-attempt-${attempt}`),
+          { brief: briefForPrompt(brief), topic: topicClaim.topic, caption: copy.caption, slides: relevanceSlidesFor(copy) },
+          relevanceGateFloor,
+        );
+        spend(rev(`07g-relevance-attempt-${attempt}`), undefined, STEP_COST_ESTIMATES_USD.relevance);
+        if (relevance.status === "off-brief") {
+          // RFC-19 §4 item 6 — MECHANISM A. This was the ONLY paid judge in the loop without the
+          // `isFinalAttempt` guard; `07j` (value) and `07f` (native) both grew one and this one never did.
+          //
+          // `MIN_RELEVANCE_SCORE` and the relaxed floor are both untouched: the verdict is still `off-brief`
+          // and the checkpointed step still says so. What changes is that on the final attempt the SUB-FLOOR
+          // SCORE travels, instead of the run ending. `DraftResult.relevance` already routes to the gate
+          // payload and the deliverable through `groundingFor` — today it can only ever carry a PASSING
+          // score, which is why the marker has to say "scored 2 against a floor of 3" in so many words.
+          if (!isFinalAttempt) {
+            lastSelfCheckReason = relevanceFailureReason(relevance);
+            relevanceSteer = relevanceSteerFor(relevance);
+            continue;
+          }
+          recordSelfCheckFinding({
+            gate: "relevance",
+            step: rev(`07g-relevance-attempt-${attempt}`),
+            kind: "off-brief",
+            detail: relevanceFailureReason(relevance),
+            // The MEASURED score against the floor that was actually applied — `relevanceFloor` relaxes to 2
+            // for a thinly-grounded brief, and a marker quoting the wrong floor would make a passing-by-the
+            // -relaxed-rule post read as a failing one.
+            score: { value: relevance.score, floor: relevanceGateFloor.minScore },
+          });
         }
-      }
-      // A draft that passed only on the relaxed floor is recorded where a
-      // reviewer will see it, on the ledger as well as on the gate payload:
-      // the post ships, and the reason the usual floor could not be applied
-      // to this client is a sentence they can act on (two onboarding
-      // documents).
-      if (relevance.status === "relevant" && relevance.note !== undefined) {
-        try {
-          await tools["ledger.appendEvent"]?.execute({ runId: wf.runId, ...relevanceThinGroundingEvent(wf.runId, attempt, relevance) }, { ctx });
-        } catch (error) {
-          console.error(`07g-relevance-attempt-${attempt}: could not record the thin-grounding warn`, error);
+        if (relevance.status === "error") {
+          try {
+            await tools["ledger.appendEvent"]?.execute({ runId: wf.runId, ...relevanceUnavailableEvent(wf.runId, attempt, relevance) }, { ctx });
+          } catch (error) {
+            console.error(`07g-relevance-attempt-${attempt}: could not record the judge-unavailable warn`, error);
+          }
         }
+        // A draft that passed only on the relaxed floor is recorded where a
+        // reviewer will see it, on the ledger as well as on the gate payload:
+        // the post ships, and the reason the usual floor could not be applied
+        // to this client is a sentence they can act on (two onboarding
+        // documents).
+        if (relevance.status === "relevant" && relevance.note !== undefined) {
+          try {
+            await tools["ledger.appendEvent"]?.execute({ runId: wf.runId, ...relevanceThinGroundingEvent(wf.runId, attempt, relevance) }, { ctx });
+          } catch (error) {
+            console.error(`07g-relevance-attempt-${attempt}: could not record the thin-grounding warn`, error);
+          }
+        }
+        attemptRelevance =
+          relevance.status === "error"
+            ? undefined
+            : { score: relevance.score, reason: relevance.reason, ...(relevance.status === "relevant" && relevance.note !== undefined ? { note: relevance.note } : {}) };
       }
-      const attemptRelevance: DraftResult["relevance"] =
-        relevance.status === "error"
-          ? undefined
-          : { score: relevance.score, reason: relevance.reason, ...(relevance.status === "relevant" && relevance.note !== undefined ? { note: relevance.note } : {}) };
 
       // ── 07j: THE VALUE GATE (Phase 5, RFC-18 §5) ──
       //
@@ -7160,7 +7648,20 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       const valueStepId = rev(`07j-value-judge-attempt-${attempt}`);
       /** This attempt's judged verdict, or `undefined` when the judge was never asked (past the hard max). */
       let judgedValue: ValueVerdict | undefined;
-      if (meter.posture === "cheapest-path") {
+      if (wrongScript) {
+        // RFC-19 §4 item 4 — the same skip, for the same reason, at the same $0 cost as the branch below it.
+        // "Would a reader save this post?" is unanswerable about text the reader cannot read; asking costs
+        // $0.003 and buys a number that means nothing. `unjudged` is the honest status and `stage: "language"`
+        // says which of the three reasons for it fired — the distinction `stage` exists to make.
+        valueVerdictForAttempt = {
+          status: "unjudged",
+          stage: "language",
+          returns: valueReturns,
+          rubricVersion: VALUE_RUBRIC_VERSION,
+          reason: `the draft was measured in the wrong script on the final attempt, so the value judge was not asked about text nobody can read`,
+          ...(leadClaim !== undefined ? { leadClaim } : {}),
+        };
+      } else if (meter.posture === "cheapest-path") {
         // Row 7 — past the hard max the judge is optional spend and is skipped outright. The free floor
         // above still ran, because it costs nothing and refuses the mechanical half for $0. The post
         // delivers `unjudged`, which is what "budgets adapt, never hold" means at this step.
@@ -7383,7 +7884,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // TIER is the optional part. A hold delivers nothing and a person cannot reject what they never
       // received, so unverified copy ships FLAGGED — to a run that still has a human gate at `09a`. The
       // original geektime failure shipped because nothing told anyone, not because something shipped.
-      if (targetLanguage !== undefined && gateText !== undefined) {
+      //
+      // RFC-19 §4 item 4 adds `!wrongScript`: `07e` already measured, deterministically and for free, that
+      // this draft is not in the target language at all. Paying $0.018 for a native editor to say so again
+      // buys nothing — its corrections are ANCHORED SPANS into text that would have to be rewritten whole —
+      // and the finding a reviewer needs is already recorded, with the measured coverage, by `07e` itself.
+      if (targetLanguage !== undefined && gateText !== undefined && !wrongScript) {
         const judgeDeps = { tools, promptStore: options.promptStore, router: options.router };
         const judgeStepId = rev(`${LANGUAGE_FLUENCY_STEP_ID}-attempt-${attempt}`);
         const registerCard = languageBrief !== undefined ? renderRegisterCard(languageBrief.register, languageBrief.target) : undefined;
@@ -7758,6 +8264,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       const slidesDataAttempt = await wf.step.code(rev(`07c-emit-slides-data-attempt-${attempt}`), () =>
         assembleForAttempt(copy, selections, validatedCustomArchetypeIds),
       );
+      // RFC-19 Mechanism B, depth 3 — this attempt's copy assembled cleanly into renderable slides-data,
+      // which is strictly more than an attempt that died at `07`. The assembly itself is not stored: it is a
+      // pure function of the copy and the selections, so the salvage path re-derives it rather than carrying
+      // a second copy of it that could disagree.
+      recordSalvage(attempt, 3, copy);
 
       // ── 07h: the default render rules, checked in code BEFORE any render is spent (Phase 0, item D) ──
       //
@@ -7811,11 +8322,30 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               : {}),
           };
         });
-        if (drr.failures.length > 0) {
+        if (drr.failures.length > 0 && !isFinalAttempt) {
           returnToCopyWith(`default render rule(s) failed on attempt ${attempt} (no render spent): ${formatDefaultRenderRuleFailures(drr.failures)}`);
           continue;
         }
         residueRules = drr.residue;
+        if (drr.failures.length > 0) {
+          // RFC-19 §4 item 7 — MECHANISM A, expressed entirely in this step's OWN existing vocabulary.
+          //
+          // The cover waiver twenty lines above already does this: a failure that no redraft can answer is
+          // moved out of `failures` and into `residue`, where `08b`'s judge still sees it and the reviewer
+          // still reads it. On the final attempt every remaining failure takes the same road, for the same
+          // reason — there is no redraft left to answer it with, and a house layout rule is not worth a run
+          // that delivers nothing. Zero new concepts, and the judge's field of view does not shrink.
+          residueRules = [...drr.residue, ...DEFAULT_RENDER_RULES.filter((r) => drr.failures.some((f) => f.ruleId === r.id))];
+          recordSelfCheckFinding({
+            gate: "render-rules",
+            step: rev(`07h-default-render-rules-attempt-${attempt}`),
+            kind: "house-rule",
+            detail: `default render rule(s) failed on the final attempt: ${formatDefaultRenderRuleFailures(drr.failures)}`,
+            remedy: "waived",
+            remedyNote: "left to the visual-QA judge and the human reviewer rather than held",
+            ...(drr.failures[0]?.slide !== undefined ? { slide: drr.failures[0].slide } : {}),
+          });
+        }
       }
 
       // ── 07k: the cross-run variety check (Phase 2, item P) ──
@@ -7957,6 +8487,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       }
       let renderedAttempt = renderResolved.result as RenderCarouselResult;
       let slidesDataForQa = slidesDataResolved;
+      // RFC-19 Mechanism B, depth 4 — the deepest an attempt can get: real PNGs exist for this copy. The
+      // common salvage case is exactly this one (attempt 1 renders, visual QA refuses it, attempt 2's copy
+      // comes back malformed), and it is what makes "the best attempt you already paid for" a measurable
+      // claim rather than a preference.
+      recordSalvage(attempt, 4, copy);
 
       // ── 08a1: the visual-interest floor, measured on the pixels ──
       //
@@ -8356,8 +8891,27 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // The whole cost claim this ticket has to prove: this attempt never
         // reaches `qaAgent` at all — zero model calls for a defect code
         // already knows about with an `includes()` check.
-        lastSelfCheckReason = `visual QA deterministic pre-check failed on attempt ${attempt} (no model call spent): ${preChecks.paletteGate.reason}`;
-        continue;
+        //
+        // RFC-19 §4 item 8, and it is TWO fixes, not one.
+        //
+        // (a) The bare `continue` becomes `returnToCopyWith`. Until now the next draft was NEVER TOLD which
+        //     hex offended, so the redraft prompt was byte-identical and produced a byte-identical palette
+        //     three times over: the *guard that cannot pass* shape, and a recorded $0.30 hold on prep run
+        //     `pubsub-21634455753345065`. The gate did not need weakening — it needed to say what it saw.
+        // (b) On the final attempt the finding is recorded and the post ships. Brand furniture must never
+        //     hold a run; `brand-render-tokens.ts` states that invariant repeatedly and this was the one
+        //     place that still did.
+        const paletteReason = `visual QA deterministic pre-check failed on attempt ${attempt} (no model call spent): ${preChecks.paletteGate.reason}`;
+        if (!isFinalAttempt) {
+          returnToCopyWith(paletteReason);
+          continue;
+        }
+        recordSelfCheckFinding({
+          gate: "palette",
+          step: rev(`08a2-visual-qa-pre-checks-attempt-${attempt}`),
+          kind: "off-kit-hex",
+          detail: paletteReason,
+        });
       }
 
       // SCRUM-393 (IGSTYLE-8): surface every sub-floor contrast fact as a
@@ -8471,6 +9025,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         finalInterest = floor;
         finalInterestRelayout = interestRelayout;
         finalSkeleton = skeletonVerdict;
+        // RFC-19 — the refusals travel with the attempt that WON, on the same footing as `finalLanguage` and
+        // `finalValue` and for the same reason: attempt-scoped, so an earlier attempt's refusals never ride
+        // along with a later attempt that came back clean.
+        finalSelfCheckFindings = selfCheckFindings;
         finalOutcomeOk = true;
         break;
       }
@@ -8503,18 +9061,54 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         ...(skeletonVerdict.warnings.length > 0 ? { skeletonWarnings: skeletonVerdict.warnings } : {}),
       });
       spend(rev(`08b-visual-qa-attempt-${attempt}`), qaExec.totalCostUsd, STEP_COST_ESTIMATES_USD.visualQa);
-      if (qaExec.status === "tooling_error") {
-        throw new WorkflowToolingFailure(`visual QA step resolved to "${qaExec.status}" on attempt ${attempt}/${maxAttempts}`);
-      }
+      // RFC-19 §4 items 10 and 11 — the `tooling_error` throw is DELETED and merged into the branch one line
+      // below it, which already treated the schema-invalid form of the same event as a quality event. A
+      // REGISTERED judge returning a non-success outcome has formed no opinion about the draft (Mechanism C),
+      // and "the judge could not answer" is strictly LESS reason to bin a rendered post than "the judge said
+      // no" — which itself no longer bins it either.
       if (qaExec.status !== "completed") {
-        lastSelfCheckReason = `visual QA output failed its own output validation on attempt ${attempt}`;
-        continue;
+        const unjudged = `visual QA produced no usable verdict on attempt ${attempt}/${maxAttempts} (${qaExec.status})`;
+        if (!isFinalAttempt) {
+          // `returnToCopyWith`, not the bare `continue` this was: a redraft that is not told the judge went
+          // silent has nothing to change, and re-rolling the same draft against a flaky judge is the same
+          // guard-that-cannot-pass shape the palette gate had.
+          returnToCopyWith(unjudged);
+          continue;
+        }
+        recordSelfCheckFinding({
+          gate: "visual-qa",
+          step: rev(`08b-visual-qa-attempt-${attempt}`),
+          kind: "unjudged",
+          detail: unjudged,
+        });
       }
-      const qa = qaExec.finalOutput!;
-      if (!qa.pass) {
+      const qa = qaExec.status === "completed" ? qaExec.finalOutput! : undefined;
+      if (qa !== undefined && !qa.pass) {
         const failing = qa.findings.filter((f) => !f.passed);
-        returnToCopyWith(`visual QA failed on attempt ${attempt}: ${failing.length > 0 ? failing.map((f) => `${f.ruleId}${f.slide !== undefined ? ` (slide ${f.slide})` : ""}: ${f.note}`).join("; ") : "no specific findings given"}`);
-        continue;
+        const qaReason = `visual QA failed on attempt ${attempt}: ${failing.length > 0 ? failing.map((f) => `${f.ruleId}${f.slide !== undefined ? ` (slide ${f.slide})` : ""}: ${f.note}`).join("; ") : "no specific findings given"}`;
+        // RFC-19 §4 item 9 — MECHANISM A, and it removes an absurdity: today crossing the HARD MAX makes a
+        // run SAFER than staying under it, because `08b`'s cheapest-path branch above already assigns
+        // `finalRendered` and delivers, while the same run under budget throws its PNGs away. The pixels are
+        // one assignment from shipping either way.
+        if (!isFinalAttempt) {
+          returnToCopyWith(qaReason);
+          continue;
+        }
+        // One finding per failing rule, carrying the judge's own `ruleId`, `slide` and `note` — never a
+        // summary. A reviewer has to be able to act on "default:two-elements-per-slide on slide 4".
+        if (failing.length === 0) {
+          recordSelfCheckFinding({ gate: "visual-qa", step: rev(`08b-visual-qa-attempt-${attempt}`), kind: "fail", detail: qaReason });
+        } else {
+          for (const f of failing) {
+            recordSelfCheckFinding({
+              gate: "visual-qa",
+              step: rev(`08b-visual-qa-attempt-${attempt}`),
+              kind: f.ruleId,
+              detail: `visual QA failed ${f.ruleId}: ${f.note}`,
+              ...(f.slide !== undefined ? { slide: f.slide } : {}),
+            });
+          }
+        }
       }
 
       finalCopy = copy;
@@ -8528,13 +9122,31 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       finalInterest = floor;
       finalInterestRelayout = interestRelayout;
       finalSkeleton = skeletonVerdict;
+      finalSelfCheckFindings = selfCheckFindings;
       finalOutcomeOk = true;
       break;
     }
 
+      // ── RFC-19 §4 item 1: THE TERMINUS, SPLIT ──
+      //
+      // The sentence that used to be here — the one about step 07's self-check not clearing inside N
+      // attempts — is DELETED OUTRIGHT (`held-sites.test.ts` asserts its wording is gone from this file, so
+      // it is quoted nowhere, here included), and its deletion is half the point of this phase. It let nine
+      // unrelated causes hide behind one generic string: a banned word, a curly quote, a sub-floor relevance
+      // score, an off-kit hex, a judge that went silent, and a model that dropped a discriminator all ended
+      // here reading as the same thing, and none of them was worth a run that delivered nothing.
+      //
+      // With Mechanism A every quality gate falls through on the final attempt, and with Mechanism B a final
+      // attempt with no draft of its own ships the best draft an earlier attempt already paid for. What is
+      // left is the owner's own carve-out, stated narrowly: **no output exists at all**. Not "a gate said
+      // no" — "nothing schema-valid was ever written". That is a real fault, and it is the only one left in
+      // this loop.
       if (!finalOutcomeOk || !finalCopy || !finalSelections || !finalSlidesData || !finalRendered) {
         throw new WorkflowHeld(
-          `step 07's self-check never passed after ${maxAttempts} attempt(s) (initial + ${maxAttempts - 1} return(s) to step 05${maxAttempts < MAX_SELF_CHECK_ATTEMPTS ? ", the run budget plan allowed one return instead of two" : ""}) — last reason: ${lastSelfCheckReason}`,
+          `no drafting attempt produced copy that cleared its own schema (${maxAttempts} attempt(s)` +
+            `${maxAttempts < MAX_SELF_CHECK_ATTEMPTS ? ", the run budget plan allowed one return instead of two" : ""}) ` +
+            `and no earlier attempt could be salvaged — there is no draft to deliver. Last: ${lastCopyFailure}` +
+            `${lastSelfCheckReason !== "no attempt completed" ? ` (last self-check finding: ${lastSelfCheckReason})` : ""}`,
         );
       }
       // ── 08c*: THE WHOLE POST (Phase 5, RFC-18 §6) ──
@@ -8811,6 +9423,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // RFC-17 — what the shipped assembly's marks could not do. Reported,
         // never gated; an empty array is the ordinary case.
         emphasisIssues,
+        // RFC-19 — ABSENT, never empty, when nothing refused. The asymmetry is the contract: a marker
+        // attached to every clean post is the "silently shipping a bad post" failure in reverse.
+        ...(finalSelfCheckFindings.length > 0
+          ? { selfCheck: { attempt: shippedAttempt, attemptsSpent, checks: finalSelfCheckFindings } }
+          : {}),
       };
     };
 
@@ -8889,6 +9506,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       ...(deepResearch.note !== undefined ? { researchNote: deepResearch.note } : {}),
       ...(primarySources.notes.length > 0 ? { primarySourceNotes: primarySources.notes } : {}),
       factCards: { kept: factCards.facts.length, duplicatesDropped: factCards.dropped.length, truncated: factCards.truncated },
+      // RFC-19 §4 item 17 — present only when `04b`'s extraction refused and this post rests on fetched
+      // HEADLINES rather than extracted claims. RFC-19 §11 item 2 names the consequence honestly: a carousel
+      // built this way is thinner and will often fail the value gate's `newFact` axis. If this marker becomes
+      // common, the extractor is the thing to fix — not the fallback.
+      ...(researchFallbackMarker !== undefined ? { research: researchFallbackMarker } : {}),
     });
 
     // ── 09a: the universal approve / revise / reject cycle ──
@@ -9041,6 +9663,20 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                 },
               }
             : {}),
+          // RFC-19 §5.3 — WHAT THE REVIEWER SEES. Top level, mirroring `visualInterest` rather than riding
+          // `groundingFor`, because this is a RUN-LEVEL degrade marker and not a verdict about grounding.
+          // The rendered PNGs are above it and exactly which checks refused are here, in each gate's own
+          // words, with the step id that produced each — so a reviewer can `reject`, and THAT rejection is
+          // still a hold, because it is the gate doing its job.
+          ...(draft.selfCheck !== undefined
+            ? {
+                selfCheck: selfCheckDegradeMarker(draft.selfCheck.checks, {
+                  attempt: draft.selfCheck.attempt,
+                  attemptsSpent: draft.selfCheck.attemptsSpent,
+                  pastHardMax: meter.posture === "cheapest-path",
+                }),
+              }
+            : {}),
           // Phase 2, item P — the layout sequence this post ships, the
           // previous one, and the measured distance between them.
           skeleton: skeletonGateFacts(draft.skeleton),
@@ -9158,7 +9794,23 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           })(),
         },
         requiredRole: "account_manager",
-        timeout: { duration: "1h", onTimeout: "auto_approve" },
+        // RFC-19 §5.5 — the ONE place the human gate moves, and it moves in the SAFER direction.
+        //
+        // A regulated-compliance finding (a `never_say` phrase, or a `gate.brandCompliance` that could not
+        // run on a `compliance.regulated` client) ships like every other finding: the reviewer receives the
+        // rendered carousel and the sentence that refused it. But `{ duration: "1h", onTimeout:
+        // "auto_approve" }` would make DELIVERY indistinguishable from PUBLICATION for exactly the client
+        // who can least afford that — and per the prep environment the auto-approve sweep is not even wired
+        // there, so "an hour" is not a promise anyone is keeping.
+        //
+        // So for this run only: a whole day, and a HOLD at the end of it rather than an approval. Nothing
+        // regulated auto-approves into publication while nobody is looking, and if it does time out the
+        // hold reads "a regulated-compliance finding went unreviewed for 24h" — the gate doing its job,
+        // with a human given a day AND a rendered post to look at. Categorically different from today's
+        // hold, where nobody ever sees anything.
+        timeout: hasBlockingFinding(draft.selfCheck?.checks ?? [])
+          ? { duration: "24h", onTimeout: "hold" }
+          : { duration: "1h", onTimeout: "auto_approve" },
       }),
       onDecision: async ({ revision, response, templateFeedback }) => {
         // IGSTYLE-3, §2.2 Layer 2 — captured here (not via `notes`, which the
@@ -9425,6 +10077,44 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         ? { status: "degraded" as const, reason: review.output.language.reason ?? `this post's language was not verified (${review.output.language.status})` }
         : undefined;
 
+    /**
+     * RFC-19 §5.1 — the self-check degrade marker, computed ONCE beside the other two and for exactly the
+     * reason they are: the gate payload, the persisted deliverable, the ledger row and the workflow's own
+     * typed return must all carry the SAME sentence, and four inline builders would drift.
+     *
+     * `undefined` on the overwhelming majority of runs — every gate passed, or an earlier attempt fixed what
+     * a later one would have been marked for. That absence is asserted by `zero-held-quality.test.ts`, not
+     * merely intended.
+     */
+    const selfCheckMarker: SelfCheckDegradeMarker | undefined =
+      review.output.selfCheck !== undefined
+        ? selfCheckDegradeMarker(review.output.selfCheck.checks, {
+            attempt: review.output.selfCheck.attempt,
+            attemptsSpent: review.output.selfCheck.attemptsSpent,
+            pastHardMax: meter.posture === "cheapest-path",
+          })
+        : undefined;
+
+    // ── RFC-19 §5.3 — THE LEDGER. One warn per degraded delivery, idempotent on (runId, revision) so a
+    //    resume writes exactly one row, the key `interest-floor` and the language marker both already use.
+    //    Best-effort: losing the row costs telemetry, and failing a delivered post over a ledger write is
+    //    the exact mistake the bookkeeping cluster below exists to stop.
+    if (selfCheckMarker !== undefined) {
+      try {
+        await tools["ledger.appendEvent"]?.execute(
+          {
+            runId: wf.runId,
+            eventId: selfCheckDegradedEventId(wf.runId, review.revision),
+            level: "warn",
+            message: selfCheckMarker.reason,
+          },
+          { ctx },
+        );
+      } catch (error) {
+        console.error("09b: could not record the self-check-degraded warn", error);
+      }
+    }
+
     // ── 09f: the pool that grows (Phase 2, item O) ──
     //
     // A run-authored layout that shipped through the HUMAN gate twice with no
@@ -9643,6 +10333,16 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             ...(interestDegradedMarker !== undefined
               ? { visualInterest: { findings: review.output.interestDegraded!.findings, reason: interestDegradedMarker.reason } }
               : {}),
+            // RFC-19 §5.3 — WHAT THE CLIENT RETRIEVES. `GET /runs/:id/deliverables/instagram-carousel` now
+            // returns a 200 with the full carousel plus this marker, on runs that are a 404 today because
+            // the run held and no deliverable was ever written. The whole requirement is a deliverable PLUS
+            // THE TRUTH: `status: "degraded"`, the reason naming the gate and the score, and `checks[]`
+            // recording exactly which checks did not pass.
+            ...(selfCheckMarker !== undefined ? { selfCheck: selfCheckMarker } : {}),
+            // RFC-19 §4 item 17 — and the deliverable says it TWICE (here and in `grounding`'s evidence
+            // notes) for the reason §11 item 2 gives: a post sourced from headlines rather than extracted
+            // claims is thinner, and nobody should have to infer that from the slides.
+            ...(researchFallbackMarker !== undefined ? { research: researchFallbackMarker } : {}),
             skeleton: skeletonGateFacts(review.output.skeleton),
             ...(review.output.deviceIssues.length > 0 ? { deviceIssues: review.output.deviceIssues } : {}),
             // THE PER-IMAGE COMPLIANCE RECORD, on the persisted deliverable.
@@ -9678,8 +10378,24 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       const shippedImagePaths = review.output.selections.map((s) => s.imagePath).filter((p): p is string => p !== null);
       if (shippedImagePaths.length > 0) {
         const recordOutcome = await tools["ledger.recordUsedImages"]!.execute({ imagePaths: shippedImagePaths }, { ctx });
+        // RFC-19, the bookkeeping cluster — a ledger WRITE, AFTER A HUMAN APPROVED THE POST, may not end the
+        // run. The `recordOutputExcerpt` call eight lines below already swallows for exactly this reason and
+        // says so in its own words: losing the record costs future dedupe signal, failing an approved post
+        // over it would cost the post. This one threw.
         if (recordOutcome.status !== "success") {
-          throw new WorkflowToolingFailure(`ledger.recordUsedImages failed: ${recordOutcome.status}`);
+          try {
+            await tools["ledger.appendEvent"]?.execute(
+              {
+                runId: wf.runId,
+                eventId: `${wf.runId}__used-images-unrecorded`,
+                level: "warn",
+                message: `ledger.recordUsedImages reported ${recordOutcome.status} after this post was approved — a future run may re-use one of its ${shippedImagePaths.length} photograph(s)`,
+              },
+              { ctx },
+            );
+          } catch (error) {
+            console.error("09b-deliver-and-log: could not record the used-images-unrecorded warn", error);
+          }
         }
       }
 
@@ -9954,8 +10670,24 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // its own reservation.
       if (topicClaim.source === "reserved" && topicClaim.reservationKey) {
         const commitOutcome = await tools["topics.commit"]!.execute({ reservationKey: topicClaim.reservationKey }, { ctx });
+        // RFC-19, the bookkeeping cluster. `09b`'s own decision-log write states the precedent verbatim —
+        // *"losing a promotion costs the pool one design, failing an approved post over it would cost the
+        // post"* — and this call sits AFTER `ledger.writeDeliverable` has already returned an id. The client
+        // has the carousel; a stuck reservation expires on its own.
         if (commitOutcome.status !== "success") {
-          throw new WorkflowToolingFailure(`topics.commit failed to confirm the step-03 topic claim: ${commitOutcome.status}`);
+          try {
+            await tools["ledger.appendEvent"]?.execute(
+              {
+                runId: wf.runId,
+                eventId: `${wf.runId}__topic-claim-uncommitted`,
+                level: "warn",
+                message: `topics.commit reported ${commitOutcome.status} after the deliverable was written — the step-03 reservation stays claimed until it expires on its own`,
+              },
+              { ctx },
+            );
+          } catch (error) {
+            console.error("09b-deliver-and-log: could not record the topic-claim-uncommitted warn", error);
+          }
         }
       }
 
@@ -10016,6 +10748,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // after two rounds, or could not judge at all, COMPLETED and delivered; the marker is what keeps it
       // distinguishable from one that shipped clean. Never a hold.
       ...(languageDegradedMarker !== undefined ? { language: languageDegradedMarker } : {}),
+      // RFC-19 — same shape, same rule, same reason as the three markers above it. A run whose slide check,
+      // craft lint, script check, relevance judge, render rules, palette gate or visual-QA judge refused the
+      // attempt that shipped COMPLETED and delivered; the marker is what keeps it distinguishable from a
+      // post that shipped clean. **Never a hold.** The engine's own `degraded` cannot express this — it
+      // hard-codes `output: null` — so every path in RFC-19 returns rather than throws.
+      ...(selfCheckMarker !== undefined ? { selfCheck: selfCheckMarker } : {}),
     };
   };
 }

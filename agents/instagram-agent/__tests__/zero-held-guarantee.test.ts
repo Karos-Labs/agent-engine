@@ -39,15 +39,45 @@ import { RUN_BUDGET_BELIEF_KEY } from "../src/workflow/run-budget.js";
  * ## What is deliberately still allowed to hold
  *
  * "Never held" cannot honestly mean "never held for any reason" — three holds
- * are not picture problems and removing them would be worse than the hold:
+ * are REAL FAULTS, and removing them would be worse than the hold:
  *
  * - A HUMAN rejecting the batch review. The gate exists to be able to say no.
  * - No subject at all (empty catalog, no requested subject, no client
  *   industry). There is nothing to write about, and inventing one is not a
  *   fallback.
- * - Research producing no schema-valid facts, or the copy/compliance
- *   self-checks never passing inside the retry budget. Shipping unsourced or
- *   non-compliant copy is a worse outcome than shipping nothing.
+ * - Nothing to write FROM or nothing written: research that produced no
+ *   readable source (`04b`, where not one fetched document carried a title to
+ *   claim), and no drafting attempt having produced schema-valid copy with no
+ *   earlier attempt to salvage. Both are the carve-out's "no output exists at
+ *   all"; shipping unsourced copy is worse than shipping nothing.
+ *
+ * That third bullet is NARROWER than it was, and RFC-19 (Phase 6) is why. It
+ * used to read "research producing no schema-valid facts, or the
+ * copy/compliance self-checks never passing inside the retry budget", and both
+ * halves of that sentence have been deliberately dismantled:
+ *
+ * - A malformed EXTRACTION no longer holds. The merged documents are still in
+ *   hand, so `04b` builds one fact card per fetched source from its own title,
+ *   verbatim and cited to its own URL (§4 item 17). Those cards ARE sourced, so
+ *   the "worse than shipping nothing" reasoning survives untouched — it just no
+ *   longer reaches. The hold now fires only when NO document has a title.
+ * - The SELF-CHECKS never passing no longer holds at all, and that was the
+ *   whole of RFC-19. A judge below a bar, a lint refusal, a sub-floor score, an
+ *   off-kit hex, a `never_say` phrase: every one of those is a QUALITY event,
+ *   and a quality event now records a typed `SelfCheckFinding`, walks the
+ *   attempt forward and delivers `completed` with the marker attached. The bars
+ *   did not move — each gate still refuses exactly what it refused — what
+ *   changed is what happens after the refusal.
+ * - COMPLIANCE in particular is no longer in this list. A regulated client's
+ *   `never_say` refusal delivers with `severity: "blocking"` at the top of
+ *   `selfCheck.checks` AND reconfigures `09a` to `{ duration: "24h", onTimeout:
+ *   "hold" }`, so nothing regulated can auto-approve into publication unread
+ *   (§5.5). The reviewer gets the rendered post and a day to read it.
+ *
+ * The enumeration above must agree with `held-sites.test.ts`, which reads the
+ * workflow source and pins the count at exactly three `throw new WorkflowHeld(`
+ * sites. If these two ever disagree, this comment is the one that is wrong —
+ * that file is machine-checked and this one is prose.
  *
  * Each of those is asserted below too, so the boundary is pinned rather than
  * assumed. THREE, not four — and RFC-14 item L's visual-interest floor
