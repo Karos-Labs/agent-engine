@@ -381,14 +381,30 @@ describe("media library — 05y-read-media-library (pending the Phase 3 wiring)"
   it("offers a matching archived frame before any sourcing tier, and pays for no vision to do it", async () => {
     const assetId = await seedLibrary();
     const calls: string[] = [];
-    const steps = await run({}, calls);
+    // The renderer records itself into the SAME list, purely as a position marker: it is the boundary
+    // between "sourcing this post's pictures" and "photographing the finished slides".
+    const steps = await run({ "publish.renderCarousel": recording(env.tools["publish.renderCarousel"] as unknown as AgentTool, calls) }, calls);
 
     const readLibrary = steps.find((s) => s.stepId === "05y-read-media-library");
     expect(readLibrary, "05y-read-media-library must run before 05b").toBeDefined();
     expect(JSON.stringify(readLibrary?.output)).toContain(assetId);
     expect(calls).toContain("media.libraryList");
-    // The saving, asserted as an absence.
-    expect(calls).not.toContain("media.inspectImages");
+    // The saving, asserted as an absence — SCOPED TO THE SOURCING PHASE, i.e. everything before `08`.
+    //
+    // It was once asserted over the whole run, and that stopped being a measurement of the sourcing tier
+    // the day the run started getting further: since RFC-19 a quality verdict no longer kills a run, so a
+    // post that used to die at a gate now walks forward and delivers — and therefore now reaches
+    // `08a4-inspect-rendered`, a step that has existed on `main` all along and legitimately pays vision to
+    // LOOK AT THE RENDERED PNGs. That call says nothing about where the pictures came from, so counting it
+    // here measured the wrong thing and failed a run for succeeding.
+    //
+    // The guarantee itself is UNCHANGED and is the whole economic argument for consulting the archive
+    // before stock: offering a library frame costs no vision call, because the STORED description is what
+    // reaches the vetting agent. Do not widen this back to the whole run to make a failure go away — if a
+    // vision call appears before the render, the saving is genuinely gone.
+    const renderAt = calls.indexOf("publish.renderCarousel");
+    const whileSourcing = renderAt === -1 ? calls : calls.slice(0, renderAt);
+    expect(whileSourcing).not.toContain("media.inspectImages");
 
     // Tier 0.5 sits after the client's fresh uploads and before stock.
     const ids = steps.map((s) => s.stepId);
