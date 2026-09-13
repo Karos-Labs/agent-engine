@@ -889,7 +889,42 @@ export interface InterestFloorOptions {
   downgradedForImages?: ReadonlySet<number> | undefined;
   /** The archetype this slide rendered through (`stat-callout`, `custom-pull_rail`) — named in the sentence when known, so item O's custom layouts are identifiable in the ledger. */
   archetype?: string | undefined;
+  /**
+   * The mark kinds `markKindsFor` admitted for this slide's effective ground
+   * (`assembleSlidesData`'s `markReportOut.kindsBySlide`).
+   *
+   * Supplied so `marks-not-visible` can tell "the marks did not paint" from
+   * "the instrument cannot see this kind of mark" — see
+   * `MARK_AREA_PAINTING_KINDS`. Absent leaves the warning's old,
+   * unconditional behaviour, which is right for a caller that has no plan to
+   * report from.
+   */
+  markKinds?: readonly string[] | undefined;
 }
+
+/**
+ * The mark kinds that can paint an area `markedShare` / `markColourCount` are
+ * able to measure — which is `block`, the highlighter swatch, and only it.
+ *
+ * A marked CELL is COVERED (48 of 64 samples off-ground) AND FLAT
+ * (`slide-metrics.ts`). `underline` is .07em tall, `double` is .09em + .04em,
+ * `swish` is .20em and `ink` fills the glyphs themselves — none can cover 48
+ * of 64 samples of a 4px cell, and a glyph fill is not flat. So on any ground
+ * darker than its ink, where `markKindsFor` refuses `block` outright, both
+ * metrics are STRUCTURALLY 0 on every slide however well the marks painted.
+ *
+ * Measured on a production-shaped eight-slide carousel on the bundled
+ * `#17181C` ground: every slide reported `markedShare 0, markColourCount 0`
+ * while the DOM probe reported `markRuns 2, markRunsPainted 2` and the marks
+ * were plainly visible in the PNG. The warning below fired on all of them.
+ *
+ * A warning that always fires is one reviewers learn to ignore, and this
+ * project already has the rule for its dual: a guard that cannot fail is a
+ * defect. Naming the capable kinds is what makes the warning mean something
+ * on a pale kit and stay silent on a dark one. It is NOT a floor and nothing
+ * gates on it — `slide-metrics.ts` is right that `markColourCount` must not.
+ */
+const MARK_AREA_PAINTING_KINDS: ReadonlySet<string> = new Set(["block"]);
 
 /** One slide's verdict. `ok` is `findings.length === 0`; a waived finding does not fail. */
 export interface InterestVerdict {
@@ -1219,7 +1254,7 @@ export function checkInterestFloor(
     });
   }
 
-  return { slide, role, ok: findings.length === 0, findings, waived, warnings: interestWarningsFor(metrics, role, slide, probe), metrics };
+  return { slide, role, ok: findings.length === 0, findings, waived, warnings: interestWarningsFor(metrics, role, slide, probe, opts.markKinds), metrics };
 }
 
 /**
@@ -1228,7 +1263,14 @@ export function checkInterestFloor(
  * Separated from the clause list rather than mixed into it, so "this can hold
  * a run" is answerable by reading which function a threshold appears in.
  */
-export function interestWarningsFor(metrics: SlideMetrics, role: SlideRole, slide: number, probe?: SlideProbe | undefined): InterestWarning[] {
+export function interestWarningsFor(
+  metrics: SlideMetrics,
+  role: SlideRole,
+  slide: number,
+  probe?: SlideProbe | undefined,
+  /** RFC-17 — this slide's admitted mark kinds. See `InterestFloorOptions.markKinds` and `MARK_AREA_PAINTING_KINDS`. */
+  markKinds?: readonly string[] | undefined,
+): InterestWarning[] {
   const warnings: InterestWarning[] = [];
   if (metrics.accentShare < ACCENT_MIN_SHARE) {
     warnings.push({
@@ -1300,7 +1342,15 @@ export function interestWarningsFor(metrics: SlideMetrics, role: SlideRole, slid
   const markRunsPainted = probe?.markRunsPainted ?? 0;
   const markedShare = metrics.markedShare ?? 0;
   const markColourCount = metrics.markColourCount ?? 0;
-  if (markRuns > 0 && markColourCount === 0) {
+  // ABSTAIN WHEN THE INSTRUMENT COULD NOT HAVE SEEN THEM. A slide whose kind
+  // set holds nothing that paints an area reports `markColourCount === 0` by
+  // arithmetic, not by failure, and saying "the marks may be the ground, the
+  // ink, or too small to read" about a correctly painted cyan underline is a
+  // false sentence printed on every slide of every dark-kit run. With no kind
+  // set supplied nothing is known, so nothing is assumed and the warning
+  // keeps its old reach.
+  const instrumentCanSeeMarks = markKinds === undefined || markKinds.some((k) => MARK_AREA_PAINTING_KINDS.has(k));
+  if (markRuns > 0 && markColourCount === 0 && instrumentCanSeeMarks) {
     warnings.push({
       slide,
       role,
@@ -1313,10 +1363,28 @@ export function interestWarningsFor(metrics: SlideMetrics, role: SlideRole, slid
   }
   // ── Composition evidence: five numbers, compared against NOTHING. ──
   //
-  // RFC-17 §3.3. Emitted on every measured slide, unconditionally, because
-  // the point is a BAND and a band needs the passing plates in it as much as
-  // the failing ones. A warning cannot admit a grey screen, which is the
-  // property that made shipping these free.
+  // RFC-17 §3.3. Emitted on every MEASURED slide — every plate the carousel
+  // path put through `measureSlidePng`, which emits all five on every slide
+  // unconditionally, so on that path this row is always present. That is what
+  // the band needs: the passing plates in it as much as the failing ones. A
+  // warning cannot admit a grey screen, which is the property that made
+  // shipping these free.
+  //
+  // IT ABSTAINS WHEN NOTHING WAS MEASURED, and that is not a softening — it
+  // is the only way the row means anything. A consumer with its own narrower
+  // metrics mirror (`template-studio.ts`, which validates a per-client
+  // template from a structural summary rather than a decoded PNG) supplies
+  // none of the five, and the `??` defaults below would then print
+  // `centroid 0.500,0.500, content box 0x0, ground/ink contrast 0.00:1` — five
+  // defaults dressed as measurements, which is exactly the failure
+  // `groundHex`'s own comment names elsewhere in this system: an anchor that
+  // matches no document turns a share into a fact about nothing. A band
+  // assembled from those rows would be poisoned by synthetic zeros from a
+  // caller that never measured a pixel.
+  //
+  // It is also the same posture the two mark instruments above already take,
+  // for the same reason: absent is treated as "nobody asked", and a warning
+  // about a measurement abstains on a consumer that did not take it.
   //
   // What they are for is stated in §3.4 so a later phase cannot move the
   // goalposts: collect this across eight archetypes x three type scales x
@@ -1334,7 +1402,16 @@ export function interestWarningsFor(metrics: SlideMetrics, role: SlideRole, slid
   const centroid = metrics.contentCentroid ?? { x: 0.5, y: 0.5 };
   const bbox = metrics.contentBBox ?? { x: 0, y: 0, w: 0, h: 0 };
   const groundInkContrast = metrics.groundInkContrast ?? 0;
-  warnings.push({
+  // ANY of the five is enough: a consumer that measured composition at all
+  // gets a row, with the defaults standing in for whatever it did not send.
+  // A consumer that measured none of it gets no row.
+  const compositionMeasured =
+    metrics.contentCentroid !== undefined ||
+    metrics.contentBBox !== undefined ||
+    metrics.groundInkContrast !== undefined ||
+    metrics.markedShare !== undefined ||
+    metrics.markColourCount !== undefined;
+  if (compositionMeasured) warnings.push({
     slide,
     role,
     kind: "composition-evidence",
@@ -1400,7 +1477,12 @@ export interface InterestFloorReport {
  */
 export function checkSlidesInterestFloor(
   slides: readonly MeasuredSlide[],
-  opts: { downgradedForImages?: ReadonlySet<number> | undefined; archetypeBySlide?: ReadonlyMap<number, string> | undefined } = {},
+  opts: {
+    downgradedForImages?: ReadonlySet<number> | undefined;
+    archetypeBySlide?: ReadonlyMap<number, string> | undefined;
+    /** RFC-17 — `assembleSlidesData`'s `markReportOut.kindsBySlide`. See `InterestFloorOptions.markKinds`. */
+    markKindsBySlide?: ReadonlyMap<number, readonly string[]> | undefined;
+  } = {},
 ): InterestFloorReport {
   const perSlide: InterestVerdict[] = [];
   const notMeasured: Array<{ slide: number; reason: string }> = [];
@@ -1412,11 +1494,13 @@ export function checkSlidesInterestFloor(
       continue;
     }
     const archetype = opts.archetypeBySlide?.get(slide.n);
+    const markKinds = opts.markKindsBySlide?.get(slide.n);
     perSlide.push(
       checkInterestFloor(slide.metrics, slide.probe, role, {
         slide: slide.n,
         ...(opts.downgradedForImages !== undefined ? { downgradedForImages: opts.downgradedForImages } : {}),
         ...(archetype !== undefined ? { archetype } : {}),
+        ...(markKinds !== undefined ? { markKinds } : {}),
       }),
     );
   }

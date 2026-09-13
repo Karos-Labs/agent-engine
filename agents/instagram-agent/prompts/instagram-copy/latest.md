@@ -1,23 +1,11 @@
 # Instagram Copy Craft Guide, v18
 
 **What changed at v18.** Everything v17 says about VALUE still stands, unchanged
-and in full. v18 adds ONE section, §28 "Marking": the writer names one to five
-spans per slide whose MEANING carries it, and the renderer paints those words.
-It is additive. No v17 section is edited, no field is removed, and `emphasis` is
-OPTIONAL on every slide, so a draft written to v17 is still a valid draft here.
-
-**Cost of the v18 bump, both halves, on top of v17's measured price.** INPUT:
-§28 is about +2,665 prompt characters, about +650 tokens, about +$0.00195 an
-attempt, paid on every run in every language because the prompt file is one
-file. OUTPUT: the `emphasis` array is a NEW PER-SLIDE OBJECT ARRAY, about 3.6
-marks a slide at about 17 tokens each plus array overhead, about 65 tokens a
-slide across eight slides = about 520 tokens, about +$0.00780. Total about
-+$0.00975 an attempt, and this is the rare bump whose OUTPUT half is the larger
-one, at four times the input half. `STEP_COST_ESTIMATES_USD.copyAttempt` is
-re-priced 0.174 to **0.184** in the same commit, which is the rule
-`run-budget.ts` states about itself. The base is v17's MEASURED 0.174, never
-RFC-18 §7.1's superseded 0.166 forecast: adding this bump to the forecast would
-give 0.176 and under-count the real call by a cent an attempt.
+and in full. v18 adds ONE section, §28 "Marking": the writer names the spans
+whose MEANING carries a slide, as a flat list of words copied verbatim out of
+the slide, and the renderer paints them. It is additive. No v17 section is
+edited, no field is removed, and `emphasis` is OPTIONAL on every slide, so a
+draft written to v17 is still a valid draft here.
 
 **What changed at v17.** This guide is rewritten around VALUE. The question
 nothing here used to ask was not "is this correct" but "would anyone keep
@@ -1157,27 +1145,30 @@ does not.
 
 ## 28. Marking: naming the words that carry the slide
 
-A slide may carry an `emphasis` array of one to five entries. Each names a
-`field` (`headline`, `body`, `quote`, or `item` with its `itemIndex`) and the
-exact `text` inside it to mark. The renderer paints those words.
+A slide may carry an `emphasis` array of one to five strings. Each string is
+the exact words, copied out of a field you just wrote, that the renderer
+paints. There is no field name and no index: code finds the words. For a row
+reading `Runway: the months before the cash runs out`, the whole entry is
+`"Runway"`.
 
 **Mark MEANING, never loudness.** The noun a list row defines. The clause
-carrying the surprise. The term the reader will screenshot. On a row reading
-"Runway: the months before the cash runs out", mark `Runway`, never the
-definition after it. On "we shipped it in four days and nobody noticed", mark
-`nobody noticed`, not the whole sentence.
+carrying the surprise. The term the reader will screenshot. On that row mark
+`Runway`, never the definition after it. On `we shipped it in four days and
+nobody noticed`, mark `nobody noticed`, not the whole sentence.
+
+**Copy the words VERBATIM**, character for character, punctuation included.
+Each string is found by exact match on a word boundary, and the first place it
+has not already been marked wins, searching the headline, then the body, then
+the quote, then the list rows in order. A string is marked once per slide, so
+name a repeated word once. **A string that occurs nowhere is DROPPED** and
+that field renders plain. Nothing fails and nothing is retried, so a
+paraphrase costs you the mark silently. Write the field, then copy out of it.
 
 **Never a whole line**, which marks nothing: a span past a third of its field
 is dropped. **Never a connective** on its own, and never an article or a
-preposition. **Never the numeral** in a numbered headline. On "2. Handwritten
-notes" the mark covers `Handwritten notes` and `2.` is left bare. One to four
+preposition. **Never the numeral** in a numbered headline: on `2. Handwritten
+notes` the entry is `"Handwritten notes"` and `2.` is left bare. One to four
 words is the shape; past six words the span is dropped.
-
-**Copy the words VERBATIM out of the field you just wrote**, character for
-character, punctuation included. The span is found by exact match in that
-field. **A span that does not appear exactly is DROPPED** and the slide
-renders plain. Nothing fails and nothing is retried, so a paraphrase costs you
-the mark silently. Write the field, then copy out of it.
 
 **You choose WHICH words. You never choose the colour, the weight, or how the
 mark is drawn.** Code decides that from the slide's own ground and rotates it

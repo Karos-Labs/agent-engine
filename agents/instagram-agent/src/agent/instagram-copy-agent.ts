@@ -273,9 +273,11 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyOutput> {
     // @17 PLUS THAT ONE SECTION — every v17 value rule above is inherited
     // verbatim, not re-opened. The writer names one to five spans per slide
     // whose MEANING carries it — the noun a list row defines, the clause
-    // carrying the surprise, the term the reader will screenshot — copied
-    // VERBATIM out of the field it already wrote, because a span that does not
-    // occur exactly is dropped rather than resolved to the wrong words. It
+    // carrying the surprise, the term the reader will screenshot — as BARE
+    // STRINGS copied VERBATIM out of the field it already wrote. There is no
+    // field name and no index: code searches headline, body, quote, then the
+    // rows in order, and a string that occurs nowhere is dropped rather than
+    // resolved to the wrong words. It
     // chooses WHICH words and never the colour, the weight or how the mark is
     // drawn: code picks the kind from the slide's ground luminance and rotates
     // the ring, which is the one thing the model cannot see (RFC-17 finding 2).
@@ -288,25 +290,45 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyOutput> {
     // neither the @14→@15 shape (output-heavy, priced on input alone) nor the
     // @15→@16 shape (input-only) is the right template for it:
     //
-    //   Input:  +2,665 prompt characters ≈ 650 tokens
-    //           x $3/1e6  = $0.00195. Paid on English runs too — one prompt
-    //           file, no conditional include.
-    //   Output: the `emphasis` array itself, ≈65 tokens a slide (3.6 marks at
-    //           ≈17 tokens each, the rf-05 mean, plus 4 array overhead) x 8
-    //           slides = 520 tokens x $15/1e6 = $0.00780.
-    //   Total:  $0.00975 an attempt, rounded UP.
+    //   Input:  +3,276 prompt characters ≈ 819 tokens x $3/1e6 = $0.00246.
+    //           Paid on English runs too — one prompt file, no conditional
+    //           include. That is the WHOLE FILE delta (67,929 - 64,653, line
+    //           endings normalised), never §28 alone: §28 measures 2,836 and
+    //           the same file also carries a changelog block, so a section
+    //           delta under-counts. THE MODEL IS SENT EVERY BYTE OF THE FILE.
+    //           That rule is what 0.179, 0.180 and 0.184 were each produced
+    //           by breaking. (918 characters of the changelog were also cut
+    //           here: it described the superseded OBJECT encoding and quoted
+    //           three numbers that are now false. Stale documentation inside
+    //           a prompt is not documentation, it is a bill.)
+    //   Output: the `emphasis` array, a FLAT ARRAY OF VERBATIM STRINGS
+    //           (`["Business", "Founder", "Know"]`) — ≈22 tokens a slide (3.6
+    //           marks at ≈5 tokens each, the rf-05 mean span being 2.6
+    //           word-tokens, plus 4 array overhead) x 8 slides = 176 tokens
+    //           x $15/1e6 = $0.00264.
+    //   Total:  $0.00510 an attempt, rounded UP.
     //
-    // `STEP_COST_ESTIMATES_USD.copyAttempt` is re-priced **0.174 → 0.184** in
+    // The first encoding named `field`/`itemIndex`/`text` per mark (≈17 output
+    // tokens each, ≈$0.00780) and was re-encoded because it did not FIT: the
+    // cold Hebrew plan has $0.00757 an attempt of headroom to the $1.00
+    // target, and that output half ALONE exceeded it, firing the attempt rung
+    // and reproducing a held run on two cases named "NEVER holds". The mark
+    // COUNT was deliberately not cut — rf-05's near-empty closer carries four
+    // marks — so the mechanism got cheaper rather than smaller. RFC-17 §6.4.
+    //
+    // `STEP_COST_ESTIMATES_USD.copyAttempt` is re-priced **0.174 → 0.181** in
     // the SAME commit, which is the rule `run-budget.ts` states about itself.
     // The base is @17's MEASURED 0.174, NOT RFC-18 §7.1's superseded 0.166
     // forecast: this branch was written against 0.161 and computed 0.171, and
-    // both of those bases are now stale. 0.166 + 0.010 = 0.176 would under-count
-    // the real call by ~$0.008 an attempt. See `run-budget.ts`'s `copyAttempt`
-    // block for the full arithmetic. At the 3-attempt cap the @18 delta is
-    // +$0.030 against the owner's $1.00 target (3.0%) and the $1.50 hard max
-    // (2.0%), and no new model step at run time or at setup: the mark ring is
-    // derived in code from the kit's accent ring, so per-client setup moves by
-    // exactly $0.000 (RFC-17 §6.2).
+    // both of those bases are now stale. A fourth stale number, **0.184**,
+    // shipped in the Phase 5 merge and priced the OBJECT encoding; restoring
+    // it would over-count by $0.0042 an attempt now that a mark is a bare
+    // string. See `run-budget.ts`'s `copyAttempt` block for the full
+    // arithmetic and for the measured cold-Hebrew plan at each candidate key.
+    // At the 3-attempt cap the @18 delta is +$0.021 against the owner's $1.00
+    // target (2.1%) and the $1.50 hard max (1.4%), and no new model step at
+    // run time or at setup: the mark ring is derived in code from the kit's
+    // accent ring, so per-client setup moves by exactly $0.000 (RFC-17 §6.2).
     skillRef: "instagram-copy@18",
   };
 }

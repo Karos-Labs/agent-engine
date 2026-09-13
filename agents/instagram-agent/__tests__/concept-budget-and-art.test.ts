@@ -147,11 +147,15 @@ describe("run-budget — the concept is priced before anyone knows whether it fi
     // same ladder and reports the trend-evidence lever too. The ladder itself
     // is unchanged in its first three rungs, which is what this assertion is
     // for; the rung this line gains is the evidence lever, not an image one.
+    // @18's re-encoded marking adds a further 3 x $0.007, so a cold plan now walks ONE MORE rung and
+    // reports the optional-re-vet lever too. Still three attempts, still a full deliverable: the rungs
+    // that cost the POST something remain untouched, which is the property this assertion exists for.
     expect(planRunBudget(DEFAULT_RUN_SHAPE).adaptations).toEqual([
       "images capped at 4",
       "images capped at 2",
       "no generated images (stock or text-only)",
       "trend evidence reduced to the one cached industry query",
+      "optional rescue re-vets skipped",
     ]);
   });
 });

@@ -8,13 +8,16 @@ import {
   buildMarkRing,
   buildMarkedRuns,
   collectEmphasisIssues,
-  declaredFor,
+  assignSpansToFields,
   markKindsFor,
+  normaliseEmphasis,
   resolveSlideMarks,
   ringIndexesFor,
   slideMarkSeed,
   type EmphasisIssue,
   type MarkDrop,
+  type MarkField,
+  type MarkKind,
   type MarkRing,
 } from "./emphasis-marks.js";
 import { buildDeviceFragment, deviceFigureValues, validateDevice, type SlideDevice } from "./slide-devices.js";
@@ -53,6 +56,21 @@ const LAYOUT_TEMPLATE_FILES: Record<Exclude<InstagramSlideLayout, "photo" | "tex
   cover: "cover.html",
   closer: "closer.html",
 };
+
+/**
+ * RFC-17 §5.4 — the archetypes that paint NO marks, whatever the copy
+ * declares.
+ *
+ * Their content is a figure and two labels, or two short columns under a pair
+ * of one-word headings. A highlighter stroke on furniture is not emphasis; it
+ * is decoration pretending to be meaning, and both plates are already the
+ * densest in the set. `contentFor` returns `htmlFragments: {}` for both, so
+ * `markRuns` is never reached — this constant is what lets the loss be
+ * REPORTED instead of merely happening, and it is read by
+ * `__tests__/emphasis-archetype-coverage.test.ts`, which pins the gap so it
+ * cannot widen silently.
+ */
+const UNMARKED_LAYOUTS: ReadonlySet<string> = new Set(["stat_callout", "comparison_card"]);
 
 function templateForLayout(layout: InstagramSlideLayout, slide: InstagramSlideCopy, clientTemplate: string): string {
   if (layout === "photo" || layout === "text_only") return clientTemplate;
@@ -1084,6 +1102,21 @@ export interface SlideMarkResult {
   hexes: string[];
   /** Every declared span this slide could not mark, and why. Facts, never findings. */
   drops: MarkDrop[];
+  /**
+   * The kinds `markKindsFor` admitted for THIS slide's effective ground.
+   *
+   * Carried so the pixel instrument knows what it is allowed to expect.
+   * `markedShare` / `markColourCount` count cells that are COVERED (48 of 64
+   * samples non-ground) and FLAT — a definition only `block`, the highlighter
+   * swatch, can ever satisfy. `underline` (.07em), `swish` (.20em), `double`
+   * (.09em + .04em) and `ink` (glyph-clipped) structurally cannot, so on any
+   * ground darker than its ink — where `markKindsFor` refuses `block` — both
+   * numbers are 0 on every slide no matter how well the marks painted. Without
+   * this field `interest-floor.ts`'s `marks-not-visible` warning fires on
+   * every marked slide of every dark-kit run, which is a warning reviewers
+   * learn to ignore.
+   */
+  kinds: MarkKind[];
 }
 
 function contentFor(
@@ -1167,11 +1200,96 @@ function contentFor(
   // italic run's background box is a parallelogram the CSS cannot follow.
   const markKinds =
     plan === undefined ? [] : markKindsFor(plan.groundHex, plan.fgHex, plan.ring.hexes, { refuseBlock: layout === "quote_card" });
+  /**
+   * RFC-17 — the wire's two declaration forms collapsed to one, ONCE per
+   * slide.
+   *
+   * ONCE PER SLIDE, NOT ONCE PER FIELD, AND THAT IS THE CONTRACT.
+   *
+   * The wire form is a flat array of verbatim spans with no field name on
+   * them (RFC-17 §6.4), so routing is a SEARCH across the slide's own fields
+   * in READING ORDER — headline, body, quote, then list rows. It has to
+   * happen once, with every field visible at the same time: a per-field call
+   * could not tell "this span belongs to a later field" from "this span is
+   * not on the slide at all", and would report the second for the first on
+   * every field it passed through.
+   *
+   * The reading-order list is built from the COPY, not from the layout,
+   * which is the same reason the emphasis contract names copy fields: a
+   * cover routes `headline` to `title` and a closer routes it to `takeaway`,
+   * and a layout downgrade must keep the marks working.
+   *
+   * Guarded on `plan` for the same reason the rest of the mark system is:
+   * with no plan the mark system is not running at all this render, and a
+   * "that span is not on the slide" fact about a slide that was never going
+   * to paint a mark is noise, not a finding.
+   */
+  const markFieldsInReadingOrder: MarkField[] = [
+    { field: "headline", text: slide.headline },
+    { field: "body", text: slide.body },
+    ...(slide.quote !== undefined ? [{ field: "quote", text: slide.quote.text }] : []),
+    // THE SEARCH HAS TO COVER EVERY FIELD THAT PRINTS PROSE, or the drop
+    // reason is a lie. `stat.subLabel` ("of calendars stall in month two")
+    // and `comparison.leftBody` / `rightBody` are rendered copy the writer
+    // reads back on the plate, but they were not in this list — so a span
+    // living only there matched nothing, and the writer was told `"stall"
+    // does not appear on this slide on a word boundary -- copy a mark
+    // verbatim out of the copy you just wrote`, which is false and advises
+    // them to do exactly what they already did. Claimed here, the span is
+    // reported against the real reason below (the archetype paints no marks).
+    //
+    // `stat.figure` is deliberately NOT here, and neither are the two
+    // comparison LABELS: a figure is a bare numeral in a `line-height: 0.95`
+    // lockup (the same designed relationship that keeps `.num-figure` out of
+    // `DISPLAY_SELECTORS` and `figure` out of `iso`), and a one-word column
+    // label is furniture. Neither is a clause, and a mark is a mark on a
+    // clause.
+    ...(slide.stat !== undefined ? [{ field: "stat.subLabel", text: slide.stat.subLabel }] : []),
+    ...(slide.comparison !== undefined
+      ? [
+          { field: "comparison.leftBody", text: slide.comparison.leftBody },
+          { field: "comparison.rightBody", text: slide.comparison.rightBody },
+        ]
+      : []),
+    ...(slide.items ?? []).map((item, i) => ({ field: `item[${i}]`, text: item.title })),
+  ];
+  const normalised = plan === undefined ? { spans: [], drops: [] } : normaliseEmphasis(slide.emphasis);
+  const assigned = plan === undefined ? { byField: new Map<string, string[]>(), drops: [] } : assignSpansToFields(markFieldsInReadingOrder, normalised.spans);
+  markDrops.push(...normalised.drops, ...assigned.drops);
+  // ── A SPAN THIS ARCHETYPE CANNOT PAINT IS A DROP, NOT A SILENCE. ──
+  //
+  // `stat_callout` and `comparison_card` return `htmlFragments: {}` — they are
+  // deliberately unmarked (RFC-17 §5.4) — so `markRuns` is never called for
+  // them. A span claimed against `headline` or `body` therefore produced no
+  // fragment AND no drop: `collectEmphasisIssues` reported nothing,
+  // `marks-missing` and `marks-not-visible` both abstain on `markRuns === 0`,
+  // and the mark simply evaporated with every instrument saying it was fine.
+  // The shipped prompt gives no archetype exception — §28 tells the writer a
+  // slide may carry emphasis, full stop — so the writer is doing as asked and
+  // deserves to be told where it went.
+  //
+  // Reported through `collectEmphasisIssues`, which NEVER gates: this is a
+  // note in the trace, not a reason to hold a run or spend another drafting
+  // attempt. Stating the exception in the prompt instead would move
+  // `EMPHASIS_CHAR_DELTA` and the `copyAttempt` budget key, which sits $0.0017
+  // under the rung that costs a cold Hebrew run an attempt — a far worse trade
+  // than a trace note for a rare, cosmetic loss.
+  if (plan !== undefined && UNMARKED_LAYOUTS.has(layout)) {
+    for (const [field, texts] of assigned.byField) {
+      for (const text of texts) {
+        markDrops.push({
+          field,
+          text,
+          reason: `the "${layout}" archetype paints no marks — its content is a figure and labels, not clauses, so this span renders as ordinary copy`,
+        });
+      }
+    }
+  }
   const markRuns = (field: "headline" | "body" | "quote" | "item", text: string, itemIndex?: number): string | undefined => {
     if (plan === undefined) return undefined;
-    const declared = declaredFor(slide.emphasis, field, itemIndex);
-    if (declared.length === 0) return undefined;
     const fieldName = field === "item" ? `item[${itemIndex ?? 0}]` : field;
+    const declared = (assigned.byField.get(fieldName) ?? []).map((t) => ({ text: t }));
+    if (declared.length === 0) return undefined;
     const resolved = resolveSlideMarks(fieldName, text, declared, {
       dir,
       allowedIndexes: plan.allowedIndexes,
@@ -1191,6 +1309,7 @@ function contentFor(
   const markResult = (): SlideMarkResult => ({
     hexes: [...new Set(markColourIndexes)].map((i) => plan?.ring.hexes[i]).filter((h): h is string => typeof h === "string"),
     drops: markDrops,
+    kinds: markKinds,
   });
 
   const base: Record<string, string> = {
@@ -1737,9 +1856,14 @@ export function assembleSlidesData(params: {
    * document was actually built from.
    *
    * `hexesBySlide` is what the caller forwards as `measure.markHexes`;
-   * `issues` is what the gate payload and the trace report as facts.
+   * `issues` is what the gate payload and the trace report as facts;
+   * `kindsBySlide` is what the caller forwards to `checkSlidesInterestFloor`
+   * so the `marks-not-visible` warning knows whether the pixel instrument was
+   * ever capable of seeing this slide's marks (only `block` paints an area a
+   * marked CELL can hold). Optional, and an absent map simply means the
+   * warning keeps its old unconditional behaviour for that caller.
    */
-  markReportOut?: { hexesBySlide: Map<number, string[]>; issues: EmphasisIssue[] } | undefined;
+  markReportOut?: { hexesBySlide: Map<number, string[]>; issues: EmphasisIssue[]; kindsBySlide?: Map<number, string[]> | undefined } | undefined;
 }): RenderCarouselInput {
   const selectionByN = new Map(params.selections.map((s) => [s.n, s]));
 
@@ -1880,6 +2004,10 @@ export function assembleSlidesData(params: {
     // kind set is computed from the ground this slide actually renders on.
     if (marks.drops.length > 0) markDropsBySlide.push({ slide: slide.n, drops: marks.drops });
     if (marks.hexes.length > 0) params.markReportOut?.hexesBySlide.set(slide.n, marks.hexes);
+    // Always set, even when empty: "this slide admitted no kind at all" is
+    // exactly as load-bearing as "it admitted four", and an absent entry
+    // would be indistinguishable from a caller that supplied no map.
+    params.markReportOut?.kindsBySlide?.set(slide.n, [...marks.kinds]);
     return {
       n: slide.n,
       template: inverted ? invertedTemplateFileName(primaryTemplate) : primaryTemplate,

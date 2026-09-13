@@ -525,8 +525,15 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     }
   });
 
-  it("instagram-copy/latest.md is BYTE-identical to 17.md, and 17.md is exactly 16.md plus §24", () => {
-    // Phase 5 (RFC-17 §5.7), step 2 of the five-step checklist.
+  it("instagram-copy/latest.md is BYTE-identical to 18.md, and 18.md is exactly 17.md plus §28", () => {
+    // The design system (RFC-17 §5.7), step 2 of the five-step checklist.
+    //
+    // The title and the section numbers below were `17.md`/`§24` until the
+    // Phase 5 merge, and the assertions underneath always read 18.md/§28 —
+    // this branch's bump was renumbered when main's own @17 arrived first. A
+    // test whose NAME describes a different file from the one it opens is how
+    // a reader comes to trust the wrong guard, so the name is corrected here
+    // rather than left as merge residue.
     //
     // A Buffer comparison, not a decoded-string one. `readFileSync(..., "utf8")`
     // above is what `check:prompts` does and it is the right check for DRIFT,
@@ -564,8 +571,8 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
   });
 
   it("§28 carries the TOPIC RULE, the verbatim contract, and its own interaction with checkSentenceCase", () => {
-    // Phase 5 (RFC-17 Part 1). THE ONE RULE THAT OVERRIDES EVERY OTHER RULE IN
-    // THIS PHASE. §24 teaches the model an EXECUTION borrowed from reference
+    // The design system (RFC-17 Part 1). THE ONE RULE THAT OVERRIDES EVERY OTHER RULE IN
+    // THIS PHASE. §28 teaches the model an EXECUTION borrowed from reference
     // accounts that post about AI and marketing, and the failure it could
     // cause is not a broken render — it is a beautiful, well-marked slide
     // about a subject the client does not do, which is the original audit
@@ -595,29 +602,46 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     expect(section28).toContain("Never a whole line");
     expect(section28).toContain("Do not invent a phrase in order to have something to mark");
 
-    // §10 vs §24. Before this phase the system had a rule AGAINST emphasis
+    // §10 vs §28. Before this phase the system had a rule AGAINST emphasis
     // (`checkSentenceCase` + `EMPHASIS_DENYLIST`) and no rule FOR it, so a
     // model that wanted to stress a word had only shouting available and got
-    // the whole draft returned for it. §24 has to name the mechanism it does
+    // the whole draft returned for it. §28 has to name the mechanism it does
     // not replace, or it reads as permission to shout.
     expect(section28).toContain("checkSentenceCase");
     expect(section28).toContain("Shouting is still refused");
     expect(section28).toContain("sanctioned way to emphasise");
 
-    // §24 obeys the prompt's own craft rules (§10): no em/en dashes, no
+    // §28 obeys the prompt's own craft rules (§10): no em/en dashes, no
     // double hyphens, no exclamation marks. A section that breaks the rules it
     // sits beside teaches the model that they are negotiable.
     expect(section28).not.toMatch(/[—–]/);
     expect(section28).not.toContain("--");
     expect(section28).not.toContain("!");
 
-    // The four `field` values are the COPY's own field names, never a template
-    // slot (RFC-17 §5.1): `contentFor` routes `headline` to `title` on a cover
-    // and to `takeaway` on a closer, and the model must not know that.
-    for (const field of ["`headline`", "`body`", "`quote`", "`item`", "`itemIndex`", "`emphasis`"]) {
-      expect(section28).toContain(field);
-    }
+    // THE READING ORDER, which replaced the field names (RFC-17 §6.4).
+    //
+    // Until the compact re-encode, §28 named a `field` and an `itemIndex` per
+    // mark and this loop pinned those six literals. The wire shape is now a
+    // bare string and CODE locates it, so the model no longer names a field at
+    // all — but the order it is searched in is now part of the contract the
+    // writer has to reason about, because a repeated word is marked at its
+    // FIRST unmarked occurrence and nowhere else. That order is the thing a
+    // reader of the prompt can get wrong, so it is what gets pinned.
+    expect(section28).toContain("`emphasis`");
+    // `\r?\n` because these files are CRLF and the sentence wraps: a literal
+    // "\n" here would never match and the guard would be decoration.
+    expect(section28, "§28 must state the search order, or a repeated word's mark lands somewhere the writer did not intend").toMatch(
+      /searching the headline, then the body, then\r?\nthe quote, then the list rows in order/,
+    );
+    expect(section28, "§28 must say a string is marked once, or the writer will name a repeated word twice").toContain("marked once per slide");
+
+    // The model must never be told a TEMPLATE SLOT name (RFC-17 §5.1):
+    // `contentFor` routes `headline` to `title` on a cover and to `takeaway`
+    // on a closer, and a prompt that leaked those would couple copy to layout.
     expect(section28, "§28 must not name a template slot").not.toContain("Runs`");
+    for (const slot of ["`title`", "`takeaway`", "`itemIndex`"]) {
+      expect(section28, `§28 must not name ${slot}: code locates marks now, the writer does not`).not.toContain(slot);
+    }
   });
 
   it("instagram-angle@1 resolves, latest.md is byte-identical to 1.md, and the agent that reads it is pinned to Sonnet", async () => {

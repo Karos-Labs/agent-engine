@@ -57,7 +57,7 @@
   judged at the cover role must report `no-device`. That is not a metric being
   protected — it is this archetype's editorial identity. It is the one quiet,
   all-type turn in the set, the floor exempts interiors from clause E for
-  exactly that reason, and a slide that wants a device has `{{html:device}}`
+  exactly that reason, and a slide that wants a device has `html:device`
   or another archetype. So: every element on this plate is either type, a
   texture, or a rule — no filled block anywhere, and no outline heavy enough
   to cover a cell.
@@ -546,14 +546,22 @@
      `fontFamiliesUsed` between two renders of the same copy), and why the two
      `#headline:empty` guards above had to be restated against the children.
 
-     This file's pairs: `.hf-headline` takes `{{html:headlineRuns}}` +
-     `{{headline}}`, `.body-text` takes `{{html:bodyRuns}}` + `{{body}}`.
+     Slot names are written WITHOUT their braces throughout this file, because
+     `fillTemplate` is a `replaceAll` over the literal token and a token spelled
+     out in a stylesheet comment is a second substitution site — see `cover.html`'s
+     canonical copy of this note for the measurement and the failure it caused.
+
+     This file's pairs: `.hf-headline` takes `html:headlineRuns` +
+     `headline`, `.body-text` takes `html:bodyRuns` + `body`.
 
      THE HOST IS `.hf-headline`, NOT `.headline`, and the collapse rule has to
      name the host it is actually written under — this is the one file in the
      set where the display slot carries an archetype-prefixed class. A rule
      copied from a sibling template would select nothing here and both twins
      would print, one under the other. */
+  /* The twin host's block-start bleed — see `cover.html` for the measurement
+     and why it is here rather than only in the shared mark sheet. */
+  :has(> span.mk-plain) { padding-block-start: var(--mk-twin-bleed, .22em); }
   .hf-headline:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
   .body-text:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
 

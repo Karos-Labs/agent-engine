@@ -188,7 +188,23 @@ const HAPPY_PATH_STEP_IDS = [
   // Flash call. The ORDER these ran in is asserted by their own suite; this
   // list is sorted and only pins that they ran at all.
   "07i-value-signals-attempt-1",
-  "07i1-verify-lead-claim",
+  // **`07i1-verify-lead-claim` IS DELIBERATELY ABSENT, and this is a PRODUCT consequence, not a fixture
+  // detail.** This fixture is a COLD run (no budget history). At `copyAttempt` 0.174 a cold plan stopped
+  // at the evidence rung with `optionalRevets: true` and this step ran. The design system's marking adds
+  // $0.021 a run, which takes the cold plan one rung further onto `optional rescue re-vets skipped`, and
+  // `07i1` is bound to that same `optionalRevets` flag (RFC-17 6.4: "the re-vet rung is exactly the
+  // rescue line plus 07i1's ONE verification execution - one flag, both rescue paths").
+  //
+  // SCOPE: **COLD RUNS ONLY.** One delivered run of history relaxes the ladder and `07i1` returns. It is
+  // also a SECOND check - the lead claim came from a fact card that was already sourced in research and
+  // already passed the grounding gate - so this is a lost re-verification, not a lost only-verification.
+  // Accepted rather than worked around: paying for it costs $0.007, which on a cold HEBREW run
+  // ($0.9983, $0.0017 of margin) lands at $1.0053 and fires the ATTEMPT rung, trading a second-line
+  // check for a first-line drafting attempt. That is forbidden outright.
+  //
+  // THE FIX IS SPECIFIED AND COSTED in RFC-17 6.5: split `optionalRevets` into 3a (rescue off, `07i1`
+  // kept, $0.1020) and 3b (`07i1` off, $0.007). Measured, English cold then keeps this step at $0.9123.
+  // If you are here because this step reappeared, that split probably landed - restore it to this list.
   "07i2-numbers-in-facts-attempt-1",
   "07j-value-judge-attempt-1",
   // Phase 2 (item P): the cross-run variety check, deliberately PRE-RENDER so

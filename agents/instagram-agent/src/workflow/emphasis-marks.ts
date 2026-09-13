@@ -47,7 +47,7 @@
 
 import { isolateForeignRuns } from "./bidi-isolate.js";
 import { contrastRatio } from "./brand-render-tokens.js";
-import type { SlideEmphasis } from "./types.js";
+import { MAX_MARK_CHARS, type SlideEmphasis } from "./types.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Constants — the resolution budget
@@ -57,7 +57,7 @@ import type { SlideEmphasis } from "./types.js";
  * How many marks one slide may actually PAINT.
  *
  * Five, against `SlideEmphasisSchema`'s `.max(8)`, and the gap is deliberate
- * (RFC-17 §5.1). The schema is the CONTRACT with a model that costs $0.171
+ * (RFC-17 §5.1). The schema is the CONTRACT with a model that costs $0.181
  * per attempt; a ninth mark must degrade, never reject the draft. This is the
  * furniture budget, enforced here where a drop is free.
  */
@@ -306,9 +306,57 @@ export function buildMarkRing(
     groundMayInvert?: boolean | undefined;
   },
 ): MarkRing {
+  // ── THE BOTH-GROUNDS PASS MUST NEVER BE THE LAST WORD (review finding 1). ─
+  //
+  // `groundMayInvert` intersects two legibility sets, and on a kit with any
+  // real contrast the intersection is EMPTY, not merely smaller. `--fg` is
+  // near-white on every dark kit we ship, so a saturated brand accent that
+  // clears 3:1 against a `#17181C` ground cannot also clear 3:1 against a
+  // near-white one — the two floors pull in opposite directions. Measured on
+  // this suite's own canonical dark kit (`#FF6B2C` + `#4ADE80` + `#38BDF8` +
+  // `#C084FC` on `#17181C`/`#F5F3EF`): the strict pass accepts NOTHING, the
+  // four candidates scoring 2.56, 1.57, 1.93 and 2.38 against the ink. The
+  // whole emphasis system then paints nothing and reports every declared span
+  // as a drop, which is what shipped before this fallback existed.
+  //
+  // So: try the intersection, and when it is empty fall back to the PRIMARY
+  // ground alone. This is safe, not a relaxation, because the per-slide half
+  // of the decision already re-checks the same floor against the slide's
+  // EFFECTIVE (post-inversion) ground: `markKindsFor` admits `underline`,
+  // `swish` and `double` only when EVERY ring member clears
+  // `MARK_GROUND_CONTRAST_FLOOR` against that ground, and `ink` only at the
+  // text floor. An inverted slide whose ring fails there gets `kinds === []`
+  // and marks nothing — a degraded slide, never an illegible mark. The
+  // failure mode we trade away (a quarter of the carousel unmarked) is
+  // strictly better than the one we had (the whole carousel unmarked).
+  const strict =
+    options?.groundMayInvert === true
+      ? buildRingAgainstGrounds(tokens, groundHex, fgHex, accentHex, [groundHex, fgHex])
+      : undefined;
+  if (strict !== undefined && strict.hexes.length > 0) return strict;
+  const ring = buildRingAgainstGrounds(tokens, groundHex, fgHex, accentHex, [groundHex]);
+  if (strict === undefined) return ring;
+  if (ring.hexes.length === 0) return strict;
+  return {
+    ...ring,
+    notes: [
+      ...strict.notes,
+      "no candidate cleared the floor against BOTH the ground and the ink, so the ring was rebuilt against the ground alone — inverted slides fall back to no marks via `markKindsFor`",
+      ...ring.notes,
+    ],
+  };
+}
+
+/** `buildMarkRing`'s body, with the set of grounds a member must be legible on made explicit. */
+function buildRingAgainstGrounds(
+  tokens: { brandAccent?: string | undefined; palette?: readonly string[] | undefined },
+  groundHex: string,
+  fgHex: string,
+  accentHex: string | readonly string[],
+  grounds: readonly string[],
+): MarkRing {
   const notes: string[] = [];
   const accents = (typeof accentHex === "string" ? [accentHex] : [...accentHex]).filter((h) => parseHex(h) !== undefined);
-  const grounds = [groundHex, ...(options?.groundMayInvert === true ? [fgHex] : [])];
 
   const raw = [tokens.brandAccent, ...(tokens.palette ?? [])].filter((h): h is string => typeof h === "string" && parseHex(h) !== undefined);
   const seen = new Set<string>();
@@ -407,9 +455,29 @@ export function buildMarkRing(
  * An empty result means this slide marks nothing — reported, never gated.
  */
 export function ringIndexesFor(ring: MarkRing, accentHex: string | undefined): number[] {
+  // THE PARSE CHECK IS LOAD-BEARING, and its absence was a silent
+  // feature-killer. `markColourDistance` returns 0 — the value that means
+  // "identical" — when either side does not parse, and every caller compares
+  // it with `<` against a tolerance. So an accent of `""`, `"rgb(196,85,47)"`
+  // or any other non-hex string put EVERY ring member inside
+  // `ACCENT_EXCLUSION`, emptied `allowedIndexes`, and sent `resolveSlideMarks`
+  // down its `plain()` path: the whole slide rendered unmarked while
+  // reporting "no legible mark colour survived this slide's kit and accent",
+  // which names the kit rather than the malformed accent that actually did it.
+  // An empty string is a very ordinary value for an unset brand accent.
+  //
+  // An unparseable accent now means "there is no accent to keep clear of",
+  // which is what `undefined` already meant, and is the same guard
+  // `buildMarkRing` applies to its own accent argument above.
+  //
+  // NOT fixed inside `markColourDistance` on purpose: `buildMarkRing` relies
+  // on the 0 to DROP an unparseable candidate, and returning `Infinity` there
+  // would admit garbage into the ring instead. The two callers want opposite
+  // fallbacks, so the check belongs at the call site.
+  const accent = accentHex !== undefined && parseHex(accentHex) !== undefined ? accentHex : undefined;
   const allowed: number[] = [];
   ring.hexes.forEach((hex, index) => {
-    if (accentHex !== undefined && markColourDistance(hex, accentHex) < ACCENT_EXCLUSION) return;
+    if (accent !== undefined && markColourDistance(hex, accent) < ACCENT_EXCLUSION) return;
     allowed.push(index);
   });
   return allowed;
@@ -580,9 +648,9 @@ const WORD_CHAR = /[\p{L}\p{N}]/u;
  * rule's falsification test and the reason the search is written out rather
  * than delegated to `indexOf`.
  */
-export function boundedFirstOccurrence(haystack: string, needle: string): number {
+export function boundedFirstOccurrence(haystack: string, needle: string, searchFrom = 0): number {
   if (needle.length === 0) return -1;
-  let from = 0;
+  let from = searchFrom;
   for (;;) {
     const at = haystack.indexOf(needle, from);
     if (at < 0) return -1;
@@ -648,17 +716,54 @@ export function resolveSlideMarks(
   const totalWordChars = [...text].filter((c) => WORD_CHAR.test(c)).length;
 
   // ── Locate every declared span, then order by position (step 2).
+  //
+  // LONGEST FIRST, AND EACH AT ITS FIRST *FREE* OCCURRENCE. Both halves are
+  // load-bearing and neither is tidiness:
+  //
+  //   - Longest first, because two spans that start at the same character are
+  //     always an overlap and the accept loop keeps whichever it reaches
+  //     first. Locating `AI` before `AI slop` marks two letters out of the
+  //     middle of the phrase the model actually meant — the `SAID` defect one
+  //     level up.
+  //   - First FREE occurrence, because a term that genuinely appears twice in
+  //     one field should be marked at its second appearance rather than
+  //     dropped. With `AI slop is real, and AI wins` and both spans declared,
+  //     scanning from 0 every time finds `AI` inside `AI slop`, and the
+  //     standalone `AI` later in the line is lost to an overlap drop that
+  //     names the wrong cause.
+  //
+  // The rule is written down here because implicit tie-breaking in a resolver
+  // that also has to survive Hebrew is a bug waiting for a string nobody
+  // tested.
   interface Located { start: number; end: number; declaredText: string }
   const located: Located[] = [];
-  for (const d of declared) {
+  /** Character ranges already claimed by a longer span, so a later one skips past them. */
+  const taken: { start: number; end: number }[] = [];
+  const longestFirst = declared.map((d, index) => ({ d, index })).sort((a, b) => b.d.text.length - a.d.text.length || a.index - b.index);
+  for (const { d } of longestFirst) {
     const needle = d.text;
     if (needle.trim().length === 0) {
       drops.push({ field, text: needle, reason: "the span is blank" });
       continue;
     }
-    const at = boundedFirstOccurrence(text, needle);
+    // The first occurrence no longer span has already taken — the same rule
+    // the cross-field walk used to promise this span to this field.
+    const at = freeOccurrence(text, needle, taken);
     if (at < 0) {
-      drops.push({ field, text: needle, reason: `the span does not occur in "${field}" on a word boundary — copy it verbatim out of the field` });
+      // Two different failures, and they must not share a message. A span
+      // that is ABSENT means the model invented a word — the one fact this
+      // channel exists to report. A span whose every occurrence is already
+      // inside a longer mark is a healthy overlap, and reporting it as
+      // "does not occur" would send a reader looking for a typo that is not
+      // there.
+      const occursAtAll = boundedFirstOccurrence(text, needle) >= 0;
+      drops.push({
+        field,
+        text: needle,
+        reason: occursAtAll
+          ? `every occurrence of the span in "${field}" overlaps a longer span that is already marked`
+          : `the span does not occur in "${field}" on a word boundary — copy it verbatim out of the field`,
+      });
       continue;
     }
     let start = at;
@@ -688,8 +793,14 @@ export function resolveSlideMarks(
       continue;
     }
     located.push({ start, end, declaredText: needle });
+    taken.push({ start, end });
   }
-  located.sort((a, b) => a.start - b.start || a.end - b.end);
+  // Position order, and on a TIE the LONGER span first (RFC-17 §6.4's
+  // "longest span first"). Two spans that start at the same character are
+  // always an overlap, and the loop below keeps whichever it reaches first —
+  // so `a.end - b.end` would keep `AI` out of `AI slop` and drop the span the
+  // model actually meant. This is the `SAID` defect one level up.
+  located.sort((a, b) => a.start - b.start || b.end - a.end);
 
   // ── Accept in position order, enforcing overlap / share / caps.
   const chosen: Located[] = [];
@@ -809,12 +920,35 @@ const HEBREW_SCRIPT = "Hebrew";
  * at `s`, `m` and `l` for free and there is no second ladder to keep in sync
  * with the type ladder. A source scan pins this.
  *
- * ── THE MARK BLEEDS, THE MEASURE DOES NOT MOVE ───────────────────────────
+ * ── THE MARK DOES NOT BLEED, AND THAT IS WHY THE MEASURE CANNOT MOVE ──────
  *
- * `padding-inline: .06em` against `margin-inline: -.06em` returns exactly
- * what the padding took. If the measure moved, a marked headline would pick a
- * different length-ladder class than the one the copy gate measured — the
- * mark would silently change the layout it was only supposed to decorate.
+ * This block used to carry `padding-inline: .06em` against
+ * `margin-inline: -.06em` and the claim that the pair "returns exactly what
+ * the padding took". It does — FOR A MARK THAT DOES NOT WRAP, which is the
+ * one case the claim did not consider.
+ *
+ * `box-decoration-break: clone`, immediately below, is mandatory and it
+ * duplicates the padding onto EVERY line fragment, while the margins apply
+ * only at the box's two outer edges. A mark broken across a line break
+ * therefore keeps `2 x bleed` of measure that nothing gives back, once per
+ * wrap — and that is enough to tip a full line. Measured on real Chromium:
+ * a three-mark headline at fontScale `l` took one line MORE than the same
+ * copy unmarked on `cover.html` and `slide.html`, and the extra line pushed
+ * the block past its column — a HARD `clipped` finding from interest-floor
+ * clause B, not a warning. Shrinking the bleed only moved the cliff: at
+ * `.03em` the same defect reappeared on `slide.html` with the LONG fixture at
+ * `textAlign: end`. There is no value that is both non-zero and safe, because
+ * the liability is proportional to how full the line already was.
+ *
+ * So the bleed is GONE, and almost nothing goes with it. Four of the five
+ * kinds set `background-size: 100%` against a `content-box` origin, so they
+ * never painted into that padding at all — the pair was doing nothing for
+ * them but adding width. Only `swish` used it, and only as a clipped sliver
+ * of its 112% ellipse; `swish` now sizes its ellipse to 100%, so its taper
+ * falls inside the run and reads as a stroke thinning at both ends, which is
+ * what `rf-05 S8` actually shows. What `block` loses is a ~5px side overshoot
+ * on a pale kit — the one real cost, and it is worth paying for a mark that
+ * can never change the layout it was only supposed to decorate.
  *
  * ── `box-decoration-break: clone` IS THE WHOLE TRICK ──────────────────────
  *
@@ -826,7 +960,16 @@ const HEBREW_SCRIPT = "Hebrew";
  *
  * No `left`/`right` anywhere, so `dir="rtl"` mirrors every mark on its own
  * and there is no second stylesheet for Hebrew to drift from this one — the
- * rule `slide-devices-rtl.test.ts` already pins for devices. `text-decoration`
+ * rule `slide-devices-rtl.test.ts` already pins for devices.
+ *
+ * WITH ONE EXCEPTION THAT THE SCAN USED TO MISS: a gradient ANGLE is a
+ * physical direction too, and `left:`/`right:` scans do not see it. `ink`'s
+ * two-stop ramp carried a literal `100deg`, so on a Hebrew run every
+ * glyph-fill mark ramped in the Latin reading direction — and `ink` is
+ * precisely the kind the bundled `#17181C` ground is forced onto, `block`
+ * being refused there. The angle is now `var(--mk-ink-angle)`, flipped to its
+ * reflection under `[dir="rtl"]`, and the source scan refuses any literal
+ * `deg` outside that one property's two declarations. `text-decoration`
  * is deliberately unused for every kind: its skip-ink and offset behaviour
  * differs across scripts, and it cannot draw the swish or the double at all.
  *
@@ -854,11 +997,103 @@ export function markCssBlock(script?: string | undefined, ring?: MarkRing | unde
      cap). Starting values, calibrated in CI by the band sweep. */
   --mk-block-h: .50em;
   --mk-block-y: .56em;
-  /* Where a rule sits: just under the baseline of a 1em box. */
+  /* WHERE THE BASELINE ACTUALLY IS, MEASURED, because every offset here is
+     measured from an INLINE box's content-box top (that is what
+     background-origin: content-box gives) and that is NOT the top of a 1em
+     box. The content area is the font's ascent+descent — 1.225 to 1.242em for
+     Fraunces across the four display hosts, measured in Chromium with the
+     real webfonts loaded — and the baseline sits 0.975 to 0.985em down it.
+     The comment that used to sit here said "just under the baseline of a 1em
+     box", and the constant below it was chosen against that wrong model. */
   --mk-rule-y: .92em;
-  --mk-swish-y: .78em;
+  /* The marker stroke, and the one constant the wrong model actually broke.
+     At .78em the .20em band ran [.78em, .98em] — it ENDED at the baseline and
+     covered the bottom fifth of the letterforms, so on the cover and the
+     closer it read as a smear THROUGH the type rather than a stroke under it.
+     Measured on the rendered PNG before this change: the band occupied
+     y=1776..1808 while that line's ink ran y=1684..1809, with ZERO pixels
+     below the baseline. At .96em the band runs [.96em, 1.16em] and the
+     ellipse's solid core (opaque to 60% of a .10em radius, transparent by
+     74%) runs [1.00em, 1.12em] — entirely BELOW the 0.978em baseline, which
+     is what rf-05 S8's pink and blue strokes do. */
+  --mk-swish-y: .96em;
+  /* THE ONE PHYSICAL DIRECTION IN THIS BLOCK, and it is a custom property so
+     it can be flipped rather than duplicated. \`ink\`'s two-stop ramp runs
+     across the glyphs, so it has a reading direction; a \`deg\` angle does NOT
+     mirror under \`dir="rtl"\` the way every logical property here does, and
+     \`ink\` is the kind our default #17181C ground is forced onto — so without
+     the flip below EVERY glyph-fill mark on a Hebrew run ramps in the LATIN
+     reading direction. 260deg is 100deg reflected about the vertical axis
+     (360 - 100), which is the same ramp read right-to-left. */
+  --mk-ink-angle: 100deg;
+  /* The twin host's block-start bleed, as a PROPERTY rather than a literal so
+     the Hebrew branch can move it without needing a second selector that
+     would then have to win a specificity race against the copy each bundled
+     template carries. Latin (Fraunces) overshoots its block by at most
+     0.0865em; Heebo and Assistant reach 0.1926em, which .14em does not cover
+     — measured, 18 renders a script. See the rule further down. */
+  --mk-twin-bleed: .14em;
 }
-${isHebrew ? HEBREW_GEOMETRY : ""}/* An UNMARKED run. It paints nothing and changes no metric — it exists only
+[dir="rtl"] { --mk-ink-angle: 260deg; }
+${isHebrew ? HEBREW_GEOMETRY : ""}/* ── THE TWIN HOST'S BLOCK-START BLEED, AND IT IS NOT COSMETIC. ──
+   The mirror of the \`padding-block-end: .22em\` every display host in
+   \`assets/templates/default\` already carries, and it is here for the same
+   measured reason, one axis over.
+
+   An INLINE box's border box is the FONT's content area (ascent + descent),
+   not its line box. Fraunces' content area measures ~1.25em while these hosts
+   set line-height 1.04-1.30, so a \`<span>\` wrapping a display line starts
+   ABOVE its block's content box — and \`probePage\`'s block-start limb
+   (\`render-carousel.ts:521\`, \`rect.top < parentRect.top - 2\`) correctly
+   reports that as an overflowing element, which interest-floor clause B turns
+   into a HARD \`clipped\` finding. Before RFC-17 the copy was a bare text node,
+   so there was no element to ask; the twin pair made it an element and, with
+   it, made cover, headline_focus and closer fail the floor on the plain
+   production path with no fragment involved at all. Measured: 20 of 36
+   renders (6 templates x s/m/l x ltr/rtl) spilled, 0 of 36 with this rule.
+
+   THE VALUE IS PER-SCRIPT AND IT IS A PROPERTY, not a literal. Fraunces
+   overshoots at most 0.0865em, so Latin takes .14em (1.6x). The Phase-0
+   Hebrew faces, Heebo and Assistant, reach 0.1926em — measured over the same
+   six templates x s/m/l with the script sheet actually loaded — and at .14em
+   12 of those 18 renders spilled. Hebrew therefore takes .22em, set on
+   \`--mk-twin-bleed\` in \`HEBREW_GEOMETRY\` rather than through a second
+   selector that would have to out-specify the copy each template carries.
+
+   THE var() FALLBACK IS .22em, NOT .14em, AND THE ASYMMETRY IS THE POINT. A
+   document composed without this sheet has no \`--mk-twin-bleed\` and no way to
+   know its own script, so the fallback has to be the value that is safe for
+   BOTH — and that is the larger one. \`bidi-isolation.test.ts\` renders exactly
+   that document (a Hebrew cover through the script-font head alone) and it is
+   what found this: a .14em fallback put \`span.mk-runs, span.mk-plain\` back in
+   \`probe.overflowing\`. In production this sheet is always spliced, so Latin
+   is always pulled back down to .14em and pays nothing for the safer default.
+   In \`em\` throughout, so it tracks \`--ts\` like everything else here.
+
+   NOT paired with a negative \`margin-block-start\`: that was tried, and
+   it simply moves the escape up one level — the HOST's own border box then
+   starts above ITS parent and \`div.hf-headline\` spills instead of
+   \`span.mk-runs\`. The tolerance is deliberately not widened: the limb is
+   reporting a true geometric fact, and it is the limb that caught the
+   headline-focus 155px escape.
+
+   THIS COPY IS THE SAFETY NET, NOT THE HOME. Each of the six bundled
+   templates carries the identical rule in its own stylesheet, because a
+   template has to be correct WITHOUT this sheet: \`template-mark-slots.test.ts\`
+   renders a marked document with no mark stylesheet at all — that is how it
+   proves a marked plate is pixel-identical to an unmarked one — and with the
+   rule living only here, 22 of those renders came back overflowing. Real
+   Chromium said so; the sheet-only version looked fine in every probe that
+   spliced the sheet. What this copy buys is the studio and custom-archetype
+   path, where a template nobody in this repo wrote may adopt the twin pair.
+   Same property, same value, so the two can never disagree — and if they ever
+   do, the template's own rule wins on specificity, which is the right way
+   round.
+
+   On the host of the PLAIN twin, so it applies whether or not a mark fragment
+   arrived: the unmarked render spilled too. */
+:has(> span.mk-plain) { padding-block-start: var(--mk-twin-bleed, .22em); }
+/* An UNMARKED run. It paints nothing and changes no metric — it exists only
    so that no text node is ever stranded outside a text-bearing leaf. See
    buildMarkedRuns. */
 .mk-t { }
@@ -867,9 +1102,11 @@ ${isHebrew ? HEBREW_GEOMETRY : ""}/* An UNMARKED run. It paints nothing and chan
   /* One mark may span a line break. */
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
-  /* Bleed past the glyphs without moving the measure. */
-  padding-inline: .06em;
-  margin-inline: -.06em;
+  /* NO inline padding and no negative margin to cancel it. See the header:
+     an inline-axis bleed cannot be made measure-neutral under \`clone\`, and
+     it was buying almost nothing. A mark's box is now exactly the glyph
+     advance, so a marked field occupies the same measure as an unmarked one,
+     always, and not merely when no mark wraps. */
   /* Every kind draws with a background IMAGE, never a background shorthand:
      the probe's painted limb reads \`backgroundImage !== "none"\`, and a
      gradient is the only way to place a band at a chosen height. */
@@ -891,11 +1128,15 @@ ${colourClasses}
   background-size: 100% .07em;
   background-position-y: var(--mk-rule-y);
 }
-/* swish — a marker stroke, thick in the middle, overshooting both ends.
-   Centred on both axes so it mirrors under dir="rtl" without a second rule. */
+/* swish — a marker stroke, thick in the middle, TAPERING at both ends.
+   Centred on both axes so it mirrors under dir="rtl" without a second rule.
+   100%, not 112%: with the inline bleed gone there is no padding for the
+   extra 12% to paint into, so it was clipped square at the run's own edges —
+   the ellipse's fade was the part being thrown away. At 100% the taper is
+   inside the run and visible, which is the reference's own shape. */
 .mk-k-swish {
   background-image: radial-gradient(ellipse 60% 100% at 50% 50%, var(--mk-c) 60%, transparent 74%);
-  background-size: 112% .20em;
+  background-size: 100% .20em;
   background-position: center var(--mk-swish-y);
 }
 /* double — two rules of different weight. */
@@ -910,7 +1151,7 @@ ${colourClasses}
    shows what a dark ground does instead. The second stop is a same-hue lift
    toward the ink, in-kit by construction. */
 .mk-k-ink {
-  background-image: linear-gradient(100deg, var(--mk-c), color-mix(in srgb, var(--mk-c) 68%, var(--fg)));
+  background-image: linear-gradient(var(--mk-ink-angle), var(--mk-c), color-mix(in srgb, var(--mk-c) 68%, var(--fg)));
   background-size: 100% 100%;
   background-position-y: 0;
   -webkit-background-clip: text;
@@ -932,12 +1173,25 @@ ${colourClasses}
  * These are STARTING VALUES, to be corrected by the CI band sweep against
  * measured cap height, not guessed once and left (RFC-17 §5.3, test 12).
  */
-const HEBREW_GEOMETRY = `/* Hebrew (Phase 0 script fonts): no ascenders, full-height letter body. */
+const HEBREW_GEOMETRY = `/* Hebrew (Phase 0 script fonts): no ascenders, full-height letter body — so
+   the BLOCK swatch, which is sized to the letter body, is shorter and sits
+   lower. The two BASELINE-relative constants are deliberately NOT restated:
+   a rule and a marker stroke sit under the baseline, and the baseline
+   measures 0.976em from the inline content-box top in Hebrew exactly as it
+   does in Latin (measured in Chromium on all four display hosts). Restating
+   them was how --mk-swish-y came to carry TWO wrong values instead of one:
+   .82em put the Hebrew stroke [.82em, 1.02em], the same smear-through-the-
+   type the Latin .78em produced. Inheriting is the fix and the guard. */
 :root {
   --mk-block-h: .44em;
   --mk-block-y: .60em;
-  --mk-rule-y: .92em;
-  --mk-swish-y: .82em;
+  /* Measured over six templates x s/m/l with the Phase-0 Hebrew faces actually
+     loaded: the worst twin overshoot is 0.1926em (list-takeaway at s, Heebo)
+     against 0.0865em for Fraunces, because these faces carry far more ascent
+     and descent than their line-heights allow for. At the Latin .14em, 12 of
+     those 18 renders spilled and the Hebrew calibration case failed on
+     cover.html with a hard clipped finding. */
+  --mk-twin-bleed: .22em;
 }
 `;
 
@@ -977,10 +1231,161 @@ export function collectEmphasisIssues(
   return issues;
 }
 
-/** Narrow a `SlideEmphasis` entry set to the ones aimed at one field, preserving the model's order (position ordering happens in `resolveSlideMarks`). */
-export function declaredFor(emphasis: SlideEmphasis | undefined, field: "headline" | "body" | "quote" | "item", itemIndex?: number): { text: string }[] {
-  if (emphasis === undefined) return [];
-  return emphasis
-    .filter((e) => e.field === field && (field !== "item" || (e.itemIndex ?? 0) === (itemIndex ?? 0)))
-    .map((e) => ({ text: e.text }));
+
+// -------------------------------------------------------------------------
+// The wire form: a flat array of verbatim spans, and the walk that routes it
+// -------------------------------------------------------------------------
+
+/**
+ * One field of a slide, as the span search sees it.
+ *
+ * `field` is the REPORTING name (`"headline"`, `"body"`, `"quote"`,
+ * `"item[2]"`) and is what a drop is reported against; `text` is the model's
+ * ORIGINAL string for that field, before `iso()` and before `esc()`.
+ */
+export interface MarkField {
+  field: string;
+  text: string;
+}
+
+/**
+ * The first bounded occurrence of `needle` in `haystack` that does not overlap
+ * a range already claimed, or `-1`.
+ *
+ * ONE rule, called from BOTH the cross-field walk and `resolveSlideMarks`, so
+ * the field that promises a span and the resolver that places it can never
+ * disagree about which occurrence they meant. Two copies of this scan is the
+ * drift `foreignRunRanges` refuses to introduce for the same reason.
+ */
+function freeOccurrence(haystack: string, needle: string, claimed: readonly { start: number; end: number }[]): number {
+  let at = boundedFirstOccurrence(haystack, needle);
+  while (at >= 0 && claimed.some((c) => at < c.end && at + needle.length > c.start)) {
+    at = boundedFirstOccurrence(haystack, needle, at + 1);
+  }
+  return at;
+}
+
+/**
+ * Validate the declared spans, dropping -- never failing on -- anything
+ * unusable, and de-duplicating.
+ *
+ * The wire form is a FLAT ARRAY OF VERBATIM SPANS (RFC-17 6.4):
+ * `["Business", "Founder", "Know"]`. No field name, no row index, no tag.
+ *
+ * ## WHY THERE IS NO FIELD NAME HERE, AND WHY THAT IS A CORRECTNESS WIN
+ *
+ * The schema carried `{field, itemIndex?, text}` until the design-system
+ * phase, and a tagged string form (`"h:Anti-AI"`) was written and then
+ * refused. Both are recorded in `SlideEmphasisSchema`'s own comment because
+ * this is where the next reader will propose bringing one back. The short
+ * version: **a field the model can name is a field it can get WRONG, and the
+ * failure is SILENT.** `{"field":"body","text":"Runway"}` when `Runway` sits
+ * in `item[2]` resolves to nothing -- the mark is simply absent, no gate
+ * fires, because marks are furniture and furniture never holds a run. A
+ * SEARCH cannot name the wrong field. The tag form is the same defect at a
+ * lower price, and a Latin tag in front of a Hebrew span is new bidi surface
+ * on every RTL mark besides.
+ *
+ * It is also what keeps a cold Hebrew run at three drafting attempts
+ * (`copyAttempt` 0.181, not 0.184) -- but that is the fourth reason, not the
+ * first.
+ *
+ * DE-DUPLICATION is not tidiness. A span is claimed by exactly one field, at
+ * exactly one position, so a repeated declaration could only ever produce a
+ * drop ("overlaps something already marked") that says nothing useful. The
+ * repeat is silently collapsed instead, because the model asking twice for
+ * the same emphasis is asking for the emphasis it already has.
+ */
+export function normaliseEmphasis(emphasis: SlideEmphasis | undefined): { spans: string[]; drops: MarkDrop[] } {
+  const spans: string[] = [];
+  const drops: MarkDrop[] = [];
+  if (emphasis === undefined) return { spans, drops };
+
+  const seen = new Set<string>();
+  for (const raw of emphasis) {
+    const text = typeof raw === "string" ? raw.trim() : "";
+    if (text.length < 2) {
+      drops.push({ field: "emphasis", text: String(raw), reason: "the span is blank or a single character" });
+      continue;
+    }
+    if (text.length > MAX_MARK_CHARS) {
+      drops.push({ field: "emphasis", text, reason: `the span is ${text.length} characters -- a mark longer than ${MAX_MARK_CHARS} is a sentence, not emphasis` });
+      continue;
+    }
+    if (seen.has(text)) continue;
+    seen.add(text);
+    spans.push(text);
+  }
+  return { spans, drops };
+}
+
+/**
+ * Route each declared span to the ONE field that will paint it.
+ *
+ * The whole mechanism the flat wire form buys, and the reason it is not
+ * merely cheaper than a field name: this is a SEARCH, and a search cannot
+ * resolve to the wrong field.
+ *
+ * Two rules, both load-bearing:
+ *
+ * 1. **LONGEST SPAN FIRST** (RFC-17 6.4). `rf-05 S1` marks both `AI slop` and
+ *    (elsewhere) `AI`. Searched in the model's own order, a short span can
+ *    claim the opening of a longer one and the longer one is then dropped as
+ *    an overlap -- the reader gets `AI` marked out of `AI slop`, which is the
+ *    `SAID` defect wearing a different hat. Claiming the longest first makes
+ *    the outcome independent of the order the model happened to emit.
+ *
+ * 2. **READING ORDER, FIRST FIELD WINS.** `headline`, `body`, `quote`, then
+ *    the list rows -- the order the eye takes them in, so a term that genuinely
+ *    appears twice is marked where it is first read.
+ *
+ * A span that occurs in NO field is dropped here with a reason naming the
+ * whole slide, which is the honest report: it is not "missing from the body",
+ * it is missing from the post. Nothing here can fail a run.
+ */
+export function assignSpansToFields(
+  fields: readonly MarkField[],
+  spans: readonly string[],
+): { byField: Map<string, string[]>; drops: MarkDrop[] } {
+  const byField = new Map<string, string[]>();
+  const drops: MarkDrop[] = [];
+  for (const f of fields) byField.set(f.field, []);
+
+  /**
+   * What each field has already promised to a longer span.
+   *
+   * THIS SET EXISTS SO THE WALK DOES NOT POISON ITS OWN INSTRUMENT, and that
+   * is worth stating because the cheap version looks equivalent. Without it,
+   * routing has to ask each field in turn "is this span here?" and report a
+   * drop every time the answer is no — so a perfectly healthy four-mark slide
+   * spread across four fields records a dozen "not in this field" facts into
+   * `collectEmphasisIssues`, which is the ONE channel that reports genuine
+   * mark failures. That does not merely add noise: it buries the real drop
+   * where nobody will find it.
+   *
+   * A span is claimed ONCE, by the first field in reading order that has a
+   * free occurrence of it, and only a span claimed by NO field is reported.
+   */
+  const claimed = new Map<string, { start: number; end: number }[]>();
+
+  // Longest first, ties broken by the model's own order so the walk stays
+  // deterministic on two spans of equal length.
+  const ordered = spans.map((text, index) => ({ text, index })).sort((a, b) => b.text.length - a.text.length || a.index - b.index);
+
+  for (const { text } of ordered) {
+    // Reading order, first field with a FREE occurrence wins. "Free" rather
+    // than merely "present" so that a term a longer span already covers falls
+    // through to the next field instead of being dropped as an overlap later.
+    const target = fields.find((f) => freeOccurrence(f.text, text, claimed.get(f.field) ?? []) >= 0);
+    if (target === undefined) {
+      drops.push({ field: "slide", text, reason: `"${text}" does not appear on this slide on a word boundary -- copy a mark verbatim out of the copy you just wrote` });
+      continue;
+    }
+    const taken = claimed.get(target.field) ?? [];
+    const at = freeOccurrence(target.text, text, taken);
+    taken.push({ start: at, end: at + text.length });
+    claimed.set(target.field, taken);
+    byField.get(target.field)!.push(text);
+  }
+  return { byField, drops };
 }

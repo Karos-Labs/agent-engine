@@ -51,9 +51,11 @@ import { measureSlidePng, type SlideMetrics, type SlideProbe } from "./slide-met
  * from it. Nothing a caller reads today reports a different value — the
  * existing metrics and probe fields are untouched — so it is not a MAJOR.
  *
- * This file is the only `TOOL_VERSION` in `karos-publish`; `slide-metrics.ts`
- * declares none, and the push gate diffs against the previous PUSH rather
- * than against `origin/main`.
+ * This file is the only `TOOL_VERSION` RFC-17 touches. `slide-metrics.ts`
+ * declares none of its own — every metric it gained rides out on this tool's
+ * wire, so this is where the bump belongs — and `karos-publish`'s three other
+ * versioned tools (`draft`, `schedule`, `status`) are unchanged by it. The
+ * push gate diffs against the previous PUSH rather than against `origin/main`.
  */
 const TOOL_VERSION = "1.4.0";
 

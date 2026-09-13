@@ -2427,6 +2427,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             // guessing for a multi-language script row, and the slot then falls back to "en" in
             // `buildStudioSampleContent` exactly as it does for an English client.
             ...(bcp47For(targetLanguage) !== undefined ? { bcp47: bcp47For(targetLanguage)! } : {}),
+            // RFC-17 — the SAME ring `markCssBlock` below is emitting for this
+            // validation render. Without it every `*Runs` slot a studio draft
+            // declares filled with nothing, so the mark sheet spliced into the
+            // plate painted nothing and the marked path went unvalidated on the
+            // one render that decides whether a template ships.
+            ...(studioMarkRing !== undefined ? { markRing: studioMarkRing } : {}),
             dir,
           });
 
@@ -4256,6 +4262,24 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
      * never appears) — a slightly smaller ring, never an illegible one,
      * which is the right side to err on.
      *
+     * "A SLIGHTLY SMALLER RING, NEVER AN ILLEGIBLE ONE" WAS NOT TRUE WHEN IT
+     * WAS WRITTEN, and this is the line that made it true. The intersection
+     * of "legible on a near-black ground" and "legible on a near-white ink"
+     * is EMPTY for every saturated kit we ship, not merely smaller: measured
+     * on five real fixture kits (both luminance extremes) the ring came back
+     * `[]` and `rotation: "none"`, so the whole emphasis system painted
+     * nothing and reported every declared span as a drop. `buildMarkRing`
+     * now falls back to the primary ground alone when the intersection is
+     * empty, and the per-slide `markKindsFor` check against the slide's
+     * EFFECTIVE ground is what keeps an inverted slide honest — it returns
+     * `[]` (that slide marks nothing) rather than painting an illegible
+     * mark. Deliberately NOT fixed by threading the derived
+     * `groundFgInversion` in here: that value is revision-scoped and this
+     * closure is also read by the head-extras builder at template-
+     * materialization time, so reading it here would let the stylesheet's
+     * `.mk-c*` values and the composition's positional indexes be built from
+     * two different rings — the exact drift this helper exists to prevent.
+     *
      * Model cost: $0.00. No new step, no new prompt, no art-director bump.
      */
     const runMarkRing = (): MarkRing | undefined => {
@@ -5435,6 +5459,23 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        * degrades to plain type, and none of it can hold or fail a run.
        */
       let emphasisIssues: EmphasisIssue[] = [];
+      /**
+       * RFC-17 — the kinds each slide's ground actually admitted, from the
+       * assembly that built the document `08a1` is about to measure.
+       *
+       * Read by `checkSlidesInterestFloor` so `marks-not-visible` abstains on
+       * a kit where the pixel instrument is structurally blind: `markedShare`
+       * and `markColourCount` count COVERED, FLAT cells, which only `block`
+       * can produce, and `block` is refused outright on any ground darker
+       * than its ink. Without this the warning fired on every marked slide of
+       * every dark-kit run — measured 5 of 8 on a production-shaped carousel,
+       * with the marks painted, visible and correct.
+       *
+       * Same lifetime and same reason as `emphasisIssues` directly above:
+       * filled by `assembleForAttempt`, read after the render, replaced whole
+       * on a re-assembly so a re-layout reports its OWN document's kinds.
+       */
+      let markKindsBySlide: Map<number, string[]> = new Map();
       /** Phase 2, item L — the shipped attempt's measured interest report, its free re-layout (if one ran), and the degrade marker when the floor never cleared. */
       let finalInterest: InterestFloorReport | undefined;
       let finalInterestRelayout: InterestRelayoutPlan | undefined;
@@ -7612,7 +7653,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // RFC-17 — fresh per assembly, so a re-assembly (the typographic
         // fallback at 08a, the free re-layout's re-render at 08a1c) reports
         // what THAT document did rather than accumulating three runs' drops.
-        const markReport = { hexesBySlide: new Map<number, string[]>(), issues: [] as EmphasisIssue[] };
+        const markReport = { hexesBySlide: new Map<number, string[]>(), issues: [] as EmphasisIssue[], kindsBySlide: new Map<number, string[]>() };
         const markRingForAttempt = runMarkRing();
         const assembled = assembleSlidesData({
           clientSlug: wf.clientSlug,
@@ -7687,6 +7728,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         if (markReport.issues.length > 0) {
           emphasisIssues = markReport.issues;
         }
+        // Replaced WHOLE, never merged: a re-assembly (the typographic
+        // fallback at 08a, the free re-layout's re-render at 08a1c) can move
+        // a slide onto a different ground, and a stale kind set would make
+        // the warning speak about a document that is no longer on screen.
+        markKindsBySlide = markReport.kindsBySlide;
         return {
           ...assembled,
           slides: assembled.slides.map((slide) => ({
@@ -7953,6 +7999,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         checkSlidesInterestFloor(renderedAttempt.rendered, {
           downgradedForImages: downgradedForImagesThisAttempt,
           archetypeBySlide: measuredArchetypes(slidesDataForQa, copy, validatedCustomArchetypeIds),
+          // RFC-17 — see `markKindsBySlide`'s declaration: without it the
+          // `marks-not-visible` warning is unconditional on every dark kit.
+          markKindsBySlide,
         }),
       );
       let interestRelayout: InterestRelayoutPlan | undefined;
@@ -8121,6 +8170,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               checkSlidesInterestFloor(renderedAttempt.rendered, {
                 downgradedForImages: downgradedForImagesThisAttempt,
                 archetypeBySlide: measuredArchetypes(slidesDataForQa, copy, validatedCustomArchetypeIds),
+                // The re-layout re-assembled, so this map is the RE-LAID
+                // document's own kind set, not the one 08a1 measured.
+                markKindsBySlide,
               }),
             );
             // A SECOND `render-integrity` failure after a re-render is not a

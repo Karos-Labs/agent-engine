@@ -52,6 +52,17 @@ interface TwinPair {
   runs: string;
   /** The `{{...}}` slot the plain fallback arrives in. */
   plain: string;
+  /**
+   * The host's `id`, where it has one. THIS IS NOT DECORATION. Four of the
+   * five files withhold their painted ground from an empty plate through a
+   * rule written against the ID rather than the class —
+   * `body:not(:has(#title > span:not(:empty))) .cov-field { background-image: none; }`
+   * is the cover's, and `#headline` / `#takeaway` carry the other three. Those
+   * are precisely the rules a twin-slot edit turns into permanent no-ops if it
+   * rewrites them carelessly, so the staleness limb has to ask about the id
+   * form too, not just `.host:empty`.
+   */
+  id?: string;
 }
 
 /**
@@ -66,23 +77,29 @@ interface TwinPair {
  */
 const TWIN_SLOTS: Record<string, readonly TwinPair[]> = {
   "cover.html": [
-    { host: "headline", runs: "titleRuns", plain: "title" },
+    { host: "headline", runs: "titleRuns", plain: "title", id: "title" },
     { host: "body-text", runs: "subtitleRuns", plain: "subtitle" },
   ],
   "slide.html": [
-    { host: "headline", runs: "headlineRuns", plain: "headline" },
+    { host: "headline", runs: "headlineRuns", plain: "headline", id: "headline" },
     { host: "body-text", runs: "bodyRuns", plain: "body" },
   ],
   "headline-focus.html": [
-    { host: "hf-headline", runs: "headlineRuns", plain: "headline" },
+    { host: "hf-headline", runs: "headlineRuns", plain: "headline", id: "headline" },
     { host: "body-text", runs: "bodyRuns", plain: "body" },
   ],
   "closer.html": [
-    { host: "headline", runs: "takeawayRuns", plain: "takeaway" },
+    { host: "headline", runs: "takeawayRuns", plain: "takeaway", id: "takeaway" },
     { host: "cl-question", runs: "questionRuns", plain: "question" },
     { host: "cl-cta", runs: "ctaRuns", plain: "cta" },
   ],
-  "quote-card.html": [{ host: "quote-text", runs: "quoteRuns", plain: "quoteText" }],
+  "quote-card.html": [{ host: "quote-text", runs: "quoteRuns", plain: "quoteText", id: "quote" }],
+  // Added by the integrator, closing the gap the "one known gap" assertion
+  // below used to pin. `slides-data.ts` has always emitted `headlineRuns` for
+  // `list_takeaway`; this file simply had nowhere for it to land. Its ROWS are
+  // still not a twin pair and never will be — `buildListRows` inlines their
+  // marks into `{{html:itemRows}}` itself.
+  "list-takeaway.html": [{ host: "me-head", runs: "headlineRuns", plain: "headline", id: "head" }],
 };
 
 /** The eight names, deduplicated — `headlineRuns` and `bodyRuns` are shared by two archetypes. */
@@ -98,13 +115,17 @@ const PINNED_SLOTS = [
 ];
 
 /**
- * The three archetypes RFC-17 §5.4 deliberately leaves alone.
- * `list-takeaway` needs nothing (`buildListRows` already emits into
- * `itemRows`, so row marks are free); `stat-callout` and `comparison-card`
- * carry labels and figures rather than clauses, and `.num-figure` is outside
- * `DISPLAY_SELECTORS` for measurement reasons.
+ * The two archetypes RFC-17 §5.4 deliberately leaves alone: `stat-callout`
+ * and `comparison-card` carry labels and figures rather than clauses, and
+ * `.num-figure` is outside `DISPLAY_SELECTORS` for measurement reasons.
+ *
+ * `list-takeaway` was in this list and should not have been. §5.4's "row
+ * marks are free" is true — `buildListRows` inlines them into `itemRows` —
+ * but it says nothing about the HEADLINE, which `slides-data.ts` routes
+ * through `headlineRuns` like every other archetype's and which this file had
+ * no slot for. It now carries one twin pair and lives in `TWIN_SLOTS`.
  */
-const UNTOUCHED = ["list-takeaway.html", "stat-callout.html", "comparison-card.html"];
+const UNTOUCHED = ["stat-callout.html", "comparison-card.html"];
 
 /**
  * The painted grounds, per file. Presence only — this guard is not trying to
@@ -118,6 +139,12 @@ const GROUND_SELECTORS: Record<string, readonly string[]> = {
   "headline-focus.html": [".ground", ".copy-art", "body.gr-glyph"],
   "closer.html": [".ground", ".cl-art", "body.gr-glyph"],
   "quote-card.html": [".ground", ".quote-block"],
+  // Added with the twin pair above. `.lt-head`'s column ruling is withheld
+  // from an empty plate by `body:has(#head > span:not(:empty))`, and that
+  // `> span` is the whole reason the twin edit is safe: `#head` now always
+  // CONTAINS two spans, so the `#head:not(:empty)` form it replaced would
+  // have been permanently true and painted the ruling on a blank plate.
+  "list-takeaway.html": [".ground", ".lt-head"],
 };
 
 async function readTemplate(file: string): Promise<string> {
@@ -137,6 +164,17 @@ function markupOf(html: string): string {
 
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Every raw-fragment token this file spells more than once, as
+ * `"<file>: <token> xN"`. Reads the RAW source on purpose — `markupOf` strips
+ * comments, and a comment is precisely where the second occurrence hides.
+ */
+function duplicateRawTokens(file: string, html: string): string[] {
+  const counts = new Map<string, number>();
+  for (const m of html.matchAll(/\{\{html:[A-Za-z0-9_]*\}\}/g)) counts.set(m[0], (counts.get(m[0]) ?? 0) + 1);
+  return [...counts].filter(([, n]) => n > 1).map(([token, n]) => `${file}: ${token} x${n}`);
 }
 
 /**
@@ -195,17 +233,37 @@ function auditTwinSlots(html: string, pairs: readonly TwinPair[]): string[] {
   // than of its children has gone permanently silent, and on four of these
   // five files that guard is what withholds a painted ground from an empty
   // plate.
+  const liveStyles = styles.replace(/\/\*[\s\S]*?\*\//g, "");
   for (const pair of pairs) {
     const stale = new RegExp(`\\.${escapeRe(pair.host)}:(?:not\\()?:?empty`);
-    if (stale.test(styles.replace(/\/\*[\s\S]*?\*\//g, ""))) {
+    if (stale.test(liveStyles)) {
       problems.push(`.${pair.host} is still asked \`:empty\` directly — a twin host always has element children, so that guard is dead`);
+    }
+    if (pair.id !== undefined) {
+      // The ID form, which is the one four of these five files actually use to
+      // withhold a painted ground from an empty plate. `#title:empty` is never
+      // true again once the twins are in the DOM, so a rule written that way
+      // paints the ground on a slide that says nothing — finding 1 inverted.
+      // The only correct shape is `#title > span:not(:empty)`, which asks the
+      // CHILDREN and is true iff one of the twins carries copy.
+      const staleId = new RegExp(`#${escapeRe(pair.id)}:(?:not\\()?:?empty`);
+      if (staleId.test(liveStyles)) {
+        problems.push(`#${pair.id} is still asked \`:empty\` directly — a twin host always has element children, so that guard is dead`);
+      }
+      // And the id has to actually be on the host, or the rules that name it
+      // select nothing at all.
+      const onHost = new RegExp(`<[a-z]+[^>]*class="[^"]*\\b${escapeRe(pair.host)}\\b[^"]*"[^>]*id="${escapeRe(pair.id)}"`);
+      const onHostReversed = new RegExp(`<[a-z]+[^>]*id="${escapeRe(pair.id)}"[^>]*class="[^"]*\\b${escapeRe(pair.host)}\\b`);
+      if (!onHost.test(markup) && !onHostReversed.test(markup)) {
+        problems.push(`#${pair.id} is not on the .${pair.host} element — every ground rule written against it selects nothing`);
+      }
     }
   }
 
   return problems;
 }
 
-describe("RFC-17 twin slots: the five changed archetypes declare both members of every pair", () => {
+describe("RFC-17 twin slots: the six changed archetypes declare both members of every pair", () => {
   for (const [file, pairs] of Object.entries(TWIN_SLOTS)) {
     it(`${file} declares ${pairs.length} twin pair(s), each with exactly one collapse rule naming its own host`, async () => {
       const html = await readTemplate(file);
@@ -281,12 +339,249 @@ describe("RFC-17 twin slots: the eight pinned slot names, spelled one way", () =
     }
   });
 
+  /**
+   * A DOC COMMENT IS A SUBSTITUTION SITE, AND THAT IS NOT A STYLE OPINION.
+   *
+   * `fillTemplate` (`render-carousel.ts:230`) is
+   * `filled.replaceAll(\`{{html:${"${key}"}}}\`, fragment)` over the WHOLE
+   * file. It has no parser and no idea what a comment is. Every one of the
+   * six mark-bearing templates shipped its `*Runs` token TWICE — once in the
+   * real slot and once spelled out in a doc comment living inside `<style>` —
+   * so the mark fragment was substituted into the stylesheet as well. The
+   * mark sheet the workflow splices in carries its own `<style>` block, and
+   * that block's `</style>` closed the HOST stylesheet early: measured on all
+   * six files, `insideAStyleEl` went 3 -> 0 and the rendered plate came back
+   * covered top to bottom in the template's own source prose set as body copy.
+   *
+   * Every existing assertion in this file reads `markupOf`, which strips
+   * comments — which is exactly why none of them could see it. This one reads
+   * the RAW file, deliberately.
+   *
+   * The escaped `{{key}}` form is NOT covered here and does not need to be:
+   * `escapeHtmlText` runs before substitution, so a plain field cannot carry
+   * `<` and cannot close an element. Only the raw form can.
+   */
+  it("every raw-fragment token appears EXACTLY ONCE per file — a comment must never be a second substitution site", async () => {
+    const files = (await fs.readdir(TEMPLATE_DIR)).filter((f) => f.endsWith(".html"));
+    const offenders: string[] = [];
+    for (const file of files) offenders.push(...duplicateRawTokens(file, await readTemplate(file)));
+    expect(offenders, "drop the braces in the prose — write `html:titleRuns`, not the token").toEqual([]);
+  });
+
+  /**
+   * AND THE SAME TRAP ONE LEVEL UP: a `<style>` tag spelled out in prose.
+   *
+   * Not hypothetical — the paragraph documenting the duplicate-token bug
+   * quoted a literal closing style tag while explaining it, inside the very
+   * stylesheet it was explaining. Chromium closed `cover.html`'s stylesheet
+   * there, every collapse rule below it stopped being CSS, and the two tests
+   * above this one went red. A style element in this directory is opened and
+   * closed exactly once, in the markup, and a comment describes one in words.
+   */
+  it("no template opens or closes a style element outside the one real pair", async () => {
+    const files = (await fs.readdir(TEMPLATE_DIR)).filter((f) => f.endsWith(".html"));
+    const offenders: string[] = [];
+    for (const file of files) {
+      const html = await readTemplate(file);
+      const opens = (html.match(/<style[\s>]/gi) ?? []).length;
+      const closes = (html.match(/<\/style\s*>/gi) ?? []).length;
+      if (opens !== 1 || closes !== 1) offenders.push(`${file}: ${opens} open, ${closes} close`);
+    }
+    expect(offenders, "write the tag in words inside a comment — a literal one is parsed, comment or not").toEqual([]);
+  });
+
+  it("BREAK IT: a style tag spelled out in a comment is caught", async () => {
+    const shipped = await readTemplate("cover.html");
+    // Injected into the twin-slot comment block, exactly where the real one
+    // was written — inside the stylesheet, above the collapse rules.
+    const anchor = "A NOTE ON HOW THE SLOT NAMES ARE SPELLED BELOW";
+    expect(shipped, "the anchor this break-it hangs on is gone").toContain(anchor);
+    const broken = shipped.replace(anchor, "the fragment's own </style> closes this one. " + anchor);
+    expect(broken, "the break-it mutation did not apply").not.toBe(shipped);
+    expect((broken.match(/<\/style\s*>/gi) ?? []).length).toBe(2);
+    // And it is not a cosmetic complaint: the collapse rules stop being CSS.
+    expect(stylesOf(broken)).not.toContain(".mk-plain { display: none; }");
+    expect(stylesOf(shipped)).toContain(".mk-plain { display: none; }");
+  });
+
+  it("BREAK IT: a token spelled out in a doc comment is caught", async () => {
+    // The exact shape that shipped: the real slot, plus the same token quoted
+    // in a `<style>` comment. Run through the SAME function the guard above
+    // uses, so a guard that stopped looking fails here too.
+    const shipped = await readTemplate("cover.html");
+    expect(duplicateRawTokens("cover.html", shipped)).toEqual([]);
+    const broken = shipped.replace("</style>", "/* `.headline` takes {{html:titleRuns}} */\n</style>");
+    expect(broken, "the break-it mutation did not apply").not.toBe(shipped);
+    expect(duplicateRawTokens("cover.html", broken)).toEqual(["cover.html: {{html:titleRuns}} x2"]);
+  });
+
   it("the three untouched archetypes declare no runs slot and no mark markup at all", async () => {
     for (const file of UNTOUCHED) {
       const html = await readTemplate(file);
       expect(html, `${file} must not grow a *Runs slot`).not.toMatch(/\{\{html:[A-Za-z0-9_]*[Rr]uns\}\}/);
       expect(markupOf(html), `${file} must not grow twin-slot markup`).not.toContain('class="mk-plain"');
     }
+  });
+});
+
+/**
+ * THE OTHER HALF OF THE CONTRACT, AND THE ONE NO TEMPLATE CAN CHECK ALONE.
+ *
+ * Everything above proves the five templates declare their slots. It cannot
+ * prove the slots are the ones `slides-data.ts` actually FILLS. Those are two
+ * independent lists maintained in two files, and `fillTemplate` reconciles
+ * them SILENTLY: a fragment whose `{{html:...}}` slot does not exist in the
+ * target template is simply never substituted and is dropped on the floor.
+ * No error, no empty render, no probe signal — the marks were computed, paid
+ * for in output tokens, counted in `marksAccepted`, and thrown away.
+ *
+ * So this reads BOTH sides out of the real source. The layout-to-file map and
+ * the `runsSlot(...)` calls are parsed out of `slides-data.ts` rather than
+ * restated here, because a restated copy of a map is a guard that passes
+ * forever while the thing it mirrors moves.
+ */
+describe("RFC-17 twin slots: every runs fragment slides-data emits has a slot to land in", () => {
+  const SLIDES_DATA = path.resolve(__dirname, "..", "src", "workflow", "slides-data.ts");
+
+  /** `photo` and `text_only` take the client's configured `slideTemplate`, whose schema default is `slide.html`. `custom` resolves to a per-client generated file that is not in this directory. */
+  const NON_MAPPED: Record<string, string | null> = { photo: "slide.html", text_only: "slide.html", custom: null };
+
+  async function parseSource(): Promise<{ files: Map<string, string | null>; emits: Map<string, Set<string>> }> {
+    const src = await fs.readFile(SLIDES_DATA, "utf8");
+
+    const mapBlock = /const LAYOUT_TEMPLATE_FILES[^=]*=\s*\{([\s\S]*?)\n\};/.exec(src);
+    if (mapBlock === null) throw new Error("LAYOUT_TEMPLATE_FILES no longer parses — this guard is reading the wrong shape");
+    const files = new Map<string, string | null>(Object.entries(NON_MAPPED));
+    for (const m of mapBlock[1]!.matchAll(/^\s*([a-z_]+):\s*"([^"]+)"/gm)) files.set(m[1]!, m[2]!);
+
+    /**
+     * THE PARSE IS ANCHORED, AND THIS IS NOT A DETAIL.
+     *
+     * `slides-data.ts` holds TWO switches over `slide.layout`: a validation
+     * one that decides whether a layout has the content it needs, and the
+     * field builder below it. Both use the same ten case labels, and the
+     * validation one is full of deliberate fallthroughs
+     * (`case "cover": case "photo": case "text_only": case "headline_focus":`
+     * share a body). Read without an anchor, those fallthroughs propagate
+     * across the wrong switch and hand `cover` the names belonging to
+     * `headline_focus` — which is exactly what this guard did on its first
+     * run, silently reporting `cover.html` as missing two slots it plainly
+     * declares. `runsSlot` is a local in the builder, so a case that can
+     * possibly call it is a case declared after it.
+     */
+    const anchor = src.indexOf("const runsSlot =");
+    if (anchor === -1) throw new Error("`const runsSlot =` is gone — this guard is anchored to a shape that no longer exists");
+    const region = src.slice(anchor);
+
+    // Only the layouts are considered, so an unrelated switch elsewhere in the
+    // region cannot inject a phantom case.
+    const layouts = new Set(files.keys());
+    const cases = [...region.matchAll(/case "([a-z_]+)":/g)].filter((m) => layouts.has(m[1]!));
+    const dupes = cases.map((m) => m[1]!).filter((l, i, a) => a.indexOf(l) !== i);
+    if (dupes.length > 0) throw new Error(`a second layout switch appeared after \`runsSlot\` (${dupes.join(", ")}) — the anchor no longer isolates one switch`);
+    const emits = new Map<string, Set<string>>();
+    const order: string[] = [];
+    const fellThrough: boolean[] = [];
+    cases.forEach((m, i) => {
+      const start = m.index!;
+      const end = i + 1 < cases.length ? cases[i + 1]!.index! : region.length;
+      const block = region.slice(start, end);
+      const names = new Set<string>();
+      for (const call of block.matchAll(/runsSlot\(([\s\S]*?)markRuns\(/g)) {
+        // The closer picks its second slot with a ternary
+        // (`... ? "questionRuns" : "ctaRuns"`), so BOTH arms are collected —
+        // both are reachable and both need a slot.
+        for (const q of call[1]!.matchAll(/"([A-Za-z0-9_]+Runs)"/g)) names.add(q[1]!);
+      }
+      order.push(m[1]!);
+      emits.set(m[1]!, names);
+      fellThrough.push(!/\breturn\b/.test(block));
+    });
+    // `case "photo": case "text_only": case "headline_focus":` share one body.
+    for (let i = order.length - 2; i >= 0; i -= 1) {
+      if (fellThrough[i] === true) emits.set(order[i]!, emits.get(order[i + 1]!)!);
+    }
+    return { files, emits };
+  }
+
+  /**
+   * VERIFY THE INSTRUMENT BEFORE TRUSTING WHAT IT SAYS. A parser that matched
+   * nothing would make every assertion below vacuously true, which is the
+   * exact shape of a guard that cannot fail. So the parse is pinned first:
+   * all ten layouts, and the eight distinct names, recovered from source.
+   */
+  it("the source parse actually finds both sides — ten layouts and all eight pinned names", async () => {
+    const { files, emits } = await parseSource();
+    expect([...files.keys()].sort()).toEqual([
+      "closer",
+      "comparison_card",
+      "cover",
+      "custom",
+      "headline_focus",
+      "list_takeaway",
+      "photo",
+      "quote_card",
+      "stat_callout",
+      "text_only",
+    ]);
+    const all = new Set<string>();
+    for (const names of emits.values()) for (const n of names) all.add(n);
+    expect([...all].sort()).toEqual(PINNED_SLOTS);
+    // The fallthrough limb specifically: `photo` and `text_only` carry no body
+    // of their own and must inherit `headline_focus`'s two names.
+    expect([...emits.get("photo")!].sort()).toEqual(["bodyRuns", "headlineRuns"]);
+    expect([...emits.get("text_only")!].sort()).toEqual(["bodyRuns", "headlineRuns"]);
+    // And the archetypes RFC-17 leaves deliberately unmarked emit nothing.
+    expect([...emits.get("stat_callout")!]).toEqual([]);
+    expect([...emits.get("comparison_card")!]).toEqual([]);
+  });
+
+  it("every emitted fragment lands in a declared slot — no exceptions", async () => {
+    const { files, emits } = await parseSource();
+    const dropped: string[] = [];
+    for (const [layout, names] of emits) {
+      const file = files.get(layout);
+      if (file === null || file === undefined) continue;
+      const markup = markupOf(await readTemplate(file));
+      for (const name of names) {
+        if (!markup.includes(`{{html:${name}}}`)) dropped.push(`${layout} -> ${file}: {{html:${name}}}`);
+      }
+    }
+
+    /**
+     * THE GAP THIS USED TO PIN IS CLOSED — the entry read
+     * `"list_takeaway -> list-takeaway.html: {{html:headlineRuns}}"`.
+     *
+     * `slides-data.ts` routes a list slide's HEADLINE marks through
+     * `headlineRuns` ("like every other archetype's", says its own comment at
+     * the `list_takeaway` case), but `list-takeaway.html` rendered its
+     * headline as a bare `{{headline}}` in `.me-head` and declared no runs
+     * slot, so `fillTemplate` built the fragment, the run paid for it in
+     * output tokens, `marksAccepted` counted it, and it was dropped on the
+     * floor. It now carries the twin pair, and `rf-11` — the dense reference
+     * list, this archetype's own reference slide — gets the marked headline
+     * it should always have had.
+     *
+     * The row marks were never part of this and are not now: `buildListRows`
+     * inlines them into `itemRows` itself, which is what RFC-17 §5.4 means by
+     * "row marks are free".
+     *
+     * KEEP THIS AN EQUALITY AGAINST THE EMPTY ARRAY, never a floor. A
+     * `toHaveLength(0)` reads the same and behaves the same; a
+     * `expect(dropped.length).toBeLessThanOrEqual(n)` does not, and is how a
+     * silently-dropped fragment gets grandfathered in next time.
+     */
+    expect(dropped.sort()).toEqual([]);
+  });
+
+  it("BREAK IT: a template that loses a slot slides-data still fills is caught", async () => {
+    // Proving the limb above has teeth, on a file this package does own. The
+    // check is re-run against a mutated COPY of the cover's markup; nothing on
+    // disk is touched, which matters in a worktree shared with live packages.
+    const { emits } = await parseSource();
+    const markup = markupOf(await readTemplate("cover.html")).replace("{{html:subtitleRuns}}", "");
+    const dropped = [...emits.get("cover")!].filter((n) => !markup.includes(`{{html:${n}}}`));
+    expect(dropped).toEqual(["subtitleRuns"]);
   });
 });
 
@@ -374,6 +669,26 @@ describe("RFC-17 twin slots: BREAK IT — the guards refuse a broken template", 
     const broken = html.replace(".cl-cta:not(:has(> span:not(:empty)))", ".cl-cta:empty");
     expect(broken).not.toBe(html);
     expect(auditTwinSlots(broken, TWIN_SLOTS["closer.html"]!).join(" | ")).toMatch(/\.cl-cta is still asked `:empty` directly/);
+  });
+
+  it("a ground rule rewritten to ask `#id:empty` is caught — it would paint the ground on a slide that says nothing", async () => {
+    // The inverse of finding 1, and the likelier of the two mistakes: nobody
+    // deletes `.cov-field`, but plenty of people would "simplify"
+    // `body:not(:has(#title > span:not(:empty)))` to `body:has(#title:empty)`
+    // while touching this markup. Twin slots make `#title:empty` permanently
+    // false, so the withholding rule stops firing and an empty cover renders
+    // its full painted field — imagery share the plate has not earned.
+    const html = await readTemplate("cover.html");
+    const broken = html.replace("body:not(:has(#title > span:not(:empty))) .cov-field", "body:has(#title:empty) .cov-field");
+    expect(broken).not.toBe(html);
+    expect(auditTwinSlots(broken, TWIN_SLOTS["cover.html"]!).join(" | ")).toMatch(/#title is still asked `:empty` directly/);
+  });
+
+  it("moving the id off the twin host is caught — every ground rule naming it would select nothing", async () => {
+    const html = await readTemplate("closer.html");
+    const broken = html.replace('<div class="headline" id="takeaway">', '<div class="headline">');
+    expect(broken).not.toBe(html);
+    expect(auditTwinSlots(broken, TWIN_SLOTS["closer.html"]!).join(" | ")).toMatch(/#takeaway is not on the \.headline element/);
   });
 
   it("the ground guard refuses a deleted field, and refuses an emptied one too", async () => {
@@ -571,6 +886,13 @@ describe.skipIf(!isChromiumInstalled())("RFC-17 twin slots render (Chromium)", (
     "headline-focus.html": { runs: "headlineRuns", plain: "headline" },
     "closer.html": { runs: "takeawayRuns", plain: "takeaway" },
     "quote-card.html": { runs: "quoteRuns", plain: "quoteText" },
+    // Added with the twin pair. Rendered WITHOUT `itemRows`: the rows panel is
+    // a separate element behind its own `.me-rows:not(:empty)` guard, and what
+    // is under test here is the head — the collapse rule firing and `mkLen`
+    // reading the visible twin, neither of which has any pixel signature an
+    // interest-floor clause would catch if it broke. A failed collapse prints
+    // the headline twice and reads as legitimate type.
+    "list-takeaway.html": { runs: "headlineRuns", plain: "headline", extra: { kicker: "FIELD NOTES" } },
   };
 
   for (const [file, pair] of Object.entries(DISPLAY_PAIR)) {

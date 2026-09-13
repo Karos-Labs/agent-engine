@@ -315,9 +315,31 @@ reaches a brandless client too. One line changes at `create-instagram-agent-work
 
 Every size is in `em`, never `px`, because `--ts` scales `font-size` on every template — an `em`-based mark
 scales at `s`, `m` and `l` for free and there is no second ladder to keep in sync. `box-decoration-break: clone`
-is what lets one mark span a line break (Part 4 obs. 3). `margin-inline: -.06em` against `padding-inline: .06em`
-lets the mark bleed past the glyphs **without moving the measure** — if it moved, a marked headline would pick a
-different length-ladder class than the copy gate measured.
+is what lets one mark span a line break (Part 4 obs. 3).
+
+**A mark has no inline box model at all, and that is a correction to this section as first written.** It
+specified `margin-inline: -.06em` against `padding-inline: .06em`, to let the mark bleed past the glyphs
+"without moving the measure". The pair does cancel — for a mark that fits on one line. `clone` duplicates the
+PADDING onto every line fragment while the margins only cancel the two outer edges, so a wrapped mark keeps
+`2 × bleed` that nothing gives back. Measured on real Chromium, that was enough to add a whole line to a
+three-mark headline and push the block out of its column: a hard `clipped` finding on `cover.html` and
+`slide.html` at `fontScale: l`, and again on `slide.html` with the long fixture at `textAlign: end` after the
+bleed was halved to `.03em`. There is no non-zero value that is safe, because the liability scales with how full
+the line already was. The bleed is therefore removed: a mark's box is exactly the glyph advance, and a marked
+field measures what an unmarked one measures, always. Four of the five kinds never painted into that padding
+anyway (`background-size: 100%` against a `content-box` origin); `swish` now sizes its ellipse to 100% so its
+taper falls inside the run, which is what `rf-05 S8` shows.
+
+**The block axis needs the opposite of a bleed, and this section did not consider it.** The twin `<span>` pair
+made the copy an ELEMENT for the first time, and an inline box's border box is the font's content area
+(ascent + descent), not its line box — 1.23–1.24em for Fraunces against line-heights of 1.04–1.30. The span
+therefore starts above its block's content box and `probePage`'s block-start limb reports it, correctly, as
+overflowing: 20 of 36 renders (6 templates × s/m/l × ltr/rtl) on the **plain** production path, with no fragment
+involved. The twin host now carries `padding-block-start: var(--mk-twin-bleed, .22em)` — the mirror of the
+`padding-block-end` every display host already had, one axis over. `--mk-twin-bleed` is `.14em` for Latin
+(1.6× Fraunces' worst 0.0865em) and `.22em` for Hebrew (Heebo and Assistant reach 0.1926em). The `var()`
+fallback is the HEBREW value, because a document composed without the mark sheet cannot know its own script and
+the fallback has to be safe for the worse case.
 
 Six colour classes (`.mk-c1`…`.mk-c6`, matching `ACCENT_RING_MAX`) each set `--mk-c`; five kind classes consume
 it. **No inline `style=` anywhere** — `assertSafeMarkup` refuses it, and correctly.
@@ -544,6 +566,237 @@ worse than a red test. `run-budget-workflow.test.ts` (8/8), `per-revision-estima
 The re-price merely made the defect reachable; the swap removes the reachable held case rather than pricing
 around it, and in doing so it unblocks `vetCall`'s own deferred +$0.0045 re-price for whoever takes it next.
 
+## 6.4 AMENDMENT after the Phase 5 merge: the swap's headroom is SPENT, and section 28 must be RE-ENCODED
+
+Everything in 6.1 to 6.3 was measured on a branch cut before Phase 5, against `copyAttempt` 0.161 to 0.171.
+Both figures are stale and 6.3's proposal is now **history rather than a plan**: the ladder swap it argued for
+shipped on main with Phase 5 (PR #111), and Phase 5 then spent the headroom it bought. The live chain is
+0.161 to +0.0125 (@17, value) to 0.174 to +0.00975 (marking) to **0.184**, and this branch's section 24 is
+**section 28 of `instagram-copy/18.md`**. Section numbers in 5.7 and 6.1 above read 24; the file says 28.
+
+### What is measured now
+
+Read off the real `planRunBudget` via `tsx` at HEAD, with the swap already in, one probe per price:
+
+| `copyAttempt` | cold Hebrew plan | attempts | |
+|---|---|---|---|
+| 0.174 (@17, before marking) | $0.9773 | **3** | the shape 6.3's swap rescued |
+| 0.180 (marking re-encoded, below) | $0.9953 | **3** | $0.0047 of margin |
+| 0.181 | $0.9983 | **3** | the exact ceiling |
+| 0.182 | $0.7327 | **2** | the cliff |
+| 0.184 (marking as first encoded) | $0.7367 | **2** | **the defect** |
+
+Headroom is $1.0000 - $0.9773 = **$0.0227 a run, $0.007566 an attempt.** `planRunBudget` reads the
+THREE-DECIMAL key and this file's rounding rule is CEILING, so the key must land at or below **0.181** and
+section 28 must cost at or below **$0.007345 an attempt**. As first encoded it costs $0.00975.
+
+Note what the lever actually does at 0.184: it does not trim $0.0073: it lands the run at **$0.7367**, giving
+up **$0.2633** of drafting to recover $0.0073, and it pays for that with a whole attempt on precisely the
+client Phase 4 exists to serve. `language-compliance-gate.test.ts` then returns `status: "held"` on two cases
+named "NEVER holds", which the owner's 2026-09-09 amendment forbids outright.
+
+### The OUTPUT half alone exceeds the entire headroom, so NO prompt-side edit can fix this
+
+$0.00780 of output against $0.007345 of total budget. **Delete section 28's prose entirely** - input half to
+$0.00000 - and the exact price is $0.181455, the ceiling key is 0.182, the plan is $1.0013, and the attempt
+rung still fires. Every lever on the prompt side is insufficient *by construction*. The cost is not in what
+the section SAYS. It is in the SHAPE of what it asks the model to emit.
+
+### Cutting the mark COUNT is not available, and the reference pixels are why
+
+The cheap answer is to ask for fewer marks. The pixels refuse it. `rf-05/slide-08` is the deliberately
+near-empty closer, about 85% bare paper, and it carries **four** marks (a pink rule under `AI does not have a
+look`, a blue rule under `You do`, a lilac block behind `prompts`, a cyan block behind `Comment "AI"`).
+`rf-11-terms/slide-01` carries **thirteen**. Marking density IS the execution this phase exists to copy, and
+2.0 marks a slide would fit the budget by deleting the phase. That is the move Part 1 names as the one
+outcome that fails this work, applied to a different number.
+
+### The resolution: a flat array of VERBATIM STRINGS
+
+Replace the per-mark object `{field, itemIndex?, text}` with a flat array of strings per slide, resolved by
+exact search across `headline`, `body`, `quote` and `items` in reading order, longest span first:
+
+```
+"emphasis": ["Business", "Founder", "Know"]
+```
+
+| Half | Arithmetic | $ |
+|---|---|---|
+| **Output** - 8 slides x (3.6 marks x ~5 tokens + 4 array overhead) = 176 tokens | 176 x $15/1e6 | **$0.00264** |
+| **Input** - the whole @17 to @18 file growth, 3,276 chars ~ 819 tokens | 819 x $3/1e6 | **$0.00246** |
+| **Total** | | **$0.00510** |
+
+**THE KEY IS 0.181, NOT 0.180, AND THE DIFFERENCE IS A THIRD INSTANCE OF THIS SECTION'S OWN ERROR.** Adding
+$0.00510 to @17's SHIPPED key of 0.173655 gives $0.178, which is what 0.180 and 0.179 were both computed
+from - but 0.173655 is itself priced off a stale constant (see the next subsection). Priced end to end off
+the files, `(22,260 + 22,172/4) x $3/1e6 + (6,300 + 10 + 176) x $15/1e6 = $0.180699`, ceiling **0.181**.
+
+Cold Hebrew is **$0.9983 on three attempts**, measured on `planRunBudget`, not inferred. **The margin to
+target is $0.0017**, and 0.182 is the cliff at $0.7327 on two attempts. That margin is the single most
+important number in this document for whoever plans the next phase: there is no room left in a cold Hebrew
+run for another per-attempt cost of any size.
+
+The input half also fell because **918 characters of the v18 changelog block were cut**. That block
+described the superseded object encoding and quoted three numbers that are now false, and the model was
+being sent it on every attempt in every language. Stale documentation inside a prompt is not documentation,
+it is a bill.
+
+**Two corrections to this section's own first draft, kept visible rather than edited away.** It forecast the
+input half at "~2,300 chars, $0.001725" and the key at 0.179. The shipped section 28 is **2,836** characters
+and the real file delta is **4,143**, so the forecast was low by 1,843 characters and the key is **0.180**.
+The gap is the same mistake in miniature that 6.1 made and 6.3 caught RFC-18 making: *pricing a section
+instead of pricing the file.* @18 also inserts a **1,307-character changelog block** under the H1, and the
+model is sent every byte. The correct definition is `len(18.md) - len(17.md)` with line endings normalised,
+because it is the only one that cannot omit a block someone added elsewhere in the file.
+
+**That same error is in the SHIPPED key, and in one inherited from main.** `EMPHASIS_CHAR_DELTA = 2_665`
+counted section 28 alone, so the shipped 0.184 was itself below the call it priced.
+
+**And `PROMPT_CHAR_DELTA` is worse.** `run-budget.test.ts` prices everything off `16_300` for @16 to @17,
+inside a band of 16,150 to 16,700. Measured on `origin/main`'s own files, 16.md is **45,757** LF characters
+and 17.md is **64,653**: the real delta is **18,896**, which is 2,196 ABOVE THE TOP OF ITS OWN BAND while
+claiming to sit inside it. This branch's 17.md is byte-identical to main's, so this came from main. Its
+consequence: @17 priced on the measured delta is `(22,260 + 18,896/4) x $3/1e6 + 6,310 x $15/1e6 =
+$0.175602`, ceiling **0.176**, against the **0.174** that `run-budget.ts` actually ships. **Main's @17 is
+~$0.0016 an attempt below the call it prices.**
+
+The constant IS corrected to 18,896 in this PR, because a test constant that misstates a measurable fact is
+a lie inside a guard and it is the lie that hid all of this. **@17's shipped KEY is deliberately NOT
+re-priced here** - that changes the budget model for every run and every plan on main and deserves its own
+change. It is pinned as a failing-if-touched assertion in `run-budget.test.ts` rather than left in a PR
+description, because a finding that lives in a test outlives one that lives in a description.
+
+**The rule, stated as a rule rather than as a value:** the model is sent EVERY BYTE of the prompt file, so
+the only honest delta is `len(new.md) - len(old.md)` with line endings normalised. Any delta measured over
+one section will silently omit whatever else the file gained. Five keys in this branch's history were
+produced by breaking that rule - 0.166, 0.171, 0.176, 0.179 and 0.180 all sit below the real call, and
+0.184 sits above it because it priced an encoding that no longer exists.
+
+The ~5 tokens a mark is read off the references rather than assumed: the mean marked span across `rf-05` S1,
+S3 and S8 is 2.7 word-tokens (`Anti-AI`, `clients`, `human,`, `AI slop`, `Handwritten notes`, `Messy, crossed
+out`, `AI does not have a look`, `You do`, `prompts`, `Comment "AI"`), plus a quote pair and a comma.
+
+### Why the flat form is BETTER, not merely cheaper
+
+The marked words are **already in the field**. `field` and `itemIndex` are the model re-deriving, at 12 tokens
+a mark, a location code can find by searching. And the model can get them WRONG: a mark with the right `text`
+and the wrong `itemIndex` is silently DROPPED today, which is the worst failure mode the mechanism has,
+because nothing fails and nothing is retried. A search cannot get the index wrong. The flat form also matches
+what the references do with a repeated term - `rf-05` S1 marks `AI slop` where it falls - rather than making
+the model nominate one occurrence.
+
+Everything else is unchanged and deliberately so: `MAX_MARKS_PER_SLIDE`, `MAX_MARKS_PER_FIELD`,
+`MAX_MARK_WORDS`, `MAX_MARKED_SHARE`, the ring, the kinds, the CSS, the bidi isolation and the "drops are
+facts, never gates" posture. `emphasis` stays OPTIONAL on the slide, so the property Phase 4 and Phase 5 both
+bank on - every other gate, dedupe corpus and language judge reads exactly the string it reads today - is
+preserved.
+
+### THE ENCODING RULING: tagged was written, priced, and REFUSED on correctness
+
+Two encodings were built on this branch at the same time by two different agents, and the tagged one was
+refused. It is recorded here, with its reasons, because **this is exactly where the next reader will propose
+bringing it back** - it is cheaper-looking, it is less code, and its defect is invisible in a diff.
+
+The refused form put a one-character field tag on each span: `"h:Anti-AI"`, `"b:AI slop"`, `"i1:runway"`,
+with `EMPHASIS_TAG_BY_FIELD` and a `COMPACT_TAG` grammar. Four reasons, and **the first three are
+correctness reasons, not cost**:
+
+1. **A field the model can NAME is a field it can get WRONG, and the failure is SILENT.** `"b:Runway"` when
+   `Runway` sits in `item[2]` resolves to nothing: the mark is absent, no gate fires, nothing is retried,
+   because marks are furniture and furniture never holds a run. That is the worst failure mode this
+   mechanism has. **The tag does not fix that defect, it makes it cheaper.** A SEARCH cannot name the wrong
+   field, which is the entire point of the flat form.
+2. **The colon needs an escape rule it does not have.** `"h:Comment "AI": why"` has no unambiguous parse,
+   and adding an escape costs back the tokens the tag saved.
+3. **It puts a LATIN tag at the head of every RTL span.** That is new bidi surface on every single Hebrew
+   mark, in precisely the territory Phase 4 built `isolateForeignRuns` and the foreign-run boundary rule in
+   `resolveSlideMarks` to contain. The flat form adds none.
+4. Cost, last and least. Both encodings clear the ceiling, so this argument decided nothing.
+
+**AND THE UNION, WHICH IS THE FINDING NEITHER ENCODING'S AUTHOR NAMED.** The refused schema was
+`z.array(z.union([CompactEmphasisSchema, StructuredEmphasisSchema])).max(8)` - it accepted the tagged string
+**and** the legacy object, justified as a migration path for in-flight checkpoints. It is not a migration
+path. **A schema that accepts two wire formats enforces neither**, and a model shown one convention in the
+prompt while the parser silently accepts another will emit both. The `itemIndex` silent drop is not removed
+by that design; it is RETAINED, beside a second format with a second failure mode. One shape, or the
+contract is not a contract. `SlideEmphasisSchema` now carries this argument in its own doc comment, which is
+where someone re-proposing the tag will actually be standing.
+
+### Where it lands
+
+**In this commit, end to end.** `SlideEmphasisSchema` in `src/workflow/types.ts` is
+`z.array(z.string().min(2).max(48)).max(8)` with no union and no tag; `normaliseEmphasis` and
+`assignSpansToFields` in `src/workflow/emphasis-marks.ts` validate and route by search, longest span first,
+reading order, first field wins; a span that occurs nowhere is ONE drop reported against the whole slide,
+which is the honest report - it is not missing from the body, it is missing from the post. Nothing here can
+hold or fail a run. `copyAttempt` is **0.181** with the arithmetic in its own comment.
+
+`run-budget.test.ts`'s cold-Hebrew assertion goes green **on its own**, with no edit to
+`expect(hebrew.plan.maxSelfCheckAttempts).toBe(3)`, because the code stopped holding. That is the only
+acceptable way for that case to be green: changing it to expect 2 would have encoded the owner's forbidden
+hold as intended behaviour.
+
+**One guard was INVERTED rather than deleted, and one was inverted rather than relaxed a third time.** The
+output-dominates-input assertion (`EMPHASIS_OUTPUT_DELTA > 3 x EMPHASIS_INPUT_DELTA`) is no longer true -
+the two halves are now within 10% of each other - so it asserts the new relation instead of being removed.
+And the cold-Hebrew HEADROOM floor, already relaxed twice ($0.03 then $0.02, against measured $0.038 then
+$0.0227), is **not relaxed again**: at $0.0017 the buffer is gone, so the assertion states that it is gone,
+and the two product requirements it was standing in for - fits the target, keeps three attempts - are
+asserted directly. A guard that flips still guards; a guard that is deleted is nothing.
+
+**One behavioural change to expect in prep.** The re-price pushes a cold ENGLISH run onto the same fifth
+rung Hebrew already used: `optional rescue re-vets skipped`. Still three attempts, still a full deliverable,
+still no hold - but `run-budget-workflow.test.ts`, `concept-budget-and-art.test.ts` and the ledger's own
+adaptation strings all move with it, and they are updated in this commit rather than discovered in prep.
+
+## 6.5 PRODUCT CONSEQUENCE, ACCEPTED: a cold run no longer verifies its lead claim, and the costed fix
+
+**The consequence, in one sentence: on a COLD run - a new client's first post - `07i1-verify-lead-claim`
+does not run, because the emphasis system costs one rung of the budget ladder.**
+
+Measured, one variable, `copyAttempt` the only thing changed: at 0.174 `workflow-e2e` passes with `07i1` in
+the step list; at 0.181 it is gone. The marking system adds $0.021 to a run, which pushes the cold ENGLISH
+plan off the evidence rung and onto `optional rescue re-vets skipped`. `07i1` is bound to that same
+`optionalRevets` flag, so the cheapest cut on the rung and the most expensive one fire together.
+
+**Why it is accepted rather than worked around.** It is the owner's own lever in the owner's own order -
+"past target drop OPTIONAL work" - and nothing holds, nothing fails, three attempts survive and the
+deliverable is complete. The scope is cold runs only: one delivered run of history relaxes the ladder and
+the step returns. And `07i1` is a SECOND check rather than the only one: the lead claim comes from a fact
+card that was sourced during research and already passed the grounding gate. Paying for it is what is
+actually unaffordable - measured, keeping `07i1` while dropping the rescue costs $0.007, which takes a cold
+HEBREW run from $0.9983 to **$1.0053**, past target, into the ATTEMPT rung. That trades a second-line
+verification for a first-line drafting attempt, on the client Phase 4 exists to serve, and it is forbidden
+outright.
+
+**It is also not specific to this key.** Any honest price for section 28 lands past the same rung: 0.180 and
+0.184 both do. The alternative is not "keep `07i1`", it is "do not ship marking", or find $0.021 a run
+elsewhere. The two free cuts available were both taken - the flat encoding and 918 characters of dead
+changelog.
+
+### The fix, costed, for its own change
+
+**Split `optionalRevets` into two rungs.** Rung 3a: rescue re-vets off, `07i1` KEPT. Rung 3b: `07i1` off.
+Today they are one flag, so a 14.6-to-1 difference in value fires as a single step. MEASURED on
+`planRunBudget`, not estimated:
+
+| | English cold | Hebrew cold |
+|---|---|---|
+| rung 3 as it stands today (both together) | **$0.1090** | **$0.1090** |
+| the rescue portion alone (proposed rung 3a) | $0.1020 | $0.1020 |
+| `07i1` alone (proposed rung 3b) | $0.0070 | $0.0070 |
+| plan at 0.181 with `07i1` KEPT | **$0.9123** - fits, with $0.088 to spare | **$1.0053** - does NOT fit |
+
+So the split gives **English cold runs the verification back outright**, and Hebrew still needs 3b. The
+ratio between the two halves is **14.6 to 1**, which is the real argument: the current single flag gives up
+a verification to buy headroom it did not need. This converts "no cold run verifies its lead claim" into
+"only the tightest language does".
+
+**Why this is a follow-up and not this commit.** The ladder is the most-touched and most-sensitive mechanism
+in this codebase this week - it has already been re-ordered once, in 6.3 - and changing its SHAPE at the end
+of a long parallel run is how the last defect got in. It needs its own change, with its own measurement of
+all four shapes, and a check that no other step is bound to the same flag.
+
 ---
 
 # Part 7 - Tests
@@ -649,3 +902,92 @@ behaviour as intended behaviour, and that is strictly worse than a red test.
 JPEGs; the control measurements in Part 3 come from a faithful re-implementation of `measureSlidePng` over real
 PNGs at 1080x1440 scale 2, with the JPEG caveat stated at each use of a reference figure. **Not** verified
 through real Chromium — those suites self-skip on this machine. CI is the gate.
+
+## 9.1 AMENDMENT after the Phase 5 merge - what the PR body must say instead
+
+Part 9 above was written before the merge and three of its claims are now wrong on the page:
+
+- **The prompt bump is `@17 → @18`, not `@16 → @17`.** Main's Phase 5 shipped its own `@17` first; this
+  branch's section 24 was renumbered to **section 28 of `18.md`**, `latest.md` is a byte copy of `18.md`, and
+  `copy-prompt-v17.test.ts` tracks @18. The five-step checklist is complete and `npm run check:prompts` is
+  green. **Do not renumber those sections back.**
+- **The re-price is `0.174 → 0.184`, not `0.161 → 0.171`.** Both of this branch's earlier figures are stale
+  bases. 0.171 was correct arithmetic on the pre-Phase-5 0.161; 0.176 is the trap in the middle, section 28's
+  bump added to RFC-18 section 7.1's superseded 0.166 forecast. The real chain is in 6.4.
+- **The rung swap is NOT this PR's headline.** It already shipped with Phase 5. The headline is now 6.4:
+  the headroom that swap bought is spent, and **the emphasis output encoding has to get cheaper.**
+
+Unchanged and still required in the PR body:
+
+- **New step ids: NONE**, so `agent-middleware/scripts/generate_engine_stages.py --check` is **not** required
+  after merge. Say it explicitly rather than omitting the section. Step `05` changes only its resolved prompt
+  version, `instagram-copy@17 → @18`.
+- **`publish.renderCarousel` `TOOL_VERSION 1.3.1 → 1.4.0`** lands in the render package, not this one.
+- **Known red on merge, deliberately not silenced:** `run-budget.test.ts`'s cold-Hebrew
+  `expect(hebrew.plan.maxSelfCheckAttempts).toBe(3)`. It is the acceptance condition for the re-encode in 6.4
+  and it goes green on its own the moment `copyAttempt` becomes 0.179. The review instruction above still
+  binds: changing it to expect 2 encodes the owner's forbidden hold as intended behaviour.
+
+---
+
+## 9.2 BLOCKING FINDING, measured on this branch: the mark ring is EMPTY on the reference ground, and the failure has no pixel signature
+
+**This is the single most important thing in this PR body and it is not fixed here.** It was found by
+running `buildMarkRing` against the owner's own reference slide rather than against the bundled dark kit.
+
+`rf-11-terms/slide-01` is the densest mark reference we have: ten rows, a yellow to chartreuse to cyan to
+lilac highlighter ladder, swatches sitting low on the baseline. It is paper — a near-white ground carrying
+near-black ink. Run the ladder against that ground through the shipped floor:
+
+| ladder colour | vs ground `#F4F2EC` | vs ink `#17181C` | verdict at the 3:1 floor |
+|---|---|---|---|
+| `#F2ED3A` | **1.11:1** | 14.32:1 | REFUSED |
+| `#D6E84A` | **1.21:1** | 13.09:1 | REFUSED |
+| `#A8E5E5` | **1.25:1** | 12.67:1 | REFUSED |
+| `#C9B8E8` | **1.63:1** | 9.72:1 | REFUSED |
+| `#5BD1A0` | **1.69:1** | 9.35:1 | REFUSED |
+
+`buildMarkRing` returns `[]`. Its own note is `no candidate survived — this run marks nothing and every
+field renders plain`. **On the ground the reference pixels were read off, the mark system is a no-op.**
+
+### Why this is worse than an ordinary bug
+
+A no-op has **no pixel signature**. `markedShare` is 0, `markColourCount` is 0, and the plate renders as
+clean type on clean ground — which is exactly what a deliberately restrained slide looks like. No
+`interest-floor` clause can separate "the mark engine refused every colour" from "this slide was designed
+without marks". It fails green. That is the same class of invisible failure as a `:has()` ruling that is
+unconditionally true, pointing the other way, and this repo's standing rule is that a defect which reads
+as green is itself the bug.
+
+It is also silent at the only other place it could surface: `collectEmphasisIssues` reports per-slide, and
+"no marks this run" is indistinguishable from "the model emitted no emphasis".
+
+### Why the floor is not simply wrong
+
+`MARK_GROUND_CONTRAST_FLOOR = 3` is correct for the kinds that draw **next to** the glyphs — `underline`,
+`swish`, `double`. A 1.11:1 pencil rule on paper genuinely is invisible.
+
+The floor is wrong for `block`, and `block` is what `rf-11` actually uses. A highlighter swatch is not read
+against the ground; it is read as a field **behind** the ink, and what has to be legible is the ink ON the
+swatch. Every one of those five colours clears 9:1 against the ink. The code already knows this distinction
+— `markKindsFor` gates `block` on `contrast(ink, mark) >= 4.5 AND ground lighter than ink` — but
+`buildMarkRing` culls the candidate on the ground test **before** kind selection ever runs, so `block`'s own
+precondition never gets to speak.
+
+### The shape of the fix, and why it is not in this PR
+
+Ring admission has to become kind-aware: a colour survives if it clears 3:1 against the ground **or** it
+clears 4.5:1 against the ink on a ground lighter than the ink. That changes ring membership on every pale
+kit, which changes `markColourCount` and `markedShare` on every rendered plate, which is a
+**calibration** change and not an integration repair.
+
+**The calibration pass was not run, and could not be:** it needs Chromium, and Playwright's Chromium
+download fails reproducibly on this machine (it dies mid-extraction just after `chrome.dll`, leaving no
+`chrome.exe`; four separate sessions, same stall). Every pixel-dependent test in this branch **self-skips**
+rather than failing, so CI is the only place this settles.
+
+**Recorded, not silenced:** `emphasis-marks.test.ts` pins the empty ring as an equality, so the day ring
+admission changes, that test goes red and whoever changed it has to come back and read this section.
+
+**This is an owner decision, not an engineering one**: either the floor becomes kind-aware as above, or the
+bundled palette stops claiming `rf-11` as its reference. It should not be resolved quietly in a follow-up.

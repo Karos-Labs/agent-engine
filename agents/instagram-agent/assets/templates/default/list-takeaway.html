@@ -27,12 +27,16 @@
   the space from the head rather than compressing, and past four there is no
   head left to take it from.
 
-  The rows themselves arrive as one pre-assembled `{{html:itemRows}}` fragment.
+  The rows themselves arrive as one pre-assembled `html:itemRows` fragment.
   `publish.renderCarousel`'s substitution is flat string replacement with no
   loop construct, so the repetition has to be built by the caller;
   `buildListRows` in `workflow/slides-data.ts` is the only producer, and it
-  HTML-escapes every title and note it interpolates (the `{{html:}}` form is
+  HTML-escapes every title and note it interpolates (the raw-fragment form is
   deliberately unescaped, so that escaping is load-bearing).
+
+  Slot names are written WITHOUT their braces in every comment in this file:
+  that flat string replacement does not skip comments, so a token spelled out
+  in prose is a second substitution site — see `cover.html`'s canonical note.
 
   ── 2026-09-11, the visual rework ──
 
@@ -205,8 +209,21 @@
 
      Bound to the headline, like every other ink-bearing layer in this
      directory: no headline, no field, and the empty-plate case in
-     `interest-floor-calibration.test.ts` still fails on the pixels alone. */
-  body:has(#head:not(:empty)) .lt-head {
+     `interest-floor-calibration.test.ts` still fails on the pixels alone.
+
+     THE CHILD COMBINATOR IS LOAD-BEARING, not style. This used to read
+     `body:has(#head:not(:empty))`. RFC-17 gave `#head` a twin pair, and an
+     element that CONTAINS two `<span>`s is never `:empty` — `:empty` does not
+     care that the spans hold no text. The old form would therefore have been
+     permanently true and this ruling would have painted on a blank plate,
+     which is the single defect
+     `interest-floor-calibration.test.ts`'s "every ground-bearing template
+     FAILS the floor when its slots come through empty" case exists to catch,
+     and which self-skips without Chromium and so would have landed red in CI
+     only. `> span:not(:empty)` asks the CHILDREN, matching the form the other
+     four twin-bearing templates already use (`#title`, `#headline`,
+     `#takeaway`, `.quote-text`). */
+  body:has(#head > span:not(:empty)) .lt-head {
     background-image:
       repeating-linear-gradient(to right,
         color-mix(in srgb, var(--fg) 16%, transparent) 0 2px,
@@ -240,6 +257,21 @@
     padding-block-end: 0.12em;
   }
   .me-head.small { font-size: calc(52px * var(--ts, 1)); }
+
+  /* RFC-17 twin slot. `.me-head` hosts BOTH `html:headlineRuns` (marked)
+     and `headline` (plain, escaped); whichever arrives filled wins and the
+     other is collapsed. `slides-data.ts` has always built this archetype's
+     `headlineRuns` fragment — `rf-11`, the dense reference list, is exactly
+     the post whose headline should carry a mark — but this file declared no
+     slot for it, so `fillTemplate` dropped it silently: built, paid for in
+     output tokens, counted in `marksAccepted`, and never rendered.
+
+     The ROW marks were always fine and are not this rule's business:
+     `buildListRows` inlines them into `html:itemRows` itself. */
+  /* The twin host's block-start bleed — see `cover.html` for the measurement
+     and why it is here rather than only in the shared mark sheet. */
+  :has(> span.mk-plain) { padding-block-start: var(--mk-twin-bleed, .22em); }
+  .me-head:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
 
   /* The rows panel: graded and textured for the reason in the header, capped
      with a full-weight accent rule. */
@@ -463,13 +495,26 @@
   <div class="lt-head">
     <div class="eyebrow">{{kicker}}</div>
     <div class="lt-rail"></div>
-    <div class="me-head" id="head">{{headline}}</div>
+    <div class="me-head" id="head"><span class="mk-runs">{{html:headlineRuns}}</span><span class="mk-plain">{{headline}}</span></div>
   </div>
   <div class="me-rows">{{html:itemRows}}</div>
   <script>
     (function () {
+      // Twin-aware, like every other template's ladder. `textContent` ignores
+      // `display: none`, so reading `#head` directly would sum BOTH twins on a
+      // marked render and step a fitting headline down to `small` for no
+      // reason. Measure the twin that is actually visible. Zero-width bidi
+      // controls are stripped: Phase 4 wraps Latin runs inside Hebrew in
+      // isolates, and those characters are not type on the plate.
+      function mkLen(el) {
+        if (el === null) return 0;
+        var runs = el.querySelector(".mk-runs");
+        var src = runs !== null && runs.textContent.trim() !== "" ? runs : el.querySelector(".mk-plain");
+        var text = ((src === null ? el : src).textContent || "").replace(/[\u2066-\u2069\u200E\u200F]/g, "");
+        return text.trim().length;
+      }
       var h = document.getElementById("head");
-      if ((h.textContent || "").trim().length > 52) h.className = "me-head small";
+      if (mkLen(h) > 52) h.className = "me-head small";
       window.__CAROUSEL_READY__ = true;
     })();
   </script>

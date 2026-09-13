@@ -549,7 +549,7 @@ export type SlideCustomArchetype = z.infer<typeof SlideCustomArchetypeSchema>;
 export const EMPHASIS_FIELDS = ["headline", "body", "quote", "item"] as const;
 
 /**
- * RFC-17 (Phase 5) — which words on a slide carry a MARK.
+ * RFC-17 - which words on a slide carry a MARK.
  *
  * The owner's reference accounts mark emphasis per word, in rotating colours
  * and mixed kinds, and that is what makes their type read as considered
@@ -558,35 +558,68 @@ export const EMPHASIS_FIELDS = ["headline", "body", "quote", "item"] as const;
  * corpus, language judge and hygiene check keeps reading exactly the string
  * it reads today.
  *
+ * **A flat array of VERBATIM SPANS, and nothing else**: `["Runway", "nobody
+ * noticed"]`. No field name, no row index, no tag. `resolveSlideMarks` finds
+ * each span by bounded exact match, and `slides-data.ts` walks the slide's
+ * fields in reading order (headline, body, quote, then list rows) consuming
+ * each span at the FIRST place it has not already been marked.
+ *
  * **Verbatim text, never offsets.** `isolateForeignRuns` inserts two
  * `\p{Cf}` characters per Latin run into every rendered RTL field, and the
- * Phase 4 native editor rewrites copy after drafting — so any character
+ * Phase 4 native editor rewrites copy after drafting, so any character
  * offset authored against the model's own string is wrong by the time the
  * field reaches the document. A span that no longer occurs is DROPPED and
  * reported, never resolved to the wrong words.
  *
+ * == WHY THERE IS NO `field`, NO TAG AND NO UNION (RFC-17 6.4) ============
+ *
+ * This schema carried `{field, itemIndex?, text}` until the design system
+ * phase, and a tagged string form (`"h:Anti-AI"`, `"i1:runway"`) was written
+ * and then REFUSED. Both are recorded here because this is exactly where the
+ * next reader will propose bringing one back, and the reasons are
+ * CORRECTNESS reasons rather than the cost saving:
+ *
+ * 1. **A field the model can name is a field it can get WRONG, and the
+ *    failure is SILENT.** `{"field":"body","text":"Runway"}` when `Runway`
+ *    sits in `item[2]` resolves to nothing: the mark is simply absent, and no
+ *    gate fires, because marks are furniture and furniture never holds a run.
+ *    That is the worst failure mode this mechanism can have. A search cannot
+ *    name the wrong field. **The tag form is the same defect at a lower
+ *    price**, which is why being cheaper did not save it.
+ * 2. **A tag needs an escape rule.** `"h:Comment "AI": why"` has no
+ *    unambiguous parse, and adding an escape costs the tokens the tag saved.
+ * 3. **A Latin tag in front of a Hebrew span is new bidi surface** on every
+ *    single RTL mark, which is precisely the hazard Phase 4's
+ *    `isolateForeignRuns` and the foreign-run boundary rule in
+ *    `resolveSlideMarks` were built to contain. A bare span adds none.
+ * 4. **A UNION OF TWO WIRE FORMATS ENFORCES NEITHER.** The refused design was
+ *    `z.array(z.union([CompactEmphasisSchema, StructuredEmphasisSchema]))`,
+ *    which keeps the `itemIndex` silent drop alive beside a second format the
+ *    model will also emit. That is not a migration path: it is the original
+ *    defect retained, plus a new one. One shape, or the contract is not a
+ *    contract.
+ *
+ * The cost fell too, `copyAttempt` 0.184 to 0.181, which is what keeps a cold
+ * Hebrew run at three drafting attempts. That is the fourth reason, not the
+ * first.
+ *
  * **`.max(8)` here, `MAX_MARKS_PER_SLIDE = 5` in `emphasis-marks.ts`.** The
  * gap is deliberate and follows the philosophy already written into this
  * schema's siblings: FURNITURE MUST NEVER BE ABLE TO REJECT A DRAFT. A hard
- * `.max(5)` would fail an entire $0.171 copy attempt over a sixth mark. A
- * ninth mark degrades — the extras are dropped in code, where a drop is free.
+ * `.max(5)` would fail an entire $0.181 copy attempt over a sixth mark. A
+ * ninth mark degrades: the extras are dropped in code, where a drop is free.
+ * `MAX_MARK_CHARS` is looser than the six-word cap for the same reason.
  *
  * The model chooses WHICH WORDS. It never chooses the colour, the weight, or
- * how the mark is drawn: it cannot see the ground, and `rf-6/slide-01` — a
- * near-black plate whose emphasis is a gradient in the glyphs, with no
- * swatch anywhere — proves the ground is what decides.
+ * how the mark is drawn: it cannot see the ground, and `rf-6/slide-01`, a
+ * near-black plate whose emphasis is a gradient in the glyphs with no swatch
+ * anywhere, proves the ground is what decides.
  */
-export const SlideEmphasisSchema = z
-  .array(
-    z.object({
-      field: z.enum(EMPHASIS_FIELDS),
-      /** Required when `field` is `"item"`: which list row this span is in. Ignored otherwise. */
-      itemIndex: z.number().int().min(0).max(3).optional(),
-      /** The exact words to mark, copied VERBATIM out of the field. If they do not appear exactly, the mark is dropped. */
-      text: z.string().min(2).max(48),
-    }),
-  )
-  .max(8);
+
+/** The longest span a mark may carry, in characters. The six-word cap in `emphasis-marks.ts` is the tighter of the two. */
+export const MAX_MARK_CHARS = 48;
+
+export const SlideEmphasisSchema = z.array(z.string().min(2).max(MAX_MARK_CHARS)).max(8);
 export type SlideEmphasis = z.infer<typeof SlideEmphasisSchema>;
 
 export const InstagramSlideCopySchema = z.object({

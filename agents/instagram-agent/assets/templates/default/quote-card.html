@@ -237,6 +237,19 @@
        underneath puts the optical gap back where legacy had it. */
     padding-block-end: 0.5em; margin-block-end: calc(-58px * var(--ts, 1));
   }
+  /* BOUND TO THE QUOTE, like every other ink-bearing layer in this directory.
+     This glyph is hard-coded in the markup, not substituted, so it painted on
+     EVERY render including one where `quoteText` came through empty: a 180px
+     accent-coloured mark, 816x189 device px, measuring 9.9% of the frame as a
+     text-bearing leaf. That is ink with no content justifying it — the exact
+     rule `cover.html`'s header states for this whole set — and it defeated the
+     DOM half of clause G on a plate with nothing to read on it: the empty
+     quote card reported `textBoxShare` 0.0992 against a 0.02 floor and looked
+     to the probe like a slide that had copy. `display: none`, not
+     `visibility: hidden`, so it leaves no box for the probe to sum. Asked of
+     the CHILDREN for the same reason the panel guard above is: `.quote-text`
+     is a twin-slot pair and is never `:empty` itself. */
+  .quote-block:not(:has(.quote-text > span:not(:empty))) .quote-mark { display: none; }
   .quote-text {
     font-family: var(--f-display); font-style: italic; font-weight: 500;
     font-size: calc(84px * var(--ts, 1)); line-height: 1.26; letter-spacing: -0.008em; text-wrap: balance;
@@ -262,7 +275,12 @@
      `fontFamiliesUsed` between two renders of the same copy), and why the
      panel-paint guard above had to be restated against the children.
 
-     One pair here: `.quote-text` takes `{{html:quoteRuns}}` + `{{quoteText}}`.
+     Slot names are written WITHOUT their braces in this file — `fillTemplate`
+     is a `replaceAll` over the literal token and does not skip comments, so a
+     token spelled out here is a second substitution site. `cover.html` carries
+     the canonical note and the measurement.
+
+     One pair here: `.quote-text` takes `html:quoteRuns` + `quoteText`.
      The attribution is not a clause and takes no marks, so `.quote-attr` and
      its `.qc-foot:has(.quote-attr:empty)` guard are untouched.
 
@@ -274,6 +292,9 @@
      ones drawn from the baseline or in the glyphs themselves. That is a
      decision for the shared mark sheet, not for this file; what this file
      owes it is the slot, and the slot is here. */
+  /* The twin host's block-start bleed — see `cover.html` for the measurement
+     and why it is here rather than only in the shared mark sheet. */
+  :has(> span.mk-plain) { padding-block-start: var(--mk-twin-bleed, .22em); }
   .quote-text:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
 
   /* Standing brand furniture. The brand head fragment (`buildBrandHeadHtml`)

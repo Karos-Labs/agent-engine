@@ -566,10 +566,29 @@
      `headline-focus.html`, `closer.html` and `quote-card.html` carry the same
      pair and point back here.
 
+     A NOTE ON HOW THE SLOT NAMES ARE SPELLED BELOW, AND IT IS NOT A STYLE
+     PREFERENCE. `fillTemplate` (`render-carousel.ts:230`) is a `replaceAll`
+     over the LITERAL token and has no idea this is a comment inside a style
+     element. A raw-fragment token written out in full here is a SECOND
+     substitution site: the mark fragment lands in the stylesheet too, and the
+     moment that fragment carries a style element of its own — which is
+     exactly how the mark sheet is spliced in — that element's CLOSING TAG
+     closes this stylesheet early, and every line of this comment renders as
+     body copy over the plate. Measured on all six mark-bearing templates. So
+     every slot named in prose in this file drops its braces
+     (`html:titleRuns`, not the token), and only the real slot down in the
+     markup can ever match.
+
+     For the same reason no comment in any stylesheet in this directory may
+     spell a closing style tag out in full. That is not pedantry: writing it
+     out in this very note is what broke `cover.html` the first time this
+     paragraph was added, and `template-mark-slots.test.ts` caught it because
+     every collapse rule below it stopped being inside a stylesheet.
+
      Every prose slot in this file is a PAIR of sibling spans inside the same
      block: `<span class="mk-runs">` takes the marked fragment
-     (`{{html:titleRuns}}`, `{{html:subtitleRuns}}`), `<span class="mk-plain">`
-     takes the same copy as ordinary escaped text (`{{title}}`, `{{subtitle}}`),
+     (`html:titleRuns`, `html:subtitleRuns`), `<span class="mk-plain">`
+     takes the same copy as ordinary escaped text (`title`, `subtitle`),
      and the two rules below hide the plain twin on the renders where the
      fragment arrived. A pair, not a straight swap, for two independent
      reasons — either one on its own would be enough:
@@ -609,6 +628,25 @@
      restated as "has a non-empty twin", which is the same question asked one
      level down. Left as they were they would have fired backwards and an
      empty plate would have acquired the ink the guards exist to withhold. */
+  /* THE TWIN HOST'S BLOCK-START BLEED. The mirror of the padding-block-end
+     this file already carries, one axis over, and it is not cosmetic. An
+     INLINE box's border box is the FONT's content area (ascent + descent),
+     not its line box: Fraunces measures ~1.25em against line-heights of
+     1.04-1.30 here, so a span wrapping a display line starts ABOVE its
+     block's content box. probePage's block-start limb (render-carousel.ts,
+     rect.top < parentRect.top - 2) correctly calls that an overflowing
+     element, and interest-floor clause B turns it into a hard `clipped`
+     FINDING. Before RFC-17 the copy was a bare text node and there was no
+     element to ask; the twin pair made it one, and with it made this plate
+     fail the floor on the plain production path with no fragment involved.
+     Measured: 20 of 36 renders (6 templates x s/m/l x ltr/rtl) spilled, 0 of
+     36 with this rule; .14em is 1.6x the worst overshoot seen (0.0865em,
+     Hebrew headline_focus at m). It lives HERE, in the template, and not
+     only in the shared mark sheet, because a template must be correct
+     without the sheet — `template-mark-slots.test.ts` renders exactly that
+     case and caught the sheet-only version. NOT paired with a negative
+     margin-block-start: that just moves the escape up to the host itself. */
+  :has(> span.mk-plain) { padding-block-start: var(--mk-twin-bleed, .22em); }
   .headline:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
   .body-text:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
 

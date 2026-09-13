@@ -483,15 +483,29 @@
      `fontFamiliesUsed` between two renders of the same copy), and why every
      `:empty` guard in this file had to be restated against the children.
 
+     A NOTE ON HOW THE SLOT NAMES ARE SPELLED BELOW. `fillTemplate` is a
+     `replaceAll` over the LITERAL token, and it does not know this is a
+     comment: a raw-fragment token written out in full here is a SECOND
+     substitution site, and a fragment carrying a style element of its own
+     closes this stylesheet early and dumps the rest of this file onto the
+     plate as body copy. Measured, on all six mark-bearing templates. So every
+     slot named in prose in this file drops its braces — `html:takeawayRuns`,
+     not the token — and only the real slot down in the markup can ever match.
+     For the same reason no comment here spells a style tag out in full; see
+     `cover.html`'s canonical copy of this note.
+
      THREE PAIRS HERE, THE MOST IN THE SET: `.headline` takes
-     `{{html:takeawayRuns}}` + `{{takeaway}}`, `.cl-question` takes
-     `{{html:questionRuns}}` + `{{question}}`, `.cl-cta` takes
-     `{{html:ctaRuns}}` + `{{cta}}`. The question and the CTA are already
+     `html:takeawayRuns` + `takeaway`, `.cl-question` takes
+     `html:questionRuns` + `question`, `.cl-cta` takes
+     `html:ctaRuns` + `cta`. The question and the CTA are already
      mutually exclusive upstream, so at most two of the three ever carry copy
      on one plate — which is why each needs its OWN collapse rule rather than
      one rule over a shared ancestor: the rule has to name the host whose runs
      span it is collapsing, or a filled takeaway would hide an unmarked CTA's
      only copy. */
+  /* The twin host's block-start bleed — see `cover.html` for the measurement
+     and why it is here rather than only in the shared mark sheet. */
+  :has(> span.mk-plain) { padding-block-start: var(--mk-twin-bleed, .22em); }
   .headline:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
   .cl-question:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
   .cl-cta:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
@@ -581,7 +595,7 @@
       // 92 and drop two steps, on a plate whose middle is already competing
       // with the recap strip. Zero-width bidi controls are stripped for the
       // reason stated there. `.cl-recap` is NOT a twin pair — it is a
-      // code-built `{{html:recap}}` fragment — and it keeps its own plain
+      // code-built `html:recap` fragment — and it keeps its own plain
       // `textContent` read above.
       var len = function (el) {
         if (el === null) return 0;

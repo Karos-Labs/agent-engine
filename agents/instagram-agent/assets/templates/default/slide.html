@@ -443,8 +443,13 @@
      `fontFamiliesUsed` between two renders of the same copy), and why every
      `:empty` guard in the file had to be restated against the children.
 
-     This file's pairs: `.headline` takes `{{html:headlineRuns}}` +
-     `{{headline}}`, `.body-text` takes `{{html:bodyRuns}}` + `{{body}}`.
+     Slot names are written WITHOUT their braces in this file — `fillTemplate`
+     is a `replaceAll` over the literal token and does not skip comments, so a
+     token spelled out here is a second substitution site. `cover.html` carries
+     the canonical note and the measurement.
+
+     This file's pairs: `.headline` takes `html:headlineRuns` +
+     `headline`, `.body-text` takes `html:bodyRuns` + `body`.
 
      ONE THING IS SPECIFIC TO THIS ARCHETYPE. The heroless plate's ground mark
      keys off `.copy:has(.headline > span:not(:empty))` above, which means the
@@ -452,6 +457,9 @@
      paints at all. That guard and these two rules have to agree about which
      span carries the copy, and the source-scan suite
      (`__tests__/template-mark-slots.test.ts`) is what holds them together. */
+  /* The twin host's block-start bleed — see `cover.html` for the measurement
+     and why it is here rather than only in the shared mark sheet. */
+  :has(> span.mk-plain) { padding-block-start: var(--mk-twin-bleed, .22em); }
   .headline:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
   .body-text:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
 
