@@ -3,7 +3,13 @@ import type { AgentContext } from "@agent-engine/core";
 import { createKarosGatesTools } from "@agent-engine/tools";
 import { checkCraftHygiene } from "../src/workflow/craft-hygiene.js";
 import type { NativeCorrection } from "../src/workflow/language-gate.js";
-import { applyNativeCorrections, type NativeCorrectionDeps } from "../src/workflow/native-corrections.js";
+import {
+  applyNativeCorrections,
+  applyPackageNativeCorrections,
+  type NativeCorrectionDeps,
+  type PackageNativeCorrectionDeps,
+} from "../src/workflow/native-corrections.js";
+import { ALT_TEXT_MAX_CHARS, checkPostPackage, type PackagedSlide, type PostPackage } from "../src/workflow/post-package.js";
 import type { InstagramCopyOutput, InstagramSlideCopy } from "../src/workflow/types.js";
 
 /**
@@ -444,5 +450,209 @@ describe("applyNativeCorrections — the free checks run again, on the state tha
     expect(out.drops).toHaveLength(1);
     expect(out.drops[0]!.correction).toEqual(bad);
     expect(out.drops[0]!.reason.length).toBeGreaterThan(10);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase 5 (RFC-18 §6.5): the SAME judge, the SAME four rules, a different
+// document — and the guard that keeps the two documents apart.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** The shipped carousel the package describes. Two slides, so `alt:7` is a target with nothing behind it. */
+const PACKAGE_SLIDES: readonly PackagedSlide[] = [
+  { n: 1, headline: "חדר הקירור שלכם לא מת מזקנה", sourceRef: "coil claim" },
+  { n: 2, headline: "כמה באמת עולה סליל מלוכלך", sourceRef: "downtime claim" },
+];
+
+/**
+ * A fluent Hebrew package carrying the SAME calque in two different fields —
+ * the first comment and slide 2's alt text. One judge round, two targets, and
+ * the two have to land in two different places.
+ */
+function hebrewPackage(over: Partial<PostPackage> = {}): PostPackage {
+  return {
+    hashtags: ["ציודמסעדות", "קירורמסחרי", "תחזוקתמטבח"],
+    altText: [
+      { n: 1, alt: "יחידת עיבוי על הגג, סליל אפור ומאובק, צילום מקרוב." },
+      { n: 2, alt: "בסוף היום הטכנאי סוגר את לוח הציוד ובודק את המדחום." },
+    ],
+    firstCommentText: "בסוף היום, המקורות לשני הנתונים מופיעים כאן לפי סדר הופעתם בשקופיות.",
+    ...over,
+  };
+}
+
+/** `checkPackage` is wired to the REAL `08c1`, gates and all, for the reason the file header gives. */
+function packageDeps(): PackageNativeCorrectionDeps {
+  const tools = createKarosGatesTools();
+  return {
+    language: "Hebrew",
+    checkPackage: (pkg) =>
+      checkPostPackage(tools, ctx, {
+        pkg,
+        slides: PACKAGE_SLIDES,
+        coreTerms: ["ציוד מסעדות", "קירור מסחרי"],
+        targetLanguage: "Hebrew",
+        scriptName: "Hebrew",
+        scriptPattern: "\\p{Script=Hebrew}",
+      }),
+  };
+}
+
+function packageCorrection(over: Partial<NativeCorrection> = {}): NativeCorrection {
+  return {
+    target: "comment",
+    field: "comment",
+    span: "בסוף היום",
+    replacement: "בסופו של דבר",
+    axis: "translationese",
+    severity: "minor",
+    why: "calque of 'at the end of the day'",
+    ...over,
+  };
+}
+
+describe("applyPackageNativeCorrections — the post package's own round", () => {
+  it("patches the first comment and a slide's alt text in one pass, and touches nothing else", async () => {
+    const pkg = hebrewPackage();
+    const out = await applyPackageNativeCorrections(pkg, [packageCorrection(), packageCorrection({ target: "alt:2", field: "alt" })], packageDeps());
+
+    expect(out.applied).toBe(2);
+    expect(out.dropped).toBe(0);
+    expect(out.pkg.firstCommentText).toBe("בסופו של דבר, המקורות לשני הנתונים מופיעים כאן לפי סדר הופעתם בשקופיות.");
+    expect(out.pkg.altText[1]!.alt).toBe("בסופו של דבר הטכנאי סוגר את לוח הציוד ובודק את המדחום.");
+    // Everything the corrections did not name is byte-identical — including the
+    // hashtags, which the judge is never even shown (RFC-18 §6.3).
+    expect(out.pkg.hashtags).toEqual(pkg.hashtags);
+    expect(out.pkg.altText[0]).toEqual(pkg.altText[0]);
+  });
+
+  it("has nowhere to put a source URL, because the document it patches has no sources in it", async () => {
+    // Rule 4, structurally. `firstComment.sources` is built in code from the
+    // run's own fact cards and is not part of the package this patcher operates
+    // on at all, so a language correction cannot reach a URL — not because a
+    // branch refuses one, but because there is no field to name.
+    const out = await applyPackageNativeCorrections(hebrewPackage(), [packageCorrection()], packageDeps());
+    expect(Object.keys(out.pkg).sort()).toEqual(["altText", "firstCommentText", "hashtags"]);
+    expect(JSON.stringify(out.pkg)).not.toContain("http");
+  });
+
+  it("drops an alt-text replacement that would break its 125-character cap, rather than losing the whole package a step later", async () => {
+    const long = `בסופו של דבר ${"מאוד ".repeat(30)}`.trim();
+    expect(long.length).toBeGreaterThan(ALT_TEXT_MAX_CHARS);
+    const pkg = hebrewPackage();
+    const out = await applyPackageNativeCorrections(pkg, [packageCorrection({ target: "alt:2", field: "alt", replacement: long })], packageDeps());
+
+    expect(out.applied).toBe(0);
+    expect(out.pkg).toEqual(pkg);
+    expect(out.drops[0]!.reason).toContain(`${ALT_TEXT_MAX_CHARS}-character schema cap`);
+  });
+
+  const unresolvable: Array<[string, NativeCorrection, string]> = [
+    ["an alt correction for a slide with no alt text", packageCorrection({ target: "alt:7", field: "alt" }), "slide 7 has no alt text in this package"],
+    ["a first-comment correction naming another field", packageCorrection({ field: "alt" }), 'named the field "alt"'],
+    ["an alt correction naming the comment field", packageCorrection({ target: "alt:2", field: "comment" }), 'named the field "comment"'],
+  ];
+  it.each(unresolvable)("drops %s", async (_label, bad, reason) => {
+    const pkg = hebrewPackage();
+    const out = await applyPackageNativeCorrections(pkg, [bad], packageDeps());
+    expect(out.applied).toBe(0);
+    expect(out.pkg).toEqual(pkg);
+    expect(out.drops[0]!.reason).toContain(reason);
+  });
+
+  it("discards THE WHOLE PATCH when a correction smuggles an em dash past the free package checks", async () => {
+    // The carousel round's rule, proven against the package's own re-checks:
+    // `08c1` ran before these corrections existed, so copy that ships must have
+    // passed it in the state it ships in.
+    const pkg = hebrewPackage();
+    const clean = packageCorrection({ target: "alt:2", field: "alt" });
+    const dashed = packageCorrection({ replacement: "בסופו של דבר — וזה העיקר" });
+
+    const out = await applyPackageNativeCorrections(pkg, [clean, dashed], packageDeps());
+
+    expect(out.discardReason).toContain("free post-package checks");
+    expect(out.applied).toBe(0);
+    expect(out.dropped).toBe(2);
+    expect(out.pkg).toEqual(pkg);
+  });
+});
+
+describe("THE CONTEXT GUARD — one vocabulary, two contexts, neither able to reach into the other", () => {
+  /**
+   * RFC-18 §6.5's guard, in both directions — and stated precisely, because
+   * the imprecise version of this comment would be a lie a future reader acts
+   * on.
+   *
+   * **Deleting `contextMismatch` turns all five of these red, and it does NOT
+   * today produce a wrong patch.** Measured, not assumed: with the guard
+   * removed, every case below is still dropped, by the two resolvers' own
+   * field-pairing checks, which each demand `field` and `target` agree
+   * (`a first-comment correction named the field "alt"`, and so on). What the
+   * deletion produces instead is a drop reason that NAMES THE WRONG DOCUMENT —
+   * a first-comment correction reported as `a slide correction named the field
+   * "comment"`, a caption correction reported as `an alt-text correction named
+   * the field "caption"`. Those reasons go into the degrade marker a reviewer
+   * reads, so that is a real defect and not a cosmetic one, but it is a
+   * different defect from the one the guard's own comment claims.
+   *
+   * The guard's value is that the invariant lives in ONE function rather than
+   * being an emergent property of two resolvers' pairing checks. Loosen either
+   * pairing later — the way `archetype` and `device` already resolve by SPAN
+   * rather than by a named field — and the guard is the only thing left
+   * between a package correction and approved, already-gated slide copy edited
+   * after every gate that reads it has run. These tests pin the reason for
+   * exactly that: the reason is how you can tell WHICH mechanism refused.
+   *
+   * In every case below the span is GENUINELY PRESENT in the other document's
+   * field, so rule 2 is not what refuses it either.
+   */
+  const intoTheCarousel: Array<[string, NativeCorrection]> = [
+    ["a first-comment correction", packageCorrection()],
+    ["an alt-text correction", packageCorrection({ target: "alt:2", field: "alt" })],
+  ];
+  it.each(intoTheCarousel)("refuses %s on a CAROUSEL round", async (_label, bad) => {
+    const copy = hebrewCopy();
+    expect(copy.slides[1]!.body).toContain(bad.span);
+
+    const out = await applyNativeCorrections(copy, [bad], hebrewDeps());
+
+    expect(out.applied).toBe(0);
+    expect(out.copy).toEqual(copy);
+    expect(out.drops[0]!.reason).toContain("arrived on a carousel round");
+    // Not reported as a slide correction: no slide was ever involved, and this
+    // reason is what a reviewer reads in the degrade marker.
+    expect(out.drops[0]!.reason).not.toContain("slide correction");
+  });
+
+  const intoThePackage: Array<[string, NativeCorrection]> = [
+    ["a caption correction", packageCorrection({ target: "caption", field: "caption" })],
+    ["a slide correction", packageCorrection({ target: "slide:2", field: "body" })],
+    ["a headline correction", packageCorrection({ target: "slide:1", field: "headline" })],
+  ];
+  it.each(intoThePackage)("refuses %s on a PACKAGE round", async (_label, bad) => {
+    const pkg = hebrewPackage();
+    expect(pkg.firstCommentText).toContain(bad.span);
+
+    const out = await applyPackageNativeCorrections(pkg, [bad], packageDeps());
+
+    expect(out.applied).toBe(0);
+    expect(out.pkg).toEqual(pkg);
+    expect(out.drops[0]!.reason).toContain("arrived on a post-package round");
+    expect(out.drops[0]!.reason).not.toContain("alt-text correction");
+  });
+
+  it("reports a cross-context target as ONE DROP, never as a discard — it is a bad correction, not a poisoned patch", async () => {
+    const pkg = hebrewPackage();
+    const good = packageCorrection({ target: "alt:2", field: "alt" });
+    const stray = packageCorrection({ target: "caption", field: "caption" });
+
+    const out = await applyPackageNativeCorrections(pkg, [good, stray], packageDeps());
+
+    expect(out.discardReason).toBeUndefined();
+    expect(out.applied).toBe(1);
+    expect(out.dropped).toBe(1);
+    expect(out.pkg.altText[1]!.alt).toContain("בסופו של דבר");
+    // And the caption it named is not in this document to be reached.
+    expect(out.pkg).not.toHaveProperty("caption");
   });
 });

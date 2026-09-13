@@ -9,24 +9,8 @@ import {
   validateCustomArchetypes,
 } from "../src/workflow/create-instagram-agent-workflow.js";
 import type { InstagramCopyOutput } from "../src/workflow/types.js";
-import {
-  goodRelevanceVerdict,
-  goodTrendScoutOutput,
-  fakeRenderCarousel,
-  fakeRouterSequence,
-  finalTurn,
-  goodCopyOutput,
-  goodImageCandidatePool,
-  goodImageVettingOutput,
-  goodResearchOutput,
-  goodVisualQaOutput,
-  makePromptStore,
-  setupTestEnvironment,
-  boringSlideMetrics,
-  passingSlideMetrics,
-  type TestEnvironment,
-  pendingStudioRow,
-} from "./test-helpers.js";
+import { boringSlideMetrics, fakeRenderCarousel, fakeRouterSequence, finalTurn, fixtureHeadline, goodCopyOutput, goodImageCandidatePool, goodImageVettingOutput, goodRelevanceVerdict, goodResearchOutput, goodTrendScoutOutput, goodVisualQaOutput, makePromptStore, passingSlideMetrics, pendingStudioRow, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 import { validateCustomArchetypeSlots } from "../src/workflow/custom-archetype-checks.js";
 
@@ -84,7 +68,7 @@ describe("custom archetypes: authoring, safety, and promotion", () => {
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(copy),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
 
     const durableStore = new MemoryDurableStepStore();
@@ -129,7 +113,7 @@ describe("custom archetypes: authoring, safety, and promotion", () => {
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(copy),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
 
     const durableStore = new MemoryDurableStepStore();
@@ -173,7 +157,7 @@ describe("custom archetypes: authoring, safety, and promotion", () => {
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(copy),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
 
     const durableStore = new MemoryDurableStepStore();
@@ -218,10 +202,10 @@ describe("custom archetypes: authoring, safety, and promotion", () => {
     // the angle is proposed once per REVISION rather than once per attempt.
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
-      finalTurn(copy), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()),
-      finalTurn(copy), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()),
-      finalTurn(copy), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(copy), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
+      finalTurn(copy), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
+      finalTurn(copy), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
+      finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
 
     const durableStore = new MemoryDurableStepStore();
@@ -292,7 +276,7 @@ describe("custom archetypes: authoring, safety, and promotion", () => {
     const copy = withCustomArchetype();
     const revised = { ...copy, caption: `${copy.caption} (revised)` };
     // The angle proposal (04i) leads each ROUND: one per revision.
-  const draftTurns = (c: InstagramCopyOutput) => [finalTurn(goodAngleProposal()), finalTurn(c), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())];
+  const draftTurns = (c: InstagramCopyOutput) => [finalTurn(goodAngleProposal()), finalTurn(c), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)];
     const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...draftTurns(copy), ...draftTurns(revised)]);
 
     const workflowFn = createInstagramAgentWorkflow({
@@ -339,7 +323,7 @@ describe("custom archetypes: authoring, safety, and promotion", () => {
       caption: "An entirely new look at how support teams handle triage under pressure this winter season.",
       slides: copy.slides.map((s, i) => ({
         ...s,
-        headline: `A different angle ${i + 1}`,
+        headline: fixtureHeadline(i, "a different angle"),
         body: `Fresh sentence number ${i + 1} covering another aspect of the team's workflow changes without echoing earlier phrasing.`,
       })),
     };

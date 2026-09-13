@@ -17,6 +17,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
+import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 
 const params = { runId: "instagram_run_visualqa", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
@@ -47,11 +48,11 @@ describe("08b-visual-qa: post-render visual QA runs and retries through the SAME
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()), finalTurn(badQa),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(badQa),
       // Attempt 2: full re-run of write-copy -> vet-images -> visual QA.
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: testTools(env),
@@ -68,7 +69,7 @@ describe("08b-visual-qa: post-render visual QA runs and retries through the SAME
 
     // scout + research + angle + 2 x (copy + vet + relevance + QA).
     expect(result.status).toBe("completed");
-    expect(router.complete).toHaveBeenCalledTimes(11);
+    expect(router.complete).toHaveBeenCalledTimes(14);
 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).toContain("08b-visual-qa-attempt-1");
@@ -89,13 +90,13 @@ describe("08b-visual-qa: post-render visual QA runs and retries through the SAME
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()), finalTurn(badQa),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(badQa),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()), finalTurn(badQa),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(badQa),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()), finalTurn(badQa),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(badQa),
     ]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: testTools(env),

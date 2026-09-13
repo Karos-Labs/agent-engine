@@ -19,6 +19,7 @@ import {
   type TestEnvironment,
   pendingStudioRow,
 } from "./test-helpers.js";
+import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 
 /**
@@ -44,7 +45,7 @@ function tools(env: TestEnvironment, extra: Record<string, unknown> = {}): Agent
 function draftTurns(copyOutput: ReturnType<typeof goodCopyOutput>) {
   // The angle proposal (04i) leads each ROUND: one per revision, outside the
   // attempt loop, so a two-round fixture spends two of them.
-  return [finalTurn(goodAngleProposal()), finalTurn(copyOutput), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())];
+  return [finalTurn(goodAngleProposal()), finalTurn(copyOutput), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)];
 }
 
 describe("revision loop", () => {
@@ -273,7 +274,7 @@ describe("revision loop", () => {
         claimMatchReason: "shows the claimed subject (instagram-image-vet@3 fixture)",
       })),
     };
-    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(vetting), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(vetting), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)]);
 
     const workflowFn = createInstagramAgentWorkflow({
       tools: tools(env),

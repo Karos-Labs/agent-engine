@@ -301,6 +301,27 @@ function briefTerms(brief: ValueSignalsInput["brief"]): string[] {
  * or offer names, or a proper noun. The capitalised-run path is Latin-only by
  * nature — Hebrew has no case, which is exactly why the core-terms and
  * numeral paths exist and are not decoration.
+ *
+ * **DIGITS ARE REQUIRED, AND THAT IS DELIBERATE.** Every numeric path here —
+ * `CURRENCY`, `PERCENT`, `YEAR`, `NUMERAL_WITH_UNIT` — is anchored on `\d`. A
+ * quantity spelled as a word matches none of them, in any language: English
+ * "four visits a year" fails exactly as Hebrew "ארבע שעות" does. RFC-18 §4.1
+ * #3 asks for a NUMERAL, and a spelled-out quantity is not one — it reads as
+ * prose, it cannot be checked against a fact card by string comparison, and
+ * admitting it here would let "several", "a handful" and "dozens" in behind
+ * it, which is the category-noun hedging this whole check exists to refuse.
+ * A spelled-out quantity is not thereby unjudged: it is the judge's `position`
+ * axis, at $0.003.
+ *
+ * The asymmetry to keep an eye on is nonetheless real, and it is NOT the
+ * numerals. It is `CAPITALISED_RUN`: an English post clears this function with
+ * a proper noun and no figure at all, and a Hebrew post has no equivalent
+ * free path, so it must produce a digit or hit a core term where an English
+ * post need not. Hebrew posts do use ASCII digits, so this is survivable and
+ * is what the Phase 4 fixtures were corrected to. But if a measured Hebrew
+ * refusal rate ever comes in above the English one, this line is the first
+ * suspect, and the fix is a Hebrew proper-noun signal — NOT loosening the
+ * numeral paths for everybody.
  */
 export function hasNamedSpecific(text: string, terms: readonly string[] = []): boolean {
   if (CURRENCY.test(text) || PERCENT.test(text) || YEAR.test(text) || NUMERAL_WITH_UNIT.test(text)) return true;
@@ -419,8 +440,11 @@ function isOrdered(slide: InstagramCopyOutput["slides"][number]): boolean {
  *
  * No declaration means no opinion. A writer that predates the field (an
  * in-flight checkpoint, a fixture) is not refused for a field it was never
- * asked for; the schema's `.default("single-claim")` is what makes that
- * distinction reach this function at all.
+ * asked for. The schema is `.optional()` with NO code-side default precisely so
+ * that `undefined` reaches this function AS `undefined` rather than as
+ * `single-claim` — which would refuse every undeclared carousel on the rule
+ * below that `single-claim` belongs to the single-image format. `types.ts`
+ * carries the whole argument beside `InstagramPayloadKindSchema`.
  */
 export function checkPayloadShape(copy: InstagramCopyOutput, payloadKind: string | undefined): SlidesDataSelfCheck {
   if (payloadKind === undefined || payloadKind.trim().length === 0) return { ok: true };

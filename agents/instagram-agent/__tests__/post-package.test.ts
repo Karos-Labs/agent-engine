@@ -182,8 +182,7 @@ describe("THE BUILDER NEVER READS THE MODEL — RFC-18 §6.4", () => {
    * Make `buildFirstCommentSources` read the packager's output in any way and
    * this test cannot compile, because its signature does not admit it.
    */
-  it("builds the first comment's sources from the SLIDES and the FACT CARDS, and the invented URL is nowhere in the shipped post", () => {
-    const pkg = PostPackageSchema.parse(RAW_PACKAGER_REPLY);
+  it("builds the first comment's sources from the SLIDES and the FACT CARDS, and never from the packager's reply", () => {
     const built = buildFirstCommentSources(SHIPPED, FACT_CARDS);
 
     const runUrls = new Set(FACT_CARDS.map((c) => c.url).filter((u): u is string => typeof u === "string"));
@@ -191,17 +190,58 @@ describe("THE BUILDER NEVER READS THE MODEL — RFC-18 §6.4", () => {
       expect(runUrls.has(source.url), `built source "${source.url}" is not one of this run's fact-card URLs`).toBe(true);
     }
     expect(built.length).toBeGreaterThan(0);
+    expect(JSON.stringify(built)).not.toContain(INVENTED);
 
-    // The whole shipped object, serialised — every field, not just the one
-    // the assertion above happens to look at.
+    // Not "the built sources happen to exclude the invented one", which a
+    // filter could fake: the invented URL is not in the run's fact cards at
+    // all, so a builder that could reach the model's output would have had to
+    // INVENT this set to pass. Both of the model's fabricated sources are
+    // absent — the plausible one (an ASHRAE URL that is not the real ASHRAE
+    // URL) as much as the obvious one.
+    expect(RAW_PACKAGER_REPLY["sources"]).toHaveLength(2);
+    for (const fabricated of RAW_PACKAGER_REPLY["sources"] as Array<{ url: string }>) {
+      expect(built.some((s) => s.url === fabricated.url)).toBe(false);
+    }
+  });
+
+  /**
+   * And the whole shipped post, end to end, on the path a run actually takes:
+   * the free rules refuse the URL-bearing prose, the packager is re-asked once
+   * under `08c-package-post-retry`, and the post that ships is assembled from
+   * the re-ask's prose plus CODE-BUILT sources.
+   *
+   * Asserting this over the REFUSED reply — as an earlier draft of this test
+   * did — asserts something the workflow never ships and goes red for the right
+   * reason at the wrong step. What must be true is that no URL the model ever
+   * wrote survives into the shipped object, and the two mechanisms that make it
+   * true are a refusal and a builder, tested here together.
+   */
+  it("ships a post with no model-written URL anywhere in it, after the free refusal and the one re-ask", () => {
+    const refused = checkPackageRules(englishCheck({ pkg: PostPackageSchema.parse(RAW_PACKAGER_REPLY) }));
+    expect(refused.ok).toBe(false);
+
+    const reAsked = PostPackageSchema.parse({
+      ...RAW_PACKAGER_REPLY,
+      firstCommentText: "Both figures on slides 1 and 2 are sourced below, in the order they appear.",
+    });
+    expect(checkPackageRules(englishCheck({ pkg: reAsked }))).toEqual({ ok: true });
+
     const post = {
-      hashtags: pkg.hashtags,
-      altText: pkg.altText,
-      firstComment: { text: pkg.firstCommentText, sources: built },
+      hashtags: reAsked.hashtags,
+      hashtagPlacement: resolveHashtagPlacement(undefined),
+      altText: reAsked.altText,
+      firstComment: { text: reAsked.firstCommentText, sources: buildFirstCommentSources(SHIPPED, FACT_CARDS) },
       timing: buildTimingNote(FACT_CARDS, new Date("2026-09-13T00:00:00Z")),
     };
-    expect(JSON.stringify(post)).not.toContain("kitchen-safety-institute");
-    expect(JSON.stringify(built)).not.toContain(INVENTED);
+    const shipped = JSON.stringify(post);
+    expect(shipped).not.toContain("kitchen-safety-institute");
+    expect(shipped).not.toContain("ashrae.example");
+    // Every URL in the shipped post, whatever field it sits in, came from a
+    // fact card — scanned out of the serialised object rather than read out of
+    // the one field this test remembered to look at.
+    for (const url of shipped.match(/https?:\/\/[^"\s]+/g) ?? []) {
+      expect(FACT_CARDS.some((c) => c.url === url), `shipped URL "${url}" is not one of this run's fact-card URLs`).toBe(true);
+    }
   });
 });
 
@@ -449,6 +489,44 @@ describe("checkPostPackage — the two free gates", () => {
   it("degrades to `ok` rather than throwing when the registry has no gates at all — a missing tool must never cost the package", async () => {
     await expect(checkPostPackage({}, ctx, englishCheck())).resolves.toEqual({ ok: true });
   });
+
+  /**
+   * RFC-18 §6.1: "there is no state in which the whole post costs us the post".
+   *
+   * `checkCraftHygiene` throws on exactly this outcome, and that is correct
+   * THERE — it runs inside the drafting loop on copy that must not ship
+   * unchecked. Here the loop has already broken and the carousel is approved,
+   * gated and rendered. A throw would end that run on a lint outage.
+   *
+   * Both shapes an outage takes, because they arrive on different lines: a
+   * non-success `execute` outcome, and a success carrying a `tooling_error`
+   * verdict.
+   */
+  // `ReturnType` takes the FUNCTION, not the tool: the brackets belong inside,
+  // around `["execute"]`. Written the other way round it asked for
+  // `ReturnType<AgentTool>`, which is why this line was the last error in
+  // `tsc -p tsconfig.test.json`. `NonNullable` because the registry is indexed
+  // under `noUncheckedIndexedAccess` (the same reason line 511 carries a `!`).
+  //
+  // Resolving to the real `AgentToolOutcome<unknown>` also costs both entries
+  // their `as never`: the first one was spelling the refusal field `error`,
+  // and the union calls it `reason`. Nothing consumed it — `checkPostPackage`
+  // only reads `status` — but a cast that wide would have hidden the drift
+  // just as happily if it HAD been consumed.
+  type LintOutcome = Awaited<ReturnType<NonNullable<(typeof tools)["gate.lintPost"]>["execute"]>>;
+  const outages: ReadonlyArray<[string, LintOutcome]> = [
+    ["a non-success outcome", { status: "tooling_error", reason: "lint provider unavailable" }],
+    ["a `tooling_error` verdict", { status: "success", result: { verdict: "tooling_error", reason: "lint provider unavailable" } }],
+  ];
+  for (const [label, outcome] of outages) {
+    it(`treats ${label} from gate.lintPost as no opinion, not as a refusal and not as a throw`, async () => {
+      const outaged = { ...tools, "gate.lintPost": { ...tools["gate.lintPost"]!, execute: async () => outcome } };
+      // The em dash that the real gate refuses two tests above. With the gate
+      // out, the package ships — degraded, never held.
+      const pkg = englishPackage({ firstCommentText: "Sources below — both figures are from 2026." });
+      await expect(checkPostPackage(outaged as never, ctx, englishCheck({ pkg }))).resolves.toEqual({ ok: true });
+    });
+  }
 
   it("catches a Hebrew alt text written in the wrong script, through `gate.nativeLanguage`", async () => {
     const base = hebrewCheck();

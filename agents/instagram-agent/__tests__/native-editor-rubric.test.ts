@@ -85,10 +85,59 @@ function verdict(over: Partial<NativeEditorVerdict> = {}): NativeEditorVerdict {
 }
 
 describe("RFC-15 §6.2 — the rubric on disk", () => {
-  it("ships `1.md` and a byte-identical `latest.md` (prompt-bump checklist step 2)", async () => {
-    const [pinned, latest] = await Promise.all([readPrompt("1.md"), readPrompt("latest.md")]);
+  it("ships `2.md` and a byte-identical `latest.md` (prompt-bump checklist step 2)", async () => {
+    const [pinned, latest] = await Promise.all([readPrompt("2.md"), readPrompt("latest.md")]);
     expect(latest).toBe(pinned);
     expect(latest.length).toBeGreaterThan(2_000);
+    // @1 stays on disk and stays resolvable: a checkpoint replayed from a run judged under the old rubric
+    // must still resolve the prompt it was actually judged with.
+    const one = await readPrompt("1.md");
+    expect(one).not.toBe(latest);
+  });
+
+  /**
+   * Phase 5 (RFC-18 §6.5) — THE REASON @2 EXISTS, and the only thing that makes
+   * `08c2-package-native-round` able to spend its money on something.
+   *
+   * `NativeCorrectionSchema.target` admitted `comment`/`alt:N`,
+   * `resolvePackageField` resolved them, and `NATIVE_EDITOR_RUBRIC_VERSION` was
+   * stamped "2" — all of it for a prompt change nobody made. @1 documented
+   * `"caption"` and `"slide:3"` and nothing else, so on a package round the
+   * judge's only available spelling was a carousel target, which
+   * `resolveField`'s context guard then correctly dropped. A judge that cannot
+   * name a legal place applies ZERO corrections on EVERY run, at
+   * `packageNativeJudge` a run, and reported it as `verified`.
+   *
+   * This test fails if the vocabulary is removed from the prompt, which is the
+   * failure the shipped code cannot detect for itself.
+   */
+  it("teaches the judge the post-package round's target vocabulary, exactly as `resolvePackageField` resolves it", async () => {
+    const latest = await readPrompt("latest.md");
+    // The two legal target/field pairs, spelled as the patcher matches them.
+    expect(latest).toContain(`\`"comment"\``);
+    expect(latest).toContain(`\`"alt:3"\``);
+    expect(latest).toContain(`\`"alt"\``);
+    // The id-vs-target asymmetry is the part a model gets wrong silently: it is SHOWN `alt-2` and must
+    // WRITE `alt:2`. `packageLanguageGateFields` builds the id with a hyphen; `resolvePackageField`
+    // slices the target on a colon.
+    expect(latest).toContain("alt-2");
+    expect(latest).toContain(`\`"alt:2"\``);
+    // And the round has to be identifiable at all: nothing in `buildNativeEditorPayload` marks it, so the
+    // field ids are the judge's only signal.
+    expect(latest).toContain("comment");
+    expect(latest.toLowerCase()).toContain("post-package round");
+  });
+
+  it("still teaches the carousel round's vocabulary, and keeps the two rounds' targets apart", async () => {
+    const latest = await readPrompt("latest.md");
+    expect(latest).toContain(`\`"caption"\``);
+    expect(latest).toContain(`\`"slide:3"\``);
+    // The anti-tautology for the test above: @1 really did lack the package vocabulary, so a guard that
+    // looks for it is a guard that could have failed — and did, on the version that shipped.
+    const one = await readPrompt("1.md");
+    expect(one).toContain(`\`"slide:3"\``);
+    expect(one).not.toContain(`\`"alt:3"\``);
+    expect(one).not.toContain(`\`"comment"\``);
   });
 
   it("names all six axes, spelled exactly as the output schema keys", async () => {
@@ -268,6 +317,59 @@ describe("normaliseNativeEditorVerdict — 'report without correcting' is unrepr
     expect(NativeCorrectionSchema.safeParse(correction({ field: "sourceRef" as never })).success).toBe(false);
     expect(NativeCorrectionSchema.safeParse(correction({ target: "slide:9" })).success).toBe(false);
     expect(NativeCorrectionSchema.safeParse(correction({ target: "slide:1" })).success).toBe(true);
+  });
+});
+
+describe("Phase 5 (RFC-18 §6.5) — the widened correction vocabulary", () => {
+  it("admits the post package's two targets, and only in their own spelling", () => {
+    expect(NativeCorrectionSchema.safeParse(correction({ target: "comment", field: "comment" })).success).toBe(true);
+    expect(NativeCorrectionSchema.safeParse(correction({ target: "alt:2", field: "alt" })).success).toBe(true);
+    // The same 1-8 bound the slide targets carry: a ninth alt text describes a
+    // slide the carousel cannot have.
+    expect(NativeCorrectionSchema.safeParse(correction({ target: "alt:9", field: "alt" })).success).toBe(false);
+    expect(NativeCorrectionSchema.safeParse(correction({ target: "alt", field: "alt" })).success).toBe(false);
+    expect(NativeCorrectionSchema.safeParse(correction({ target: "firstComment", field: "comment" })).success).toBe(false);
+    expect(NativeCorrectionSchema.safeParse(correction({ target: "comment:1", field: "comment" })).success).toBe(false);
+  });
+
+  it("still has NO spelling for a source URL, a sourceRef, a figure or a hashtag", () => {
+    // Rule 4's structural guarantee, re-asserted after the enum grew. The
+    // package's source links are built in code from the run's own fact cards
+    // (`post-package.ts`), and the reason a language correction can never
+    // change one is that there is no way to name one.
+    for (const target of ["url", "sources:1", "firstComment.sources[0].url", "hashtag:1", "sourceRef", "timing"]) {
+      expect(NativeCorrectionSchema.safeParse(correction({ target })).success, `"${target}" must not be a legal correction target`).toBe(false);
+    }
+    for (const field of ["url", "source", "figure", "hashtag", "altText"]) {
+      expect(NativeCorrectionSchema.safeParse(correction({ field: field as never })).success, `"${field}" must not be a legal correction field`).toBe(false);
+    }
+  });
+
+  it('stamps the rubric "2", because the target vocabulary changed under the same six axes', () => {
+    // The axes and the rubric's wording on disk are unchanged, so a run's
+    // per-axis correction mix is comparable ONLY within a version. Telemetry
+    // that cannot tell the two eras apart reads Phase 5's shift as a change in
+    // the MODEL — the one thing a rubric stamp exists to prevent. A literal,
+    // not `NATIVE_EDITOR_RUBRIC_VERSION`, so a silent revert to "1" is red.
+    expect(NATIVE_EDITOR_RUBRIC_VERSION).toBe("2");
+  });
+
+  it("labels a package correction by ITS document, never as a slide that does not exist", () => {
+    // `nativeSteerFor`'s slide-prefix strip used to be the else-branch of a
+    // two-way test, so a `comment` target rendered as `slide t · comment`. The
+    // package targets never reach a carousel redraft — `resolveField`'s context
+    // guard refuses them first — but a label function that produces nonsense
+    // off its happy path is a bug waiting for the next caller.
+    const steer = nativeSteerFor([
+      correction({ target: "comment", field: "comment", span: "בסוף היום", replacement: "בסופו של דבר" }),
+      correction({ target: "alt:2", field: "alt", span: "תמונה של", replacement: "יחידת עיבוי", axis: "convention" }),
+    ]);
+    expect(steer.split("\n")).toEqual([
+      'first comment · "בסוף היום" → "בסופו של דבר" (calque of \'at the end of the day\')',
+      'slide 2 · alt text · "תמונה של" → "יחידת עיבוי" (calque of \'at the end of the day\')',
+    ]);
+    expect(steer).not.toContain("slide t");
+    expect(steer).not.toContain("slide c");
   });
 });
 
@@ -481,7 +583,7 @@ describe("the judge's own configuration", () => {
     expect(config.id).toBe("instagram-native-editor");
     expect(config.allowedTools).toEqual([]);
     expect(config.maxSteps).toBe(1);
-    expect(config.skillRef).toBe("instagram-native-editor@1");
+    expect(config.skillRef).toBe("instagram-native-editor@2");
     expect(config.modelPolicy.policy).toBe("pinned");
   });
 

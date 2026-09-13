@@ -19,6 +19,7 @@ import {
   type FakeRenderCarouselOptions,
   type TestEnvironment,
 } from "./test-helpers.js";
+import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 import { RUN_BUDGET_BELIEF_KEY } from "../src/workflow/run-budget.js";
 
@@ -105,7 +106,7 @@ describe("zero-held guarantee: a picture problem never costs the post", () => {
     });
 
     // No vetting turn: an empty pool skips step 06's model call entirely.
-    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)]);
     const durableStore = new MemoryDurableStepStore();
     const result = await new WorkflowEngine(durableStore).run(
       createInstagramAgentWorkflow({
@@ -150,7 +151,7 @@ describe("zero-held guarantee: a picture problem never costs the post", () => {
         reason: "unsplash search returned 503",
       }),
     });
-    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)]);
     const durableStore = new MemoryDurableStepStore();
     const result = await new WorkflowEngine(durableStore).run(
       createInstagramAgentWorkflow({
@@ -211,7 +212,7 @@ describe("zero-held guarantee: a picture problem never costs the post", () => {
           { n: 1, imagePath: genPath, reason: "the generated image matches", license: "Generated image", rightsUsable: true, watermarkFree: true, claimMatch: 5, claimMatchReason: "drawn to the slide's claim" },
         ],
       }),
-      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
 
     const durableStore = new MemoryDurableStepStore();
@@ -248,7 +249,7 @@ describe("zero-held guarantee: a picture problem never costs the post", () => {
     const copy = goodCopyOutput();
     // The angle proposal (04i) leads each ROUND: revision 1 spends its own,
     // after 04g-style-directive's own (throwing) Tier 2 call below.
-    const draftTurns = () => [finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())];
+    const draftTurns = () => [finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)];
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()),
       ...draftTurns(),
@@ -314,7 +315,7 @@ describe("zero-held guarantee: a picture problem never costs the post", () => {
     const registry = tools(env, {
       "media.findImages": deadTool("media.findImages", { status: "content_fail", reason: "nothing found" }),
     });
-    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: registry,
       promptStore: makePromptStore(),
@@ -408,7 +409,7 @@ describe("zero-held guarantee: a picture problem never costs the post", () => {
       "media.scrapeImages": deadTool("media.scrapeImages", { status: "not_available", reason: "no scraper configured" }),
       "image.generate": deadTool("image.generate", { status: "content_fail", reason: "image.generate: produced nothing" }),
     });
-    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)]);
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
     const runId = "zero_held_subfloor_contrast";
@@ -494,7 +495,11 @@ describe("zero-held guarantee: a picture problem never costs the post", () => {
       finalTurn(goodTrendScoutOutput()),
       finalTurn(goodResearchOutput()),
       finalTurn(goodAngleProposal()),
-      ...[1, 2, 3].flatMap(() => [finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]),
+      ...[1, 2, 3].flatMap(() => [finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput())]),
+      // ONE packager turn, after the three attempts and not inside them: `08c`
+      // runs once per REVISION, after the attempt loop breaks, so a per-attempt
+      // copy of it would be handed to attempt 2's copy call instead.
+      finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const durableStore = new MemoryDurableStepStore();
     const runId = "zero_held_interest_floor";
@@ -544,7 +549,7 @@ describe("zero-held guarantee: a picture problem never costs the post", () => {
       "media.scrapeImages": deadTool("media.scrapeImages", { status: "not_available", reason: "no scraper configured" }),
       "image.generate": deadTool("image.generate", { status: "content_fail", reason: "image.generate: produced nothing" }),
     });
-    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)]);
     const durableStore = new MemoryDurableStepStore();
     const runId = "zero_held_all_clear_contrast";
     const result = await new WorkflowEngine(durableStore).run(

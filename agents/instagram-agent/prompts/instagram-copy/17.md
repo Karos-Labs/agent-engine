@@ -11,9 +11,10 @@ now reads the finished post against four questions and returns a draft it
 cannot find answers to, with the fixes named.
 
 **Cost, both halves, separately, because they move for different reasons.**
-INPUT: +16,517 prompt characters (46,539 to 63,056), about +4,129
-tokens, about +$0.0124 an attempt, paid on every run in every language
-because the prompt file is one file. OUTPUT: one new enum field,
+INPUT: +16,301 prompt characters (45,805 to 62,106, counted with line
+endings normalised so the figure does not move with a checkout), about
++4,075 tokens, about +$0.0122 an attempt, paid on every run in every
+language because the prompt file is one file. OUTPUT: one new enum field,
 `payloadKind`, about +10 tokens, about +$0.00015 an attempt. Nothing else in
 the output grows, and that is deliberate: §5's so what lives inside `body`,
 which already existed, and the caption's three jobs are structure inside the
@@ -151,7 +152,11 @@ both tight; a carousel slide is not a paragraph.
 
 The so what gets no field of its own. It lives in the second half of the
 body, where a reader sees it, and it is read there: the value check quotes
-the one slide whose body best shows a claim plus its consequence.
+the one slide whose body best shows a claim plus its consequence, and then
+COUNTS. If fewer than half your content slides say what follows from their
+claim for the reader, the payload question is weak however good your best
+slide is, and the fix comes back naming the slides that carry a claim and
+no consequence. One strong slide does not carry seven fillers.
 
 **Editor's note, and this one is about this file.** This prompt bans em
 dashes, en dashes and double hyphens in the copy it asks for, so it must not
@@ -962,6 +967,15 @@ middle: a plain assertion, then the thing that contradicts the reader's
 default. Study the SHAPE. Never borrow the sentence, and never borrow the
 subject it was about.
 
+The same contrast in Hebrew, because a specific is a specific in every
+language and the English pair above will not show you one. "מעבה שמנוקה
+ארבע פעמים בשנה צורך כ-12 אחוז פחות חשמל ממעבה שמנוקה פעם בשנה" (a coil
+cleaned four times a year draws about 12 percent less power than one cleaned
+once a year) carries a figure, a unit and a period. "ניקוי תקופתי משפר את
+יעילות המערכת" (periodic cleaning improves system efficiency) carries a
+category noun and nothing checkable, and it is the sentence a Hebrew draft
+reaches for when it has no number.
+
 ### 24.3 The ask is engineered, not hoped for
 
 The caption's last paragraph asks for ONE thing the reader can do with what
@@ -995,6 +1009,32 @@ draft back before a judge ever reads it:
 - `limited time`
 - `act now`
 
+And in Hebrew, held against the same check in the same way, so a Hebrew
+draft is under the same rule and not merely under the judge's opinion:
+
+- `תגיבו למטה` / `תגיבי למטה`
+- `מה דעתכם` / `מה דעתכן`
+- `מה אתם חושבים` / `מה אתן חושבות`
+- `ספרו לנו בתגובות`
+- `כתבו לנו בתגובות`
+- `שתפו בתגובות`
+- `מסכימים?` / `מסכימות?`
+- `דעה לא פופולרית`
+- `אף אחד לא מדבר על`
+- `אנחנו מציעים`
+- `הפלטפורמה שלנו`
+- `השירות שלנו עוזר`
+- `מוזמנים לפנות אלינו`
+- `מוזמנים לשלוח הודעה`
+- `לינק בביו` / `קישור בביו`
+- `אל תפספסו`
+- `זמן מוגבל`
+- `הזדמנות אחרונה`
+
+Both lists are matched as substrings, in any casing. Neither list is
+exhaustive, and a lazy ask that is on neither of them still fails the value
+check's action question, which asks the same thing without a list.
+
 They are banned because they are the LAZY forms of an ask, not because
 asking is wrong. The strongest post this craft was drawn from ran a comment
 gated ask and drew 180 comments against 368 likes, by naming a keyword and
@@ -1026,6 +1066,17 @@ important consideration", "more than ever" and "in today's landscape" are
 the words a sentence reaches for when it has decided not to claim anything.
 If you can delete a clause and the sentence asserts more, delete it.
 
+The reflex is identical in Hebrew and the English list will not help you
+find it there, so here it is in Hebrew, on the same neutral trade.
+"תחזוקה מונעת היא חלק חשוב מהתפעול" (preventive maintenance is an important
+part of operations) is the hedge: fluent, idiomatic, and it claims nothing
+anybody could argue with. "המקרר שלכם לא מת מזקנה. הוא מת ממעבה מלוכלך."
+(your fridge is not dying of old age, it is dying of a dirty condenser) is
+the position. The Hebrew words to watch are "עשוי לסייע", "יכול לתרום",
+"חשוב לזכור", "מהווה נדבך חשוב" and "בעולם של היום". §23's register card
+will not catch these: it is about sounding native, and a hedge can be
+perfectly native.
+
 If the client's compliance rules forbid the claim (§8, and §15's
 `forbidden.claims`), take the position about the DECISION rather than about
 the outcome: "most teams choose X before they have measured Y" asserts
@@ -1038,7 +1089,12 @@ states what it has to do, and the wordings that fail it on contact.
 ## 26. Rhythm
 
 Vary the length of consecutive sentences on purpose. At least one headline
-of six words or fewer. At least one body that turns on a contrast ("not
+of six words or fewer, or four or fewer in a language that fuses its
+articles, conjunctions and prepositions onto the following word, Hebrew
+among them: ו, ה, ב, ל and ש are prefixes rather than words there, so six
+Hebrew words carry roughly what eight English ones do and a six word rule
+would be materially slacker in Hebrew than in English. At least one body
+that turns on a contrast ("not
 this. that."). Do not begin three slides with the same word, and do not give
 three consecutive slides the same grammatical shape: two imperatives in a
 row, then two questions in a row, then two "X is Y" definitions in a row, is

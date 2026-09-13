@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { AgentContext, AgentToolRegistry, GateVerdict } from "@agent-engine/core";
-import { WorkflowToolingFailure } from "@agent-engine/workflow";
+import { HEBREW_BANNED_PHRASES } from "./craft-hygiene.js";
 import { resolveExpectedScript } from "./language-gate.js";
 import type { RegisterCard, RegisterTermPair } from "./language-register.js";
 import type { SlidesDataSelfCheck } from "./types.js";
@@ -641,8 +641,10 @@ export interface PostPackageGateInput extends PostPackageCheckInput {
  * (`08c-package-post-retry`), because `step.agent` replays a checkpointed
  * `content_fail` and a re-call under the same id returns the first failure
  * without touching the model. Then it ships whatever survives with the
- * failing field dropped. **`WorkflowHeld` is never thrown on any path
- * through this module.**
+ * failing field dropped. **Nothing is ever thrown on any path through this
+ * module** — not `WorkflowHeld` and not `WorkflowToolingFailure`. The only two
+ * values it can produce are "the package is fine" and "the package is not, and
+ * here is the reason a re-ask gets to read".
  */
 export async function checkPostPackage(
   tools: AgentToolRegistry,
@@ -687,13 +689,27 @@ export async function checkPostPackage(
 
   const altTexts = input.pkg.altText.map((entry) => entry.alt);
   const lintOutcome = await lintTool.execute(
-    { text: input.pkg.firstCommentText, parts: altTexts, platform: "instagram", checkAntiSlop: true, maxExclamationMarks: 0, bannedPhrases: [] },
+    // The same Hebrew supplement `checkCraftHygiene` passes, for the same
+    // reason: the first comment is where a lazy ask goes when the caption is
+    // clean, and `gate.lintPost`'s own bank cannot see a Hebrew one. Shared
+    // constant so the caption's bar and the first comment's bar cannot drift.
+    { text: input.pkg.firstCommentText, parts: altTexts, platform: "instagram", checkAntiSlop: true, maxExclamationMarks: 0, bannedPhrases: [...HEBREW_BANNED_PHRASES] },
     { ctx },
   );
-  if (lintOutcome.status !== "success") {
-    throw new WorkflowToolingFailure(`gate.lintPost failed: ${lintOutcome.status}`);
-  }
+  // A non-success outcome is the same "no opinion" as a missing tool, and for
+  // the same reason `checkCraftHygiene` — which DOES throw here — is the wrong
+  // precedent: that gate runs inside the drafting loop on copy that must not
+  // ship unchecked, so an outage there is a wiring failure worth stopping for.
+  // This one runs after the loop has already broken, on additive fields whose
+  // whole failure mode is "the post ships without them". A thrown
+  // `WorkflowToolingFailure` out of `08c1` would take a run that already has an
+  // approved, gated, rendered carousel and end it on a lint outage — the exact
+  // state RFC-18 §6.1 says cannot exist ("there is no state in which the whole
+  // post costs us the post").
+  if (lintOutcome.status !== "success") return { ok: true };
   const verdict = lintOutcome.result as GateVerdict;
+  // Same posture as `07e2`: a gate that could not form a view has not refused.
+  if (verdict.verdict === "tooling_error") return { ok: true };
   if (verdict.verdict === "content_fail") {
     const part = THREAD_PART_PREFIX.exec(verdict.reason);
     if (part) {

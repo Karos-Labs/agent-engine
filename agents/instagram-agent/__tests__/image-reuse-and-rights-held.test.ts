@@ -16,6 +16,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
+import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 
 const params = { runId: "instagram_run_reuse_rights", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
@@ -63,7 +64,7 @@ describe("P0 parity-audit Fix 4: image rights/watermark verification holds the w
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
       finalTurn(vetting),
-      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: testTools(env),
@@ -105,7 +106,7 @@ describe("P0 parity-audit Fix 4: image rights/watermark verification holds the w
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
       finalTurn(vetting),
-      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: testTools(env),
@@ -159,7 +160,7 @@ describe("P0 parity-audit Fix 3: cross-post image-reuse prevention", () => {
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
       finalTurn(vetting),
-      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: testTools(env),
@@ -184,7 +185,7 @@ describe("P0 parity-audit Fix 3: cross-post image-reuse prevention", () => {
   it("records every shipped image as used at delivery, so a LATER post's cross-post check picks it up", async () => {
     const promptStore = makePromptStore();
     const vetting = selectionsWith();
-    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(goodCopyOutput()), finalTurn(vetting), finalTurn(goodRelevanceVerdict()), finalTurn({ pass: true, findings: [] })]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(goodCopyOutput()), finalTurn(vetting), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn({ pass: true, findings: [] })]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: testTools(env),
       promptStore,

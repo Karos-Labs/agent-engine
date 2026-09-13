@@ -240,9 +240,14 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyOutput> {
     // hygiene on exactly that character twice in three attempts.
     //
     // Cost, BOTH halves stated separately, and MEASURED rather than
-    // estimated. Input: +16,517 prompt characters (46,539 → 63,056) ≈ +4,129
-    // tokens ≈ +$0.0124 per attempt, paid on English runs too because the
-    // prompt file is one file. Output: `payloadKind` is one enum value, ≈ +10
+    // estimated. Input: +16,301 prompt characters (45,805 → 62,106, counted
+    // with line endings normalised, since a CRLF checkout would otherwise
+    // inflate the figure by one byte a line and make the same file price
+    // differently on two machines) ≈ +4,075 tokens ≈ +$0.0122 per attempt,
+    // paid on English runs too because the prompt file is one file. The same
+    // measurement is made independently in `run-budget.ts`'s `copyAttempt`
+    // block, from the same two files, and the two must agree.
+    // Output: `payloadKind` is one enum value, ≈ +10
     // tokens ≈ +$0.00015 — and nothing else grows, deliberately: §5's so-what
     // lives inside `body` and the caption's three jobs are structure inside
     // the one `caption` string, so neither is a per-slide field. RFC-18 §7.1
@@ -251,6 +256,14 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyOutput> {
     // re-priced 0.161 → 0.174, and the prompt's own version ledger states the
     // same measured numbers. Pricing a bump against the estimate rather than
     // against the file is the @14→@15 error in the other direction.
+    //
+    // NOTE FOR THE INTEGRATOR, 2026-09-13: `run-budget.ts` carries this same
+    // argument in full — it has a comment section headed "WHY THIS IS 0.174
+    // AND NOT RFC-18 §7.1's 0.166" — but the CONSTANT it guards was still
+    // `copyAttempt: 0.166` when this package was written, so the file
+    // currently disagrees with its own comment. The pricing key is not this
+    // package's to edit; the correction is reported as a cross-file
+    // obligation rather than made here.
     skillRef: "instagram-copy@17",
   };
 }

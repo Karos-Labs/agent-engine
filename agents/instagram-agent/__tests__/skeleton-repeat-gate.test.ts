@@ -32,7 +32,7 @@ import {
   type TestEnvironment,
 } from "./test-helpers.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
-import { happyTurns, standardTurns } from "./turns.js";
+import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS, happyTurns, standardTurns } from "./turns.js";
 
 /**
  * Item P through the real workflow: `07k-skeleton-variety-attempt-N`.
@@ -440,8 +440,8 @@ describe("07k-skeleton-variety (item P): repetition is refused before a render, 
       finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput(), { outputTokens: 120_000 }),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()),
-      finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
+      finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const { result, stepIds, steps } = await run(env, "skel_cheapest_path", router, { ...env.tools, "publish.renderCarousel": render.tool });
 

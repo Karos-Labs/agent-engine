@@ -195,6 +195,45 @@ const VARIADIC_TURN_KEYS: ReadonlySet<keyof StandardTurnFixtures> = new Set(["te
  */
 const DEFAULTED_TURN_KEYS: ReadonlySet<keyof StandardTurnFixtures> = new Set(["valueJudge", "postPackager"]);
 
+/**
+ * The `07j-value-judge` turn for a HAND-QUEUED router sequence: a verdict that
+ * clears the bar for any draft, whatever its words.
+ *
+ * ## Why it is four `weak`s and not four `pass`es
+ *
+ * Looks backwards, and is not. `normaliseValueVerdict`'s rule 2 (RFC-18 §5.4,
+ * and Phase 4's `language-gate.ts:723-736` before it) sets a `weak` or `fail`
+ * axis with NO SURVIVING FIX back to `pass`: "report without proposing" is
+ * structurally unrepresentable, because a judge that flags an axis and
+ * proposes nothing has produced a hold generator. So an all-`weak` verdict
+ * with three empty fix arrays normalises to four passes and `keepable: true`.
+ *
+ * Four `pass`es would NOT be safe here. Rule 1 re-checks every claimed `pass`
+ * against the draft IN CODE and downgrades the axis when its quote does not
+ * occur, so a constant carrying quotes would silently refuse any fixture whose
+ * copy is a mutation of `goodCopyOutput()` — which is most of them. **This
+ * constant is copy-independent by construction**, and that is exactly what a
+ * hand-queued list needs: a turn that answers `07j` and cannot accidentally
+ * become "the value gate sent this draft back".
+ *
+ * `standardTurns` does NOT use this. A block that queues by key already knows
+ * which draft the judge will read, so it gets `defaultValueTurnFor(copy)` —
+ * real quotes, drawn from that block's own copy fixture, exercising rule 1
+ * rather than stepping around it. Use this only where turns are pushed
+ * positionally by hand, and pass an explicit verdict wherever the test is
+ * ABOUT the value gate.
+ */
+export const VALUE_TURN_NO_FINDINGS: Record<string, unknown> = {
+  newFact: "weak",
+  position: "weak",
+  payload: "weak",
+  action: "weak",
+  fixAxes: [],
+  fixTargets: [],
+  fixInstructions: [],
+  keepLine: "The value judge had nothing to propose, so this fixture says so and the bar is computed from that.",
+};
+
 /** A fixture that reads like `InstagramCopyOutput`, for deriving the two defaults' quotes and alt-text count from the copy this block actually queued. */
 type CopyLike = { caption: string; slides: Array<{ n: number; headline: string; body: string }> };
 
@@ -291,7 +330,13 @@ export const DEFAULT_PACKAGE_TURN: Record<string, unknown> = defaultPackageTurnF
  * and does reach `07j`.
  */
 function reachesValueJudge(fixtures: StandardTurnFixtures): boolean {
-  if (!("copy" in fixtures) || fixtures.copy === undefined) return false;
+  // Keyed on `relevance` ALONE, deliberately: `07j` runs the moment `07g`
+  // passes, so the block that queues a relevance turn is the block whose next
+  // turn the value judge takes. Requiring `copy` in the same block looked
+  // safer and was wrong - `concept-workflow.test.ts` splices its `04n` turn in
+  // by calling `standardTurns` THREE times, with `copy` in the second block and
+  // `relevance` in the third, so a copy-gated rule emitted no value turn at all
+  // and `07j` ate the QA fixture instead.
   if (!("relevance" in fixtures) || fixtures.relevance === undefined) return false;
   const score = (fixtures.relevance as { score?: unknown }).score;
   return typeof score !== "number" || score >= 3;
@@ -360,6 +405,18 @@ export function happyTurns(overrides: StandardTurnFixtures = {}): Array<() => Co
     scout: goodTrendScoutOutput(),
     research: goodResearchOutput(),
     angle: goodAngleProposal(),
+    // Phase 5 — `goodCopyOutput()`, which now CLEARS `07i`'s free value floor.
+    //
+    // For a few hours of this cycle this line read `valueFloorSafeCopy()`, a
+    // local stand-in written here because the shared fixture's every body was
+    // its fact card's own sentence and `checkSourceProse` refused it. That
+    // stand-in's own comment named the real fix — lift its copy into
+    // `goodCopyOutput()` and delete it — and that fix has now landed in
+    // `test-helpers.ts`, together with a `weakCopyOutput()` twin that is
+    // deliberately still refused so the suite exercises the gate saying no.
+    // A canonical happy path has to actually clear the gates: a "happy" draft
+    // sent back to `05` on attempt 1 desynchronises every positional turn list
+    // downstream and fails in a place that has nothing to do with the test.
     copy: goodCopyOutput(),
     vet: goodImageVettingOutput(),
     relevance: goodRelevanceVerdict(),

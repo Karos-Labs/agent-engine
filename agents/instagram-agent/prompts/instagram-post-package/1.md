@@ -118,7 +118,14 @@ it does not repeat the ask, and it does not add a new one.
   "hot take:", "nobody talks about", "agree?", "thoughts?", "rt if", "drop a 🔥",
   "comment below", "let me know your thoughts", "feel free to dm", "check
   out our", "check out my", "we offer", "our platform helps", "link in my
-  bio", "don't miss out", "limited time", "act now".
+  bio", "don't miss out", "limited time", "act now". The Hebrew forms are on
+  the same list and fail the same way: "תגיבו למטה", "מה דעתכם", "מה אתם
+  חושבים", "ספרו לנו בתגובות", "כתבו לנו בתגובות", "שתפו בתגובות",
+  "מסכימים?", "דעה לא פופולרית", "אף אחד לא מדבר על", "אנחנו מציעים",
+  "הפלטפורמה שלנו", "השירות שלנו עוזר", "מוזמנים לפנות אלינו", "מוזמנים
+  לשלוח הודעה", "לינק בביו", "קישור בביו", "אל תפספסו", "זמן מוגבל",
+  "הזדמנות אחרונה". Neither list is exhaustive; write the ask you would
+  write if there were no list.
 - No claim, number, date, name, price or offer that is not already in the
   post or in the fact cards.
 - No competitor names, and nothing the client's brief forbids.

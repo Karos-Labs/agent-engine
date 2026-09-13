@@ -252,10 +252,26 @@ describe("checkCoverTension — the hedged cover (§4.1 #3)", () => {
   it.each([
     ["a contrast", "Your walk-in is not dying of old age."],
     ["a refusal", "Stop paying for a compressor rebuild."],
-    ["a number", "Four visits a year, one of them matters."],
+    ["a numeral", "4 visits a year, and only one of them matters."],
     ["an instead-of", "Clean the coil instead of replacing the unit."],
   ])("accepts a cover carrying %s", (_shape, headline) => {
     expect(checkCoverTension(copy([slide(1, headline, "body")]), KITCHEN_BRIEF).ok).toBe(true);
+  });
+
+  /**
+   * The numeral path is a NUMERAL path: §4.1 #3 says the cover carries "a
+   * numeral", and `\p{Nd}` is what reads one. A number spelled as a word
+   * ("Four visits a year") satisfies none of the three free paths, and that is
+   * deliberate rather than an oversight — recognising every spelled-out
+   * quantity in every script would be a grammar, and this is the free half of
+   * a check whose paid half (`position`) sees the cases a regex misses at
+   * $0.003. Pinned here because the inherited fixture for the numeral case
+   * used a spelled-out number and so tested the numeral path by never
+   * exercising it.
+   */
+  it("reads a numeral, not a number spelled as a word", () => {
+    expect(checkCoverTension(copy([slide(1, "Four visits a year, and only one of them matters.", "body")]), KITCHEN_BRIEF).ok).toBe(false);
+    expect(checkCoverTension(copy([slide(1, "4 visits a year, and only one of them matters.", "body")]), KITCHEN_BRIEF).ok).toBe(true);
   });
 
   it("accepts the Hebrew contrast markers, which a JavaScript word boundary cannot see", () => {

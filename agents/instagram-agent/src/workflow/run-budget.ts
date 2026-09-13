@@ -82,8 +82,8 @@ export const MAX_RUN_SPEND_USD = 1.5;
  */
 export const STEP_COST_ESTIMATES_USD = {
   /**
-   * Sonnet, ~23.76k in / ~6.31k out, one draft of copy: $0.0713 in + $0.0947
-   * out at $3/$15 per 1M = $0.1659, entered as **0.166**.
+   * Sonnet, ~26.34k in / ~6.31k out, one draft of copy: $0.0790 in + $0.0947
+   * out at $3/$15 per 1M = $0.1737, entered as **0.174**.
    *
    * ## Phase 5 (`instagram-copy@16` → `@17`), BOTH SIDES, STATED SEPARATELY
    *
@@ -93,29 +93,65 @@ export const STEP_COST_ESTIMATES_USD = {
    * on input alone and under-counted the real growth by roughly nine tenths,
    * because on Sonnet an output token costs 5x an input one. So:
    *
-   * **Input** (≈+1,500 tokens, **+$0.0045**): the prompt goes 46,587 →
-   * ≈52,600 characters, ≈+6,000 characters — §24 (value: the payload and the
-   * named specific), §25 (take a position, including the verbatim
-   * `gate.lintPost` banned-CTA list), §26 (rhythm), §27 (the source's prose is
-   * not yours), §16's `valueSteer` paragraph and §2's rewrite of the caption
-   * into hook / body / CTA. 6,000 chars / 4 ≈ 1,500 tokens x $3/1M =
-   * $0.0045.
+   * **Input** (≈+4,075 tokens, **+$0.0122**): the prompt goes 45,757 →
+   * 62,057 characters, **+16,300** (measured 2026-09-13 on the shipped files
+   * with line endings normalised; `instagram-copy-agent.ts`'s own note counts
+   * the same two files as 46,539 → 63,056 under a different convention, and
+   * the two agree on the delta to within 300 characters and on this key to the
+   * third decimal) — §24 (value: the payload and the named specific, carrying
+   * `gate.lintPost`'s banned-CTA bank verbatim), §25 (take a position), §26
+   * (rhythm), §27 (the source's prose is not yours), §16's `valueSteer`
+   * paragraph, §2's rewrite of the caption into hook / body / CTA, §3's
+   * payload-driven slide count and §5's one-claim-plus-consequence rewrite.
+   * 16,300 chars / 4 ≈ 4,075 tokens x $3/1M = $0.012225.
    *
    * **Output** (≈+10 tokens, **+$0.00015**): exactly one new field,
-   * `payloadKind`, an enum of eight short literals with a `.default()`. §§24-27
-   * change how the draft READS and what its slide count is FOR; they do not
-   * ask for another per-slide object. §3.2 of RFC-18 declines a per-slide
-   * `soWhat` field for precisely this reason — it would have been ≈+250 output
-   * tokens on every attempt, ≈+$0.0038, i.e. 25x the whole output delta priced
-   * here — and puts the so-what in the body where a reader sees it and the
-   * value judge checks it.
+   * `payloadKind`, an enum of eight short literals, optional and with NO
+   * code-side default. §§24-27 change how the draft READS and what its
+   * slide count is FOR; they do not ask for another per-slide object. §3.2 of
+   * RFC-18 declines a per-slide `soWhat` field for precisely this reason — it
+   * would have been ≈+250 output tokens on every attempt, ≈+$0.0038, i.e. 25x
+   * the whole output delta priced here — and puts the so-what in the body where
+   * a reader sees it and the value judge checks it.
    *
-   * **Total +$0.0047 an attempt**, +$0.0141 over a three-attempt run. Entered
-   * as 0.166 against an exact $0.16593, so the three-decimal table now
-   * OVER-counts by $0.00007 an attempt. That direction is the safe one and is
-   * stated rather than waved at: this file's header says an estimate that
-   * flatters itself pulls no lever, and $0.0002 over three attempts is four
-   * orders of magnitude below the smallest lever there is.
+   * **Total +$0.0124 an attempt**, +$0.0371 over a three-attempt run. Entered
+   * as 0.174 against an exact $0.17366, so the three-decimal table OVER-counts
+   * by $0.00035 an attempt. That direction is the safe one and is stated
+   * rather than waved at: this file's header says an estimate that flatters
+   * itself pulls no lever.
+   *
+   * @17 was measured three times while this was written and moved twice, by
+   * tens of characters, because the prompt is under active editing. The test
+   * therefore asserts a BAND (16,150-16,700 characters) rather than one count:
+   * everywhere in it, 0.174 is both the correct rounding and at-or-above the
+   * real call. ±300 characters is editorial noise and cannot move a
+   * three-decimal key; 5,000 is a section, and the test refuses that.
+   *
+   * ## WHY THIS IS 0.174 AND NOT RFC-18 §7.1's 0.166
+   *
+   * RFC-18 §7.1 priced this bump at **0.166**, from an estimate of "+6,000
+   * characters" made while the RFC was being written and before @17 existed.
+   * The file that shipped is **+16,300**, nearly three times the estimate,
+   * because §§24-27 landed as full worked sections and §16's steer, §2's
+   * caption rewrite, §3's slide-count rule and §5's rewrite all grew with them.
+   * Priced at the RFC's figure this key would under-count by **$0.0078 an
+   * attempt, $0.023 a run** — forty times the $0.0002 of headroom whose loss
+   * Phase 4 considered serious enough to defer `vetCall`'s re-price over an
+   * entire phase, and larger than Phase 5's whole English planner delta.
+   *
+   * So the key is priced against the FILE, not against the RFC's forecast of
+   * the file. That IS the house rule, stated one paragraph up and re-learned at
+   * @14 and again at @15: a bump is priced on what the call bills. Pricing a
+   * bump against the estimate rather than against the shipped prompt is the
+   * @14→@15 error wearing different clothes, and it is the error this comment
+   * block exists to stop. `instagram-copy-agent.ts`'s @17 note reaches the same
+   * figure independently from its own measurement of the same two files.
+   *
+   * This is a re-price, not a scope change: the plan still fits (`__tests__/run-budget.test.ts`
+   * pins the cold English and cold Hebrew landings), the rung swap below still
+   * absorbs it, and the cold Hebrew shape still keeps all three attempts.
+   *
+   * If @17 is edited again, RE-MEASURE. The characters are the price.
    *
    * **No Opus.** This key stays a `claude-sonnet-4-6` price. The owner's plan
    * asked for the writer to "move to a stronger model"; the owner's later
@@ -140,7 +176,7 @@ export const STEP_COST_ESTIMATES_USD = {
    *
    * At @16 the table's three decimals entered $0.1613 as $0.161, so the key
    * UNDER-counted by $0.0003 an attempt. Phase 5's re-price above ends that:
-   * $0.16593 rounds up to 0.166 and the rounding error changes sign.
+   * $0.17366 rounds up to 0.174 and the rounding error changes sign.
    *
    * The +$0.0023 is paid on English runs too: the prompt file is one file and
    * every draft carries all of it. What English runs do NOT pay is
@@ -202,7 +238,7 @@ export const STEP_COST_ESTIMATES_USD = {
    * itself pulls no lever, so the plan the planner chooses is not the plan
    * the run can afford (`__tests__/run-budget.test.ts` pins the arithmetic).
    */
-  copyAttempt: 0.166,
+  copyAttempt: 0.174,
   /**
    * Phase 4 — the `languageBrief` input FIELD on `05-write-copy-attempt-N`,
    * added per attempt on non-English runs only (the same conditional shape
@@ -254,8 +290,15 @@ export const STEP_COST_ESTIMATES_USD = {
    * verification = **$0.109 of headroom**, where the attempt lever used to be
    * fired to recover $0.0002. The reachable held case is therefore REMOVED,
    * not merely avoided: the cold Hebrew plan carries Phase 5's whole +$0.043
-   * AND this re-price and still lands at $0.9383 with all three attempts
-   * intact, and `__tests__/run-budget.test.ts` pins that it does.
+   * AND @17's measured +$0.0124 an attempt AND this re-price AND the
+   * `nativeJudge` re-price below ($0.014 -> $0.018, the first time that prompt
+   * was measured against the file rather than forecast), and still lands at
+   * **$0.9773** with all three attempts intact — **$0.0227 under the $1.00
+   * target**. `__tests__/run-budget.test.ts:468` pins that figure, and
+   * `:470-485` is where the headroom is read honestly rather than celebrated.
+   * (These two numbers were $0.9623 and $0.038 before `nativeJudge` moved; the
+   * test and RFC-18 §§7.1/7.4 were corrected and this comment was not, which is
+   * a file carrying a number its own test contradicts.)
    *
    * The deeper finding the Phase 4 note named — "the real finding underneath
    * is that the attempt lever can produce a held run at all" — is what §7.3
@@ -307,10 +350,26 @@ export const STEP_COST_ESTIMATES_USD = {
    * only, once per attempt and again for round 2 when round 1 proposed
    * corrections.
    *
-   * In: rubric 1,500 + register card 450 + 4 few-shot posts 2,000 + the draft
-   * 1,700 + `gate.nativeLanguage`'s findings 200 + scaffolding 150 =
-   * **6,000** x $1.25/1M = $0.0075. Out: up to 8 corrections at ~70 tokens
-   * each + the verdict 90 ≈ **650** x $10/1M = $0.0065. **= $0.0140.**
+   * ## Phase 5 re-price, 0.014 -> 0.018, and a standing error corrected with it
+   *
+   * The old line read "rubric 1,500". **`instagram-native-editor@1` is 13,109
+   * characters — 3,277 tokens.** The rubric line has under-counted by 1,777
+   * tokens ($0.0022 a call) since Phase 4 shipped it; it was never measured
+   * against the file. That is the same error `copyAttempt` records at @14->@15
+   * and again at @17: a prompt priced from a forecast rather than from disk.
+   * Corrected here rather than carried, because this file's own header says an
+   * estimate that flatters itself pulls no lever.
+   *
+   * On top of it, `@2` (RFC-18 §6.5) adds the post-package round's target
+   * vocabulary: **16,573 chars = 4,143 tokens**, +866 over @1. Output is
+   * unchanged — no new schema field, same 12-correction cap.
+   *
+   * In: rubric **4,143** (measured, LF-normalised) + register card 450 + 4
+   * few-shot posts 2,000 + the draft 1,700 + `gate.nativeLanguage`'s findings
+   * 200 + scaffolding 150 = **8,643** x $1.25/1M = $0.01080. Out: up to 8
+   * corrections at ~70 tokens each + the verdict 90 ≈ **650** x $10/1M =
+   * $0.0065. **= $0.01730, entered as 0.018** — rounded UP, the only direction
+   * this table may round.
    *
    * It replaces a $0.0055 Haiku call — +$0.0085 an attempt — and the trade is
    * against $0.2401, the cost of the redraft a wrong verdict causes. Gemini
@@ -319,7 +378,7 @@ export const STEP_COST_ESTIMATES_USD = {
    * also qualifies, at $2/$12); Haiku 4.5, which has been
    * judging Hebrew nativeness since Phase 0, is rated `basic` on both.
    */
-  nativeJudge: 0.014,
+  nativeJudge: 0.018,
   /**
    * Haiku fluency judge, ~4k in / 0.3k out, non-English targets only.
    *
@@ -382,21 +441,35 @@ export const STEP_COST_ESTIMATES_USD = {
    * (`08c2-package-native-round`), `gemini-2.5-pro`, non-English targets only,
    * once per revision.
    *
-   * In: rubric 1,500 + register card 450 + the package's prose 600 +
-   * scaffolding 150 = **2,700** x $1.25/1M = $0.00338. Out: up to 6
+   * In: rubric **4,143** + register card 450 + the package's prose 600 +
+   * scaffolding 150 = **5,343** x $1.25/1M = $0.00668. Out: up to 6
    * corrections x 70 + the verdict 90 = **510** x $10/1M = $0.0051.
-   * **= $0.008475, entered as 0.009** — rounded UP rather than to nearest,
+   * **= $0.01178, entered as 0.012** — rounded UP rather than to nearest,
    * which is the only direction a three-decimal table may round in a file
    * whose header says an estimate that flatters itself pulls no lever.
    *
-   * ## Why it is cheaper than `nativeJudge` ($0.014) on the same model
+   * Re-priced from 0.009 in the same commit as `nativeJudge` and for the same
+   * two reasons: the shared "rubric 1,500" line was never measured against the
+   * file (@1 is 3,277 tokens), and `@2` adds 866 more. This key carries the
+   * FULL prompt exactly as `nativeJudge` does — the rubric is not the part that
+   * differs between the two rounds.
    *
-   * **No few-shot.** `nativeJudge` carries four of the client's own recent
-   * posts (≈2,000 tokens) because it is judging whether a whole draft SOUNDS
-   * like this account. This round judges an alt text and a first comment —
-   * short, functional prose whose register was already settled on the copy the
-   * package was derived from. The few-shot block is the single largest line in
-   * `nativeJudge`'s input and dropping it is where the $0.005 goes.
+   * ## Why it is cheaper than `nativeJudge` ($0.018) on the same model
+   *
+   * **No few-shot, and a much shorter draft.** `nativeJudge` carries four of
+   * the client's own recent posts (≈2,000 tokens) because it is judging
+   * whether a whole draft SOUNDS like this account. This round judges an alt
+   * text and a first comment — short, functional prose whose register was
+   * already settled on the copy the package was derived from. The gap is
+   * 3,300 tokens: few-shot 2,000, plus the carousel draft 1,700 against the
+   * package's 600, plus 200 of soft tells this round is not given. That is
+   * where the $0.006 goes.
+   *
+   * Note what is NOT in the gap: the rubric. Both rounds are the same agent on
+   * the same prompt file, so @2's 4,143 tokens are paid twice over on a Hebrew
+   * run and the two keys move together whenever it is bumped. Before this
+   * commit both derivations said "rubric 1,500" and both were wrong by the
+   * same 1,777 tokens — one mis-measurement, two under-counts.
    *
    * Same model as `nativeJudge` rather than a cheaper one: Hebrew is
    * first-class here, and `gemini-2.5-pro` is the CHEAPEST row in
@@ -411,7 +484,7 @@ export const STEP_COST_ESTIMATES_USD = {
    * over-state every English plan by $0.009 and pull an image lever that did
    * not need pulling.
    */
-  packageNativeJudge: 0.009,
+  packageNativeJudge: 0.012,
   /**
    * Flash trend scout (03c), ~18k in / 2.5k out.
    *
@@ -1291,7 +1364,7 @@ export function planRunBudget(
   // It is also worth vastly more money, and in the right direction. On the
   // cold default shape this rung frees $0.109 (`3 x (3 x $0.007 + 2 x
   // $0.0065)` of rescue plus `07i1`'s $0.007) while the attempt rung frees
-  // $0.2826 — so the old order overshot by a quarter of the whole target to
+  // $0.2906 — so the old order overshot by a quarter of the whole target to
   // recover a few cents, and did it by deleting a draft.
   //
   // Not changed: the attempt lever still exists and still floors at 2, and the

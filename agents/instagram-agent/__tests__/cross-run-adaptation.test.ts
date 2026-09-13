@@ -3,22 +3,8 @@ import type { AgentContext, AgentToolRegistry } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { MemoryTemplateStore, TemplateDefinitionSchema } from "@agent-engine/tool-karos-templates";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
-import {
-  goodRelevanceVerdict,
-  goodTrendScoutOutput,
-  fakeRenderCarousel,
-  fakeRouterSequence,
-  finalTurn,
-  goodCopyOutput,
-  goodImageCandidatePool,
-  goodImageVettingOutput,
-  goodResearchOutput,
-  goodVisualQaOutput,
-  makePromptStore,
-  setupTestEnvironment,
-  type TestEnvironment,
-  pendingStudioRow,
-} from "./test-helpers.js";
+import { fakeRenderCarousel, fakeRouterSequence, finalTurn, fixtureHeadline, goodCopyOutput, goodImageCandidatePool, goodImageVettingOutput, goodRelevanceVerdict, goodResearchOutput, goodTrendScoutOutput, goodVisualQaOutput, makePromptStore, pendingStudioRow, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import fsp from "node:fs/promises";
 import pathMod from "node:path";
 import { goodAngleProposal } from "./angle-fixtures.js";
@@ -56,7 +42,7 @@ function tools(env: TestEnvironment, extra: Record<string, unknown> = {}): Agent
 function draftTurns(copyOutput: ReturnType<typeof goodCopyOutput>) {
   // The angle proposal (04i) leads each ROUND: one per revision, outside the
   // attempt loop, so a two-round fixture spends two of them.
-  return [finalTurn(goodAngleProposal()), finalTurn(copyOutput), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())];
+  return [finalTurn(goodAngleProposal()), finalTurn(copyOutput), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)];
 }
 
 describe("cross-run adaptation (IGSTYLE-5)", () => {
@@ -120,7 +106,7 @@ describe("cross-run adaptation (IGSTYLE-5)", () => {
       // terminal self-check requires every slide's `sourceRef` to match a
       // real research fact exactly, and both runs share the same research
       // output. Only the reader-facing prose (`headline`/`body`) differs.
-      slides: copy.slides.map((s, i) => ({ ...s, headline: `Spotlight ${i + 1}`, body: DIFFERENT_BODIES[i]! })),
+      slides: copy.slides.map((s, i) => ({ ...s, headline: fixtureHeadline(i, "spotlight"), body: DIFFERENT_BODIES[i]! })),
     };
 
     // ── Run A: revise (a STRUCTURED `edits.style` pick — Tier 0), then
@@ -307,7 +293,7 @@ describe("cross-run adaptation (IGSTYLE-5)", () => {
         claimMatchReason: "shows the claimed subject (instagram-image-vet@3 fixture)",
       })),
     };
-    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(vetting), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(copy), finalTurn(vetting), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)]);
 
     const workflowFnWithTemplates = createInstagramAgentWorkflow({
       tools: tools(env),

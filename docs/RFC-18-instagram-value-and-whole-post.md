@@ -98,7 +98,7 @@ first, every free rejection before any paid one.* New rows in **bold**.
 
 | # | id (`rev()`-wrapped; `07*` also `-attempt-N`) | kind | cost |
 |---|---|---|---|
-| 1 | `05-write-copy-attempt-N` | agent | $0.166 |
+| 1 | `05-write-copy-attempt-N` | agent | $0.174 (corrected, §7.1) |
 | 2 | `04o-apply-concept-attempt-N` | code | $0 |
 | 3 | `05b…06f` image sourcing / vetting | code+agent | images |
 | 4 | `07a-downgrade-unfillable-slides-attempt-N` | code | $0 |
@@ -116,7 +116,7 @@ first, every free rejection before any paid one.* New rows in **bold**.
 | — | *the attempt loop breaks* | | |
 | 16 | **`08c-package-post`** (+ `-retry`) | agent | **$0.003, once per revision** |
 | 17 | **`08c1-package-checks`** | code | **$0** |
-| 18 | **`08c2-package-native-round`** (non-English only) | agent | **$0.009** |
+| 18 | **`08c2-package-native-round`** (non-English only) | agent | **$0.012** (corrected, §7.1) |
 | 19 | **`08c3-timing-note`** | code | **$0** |
 | 20 | `09a-batch-review`, `09b-deliver-and-log` | gate/code | — |
 
@@ -783,12 +783,24 @@ all `content_fail` → **one** re-ask of the packager under `08c-package-post-re
 without touching the model (`language-gate.ts:565-572`) — then ship whatever survives with the failing field
 dropped.
 
-**`08c2-package-native-round`** (agent, **non-English clients only, one round, $0.009**): reuses
+**`08c2-package-native-round`** (agent, **non-English clients only, one round, $0.012**): reuses
 `runNativeEditor` / `InstagramNativeEditorAgent` unchanged and **without the few-shot exemplars** — they are the
 post's *voice*, and alt text and a sources line are utility prose — then applies its corrections through
 `applyNativeCorrections`. This honours the owner's binding rule that every prose field added here passes Phase
 4's native judge, at **two thirds of a full judge round**. There is no round 2 and no redraft: corrections apply
 or are dropped by the patcher's four existing refusal rules, and the package ships.
+
+> **MISSING FROM THIS RFC AS WRITTEN, ADDED AT INTEGRATION: the judge must be TOLD the new vocabulary.**
+> §6.6's prompt-bump paragraph plans a bump "for each of the two prompts" — `instagram-copy` and
+> `instagram-post-package` — and says no other prompt is touched. But `instagram-native-editor@1`
+> documents `target` as `"caption"` or `"slide:3"` and `field` as the seven carousel values, and nothing
+> in `buildNativeEditorPayload` marks which round the judge is on. Widening the schema, the resolver and
+> `NATIVE_EDITOR_RUBRIC_VERSION` (all specified below, all shipped) without bumping the prompt leaves
+> `08c2` structurally unable to apply a correction: the judge's only legal spelling is a carousel target,
+> and the context guard immediately below drops it. **A third five-step bump is required**, to
+> `instagram-native-editor@2`, teaching the judge to read the round off the field ids (`comment` / `alt-N`
+> versus `caption` / `slide-N.…`) and giving each round its own target table. Note the id-vs-target
+> asymmetry it has to state explicitly: the judge is shown `alt-2` and must write `"alt:2"`.
 
 This widens **one shared vocabulary**, in this package's own files:
 
@@ -840,12 +852,32 @@ $0.30 / $2.50; `gemini-2.5-pro` $1.25 / $10.
 
 ### 7.1 New and re-priced `STEP_COST_ESTIMATES_USD` keys
 
+> **CORRECTED AT INTEGRATION (2026-09-13). Three of the values below were forecasts and the shipped files
+> disagree with them. `agents/instagram-agent/src/workflow/run-budget.ts` is the source of truth; each
+> corrected row carries its measurement.**
+>
+> - **`copyAttempt` is 0.174, not 0.166.** The row below forecast "+6,000 characters" before
+>   `instagram-copy@17` existed. Measured on disk, LF-normalised: 45,757 → 62,057 chars = **+16,300**,
+>   ~2.7× the forecast. +4,075 tok @ $3/1M = +$0.0122 input, +$0.00015 output → **0.161 → 0.174**.
+> - **`nativeJudge` is 0.018, not 0.014**, and **`packageNativeJudge` is 0.012, not 0.009.** Both
+>   derivations said "rubric 1,500". `instagram-native-editor@1` is 13,109 chars = **3,277 tokens** — the
+>   term was never measured against the file, so ONE mis-measurement produced TWO under-counts, standing
+>   since Phase 4. `@2` (§6.5, added at integration) takes it to 16,573 chars = 4,143 tokens. Corrected:
+>   `nativeJudge` in 8,643 → $0.01730, entered 0.018; `packageNativeJudge` in 5,343 → $0.01178,
+>   entered 0.012. Rounded up, the only safe direction.
+> - **Consequence for §7.4:** the cold Hebrew plan is **$0.9773** (was $0.9623) and the cold English plan
+>   pulls a **fourth rung**. Both still fit the target on three attempts; nothing holds. But planned
+>   headroom on the cold Hebrew shape is now **$0.0227**, which is **below** Phase 5's own added Hebrew
+>   line ($0.024 at corrected constants). That is the number the next phase has to move, and there is no
+>   rung between "optional rescue re-vets skipped" and "3 attempts → 2" to move it with.
+
 | key | model | arithmetic | value |
 |---|---|---|---|
-| `copyAttempt` **re-priced** | sonnet-4-6 | **input** +6,000 chars ≈ +1,500 tok @ $3/1M = **+$0.0045**; **output** `payloadKind` ≈ +10 tok @ $15/1M = **+$0.00015**. Total +$0.0047. Input and output stated separately, per the house rule the @13→@14 note exists to enforce. | **0.161 → 0.166** |
+| `copyAttempt` **re-priced** | sonnet-4-6 | ~~**input** +6,000 chars ≈ +1,500 tok~~ — see the correction above. **Measured:** input +16,300 chars ≈ +4,075 tok @ $3/1M = **+$0.0122**; **output** `payloadKind` ≈ +10 tok @ $15/1M = **+$0.00015**. Input and output stated separately, per the house rule the @13→@14 note exists to enforce. | ~~0.166~~ **0.161 → 0.174** |
 | `valueJudge` **new** | gemini-2.5-flash | in: rubric 1,700 + brief 600 + post 1,700 + fact-card digest 800 + scaffolding 300 = 5,100 × $0.30/1M = $0.00153; out: 4 axes + 4 quotes + 3 arrays + keepLine ≈ 500 × $2.50/1M = $0.00125 | **0.003** |
 | `postPackage` **new** | gemini-2.5-flash | in: slides 1,700 + caption 300 + brief 600 + register 450 + fact cards 800 + terms 200 + instructions 1,250 = 5,300 × $0.30/1M = $0.00159; out: hashtags 40 + alt 8×45 + comment 120 + scaffolding 40 = 560 × $2.50/1M = $0.0014 | **0.003** |
-| `packageNativeJudge` **new** | gemini-2.5-pro | in: rubric 1,500 + register 450 + package 600 + scaffolding 150 (**no few-shot**) = 2,700 × $1.25/1M = $0.00338; out: 6 corrections × 70 + verdict 90 = 510 × $10/1M = $0.0051 | **0.009** |
+| `packageNativeJudge` **new** | gemini-2.5-pro | in: rubric ~~1,500~~ **4,143 (measured)** + register 450 + package 600 + scaffolding 150 (**no few-shot**) = **5,343** × $1.25/1M = $0.00668; out: 6 corrections × 70 + verdict 90 = 510 × $10/1M = $0.0051 | ~~0.009~~ **0.012** |
+| `nativeJudge` **re-priced** (not in the original plan) | gemini-2.5-pro | Re-measured for the same reason, and bumped again by `instagram-native-editor@2`. in: rubric **4,143** + register 450 + few-shot 2,000 + draft 1,700 + soft tells 200 + scaffolding 150 = **8,643** × $1.25/1M = $0.01080; out: 650 × $10/1M = $0.0065 | **0.014 → 0.018** |
 | `scraperExecution` reused | — | `07i1`, one execution **per run**, priced through a new `RunShape.claimVerifications = 1` | 0.007 |
 
 `rawEstimate`'s `perAttempt` gains `c.valueJudge`; `fixed` gains `c.postPackage`,
@@ -854,15 +886,21 @@ $0.30 / $2.50; `gemini-2.5-pro` $1.25 / $10.
 
 ### 7.2 Per-run delta, 3 attempts, 1 revision
 
+Corrected figures in bold; the struck values are the forecasts §7.1's note above replaces.
+
 | line | × | English | Hebrew |
 |---|---|---|---|
-| `copyAttempt` +$0.005 | 3 | +$0.015 | +$0.015 |
+| `copyAttempt` ~~+$0.005~~ **+$0.013** | 3 | ~~+$0.015~~ **+$0.039** | ~~+$0.015~~ **+$0.039** |
 | `valueJudge` $0.003 | 3 | +$0.009 | +$0.009 |
 | `postPackage` $0.003 | 1 | +$0.003 | +$0.003 |
-| `packageNativeJudge` $0.009 | 1 | — | +$0.009 |
+| `packageNativeJudge` ~~$0.009~~ **$0.012** | 1 | — | ~~+$0.009~~ **+$0.012** |
+| `nativeJudge` **+$0.004** (re-price, Phase 4 line) | 3 | — | **+$0.012** |
 | lead-claim verification $0.007 | 1 (per run) | +$0.007 | +$0.007 |
 | `07i`, `07i2`, `08c1`, `08c3` | — | $0 | $0 |
-| **planner total** | | **+$0.034** | **+$0.043** |
+| **planner total** | | ~~+$0.034~~ **+$0.058** | ~~+$0.043~~ **+$0.082** |
+
+The Phase-5-only lines are unchanged at **+$0.034 English / +$0.046 Hebrew**; the rest of the growth is the
+two standing under-counts (`copyAttempt`, `nativeJudge`) that this phase measured rather than introduced.
 
 ### 7.3 The lever swap — a precondition, not an optimisation
 
@@ -905,8 +943,20 @@ attempt lever is ever reached, against the $0.0002 the attempt lever was previou
 
 **Not changed:** the attempt lever still exists, still floors at 2, and the existing `WorkflowHeld` for genuine
 mechanical exhaustion (`07`'s slide check, craft hygiene) stays. What Phase 5 guarantees is narrower and exact:
-**no judgment gate — value, relevance, language, numbers — can produce a hold, and no budget lever can create
-one by starving the loop.**
+**no judgment gate — value, relevance, language, numbers — returns work on the final attempt, and none of them
+produces a hold directly. No budget lever starves the loop below the floor.**
+
+**What that sentence deliberately does NOT claim, because the code does not.** A judgment gate that returns
+work on a non-final attempt consumes one of `maxSelfCheckAttempts`, and `finalOutcomeOk` is only set after a
+fully clean attempt, so the loop running out still throws `WorkflowHeld` (`create-instagram-agent-workflow.ts`,
+the `07j` guard is `!isFinalAttempt && valueReturns < VALUE_MAX_RETURNS && !stalled`; the throw is at the end of
+the loop). A draft that reached `07j` had already passed `07`'s slide check and craft hygiene, so it was
+shippable; spend an attempt on a value return and it is possible for the two remaining attempts to fail craft
+hygiene and end in a hold that would not have happened without the gate. This is **structural and shared with
+the Phase 0 relevance gate** — it is not new in kind, and Phase 5 widens the exposure by exactly one more
+returning gate. Closing it properly means budgeting a value return OUTSIDE `maxSelfCheckAttempts`, which is a
+Phase 6 shape and larger than this PR should carry. Stating the weaker, true property here is the point: a
+guarantee the code does not keep is worse than no guarantee.
 
 ### 7.4 Against $1.00 and $1.50
 
@@ -916,7 +966,20 @@ one by starving the loop.**
 | cold Hebrew | **$0.9998** | $1.0428 → **attempt lever → held** | $1.0428 − $0.085 = **$0.9578** | **3** |
 | typical actual (1 attempt, Hebrew, warm) | ~$0.48 | — | **~$0.52** | — |
 
-**Against the hard max $1.50.** The planned worst case is $0.9858. The meter crosses $1.50 only at a
+> **MEASURED AT INTEGRATION, and the table above is a forecast.** The numbers the shipped estimator
+> actually produces, after §7.1's three corrections:
+>
+> | shape | measured plan | attempts | rungs pulled |
+> |---|---|---|---|
+> | cold English | **$0.9933** | **3** | 4 (a fourth rung — "trend evidence reduced" — now fires) |
+> | cold Hebrew | **$0.9773** | **3** | 5 (through "optional rescue re-vets skipped") |
+>
+> Both fit the target, both keep three attempts, nothing holds — the ladder is behaving exactly as §7.3
+> designed it to. The one thing to carry forward is the **margin**: cold Hebrew now plans $0.0227 under
+> target, against the $0.024 Phase 5 itself adds on a Hebrew run. Pinned in
+> `run-budget.test.ts`, stated there as an inequality that fails loudly if a future phase improves it.
+
+**Against the hard max $1.50.** The planned worst case is ~$0.99 (measured; $0.9858 as forecast). The meter crosses $1.50 only at a
 calibration ratio above ~1.5; at that point `posture === "cheapest-path"` and: the free checks always run; the
 value judge is skipped (`status: "unjudged"`, row 7); the lead-claim verification is off; the packager runs and
 the native round does not, shipping `post.language = "unverified"`. **Every path delivers. No path in this
@@ -1046,3 +1109,92 @@ Because the workflow consumes a value turn and a packager turn on **every** run,
 desynchronise by two. Each default is a named exported constant with a comment saying what it means ("absent
 means the value judge passed"), and any test that cares passes the key explicitly. `packageNative` stays
 optional, exactly as `nativeEditor` is, since it runs on non-English targets only.
+
+## 13. Corrections applied after the verification round
+
+Everything below was found by review against a built, tested branch and changed in the same PR. Listed here
+rather than folded silently into the sections above, so the RFC reads as what was designed AND what the
+design got wrong.
+
+**`post` is at the TOP LEVEL of the deliverable, and the code now agrees.** §6.6 and §12 both name
+`deliverable.post`; an earlier cut emitted it inside `groundingFor()`, i.e. at `deliverable.grounding.post`.
+The portal PR is written from this RFC in a different repo, so the RFC is the contract and the code was moved
+to it, not the reverse. `value` and `language` genuinely do ride `grounding` (§5.8) because they are verdicts
+about the draft; the post is part of the deliverable. `value-termination.test.ts` now asserts BOTH that
+`deliverable.post` is populated and that `deliverable.grounding.post` is `undefined`, so a refactor that tucks
+it back in fails in this repo rather than showing no hashtags in the other one.
+
+**A free-floor refusal survives a judge outage.** `07i`/`07i2` refuse for $0 and their findings are
+mechanical, so they are true whether or not `07j` answered. The judge-outage branch used to overwrite them
+with `unjudged`, which told a reviewer "nobody looked" about a post something had already looked at and named
+a slide on. It now ships `below-bar` at the floor's own stage with the judge's error carried as a note. §5.7
+row 2's contract was always this; only the outage path disagreed with it.
+
+**A value REGRESSION is not a stall.** `axesImproved` was boolean and returned `false` both for "nothing
+moved" and for "an axis moved down", and the caller stalled on both. It is now `axesMovement`, three-valued,
+and only `"flat"` stalls. The reachable case had nothing to do with value: a `keepable` attempt returned to
+`05` by `08b`'s visual QA over a PIXEL, re-judged worse, shipped `below-bar` with a value return unspent.
+
+**The payload axis counts, it does not pick a best slide.** The axis bans "a carousel of six true statements
+with no consequence attached" and then asked only for the single best slide, so seven fillers and one strong
+slide passed. The rubric now states a density bar — fewer than half the content slides carrying a consequence
+is `weak` however good the best one is — and the fix names the slides that carry a claim and nothing else.
+Still fully span-evidenced: the `pass` quote is unchanged and the density finding lands in `fixInstructions`,
+so no second quote field and no extra output tokens.
+
+**§5.6's worked pair is IN the rubric.** It was written here and never carried into
+`buildValueSystemPrompt()`, which shipped with one concrete positive exemplar across four axes and none at all
+on `payload`. The REFUSAL half is the load-bearing one: it shows a Flash-tier judge the exact draft shape this
+gate was commissioned to refuse — correct, sourced, fluent, worthless — scoring three fails rather than a
+polite four out of five. Measured cost of the whole rubric growth: **+$0.00006 an attempt**.
+
+**`declaredStructure` is named in the rubric.** The writer's `payloadKind` was being sent to the judge and the
+rubric never mentioned it, so `timeline`, `myth-vs-fact` and `walkthrough` — the three kinds
+`checkPayloadShape` explicitly defers to the judge — were checked by nobody.
+
+**Hebrew is enforced, not only described.** Three gaps, all closed:
+
+- The eighteen lazy asks both prompts promise will "fail your draft on contact" are an ASCII English bank
+  (`lint-post.ts`), so on a Hebrew run the promised gate could not fire. `HEBREW_BANNED_PHRASES`
+  (`craft-hygiene.ts`) is now passed through `gate.lintPost`'s existing per-call `bannedPhrases` supplement at
+  both call sites — the caption's and the first comment's. **No shared-package edit and no `TOOL_VERSION`
+  story**: the tool concatenates the supplement onto its own bank. Passed unconditionally rather than keyed
+  off the resolved language, because a Hebrew string cannot occur in an English caption and gating it would
+  reopen the hole for the one run that matters — the one whose language resolution said English and whose
+  writer wrote Hebrew anyway. Both prompts list the Hebrew phrases verbatim, so the writer is told the rule
+  rather than trapped by it.
+- The hedge, the named specific and the position were worked only in English. `17.md` now carries a Hebrew
+  worked pair in each of §24.2 and §25, and the rubric's `position` axis carries a Hebrew pass/refusal line.
+  §23's register card does not cover this: it is about sounding native, and a hedge can be perfectly native.
+- §26 asked for "a headline of six words or fewer" with no RTL adjustment, in the same phase whose code
+  adjusts the identical token count from eight to six for Hebrew and explains why (Hebrew fuses ו, ה, ב, ל, ש
+  onto the following word). Six words was therefore materially slacker in Hebrew than in English. §26 now says
+  four or fewer in a language that fuses its articles and prepositions.
+
+**Dead code deleted rather than documented.** `payloadKindOf` / `DEFAULT_INSTAGRAM_PAYLOAD_KIND` had no call
+site and a doc comment asserting every consumer went through them; `valueDegraded` was written twice and read
+never, with a comment claiming it mirrored `languageDegraded`, which is read. Both are gone. On
+`payloadKindOf` the deletion is also the CORRECT semantics: a defaulted read would make
+`checkPayloadShape`'s "a carousel is a structure; `single-claim` belongs to the single-image format" fire on
+any draft that merely failed to declare, refusing resumed checkpoints and every pre-field fixture. Absent means
+no opinion. The residual gap — a live writer that omits the field escapes the shape check — is named in §11.
+
+**The no-Opus guard derives its roster.** `no-premium-models.test.ts` held a hand-written list of twelve
+constructors behind `toBeGreaterThanOrEqual(12)`, a floor that cannot notice a thirteenth agent — and had
+already failed to: `InstagramConceptAgent` is a live pinned `claude-sonnet-4-6` step in every run, was absent
+from the list, and was not even exported from `src/agent/index.ts`. It is now exported, constructed, and the
+count is asserted EXACTLY against a read of `src/agent/*-agent.ts`, so a new agent file fails the suite.
+
+**Step id `08c-package-post-retry`.** It was built as `` `${rev(id)}-retry` ``, which on a revise round put
+the suffix in a different position from every sibling (`08c-package-post-r1-retry` beside
+`08c1-package-checks-retry-r1`). Now `rev("08c-package-post-retry")`, so the revision suffix is always last.
+
+**Three cost comments re-derived, not restated.** `create-instagram-agent-workflow.ts`'s 07f block, its `08c2`
+block and `run-budget.ts`'s `vetCall` block quoted $0.014, $0.009 and $0.9623 — figures the same commit
+invalidated when `nativeJudge` was re-priced against the measured prompt. They now read $0.018, $0.012 and
+$0.9773 / $0.0227 of headroom, matching `run-budget.test.ts:468` and §§7.1/7.4.
+
+**§7.3's guarantee was narrowed to what the code keeps.** It claimed no judgment gate can contribute to a
+hold. The direct path is genuinely closed and tested; the indirect one is not, because a value return consumes
+an attempt out of `maxSelfCheckAttempts`. See §7.3 for the full statement. Structural, shared with the Phase 0
+relevance gate, and a Phase 6 shape to fix properly.

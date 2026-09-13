@@ -2,21 +2,8 @@ import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import type { InstagramCopyOutput } from "../src/workflow/types.js";
-import {
-  goodRelevanceVerdict,
-  goodTrendScoutOutput,
-  fakeRenderCarousel,
-  fakeRouterSequence,
-  finalTurn,
-  goodCopyOutput,
-  goodImageCandidatePool,
-  goodImageVettingOutput,
-  goodResearchOutput,
-  goodVisualQaOutput,
-  makePromptStore,
-  setupTestEnvironment,
-  type TestEnvironment,
-} from "./test-helpers.js";
+import { fakeRenderCarousel, fakeRouterSequence, finalTurn, fixtureHeadline, goodCopyOutput, goodImageCandidatePool, goodImageVettingOutput, goodRelevanceVerdict, goodResearchOutput, goodTrendScoutOutput, goodVisualQaOutput, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 
 const base = { clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
@@ -29,7 +16,7 @@ function freshCopy(): InstagramCopyOutput {
     caption: "A completely separate story about how the design department reorganized their weekly critique sessions.",
     slides: good.slides.map((s, i) => ({
       ...s,
-      headline: `Another take ${i + 1}`,
+      headline: fixtureHeadline(i, "another take"),
       body: `Distinct sentence ${i + 1} exploring an unrelated dimension of the quarterly workflow experiments nobody wrote about yet.`,
     })),
   };
@@ -62,13 +49,17 @@ describe("output dedup: the shipped-output window steers future runs", () => {
     // Run 1: ships goodCopyOutput's text, which enters the window.
     const first = await engine.run(
       workflowFor(
-        fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(goodCopyOutput()), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]),
+        fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(goodCopyOutput()), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)]),
       ),
       { runId: "dedup_run_1", ...base },
     );
     expect(first.status).toBe("completed");
     const window = await env.store.readJson<Array<{ runId: string; excerpt: string }>>("acme", ["ledger", "output-history", "instagram-agent"]);
-    expect(window?.some((e) => e.runId === "dedup_run_1" && e.excerpt.includes("Finding #1"))).toBe(true);
+    // Derived from the fixture rather than spelled out: `goodCopyOutput()`'s
+    // headlines changed in Phase 5 when `07i-value-signals` started measuring
+    // the copy a fixture called "good", and a literal here would have to be
+    // re-typed every time that fixture is improved again.
+    expect(window?.some((e) => e.runId === "dedup_run_1" && e.excerpt.includes(goodCopyOutput().slides[0]!.headline))).toBe(true);
 
     // Run 2: the model re-drafts the SAME post (attempt 1), gets caught by
     // 07d, and its second attempt (fresh copy) ships instead.
@@ -80,10 +71,10 @@ describe("output dedup: the shipped-output window steers future runs", () => {
           // Each attempt pays the relevance judge (07g) BEFORE the dedupe check (07d) rejects it.
           finalTurn(goodCopyOutput()),
           finalTurn(goodImageVettingOutput()),
-          finalTurn(goodRelevanceVerdict()),
+          finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
           finalTurn(freshCopy()),
           finalTurn(goodImageVettingOutput()),
-          finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+          finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
         ]),
       ),
       { runId: "dedup_run_2", ...base },
@@ -99,14 +90,14 @@ describe("output dedup: the shipped-output window steers future runs", () => {
     const delivered = steps.find((s) => s.stepId === "07c-emit-slides-data-attempt-2")?.output as
       | { slides: Array<{ fields: Record<string, string> }> }
       | undefined;
-    expect(delivered?.slides[0]?.fields["headline"]).toContain("Another take");
+    expect(delivered?.slides[0]?.fields["headline"]).toContain("another take");
   }, 60000);
 
   it("a repeat that survives every attempt ships FLAGGED, never held — the human gate outranks the threshold", async () => {
     const engine = new WorkflowEngine(new MemoryDurableStepStore());
     const r1 = await engine.run(
       workflowFor(
-        fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(goodCopyOutput()), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput())]),
+        fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(goodCopyOutput()), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)]),
       ),
       { runId: "dedup_flag_1", ...base },
     );
@@ -121,13 +112,13 @@ describe("output dedup: the shipped-output window steers future runs", () => {
           // Each attempt pays the relevance judge (07g) BEFORE the dedupe check (07d) flags it.
           finalTurn(goodCopyOutput()),
           finalTurn(goodImageVettingOutput()),
-          finalTurn(goodRelevanceVerdict()),
+          finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
           finalTurn(goodCopyOutput()),
           finalTurn(goodImageVettingOutput()),
-          finalTurn(goodRelevanceVerdict()),
+          finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
           finalTurn(goodCopyOutput()),
           finalTurn(goodImageVettingOutput()),
-          finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+          finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
         ]),
       ),
       { runId: "dedup_flag_2", ...base },

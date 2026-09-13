@@ -53,10 +53,20 @@ import { cardCarriesSpecific } from "./value-signals.js";
  * ## COST, and the no-Opus arithmetic (RFC-18 §7.1, §8)
  *
  * **$0.003 per attempt**, pinned `gemini-2.5-flash` at $0.30/$2.50 per 1M:
- * in 5,100 tok (rubric 1,700 + brief 600 + post 1,700 + fact-card digest 800 +
- * scaffolding 300) = $0.00153; out ~500 tok (4 axes + 4 quotes + 3 arrays +
+ * in 5,300 tok (rubric 1,900 + brief 600 + post 1,700 + fact-card digest 800 +
+ * scaffolding 300) = $0.00159; out ~500 tok (4 axes + 4 quotes + 3 arrays +
  * `keepLine`) = $0.00125. Across a 3-attempt run that is **$0.009, under 1% of
  * the $1.00 target**.
+ *
+ * The rubric line was measured, not guessed: `buildValueSystemPrompt()` joins
+ * to **7,284 characters**. It rose from ~1,030 tokens to ~1,900 when the
+ * worked PASS/REFUSAL pair, the payload density clause, the `declaredStructure`
+ * sentence and the Hebrew position exemplar went in, which is +$0.00006 an
+ * attempt and +$0.0002 a run. That is the cheapest place this phase could have
+ * spent money, and it is the place the owner's amendment said to spend it:
+ * the refusal half of the pair is what shows a Flash-tier judge the exact draft
+ * shape it was commissioned to refuse — correct, sourced, fluent, worthless —
+ * scoring three fails rather than a polite four out of five.
  *
  * The owner's plan said to move the WRITER to a stronger model and give it a
  * search tool. Both are declined, on the owner's own later amendment (**no
@@ -86,7 +96,7 @@ import { cardCarriesSpecific } from "./value-signals.js";
  *
  * **`WorkflowHeld` is never thrown on any value path.** Budgets adapt, never
  * hold: bounded returns (`VALUE_MAX_RETURNS`), a no-improvement stop
- * (`axesImproved`), and on the final attempt the draft ships marked
+ * (`axesMovement`), and on the final attempt the draft ships marked
  * `below-bar` with the axes and the fixes on the `09a` payload so the reviewer
  * sees exactly why. Nothing in this module throws.
  */
@@ -284,7 +294,7 @@ const FIX_TARGET = /^(cover|caption|slide:[1-8])$/;
  */
 export function buildValueSystemPrompt(): string {
   return [
-    "You are a practitioner in this client's field, scrolling. You are handed the account owner's Client Brief, the fact cards this post was built from, and one finished Instagram post: its caption and every slide's headline and body.",
+    "You are a practitioner in this client's field, scrolling. You are handed the account owner's Client Brief, the fact cards this post was built from, one finished Instagram post (its caption and every slide's headline and body), and, when the writer declared one, declaredStructure: the structure the writer says this post is.",
     "",
     "You are NOT scoring how good it is. You are answering four yes-or-no questions, and for each one you must either QUOTE the words in the post that make the answer yes, or say what to write instead. A question you cannot quote an answer for is not a yes.",
     "",
@@ -294,11 +304,14 @@ export function buildValueSystemPrompt(): string {
     "",
     "2. position: does this post take a side someone could argue with?",
     "A yes needs a sentence, on the cover or in the caption's first line, that a competent person in this field could disagree with. \"X is not the reason Y happens\" is a position. \"X is an important consideration\" is not. A statement that is true of every business in this industry is not a position, it is a description.",
+    "The same test in Hebrew, so you are not matching English wordings: \"המקרר שלכם לא מת מזקנה. הוא מת ממעבה מלוכלך.\" (your fridge is not dying of old age, it is dying of a dirty condenser) is a position: a competent technician could argue with it. \"תחזוקה מונעת היא חלק חשוב מהתפעול\" (preventive maintenance is an important part of operations) is not: nobody could argue with it, and it is true of every business in the trade. Judge the Hebrew sentence by what it claims, not by how well it is written.",
     "Quote the sentence. If there is none, write the position this post's own evidence would support, in one sentence.",
     "",
     "3. payload: is there something here a reader would keep?",
     "A yes needs two things. First, a structure a reader could come back to: a glossary, a ranking, a comparison, a checklist, a walkthrough, a myth corrected, a teardown. Second, slides that each carry ONE claim and say what follows from it for the reader. A carousel of six true statements with no consequence attached is not a payload.",
-    "Quote the one slide whose body best shows the claim plus its consequence. If no slide does, name the slide that comes closest and write its missing consequence.",
+    "When declaredStructure is present, it is the structure the writer said this post is. If the slides are not that structure, payload is at best weak, and the fix says either build the structure declared or declare the one built.",
+    "This axis is about the WHOLE post, not its best slide. Count the content slides whose body says what follows from its claim for the reader. If fewer than half of them do, payload is weak however good the best slide is, and the fix names the slides that carry a claim with no consequence attached.",
+    "Quote the one slide whose body best shows the claim plus its consequence. If no slide does, payload is fail: name the slide that comes closest and write its missing consequence.",
     "",
     "4. action: is there a specific thing the reader can do next?",
     "A yes needs an action the reader can take with what they already have, named precisely enough to start today, and worded so it asks for something specific rather than hoping for engagement. \"Comment below\" and \"thoughts?\" are not actions. \"Check which of the three your current contract uses, and reply with the number if you want the comparison sheet\" is.",
@@ -316,6 +329,24 @@ export function buildValueSystemPrompt(): string {
     "Write your fixes in plain characters: no em dash, no en dash, no double hyphen. The writer is held to that rule and reads your fixes verbatim.",
     "",
     "Finally, write keepLine: one sentence naming what a reader would save this post for. If you cannot write that sentence honestly, say so in it.",
+    "",
+    "TWO WORKED EXAMPLES, on a trade that is not this client's: a servicer of commercial kitchen equipment. Take the shape of the judgement, never the subject.",
+    "",
+    "A PASS.",
+    "cover: \"Your walk-in is not dying of old age. It is dying of a dirty condenser coil.\"",
+    "slide 3 body: \"A coil cleaned quarterly draws about 12 percent less power than one cleaned once a year. On a 2 HP compressor that is roughly 40 dollars a month you are paying to keep dust warm.\"",
+    "caption CTA: \"Open the panel, take a photo of your coil, and reply with it. I will tell you whether it needs a clean this month or in six.\"",
+    "All four pass. newFact has a figure with its unit and its period. position names a cause someone could argue with. payload is a comparison whose slides say what the claim costs. action can be done in a minute with what the reader already has and says what they get back.",
+    "keepLine: \"A restaurant owner would keep this to decide whether the quarterly service contract is worth its price.\"",
+    "",
+    "A REFUSAL. Read this one closely: it is grounded, on brief, fluent, correctly sourced and clean. Nothing in it is wrong. Nothing in it is worth saving. It is the post this question exists to refuse, and a polite four out of five here is the failure mode, not the safe answer.",
+    "cover: \"Preventive maintenance matters more than ever for modern kitchens.\"",
+    "slide 2 body: \"Regular servicing can help reduce unexpected downtime and extend equipment lifespan.\"",
+    "caption CTA: \"Let us know your thoughts.\"",
+    "newFact: fail. position: fail. payload: weak. action: fail.",
+    "fixAxes: newFact, position, payload, action. fixTargets: slide:3, cover, slide:2, caption.",
+    "fixInstructions: \"Fact card 4 carries the 12 percent figure for quarterly coil cleaning; put that number and its period on slide 3 and drop the general claim.\" / \"Assert the cause: name the single failure this client sees most often and say plainly that age is not it.\" / \"Slide 2 states a benefit with no consequence; say what the downtime costs on a Friday service, in money or in covers.\" / \"Ask for one thing the reader can do in a minute and say what they get back for doing it.\"",
+    "keepLine: \"Nothing here is wrong, and nothing here is worth saving: every sentence would be true for any maintenance company in any trade.\"",
   ].join("\n");
 }
 
@@ -354,21 +385,45 @@ export function decideValue(axes: ValueAxes, advisory: readonly ValueAxis[] = []
 const AXIS_RANK: Record<ValueAxisVerdict, number> = { fail: 0, weak: 1, pass: 2 };
 
 /**
- * Did the redraft actually move? True only when at least one axis moved UP
- * (`fail -> weak -> pass`) and none moved down.
+ * Did the redraft actually move, and WHICH WAY?
  *
  * The no-improvement stop this feeds saves a whole ~$0.26 attempt on the runs
  * where the writer has nothing more to give, and it is a stop rather than a
  * hold: the draft ships marked `below-bar` with the stall named.
+ *
+ * This used to be a boolean `axesImproved`, and that was the bug. A boolean
+ * returns false for two different things, and the caller treated both as a
+ * stall: "nothing moved at all" and "an axis moved DOWN". Only the first is a
+ * writer with nothing more to give. The second is a REGRESSION, and the path to
+ * it does not need a value return to have caused it:
+ * `previousValueAxes` is written on every judged attempt, including attempts
+ * that go back to `05` for an unrelated reason. So attempt 1 could be judged
+ * `keepable`, `08b`'s visual QA could send the draft back over a pixel, attempt
+ * 2 could come back `below-bar` — and the old test read that drop as "the
+ * writer is stalled", shipped it, and left the last attempt unbought with the
+ * writer never once shown a value fix. The reason it emitted ("no axis improved
+ * on the previous attempt, so the next draft was not bought") was true and
+ * misleading in the same sentence.
+ *
+ * A regression now spends a value return, which is safe because it is bounded
+ * by `VALUE_MAX_RETURNS` and by the final-attempt guard exactly as every other
+ * return is. Only `"flat"` stalls.
+ *
+ * - `"up"`: at least one axis rose and none fell.
+ * - `"down"`: at least one axis fell, whatever else did. A trade counts as
+ *   down: the writer answered one fix by breaking something else.
+ * - `"flat"`: nothing moved.
  */
-export function axesImproved(prev: ValueAxes, next: ValueAxes): boolean {
+export function axesMovement(prev: ValueAxes, next: ValueAxes): "up" | "flat" | "down" {
   let up = false;
+  let down = false;
   for (const axis of VALUE_AXES) {
     const delta = AXIS_RANK[next[axis]] - AXIS_RANK[prev[axis]];
-    if (delta < 0) return false;
+    if (delta < 0) down = true;
     if (delta > 0) up = true;
   }
-  return up;
+  if (down) return "down";
+  return up ? "up" : "flat";
 }
 
 // ─────────────────────────────────────────────────────────────────────────

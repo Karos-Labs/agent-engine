@@ -15,4 +15,15 @@ export * from "./instagram-image-vetting-agent.js";
 // judge (`instagram-language-fluency`, a `DynamicAgent`): a new class id
 // because the step moves vendor `anthropic` -> `gemini`.
 export * from "./instagram-native-editor-agent.js";
+// Phase 5, RFC-18 §6.1 — the post packager. Runs ONCE PER REVISION, after the
+// drafting loop breaks, and writes the hashtags, the per-slide alt text and the
+// first comment's prose. A `BaseAgent` for the same reason the native editor is
+// one: `altText` is an `object[]` and the flat field DSL has no such type.
+export * from "./instagram-post-packager-agent.js";
 export * from "./instagram-visual-qa-agent.js";
+// Phase 4 (#110) — the concept/metaphor direction for generated images. It was
+// never exported here, which is how it stayed outside the reach of
+// `no-premium-models.test.ts` while being a live `claude-sonnet-4-6` step in
+// every run. Exported now so the roster that suite derives really is every
+// agent this package ships.
+export * from "./instagram-concept-agent.js";

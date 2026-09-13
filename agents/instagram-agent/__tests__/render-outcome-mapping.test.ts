@@ -18,6 +18,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
+import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 
 /** Chromium-free render stand-in; the tool-level validation it wraps is the real one. */
@@ -64,7 +65,7 @@ describe("08-render-carousel: the three-way outcome mapping, never confused (RFC
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(copy),
       finalTurn(vetting),
-      finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: testTools(env),

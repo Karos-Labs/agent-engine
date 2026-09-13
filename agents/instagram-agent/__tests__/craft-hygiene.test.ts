@@ -19,6 +19,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
+import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 
 const ctx: AgentContext = { runId: "run_1", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring", metadata: {} };
@@ -211,7 +212,7 @@ describe("Fix 3: unconditional mechanical craft-hygiene gate (em dash / exclamat
         finalTurn(goodImageVettingOutput()),
         finalTurn(cleanCopy),
         finalTurn(goodImageVettingOutput()),
-        finalTurn(goodRelevanceVerdict()), finalTurn(goodVisualQaOutput()),
+        finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
       ]);
       const workflowFn = createInstagramAgentWorkflow({
         tools: testTools(env),

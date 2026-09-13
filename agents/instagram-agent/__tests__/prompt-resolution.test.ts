@@ -5,6 +5,7 @@ import { MockAgent, type AgentContext, type BaseAgentRuntime } from "@agent-engi
 import { z } from "zod";
 import { InstagramResearchAgent } from "../src/agent/instagram-research-agent.js";
 import { InstagramCopyAgent } from "../src/agent/instagram-copy-agent.js";
+import { InstagramPostPackagerAgent } from "../src/agent/instagram-post-packager-agent.js";
 import { InstagramImageVettingAgent } from "../src/agent/instagram-image-vetting-agent.js";
 import { InstagramAngleAgent } from "../src/agent/instagram-angle-agent.js";
 import { InstagramVisualQaAgent } from "../src/agent/instagram-visual-qa-agent.js";
@@ -459,11 +460,19 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // this asserts is that the rows exist at all, which is the step a prompt
     // bump most often forgets.
     const registry = readFileSync(path.join(PROMPTS_ROOT, "..", "..", "..", "scripts", "prompt-registry.ts"), "utf8");
-    expect(registry).toContain(`"13", "14", "15", "16"`);
-    expect(registry).toMatch(/promptId: "instagram-copy"[\s\S]{0,400}latestVersion: "16"/);
+    expect(registry).toContain(`"14", "15", "16", "17"`);
+    expect(registry).toMatch(/promptId: "instagram-copy"[\s\S]{0,400}latestVersion: "17"/);
+    // Phase 5 (RFC-18 §6.1). The packager's prompt is the one THIS phase added,
+    // and the WIP commit this branch inherited had shipped both prompt files
+    // with no registry row at all — which `check:prompts` fails on and which
+    // this line is the cheap local copy of.
+    expect(registry).toContain(`{ promptId: "instagram-post-package", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
     // Phase 4 (RFC-15 §6). The native editor's prompt is the one this phase
     // added; a row that never lands is exactly what this test exists to catch.
-    expect(registry).toContain(`{ promptId: "instagram-native-editor", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
+    // Phase 5 bumped it to @2 (RFC-18 §6.5): `@1` documented only the CAROUSEL round's
+    // `"caption"`/`"slide:N"` targets, so on `08c2-package-native-round` the judge had no legal target to
+    // write and every correction it returned was dropped as cross-context by `resolveField`'s guard.
+    expect(registry).toContain(`{ promptId: "instagram-native-editor", agent: "instagram-agent", versions: ["1", "2"], latestVersion: "2" }`);
     // Phase 3 (items Q and R).
     expect(registry).toContain(`{ promptId: "instagram-image-vet", agent: "instagram-agent", versions: ["1", "2", "3", "4", "5"], latestVersion: "5" }`);
     expect(registry).toContain(`{ promptId: "instagram-art-director", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
@@ -475,13 +484,15 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     expect(registry).toContain(`{ promptId: "instagram-concept", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
   });
 
-  it("every agent reads the version this phase shipped: copy @16, visual QA @4, image vet @5, art director @1, concept @1", async () => {
+  it("every agent reads the version this phase shipped: copy @17, post package @1, visual QA @4, image vet @5, art director @1, concept @1", async () => {
     // The last line of a prompt bump, and the one most often forgotten: a new
     // prompt file that no `skillRef` points at exists, resolves, and is read
     // by nothing.
     const promptStore = makePromptStore();
     const copy = new InstagramCopyAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
-    expect((copy as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-copy@16");
+    expect((copy as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-copy@17");
+    const packager = new InstagramPostPackagerAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
+    expect((packager as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-post-package@1");
     const qa = new InstagramVisualQaAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
     expect((qa as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-visual-qa@4");
     const vet = new InstagramImageVettingAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
@@ -492,14 +503,15 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     expect((concept as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-concept@1");
   });
 
-  it("instagram-copy@16, instagram-image-vet@5, instagram-art-director@1 and instagram-concept@1 resolve, each byte-identical to its own latest.md", async () => {
+  it("instagram-copy@17, instagram-post-package@1, instagram-image-vet@5, instagram-art-director@1 and instagram-concept@1 resolve, each byte-identical to its own latest.md", async () => {
     // Phase 3 (items Q and R). The byte comparison is the one `check:prompts`
     // makes too, and it is here as well because a drifted `latest.md` is the
     // failure mode where a run silently reads a DIFFERENT prompt from the one
     // its version pin names.
     const promptStore = makePromptStore();
     for (const [promptId, version, h1] of [
-      ["instagram-copy", "16", "# Instagram Copy Craft Guide, v16"],
+      ["instagram-copy", "17", "# Instagram Copy Craft Guide, v17"],
+      ["instagram-post-package", "1", "# Instagram Post Package Guide, v1"],
       ["instagram-image-vet", "5", "# Instagram Image Vetting Craft Guide — v5"],
       ["instagram-art-director", "1", "# Instagram Art Direction Guide — v1"],
       ["instagram-concept", "1", "# Instagram Concept Direction Guide — v1"],
@@ -592,6 +604,16 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
       "copy",
       "vet",
       "relevance",
+      // Phase 5 (RFC-18 §2 and §12). `07j-value-judge` sits HERE, between
+      // relevance and the native editor, and nowhere else. AFTER relevance
+      // because a post that is not this client's business is dead anyway and
+      // relevance is the cheaper refusal. BEFORE the native editor because the
+      // editor's corrections are ANCHORED SPANS into headline/body/caption, so
+      // a value-driven rewrite landing after `07f` would invalidate every
+      // applied correction and every span a second round rests on. Language is
+      // the last word on the sentences, and this line is where that decision is
+      // actually enforced against thirty files' worth of positional fixtures.
+      "valueJudge",
       // Phase 4 (RFC-15 §6.5) renamed this slot `fluency` -> `nativeEditor`
       // and made it VARIADIC (one entry per judge round). It did not move:
       // the native editor runs at the same point in the run the fluency judge
@@ -599,9 +621,24 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
       // valid.
       "nativeEditor",
       "qa",
+      // The packager pair sits AFTER `qa`, because `08c*` runs once the attempt
+      // loop has broken: alt text written for a slide a redraft is about to
+      // throw away is money burned, and none of the package's fields is an
+      // input to any gate inside the loop. `packageNative` is its own key
+      // rather than one more entry in `nativeEditor`'s variadic slot precisely
+      // because it is consumed at a DIFFERENT position; folding it in would
+      // desynchronise every fixture that queues a carousel round.
+      "postPackager",
+      "packageNative",
     ]);
 
     const labelled = standardTurns({
+      // `valueJudge` and `postPackager` are passed explicitly here even though
+      // `standardTurns` would default them, so this assertion stays about ORDER
+      // rather than about what the defaults happen to contain. The defaulting
+      // itself is `turns.ts`'s own contract and is tested where it lives.
+      valueJudge: "valueJudge",
+      postPackager: "postPackager",
       qa: "qa",
       copy: "copy",
       brief: "brief",
@@ -634,8 +671,10 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
       "copy",
       "vet",
       "relevance",
+      "valueJudge",
       "nativeEditor",
       "qa",
+      "postPackager",
     ]);
 
     // Omitted keys are skipped, not defaulted: a run that stops before the

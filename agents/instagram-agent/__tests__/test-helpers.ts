@@ -455,8 +455,130 @@ const GOOD_VISUAL_NEEDS = [
   "a small team gathered around a table reviewing printed charts",
 ];
 
+/**
+ * The headline and body for each of `SIX_RESEARCH_FACTS`, in order.
+ *
+ * ## Why this is not `Finding #N` plus the card's claim any more (Phase 5)
+ *
+ * Until RFC-18 this fixture was six slides headlined `Finding #1` ... `Finding
+ * #6`, each body the fact card's `claim` copied VERBATIM. Nothing measured
+ * either fact, so nothing objected. `07i-value-signals` measures both, and
+ * refuses on both:
+ *
+ * - `checkRhythm` - six headlines opening with the same word is the cadence
+ *   that makes a carousel read as one paragraph cut into six.
+ * - `checkSourceProse` - a body that IS its source's sentence shares far more
+ *   than eight consecutive tokens with it, which is the press-release-with-a-
+ *   filter-on-it the prose ban exists to stop.
+ *
+ * **The gate was right and the fixture was wrong.** A file called
+ * `goodCopyOutput` whose copy a value gate refuses is a lie in its own name,
+ * and a human editor would have sent this draft back long before any gate
+ * did. It is the same shape as PR #108's `syntheticPhotograph`: an old fixture
+ * that was never what it claimed to be, exposed the moment a measurement got
+ * honest. **When a new measurement fails an old fixture, suspect the fixture.**
+ *
+ * So these are written as copy rather than tuned to clear a threshold: a cover
+ * that takes a position, one claim per slide with what follows from it for the
+ * reader, and every figure kept exactly as its card states it while the
+ * sentence around it is this account's own. `weakCopyOutput()` below is the
+ * deliberate other side, so the suite still exercises the refusal.
+ *
+ * `sourceRef` stays the card's `claim` BYTE FOR BYTE on every slide: it is a
+ * citation, `07-self-check` traces it verbatim, and `checkSourceProse`
+ * excludes it for exactly that reason.
+ */
+const GOOD_SLIDE_COPY: ReadonlyArray<{ headline: string; body: string }> = [
+  {
+    headline: "Stop hand-building the weekly report",
+    body: "Every team that handed it to the tool got about 4 hours a week back, which is most of a working morning nobody was billing for.",
+  },
+  {
+    headline: "Triage on arrival, not once the queue is deep",
+    body: "Sorting tickets the moment they land resolved 30% more of them, and the queue stopped being the thing that decided everyone's afternoon.",
+  },
+  {
+    headline: "A checklist is worth two working days",
+    body: "Clients onboarded against one hit first value 2 days sooner, so the second invoice lands in the same month as the first.",
+  },
+  {
+    headline: "The number that says whether a change survives",
+    body: "Satisfaction inside the team went up 25% after this one, and a process the people running it resent does not last a busy quarter.",
+  },
+  {
+    headline: "Five rounds of revisions became two",
+    body: "Writing the constraint into the brief took design from 5 to 2, which is three fewer meetings on every single piece of work.",
+  },
+  {
+    headline: "Onboarding now takes a week",
+    body: "It ran to 14 days and now runs to 7, the difference between a client who still remembers the sales call and one who does not.",
+  },
+];
+
+/**
+ * Six different opening words, one per slide of a six-slide fixture.
+ *
+ * `07i-value-signals`' `checkRhythm` refuses three slides that open with the
+ * same word, and a templated fixture headline (`` `${seed} note ${i + 1}` ``)
+ * opens all six with the same one. That is the cadence the check was written
+ * to catch and the fixtures were written before anything measured it.
+ */
+const FIXTURE_HEADLINE_OPENERS = ["First", "Then", "Next", "Also", "Finally", "Lastly"] as const;
+
+/**
+ * A slide headline for a fixture that does not care what its copy SAYS, only
+ * that a run reaches the step under test.
+ *
+ * Two things it guarantees, both of which `07i-value-signals` now measures and
+ * neither of which a templated `` `${subject} ${i + 1}` `` had:
+ *
+ * - a DIFFERENT opening word per slide, for `checkRhythm`;
+ * - a numeral carrying a counted noun (`", 1 of 6"`), which is what
+ *   `hasNamedSpecific` reads, so `checkNamedSpecifics` finds its
+ *   `ceil(slides / 3)` specifics and `checkCoverTension` finds a number on the
+ *   cover.
+ *
+ * A fixture whose copy IS the subject of the test writes its own headlines;
+ * this is for the dozen that only need a run to get as far as `08` or `09`.
+ */
+export function fixtureHeadline(index: number, subject: string): string {
+  return `${FIXTURE_HEADLINE_OPENERS[index % FIXTURE_HEADLINE_OPENERS.length]} ${subject}, ${index + 1} of 6`;
+}
+
 /** Six clean slides, one per `SIX_RESEARCH_FACTS` entry, each `sourceRef` matching a fact's `claim` verbatim. */
 export function goodCopyOutput(): InstagramCopyOutput {
+  return {
+    format: "carousel",
+    caption:
+      "We measured every process change we made this quarter instead of trusting our memory of it. Here is what each one returned, and which one we would do first if we started the quarter again.",
+    slides: SIX_RESEARCH_FACTS.map((fact, i) => ({
+      n: i + 1,
+      headline: GOOD_SLIDE_COPY[i]!.headline,
+      body: GOOD_SLIDE_COPY[i]!.body,
+      visualNeed: GOOD_VISUAL_NEEDS[i]!,
+      sourceRef: fact.claim,
+      layout: "photo" as const,
+    })),
+  };
+}
+
+/**
+ * The deliberate other side of `goodCopyOutput()`: a draft that passes every
+ * gate that existed before Phase 5 and that `07i-value-signals` refuses.
+ *
+ * It exists so the suite exercises the gate's REFUSAL path end to end. A
+ * fixture set in which nothing can make a gate say no is a guard that cannot
+ * fail, which is the failure mode this repository keeps catching in its own
+ * tests. Grounded, on-brief, correctly sourced, clean typography, and
+ * worthless - which is exactly the post the 2026-09-08 audit charged that
+ * nothing was catching.
+ *
+ * It refuses on `checkSourceProse` first (every body is its card's sentence)
+ * and would refuse on `checkRhythm` too (six headlines opening with the same
+ * word). Both are named here so a reader knows which one moves if either
+ * check's wording changes.
+ */
+export function weakCopyOutput(): InstagramCopyOutput {
   return {
     format: "carousel",
     caption: "A quick look at the process changes that actually moved the needle this quarter, and what teams did differently.",
