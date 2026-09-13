@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { buildMarkRing } from "../src/workflow/emphasis-marks.js";
 import {
   DEFAULT_QUALITY_STUDIO,
 } from "@agent-engine/tool-karos-templates";
 import {
   KNOWN_SLOT_NAMES,
+  PLAIN_TWIN_OF,
+  RUNS_SLOT_NAMES,
   ROLE_BY_ARCHETYPE,
   ROUTABLE_ARCHETYPE_IDS,
   SCRIPT_GLYPH_PROBE,
@@ -476,6 +479,75 @@ describe("the sample content is built by CODE", () => {
     const content = buildStudioSampleContent({ archetypeId: "list_takeaway", slots: ["headline", "itemRows"] }, seed);
     expect(content.htmlFragments["itemRows"]).not.toContain("<script>");
     expect(content.htmlFragments["itemRows"]).toContain("&lt;script&gt;");
+  });
+
+  /**
+   * RFC-17 — THE VALIDATION PLATE HAS TO EXERCISE THE MARKED PATH.
+   *
+   * The eight `*Runs` names were admitted to `SLOTS_BY_ARCHETYPE` and
+   * `PRIVILEGED_HTML_SLOTS` — so gates 2 and 3 pass a draft that declares one
+   * — before this builder had any case for them. Every `*Runs` slot fell
+   * through to `default:` and was filled with NOTHING, so the plate that
+   * decides whether a studio template ships carried zero `.mk` elements and
+   * the mark sheet spliced into that render painted nothing. A template could
+   * declare `titleRuns`, render a blank field, and pass.
+   */
+  const markRing = buildMarkRing({ brandAccent: "#C8FF4D", palette: [] }, "#17181C", "#F4F2EC", []);
+
+  it("fills every *Runs slot with a REAL marked fragment, from the same copy its plain twin carries", () => {
+    const seed = studioSampleSeedFromBrief({ brief, kit, clientSlug: "acme", markRing });
+    const content = buildStudioSampleContent({ archetypeId: "cover", slots: ["title", "titleRuns", "subtitle", "subtitleRuns"] }, seed);
+
+    // The premise: a ring was derivable, so a missing fragment below would be
+    // a routing failure and not an absent ring.
+    expect(markRing.hexes.length, "no ring — this case would be vacuous").toBeGreaterThan(0);
+
+    for (const slot of ["titleRuns", "subtitleRuns"]) {
+      const fragment = content.htmlFragments[slot];
+      expect(fragment, `${slot} was not filled`).toBeDefined();
+      // Through `buildMarkedRuns`, so it carries the positional colour class
+      // and a kind the ground actually admits — not hand-written markup no run
+      // could produce.
+      expect(fragment, `${slot} carries no mark`).toMatch(/<span class="mk mk-c\d mk-k-(underline|swish|double|ink|block)">/);
+      expect(fragment, `${slot} lost the unmarked remainder`).toContain('<span class="mk-t">');
+    }
+    // The plain twin is still filled with the SAME copy: the pair is never a
+    // swap, and `fillTemplate` erases whichever slot nobody filled.
+    expect(content.fields["title"]).toBe(seed.headline);
+    expect(content.fields["subtitle"]).toBe(seed.body);
+  });
+
+  it("fills NOTHING, rather than something unmarked, when no ring is derivable", () => {
+    // Exactly what a run with no derivable ground pair does. `fillTemplate`
+    // erases the empty slot and the plain twin shows — a degraded plate, never
+    // a blank field.
+    const seed = studioSampleSeedFromBrief({ brief, kit, clientSlug: "acme" });
+    const content = buildStudioSampleContent({ archetypeId: "cover", slots: ["title", "titleRuns"] }, seed);
+    expect(content.htmlFragments["titleRuns"]).toBe("");
+    expect(content.fields["title"]).toBe(seed.headline);
+  });
+
+  it("isolates each run exactly ONCE on an RTL sample — the seed is already isolated and the resolver takes raw copy", () => {
+    const hebrewBrief = goodClientBrief({
+      positioning: { oneLiner: "גיקטיים מסקרת את עולם ההייטק הישראלי לקהל מקצועי מאוד.", whatWeSell: "כיסוי יומי", differentiators: [] },
+    });
+    const seed = studioSampleSeedFromBrief({ brief: hebrewBrief, kit, clientSlug: "geektime", targetLanguage: "Hebrew", dir: "rtl", markRing });
+    const fragment = buildStudioSampleContent({ archetypeId: "cover", slots: ["title", "titleRuns"] }, seed).htmlFragments["titleRuns"] ?? "";
+    expect(fragment.length).toBeGreaterThan(0);
+    // A nested FSI/PDI pair is the `⁨API⁩ ⁨v2⁩` regression `bidi-isolate.ts`
+    // documents. Feeding the already-isolated seed straight in would produce
+    // one; `stripIsolates` before `resolveSlideMarks` is what prevents it.
+    expect(fragment).not.toMatch(/⁨⁨|⁩⁩/u);
+  });
+
+  it("gate 2 refuses a *Runs slot declared without its plain twin", () => {
+    // Both halves are individually legal — gate 2's "declared but never read"
+    // and gate 3's privileged-slot check both pass — so nothing else can see
+    // it. And the marked fragment is EMPTY on every slide that declares no
+    // emphasis, which is most of them, so the field would render blank.
+    expect(PLAIN_TWIN_OF["titleRuns"]).toBe("title");
+    expect(PLAIN_TWIN_OF["quoteRuns"]).toBe("quoteText");
+    expect(Object.keys(PLAIN_TWIN_OF).sort()).toEqual([...RUNS_SLOT_NAMES].sort());
   });
 
   it("only fills a hero when the caller actually has an image path — a photo ground must otherwise hold the frame itself", () => {
