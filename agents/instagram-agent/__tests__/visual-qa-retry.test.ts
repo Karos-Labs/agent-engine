@@ -83,7 +83,13 @@ describe("08b-visual-qa: post-render visual QA runs and retries through the SAME
     expect(qa2.output.finalOutput.pass).toBe(true);
   }, 60000);
 
-  it("holds the whole post after exhausting all 3 attempts when visual QA never passes", async () => {
+  it("DELIVERS THE RENDER IT ALREADY PAID FOR after all 3 attempts fail visual QA, degraded and naming the ruleId", async () => {
+    // RFC-19 §4 item 9. The judge refuses all three renders, at the same bar, in
+    // the same words — nothing here is relaxed. What changed is the third one:
+    // `finalRendered` is the PNG set attempt 3 already rendered, one assignment
+    // away, and binning it removed the absurdity where crossing the hard max made
+    // a run SAFER than staying under it (`WF:8454`'s cheapest-path branch has
+    // always delivered a post whose QA it could not afford to buy).
     const promptStore = makePromptStore();
     const badQa = { pass: false, findings: [{ ruleId: "nothing-overlaps", passed: false, note: "a headline field and a stat field both claim the same region" }] };
     const router = fakeRouterSequence([
@@ -97,6 +103,11 @@ describe("08b-visual-qa: post-render visual QA runs and retries through the SAME
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(badQa),
+      // The ONE turn this fixture gains, and the only one: attempt 3's QA refusal
+      // no longer returns the draft to `05`, so the loop breaks normally and
+      // `08c-package-post` is bought — the turn a delivering run has always
+      // bought, arriving on a path that never used to deliver.
+      finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: testTools(env),
@@ -111,16 +122,47 @@ describe("08b-visual-qa: post-render visual QA runs and retries through the SAME
     const engine = new WorkflowEngine(durableStore);
     const result = await engine.run(workflowFn, { ...params, runId: "instagram_run_visualqa_exhausted" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/self-check never passed after 3 attempt/i);
-    expect(result.reason).toMatch(/visual QA failed on attempt 3/i);
+    expect(result.status, JSON.stringify(result)).toBe("completed");
+    if (result.status !== "completed") throw new Error("unreachable");
 
     const stepIds = (await durableStore.listSteps("instagram_run_visualqa_exhausted")).map((s) => s.stepId);
     expect(stepIds).toContain("08b-visual-qa-attempt-3");
-    expect(stepIds).not.toContain("09b-deliver-and-log");
+    // There is no fourth attempt: the loop exited because attempt 3 finished, not
+    // because it ran out of road.
+    expect(stepIds).not.toContain("05-write-copy-attempt-4");
 
-    const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", "instagram_run_visualqa_exhausted", "_"]);
-    expect(deliverables).toHaveLength(0);
+    // THE PREMISE (RFC-19 §8.2 assertion 7): the judge really did refuse the
+    // render that shipped. A fall-through must happen AFTER a refusal, never
+    // INSTEAD of one — without this line the case would pass just as happily if
+    // `08b` had quietly started passing everything.
+    const qa3 = (await durableStore.getStep("instagram_run_visualqa_exhausted", "08b-visual-qa-attempt-3")) as { output: { finalOutput: { pass: boolean } } };
+    expect(qa3.output.finalOutput.pass).toBe(false);
+
+    // The finding carries the judge's OWN ruleId and note, never a paraphrase —
+    // a reviewer has to be able to go and read `nothing-overlaps`.
+    const selfCheck = result.output.selfCheck;
+    expect(selfCheck?.status).toBe("degraded");
+    const finding = selfCheck!.checks.find((c) => c.gate === "visual-qa");
+    expect(finding, `checks: ${JSON.stringify(selfCheck?.checks)}`).toBeDefined();
+    expect(finding!.kind).toBe("nothing-overlaps");
+    expect(finding!.detail).toContain("a headline field and a stat field both claim the same region");
+    // A judge that REFUSED is not a judge that could not run: `unjudged` is a
+    // different kind for a different event (§4 item 10) and must not appear here.
+    expect(finding!.kind).not.toBe("unjudged");
+
+    // THE TURN COUNT, ENUMERATED (RFC-19 §8.2 assertion 9):
+    //   scout 1 + research 1 + angle 1                                        = 3
+    //   3 × (copy + vet + relevance + value + visual QA)                      = 15
+    //   after the loop: packager                                              = 1
+    //                                                                     total 19
+    expect(router.complete).toHaveBeenCalledTimes(19);
+
+    // And the client receives it, with the truth attached rather than a 404.
+    const deliverables = await env.store.listJson<{ deliverable: { selfCheck?: { reason: string } } }>(
+      "acme",
+      ["ledger", "deliverables", "instagram_run_visualqa_exhausted", "_"],
+    );
+    expect(deliverables).toHaveLength(1);
+    expect(deliverables[0]!.data.deliverable.selfCheck?.reason).toBe(selfCheck!.reason);
   }, 60000);
 });

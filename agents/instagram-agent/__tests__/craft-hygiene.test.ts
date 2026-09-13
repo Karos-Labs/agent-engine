@@ -2,7 +2,7 @@ import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import type { AgentContext, AgentToolRegistry } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
-import { checkCraftHygiene, checkSentenceCase } from "../src/workflow/craft-hygiene.js";
+import { checkCraftHygiene, checkSentenceCase, CRAFT_GATE_OUTAGE_SLUG } from "../src/workflow/craft-hygiene.js";
 import type { InstagramCopyOutput } from "../src/workflow/types.js";
 import {
   goodRelevanceVerdict,
@@ -191,6 +191,118 @@ describe("Fix 3: unconditional mechanical craft-hygiene gate (em dash / exclamat
     });
   });
 
+  /**
+   * ── RFC-19 §3, Mechanism C: a gate that could not run has no opinion ──
+   *
+   * `07e2` has taken this posture since Phase 4, in its own words: "A gate that
+   * could not RUN is not a verdict on the draft, and this one is free — there
+   * is no spend to justify failing a run over." `gate.lintPost` is free too,
+   * and this gate got it wrong in BOTH of the two shapes an outage arrives in,
+   * on two adjacent lines:
+   *
+   * - a non-success `execute` OUTCOME threw `WorkflowToolingFailure`, ending a
+   *   run that had already paid for its draft, its images and its vetting;
+   * - a `tooling_error` VERDICT was converted into a CONTENT refusal whose
+   *   sentence says the caption "failed the mechanical craft-hygiene gate" —
+   *   about a caption the gate never read. That one is the worse of the two:
+   *   it fed the redraft prompt a complaint no writer can act on, three times,
+   *   and then the loop's exhaustion terminus held the run.
+   *
+   * `checkPostPackage` already draws exactly this line for the same tool
+   * (`post-package.test.ts`), and its comment cited THIS gate's throw as the
+   * correct opposite. That asymmetry is what RFC-19 removes: the argument for
+   * it was "copy inside the drafting loop must not ship unchecked", and an
+   * outage does not check it either way — it just decides whether the client
+   * gets the post.
+   */
+  describe("Mechanism C: a gate.lintPost outage forms no opinion (RFC-19 §3)", () => {
+    let env: TestEnvironment;
+
+    beforeEach(async () => {
+      env = await setupTestEnvironment();
+    });
+
+    afterEach(async () => {
+      await env.cleanup();
+    });
+
+    /** The two shapes an outage takes, on the two different lines they arrive on. Same shape `post-package.test.ts` uses. */
+    type LintOutcome = Awaited<ReturnType<NonNullable<TestEnvironment["tools"]["gate.lintPost"]>["execute"]>>;
+    const outages: ReadonlyArray<[string, LintOutcome]> = [
+      ["a non-success outcome", { status: "tooling_error", reason: "lint provider unavailable" }],
+      ["a `tooling_error` verdict", { status: "success", result: { verdict: "tooling_error", reason: "lint provider unavailable", toolVersion: "1.0.0" } }],
+    ];
+
+    function withOutage(env: TestEnvironment, outcome: LintOutcome): AgentToolRegistry {
+      return { ...env.tools, "gate.lintPost": { ...env.tools["gate.lintPost"]!, execute: async () => outcome } } as AgentToolRegistry;
+    }
+
+    for (const [label, outcome] of outages) {
+      it(`treats ${label} as a pass that SAYS it did not run, not as a refusal and not as a throw`, async () => {
+        // The em dash the real gate refuses in the tests above. THE PREMISE:
+        // this exact copy is proved to be a refusal when the gate is healthy,
+        // so a pass here is the outage doing it, not a clean draft.
+        const copy = copyWith("Teams saved time — a lot of it, every single week.");
+        await expect(checkCraftHygiene(env.tools, ctx, copy)).resolves.toMatchObject({ ok: false });
+
+        const result = await checkCraftHygiene(withOutage(env, outcome), ctx, copy);
+        // Still a pass: the draft ships, because a gate that could not RUN is not a verdict on it.
+        expect(result.ok).toBe(true);
+        // And NOT a bare `{ ok: true }` — that is a clean bill of health the anti-slop half never gave, on a
+        // draft the healthy gate is proved one line above to refuse. `outage` is what the workflow turns
+        // into the `kind: "not-checked"` self-check finding the client and the `09a` reviewer both read.
+        expect(result.outage).toMatch(/gate\.lintPost could not form a view/);
+        // Precise about WHICH half went dark: the sentence-case checks are local code and still ran.
+        expect(result.outage).toMatch(/anti-slop half recorded NO OPINION on this draft; the sentence-case checks still ran/);
+      });
+
+      it(`records ONE ledger warn naming the gate and the outage for ${label}`, async () => {
+        await checkCraftHygiene(withOutage(env, outcome), ctx, goodCopyOutput());
+        const events = await env.store.listJson<{ level: string; eventId: string; message: string }>("acme", ["ledger", "events", ctx.runId]);
+        const warn = events.find((e) => e.data.eventId === `${ctx.runId}__${CRAFT_GATE_OUTAGE_SLUG}`);
+        expect(warn, `events: ${JSON.stringify(events)}`).toBeDefined();
+        expect(warn!.data.level).toBe("warn");
+        expect(warn!.data.message).toMatch(/gate\.lintPost could not form a view/);
+        expect(warn!.data.message).toMatch(/NO OPINION/);
+        // Names WHICH outage, so a reader can tell a dead provider from a
+        // provider that answered with a shrug.
+        expect(warn!.data.message).toMatch(outcome.status === "success" ? /verdict: tooling_error/ : /outcome: tooling_error/);
+      });
+
+      it(`still refuses shouting for ${label} — the outage silences the tool's half, never the local half`, async () => {
+        // THE ANTI-WEAKENING ASSERTION. A "no opinion" that returned early
+        // would skip `checkSentenceCase`, which needs no tool at all, and the
+        // gate would quietly stop enforcing the one rule it can enforce on its
+        // own. The bar does not move: this draft still refuses with the gate
+        // out.
+        const shouting = { ...goodCopyOutput(), caption: "STOP scrolling. This quarter's process changes, in six slides." };
+        const result = await checkCraftHygiene(withOutage(env, outcome), ctx, shouting);
+        expect(result.ok).toBe(false);
+        if (result.ok) throw new Error("unreachable");
+        expect(result.reason).toMatch(/^caption failed the sentence-case check: /);
+      });
+    }
+
+    it("a REGISTERED tool that failed and an UNREGISTERED tool are different things, and only the second one throws", async () => {
+      // RFC-19 §6 item 8. An unregistered tool is a deploy defect: there is
+      // nothing to measure the draft with and no redraft produces one. Keeping
+      // this throw is what makes the no-opinion branch above a narrow decision
+      // rather than "the gate stopped mattering".
+      await expect(checkCraftHygiene({}, ctx, goodCopyOutput())).rejects.toThrow(/not registered/);
+    });
+
+    it("a content_fail verdict is untouched by any of this — the gate still refuses exactly what it refused", async () => {
+      const refusing: LintOutcome = {
+        status: "success",
+        result: { verdict: "content_fail", evidence: [], reason: "thread part 2: contains an em dash", toolVersion: "1.0.0" },
+      };
+      const result = await checkCraftHygiene(withOutage(env, refusing), ctx, goodCopyOutput());
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("unreachable");
+      expect(result.reason).toBe("slide 1 failed the mechanical craft-hygiene gate: contains an em dash");
+    });
+  });
+
   describe("wired into the workflow's retry loop (integration)", () => {
     let env: TestEnvironment;
 
@@ -237,7 +349,30 @@ describe("Fix 3: unconditional mechanical craft-hygiene gate (em dash / exclamat
       expect(hygiene1.output.ok).toBe(false);
     }, 60000);
 
-    it("blocks a draft with an exclamation mark, holding the whole post after exhausting all attempts if never fixed", async () => {
+    /**
+     * ── RFC-19 §8.6: this case used to end `held` ──
+     *
+     * It asserted `/self-check never passed after 3 attempt/` and that ZERO
+     * deliverables existed. Three drafts were paid for, three were refused over
+     * an exclamation mark, and the client received nothing. An exclamation mark
+     * is EXACTLY the class the owner named: "if the score is not good then it
+     * should repeat steps or do something else, but THE CLIENT CANNOT RECEIVE A
+     * FAILED RUN unless it is a real fault."
+     *
+     * The gate is not weakened — `07b-craft-hygiene-attempt-3` still refuses,
+     * and this test asserts that it did (the premise assertion, RFC-19 §8.2:
+     * without it this passes just as happily when the gate silently stopped
+     * running). What changed is what happens after the refusal: attempt 3 walks
+     * on, the post ships, and the reviewer is handed the gate's own sentence.
+     *
+     * **The turn count is ENUMERATED, not observed** (RFC-19 §8.2 assertion 9,
+     * §11 item 4): 3 pre-loop (scout, research, angle) + 2 per refused attempt
+     * (copy, vetting) × 3 + the 3 the delivering attempt now reaches (relevance,
+     * value, visual QA) + 1 packager = 13. A new model call anywhere in this
+     * path exhausts the queue and this test fails loudly — which is the real
+     * enforcement of RFC-19 §7's "added planned cost: $0.000000".
+     */
+    it("delivers a draft whose exclamation mark the gate refused on every attempt, marked degraded, rather than holding", async () => {
       const promptStore = makePromptStore();
       const shoutyCopy = copyWith("Four hours back every week!");
       const router = fakeRouterSequence([
@@ -248,6 +383,7 @@ describe("Fix 3: unconditional mechanical craft-hygiene gate (em dash / exclamat
         finalTurn(goodImageVettingOutput()),
         finalTurn(shoutyCopy),
         finalTurn(goodImageVettingOutput()),
+        finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
       ]);
       const workflowFn = createInstagramAgentWorkflow({
         tools: testTools(env),
@@ -260,20 +396,80 @@ describe("Fix 3: unconditional mechanical craft-hygiene gate (em dash / exclamat
 
       const durableStore = new MemoryDurableStepStore();
       const engine = new WorkflowEngine(durableStore);
-      const result = await engine.run(workflowFn, { ...params, runId: "instagram_run_craft_exhausted" });
+      const runId = "instagram_run_craft_exhausted";
+      const result = await engine.run(workflowFn, { ...params, runId });
 
-      expect(result.status).toBe("held");
-      if (result.status !== "held") throw new Error("unreachable");
-      expect(result.reason).toMatch(/self-check never passed after 3 attempt/i);
+      expect(result.status).toBe("completed");
 
-      const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", "instagram_run_craft_exhausted", "_"]);
-      expect(deliverables).toHaveLength(0);
+      // THE PREMISE. The fall-through must be AFTER a refusal, not INSTEAD of
+      // one — six recorded instances in this codebase of a guard that could not
+      // fail say so.
+      const hygiene3 = (await durableStore.getStep(runId, "07b-craft-hygiene-attempt-3")) as { output: { ok: boolean; reason?: string } };
+      expect(hygiene3.output.ok).toBe(false);
+
+      const deliverables = await env.store.listJson<{ deliverable?: { selfCheck?: { status: string; reason: string; checks: Array<Record<string, unknown>> } } }>(
+        "acme",
+        ["ledger", "deliverables", runId, "_"],
+      );
+      expect(deliverables).toHaveLength(1);
+      const selfCheck = deliverables[0]!.data.deliverable?.selfCheck;
+      expect(selfCheck?.status).toBe("degraded");
+
+      // The right gate, in the gate's OWN words — `detail` is never re-worded,
+      // so a reviewer reads what `07b` actually said.
+      const craft = selfCheck?.checks.find((c) => c["gate"] === "craft");
+      expect(craft, `checks: ${JSON.stringify(selfCheck?.checks)}`).toBeDefined();
+      expect(craft!["detail"]).toBe(hygiene3.output.reason);
+      expect(craft!["step"]).toBe("07b-craft-hygiene-attempt-3");
+
+      expect(router.complete).toHaveBeenCalledTimes(13);
     }, 60000);
 
-    it("is unconditional: a client style config with NO banned_chars still blocks an em dash", async () => {
+    /**
+     * Assertion 8 (RFC-19 §8.2) for the case above: the same fixture with the
+     * trigger removed must ship with NO marker at all. The marker is absent,
+     * never empty, on a clean run — attaching one unconditionally is the
+     * "silently shipping a bad post" failure in reverse: shouting `degraded` at
+     * every clean post until nobody reads the word.
+     */
+    it("attaches NO selfCheck marker when the identical fixture's draft is clean", async () => {
+      const promptStore = makePromptStore();
+      const cleanCopy = goodCopyOutput();
+      const router = fakeRouterSequence([
+        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+        finalTurn(cleanCopy),
+        finalTurn(goodImageVettingOutput()),
+        finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
+      ]);
+      const workflowFn = createInstagramAgentWorkflow({
+        tools: testTools(env),
+        promptStore,
+        router,
+        repoRoot: env.repoRoot,
+        imageCandidatePool: goodImageCandidatePool(),
+        autoApprove: true,
+      });
+
+      const durableStore = new MemoryDurableStepStore();
+      const engine = new WorkflowEngine(durableStore);
+      const runId = "instagram_run_craft_clean";
+      const result = await engine.run(workflowFn, { ...params, runId });
+
+      expect(result.status).toBe("completed");
+      const hygiene1 = (await durableStore.getStep(runId, "07b-craft-hygiene-attempt-1")) as { output: { ok: boolean } };
+      expect(hygiene1.output.ok).toBe(true);
+
+      const deliverables = await env.store.listJson<{ deliverable?: { selfCheck?: unknown } }>("acme", ["ledger", "deliverables", runId, "_"]);
+      expect(deliverables).toHaveLength(1);
+      expect(deliverables[0]!.data.deliverable?.selfCheck).toBeUndefined();
+    }, 60000);
+
+    it("is unconditional: a client style config with NO banned_chars still refuses an em dash, and the post still ships degraded", async () => {
       // goodStyleConfig()'s default banned_chars is [] -- if craft hygiene were
       // driven by client config instead of unconditional, this em dash would
-      // sail through untouched.
+      // sail through untouched and `07b` would report `ok: true`. The
+      // `ok: false` assertion below is what keeps THAT the thing under test:
+      // "completed" alone would pass whether the gate refused or never looked.
       const promptStore = makePromptStore();
       const emDashCopy = copyWith("Teams saved time — every week, reliably.");
       const router = fakeRouterSequence([
@@ -284,6 +480,7 @@ describe("Fix 3: unconditional mechanical craft-hygiene gate (em dash / exclamat
         finalTurn(goodImageVettingOutput()),
         finalTurn(emDashCopy),
         finalTurn(goodImageVettingOutput()),
+        finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
       ]);
       const workflowFn = createInstagramAgentWorkflow({
         tools: testTools(env),
@@ -296,9 +493,21 @@ describe("Fix 3: unconditional mechanical craft-hygiene gate (em dash / exclamat
 
       const durableStore = new MemoryDurableStepStore();
       const engine = new WorkflowEngine(durableStore);
-      const result = await engine.run(workflowFn, { ...params, runId: "instagram_run_craft_unconditional" });
+      const runId = "instagram_run_craft_unconditional";
+      const result = await engine.run(workflowFn, { ...params, runId });
 
-      expect(result.status).toBe("held");
+      expect(result.status).toBe("completed");
+      for (const attempt of [1, 2, 3]) {
+        const hygiene = (await durableStore.getStep(runId, `07b-craft-hygiene-attempt-${attempt}`)) as { output: { ok: boolean; reason?: string } };
+        expect(hygiene.output.ok, `attempt ${attempt}`).toBe(false);
+        expect(hygiene.output.reason).toMatch(/em dash/);
+      }
+
+      const deliverables = await env.store.listJson<{ deliverable?: { selfCheck?: { checks: Array<Record<string, unknown>> } } }>(
+        "acme",
+        ["ledger", "deliverables", runId, "_"],
+      );
+      expect(deliverables[0]!.data.deliverable?.selfCheck?.checks.some((c) => c["gate"] === "craft")).toBe(true);
     }, 60000);
   });
 });

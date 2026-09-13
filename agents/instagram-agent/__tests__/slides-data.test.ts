@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { AgentContext, AgentToolRegistry } from "@agent-engine/core";
 import fsp from "node:fs/promises";
 import pathMod from "node:path";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
@@ -15,26 +16,33 @@ import {
   goodImageVettingOutput,
   goodResearchOutput,
   goodVisualQaOutput,
+  goodStyleConfig,
   makePromptStore,
   setupTestEnvironment,
   type TestEnvironment,
   pendingStudioRow,
+  SIX_RESEARCH_FACTS,
 } from "./test-helpers.js";
 import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import {
   assembleSlidesData,
   buildListRows,
   buildVariationPlan,
+  checkSlidesData,
   collectDeviceIssues,
+  COMPLIANCE_GATE_OUTAGE_SLUG,
   eligibleAlternateTemplates,
   fallbackArchetypeFor,
   HERO_IMAGE_LAYOUTS,
   invertedTemplateFileName,
   isVariationSlot,
+  normaliseSourceRef,
   pickAlternateTemplate,
+  repairSourceRefs,
   resolveLayout,
   VARIATION_MIX,
   type SlidePosition,
+  type SlidesCheckRefusalKind,
 } from "../src/workflow/slides-data.js";
 import { deriveBrandRenderTokens, paletteForSlide } from "../src/workflow/brand-render-tokens.js";
 import { checkPaletteWithinKit } from "../src/workflow/visual-qa-pre-checks.js";
@@ -1549,4 +1557,629 @@ describe("eligibleAlternateTemplates / pickAlternateTemplate (IGSTYLE-10, §10d)
     expect(a).toEqual(b);
     expect(pickAlternateTemplate([], "run-x")).toBeUndefined();
   });
+});
+
+/**
+ * ── RFC-19 (Phase 6), P2: `checkSlidesData` refuses in KINDS, not in prose ──
+ *
+ * The workflow has to treat two of `checkSlidesData`'s six refusals differently
+ * from the other four. A `compliance` refusal on a REGULATED client routes to
+ * RFC-19 §5.5: the finding rides the top of `selfCheck.checks` with
+ * `severity: "blocking"` and `09a` is reconfigured to `{ duration: "24h",
+ * onTimeout: "hold" }`, because `09a`'s normal timeout is `{ duration: "1h",
+ * onTimeout: "auto_approve" }` and for a regulated client that would make
+ * DELIVERY indistinguishable from PUBLICATION. A count, pairing, source-ref or
+ * banned-term refusal is mechanical and ships recorded.
+ *
+ * The obvious way to draw that line was a regex over `reason`
+ * (`/never say|required framing/`). It would work today and it would silently
+ * reclassify a `never_say` finding as mechanical the first time somebody
+ * improved a sentence — a regulated client's post auto-approving into
+ * publication because of a copy-edit. RFC-19 §11 item 3 names that risk and
+ * this table is the answer to it: **a wording change must break a test, never
+ * quietly downgrade a finding.**
+ *
+ * Every row runs the REAL `checkSlidesData` against the REAL
+ * `gate.brandCompliance` — never a `vi.mock`, which would make these branches
+ * untestable by proving only that a stub returned what the stub was told to.
+ */
+describe("checkSlidesData: the refusal kind is structural (RFC-19 §6, P2)", () => {
+  let env: TestEnvironment;
+  const ctx: AgentContext = { runId: "run_kinds", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring", metadata: {} };
+
+  beforeEach(async () => {
+    env = await setupTestEnvironment();
+  });
+
+  afterEach(async () => {
+    await env.cleanup();
+  });
+
+  const selections = (): ImageSelection[] => goodImageVettingOutput().selections;
+
+  /** One slide's body replaced; everything else stays valid so a refusal traces to exactly one condition. */
+  function bodyOf(text: string, index = 0): InstagramCopyOutput {
+    const copy = goodCopyOutput();
+    return { ...copy, slides: copy.slides.map((s, i) => (i === index ? { ...s, body: text } : s)) };
+  }
+
+  const cases: Array<{
+    name: string;
+    kind: SlidesCheckRefusalKind;
+    reason: RegExp;
+    build: () => { copy: InstagramCopyOutput; selections: ImageSelection[]; styleConfig: ReturnType<typeof goodStyleConfig> };
+  }> = [
+    {
+      name: "a carousel with too few slides",
+      kind: "count",
+      reason: /outside the configured range/,
+      build: () => {
+        const copy = goodCopyOutput();
+        return { copy: { ...copy, slides: copy.slides.slice(0, 3) }, selections: selections().slice(0, 3), styleConfig: goodStyleConfig() };
+      },
+    },
+    {
+      name: "a single-image post carrying six slides",
+      kind: "count",
+      reason: /exactly one slide/,
+      build: () => ({ copy: { ...goodCopyOutput(), format: "single" as const }, selections: selections(), styleConfig: goodStyleConfig() }),
+    },
+    {
+      name: "more slides than image selections",
+      kind: "pairing",
+      reason: /does not match slide count/,
+      build: () => ({ copy: goodCopyOutput(), selections: selections().slice(0, 5), styleConfig: goodStyleConfig() }),
+    },
+    {
+      name: "a slide with no selection of its own",
+      kind: "pairing",
+      reason: /slide 3 has no corresponding image selection/,
+      build: () => ({
+        copy: goodCopyOutput(),
+        selections: selections().map((s) => (s.n === 3 ? { ...s, n: 99 } : s)),
+        styleConfig: goodStyleConfig(),
+      }),
+    },
+    {
+      name: "a mis-cited sourceRef",
+      kind: "source-ref",
+      reason: /does not match any research fact's claim verbatim/,
+      build: () => {
+        const copy = goodCopyOutput();
+        return {
+          copy: { ...copy, slides: copy.slides.map((s, i) => (i === 1 ? { ...s, sourceRef: "a claim nobody ever researched" } : s)) },
+          selections: selections(),
+          styleConfig: goodStyleConfig(),
+        };
+      },
+    },
+    {
+      name: "a client-configured banned word",
+      kind: "banned-term",
+      reason: /failed the banned word\/character check/,
+      build: () => ({
+        copy: bodyOf("This approach is guaranteed to work for every team we have measured."),
+        selections: selections(),
+        styleConfig: goodStyleConfig(),
+      }),
+    },
+    {
+      name: "gate.brandCompliance's own always-on promise floor",
+      kind: "banned-term",
+      reason: /guaranteed returns/i,
+      build: () => ({
+        copy: bodyOf("We offer guaranteed returns on every plan, measured across the quarter."),
+        selections: selections(),
+        styleConfig: goodStyleConfig({ banned_words: [], banned_chars: [] }),
+      }),
+    },
+    {
+      name: "a regulated client's missing required_framing",
+      kind: "compliance",
+      reason: /required framing phrase is missing/,
+      build: () => ({
+        copy: goodCopyOutput(),
+        selections: selections(),
+        styleConfig: goodStyleConfig({ compliance: { regulated: true, required_framing: ["results are not guaranteed"], never_say: [] } }),
+      }),
+    },
+    {
+      name: "a regulated client's never_say phrase",
+      kind: "compliance",
+      reason: /never say/i,
+      build: () => ({
+        copy: bodyOf("The team found that with this approach you cannot lose, measured over two quarters."),
+        selections: selections(),
+        styleConfig: goodStyleConfig({ banned_words: [], compliance: { regulated: true, required_framing: [], never_say: ["cannot lose"] } }),
+      }),
+    },
+  ];
+
+  for (const testCase of cases) {
+    it(`classifies ${testCase.name} as kind '${testCase.kind}'`, async () => {
+      const built = testCase.build();
+      const result = await checkSlidesData(env.tools, ctx, built.copy, built.selections, goodResearchOutput(), built.styleConfig);
+      expect(result.ok, result.ok ? "the gate did not refuse at all — this case's premise is gone" : "").toBe(false);
+      if (result.ok) throw new Error("unreachable");
+      expect(result.kind).toBe(testCase.kind);
+      expect(result.reason).toMatch(testCase.reason);
+    });
+  }
+
+  /**
+   * The negative half, stated as its own assertion rather than left implied by
+   * the table: the REGULATED refusals and the MECHANICAL ones are disjoint
+   * sets, and nothing mechanical may ever be spelled `compliance`. This is the
+   * assertion that fails if somebody re-introduces a prose match — the word
+   * "guaranteed" appears in a required_framing refusal AND in a banned-word
+   * refusal, so a regex over `reason` gets at least one of these wrong.
+   */
+  it("a regulated refusal is never read as mechanical, and a mechanical one is never read as regulated", async () => {
+    const regulated = goodStyleConfig({
+      banned_words: [],
+      compliance: { regulated: true, required_framing: ["results are not guaranteed"], never_say: [] },
+    });
+    const framing = await checkSlidesData(env.tools, ctx, goodCopyOutput(), selections(), goodResearchOutput(), regulated);
+    expect(framing.ok).toBe(false);
+    if (framing.ok) throw new Error("unreachable");
+    expect(framing.kind).toBe("compliance");
+    expect(framing.reason).toMatch(/guaranteed/);
+
+    // ...and the same word, in a banned-word refusal on a REGULATED client, is
+    // still mechanical. `compliance.regulated` is a property of the CLIENT, not
+    // of the refusal: §5.5 is about the never_say/required_framing checks, and
+    // a banned word is a banned word on any client.
+    const bannedOnRegulated = await checkSlidesData(
+      env.tools,
+      ctx,
+      bodyOf("This approach is guaranteed to work for every team we have measured."),
+      selections(),
+      goodResearchOutput(),
+      goodStyleConfig({ compliance: { regulated: true, required_framing: [], never_say: [] } }),
+    );
+    expect(bannedOnRegulated.ok).toBe(false);
+    if (bannedOnRegulated.ok) throw new Error("unreachable");
+    expect(bannedOnRegulated.kind).toBe("banned-term");
+  });
+
+  it("a clean draft is { ok: true } with no kind at all", async () => {
+    const result = await checkSlidesData(env.tools, ctx, goodCopyOutput(), selections(), goodResearchOutput(), goodStyleConfig());
+    expect(result).toEqual({ ok: true });
+  });
+});
+
+/**
+ * ── RFC-19 §3, Mechanism C, at `runBrandCompliance` ──
+ *
+ * `runBrandCompliance` is called in a LOOP — once per slide, plus once per
+ * `required_framing` phrase, plus once for `never_say`. On an eight-slide
+ * regulated carousel that is ten-plus calls, and it used to throw
+ * `WorkflowToolingFailure` on a non-success outcome: ONE flaky call out of ten
+ * ended a run that had already paid for its research, its draft, its images and
+ * its vetting. A provider blip is not a verdict on the copy.
+ *
+ * The split is by CLIENT, and it is the one place RFC-19 §5.5 says Mechanism C
+ * does not fully apply:
+ *
+ * - an ordinary client gets NO OPINION (`{ ok: true }`) — the banned-word check
+ *   did not run this attempt, a redraft cannot fix a provider outage, and the
+ *   run has a draft in hand;
+ * - a REGULATED client gets `kind: "compliance-unverified"` — the one thing
+ *   this gate exists for could not be verified, and shipping an unverified
+ *   clean bill of health is the dishonest half of this work.
+ */
+describe("checkSlidesData: a gate.brandCompliance outage forms no opinion (RFC-19 §3)", () => {
+  let env: TestEnvironment;
+  const ctx: AgentContext = { runId: "run_outage", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring", metadata: {} };
+
+  beforeEach(async () => {
+    env = await setupTestEnvironment();
+  });
+
+  afterEach(async () => {
+    await env.cleanup();
+  });
+
+  type ComplianceOutcome = Awaited<ReturnType<NonNullable<TestEnvironment["tools"]["gate.brandCompliance"]>["execute"]>>;
+
+  const outages: ReadonlyArray<[string, ComplianceOutcome]> = [
+    ["a non-success outcome", { status: "tooling_error", reason: "compliance provider unavailable" }],
+    ["a `tooling_error` verdict", { status: "success", result: { verdict: "tooling_error", reason: "compliance provider unavailable", toolVersion: "1.0.0" } }],
+  ];
+
+  /** Fails only the `nth` call (1-indexed), so the LOOP is what is under test: one bad call out of many. */
+  function withOutageOnCall(environment: TestEnvironment, outcome: ComplianceOutcome, nth: number): AgentToolRegistry {
+    const real = environment.tools["gate.brandCompliance"]!;
+    let calls = 0;
+    return {
+      ...environment.tools,
+      "gate.brandCompliance": {
+        ...real,
+        execute: (async (input: never, opts: never) => {
+          calls += 1;
+          if (calls === nth) return outcome;
+          return real.execute(input, opts);
+        }) as typeof real.execute,
+      },
+    } as unknown as AgentToolRegistry;
+  }
+
+  for (const [label, outcome] of outages) {
+    it(`an ordinary client: ${label} on ONE slide out of six is no opinion, not a refusal and not a throw — and SAYS the check did not run`, async () => {
+      const tools = withOutageOnCall(env, outcome, 3);
+      const result = await checkSlidesData(
+        tools,
+        ctx,
+        goodCopyOutput(),
+        goodImageVettingOutput().selections,
+        goodResearchOutput(),
+        goodStyleConfig(),
+      );
+      // Still not a refusal: the draft ships.
+      expect(result.ok).toBe(true);
+      // But NOT a bare `{ ok: true }`. A bare pass here is a clean bill of health the gate never gave — the
+      // client's own `banned_words`/`banned_chars` went unmeasured and, before `outage` existed, the post
+      // shipped with `selfCheck` absent and nothing on any client- or reviewer-visible surface to say so.
+      // The ledger warn `noteGateOutage` writes is not a counter-example: `buildRunReport` does not surface
+      // `ledger/events` on `GET /runs/:id/status` and the `09a` reviewer never sees it.
+      expect(result.outage).toMatch(/gate\.brandCompliance could not form a view/);
+      expect(result.outage).toMatch(/recorded NO OPINION on this draft/);
+    });
+
+    it(`a REGULATED client: ${label} is kind 'compliance-unverified', never a silent pass`, async () => {
+      // THE ONE THAT MATTERS. Before this change a `tooling_error` VERDICT fell
+      // straight through the `=== "content_fail"` test as if it were a pass, so
+      // a regulated client's `never_say` list could go unchecked with nobody
+      // told. `{ ok: true }` here would be the dishonest half of RFC-19.
+      const tools = withOutageOnCall(env, outcome, 1);
+      const styleConfig = goodStyleConfig({ banned_words: [], compliance: { regulated: true, required_framing: [], never_say: ["cannot lose"] } });
+      const result = await checkSlidesData(tools, ctx, goodCopyOutput(), goodImageVettingOutput().selections, goodResearchOutput(), styleConfig);
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("unreachable");
+      expect(result.kind).toBe("compliance-unverified");
+      expect(result.reason).toMatch(/could not be run against this draft/);
+      expect(result.reason).toMatch(/formed no view/);
+    });
+
+    it(`records ONE ledger warn naming the gate and the outage for ${label}`, async () => {
+      await checkSlidesData(
+        withOutageOnCall(env, outcome, 2),
+        ctx,
+        goodCopyOutput(),
+        goodImageVettingOutput().selections,
+        goodResearchOutput(),
+        goodStyleConfig(),
+      );
+      const events = await env.store.listJson<{ level: string; eventId: string; message: string }>("acme", ["ledger", "events", ctx.runId]);
+      const warn = events.find((e) => e.data.eventId === `${ctx.runId}__${COMPLIANCE_GATE_OUTAGE_SLUG}`);
+      expect(warn, `events: ${JSON.stringify(events)}`).toBeDefined();
+      expect(warn!.data.level).toBe("warn");
+      expect(warn!.data.message).toMatch(/gate\.brandCompliance could not form a view/);
+      expect(warn!.data.message).toMatch(outcome.status === "success" ? /verdict: tooling_error/ : /outcome: tooling_error/);
+    });
+  }
+
+  it("an outage NEVER masks a real refusal that a healthy call found", async () => {
+    // The bar does not move. Slide 1 genuinely uses a banned word and call 1 is
+    // the one that answers; the outage lands on call 3, after the refusal has
+    // already returned. A "no opinion" that swallowed the whole gate would ship
+    // this draft.
+    const copy = goodCopyOutput();
+    const withBannedWord = { ...copy, slides: copy.slides.map((s, i) => (i === 0 ? { ...s, body: "This is guaranteed to work." } : s)) };
+    const tools = withOutageOnCall(env, outages[0]![1], 3);
+    const result = await checkSlidesData(tools, ctx, withBannedWord, goodImageVettingOutput().selections, goodResearchOutput(), goodStyleConfig());
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.kind).toBe("banned-term");
+  });
+
+  it("an UNREGISTERED gate.brandCompliance still throws — a deploy defect is not an outage", async () => {
+    // RFC-19 §6 item 8. Nothing to measure the draft with, and no redraft
+    // produces one. Keeping this throw is what makes the branch above a narrow
+    // decision rather than "the gate stopped mattering".
+    await expect(
+      checkSlidesData({}, ctx, goodCopyOutput(), goodImageVettingOutput().selections, goodResearchOutput(), goodStyleConfig()),
+    ).rejects.toThrow(/not registered/);
+  });
+});
+
+/**
+ * ── RFC-19 §3, Mechanism 0: `repairSourceRefs` — one free repair, and only one ──
+ *
+ * A `source-ref` refusal is the one `checkSlidesData` refusal that is routinely
+ * NOT a defect in the draft: the match is `Set.has`, byte-for-byte, so a writer
+ * who quoted the right card and wrapped it in quotation marks, or put a full
+ * stop on the end, loses the whole attempt and is then told to fix a citation
+ * that was already correct.
+ *
+ * **Every test here runs the REAL `checkSlidesData`.** A `vi.mock` of the gate
+ * would make this branch untestable: the whole claim is "the patch is kept only
+ * if the REAL gate now passes", and a stubbed gate proves only that a stub
+ * returns what it was told to.
+ */
+describe("repairSourceRefs: the only repair, and the four things it refuses to do (RFC-19 §3)", () => {
+  let env: TestEnvironment;
+  const ctx: AgentContext = { runId: "run_repair", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring", metadata: {} };
+
+  beforeEach(async () => {
+    env = await setupTestEnvironment();
+  });
+
+  afterEach(async () => {
+    await env.cleanup();
+  });
+
+  function withSourceRef(value: string, index = 0): InstagramCopyOutput {
+    const copy = goodCopyOutput();
+    return { ...copy, slides: copy.slides.map((s, i) => (i === index ? { ...s, sourceRef: value } : s)) };
+  }
+
+  const CLAIM = SIX_RESEARCH_FACTS[0]!.claim;
+
+  it("normaliseSourceRef strips exactly the differences a reader would not see, and nothing else", () => {
+    expect(normaliseSourceRef(`  ${CLAIM}  `)).toBe(normaliseSourceRef(CLAIM));
+    expect(normaliseSourceRef(`"${CLAIM}"`)).toBe(normaliseSourceRef(CLAIM));
+    expect(normaliseSourceRef(`“${CLAIM}”`)).toBe(normaliseSourceRef(CLAIM));
+    expect(normaliseSourceRef(CLAIM.replace(/ /gu, "  "))).toBe(normaliseSourceRef(CLAIM));
+    // ONE trailing mark, and one only. `CLAIM` already ends in a full stop, so
+    // `CLAIM + ","` carries two and this deliberately does NOT reach through
+    // both: the further the normaliser reaches, the more it is guessing.
+    const noStop = CLAIM.slice(0, -1);
+    expect(normaliseSourceRef(`${noStop},`)).toBe(normaliseSourceRef(noStop));
+    expect(normaliseSourceRef(`${CLAIM},`)).not.toBe(normaliseSourceRef(CLAIM));
+    // NFC: a decomposed e-acute and a composed one are the same text and
+    // different bytes, and only one of them can be in the research card.
+    // The `not.toBe` below is the PREMISE assertion: if an editor or a
+    // formatter ever normalises this file, these two stop differing and this
+    // line fails loudly rather than the NFC branch quietly going untested.
+    const composed = "N\u00E9e reached first value faster";
+    const decomposed = "Ne\u0301e reached first value faster";
+    expect(composed).not.toBe(decomposed);
+    expect(normaliseSourceRef(decomposed)).toBe(normaliseSourceRef(composed));
+    // NOT case-folded, and inner punctuation is untouched — those are
+    // differences a reader WOULD see, and a citation is quoted text.
+    expect(normaliseSourceRef(CLAIM.toUpperCase())).not.toBe(normaliseSourceRef(CLAIM));
+    expect(normaliseSourceRef(CLAIM.replace(/ an average of /u, " "))).not.toBe(normaliseSourceRef(CLAIM));
+  });
+
+  const fixable: Array<[string, string]> = [
+    ["wrapping straight quotes", `"${CLAIM}"`],
+    ["wrapping curly quotes", `“${CLAIM}”`],
+    ["surrounding whitespace", `  ${CLAIM} `],
+    ["a doubled inner space", CLAIM.replace("weekly reporting", "weekly  reporting")],
+  ];
+
+  for (const [label, ref] of fixable) {
+    it(`snaps a sourceRef that differs only by ${label}, and the REAL gate then passes`, async () => {
+      const copy = withSourceRef(ref);
+      // THE PREMISE: the gate genuinely refuses this draft first. Without it a
+      // "repaired" result proves nothing — it could be a draft that never
+      // needed repairing.
+      const before = await checkSlidesData(env.tools, ctx, copy, goodImageVettingOutput().selections, goodResearchOutput(), goodStyleConfig());
+      expect(before.ok).toBe(false);
+      if (before.ok) throw new Error("unreachable");
+      expect(before.kind).toBe("source-ref");
+
+      const repair = await repairSourceRefs(env.tools, ctx, copy, goodImageVettingOutput().selections, goodResearchOutput(), goodStyleConfig());
+      expect(repair.outcome, repair.outcome === "discarded" ? repair.remedyNote : "").toBe("repaired");
+      if (repair.outcome !== "repaired") throw new Error("unreachable");
+      expect(repair.patched).toHaveLength(1);
+      expect(repair.patched[0]!.from).toBe(ref);
+      expect(repair.patched[0]!.to).toBe(CLAIM);
+
+      // The real gate now passes the patched copy, and NOTHING about the slide
+      // but its sourceRef moved.
+      const after = await checkSlidesData(env.tools, ctx, repair.copy, goodImageVettingOutput().selections, goodResearchOutput(), goodStyleConfig());
+      expect(after).toEqual({ ok: true });
+      expect({ ...repair.copy.slides[0]!, sourceRef: ref }).toEqual(copy.slides[0]);
+    });
+  }
+
+  /**
+   * The refusals. Each is a decision RFC-19 §3 records, not an omission:
+   * "never a fuzzy match, never a nearest match — a fabricated citation is
+   * worse than the refusal it would have avoided."
+   */
+  it("refuses a citation that is not in the research set at all, rather than snapping it to the nearest claim", async () => {
+    // One digit apart from a real claim. An edit-distance or nearest match
+    // would "fix" this into a figure the source does not state.
+    const copy = withSourceRef("Teams that automated their weekly reporting saved an average of 9 hours per week.");
+    const repair = await repairSourceRefs(env.tools, ctx, copy, goodImageVettingOutput().selections, goodResearchOutput(), goodStyleConfig());
+    expect(repair.outcome).toBe("discarded");
+    if (repair.outcome !== "discarded") throw new Error("unreachable");
+    expect(repair.remedyNote).toMatch(/would fabricate a source/);
+  });
+
+  it("refuses a PREFIX of a real claim — a truncated citation is a different claim", async () => {
+    const copy = withSourceRef("Teams that automated their weekly reporting");
+    const repair = await repairSourceRefs(env.tools, ctx, copy, goodImageVettingOutput().selections, goodResearchOutput(), goodStyleConfig());
+    expect(repair.outcome).toBe("discarded");
+  });
+
+  it("refuses an AMBIGUOUS normalised match, where two different claims normalise alike", async () => {
+    // Two research cards whose claims differ only by a trailing full stop: the
+    // normalised key is reached by both, so neither is "the" claim and no snap
+    // happens. Unique-or-nothing, by construction.
+    const twin = { claim: CLAIM.slice(0, -1), source: "a second card", date: "2026-07-02" };
+    const research = { ...goodResearchOutput(), facts: [...SIX_RESEARCH_FACTS, twin] };
+    const copy = withSourceRef(`"${CLAIM}"`);
+    const repair = await repairSourceRefs(env.tools, ctx, copy, goodImageVettingOutput().selections, research, goodStyleConfig());
+    expect(repair.outcome).toBe("discarded");
+    if (repair.outcome !== "discarded") throw new Error("unreachable");
+    expect(repair.remedyNote).toMatch(/would fabricate a source/);
+  });
+
+  it("discards the patch WHOLE when the real gate still refuses the patched draft, and says which refusal survived", async () => {
+    // The sourceRef IS repairable and the draft has a second, unrelated problem
+    // the repair cannot touch. The patch is discarded whole rather than handed
+    // back half-good: a repair may only ever turn a refusal into the gate's own
+    // PASS, never into a different refusal.
+    const copy = withSourceRef(`"${CLAIM}"`);
+    const alsoBanned = { ...copy, slides: copy.slides.map((s, i) => (i === 2 ? { ...s, body: "This is guaranteed to work for every team." } : s)) };
+    const repair = await repairSourceRefs(env.tools, ctx, alsoBanned, goodImageVettingOutput().selections, goodResearchOutput(), goodStyleConfig());
+    expect(repair.outcome).toBe("discarded");
+    if (repair.outcome !== "discarded") throw new Error("unreachable");
+    expect(repair.remedyNote).toMatch(/discarded whole/);
+    expect(repair.remedyNote).toMatch(/banned-term/);
+    expect(repair.remedyNote).toMatch(/guaranteed/);
+  });
+
+  it("repairs EVERY mis-cited slide in one pass", async () => {
+    const copy = goodCopyOutput();
+    const messy = { ...copy, slides: copy.slides.map((s, i) => (i < 3 ? { ...s, sourceRef: `“${s.sourceRef}” ` } : s)) };
+    const repair = await repairSourceRefs(env.tools, ctx, messy, goodImageVettingOutput().selections, goodResearchOutput(), goodStyleConfig());
+    expect(repair.outcome, repair.outcome === "discarded" ? repair.remedyNote : "").toBe("repaired");
+    if (repair.outcome !== "repaired") throw new Error("unreachable");
+    expect(repair.patched.map((p) => p.slide)).toEqual([1, 2, 3]);
+  });
+
+  it("costs ZERO model calls — it is NFC normalisation plus one more FREE gate call", async () => {
+    // RFC-19 §7.6 item 1. `repairSourceRefs` takes no router and there is none
+    // in scope; its only I/O is `gate.brandCompliance`, which carries no
+    // `STEP_COST_ESTIMATES_USD` key and makes no model call. Counting the calls
+    // is what makes a future edit that reaches for a model to "understand" a
+    // citation fail HERE rather than on a budget dashboard.
+    let calls = 0;
+    const real = env.tools["gate.brandCompliance"]!;
+    const counted = {
+      ...env.tools,
+      "gate.brandCompliance": {
+        ...real,
+        execute: (async (input: never, opts: never) => {
+          calls += 1;
+          return real.execute(input, opts);
+        }) as typeof real.execute,
+      },
+    } as unknown as AgentToolRegistry;
+    const repair = await repairSourceRefs(counted, ctx, withSourceRef(`"${CLAIM}"`), goodImageVettingOutput().selections, goodResearchOutput(), goodStyleConfig());
+    expect(repair.outcome).toBe("repaired");
+    // Six slides, one call each, on the ONE re-check. Nothing else bills.
+    expect(calls).toBe(6);
+  });
+});
+
+/**
+ * ── Mechanism 0, end to end: the repair either SAVES the attempt or is DISCARDED ──
+ *
+ * The unit tests above prove `repairSourceRefs` against the real gate. These
+ * two prove the only thing a unit test cannot: that the repair changes what the
+ * CLIENT receives, in both directions.
+ *
+ * The pair is deliberate. A repair that could only ever help would be a repair
+ * nobody had tested the refusal of — and a citation snapped to the wrong claim
+ * is the one failure mode of this whole RFC that would be worse than the hold
+ * it replaces. So: one draft the repair saves entirely (no marker, no redraft,
+ * no extra turn), and one it refuses to touch, which then ships DEGRADED with
+ * `remedy: "discarded"` and the note saying why.
+ */
+describe("repairSourceRefs, wired into step 07 (RFC-19 §3 + §4 item 2)", () => {
+  let env: TestEnvironment;
+  const params = { clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
+
+  beforeEach(async () => {
+    env = await setupTestEnvironment();
+  });
+
+  afterEach(async () => {
+    await env.cleanup();
+  });
+
+  function workflowFor(router: ReturnType<typeof fakeRouterSequence>) {
+    return createInstagramAgentWorkflow({
+      tools: { ...env.tools, "publish.renderCarousel": fakeRenderCarousel(env.tools["publish.renderCarousel"]!) },
+      promptStore: makePromptStore(),
+      router,
+      repoRoot: env.repoRoot,
+      imageCandidatePool: goodImageCandidatePool(),
+      autoApprove: true,
+    });
+  }
+
+  it("saves the attempt when the citation is right and only its punctuation is wrong: completed, NO marker, no redraft", async () => {
+    // Every sourceRef is the correct claim wrapped in quotation marks — the
+    // shape a writer produces when it is quoting properly. Today `Set.has`
+    // refuses all six and the run spends a whole drafting attempt being told to
+    // fix citations that were already right.
+    const copy = goodCopyOutput();
+    const quoted = { ...copy, slides: copy.slides.map((s) => ({ ...s, sourceRef: `“${s.sourceRef}”` })) };
+    const router = fakeRouterSequence([
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(quoted),
+      finalTurn(goodImageVettingOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
+    ]);
+
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+    const runId = "instagram_run_repair_saved";
+    const result = await engine.run(workflowFor(router), { ...params, runId });
+
+    expect(result.status).toBe("completed");
+
+    // ONE attempt. The queue holds exactly the turns a clean single-attempt run
+    // pulls — 3 pre-loop + copy + vetting + relevance + value + visual QA +
+    // packager = 9 — so a second drafting attempt would exhaust it and fail
+    // loudly. That is the assertion that "it saved the attempt" actually rests
+    // on; `completed` alone would be true of a run that redrafted twice.
+    expect(router.complete).toHaveBeenCalledTimes(9);
+    expect(await durableStore.getStep(runId, "05-write-copy-attempt-2")).toBeUndefined();
+
+    // And it shipped CLEAN: a repaired citation is not a degrade. The marker is
+    // absent, never empty.
+    const deliverables = await env.store.listJson<{ deliverable?: { selfCheck?: unknown; slidesData?: unknown } }>(
+      "acme",
+      ["ledger", "deliverables", runId, "_"],
+    );
+    expect(deliverables).toHaveLength(1);
+    expect(deliverables[0]!.data.deliverable?.selfCheck).toBeUndefined();
+  }, 60000);
+
+  it("ships degraded with remedy 'discarded' and a remedyNote when the citation is not in the research set at all", async () => {
+    // One digit apart from a real claim — the exact input a nearest-match
+    // repair would "fix" into a figure the source does not state. The repair
+    // refuses, the gate's refusal stands, and the post ships with the truth
+    // attached rather than dying.
+    const copy = goodCopyOutput();
+    const fabricated = {
+      ...copy,
+      slides: copy.slides.map((s, i) =>
+        i === 0 ? { ...s, sourceRef: "Teams that automated their weekly reporting saved an average of 9 hours per week." } : s,
+      ),
+    };
+    const router = fakeRouterSequence([
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(fabricated),
+      finalTurn(goodImageVettingOutput()),
+      finalTurn(fabricated),
+      finalTurn(goodImageVettingOutput()),
+      finalTurn(fabricated),
+      finalTurn(goodImageVettingOutput()),
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
+    ]);
+
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+    const runId = "instagram_run_repair_discarded";
+    const result = await engine.run(workflowFor(router), { ...params, runId });
+
+    expect(result.status).toBe("completed");
+
+    // THE PREMISE: the gate really did refuse on the attempt that shipped.
+    const check3 = (await durableStore.getStep(runId, "07-self-check-attempt-3")) as { output: { ok: boolean; kind?: string } };
+    expect(check3.output.ok).toBe(false);
+    expect(check3.output.kind).toBe("source-ref");
+
+    const deliverables = await env.store.listJson<{ deliverable?: { selfCheck?: { checks: Array<Record<string, unknown>> } } }>(
+      "acme",
+      ["ledger", "deliverables", runId, "_"],
+    );
+    const finding = deliverables[0]!.data.deliverable?.selfCheck?.checks.find((c) => c["kind"] === "source-ref");
+    expect(finding, `checks: ${JSON.stringify(deliverables[0]?.data.deliverable?.selfCheck?.checks)}`).toBeDefined();
+    expect(finding!["gate"]).toBe("slides");
+    expect(finding!["remedy"]).toBe("discarded");
+    // The note says WHY the repair was refused — not "a repair was attempted".
+    expect(String(finding!["remedyNote"])).toMatch(/fabricate a source/);
+
+    expect(router.complete).toHaveBeenCalledTimes(13);
+  }, 60000);
 });

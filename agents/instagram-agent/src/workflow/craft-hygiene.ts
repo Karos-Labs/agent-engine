@@ -307,9 +307,59 @@ export const HEBREW_BANNED_PHRASES = [
   "הזדמנות אחרונה",
 ] as const;
 
-export async function checkCraftHygiene(tools: AgentToolRegistry, ctx: AgentContext, copy: InstagramCopyOutput): Promise<SlidesDataSelfCheck> {
+/**
+ * ONE ledger warn for a gate that could not form a view (RFC-19 §3, Mechanism C).
+ *
+ * Lives in this module because it is the leaf of the two step-07 self-check
+ * gates — `slides-data.ts` imports it, nothing it imports imports back — and
+ * because both gates have to say the same thing the same way: a reviewer
+ * reading the run log must be able to tell "the gate looked and refused" from
+ * "the gate never looked", and two independently worded warns are how those
+ * two facts start reading alike.
+ *
+ * Idempotent on `(runId, slug)` the way every other warn in this agent is
+ * (`WF:8221`, `WF:7328`), and deliberately NOT keyed by attempt: an outage
+ * repeated on three attempts is one fact about the deployment, not three facts
+ * about three drafts. Swallows its own failure — a bookkeeping write may not
+ * cost the thing it is bookkeeping about.
+ */
+export async function noteGateOutage(tools: AgentToolRegistry, ctx: AgentContext, slug: string, message: string): Promise<void> {
+  try {
+    await tools["ledger.appendEvent"]?.execute({ runId: ctx.runId, eventId: `${ctx.runId}__${slug}`, level: "warn", message }, { ctx });
+  } catch (error) {
+    console.error(`${slug}: could not record the gate-outage warn`, error);
+  }
+}
+
+/** The ledger/idempotency slug for the craft gate's own "no opinion" warn. Exported so a test names the same string the code writes. */
+export const CRAFT_GATE_OUTAGE_SLUG = "craft-hygiene-gate-no-opinion";
+
+/**
+ * The house self-check shape, plus the ONE thing the house shape cannot say: *this check did not run*.
+ *
+ * `{ ok: true }` is a clean bill of health, and until this field existed a `gate.lintPost` outage returned
+ * exactly that — so a post whose anti-slop half was never measured was indistinguishable, on every surface a
+ * client or a reviewer can read, from one that passed it. The ledger warn `noteGateOutage` writes is not a
+ * counter-example: `buildRunReport` does not surface `ledger/events` on `GET /runs/:id/status` and the `09a`
+ * reviewer never sees it.
+ *
+ * RFC-19's honesty rule is *"the deliverable records which checks did not pass"*, and a check that did not RUN
+ * is the sharpest case of that. Set ALONGSIDE `ok: true` rather than instead of it, because the outage is not
+ * a refusal: the draft ships, it just stops claiming a verdict the gate never gave. Optional and absent on the
+ * clean path, so a clean post carries no marker at all (`self-check-degrade.ts`'s "absent, never empty").
+ *
+ * Assignable to `SlidesDataSelfCheck`, so `native-corrections.ts`'s `checkHygiene` port is unchanged.
+ */
+export type CraftHygieneResult = SlidesDataSelfCheck & { outage?: string };
+
+export async function checkCraftHygiene(tools: AgentToolRegistry, ctx: AgentContext, copy: InstagramCopyOutput): Promise<CraftHygieneResult> {
   const lintTool = tools["gate.lintPost"];
   if (!lintTool) {
+    // KEPT AS A THROW (RFC-19 §6 item 8). An UNREGISTERED tool is a deploy
+    // defect: there is nothing to measure the draft with and no amount of
+    // re-drafting produces one. That is categorically different from the
+    // REGISTERED tool that failed, handled below — the distinction Mechanism C
+    // turns on.
     throw new WorkflowToolingFailure(`"gate.lintPost" is not registered — the craft-hygiene gate cannot run without it`);
   }
 
@@ -318,14 +368,34 @@ export async function checkCraftHygiene(tools: AgentToolRegistry, ctx: AgentCont
     { text: copy.caption, parts: slideTexts, platform: "instagram", checkAntiSlop: true, maxExclamationMarks: 0, bannedPhrases: [...HEBREW_BANNED_PHRASES] },
     { ctx },
   );
-  if (lintOutcome.status !== "success") {
-    throw new WorkflowToolingFailure(`gate.lintPost failed: ${lintOutcome.status}`);
-  }
-  const verdict = lintOutcome.result as GateVerdict;
-  if (verdict.verdict !== "pass") {
-    if (verdict.verdict !== "content_fail") {
-      return { ok: false, reason: "caption failed the mechanical craft-hygiene gate: gate.lintPost tooling error" };
-    }
+  // ── Mechanism C: A GATE THAT COULD NOT RUN HAS NO OPINION (RFC-19 §3) ──
+  //
+  // `07e2` already takes exactly this posture, in its own words: "A gate that
+  // could not RUN is not a verdict on the draft, and this one is free — there
+  // is no spend to justify failing a run over." `gate.lintPost` is free too.
+  // This gate got it wrong twice and in two different ways: a non-success
+  // OUTCOME threw `WorkflowToolingFailure` (a lint provider blip ended a run
+  // that had already paid for its draft), and a `tooling_error` VERDICT was
+  // converted into a CONTENT refusal — a sentence that says the caption
+  // "failed the mechanical craft-hygiene gate" when the gate never read it.
+  // That second one is the worse of the two: it fed a redraft prompt a
+  // complaint the writer cannot act on, three times, and then held.
+  //
+  // Both are now "no opinion", ON EVERY ATTEMPT rather than only the final
+  // one — an outage is not more of a verdict on attempt 1 than on attempt 3.
+  // The bar does not move: `content_fail` still refuses exactly the drafts it
+  // refused yesterday, and the sentence-case checks below — which are local
+  // code and need no tool — still run and can still refuse this draft.
+  const verdict = lintOutcome.status === "success" ? (lintOutcome.result as GateVerdict) : undefined;
+  /** Set once, spread into every return BELOW this branch — the same sentence the ledger warn carries, so the two surfaces cannot drift. */
+  let outage: { outage: string } | Record<string, never> = {};
+  if (verdict === undefined || verdict.verdict === "tooling_error") {
+    const message =
+      `gate.lintPost could not form a view (${verdict === undefined ? `outcome: ${lintOutcome.status}` : `verdict: tooling_error — ${verdict.reason}`}) — ` +
+      "the craft-hygiene gate's anti-slop half recorded NO OPINION on this draft; the sentence-case checks still ran";
+    await noteGateOutage(tools, ctx, CRAFT_GATE_OUTAGE_SLUG, message);
+    outage = { outage: message };
+  } else if (verdict.verdict === "content_fail") {
     const part = THREAD_PART_PREFIX.exec(verdict.reason);
     if (part) {
       const slide = copy.slides[Number(part[1]) - 2];
@@ -337,15 +407,15 @@ export async function checkCraftHygiene(tools: AgentToolRegistry, ctx: AgentCont
 
   const captionCase = checkSentenceCase(copy.caption.replace(HASHTAG, " "));
   if (!captionCase.ok) {
-    return { ok: false, reason: `caption failed the sentence-case check: ${captionCase.reason}` };
+    return { ok: false, reason: `caption failed the sentence-case check: ${captionCase.reason}`, ...outage };
   }
 
   for (const [i, slide] of copy.slides.entries()) {
     const sentenceCase = checkSentenceCase(slideTexts[i]!);
     if (!sentenceCase.ok) {
-      return { ok: false, reason: `slide ${slide.n} failed the sentence-case check: ${sentenceCase.reason}` };
+      return { ok: false, reason: `slide ${slide.n} failed the sentence-case check: ${sentenceCase.reason}`, ...outage };
     }
   }
 
-  return { ok: true };
+  return { ok: true, ...outage };
 }

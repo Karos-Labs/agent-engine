@@ -104,7 +104,7 @@ describe("05b-source-images", () => {
     const pool = goodImageCandidatePool();
     let seen: Record<string, unknown> | undefined;
 
-    const tools = {
+    const tools = testTools({
       ...env.tools,
       "media.findImages": stubFindImages(
         { status: "success", result: { provider: "fake", candidates: pool, unmet: [] } },
@@ -112,7 +112,7 @@ describe("05b-source-images", () => {
           seen = args;
         },
       ),
-    };
+    });
 
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
@@ -158,12 +158,12 @@ describe("05b-source-images", () => {
     const pool = goodImageCandidatePool();
     let called = false;
 
-    const tools = {
+    const tools = testTools({
       ...env.tools,
       "media.findImages": stubFindImages({ status: "success", result: { provider: "fake", candidates: [], unmet: [] } }, () => {
         called = true;
       }),
-    };
+    });
 
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
@@ -341,7 +341,7 @@ describe("05b-source-images", () => {
     const filled = pool[0]!.path;
     let generatedFor: unknown;
 
-    const tools = {
+    const tools = testTools({
       ...env.tools,
       "media.findImages": stubFindImages({ status: "success", result: { provider: "unsplash", providersUsed: ["unsplash"], candidates: pool, unmet: [] } }),
       "image.generate": stubGenerateImage(
@@ -350,7 +350,7 @@ describe("05b-source-images", () => {
           generatedFor = args["needs"];
         },
       ),
-    };
+    });
 
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
@@ -630,7 +630,7 @@ describe("05b-source-images", () => {
     const pool = goodImageCandidatePool();
     const queries: string[][] = [];
 
-    const tools = {
+    const tools = testTools({
       ...env.tools,
       "media.findImages": stubFindImages(
         { status: "success", result: { provider: "fake", candidates: pool, unmet: [] } },
@@ -638,7 +638,7 @@ describe("05b-source-images", () => {
           queries.push((args["needs"] as { query: string }[]).map((n) => n.query));
         },
       ),
-    };
+    });
 
     // Attempt 1's vetting output is malformed, which sends the loop back to
     // step 05 for a fresh draft; attempt 2 succeeds.

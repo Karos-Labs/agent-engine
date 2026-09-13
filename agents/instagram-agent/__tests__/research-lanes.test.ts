@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentContext, AgentToolRegistry } from "@agent-engine/core";
-import { WorkflowToolingFailure, type ResearchPullResult, type WorkflowContext } from "@agent-engine/workflow";
+import { WorkflowBlockedIntake, WorkflowToolingFailure, type ResearchPullResult, type WorkflowContext } from "@agent-engine/workflow";
 import type { ClientBrief } from "@agent-engine/tools";
 import { deriveClientBrief } from "../src/workflow/client-brief.js";
 import {
@@ -333,12 +333,25 @@ describe("pullResearchLanes", () => {
     ).rejects.toThrow(WorkflowToolingFailure);
   });
 
-  it("refuses to run with no lanes at all, rather than reporting an empty research base", async () => {
+  it("refuses to run with no lanes at all as BLOCKED INTAKE, not as a malfunction (RFC-19)", async () => {
     const { tools } = fakePull(() => ({ status: "success" }));
 
-    await expect(
-      pullResearchLanes(fakeWorkflowContext(), tools, CTX, { stepId: "04a2-research-pull-deep", lanes: [], job: "j", historyAgentId: "instagram-agent" }),
-    ).rejects.toThrow(/no research lanes/);
+    // Two different stops, and telling them apart is the whole change. Nothing
+    // malfunctioned here: `buildResearchLanes` is pure and built nothing
+    // because it was handed no subject and a brief with no core terms — a
+    // client whose intake was never completed, which is the owner's own
+    // carve-out ("there is nobody to write for") and needs a person, not a
+    // pager. An outage (every query failing, the case above) stays tooling.
+    const thrown = await pullResearchLanes(fakeWorkflowContext(), tools, CTX, { stepId: "04a2-research-pull-deep", lanes: [], job: "j", historyAgentId: "instagram-agent" }).catch(
+      (error: unknown) => error,
+    );
+
+    expect(thrown).toBeInstanceOf(WorkflowBlockedIntake);
+    expect((thrown as Error).message).toMatch(/no research lanes/);
+    // The premise, asserted rather than assumed: the two classes are siblings,
+    // so `toBeInstanceOf` above cannot pass by both merely being `Error`.
+    expect(thrown).not.toBeInstanceOf(WorkflowToolingFailure);
+    expect(new WorkflowToolingFailure("x")).not.toBeInstanceOf(WorkflowBlockedIntake);
   });
 
   // ───────────────────────────────────────────────────────────────────────

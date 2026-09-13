@@ -200,7 +200,7 @@ describe("02i / 04a / 07g — the grounding gate in the instagram workflow", () 
     expect(deliverables[0]!.data.deliverable.grounding?.relevance?.score).toBe(5);
   }, 60000);
 
-  it("off-brief verdicts exhaust the self-check budget the PLAN allowed and HOLD, naming relevance — never a render, never a delivery", async () => {
+  it("off-brief verdicts exhaust the self-check budget the PLAN allowed and DELIVER DEGRADED, naming relevance and its sub-floor score", async () => {
     // TWO rounds, not three, and the reason is the budget rather than this
     // gate: a first run for a new client writes its Client Brief (00b1 +
     // 00b2, $0.155 of the $1.00 target before a single slide is drafted), so
@@ -208,26 +208,74 @@ describe("02i / 04a / 07g — the grounding gate in the instagram workflow", () 
     // to step 05 instead of two". That is the owner's amendment working as
     // written — the plan adapts, the run still delivers or holds on its own
     // merits — and it is why the third round would never be reached. The
-    // assertions below are the ones that matter and none of them is relaxed:
-    // the run HOLDS naming relevance, nothing renders, nothing is delivered,
-    // and every queued turn was consumed.
+    // assertions below are the ones that matter and none of them is relaxed.
+    //
+    // RFC-19 §4 item 6 — WHAT CHANGED, AND WHAT DID NOT. The judge still refuses
+    // every draft, at the same floor, in the same words: `07g` scores this 1
+    // against a floor of 2 on both attempts and attempt 1 is still returned to
+    // `05`. What changed is the LAST attempt, which used to `continue` into the
+    // self-check-exhaustion hold and now records its finding and walks on. The
+    // client receives the carousel plus the reason it is degraded, instead of a
+    // 404 and a run that spent $0.84 to deliver nothing.
+    //
+    // `qa` and `isFinalAttempt` on the second block are the fixture telling the
+    // truth about that, and they are not decoration: the fall-through buys the
+    // value judge, the visual QA and the packager — three turns this fixture
+    // never queued. Without them the router exhausts three times over, `08b`
+    // reports a `tooling_error` it invented by running out of fixtures, and the
+    // run ships a SECOND finding ("visual QA produced no usable verdict") that
+    // is an artefact of the queue rather than anything the code did. The case
+    // would have passed, green and meaningless.
     const router = fakeRouterSequence([
       ...auditTurns({ relevance: OFF_BRIEF_VERDICT, qa: undefined }),
-      ...standardTurns({ copy: goodCopyOutput(), vet: goodImageVettingOutput(), relevance: OFF_BRIEF_VERDICT }),
+      ...standardTurns({
+        copy: goodCopyOutput(),
+        vet: goodImageVettingOutput(),
+        relevance: OFF_BRIEF_VERDICT,
+        qa: goodVisualQaOutput(),
+        isFinalAttempt: true,
+      }),
     ]);
     const params = { runId: "instagram_run_grounding_hold", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
     const durableStore = new MemoryDurableStepStore();
 
     const result = await new WorkflowEngine(durableStore).run(workflowFor(router), params);
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/relevance 1\/5/);
-    expect(result.reason).toMatch(/does not read as this client's/);
-    expect(result.reason).toContain(OFF_BRIEF_VERDICT.reason);
+    expect(result.status, JSON.stringify(result)).toBe("completed");
+    if (result.status !== "completed") throw new Error("unreachable");
+
+    // THE PREMISE, asserted before anything else (RFC-19 §8.2 assertion 7): the
+    // gate really did refuse on the attempt that shipped. Without this the case
+    // would go green the day `07g` silently stopped scoring, which is how this
+    // codebase has produced guards that cannot fail.
+    const relevance2 = (await durableStore.getStep(params.runId, "07g-relevance-attempt-2")) as { output: { finalOutput: { score: number } } };
+    expect(relevance2.output.finalOutput.score).toBe(1);
+
+    // The degrade marker names the gate, the score AND the floor, in the judge's
+    // own words. The floor is 2, not 3: this client is thinly grounded, so
+    // `relevanceGateFloor` relaxes it — and carrying the floor the gate actually
+    // used is the difference between "scored 1 against a floor of 2" and a
+    // sentence that quietly misreports which bar was applied.
+    const selfCheck = result.output.selfCheck;
+    expect(selfCheck?.status).toBe("degraded");
+    const finding = selfCheck!.checks.find((c) => c.gate === "relevance");
+    expect(finding, `checks: ${JSON.stringify(selfCheck?.checks)}`).toBeDefined();
+    expect(finding!.score).toEqual({ value: 1, floor: THIN_GROUNDING_MIN_RELEVANCE_SCORE });
+    expect(finding!.detail).toMatch(/relevance 1\/5/);
+    expect(finding!.detail).toMatch(/does not read as this client's/);
+    expect(finding!.detail).toContain(OFF_BRIEF_VERDICT.reason);
+    // ONE finding. A second one here would mean a gate refused for a reason this
+    // fixture did not arrange — the shape the exhausted-router artefact took.
+    expect(selfCheck!.checks).toHaveLength(1);
+    // The same sentence on the typed return and on the deliverable: one marker,
+    // four destinations, no drift (RFC-19 §5.3).
+    expect(selfCheck!.reason).toMatch(/scored 1 against a floor of 2/);
 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).toContain("07g-relevance-attempt-1");
     expect(stepIds).toContain("07g-relevance-attempt-2");
+    // Attempt 1 was still RETURNED TO 05 — the fall-through is the last attempt
+    // only, and `05-write-copy-attempt-2` existing is the proof.
+    expect(stepIds).toContain("05-write-copy-attempt-2");
     // The plan is what decided there were two rounds and not three, and the
             // reason is on the record: a budget adaptation, never a hold cause.
     const plan = (await durableStore.listSteps(params.runId)).find((s) => s.stepId === "02j-plan-run-budget")?.output as
@@ -236,12 +284,34 @@ describe("02i / 04a / 07g — the grounding gate in the instagram workflow", () 
     expect(plan?.plan.maxSelfCheckAttempts).toBe(2);
     expect(plan?.adaptations).toContain("one return to step 05 instead of two");
     expect(stepIds).not.toContain("07g-relevance-attempt-3");
-    expect(stepIds.some((id) => id.startsWith("08-render-carousel"))).toBe(false);
-    // Every queued turn was consumed: nothing skipped the judge.
+    // It DOES render now, and that is the point: the render was already paid for
+    // on attempt 2, and throwing it away is what this phase stopped doing.
+    expect(stepIds).toContain("08-render-carousel-attempt-2");
+
+    // THE TURN COUNT, ENUMERATED RATHER THAN OBSERVED (RFC-19 §8.2 assertion 9,
+    // §11 item 4). This is the real enforcement of "zero added model cost": a new
+    // model call anywhere on the fall-through path exhausts the queue and this
+    // line fails loudly instead of the bill growing quietly.
+    //
+    //   brief 1 + scout 1 + research 1 + angle 1                              = 4
+    //   attempt 1: copy + vet + relevance                                     = 3   (returned to 05 at 07g)
+    //   attempt 2: copy + vet + relevance + value + visual QA                 = 5   (falls through, pays on)
+    //   after the loop: packager                                              = 1
+    //                                                                     total 13
+    expect(router.complete).toHaveBeenCalledTimes(13);
+    // And the queue is EXACTLY spent — a turn left over would mean a step the
+    // enumeration above thinks runs did not.
     await expect(router.complete({} as never, {} as never, [] as never, {} as never)).rejects.toThrow(/exhausted/);
 
-    const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
-    expect(deliverables).toHaveLength(0);
+    // The client gets the post and the truth, on the same record.
+    const deliverables = await env.store.listJson<{ deliverable: { selfCheck?: { reason: string; checks: Array<{ gate: string }> } } }>(
+      "acme",
+      ["ledger", "deliverables", params.runId, "_"],
+    );
+    expect(deliverables).toHaveLength(1);
+    const delivered = deliverables[0]!.data.deliverable.selfCheck;
+    expect(delivered?.checks.map((c) => c.gate)).toEqual(["relevance"]);
+    expect(delivered?.reason).toBe(selfCheck!.reason);
   }, 60000);
 
   it("THIN GROUNDING: a 2/5 on an industry-only brief ships with the reason on the gate payload instead of holding the run", async () => {

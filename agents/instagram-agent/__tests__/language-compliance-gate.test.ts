@@ -371,10 +371,34 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     expect(stepIds.indexOf("07f-language-fluency-attempt-1")).toBeLessThan(stepIds.indexOf("08-render-carousel-attempt-1"));
   }, 60000);
 
-  it("FAILS stage 1: an English draft for a Hebrew client never reaches the judge, never renders, and holds", async () => {
+  /**
+   * A package a Hebrew client's `08c1` actually accepts.
+   *
+   * `DEFAULT_PACKAGE_TURN` is English BY CONSTRUCTION and `turns.ts` says so in as many words: `08c1` holds
+   * the tags to the TARGET language's script, so a non-English fixture that inherits the default has its
+   * package refused, buys the `08c-package-post-retry` turn, and `08c2` never runs. Two Latin tags is the
+   * most `08c1` allows, and `founders` is one of the seeded brief's own `coreTerms`, which is the other rule
+   * it enforces rather than requests.
+   */
+  const HEBREW_PACKAGE_TURN = {
+    hashtags: ["founders", "pipeline", "תוכן", "עריכה", "קצב"],
+    altText: HEBREW_HEADLINES.map((headline, i) => ({ n: i + 1, alt: `שקופית ${i + 1}: ${headline}`.slice(0, 125) })),
+    firstCommentText: "המקורות לנתונים שמופיעים בשקופיות מופיעים כאן, לפי סדר הופעתם.",
+  };
+
+  it("FAILS stage 1: an English draft for a Hebrew client DELIVERS DEGRADED on the last attempt, and pays no judge to read the wrong script", async () => {
     await env.store.writeJson("acme", ["client", "brand"], HEBREW_BRAND);
-    // Three full attempts of copy + vetting and NOT ONE fluency turn — the
-    // deterministic stage rejects each draft before stage 2 costs anything.
+    // RFC-19 §4 item 4. The deterministic stage still refuses all three drafts at
+    // the same floor — `MIN_EXPECTED_SCRIPT_RATIO` does not move and 0% Hebrew is
+    // 0% Hebrew. Attempts 1 and 2 are unchanged: back to `05`, no judge bought.
+    // The LAST attempt is what changed. It used to `continue` into the
+    // self-check-exhaustion hold; it now records `{ gate: "script", kind:
+    // "wrong-script" }`, marks the language degraded and ships.
+    //
+    // And it ships CHEAPER than a passing run: `07g`, `07j` and `07f` are skipped
+    // outright (−$0.023, §7.4), because three paid opinions about text in the
+    // wrong language are three opinions nobody can act on. That saving is
+    // asserted below as three absent step ids, not taken on trust.
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
@@ -383,34 +407,70 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
+      // The turns the fall-through buys, and the complete list of them.
+      finalTurn(goodVisualQaOutput()),
+      finalTurn(HEBREW_PACKAGE_TURN),
+      // `08c2-package-native-round` IS bought, and that is not an oversight in
+      // the skip list above: `07f` would have been asked to read the English
+      // SLIDES, whereas `08c2` reads the PACKAGE — hashtags, alt text and the
+      // first comment — which `08c` has just authored in Hebrew. A native round
+      // over genuinely Hebrew prose is an opinion somebody can act on.
+      finalTurn(NATIVE_VERDICT),
     ]);
     const params = { runId: "instagram_run_lang_script_fail", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
     const durableStore = new MemoryDurableStepStore();
     const result = await new WorkflowEngine(durableStore).run(workflowFor(router), params);
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/self-check never passed after 3 attempt/i);
-    expect(result.reason).toMatch(/deterministic language\/script check/i);
-    expect(result.reason).toMatch(/not written in the Hebrew script/i);
-
-    // Stage 2 was never asked, and neither was the relevance judge (07e fails before 07g): scout + research + 3 x (copy + vetting).
-    expect(router.complete).toHaveBeenCalledTimes(9);
+    expect(result.status, JSON.stringify(result)).toBe("completed");
+    if (result.status !== "completed") throw new Error("unreachable");
 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).toContain("07e-language-script-attempt-1");
     expect(stepIds).toContain("07e-language-script-attempt-3");
-    expect(stepIds).not.toContain("07f-language-fluency-attempt-1");
-    expect(stepIds).not.toContain("08-render-carousel-attempt-1");
-    expect(stepIds).not.toContain("09b-deliver-and-log");
 
+    // THE PREMISE (RFC-19 §8.2 assertion 7): the gate refused the draft that
+    // shipped, in its own words, measuring what it always measured.
     const script = (await durableStore.getStep(params.runId, "07e-language-script-attempt-1")) as { output: { ok: boolean; reason: string } };
     expect(script.output.ok).toBe(false);
     expect(script.output.reason).toMatch(/only 0\//);
+    const script3 = (await durableStore.getStep(params.runId, "07e-language-script-attempt-3")) as { output: { ok: boolean } };
+    expect(script3.output.ok).toBe(false);
 
-    const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
-    expect(deliverables).toHaveLength(0);
+    // §7.4's SAVING, asserted rather than described: not one of the three paid
+    // opinions about wrong-script text was bought, on ANY attempt.
+    expect(stepIds.some((id) => id.startsWith("07g-relevance"))).toBe(false);
+    expect(stepIds.some((id) => id.startsWith("07j-value-judge"))).toBe(false);
+    expect(stepIds.some((id) => id.startsWith("07f-language-fluency"))).toBe(false);
+
+    // The finding, and the language marker beside it.
+    const finding = result.output.selfCheck?.checks.find((c) => c.gate === "script");
+    expect(finding, `checks: ${JSON.stringify(result.output.selfCheck?.checks)}`).toBeDefined();
+    expect(finding!.kind).toBe("wrong-script");
+    expect(finding!.detail).toMatch(/not written in the Hebrew script/i);
+    // MEASURED, not asserted in prose — the gate's own coverage figure rides the
+    // finding, so a reviewer reads "0/938 letters" rather than "it failed".
+    expect(finding!.detail).toMatch(/only 0\/\d+ letters/);
+    expect(result.output.language?.status).toBe("degraded");
+    expect(result.output.language?.reason).toMatch(/not in Hebrew/i);
+
+    // THE TURN COUNT, ENUMERATED (RFC-19 §8.2 assertion 9):
+    //   scout 1 + research 1 + angle 1                                        = 3
+    //   3 × (copy + vet)                                                      = 6   (07e refuses before any judge)
+    //   attempt 3 falls through: visual QA                                    = 1
+    //   after the loop: packager + the package's native round                 = 2
+    //                                                                     total 12
+    expect(router.complete).toHaveBeenCalledTimes(12);
+
+    // It rendered and it was delivered — the two things the hold used to prevent.
+    expect(stepIds).toContain("08-render-carousel-attempt-3");
+    expect(stepIds).toContain("09b-deliver-and-log");
+    const deliverables = await env.store.listJson<{ deliverable: { selfCheck?: { checks: Array<{ kind: string }> } } }>(
+      "acme",
+      ["ledger", "deliverables", params.runId, "_"],
+    );
+    expect(deliverables).toHaveLength(1);
+    expect(deliverables[0]!.data.deliverable.selfCheck?.checks.some((c) => c.kind === "wrong-script")).toBe(true);
   }, 60000);
 
   it("TWO ROUNDS THEN DELIVERS: a judge that still flags the final attempt ships the best version degraded, and NEVER holds", async () => {
@@ -761,29 +821,68 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
       finalTurn(curly()), finalTurn(goodImageVettingOutput()),
       finalTurn(curly()), finalTurn(goodImageVettingOutput()),
       finalTurn(curly()), finalTurn(goodImageVettingOutput()),
+      // RFC-19 §4 item 5 — and ONLY attempt 3 buys any of these. The ordering
+      // claim this test is named for is a claim about attempts 1 and 2, and it is
+      // unchanged: a draft a regex can refuse still dies before the $0.002
+      // relevance judge and the $0.014 native editor, twice. The last attempt
+      // records the conventions finding and walks the rest of the way, because
+      // there is no next draft for the saving to be a saving FOR.
+      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
+      finalTurn(NATIVE_VERDICT),
+      finalTurn(goodVisualQaOutput()), finalTurn(HEBREW_PACKAGE_TURN), finalTurn(NATIVE_VERDICT),
     ]);
     const params = { runId: "instagram_run_lang_conventions", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
     const durableStore = new MemoryDurableStepStore();
     const result = await new WorkflowEngine(durableStore).run(workflowFor(router), params);
 
-    // Not a language DELIVERY path: the draft never got past a free gate, so this is the ordinary
-    // attempt-cap hold every other self-check shares, and the reason names the conventions gate.
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/deterministic Hebrew conventions gate/i);
+    expect(result.status, JSON.stringify(result)).toBe("completed");
+    if (result.status !== "completed") throw new Error("unreachable");
 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).toContain("07e2-native-conventions-attempt-1");
     expect(stepIds).toContain("07e2-native-conventions-attempt-3");
-    // ZERO paid turns spent on a draft a regex could refuse: scout + research + angle + 3 x (copy + vet).
-    expect(router.complete).toHaveBeenCalledTimes(9);
-    expect(stepIds).not.toContain("07g-relevance-attempt-1");
-    expect(stepIds).not.toContain("07f-language-fluency-attempt-1");
-    expect(stepIds).not.toContain("08-render-carousel-attempt-1");
+
+    // THE PREMISE (RFC-19 §8.2 assertion 7): the free gate refused the draft that
+    // shipped. The bar did not move — `gate.nativeLanguage` still rejects a curly
+    // quotation mark mechanically, on every attempt.
+    const conventions3 = (await durableStore.getStep(params.runId, "07e2-native-conventions-attempt-3")) as { output: { ok: boolean } };
+    expect(conventions3.output.ok).toBe(false);
+    const finding = result.output.selfCheck?.checks.find((c) => c.gate === "conventions");
+    expect(finding, `checks: ${JSON.stringify(result.output.selfCheck?.checks)}`).toBeDefined();
+    expect(finding!.detail).toMatch(/deterministic Hebrew conventions gate/i);
+    // The gate's OWN sentence, naming the rule that fired — not a paraphrase.
+    expect(finding!.detail).toMatch(/curly-quotes/);
+
+    // ── THE ORDERING CLAIM, PRESERVED WHERE IT STILL HOLDS ──
+    // Attempts 1 and 2 spend ZERO relevance and ZERO judge turns: they were
+    // returned to `05` by a free gate, which is the entire cost argument of this
+    // phase and is untouched. Only attempt 3 — which has no next draft to be
+    // cheap for — pays.
+    for (const attempt of [1, 2]) {
+      expect(stepIds).not.toContain(`07g-relevance-attempt-${attempt}`);
+      expect(stepIds).not.toContain(`07j-value-judge-attempt-${attempt}`);
+      expect(stepIds).not.toContain(`07f-language-fluency-attempt-${attempt}`);
+      expect(stepIds).not.toContain(`08-render-carousel-attempt-${attempt}`);
+    }
+    expect(stepIds).toContain("07g-relevance-attempt-3");
+    expect(stepIds).toContain("07f-language-fluency-attempt-3");
+
+    // THE TURN COUNT, ENUMERATED (RFC-19 §8.2 assertion 9):
+    //   scout 1 + research 1 + angle 1                                        = 3
+    //   3 × (copy + vet)                                                      = 6   (07e2 refuses each)
+    //   attempt 3 falls through: relevance + value + native editor + visual QA = 4
+    //   after the loop: packager + the package's native round                 = 2
+    //                                                                     total 15
+    expect(router.complete).toHaveBeenCalledTimes(15);
 
     // And the order is the one the comment claims, measured on the checkpoints rather than asserted in prose.
     expect(stepIds.indexOf("07e-language-script-attempt-1")).toBeLessThan(stepIds.indexOf("07e2-native-conventions-attempt-1"));
+    expect(stepIds.indexOf("07e2-native-conventions-attempt-3")).toBeLessThan(stepIds.indexOf("07g-relevance-attempt-3"));
+    expect(stepIds.indexOf("07g-relevance-attempt-3")).toBeLessThan(stepIds.indexOf("07f-language-fluency-attempt-3"));
+
+    // Delivered, with the truth attached.
+    expect(await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"])).toHaveLength(1);
   }, 60000);
 
   it("ORDERING, the other half: on a draft that PASSES the free gates, 07e2 runs before 07g and 07g before 07f", async () => {
@@ -924,9 +1023,29 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     expect(stepIds).toContain("07f-language-fluency-attempt-1");
   }, 60000);
 
-  it("HOLDS AT INTAKE: a client whose profile is written in a script several languages share holds at 02d before any copy is drafted", async () => {
+  /**
+   * ── RFC-19 §4 item 18: still stops, and now stops HONESTLY ──
+   *
+   * This case used to assert `held`. Nothing about WHEN the run stops has
+   * changed — 02d still refuses, before a cent is spent, and the three
+   * `reason` assertions below are the same three. What changed is the WORD.
+   *
+   * `WorkflowHeld` is this agent's vocabulary for "a quality process reached
+   * the end of its rope", and that is not what happened here. A client whose
+   * profile is Cyrillic prose with no `brand.language` is a CONFIG GAP: it is
+   * identical in kind to the five `WorkflowBlockedIntake` sites beside it (no
+   * client config, an unparseable `instagramStyleConfig`, a canvas scale that
+   * is not 2), and `zero-held-guarantee.test.ts:379` already names that class
+   * in the words this now matches — "a real blockage somebody must act on".
+   *
+   * It is the one row of RFC-19's exit table that is NOT a quality change,
+   * and the RFC says so: "one word". Filing a missing input as a malfunction
+   * is how the owner's carve-out ("there is nobody to write for") ends up
+   * looking like the thing the carve-out exists to forbid.
+   */
+  it("BLOCKS INTAKE: a client whose profile is written in a script several languages share stops at 02d before any copy is drafted", async () => {
     await env.store.writeJson("acme", ["client", "profile"], CYRILLIC_PROFILE);
-    // No turns at all: 02d runs before research (04), so a hold there must
+    // No turns at all: 02d runs before research (04), so stopping there must
     // cost zero model calls.
     const router = fakeRouterSequence([]);
     const params = { runId: "instagram_run_lang_unresolved", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
@@ -934,8 +1053,12 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     const durableStore = new MemoryDurableStepStore();
     const result = await new WorkflowEngine(durableStore).run(workflowFor(router), params);
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
+    // NOT `held` — and, just as importantly, NOT `completed`. The owner's
+    // requirement is that a quality verdict may not kill a run; it is not that
+    // every run ships something. With no resolvable language there is nobody
+    // to write FOR, and inventing one is the failure this branch prevents.
+    expect(result.status).toBe("blocked_intake");
+    if (result.status !== "blocked_intake") throw new Error("unreachable");
     expect(result.reason).toMatch(/target language could not be resolved/i);
     expect(result.reason).toMatch(/Cyrillic/);
     expect(result.reason).toMatch(/Russian/);

@@ -493,10 +493,17 @@ describe("checkPostPackage — the two free gates", () => {
   /**
    * RFC-18 §6.1: "there is no state in which the whole post costs us the post".
    *
-   * `checkCraftHygiene` throws on exactly this outcome, and that is correct
-   * THERE — it runs inside the drafting loop on copy that must not ship
-   * unchecked. Here the loop has already broken and the carousel is approved,
-   * gated and rendered. A throw would end that run on a lint outage.
+   * This paragraph used to say `checkCraftHygiene` throws on exactly this
+   * outcome and that it is correct THERE. RFC-19's Mechanism C has since made
+   * the first half false: a REGISTERED `gate.lintPost` that fails, at either
+   * gate, now forms no opinion and records a ledger warn. Both call sites take
+   * the same posture on an outage, and this one simply took it first.
+   *
+   * The reasoning below is what survives, and it is about an UNREGISTERED tool,
+   * where the two still differ on purpose: `07b` runs inside the drafting loop
+   * on copy that must not ship unchecked and throws; here the loop has already
+   * broken and the carousel is approved, gated and rendered, so a throw would
+   * end that run over a missing tool.
    *
    * Both shapes an outage takes, because they arrive on different lines: a
    * non-success `execute` outcome, and a success carrying a `tooling_error`

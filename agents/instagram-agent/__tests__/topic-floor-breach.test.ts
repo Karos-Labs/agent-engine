@@ -1,7 +1,7 @@
 import { describe, expect, it, afterEach } from "vitest";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
-import { fakeRouterSequence, finalTurn, goodBrandTokens, goodStyleConfig, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import { fakeRenderCarousel, fakeRouterSequence, finalTurn, goodBrandTokens, goodStyleConfig, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 import { happyTurns } from "./turns.js";
 
 const params = { runId: "instagram_run_floor", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
@@ -16,6 +16,17 @@ function containsInOrder(actual: readonly string[], expected: readonly string[])
 describe("03-claim-topic: the topics catalog is the only dedup gate (RFC-03 §2.3)", () => {
   let env: TestEnvironment;
 
+  /**
+   * The real registry with the Chromium-free renderer swapped in (`workflow-e2e.test.ts`'s rationale).
+   *
+   * Every assertion in this file reads `03-claim-topic`'s own step output, its hold reason, or the topics
+   * catalog — not one reads a rendered pixel, a PNG path or a render outcome. These runs reach the renderer
+   * only because a topic-fallback run no longer dies at `03` and now walks the whole workflow to delivery.
+   */
+  function renderFree(): TestEnvironment["tools"] {
+    return { ...env.tools, "publish.renderCarousel": fakeRenderCarousel(env.tools["publish.renderCarousel"]!) } as TestEnvironment["tools"];
+  }
+
   afterEach(async () => {
     await env.cleanup();
   });
@@ -29,7 +40,7 @@ describe("03-claim-topic: the topics catalog is the only dedup gate (RFC-03 §2.
     env = await setupTestEnvironment({ seedTopics: [] }); // an empty catalog: topics.reserve has nothing to give
     const promptStore = makePromptStore();
     const router = fakeRouterSequence([finalTurn({ text: "unused — must never be reached" })]);
-    const workflowFn = createInstagramAgentWorkflow({ tools: env.tools, promptStore, router, repoRoot: env.repoRoot });
+    const workflowFn = createInstagramAgentWorkflow({ tools: renderFree(), promptStore, router, repoRoot: env.repoRoot });
 
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
@@ -100,7 +111,7 @@ describe("03-claim-topic: the topics catalog is the only dedup gate (RFC-03 §2.
       // output, so the happy path is queued and whatever happens after is
       // not asserted on.
       const router = fakeRouterSequence(happyTurns());
-      const workflowFn = createInstagramAgentWorkflow({ tools: env.tools, promptStore, router, repoRoot: env.repoRoot });
+      const workflowFn = createInstagramAgentWorkflow({ tools: renderFree(), promptStore, router, repoRoot: env.repoRoot });
       const durableStore = new MemoryDurableStepStore();
       await new WorkflowEngine(durableStore).run(workflowFn, { ...params, runId });
       const step03 = (await durableStore.listSteps(runId)).find((s) => s.stepId === "03-claim-topic");
@@ -177,7 +188,7 @@ describe("03-claim-topic: the topics catalog is the only dedup gate (RFC-03 §2.
     env = await setupTestEnvironment(); // the default seed has 6 topics
     const promptStore = makePromptStore();
     const router = fakeRouterSequence(happyTurns({ research: { text: "unused — this test only exercises step 03" } }));
-    const workflowFn = createInstagramAgentWorkflow({ tools: env.tools, promptStore, router, repoRoot: env.repoRoot });
+    const workflowFn = createInstagramAgentWorkflow({ tools: renderFree(), promptStore, router, repoRoot: env.repoRoot });
 
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
@@ -208,7 +219,7 @@ describe("03-claim-topic: the topics catalog is the only dedup gate (RFC-03 §2.
 
       const promptStore = makePromptStore();
       const router = fakeRouterSequence([finalTurn({ text: "unused — must never be reached" })]);
-      const workflowFn = createInstagramAgentWorkflow({ tools: env.tools, promptStore, router, repoRoot: env.repoRoot });
+      const workflowFn = createInstagramAgentWorkflow({ tools: renderFree(), promptStore, router, repoRoot: env.repoRoot });
 
       const durableStore = new MemoryDurableStepStore();
       const engine = new WorkflowEngine(durableStore);
@@ -243,7 +254,7 @@ describe("03-claim-topic: the topics catalog is the only dedup gate (RFC-03 §2.
 
       const promptStore = makePromptStore();
       const router = fakeRouterSequence(happyTurns({ research: { text: "unused — this test only exercises step 03" } }));
-      const workflowFn = createInstagramAgentWorkflow({ tools: env.tools, promptStore, router, repoRoot: env.repoRoot });
+      const workflowFn = createInstagramAgentWorkflow({ tools: renderFree(), promptStore, router, repoRoot: env.repoRoot });
 
       const durableStore = new MemoryDurableStepStore();
       const engine = new WorkflowEngine(durableStore);

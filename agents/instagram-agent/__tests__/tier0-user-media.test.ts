@@ -5,7 +5,7 @@ import type { AgentTool } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { MEDIA_LIBRARY_SEGMENTS, createMediaLibraryTools, type MediaLibraryDocument } from "@agent-engine/tool-karos-media";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
-import { fakeRouterSequence, goodCopyOutput, goodResearchOutput, goodTrendScoutOutput, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import { fakeRenderCarousel, fakeRouterSequence, goodCopyOutput, goodResearchOutput, goodTrendScoutOutput, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 import { standardTurns } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 
@@ -79,7 +79,10 @@ describe("instagram Tier 0: client-supplied media", () => {
     const router = fakeRouterSequence(standardTurns({ scout: goodTrendScoutOutput(), research: goodResearchOutput(), angle: goodAngleProposal(), copy }));
     const store = new MemoryDurableStepStore();
     const workflowFn = createInstagramAgentWorkflow({
-      tools: { ...env.tools, ...tools } as never,
+      // The Chromium-free renderer (`workflow-e2e.test.ts`'s rationale). Tier 0 is about INGESTION: every
+      // assertion below reads `05z`'s step output, the harvester's `needs` or the media library, and none
+      // reads a rendered pixel. These runs touch the renderer only because a delivered run now gets there.
+      tools: { ...env.tools, "publish.renderCarousel": fakeRenderCarousel(env.tools["publish.renderCarousel"]!), ...tools } as never,
       promptStore: makePromptStore(),
       router,
       repoRoot: env.repoRoot,

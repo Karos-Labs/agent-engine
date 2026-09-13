@@ -21,6 +21,7 @@ import {
   recordRunInHistory,
   remainingGenerationBudget,
   revisionEstimateUsd,
+  roundUsd,
   summarizeRunBudget,
   targetCrossedNote,
 } from "../src/workflow/run-budget.js";
@@ -1238,5 +1239,193 @@ describe("the estimate table", () => {
     for (const key of ["valueJudge", "postPackage", "packageNativeJudge"] as const) {
       expect(c[key]).toBeLessThan(c.copyAttempt / 10);
     }
+  });
+});
+
+/**
+ * ════════════════════════════════════════════════════════════════════════════
+ * RFC-19 §8.4 — THE ATTEMPT RUNG GUARD
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * ## What this exists to catch, stated as an incident rather than as a policy
+ *
+ * `run-budget.ts:1524-1554` records it in the module's own words: a cold
+ * Hebrew plan sat $0.0002 under target, an HONEST $0.0045 re-price of
+ * `vetCall` pushed it over, rung 4 — the ATTEMPT rung — fired,
+ * `maxSelfCheckAttempts` went 3 -> 2, and **two tests whose names contain the
+ * words "NEVER holds" started producing `status: "held"` runs**. Nobody
+ * changed a gate. Nobody changed a hold. A cost key moved by less than half a
+ * cent and a quality guarantee three files away stopped being true.
+ *
+ * The headroom is now **$0.0017**, not $0.0002 — 8.5x larger and still small
+ * enough that the same accident is one careless key away. RFC-19 (Phase 6)
+ * makes every quality gate DELIVER instead of hold, and every one of those
+ * deliveries rides the drafting attempt loop that rung 4 cuts. So the rung is
+ * no longer only a budget lever: **it is the load-bearing member under the
+ * owner's "the client cannot receive a failed run" requirement**, and it gets
+ * a guard of its own rather than being protected by a number in a comment.
+ *
+ * ## Why it lives HERE and not only in the flipped gate suites
+ *
+ * When rung 4 fires the symptom appears in `language-compliance-gate.test.ts`
+ * and `zero-held-guarantee.test.ts` as a held run, which reads as a WORKFLOW
+ * regression and sends the next reader into the workflow file. It is not one.
+ * These two tests fail FIRST, in the file where the cause is, with a number
+ * that says how much was added and what it cost.
+ *
+ * ## RFC-19's own cost claim, asserted rather than asserted-about
+ *
+ * RFC-19 §7.1 claims **$0.000000 of added planned cost**: `rawEstimate` gains
+ * no term in `fixed`, `perAttempt`, `rescue` or `images`. That is not a claim
+ * a reviewer can check by reading a diff of a 10,000-line workflow file. It is
+ * a claim about four numbers, and the four numbers are pinned below.
+ */
+describe("RFC-19 §8.4 — the attempt rung holds, and an added per-attempt cost cannot buy itself a drafting attempt", () => {
+  /** The shape RFC-19 §7.3 turns on, and the one `planRunBudget` is handed for a Hebrew client. */
+  const COLD_HEBREW_SHAPE = { ...DEFAULT_RUN_SHAPE, targetLanguage: true };
+
+  it("pins the cold Hebrew raw estimate LEG BY LEG, so a new cost lands on a named number here first", () => {
+    const c = STEP_COST_ESTIMATES_USD;
+    const raw = estimateRunCost(DEFAULT_RUN_BUDGET_PLAN, COLD_HEBREW_SHAPE);
+
+    // ── The pin. Four legs and the total, as literals. ──
+    //
+    // Literals rather than derivations ON PURPOSE, and the derivation is
+    // asserted separately below. A test that only ever re-derives the number
+    // from the module's own keys agrees with the module by construction: add a
+    // key to `rawEstimate.perAttempt` AND to the derivation, and a
+    // derivation-only test still passes while every plan in production moves.
+    // The literal is the half that cannot be told the answer.
+    expect(raw.breakdown.fixed).toBe(0.2535);
+    expect(raw.breakdown.attempts).toBe(0.8028);
+    expect(raw.breakdown.rescue).toBe(0.102);
+    expect(raw.breakdown.images).toBe(0.312);
+    expect(raw.rawUsd).toBe(1.4703);
+    // `estimateRunCost`'s third argument defaults to a calibration ratio of 1,
+    // so on a client with no history the raw figure IS the planned figure.
+    expect(raw.estimatedUsd).toBe(raw.rawUsd);
+    expect(EMPTY_RUN_BUDGET_HISTORY.ewmaRatio).toBe(1);
+
+    // ── The derivation, term by term, ENUMERATED and not observed. ──
+    //
+    // Every term `rawEstimate`'s `perAttempt` carries is written out here. A
+    // Phase 6 that added a priced step inside the attempt loop — a re-ask, a
+    // second judge round, a repair that bills — would have to appear on this
+    // list to keep the equality, and the moment it does the LITERAL above
+    // refuses. The two assertions fail together and say different things:
+    // the literal says "the plan moved", this one says "by which term".
+    const perAttempt =
+      c.copyAttempt +
+      c.vetCall +
+      c.relevance +
+      c.valueJudge +
+      // Hebrew: the `languageBrief` field plus ONE native-editor round. The
+      // planner prices one and `revisionEstimateUsd` prices two, deliberately
+      // (`run-budget.ts:1176-1191`), and RFC-19 moves neither.
+      c.copyLanguageBrief +
+      c.nativeJudge +
+      c.visualQa +
+      // 05c inspects the whole candidate POOL, six per photo slide.
+      COLD_HEBREW_SHAPE.photoSlides * CANDIDATES_PER_PHOTO_SLIDE * c.visionInspectPerImage +
+      // 08a4 inspects every rendered slide, capped at 12 by the step itself.
+      Math.min(COLD_HEBREW_SHAPE.slideCount, 12) * c.visionInspectPerImage;
+    expect(perAttempt).toBeCloseTo(0.2676, 10);
+    expect(raw.breakdown.attempts).toBeCloseTo(DEFAULT_RUN_BUDGET_PLAN.maxSelfCheckAttempts * perAttempt, 10);
+    // The three free steps, named so nobody "completes" the list above with
+    // them: `07i`, `07i2`, `07e2`, `08c1` and RFC-19's two salvage steps are
+    // `wf.step.code` with no model call and no tool call, and they contribute
+    // nothing BY CONSTRUCTION rather than by omission (`run-budget.ts:1167`).
+    // RFC-19 §7.6 makes the same promise for `repairSourceRefs` and the
+    // salvage render: if either ever bills, this pin is where it surfaces.
+    expect(raw.rawUsd).toBeCloseTo(raw.breakdown.fixed + raw.breakdown.attempts + raw.breakdown.rescue + raw.breakdown.images, 10);
+
+    // The English cold shape differs by exactly the two language lines and
+    // nothing else — differencing one thing at a time, the discipline the
+    // block at line 519 states. This is what makes "Hebrew is the tight one"
+    // a measured fact rather than an assumption.
+    const english = estimateRunCost(DEFAULT_RUN_BUDGET_PLAN, DEFAULT_RUN_SHAPE);
+    expect(raw.breakdown.fixed - english.breakdown.fixed).toBeCloseTo(c.packageNativeJudge, 10);
+    expect(raw.breakdown.attempts - english.breakdown.attempts).toBeCloseTo(3 * (c.copyLanguageBrief + c.nativeJudge), 10);
+    expect(raw.breakdown.rescue).toBe(english.breakdown.rescue);
+    expect(raw.breakdown.images).toBe(english.breakdown.images);
+  });
+
+  it("keeps three attempts on the cold Hebrew plan, and the cliff is $0.0006 an attempt away — asserted on BOTH sides", () => {
+    const hebrew = planRunBudget(COLD_HEBREW_SHAPE);
+
+    // ── The acceptance condition, first and on its own line. ──
+    expect(hebrew.plan.maxSelfCheckAttempts).toBe(3);
+    expect(hebrew.adaptations).not.toContain("one return to step 05 instead of two");
+    expect(hebrew.estimate.estimatedUsd).toBe(0.9983);
+    expect(roundUsd(TARGET_RUN_SPEND_USD - hebrew.estimate.estimatedUsd)).toBe(0.0017);
+
+    // ── THE LADDER, REPLAYED — the same technique the block at line 665 uses,
+    // ── and for the same reason: "it goes red if you break it" is a claim
+    // ── until someone breaks it, and the reader of this file cannot.
+    //
+    // `addedPerAttempt` is the ONE thing RFC-19 promised not to spend. Feeding
+    // it through the real `estimateRunCost` and the real `fits()` rule answers
+    // the only question that matters — how much is a drafting attempt worth in
+    // cents — with the module's own arithmetic instead of with a forecast.
+    const replayLadder = (addedPerAttempt: number) => {
+      const at = (p: typeof DEFAULT_RUN_BUDGET_PLAN) =>
+        roundUsd(estimateRunCost(p, COLD_HEBREW_SHAPE, EMPTY_RUN_BUDGET_HISTORY.ewmaRatio).estimatedUsd + p.maxSelfCheckAttempts * addedPerAttempt);
+      const fits = (p: typeof DEFAULT_RUN_BUDGET_PLAN) => at(p) <= TARGET_RUN_SPEND_USD;
+      let plan = { ...DEFAULT_RUN_BUDGET_PLAN };
+      for (const cap of [4, 2, 0]) if (!fits(plan) && plan.generatedImagesCap > cap) plan = { ...plan, generatedImagesCap: cap };
+      if (!fits(plan) && plan.evidencePulls === "full") plan = { ...plan, evidencePulls: "reduced" };
+      if (!fits(plan) && plan.optionalRevets) plan = { ...plan, optionalRevets: false };
+      // Rung 4, LAST — "the only rung that makes the deliverable itself worse".
+      if (!fits(plan) && plan.maxSelfCheckAttempts > 2) plan = { ...plan, maxSelfCheckAttempts: 2 };
+      return { plan, landedUsd: at(plan) };
+    };
+
+    // ── ASSERT THE PREMISE. ──
+    //
+    // A replay that has drifted from the module proves nothing about the
+    // module, and a guard built on a stale replay is one of the six recorded
+    // ways this codebase has produced a guard that cannot fail. So the replay
+    // at ZERO added cost must land on `planRunBudget`'s OWN answer, plan field
+    // for plan field and dollar for dollar, before either cliff assertion is
+    // allowed to mean anything. Re-order the rungs in `run-budget.ts` and this
+    // line fails before the cliff lines do.
+    const unchanged = replayLadder(0);
+    expect(unchanged.plan).toEqual(hebrew.plan);
+    expect(unchanged.landedUsd).toBe(hebrew.estimate.estimatedUsd);
+
+    // ── THE CLIFF, FROM BOTH SIDES. ──
+    //
+    // $0.0005 an attempt is $0.0015 a run: it fits, with $0.0002 to spare —
+    // and $0.0002 is precisely the margin the incident above started from, so
+    // this is the last sub-cent that is safe rather than a comfortable one.
+    const safe = replayLadder(0.0005);
+    expect(safe.plan.maxSelfCheckAttempts).toBe(3);
+    expect(safe.landedUsd).toBe(0.9998);
+
+    // $0.0006 an attempt is $0.0018 a run, $0.0001 over the headroom, and it
+    // costs A WHOLE DRAFTING ATTEMPT.
+    const fired = replayLadder(0.0006);
+    expect(fired.plan.maxSelfCheckAttempts).toBe(2);
+    expect(fired.plan.optionalRevets).toBe(false);
+
+    // ── AND THE OVERSHOOT, WHICH IS THE ACTUAL FINDING. ──
+    //
+    // The rung does not recover $0.0018. It recovers a whole attempt — the
+    // plan lands at $0.7319, a QUARTER of the target given back to claw a
+    // fifth of a cent. That ratio is why RFC-19 §7.1's "no priced step
+    // anywhere" is a hard constraint and not a preference: there is no
+    // proportionate version of crossing this line.
+    expect(fired.landedUsd).toBe(0.7319);
+    expect(TARGET_RUN_SPEND_USD - fired.landedUsd).toBeGreaterThan(100 * 0.0018);
+    expect(safe.landedUsd - fired.landedUsd).toBeCloseTo(0.2679, 6);
+
+    // What the attempt that was deleted would have carried, named in gates
+    // rather than in dollars — because this is the sentence the next author
+    // needs and a dollar figure does not say it. Every one of RFC-19's
+    // fall-throughs fires on `isFinalAttempt`, so cutting 3 to 2 does not make
+    // the run cheaper by a third: it makes the gate that returns work on
+    // attempt 2 the LAST word, which is the difference between a redraft and a
+    // degraded delivery.
+    expect(fired.plan.maxSelfCheckAttempts).toBeLessThan(hebrew.plan.maxSelfCheckAttempts);
   });
 });

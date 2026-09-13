@@ -124,6 +124,27 @@ export interface StandardTurnFixtures {
    * too early.
    */
   packageNative?: unknown;
+  /**
+   * RFC-19 (Phase 6) — **is this block the fixture for the FINAL drafting attempt?**
+   *
+   * Not a turn. It is the one thing a block cannot work out for itself, and without it the two predicates
+   * below encode a control flow that no longer exists.
+   *
+   * Before Phase 6, a gate that refused sent the draft back to `05` on EVERY attempt, so a refusing fixture
+   * bought nothing after that gate — `reachesValueJudge` and `reachesPackager` read the refusal and emitted
+   * no turn. Phase 6 changed what happens after a refusal ON THE LAST ATTEMPT ONLY: the finding is recorded
+   * and the attempt WALKS ON, through the relevance judge, the value judge, the visual QA and the packager,
+   * every one of which is a turn the plan already reserved (RFC-19 §7.4). A fixture whose last block refuses
+   * and does not say so therefore runs three turns short, the router exhausts, and the failure surfaces as a
+   * workflow regression rather than the fixture gap it is — which is the exact confusion this module's
+   * header comment exists to prevent.
+   *
+   * **Defaults to today's behaviour** (`undefined` → a refusing block buys nothing), so every fixture that
+   * does not mention it is unaffected. Set it only on the block standing in for the last attempt, and only
+   * when that block's gate actually refuses; on a block that passes its gates it changes nothing, because
+   * both predicates already return `true` for those.
+   */
+  isFinalAttempt?: boolean;
 }
 
 /**
@@ -339,19 +360,29 @@ function reachesValueJudge(fixtures: StandardTurnFixtures): boolean {
   // and `07j` ate the QA fixture instead.
   if (!("relevance" in fixtures) || fixtures.relevance === undefined) return false;
   const score = (fixtures.relevance as { score?: unknown }).score;
-  return typeof score !== "number" || score >= 3;
+  if (typeof score !== "number" || score >= 3) return true;
+  // RFC-19 §4 item 6 — a sub-floor verdict returns the draft to `05` on attempts 1..n-1 and `07j` is never
+  // reached, but on the FINAL attempt `07g` records its finding and the attempt walks on, so the value judge
+  // IS bought. §7.4's table prices exactly this turn.
+  return fixtures.isFinalAttempt === true;
 }
 
 /**
- * Whether this block's attempt WINS — the only state in which `08c` is bought.
+ * Whether this block's attempt reaches `08c` — the packager.
  *
- * A failing visual QA verdict returns the draft to `05`, so the packager is
- * never reached on that attempt; a block with no `qa` fixture never got that
- * far either.
+ * A block with no `qa` fixture never got that far, on any attempt: `08c*` runs after the loop breaks, and a
+ * block that queues no QA verdict is one whose attempt ends before the render. That half is unchanged.
+ *
+ * A FAILING QA verdict used to mean the same thing, because it returned the draft to `05`. Under RFC-19 §4
+ * item 9 the final attempt's QA refusal is recorded and the loop exits normally — `finalRendered` is the
+ * render that was already paid for, `finalOutcomeOk` is true — so `08c-package-post` IS bought. Hence the
+ * `isFinalAttempt` consultation: the fixture has to say which attempt it is standing in for, because a
+ * `pass: false` alone no longer determines the answer.
  */
 function reachesPackager(fixtures: StandardTurnFixtures): boolean {
   if (!("qa" in fixtures) || fixtures.qa === undefined) return false;
-  return (fixtures.qa as { pass?: unknown }).pass !== false;
+  if ((fixtures.qa as { pass?: unknown }).pass !== false) return true;
+  return fixtures.isFinalAttempt === true;
 }
 
 /** `finalTurn(...)` entries for the supplied fixtures, in execution order. */

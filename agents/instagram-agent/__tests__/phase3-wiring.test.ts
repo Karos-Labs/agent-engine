@@ -266,7 +266,9 @@ describe("00d* — a client with no visual direction derives one, once", () => {
       );
       const store = new MemoryDurableStepStore();
       const workflowFn = createInstagramAgentWorkflow({
-        tools: fresh.tools as unknown as AgentToolRegistry,
+        // The Chromium-free renderer, like this file's other three runs. This test asserts only which
+        // `00d*` steps ran; it reaches the renderer at all only because a delivered run now gets that far.
+        tools: { ...fresh.tools, "publish.renderCarousel": fakeRenderCarousel(fresh.tools["publish.renderCarousel"]!) } as unknown as AgentToolRegistry,
         promptStore: makePromptStore(),
         router,
         repoRoot: fresh.repoRoot,

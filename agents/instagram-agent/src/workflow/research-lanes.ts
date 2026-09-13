@@ -1,5 +1,6 @@
 import type { AgentContext, AgentToolRegistry } from "@agent-engine/core";
 import {
+  WorkflowBlockedIntake,
   WorkflowToolingFailure,
   mergeResearchPulls,
   type ResearchCandidateDocument,
@@ -317,7 +318,19 @@ export async function pullResearchLanes(
     const pull = tools["research.pull"];
     if (!pull) throw new Error(`${options.stepId}: research.pull is not registered`);
     if (options.lanes.length === 0) {
-      throw new WorkflowToolingFailure(`${options.stepId}: no research lanes were built — there was no subject and no client brief to ground one in`);
+      // NOT a tooling failure (RFC-19 §4, the bookkeeping cluster). Nothing
+      // malfunctioned: `buildResearchLanes` is pure and it built nothing
+      // because it was given nothing — no subject and a brief with no core
+      // terms is a client whose intake was never completed. Filing that as a
+      // malfunction sent it to the wrong person, and it is semantically the
+      // owner's own carve-out ("there is nobody to write for") wearing an
+      // outage's name. `WorkflowBlockedIntake` is what the five sibling
+      // config gaps in this workflow already throw, and
+      // `zero-held-guarantee.test.ts` asserts that class means "a real
+      // blockage somebody must act on".
+      //
+      // The run still stops. It stops honestly.
+      throw new WorkflowBlockedIntake(`${options.stepId}: no research lanes were built — there was no subject and no client brief to ground one in`);
     }
 
     const laneOutcomes: ResearchLaneOutcome[] = [];
