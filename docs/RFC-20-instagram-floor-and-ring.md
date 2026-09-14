@@ -1199,3 +1199,38 @@ Added to §11.4's table. Same terms: **not deleted, returning unweakened, in the
 
 The second is **removed, not left looping over an empty table** — an empty loop passes, and a green case that
 asserts nothing is the same defect as a guard left behind testing work that is not there.
+
+## 11.9 THE LAST RED LIGHT — CI 34815523803, and it is a pre-existing defect on an unmodified plate
+
+Applying §11.8's rule took the suite from 12 failures to **one**, and every `(0,0)` rectangle went with the
+templates that owned it: the interior band's worst `LER` fell **0.2889 -> 0.2139** and the closer's **0.2028 ->
+0.0395**. The reverted plates are healthy. The one that is left:
+
+```
+en ltr short s -> comparison-card @ interior: occ 0.3131 is under 1.15x the interior floor 0.3
+```
+
+**Nothing in this PR touches either side of that comparison.** `comparison-card.html` is byte-identical to
+`origin/main` and `OCCUPIED_SHARE_FLOOR.interior` is the 0.30 the tree already shipped. What changed is that the
+gate-zero sweep exists for the first time and rendered 76 interior rows on real Chromium, so **this is a new
+INSTRUMENT reporting an old defect, not a regression.** The same row would have been red on `main` if `main` had
+a sweep to be red in.
+
+It has no live effect. Clause D is a conjunction and this plate measures `flat` 0.6592, under
+`FLAT_BACKGROUND_CEILING` 0.70, so the occupancy limb is never reached and no run is refused for it. The sweep's
+1.15x margin is stricter than the gate by design — it is the margin that says a plate is not *about* to fail.
+
+**By §5.6 rule 2 the first remedy is the template, and the constant does not move.** 0.30 stays. The plate needs
+the same thing `stat-callout` and the statement archetypes need — something at the top of the frame that its own
+copy earns — and that is §11.4's work. **No composition is guessed at here.**
+
+The updated bands, for §11.4 to re-derive from (CI 34815523803, NEGLECTED ceiling `occ` 0.0194 over 6 controls):
+
+| role | POPULATED min `occ` | max `LER` | shipped floor | rule-1 midpoint |
+|---|---|---|---|---|
+| cover (n=19) | 0.2670 | 0.1469 | **0.18** | 0.14 |
+| interior (n=76) | 0.2856 | 0.2139 | **0.30** | — rule 2 |
+| closer (n=19) | 0.5333 | 0.0395 | **0.42** | 0.27 |
+
+Both shipped constants sit **above** their rule-1 midpoints — `cover` 0.18 against 0.14 and `closer` 0.42 against
+0.27 — which is the safe direction, and is stated rather than left for a later reader to reconstruct.
