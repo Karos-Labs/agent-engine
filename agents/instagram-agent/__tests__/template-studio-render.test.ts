@@ -154,12 +154,21 @@ function assertSpecAndModuleAgree(thresholds: StudioInterestThresholds): void {
   expect(thresholds.textShareCeiling).toBe(SPEC_THRESHOLDS.textShareCeiling);
   // The studio grades against the RUN's floors, all three roles of them.
   expect(thresholds.occupiedShareFloor).toEqual(OCCUPIED_SHARE_FLOOR);
-  // …and the spec's original is recorded as superseded rather than forgotten:
-  // if a future edit ever puts them back in agreement, that is a real event
-  // and this line is what makes somebody look at why.
-  expect(thresholds.occupiedShareFloor.interior, "the module and the spec agree again — re-read RFC-20 §5.6 before assuming that is correct").not.toBe(
-    SPEC_THRESHOLDS.occupiedShareFloor.interior,
-  );
+  // THE DIVERGENCE THIS LINE WATCHED IS GONE, AND IT IS THE LINE THAT SAID SO.
+  //
+  // It used to assert `.not.toBe(SPEC_THRESHOLDS.occupiedShareFloor.interior)`,
+  // with the note: *if a future edit ever puts them back in agreement, that is
+  // a real event and this line is what makes somebody look at why.* It went red
+  // on CI 34804038775 and the event is real: RFC-20 Part 11 CUT the interior
+  // re-calibration, because the band its 0.19 came from was `.hf-plate`'s own
+  // painted area rather than anything a reader sees. The module is back at the
+  // spec's 0.30 and the two agree honestly rather than by a hand edit.
+  //
+  // The line is removed rather than inverted because there is nothing left for
+  // it to watch, and `toEqual(OCCUPIED_SHARE_FLOOR)` above is the stronger pin
+  // in every way: it covers all three roles, it reads the live export, and it
+  // cannot be satisfied by editing `SPEC_THRESHOLDS` to match. `cover` and
+  // `closer` DID move (0.42 -> 0.18 / 0.31) and that pin is what holds them.
 }
 
 /** The document shell code owns. `buildStudioTemplateDocument` once it exists; its byte-identical sibling until then. */
