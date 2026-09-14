@@ -409,10 +409,20 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
         .sort((a, b) => a.at - b.at)
         .map((d) => d.mode);
       const priorMode = recentModes.at(-1);
-      const mode = selectContentMode(recentModes, intake.requestedMode);
+      // Same precedence as linkedin-agent's 07b (SCRUM-430): a typed note that
+      // names a kind of post outranks the dialog's pick; one that does not
+      // leaves the pick standing. The two products stay readable side by side.
+      const directed = runDirection.modeOverride;
+      const mode = selectContentMode(recentModes, directed ?? intake.requestedMode);
+      const source: XContentModeSelection["source"] =
+        directed !== undefined && mode === directed
+          ? "directed"
+          : intake.requestedMode !== undefined && mode === intake.requestedMode
+            ? "requested"
+            : "rotation";
       return {
         mode,
-        source: intake.requestedMode !== undefined && mode === intake.requestedMode ? "requested" : "rotation",
+        source,
         ...(priorMode !== undefined ? { priorMode } : {}),
       };
     });

@@ -1,4 +1,5 @@
 import { readRichRunInput, type MediaAsset, type MediaSource } from "@agent-engine/core";
+import { CONTENT_MODES, type ContentMode } from "./social-trend-scout.js";
 
 /**
  * The run-scoped direction a person typed, resolved once per run.
@@ -81,6 +82,20 @@ export interface RunDirection {
    * reads like a topic line (see `looksLikeTopic`).
    */
   topicOverride?: string;
+  /**
+   * The content mode this run should write in, when the typed instruction
+   * says so. "React to this week's funding news" is hot-news whatever "Kind
+   * of post" was picked in the dialog; "ask the audience whether…" is an
+   * open discussion. Set only when the instruction carries cues for exactly
+   * ONE mode (see `modeFromDirection`); a note that says nothing about the
+   * kind of post leaves the picked mode standing.
+   *
+   * This is the LinkedIn/X analogue of tiktok's "customPrompt wins over
+   * requestedTopic" (SCRUM-430): the thing a person typed for this run
+   * outranks the thing they clicked, on the axis the typed thing actually
+   * speaks to.
+   */
+  modeOverride?: ContentMode;
   mediaAssets: readonly MediaAsset[];
   /** Where this run's visuals may come from — see `MediaSource` in core. `"system"` unless the portal said otherwise. */
   mediaSource: MediaSource;
@@ -123,6 +138,38 @@ function looksLikeTopic(instruction: string): boolean {
   if (STYLE_ONLY_HINTS.some((hint) => lower.includes(hint))) return false;
   // A whole paragraph is a brief, not a topic line.
   return instruction.length <= 160;
+}
+
+/**
+ * Phrases that name a KIND of post, per content mode. One table keyed by the
+ * mode union, so adding a mode without deciding its cues is a type error.
+ *
+ * Kept short and literal for the same reason `STYLE_ONLY_HINTS` is: the cost
+ * of a wrong guess is asymmetric. A note that merely mentions "news" in
+ * passing and gets forced into hot-news overrides a choice the client made on
+ * purpose. So a cue has to be a phrase a person writes when they mean the
+ * mode, not a word that can appear in any sentence about anything.
+ */
+export const MODE_CUES: Record<ContentMode, readonly string[]> = {
+  "hot-news": ["react to", "reaction to", "this week's", "breaking news", "just announced", "just launched", "hot take on the news", "in the news"],
+  "deep-value": ["lessons from", "lessons learned", "lesson learned", "how we", "how-to", "how to", "framework", "playbook", "teardown", "deep dive", "step by step", "case study"],
+  "open-discussion": ["ask the audience", "ask our audience", "open question", "start a discussion", "start a debate", "what do you think", "run a poll", "a poll", "unpopular opinion", "invite opinions", "hot take:"],
+};
+
+/**
+ * The content mode a typed instruction asks for, or undefined when it does not
+ * ask for one. Undefined is the common case and the safe one: the run keeps
+ * whatever mode the dialog picked or the rotation chooses.
+ *
+ * Deliberately refuses to guess when cues for MORE THAN ONE mode appear —
+ * "a deep dive reacting to this week's news" is two modes, and picking one
+ * silently is exactly the kind of decision this module leaves to a person.
+ */
+export function modeFromDirection(instruction: string | undefined): ContentMode | undefined {
+  if (!instruction) return undefined;
+  const lower = instruction.toLowerCase();
+  const hits = CONTENT_MODES.filter((mode) => MODE_CUES[mode].some((cue) => lower.includes(cue)));
+  return hits.length === 1 ? hits[0] : undefined;
 }
 
 function readString(input: Readonly<Record<string, unknown>>, key: string): string | undefined {
@@ -210,6 +257,10 @@ export function readRunDirection(input: Readonly<Record<string, unknown>> | unde
   // An explicit topic field is a topic, full stop — no length or style
   // heuristic applies to it. Only a free-text instruction has to look like one.
   const topicOverride = requestedTopic ?? (instruction && looksLikeTopic(instruction) ? instruction : undefined);
+  // Read off the bare instruction, like the topic question above: brief lines
+  // are labelled form fields, and a "Tone: casual" line must never be mistaken
+  // for a request to change the kind of post.
+  const modeOverride = modeFromDirection(instruction);
 
   // The brief rides along with the instruction rather than replacing it, and
   // the "does this look like a topic" question above was asked of the bare
@@ -222,6 +273,7 @@ export function readRunDirection(input: Readonly<Record<string, unknown>> | unde
   return {
     ...(direction ? { direction } : {}),
     ...(topicOverride ? { topicOverride } : {}),
+    ...(modeOverride ? { modeOverride } : {}),
     mediaAssets: rich.mediaAssets,
     mediaSource: rich.mediaSource,
     brief,

@@ -113,9 +113,10 @@ export interface XSelectedCandidate {
 }
 
 /** Step 07b's output: the content mode this run writes in, and the prior run's, for the trace. */
+/** `source` precedence is the same as LinkedIn's (SCRUM-430): a typed note naming a kind of post > the dialog's pick > rotation. */
 export interface XContentModeSelection {
   mode: ContentMode;
-  source: "requested" | "rotation";
+  source: "directed" | "requested" | "rotation";
   priorMode?: ContentMode;
 }
 

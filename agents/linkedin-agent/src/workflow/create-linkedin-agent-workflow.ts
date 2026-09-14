@@ -550,12 +550,26 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
     }
 
     // ── 07b: the content-mode rotation — never the same twice, least-used first ──
+    //
+    // Precedence (SCRUM-430, mirroring tiktok's "customPrompt wins over
+    // requestedTopic"): a typed run note that names a kind of post outranks the
+    // dialog's "Kind of post" pick, because the person who wrote the sentence
+    // said more about THIS run than the person who clicked a chip did. A note
+    // that says nothing about the kind of post leaves the pick standing — the
+    // note is not ignored, it just spoke to a different axis (topic, style).
     const modeSelection = await wf.step.code("07b-select-content-mode", (): LinkedInContentModeSelection => {
       const priorMode = recentDecisions.modes.at(-1);
-      const mode = selectContentMode(recentDecisions.modes, intake.requestedMode);
+      const directed = runDirection.modeOverride;
+      const mode = selectContentMode(recentDecisions.modes, directed ?? intake.requestedMode);
+      const source: LinkedInContentModeSelection["source"] =
+        directed !== undefined && mode === directed
+          ? "directed"
+          : intake.requestedMode !== undefined && mode === intake.requestedMode
+            ? "requested"
+            : "rotation";
       return {
         mode,
-        source: intake.requestedMode !== undefined && mode === intake.requestedMode ? "requested" : "rotation",
+        source,
         ...(priorMode !== undefined ? { priorMode } : {}),
       };
     });
