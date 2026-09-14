@@ -612,6 +612,18 @@ export const FLAT_BACKGROUND_CEILING = 0.7;
  * decision rule 1 applies: the constant is the midpoint rounded to 0.01 toward
  * NEGLECTED, (0.3121 + 0.0746) / 2 = 0.1934 -> **0.19**.
  *
+ * TWO MEASUREMENTS FEED THAT NEGLECTED FIGURE AND THE HIGHER ONE IS USED, which
+ * is worth saying because the sweep prints the lower. The gate-zero sweep
+ * renders its neglected controls at the `m` type scale only and its eight rows
+ * top out at `occ` **0.0584**; the dedicated grey-screen probe renders both
+ * ground variants at s, m and l and tops out at **0.0746** (glyph ground, `l`).
+ * 0.0746 is the max over both, so it is what the midpoint is taken from — a
+ * NEGLECTED ceiling set from the smaller of two measurements would be a floor
+ * set from the more flattering one, which is the move this whole comment
+ * exists to refuse. Using the sweep's 0.0584 would give 0.1852 -> 0.19 anyway;
+ * the two agree on the answer and only one of them is the conservative route
+ * to it.
+ *
  *   cover     0.42 -> 0.18  MEASURED-EDGE occupancy, 19 rows: POPULATED
  *                           0.2690-0.3517, NEGLECTED (every slot empty) 0.0006.
  *                           0.42 is ABOVE the populated floor and false-refuses
