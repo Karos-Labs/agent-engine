@@ -1037,3 +1037,30 @@ Scope, so the next phase starts costed rather than from scratch:
 Every failing rectangle in 1 and 2 is at `y = 0`, full width, 328–340px tall: the band between the top of the plate
 and the first content, on archetypes whose eyebrow slot is empty in the fixture. One defect, two faces, one
 composition answer — which is the same answer §11.4 gives the statement archetypes.
+
+## 11.6 THE COST OF THE CUT, MEASURED — CI 34804038775
+
+The cut was pushed and rendered. **12 failures, and the headline one is this phase's own acceptance condition:**
+
+```
+G1 — THE OWNER'S GREY SCREEN PASSED THE FLOOR at the interior role on the grid ground
+     occ 0.5090, LER 0.0778, COCC 0.3301, ink 0.2142
+```
+
+With `headline_focus` reverted its hatch is back, and the hatch is what makes a one-line grey screen measure `occ`
+0.51 and `LER` 0.078. G5 measures the marked grey screen's rectangle at **3.33%**; G2 fails on the restored
+screens. **This is not a regression the cut introduced — it is `main`'s behaviour, which is exactly what "keep
+today's behaviour" means.** It still has to be written down in one sentence: *as cut, this phase ships no pixel
+proof about the owner's original complaint, because every such proof is a test of the two archetypes it cut.*
+
+One finding is new. The material-ground A/B case reports **`flatBackgroundShare` moving 0.123 points** (0.79617
+against 0.79740, bound 0.0005) when `groundMaterialCssBlock` is spliced in. The material is inert on the six
+shipped archetypes and **NOT inert over `.copy-art`'s hatch** — the same boundary-tipping mechanism §5.1a already
+recorded for `iod` on a flat fill, now on the flatness limb. **The bound was not widened.** So the material sheet
+either has to be withheld from the two cut templates, or those templates come along.
+
+**The decision this leaves open, stated for the owner rather than taken here.** G1, G2, G5 and the A/B case are
+new in this branch and were written to prove the two cut archetypes were fixed. Either those archetypes come back
+into scope and get their bounded object (§11.4), or those four guards leave the PR with the work they test. **They
+cannot be made green on a tree that keeps the hatch, and they must not be weakened to try.** Cutting a guard
+alongside the feature it tests is coherent; cutting it alone is not.
