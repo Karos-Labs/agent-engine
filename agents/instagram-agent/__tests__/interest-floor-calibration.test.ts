@@ -2561,6 +2561,111 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
     },
     1_800_000,
   );
+
+  /**
+   * ── RFC-21 §2.7 STEP 2 — THE PAIR THAT DIFFERS IN EXACTLY ONE VARIABLE ──
+   *
+   * The gate-zero sweep's NEGLECTED controls are EMPTY-SLOT renders: every copy
+   * slot blank. They prove candidate 5 separates *populated* from *completely
+   * empty*, which is the easier half of the owner's question. The hard half is
+   * his grey screen — a plate with a real headline, set small, on flat ground —
+   * against its confident twin, the same words set large.
+   *
+   * Those two plates differ in ONE variable, `fontScale`, and nothing else:
+   * same copy, same template, same ground, same materialization, same run. That
+   * is what makes the difference between their numbers attributable to type
+   * scale rather than to content, and it is the control the repo has never had.
+   * §11.6 records the grey-screen row as UNPAID; this is what pays it.
+   *
+   * ## The one assertion, and why it is the right one
+   *
+   * `edgeDensity` is perimeter per unit ink. A glyph's perimeter grows linearly
+   * with size and its area quadratically, so the ratio MUST fall as type grows.
+   * That is a claim about geometry, not about taste, and it is falsifiable here
+   * in one line. The sweep already showed the direction across s/m/l averaged
+   * over 114 plates (0.0988 → 0.0921 → 0.0860); this shows it on the single
+   * pair the threshold will eventually be set from, where there is no averaging
+   * to hide behind.
+   *
+   * If this ever goes red, candidate 5 is dead on the plates that matter and no
+   * amount of agreement on the aggregate saves it — which is exactly the shape
+   * RFC-17 §3.4 asks a candidate to survive.
+   *
+   * ## What is deliberately NOT asserted
+   *
+   * No threshold. The numbers are printed and nothing gates on their VALUES,
+   * because a constant set from one pair on one template is the overfitting
+   * this whole line of work exists to undo. Widening this to the archetypes
+   * that can carry a statement plate, and to Hebrew, is what sets the number.
+   */
+  it(
+    "RFC-21 control pair: the same words at display scale and at body scale, one variable apart",
+    async () => {
+      const STATEMENT = { headline: "AI does not have a look", body: "You do." };
+      const rows: string[] = [];
+      const measuredByScale = new Map<string, Measured[]>();
+
+      for (const fontScale of ["s", "m", "l"] as const) {
+        const slides = [
+          slide({ n: 1, layout: "cover", ...STATEMENT, kicker: "THE POINT" }),
+          slide({ n: 2, layout: "headline_focus", ...STATEMENT, kicker: "THE POINT" }),
+          slide({ n: 3, layout: "closer", ...STATEMENT }),
+        ];
+        const input = assemble(slides, slides.map((s) => selection(s.n, null)), {
+          slideStyleOverrides: new Map(slides.map((s) => [s.n, { fontScale }] as const)),
+        });
+        const measured = await render(input);
+        measuredByScale.set(fontScale, measured);
+        for (const [index, entry] of measured.entries()) {
+          const role: SlideRole = index === 0 ? "cover" : index === measured.length - 1 ? "closer" : "interior";
+          const verdict = checkInterestFloor(entry.metrics, entry.probe, role, optsFor(entry));
+          rows.push(
+            [
+              `${fontScale}`.padEnd(3),
+              `${templateBasename(entry.template)}`.padEnd(17),
+              `${role}`.padEnd(9),
+              `occ ${entry.metrics.occupiedShare.toFixed(4)}`,
+              `flat ${entry.metrics.flatBackgroundShare.toFixed(4)}`,
+              `LER ${entry.metrics.largestEmptyRectShare.toFixed(4)}`,
+              `ink ${entry.metrics.inkShare.toFixed(4)}`,
+              `text ${entry.metrics.textShare.toFixed(4)}`,
+              `EDGE ${entry.metrics.edgeDensity.toFixed(4)}`,
+              `iod ${entry.metrics.imageryOrDeviceShare.toFixed(4)}`,
+              verdict.ok ? "pass" : `FAIL ${verdict.findings.map((f) => f.kind).join(",")}`,
+            ].join("  "),
+          );
+        }
+      }
+      console.log(["", "RFC-21 §2.7 CONTROL PAIR — one short statement, three type scales:", ...rows, ""].join("\n"));
+
+      // ── THE ASSERTION. Geometry, per template, with no averaging. ──
+      //
+      // Compared per TEMPLATE rather than across the set, because a mean over
+      // three different archetypes could hide a template moving the wrong way —
+      // and a mean that hides a counter-example is the thing this file's
+      // §11 kept catching.
+      const small = measuredByScale.get("s") ?? [];
+      const large = measuredByScale.get("l") ?? [];
+      expect(small.length, "the control pair rendered nothing at fontScale s").toBeGreaterThan(0);
+      expect(large.length, "the control pair rendered nothing at fontScale l").toBe(small.length);
+      for (const [index, smallEntry] of small.entries()) {
+        const largeEntry = large[index]!;
+        const template = templateBasename(smallEntry.template);
+        // Both plates carry the same words, so a difference in ink is a
+        // difference in how big those words are set. Asserted first: without it
+        // the edge comparison could be reading two plates that rendered
+        // different content, which is the premise this pair rests on.
+        expect(largeEntry.metrics.inkShare, `${template}: fontScale l painted no more ink than s, so the scales did not differ`).toBeGreaterThan(
+          smallEntry.metrics.inkShare,
+        );
+        expect(
+          largeEntry.metrics.edgeDensity,
+          `${template}: edgeDensity did not fall as type grew (s ${smallEntry.metrics.edgeDensity.toFixed(4)} -> l ${largeEntry.metrics.edgeDensity.toFixed(4)}) — candidate 5 is not a type-scale proxy on this plate`,
+        ).toBeLessThan(smallEntry.metrics.edgeDensity);
+      }
+    },
+    900_000,
+  );
 });
 
 /**

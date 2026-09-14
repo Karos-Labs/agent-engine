@@ -1,7 +1,7 @@
 # RFC-21 — The owner's three rulings, 2026-09-14
 
-**Status:** Part 1 implemented. Part 2 has one candidate falsified and the instrument that decides
-the next two. Part 3 is designed and scoped as its own phase — see §3.5 for why it is not started
+**Status:** Part 1 implemented. Part 2 has candidates 3 and 4 falsified and candidate 5 surviving
+its controls on measured CI data (§2.6.1); the threshold waits on one more control. Part 3 is designed and scoped as its own phase — see §3.5 for why it is not started
 as a slice.
 **Supersedes, in the places named:** RFC-18 §7.3 (the rung swap), RFC-19 §8.4 (the attempt-rung
 guard), RFC-20 Part 11 (the interest floor's calibration).
@@ -139,9 +139,10 @@ where Chromium is not installed — pixel truth comes from CI). Root `tsc --noEm
 
 # Part 2 — Ruling 2, the semantic floor
 
-**Status: candidate 3 written and FALSIFIED; the sweep now measures candidates 4 and 5.**
-No threshold in `interest-floor.ts` has moved, and none may until a candidate faces its controls
-(RFC-17 §3.4).
+**Status: candidates 3 and 4 FALSIFIED. Candidate 5 — `edgeDensity` — SURVIVES ITS CONTROLS,
+measured, on the first sweep that printed it.** It is the first separator to do so after three
+failures. No threshold in `interest-floor.ts` has moved yet, and §2.7 says what is still missing
+before one can be set.
 
 ## 2.1 The evidence that the instrument is overfitted, counted
 
@@ -242,19 +243,74 @@ That ladder is the decisive test and it costs nothing extra. A real type-scale p
 s → m → l monotonically on identical copy. A candidate that does not is measuring something else,
 and it is better to learn that from a table than from a shipped threshold.
 
+## 2.6.1 THE MEASUREMENT — CI 34831400323, n=114 populated, n=6 neglected
+
+```
+                        POPULATED (n=114)                      NEGLECTED (n=6)
+cocc/occ  (cand. 3)     [0.5267 .. 0.9925] median 0.8657       [0.0000 .. 1.0000] median 1.0000
+ink/occ   (cand. 4)     [0.6341 .. 0.9600] median 0.8154       [0.4139 .. 0.9251] median 0.6714
+edgeDensity (cand. 5)   [0.0277 .. 0.2188] median 0.1002       [0.2365 .. 1.0000] median 0.5009
+textShare               [0.0837 .. 0.3592] median 0.1963       [0.0006 .. 0.0191] median 0.0031
+content centroid y      [0.1817 .. 0.6483] median 0.4749       [0.0847 .. 0.5597] median 0.3618
+
+scale ladder, same copy at fontScale s / m / l:
+  cocc/occ    0.8653  0.8731  0.8936     monotonic UP
+  ink/occ     0.8084  0.8072  0.8275     NOT monotonic — it dips at m
+  edge        0.0988  0.0921  0.0860     monotonic DOWN
+```
+
+**Candidate 3 is dead twice over.** §2.5 killed it on `boringSlideMetrics`; CI reproduces it
+independently — `cocc/occ` reads **1.0000 on four of the six neglected controls**, and its neglected
+range spans the populated range entirely. An undecorated plate forces the ratio to 1 whatever is on
+it, which is the structural error, now measured rather than argued.
+
+**Candidate 4 is dead.** Its bands overlap across 0.634–0.925, and its scale ladder is not
+monotonic: 0.8084 → 0.8072 → 0.8275 dips at `m`. Whatever `ink/occ` tracks, it is not type scale.
+
+**Candidate 5 survives both tests, and it is the only one that does.**
+
+1. **The bands do not overlap.** Populated tops out at **0.2188**; the lowest neglected control
+   (`closer` with every slot empty) sits at **0.2365**. A real gap, in the right direction: high
+   perimeter-per-ink means thin strokes and nothing substantial on the plate.
+2. **The scale ladder is monotonic and in the predicted direction** — 0.0988 → 0.0921 → 0.0860 as
+   the same copy grows from `s` to `l`. That is the physical claim confirmed: a glyph's perimeter
+   grows linearly with size while its area grows quadratically, so the ratio falls as type grows.
+
+It is also already measured on every slide and already carries `EDGE_DENSITY_FLOOR` (0.06) as a
+warning for the OPPOSITE failure, a solid wash with no edges. Candidate 5 is the ceiling at the
+other end of the same instrument.
+
+**Two honest limits on this result, stated because they decide what happens next.** The gap is
+**0.0177, about 8%, on n=6** — real but thin, and thin gaps on six controls are how an overfitted
+constant gets set. And the scale ladder moves only 13% across the whole `s`→`l` range, so the
+gradient is genuine but shallow within the type sizes we actually ship; the reference plates set
+type far larger than our `l`.
+
 ## 2.7 What still has no control, and must be built before the threshold moves
 
-The repo has a measured NEGLECTED plate and measured POPULATED plates. **It has no measured
-GOOD-SIMPLICITY plate** — the reference slides were read as images in an earlier session and never
-stored, and `interest-floor-calibration.test.ts`'s own §11.6 records the grey-screen control as
-UNPAID after RFC-20 cut `headline-focus.html`'s statement archetypes out of scope.
+The six NEGLECTED controls in §2.6.1 are **empty-slot renders** — every copy slot blank. They prove
+candidate 5 separates *populated* from *completely empty*, which is the easier half of the question.
+The hard half is the owner's grey screen: a plate with a real headline, set small, parked low, on
+flat ground. **The repo has no measured row for it**, and none for its counterpart either — the
+reference slides were read as images in an earlier session and never stored, and
+`interest-floor-calibration.test.ts`'s own §11.6 records the grey-screen control as UNPAID after
+RFC-20 cut `headline-focus.html`'s statement archetypes out of scope.
 
 So the remaining work, in order:
 
-1. Read the sweep's candidate table off CI and pick whichever separator orders the scale ladder.
-2. Restore the grey-screen control and add its CONFIDENT counterpart — the same copy at display
-   scale — so the pair differs in exactly one variable.
-3. Only then move a threshold, and quote the band it came from in the constant's doc comment.
+1. ~~Read the sweep's candidate table and pick the separator that orders the scale ladder.~~
+   **DONE — candidate 5, `edgeDensity`.** §2.6.1.
+2. **Build the pair that differs in exactly one variable:** the same short headline rendered at
+   display scale and at body scale, on the same ground, through `headline-focus.html`. That is the
+   owner's grey screen and its confident twin, and it is the only control that can set a THRESHOLD
+   rather than confirm a direction. Expect the confident plate near the populated floor (~0.03–0.06)
+   and the timid one above it; the threshold goes in the gap, quoted from the table.
+3. Then wire it, and only into clauses C, D and clause G's content limb — never into A, A2, B, F or
+   G's `noType` limb (§2.8). A waiver that admits the plate the floor was built for would be worse
+   than no waiver, so the acceptance condition is written as a pair: **the confident plate is
+   waived AND the grey screen is still refused**, including the grey screen with marks stuck on it
+   (RFC-17 finding 5).
+4. Re-sweep and quote the new band in the constant's doc comment.
 
 ## 2.8 Direction, once the number exists
 
