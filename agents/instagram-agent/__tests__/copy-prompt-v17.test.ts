@@ -7,7 +7,7 @@ import { fakeRouterSequence, makePromptStore, PROMPTS_ROOT } from "./test-helper
 
 /**
  * **THE FILENAME IS HISTORICAL. This suite tracks the copy prompt's LATEST version, not v17.** It was written
- * for @17 and now guards @18; renaming it is a deliberate act someone should do when nothing else is in
+ * for @17 and now guards @19; renaming it is a deliberate act someone should do when nothing else is in
  * flight, not a drive-by rename in a file other work is open in. Whoever touches it next: rename it then.
  *
  * Phase 5 (RFC-18 §3 and §6.1) — THE FIVE-STEP PROMPT BUMP, for BOTH prompts this phase ships, asserted as
@@ -48,12 +48,12 @@ const BUMPED = [
   {
     // FOLLOWS THE LIVE VERSION. Pinned at @17 these five steps would keep passing forever while guarding a
     // file no run loads any more — a guard that cannot fail in the way that matters, which is the failure
-    // mode this repo keeps catching. @18 is @17 plus section 28 and inherits all 27 of its sections, so
+    // mode this repo keeps catching. @19 is @18 plus section 29 and inherits all 28 of its sections, so
     // following costs this suite no coverage and restores it to the prompt a run actually reads.
     promptId: "instagram-copy",
-    version: "18",
-    h1: "# Instagram Copy Craft Guide, v18",
-    skillRef: "instagram-copy@18",
+    version: "19",
+    h1: "# Instagram Copy Craft Guide, v19",
+    skillRef: "instagram-copy@19",
     agent: () => new InstagramCopyAgent({ router: fakeRouterSequence([]), tools: {}, promptStore: makePromptStore() }),
   },
   {
@@ -69,7 +69,7 @@ const readPrompt = (promptId: string, file: string): string => readFileSync(path
 
 const skillRefOf = (agent: unknown): string => (agent as { config: { skillRef: string } }).config.skillRef;
 
-describe("the copy prompt bump: instagram-copy@18 (live) and instagram-post-package@1 (RFC-18 §12)", () => {
+describe("the copy prompt bump: instagram-copy@19 (live) and instagram-post-package@1 (RFC-18 §12)", () => {
   for (const { promptId, version, h1, skillRef, agent } of BUMPED) {
     describe(`${promptId}@${version}`, () => {
       it(`step 1: prompts/${promptId}/${version}.md exists and is not a stub`, () => {
@@ -151,7 +151,7 @@ describe("the copy prompt bump: instagram-copy@18 (live) and instagram-post-pack
   });
 
   it("the two prompts carry the Phase 5 sections they exist for, so a file that resolves but says nothing cannot pass", () => {
-    const copy = readPrompt("instagram-copy", "18.md");
+    const copy = readPrompt("instagram-copy", "19.md");
     // §24 to §27, the four sections RFC-18 §3.1 adds, by heading rather than by body text.
     for (const heading of [
       "## 24. Value: the payload, the named specific, and the ask",
@@ -185,7 +185,7 @@ describe("the copy prompt bump: instagram-copy@18 (live) and instagram-post-pack
    * fails.
    */
   it("the EXECUTION-transfers / SUBJECT-MATTER-never sentence appears in BOTH §15 and §24 of instagram-copy@17", () => {
-    const copy = readPrompt("instagram-copy", "18.md");
+    const copy = readPrompt("instagram-copy", "19.md");
     const sentence = "THE EXECUTION\nTRANSFERS. THE SUBJECT MATTER NEVER DOES.";
     const normalised = copy.replace(/\r\n/g, "\n").replace(/\s+/g, " ");
     const occurrences = normalised.split(sentence.replace(/\s+/g, " ")).length - 1;
@@ -217,7 +217,7 @@ describe("the copy prompt bump: instagram-copy@18 (live) and instagram-post-pack
    * means, and RFC-18 §3.4 names exactly the CTA wordings this section is about.
    */
   it("§24.3 carries gate.lintPost's banned-CTA wordings verbatim, so a stale copy of the bank is visible", () => {
-    const copy = readPrompt("instagram-copy", "18.md");
+    const copy = readPrompt("instagram-copy", "19.md");
     for (const phrase of [
       "unpopular opinion:",
       "hot take:",

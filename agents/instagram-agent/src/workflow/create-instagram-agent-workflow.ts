@@ -195,6 +195,7 @@ import {
   buildSkeletonEntry,
   checkSkeletonVariety,
   readSkeletonHistory,
+  recentSeriesIds,
   recordSkeleton,
   rolesForSlideCount,
   skeletonAvoidList,
@@ -205,6 +206,7 @@ import {
   type SkeletonHistory,
   type SkeletonVarietyVerdict,
 } from "./skeleton-memory.js";
+import { countComparedEntities, selectSeries, seriesDirective, SERIES_DIRECTIVE_SLIDES } from "./editorial-series.js";
 import {
   buildAutoPromotionRequest,
   cleanShipsFor,
@@ -1446,6 +1448,14 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     const skeletonHistory: SkeletonHistory = structuralMemory.skeletons;
     /** The last five shipped layout sequences, newest first — the copy prompt's avoid-list (item P, prompt @14 §21). Empty on a first run. */
     const recentSkeletons = skeletonAvoidList(skeletonHistory);
+    /**
+     * RFC-21 Part 3 — the editorial series this run drafted in, hoisted out of
+     * `draftOnce` for the same reason `languageBeliefForRun` is: it is decided
+     * inside the attempt loop and READ at `09b`, which is the one step that
+     * only runs on a delivery. A run that held or never delivered records
+     * nothing, which is correct — rotation holds out formats that SHIPPED.
+     */
+    let shippedSeriesId: string | undefined;
     /** Item O's ledger of run-authored designs, advanced by `09f` and written back at `09b`. */
     let customArchetypeHistory: CustomArchetypeHistory = structuralMemory.customArchetypes;
     /**
@@ -5391,6 +5401,84 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       /** `{ chosen, rejected }` for the copy prompt (§17) — `undefined` on the fail-open path, which the prompt documents as an unchanged drafting path. */
       const angleForCopy = angleDecision !== undefined ? angleForCopyInput(angleDecision) : undefined;
 
+      // ── 04i2: the editorial series (RFC-21 Part 3, prompt @19 §29) ──
+      //
+      // `wf.step.code`. NO MODEL CALL, no tool call, no network. $0.00, and it
+      // contributes nothing to `rawEstimate` BY CONSTRUCTION, the same way
+      // `07i`, `07i2` and `04l` do.
+      //
+      // ## What it decides, and why it is here rather than in the writer
+      //
+      // The owner ruled that archetypes must be derivable at RUN TIME, by
+      // composition from validated blocks rather than by the model authoring
+      // markup. §7 of the copy prompt already asks the writer to pick a layout
+      // per slide, and that is a good question about ONE SLIDE and the wrong
+      // question about a FEED: answered locally, week after week, on a similar
+      // story with the same nine-item menu, it produces the same sequence.
+      // `skeleton-memory` exists because that is what happened; it can refuse a
+      // repeat but it cannot propose an alternative.
+      //
+      // So the unit of choice moves up a level. The run picks an editorial
+      // SERIES from this story's own evidence and hands the writer the
+      // skeleton; the writer keeps the judgement it is better at, which is what
+      // each slide says.
+      //
+      // ## Why the evidence is the angle's cards and not everything fetched
+      //
+      // `restsOn` is the set `selectAngle` has already proven names cards this
+      // run actually holds, and it is what the POST is built from. Scoring
+      // against every fetched card would let a story about an event be filed as
+      // `by_the_numbers` because research happened to return two statistics
+      // nobody is going to write about.
+      //
+      // ## Fails open, like the angle above it
+      //
+      // A run with no angle sends no `seriesDirective`, prompt @19 §29 says in
+      // as many words that §7 then governs unchanged, and the draft reads
+      // identically to @18. A series is an improvement to a post, never a
+      // precondition for one.
+      const seriesChoice = await wf.step.code(rev("04i2-select-series"), async () => {
+        const chosen = angleDecision !== undefined && "chosen" in angleDecision ? angleDecision.chosen : undefined;
+        if (chosen === undefined) return undefined;
+        const kinds = chosen.restsOn
+          .map((claim) => research.facts.find((f) => f.claim.trim().toLowerCase() === claim.trim().toLowerCase())?.kind)
+          .filter((kind): kind is "stat" | "quote" | "event" | "definition" => kind !== undefined);
+        const choice = selectSeries({
+          angleId: chosen.id,
+          restsOnKinds: kinds,
+          // Two named things in the angle's own title is what makes a story
+          // renderable as a comparison. Counted off the title rather than
+          // guessed from the framing, because `head_to_head` is the one series
+          // whose signal is structural: a comparison card cannot be filled
+          // without two sides.
+          comparedEntities: countComparedEntities(chosen.title),
+          recentSeriesIds: recentSeriesIds(skeletonHistory),
+        });
+        // INSIDE the step, and the resume guard is why. A ledger write outside
+        // a `wf.step.code` re-fires on every resume, which
+        // `resume-idempotency.test.ts` counts and refuses - it caught this one
+        // written the other way round. The scores ride in the message rather
+        // than a data bag, because the question this row answers at 2am is
+        // "why THIS format", and the runner-up margin is the whole answer.
+        try {
+          await tools["ledger.appendEvent"]?.execute(
+            {
+              runId: wf.runId,
+              eventId: `${wf.runId}__instagram-series`,
+              level: "info",
+              message: `${choice.reason}; scores ${Object.entries(choice.scores).map(([id, score]) => `${id}=${score}`).join(" ")}`,
+            },
+            { ctx },
+          );
+        } catch (error) {
+          console.error("04i2-select-series: could not record the series choice", error);
+        }
+        return choice;
+      });
+      if (seriesChoice !== undefined) shippedSeriesId = seriesChoice.series.id;
+      /** The skeleton and the register, as prose for prompt @19 §29. `undefined` on the fail-open path. */
+      const seriesDirectiveText = seriesChoice !== undefined ? seriesDirective(seriesChoice, SERIES_DIRECTIVE_SLIDES) : undefined;
+
       // ── 04l: the register card, the persona and the few-shot (Phase 4, RFC-15 §3) ──
       //
       // `wf.step.code`. NO MODEL CALL, no tool call, no network, no new fetch. $0.00. Everything it reads is
@@ -5888,6 +5976,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // chosen one plus the two it is NOT making, as context. Absent on the
         // fail-open path, which the prompt documents as an unchanged path.
         ...(angleForCopy !== undefined ? { angle: angleForCopy } : {}),
+        // RFC-21 Part 3 (prompt @19 §29) — the editorial series this post is
+        // written in: the premise, the register and the layout of every slide
+        // in order. When it is present the writer does not choose layouts;
+        // every other rule in §7, including what each archetype REQUIRES,
+        // applies exactly as before. Absent on the fail-open path, which §29
+        // documents as an unchanged drafting path.
+        ...(seriesDirectiveText !== undefined ? { seriesDirective: seriesDirectiveText } : {}),
         ...(relevanceSteer !== undefined ? { relevanceSteer } : {}),
         // Phase 4 (prompt @16 §16): the native editor's corrections on the previous attempt, one line per
         // correction as `slide N · field · "span" → "replacement" (why)`. Applied, not argued with, and
@@ -10637,6 +10732,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           devices: slidesData.slides.map((slide) => slide.fields?.["deviceKind"]),
           ...(shippedOccupancy.length === slidesData.slides.length ? { occupancy: shippedOccupancy } : {}),
           edited: hasReviewEdits,
+          // RFC-21 Part 3 — recorded so the NEXT run can hold this format
+          // out. It is the rotation guarantee's storage half: without it
+          // `selectSeries` sees an empty history every week and picks the
+          // same best-scoring format on the same story forever.
+          ...(shippedSeriesId !== undefined ? { seriesId: shippedSeriesId } : {}),
         });
         /**
          * Phase 4 — the belief this run earned. Built here rather than at `04l` so it records what actually

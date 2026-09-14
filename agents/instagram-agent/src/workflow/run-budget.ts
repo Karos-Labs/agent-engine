@@ -430,7 +430,21 @@ export const STEP_COST_ESTIMATES_USD = {
   //          its bidi surface.
   //   0.179  this encoding priced on a section-only input delta.
   //   0.176 / 0.171 / 0.166  bumps added to stale or forecast bases.
-  copyAttempt: 0.181,
+  /**
+   * ── @18 -> @19, RFC-21 Part 3: 0.181 -> 0.185 ──
+   *
+   * §29 "Your series" adds 3,726 prompt characters (69,629 -> 73,355) ≈ 932
+   * tokens ≈ $0.00280, and the `seriesDirective` the run puts on the input
+   * object adds ≈700 characters ≈ 175 tokens ≈ $0.00053. Output is unchanged:
+   * the writer emits the same schema and was already emitting `layout`.
+   * $0.00333 an attempt, rounded UP to land the key on 0.185.
+   *
+   * The series step itself is $0.00 — `selectSeries` is a pure function over
+   * evidence the run already holds, with no model call and no tool call, so it
+   * contributes nothing to `fixed` BY CONSTRUCTION, the same way `07i` and
+   * `04l` do.
+   */
+  copyAttempt: 0.185,
   /**
    * Phase 4 — the `languageBrief` input FIELD on `05-write-copy-attempt-N`,
    * added per attempt on non-English runs only (the same conditional shape
