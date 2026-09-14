@@ -1,10 +1,10 @@
 {
   "id": "tiktok-short-first-hire-he",
-  "description": "A Hebrew-language short on the first hire, for a Hebrew-publishing client. Exists so an English script shipped to a Hebrew client is a measurable failure rather than something a person notices by eye, and so the voice, shot and pitch lints are exercised on Hebrew words (the stock queries stay English: the library is). Three beats, 20 seconds, every sentence under a breath.",
+  "description": "A Hebrew-language short on the first hire, for a Hebrew-publishing client. Pre-read 2026-09-14 (SCRUM-437): the script said השכירה הראשונה, which in Hebrew is a rental, not a person you hire; every occurrence is now הגיוס הראשון / העובד הראשון, the words a Hebrew founder would use. A reference output must not teach the model a mistranslation. Exists so an English script shipped to a Hebrew client is a measurable failure rather than something a person notices by eye, and so the voice, shot and pitch lints are exercised on Hebrew words (the stock queries stay English: the library is). Three beats, 20 seconds, every sentence under a breath.",
   "agentId": "tiktok-agent",
   "language": "he",
   "input": {
-    "topic": "השכירה הראשונה בסטארטאפ: למי מגייסים, לחברה של היום או לזו של עוד שנה",
+    "topic": "הגיוס הראשון בסטארטאפ: למי מגייסים, לחברה של היום או לזו של עוד שנה",
     "clientSlug": "karoslabs",
     "voiceRules": { "tone": "ענייני, ישיר, בלי ז'רגון", "signature": "No pitch, just a plan." },
     "brand": { "handle": "karoslabs", "language": "he-IL" },
@@ -13,12 +13,12 @@
     "allowPeople": false
   },
   "endorsedOutput": {
-    "hook": "השכירה הראשונה שלכם היא הימור על חברה שעוד לא קיימת.",
+    "hook": "העובד הראשון שלכם הוא הימור על חברה שעוד לא קיימת.",
     "format": "footage",
     "formatRationale": "יש כאן מקום: שולחן ריק, לוח שנמחק, רחוב בבוקר. סצנות אמיתיות נותנות לטענה משקל שכרטיסי טקסט לא נותנים.",
     "beats": [
       {
-        "narration": "השכירה הראשונה שלכם היא הימור על חברה שעוד לא קיימת.",
+        "narration": "העובד הראשון שלכם הוא הימור על חברה שעוד לא קיימת.",
         "onScreenText": "מגייסים למי שתהיו",
         "visualBrief": "שולחן עבודה ריק ליד חלון גדול, אור בוקר אפרפר, כיסא אחד מוזז לאחור. בלי אנשים, בלי מסכים, בלי טקסט. תחושה של משרד רגע לפני שמישהו מגיע.",
         "stockQuery": "empty desk chair office window morning",
@@ -39,8 +39,8 @@
         "seconds": 6
       }
     ],
-    "caption": "השכירה הראשונה קובעת יותר מהתקציב הראשון. שאלו איזו חברה תהיו בעוד שנה, ותגייסו לזה. karoslabs.com. No pitch, just a plan. #גיוס #סטארטאפ #KarosLabs",
-    "about": "סרטון של שלושה ביטים על השכירה הראשונה בסטארטאפ: לגייס לחברה שתהיה, לא לזו שקיימת. קהל: מייסדים לפני הגיוס הראשון.",
+    "caption": "הגיוס הראשון קובע יותר מהתקציב הראשון. שאלו איזו חברה תהיו בעוד שנה, ותגייסו לזה. karoslabs.com. No pitch, just a plan. #גיוס #סטארטאפ #KarosLabs",
+    "about": "סרטון של שלושה ביטים על הגיוס הראשון בסטארטאפ: לגייס לחברה שתהיה, לא לזו שקיימת. קהל: מייסדים לפני הגיוס הראשון.",
     "voiceover": true,
     "voiceoverRationale": "טענה עם סיבה ותוצאה: מגייסים להיום, החברה משתנה, ולכן מגייסים לעתיד. קול נושא את הרצף; כתוביות לבד היו מפרקות אותו לשלוש טענות.",
     "language": "he-IL"
