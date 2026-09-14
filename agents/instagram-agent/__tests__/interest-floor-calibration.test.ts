@@ -2713,3 +2713,198 @@ async function markBand(pngPath: string): Promise<{ top: number; bottom: number;
   if (header === undefined) return undefined;
   return { top: bottom < 0 ? 0 : top, bottom: bottom < 0 ? 0 : bottom, height: header.height, pixels };
 }
+
+/**
+ * ── RFC-21 §2.9 — THE ONE-LINE PLATE, ACROSS BRAND PALETTES ──
+ *
+ * ## The owner's correction, and it is the one that decides whether any of
+ * ## this is shippable
+ *
+ * Every band in this repo, and every constant derived from one, was measured
+ * on a SINGLE brand pair: the bundled `#17181C` / `#F4F2EC`. The defect was
+ * always described as "the grey screen", and grey is Karos Labs' own brand
+ * colour — so "grey" named a client, not a failure mode. Verbatim, 2026-09-14:
+ * *"לכל חברה יש brand colors שונים לחלוטין. הבעיה של שקף ריק/מונוטוני יכולה
+ * לקרות בדיוק באותו אופן בצבעי מותג אחרים."*
+ *
+ * The masks in `slide-metrics.ts` are already relative by construction — every
+ * share is measured against the MEASURED modal ground and the SUPPLIED ink
+ * token, never against a literal. But the TOLERANCES are absolute distances on
+ * the weighted 0-255 scale (`flat` 12, `ink` 18), so the fraction of each
+ * antialiased ramp that lands in the dead band between them depends on how far
+ * apart a brand's ground and ink actually are. Measured over realistic pairs
+ * that spread is 7.9% to 13.1% of the gap — bounded, but not zero, and nobody
+ * had ever checked whether it moves a verdict.
+ *
+ * (While measuring it, `MeasureTolerances.flat`'s own doc comment was found to
+ * claim derived pairs are "separated by >= 24". The real minimum for a pair at
+ * the 4.5:1 `TEXT_CONTRAST_FLOOR` is **83.7**, and realistic pairs run
+ * 137-229. The comment is corrected in `slide-metrics.ts`; a wrong bound in
+ * the place a calibration reads is exactly how the next one goes wrong.)
+ *
+ * ## What this case renders, and why it is the plate that was missing
+ *
+ * `headline-focus.html` with ONE LINE and an EMPTY body, at fontScale `l` and
+ * at `s`. That pair is the owner's grey screen and its confident twin, it
+ * differs in exactly one variable, and no other case in this file renders it —
+ * every archetype in RFC-21 §2.6.2's pair carries a body, which is why that
+ * round could confirm the proxy but not set a number.
+ *
+ * Four palettes, chosen to span what a client can actually have rather than to
+ * be pretty: the bundled dark pair, a light ground, a saturated blue ground,
+ * and a pair sitting on the 4.5:1 contrast floor itself.
+ *
+ * ## THE TWO ASSERTIONS, AND THE SECOND ONE IS THE OWNER'S
+ *
+ * 1. **Per palette, the scale claim holds**: the display plate paints more ink
+ *    and scores a LOWER `edgeDensity` than the body-scale plate. Perimeter
+ *    grows linearly with glyph size and area quadratically; if that ever fails
+ *    on a real palette, the proxy is dead on the plates that matter.
+ * 2. **Across palettes, the bands do not cross**: the WORST display plate still
+ *    scores below the BEST body-scale plate. That is what makes a single
+ *    colour-agnostic threshold possible at all — and if it fails, the honest
+ *    answer is to normalise the metric by measured contrast rather than to
+ *    pick a palette and fit to it.
+ */
+describe.skipIf(!isChromiumInstalled())("RFC-21 §2.9: the one-line plate is separable from the grey screen in every brand palette", () => {
+  /** Ground / ink pairs spanning what `deriveBrandRenderTokens` can hand us. Every pair clears `TEXT_CONTRAST_FLOOR`. */
+  const PALETTES = [
+    { label: "bundled dark", bg: "#17181C", fg: "#F4F2EC" },
+    { label: "light ground", bg: "#FFFFFF", fg: "#1A1A1A" },
+    { label: "saturated blue", bg: "#1D4ED8", fg: "#FFFFFF" },
+    { label: "on the 4.5:1 floor", bg: "#FFFFFF", fg: "#767676" },
+  ] as const;
+
+  /** One line, no body. The reference set's own closing plate is this shape. */
+  const ONE_LINE = "AI does not have a look";
+
+  let paletteWork: string;
+
+  beforeAll(async () => {
+    paletteWork = await fs.mkdtemp(path.join(REPO_ROOT, ".tmp-palette-"));
+  }, 120_000);
+
+  afterAll(async () => {
+    if (paletteWork !== undefined) await fs.rm(paletteWork, { recursive: true, force: true });
+  });
+
+  it(
+    "the display plate scores below the body-scale plate on every palette, and the bands do not cross",
+    async () => {
+      const measurements: Array<{ palette: string; scale: string; m: SlideMetrics; ok: boolean; kinds: string[] }> = [];
+      const previousTemplateDir = templateDir;
+      const previousOutDir = outDir;
+
+      try {
+        for (const palette of PALETTES) {
+          const dir = path.join(paletteWork, `tpl-${palette.label.replace(/[^a-z]+/giu, "-")}`);
+          // The brand head is the production channel for a client's tokens, so
+          // the palette arrives the same way a real kit's would rather than by
+          // rewriting the template files.
+          await materialize(dir, undefined, buildBrandHeadHtml({ cssVars: { "--bg": palette.bg, "--fg": palette.fg }, fontFamilies: [], badgeStyle: "plain", palette: [] }));
+          templateDir = dir;
+          outDir = path.join(paletteWork, `out-${palette.label.replace(/[^a-z]+/giu, "-")}`);
+          await fs.mkdir(outDir, { recursive: true });
+
+          for (const fontScale of ["l", "s"] as const) {
+            const furniture = { dir: "ltr", fontScale, textAlign: "start", accentColor: "#C4552F", groundStyle: "grid", slideIndex: "04" };
+            // Hand-built, because `InstagramSlideCopySchema` requires a
+            // non-empty body and the whole subject of this case is a plate
+            // that has none. Same escape the `hollow` case above takes, for
+            // the same reason.
+            const input = {
+              client: "calibration",
+              postId: `rfc21-one-line-${fontScale}`,
+              canvas: CANVAS,
+              repoRoot: REPO_ROOT,
+              templateDir: path.relative(REPO_ROOT, dir).replaceAll("\\", "/"),
+              slides: [
+                {
+                  n: 1,
+                  template: "headline-focus.html",
+                  fields: { ...furniture, headline: ONE_LINE, body: "" },
+                  images: {},
+                  htmlFragments: {},
+                  // The measure anchors are the PALETTE's pair, not the
+                  // bundled one `groundFor` would read off the source files.
+                  // Without this the metrics are anchored to a ground the
+                  // document does not paint, which is the exact failure
+                  // `groundHex`'s own comment describes.
+                  measure: { accentHex: "#C4552F", groundHex: palette.bg, foregroundHex: palette.fg },
+                },
+              ],
+            } as unknown as RenderCarouselInput;
+
+            const measured = await render(input);
+            const entry = measured[0]!;
+            const verdict = checkInterestFloor(entry.metrics, entry.probe, "interior", optsFor(entry));
+            measurements.push({
+              palette: palette.label,
+              scale: fontScale,
+              m: entry.metrics,
+              ok: verdict.ok,
+              kinds: verdict.findings.map((f) => f.kind),
+            });
+          }
+        }
+      } finally {
+        templateDir = previousTemplateDir;
+        outDir = previousOutDir;
+      }
+
+      // ── THE TABLE ──
+      const f = (v: number): string => v.toFixed(4);
+      console.log(
+        [
+          "",
+          "RFC-21 §2.9 ONE-LINE PLATE ACROSS PALETTES — headline-focus.html, one line, empty body",
+          `${"palette".padEnd(22)} ${"scale".padEnd(6)} ${"occ".padEnd(8)} ${"flat".padEnd(8)} ${"LER".padEnd(8)} ${"COCC".padEnd(8)} ${"ink".padEnd(8)} ${"text".padEnd(8)} ${"EDGE".padEnd(8)} ${"iod".padEnd(8)} ${"contrast".padEnd(9)} verdict`,
+          ...measurements.map(
+            (r) =>
+              `${r.palette.padEnd(22)} ${r.scale.padEnd(6)} ${f(r.m.occupiedShare).padEnd(8)} ${f(r.m.flatBackgroundShare).padEnd(8)} ${f(r.m.largestEmptyRectShare).padEnd(8)} ` +
+              `${f(r.m.contentOccupiedShare).padEnd(8)} ${f(r.m.inkShare).padEnd(8)} ${f(r.m.textShare).padEnd(8)} ${f(r.m.edgeDensity).padEnd(8)} ${f(r.m.imageryOrDeviceShare).padEnd(8)} ` +
+              `${(r.m.groundInkContrast ?? 0).toFixed(2).padEnd(9)} ${r.ok ? "pass" : `FAIL ${r.kinds.join(",")}`}`,
+          ),
+          "",
+        ].join("\n"),
+      );
+
+      const display = measurements.filter((r) => r.scale === "l");
+      const body = measurements.filter((r) => r.scale === "s");
+      expect(display, "no display-scale plates were measured").toHaveLength(PALETTES.length);
+      expect(body, "no body-scale plates were measured").toHaveLength(PALETTES.length);
+
+      // ── 1. THE SCALE CLAIM, PER PALETTE ──
+      for (const [index, palette] of PALETTES.entries()) {
+        const big = display[index]!;
+        const small = body[index]!;
+        expect(big.m.inkShare, `${palette.label}: fontScale l painted no more ink than s, so the two plates did not differ`).toBeGreaterThan(small.m.inkShare);
+        expect(
+          big.m.edgeDensity,
+          `${palette.label}: edgeDensity did not fall as type grew (s ${f(small.m.edgeDensity)} -> l ${f(big.m.edgeDensity)})`,
+        ).toBeLessThan(small.m.edgeDensity);
+      }
+
+      // ── 2. THE OWNER'S ASSERTION: THE BANDS DO NOT CROSS ACROSS PALETTES ──
+      //
+      // A single threshold is only honest if the WORST display plate on any
+      // palette still scores below the BEST body-scale plate on any other.
+      // Fail this and the answer is to normalise by measured contrast, never
+      // to pick a palette and fit the constant to it.
+      const worstDisplay = Math.max(...display.map((r) => r.m.edgeDensity));
+      const bestBody = Math.min(...body.map((r) => r.m.edgeDensity));
+      const worstDisplayLabel = display.find((r) => r.m.edgeDensity === worstDisplay)!.palette;
+      const bestBodyLabel = body.find((r) => r.m.edgeDensity === bestBody)!.palette;
+      console.log(
+        `RFC-21 §2.9 BAND: worst display ${f(worstDisplay)} (${worstDisplayLabel})  <  best body ${f(bestBody)} (${bestBodyLabel})  ` +
+          `gap ${f(bestBody - worstDisplay)}  midpoint ${f((worstDisplay + bestBody) / 2)}\n`,
+      );
+      expect(
+        worstDisplay,
+        `the bands CROSS across palettes: the worst display plate (${worstDisplayLabel}, ${f(worstDisplay)}) is not below the best body plate (${bestBodyLabel}, ${f(bestBody)}). ` +
+          "A single colour-agnostic edgeDensity threshold is not available; normalise by measured groundInkContrast instead of fitting to one palette.",
+      ).toBeLessThan(bestBody);
+    },
+    900_000,
+  );
+});
