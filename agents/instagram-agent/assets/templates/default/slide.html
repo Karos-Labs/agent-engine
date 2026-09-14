@@ -499,10 +499,21 @@
        on long copy, and THIS archetype is where that was caught — 3 of 18 rows
        flipped and reported `clippedEdgeShare` 2.58% against a 0.4% ceiling for
        ink that is not on the plate. Both stops stay clear of the 18-unit ink
-       line, so every cell is still covered and still `graphic`. */
-    background: linear-gradient(to bottom,
-      color-mix(in srgb, var(--fg) 10%, var(--bg)) 0%,
-      color-mix(in srgb, var(--fg) 15%, var(--bg)) 100%);
+       line, so every cell is still covered and still `graphic`.
+
+       ── AND THAT LAST CLAUSE IS WHY THE FILL IS GONE. ──
+
+       "Still covered and still `graphic`" is the defect stated as if it were
+       the design. CI run 34800700580, real Chromium: this card took the
+       heroless plate to `imageryOrDeviceShare` 37.2-50.2% on a plate with no
+       imagery and no device (floor 0.10), `textShare` down to 1.0-1.8% from
+       ~33%, and `flatBackgroundShare` to 48.5-62.0% from ~92%. The 1x1
+       TRANSPARENT-hero fixture — the prep defect with no symptom — measured
+       37.2% where the guard expects under 3.5%, because `onerror` empties
+       `.bg` and this card then paints. At `fontScale l` it still won
+       `backgroundHex`'s modal vote and false-fired clause B (`clipped`).
+       See `headline-focus.html`'s `.hf-plate` block for why no percentage
+       fixes this. The card keeps its geometry and paints nothing. */
   }
   /* At `s` every block is 15% shorter and the air is 15% taller, so the card
      takes a more generous inset — the only element on the plate that can

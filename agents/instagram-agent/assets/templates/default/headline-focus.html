@@ -630,10 +630,32 @@
        `dir="rtl"` in a horizontal writing mode, so the card still needs no RTL
        branch. Mixed into `--bg` rather than into `transparent`, so the card's
        measured distance is a property of the kit and not of whatever it
-       happens to be lying over. */
-    background: linear-gradient(to bottom,
-      color-mix(in srgb, var(--fg) 10%, var(--bg)) 0%,
-      color-mix(in srgb, var(--fg) 15%, var(--bg)) 100%);
+       happens to be lying over.
+
+       ── THE FILL IS GONE, AND THE REASON IS A CI RENDER, NOT A PREFERENCE. ──
+
+       Run 34800700580 measured this card through real Chromium. On a plate
+       carrying no imagery and no drawn device it reported
+       `imageryOrDeviceShare` 32.0-41.2% against `IMAGERY_OR_DEVICE_FLOOR`
+       0.10 — three to four times over — so `headline_focus` was ACCEPTED as a
+       cover at every type scale and on both grounds, and
+       `interest-floor-calibration.test.ts`'s `default:cover-carries-device`
+       guard stopped firing. The same fill also took `flatBackgroundShare` from
+       ~92% to 56.5-65.4%, under `FLAT_BACKGROUND_CEILING` 0.70, which disarms
+       clause D's FIRST limb on every plate that wears it; took `textShare`
+       from ~33% to 1.0-1.8%, which disarms clause F; and at `fontScale l` on
+       `slide.html` still won `backgroundHex`'s modal vote, which false-fired
+       clause B (`clipped`). One object, four clauses.
+
+       It is not repairable by choosing a different percentage. RFC-20 §5.0's
+       own structural fact is that `imageryOrDeviceShare` is a cell-for-cell
+       SUBSET of `occupiedShare`: a fill at or over `tol.ink` = 18 units is
+       `covered` and therefore `graphic`, and a fill under `FLAT_TOL` = 12 is
+       invisible to every share. The 12-18 band in between is closed by
+       `MATERIAL_PEAK_DELTA`'s own note — it takes `flatBackgroundShare` under
+       0.70 and disarms clause D. **There is no plinth that pays clause D
+       without disarming clause E.** The card therefore keeps its geometry —
+       the inset is what breaks the empty band up — and paints nothing. */
   }
   /* ── THE CARD'S INSET IS NOT A FUNCTION OF `--ts`, AND AT `s` IT GROWS. ──
      Two separate reasons, both measured.
