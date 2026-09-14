@@ -1,6 +1,8 @@
 # RFC-21 — The owner's three rulings, 2026-09-14
 
-**Status:** Part 1 implemented. Parts 2 and 3 in progress.
+**Status:** Part 1 implemented. Part 2 has one candidate falsified and the instrument that decides
+the next two. Part 3 is designed and scoped as its own phase — see §3.5 for why it is not started
+as a slice.
 **Supersedes, in the places named:** RFC-18 §7.3 (the rung swap), RFC-19 §8.4 (the attempt-rung
 guard), RFC-20 Part 11 (the interest floor's calibration).
 
@@ -273,7 +275,8 @@ belongs in the same sweep.
 
 # Part 3 — Ruling 3, hybrid archetypes
 
-**Status: not yet implemented.** Specified here so the work is not re-derived.
+**Status: designed here, NOT implemented, and deliberately not started as a slice.** §3.5 states why
+shipping half of it would make the product worse than shipping none of it.
 
 ## 3.1 The client's own feed already is the answer
 
@@ -307,3 +310,76 @@ project: Phase 2's first pass gave six of eight slides the same diagonal hairlin
 across RUNS and across CLIENTS, not just within one carousel.
 
 Take the reference's craft. Never its specific look.
+
+## 3.3 WHERE THE SHIPPED CODE ACTUALLY STANDS — and it is further from the ruling than it looks
+
+The audit finding was "eight fixed archetypes, identical for every client". That is the half
+everyone remembers. Reading the tree, the OTHER half is the one the ruling is really about:
+
+- **A run can already author raw HTML and CSS.** `instagram-copy@18` §20 gives the writer a
+  `customArchetype` object with `bodyHtml`, `css`, `slots` and `fields`, bounded to two per
+  carousel. The owner's ruling says the opposite in as many words: *at run time the model does NOT
+  author HTML/CSS from scratch.*
+- **And it ships to the client on the run that invents it.** `custom-archetype-checks.ts` is
+  explicit that it "deliberately does NOT judge the design" — it checks markup safety and that
+  every `{{slot}}` has a value. Quality is left to the interest floor, on the pixels, at run time.
+  `custom-archetype-memory.ts` then promotes a design into the client's pool after two clean human
+  ships. So the pool grows through a human gate, but the FIRST render of a model-authored layout
+  goes straight to production. The ruling says a new archetype *is saved as a CANDIDATE for CI
+  calibration and never goes straight to production.*
+- **`seriesBadge` exists and is inert.** It is a per-client brand token frozen at setup
+  (`template-studio.ts` seeds it as `"playbook"` / `"מדריך"`) and rendered as a label. Nothing
+  chooses it per run and nothing reads it to pick a layout. The hook the owner's own feed uses is
+  in the tree as a string.
+
+So ruling 3 does two things at once: it **narrows** what a run may author, and it **widens** what a
+run may compose. Those are not the same change and they do not have the same risk.
+
+## 3.4 THE DESIGN
+
+**A SERIES REGISTRY, per client.** A series binds three things that today live nowhere:
+
+| Part | What it is | Where it comes from today |
+|---|---|---|
+| trigger | the kind of story this series is for — a teardown, a head-to-head, an origin, a statistic, a rule-set, a campaign post-mortem | nothing; the writer picks layouts slide by slide |
+| layout family | an ordered skeleton of archetypes plus a ground treatment and a type register | `skeleton-memory.ts` records skeletons but only to REFUSE a repeat |
+| brand system | the header lockup, the series tag, the serif headline, the accent mark, the source credit | already shared and already correct — this part does not change |
+
+**The story picks the series; the series picks the composition.** That is the whole mechanism, and
+it is what `@karoslabs`'s own feed does. It replaces "the writer chooses six layouts" with a choice
+the writer is actually qualified to make — *what kind of story is this* — and derives the rest.
+
+**Composition from validated blocks, not authored markup.** A series composes from a bounded
+vocabulary whose members have each passed validation: the eight bundled archetypes, the client's
+Template Studio rows, the ground materials, the mark kinds and the device fragments. A run assembles
+them; it does not write CSS. This is the ruling's "slot-based / component assembly", and its
+practical test is that a run can produce a PLATE the repo has never rendered without producing a
+FILE the repo has never validated.
+
+**The candidate path.** When a run proposes something genuinely outside the vocabulary, it is
+stored as a candidate against that client and the slide renders through the validated archetype its
+content fits — which is the degrade path `custom-archetype-checks.ts` already has. The candidate
+enters the calibration sweep, and it joins the pool only when it clears its role's floor with the
+same margin every bundled archetype must clear. `AUTO_PROMOTE_QUALITY_SCORE` and the two-clean-ships
+rule stay as they are for the human route; this adds the CI route the ruling asks for.
+
+## 3.5 WHY THIS IS NOT SHIPPED AS A SLICE, AND THAT IS THE POINT
+
+The tempting first commit is the small one: stop `customArchetype` rendering to a client on the run
+that invents it, store it as a candidate, done. It is contained, it is the ruling's own sentence,
+and it would take an afternoon.
+
+**It would also make the output more repetitive, which is the defect this entire line of work
+exists to fix.** Removing the only path by which a run can produce an unseen layout, BEFORE the
+composition vocabulary that replaces it exists, leaves every client on eight archetypes again. The
+owner's original complaint — *"בנוסף בגלל שזה חזרתי זה נראה AI"* — would get measurably truer while
+the commit message claimed to be implementing his ruling.
+
+The same trap is on this project's record twice already: Phase 2's first pass replaced "eight
+identical templates" with six of eight slides carrying the same diagonal hairline field, trading
+"mostly grey" for "mostly striped"; and RFC-21 §3.2 records the same risk for the reference look.
+A narrowing and its replacement have to land together.
+
+So Part 3 is a phase, with its own RFC and its own PR, and its acceptance condition is stated in
+advance: **a run can produce a plate the repo has never rendered, without producing a file the repo
+has never validated, and variety across runs and across clients is measured rather than assumed.**
