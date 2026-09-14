@@ -269,8 +269,8 @@
       repeating-linear-gradient(45deg,
         var(--accent) 0 3px, transparent 3px 46px),
       repeating-linear-gradient(45deg,
-        color-mix(in srgb, var(--fg) 8%, transparent) 0 2px,
-        transparent 2px 14px);
+        color-mix(in srgb, var(--fg) 22%, transparent) 0 2px,
+        transparent 2px 9px);
     background-size: 100% 300px, 100% 200px, auto;
     background-repeat: no-repeat, no-repeat, repeat;
     background-position: 0 0, 0 100%, 0 0;
@@ -406,8 +406,8 @@
      imagery-or-device at `l`, well inside the floor's headroom. */
   body.gr-glyph .ground-glyph {
     display: block; position: absolute; z-index: 0;
-    inset-block-start: calc(-90px * var(--ts, 1)); inset-inline-start: calc(-8px * var(--ts, 1));
-    font-family: var(--f-display); font-weight: 600; font-size: calc(460px * var(--ts, 1));
+    inset-block-start: calc(-210px * var(--ts, 1)); inset-inline-start: calc(-18px * var(--ts, 1));
+    font-family: var(--f-display); font-weight: 600; font-size: calc(720px * var(--ts, 1));
     line-height: 1; letter-spacing: -0.04em; padding-block-end: 0.2em;
     /* OUTLINE ONLY, and that is the whole trick. A filled numeral is a filled
        SHAPE: at 9% of the foreground its interior sits 19 units off the
@@ -418,19 +418,7 @@
        previous 3px at 26%) gives a numeral a reader can actually see while
        the pixels inside it stay ground. */
     color: transparent;
-    /* ── QUIETED 2026-09-14, after a real render ──
-       The stroke was taken to 4px at 52% when the FILL was dropped (the fill
-       was inflating `graphicShare`; see the note below). That traded a metric
-       problem for a reading problem: at 720px, cropped by the frame, a 52%
-       outline is the second loudest thing on the plate and it fights the
-       statement it is supposed to sit behind. On run
-       `pubsub-21839432908803804` the owner's words were "too many effects,
-       hard to look at".
-       Back to a watermark: smaller, inside the frame, and faint. The floor is
-       unaffected by construction -- the pixels INSIDE the outline are ground
-       either way, which is the whole point of the fill being gone, so this
-       moves contrast and not occupancy. */
-    -webkit-text-stroke: 2px color-mix(in srgb, var(--fg) 16%, transparent);
+    -webkit-text-stroke: 4px color-mix(in srgb, var(--fg) 52%, transparent);
   }
 
   /* ── The composition. Three parts down the plate, not one block at the

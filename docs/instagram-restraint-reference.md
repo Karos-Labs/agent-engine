@@ -62,12 +62,56 @@ This is the strongest argument yet for RFC-21 Part 2's unfinished work, and it r
 question is not only "can the floor tell deliberate emptiness from neglect" but "**is a floor that
 rewards ink the right instrument at all**".
 
+## ── MEASURED, AND IT CHANGED THE CONCLUSION (CI 34861097819) ──
+
+The texture reduction above was pushed and the calibration sweep measured it. **It failed, and the
+failure is the most useful result in this document.**
+
+The one-line plate across four palettes, before and after quieting the full-plate hairline from 22% on
+a 9px period to 8% on 14px:
+
+```
+                         occ      flat     verdict
+before   bundled dark    0.5094   0.7666   pass
+after    saturated blue  0.1315   0.8399   FAIL empty
+after    on the 4.5:1    0.1300   0.8660   FAIL empty
+```
+
+**Occupancy fell from 0.51 to 0.13 because the texture WAS the occupancy.** Roughly 38 of those 51
+points were the dot field, not the type.
+
+Two consequences, and the second is the important one.
+
+**First, it corrects a conclusion recorded in RFC-21 §2.7.** That section says a confident one-liner on
+our templates is a high-occupancy plate that already clears every floor, and concludes the owner's
+"deliberate emptiness" case is *not reproducible on our own templates*. That reading was measuring the
+decoration. With the decoration quieted the same plate fails clause D on every palette. **The case IS
+reproducible; it was hidden by the paint.**
+
+**Second, the floor is what holds the decoration in place.** `slide.html` heroless, `closer.html` in
+Hebrew, the marked-emphasis case and the whole gate-zero sweep all went red on a change that only
+lowered a texture's opacity. That is RFC-20 §11.3's "seven of eight templates cannot clear the floor
+without a paint layer" demonstrated from the other direction: remove the paint and they do not clear
+it.
+
+So the restraint this document describes **cannot be implemented while `occupiedShare` gates**, and the
+number must not simply be lowered to let it through — that is the move this project has refused all
+along, and lowering it to fit a plate is how the instrument became overfitted in the first place.
+
+The template changes are therefore REVERTED in this branch. What shipped is the half that does not
+depend on the floor. The next piece of work is the floor itself, and RFC-20 §5.6 rule 3 already names
+the shape: demote clause D's occupancy limb to reporting-only and let clause C, clause G and the value
+gate carry the refusal.
+
 ## What was changed on the strength of this
 
 See the commit *"Stop fabricating statistics, and stop randomising alignment"*: the word-boundary
-guard on figure extraction, alignment withdrawn to `start`, one ground per post, the ghost numeral
-quieted from 720px/52% to 460px/16%, and full-plate hairline textures from 22% on a 9px period to 8%
-on 14px — which is the Buffer treatment, arrived at independently and then confirmed by it.
+guard on figure extraction, alignment withdrawn to `start`, and one ground per post. None of the three
+touches a pixel budget, which is why they survive.
+
+The two that did — the ghost numeral at 460px/16% and the full-plate textures at 8%/14px, which is the
+Buffer treatment arrived at independently — are **reverted**, for the reason measured above. They are
+right, and they are not shippable until the floor stops requiring the ink they removed.
 
 ## What is NOT changed, and should be measured before it is
 
