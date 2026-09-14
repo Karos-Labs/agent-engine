@@ -2465,7 +2465,25 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
        */
       const atRecordedPrecision = (v: number): number => Math.round(v * 10_000) / 10_000;
       const SWEEP_BASELINE: Readonly<Record<BaselineKey, number>> = {
-        "en ltr short s → comparison-card @ interior|occ": 0.3131,
+        // 0.3131 -> 0.3130, and the one ten-thousandth is DELIBERATE.
+
+        // `TEXT_ALIGN_WALK` withdrew to a single `start` entry on 2026-09-14,
+
+        // so this row's copy no longer ranges centre and its glyphs land a
+
+        // fraction differently. The row is re-measured rather than deleted:
+
+        // it is still a DEBT, still pre-existing on `main`, and still inert
+
+        // in production (clause D is a conjunction and this plate measures
+
+        // under `FLAT_BACKGROUND_CEILING`, so the occupancy limb is never
+
+        // reached). Re-measuring a baselined row is only honest when the
+
+        // change that moved it is named, which is what this comment is for.
+
+        "en ltr short s → comparison-card @ interior|occ": 0.313,
         "en ltr medium s → comparison-card @ interior|occ": 0.3308,
         "he rtl short s → stat-callout @ interior|occ": 0.3258,
         "he rtl short s → comparison-card @ interior|occ": 0.2856,
