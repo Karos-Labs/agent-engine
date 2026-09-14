@@ -59,12 +59,19 @@ describe("planTextAlign — seeded, never random", () => {
     }
   });
 
-  it("reads the seed: different runs start the walk at a different phase", () => {
+  it("WITHDRAWN AXIS: the seed no longer moves alignment, and every client gets the same answer", () => {
+    // This used to assert the opposite — that different seeds start the walk at
+    // different phases — and it was correct for the axis as designed. The axis
+    // was withdrawn on 2026-09-14 (see `TEXT_ALIGN_WALK`): it shipped four
+    // centred and one right-aligned body block on a seven-slide LTR post, and
+    // the reference behaviour it was built from moves the type block's
+    // POSITION, not the text's ragging.
+    //
+    // Kept and inverted rather than deleted: a guard that flips still guards,
+    // and the next person to reach for a seeded alignment walk should find the
+    // reason here rather than rediscover it on a client's feed.
     const walks = new Set(SEEDS.map((s) => planTextAlign(8, s).join(",")));
-    // Not all 8 need differ (there are only 8 phases and some collide), but a
-    // single walk for every client would mean the seed is being ignored —
-    // which is the whole defect this axis exists to fix.
-    expect(walks.size).toBeGreaterThan(1);
+    expect(walks.size, "alignment varies with the seed again — read TEXT_ALIGN_WALK before restoring it").toBe(1);
   });
 
   it("returns exactly one alignment per slide, for every carousel length", () => {
@@ -84,12 +91,16 @@ describe("planTextAlign — seeded, never random", () => {
    * `["start","start","start","end","center","center","start","center"]`.
    * The first three positions then collide and this goes red at phase 0.
    */
-  it("never puts three consecutive slides on the same alignment, at any phase or length", () => {
+  it("ranges every slide to the start edge, at every phase and every length", () => {
+    // The replacement invariant, and it is the one a reader can check against a
+    // rendered post: body copy ranges to the script's own start edge. `runs()`
+    // is still computed so the helper stays exercised and a future multi-entry
+    // walk has its consecutive-run check waiting for it.
     for (const seed of SEEDS) {
       for (let n = 1; n <= 8; n++) {
         const walk = planTextAlign(n, seed);
-        expect({ seed, n, walk, longestRun: runs(walk) }).toEqual({ seed, n, walk, longestRun: runs(walk) });
-        expect(runs(walk)).toBeLessThanOrEqual(2);
+        expect(walk, `seed ${seed}, length ${n}`).toEqual(Array.from({ length: n }, () => "start"));
+        expect(runs(walk)).toBe(n);
       }
     }
   });
@@ -108,16 +119,20 @@ describe("planTextAlign — seeded, never random", () => {
    *
    * BREAK IT: remove the `i === 0 && picked === "end"` guard.
    */
-  it("never sets the cover to `end` — including on the one phase that otherwise would", () => {
-    /** Measured, not chosen: this seed's walk starts at the `end` position. */
-    const PIN_SEED = "kit-5";
-    // The premise first. Without it, the assertion below is vacuous: it would
-    // pass on a seed whose phase never offered `end` in the first place.
-    expect(planTextAlign(8, PIN_SEED).slice(1, 4)).toEqual(["center", "center", "start"]);
-    expect(planTextAlign(8, PIN_SEED)[0]).toBe("start");
-    // …and no phase, on any seed, ever puts `end` on the cover.
-    for (const seed of [...SEEDS, PIN_SEED, ...Array.from({ length: 64 }, (_, i) => `kit-${i}`)]) {
-      expect(planTextAlign(8, seed)[0]).not.toBe("end");
+  it("never sets ANY slide to `end` or `center` — the pin widened from the cover to the post", () => {
+    // The cover pin (`i === 0 && picked === "end"`) is still in the code and is
+    // now redundant by construction. It is deliberately not deleted: it is the
+    // one line that still has to be right if a future walk grows entries.
+    //
+    // Swept over 72 seeds and every length, because the defect this replaces
+    // was found on a LIVE post rather than in a test, and breadth is the only
+    // thing that would have caught it here first.
+    for (const seed of [...SEEDS, ...Array.from({ length: 64 }, (_, i) => `kit-${i}`)]) {
+      for (let n = 1; n <= 8; n++) {
+        const walk = planTextAlign(n, seed);
+        expect(walk.includes("end"), `seed ${seed} length ${n} produced right-aligned body copy`).toBe(false);
+        expect(walk.includes("center"), `seed ${seed} length ${n} produced centred body copy`).toBe(false);
+      }
     }
   });
 
@@ -129,10 +144,19 @@ describe("planTextAlign — seeded, never random", () => {
    * BREAK IT: return `Array(n).fill("start")`, which is what shipped before
    * this phase. Every other test in this file still passes.
    */
-  it("actually VARIES: an eight-slide post uses at least two alignments, and the walk uses all three", () => {
-    for (const seed of SEEDS) expect(new Set(planTextAlign(8, seed)).size).toBeGreaterThanOrEqual(2);
-    const everything = new Set(SEEDS.flatMap((s) => planTextAlign(8, s)));
-    expect(everything).toEqual(new Set<SlideTextAlign>(["start", "center", "end"]));
+  it("INVERTED: an eight-slide post uses exactly ONE alignment, and variety comes from the series instead", () => {
+    // The case this file was built around, kept and turned over. It read: "the
+    // point of the whole axis: an eight-slide carousel must not ship eight
+    // identically aligned type blocks."
+    //
+    // That premise was right about the disease and wrong about the cure. Eight
+    // identically aligned type blocks are fine — every professional editorial
+    // carousel has them — and what makes a feed look machine-made is the
+    // repeated SKELETON, which is what the series layer (RFC-21 Part 3) now
+    // varies. Alignment was the axis that happened to be free, and a free axis
+    // is not the same as a right one.
+    for (const seed of SEEDS) expect(new Set(planTextAlign(8, seed)).size).toBe(1);
+    expect(new Set(SEEDS.flatMap((s) => planTextAlign(8, s)))).toEqual(new Set<SlideTextAlign>(["start"]));
   });
 
   it("degrades quietly on a missing or empty seed rather than throwing", () => {
@@ -207,7 +231,11 @@ describe("buildVariationPlan — the gate payload reports what the slide RENDERS
     for (const n of [6, 7]) {
       const entries = textAlignEntries(buildVariationPlan({ ...base, slideNs: slideNs.slice(0, n) }));
       expect(entries).toHaveLength(n);
-      expect(runs(entries.map((e) => e.value!))).toBeLessThanOrEqual(2);
+      // One run of length n, since the walk withdrew to a single entry.
+      // The plan still reports one entry PER SLIDE, which is what this case
+      // is really for: a six- or seven-slide post must not lose a row.
+      expect(runs(entries.map((e) => e.value!))).toBe(n);
+      expect(new Set(entries.map((e) => e.value))).toEqual(new Set(["start"]));
     }
   });
 });
