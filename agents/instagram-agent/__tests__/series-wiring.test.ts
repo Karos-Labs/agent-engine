@@ -150,7 +150,12 @@ describe("RFC-21 Part 3 wiring: a real run chooses a series and the writer is to
     expect(result.status, JSON.stringify(result)).toBe("completed");
     const record = steps.find((s) => s.stepId === "04i2-select-series");
     expect(record, "the step must still RUN on the fail-open path, and decide nothing").toBeDefined();
-    expect(record?.output ?? undefined, "a run with no angle must not invent a series").toBeUndefined();
+    // `toBeNull`, NOT `?? undefined`. The `??` was here first and it is what
+    // hid the production encoding: the engine records a step that returned
+    // `undefined` as `null`, and `null ?? undefined` is `undefined`, so this
+    // line was green while prep was storing a value that crashed the resume.
+    // See `series-null-checkpoint.test.ts` for the incident.
+    expect(record?.output, "a run with no angle must not invent a series").toBeNull();
     expect(copyTurnInputs(router)[0]?.["seriesDirective"], "a run with no angle must send no directive").toBeUndefined();
   }, 120_000);
 });

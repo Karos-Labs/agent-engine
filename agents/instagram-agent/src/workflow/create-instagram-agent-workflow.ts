@@ -5475,9 +5475,28 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         }
         return choice;
       });
-      if (seriesChoice !== undefined) shippedSeriesId = seriesChoice.series.id;
+      // ── `?? undefined`, AND IT IS NOT DEFENSIVE PADDING ──
+      //
+      // `wf.step.code`'s checkpoint goes through `sanitizeForFirestore`
+      // (`packages/workflow/src/adapters/firestore/firestore-store.ts`), which
+      // recursively replaces EVERY `undefined` with `null` because real
+      // Firestore's `set()` throws on `undefined` anywhere in the tree. So a
+      // step that returns `undefined` is read back as `null`, and on any
+      // resume or redelivery `seriesChoice !== undefined` is TRUE for a null —
+      // `seriesChoice.series` then throws "Cannot read properties of null
+      // (reading 'series')".
+      //
+      // That is not hypothetical. It killed run `pubsub-21839432908803804` in
+      // prep on 2026-09-14 after $1.199 of work, with a rendered carousel the
+      // client never received.
+      //
+      // The `??` normalises the two spellings of "no series" into one, ONCE,
+      // at the boundary where the checkpoint is read. `MemoryDurableStepStore`
+      // does no such coercion, which is exactly why every test passed.
+      const series = seriesChoice ?? undefined;
+      if (series !== undefined) shippedSeriesId = series.series.id;
       /** The skeleton and the register, as prose for prompt @19 §29. `undefined` on the fail-open path. */
-      const seriesDirectiveText = seriesChoice !== undefined ? seriesDirective(seriesChoice, SERIES_DIRECTIVE_SLIDES) : undefined;
+      const seriesDirectiveText = series !== undefined ? seriesDirective(series, SERIES_DIRECTIVE_SLIDES) : undefined;
 
       // ── 04l: the register card, the persona and the few-shot (Phase 4, RFC-15 §3) ──
       //
@@ -8335,9 +8354,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // this system uses -- and still gets the series' COMPOSITION. The
         // badge is how the format is announced; it is not what the format is.
         const brandTokensForAssembly =
-          seriesChoice === undefined
+          series === undefined
             ? frozen.brandTokens
-            : { ...frozen.brandTokens, seriesBadge: seriesBadgeFor(seriesChoice, frozen.brandTokens.seriesBadge) };
+            : { ...frozen.brandTokens, seriesBadge: seriesBadgeFor(series, frozen.brandTokens.seriesBadge) };
         const assembled = assembleSlidesData({
           clientSlug: wf.clientSlug,
           postId: runClaim.postId,
