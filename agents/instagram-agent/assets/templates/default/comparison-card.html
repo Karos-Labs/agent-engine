@@ -121,17 +121,6 @@
   }
   .eyebrow:empty { display: none; }
   .cmp-rail { block-size: 2px; background: color-mix(in srgb, var(--fg) 48%, transparent); margin-block-start: calc(24px * var(--ts, 1)); }
-  /* ── RFC-20 §5.0, the Ground Rule, applied to this file's standing furniture. ──
-     MEASURED-EDGE: every copy slot empty gave `occupiedShare` 1.94% and
-     `largestEmptyRectShare` 31.67% against G2's 0.90 bar — the worst blank
-     plate in the set. The panel FILLS below are already content-guarded on
-     `.cmp-label`; four things were not, and drew a whole comparison diagram
-     on a plate with no comparison on it: this rail, the two `.cmp-col`
-     borders, the two `.cmp-rule` bars and the winner's corner diamond. Each
-     is now switched off by the slot it decorates, on the same `.cmp-label`
-     reader the fills already use, so a card either draws completely or not at
-     all. With the guards: occ 0.00, LER 100.00. */
-  body:not(:has(.eyebrow:not(:empty))) .cmp-rail { display: none; }
 
   .cmp-head {
     z-index: 3;
@@ -249,14 +238,6 @@
   }
   .cmp-rule { width: 72px; height: 5px; background: var(--line); margin: 30px 0; }
   .cmp-col.win .cmp-rule { background: var(--accent); }
-  /* The Ground Rule — see `.cmp-rail` above. The border and the diamond go to
-     `transparent` rather than `display: none` so the empty cards keep their
-     boxes and the row keeps its geometry: the guard must remove PAINT, not
-     rearrange a layout that a populated plate depends on. */
-  body:not(:has(.cmp-label:not(:empty))) .cmp-col,
-  body:not(:has(.cmp-label:not(:empty))) .cmp-col.win { border-color: transparent; }
-  body:not(:has(.cmp-label:not(:empty))) .cmp-rule { display: none; }
-  body:not(:has(.cmp-label:not(:empty))) .cmp-col.win::after { display: none; }
   .cmp-body {
     font-family: var(--f-body); font-weight: 400; font-size: calc(32px * var(--ts, 1)); line-height: 1.5;
     color: color-mix(in srgb, var(--fg) 78%, transparent); text-wrap: pretty;

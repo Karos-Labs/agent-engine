@@ -1137,3 +1137,65 @@ never reached and no live run is refused for this.** But the sweep's 1.15x gate 
 is a TEMPLATE finding on `comparison-card` rather than a reason to move 0.30. It is latent behind the
 `stat-callout` rectangle failure in the same loop and will surface the moment that one is fixed. **0.30 is the
 value the tree shipped with and it is not moved here; the plate is the bug.**
+
+## 11.8 THE RULE, GENERALISED — and it reaches every archetype
+
+The `(0,0)` rectangles were never introduced by this phase. **The holes were always there; the deleted screens
+were painting over them.** That is the fourth instance of one sentence in one phase — the hatch, the plinth, the
+two statement archetypes, and now the panels — so it stops being a case list and becomes the rule:
+
+> **An archetype gets the material ground only when its own composition clears the floor without paint. Any plate
+> with an unearned hole keeps today's behaviour, byte-identical to `origin/main`, and comes back with §11.4.**
+
+Applied to all eight on CI renders, it reaches all eight:
+
+| archetype | why it keeps today's behaviour | measured |
+|---|---|---|
+| `headline-focus` | composes below a neglected plate | `occ` 0.0544–0.1252 at `flat` 0.92–0.97 vs a 0.0562 control |
+| `slide` (heroless) | same | `occ` 0.0383–0.0942, `LER` up to 0.3750 |
+| `stat-callout` | unearned hole at `(0,0)` | `LER` **0.2750**, rect `(0,0 → 1080,340)` |
+| `closer` | unearned hole at `(0,0)` | `LER` **0.2278** (en) / **0.2306** (he) |
+| `comparison-card` | under its floor once its furniture is guarded | `occ` **0.2857**, 0.95× |
+| `cover` | **changes** — composition clears at `LER` 0.0750–0.1469 | its open item is the G2 cell map (§11.5) |
+| `quote-card`, `list-takeaway` | clear without paint | `LER` 0.0667–0.1778 |
+
+That leaves `quote-card` and `list-takeaway` as the only plates the material could mount on. **A material ground
+that ships on two plates because those two happen not to have a hole yet is not a material ground, it is a
+coincidence.** So it ships nowhere: `GROUND_MATERIAL_MOUNTED = false` in `ground-material.ts`, one flag in one
+place rather than a per-template list that rots, with the rule in its doc comment.
+
+**Nothing about the material is deleted or weakened.** `groundMaterialPlan`, `groundMaterialCssBlock` and their
+nineteen Chromium-free guards all run and all pass, and the three call sites keep their plumbing so the mount is
+proven wiring rather than unwritten code. `ground-fg-inversion.test.ts` mirrors the flag rather than dropping its
+assertion, so flipping it restores the check in the same commit that restores the behaviour.
+
+**And `OCCUPIED_SHARE_FLOOR.closer` goes back to 0.42 with its plate.** 0.31 was derived from 19 CI rows off a
+`closer.html` this PR no longer changes, and a constant re-derived from a plate that left has no business moving.
+Its band is recorded for §11.4 (POPULATED 0.5722–0.6681, NEGLECTED ceiling 0.0024, rule-1 midpoint 0.28) and
+re-derived there, not inherited. That also retires the `#takeaway`-plinth trap: the plinth left with the file.
+
+**`cover` 0.18 is the one constant this phase moves, and it is deliberately stricter than its own derivation** —
+rule 1's answer is 0.13, and a constant set above the rule that derived it refuses strictly more than the rule
+requires, so it cannot be a bar moved to make something green. The visible cost of that choice is 1.48× of
+headroom instead of 2.05×. At 0.42 all 19 rendered cover rows were falsely refused.
+
+### What this leaves, and it is not nothing
+
+**The kind-aware mark ring (Part 6) is the user-visible change in this PR and it stands entirely on its own.** On
+a paper kit it takes brand colours from **3/16 admitted to 15/16**, and block-capable from **1/16 to 13/16** —
+the saturated-highlighter class every reference plate is built on, unreachable until now because the ring culled
+on "far from the paper" and then asked `block` for "far from the ink", which are opposite directions on one
+luminance axis. **No constant moves for it**; it is a change of quantifier. On the bundled dark kit it is inert
+(15/16 → 15/16, block 0/16 → 0/16), so nothing we run today changes shape.
+
+### The cases that travelled out with the templates, by name
+
+Added to §11.4's table. Same terms: **not deleted, returning unweakened, in the same PR as the work.**
+
+| case | file | what it holds |
+|---|---|---|
+| `the full-bleed screens RFC-20 §5.2 deleted do not paint again` | `template-mark-slots.test.ts` | `.copy-art` ×2 and `.cl-art` stay deleted |
+| `the two panel archetypes withhold their standing furniture from an empty plate` | `template-mark-slots.test.ts` | five rows: `.sc-rail`/`.eyebrow`, `.stat-band`/`#figure`, `.cmp-rail`/`.eyebrow`, `.cmp-rule`/`.cmp-label`, `.cmp-col`/`.cmp-label` |
+
+The second is **removed, not left looping over an empty table** — an empty loop passes, and a green case that
+asserts nothing is the same defect as a guard left behind testing work that is not there.

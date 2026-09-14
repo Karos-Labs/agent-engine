@@ -5,7 +5,7 @@ import type { AgentContext, AgentToolRegistry } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import { invertedTemplateFileName } from "../src/workflow/slides-data.js";
-import { groundMaterialCssBlock } from "../src/workflow/ground-material.js";
+import { GROUND_MATERIAL_MOUNTED, groundMaterialCssBlock } from "../src/workflow/ground-material.js";
 import {
   goodRelevanceVerdict,
   goodTrendScoutOutput,
@@ -137,10 +137,13 @@ describe("ground/fg inversion, end to end (IGSTYLE-10, §10a/10b/10c/10e)", () =
     // one through. `"acme"` is `base.clientSlug` (the material's seed key)
     // and the trailing `\n` is load-bearing — `ensureTemplatesOnDisk` splices
     // `${invertedHeadHtml}\n</head>`.
-    const appendedBlock = `<style>\n:root {\n  --bg: #F4F2EC;\n  --fg: #17181C;\n}\n</style>\n${groundMaterialCssBlock(
-      { ground: "#F4F2EC", fg: "#17181C" },
-      "acme",
-    )}\n`;
+    const appendedBlock = `<style>\n:root {\n  --bg: #F4F2EC;\n  --fg: #17181C;\n}\n</style>\n${
+      // RFC-20 Part 11: the material mounts NOWHERE, so this half of the
+      // appended run is currently empty. Mirrored off the flag rather than
+      // deleted, so flipping `GROUND_MATERIAL_MOUNTED` restores the assertion
+      // in the same commit that restores the behaviour.
+      GROUND_MATERIAL_MOUNTED ? groundMaterialCssBlock({ ground: "#F4F2EC", fg: "#17181C" }, "acme") : ""
+    }\n`;
     expect(invertedHtml.replace(appendedBlock, "")).toBe(primaryHtml);
 
     const gate = await durableStore.getGate(`${runId}__09a-batch-review-r0`);

@@ -768,28 +768,36 @@ export const FLAT_BACKGROUND_CEILING = 0.7;
  * more than the rule requires, so it cannot be a bar moved to make something
  * green. 1.48x over 19 populated rows, 4.75x over the neglected ceiling.
  *
- * `closer` moves 0.30 -> **0.31**. 19 rows, POPULATED 0.5722-0.6681, margin
- * 1.85x. Re-run on the SHIPPED tree (CI 34805932618), with the two cut
- * archetypes held out of the control set, rule 1's midpoint is **0.28** and the
- * NEGLECTED ceiling is 0.0024 over six empty-slot renders — so 0.31 is one rung
- * STRICTER than the rule's own answer, and stricter again than the 0.30 this
- * branch first proposed off Edge numbers. It is not moved down to match: the
- * safe direction is the one that refuses more.
+ * ── TENTH PASS: `closer` DOES NOT MOVE EITHER, BECAUSE ITS PLATE LEFT. ──
  *
- * ⚠ **0.31's BASIS INCLUDES AN OBJECT THAT MAY BE DELETED, AND WHOEVER DELETES
- * IT OWNS THIS NUMBER.** The 0.5722-0.6681 band was measured on a
- * `closer.html` carrying `#takeaway`'s filled plinth, which this phase added
- * and which is **the same object as `.hf-plate`** — a `covered && distinct <= 3`
- * card whose area is counted by `graphicShare` and therefore by clause E. No
- * guard is currently blind because of it: the closer clears
- * `IMAGERY_OR_DEVICE_FLOOR` on its recap strip and ask band with the plinth
- * suppressed entirely, MEASURED-EDGE by 28.18 points. But a pass that removes
- * that plinth removes 19 rows' worth of occupancy from underneath this
- * constant. **Re-derive 0.31 from a fresh CI sweep on that tree. Do not
- * inherit it.** A constant whose basis is about to be deleted is a trap for
- * whoever does the deleting, and this sentence is the trap being disarmed.
+ * 0.31 was derived from 19 CI rows off a `closer.html` this PR restructured.
+ * RFC-20 Part 11 then reverted that file to its shipped state — it holds a
+ * 0.2278 (en) / 0.2306 (he) rectangle at `(0,0)`, an unearned hole the deleted
+ * screen had been painting over — so the plate the band was measured on is not
+ * a plate this PR changes any more. **A constant re-derived from a plate this
+ * PR no longer touches has no business moving**, and 0.42 stands until the
+ * closer comes back with §11.4's bounded object and a fresh sweep. The band is
+ * recorded rather than banked: POPULATED 0.5722-0.6681 over 19 rows, NEGLECTED
+ * ceiling 0.0024, rule-1 midpoint 0.28.
+ *
+ * That also retires the trap noted here in the ninth pass — that 0.31's basis
+ * included `#takeaway`'s plinth, the same `covered && distinct <= 3` object as
+ * `.hf-plate`. The plinth left with the file, and so did the constant.
+ *
+ * ── `cover` IS THE ONE CONSTANT THIS PHASE MOVES, AND IT IS DELIBERATELY
+ *    STRICTER THAN ITS OWN DERIVATION. ──
+ *
+ * 0.42 -> **0.18**. CI (34805932618), 19 rendered cover rows, POPULATED
+ * `occ` 0.2670-0.3517 against a NEGLECTED ceiling of 0.0024 over six
+ * empty-slot controls. **Rule 1's own answer is the midpoint, 0.13. 0.18 is
+ * taken above it on purpose: a constant set stricter than the rule that
+ * derived it refuses strictly more than the rule requires, so it cannot be a
+ * bar moved to make something green — and the visible cost of that choice is
+ * 1.48x of headroom instead of 2.05x.** At 0.42 all 19 rendered cover rows
+ * were falsely refused, which is what makes this a re-calibration rather than
+ * a relaxation.
  */
-export const OCCUPIED_SHARE_FLOOR: Readonly<Record<SlideRole, number>> = { cover: 0.18, interior: 0.3, closer: 0.31 };
+export const OCCUPIED_SHARE_FLOOR: Readonly<Record<SlideRole, number>> = { cover: 0.18, interior: 0.3, closer: 0.42 };
 
 /**
  * A cover or a closer must carry imagery or a drawn device. Interiors are

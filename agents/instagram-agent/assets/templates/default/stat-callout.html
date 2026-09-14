@@ -148,22 +148,6 @@
     letter-spacing: 0.22em; text-transform: uppercase; color: var(--accent);
   }
   .sc-rail { block-size: 2px; background: color-mix(in srgb, var(--fg) 48%, transparent); margin-block-start: calc(24px * var(--ts, 1)); }
-  /* ── RFC-20 §5.0, the Ground Rule, applied to this file's standing furniture. ──
-     MEASURED-EDGE: with every copy slot empty this plate reported
-     `occupiedShare` 0.45% and `largestEmptyRectShare` 64.99% against G2's
-     0.90 bar. Nothing on it is content, so 64.99 is furniture drawing a line
-     across a blank plate — and a plate that cannot report itself blank cannot
-     be told apart from a neglected one. Two boxes were doing it: this rail
-     (a 952x2 full-measure hairline under the eyebrow) and `.stat-band` (a
-     200x14 solid accent bar in the middle of the slab). Both are now switched
-     off by the slot they decorate, which is `closer.html`'s `.cl-rail` /
-     `#takeaway` shape exactly. With the guards: occ 0.00, LER 100.00.
-
-     `.eyebrow` and `#figure` rather than `> span:not(:empty)` because neither
-     slot is a mark host — the emphasis system wraps only headline and body
-     hosts in spans, so a bare `:not(:empty)` is the right reader here, and it
-     is the same one `.num-zone`'s own guard below already uses. */
-  body:not(:has(.eyebrow:not(:empty))) .sc-rail { display: none; }
 
   /* ── The stat slab. A FILLED, low-colour-count region is what the
         measurement calls a drawn device, and this one is about 40% of the
@@ -292,12 +276,6 @@
 
   /* The one full-strength accent mark inside the slab. */
   .stat-band { inline-size: calc(200px * var(--ts, 1)); block-size: calc(14px * var(--ts, 1)); background: var(--accent); margin-block-start: calc(8px * var(--ts, 1)); }
-  /* The Ground Rule again — see `.sc-rail` above. This bar is the slab's one
-     full-strength accent mark, so it belongs to the figure; with no figure
-     there is no slab for it to mark, and an unguarded 200x14 solid in the
-     middle of a blank plate is what took G2's empty-plate rectangle to 64.99%.
-     `headline-focus.html` guards its own `.stat-band` on the same principle. */
-  body:not(:has(#figure:not(:empty))) .stat-band { display: none; }
 
   .num-label {
     font-family: var(--f-display); font-weight: 500; font-size: calc(54px * var(--ts, 1));

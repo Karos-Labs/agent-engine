@@ -195,102 +195,75 @@
 
      The accent is spent on ONE solid rule capping the field's head, not on a
      diagonal band: a diagonal band is `headline-focus.html`'s signature, and
-     two archetypes sharing a signature is the defect this pass removes.
+     two archetypes sharing a signature is the defect this pass removes. */
+  .cl-art {
+    background-image:
+      linear-gradient(to bottom, var(--accent) 0 calc(10px * var(--ts, 1)), transparent 0),
+      repeating-linear-gradient(to bottom,
+        color-mix(in srgb, var(--fg) 20%, transparent) 0 6px,
+        transparent 6px 30px);
+    background-size: 100% 100%, auto;
+    background-repeat: no-repeat, repeat;
+    background-position: 0 0, 0 0;
+  }
+  /* The alternative ground: a display-face numeral bleeding off the start
+     corner, over a TIGHTER band rhythm — 4px bars every 20px, so the two
+     closers differ in the weight and the count of their bands as well as in
+     whether a numeral is present. Finer here on purpose: the numeral is the
+     thing to see on this variant, and a 6px bar competes with it. This used to be the same 135-degree hatch
+     the grid variant ran at 45, which is one mark at two angles: two
+     consecutive slides wearing it still read as one wallpaper, which is the
+     defect the variant exists to break.
+     OUTLINE ONLY on the numeral — a filled numeral at any tint that reads is
+     a filled SHAPE, and every cell inside it then counts as a drawn device;
+     the budget goes into stroke CONTRAST instead, which costs no coverage at
+     all. */
+  body.gr-glyph .cl-art {
+    background-image:
+      linear-gradient(to bottom, var(--accent) 0 calc(10px * var(--ts, 1)), transparent 0),
+      repeating-linear-gradient(to bottom,
+        color-mix(in srgb, var(--fg) 22%, transparent) 0 4px,
+        transparent 4px 20px);
+  }
+  /* The guards. No takeaway, no field; and furniture that paints ink answers
+     to the same rule, so the numeral goes with it.
 
-     ── 2026-09-14, RFC-20 P2: `.cl-art` AND `.ground-glyph` ARE DELETED, AND
-        ON THIS FILE IT COSTS NOTHING. THAT IS THE POINT OF THE ENTRY. ──
-
-     `template-mark-slots.test.ts` records the closer's clause-E constant as
-     `.cl-art`: "Delete them and every photoless cover and every closer falls
-     into the type-only band (0.2-7.0%), where clause E refuses all of them."
-     RFC-20 §5.2 and RFC-17 finding 1 both carry that claim. IT IS FALSE ON
-     THIS TREE, and it has been re-measured twice by two instruments:
-     MEASURED-EDGE, `.cl-art` is worth 1.01 points of the closer's 38.63; and
-     measured here through real Chromium (`measureSlidePng`, 1080x1440 @2,
-     msedge channel) the composed closer reports `imageryOrDeviceShare` 33.89%
-     WITH the band stack and the numeral.
-
-     The closer's device share is, and always was, the RECAP STRIP, the ASK
-     BAND and the accent rule — three bounded objects, each already guarded on
-     the content that justifies it (`buildRecapFragment`'s plates, the
-     question-or-CTA `:has()` pair, the takeaway). That is a plate already
-     built to the Ground Rule, which is why this file is the cheapest entry in
-     RFC-20 §5.2's table: it loses a band stack it was never being paid for.
-
-     What goes is a full-field `repeating-linear-gradient` whose extent is the
-     elastic field's, i.e. the leftover space — the same shape as
-     `headline-focus.html`'s hatch and `slide.html`'s dot screen, and refused
-     for the same reason. The 720px outlined numeral goes with it: it is
-     bounded and guarded, but with the band stack gone it is the only thing
-     left of a "ground variant" that no longer varies anything, and a stray
-     display glyph behind a recap strip is decoration with no argument. Both
-     closers now differ in what they RECAP and what they ASK, which is the
-     only difference a reader was ever going to notice. */
-  /* The guards that remain, asked of the TAKEAWAY'S CHILDREN because
-     `.headline` is a twin-slot pair (see the twin-slot block below) and a host
-     with two element children can never match `:empty` again — written the old
-     way they would have gone permanently silent and a closer with nothing to
-     say would have acquired the ink an empty plate must not have. */
+     BOTH ARE ASKED OF THE TAKEAWAY'S CHILDREN. `.headline` is a twin-slot pair
+     now (see the twin-slot block below), so `#takeaway` has two element
+     children on every render and can never match `:empty` again — written the
+     old way these two guards would have gone permanently silent and a closer
+     with nothing to say would have kept both the field paint and the 720px
+     numeral, which is the ink an empty plate must not acquire. */
+  body:not(:has(#takeaway > span:not(:empty))) .cl-art { background-image: none; }
+  .ground-glyph { display: none; }
+  body:not(:has(#takeaway > span:not(:empty))) .ground-glyph { display: none !important; }
+  body.gr-glyph .ground-glyph {
+    display: block; position: absolute; z-index: 0;
+    inset-block-start: calc(-210px * var(--ts, 1)); inset-inline-start: calc(-18px * var(--ts, 1));
+    font-family: var(--f-display); font-weight: 600; font-size: calc(720px * var(--ts, 1));
+    line-height: 1; letter-spacing: -0.04em; padding-block-end: 0.2em;
+    color: transparent;
+    -webkit-text-stroke: 4px color-mix(in srgb, var(--fg) 52%, transparent);
+  }
 
   /* The top anchor, the elastic column, and the ask that sits on the band. */
   .cl-head { position: relative; z-index: 3; flex: 0 0 auto; }
   .cl-rail { block-size: 2px; background: color-mix(in srgb, var(--fg) 48%, transparent); margin-block-start: calc(24px * var(--ts, 1)); }
-  /* ── THE FURNITURE ANSWERS TO THE GROUND RULE TOO (RFC-20 P2). ──
-     `.cl-rail` is a full-measure 2px rule at 48% of the foreground (103 units
-     off the ground, so every cell row it crosses is ink and OCCUPIED) and
-     `.cl-rule` is a 240x14 accent block. Both used to paint on every render,
-     including one with nothing on it.
-
-     Neither is large, and that is exactly why this went unseen: measured on
-     this tree through real Chromium, a closer with EVERY SLOT EMPTY reported
-     `occupiedShare` 0.49% — trivial — and `largestEmptyRectShare` 65.27%,
-     because `largestEmptyRect` is ONE contiguous rectangle and two full-width
-     marks cut it into thirds. An empty plate measured as though a third of it
-     were composed, on half a per cent of ink. Guarded, the same render
-     measures 0.00% and 100.00%, which is what RFC-20 guard G2 asserts for
-     every archetype at every role.
-
-     A rule under an eyebrow that is not there is not a rule, and an accent
-     mark above an ask that is not there is not punctuation. */
-  body:not(:has(.eyebrow:not(:empty))) .cl-rail { display: none; }
   /* The field runs the full measure inside the 16px frame — wider than the
      body's own 64px margin, so it reads as a field rather than as a
      highlighted paragraph. The negative inline margin and the matching inline
      padding cancel, so no glyph moves; 16px rather than 0 because
      `clippedEdgeShare` counts ink inside an 8px bleed band.
 
-     ── 2026-09-14, RFC-20 P2: THE TAKEAWAY IS CENTRED IN THE FIELD AGAIN, AND
-        THE REASON THE OLD ARGUMENT FAILS IS THAT ITS PREMISE IS GONE. ──
-
-     The note above is sound and it depends on one word: TEXTURE. Anchoring
-     the wrap to the field's foot collected all the breathing room at the top
-     "under the accent geometry", and that was a good trade while the top of
-     the field carried a painted band stack. `.cl-art` is deleted, so the top
-     of the field is now BARE GROUND — and all the air in one contiguous
-     full-width band at the top of the plate is the largest empty rectangle by
-     construction, which is the one thing clause C measures.
-
-     Measured on this tree through real Chromium (`measureSlidePng`, 1080x1440
-     @2, msedge channel), the calibration's six fixtures x three type scales,
-     worst `largestEmptyRectShare` against the closer's 0.22 ceiling:
-
-       composition                              recap ON      recap OFF
-       anchored flex-end (as it was)            31.94  FAIL   48.06  FAIL
-       + takeaway plinth, still anchored        21.11         35.00  FAIL
-       centred, no plinth                       17.78         26.94  FAIL
-       centred + takeaway plinth                12.50         19.44
-
-     Only the last row clears the ceiling on BOTH, and the two changes are not
-     interchangeable: centring halves one band into two, and the plinth is what
-     gives the halves something to sit between. The shipped file measured 8.94
-     at worst and that number was the band stack's, not the slide's — the same
-     plate with nothing on it measured the same, which is the defect.
-
-     This is not a relaxation of anything: the ceiling did not move, the
-     template did. */
+     The takeaway is anchored to the field's FOOT, not centred in it. Centred,
+     the plate carried two ~25% bands of bare texture, one above the statement
+     and one between it and the footer band; anchored, the breathing room all
+     collects under the accent geometry at the top — where a designed plate
+     wants it — and the reading order (eyebrow, accent, takeaway, ask) is one
+     continuous run down to the band. */
   .cl-field {
     position: relative; z-index: 3; flex: 1 1 auto; min-block-size: 0;
-    display: flex; flex-direction: column; justify-content: center;
+    display: flex; flex-direction: column; justify-content: flex-end;
     margin-inline: calc(16px - var(--mx)); padding-inline: calc(var(--mx) - 16px);
     margin-block-start: calc(28px * var(--ts, 1));
     padding-block: calc(40px * var(--ts, 1));
@@ -445,48 +418,6 @@
 
   /* `.headline`, not a closer-specific name — a DISPLAY_SELECTOR, so the
      takeaway picks up per-script leading. */
-  /* ── THE TAKEAWAY'S PLINTH (RFC-20 §5.3). ──
-     `headline-focus.html`'s `.hf-plate` block is the canonical note: why a
-     `fit-content` card that hugs its copy converts copy volume into measurable
-     area, why `flex: 1 1 auto` here would reproduce the defect being removed,
-     why the fill is mixed into `--bg` and not into `transparent`, and why it
-     is written in logical properties with no `deg` so it mirrors under RTL.
-
-     It lives on `#takeaway` itself rather than on a wrapper because this file
-     already has one: `.cl-wrap` holds the recap strip AND the takeaway AND the
-     accent rule, and a card behind all three would swallow the recap's own
-     panel — two filled objects nested, which reads as a mistake and measures
-     as one region. The takeaway is the statement; the card is the statement's.
-
-     The measurement that makes it load-bearing rather than decorative is in
-     `.cl-field`'s block above: centring alone leaves the closer over its
-     ceiling with no recap to build, and the plinth is what closes it. */
-  #takeaway {
-    inline-size: fit-content;
-    max-inline-size: 100%;
-    block-size: fit-content;
-    align-self: start;
-    padding-inline: 44px;
-    padding-block: 48px;
-    /* A 10-15% shade across the card rather than a flat 12%. `headline-focus
-       .html`'s `.hf-plate` block carries the measurement: a flat fill is one
-       5-bit bin large enough to take `backgroundHex`'s modal vote, and this
-       file flipped on 2 of 18 rows and reported `clippedEdgeShare` 1.76%
-       against a 0.4% ceiling for ink that is not on the plate. Both stops stay
-       clear of the 18-unit ink line, so every cell is still covered and still
-       lands in the `graphic` bucket. */
-    background: linear-gradient(to bottom,
-      color-mix(in srgb, var(--fg) 10%, var(--bg)) 0%,
-      color-mix(in srgb, var(--fg) 15%, var(--bg)) 100%);
-  }
-  /* At `s` every block is 15% shorter and the air is 15% taller, so the card
-     takes a more generous inset. Fixed px, never `calc(Npx * var(--ts))` — a
-     measurement cell is 4 DESIGN px and does not scale, and this directory's
-     standing rule is that a drawn mark is not a function of the type scale. */
-  body.ts-s #takeaway { padding-inline: 64px; padding-block: 96px; }
-  /* The guard, asked of the twin's CHILDREN — `#takeaway` is a twin-slot pair
-     host and can never match `:empty` again. */
-  body:not(:has(#takeaway > span:not(:empty))) #takeaway { background: none; }
   .headline {
     font-family: var(--f-display); font-weight: 600; font-size: calc(100px * var(--ts, 1));
     line-height: 1.12; letter-spacing: -0.018em; text-wrap: balance;
@@ -504,18 +435,9 @@
      and reports both, but a template that needs the probe to catch it is
      still a broken template — this step is what makes it fit. */
   .headline.tiny { font-size: calc(64px * var(--ts, 1)); line-height: 1.16; }
-  /* ── A FOURTH STEP, AND ONLY `l` WITH A RECAP EVER REACHES IT (RFC-20 P2). ──
-     The takeaway's plinth costs the field a card's inset on both block edges,
-     and `l` over a three-plate recap is the one case with nothing to give:
-     measured, `.cl-field` went 34px outside its own box with the calibration's
-     LONG takeaway, which `probePage`'s block-start limb reports and clause B
-     fails on. The ladder is where this file already answers "does it fit", so
-     it answers it here too rather than by shrinking the card. */
-  .headline.micro { font-size: calc(52px * var(--ts, 1)); line-height: 1.2; }
 
   /* The one accent moment above the ask. */
   .cl-rule { inline-size: calc(240px * var(--ts, 1)); block-size: calc(14px * var(--ts, 1)); background: var(--accent); margin-block: calc(40px * var(--ts, 1)) 0; }
-  body:not(:has(#takeaway > span:not(:empty))) .cl-rule { display: none; }
 
   /* ── THE ASK HAS A LADDER NOW, and it is the piece that was missing. ──
      `.cl-ask` is `flex: 0 0 auto` with a 400px floor, so its height is its
@@ -615,13 +537,14 @@
 </head>
 <body class="ts-{{fontScale}} ta-{{textAlign}} gr-{{groundStyle}}">
   <div class="ground" aria-hidden="true"></div>
+  <span class="ground-glyph" aria-hidden="true">{{slideIndex}}</span>
   <div class="brand-badge">{{seriesBadge}}</div>
   <div class="brand-handle"><bdi dir="ltr">{{brandHandle}}</bdi></div>
   <div class="cl-head">
     <div class="eyebrow">{{eyebrow}}</div>
     <div class="cl-rail"></div>
   </div>
-  <div class="cl-field">
+  <div class="cl-field cl-art">
     <div class="cl-wrap">
       <div class="cl-recap">{{html:recap}}</div>
       <div class="headline" id="takeaway"><span class="mk-runs">{{html:takeawayRuns}}</span><span class="mk-plain">{{takeaway}}</span></div>
@@ -685,12 +608,7 @@
       var t = document.getElementById("takeaway");
       // 90/44 and 46/30 are the measured pair this file already carried; only
       // the recap factor is new.
-      // `micro` is the step RFC-20 P2's plinth needed; see its CSS block. At
-      // `m` its threshold is past anything `InstagramSlideCopySchema` produces
-      // for a takeaway, so only `l` — and in practice only `l` over a recap,
-      // where `at()`'s 0.85 factor applies — ever reaches it.
-      if (len(t) > at(150, 80)) t.className = "headline micro";
-      else if (len(t) > at(90, 44)) t.className = "headline tiny";
+      if (len(t) > at(90, 44)) t.className = "headline tiny";
       else if (len(t) > at(46, 30)) t.className = "headline small";
 
       var q = document.querySelector(".cl-question");

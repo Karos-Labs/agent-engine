@@ -439,7 +439,11 @@ const PINNED_ROLE_RECORDS: Readonly<Record<string, Readonly<Record<SlideRole, nu
   // NINTH PASS: `interior` back to 0.30 (its band was the plinth, and CI
   // measured the plinth as a graphic device); `closer` to 0.31, the CI
   // rule-1 literal and stricter than the 0.30 this branch first proposed.
-  OCCUPIED_SHARE_FLOOR: { cover: 0.18, interior: 0.3, closer: 0.31 },
+  // TENTH PASS: `cover` is the ONE constant this phase moves. `interior` was
+  // never a band (its 0.19 was the plinth's own painted area) and `closer`
+  // went back to 0.42 when `closer.html` reverted - a constant derived from a
+  // plate this PR no longer changes has no business moving.
+  OCCUPIED_SHARE_FLOOR: { cover: 0.18, interior: 0.3, closer: 0.42 },
 };
 
 describe("RFC-17 Part 3 / RFC-20 §5.6: exactly one threshold record moved, and nothing else", () => {

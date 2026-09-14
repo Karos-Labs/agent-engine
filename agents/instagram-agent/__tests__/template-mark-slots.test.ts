@@ -698,128 +698,49 @@ describe("RFC-20 §5.0: the Ground Rule, as a source scan", () => {
       ).toBe(true);
     }
   });
+  // ── THE DELETED-SCREEN SCAN TRAVELLED OUT OF THIS PR WITH ITS SUBJECTS. ──
+  //
+  // It pinned three rows: `.copy-art` on `headline-focus.html` and on
+  // `slide.html`, and `.cl-art` on `closer.html`. RFC-20 Part 11 reverted all
+  // three files to `origin/main`, so every row was asserting that a screen
+  // stays deleted in a file this PR does not change — which it does not.
+  //
+  // The rule that sent them back is one sentence and it is worth more than the
+  // three cases: **an archetype gets the material ground only when its own
+  // composition clears the floor without paint, and a plate with an unearned
+  // hole keeps today's behaviour.** On CI renders every one of these plates has
+  // a hole the screen was painting over — `slide` `LER` up to 0.3750,
+  // `closer` 0.2278/0.2306 at `(0,0)`. **The holes were always there.**
+  //
+  // Not weakened, not deleted: RFC-20 §11.4 lists this case with the guards, and
+  // it returns in the same PR as the bounded object that lets the screens go.
+  // The measurements that justified each deletion are preserved verbatim in
+  // §5.2's table, so a reviewer who wants a layer back still has to argue with a
+  // number rather than with a preference.
+  // ── THE PANEL-FURNITURE SCAN TRAVELLED OUT TOO, AND NOT AS AN EMPTY LOOP. ──
+  //
+  // It held five rows across `stat-callout.html` and `comparison-card.html`:
+  //
+  //   stat-callout.html    .sc-rail   withheld when .eyebrow is empty
+  //   stat-callout.html    .stat-band withheld when #figure is empty
+  //   comparison-card.html .cmp-rail  withheld when .eyebrow is empty
+  //   comparison-card.html .cmp-rule  withheld when .cmp-label is empty
+  //   comparison-card.html .cmp-col   withheld when .cmp-label is empty
+  //
+  // Both files reverted to `origin/main` with RFC-20 Part 11, so the scan had
+  // no subject. It is removed rather than left looping over an empty table,
+  // because a loop with nothing in it PASSES, and a green case that asserts
+  // nothing is worse than no case at all — it is the same defect as a guard
+  // left behind testing work that is not there.
+  //
+  // THE GUARDS WERE RIGHT, AND THEY ARE WHAT EXPOSED THE REAL DEFECT. With
+  // `.sc-rail` withheld from a plate with no eyebrow, `stat-callout` reports a
+  // 0.2750 rectangle at `(0,0)` — the rail had been breaking up a hole rather
+  // than the composition filling it — and `comparison-card` falls to `occ`
+  // 0.2857, 0.95x its floor. **The holes were always there.** RFC-20 §11.4
+  // lists these five rows by name; they come back with the composition that
+  // earns them, unweakened.
 
-  /**
-   * THE DELETION, PINNED — and this is the Chromium-FREE half of RFC-20
-   * §5.7's own named breakage.
-   *
-   * §5.7 says of G1 and G2: *restore the `.copy-art` screen and both must go
-   * red*. Those two guards are Chromium-gated, so on a developer machine
-   * nothing watches them at all and the screens could be restored by a tidy-up
-   * — or by a merge — with no local signal whatsoever. This scan runs
-   * everywhere, and it fails for the same reason G1 would.
-   *
-   * Written as "declares no PAINTING background-image" rather than "the class
-   * is gone", because the class may legitimately survive as an unpainted
-   * container for a bounded object: what RFC-20 §5.2 deletes is the full-bleed
-   * SCREEN, not necessarily the box. The measurements behind each row are in
-   * the message, so a reviewer who wants the layer back has to argue with a
-   * number rather than with a preference.
-   *
-   * BREAK IT: put `background-image: repeating-linear-gradient(...)` back on
-   * `.copy-art` in `headline-focus.html`. This goes red, and so does G1.
-   */
-  it("the full-bleed screens RFC-20 §5.2 deleted do not paint again", async () => {
-    // ── THE TWO ROWS THAT ARE NOT HERE, AND WHY THAT IS A SCOPE DECISION
-    //    RATHER THAN A RELAXATION. ──
-    //
-    // `headline-focus.html` and `slide.html` carried a row each until the ninth
-    // pass. Both are gone because the ARCHETYPES are out of RFC-20's scope, not
-    // because the measurement changed — the numbers that justified deleting
-    // their screens still stand, and are quoted in RFC-20 Part 11.
-    //
-    // The cut is forced by a CI render (34802291959). With `.copy-art` deleted
-    // and the plinth that replaced it removed, those two archetypes measure
-    // `occupiedShare` 0.0383-0.1252 at `flatBackgroundShare` 0.92-0.97 — BELOW
-    // the 0.0562 ceiling of the sweep's own neglected controls. **They are not
-    // plates that need a better ground; they are type on ground and nothing
-    // else, which is the owner's complaint itself.** Deleting their screens
-    // without giving them something to carry would refuse them in production
-    // and buy a $0.181 redraft out of three against $0.0017 of headroom, so
-    // they keep today's paint until RFC-20 Part 11 gives them a real bounded
-    // object from their own copy.
-    //
-    // A row may only come back WITH that object. Re-adding one to make the
-    // screens deletable on their own is the move this comment exists to stop.
-    const deleted: Array<{ file: string; klass: string; why: string }> = [
-      {
-        file: "closer.html",
-        klass: "cl-art",
-        why: "MEASURED-EDGE worth 1.01 points of 38.63 (2.6%) — RFC-17 line 70's claim that the closer's clause-E share IS .cl-art is false on this tree",
-      },
-    ];
-    for (const { file, klass, why } of deleted) {
-      const styles = stylesOf(await readTemplate(file));
-      const painting = [...styles.matchAll(new RegExp(`\\.${klass}[^{}]*\\{([^{}]*)\\}`, "g"))].filter(
-        (r) => /background-image\s*:/.test(r[1]!) && !/background-image\s*:\s*none/.test(r[1]!),
-      );
-      expect(painting.map((r) => r[0]), `${file}: .${klass} paints a full-bleed background-image again. ${why}.`).toEqual([]);
-    }
-  });
-
-  /**
-   * THE TWO PANELS RFC-20 §5.2 SAID WERE "ALREADY BUILT TO THE GROUND RULE",
-   * WHICH THEY WERE NOT — the Chromium-FREE half of their fix.
-   *
-   * §5.2 checked clause E on the four panel archetypes and concluded they
-   * needed no work. Clause E was the wrong question. MEASURED-EDGE with every
-   * copy slot empty, before this fix:
-   *
-   *   stat-callout.html     occ 0.45%  LER 64.99%   (G2 bar: occ < 1%, LER > 90%)
-   *   comparison-card.html  occ 1.94%  LER 31.67%
-   *
-   * Nothing on either plate was content, so those rectangles are FURNITURE
-   * drawing a diagram on a blank plate — `.sc-rail` and `.stat-band` on one,
-   * and the rail, both card borders, both `.cmp-rule` bars and the winner's
-   * corner diamond on the other. A plate that cannot report itself blank
-   * cannot be told apart from a neglected one, which is defect 1's shape in a
-   * file §5.2 never rendered empty. Both measure occ 0.00% / LER 100.00% now,
-   * and every populated row is byte-identical to before the guards (EN and
-   * HE, s/m/l, all four metrics) — the guards remove paint from the blank
-   * plate and nothing else.
-   *
-   * This scan is here rather than only in G2 for the reason the case above
-   * gives: G2 is Chromium-gated, so on a developer machine nothing watches it
-   * and a tidy-up could drop a guard with no local signal at all.
-   *
-   * BREAK IT: delete any one `display: none` / `border-color: transparent`
-   * guard row below. This goes red, and so does G2.
-   */
-  it("the two panel archetypes withhold their standing furniture from an empty plate", async () => {
-    // `klass` must still PAINT (or the guard guards a dead rule and this test
-    // is decoration), and must ALSO be switched off by `slot` being empty.
-    const guarded: Array<{ file: string; klass: string; slot: string }> = [
-      { file: "stat-callout.html", klass: "sc-rail", slot: ".eyebrow" },
-      { file: "stat-callout.html", klass: "stat-band", slot: "#figure" },
-      { file: "comparison-card.html", klass: "cmp-rail", slot: ".eyebrow" },
-      { file: "comparison-card.html", klass: "cmp-rule", slot: ".cmp-label" },
-      { file: "comparison-card.html", klass: "cmp-col", slot: ".cmp-label" },
-    ];
-    for (const { file, klass, slot } of guarded) {
-      const styles = stylesOf(await readTemplate(file));
-      const rules = [...styles.matchAll(new RegExp(`\\.${klass}[^{}]*\\{([^{}]*)\\}`, "g"))];
-      // Half one: it paints. A rule that sets no background and no border is
-      // a deleted decoration, and guarding it would prove nothing.
-      expect(
-        rules.some((r) => /(background|border-color|border(-[a-z]+)?)\s*:/.test(r[1]!) && !/:\s*(none|transparent)\s*;?$/.test(r[1]!.trim())),
-        `${file}: .${klass} no longer paints anything, so its empty-plate guard is guarding nothing — either restore the decoration or drop it from this table`,
-      ).toBe(true);
-      // Half two: an empty `slot` switches it off. `body:not(:has(…))` is the
-      // set's established spelling for exactly this (`closer.html`'s
-      // `.cl-rail`, `headline-focus.html`'s `.stat-band`).
-      const guard = new RegExp(`body:not\\(:has\\(${slot.replace(/[.#]/g, "\\$&")}[^)]*\\)\\)[^{}]*\\.${klass}\\b[^{}]*\\{([^{}]*)\\}`);
-      const match = guard.exec(styles);
-      expect(
-        match,
-        `${file}: nothing withholds .${klass} from a plate whose ${slot} is empty. MEASURED-EDGE this is worth ` +
-          `${file === "stat-callout.html" ? "LER 64.99%" : "LER 31.67%"} on a blank plate against G2's 90% bar — the plate draws a diagram with no content on it.`,
-      ).not.toBeNull();
-      expect(
-        /display\s*:\s*none|border-color\s*:\s*transparent/.test(match![1]!),
-        `${file}: .${klass}'s empty-plate guard does not actually remove its paint (it sets "${match![1]!.trim()}")`,
-      ).toBe(true);
-    }
-  });
 
   /**
    * THE COVER IS THE OTHER HALF OF THE SAME RULE, and it is the interesting

@@ -164,7 +164,7 @@ import { deviceCssBlock } from "./slide-devices.js";
 // ── Phase 5 (RFC-17) — marked emphasis. ──
 import { buildMarkRing, markCssBlock, type EmphasisIssue, type MarkRing } from "./emphasis-marks.js";
 // ── Phase 7 (RFC-20 §5.1) — the material ground. ──
-import { groundMaterialCssBlock } from "./ground-material.js";
+import { GROUND_MATERIAL_MOUNTED, groundMaterialCssBlock } from "./ground-material.js";
 import { scriptTypographyFor } from "./script-fonts.js";
 // ── Phase 2 (RFC-14) — the four modules the integrator wires ──
 import {
@@ -2580,7 +2580,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                   // document production that is not the one we ship.
                   extraHeadHtml: [deviceCssBlock(),
                     markCssBlock(targetLanguage !== undefined ? scriptTypographyFor(targetLanguage)?.script : undefined, studioMarkRing),
-                    groundMaterialCssBlock({ ground: studioKit?.cssVars["--bg"], fg: studioKit?.cssVars["--fg"] }, wf.clientSlug),
+                    // RFC-20 Part 11: MOUNTED NOWHERE. See `GROUND_MATERIAL_MOUNTED`
+                    // for the rule and the CI renders behind it. The call stays so
+                    // the mount is proven wiring rather than unwritten code.
+                    GROUND_MATERIAL_MOUNTED ? groundMaterialCssBlock({ ground: studioKit?.cssVars["--bg"], fg: studioKit?.cssVars["--fg"] }, wf.clientSlug) : "",
                   ]
                     .filter((s) => s.length > 0)
                     .join("\n"),
@@ -4457,7 +4460,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         deviceCssBlock(),
         imageTreatmentCssBlock(frozenStyle),
         markCssBlock(markScript, runMarkRing()),
-        groundMaterialCssBlock({ ground: effectiveKit?.cssVars["--bg"], fg: effectiveKit?.cssVars["--fg"] }, wf.clientSlug),
+        // RFC-20 Part 11: MOUNTED NOWHERE — see `GROUND_MATERIAL_MOUNTED`.
+        GROUND_MATERIAL_MOUNTED ? groundMaterialCssBlock({ ground: effectiveKit?.cssVars["--bg"], fg: effectiveKit?.cssVars["--fg"] }, wf.clientSlug) : "",
       ]
         .filter((s) => s.length > 0)
         .join("\n");
@@ -4764,10 +4768,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // renders on, emitted by the same function against the swapped
         // tokens. Same selector, later block, later wins. Cost: one more
         // hash per file, $0.00.
-        const invertedHeadHtml = `<style>\n:root {\n  --bg: ${invertFg};\n  --fg: ${invertGround};\n}\n</style>\n${groundMaterialCssBlock(
-          { ground: invertFg, fg: invertGround },
-          wf.clientSlug,
-        )}`;
+        // RFC-20 Part 11: the material is MOUNTED NOWHERE, so the inverted
+        // sibling gets the `:root` swap alone — which is all it ever needed
+        // without a material. See `GROUND_MATERIAL_MOUNTED`.
+        const invertedHeadHtml = `<style>\n:root {\n  --bg: ${invertFg};\n  --fg: ${invertGround};\n}\n</style>\n${
+          GROUND_MATERIAL_MOUNTED ? groundMaterialCssBlock({ ground: invertFg, fg: invertGround }, wf.clientSlug) : ""
+        }`;
         const isAlreadyInverted = (file: string): boolean => {
           const dot = file.lastIndexOf(".");
           const stem = dot === -1 ? file : file.slice(0, dot);

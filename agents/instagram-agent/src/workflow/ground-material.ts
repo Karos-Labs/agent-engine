@@ -530,6 +530,43 @@ function turbulenceLayerUri(layer: GroundMaterialLayer, tilePx: number): string 
  * symmetric material renders exactly as it does today. Budgets adapt; nothing
  * here can hold a run.
  */
+/**
+ * ── THE MATERIAL GROUND IS BUILT, MEASURED AND MOUNTED NOWHERE. ──
+ *
+ * RFC-20 Part 11. The rule this phase converged on, stated once so it does not
+ * have to be re-derived per template:
+ *
+ * > **An archetype gets the material ground only when its own composition
+ * > clears the floor without paint. Any plate with an unearned hole keeps
+ * > today's behaviour, byte-identical to `origin/main`, and comes back with
+ * > §11.4.**
+ *
+ * Applied to the eight bundled archetypes on CI renders, it reaches all of
+ * them. `headline_focus` and heroless `slide` measure `occ` 0.0383-0.1252 at
+ * `flat` 0.92-0.97 with their screens gone — below the neglected controls.
+ * `stat-callout` holds a 0.2750 rectangle at `(0,0)` and `closer` 0.2278/0.2306
+ * at the same corner, and `comparison-card` sits at `occ` 0.2857, 0.95x its
+ * floor. **The holes were always there; the deleted screens were painting over
+ * them.** That is the same sentence as the hatch and as the plinth, for the
+ * fourth time in one phase, and the answer is the same: the plate is the bug.
+ *
+ * That leaves `quote-card` and `list-takeaway` as the only plates whose
+ * composition clears without paint — and **a material that ships on two plates
+ * because those two happen not to have a hole yet is not a material ground, it
+ * is a coincidence.** So it mounts nowhere and this constant says so in one
+ * place rather than becoming a list of templates that rots.
+ *
+ * Nothing here is deleted or weakened. `groundMaterialPlan`,
+ * `groundMaterialCssBlock` and their nineteen Chromium-free guards (G3, G4, the
+ * alpha invariant, the achromatic identity, the `backgroundHex` anchor) all run
+ * and all pass; the three call sites keep their plumbing so the mount is proven
+ * wiring rather than unwritten code. **Flip this to `true` in the same PR that
+ * gives those archetypes a bounded object (§11.4), and re-run the A/B case at
+ * its unchanged 0.0005 bound** — which is also where
+ * `body:not(:has(.copy-art))` below comes out.
+ */
+export const GROUND_MATERIAL_MOUNTED: boolean = false;
+
 export function groundMaterialCssBlock(tokens: GroundMaterialTokens, seedKey: string): string {
   const plan = groundMaterialPlan(tokens, seedKey);
   if (plan === undefined || !plan.ok) return "";

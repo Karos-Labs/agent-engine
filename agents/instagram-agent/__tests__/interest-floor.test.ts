@@ -355,8 +355,8 @@ describe("checkInterestFloor: the bold type poster", () => {
  * drives the rule with them.
  */
 describe("OCCUPIED_SHARE_FLOOR: the RFC-20 re-calibration", () => {
-  it("is 0.18 / 0.19 / 0.30, and every other threshold this phase touched held", () => {
-    expect(OCCUPIED_SHARE_FLOOR).toEqual({ cover: 0.18, interior: 0.3, closer: 0.31 });
+  it("is 0.18 / 0.30 / 0.42 — one constant moved, and every other threshold this phase touched held", () => {
+    expect(OCCUPIED_SHARE_FLOOR).toEqual({ cover: 0.18, interior: 0.3, closer: 0.42 });
     // The siblings RFC-20 §5.6 lists as NOT moving, each with the measurement
     // that keeps it: the plinth alone is iod 0.2383 against 0.10; the cover's
     // 0.2361 rectangle is a hole at a named rectangle, not a tight ceiling;
@@ -434,8 +434,12 @@ describe("OCCUPIED_SHARE_FLOOR: the RFC-20 re-calibration", () => {
     // The two roles RFC-20 actually re-calibrated. `interior` is not here
     // because it did not move; see `strippedStatement` and the case below.
     expect(kinds(check(composedCover(), "cover", 1)).filter((k) => k === "empty")).toEqual([]);
-    expect(kinds(check(composedCloser(), "closer", 6)).filter((k) => k === "empty")).toEqual([]);
     expect(composedCover().occupiedShare / OCCUPIED_SHARE_FLOOR.cover).toBeGreaterThan(1.15);
+    // The closer's own worst row is kept as a RECORD, not as a gate on a
+    // constant: `closer.html` reverted with RFC-20 Part 11 and its floor went
+    // back to 0.42, so this line asserts only that the band which WOULD have
+    // justified 0.31 also clears the floor that stayed. It is what §11.4
+    // re-derives from.
     expect(composedCloser().occupiedShare / OCCUPIED_SHARE_FLOOR.closer).toBeGreaterThan(1.15);
   });
 
@@ -496,15 +500,12 @@ describe("OCCUPIED_SHARE_FLOOR: the RFC-20 re-calibration", () => {
     // all 19 rendered cover rows sit at 0.2670-0.3517, i.e. entirely under it.
     expect(composedCover().occupiedShare).toBeLessThan(old.cover);
     expect(composedCover().occupiedShare).toBeGreaterThan(OCCUPIED_SHARE_FLOOR.cover * 1.15);
-    // The closer's own plate clears the OLD floor too (0.5722 vs 0.42) -- said
-    // plainly, because the honest reason `closer` moved is not that 0.42
-    // refused a real plate, it is that 5.6's pre-committed rule 1 puts the
-    // constant at the midpoint of a measured band and CI's midpoint is 0.31.
-    // The rule was written before the sweep ran so this row could not be argued
-    // either way afterwards, and 0.31 is STRICTER than the 0.30 this branch
-    // first proposed off Edge numbers.
+    // The closer's own plate clears the OLD floor too (0.5722 vs 0.42), which
+    // is why `closer` in the end did NOT move: 0.42 never refused a real closer
+    // row, and the plate the 0.31 band was measured on reverted with RFC-20
+    // Part 11. A constant re-derived from a plate this PR no longer changes has
+    // no business moving.
     expect(composedCloser().occupiedShare).toBeGreaterThan(old.closer);
-    expect(composedCloser().occupiedShare).toBeGreaterThan(OCCUPIED_SHARE_FLOOR.closer * 1.15);
     // The grey screen is refused at every role by BOTH sets -- which is why
     // the old floor's failure on this mask is a false-POSITIVE problem. What
     // the old floor could not do is the SHIPPED-hatch case below.
