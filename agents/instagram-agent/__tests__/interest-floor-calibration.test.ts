@@ -2349,9 +2349,28 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
        * That is the honest way to populate a baseline: read every row that
        * misses a gate in one pass, and record it.
        */
+      /**
+       * RECORDED TO FOUR DECIMAL PLACES, AND COMPARED AT FOUR DECIMAL PLACES.
+       *
+       * The sweep's own table prints `toFixed(4)`, which is where these came
+       * from, so a recorded number names an interval of ±0.00005 and not a
+       * double. The first version of this table stored two rows at full
+       * precision and the other seven at 4 dp, then compared raw — and
+       * `he rtl long s → stat-callout` failed at 0.3435 against 0.3435, because
+       * its true value is 0.34345… and rounds UP when printed. That is a unit
+       * bug in the ratchet, not a regression in the plate.
+       *
+       * So every entry is 4 dp and `atRecordedPrecision` rounds the live value
+       * the same way before comparing. **This is not a tolerance on the gate** —
+       * every non-baselined row is still compared raw against an unchanged gate.
+       * It is the ratchet being read at the resolution of its own record: a
+       * regression smaller than 0.0001 is below the precision of the number it
+       * would be regressing against, and cannot honestly be claimed either way.
+       */
+      const atRecordedPrecision = (v: number): number => Math.round(v * 10_000) / 10_000;
       const SWEEP_BASELINE: Readonly<Record<BaselineKey, number>> = {
-        "en ltr short s → comparison-card @ interior|occ": 0.31309670781893006,
-        "en ltr medium s → comparison-card @ interior|occ": 0.33082304526748973,
+        "en ltr short s → comparison-card @ interior|occ": 0.3131,
+        "en ltr medium s → comparison-card @ interior|occ": 0.3308,
         "he rtl short s → stat-callout @ interior|occ": 0.3258,
         "he rtl short s → comparison-card @ interior|occ": 0.2856,
         "he rtl short m → comparison-card @ interior|occ": 0.3421,
@@ -2395,8 +2414,8 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
             `${fmt(debt)} and nowhere worse, and it has just moved the wrong way. ${BASELINE_WHY}\n` +
             `Do NOT widen this entry to admit the new number, and do NOT lower the gate: find what regressed. ` +
             `If the plate genuinely improved, DELETE the entry rather than re-measuring it downward.`;
-          if (sense === "atLeast") expect(value, message).toBeGreaterThanOrEqual(debt);
-          else expect(value, message).toBeLessThanOrEqual(debt);
+          if (sense === "atLeast") expect(atRecordedPrecision(value), message).toBeGreaterThanOrEqual(debt);
+          else expect(atRecordedPrecision(value), message).toBeLessThanOrEqual(debt);
         };
 
         gated(

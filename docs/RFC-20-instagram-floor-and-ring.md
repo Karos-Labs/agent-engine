@@ -1300,8 +1300,12 @@ RFC-20 touches either side of any of these comparisons.
 
 - A row **not** in the table that misses its gate **fails**, exactly as before. The gates are unchanged for every
   other assertion in the sweep.
-- A row **in** the table that gets **worse** than its recorded value **fails**, at its exact recorded number, with
-  no jitter allowance — two CI runs on this tree reproduced the first entry to seventeen significant digits.
+- A row **in** the table that gets **worse** than its recorded value **fails**. The record is kept to **four
+  decimal places** — that is the precision the sweep prints — and the live value is rounded the same way before
+  comparing. **That is not a tolerance on the gate**; every non-baselined row is still compared raw against an
+  unchanged gate. It is the ratchet being read at the resolution of its own record, and it is stated because the
+  first version mixed full-precision and 4-dp entries and failed `he rtl long s → stat-callout` at 0.3435 against
+  0.3435 — a unit bug in the ratchet, not a regression in the plate.
 - A row in the table that gets **better** is meant to have its entry **deleted**, not re-measured downward, and
   the assertion message says so.
 - An entry whose row **stops being reached** fails, so a debt cannot outlive the measurement that found it.
