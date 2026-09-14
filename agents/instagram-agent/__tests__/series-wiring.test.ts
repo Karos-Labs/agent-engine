@@ -107,6 +107,20 @@ describe("RFC-21 Part 3 wiring: a real run chooses a series and the writer is to
     );
     expect(recentSeriesIds(history)).toContain(series!.series!.id);
     expect(SKELETON_BELIEF_KEY).toBe("instagramSkeletons");
+
+    // ── 4. AND THE READER IS TOLD TOO. ──
+    //
+    // The `seriesBadge` slot is the visible half: it exists on every bundled
+    // template and, until this phase, carried a per-CLIENT string frozen at
+    // setup, so the hook the reference feed uses sat in the tree with nothing
+    // choosing it. `seriesBadgeFor` was written, tested and then CALLED BY
+    // NOBODY until this assertion went looking for it — the badge on the
+    // rendered slides has to be the chosen series'.
+    const slidesData = steps.find((s) => s.stepId.startsWith("07c-emit-slides-data"))?.output as
+      | { slides?: Array<{ fields?: Record<string, unknown> }> }
+      | undefined;
+    const badges = new Set((slidesData?.slides ?? []).map((slide) => slide.fields?.["seriesBadge"]));
+    expect([...badges], "the rendered slides do not carry the chosen series' badge").toContain(series!.series!.badge);
   }, 120_000);
 
   it("ASSERT THE PREMISE: an angle that fails open leaves no series and no directive, and the run still delivers", async () => {
