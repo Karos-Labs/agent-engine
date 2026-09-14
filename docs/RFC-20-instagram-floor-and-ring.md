@@ -313,7 +313,21 @@ And material-only, with no type at all — the G2 empty-plate case:
 > the `distinct` boundary. That is noise around a boundary, not a contribution: 0.14 points is **20× under** the
 > 0.10 clause-E floor it would have to reach to change a verdict. The table above was measured on hand-painted
 > plates, where the effect cannot appear because there is no boundary-sitting fill to tip. The rendered A/B case
-> pins the four at equality and the two at a 0.005 bound. This is stronger than Spec A claimed. It also locates the cliff:
+> pins the four at equality and the two at a 0.005 bound.
+>
+> **⚠ SECOND INSTANCE, 2026-09-14, ON A DIFFERENT LIMB — and both belong in one place, because the mechanism is
+> one mechanism.** CI 34804038775 spliced the same sheet onto a plate wearing `.copy-art`'s 22% hatch and
+> `flatBackgroundShare` moved **0.123 points** (0.7962 against 0.7974) where the A/B case bounds it at 0.0005.
+> The bound was NOT widened. Read it next to the `iod` case above: a sub-ink grain changes no pixel's ink status,
+> but it can tip a cell whose MEAN sits exactly on a threshold — `tol.ink` for `contentOccupiedShare`, the
+> `distinct` count for `graphicShare`, `FLAT_TOL` for `flatBackgroundShare`. **The material is inert on a plate
+> with no boundary-sitting cells and not on one that has tens of thousands of them**, which is what a flat fill
+> (the plinth) or a hatch (`.copy-art`) is. So "the material is invisible to the instrument" is a claim about a
+> BARE ground, and `groundMaterialCssBlock` now says so in its own selector: `body:not(:has(.copy-art))`. That is
+> the Ground Rule's condition asked of the document, not a template allowlist, and it comes out in the same PR as
+> the screens. Anyone adding a ground layer needs both instances, and this is where they are.
+>
+> The `iod` reading also locates the cliff:
 `flatBackgroundShare` moves first at ~16, and `inkShare`/`LER` break between 16 and 20 — at `tol.ink = 18`, which
 is the correct and predictable place, because a material whose peak deviation is under 18 produces **no ink
 pixel at all**. `MATERIAL_PEAK_DELTA = 11` therefore sits mid-plateau with 7 units of headroom, not on an edge.
@@ -935,10 +949,17 @@ Measured on CI, one object disarmed four clauses at once:
 It also took the 1×1 **transparent-hero** fixture — the prep defect with no symptom — to `iod` **37.2%** against a
 guard expecting under 3.5%, because `onerror` empties `.bg` and the heroless card then paints.
 
-**This is §5.2's hatch, one clause over.** §5.2 deleted `.copy-art` because it "disarms clauses C, D and G and
-trips F as a false positive". The plinth that replaced it disarms B, D, E and F. The mechanism is the same — a
-large unearned painted area — and the phase walked into it because it was measuring the card's *contribution to
-occupancy* and never its contribution to `graphicShare`.
+**THIS IS A CLASS OF DEFECT, NOT AN INCIDENT, AND IT IS THE SECOND TIME IT HAS BITTEN THIS PROJECT: any
+full-frame painted layer that a plate has not earned will be scored by some clause as the evidence that clause was
+built to look for — the hatch was scored as type (clause F, `textShare` 0.6132) and the plinth was scored as a
+drawn device (clause E, `iod` up to 0.514) — so a new painted panel is a change to the INSTRUMENT and must be
+measured against every share before it is measured against the eye.**
+
+§5.2 deleted `.copy-art` because it "disarms clauses C, D and G and trips F as a false positive". The plinth that
+replaced it disarms B, D, E and F. The mechanism is identical — a large unearned painted area — and the phase
+walked into it because it was measuring the card's *contribution to occupancy* and never its contribution to
+`graphicShare`. **The next painted panel will be added by someone who never read this PR. This paragraph is what
+they need to hit first.**
 
 **It is not repairable by choosing a different percentage, and that is a proof rather than a measurement.** §5.0's
 own structural fact is that `imageryOrDeviceShare ⊆ contentOccupiedShare ⊆ occupiedShare`, cell for cell. So:
@@ -1015,6 +1036,29 @@ Scope, so the next phase starts costed rather than from scratch:
 3. Only then delete `.copy-art` from both files, and only in the same PR as the object.
 4. Re-run the gate-zero sweep and set `OCCUPIED_SHARE_FLOOR.interior` from the band it prints — **from CI, and from
    a tree where the populated rows are objects rather than decoration.**
+5. Remove `groundMaterialCssBlock`'s `body:not(:has(.copy-art))` guard, which exists only because those two files
+   still carry a screen (§11.6), and re-run the A/B case at its unchanged 0.0005 bound.
+
+### The guards that travelled out of PR #114 with this work, by name
+
+**They were not deleted. They are travelling.** Each one renders `headline_focus` or heroless `slide.html` as its
+subject, so on the cut tree each was a red light with nothing behind it. Every one comes back **unweakened —
+that is the only way any of them may come back** — in the same PR as the bounded object:
+
+| test | file | what it holds | its value on the cut tree |
+|---|---|---|---|
+| `G1 — the owner's grey screen is REFUSED at the interior AND cover roles, on either ground` | `interest-floor-calibration.test.ts` | **the phase's acceptance condition** | RED: `occ` 0.5090, `LER` 0.0778 — the grey screen PASSES |
+| `G2 — every bundled archetype with every copy slot empty measures as EMPTY, on either ground and in both directions` | `interest-floor-calibration.test.ts` | the Ground Rule made executable | RED on the restored screens |
+| `G5 — the grey screen carrying its maximum mark load still fails clause C` | `interest-floor-calibration.test.ts` | marks must not close the hole | RED: rectangle 3.33% |
+| `G5: the grey screen carrying the MAXIMUM mark load still fails clause C` | `interest-floor-marks.test.ts` | the same guard on the paper-ground ring | RED: `LER` 0.0889 |
+| `the ground material moves no share on a real archetype render` | `interest-floor-calibration.test.ts` | the material is inert | RED over a hatch: `flat` 0.123 points vs a 0.0005 bound |
+
+The **gate-zero sweep** keeps running and keeps rendering all eight archetypes — a render that degrades one
+archetype into another is a real failure and that check is untouched — but it no longer SCORES the two cut files in
+either band (`OUT_OF_SCOPE` in that file). Scoring them would make both bands dishonest in the same direction:
+their POPULATED occupancy is their hatch rather than their copy, which is the circularity §3.2 rejects Spec B for,
+and their NEGLECTED row is the grey screen that currently passes. **Both bands, and `OCCUPIED_SHARE_FLOOR.interior`
+with them, are re-derived when the two files come back — never inherited.**
 
 ## 11.5 Still open, all named, none of them guessed at
 

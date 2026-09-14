@@ -542,8 +542,25 @@ export function groundMaterialCssBlock(tokens: GroundMaterialTokens, seedKey: st
    alphas=${plan.layers.map((l) => `${l.role}:${l.alpha.toFixed(4)}`).join(" ")}
    Sub-ink by construction: peak ${plan.effectivePeakDelta.toFixed(2)} < FLAT_TOL 12 < INK_DELTA 18, so this
    layer contributes 0 to inkShare, occupiedShare, contentOccupiedShare and
-   imageryOrDeviceShare and removes nothing from the empty-rectangle mask. */
-.ground::after {
+   imageryOrDeviceShare and removes nothing from the empty-rectangle mask.
+
+   ── WITHHELD FROM A DOCUMENT THAT STILL CARRIES A FULL-BLEED SCREEN. ──
+   \`body:not(:has(.copy-art))\` is not a template allowlist; it is the Ground
+   Rule's own condition, asked of the document. "Sub-ink by construction"
+   above is a statement about a BARE ground, and it stops being true over a
+   screen: measured on CI 34804038775, splicing this sheet onto a plate
+   wearing \`.copy-art\`'s 22% hatch moved \`flatBackgroundShare\` 0.123 points
+   (0.7962 against 0.7974) where the A/B case bounds it at 0.0005. The cause
+   is the same boundary-tipping RFC-20 §5.1a already records for \`iod\` on a
+   flat fill — a sub-ink grain changes no pixel's ink status but can tip a
+   cell whose mean sits exactly on \`tol.ink\`, and a hatch puts tens of
+   thousands of cells on that boundary. On a bare ground there is no boundary
+   to tip and every share is identical to 3 dp.
+   \`headline-focus.html\` and \`slide.html\` are the two files that still carry
+   one; RFC-20 Part 11 cut them from this phase, and this selector is what
+   keeps them byte-identical in their measurements as well as in their source.
+   The guard comes out in the same PR as their screens. */
+body:not(:has(.copy-art)) .ground::after {
   content: "";
   position: absolute;
   inset: 0;

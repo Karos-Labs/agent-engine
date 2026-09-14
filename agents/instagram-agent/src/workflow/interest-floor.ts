@@ -770,6 +770,19 @@ export const FLAT_BACKGROUND_CEILING = 0.7;
  *
  * `closer` moves 0.30 -> **0.31**, the rule-1 literal and STRICTER than this
  * branch first proposed. 19 rows, POPULATED 0.5722-0.6681, margin 1.85x.
+ *
+ * ⚠ **0.31's BASIS INCLUDES AN OBJECT THAT MAY BE DELETED, AND WHOEVER DELETES
+ * IT OWNS THIS NUMBER.** The 0.5722-0.6681 band was measured on a
+ * `closer.html` carrying `#takeaway`'s filled plinth, which this phase added
+ * and which is **the same object as `.hf-plate`** — a `covered && distinct <= 3`
+ * card whose area is counted by `graphicShare` and therefore by clause E. No
+ * guard is currently blind because of it: the closer clears
+ * `IMAGERY_OR_DEVICE_FLOOR` on its recap strip and ask band with the plinth
+ * suppressed entirely, MEASURED-EDGE by 28.18 points. But a pass that removes
+ * that plinth removes 19 rows' worth of occupancy from underneath this
+ * constant. **Re-derive 0.31 from a fresh CI sweep on that tree. Do not
+ * inherit it.** A constant whose basis is about to be deleted is a trap for
+ * whoever does the deleting, and this sentence is the trap being disarmed.
  */
 export const OCCUPIED_SHARE_FLOOR: Readonly<Record<SlideRole, number>> = { cover: 0.18, interior: 0.3, closer: 0.31 };
 
