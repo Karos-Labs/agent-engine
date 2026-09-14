@@ -37,6 +37,25 @@ import { measureSlidePng, type SlideMetrics, type SlideProbe } from "./slide-met
  * honest way to satisfy it — semver already means "nothing a caller can
  * observe moved", which is exactly the claim being made here.
  *
+ * 1.5.0 — RFC-21's typography instrument. ONE thing moves on the wire and
+ * it is additive: `probe.displayTypeScale`, the largest rendered font size
+ * on the plate as a fraction of frame height.
+ *
+ * The MINOR digit rather than a patch, and the drift guard is right to have
+ * asked. A caller CAN observe this: `interest-floor.ts`'s `plateSubject`
+ * reads it to decide whether a plate earns a quiet region, so a telemetry
+ * record made before this change and one made after are answering different
+ * questions about the same plate. That is precisely what a version exists to
+ * distinguish.
+ *
+ * Why the DOM and not the pixels: contrast and imagery were both already
+ * measured and type scale had no instrument at all, so one enormous
+ * confident line and the same words at caption size were indistinguishable
+ * to every clause in the floor. Three pixel proxies were tried for it and
+ * all three failed their controls (RFC-21 §2.5-§2.6.2), the last because
+ * `edgeDensity` is dominated by imagery share rather than by glyph size. The
+ * document knows the answer exactly; there was no reason to keep guessing.
+ *
  * 1.4.0 — RFC-17's measurement half. Four things move on the wire, all of
  * them additive: `slide.measure.markHexes` (a new input, forwarded as
  * `expected.marks`); `slide.measure.foregroundHex`, which used to anchor
@@ -57,7 +76,7 @@ import { measureSlidePng, type SlideMetrics, type SlideProbe } from "./slide-met
  * versioned tools (`draft`, `schedule`, `status`) are unchanged by it. The
  * push gate diffs against the previous PUSH rather than against `origin/main`.
  */
-const TOOL_VERSION = "1.4.0";
+const TOOL_VERSION = "1.5.0";
 
 // n/template/fields/images have no existing TSDoc to transcribe (SCRUM-293 flag) — descriptions
 // below synthesized from fillTemplate's/validateRenderInputs' usage of each field.
