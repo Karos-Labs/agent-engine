@@ -295,27 +295,49 @@ export interface VariationPlanEntry {
 export type SlideTextAlign = "start" | "center" | "end";
 
 /**
- * The reference carousels' own alignment sequence.
+ * ── WITHDRAWN 2026-09-14: THE WALK SUBSTITUTED THE WRONG AXIS ──
  *
- * The variety in the reference sets is (a) type-block vertical position,
- * (b) ALIGNMENT, (c) mark colour and (d) imagery — over ONE unchanging
- * ground. (c) is the mark system. Of the rest, alignment is the only one that
- * is free today: every template already carries `body.ta-center` and
- * `body.ta-end`, and `textAlign` has until now defaulted to `"start"` on
- * every slide and only ever moved when a reviewer moved it. An eight-slide
- * carousel therefore shipped eight left-aligned type blocks, which is exactly
- * the repetition the owner called machine-made.
+ * This used to cycle `["start","start","center","end","center","center","start","center"]`,
+ * and the owner's read of a real prep render is what retired it: on run
+ * `pubsub-21839432908803804`, four of seven slides shipped centred body copy
+ * and one shipped **right-aligned body copy in an LTR document**. Verbatim:
+ * *"the templates had too many effects, it did not look professional at all."*
  *
- * Vertical migration is deliberately NOT built: it needs a `cw-*` trio in
- * every template and it moves the type block relative to a FIXED painted
- * field, which re-opens the clause E band that `IMAGERY_OR_DEVICE_FLOOR`'s
- * calibration depends on. That is its own phase.
+ * ## The reasoning that produced it, and where it went wrong
  *
- * The sequence is cyclic and — checked by test across every phase and every
- * carousel length — never puts three consecutive slides on the same
- * alignment, including across the wrap.
+ * Its own comment said the reference sets vary by *"(a) type-block vertical
+ * position, (b) ALIGNMENT, (c) mark colour and (d) imagery"*, and then chose
+ * (b) on the stated grounds that it *"is the only one that is free today"* —
+ * vertical migration being "its own phase".
+ *
+ * But the reference analysis this cites says something different
+ * (`instagram-quality-reference-accounts`): *"within one carousel the type
+ * block MIGRATES — top-left, bottom-left, bottom-right, top-centre, dead
+ * centre — and the object cluster counterbalances it."* **That is the
+ * POSITION of the block on the plate, not the RAGGING of the text inside it.**
+ * Editorial design moves the block and leaves the copy ranged left; centring
+ * and right-ragging multi-line body copy is the opposite move, and it is the
+ * single clearest amateur tell in a layout.
+ *
+ * So the cheap axis was substituted for the right one BECAUSE it was cheap,
+ * and the cheap axis is the one that reads as unprofessional. That is the same
+ * shape as every other defect this project has recorded: a proxy adopted for
+ * its availability rather than for what it measures.
+ *
+ * ## Why removing it costs no variety
+ *
+ * It was added because *"an eight-slide carousel shipped eight left-aligned
+ * type blocks, which is exactly the repetition the owner called
+ * machine-made"*. That was true when it was written and is not true now: the
+ * series layer (RFC-21 Part 3) gives each post a different ordered layout
+ * family, and holds a format out for two runs. Variety comes from the
+ * composition, which is where the reference accounts get it.
+ *
+ * Alignment is back to what it was before: `start`, and a reviewer's explicit
+ * `textAlign` override still wins. A DELIBERATE centred plate remains
+ * available; a seeded one does not.
  */
-const TEXT_ALIGN_WALK: readonly SlideTextAlign[] = ["start", "start", "center", "end", "center", "center", "start", "center"];
+const TEXT_ALIGN_WALK: readonly SlideTextAlign[] = ["start"];
 
 /**
  * This run's default alignment per slide — seeded, never random, on the same
@@ -331,6 +353,10 @@ const TEXT_ALIGN_WALK: readonly SlideTextAlign[] = ["start", "start", "center", 
  * the same shape for a six-, seven- or eight-slide post.
  */
 export function planTextAlign(slideCount: number, paletteSeed: string | undefined): SlideTextAlign[] {
+  // The seed is still read and still phases the walk, so the contract is
+  // unchanged and a future walk with more than one entry needs no caller
+  // change. With a one-entry walk every slide ranges to the script's own
+  // start edge, which is what body copy does.
   const phase = paletteSeed !== undefined && paletteSeed.length > 0 ? fnv1a32ForVariation(`${paletteSeed}:textAlign`) % TEXT_ALIGN_WALK.length : 0;
   const out: SlideTextAlign[] = [];
   for (let i = 0; i < Math.max(0, slideCount); i++) {
@@ -2220,10 +2246,39 @@ export function assembleSlidesData(params: {
       {
         position,
         ...(markPlan !== undefined ? { marks: markPlan } : {}),
-        // Item M.3 — which token-driven ground this slide paints, on the
-        // EXISTING seeded low-discrepancy walk under its own namespace. No
-        // new randomness mechanism: same seed and index always agree, a
-        // different run starts the walk at a different phase.
+        // ── ONE MATERIAL PER POST IS RIGHT, AND IS DEFERRED (2026-09-14) ──
+        //
+        // Changing `slide.n` to `1` here — one ground for the whole carousel —
+        // was measured in CI 34863915940 and REVERTED: it makes a HEBREW
+        // `closer.html` fail the interest floor outright, because the ground a
+        // post-wide seed picks is not always the one that plate needed to clear
+        // its number. That is the same finding as the texture revert one commit
+        // earlier, one level down: the floor is pinning the decoration, and a
+        // composition change cannot land until the floor stops gating on ink.
+        // The reasoning below is kept because it is still the right target.
+        //
+        // This used to read `isVariationSlot(slide.n, GROUND_VARIATION_MIX, …)`,
+        // so HALF the slides in a carousel took the glyph field and half took
+        // the grid — the ground changing under the reader every second slide.
+        //
+        // The reference analysis this was built from says the opposite in as
+        // many words (`instagram-quality-reference-accounts`): *"their
+        // anti-repetition mechanism is COMPOSITION, not ground. Within one
+        // carousel the type block migrates over ONE UNCHANGING MATERIAL. Phase
+        // 2 solved repetition the other way: eight archetypes each painting a
+        // different KIND of ground. Theirs is cheaper and probably stronger —
+        // one material, many compositions."*
+        //
+        // On a real prep render (`pubsub-21839432908803804`) the alternation is
+        // plainly visible and it is what makes the set read as unsettled rather
+        // than as one post. So the seed now picks ONE ground for the whole
+        // carousel: same mechanism, same determinism, keyed on the post instead
+        // of the slide.
+        //
+        // Variety across RUNS is unaffected — a different `paletteSeed` still
+        // starts a different ground — and variety WITHIN the post is the series
+        // layer's job (RFC-21 Part 3), which is where the reference accounts
+        // get it.
         groundStyle: isVariationSlot(slide.n, GROUND_VARIATION_MIX, `${params.paletteSeed ?? ""}:ground`) ? "glyph" : "grid",
         ...(params.targetLanguage !== undefined ? { targetLanguage: params.targetLanguage } : {}),
         ...(params.bcp47 !== undefined ? { bcp47: params.bcp47 } : {}),

@@ -357,6 +357,17 @@ So the remaining work, in order:
 2b. ~~Build the ONE-LINE plate.~~ **DONE — §2.6.3.** `headline-focus.html` with one line and an empty
    body, at display and body scale, across four palettes.
 
+> ### ⚠ SUPERSEDED 2026-09-14 BY A MEASUREMENT — READ `docs/instagram-restraint-reference.md`
+>
+> The paragraph below concludes that our templates cannot produce the shape the ruling is about. **That
+> reading was measuring the DECORATION.** Quieting the full-plate hairline from 22%/9px to 8%/14px drops
+> the identical plate from `occupiedShare` 0.5094 to **0.1300**, and it then FAILS clause D on every
+> palette (CI 34861097819). Roughly 38 of those 51 points were the dot field, not the type.
+>
+> **The case IS reproducible. It was hidden by the paint.** And the floor is what holds the paint in
+> place: the same change turned `slide.html` heroless, `closer.html` in Hebrew, the marked-emphasis case
+> and the whole gate-zero sweep red. The next piece of work is the floor itself.
+
 **AND IT CHANGED THE QUESTION.** That plate measures `occupiedShare` **0.5094** and `textShare`
 **0.47**. It is not sparse at all: our templates scale display type to fill the frame, so a confident
 one-liner on OUR system is a HIGH-occupancy plate that clears every floor with room. It passed on all

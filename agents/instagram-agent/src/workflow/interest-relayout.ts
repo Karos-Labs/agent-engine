@@ -262,7 +262,55 @@ export interface InterestRelayoutOptions {
  * "5 rounds to 2, a 60% drop" yields the figure `2` and not `2,` — a device
  * value is typeset verbatim, and a trailing comma would ship.
  */
-const FIGURE_IN_TEXT = /(?:[$€£₪]\s?)?\d(?:[\d.,]*\d)?\s?(?:%|[kKmM]\b|x\b|million|billion|bn\b|אלף|מיליון|מיליארד)?/gu;
+const FIGURE_IN_TEXT = /(?:[$€£₪]\s?)?\d(?:[\d.,]*\d)?\s?(?:%|[kKmMbB]\b|x\b|million|billion|bn\b|אלף|מיליון|מיליארד)?/gu;
+
+/**
+ * ── THE WORD-BOUNDARY GUARD, AND THE INCIDENT THAT BOUGHT IT ──
+ *
+ * Prep run `pubsub-21839432908803804`, 2026-09-14. The cover failed clause C,
+ * the free re-layout planner reached for `deviceFromText` to fill the hole,
+ * and the regex above matched the **`2` inside `B2B`**. What shipped was a
+ * display numeral reading `2`, a label reading *"Inbound pipeline loss isn't a
+ * product problem B B marketing teams are losing"* — the claim with the digit
+ * cut out of the middle of the word — and `salesforce.com` printed under it as
+ * the source.
+ *
+ * **A fabricated statistic, sourced to a real company, on the cover.** That is
+ * worse than an ugly slide: every other defect in this system makes a post
+ * look bad, and this one makes it WRONG, with a citation.
+ *
+ * `\d` matches a digit wherever it sits, so every alphanumeric token was a
+ * candidate: `B2B`, `Web3`, `5G`, `S3`, `H1`, `GPT-4`, `COVID-19`. The regex
+ * was written to find "a figure token anywhere in a sentence" and it did
+ * exactly that; what it never asked is whether the digits were a NUMBER or
+ * part of a NAME.
+ *
+ * Checked on the match's neighbours rather than folded into the pattern,
+ * because the pattern is already at the limit of what a reader can verify by
+ * eye, and because a rejected candidate should be explainable in one line.
+ */
+function isStandaloneFigure(text: string, match: RegExpMatchArray): boolean {
+  const start = match.index ?? 0;
+  // The END OF THE TRIMMED MATCH, not of the match. `FIGURE_IN_TEXT`'s
+  // `\s?` before the unit group consumes a trailing space when no unit
+  // follows, so `match[0]` for "5 rounds" is `"5 "` and the raw end lands
+  // on the `r`. Read that way the guard rejected every bare count followed
+  // by a word -- which is most of them -- and the unit tests caught it.
+  const end = start + match[0].replace(/\s+$/u, "").length;
+  const before = text.slice(Math.max(0, start - 2), start);
+  const after = text.slice(end, end + 1);
+  // Glued to a word on the left: `B2B`, `Web3`, `S3`, `H1`.
+  if (/[\p{L}\p{N}]$/u.test(before)) return false;
+  // Hyphenated onto a name: `GPT-4`, `COVID-19`. The hyphen alone is not
+  // enough to reject — "5 rounds to 2 - a 60% drop" is a real figure — so the
+  // letter BEFORE the hyphen is what decides.
+  if (/[\p{L}\p{N}][-\u2010-\u2015]$/u.test(before)) return false;
+  // A letter immediately after a figure the unit group did not claim: `5G`,
+  // `3D`, `4K`. `$1.8B` and `4.2x` are unaffected — their unit is consumed by
+  // the match, so `after` is whatever follows the unit.
+  if (/[\p{L}\p{N}]/u.test(after)) return false;
+  return true;
+}
 
 /** Item M's schema cap on a device value: past 12 characters it is not a figure. */
 export const MAX_DEVICE_VALUE_LENGTH = 12;
@@ -296,6 +344,9 @@ export function figuresInText(text: string): FoundFigure[] {
   for (const match of text.matchAll(pattern)) {
     const value = match[0].trim();
     if (value.length === 0 || value.length > MAX_DEVICE_VALUE_LENGTH) continue;
+    // The digits have to BE a number, not sit inside a name. See the incident
+    // above `isStandaloneFigure`.
+    if (!isStandaloneFigure(text, match)) continue;
     const hasUnit = /[%$€£₪xkKmM]|million|billion|bn|אלף|מיליון|מיליארד/u.test(value);
     if (!hasUnit && /^(?:19|20)\d{2}$/u.test(value)) continue;
     found.push({ value, raw: match[0], index: match.index, hasUnit });
