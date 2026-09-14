@@ -101,11 +101,71 @@ export const MARK_SEPARATION = 2 * MARK_TOL;
 /** Matches `ACCENT_RING_MAX` in `brand-render-tokens.ts`, and therefore the six `.mk-c*` classes `markCssBlock` emits. */
 export const MARK_RING_MAX = 6;
 
-/** Below this, a mark is invisible against the ground for every kind that draws NEXT TO the glyphs. */
-const MARK_GROUND_CONTRAST_FLOOR = 3;
+/**
+ * Below this, a mark is invisible against the ground for every kind that draws
+ * NEXT TO the glyphs.
+ *
+ * EXPORTED since RFC-20 §6.2 so the guards pin the CONSTANT rather than a
+ * literal `3` they happen to agree with. A test that writes `>= 3` cannot see
+ * this number move; a test that writes `>= MARK_GROUND_CONTRAST_FLOOR` can.
+ */
+export const MARK_GROUND_CONTRAST_FLOOR = 3;
 
-/** Above this, a mark may carry the glyphs themselves (`ink`) or stand behind them (`block`). WCAG AA for normal text. */
-const MARK_TEXT_CONTRAST_FLOOR = 4.5;
+/** Above this, a mark may carry the glyphs themselves (`ink`) or stand behind them (`block`). WCAG AA for normal text. Exported for the same reason as its sibling. */
+export const MARK_TEXT_CONTRAST_FLOOR = 4.5;
+
+/**
+ * THE ALPHA THE BUNDLED TEMPLATES ACTUALLY PAINT THEIR BODY INK AT, and why
+ * `block` admission has to know about it.
+ *
+ * `block` is admitted on `contrastRatio(fgHex, hex) >= 4.5` — the INK on the
+ * swatch. But no bundled template paints `var(--fg)` neat in a mark-bearing
+ * run. Every one of them softens it:
+ *
+ *   `.body-text`  cover.html, headline-focus.html, slide.html   `--fg` at 92%
+ *   `.cl-cta`     closer.html                                   `--fg` at 94%
+ *   `.body-text`  stat-callout.html                             `--fg` at 90%
+ *
+ * `color-mix(in srgb, var(--fg) N%, transparent)` over a `block` swatch
+ * composites channel-wise in gamma sRGB, so the glyphs a reader actually sees
+ * are `N%` of the ink lerped toward THE SWATCH — never toward the page ground,
+ * because the swatch is what is behind them. The ink therefore moves TOWARD
+ * the thing it has to contrast with, and the shipped ratio is strictly below
+ * the one admission measured.
+ *
+ * MEASURED, a 3-step RGB sweep of every `block`-capable candidate on the paper
+ * kit `#F0EAE6`/`#12100E`: **22,876 of 379,493** render below 4.5 on a 92%
+ * host. Worst case `#8A7B3C`, admitted at 4.501:1, renders at **4.16:1**. On
+ * `#FAF7F2`/`#3A3632`, `#A5A254` is admitted at 4.503:1 and renders at 3.95:1.
+ * PIXEL-CONFIRMED through the real `markCssBlock` + `buildMarkedRuns` output:
+ * a `#FFEB3B` block's glyphs render `rgb(37,33,18)` on a 92% host rather than
+ * `rgb(18,16,14)`, and measured contrast falls 15.55:1 -> 13.18:1.
+ *
+ * 0.90 is the MINIMUM over the bundled set, not the median, because admission
+ * runs once per RUN and does not know which archetype will host the run. A
+ * per-host value would be more precise and would also be a second source of
+ * truth for a number that lives in CSS; the minimum is the only value that is
+ * safe for every host at once. `template-mark-slots.test.ts` scans the
+ * templates and fails if any mark-bearing host paints its ink below this, so
+ * the constant cannot silently stop being the worst case.
+ *
+ * **This is not a threshold move.** 4.5 is untouched. What changes is the
+ * COLOUR the 4.5 is measured on: the ink the reader gets rather than the token
+ * the kit declares.
+ */
+export const MARK_HOST_INK_ALPHA = 0.9;
+
+/**
+ * The ink a reader actually sees inside a `block` run: the host's softened
+ * `--fg` composited over the swatch.
+ *
+ * Falls back to the bare token when either hex is unparseable, which is the
+ * same posture `parseHex`'s callers take everywhere else in this file — a
+ * colour we cannot read is never repaired or guessed at.
+ */
+function effectiveInkOnMark(fgHex: string, markHex: string): string {
+  return mixSrgb(fgHex, markHex, MARK_HOST_INK_ALPHA * 100) ?? fgHex;
+}
 
 /**
  * Whether the ground is LIGHTER than the ink — the one fact the whole kind
@@ -147,6 +207,111 @@ const MIN_HUE_RING = 3;
  */
 export const MARK_KINDS = ["block", "underline", "swish", "double", "ink"] as const;
 export type MarkKind = (typeof MARK_KINDS)[number];
+
+/** One failed capability test, in the form a ring note quotes it. */
+interface CapabilityMiss {
+  kinds: string;
+  why: string;
+}
+
+/**
+ * WHAT ONE COLOUR IS LEGIBLE AS, against ONE ground/ink pair — RFC-20 §6.2.
+ *
+ * ── THE DEFECT THIS FUNCTION EXISTS TO END ───────────────────────────────
+ *
+ * `buildMarkRing` used to cull every candidate on `contrastRatio(hex, ground)
+ * >= 3` BEFORE any kind existed, and `block` — a highlighter swatch BEHIND the
+ * word — then needed the ink at 4.5:1 ON that swatch. On paper those two
+ * squeeze from opposite ends of one luminance axis: a highlighter works by
+ * sitting CLOSE to the paper in luminance and far from it in hue, so the very
+ * colours `block` is for were refused before `block` was ever considered.
+ * MEASURED (RFC-20 §6.4, and re-measured for this build on the paper kit
+ * `#F0EAE6`/`#12100E`): `#FFEB3B` scores **1.02:1** against the paper and
+ * **15.55:1** for the ink on it. The first number is the wrong test; the
+ * second is the right one, and it is STRICTER.
+ *
+ * ── THIS IS A CHANGE OF QUANTIFIER, NOT OF THRESHOLD ─────────────────────
+ *
+ * Every number below is the number that shipped: 3:1 for the three kinds that
+ * draw NEXT TO the glyphs, 4.5:1 (WCAG AA) for the two that ARE the glyphs or
+ * sit under them, and `groundIsLighterThanInk` for `block` exactly as before.
+ * Nothing is relaxed. What changes is WHICH test a candidate is judged by:
+ * the test belonging to the kind it would actually be drawn as.
+ *
+ * ── ONE IMPLEMENTATION, FOUR CALLERS, SO THEY CANNOT DISAGREE ────────────
+ *
+ * Admission (`buildRingAgainstGrounds`), the per-slide narrowing
+ * (`slideMarkKinds`, `ringIndexesFor`), the reporting union (`markKindsFor`)
+ * and the emission-point re-assertion (`resolveSlideMarks`) all call THIS.
+ * Four copies of a legibility rule is how a ring comes to admit a pair its own
+ * renderer refuses, which is the class of defect this phase is repairing.
+ *
+ * It deliberately does NOT apply the `MARK_TOL` separability cull: that is a
+ * RUN-level fact about every ground the member can land on, it is the metric's
+ * own test rather than a legibility one, and it stays where it is — ahead of
+ * everything, in `buildRingAgainstGrounds`.
+ */
+export function markCapabilitiesFor(
+  hex: string,
+  groundHex: string,
+  fgHex: string,
+  options?: { refuseBlock?: boolean | undefined },
+): MarkKind[] {
+  return capabilitiesWithMisses(hex, groundHex, fgHex, options).kinds;
+}
+
+/** `markCapabilitiesFor` plus the reason EVERY refused kind was refused — so a drop note can name all of them, not just the first. */
+function capabilitiesWithMisses(
+  hex: string,
+  groundHex: string,
+  fgHex: string,
+  options?: { refuseBlock?: boolean | undefined },
+): { kinds: MarkKind[]; misses: CapabilityMiss[] } {
+  const kinds: MarkKind[] = [];
+  const misses: CapabilityMiss[] = [];
+
+  // `block` — the swatch sits BEHIND the glyphs, so what must be readable is
+  // the INK ON THE MARK, and the swatch only reads as a highlighter when it is
+  // lighter than the type it sits under. Both conjuncts as they shipped.
+  // The ink measured here is the host's EFFECTIVE ink, not the kit token — see
+  // `MARK_HOST_INK_ALPHA` for the measurement. Admitting on the neat token
+  // admits a mark the reader never gets.
+  const inkOnMark = effectiveInkOnMark(fgHex, hex);
+  const onMark = contrastRatio(inkOnMark, hex);
+  if (options?.refuseBlock === true) {
+    misses.push({ kinds: "block", why: "this archetype refuses block outright — an italic run's background box is a parallelogram the CSS cannot follow" });
+  } else if (!groundIsLighterThanInk(groundHex, fgHex)) {
+    misses.push({ kinds: "block", why: `the ground ${groundHex} is not lighter than the ink ${fgHex}, so a swatch behind the glyphs cannot read as a highlighter` });
+  } else if (onMark < MARK_TEXT_CONTRAST_FLOOR) {
+    misses.push({
+      kinds: "block",
+      why:
+        `the ink ${fgHex} renders as ${inkOnMark} at this archetype's ${(MARK_HOST_INK_ALPHA * 100).toFixed(0)}% and reads at only ` +
+        `${onMark.toFixed(2)}:1 ON the mark, below the ${MARK_TEXT_CONTRAST_FLOOR}:1 text floor`,
+    });
+  } else {
+    kinds.push("block");
+  }
+
+  // The three that draw NEXT TO the glyphs — they need luminance contrast
+  // against the GROUND, which is genuinely what `contrastRatio` measures.
+  const onGround = contrastRatio(hex, groundHex);
+  if (onGround >= MARK_GROUND_CONTRAST_FLOOR) kinds.push("underline", "swish", "double");
+  else misses.push({ kinds: "underline/swish/double", why: `${onGround.toFixed(2)}:1 against the ground ${groundHex} is below the ${MARK_GROUND_CONTRAST_FLOOR}:1 mark floor` });
+
+  // `ink` — the glyphs THEMSELVES take the mark colour (`rf-6`'s mechanism),
+  // so the mark IS the text and needs text contrast against the ground.
+  if (onGround >= MARK_TEXT_CONTRAST_FLOOR) kinds.push("ink");
+  else misses.push({ kinds: "ink", why: `${onGround.toFixed(2)}:1 against the ground ${groundHex} is below the ${MARK_TEXT_CONTRAST_FLOOR}:1 text floor` });
+
+  return { kinds, misses };
+}
+
+/** Keep a kind list in `MARK_KINDS` order and free of repeats, whatever order it was accumulated in. */
+function orderedKinds(kinds: Iterable<MarkKind>): MarkKind[] {
+  const present = new Set(kinds);
+  return MARK_KINDS.filter((k) => present.has(k));
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 // Small local utilities — mirrored, not imported, and each says why
@@ -253,6 +418,27 @@ export interface MarkRing {
    * measurement is told to expect.
    */
   readonly cssValues: readonly string[];
+  /**
+   * WHAT EACH MEMBER IS LEGIBLE AS — positional, parallel to `hexes`, computed
+   * ONCE at admission where both the colour and the grounds are known (RFC-20
+   * §6.2 item 3).
+   *
+   * This is the field that makes the ring's promise checkable. Before it, the
+   * ring promised only "these colours are far enough from the ground", the
+   * kind was chosen separately, and a (colour, kind) pair could exist that the
+   * colour could not carry. A member is in `hexes` only when this entry is
+   * non-empty.
+   *
+   * IT IS A UNION ACROSS THE GROUNDS THE RING WAS BUILT AGAINST, and therefore
+   * an INVENTORY rather than a licence. On an inverting run a member may carry
+   * `block` on the paper ground and `underline` on the dark one; both appear
+   * here. The BINDING set is the per-slide one — `slideMarkKinds` recomputes
+   * against the slide's own effective (post-inversion) pair, `ringIndexesFor`
+   * drops a member whose set is empty for that slide, and `resolveSlideMarks`
+   * re-asserts the pair at the point of emission. Reading this field straight
+   * into `markRotation` would skip all three.
+   */
+  readonly kindsByIndex: readonly (readonly MarkKind[])[];
   /** `hue` — genuinely different colours. `tint` — one hue at three strengths. `none` — nothing legible survived. */
   rotation: "hue" | "tint" | "none";
   /** Every candidate that did not make it, and why. Reported, never gated. */
@@ -321,20 +507,43 @@ export function buildMarkRing(
   //
   // So: try the intersection, and when it is empty fall back to the PRIMARY
   // ground alone. This is safe, not a relaxation, because the per-slide half
-  // of the decision already re-checks the same floor against the slide's
-  // EFFECTIVE (post-inversion) ground: `markKindsFor` admits `underline`,
-  // `swish` and `double` only when EVERY ring member clears
-  // `MARK_GROUND_CONTRAST_FLOOR` against that ground, and `ink` only at the
-  // text floor. An inverted slide whose ring fails there gets `kinds === []`
-  // and marks nothing — a degraded slide, never an illegible mark. The
-  // failure mode we trade away (a quarter of the carousel unmarked) is
-  // strictly better than the one we had (the whole carousel unmarked).
+  // of the decision already re-checks against the slide's EFFECTIVE
+  // (post-inversion) ground: since RFC-20 that is `slideMarkKinds`, which
+  // recomputes each member's capabilities against the pair the slide really
+  // renders on, plus `ringIndexesFor`'s narrowing and the emission-point
+  // re-assertion. An inverted slide whose ring fails there gets an empty
+  // capability set per member and marks nothing — a degraded slide, never an
+  // illegible mark. The failure mode we trade away (a quarter of the carousel
+  // unmarked) is strictly better than the one we had (the whole carousel
+  // unmarked).
+  //
+  // ── WHAT RFC-20 §6.2 ITEM 8 CHANGES HERE, AND WHAT IT DOES NOT ───────────
+  //
+  // The pairs below are (GROUND, INK), not two grounds: on an inverted slide
+  // the kit's `--fg` IS the ground and its `--bg` is the ink, and `block`'s
+  // whole test is about which of the pair is lighter. Passing two bare grounds
+  // and one fixed ink — which is what "two membership sets" amounted to —
+  // cannot express that, and it is why the strict pass used to be empty on
+  // every kit with real contrast.
+  //
+  // The intersection is now taken over CAPABILITY: a member survives when it
+  // is legible as at least one kind on EVERY pair, and it KEEPS the union of
+  // what it can do on each. MEASURED for this build on the shipped
+  // `#17181C`/`#F4F2EC` kit, all four of `#FF6B2C`/`#4ADE80`/`#38BDF8`/
+  // `#C084FC` now clear the strict pass (underline-family on the dark ground,
+  // `block` on the inverted paper one) where none did before — so the ring is
+  // IDENTICAL to the fallback ring it used to reach the long way round, and
+  // the fallback below now fires only when a member really is illegible on one
+  // of the two. The fallback stays because "far less often" is not "never".
   const strict =
     options?.groundMayInvert === true
-      ? buildRingAgainstGrounds(tokens, groundHex, fgHex, accentHex, [groundHex, fgHex])
+      ? buildRingAgainstGrounds(tokens, groundHex, fgHex, accentHex, [
+          { ground: groundHex, ink: fgHex },
+          { ground: fgHex, ink: groundHex },
+        ])
       : undefined;
   if (strict !== undefined && strict.hexes.length > 0) return strict;
-  const ring = buildRingAgainstGrounds(tokens, groundHex, fgHex, accentHex, [groundHex]);
+  const ring = buildRingAgainstGrounds(tokens, groundHex, fgHex, accentHex, [{ ground: groundHex, ink: fgHex }]);
   if (strict === undefined) return ring;
   if (ring.hexes.length === 0) return strict;
   return {
@@ -347,15 +556,40 @@ export function buildMarkRing(
   };
 }
 
-/** `buildMarkRing`'s body, with the set of grounds a member must be legible on made explicit. */
+/** `buildMarkRing`'s body, with the (ground, ink) pairs a member must be legible on made explicit. */
 function buildRingAgainstGrounds(
   tokens: { brandAccent?: string | undefined; palette?: readonly string[] | undefined },
   groundHex: string,
   fgHex: string,
   accentHex: string | readonly string[],
-  grounds: readonly string[],
+  pairs: readonly { ground: string; ink: string }[],
 ): MarkRing {
   const notes: string[] = [];
+  /** Every surface a member can land on — the `MARK_TOL` cull's own domain, unchanged. */
+  const surfaces = [...new Set(pairs.flatMap((p) => [p.ground, p.ink]))];
+
+  /**
+   * Per-capability admission — RFC-20 §6.2 item 2.
+   *
+   * `undefined` means "legible as nothing here"; the note that comes back
+   * names EVERY test it failed, because a note naming only the first sends the
+   * next reader to fix one of three things.
+   */
+  const admit = (hex: string): { kinds: MarkKind[] } | { note: string } => {
+    const perPair = pairs.map((p) => ({ pair: p, ...capabilitiesWithMisses(hex, p.ground, p.ink) }));
+    const dead = perPair.find((r) => r.kinds.length === 0);
+    if (dead !== undefined) {
+      return {
+        note:
+          `${hex} was dropped — no kind is legible on the ground ${dead.pair.ground}: ` +
+          dead.misses.map((m) => `${m.kinds} (${m.why})`).join("; "),
+      };
+    }
+    // The member survives every pair, and KEEPS the union of what it can do on
+    // each. See `MarkRing.kindsByIndex` for why a union is safe here and where
+    // it is narrowed.
+    return { kinds: orderedKinds(perPair.flatMap((r) => r.kinds)) };
+  };
   const accents = (typeof accentHex === "string" ? [accentHex] : [...accentHex]).filter((h) => parseHex(h) !== undefined);
 
   const raw = [tokens.brandAccent, ...(tokens.palette ?? [])].filter((h): h is string => typeof h === "string" && parseHex(h) !== undefined);
@@ -369,19 +603,30 @@ function buildRingAgainstGrounds(
   }
 
   const accepted: string[] = [];
+  const acceptedKinds: MarkKind[][] = [];
   for (const hex of candidates) {
     if (accepted.length >= MARK_RING_MAX) break;
+    // ── THE HONEST CULL, AND IT IS DELIBERATELY UNCHANGED (RFC-20 §6.2 item 1).
+    //
     // The ground and the ink themselves are not mark colours: a "mark" the
-    // same colour as what it sits on is nothing at all.
-    if (grounds.some((g) => markColourDistance(hex, g) <= MARK_TOL) || markColourDistance(hex, fgHex) <= MARK_TOL) {
+    // same colour as what it sits on is nothing at all. This is the
+    // MEASUREMENT's own test — `markColourDistance` is byte-for-byte
+    // `slide-metrics.ts`'s `colourDistance`, the number that will later decide
+    // whether a marked cell counts — so a colour inside it is one the pixel
+    // instrument could not see either.
+    //
+    // Keeping it exactly as it was is what stops this phase being a general
+    // loosening. MEASURED for this build: `#E8D4F0`, rf-11's own lilac, sits
+    // at 16.2 from the paper `#F0EAE6` and stays refused, even though the ink
+    // reads on it at 13.66:1 and `block` would otherwise admit it.
+    if (surfaces.some((s) => markColourDistance(hex, s) <= MARK_TOL)) {
       notes.push(`${hex} was dropped — it is within ${MARK_TOL} of the ground or the ink`);
       continue;
     }
-    // Legibility: every kind that draws NEXT TO the glyphs needs 3:1 against
-    // whatever ground this member can land on.
-    const failing = grounds.find((g) => contrastRatio(hex, g) < MARK_GROUND_CONTRAST_FLOOR);
-    if (failing !== undefined) {
-      notes.push(`${hex} was dropped — ${contrastRatio(hex, failing).toFixed(2)}:1 against ${failing} is below the ${MARK_GROUND_CONTRAST_FLOOR}:1 mark floor`);
+    // Legibility, per capability rather than by one pre-kind ratio.
+    const verdict = admit(hex);
+    if ("note" in verdict) {
+      notes.push(verdict.note);
       continue;
     }
     // Accent exclusion — see ACCENT_EXCLUSION.
@@ -398,10 +643,11 @@ function buildRingAgainstGrounds(
       continue;
     }
     accepted.push(hex);
+    acceptedKinds.push(verdict.kinds);
   }
 
   if (accepted.length >= MIN_HUE_RING) {
-    return { hexes: accepted, cssValues: accepted, rotation: "hue", notes };
+    return { hexes: accepted, cssValues: accepted, kindsByIndex: acceptedKinds, rotation: "hue", notes };
   }
 
   // ── Tint fallback: a one-hue kit still gets a rotation (RFC-17 §5.2).
@@ -413,29 +659,41 @@ function buildRingAgainstGrounds(
   // ring of colours the measurement cannot tell apart.
   const tintHexes = [...accepted];
   const tintCss = [...accepted];
+  const tintKinds = [...acceptedKinds];
   for (const member of accepted.length > 0 ? accepted : []) {
     for (const step of TINT_STEPS) {
       if (tintHexes.length >= MARK_RING_MAX) break;
       const resolved = mixSrgb(member, groundHex, step);
       if (resolved === undefined) continue;
-      if (contrastRatio(resolved, groundHex) < MARK_GROUND_CONTRAST_FLOOR) continue;
+      // THE `MARK_TOL` CULL APPLIES HERE TOO, AND IT DID NOT BEFORE. A tint is
+      // a lerp TOWARD the ground, so the 55% step is the one member of this
+      // ring that can genuinely land inside the metric's own resolution. The
+      // old code never checked it because the 3:1 contrast cull it is
+      // replacing happened to imply separability; per-capability admission
+      // does not, since `block` asks nothing about the ground at all. Adding
+      // it is what keeps "no admitted colour is ever within MARK_TOL of a
+      // surface" true of the WHOLE ring rather than of the hue path alone.
+      if (surfaces.some((s) => markColourDistance(resolved, s) <= MARK_TOL)) continue;
+      const verdict = admit(resolved);
+      if ("note" in verdict) continue;
       if (accents.some((a) => markColourDistance(resolved, a) < ACCENT_EXCLUSION)) continue;
       if (tintHexes.some((prev) => markColourDistance(resolved, prev) < MARK_SEPARATION)) continue;
       tintHexes.push(resolved);
       tintCss.push(`color-mix(in srgb, ${member} ${step}%, var(--bg))`);
+      tintKinds.push(verdict.kinds);
     }
   }
 
   if (tintHexes.length === 0) {
     notes.push("no candidate survived — this run marks nothing and every field renders plain");
-    return { hexes: [], cssValues: [], rotation: "none", notes };
+    return { hexes: [], cssValues: [], kindsByIndex: [], rotation: "none", notes };
   }
   if (tintHexes.length === accepted.length) {
     // Nothing was added: the ring is what the hues gave, however short.
-    return { hexes: tintHexes, cssValues: tintCss, rotation: "hue", notes };
+    return { hexes: tintHexes, cssValues: tintCss, kindsByIndex: tintKinds, rotation: "hue", notes };
   }
   notes.push(`the kit offered ${accepted.length} separable hue(s), so the ring rotates through tints of them instead`);
-  return { hexes: tintHexes, cssValues: tintCss, rotation: "tint", notes };
+  return { hexes: tintHexes, cssValues: tintCss, kindsByIndex: tintKinds, rotation: "tint", notes };
 }
 
 /**
@@ -453,8 +711,29 @@ function buildRingAgainstGrounds(
  * and cannot vary per slide.
  *
  * An empty result means this slide marks nothing — reported, never gated.
+ *
+ * ── AND, SINCE RFC-20 §6.2 ITEM 7, THIS SLIDE'S KIND CONSTRAINTS ─────────
+ *
+ * `slide` is optional because the inventory callers (a trace, the studio's
+ * kind listing) genuinely have no slide. **Every production call site passes
+ * it**, and a source scan in `emphasis-marks.test.ts` pins that, because
+ * omitting it is silent: the slot is admitted and the narrowing simply does
+ * not happen.
+ *
+ * It is LOAD-BEARING rather than tidy. On `quote_card`, `refuseBlock` strips
+ * `block`, and on a paper kit a highlighter yellow's ONLY capability is
+ * `block` — so without this limb that member is selected for a slide on which
+ * it can be drawn as nothing at all, and `markRotation` returns `undefined`
+ * for a colour the caller was told it could use. Before RFC-20 the question
+ * could not arise, because kinds were a single per-slide set shared by every
+ * member; per-member capabilities make "allowed colour" and "drawable colour"
+ * two different facts, and this is where they are reconciled.
  */
-export function ringIndexesFor(ring: MarkRing, accentHex: string | undefined): number[] {
+export function ringIndexesFor(
+  ring: MarkRing,
+  accentHex: string | undefined,
+  slide?: { groundHex: string; fgHex: string; refuseBlock?: boolean | undefined } | undefined,
+): number[] {
   // THE PARSE CHECK IS LOAD-BEARING, and its absence was a silent
   // feature-killer. `markColourDistance` returns 0 — the value that means
   // "identical" — when either side does not parse, and every caller compares
@@ -478,26 +757,70 @@ export function ringIndexesFor(ring: MarkRing, accentHex: string | undefined): n
   const allowed: number[] = [];
   ring.hexes.forEach((hex, index) => {
     if (accent !== undefined && markColourDistance(hex, accent) < ACCENT_EXCLUSION) return;
+    if (slide !== undefined && markCapabilitiesFor(hex, slide.groundHex, slide.fgHex, slide).length === 0) return;
     allowed.push(index);
   });
   return allowed;
 }
 
 /**
- * Which of the five kinds are LEGIBLE for this slide's ground/ink pair and
- * this ring — computed, not chosen.
+ * What each ring slot may be drawn as on ONE slide, and the union for the
+ * trace — the per-slide half of RFC-20 §6.2.
  *
- * Conservative on purpose: a kind is in the set only when its precondition
- * holds for EVERY ring member, so any (colour, kind) pairing the rotation can
- * produce is legible. The alternative — a per-member kind set — would make
- * the rotation's kind depend on its colour and the two would stop being
- * independent axes.
+ * THE RING'S OWN `kindsByIndex` IS NOT THIS. That one is a union over the
+ * grounds the RUN may render on, and on an inverting run it deliberately keeps
+ * a `block` a dark slide cannot draw. This recomputes against the pair THIS
+ * slide actually renders — `assembleSlidesData` resolves the inversion before
+ * it composes, for exactly this reason — and applies the archetype's own
+ * `refuseBlock`.
  *
- * On our bundled `#17181C` ground against a light ink, `block` is refused by
- * its own precondition and the set is `{underline, swish, double, ink}`. That
- * is the honest answer to "the references are paper and we are not", and it
- * is a computation rather than a taste call. A pale kit gets `block` back
- * automatically.
+ * Returns both halves because they answer different questions and must not be
+ * confused again: `kindsByIndex` BINDS the rotation, `kinds` is the union that
+ * `SlideMarkResult.kinds` carries so `interest-floor.ts` knows whether
+ * `markedShare` can be non-zero at all.
+ */
+export function slideMarkKinds(
+  ring: MarkRing,
+  groundHex: string,
+  fgHex: string,
+  options?: { refuseBlock?: boolean | undefined },
+): { kindsByIndex: MarkKind[][]; kinds: MarkKind[] } {
+  const kindsByIndex = ring.hexes.map((hex) => markCapabilitiesFor(hex, groundHex, fgHex, options));
+  return { kindsByIndex, kinds: orderedKinds(kindsByIndex.flat()) };
+}
+
+/**
+ * Which of the five kinds are legible for this ground/ink pair and this ring —
+ * the UNION over its members. **Reporting and inventory only since RFC-20.**
+ *
+ * ── `every()` IS GONE, AND IT WAS THE SECOND HALF OF THE SQUEEZE ─────────
+ *
+ * This function used to be the GATE: a kind was admitted only when its
+ * precondition held for EVERY member, so that any (colour, kind) pairing the
+ * rotation produced was legible. The reasoning was sound and the consequence
+ * was not. MEASURED for this build on the paper kit `#F0EAE6`/`#12100E`: a
+ * kind-aware admission ALONE still leaves `block` unusable, because one dark
+ * navy member — `#1D4ED8`, which the ink reads on at only 2.83:1 — vetoes
+ * `block` for the whole run, however many highlighters sit beside it in the
+ * ring. Re-arming the ring without removing the universal quantifier fixes
+ * nothing; removing the quantifier without the ring fix admits pairs the ring
+ * never checked. The two defects had to be repaired together, and RFC-20 §6.1
+ * is where that is argued.
+ *
+ * The bound moved to where the PAIRING is made instead: `slideMarkKinds`
+ * computes a set per member, `markRotation` draws a kind from the selected
+ * colour's OWN set, and `resolveSlideMarks` re-asserts at emission. No
+ * (colour, kind) pair can exist that the colour cannot carry — which is a
+ * STRONGER guarantee than `every()` gave, since `every()` only protected
+ * pairings drawn from one shared set.
+ *
+ * What survives here unchanged: the name, the signature, the `refuseBlock`
+ * option, and the answers on a dark kit. On our bundled `#17181C` ground
+ * against a light ink `block` is still refused — for every colour there is,
+ * not merely for this ring — because `groundIsLighterThanInk` is false and no
+ * mark colour can make it true. `interest-floor.ts` and `SlideMarkResult`
+ * read this union to decide whether `markedShare` can be non-zero at all, and
+ * a union is the right answer to that question.
  */
 export function markKindsFor(
   groundHex: string,
@@ -514,28 +837,7 @@ export function markKindsFor(
   },
 ): MarkKind[] {
   if (ring.length === 0) return [];
-  const kinds: MarkKind[] = [];
-  const every = (fn: (hex: string) => boolean): boolean => ring.every(fn);
-
-  // `block` — the swatch sits BEHIND the glyphs, so what must be readable is
-  // the INK ON THE MARK, and the swatch only reads as a highlighter when it
-  // is lighter than the type it sits under.
-  const groundIsLighter = contrastRatio(groundHex, "#FFFFFF") < contrastRatio(fgHex, "#FFFFFF");
-  if (options?.refuseBlock !== true && groundIsLighter && every((hex) => contrastRatio(fgHex, hex) >= MARK_TEXT_CONTRAST_FLOOR)) {
-    kinds.push("block");
-  }
-  // The three that draw NEXT TO the glyphs — the ring already guarantees this
-  // floor, so they are in whenever the ring is non-empty. Kept as an explicit
-  // test anyway: `buildMarkRing` is not the only possible caller, and a kind
-  // set that assumed its input had been filtered would be a guard that cannot
-  // fail.
-  for (const kind of ["underline", "swish", "double"] as const) {
-    if (every((hex) => contrastRatio(hex, groundHex) >= MARK_GROUND_CONTRAST_FLOOR)) kinds.push(kind);
-  }
-  // `ink` — the glyphs THEMSELVES take the mark colour (`rf-6`'s mechanism),
-  // so the mark is the text and needs text contrast.
-  if (every((hex) => contrastRatio(hex, groundHex) >= MARK_TEXT_CONTRAST_FLOOR)) kinds.push("ink");
-  return kinds;
+  return orderedKinds(ring.flatMap((hex) => markCapabilitiesFor(hex, groundHex, fgHex, options)));
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -560,7 +862,40 @@ export interface SlideMarkContext {
   dir: "rtl" | "ltr";
   /** The run ring's slots THIS slide may use, from `ringIndexesFor`. Empty means this slide marks nothing. */
   allowedIndexes: readonly number[];
+  /** The UNION of what this slide's allowed slots can be drawn as. Reporting only — `kindsByIndex` is what binds. */
   kinds: readonly MarkKind[];
+  /**
+   * What each RING SLOT may be drawn as on this slide — positional, parallel
+   * to `hexes`, from `slideMarkKinds`. **This is the binding constraint.**
+   *
+   * ── WHY IT IS OPTIONAL, WHICH IS A DECISION AND NOT AN OVERSIGHT ─────────
+   *
+   * Omitting it falls back to `kinds` for every slot, which is EXACTLY the
+   * pre-RFC-20 shape: one set shared by the whole ring. That fallback exists
+   * for one reason — `emphasis-marks-rtl.test.ts` composes this context by
+   * hand to exercise Phase 4's bidi isolation, and RFC-20 §5.9 states that if
+   * that file needs editing, the change was wrong. The bidi rules under test
+   * there have nothing to do with colour legibility, and forcing a colour
+   * model onto them would be a phase leaking into a phase.
+   *
+   * It is safe because the fallback cannot be LOOSER than what it replaces:
+   * `kinds` is the same union the old code fed `markRotation` directly. It is
+   * kept honest because **both production call sites pass it**, and a source
+   * scan in `emphasis-marks.test.ts` pins that — the one thing an optional
+   * field cannot do for itself.
+   */
+  kindsByIndex?: readonly (readonly MarkKind[])[] | undefined;
+  /**
+   * The ring's hexes and this slide's EFFECTIVE (post-inversion) pair, so the
+   * emission point can re-assert the pairing it is about to write.
+   *
+   * Absent means the re-assertion is skipped — the admission-time bound still
+   * holds, and this is the belt over those braces. Same source scan.
+   */
+  hexes?: readonly string[] | undefined;
+  groundHex?: string | undefined;
+  fgHex?: string | undefined;
+  refuseBlock?: boolean | undefined;
   /** `fnv1a32(`${paletteSeed}|mk|${slide.n}`)`, computed once per slide by `slideMarkSeed`. */
   seed: number;
 }
@@ -580,23 +915,48 @@ export function slideMarkSeed(paletteSeed: string | undefined, slideN: number): 
  *   allowed slots (`allowed[(b + k) mod R]` steps by exactly one each time).
  *   With a single allowed slot they necessarily do, and the KIND alternation
  *   below is what still keeps two adjacent marks from being identical.
- * - **At least two kinds appear** whenever at least two marks do, when the
- *   kind set has >= 2 members: `kindB`'s offset is drawn from `[1, K-1]`, so
- *   it can never land back on `kindA`.
+ * - **At least two kinds appear** whenever at least two marks do, when the two
+ *   selected colours share a kind set of >= 2 members: `kindB`'s offset is
+ *   drawn from `[1, K-1]`, so it can never land back on `kindA`. The
+ *   qualifier is new in RFC-20 and it is honest rather than weaker — see below.
  *
- * `undefined` when this slide has no allowed slot at all — the caller renders
- * the field plain and reports it.
+ * ── THE KIND COMES FROM THE SELECTED COLOUR'S OWN SET (RFC-20 §6.2 item 5) ─
+ *
+ * `kindsByIndex` is indexed by RING SLOT, not by rotation position. The colour
+ * is chosen first, exactly as before, and the kind is then drawn from what
+ * THAT colour can carry on THIS slide.
+ *
+ * **This is the bound.** The pairing is what has to be legible, so the pairing
+ * is checked at the point it is made, and no (colour, kind) pair can exist
+ * that the colour cannot carry. The old design kept colour and kind as
+ * independent axes and paid for it with `markKindsFor`'s `every()`, which
+ * meant one dark ring member could veto `block` for a carousel full of
+ * highlighters.
+ *
+ * The cost is the second invariant's qualifier: when two consecutive marks
+ * draw colours with DIFFERENT capability sets, the "two kinds" guarantee comes
+ * from the sets differing rather than from the offset, and when both sets are
+ * a single identical kind the two marks necessarily share it. That is correct
+ * — legibility outranks variety, and a kit whose members can each be drawn one
+ * way has one way to draw them. When the sets are equal, which is every slide
+ * of every dark kit we ship, the old guarantee holds verbatim.
+ *
+ * `undefined` when this slide has no allowed slot at all, or when the slot the
+ * rotation landed on can be drawn as nothing — the caller renders the field
+ * plain and reports it.
  */
 export function markRotation(
   seed: number,
   ordinal: number,
   allowedIndexes: readonly number[],
-  kinds: readonly MarkKind[],
+  kindsByIndex: readonly (readonly MarkKind[])[],
 ): { colourIndex: number; kind: MarkKind } | undefined {
   const r = allowedIndexes.length;
-  const k = kinds.length;
-  if (r === 0 || k === 0) return undefined;
+  if (r === 0) return undefined;
   const colourIndex = allowedIndexes[(seed + ordinal) % r]!;
+  const kinds = kindsByIndex[colourIndex];
+  if (kinds === undefined || kinds.length === 0) return undefined;
+  const k = kinds.length;
   const kindA = kinds[seed % k]!;
   const kindB = k >= 2 ? kinds[(seed + 1 + ((seed >>> 3) % (k - 1))) % k]! : kindA;
   return { colourIndex, kind: ordinal % 2 === 0 ? kindA : kindB };
@@ -707,7 +1067,18 @@ export function resolveSlideMarks(
 
   if (text.length === 0) return plain();
   if (declared.length === 0) return plain();
-  if (ctx.allowedIndexes.length === 0 || ctx.kinds.length === 0) {
+  // Since RFC-20 a slot can be ALLOWED (far enough from this slide's accent)
+  // and still be drawable as NOTHING here — a paper kit's highlighter on a
+  // `quote_card`, whose only capability is `block` and whose `block` that
+  // archetype refuses. `ringIndexesFor` already drops those when it is given
+  // the slide, and this re-filters rather than trusting it: the narrowing
+  // argument is optional, and a resolver that assumed its input had been
+  // filtered would be a guard that cannot fail.
+  const kindsAt = (index: number): readonly MarkKind[] => (ctx.kindsByIndex === undefined ? ctx.kinds : (ctx.kindsByIndex[index] ?? []));
+  /** Dense and positional, so `markRotation` can index it by RING SLOT. */
+  const rotationKinds: readonly MarkKind[][] = Array.from({ length: Math.max(0, ...ctx.allowedIndexes.map((i) => i + 1)) }, (_, i) => [...kindsAt(i)]);
+  const usable = ctx.allowedIndexes.filter((i) => kindsAt(i).length > 0);
+  if (usable.length === 0) {
     for (const d of declared) drops.push({ field, text: d.text, reason: "no legible mark colour survived this slide's kit and accent, so nothing is marked" });
     return plain();
   }
@@ -836,22 +1207,61 @@ export function resolveSlideMarks(
 
   if (chosen.length === 0) return plain();
 
-  // ── Split into alternating runs (step 6's first half).
+  // ── Split into alternating runs (step 6's first half), re-asserting each
+  //    pairing at the point of emission.
+  //
+  // ── WHY A SECOND CHECK, WHEN ADMISSION ALREADY BOUND THE PAIR ────────────
+  //
+  // Belt and braces, grafted into RFC-20 from the competing spec. The
+  // admission-time bound (`kindsByIndex` + `markRotation` drawing from the
+  // selected colour's own set) is what makes an illegible pair impossible;
+  // this is what makes it OBSERVABLE if it ever becomes possible again. The
+  // two are separated by four function boundaries and a per-slide
+  // recomputation of the ground, and the failure they guard against — a mark
+  // painted at 1.02:1 — is exactly the kind that renders, ships and is noticed
+  // by a client rather than by a test.
+  //
+  // A FAILURE HERE IS A DROP, NEVER A HOLD. It degrades that one span to plain
+  // type and reports the fact through `collectEmphasisIssues`, which is the
+  // posture the whole module takes ("budgets adapt, never hold"): a mark is
+  // furniture, and furniture must not be able to fail a $1.00 run.
   const runs: MarkRun[] = [];
   let cursor = 0;
-  chosen.forEach((span, i) => {
+  /** Ordinals count marks actually PAINTED, so a drop here does not leave a hole in the rotation. */
+  let painted = 0;
+  for (const span of chosen) {
     if (span.start > cursor) runs.push({ text: text.slice(cursor, span.start) });
-    const ordinal = ctx.alreadyAccepted + i;
-    const rotated = markRotation(ctx.seed, ordinal, ctx.allowedIndexes, ctx.kinds);
-    // Unreachable: the empty-allowed / empty-kinds case returned `plain()`
-    // above. Handled rather than asserted so a future caller that skips that
-    // guard degrades to plain type instead of throwing inside composition.
-    if (rotated === undefined) runs.push({ text: text.slice(span.start, span.end) });
-    else runs.push({ text: text.slice(span.start, span.end), mark: { ordinal, ...rotated } });
+    const ordinal = ctx.alreadyAccepted + painted;
+    const rotated = markRotation(ctx.seed, ordinal, usable, rotationKinds);
+    const refusal = rotated === undefined ? "the rotation found no drawable slot for this slide" : pairRefusal(ctx, rotated);
+    if (rotated === undefined || refusal !== undefined) {
+      drops.push({ field, text: span.declaredText, reason: `${refusal} — the span renders as plain type` });
+      runs.push({ text: text.slice(span.start, span.end) });
+    } else {
+      runs.push({ text: text.slice(span.start, span.end), mark: { ordinal, ...rotated } });
+      painted++;
+    }
     cursor = span.end;
-  });
+  }
+  if (painted === 0) return plain();
   if (cursor < text.length) runs.push({ text: text.slice(cursor) });
-  return { runs, accepted, drops };
+  return { runs, accepted: painted, drops };
+}
+
+/**
+ * `undefined` when this (colour, kind) pair clears its OWN kind's floor
+ * against the ground the slide actually renders on; otherwise the reason it
+ * does not, in the form a `MarkDrop` quotes.
+ */
+function pairRefusal(ctx: SlideMarkContext, rotated: { colourIndex: number; kind: MarkKind }): string | undefined {
+  // No hexes and no pair means the caller did not ask for this check — see
+  // `SlideMarkContext.hexes`. The admission-time bound is unaffected.
+  if (ctx.hexes === undefined || ctx.groundHex === undefined || ctx.fgHex === undefined) return undefined;
+  const hex = ctx.hexes[rotated.colourIndex];
+  if (hex === undefined) return `ring slot ${rotated.colourIndex} has no colour`;
+  const capable = markCapabilitiesFor(hex, ctx.groundHex, ctx.fgHex, { refuseBlock: ctx.refuseBlock });
+  if (capable.includes(rotated.kind)) return undefined;
+  return `${hex} cannot be drawn as \`${rotated.kind}\` on ${ctx.groundHex}/${ctx.fgHex} (it carries ${capable.length > 0 ? capable.join(", ") : "no kind at all"})`;
 }
 
 function wordCount(text: string): number {

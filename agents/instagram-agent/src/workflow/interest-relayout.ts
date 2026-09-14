@@ -27,6 +27,7 @@ import type { InterestFailureKind, InterestFinding } from "./interest-floor.js";
  * |---|---|
  * | `no-device` on the cover | promote a vetted-but-unused image to the cover → else a device from the strongest `kind: "stat"` fact card (moved onto `cover` when the slide's archetype paints none) → else the `colour-block` cover ground |
  * | `no-device` on the closer | a recap strip built from earlier slides' figures/titles → else a question block lifted from the post's own words |
+ * | `dead-space` on a COVER, in `.cov-field` | the cover's own device remedy — a vetted-but-unused image, else a figure from the post's strongest sourced statistic — because the hole IS the empty device slot (RFC-20 §5.5) |
  * | `dead-space` / `empty` | a device from a figure already in that slide's own text (only where it paints) → else switch `headline_focus`/`text_only` down the real degrade ladder, carrying the device when the target can render one → else raise `fontScale` one step |
  *
  * ## A remedy must be able to take effect
@@ -411,6 +412,68 @@ function archetypesInUse(copy: InstagramCopyOutput, exceptSlide: number): Set<st
  */
 const DEVICE_SLOT_ARCHETYPES: ReadonlySet<string> = new Set(["cover", "headline_focus", "closer"]);
 
+/**
+ * `.cov-field`'s vertical extent on the 1440px design frame — the band a
+ * `dead-space` finding has to sit inside for the cover limb below to claim it.
+ *
+ * ## Why this limb exists (RFC-20 §5.5)
+ *
+ * With the full-bleed hairline screen deleted, `cover.html` fails clause C at
+ * `largestEmptyRectShare` 0.2361 against a 0.22 ceiling, and the failing
+ * rectangle is NAMED: `{x: 0, y: 236, w: 1080, h: 376}` — a full-width band
+ * between the ramp's foot and the lockup's head, which is precisely
+ * `.cov-device`'s slot standing empty. MEASURED-EDGE, a real device in that
+ * slot closes the band to 228px and the plate passes at 0.1583. **The cover
+ * has a real hole and the screen has been painting over it**, and the legacy
+ * DEAD-SPACE rule ("no empty horizontal band over 380px") and the measured
+ * 376px agree with each other and disagree with the template.
+ *
+ * The remedy already exists — `coverRemedy` builds a figure device from the
+ * strongest sourced `kind: "stat"` fact card by deterministic regex over copy
+ * the run already holds, **$0.00 and no model call.** Until now it was reached
+ * only from a `no-device` finding, and a cover whose ramp clears clause E at
+ * 16-19% never produces one. So the plate had a free remedy sitting behind a
+ * clause it could not trip.
+ *
+ * ## Why these two numbers, and why they live here
+ *
+ * `cover.html` declares `.cov-field { margin: 16px 16px 0; flex: 1 1 auto }`,
+ * so the field's head is a fixed 16px and its foot is wherever the lockup
+ * begins — elastic by design, measured at y≈740 on the reference render
+ * (that file's own note anchors the eyebrow there). 760 carries ~20px of
+ * slack for the type-scale ladder's effect on the lockup's height, and the
+ * measured failing band ends at 612, so the limb has 148px of margin and
+ * cannot be reached by a rectangle that lies over the LOCKUP — which is a
+ * different defect (too little copy) with a different remedy (the ladder
+ * below).
+ *
+ * Mirrored here rather than imported for the reason `DEVICE_SLOT_ARCHETYPES`
+ * is: the geometry lives in an HTML file this module cannot read, and a remedy
+ * that names a mechanism the slide cannot render is the exact defect this
+ * module exists to avoid paying for. If `cover.html`'s field is ever re-shaped
+ * the limb stops firing and the ladder below takes over — it degrades to
+ * today's behaviour rather than to a wrong one.
+ */
+const COVER_FIELD_HEAD_Y = 16;
+const COVER_FIELD_FOOT_Y = 760;
+
+/**
+ * Whether a `dead-space` finding's own failing rectangle lies inside
+ * `.cov-field`'s extent.
+ *
+ * Reads the four scalars `checkInterestFloor` puts on the finding
+ * (`largestEmptyRectY` / `largestEmptyRectH`); a caller that supplies neither
+ * — a hand-built finding in a fixture, or an older gate payload replayed —
+ * gets `false` and the existing ladder, which is the safe direction: this limb
+ * can only ever offer a remedy the plate did not have before.
+ */
+function deadSpaceIsInCoverField(finding: InterestFinding | undefined): boolean {
+  const y = finding?.measured["largestEmptyRectY"];
+  const h = finding?.measured["largestEmptyRectH"];
+  if (y === undefined || h === undefined) return false;
+  return y >= COVER_FIELD_HEAD_Y && y + h <= COVER_FIELD_FOOT_Y;
+}
+
 /** The position `fallbackArchetypePreferences` needs to judge a cover or a closer. */
 function positionOf(copy: InstagramCopyOutput, slideN: number): { index: number; lastIndex: number; earlier: InstagramSlideCopy[] } | undefined {
   const index = copy.slides.findIndex((s) => s.n === slideN);
@@ -649,6 +712,39 @@ function remedyFor(
       const source = sourceForSlide(slide, factCards);
       const device = source !== undefined ? deviceFromText(`${slide.headline} ${slide.body}`, source) : undefined;
 
+      // ── 0. THE COVER LIMB (RFC-20 §5.5), AHEAD OF THE LADDER. ──
+      //
+      // A `dead-space` finding on a COVER whose failing rectangle lies inside
+      // `.cov-field` is not "this slide has too little copy" — it is
+      // `.cov-device`'s slot standing empty, which is a hole the template
+      // already has a place to fill. See `COVER_FIELD_HEAD_Y` for the
+      // measurement and for why the extent test is what distinguishes the two.
+      //
+      // It takes `coverRemedy`'s image-then-figure path, which is the same
+      // remedy a `no-device` finding on the same slide would get and costs the
+      // same $0.00 — and it takes it AHEAD of the ladder below, because the
+      // ladder's answers to a cover-sized hole are a `switch-archetype` away
+      // from the one archetype built for this case, or one step of
+      // `fontScale`, which cannot close a 376px band.
+      //
+      // **Its step-3 `colour-block-ground` fallback is deliberately withheld**
+      // — `groundFallback: false`. Audited against RFC-20 §5.0's Ground Rule:
+      // that change re-renders the slide on the `cover` archetype, whose field
+      // is already bound to its own content (`cover.html`'s
+      // `body:not(:has(#title > span:not(:empty))) .cov-field`), so it is not
+      // an unguarded full-bleed colour block and the Ground Rule does not
+      // refuse it. It is withheld for the other rule this module keeps: a
+      // slide that just reported a hole INSIDE `.cov-field` is a slide already
+      // rendering `cover.html`, so the change is a byte-identical re-render —
+      // "a remedy that cannot move a pixel is worse than no remedy: it looks
+      // like one in the trace". With no image and no figure the cover fails
+      // clause C and that is the correct answer: the floor is now able to tell
+      // a cover that has something to say from one that does not.
+      if (kind === "dead-space" && role === "cover" && deadSpaceIsInCoverField(slideFindings.find((f) => f.kind === "dead-space"))) {
+        const remedy = coverRemedy(slide, copy, selections, factCards, { groundFallback: false });
+        if (remedy !== undefined) return remedy;
+      }
+
       // 1. A device from a figure the slide ALREADY carries — the cheapest
       //    real fix there is, and the one item M's `device` field exists for.
       //
@@ -718,12 +814,23 @@ function remedyFor(
   }
 }
 
-/** `no-device` on the cover: an image, then a figure, then a graphic ground. */
+/**
+ * `no-device` on the cover: an image, then a figure, then a graphic ground.
+ *
+ * `groundFallback` is what the last of those three is worth to the CALLER.
+ * A `no-device` finding means the cover measured no imagery and no drawn
+ * device at all, and moving it onto the `cover` archetype genuinely changes
+ * what paints — that is the case step 3 was written for, and it keeps it. The
+ * `dead-space` cover limb passes `false`, because there the slide is already
+ * on `cover` and the change would re-render it byte-identically; see the limb
+ * for the full audit against RFC-20's Ground Rule.
+ */
 function coverRemedy(
   slide: InstagramSlideCopy,
   copy: InstagramCopyOutput,
   selections: readonly ImageSelection[],
   factCards: readonly RelayoutFactCard[],
+  opts: { groundFallback?: boolean } = {},
 ): InterestRelayoutChange | undefined {
   const slideN = slide.n;
   const layoutByN = new Map(copy.slides.map((s) => [s.n, s.layout ?? "photo"]));
@@ -786,12 +893,27 @@ function coverRemedy(
 
   // 3. The `cover` archetype's own colour-block ground plus keyline, which is
   //    structurally incapable of being a headline on flat ground (item M).
-  return {
-    kind: "colour-block-ground",
-    slide: slideN,
-    archetype: "cover",
-    reason: `slide ${slideN} had no imagery and no sourced figure; rendering it on the cover archetype's colour-block ground`,
-  };
+  //
+  //    AUDITED AGAINST RFC-20 §5.0'S GROUND RULE, because "a full-bleed
+  //    unguarded colour block is the same defect wearing a different name":
+  //    `cover.html`'s field is NOT unguarded. It carries
+  //    `body:not(:has(#title > span:not(:empty))) .cov-field { background-image: none }`
+  //    and a `body:has(.hero)` branch, so the ramp paints only on a cover that
+  //    has a title and no photograph — an OBJECT whose extent is a function of
+  //    the content, which is limb (b) of the rule rather than limb (a)'s
+  //    material. It is the cover's bounded ramp, not a screen over the plate,
+  //    and it is what carries clause E at iod 0.1651-0.1880 on the ramp alone.
+  //    The layer RFC-20 deletes from that file is the full-bleed HAIRLINE
+  //    SCREEN over the ramp, which is a different layer and is not this
+  //    remedy.
+  return opts.groundFallback === false
+    ? undefined
+    : {
+        kind: "colour-block-ground",
+        slide: slideN,
+        archetype: "cover",
+        reason: `slide ${slideN} had no imagery and no sourced figure; rendering it on the cover archetype's colour-block ground`,
+      };
 }
 
 /** `no-device` on the closer: a recap of the post's own points, then a question the post already asks. */

@@ -21,7 +21,7 @@ import {
   type FakeRenderCarouselOptions,
   type TestEnvironment,
 } from "./test-helpers.js";
-import type { SlideMetrics } from "../src/workflow/interest-floor.js";
+import { FLAT_BACKGROUND_CEILING, OCCUPIED_SHARE_FLOOR, type SlideMetrics } from "../src/workflow/interest-floor.js";
 import { VALUE_TURN_NO_FINDINGS, happyTurns, standardTurns } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 import { goodTrendScoutOutput, goodResearchOutput, goodImageVettingOutput, goodRelevanceVerdict, goodVisualQaOutput } from "./test-helpers.js";
@@ -261,15 +261,38 @@ describe("08a1-interest-floor: where it runs and what it costs", () => {
       ...happyTurns({ scout: undefined, research: undefined, angle: undefined }),
     ]);
     let renders = 0;
+    // RFC-20 §5.6 re-calibration: `OCCUPIED_SHARE_FLOOR.cover` moved 0.42 →
+    // 0.18 because the Ground Rule deleted the full-bleed screens that used
+    // to inflate a composed plate to occ 0.67. `boringSlideMetrics()` — the
+    // 2026-09-08 audit slide as measured — sits at occ 0.18 EXACTLY, so it no
+    // longer satisfies clause D's `occupiedShare < floor`. That slide is
+    // still REFUSED (clause C, LER 0.556 against a 0.22 cover ceiling), and
+    // `interest-floor.test.ts` records the loss of clause D on it as a named
+    // outcome of the re-calibration.
+    //
+    // This test is about the STEP's wiring — that a refusal's measured
+    // numbers reach `selfCheckSteer` — not about where the floor sits. So it
+    // keeps asserting clause D's own sentence and supplies a plate that is
+    // genuinely idle under the NEW floor: 8% occupied, all of it content
+    // (`contentOccupiedShare` can never exceed `occupiedShare`; it counts a
+    // subset of the same cells, `slide-metrics.ts:955`). Lowering the
+    // assertion to whatever the steer happens to say now would have been the
+    // move this phase exists to refuse.
+    const idleUnderTheNewFloor = boringSlideMetrics({ occupiedShare: 0.08, contentOccupiedShare: 0.08 });
     const { result, stepIds } = await runToGate(env, "interest_returns_to_copy", router, {
       metrics: (slide: Slide) => {
         if (slide.n === 1) renders += 1;
-        return renders <= 2 && slide.n === 1 ? boringSlideMetrics() : passingSlideMetrics();
+        return renders <= 2 && slide.n === 1 ? idleUnderTheNewFloor : passingSlideMetrics();
       },
     });
 
     expect(result.status).toBe("awaiting_gate");
     expect(stepIds).toContain("05-write-copy-attempt-2");
+
+    // The fixture's premise, asserted rather than assumed: clause D can only
+    // speak if the plate is under the floor that ships today.
+    expect(idleUnderTheNewFloor.occupiedShare).toBeLessThan(OCCUPIED_SHARE_FLOOR.cover);
+    expect(idleUnderTheNewFloor.flatBackgroundShare).toBeGreaterThan(FLAT_BACKGROUND_CEILING);
 
     const inputs = copyTurnInputs(router);
     expect(inputs).toHaveLength(2);

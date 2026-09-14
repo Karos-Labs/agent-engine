@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { extractSupportedFields } from "@agent-engine/tool-karos-templates";
 import { createRenderCarousel } from "@agent-engine/tool-karos-publish";
+import { MARK_HOST_INK_ALPHA } from "../src/workflow/emphasis-marks.js";
 import { isChromiumInstalled } from "./test-helpers.js";
 
 /**
@@ -128,16 +129,37 @@ const PINNED_SLOTS = [
 const UNTOUCHED = ["stat-callout.html", "comparison-card.html"];
 
 /**
- * The painted grounds, per file. Presence only — this guard is not trying to
- * pin a design, it is refusing a DELETION (finding 1). Each name here is a
+ * The grounds RFC-20 KEEPS, per file. Presence only — this guard is not
+ * trying to pin a design, it is refusing a DELETION. Each name here is a
  * selector whose rule paints the field that supplies the archetype's
  * `imageryOrDeviceShare` on a photoless render.
+ *
+ * ── RFC-20 §5.2 REMOVED FOUR NAMES FROM THIS TABLE, AND THAT IS THE PHASE ──
+ *
+ * `.cov-field`, `.copy-art` (twice) and `.cl-art` were here, and RFC-17
+ * finding 1 was right that deleting them would drop a photoless cover and the
+ * closer into the type-only band. RFC-20 Part 5 measured the other half of
+ * that trade and it is worse: those layers are FULL-BLEED, and under the
+ * instrument `covered` implies `carriesInk`, so anything visible to clause E
+ * is also visible to clauses C and D. MEASURED, the shipped 45-degree screen
+ * on `headline-focus` alone takes `contentOccupiedShare` to 0.3128,
+ * `occupiedShare` to 0.6426 and `largestEmptyRectShare` to **0.0000** — and a
+ * properly composed plate and the owner's grey screen then measure 0.6688 vs
+ * 0.6324 and BOTH PASS. A bar that cannot refuse the thing it was built for
+ * is worthless, so the layers come out and the share they were carrying is
+ * paid by bounded, content-guarded objects instead (§5.3, §5.5).
+ *
+ * Deleting a pin is not free, so it is replaced rather than dropped: the
+ * "those four must not come back" half is the guard below, and the general
+ * rule — no full-bleed layer may carry ink, at all, in any template — is G2
+ * in `interest-floor-calibration.test.ts`, which renders every archetype with
+ * every copy slot empty.
  */
 const GROUND_SELECTORS: Record<string, readonly string[]> = {
-  "cover.html": [".ground", ".cov-field"],
-  "slide.html": [".ground", ".copy-art", "--gr-mark", "--gr-tile", "--gr-repeat"],
-  "headline-focus.html": [".ground", ".copy-art", "body.gr-glyph"],
-  "closer.html": [".ground", ".cl-art", "body.gr-glyph"],
+  "cover.html": [".ground"],
+  "slide.html": [".ground"],
+  "headline-focus.html": [".ground"],
+  "closer.html": [".ground"],
   "quote-card.html": [".ground", ".quote-block"],
   // Added with the twin pair above. `.lt-head`'s column ruling is withheld
   // from an empty plate by `body:has(#head > span:not(:empty))`, and that
@@ -296,6 +318,59 @@ describe("RFC-17 twin slots: the six changed archetypes declare both members of 
         expect(markup, `${file}: ${pair.plain} must never become a raw html slot`).not.toContain(`{{html:${pair.plain}}}`);
       }
     }
+  });
+});
+
+/**
+ * RFC-20 §6 — `MARK_HOST_INK_ALPHA` IS A CLAIM ABOUT THESE FILES, SO THESE
+ * FILES ARE WHAT CHECKS IT.
+ *
+ * `block` admission asks whether the ink reads at 4.5:1 ON the swatch. The ink
+ * a reader gets is not `var(--fg)`: every bundled archetype softens its body
+ * ink with `color-mix(in srgb, var(--fg) N%, transparent)`, and over a block
+ * swatch that composites the glyphs TOWARD the swatch — i.e. toward the very
+ * colour they have to contrast with. `emphasis-marks.ts` therefore measures
+ * the composited ink at `MARK_HOST_INK_ALPHA`, and that constant is only
+ * correct while it is the MINIMUM alpha any mark-bearing host paints.
+ *
+ * A template edit that softened one host to 85% would silently make the
+ * admission optimistic again, with no symptom anywhere: the ring would still
+ * build, the mark would still paint, and the contrast would just be wrong. So
+ * the scan reads the alpha off every element that hosts a `*Runs` slot and
+ * fails on the first one under the constant, naming it.
+ *
+ * BROKEN BEFORE IT WAS TRUSTED: setting `MARK_HOST_INK_ALPHA` to 0.95 turns
+ * this red on `stat-callout.html` (0.90), `cover.html`, `headline-focus.html`
+ * and `slide.html` (0.92); dropping any host's `92%` to `85%` turns it red on
+ * that host alone.
+ */
+describe("RFC-20 §6: MARK_HOST_INK_ALPHA is the worst case the bundled templates actually paint", () => {
+  it("no mark-bearing host softens its ink below the constant block admission composites with", async () => {
+    const files = (await fs.readdir(TEMPLATE_DIR)).filter((f) => f.endsWith(".html"));
+    const offenders: string[] = [];
+    let hostsSeen = 0;
+    for (const file of files) {
+      const html = await readTemplate(file);
+      const styles = stylesOf(html);
+      const markup = markupOf(html);
+      // The classes on elements that actually host a runs slot in THIS file.
+      for (const match of markup.matchAll(/class="([^"]*)"[^>]*>\s*<span class="mk-runs">/g)) {
+        for (const cls of (match[1] ?? "").split(/\s+/).filter(Boolean)) {
+          // Every declaration of `color: color-mix(… var(--fg) N%, transparent)`
+          // on a rule that names this class. A host with no softened ink is
+          // painting `--fg` neat, which is alpha 1 and never an offender.
+          for (const decl of styles.matchAll(new RegExp(String.raw`\.${cls}\b[^{]*\{[^}]*color:\s*color-mix\(in srgb,\s*var\(--fg\)\s*(\d+)%,\s*transparent\)`, "g"))) {
+            hostsSeen += 1;
+            const alpha = Number(decl[1]) / 100;
+            if (alpha < MARK_HOST_INK_ALPHA) offenders.push(`${file} .${cls} paints its ink at ${decl[1]}%, under MARK_HOST_INK_ALPHA ${MARK_HOST_INK_ALPHA * 100}%`);
+          }
+        }
+      }
+    }
+    // The scan has to have FOUND something, or it is asserting over an empty
+    // set and would stay green through a wholesale rename of `mk-runs`.
+    expect(hostsSeen, "the scan matched no softened mark host at all — the selector or the markup shape moved").toBeGreaterThan(0);
+    expect(offenders).toEqual([]);
   });
 });
 
@@ -585,7 +660,7 @@ describe("RFC-17 twin slots: every runs fragment slides-data emits has a slot to
   });
 });
 
-describe("RFC-17 finding 1: no painted ground was deleted", () => {
+describe("RFC-20 §5.0: the Ground Rule, as a source scan", () => {
   for (const [file, selectors] of Object.entries(GROUND_SELECTORS)) {
     it(`${file} still declares every ground selector its clause-E constant depends on`, async () => {
       const styles = stylesOf(await readTemplate(file));
@@ -595,15 +670,22 @@ describe("RFC-17 finding 1: no painted ground was deleted", () => {
     });
   }
 
-  it("every field that supplies an archetype's device share still PAINTS — a selector that sets nothing is a deleted ground", async () => {
-    // Presence of the class name is not enough: `.cov-field { }` would pass a
-    // `toContain` and measure exactly as if the rule had been removed. Each
-    // of these has to still carry a `background-image`.
+  it("the bounded object that survives still PAINTS — a selector that sets nothing is a deleted ground", async () => {
+    // Presence of the class name is not enough: `.quote-block { }` would pass
+    // a `toContain` and measure exactly as if the rule had been removed, so
+    // it has to still carry a `background-image`.
+    //
+    // `quote-card` is the one entry left of five, and it is here because
+    // RFC-20 §5.2 measured it and left it alone: MEASURED-EDGE the four panel
+    // archetypes (`quote-card` 47.30, `stat-callout` 34.59, `list-takeaway`
+    // 33.58, `comparison-card` 19.39) are unchanged to 2 dp with all ground
+    // paint suppressed, so their clause-E share was never coming from a
+    // full-bleed layer in the first place. `.lt-head` is deliberately NOT
+    // asserted as painting: its 2px/9px ruling is the same shape as the
+    // screens below and it sits on a `flex: 1 1 auto` box that absorbs
+    // leftover space, which is what §5.3 forbids — whether it survives as a
+    // bounded object is Part 5's call and not this file's to pre-empt.
     const painted: Record<string, string> = {
-      "cover.html": "cov-field",
-      "slide.html": "copy-art",
-      "headline-focus.html": "copy-art",
-      "closer.html": "cl-art",
       "quote-card.html": "quote-block",
     };
     for (const [file, klass] of Object.entries(painted)) {
@@ -615,6 +697,167 @@ describe("RFC-17 finding 1: no painted ground was deleted", () => {
         `${file}: .${klass} no longer paints a background-image — the archetype's imageryOrDeviceShare constant is gone`,
       ).toBe(true);
     }
+  });
+
+  /**
+   * THE DELETION, PINNED — and this is the Chromium-FREE half of RFC-20
+   * §5.7's own named breakage.
+   *
+   * §5.7 says of G1 and G2: *restore the `.copy-art` screen and both must go
+   * red*. Those two guards are Chromium-gated, so on a developer machine
+   * nothing watches them at all and the screens could be restored by a tidy-up
+   * — or by a merge — with no local signal whatsoever. This scan runs
+   * everywhere, and it fails for the same reason G1 would.
+   *
+   * Written as "declares no PAINTING background-image" rather than "the class
+   * is gone", because the class may legitimately survive as an unpainted
+   * container for a bounded object: what RFC-20 §5.2 deletes is the full-bleed
+   * SCREEN, not necessarily the box. The measurements behind each row are in
+   * the message, so a reviewer who wants the layer back has to argue with a
+   * number rather than with a preference.
+   *
+   * BREAK IT: put `background-image: repeating-linear-gradient(...)` back on
+   * `.copy-art` in `headline-focus.html`. This goes red, and so does G1.
+   */
+  it("the full-bleed screens RFC-20 §5.2 deleted do not paint again", async () => {
+    const deleted: Array<{ file: string; klass: string; why: string }> = [
+      {
+        file: "headline-focus.html",
+        klass: "copy-art",
+        why: "MEASURED it alone takes contentOccupiedShare to 0.3128, occupiedShare to 0.6426, textShare to 0.6132 and largestEmptyRectShare to 0.0000 — it disarms clauses C, D and G and trips F as a false positive",
+      },
+      {
+        file: "slide.html",
+        klass: "copy-art",
+        why: "same shape; MEASURED-EDGE iod 4.53 -> 3.39 without it, i.e. it never paid clause E either",
+      },
+      {
+        file: "closer.html",
+        klass: "cl-art",
+        why: "MEASURED-EDGE worth 1.01 points of 38.63 (2.6%) — RFC-17 line 70's claim that the closer's clause-E share IS .cl-art is false on this tree",
+      },
+    ];
+    for (const { file, klass, why } of deleted) {
+      const styles = stylesOf(await readTemplate(file));
+      const painting = [...styles.matchAll(new RegExp(`\\.${klass}[^{}]*\\{([^{}]*)\\}`, "g"))].filter(
+        (r) => /background-image\s*:/.test(r[1]!) && !/background-image\s*:\s*none/.test(r[1]!),
+      );
+      expect(painting.map((r) => r[0]), `${file}: .${klass} paints a full-bleed background-image again. ${why}.`).toEqual([]);
+    }
+  });
+
+  /**
+   * THE TWO PANELS RFC-20 §5.2 SAID WERE "ALREADY BUILT TO THE GROUND RULE",
+   * WHICH THEY WERE NOT — the Chromium-FREE half of their fix.
+   *
+   * §5.2 checked clause E on the four panel archetypes and concluded they
+   * needed no work. Clause E was the wrong question. MEASURED-EDGE with every
+   * copy slot empty, before this fix:
+   *
+   *   stat-callout.html     occ 0.45%  LER 64.99%   (G2 bar: occ < 1%, LER > 90%)
+   *   comparison-card.html  occ 1.94%  LER 31.67%
+   *
+   * Nothing on either plate was content, so those rectangles are FURNITURE
+   * drawing a diagram on a blank plate — `.sc-rail` and `.stat-band` on one,
+   * and the rail, both card borders, both `.cmp-rule` bars and the winner's
+   * corner diamond on the other. A plate that cannot report itself blank
+   * cannot be told apart from a neglected one, which is defect 1's shape in a
+   * file §5.2 never rendered empty. Both measure occ 0.00% / LER 100.00% now,
+   * and every populated row is byte-identical to before the guards (EN and
+   * HE, s/m/l, all four metrics) — the guards remove paint from the blank
+   * plate and nothing else.
+   *
+   * This scan is here rather than only in G2 for the reason the case above
+   * gives: G2 is Chromium-gated, so on a developer machine nothing watches it
+   * and a tidy-up could drop a guard with no local signal at all.
+   *
+   * BREAK IT: delete any one `display: none` / `border-color: transparent`
+   * guard row below. This goes red, and so does G2.
+   */
+  it("the two panel archetypes withhold their standing furniture from an empty plate", async () => {
+    // `klass` must still PAINT (or the guard guards a dead rule and this test
+    // is decoration), and must ALSO be switched off by `slot` being empty.
+    const guarded: Array<{ file: string; klass: string; slot: string }> = [
+      { file: "stat-callout.html", klass: "sc-rail", slot: ".eyebrow" },
+      { file: "stat-callout.html", klass: "stat-band", slot: "#figure" },
+      { file: "comparison-card.html", klass: "cmp-rail", slot: ".eyebrow" },
+      { file: "comparison-card.html", klass: "cmp-rule", slot: ".cmp-label" },
+      { file: "comparison-card.html", klass: "cmp-col", slot: ".cmp-label" },
+    ];
+    for (const { file, klass, slot } of guarded) {
+      const styles = stylesOf(await readTemplate(file));
+      const rules = [...styles.matchAll(new RegExp(`\\.${klass}[^{}]*\\{([^{}]*)\\}`, "g"))];
+      // Half one: it paints. A rule that sets no background and no border is
+      // a deleted decoration, and guarding it would prove nothing.
+      expect(
+        rules.some((r) => /(background|border-color|border(-[a-z]+)?)\s*:/.test(r[1]!) && !/:\s*(none|transparent)\s*;?$/.test(r[1]!.trim())),
+        `${file}: .${klass} no longer paints anything, so its empty-plate guard is guarding nothing — either restore the decoration or drop it from this table`,
+      ).toBe(true);
+      // Half two: an empty `slot` switches it off. `body:not(:has(…))` is the
+      // set's established spelling for exactly this (`closer.html`'s
+      // `.cl-rail`, `headline-focus.html`'s `.stat-band`).
+      const guard = new RegExp(`body:not\\(:has\\(${slot.replace(/[.#]/g, "\\$&")}[^)]*\\)\\)[^{}]*\\.${klass}\\b[^{}]*\\{([^{}]*)\\}`);
+      const match = guard.exec(styles);
+      expect(
+        match,
+        `${file}: nothing withholds .${klass} from a plate whose ${slot} is empty. MEASURED-EDGE this is worth ` +
+          `${file === "stat-callout.html" ? "LER 64.99%" : "LER 31.67%"} on a blank plate against G2's 90% bar — the plate draws a diagram with no content on it.`,
+      ).not.toBeNull();
+      expect(
+        /display\s*:\s*none|border-color\s*:\s*transparent/.test(match![1]!),
+        `${file}: .${klass}'s empty-plate guard does not actually remove its paint (it sets "${match![1]!.trim()}")`,
+      ).toBe(true);
+    }
+  });
+
+  /**
+   * THE COVER IS THE OTHER HALF OF THE SAME RULE, and it is the interesting
+   * one.
+   *
+   * `.cov-field` did not go away — RFC-20 §5.2 deletes its full-bleed hairline
+   * SCREEN, and §5.5 keeps the bounded accent RAMP that is the cover's one
+   * object. So "the class is gone" would be the wrong pin here and "it still
+   * paints" would be the wrong pin too. The Ground Rule's clause (b) is the
+   * right one, and it has two limbs, both checkable in the source:
+   *
+   *   BOUNDED IN EXTENT — an explicit block-axis length and `no-repeat`. A
+   *   screen is a `repeating-*-gradient` tiled over the plate; a ramp is one
+   *   pass of a fixed height. MEASURED, the deleted screen was solely
+   *   responsible for taking `largestEmptyRectShare` 40.00 -> 7.50 while
+   *   carrying 0.22 points of clause E, and deleting it RAISED `iod` 14.09 ->
+   *   17.12 because its hairlines were adding a fourth distinct colour to the
+   *   ramp's own cells and pushing them out of the `graphic` bucket.
+   *
+   *   SWITCHED OFF WHEN ITS CONTENT IS ABSENT — the `body:not(:has(#title >
+   *   span:not(:empty)))` guard. Without it the cover paints a ramp on a plate
+   *   with nothing on it, which is precisely the empty-plate case G2 renders.
+   *
+   * BREAK IT: give `.cov-field` a `repeating-linear-gradient` back, or drop
+   * the empty-title guard. One limb each.
+   */
+  it("the cover's surviving ground is BOUNDED and content-guarded, not a screen", async () => {
+    const styles = stylesOf(await readTemplate("cover.html"));
+    const painting = [...styles.matchAll(/\.cov-field[^{}]*\{([^{}]*)\}/g)].filter(
+      (r) => /background-image\s*:/.test(r[1]!) && !/background-image\s*:\s*none/.test(r[1]!),
+    );
+    expect(painting.length, "cover.html: nothing paints .cov-field at all — the cover has lost its only object").toBeGreaterThan(0);
+    for (const rule of painting) {
+      const body = rule[1]!;
+      expect(body, `cover.html: .cov-field paints a REPEATING gradient — that is the screen RFC-20 §5.2 deleted, not the ramp §5.5 keeps`).not.toMatch(
+        /repeating-(linear|radial|conic)-gradient/,
+      );
+      expect(body, "cover.html: .cov-field's paint has no `background-repeat: no-repeat` — an unbounded tile is a screen").toMatch(
+        /background-repeat\s*:\s*no-repeat/,
+      );
+      expect(
+        body,
+        "cover.html: .cov-field's paint declares no explicit block-axis length in `background-size` — its extent is the leftover space rather than a fixed band",
+      ).toMatch(/background-size\s*:[^;]*\d+(px|%)\s+\d+px/);
+    }
+    expect(
+      styles.replace(/\s+/g, " "),
+      "cover.html: the empty-title guard on .cov-field is gone — the ramp now paints on a plate with no title, which is the empty-plate case G2 refuses",
+    ).toContain("body:not(:has(#title > span:not(:empty))) .cov-field");
   });
 });
 

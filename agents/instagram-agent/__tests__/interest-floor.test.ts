@@ -186,7 +186,7 @@ describe("checkInterestFloor: every clause fires alone", () => {
   });
 
   it("D — substance: flat AND idle fails; flat alone does NOT, and idle alone does not either", () => {
-    const flatAndIdle = metrics({ flatBackgroundShare: 0.93, occupiedShare: 0.18, imageryOrDeviceShare: 0.2 });
+    const flatAndIdle = metrics({ flatBackgroundShare: 0.93, occupiedShare: 0.08, imageryOrDeviceShare: 0.2 });
     expect(kinds(check(flatAndIdle, "interior", 5))).toEqual(["empty"]);
 
     // Flat alone: a bold type poster. This is the case a single
@@ -194,13 +194,13 @@ describe("checkInterestFloor: every clause fires alone", () => {
     expect(check(metrics({ flatBackgroundShare: 0.93, occupiedShare: 0.52 }), "interior").ok).toBe(true);
     // Idle alone: a photograph with a lot of quiet sky. Nothing is flat
     // against the brand ground, so there is no emptiness to fail.
-    expect(check(metrics({ flatBackgroundShare: 0.2, occupiedShare: 0.18 }), "interior").ok).toBe(true);
+    expect(check(metrics({ flatBackgroundShare: 0.2, occupiedShare: 0.08 }), "interior").ok).toBe(true);
   });
 
   it("D — the sentence is the one the spec wrote, numbers included", () => {
-    const verdict = check(metrics({ flatBackgroundShare: 0.93, occupiedShare: 0.18, imageryOrDeviceShare: 0.2 }), "interior", 5);
+    const verdict = check(metrics({ flatBackgroundShare: 0.93, occupiedShare: 0.08, imageryOrDeviceShare: 0.2 }), "interior", 5);
     expect(verdict.findings[0]?.sentence).toBe(
-      "slide 5 — 93% of the pixels were the background colour and only 18% of the frame was occupied (floor 30% for an interior slide).",
+      "slide 5 — 93% of the pixels were the background colour and only 8% of the frame was occupied (floor 19% for an interior slide).",
     );
     expect(verdict.findings[0]?.steer).toBe(
       "Either give slide 5 a device (figure, bars, before/after, timeline, versus) or merge it into slide 4 and let the carousel be one slide shorter.",
@@ -212,10 +212,33 @@ describe("checkInterestFloor: every clause fires alone", () => {
     expect(check(idle(FLAT_BACKGROUND_CEILING + EPS, OCCUPIED_SHARE_FLOOR.interior - EPS), "interior").ok).toBe(false);
     expect(check(idle(FLAT_BACKGROUND_CEILING - EPS, OCCUPIED_SHARE_FLOOR.interior - EPS), "interior").ok).toBe(true);
     expect(check(idle(FLAT_BACKGROUND_CEILING + EPS, OCCUPIED_SHARE_FLOOR.interior + EPS), "interior").ok).toBe(true);
-    // The cover's floor is higher, so the SAME slide fails there and passes mid-carousel.
-    const between = idle(0.8, 0.35);
-    expect(check(between, "interior").ok).toBe(true);
-    expect(kinds(check(between, "cover", 1))).toEqual(["empty"]);
+    // ── THE ROLES ARE NOT ORDERED THE WAY EDITORIAL INTENT WOULD ORDER THEM,
+    //    AND THAT IS THE MEASUREMENT TALKING. ──
+    //
+    // This case used to read "the cover's floor is higher, so the SAME slide
+    // fails there and passes mid-carousel". After the RFC-20 sweep it is not:
+    // cover 0.18 sits BELOW interior 0.19, because each floor is the midpoint
+    // of its own role's measured band and a cover's populated band really is
+    // lower than an interior's (0.2690-0.3517 against 0.2895-0.6364 — a cover
+    // is a bounded ramp and a lockup, an interior can be a filled panel).
+    //
+    // Nothing is lost by that. The editorial "the thumbnail and the save
+    // moment are judged harder" lives in `LARGEST_EMPTY_RECT_CEILING`, which
+    // is 0.22 for a cover against 0.28 for an interior and did not move. So
+    // the case now pins the ordering it can defend — that the two floors are
+    // distinct and that a plate between them is separated by role — written
+    // against the constants rather than a literal, and with `min`/`max` so it
+    // keeps meaning "between" whichever way a re-sweep puts them.
+    const lo = Math.min(OCCUPIED_SHARE_FLOOR.interior, OCCUPIED_SHARE_FLOOR.cover);
+    const hi = Math.max(OCCUPIED_SHARE_FLOOR.interior, OCCUPIED_SHARE_FLOOR.cover);
+    expect(lo, "the two floors must stay distinct or this case asserts nothing").toBeLessThan(hi);
+    const stricterRole = OCCUPIED_SHARE_FLOOR.cover > OCCUPIED_SHARE_FLOOR.interior ? ("cover" as const) : ("interior" as const);
+    const looserRole = stricterRole === "cover" ? ("interior" as const) : ("cover" as const);
+    const between = idle(0.8, (lo + hi) / 2);
+    expect(between.occupiedShare).toBeGreaterThan(lo);
+    expect(between.occupiedShare).toBeLessThan(hi);
+    expect(check(between, looserRole, looserRole === "cover" ? 1 : 3).ok).toBe(true);
+    expect(kinds(check(between, stricterRole, stricterRole === "cover" ? 1 : 3))).toEqual(["empty"]);
     expect(check(idle(0.8, OCCUPIED_SHARE_FLOOR.closer + EPS), "closer", 6).ok).toBe(true);
   });
 
@@ -276,12 +299,198 @@ describe("checkInterestFloor: the bold type poster", () => {
     expect(kinds(verdict)).toEqual(["no-device"]);
   });
 
-  it("still fails the audit slide, which is flat AND idle AND holed", () => {
+  /**
+   * THE AUDIT SLIDE IS STILL REFUSED, AND RFC-20 CHANGED WHICH CLAUSE DOES IT.
+   *
+   * `boringSlideMetrics` is the 2026-09-08 prep render as numbers: 93% ground,
+   * 18% occupied, a hole over half the plate, nothing but type. It used to
+   * fail C, D and E. At `OCCUPIED_SHARE_FLOOR.cover = 0.18` it no longer fails
+   * D — 0.18 is not under 0.18 — and this case says so out loud rather than
+   * letting the loss go unrecorded.
+   *
+   * **That is the re-calibration's price and it is the price RFC-20 §5.6's
+   * decision rule 3 named in advance.** The occupancy limb was never what
+   * separated this plate from a good one: on the tree these numbers came from,
+   * a full-bleed hatch took a GOOD plate to 0.6688 and the owner's grey screen
+   * to 0.6324, and both passed. The rectangle is the instrument that can tell
+   * them apart, it refuses this plate at 55.6% against a 22% cover ceiling —
+   * 2.5x over — and `ok === false` is what the pipeline actually reads.
+   *
+   * ── THE COINCIDENCE, NAMED SO NOBODY HAS TO REDISCOVER IT. ──
+   *
+   * `OCCUPIED_SHARE_FLOOR.cover` and `boringSlideMetrics().occupiedShare` are
+   * both 0.18, exactly, and that is why the `>=` below reads the way it does.
+   * It is a coincidence and not a calibration: 0.18 came from the cover band
+   * (POPULATED 0.2690-0.3517, NEGLECTED 0.0006) and the audit slide's 0.18
+   * came from a prep render eleven months earlier. Two numbers landing on each
+   * other is worth knowing about because it means **the cover floor has no
+   * margin against the canonical bad plate at all**, so nothing here may ever
+   * be allowed to rest on clause D at the cover role. It does not: the
+   * `dead-space` assertion above is the refusal, at 2.5x. At the INTERIOR role
+   * the plate is under 0.19 and clause D speaks again — see the double-report
+   * case below, which pins that.
+   */
+  it("still fails the audit slide, which is holed and carries nothing but type", () => {
     const verdict = check(boringSlideMetrics(), "cover", 1);
-    expect(kinds(verdict).sort()).toEqual(["dead-space", "empty", "no-device"]);
-    // All three findings name slide 1 and carry their own measured numbers.
+    expect(verdict.ok).toBe(false);
+    expect(kinds(verdict).sort()).toEqual(["dead-space", "no-device"]);
+    // Both findings name slide 1 and carry their own measured numbers.
     expect(verdict.findings.every((f) => f.slide === 1)).toBe(true);
     expect(verdict.findings.every((f) => Object.keys(f.measured).length > 0)).toBe(true);
+    // The clause that speaks for it, and by how much — stated as an assertion
+    // so the day somebody proposes moving 0.22, this file says what it costs.
+    expect(boringSlideMetrics().largestEmptyRectShare).toBeGreaterThan(LARGEST_EMPTY_RECT_CEILING.cover * 2);
+    // And the limb that stopped speaking, also as an assertion: 0.18 is the
+    // exact cover floor, so this plate sits ON the line rather than under it.
+    expect(boringSlideMetrics().occupiedShare).toBeGreaterThanOrEqual(OCCUPIED_SHARE_FLOOR.cover);
+  });
+});
+
+/**
+ * RFC-20 §5.6 — THE ONE RE-CALIBRATION, PINNED TO THE BAND IT CAME FROM.
+ *
+ * Three constants moved and every other threshold in the module held. A value
+ * pinned without its band is a value nobody can argue with later, so each row
+ * here carries the two measurements either side of it and the case below
+ * drives the rule with them.
+ */
+describe("OCCUPIED_SHARE_FLOOR: the RFC-20 re-calibration", () => {
+  it("is 0.18 / 0.19 / 0.30, and every other threshold this phase touched held", () => {
+    expect(OCCUPIED_SHARE_FLOOR).toEqual({ cover: 0.18, interior: 0.19, closer: 0.3 });
+    // The siblings RFC-20 §5.6 lists as NOT moving, each with the measurement
+    // that keeps it: the plinth alone is iod 0.2383 against 0.10; the cover's
+    // 0.2361 rectangle is a hole at a named rectangle, not a tight ceiling;
+    // the 0.6132 textShare reading was decoration scored as type.
+    expect(IMAGERY_OR_DEVICE_FLOOR).toBe(0.1);
+    expect(LARGEST_EMPTY_RECT_CEILING).toEqual({ cover: 0.22, interior: 0.28, closer: 0.22 });
+    expect(CONTENT_OCCUPIED_SHARE_FLOOR).toEqual({ cover: 0.09, interior: 0.06, closer: 0.09 });
+    expect(TEXT_SHARE_CEILING).toBe(0.55);
+    expect(FLAT_BACKGROUND_CEILING).toBe(0.7);
+  });
+
+  /**
+   * The two plates the whole phase is about, AT THEIR REAL RENDERED NUMBERS.
+   *
+   * These used to be hand-painted synthetics (composed 0.2620 / grey screen
+   * 0.0311) and one field of the composed row was not even that — it carried
+   * `largestEmptyRectShare: 0.2` three lines under a comment claiming every
+   * field but `inkShare` was the measurement, while the band table beside the
+   * constant recorded 0.3611. Both are replaced here by MEASURED-EDGE rows off
+   * the real pipeline (`assembleSlidesData` -> real
+   * `createRenderCarousel({probe,measure})` -> real `measureSlidePng`), on a
+   * document carrying all four production head sheets including the ground
+   * material, `headline_focus` on the grid ground at the `m` type scale:
+   *
+   *   composed, short copy    occ 0.2928  flat 0.7163  LER 0.2778  iod 0.2739
+   *   the owner's grey screen occ 0.0372  flat 0.9712  LER 0.3917  iod 0.0226
+   *
+   * The grey-screen row is what it is BECAUSE of `headline-focus.html`'s guard
+   * fix. With the plinth guarded on the headline alone the same plate measured
+   * occ 0.2791-0.3004 and `iod` 0.2763-0.3152 — inside the composed band on
+   * both, i.e. the two plates were once again indistinguishable and the grey
+   * screen was reporting a drawn device it had not earned. **A fixture that
+   * kept the old numbers would be asserting the defect.**
+   *
+   * `contentOccupiedShare` is set equal to `occupiedShare`: with no sub-covered
+   * full-bleed paint left there is nothing to separate them, which is RFC-20
+   * §5.0's whole claim and what the material ground buys.
+   */
+  //
+  // `inkShare` is left at the passing fixture's default on both, deliberately:
+  // clause A is render integrity and short-circuits everything, so pinning it
+  // to each plate's real ink would make these cases about whether the render
+  // worked instead of about the band. Every other field is the measurement.
+  const composed = () =>
+    metrics({ flatBackgroundShare: 0.7163, occupiedShare: 0.2928, contentOccupiedShare: 0.2928, largestEmptyRectShare: 0.2778, imageryOrDeviceShare: 0.2739, textShare: 0.0237 });
+  const greyScreen = () =>
+    metrics({ flatBackgroundShare: 0.9712, occupiedShare: 0.0372, contentOccupiedShare: 0.0372, largestEmptyRectShare: 0.3917, imageryOrDeviceShare: 0.0226, textShare: 0.01 });
+
+  /**
+   * The closer's own plate, which is a different archetype and a different
+   * number. MEASURED-EDGE off the gate-zero sweep's 19 closer rows, taken at
+   * the WORST (lowest-occupancy) row, `he rtl short l`: occ **0.5722**, which
+   * is the closer band's true floor. The composed `headline_focus` above is
+   * NOT a closer and is not held to it.
+   *
+   * `imageryOrDeviceShare` is INHERITED from the clause-E measurer rather than
+   * re-measured — the sweep prints occupancy, flatness and the rectangle, not
+   * `iod` — and it is here only to keep clause E quiet so the case is about
+   * clause D. Nothing asserts on it.
+   */
+  const composedCloser = () =>
+    metrics({ flatBackgroundShare: 0.4287, occupiedShare: 0.5722, contentOccupiedShare: 0.5722, largestEmptyRectShare: 0.2028, imageryOrDeviceShare: 0.3863, textShare: 0.1 });
+
+  it("admits the composed plate at the role it belongs to — the false refusal a 0.30 floor would have cost $0.181", () => {
+    // `headline_focus` sits at slide 1 or mid-carousel, never last.
+    for (const role of ["cover", "interior"] as const) {
+      expect(kinds(check(composed(), role, role === "interior" ? 3 : 1)).filter((k) => k === "empty"), role).toEqual([]);
+    }
+    expect(kinds(check(composedCloser(), "closer", 6)).filter((k) => k === "empty")).toEqual([]);
+    // Each plate against its own role's floor, at the 1.15x margin the sweep
+    // gates on. The closer's row is the band's LOWEST of nineteen, so this is
+    // the whole closer band clearing 0.30 and not one comfortable plate.
+    expect(composed().occupiedShare / OCCUPIED_SHARE_FLOOR.interior).toBeGreaterThan(1.15);
+    expect(composedCloser().occupiedShare / OCCUPIED_SHARE_FLOOR.closer).toBeGreaterThan(1.15);
+  });
+
+  it("refuses the owner's grey screen at every role, on clause D AND on clause C", () => {
+    for (const role of ["cover", "interior", "closer"] as const) {
+      const verdict = check(greyScreen(), role, role === "interior" ? 3 : 1);
+      expect(verdict.ok, role).toBe(false);
+      expect(kinds(verdict), role).toContain("empty");
+      expect(kinds(verdict), role).toContain("dead-space");
+    }
+  });
+
+  /**
+   * THE GUARD, BROKEN ON PURPOSE. Put the old floors back and BOTH halves of
+   * the band go wrong at once, which is the property that makes this a
+   * re-calibration rather than a relaxation: the new numbers are not merely
+   * looser, they are the ones that separate the two plates.
+   */
+  it("the OLD floors get both halves wrong: the composed plate is falsely refused and 0.42 admits nothing it should", () => {
+    const old: Record<SlideRole, number> = { cover: 0.42, interior: 0.3, closer: 0.42 };
+    for (const role of ["cover", "interior"] as const) {
+      // A composed statement plate at 0.2928 is UNDER the old floor at BOTH
+      // roles — a false refusal, and at 0.181 a drafting attempt out of three.
+      expect(composed().occupiedShare, role).toBeLessThan(old[role]);
+      // …and over the new one, with the 1.15x margin the sweep gates on.
+      expect(composed().occupiedShare, role).toBeGreaterThan(OCCUPIED_SHARE_FLOOR[role] * 1.15);
+    }
+    // The closer's own plate. It clears the OLD floor too (0.5722 vs 0.42) —
+    // said plainly, because the honest reason `closer` moved is not that 0.42
+    // refused a real plate, it is that §5.6's pre-committed rule 1 puts the
+    // constant at the midpoint of a measured band and the midpoint is 0.29.
+    // The rule was written before the sweep ran so this row could not be
+    // argued either way afterwards, and 0.30 is one point stricter than it.
+    expect(composedCloser().occupiedShare).toBeGreaterThan(old.closer);
+    expect(composedCloser().occupiedShare).toBeGreaterThan(OCCUPIED_SHARE_FLOOR.closer * 1.15);
+    // The grey screen is refused at every role by BOTH sets — which is why
+    // the old floor's failure on this mask is a false-POSITIVE problem. What
+    // the old floor could not do is the SHIPPED-hatch case below.
+    for (const role of ["cover", "interior", "closer"] as const) {
+      expect(greyScreen().occupiedShare, role).toBeLessThan(OCCUPIED_SHARE_FLOOR[role]);
+      expect(greyScreen().occupiedShare, role).toBeLessThan(old[role]);
+    }
+  });
+
+  /**
+   * THE FALSE NEGATIVE, WHICH IS THE DEFECT RFC-20 EXISTS FOR. On the shipped
+   * painted ground the same two plates measure 0.6688 and 0.6324 — the old
+   * floors admit BOTH, and so would the new ones. **No occupancy floor can
+   * work on that mask**, which is why the phase changes the GROUND and not the
+   * number, and why this case asserts the failure rather than a fix.
+   */
+  it("no floor, old or new, can refuse the grey screen while the painted ground is counted as occupancy", () => {
+    const onShippedHatch = metrics({ flatBackgroundShare: 0.7712, occupiedShare: 0.6324, largestEmptyRectShare: 0, contentOccupiedShare: 0.3128 });
+    for (const role of ["cover", "interior", "closer"] as const) {
+      expect(onShippedHatch.occupiedShare, role).toBeGreaterThan(0.42);
+      expect(onShippedHatch.occupiedShare, role).toBeGreaterThan(OCCUPIED_SHARE_FLOOR[role]);
+      // Clause C cannot see it either: the hatch marks a cell everywhere, so
+      // the largest all-ground rectangle is 0.0000 on a plate with one line
+      // on it. Both of the floor's instruments are disarmed by the decoration.
+      expect(onShippedHatch.largestEmptyRectShare, role).toBeLessThan(LARGEST_EMPTY_RECT_CEILING[role]);
+    }
   });
 });
 
@@ -352,11 +561,26 @@ describe("checkInterestFloor: clause G — a decorated empty plate", () => {
     expect(kinds(checkInterestFloor(metrics({}), passingSlideProbe(3, { textBoxShare: PROBE_TEXT_BOX_SHARE_FLOOR }), "interior", { slide: 3 }))).toEqual([]);
   });
 
-  it("does not double-report: the audit slide's bare-ground emptiness is clause D's, not clause G's", () => {
+  it("does not double-report: clauses D and G never both speak for the same plate", () => {
     // `boringSlideMetrics` carries no ground treatment, so every mark on it
-    // is content and clause G has nothing to say. One defect, one finding.
-    const verdict = check(boringSlideMetrics(), "interior", 3);
-    expect(kinds(verdict).filter((k) => k === "empty")).toHaveLength(1);
+    // is content and clause G has nothing to say. Clause D DOES speak for it
+    // at the interior role — 18% occupied is under the measured 0.19 floor, on
+    // a plate that is 93% flat — so the property this case pins is the one it
+    // was always about: at most ONE `empty` finding per plate, whichever limb
+    // produced it. An intermediate revision of this phase put the interior
+    // floor at 0.12, which took clause D off this plate entirely; that is the
+    // check that said the number was wrong.
+    expect(kinds(check(boringSlideMetrics(), "interior", 3)).filter((k) => k === "empty")).toHaveLength(1);
+    expect(kinds(check(boringSlideMetrics(), "interior", 3)).sort()).toEqual(["dead-space", "empty"]);
+    // A plate that is genuinely idle AND has nothing to read trips D and G on
+    // two different masks, and gets one finding from each — which is correct,
+    // because they are two different sentences about two different masks. The
+    // invariant is that neither clause ever fires twice for one plate.
+    const idleAndUnreadable = metrics({ flatBackgroundShare: 0.97, occupiedShare: 0.03, contentOccupiedShare: 0.03, imageryOrDeviceShare: 0.2 });
+    const both = kinds(check(idleAndUnreadable, "interior", 3)).filter((k) => k === "empty");
+    expect(both).toHaveLength(2);
+    const sentences = new Set(check(idleAndUnreadable, "interior", 3).findings.filter((f) => f.kind === "empty").map((f) => f.sentence));
+    expect(sentences.size, "the two `empty` findings must be two different sentences, not one clause firing twice").toBe(2);
   });
 });
 
@@ -437,7 +661,7 @@ describe("the steer the writer receives", () => {
       ...check(metrics({ inkShare: 0.004 }), "interior", 2).findings,
       ...checkInterestFloor(metrics(), passingSlideProbe(3, { overflow: true, overflowing: [".headline"] }), "interior", { slide: 3 }).findings,
       ...check(metrics({ largestEmptyRectShare: 0.42 }), "cover", 1).findings,
-      ...check(metrics({ flatBackgroundShare: 0.93, occupiedShare: 0.18, imageryOrDeviceShare: 0.2 }), "interior", 5).findings,
+      ...check(metrics({ flatBackgroundShare: 0.93, occupiedShare: 0.08, imageryOrDeviceShare: 0.2 }), "interior", 5).findings,
       ...check(metrics({ imageryOrDeviceShare: 0 }), "closer", 6).findings,
       ...check(metrics({ textShare: 0.61 }), "interior", 4).findings,
     ];
@@ -484,12 +708,13 @@ describe("the steer the writer receives", () => {
   });
 
   it("summarizeInterestFindings is the compact ledger line, shaped like the default-render-rule one", () => {
-    const line = summarizeInterestFindings(check(boringSlideMetrics(), "cover", 1).findings);
+    const findings = check(boringSlideMetrics(), "cover", 1).findings;
+    const line = summarizeInterestFindings(findings);
     expect(line).toMatch(/interest:dead-space \(slide 1\)/);
-    expect(line).toMatch(/interest:empty \(slide 1\)/);
+    expect(line).toMatch(/interest:no-device \(slide 1\)/);
     // One segment per finding — and the separator is ` | ` precisely because
     // these sentences carry their own semicolons.
-    expect(line.split(INTEREST_FINDING_SEPARATOR)).toHaveLength(3);
+    expect(line.split(INTEREST_FINDING_SEPARATOR)).toHaveLength(findings.length);
     expect(line.split(INTEREST_FINDING_SEPARATOR).every((s) => s.startsWith("interest:"))).toBe(true);
   });
 
@@ -517,7 +742,10 @@ describe("checkSlidesInterestFloor: the whole attempt", () => {
     slides[4] = { ...slides[4]!, metrics: metrics({ textShare: 0.7 }) };
     const report = checkSlidesInterestFloor(slides);
     expect(report.ok).toBe(false);
-    expect(report.findings.map((f) => f.slide)).toEqual([1, 1, 1, 5]);
+    // Two for slide 1 (clause C's hole and clause E's missing device — clause
+    // D stopped speaking for this plate when RFC-20 re-calibrated the floor;
+    // see "still fails the audit slide" above) and one for slide 5.
+    expect(report.findings.map((f) => f.slide)).toEqual([1, 1, 5]);
   });
 
   it("an UNMEASURED slide is a fact, never a verdict — it cannot make the attempt fail", () => {
@@ -555,7 +783,7 @@ function findingFor(kind: InterestFinding["kind"], slide: number, role: SlideRol
     "render-integrity": { inkShare: 0.004 },
     clipped: { clippedEdgeShare: 0.02 },
     "dead-space": { largestEmptyRectShare: 0.45 },
-    empty: { flatBackgroundShare: 0.93, occupiedShare: 0.18, imageryOrDeviceShare: 0.2 },
+    empty: { flatBackgroundShare: 0.93, occupiedShare: 0.08, imageryOrDeviceShare: 0.2 },
     "no-device": { imageryShare: 0, graphicShare: 0, imageryOrDeviceShare: 0 },
     "text-wall": { textShare: 0.7 },
     // Unreachable through this helper, and that is the clause's whole point:
@@ -574,6 +802,38 @@ function findingFor(kind: InterestFinding["kind"], slide: number, role: SlideRol
 function copyWithLayouts(layouts: Partial<Record<number, InstagramCopyOutput["slides"][number]["layout"]>>): InstagramCopyOutput {
   const copy = goodCopyOutput();
   return { ...copy, slides: copy.slides.map((s) => ({ ...s, layout: layouts[s.n] ?? s.layout })) };
+}
+
+/**
+ * A `dead-space` finding on slide 1 at the cover role whose rectangle is the
+ * one given — built through the REAL rule, so the four scalars the cover limb
+ * reads are the ones `checkInterestFloor` actually emits rather than a shape
+ * this file invented. A hand-written `measured` map would pass whatever the
+ * clause did.
+ */
+function coverDeadSpace(rect: { x: number; y: number; w: number; h: number }, share: number): InterestFinding {
+  const verdict = checkInterestFloor(metrics({ largestEmptyRect: rect, largestEmptyRectShare: share }), passingSlideProbe(1), "cover", { slide: 1 });
+  const finding = verdict.findings.find((f) => f.kind === "dead-space");
+  if (finding === undefined) throw new Error(`a ${share} rectangle produced no dead-space finding at the cover role`);
+  return finding;
+}
+
+/**
+ * Slide 1 as a `cover` whose own headline and body carry NO figure.
+ *
+ * Load-bearing for the cover-limb cases: with a figure in its own text the
+ * `dead-space` ladder's own step 1 would build a device too, and a test that
+ * cannot tell the limb's device from the ladder's proves nothing about which
+ * one ran. Stripped, the only device in reach is `coverRemedy`'s — from the
+ * post's strongest sourced fact card — so the two are distinguishable by the
+ * value they carry.
+ */
+function coverCopyWithoutItsOwnFigure(): InstagramCopyOutput {
+  const copy = copyWithLayouts({ 1: "cover" });
+  return {
+    ...copy,
+    slides: copy.slides.map((s) => (s.n === 1 ? { ...s, headline: "What changed this quarter", body: "The team reworked its intake process end to end." } : s)),
+  };
 }
 
 function unusableSelections(): ImageSelection[] {
@@ -704,6 +964,74 @@ describe("planInterestRelayout: the fixed table", () => {
     expect(plan).toBeUndefined();
   });
 
+  /**
+   * RFC-20 §5.5 — THE COVER'S HOLE, AND THE REMEDY THAT ALREADY EXISTED.
+   *
+   * With the full-bleed screen deleted, `cover.html` fails clause C at 23.61%
+   * against a 22% ceiling and the failing rectangle is `{x: 0, y: 236, w: 1080,
+   * h: 376}` — `.cov-device`'s slot standing empty, between the ramp's foot and
+   * the lockup's head. A device closes the band to 228px and the plate passes
+   * at 15.83%. The remedy is `deviceFromText` over a `kind: "stat"` fact card:
+   * deterministic regex, $0.00, no model call.
+   *
+   * Before this limb that path was reachable only from a `no-device` finding,
+   * which a cover on its bounded ramp (iod 16-19% against a 10% floor) never
+   * produces. So the plate had a free remedy sitting behind a clause it could
+   * not trip, and the ladder's answers to a 376px band — a switch away from
+   * the one archetype built for the case, or one step of `fontScale` — cannot
+   * close it.
+   *
+   * The EXTENT test is what makes the limb a limb rather than a widening, and
+   * both sides of it are driven below: a hole inside the field takes the
+   * device, a hole over the lockup does not.
+   */
+  it("a dead-space hole INSIDE .cov-field takes the cover's device remedy, ahead of the ladder", () => {
+    // The measured rectangle, verbatim: y 236, h 376, inside the field.
+    const finding = coverDeadSpace({ x: 0, y: 236, w: 1080, h: 376 }, 0.2361);
+    const plan = planInterestRelayout(coverCopyWithoutItsOwnFigure(), unusableSelections(), SIX_RESEARCH_FACTS, [finding]);
+    const change = plan?.changes[0] as Extract<InterestRelayoutChange, { kind: "attach-device" }> | undefined;
+    expect(change?.kind).toBe("attach-device");
+    expect(change?.device.value).toBe("4");
+    expect(change?.device.source).toBe("internal client survey");
+    // Already on `cover`, so no switch rides along — the slot is there.
+    expect(change?.archetype).toBeUndefined();
+  });
+
+  it("...and a hole over the LOCKUP does not: that is too little copy, and it gets the ladder", () => {
+    // Same share, a rectangle in the lower third — past `.cov-field`'s foot.
+    const finding = coverDeadSpace({ x: 0, y: 1000, w: 1080, h: 376 }, 0.2361);
+    const plan = planInterestRelayout(coverCopyWithoutItsOwnFigure(), unusableSelections(), SIX_RESEARCH_FACTS, [finding]);
+    // `cover` is not one of the two shapeless archetypes the ladder switches,
+    // and the slide carries no figure of its own, so what is left is the type
+    // size — the ladder's own answer, unchanged by this phase.
+    expect(plan?.changes[0]).toMatchObject({ kind: "font-scale", slide: 1, from: "m", to: "l" });
+  });
+
+  it("...and a finding carrying no rectangle at all falls through to the ladder rather than guessing", () => {
+    // An older gate payload replayed, or a hand-built fixture: the four
+    // scalars are absent, so the limb declines. It can only ever OFFER a
+    // remedy a plate did not have, never take one away.
+    const bare: InterestFinding = { ...coverDeadSpace({ x: 0, y: 236, w: 1080, h: 376 }, 0.2361), measured: { largestEmptyRectShare: 0.2361 } };
+    const plan = planInterestRelayout(coverCopyWithoutItsOwnFigure(), unusableSelections(), SIX_RESEARCH_FACTS, [bare]);
+    expect(plan?.changes[0]?.kind).toBe("font-scale");
+  });
+
+  it("the cover limb withholds the colour-block ground, because that change cannot move a pixel on a slide already on cover", () => {
+    // No usable image and no fact cards, so `coverRemedy` runs out at step 3.
+    // From a `no-device` finding it returns `colour-block-ground`, which moves
+    // a non-cover slide onto the cover archetype and genuinely repaints. From
+    // this limb the slide is ALREADY on `cover`, so the same change would
+    // re-render byte-identically and spend the attempt's one free chance — the
+    // defect this module's header names. It declines and the ladder answers.
+    const finding = coverDeadSpace({ x: 0, y: 236, w: 1080, h: 376 }, 0.2361);
+    const plan = planInterestRelayout(coverCopyWithoutItsOwnFigure(), unusableSelections(), [], [finding]);
+    expect(plan?.changes[0]?.kind).not.toBe("colour-block-ground");
+    expect(plan?.changes[0]?.kind).toBe("font-scale");
+    // And the `no-device` path is untouched: it still reaches the fallback.
+    const noDevice = planInterestRelayout(goodCopyOutput(), unusableSelections(), [], [findingFor("no-device", 1, "cover")]);
+    expect(noDevice?.changes[0]).toMatchObject({ kind: "colour-block-ground", slide: 1, archetype: "cover" });
+  });
+
   it("dead-space and empty both set a figure already in the slide's own text as a device", () => {
     // On an archetype that PAINTS one. `headline_focus` declares
     // `{{html:device}}`, so the fragment reaches the pixels and the re-render
@@ -810,9 +1138,9 @@ describe("planInterestRelayout: the fixed table", () => {
 describe("planInterestRelayout: the bounds", () => {
   const facts = SIX_RESEARCH_FACTS;
 
-  it("makes AT MOST one change per failing slide, even when the slide failed three clauses", () => {
+  it("makes AT MOST one change per failing slide, even when the slide failed several clauses", () => {
     const cover = checkInterestFloor(boringSlideMetrics(), passingSlideProbe(1), "cover", { slide: 1 });
-    expect(cover.findings).toHaveLength(3);
+    expect(cover.findings.length).toBeGreaterThan(1);
     const plan = planInterestRelayout(goodCopyOutput(), unusableSelections(), facts, cover.findings);
     expect(plan?.changes).toHaveLength(1);
     // The highest-priority failing kind for the slide wins: `no-device`

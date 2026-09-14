@@ -163,6 +163,8 @@ import {
 import { deviceCssBlock } from "./slide-devices.js";
 // ── Phase 5 (RFC-17) — marked emphasis. ──
 import { buildMarkRing, markCssBlock, type EmphasisIssue, type MarkRing } from "./emphasis-marks.js";
+// ── Phase 7 (RFC-20 §5.1) — the material ground. ──
+import { groundMaterialCssBlock } from "./ground-material.js";
 import { scriptTypographyFor } from "./script-fonts.js";
 // ── Phase 2 (RFC-14) — the four modules the integrator wires ──
 import {
@@ -2567,7 +2569,19 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                   // The ring is derived from the STUDIO kit for the same
                   // reason: the validation render has to carry the colours
                   // the client's own runs will carry.
-                  extraHeadHtml: [deviceCssBlock(), markCssBlock(targetLanguage !== undefined ? scriptTypographyFor(targetLanguage)?.script : undefined, studioMarkRing)]
+                  //
+                  // AND THE MATERIAL GROUND (RFC-20 §5.1), for the reason
+                  // the mark sheet is here: a studio template is MEASURED on
+                  // a rendered plate, and it must be measured wearing the
+                  // ground its client's real runs will wear. The material
+                  // contributes zero to every share it could move
+                  // (`ground-material.test.ts` G3), so this cannot flatter a
+                  // template into passing — but omitting it would validate a
+                  // document production that is not the one we ship.
+                  extraHeadHtml: [deviceCssBlock(),
+                    markCssBlock(targetLanguage !== undefined ? scriptTypographyFor(targetLanguage)?.script : undefined, studioMarkRing),
+                    groundMaterialCssBlock({ ground: studioKit?.cssVars["--bg"], fg: studioKit?.cssVars["--fg"] }, wf.clientSlug),
+                  ]
                     .filter((s) => s.length > 0)
                     .join("\n"),
                 },
@@ -4421,10 +4435,32 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     const markScript = scriptTypographyFor(targetLanguage)?.script;
     /**
      * The head fragments every rendered document receives: item M's device
-     * stylesheet, item S's image-treatment sheet, and RFC-17's mark sheet.
+     * stylesheet, item S's image-treatment sheet, RFC-17's mark sheet, and
+     * RFC-20's material ground.
+     *
+     * ORDER IS IMMATERIAL HERE AND IS NOT LEFT TO CHANCE: no two of these
+     * four sheets declare the same property on the same selector — the
+     * material owns `.ground::after` and nothing else touches it. It is
+     * appended LAST so that `phase3-wiring.test.ts`'s source pin — which
+     * anchors on the studio site's array opening with the device sheet, and
+     * counts its occurrences — keeps the anchor it was written against.
+     *
+     * Keyed on `wf.clientSlug`, so one client always renders on one paper —
+     * the same hash `paletteForSlide` already uses, one hash per document,
+     * $0.00. The tokens are the EFFECTIVE kit's, because the material's
+     * amplitude is computed from the exact pair the plate renders on; a
+     * brandless client has neither and the module falls back to the bundled
+     * `:root`, which is what that client actually renders on.
      */
     const headExtras = (): string =>
-      [deviceCssBlock(), imageTreatmentCssBlock(frozenStyle), markCssBlock(markScript, runMarkRing())].filter((s) => s.length > 0).join("\n");
+      [
+        deviceCssBlock(),
+        imageTreatmentCssBlock(frozenStyle),
+        markCssBlock(markScript, runMarkRing()),
+        groundMaterialCssBlock({ ground: effectiveKit?.cssVars["--bg"], fg: effectiveKit?.cssVars["--fg"] }, wf.clientSlug),
+      ]
+        .filter((s) => s.length > 0)
+        .join("\n");
 
     // ── 04c: resolve which archetype templates this run can actually render ──
     //
@@ -4710,7 +4746,28 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // Appended AFTER whatever `:root{}` the primary file's own materialization
         // already spliced in — equal CSS specificity, later wins, the same rule
         // `buildBrandHeadHtml`'s own doc comment already relies on.
-        const invertedHeadHtml = `<style>\n:root {\n  --bg: ${invertFg};\n  --fg: ${invertGround};\n}\n</style>`;
+        //
+        // RFC-20 §5.1 — AND THE MATERIAL FOR THE INVERTED PAIR, appended
+        // after the swap for the same "later wins on a tie" reason.
+        //
+        // This is not tidiness, it is the difference between a material and a
+        // defect. The material's tints are literal hexes baked into an SVG
+        // data URI, which cannot read `var(--fg)`; the alpha that makes a
+        // tint sub-ink is computed from its distance to the ground it will
+        // land on. Swap the pair underneath the primary block and the LIFT
+        // tint — the ink mirrored across the primary ground, so black on our
+        // bundled kit — lands on a near-white inverted ground at roughly 100
+        // metric units. Every "contributes zero" claim in
+        // `ground-material.test.ts` would hold for the primary slides and
+        // invert into a black noise field on the inverted ones. So the
+        // inverted file gets a material computed for the pair it actually
+        // renders on, emitted by the same function against the swapped
+        // tokens. Same selector, later block, later wins. Cost: one more
+        // hash per file, $0.00.
+        const invertedHeadHtml = `<style>\n:root {\n  --bg: ${invertFg};\n  --fg: ${invertGround};\n}\n</style>\n${groundMaterialCssBlock(
+          { ground: invertFg, fg: invertGround },
+          wf.clientSlug,
+        )}`;
         const isAlreadyInverted = (file: string): boolean => {
           const dot = file.lastIndexOf(".");
           const stem = dot === -1 ? file : file.slice(0, dot);

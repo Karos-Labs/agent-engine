@@ -2,7 +2,7 @@ import { z } from "zod";
 import { TemplateDefinitionSchema, extractSupportedFields, type TemplateDefinition } from "@agent-engine/tool-karos-templates";
 import type { ClientBrief } from "@agent-engine/tools";
 import { isolateForeignRuns, stripIsolates } from "./bidi-isolate.js";
-import { buildMarkedRuns, markKindsFor, resolveSlideMarks, ringIndexesFor, slideMarkSeed, type MarkRing } from "./emphasis-marks.js";
+import { buildMarkedRuns, resolveSlideMarks, ringIndexesFor, slideMarkKinds, slideMarkSeed, type MarkRing } from "./emphasis-marks.js";
 import { resolveExpectedScript } from "./language-gate.js";
 import { scriptTypographyFor } from "./script-fonts.js";
 import { assessContrastFacts, checkPaletteWithinKit, LAYOUT_FIELD_KEYS, LEADS_WITH_FIGURE, type ContrastFact } from "./visual-qa-pre-checks.js";
@@ -1411,9 +1411,14 @@ function sampleDeviceFragment(seed: StudioSampleSeed): string {
 function sampleMarkedRuns(seed: StudioSampleSeed, archetypeId: string, text: string): string {
   const marks = seed.marks;
   if (marks === undefined || marks.ring.hexes.length === 0) return "";
-  const kinds = markKindsFor(marks.groundHex, marks.fgHex, marks.ring.hexes, { refuseBlock: archetypeId === "quote_card" });
+  // RFC-20 — per member, and the same `refuseBlock` narrows BOTH the kind sets
+  // and the slot list. A member whose only capability is `block` (a paper
+  // kit's highlighter) must not be offered to a `quote_card` sample, or the
+  // studio validates a template against a rotation that can draw nothing.
+  const refuseBlock = archetypeId === "quote_card";
+  const { kindsByIndex, kinds } = slideMarkKinds(marks.ring, marks.groundHex, marks.fgHex, { refuseBlock });
   if (kinds.length === 0) return "";
-  const allowedIndexes = ringIndexesFor(marks.ring, seed.accentHex);
+  const allowedIndexes = ringIndexesFor(marks.ring, seed.accentHex, { groundHex: marks.groundHex, fgHex: marks.fgHex, refuseBlock });
   if (allowedIndexes.length === 0) return "";
   // THE RESOLVER TAKES RAW COPY, and the seed's fields have already been
   // through `iso()`. `slides-data.ts` hands `markRuns` the model's own
@@ -1430,6 +1435,11 @@ function sampleMarkedRuns(seed: StudioSampleSeed, archetypeId: string, text: str
     dir: seed.dir,
     allowedIndexes,
     kinds,
+    kindsByIndex,
+    hexes: marks.ring.hexes,
+    groundHex: marks.groundHex,
+    fgHex: marks.fgHex,
+    refuseBlock,
     seed: slideMarkSeed(seed.brandHandle, 1),
     alreadyAccepted: 0,
   });

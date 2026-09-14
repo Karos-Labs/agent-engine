@@ -5,6 +5,7 @@ import type { AgentContext, AgentToolRegistry } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import { invertedTemplateFileName } from "../src/workflow/slides-data.js";
+import { groundMaterialCssBlock } from "../src/workflow/ground-material.js";
 import {
   goodRelevanceVerdict,
   goodTrendScoutOutput,
@@ -121,10 +122,25 @@ describe("ground/fg inversion, end to end (IGSTYLE-10, §10a/10b/10c/10e)", () =
     expect(invertedHtml).toContain("--bg: #F4F2EC;");
     expect(invertedHtml).toContain("--fg: #17181C;");
     // The inverted file is the SAME document plus one appended override — not
-    // a second, divergently-authored copy: strip the extra `<style>` block
-    // this materialization step alone adds and what's left is byte-identical
-    // to the primary file.
-    const appendedBlock = `<style>\n:root {\n  --bg: #F4F2EC;\n  --fg: #17181C;\n}\n</style>\n`;
+    // a second, divergently-authored copy: strip the extra blocks this
+    // materialization step alone adds and what's left is byte-identical to
+    // the primary file.
+    //
+    // RFC-20 P1: the appended run is now TWO blocks, not one — the `:root`
+    // swap and, after it, the sub-ink material ground computed for the
+    // SWAPPED pair. The material's tints are literal hexes inside a data URI
+    // and cannot read `var(--fg)`, so an inverted slide re-using the primary
+    // pair's material would paint the lift tint (near-black on the bundled
+    // kit) onto a near-white ground. Reproducing the call here rather than
+    // regexing the block away is deliberate: this assertion's whole job is to
+    // catch a divergently-authored inverted copy, and a wildcard would let
+    // one through. `"acme"` is `base.clientSlug` (the material's seed key)
+    // and the trailing `\n` is load-bearing — `ensureTemplatesOnDisk` splices
+    // `${invertedHeadHtml}\n</head>`.
+    const appendedBlock = `<style>\n:root {\n  --bg: #F4F2EC;\n  --fg: #17181C;\n}\n</style>\n${groundMaterialCssBlock(
+      { ground: "#F4F2EC", fg: "#17181C" },
+      "acme",
+    )}\n`;
     expect(invertedHtml.replace(appendedBlock, "")).toBe(primaryHtml);
 
     const gate = await durableStore.getGate(`${runId}__09a-batch-review-r0`);
