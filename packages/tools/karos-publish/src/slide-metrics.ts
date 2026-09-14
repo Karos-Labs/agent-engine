@@ -126,6 +126,36 @@ export interface MeasureTolerances {
    *
    * A wrong bound in the place a calibration reads is how the NEXT
    * calibration goes wrong, which is why this is corrected rather than left.
+   *
+   * ## MEASURED, 2026-09-14: WHICH SHARES MOVE WITH A BRAND'S COLOURS
+   *
+   * The owner's correction was that "the grey screen" named a CLIENT — grey is
+   * Karos Labs' own brand colour — and not a failure mode: the same empty,
+   * monotonous plate happens in blue, in white, in green. Every band in the
+   * instagram agent had been measured on one pair.
+   *
+   * So RFC-21 §2.9 renders ONE PLATE across four palettes spanning 4.54:1 to
+   * 17.4:1, dark ground, light ground and saturated. The result, and it is the
+   * thing to know before calibrating any threshold on any of these:
+   *
+   *   INVARIANT to 3-4 decimals   occupiedShare, inkShare, textShare, edgeDensity
+   *   PALETTE-DEPENDENT           contentOccupiedShare (0.2169-0.3739, a 42% swing
+   *                               on the IDENTICAL plate), flatBackgroundShare (~11%)
+   *
+   * The reason is this dead band, and it is not a bug to tune away.
+   * `contentOccupiedShare` marks a cell when its MEAN has left the ground by
+   * more than `ink`; on a low-contrast brand a part-inked cell's mean sits
+   * closer to the ground, so fewer cells qualify. At 137 units of separation
+   * an 18-unit band genuinely IS 13% of the signal, and it cannot shrink below
+   * the AA noise floor `flat` exists to clear. It is a fact about 8-bit
+   * measurement at low contrast.
+   *
+   * What follows for a caller: **calibrate a threshold on an invariant share.**
+   * `interest-floor.ts`'s clause D reads `flatBackgroundShare` and clause G
+   * reads `contentOccupiedShare`, so both carry this; today the margin absorbs
+   * it (the worst palette still clears clause G's tightest floor several times
+   * over) and RFC-21 §2.9 asserts that, with the bound at which it stops being
+   * absorbable.
    */
   flat: number;
   /**

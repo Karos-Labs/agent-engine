@@ -2869,6 +2869,69 @@ describe.skipIf(!isChromiumInstalled())("RFC-21 §2.9: the one-line plate is sep
         ].join("\n"),
       );
 
+      // ── 0. THE OWNER'S ASSERTION, FIRST: SAME PLATE, SAME VERDICT ──
+      //
+      // "Grey" named a client, not a failure mode. The requirement that follows
+      // is not that a metric be pretty across palettes; it is that the FLOOR
+      // reach the same conclusion about the same plate whatever the brand's
+      // colours are. Asserted before any number, because it is the property,
+      // and the numbers below only explain it.
+      for (const scale of ["l", "s"] as const) {
+        const verdicts = measurements.filter((r) => r.scale === scale);
+        const outcomes = new Set(verdicts.map((r) => `${r.ok}:${[...r.kinds].sort().join(",")}`));
+        expect(
+          outcomes.size,
+          `at fontScale ${scale} the SAME PLATE got different verdicts on different brand palettes: ` +
+            verdicts.map((r) => `${r.palette}=${r.ok ? "pass" : r.kinds.join("/")}`).join(", "),
+        ).toBe(1);
+      }
+
+      // ── 0b. WHICH METRICS ARE PALETTE-INVARIANT, MEASURED RATHER THAN HOPED ──
+      //
+      // Every share is anchored on the MEASURED modal ground and the SUPPLIED
+      // ink token, so none of them is fitted to a literal colour. But the
+      // tolerances are ABSOLUTE distances on the weighted 0-255 scale, and the
+      // fraction of each antialiased ramp that falls in the dead band between
+      // `flat` and `ink` depends on how far apart a brand's two tokens are
+      // (7.9%-13.1% across realistic pairs). So "already relative" is an
+      // argument, and this is the measurement.
+      //
+      // The result is worth stating plainly, because it decides which metric a
+      // future threshold may be calibrated on:
+      //
+      //   INVARIANT   occupiedShare, inkShare, textShare, edgeDensity
+      //   NOT         contentOccupiedShare, flatBackgroundShare
+      //
+      // `contentOccupiedShare` marks a cell when its MEAN has left the ground
+      // by more than `tol.ink`; on a low-contrast brand a part-inked cell's
+      // mean sits closer to the ground, so fewer cells qualify. That is not a
+      // bug to be tuned away — at 137 units of separation an 18-unit dead band
+      // genuinely IS 13% of the signal, and it cannot shrink below the AA noise
+      // floor `flat` exists to clear. It is a fact about 8-bit measurement at
+      // low contrast, and the right response is to know which metrics carry it.
+      const spreadOf = (scale: "l" | "s", of: (r: (typeof measurements)[number]) => number): number => {
+        const vs = measurements.filter((r) => r.scale === scale).map(of);
+        return Math.max(...vs) - Math.min(...vs);
+      };
+      for (const scale of ["l", "s"] as const) {
+        expect(spreadOf(scale, (r) => r.m.edgeDensity), `edgeDensity moved with the palette at ${scale}`).toBeLessThan(0.005);
+        expect(spreadOf(scale, (r) => r.m.occupiedShare), `occupiedShare moved with the palette at ${scale}`).toBeLessThan(0.005);
+        expect(spreadOf(scale, (r) => r.m.inkShare), `inkShare moved with the palette at ${scale}`).toBeLessThan(0.005);
+        expect(spreadOf(scale, (r) => r.m.textShare), `textShare moved with the palette at ${scale}`).toBeLessThan(0.01);
+      }
+      // AND THE TWO THAT DO MOVE, PINNED AS A CEILING RATHER THAN DESCRIBED.
+      // If this ever grows past a fifth of the frame the palette dependence has
+      // started to matter more than the composition, and clause G's floor needs
+      // to be read against measured contrast rather than as a constant.
+      const coccSpread = Math.max(spreadOf("l", (r) => r.m.contentOccupiedShare), spreadOf("s", (r) => r.m.contentOccupiedShare));
+      expect(coccSpread, "contentOccupiedShare is palette-dependent, which is known — this bound is where it stops being tolerable").toBeLessThan(0.2);
+      expect(coccSpread, "contentOccupiedShare stopped moving with the palette — re-read the tolerances before deleting this").toBeGreaterThan(0.05);
+      // The margin that makes the spread survivable TODAY: even the worst
+      // palette clears clause G's tightest floor several times over. This is
+      // the line that goes red first if a future template gets sparser.
+      const worstContent = Math.min(...measurements.map((r) => r.m.contentOccupiedShare));
+      expect(worstContent, "the worst palette no longer clears clause G's cover/closer floor with margin").toBeGreaterThan(2 * CONTENT_OCCUPIED_SHARE_FLOOR.cover);
+
       const display = measurements.filter((r) => r.scale === "l");
       const body = measurements.filter((r) => r.scale === "s");
       expect(display, "no display-scale plates were measured").toHaveLength(PALETTES.length);
