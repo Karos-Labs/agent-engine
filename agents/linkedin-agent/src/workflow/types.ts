@@ -128,10 +128,17 @@ export interface LinkedInSelectedCandidate {
   trend?: TrendCandidate;
 }
 
-/** Step 07b's output: the content mode this run writes in, and the prior run's, for the trace. */
+/**
+ * Step 07b's output: the content mode this run writes in, how it was chosen,
+ * and the prior run's, for the trace.
+ *
+ * `source` precedence (SCRUM-430): "directed" — the typed run note named a
+ * kind of post and it won; "requested" — the dialog's "Kind of post" won;
+ * "rotation" — neither said, least-used mode not equal to the last one.
+ */
 export interface LinkedInContentModeSelection {
   mode: ContentMode;
-  source: "requested" | "rotation";
+  source: "directed" | "requested" | "rotation";
   priorMode?: ContentMode;
 }
 

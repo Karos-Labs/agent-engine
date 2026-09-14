@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readRunDirection, runDirectionField } from "../src/index.js";
+import { CONTENT_MODES, MODE_CUES, modeFromDirection, readRunDirection, runDirectionField, selectContentMode } from "../src/index.js";
 
 /**
  * `readRunDirection` — one answer, for every agent, to two questions:
@@ -254,5 +254,83 @@ describe("readRunDirection — where this run's visuals may come from (mediaSour
     expect(readRunDirection({ mediaSource: "CLIENT" }).mediaSource).toBe("system");
     expect(readRunDirection({ mediaSource: "generate" }).mediaSource).toBe("system");
     expect(readRunDirection({ mediaSource: 7 }).mediaSource).toBe("system");
+  });
+});
+
+describe("readRunDirection — a typed note that names a kind of post outranks the dialog's pick (SCRUM-430)", () => {
+  // Lola picked "Kind of post", typed a note about what this run should
+  // actually be, and expected the note to win. linkedin-agent read the two
+  // independently, so the chip decided the shape. This is the shared answer,
+  // mirroring tiktok's "customPrompt wins over requestedTopic": the typed
+  // thing beats the clicked thing, on the axis the typed thing speaks to.
+
+  it("reads a hot-news cue as a mode override, and still hands the sentence to the model", () => {
+    const d = readRunDirection({ customPrompt: "React to this week's funding news in our space" });
+    expect(d.modeOverride).toBe("hot-news");
+    expect(d.direction).toBe("React to this week's funding news in our space");
+  });
+
+  it("reads a deep-value cue and an open-discussion cue", () => {
+    expect(readRunDirection({ customPrompt: "Lessons from our first enterprise deal" }).modeOverride).toBe("deep-value");
+    expect(readRunDirection({ customPrompt: "Ask the audience whether they would ship on a Friday" }).modeOverride).toBe("open-discussion");
+  });
+
+  it("leaves the pick standing when the note says nothing about the kind of post", () => {
+    // A topic note and a style note both speak to other axes. Forcing a mode
+    // off either would override a choice the client made on purpose.
+    expect(readRunDirection({ customPrompt: "Focus on the product launch" }).modeOverride).toBeUndefined();
+    expect(readRunDirection({ customPrompt: "Keep it shorter than usual" }).modeOverride).toBeUndefined();
+    expect(readRunDirection({}).modeOverride).toBeUndefined();
+  });
+
+  it("refuses to guess when the note names two kinds of post", () => {
+    // "a deep dive reacting to this week's news" is two modes. Picking one
+    // silently is exactly the decision this module leaves to a person.
+    expect(modeFromDirection("A deep dive reacting to this week's news")).toBeUndefined();
+  });
+
+  it("is read off the bare instruction, never off a labelled brief line", () => {
+    // "Tone: how-to" is a form field, not a request to change the kind of post.
+    const d = readRunDirection({ tone: "how to sound", audience: "founders" });
+    expect(d.modeOverride).toBeUndefined();
+    expect(d.direction).toContain("Tone: how to sound");
+  });
+
+  it("is omitted, not present-and-undefined, when absent", () => {
+    expect("modeOverride" in readRunDirection({ customPrompt: "Focus on the product launch" })).toBe(false);
+  });
+
+  it("wins over a requested mode once handed to selectContentMode, exactly as a requested mode wins over rotation", () => {
+    // The step-07b wiring: `selectContentMode(recent, directed ?? requested)`.
+    const directed = readRunDirection({ customPrompt: "Ask the audience: is remote hiring dead?" }).modeOverride;
+    expect(selectContentMode(["open-discussion", "open-discussion"], directed ?? "hot-news")).toBe("open-discussion");
+    // And with no directed mode the requested one still decides.
+    const notDirected = readRunDirection({ customPrompt: "Focus on the product launch" }).modeOverride;
+    expect(selectContentMode(["open-discussion"], notDirected ?? "hot-news")).toBe("hot-news");
+  });
+
+  it("every content mode has cues, and no cue is a bare word that could appear in any sentence", () => {
+    // Record<ContentMode, …> already makes a missing mode a type error; this
+    // pins the runtime shape and the asymmetry rule the table's comment states.
+    for (const mode of CONTENT_MODES) {
+      expect(MODE_CUES[mode].length).toBeGreaterThan(0);
+      for (const cue of MODE_CUES[mode]) {
+        expect(cue).toBe(cue.toLowerCase());
+        // A single common English word is a false-positive machine ("news",
+        // "poll", "breaking"). Every cue is a phrase, or a word no one writes
+        // by accident.
+        expect(cue.includes(" ") || cue.includes("-") || cue.includes(":") || cue.length >= 8).toBe(true);
+      }
+    }
+  });
+
+  it("no cue belongs to two modes, so a single phrase can never be ambiguous by construction", () => {
+    const seen = new Map<string, string>();
+    for (const mode of CONTENT_MODES) {
+      for (const cue of MODE_CUES[mode]) {
+        expect(seen.get(cue), `"${cue}" is listed under both ${seen.get(cue)} and ${mode}`).toBeUndefined();
+        seen.set(cue, mode);
+      }
+    }
   });
 });
