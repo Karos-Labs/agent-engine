@@ -2221,7 +2221,11 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
         // the cover role would flatter the controls with clause E.
         rows.push({
           band: "NEGLECTED",
-          label: index < 2 ? `grey screen ${index === 0 ? "grid" : "glyph"}` : `${templateBasename(entry.template)} EMPTY`,
+          // Every control is now an empty-slot render: the two grey-screen
+          // rows were `headline-focus.html` and left with it (see OUT_OF_SCOPE).
+          // The index-based label they used to share printed the wrong template
+          // name onto whatever slid into those slots, so it reads the render.
+          label: `${templateBasename(entry.template)} EMPTY`,
           archetype: templateBasename(entry.template),
           role: "interior",
           occ: entry.metrics.occupiedShare,

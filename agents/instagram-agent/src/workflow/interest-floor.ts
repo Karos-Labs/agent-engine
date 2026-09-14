@@ -768,8 +768,13 @@ export const FLAT_BACKGROUND_CEILING = 0.7;
  * more than the rule requires, so it cannot be a bar moved to make something
  * green. 1.48x over 19 populated rows, 4.75x over the neglected ceiling.
  *
- * `closer` moves 0.30 -> **0.31**, the rule-1 literal and STRICTER than this
- * branch first proposed. 19 rows, POPULATED 0.5722-0.6681, margin 1.85x.
+ * `closer` moves 0.30 -> **0.31**. 19 rows, POPULATED 0.5722-0.6681, margin
+ * 1.85x. Re-run on the SHIPPED tree (CI 34805932618), with the two cut
+ * archetypes held out of the control set, rule 1's midpoint is **0.28** and the
+ * NEGLECTED ceiling is 0.0024 over six empty-slot renders — so 0.31 is one rung
+ * STRICTER than the rule's own answer, and stricter again than the 0.30 this
+ * branch first proposed off Edge numbers. It is not moved down to match: the
+ * safe direction is the one that refuses more.
  *
  * ⚠ **0.31's BASIS INCLUDES AN OBJECT THAT MAY BE DELETED, AND WHOEVER DELETES
  * IT OWNS THIS NUMBER.** The 0.5722-0.6681 band was measured on a

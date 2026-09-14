@@ -1108,3 +1108,32 @@ new in this branch and were written to prove the two cut archetypes were fixed. 
 into scope and get their bounded object (§11.4), or those four guards leave the PR with the work they test. **They
 cannot be made green on a tree that keeps the hatch, and they must not be weakened to try.** Cutting a guard
 alongside the feature it tests is coherent; cutting it alone is not.
+
+## 11.7 THE SWEEP RE-RUN ON THE SHIPPED TREE — CI 34805932618
+
+The bands in §11.2 were measured with `headline_focus` and heroless `slide.html` still in both bands. With those
+two held out (`OUT_OF_SCOPE`) the sweep is re-run over what actually ships, and the numbers move. **These are the
+provenance for the two constants this phase changes; §11.2's are the provenance for the CUT.**
+
+```
+NEGLECTED ceiling: occ 0.0024  COCC 0.0024  (over 6 controls, all empty-slot renders)
+cover     POPULATED n= 19  min occ 0.2670 (floor 0.18, 1.48x)  max LER 0.1469 (ceiling 0.22, 1.50x)
+          -> RULE 1 - bands separate; midpoint 0.13
+closer    POPULATED n= 19  min occ 0.5722 (floor 0.31, 1.85x)  max LER 0.2028 (ceiling 0.22, 1.08x)
+          -> RULE 1 - bands separate; midpoint 0.28
+interior  POPULATED n= 76  min occ 0.2857 (floor 0.30, 0.95x)  max LER 0.2889 (ceiling 0.28, 0.97x)
+          -> RULE 2 - the FIRST remedy is the TEMPLATE
+```
+
+**Both shipped constants are now MORE conservative than the rule's own answer, not less**: `cover` 0.18 against a
+midpoint of 0.13, `closer` 0.31 against 0.28. The earlier "0.31 is the rule-1 literal" was true of the sweep that
+included the cut archetypes as controls; on the shipped control set it is one rung stricter, which is the safe
+direction and is why it is not moved down to match.
+
+**And one finding that is new, and belongs to whoever merges this.** At `interior` = 0.30 the lowest composed row
+on a SHIPPED archetype is `comparison-card` at `en ltr short s`, **occ 0.2857 — 0.95x the floor.** Clause D is a
+conjunction and that plate measures `flat` 0.6592, under `FLAT_BACKGROUND_CEILING` 0.70, so **the occupancy limb is
+never reached and no live run is refused for this.** But the sweep's 1.15x gate is not met, and by §5.6 rule 2 that
+is a TEMPLATE finding on `comparison-card` rather than a reason to move 0.30. It is latent behind the
+`stat-callout` rectangle failure in the same loop and will surface the moment that one is fixed. **0.30 is the
+value the tree shipped with and it is not moved here; the plate is the bug.**
