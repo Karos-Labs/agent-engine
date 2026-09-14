@@ -4,6 +4,7 @@ import {
   ACCENT_MIN_SHARE,
   CLIPPED_EDGE_SHARE_CEILING,
   CONTENT_OCCUPIED_SHARE_FLOOR,
+  DISPLAY_TYPE_SCALE_FLOOR,
   FLAT_BACKGROUND_CEILING,
   FULL_BLEED_IMAGERY_SHARE,
   IMAGERY_OR_DEVICE_FLOOR,
@@ -57,6 +58,22 @@ const EPS = 0.001;
 /** A slide that clears every clause at every role, as the base to break one field of. */
 function metrics(overrides: Partial<SlideMetrics> = {}): SlideMetrics {
   return passingSlideMetrics(overrides);
+}
+
+/**
+ * The same base with NO SUBJECT: no imagery, no drawn device.
+ *
+ * Since 2026-09-14 clause C abstains on a plate that carries a subject — a
+ * large quiet region is composition when something is in frame and neglect
+ * when nothing is (`plateSubject`). `passingSlideMetrics` carries
+ * `imageryOrDeviceShare` 0.34, so every clause-C case has to say explicitly
+ * that its plate is bare, or it is testing the waiver rather than the clause.
+ *
+ * `passingSlideProbe` reports no `displayTypeScale`, so the type limb abstains
+ * here too and the plate has neither.
+ */
+function bare(overrides: Partial<SlideMetrics> = {}): SlideMetrics {
+  return passingSlideMetrics({ imageryShare: 0, graphicShare: 0, imageryOrDeviceShare: 0, ...overrides });
 }
 
 function check(m: SlideMetrics, role: SlideRole, slide = 3, opts: { downgradedForImages?: ReadonlySet<number> } = {}) {
@@ -164,11 +181,12 @@ describe("checkInterestFloor: every clause fires alone", () => {
 
   it("C — dead space: one contiguous hole over the role's ceiling, with the rectangle's own corners in the sentence", () => {
     const verdict = check(
-      metrics({ largestEmptyRect: { x: 0, y: 0, w: 1080, h: 590 }, largestEmptyRectShare: 0.41 }),
+      bare({ largestEmptyRect: { x: 0, y: 0, w: 1080, h: 590 }, largestEmptyRectShare: 0.41 }),
       "cover",
       1,
     );
-    expect(kinds(verdict)).toEqual(["dead-space"]);
+    // `bare`, not `metrics`: a plate carrying a subject is allowed this hole.
+    expect(kinds(verdict)).toEqual(["dead-space", "no-device"]);
     expect(verdict.findings[0]?.sentence).toBe(
       "slide 1 — an empty rectangle covered 41% of the plate (0,0 to 1080,590); the ceiling is 22% for a cover.",
     );
@@ -176,42 +194,101 @@ describe("checkInterestFloor: every clause fires alone", () => {
   });
 
   it("C — boundary: the interior ceiling is looser than the cover's, and each is exact to 0.001", () => {
-    expect(check(metrics({ largestEmptyRectShare: LARGEST_EMPTY_RECT_CEILING.interior - EPS }), "interior").ok).toBe(true);
-    expect(kinds(check(metrics({ largestEmptyRectShare: LARGEST_EMPTY_RECT_CEILING.interior + EPS }), "interior"))).toEqual(["dead-space"]);
-    expect(check(metrics({ largestEmptyRectShare: LARGEST_EMPTY_RECT_CEILING.cover - EPS }), "cover").ok).toBe(true);
-    expect(kinds(check(metrics({ largestEmptyRectShare: LARGEST_EMPTY_RECT_CEILING.cover + EPS }), "cover"))).toEqual(["dead-space"]);
+    // Interiors are exempt from clause E, so a bare interior reports dead-space alone.
+    expect(check(bare({ largestEmptyRectShare: LARGEST_EMPTY_RECT_CEILING.interior - EPS }), "interior").ok).toBe(true);
+    expect(kinds(check(bare({ largestEmptyRectShare: LARGEST_EMPTY_RECT_CEILING.interior + EPS }), "interior"))).toEqual(["dead-space"]);
+    expect(check(bare({ largestEmptyRectShare: LARGEST_EMPTY_RECT_CEILING.cover - EPS }), "cover").findings.map((f) => f.kind)).toEqual(["no-device"]);
+    expect(kinds(check(bare({ largestEmptyRectShare: LARGEST_EMPTY_RECT_CEILING.cover + EPS }), "cover"))).toEqual(["dead-space", "no-device"]);
     // 0.25 sits between the two: legitimate mid-carousel, a defect on a cover.
-    expect(check(metrics({ largestEmptyRectShare: 0.25 }), "interior").ok).toBe(true);
-    expect(kinds(check(metrics({ largestEmptyRectShare: 0.25 }), "cover"))).toEqual(["dead-space"]);
+    expect(check(bare({ largestEmptyRectShare: 0.25 }), "interior").ok).toBe(true);
+    expect(kinds(check(bare({ largestEmptyRectShare: 0.25 }), "cover"))).toEqual(["dead-space", "no-device"]);
   });
 
-  it("D — substance: flat AND idle fails; flat alone does NOT, and idle alone does not either", () => {
+  /**
+   * THE OWNER'S RULE, AS A PAIR. 2026-09-14: *"the difference between clean
+   * design and bad design is not the absence of interest, it is the absence of
+   * noise."* `@semrush`'s reference plate leaves its whole lower-left quadrant
+   * empty and carries a four-node diagram; the owner's grey screen has a hole
+   * the same size and nothing in it. Both sides are asserted here, because a
+   * waiver tested only on the plate it is meant to admit is a waiver nobody
+   * has checked can refuse.
+   */
+  it("C — a plate that carries a SUBJECT is allowed its quiet; one that carries nothing is not", () => {
+    const hole = { largestEmptyRect: { x: 0, y: 0, w: 1080, h: 800 }, largestEmptyRectShare: 0.52 };
+    // Imagery in frame: the hole is composition.
+    const withImagery = check(metrics(hole), "interior");
+    expect(withImagery.findings.map((f) => f.kind)).not.toContain("dead-space");
+    expect(withImagery.waived.map((f) => f.kind)).toContain("dead-space");
+    expect(withImagery.waived[0]?.waivedReason).toMatch(/imagery or a drawn device/u);
+    // Display-scale TYPE is the other way to carry a plate, and it is read off
+    // the DOM probe rather than the pixels.
+    const bigType = checkInterestFloor(bare(hole), { ...passingSlideProbe(3), displayTypeScale: DISPLAY_TYPE_SCALE_FLOOR }, "interior", { slide: 3 });
+    expect(bigType.findings.map((f) => f.kind)).not.toContain("dead-space");
+    expect(bigType.waived[0]?.waivedReason).toMatch(/display scale/u);
+    // And NEITHER: refused, exactly as before.
+    const neither = checkInterestFloor(bare(hole), { ...passingSlideProbe(3), displayTypeScale: DISPLAY_TYPE_SCALE_FLOOR - 0.001 }, "interior", { slide: 3 });
+    expect(neither.findings.map((f) => f.kind)).toContain("dead-space");
+  });
+
+  /**
+   * THE ONE PLATE THIS WHOLE SYSTEM EXISTS FOR, re-asserted after clause D was
+   * demoted. `boringSlideMetrics` is the owner's grey screen as MEASURED off
+   * the 2026-09-08 Karos Labs renders, and demoting an occupancy gate must not
+   * let it through.
+   */
+  it("THE GREY SCREEN IS STILL REFUSED, with clause D reporting rather than gating", () => {
+    for (const role of ["cover", "interior", "closer"] as const) {
+      const verdict = check(boringSlideMetrics(), role);
+      expect(verdict.ok, `the grey screen passed at ${role}`).toBe(false);
+      expect(verdict.findings.map((f) => f.kind), `at ${role}`).toContain("dead-space");
+    }
+    // And the demoted measurement is still REPORTED, so the number a reader
+    // goes looking for is present rather than missing.
+    const warned = check(boringSlideMetrics(), "interior").warnings.map((w) => w.kind);
+    expect(warned).toContain("low-occupancy");
+  });
+
+  it("D — DEMOTED: flat AND idle now REPORTS instead of failing, and the number is unchanged", () => {
+    // This case used to read "flat AND idle FAILS". It reports. The conjunction
+    // itself is untouched — the same two limbs, the same constants — so a
+    // reader comparing an old gate payload to a new one sees the same numbers
+    // under a different heading. See the clause-D block in `interest-floor.ts`
+    // for the two measurements that demoted it.
     const flatAndIdle = metrics({ flatBackgroundShare: 0.93, occupiedShare: 0.08, imageryOrDeviceShare: 0.2 });
-    expect(kinds(check(flatAndIdle, "interior", 5))).toEqual(["empty"]);
+    const verdict = check(flatAndIdle, "interior", 5);
+    expect(kinds(verdict)).toEqual([]);
+    expect(verdict.ok).toBe(true);
+    const low = verdict.warnings.find((w) => w.kind === "low-occupancy");
+    expect(low, "the demoted measurement stopped being reported — that is a deletion, not a demotion").toBeDefined();
+    expect(low?.measured).toMatchObject({ flatBackgroundShare: 0.93, occupiedShare: 0.08, formerFloor: OCCUPIED_SHARE_FLOOR.interior });
 
-    // Flat alone: a bold type poster. This is the case a single
-    // flat-background ceiling would kill, and it must pass.
-    expect(check(metrics({ flatBackgroundShare: 0.93, occupiedShare: 0.52 }), "interior").ok).toBe(true);
-    // Idle alone: a photograph with a lot of quiet sky. Nothing is flat
-    // against the brand ground, so there is no emptiness to fail.
-    expect(check(metrics({ flatBackgroundShare: 0.2, occupiedShare: 0.08 }), "interior").ok).toBe(true);
+    // Neither limb alone ever reported, and that is unchanged.
+    expect(check(metrics({ flatBackgroundShare: 0.93, occupiedShare: 0.52 }), "interior").warnings.map((w) => w.kind)).not.toContain("low-occupancy");
+    expect(check(metrics({ flatBackgroundShare: 0.2, occupiedShare: 0.08 }), "interior").warnings.map((w) => w.kind)).not.toContain("low-occupancy");
   });
 
-  it("D — the sentence is the one the spec wrote, numbers included", () => {
+  it("D — the sentence still carries both numbers, and now says it gates nothing", () => {
     const verdict = check(metrics({ flatBackgroundShare: 0.93, occupiedShare: 0.08, imageryOrDeviceShare: 0.2 }), "interior", 5);
-    expect(verdict.findings[0]?.sentence).toBe(
-      "slide 5 — 93% of the pixels were the background colour and only 8% of the frame was occupied (floor 30% for an interior slide).",
+    const low = verdict.warnings.find((w) => w.kind === "low-occupancy");
+    expect(low?.sentence).toBe(
+      "slide 5 — 93% of the pixels were the background colour and only 8% of the frame was occupied (the floor this used to fail at was 30% for an interior slide); reported since 2026-09-14, gates nothing.",
     );
-    expect(verdict.findings[0]?.steer).toBe(
-      "Either give slide 5 a device (figure, bars, before/after, timeline, versus) or merge it into slide 4 and let the carousel be one slide shorter.",
-    );
+    // A warning carries no steer: there is nothing for a redraft to fix.
+    expect(low).not.toHaveProperty("steer");
   });
 
-  it("D — boundary: both halves are exact to 0.001, on both the flat ceiling and each role's occupancy floor", () => {
+  it("D — boundary: both halves are still exact to 0.001, on the WARNING rather than on a refusal", () => {
+    // The conjunction and both constants are untouched by the demotion, so the
+    // boundary case is kept verbatim and only the assertion moves from `ok` to
+    // the warning list. That is the point of demoting rather than deleting: the
+    // number still has to be right, because the next phase calibrates on it.
     const idle = (flat: number, occupied: number) => metrics({ flatBackgroundShare: flat, occupiedShare: occupied, imageryOrDeviceShare: 0.2 });
-    expect(check(idle(FLAT_BACKGROUND_CEILING + EPS, OCCUPIED_SHARE_FLOOR.interior - EPS), "interior").ok).toBe(false);
-    expect(check(idle(FLAT_BACKGROUND_CEILING - EPS, OCCUPIED_SHARE_FLOOR.interior - EPS), "interior").ok).toBe(true);
-    expect(check(idle(FLAT_BACKGROUND_CEILING + EPS, OCCUPIED_SHARE_FLOOR.interior + EPS), "interior").ok).toBe(true);
+    const warnedAt = (m: SlideMetrics) => check(m, "interior").warnings.some((w) => w.kind === "low-occupancy");
+    expect(warnedAt(idle(FLAT_BACKGROUND_CEILING + EPS, OCCUPIED_SHARE_FLOOR.interior - EPS))).toBe(true);
+    expect(warnedAt(idle(FLAT_BACKGROUND_CEILING - EPS, OCCUPIED_SHARE_FLOOR.interior - EPS))).toBe(false);
+    expect(warnedAt(idle(FLAT_BACKGROUND_CEILING + EPS, OCCUPIED_SHARE_FLOOR.interior + EPS))).toBe(false);
+    // And none of the three refuses anything any more.
+    expect(check(idle(FLAT_BACKGROUND_CEILING + EPS, OCCUPIED_SHARE_FLOOR.interior - EPS), "interior").ok).toBe(true);
     // ── THE ROLES ARE NOT ORDERED THE WAY EDITORIAL INTENT WOULD ORDER THEM,
     //    AND THAT IS THE MEASUREMENT TALKING. ──
     //
@@ -238,7 +315,15 @@ describe("checkInterestFloor: every clause fires alone", () => {
     expect(between.occupiedShare).toBeGreaterThan(lo);
     expect(between.occupiedShare).toBeLessThan(hi);
     expect(check(between, looserRole, looserRole === "cover" ? 1 : 3).ok).toBe(true);
-    expect(kinds(check(between, stricterRole, stricterRole === "cover" ? 1 : 3))).toEqual(["empty"]);
+    // Separated by ROLE on the warning now, not on a refusal: the two floors are
+    // still distinct and a plate between them is still told apart by role, which
+    // is the property this case pins. It is worth keeping precisely because the
+    // next phase calibrates on these two constants.
+    const warnedAtRole = (role: SlideRole) =>
+      check(between, role, role === "cover" ? 1 : 3).warnings.some((w) => w.kind === "low-occupancy");
+    expect(warnedAtRole(looserRole)).toBe(false);
+    expect(warnedAtRole(stricterRole)).toBe(true);
+    expect(kinds(check(between, stricterRole, stricterRole === "cover" ? 1 : 3))).toEqual([]);
     expect(check(idle(0.8, OCCUPIED_SHARE_FLOOR.closer + EPS), "closer", 6).ok).toBe(true);
   });
 
@@ -611,17 +696,29 @@ describe("checkInterestFloor: clause G — a decorated empty plate", () => {
     // produced it. An intermediate revision of this phase put the interior
     // floor at 0.12, which took clause D off this plate entirely; that is the
     // check that said the number was wrong.
-    expect(kinds(check(boringSlideMetrics(), "interior", 3)).filter((k) => k === "empty")).toHaveLength(1);
-    expect(kinds(check(boringSlideMetrics(), "interior", 3)).sort()).toEqual(["dead-space", "empty"]);
-    // A plate that is genuinely idle AND has nothing to read trips D and G on
-    // two different masks, and gets one finding from each — which is correct,
-    // because they are two different sentences about two different masks. The
-    // invariant is that neither clause ever fires twice for one plate.
+    // Clause D was demoted on 2026-09-14, so the grey screen now produces ONE
+    // finding rather than two: `dead-space` from clause C. The
+    // never-double-report property it was written for is stronger than before
+    // — there is only one clause left that can say `empty` — and the case is
+    // kept because the day a second one appears this line is where it shows.
+    expect(kinds(check(boringSlideMetrics(), "interior", 3)).filter((k) => k === "empty")).toHaveLength(0);
+    expect(kinds(check(boringSlideMetrics(), "interior", 3)).sort()).toEqual(["dead-space"]);
+    // And the demoted measurement still fires on it, as a report.
+    expect(check(boringSlideMetrics(), "interior", 3).warnings.map((w) => w.kind)).toContain("low-occupancy");
+    // A plate that is genuinely idle AND has nothing to read used to trip D and
+    // G on two different masks and get one finding from each. Clause D was
+    // demoted on 2026-09-14, so it now gets ONE finding (clause G) and one
+    // WARNING (the demoted occupancy measurement) — and the invariant this case
+    // was written for is stronger rather than weaker: with one clause left that
+    // can say `empty`, a second occurrence means a clause fired twice.
     const idleAndUnreadable = metrics({ flatBackgroundShare: 0.97, occupiedShare: 0.03, contentOccupiedShare: 0.03, imageryOrDeviceShare: 0.2 });
-    const both = kinds(check(idleAndUnreadable, "interior", 3)).filter((k) => k === "empty");
-    expect(both).toHaveLength(2);
-    const sentences = new Set(check(idleAndUnreadable, "interior", 3).findings.filter((f) => f.kind === "empty").map((f) => f.sentence));
-    expect(sentences.size, "the two `empty` findings must be two different sentences, not one clause firing twice").toBe(2);
+    const verdict = check(idleAndUnreadable, "interior", 3);
+    expect(kinds(verdict).filter((k) => k === "empty"), "a clause fired twice for one plate").toHaveLength(1);
+    // Both masks are still SPOKEN FOR — one refuses, one reports — so nothing
+    // about this plate became invisible when the gate moved.
+    expect(verdict.warnings.map((w) => w.kind)).toContain("low-occupancy");
+    const sentences = new Set([...verdict.findings, ...verdict.warnings].filter((f) => f.sentence.includes("%")).map((f) => f.sentence));
+    expect(sentences.size, "the occupancy report and the content refusal must be two different sentences").toBeGreaterThanOrEqual(2);
   });
 });
 
@@ -690,8 +787,10 @@ describe("checkInterestFloor: the one waiver", () => {
 
   it("does not waive a DIFFERENT slide, and never waives any other clause", () => {
     expect(kinds(check(typeOnly, "cover", 1, { downgradedForImages: new Set([4]) }))).toEqual(["no-device"]);
-    const holed = metrics({ largestEmptyRectShare: 0.5 });
-    expect(kinds(check(holed, "cover", 1, { downgradedForImages: new Set([1]) }))).toEqual(["dead-space"]);
+    // `bare`: a plate carrying imagery earns its hole since 2026-09-14, so a
+    // dead-space case has to be a plate with no subject on it.
+    const holed = bare({ largestEmptyRectShare: 0.5 });
+    expect(kinds(check(holed, "cover", 1, { downgradedForImages: new Set([1]) })).sort()).toEqual(["dead-space"]);
   });
 });
 
@@ -701,8 +800,12 @@ describe("the steer the writer receives", () => {
     return [
       ...check(metrics({ inkShare: 0.004 }), "interior", 2).findings,
       ...checkInterestFloor(metrics(), passingSlideProbe(3, { overflow: true, overflowing: [".headline"] }), "interior", { slide: 3 }).findings,
-      ...check(metrics({ largestEmptyRectShare: 0.42 }), "cover", 1).findings,
-      ...check(metrics({ flatBackgroundShare: 0.93, occupiedShare: 0.08, imageryOrDeviceShare: 0.2 }), "interior", 5).findings,
+      // `bare` since 2026-09-14: clause C waives a plate that carries a
+      // subject, so a dead-space specimen has to be a plate with none.
+      ...check(bare({ largestEmptyRectShare: 0.42 }), "cover", 1).findings.filter((f) => f.kind === "dead-space"),
+      // Clause D is reporting-only, so the `empty` specimen now comes from
+      // clause G — nothing to READ — which was always the substantive limb.
+      ...check(metrics({ contentOccupiedShare: 0.01 }), "interior", 5).findings,
       ...check(metrics({ imageryOrDeviceShare: 0 }), "closer", 6).findings,
       ...check(metrics({ textShare: 0.61 }), "interior", 4).findings,
     ];
@@ -823,8 +926,14 @@ function findingFor(kind: InterestFinding["kind"], slide: number, role: SlideRol
   const byKind: Record<InterestFinding["kind"], Partial<SlideMetrics>> = {
     "render-integrity": { inkShare: 0.004 },
     clipped: { clippedEdgeShare: 0.02 },
-    "dead-space": { largestEmptyRectShare: 0.45 },
-    empty: { flatBackgroundShare: 0.93, occupiedShare: 0.08, imageryOrDeviceShare: 0.2 },
+    // `imageryOrDeviceShare: 0` since 2026-09-14: clause C abstains on a plate
+    // that carries a subject, so a dead-space fixture has to be a BARE plate or
+    // it is exercising the waiver instead of the clause.
+    "dead-space": { largestEmptyRectShare: 0.45, imageryShare: 0, graphicShare: 0, imageryOrDeviceShare: 0 },
+    // Clause D was demoted to reporting-only on 2026-09-14, so an `empty`
+    // finding now comes from clause G — nothing to READ on the plate — which is
+    // the limb that was always the substantive one.
+    empty: { contentOccupiedShare: 0.01 },
     "no-device": { imageryShare: 0, graphicShare: 0, imageryOrDeviceShare: 0 },
     "text-wall": { textShare: 0.7 },
     // Unreachable through this helper, and that is the clause's whole point:
@@ -853,7 +962,7 @@ function copyWithLayouts(layouts: Partial<Record<number, InstagramCopyOutput["sl
  * clause did.
  */
 function coverDeadSpace(rect: { x: number; y: number; w: number; h: number }, share: number): InterestFinding {
-  const verdict = checkInterestFloor(metrics({ largestEmptyRect: rect, largestEmptyRectShare: share }), passingSlideProbe(1), "cover", { slide: 1 });
+  const verdict = checkInterestFloor(bare({ largestEmptyRect: rect, largestEmptyRectShare: share }), passingSlideProbe(1), "cover", { slide: 1 });
   const finding = verdict.findings.find((f) => f.kind === "dead-space");
   if (finding === undefined) throw new Error(`a ${share} rectangle produced no dead-space finding at the cover role`);
   return finding;

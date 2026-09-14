@@ -348,6 +348,7 @@ declare function getComputedStyle(element: ProbeElement): {
   // in a Chromium-free test supplies only what the case under test needs, and
   // a probe that throws on a partial style object would be untestable in
   // exactly the environment it was exported to be testable in.
+  fontSize?: string;
   backgroundImage?: string;
   backgroundClip?: string;
   webkitBackgroundClip?: string;
@@ -404,6 +405,32 @@ export function probePage(canvas: { n: number; w: number; h: number }): {
   fontFamiliesUsed: string[];
   markRuns: number;
   markRunsPainted: number;
+  /**
+   * The largest rendered font size on the plate, as a FRACTION OF FRAME
+   * HEIGHT. 0 when nothing text-bearing rendered.
+   *
+   * ## Why a plate needs this measured
+   *
+   * Every emptiness clause in `interest-floor.ts` asks how much of the frame
+   * is COVERED, and the owner's correction of 2026-09-14 is that covered is
+   * not the same as interesting: *"the difference between clean design and
+   * bad design is not the absence of interest, it is the absence of noise.
+   * Interest comes from bold typography, excellent contrast and strong
+   * visuals -- not from extra layers, random gradients or invented numbers."*
+   *
+   * Contrast is already measured (`groundInkContrast`) and visuals are
+   * already measured (`imageryOrDeviceShare`). **Typography was the one of
+   * the three with no instrument at all**, so a plate carrying one enormous
+   * confident line and a plate carrying the same words at caption size were
+   * indistinguishable to every clause in the system.
+   *
+   * Read from the DOM rather than inferred from pixels because it is a fact
+   * the document already knows exactly, and every pixel proxy tried for it
+   * has failed its controls (RFC-21 §2.5-2.6.2: three separators dead, the
+   * last of them because `edgeDensity` is dominated by imagery share rather
+   * than by glyph size).
+   */
+  displayTypeScale: number;
 } {
   const describe = (element: ProbeElement): string => {
     const tag = String(element.tagName || "").toLowerCase();
@@ -422,6 +449,7 @@ export function probePage(canvas: { n: number; w: number; h: number }): {
   const offscreen: string[] = [];
   const families: string[] = [];
   let textArea = 0;
+  let maxFontPx = 0;
   let markRuns = 0;
   let markRunsPainted = 0;
 
@@ -531,8 +559,17 @@ export function probePage(canvas: { n: number; w: number; h: number }): {
     const text = (element.textContent ?? "").trim();
     if (element.children.length === 0 && text !== "") {
       textArea += rect.width * rect.height;
-      const family = String(getComputedStyle(element).fontFamily || "").split(",")[0]?.trim().replace(/^["']|["']$/g, "");
+      const style = getComputedStyle(element);
+      const family = String(style.fontFamily || "").split(",")[0]?.trim().replace(/^["']|["']$/g, "");
       if (family !== undefined && family !== "" && families.indexOf(family) === -1) families.push(family);
+      // `parseFloat` rather than a unit-aware parse: a computed `fontSize`
+      // is always in px, and a fake style object in a Chromium-free test
+      // supplies whatever the case needs. A leaf with no rendered box is
+      // skipped so a hidden heading cannot claim the plate is bold.
+      if (rect.width > 0 && rect.height > 0) {
+        const px = parseFloat(String(style.fontSize ?? ""));
+        if (isFinite(px) && px > maxFontPx) maxFontPx = px;
+      }
     }
   }
 
@@ -546,6 +583,7 @@ export function probePage(canvas: { n: number; w: number; h: number }): {
     fontFamiliesUsed: families.sort(),
     markRuns,
     markRunsPainted,
+    displayTypeScale: canvas.h > 0 ? maxFontPx / canvas.h : 0,
   };
 }
 

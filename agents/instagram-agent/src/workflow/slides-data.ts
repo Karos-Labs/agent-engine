@@ -2246,16 +2246,12 @@ export function assembleSlidesData(params: {
       {
         position,
         ...(markPlan !== undefined ? { marks: markPlan } : {}),
-        // ── ONE MATERIAL PER POST IS RIGHT, AND IS DEFERRED (2026-09-14) ──
+        // ── ONE MATERIAL PER POST, NOT ONE PER SLIDE ──
         //
-        // Changing `slide.n` to `1` here — one ground for the whole carousel —
-        // was measured in CI 34863915940 and REVERTED: it makes a HEBREW
-        // `closer.html` fail the interest floor outright, because the ground a
-        // post-wide seed picks is not always the one that plate needed to clear
-        // its number. That is the same finding as the texture revert one commit
-        // earlier, one level down: the floor is pinning the decoration, and a
-        // composition change cannot land until the floor stops gating on ink.
-        // The reasoning below is kept because it is still the right target.
+        // Tried on 2026-09-14 and REVERTED that day because it made a Hebrew
+        // `closer.html` fail clause D outright; re-landed here in the same
+        // change that demotes clause D's occupancy limb, which is what was
+        // refusing it. The composition was never the problem.
         //
         // This used to read `isVariationSlot(slide.n, GROUND_VARIATION_MIX, …)`,
         // so HALF the slides in a carousel took the glyph field and half took
@@ -2279,7 +2275,7 @@ export function assembleSlidesData(params: {
         // starts a different ground — and variety WITHIN the post is the series
         // layer's job (RFC-21 Part 3), which is where the reference accounts
         // get it.
-        groundStyle: isVariationSlot(slide.n, GROUND_VARIATION_MIX, `${params.paletteSeed ?? ""}:ground`) ? "glyph" : "grid",
+        groundStyle: isVariationSlot(1, GROUND_VARIATION_MIX, `${params.paletteSeed ?? ""}:ground`) ? "glyph" : "grid",
         ...(params.targetLanguage !== undefined ? { targetLanguage: params.targetLanguage } : {}),
         ...(params.bcp47 !== undefined ? { bcp47: params.bcp47 } : {}),
       },
