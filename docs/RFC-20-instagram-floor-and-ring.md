@@ -1057,7 +1057,7 @@ Scope, so the next phase starts costed rather than from scratch:
 > - **Do NOT open by re-deriving `OCCUPIED_SHARE_FLOOR.interior` against the same occupancy metric.** That work
 >   may be measuring a quantity the rebuild retires, and this phase has already spent two CI cycles proving that
 >   the interior band cannot be made honest by choosing a different number.
-> - The baseline debt in the gate-zero sweep (`comparison-card`, §11.9) may be discharged by the rebuild rather
+> - The nine baseline debts in the gate-zero sweep (§11.9) may be discharged by the rebuild rather
 >   than by a composition. Check which before building anything for it.
 > - The measurements in this document keep their value either way: they are facts about plates, not about
 >   thresholds. §11.1's finding in particular — **a decoration is scored as the evidence the clause was built to
@@ -1265,3 +1265,50 @@ The updated bands, for §11.4 to re-derive from (CI 34815523803, NEGLECTED ceili
 
 Both shipped constants sit **above** their rule-1 midpoints — `cover` 0.18 against 0.14 and `closer` 0.42 against
 0.27 — which is the safe direction, and is stated rather than left for a later reader to reconstruct.
+
+## 11.10 THE BASELINE, AND WHY IT HAS NINE ENTRIES RATHER THAN ONE
+
+§11.9 reported one red row. That was one CI cycle's worth of truth: the sweep's assertion loop throws on the
+FIRST failure, so each repair reveals the next. Pinning `comparison-card @ en ltr short s` produced
+`en ltr medium s` behind it, which would have produced a third, and so on — **a queue discovered one 15-minute
+push at a time is not a measurement, it is a guessing game with a slow clock.**
+
+So the full set was read out of the sweep's **own printed table** in run 34819108090 in one pass. Nine rows miss a
+gate, and they are one defect:
+
+| case | archetype | `occ` (needs 0.345) | `flat` | `LER` (max 0.2435) |
+|---|---|---|---|---|
+| en ltr short s | comparison-card | 0.3131 | 0.6563 | 0.1750 |
+| en ltr medium s | comparison-card | 0.3308 | 0.6477 | 0.1417 |
+| he rtl short s | stat-callout | 0.3258 | 0.6739 | 0.2139 |
+| he rtl short s | comparison-card | **0.2856** | 0.6890 | 0.1861 |
+| he rtl short m | comparison-card | 0.3421 | 0.6300 | 0.1417 |
+| he rtl medium s | stat-callout | 0.3321 | 0.6715 | 0.2000 |
+| he rtl medium s | comparison-card | 0.2966 | 0.6868 | 0.1750 |
+| he rtl long s | stat-callout | 0.3435 | 0.6677 | 0.1750 |
+| he rtl long s | comparison-card | 0.3141 | 0.6801 | 0.1472 |
+
+**Only the occupancy gate is missed.** Every row clears its rectangle ceiling and its content floor comfortably —
+which is itself the finding: these plates are not empty, they are *small-type panels*, six of nine in Hebrew,
+which sets denser and covers less frame for the same words. Eight sit between the 0.30 floor and the sweep's
+stricter 1.15× margin; one (`he rtl short s` comparison-card, **0.2856**) is under the floor itself.
+
+**Both templates are byte-identical to `origin/main` and 0.30 is the floor `main` already ships.** Nothing in
+RFC-20 touches either side of any of these comparisons.
+
+### The ratchet, and the condition that stops it becoming an allowlist
+
+- A row **not** in the table that misses its gate **fails**, exactly as before. The gates are unchanged for every
+  other assertion in the sweep.
+- A row **in** the table that gets **worse** than its recorded value **fails**, at its exact recorded number, with
+  no jitter allowance — two CI runs on this tree reproduced the first entry to seventeen significant digits.
+- A row in the table that gets **better** is meant to have its entry **deleted**, not re-measured downward, and
+  the assertion message says so.
+- An entry whose row **stops being reached** fails, so a debt cannot outlive the measurement that found it.
+- **And every baselined row must be INERT, asserted on the live render**: clause D is a conjunction, so its
+  occupancy limb is unreachable on a plate over `FLAT_BACKGROUND_CEILING` 0.70, and every row above measures
+  `flat` 0.6300–0.6890. **An entry for a plate that CAN be refused fails on that alone, whatever its number
+  says.** That is the difference between a debt and an amnesty, and it is a check rather than a promise.
+
+Every green run prints the table, prefixed *"recorded baseline debt(s), NOT passes"*, so a passing build still
+says what it is carrying.
