@@ -1036,6 +1036,37 @@ Scope, so the next phase starts costed rather than from scratch:
 3. Only then delete `.copy-art` from both files, and only in the same PR as the object.
 4. Re-run the gate-zero sweep and set `OCCUPIED_SHARE_FLOOR.interior` from the band it prints — **from CI, and from
    a tree where the populated rows are objects rather than decoration.**
+
+> ### ⚠ READ THIS BEFORE RE-DERIVING ANY FLOOR: THE INSTRUMENT IS BEING REBUILT
+>
+> **The owner has ruled that the interest floor is overfitted — that it punishes good simplicity, and that the
+> reference plates must pass.** There is now a four-example sample, and every one of them is a plate we would be
+> glad to ship: two one-line statement plates, a pair of silhouettes on white, a text-only playbook plate, and a
+> single-numeral plate. **All four are good. All four are low-occupancy. All four are refused by our floor.**
+>
+> That is the same shape as everything else in Part 11, one level up: `occupiedShare` measures how much of the
+> frame is *covered*, and "covered" is not "considered". A plate can be deliberate, composed and worth saving
+> while leaving most of the frame empty — that is what the reference accounts actually do — and a share-of-frame
+> metric cannot tell that plate from a neglected one. **This phase kept finding that it could only separate them
+> by adding paint, and paint is what disarms the clauses.** The real answer is not a better number for the same
+> metric; it is a semantic/structural reading of the plate.
+>
+> **So the floor is scheduled for a rebuild, and `occupiedShare` is one of the things under review.** The
+> practical consequence for whoever picks up the deferred work above:
+>
+> - **Do NOT open by re-deriving `OCCUPIED_SHARE_FLOOR.interior` against the same occupancy metric.** That work
+>   may be measuring a quantity the rebuild retires, and this phase has already spent two CI cycles proving that
+>   the interior band cannot be made honest by choosing a different number.
+> - The baseline debt in the gate-zero sweep (`comparison-card`, §11.9) may be discharged by the rebuild rather
+>   than by a composition. Check which before building anything for it.
+> - The measurements in this document keep their value either way: they are facts about plates, not about
+>   thresholds. §11.1's finding in particular — **a decoration is scored as the evidence the clause was built to
+>   look for** — survives any metric, because it is a statement about what paint does to an instrument.
+> - The bounded-object work is still worth doing on its own merits: rf-05's near-empty cover carries a stitched
+>   photograph and rf-11's statement slide carries ten highlighter blocks. **Those plates are not low-occupancy
+>   because they are empty; they are low-occupancy because they are confident.** The object is composition, not a
+>   way to clear a number — and if it is built as a way to clear a number it will be the plinth again.
+
 5. Remove `groundMaterialCssBlock`'s `body:not(:has(.copy-art))` guard, which exists only because those two files
    still carry a screen (§11.6), and re-run the A/B case at its unchanged 0.0005 bound.
 
