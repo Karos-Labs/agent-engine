@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { createRenderCarousel } from "@agent-engine/tool-karos-publish";
 import * as templates from "@agent-engine/tool-karos-templates";
+import { OCCUPIED_SHARE_FLOOR } from "../src/workflow/interest-floor.js";
 import { buildScriptFontHeadForLanguage } from "../src/workflow/script-fonts.js";
 import {
   STUDIO_INTEREST_MARGIN,
@@ -125,12 +126,40 @@ async function resolveThresholds(): Promise<{ thresholds: StudioInterestThreshol
  * the difference is deliberate — `imageryOrDeviceFloor` moved 0.03 -> 0.10
  * on measurements — so this asserts only the clauses an INTERIOR row is
  * actually judged on, which are the ones this file's two cases use.
+ *
+ * ## 2026-09-14, RFC-20: `occupiedShareFloor.interior` JOINS THAT LIST, AND
+ *    THE ASSERTION GETS STRONGER RATHER THAN QUIETER
+ *
+ * It moved 0.30 -> 0.19 on the gate-zero sweep's measured band (POPULATED
+ * flat-gated min 0.3121, NEGLECTED max 0.0746, rule-1 midpoint 0.19), which is
+ * the same category `imageryOrDeviceFloor` is already in: the hand-transcribed
+ * spec row is now history and the module is the policy.
+ *
+ * **Deleting the line would be the wrong repair**, because the defect this
+ * function exists to catch is precisely a studio grading against its own copy
+ * of the numbers — the `resolveThresholds` block above is the story of that
+ * happening silently for a whole phase. So the row is not dropped; it is
+ * re-pointed at the module's live export. `toEqual` against the imported
+ * record is a STRICTER statement than the old `toBe` against a literal: it
+ * covers all three roles instead of one, and it cannot be satisfied by
+ * hand-editing `SPEC_THRESHOLDS` to match, which is the move that would make
+ * this pin meaningless.
+ *
+ * The spec row stays in `SPEC_THRESHOLDS` as the record of what the number
+ * was, exactly as `imageryOrDeviceFloor`'s 0.03 does.
  */
 function assertSpecAndModuleAgree(thresholds: StudioInterestThresholds): void {
   expect(thresholds.largestEmptyRectCeiling.interior).toBe(SPEC_THRESHOLDS.largestEmptyRectCeiling.interior);
-  expect(thresholds.occupiedShareFloor.interior).toBe(SPEC_THRESHOLDS.occupiedShareFloor.interior);
   expect(thresholds.flatBackgroundCeiling).toBe(SPEC_THRESHOLDS.flatBackgroundCeiling);
   expect(thresholds.textShareCeiling).toBe(SPEC_THRESHOLDS.textShareCeiling);
+  // The studio grades against the RUN's floors, all three roles of them.
+  expect(thresholds.occupiedShareFloor).toEqual(OCCUPIED_SHARE_FLOOR);
+  // …and the spec's original is recorded as superseded rather than forgotten:
+  // if a future edit ever puts them back in agreement, that is a real event
+  // and this line is what makes somebody look at why.
+  expect(thresholds.occupiedShareFloor.interior, "the module and the spec agree again — re-read RFC-20 §5.6 before assuming that is correct").not.toBe(
+    SPEC_THRESHOLDS.occupiedShareFloor.interior,
+  );
 }
 
 /** The document shell code owns. `buildStudioTemplateDocument` once it exists; its byte-identical sibling until then. */
