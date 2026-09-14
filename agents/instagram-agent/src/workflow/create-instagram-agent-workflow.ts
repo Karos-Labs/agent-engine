@@ -206,7 +206,7 @@ import {
   type SkeletonHistory,
   type SkeletonVarietyVerdict,
 } from "./skeleton-memory.js";
-import { countComparedEntities, selectSeries, seriesDirective, SERIES_DIRECTIVE_SLIDES } from "./editorial-series.js";
+import { countComparedEntities, selectSeries, seriesBadgeFor, seriesDirective, SERIES_DIRECTIVE_SLIDES } from "./editorial-series.js";
 import {
   buildAutoPromotionRequest,
   cleanShipsFor,
@@ -8325,11 +8325,24 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // what THAT document did rather than accumulating three runs' drops.
         const markReport = { hexesBySlide: new Map<number, string[]>(), issues: [] as EmphasisIssue[], kindsBySlide: new Map<number, string[]>() };
         const markRingForAttempt = runMarkRing();
+        // RFC-21 Part 3 — the series is ANNOUNCED through the `seriesBadge`
+        // slot every bundled template already renders. Until now that slot
+        // carried a per-CLIENT string frozen at setup, so the hook the
+        // reference feed uses sat in the tree with nothing choosing it.
+        //
+        // A client that set its own badge KEEPS it -- an explicit brand
+        // decision beats a derived one, the precedence every other token in
+        // this system uses -- and still gets the series' COMPOSITION. The
+        // badge is how the format is announced; it is not what the format is.
+        const brandTokensForAssembly =
+          seriesChoice === undefined
+            ? frozen.brandTokens
+            : { ...frozen.brandTokens, seriesBadge: seriesBadgeFor(seriesChoice, frozen.brandTokens.seriesBadge) };
         const assembled = assembleSlidesData({
           clientSlug: wf.clientSlug,
           postId: runClaim.postId,
           repoRoot: options.repoRoot,
-          brandTokens: frozen.brandTokens,
+          brandTokens: brandTokensForAssembly,
           copy: copyForAssembly,
           selections: selectionsForAssembly,
           canvas: frozen.styleConfig.canvas,
