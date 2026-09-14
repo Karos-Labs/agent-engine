@@ -201,14 +201,19 @@ describe("02i / 04a / 07g — the grounding gate in the instagram workflow", () 
   }, 60000);
 
   it("off-brief verdicts exhaust the self-check budget the PLAN allowed and DELIVER DEGRADED, naming relevance and its sub-floor score", async () => {
-    // TWO rounds, not three, and the reason is the budget rather than this
-    // gate: a first run for a new client writes its Client Brief (00b1 +
-    // 00b2, $0.155 of the $1.00 target before a single slide is drafted), so
-    // `02j` pulls every lever it has and the last one it needs is "one return
-    // to step 05 instead of two". That is the owner's amendment working as
-    // written — the plan adapts, the run still delivers or holds on its own
-    // merits — and it is why the third round would never be reached. The
-    // assertions below are the ones that matter and none of them is relaxed.
+    // THREE rounds, and the reason is the owner's 2026-09-14 ruling. This case
+    // used to run TWO: a first run for a new client writes its Client Brief
+    // (00b1 + 00b2, $0.155 of the $1.00 target before a single slide is
+    // drafted), so `02j` pulled every lever it had and the last one it needed
+    // was "one return to step 05 instead of two". That rung no longer exists —
+    // the target may adapt OPTIONAL work only — so the same client now plans
+    // over target and gets all three drafts. The plan still adapts, it just
+    // never adapts by taking a draft away.
+    //
+    // The subject of the test is unchanged and none of its assertions are
+    // relaxed: the gate refuses EVERY attempt, the last one falls through, and
+    // the client receives the carousel plus the reason it is degraded. What
+    // changed is only how many refusals it takes to get there.
     //
     // RFC-19 §4 item 6 — WHAT CHANGED, AND WHAT DID NOT. The judge still refuses
     // every draft, at the same floor, in the same words: `07g` scores this 1
@@ -228,6 +233,16 @@ describe("02i / 04a / 07g — the grounding gate in the instagram workflow", () 
     // would have passed, green and meaningless.
     const router = fakeRouterSequence([
       ...auditTurns({ relevance: OFF_BRIEF_VERDICT, qa: undefined }),
+      // Attempt 2: refused again and returned to 05 again. Scout, research and
+      // the angle ran once per run, so only the per-attempt turns are queued —
+      // and `qa: undefined` because a returned attempt never reaches `08b`.
+      ...standardTurns({
+        copy: goodCopyOutput(),
+        vet: goodImageVettingOutput(),
+        relevance: OFF_BRIEF_VERDICT,
+        qa: undefined,
+      }),
+      // Attempt 3 is the last the plan allows, so it FALLS THROUGH and pays on.
       ...standardTurns({
         copy: goodCopyOutput(),
         vet: goodImageVettingOutput(),
@@ -247,8 +262,8 @@ describe("02i / 04a / 07g — the grounding gate in the instagram workflow", () 
     // gate really did refuse on the attempt that shipped. Without this the case
     // would go green the day `07g` silently stopped scoring, which is how this
     // codebase has produced guards that cannot fail.
-    const relevance2 = (await durableStore.getStep(params.runId, "07g-relevance-attempt-2")) as { output: { finalOutput: { score: number } } };
-    expect(relevance2.output.finalOutput.score).toBe(1);
+    const relevanceFinal = (await durableStore.getStep(params.runId, "07g-relevance-attempt-3")) as { output: { finalOutput: { score: number } } };
+    expect(relevanceFinal.output.finalOutput.score).toBe(1);
 
     // The degrade marker names the gate, the score AND the floor, in the judge's
     // own words. The floor is 2, not 3: this client is thinly grounded, so
@@ -273,20 +288,24 @@ describe("02i / 04a / 07g — the grounding gate in the instagram workflow", () 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).toContain("07g-relevance-attempt-1");
     expect(stepIds).toContain("07g-relevance-attempt-2");
-    // Attempt 1 was still RETURNED TO 05 — the fall-through is the last attempt
-    // only, and `05-write-copy-attempt-2` existing is the proof.
+    expect(stepIds).toContain("07g-relevance-attempt-3");
+    // Attempts 1 and 2 were still RETURNED TO 05 — the fall-through is the last
+    // attempt only, and `05-write-copy-attempt-2`/`-3` existing is the proof.
     expect(stepIds).toContain("05-write-copy-attempt-2");
-    // The plan is what decided there were two rounds and not three, and the
-            // reason is on the record: a budget adaptation, never a hold cause.
+    expect(stepIds).toContain("05-write-copy-attempt-3");
+    // The plan is what decided how many rounds there were, and the record now
+    // says THREE with every optional rung spent. A budget adaptation is still
+    // never a hold cause; since 2026-09-14 it is also never an attempt cause.
     const plan = (await durableStore.listSteps(params.runId)).find((s) => s.stepId === "02j-plan-run-budget")?.output as
-      | { plan: { maxSelfCheckAttempts: number }; adaptations: string[] }
+      | { plan: { maxSelfCheckAttempts: number; optionalRevets: boolean }; adaptations: string[] }
       | undefined;
-    expect(plan?.plan.maxSelfCheckAttempts).toBe(2);
-    expect(plan?.adaptations).toContain("one return to step 05 instead of two");
-    expect(stepIds).not.toContain("07g-relevance-attempt-3");
+    expect(plan?.plan.maxSelfCheckAttempts).toBe(3);
+    expect(plan?.plan.optionalRevets).toBe(false);
+    expect(plan?.adaptations).not.toContain("one return to step 05 instead of two");
+    expect(stepIds).not.toContain("07g-relevance-attempt-4");
     // It DOES render now, and that is the point: the render was already paid for
-    // on attempt 2, and throwing it away is what this phase stopped doing.
-    expect(stepIds).toContain("08-render-carousel-attempt-2");
+    // on the last attempt, and throwing it away is what this phase stopped doing.
+    expect(stepIds).toContain("08-render-carousel-attempt-3");
 
     // THE TURN COUNT, ENUMERATED RATHER THAN OBSERVED (RFC-19 §8.2 assertion 9,
     // §11 item 4). This is the real enforcement of "zero added model cost": a new
@@ -295,10 +314,14 @@ describe("02i / 04a / 07g — the grounding gate in the instagram workflow", () 
     //
     //   brief 1 + scout 1 + research 1 + angle 1                              = 4
     //   attempt 1: copy + vet + relevance                                     = 3   (returned to 05 at 07g)
-    //   attempt 2: copy + vet + relevance + value + visual QA                 = 5   (falls through, pays on)
+    //   attempt 2: copy + vet + relevance                                     = 3   (returned to 05 at 07g)
+    //   attempt 3: copy + vet + relevance + value + visual QA                 = 5   (falls through, pays on)
     //   after the loop: packager                                              = 1
-    //                                                                     total 13
-    expect(router.complete).toHaveBeenCalledTimes(13);
+    //                                                                     total 16
+    //
+    // 13 -> 16 is the whole cost of the owner's ruling on this path, enumerated
+    // rather than estimated: one more refused drafting round, three turns.
+    expect(router.complete).toHaveBeenCalledTimes(16);
     // And the queue is EXACTLY spent — a turn left over would mean a step the
     // enumeration above thinks runs did not.
     await expect(router.complete({} as never, {} as never, [] as never, {} as never)).rejects.toThrow(/exhausted/);

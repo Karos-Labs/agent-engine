@@ -14,7 +14,7 @@ import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS, happyTurns, standardTurns
  *
  * The owner's rule (2026-09-09 amendment, binding): the budget ADAPTS and
  * never holds. An estimate over the $1.00 target adapts the plan before the
- * attempt loop and records a note; an actual spend over the $1.50 hard max
+ * attempt loop and records a note; an actual spend over the $1.60 hard max
  * finishes the run on the cheapest complete path and DELIVERS, marked
  * degraded, with a ledger row; the next run reads that history and starts
  * tighter. A test that asserts a budget hold is wrong by definition.
@@ -215,7 +215,7 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
   });
 
   it("actual over the hard max mid-run -> the run COMPLETES degraded with a full deliverable on the cheapest path, writes the ledger row, and the NEXT run starts tighter", async () => {
-    // The copy turn reports 120k output tokens on Sonnet ($15/1M): $1.80 measured, straight through $1.00 and $1.50.
+    // The copy turn reports 120k output tokens on Sonnet ($15/1M): $1.80 measured, straight through $1.00 and $1.60.
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()),
       finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
@@ -229,7 +229,7 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     if (result.status !== "completed") throw new Error("unreachable");
     expect(result.output.renderedCount).toBe(6);
     expect(result.output.budget?.status).toBe("degraded");
-    expect(result.output.budget?.reason).toMatch(/^budget: estimated \$0\.\d\d, actual \$1\.\d\d \(over the hard max\); budget: \$1\.\d\d spent at 05-write-copy-attempt-1, over the \$1\.50 hard max — finishing on the cheapest complete path/);
+    expect(result.output.budget?.reason).toMatch(/^budget: estimated \$0\.\d\d, actual \$1\.\d\d \(over the hard max\); budget: \$1\.\d\d spent at 05-write-copy-attempt-1, over the \$1\.60 hard max — finishing on the cheapest complete path/);
     // scout + research + angle + copy + vet + relevance; no visual-QA turn.
     expect(router.complete).toHaveBeenCalledTimes(7);
     // Every mandatory gate still ran; the optional model QA was consciously skipped under its own id.
@@ -244,7 +244,7 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     expect(deliverable?.budget.actualUsd).toBeGreaterThan(1.5);
     expect(deliverable?.budget.notes).toHaveLength(3);
     expect(deliverable?.budget.notes[1]).toMatch(/over the \$1\.00 target — optional work stopped/);
-    expect(deliverable?.budget.notes[2]).toMatch(/over the \$1\.50 hard max — finishing on the cheapest complete path/);
+    expect(deliverable?.budget.notes[2]).toMatch(/over the \$1\.60 hard max — finishing on the cheapest complete path/);
     const copyLine = deliverable?.budget.lines.find((l) => l.label === "05-write-copy-attempt-1");
     expect(copyLine?.basis).toBe("measured");
     // $1.80 of output tokens plus the 100 input tokens the fixture reports.
