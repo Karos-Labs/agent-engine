@@ -154,6 +154,12 @@ const HAPPY_PATH_STEP_IDS = [
   // Phase 1 (RFC-13 item K): the angle this carousel argues — one Sonnet
   // proposal per REVISION (never per attempt), then the deterministic pick.
   "04i-propose-angles",
+  // RFC-21 Part 3 — the editorial series, chosen from the angle's own fact
+  // cards and the client's recent formats. `wf.step.code`: no model call, no
+  // tool call beyond the one ledger row it writes INSIDE the step, and $0.00
+  // on `rawEstimate` by construction. It sorts between `04i` and `04j`
+  // because this list is sorted and "-" precedes "2".
+  "04i2-select-series",
   "04j-select-angle",
   // Phase 4 (RFC-16 item D): the concept SELECTOR — free code, unconditional,
   // immediately after the angle. `04n-design-concept` (the paid Sonnet call),

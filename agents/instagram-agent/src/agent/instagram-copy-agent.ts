@@ -329,6 +329,28 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyOutput> {
     // target (2.1%) and the $1.50 hard max (1.4%), and no new model step at
     // run time or at setup: the mark ring is derived in code from the kit's
     // accent ring, so per-client setup moves by exactly $0.000 (RFC-17 §6.2).
-    skillRef: "instagram-copy@18",
+    //
+    // v19 (RFC-21 Part 3, the series layer, 2026-09-14): ONE additive section,
+    // §29 "Your series". When the input carries a `seriesDirective` the layout
+    // of every slide is already decided and §7's layout MENU does not apply —
+    // every other rule in §7, including what each archetype REQUIRES, applies
+    // unchanged, and the section says so in those words because that is the
+    // whole safety argument for handing a writer a skeleton.
+    //
+    //   Input:  +3,726 prompt characters (69,629 -> 73,355) ≈ 932 tokens x
+    //           $3/1e6 = $0.00280, plus the directive itself on the input
+    //           object — the premise, the register and one numbered line per
+    //           slide, ≈700 characters ≈ 175 tokens = $0.00053.
+    //   Output: $0.000. No new field. The writer emits the same schema; what
+    //           changed is that it no longer chooses `layout`, and `layout`
+    //           was already being emitted.
+    //   Total:  $0.00333 an attempt, and `STEP_COST_ESTIMATES_USD.copyAttempt`
+    //           is re-priced **0.181 -> 0.185** in the SAME commit, which is
+    //           the rule `run-budget.ts` states about itself. Rounded up.
+    //
+    // It FAILS OPEN, which is why it is additive rather than a rewrite: a run
+    // whose series step did not complete sends no `seriesDirective`, §29 says
+    // so explicitly, and the draft reads identically to @18.
+    skillRef: "instagram-copy@19",
   };
 }

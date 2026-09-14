@@ -97,8 +97,8 @@ describe("PER_REVISION_ESTIMATE_USD / revisionEstimateUsd", () => {
     const c = STEP_COST_ESTIMATES_USD;
 
     // The literals. English and Hebrew, before and after the language lines.
-    expect(PER_REVISION_ESTIMATE_USD).toBe(0.2326);
-    expect(revisionEstimateUsd({ attempts: 1, targetLanguage: true })).toBe(0.2776);
+    expect(PER_REVISION_ESTIMATE_USD).toBe(0.2366);
+    expect(revisionEstimateUsd({ attempts: 1, targetLanguage: true })).toBe(0.2816);
 
     // The enumeration, beside them rather than instead of them: the literal
     // catches a term that was ADDED to both the module and this list, and the
@@ -126,7 +126,7 @@ describe("PER_REVISION_ESTIMATE_USD / revisionEstimateUsd", () => {
     // round did not get cheaper, so the comparison is restated against the
     // number that actually governs a reviewer's round — the TARGET — with the
     // ceiling kept as the looser second bound rather than dropped.
-    expect(revisionEstimateUsd({ attempts: 3, targetLanguage: true })).toBe(0.7608);
+    expect(revisionEstimateUsd({ attempts: 3, targetLanguage: true })).toBe(0.7728);
     expect(revisionEstimateUsd({ attempts: 3, targetLanguage: true })).toBeGreaterThan(0.75 * TARGET_RUN_SPEND_USD);
     expect(revisionEstimateUsd({ attempts: 3, targetLanguage: true })).toBeGreaterThan(0.45 * MAX_RUN_SPEND_USD);
   });

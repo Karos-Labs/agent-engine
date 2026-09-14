@@ -133,6 +133,22 @@ export interface SkeletonEntry {
   occupancy: number[];
   /** Whether the reviewer edited any copy before approving. Recorded, not enforced: an edited post is still a shipped post. */
   edited: boolean;
+  /**
+   * RFC-21 Part 3 — the editorial series this post shipped in, when it shipped
+   * in one.
+   *
+   * OPTIONAL, and that is not laziness: every entry written before the series
+   * layer existed has no series, and a required field would make this module
+   * unable to read its own history. `recentSeriesIds` treats absent as "not
+   * this series", which is the right answer — a post that predates the layer
+   * genuinely does not hold a format down.
+   *
+   * It is recorded HERE rather than in a sibling belief for the reason the
+   * signature is: the rotation question is "what shape did the last few posts
+   * take", and the shape and the format are the same fact at two resolutions.
+   * Two keys would let them disagree about which run was last.
+   */
+  seriesId?: string;
 }
 
 export interface SkeletonHistory {
@@ -298,6 +314,9 @@ export function readSkeletonHistory(beliefs: unknown): SkeletonHistory {
               ? (e["occupancy"] as unknown[]).filter((n): n is number => typeof n === "number" && Number.isFinite(n))
               : [],
             edited: e["edited"] === true,
+            // Same tolerant posture as every field above: a row written
+            // before the series layer existed simply has none.
+            ...(typeof e["seriesId"] === "string" && e["seriesId"].length > 0 ? { seriesId: e["seriesId"] } : {}),
           },
         ];
       })
@@ -325,6 +344,23 @@ export function skeletonAvoidList(history: SkeletonHistory): string[] {
 /** The immediately previous shipped post, or `undefined` on a client's first run. */
 export function previousSkeleton(history: SkeletonHistory): SkeletonEntry | undefined {
   return history.entries[history.entries.length - 1];
+}
+
+/**
+ * The editorial series of the recently shipped posts, NEWEST FIRST — the
+ * rotation input `selectSeries` holds a format out on (RFC-21 Part 3).
+ *
+ * Entries with no `seriesId` are SKIPPED rather than yielding a gap, so a
+ * client whose history straddles the layer's arrival gets a rotation window
+ * built from the posts that actually had a format. Skipping rather than
+ * padding matters: a padded `undefined` would occupy a slot in the hold and
+ * silently shorten the real window to one.
+ */
+export function recentSeriesIds(history: SkeletonHistory): string[] {
+  return [...history.entries]
+    .reverse()
+    .map((entry) => entry.seriesId)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
 }
 
 /**
@@ -554,6 +590,8 @@ export function buildSkeletonEntry(input: {
   devices?: readonly (string | undefined)[] | undefined;
   occupancy?: readonly number[] | undefined;
   edited: boolean;
+  /** RFC-21 Part 3 — the editorial series this post shipped in. Absent on a run whose series step failed open. */
+  seriesId?: string | undefined;
 }): SkeletonEntry {
   const roles = input.roles ?? rolesForSlideCount(input.slides.length);
   const devices = input.devices ?? [];
@@ -565,6 +603,7 @@ export function buildSkeletonEntry(input: {
     deviceKinds: input.slides.map((_, i) => devices[i] ?? ""),
     roles: [...roles],
     occupancy: (input.occupancy ?? []).map((n) => Math.round(n * 100) / 100),
+    ...(input.seriesId !== undefined && input.seriesId.length > 0 ? { seriesId: input.seriesId } : {}),
     edited: input.edited,
   };
 }

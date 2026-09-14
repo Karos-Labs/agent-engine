@@ -1,8 +1,9 @@
 # RFC-21 — The owner's three rulings, 2026-09-14
 
-**Status:** Part 1 implemented. Part 2 has candidates 3 and 4 falsified and candidate 5 surviving
-its controls on measured CI data (§2.6.1); the threshold waits on one more control. Part 3 is designed and scoped as its own phase — see §3.5 for why it is not started
-as a slice.
+**Status:** Part 1 implemented. **Part 3 implemented** (the series layer). Part 2 has candidates 3, 4
+and 5 all falsified as thresholds, the owner's colour correction answered with a four-palette
+measurement (§2.6.3), and the one-line control built (§2.7 step 2b) — which changed the question: on
+OUR templates a confident one-liner is a HIGH-occupancy plate that already passes.
 **Supersedes, in the places named:** RFC-18 §7.3 (the rung swap), RFC-19 §8.4 (the attempt-rung
 guard), RFC-20 Part 11 (the interest floor's calibration).
 
@@ -353,12 +354,29 @@ So the remaining work, in order:
    **DONE — candidate 5, `edgeDensity`.** §2.6.1.
 2. ~~Build the pair that differs in exactly one variable.~~ **DONE — §2.6.2.** It confirmed the
    proxy and falsified the single-metric threshold in the same table.
-2b. **Build the ONE-LINE plate.** Every archetype in the pair carries a body, so none of them is the
-   plate the ruling is about. The row still missing is a statement plate with one line at display
-   scale and nothing else, against the same line set small on the same ground — the owner's grey
-   screen and its confident twin. `headline-focus.html`'s statement archetypes were cut by RFC-20
-   and are the natural home for it (§11.4 owns that work). Until that row exists there is no gap to
-   put a number in.
+2b. ~~Build the ONE-LINE plate.~~ **DONE — §2.6.3.** `headline-focus.html` with one line and an empty
+   body, at display and body scale, across four palettes.
+
+**AND IT CHANGED THE QUESTION.** That plate measures `occupiedShare` **0.5094** and `textShare`
+**0.47**. It is not sparse at all: our templates scale display type to fill the frame, so a confident
+one-liner on OUR system is a HIGH-occupancy plate that clears every floor with room. It passed on all
+four palettes at both scales.
+
+So the refusal the ruling is about **is not reproducible on our own templates**, and that is the
+honest finding rather than a failure to find one. The reference plates are low-occupancy because that
+publisher sets small type on a large paper ground; ours does not do that, and the plate the owner
+would be glad to ship already ships.
+
+What remains, in order:
+
+2c. **Reproduce it or close it.** Either build the plate that genuinely fails — small type,
+   deliberately placed, on a quiet ground, which is `headline-focus.html`'s cut statement archetype
+   (RFC-20 §11.4) — or record that our template system cannot produce the shape and close the
+   deliberate-emptiness question against our own renders. **Do not ship a waiver for a case no plate
+   exercises.**
+2d. Calibrate on an INVARIANT share (§2.6.3). `edgeDensity` is invariant and does track type scale,
+   but it is a PROXY and not a gate: it is dominated by imagery share, so a text-dense plate and an
+   empty one both score high. Any rule using it is a conjunction with `textShare`.
 3. Then wire it, and only into clauses C, D and clause G's content limb — never into A, A2, B, F or
    G's `noType` limb (§2.8). A waiver that admits the plate the floor was built for would be worse
    than no waiver, so the acceptance condition is written as a pair: **the confident plate is
@@ -385,8 +403,9 @@ belongs in the same sweep.
 
 # Part 3 — Ruling 3, hybrid archetypes
 
-**Status: designed here, NOT implemented, and deliberately not started as a slice.** §3.5 states why
-shipping half of it would make the product worse than shipping none of it.
+**Status: IMPLEMENTED, with its replacement, which is what §3.5 argued for before any of it was
+written.** `editorial-series.ts`, the `04i2-select-series` step and prompt @19 §29 ship together, so
+the composition vocabulary exists in the same commit that starts using it. §3.6 records what shipped.
 
 ## 3.1 The client's own feed already is the answer
 
@@ -493,3 +512,53 @@ A narrowing and its replacement have to land together.
 So Part 3 is a phase, with its own RFC and its own PR, and its acceptance condition is stated in
 advance: **a run can produce a plate the repo has never rendered, without producing a file the repo
 has never validated, and variety across runs and across clients is measured rather than assumed.**
+
+
+## 3.6 WHAT SHIPPED
+
+`src/workflow/editorial-series.ts` holds six generic editorial formats, each binding a story-shaped
+trigger to a layout family over the one shared brand system: `by_the_numbers`, `head_to_head`,
+`the_breakdown`, `the_playbook`, `field_notes`, `in_their_words`. Every layout they compose from is an
+archetype the repo already renders and calibrates, and never `custom` — a test reads the module's
+import list off the source and fails the moment it reaches for a template directory or a CSS string.
+That import boundary IS "composition from validated building blocks".
+
+`04i2-select-series` picks one from the post's own evidence: the kinds of fact card the ANGLE rests on
+(not everything research returned), and whether the angle's title sets two things against each other.
+`wf.step.code`, no model call, $0.00 on `rawEstimate` by construction, identical across a resume.
+
+Prompt **@19 §29** hands the writer the skeleton and states the one thing that must not be
+misunderstood: the series constrains the SEQUENCE, §7's per-archetype requirements constrain the FIT,
+and where they disagree the fit wins. `copyAttempt` is re-priced 0.181 → 0.185 in the same commit.
+
+**Rotation is the owner's repetition complaint as a property.** A format used in the last two shipped
+posts is held out, so three consecutive runs on ONE UNCHANGED STORY get three different formats and
+three different opening archetypes. The test asserts both, and asserts its own premise — the same
+three runs without the history come back identical — so it is measuring the rotation rather than
+agreeing with it.
+
+### Four bugs the tests found before the code shipped
+
+1. `skeletonFor` returned a two-slide carousel on a NaN count, because `Math.max(4, NaN)` is NaN. A
+   cover and a closer with no post between them, and no clause would have refused it: every plate on
+   it is fine.
+2. `head_to_head` could be chosen by the angle's framing alone, handing the writer a comparison
+   skeleton with nothing to compare. It is now the one series whose signal is a GATE rather than a sum.
+3. Two series opened on the same archetype, so a rotation between them would have produced a post that
+   reads the same on the slide after the cover.
+4. The `ledger.appendEvent` sat outside the checkpointed step and re-fired on resume —
+   `resume-idempotency.test.ts` counted it.
+
+### One decision worth naming
+
+`countComparedEntities` uses a per-script list of comparison connectives rather than counting
+capitalised spans. A capitalisation heuristic would have denied the format to every RTL client, which
+is the same shape of defect as calibrating a colour metric on one brand's palette. A language not on
+the list returns 0 and falls through to the general teardown: **wrong toward the default, never toward
+a format that cannot be filled.**
+
+### What is NOT built, and is the next slice
+
+The CANDIDATE path. `customArchetype` still renders model-authored markup to the client on the run
+that invents it. Now that the composition vocabulary exists, narrowing it no longer costs the variety
+it used to — which is precisely the condition §3.5 said had to be met first.

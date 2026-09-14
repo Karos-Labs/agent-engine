@@ -102,10 +102,60 @@ export interface MeasureTolerances {
    * antialiasing plus the templates' own `color-mix(in srgb, var(--fg) 78%,
    * transparent)` overlays put ground-adjacent tones a few units off
    * ground; a headless 8-bit screenshot carries no dithering, so AA is the
-   * only noise source and it stays inside +/-10. Cannot merge two brand
-   * neutrals: derived ground/fg pairs are separated by >= 24 by the contrast
-   * floor's own construction, and the bundled `#17181C`/`#F4F2EC` pair by
-   * 220.
+   * only noise source and it stays inside +/-10.
+   *
+   * ## It cannot merge two brand neutrals, and the bound is MEASURED
+   *
+   * This comment used to claim derived ground/fg pairs are "separated by >=
+   * 24". That number was never measured and it is far too pessimistic. Swept
+   * over the RGB cube for pairs sitting ON the instagram agent's 4.5:1
+   * `TEXT_CONTRAST_FLOOR`, the true minimum weighted distance is **83.7**
+   * (`#103000` / `#60A000`, contrast 4.52), and realistic brand pairs run
+   * **137 to 229** — `#767676`/`#FFFFFF` sitting on the floor is 137, the
+   * bundled `#17181C`/`#F4F2EC` pair is 215.
+   *
+   * That matters beyond pedantry, because it is what makes these ABSOLUTE
+   * tolerances safe on a palette nobody calibrated against. `ink` 18 is
+   * 7.9%-13.1% of the ground-to-ink gap across realistic pairs, and ~21% at
+   * the theoretical worst case, so the dead band between `flat` and `ink`
+   * eats a small and BOUNDED slice of every antialiased ramp whatever the
+   * brand. The masks themselves are already relative — every share is
+   * measured against the MEASURED modal ground and the SUPPLIED ink token,
+   * never against a literal — and RFC-21 §2.9 renders the same plate across
+   * four palettes to check that the residual does not move a verdict.
+   *
+   * A wrong bound in the place a calibration reads is how the NEXT
+   * calibration goes wrong, which is why this is corrected rather than left.
+   *
+   * ## MEASURED, 2026-09-14: WHICH SHARES MOVE WITH A BRAND'S COLOURS
+   *
+   * The owner's correction was that "the grey screen" named a CLIENT — grey is
+   * Karos Labs' own brand colour — and not a failure mode: the same empty,
+   * monotonous plate happens in blue, in white, in green. Every band in the
+   * instagram agent had been measured on one pair.
+   *
+   * So RFC-21 §2.9 renders ONE PLATE across four palettes spanning 4.54:1 to
+   * 17.4:1, dark ground, light ground and saturated. The result, and it is the
+   * thing to know before calibrating any threshold on any of these:
+   *
+   *   INVARIANT to 3-4 decimals   occupiedShare, inkShare, textShare, edgeDensity
+   *   PALETTE-DEPENDENT           contentOccupiedShare (0.2169-0.3739, a 42% swing
+   *                               on the IDENTICAL plate), flatBackgroundShare (~11%)
+   *
+   * The reason is this dead band, and it is not a bug to tune away.
+   * `contentOccupiedShare` marks a cell when its MEAN has left the ground by
+   * more than `ink`; on a low-contrast brand a part-inked cell's mean sits
+   * closer to the ground, so fewer cells qualify. At 137 units of separation
+   * an 18-unit band genuinely IS 13% of the signal, and it cannot shrink below
+   * the AA noise floor `flat` exists to clear. It is a fact about 8-bit
+   * measurement at low contrast.
+   *
+   * What follows for a caller: **calibrate a threshold on an invariant share.**
+   * `interest-floor.ts`'s clause D reads `flatBackgroundShare` and clause G
+   * reads `contentOccupiedShare`, so both carry this; today the margin absorbs
+   * it (the worst palette still clears clause G's tightest floor several times
+   * over) and RFC-21 §2.9 asserts that, with the bound at which it stops being
+   * absorbable.
    */
   flat: number;
   /**
