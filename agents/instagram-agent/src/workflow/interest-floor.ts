@@ -717,7 +717,61 @@ export const FLAT_BACKGROUND_CEILING = 0.7;
  * the point, because at 0.42 all 19 of them were refused. A cover under 0.18 is
  * still refused, and a cover that is empty measures 0.0006.
  */
-export const OCCUPIED_SHARE_FLOOR: Readonly<Record<SlideRole, number>> = { cover: 0.18, interior: 0.19, closer: 0.3 };
+/**
+ * ── NINTH PASS, 2026-09-14. `interior` IS BACK AT 0.30, AND THE REASON IS A
+ *    CI RENDER THAT FALSIFIED THE BAND IT WAS SET FROM. ──
+ *
+ * PROVENANCE, and it is the whole point of this block: everything above is
+ * MEASURED-EDGE — the system Edge channel on the authoring machine. Everything
+ * here is a CI RENDER on the binary CI actually uses (runs 34800700580 and
+ * 34802291959), which is the only authority for a pixel claim on this project.
+ * Where they disagree, these numbers win.
+ *
+ * The 0.19 above was taken from a POPULATED interior band whose minimum was
+ * 0.3121. That number was not the type; it was `.hf-plate`, the filled card
+ * RFC-20 §5.3 put behind the statement. The card was built to be
+ * `covered && distinct <= 3` — which is the literal definition of
+ * `graphicShare` — so **a decoration was being counted as the very drawn
+ * device whose absence clause E exists to detect.** On CI it measured `iod`
+ * 32.0-51.4% on plates carrying no imagery and no device, against the 0.10
+ * floor in `IMAGERY_OR_DEVICE_FLOOR`, and `headline_focus` was accepted as a
+ * COVER at every type scale on both grounds. It is the hatch's defect one
+ * clause over, and it will be re-introduced by the next person who adds a
+ * painted panel unless this paragraph is read first.
+ *
+ * With the card's fill removed and the same 160-row sweep re-run on CI:
+ *
+ *   role      POPULATED min occ     NEGLECTED max occ    rule branch
+ *   cover     0.2670 (n=19)         0.0562 (n=8)         1 — midpoint 0.16
+ *   closer    0.5722 (n=19)         0.0562               1 — midpoint 0.31
+ *   interior  0.0383 (n=114)        0.0562               NONE — see below
+ *
+ * The interior minimum is BELOW the neglected ceiling. It is not a panel
+ * archetype — `stat-callout`, `quote-card`, `comparison-card` and
+ * `list-takeaway` measure 0.31-0.61 — it is `headline_focus` (0.0544-0.1252)
+ * and heroless `slide.html` (0.0383-0.0942), at `flat` 0.92-0.97. Composed to
+ * the Ground Rule with no paint on them, **those two archetypes measure as
+ * neglected plates, because that is what they are**: type on ground and
+ * nothing else. The grey screen carrying its maximum mark load sits at 0.0864,
+ * inside their composed band.
+ *
+ * So `interior` has no measured band to be set from, and it returns to 0.30 —
+ * the value the tree shipped with — rather than to a number argued backwards
+ * out of a card. `headline_focus` and heroless `slide.html` are OUT OF SCOPE
+ * for RFC-20 and keep their existing paint unchanged, so no live run pays a
+ * false refusal for this. The fix those two need is a real bounded object from
+ * their own copy (RFC-20 §5.5's `deviceFromText`, $0.00, no model call), and it
+ * is specced as RFC-20 Part 11 rather than built here.
+ *
+ * `cover` stays at **0.18** and is deliberately NOT relaxed to the derived
+ * 0.16: a constant taken above its own decision rule's answer refuses strictly
+ * more than the rule requires, so it cannot be a bar moved to make something
+ * green. 1.48x over 19 populated rows, 4.75x over the neglected ceiling.
+ *
+ * `closer` moves 0.30 -> **0.31**, the rule-1 literal and STRICTER than this
+ * branch first proposed. 19 rows, POPULATED 0.5722-0.6681, margin 1.85x.
+ */
+export const OCCUPIED_SHARE_FLOOR: Readonly<Record<SlideRole, number>> = { cover: 0.18, interior: 0.3, closer: 0.31 };
 
 /**
  * A cover or a closer must carry imagery or a drawn device. Interiors are

@@ -720,17 +720,28 @@ describe("RFC-20 §5.0: the Ground Rule, as a source scan", () => {
    * `.copy-art` in `headline-focus.html`. This goes red, and so does G1.
    */
   it("the full-bleed screens RFC-20 §5.2 deleted do not paint again", async () => {
+    // ── THE TWO ROWS THAT ARE NOT HERE, AND WHY THAT IS A SCOPE DECISION
+    //    RATHER THAN A RELAXATION. ──
+    //
+    // `headline-focus.html` and `slide.html` carried a row each until the ninth
+    // pass. Both are gone because the ARCHETYPES are out of RFC-20's scope, not
+    // because the measurement changed — the numbers that justified deleting
+    // their screens still stand, and are quoted in RFC-20 Part 11.
+    //
+    // The cut is forced by a CI render (34802291959). With `.copy-art` deleted
+    // and the plinth that replaced it removed, those two archetypes measure
+    // `occupiedShare` 0.0383-0.1252 at `flatBackgroundShare` 0.92-0.97 — BELOW
+    // the 0.0562 ceiling of the sweep's own neglected controls. **They are not
+    // plates that need a better ground; they are type on ground and nothing
+    // else, which is the owner's complaint itself.** Deleting their screens
+    // without giving them something to carry would refuse them in production
+    // and buy a $0.181 redraft out of three against $0.0017 of headroom, so
+    // they keep today's paint until RFC-20 Part 11 gives them a real bounded
+    // object from their own copy.
+    //
+    // A row may only come back WITH that object. Re-adding one to make the
+    // screens deletable on their own is the move this comment exists to stop.
     const deleted: Array<{ file: string; klass: string; why: string }> = [
-      {
-        file: "headline-focus.html",
-        klass: "copy-art",
-        why: "MEASURED it alone takes contentOccupiedShare to 0.3128, occupiedShare to 0.6426, textShare to 0.6132 and largestEmptyRectShare to 0.0000 — it disarms clauses C, D and G and trips F as a false positive",
-      },
-      {
-        file: "slide.html",
-        klass: "copy-art",
-        why: "same shape; MEASURED-EDGE iod 4.53 -> 3.39 without it, i.e. it never paid clause E either",
-      },
       {
         file: "closer.html",
         klass: "cl-art",

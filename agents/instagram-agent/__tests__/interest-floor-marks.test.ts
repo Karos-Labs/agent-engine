@@ -436,7 +436,10 @@ const PINNED_SCALARS: Readonly<Record<string, number>> = {
 const PINNED_ROLE_RECORDS: Readonly<Record<string, Readonly<Record<SlideRole, number>>>> = {
   LARGEST_EMPTY_RECT_CEILING: { cover: 0.22, interior: 0.28, closer: 0.22 },
   CONTENT_OCCUPIED_SHARE_FLOOR: { cover: 0.09, interior: 0.06, closer: 0.09 },
-  OCCUPIED_SHARE_FLOOR: { cover: 0.18, interior: 0.19, closer: 0.3 },
+  // NINTH PASS: `interior` back to 0.30 (its band was the plinth, and CI
+  // measured the plinth as a graphic device); `closer` to 0.31, the CI
+  // rule-1 literal and stricter than the 0.30 this branch first proposed.
+  OCCUPIED_SHARE_FLOOR: { cover: 0.18, interior: 0.3, closer: 0.31 },
 };
 
 describe("RFC-17 Part 3 / RFC-20 §5.6: exactly one threshold record moved, and nothing else", () => {

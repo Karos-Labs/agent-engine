@@ -501,6 +501,15 @@ relaxation:**
    plates. It is then **demoted to reporting-only** for the `headline_focus`/heroless-`slide` family, and clause
    C carries the refusal — which it does decisively at `LER` 0.5111–0.5259 on the grey screen. **A limb that
    cannot refuse the thing it was built for is removed, not lowered.**
+
+   > **⚠ RULE 3 IS REFUSED, 2026-09-14, AND THE MEASUREMENT THAT KILLS IT IS G5.** The bands DID overlap on CI
+   > (Part 11), so this branch is exactly the case rule 3 was written for — and the remedy it prescribes is
+   > wrong, because its premise is false. Rule 3 says *"clause C carries the refusal."* **It does not.** CI run
+   > 34802291959, G5: the owner's grey screen carrying its maximum mark load measures `largestEmptyRectShare`
+   > **0.2278** against the 0.28 interior ceiling — under it. **Clause C admits the marked grey screen. The only
+   > clause that refuses it is clause D, on occupancy (occ 0.0864).** Demoting D's occupancy limb would let the
+   > owner's original complaint through the gate on any plate carrying emphasis, which every plate we ship does.
+   > Nobody reaches for this lever again without answering that number.
 4. **Under no outcome is a floor lowered to make a specific plate pass.** The band and the full table go into the
    constant's doc comment in the form the existing comments use.
 
@@ -891,3 +900,140 @@ premise moved, and it needs re-arguing rather than re-numbering.
 the plate and the first content, on archetypes whose eyebrow slot is empty in the fixture. That is one defect with
 four faces, and it wants one composition answer, not four. Naming it here so the next phase starts from the shape
 rather than from the symptoms.
+
+---
+
+# Part 11 — THE CUT, 2026-09-14: what shipped, what was cut, and the one finding that forced it
+
+**Provenance, first, because it is what makes this part trustworthy.** Parts 1–10 are `MEASURED-HERE` (hand-painted
+plates through the real `measureSlidePng`) and `MEASURED-EDGE` (the system Edge channel on the authoring machine).
+Everything in Part 11 is a **CI RENDER** — runs [34800700580](https://github.com/Karos-Labs/agent-engine/actions/runs/34800700580)
+and [34802291959](https://github.com/Karos-Labs/agent-engine/actions/runs/34802291959), on the binary CI actually
+uses. §2's standing caveat says CI is the only authority for a pixel claim. It exercised that authority and
+falsified three of this document's conclusions. Where Part 11 and any earlier part disagree, **Part 11 wins.**
+
+## 11.1 THE FINDING: a decoration was being counted as the device whose absence clause E detects
+
+`.hf-plate` — the plinth §5.3 introduced to make "how much was written" measurable as area — was built to be
+`covered && distinct <= 3`. Its own comment said so approvingly: *"every cell stays COVERED … the card stays in the
+`graphic` bucket."*
+
+`slide-metrics.ts:906` is `const isGraphic = covered && !isImagery && distinct <= GRAPHIC_MAX_DISTINCT_COLOURS`,
+and `imageryOrDeviceShare = imageryShare + graphicShare`. **That is not a description of a side effect; it is the
+literal definition of the metric clause E reads.** The plinth was therefore, by construction, indistinguishable
+from a photograph or a drawn device to the one clause whose entire job is to notice that a plate has neither.
+
+Measured on CI, one object disarmed four clauses at once:
+
+| clause | constant | what the card measured, on plates carrying NO imagery and NO device |
+|---|---|---|
+| **E `no-device`** | `IMAGERY_OR_DEVICE_FLOOR` 0.10 | `iod` **32.0–51.4%** — 3–5× over. `headline_focus` was **ACCEPTED as a cover** at every type scale on both grounds, and `default:cover-carries-device` lost its pixel teeth. |
+| **D, first limb** | `FLAT_BACKGROUND_CEILING` 0.70 | `flat` **48.5–65.4%** on plates that are 92–97% bare ground. The limb cannot fire on a plate wearing the card. |
+| **F `text-wall`** | `TEXT_SHARE_CEILING` 0.55 | `textShare` **1.0–1.8%**, down from ~33%: the card swallows its own type into `graphicShare`. |
+| **B `clipped`** | `CLIPPED_EDGE_SHARE_CEILING` | at `fontScale l` the card still won `backgroundHex`'s modal vote, re-labelled the real ground as ink, and **false-fired**. |
+
+It also took the 1×1 **transparent-hero** fixture — the prep defect with no symptom — to `iod` **37.2%** against a
+guard expecting under 3.5%, because `onerror` empties `.bg` and the heroless card then paints.
+
+**This is §5.2's hatch, one clause over.** §5.2 deleted `.copy-art` because it "disarms clauses C, D and G and
+trips F as a false positive". The plinth that replaced it disarms B, D, E and F. The mechanism is the same — a
+large unearned painted area — and the phase walked into it because it was measuring the card's *contribution to
+occupancy* and never its contribution to `graphicShare`.
+
+**It is not repairable by choosing a different percentage, and that is a proof rather than a measurement.** §5.0's
+own structural fact is that `imageryOrDeviceShare ⊆ contentOccupiedShare ⊆ occupiedShare`, cell for cell. So:
+
+- a fill at or over `tol.ink` = **18** units is `covered`, therefore `graphic`, therefore clause E;
+- a fill under `FLAT_TOL` = **12** is invisible to every share, and to the eye it is paper tooth;
+- the 12–18 band between them is closed by `MATERIAL_PEAK_DELTA`'s own note, because it takes
+  `flatBackgroundShare` under 0.70 and disarms clause D on every plate that wears it.
+
+**There is no plinth that pays clause D without disarming clause E.** Any future painted panel behind copy meets
+this paragraph first.
+
+## 11.2 What the sweep then said, with the card gone
+
+160 rows, 8 archetypes × 3 copy lengths × 3 type scales × {en ltr, he rtl}, plus 8 neglected controls.
+**NEGLECTED ceiling `occ` 0.0562.**
+
+| role | POPULATED min `occ` | n | §5.6 rule branch |
+|---|---|---|---|
+| cover | 0.2670 | 19 | **1** — bands separate; midpoint **0.16** |
+| closer | 0.5722 | 19 | **1** — bands separate; midpoint **0.31** |
+| interior | **0.0383** | 114 | **none** — the minimum is *below* the neglected ceiling |
+
+The interior minimum is not a panel archetype: `stat-callout`, `quote-card`, `comparison-card` and
+`list-takeaway` measure 0.31–0.61 and are indifferent to all of this. It is `headline_focus` (0.0544–0.1252) and
+heroless `slide.html` (0.0383–0.0942), at `flat` 0.92–0.97. The grey screen carrying its maximum mark load sits at
+**0.0864 — inside their composed band.**
+
+> **Stated as plainly as it can be: two of our eight archetypes ARE the mostly-grey screen the owner complained
+> about, and the decoration was hiding that from our own gate.** Composed to the Ground Rule with nothing painted
+> on them they are type on ground and nothing else, and no occupancy floor can separate them from a neglected
+> plate because there is nothing to separate. They do not need a better background. They need something on them.
+
+## 11.3 THE CUT
+
+**SHIPPED.** The material ground (§5.1, proven inert on a real A/B render), the kind-aware ring (Part 6), the
+Ground-Rule furniture guards on `stat-callout`, `comparison-card`, `cover` and `closer`, the four panel
+archetypes, and two re-calibrations with CI bands behind them:
+
+| constant | was | **now** | provenance |
+|---|---|---|---|
+| `OCCUPIED_SHARE_FLOOR.cover` | 0.42 | **0.18** | CI, 19 rows, POPULATED 0.2670–0.3517 vs NEGLECTED 0.0562. Rule-1 midpoint is **0.16**; 0.18 is kept **deliberately above it**. A constant taken above its own decision rule's answer refuses strictly more than the rule requires, so it cannot be a bar moved to make something green. 1.48× / 4.75×. |
+| `OCCUPIED_SHARE_FLOOR.closer` | 0.42 | **0.31** | CI, 19 rows, POPULATED 0.5722–0.6681. Rule-1 literal, and **stricter** than the 0.30 this branch proposed off Edge numbers. 1.85×. |
+
+**CUT.** `OCCUPIED_SHARE_FLOOR.interior` stays at **0.30**. Its 0.19 was the midpoint of a band whose lower wall
+was the plinth's own area, which is §3.2's circularity objection to Spec B turning up inside Spec A.
+
+**CUT.** `headline_focus` and heroless `slide.html` are **untouched by this PR** — their existing paint, their
+existing floor. Not because their screens are defensible (§5.2's measurements stand) but because deleting them
+without giving those plates something to carry refuses them in production: a false refusal costs a **$0.181**
+drafting attempt out of three against **$0.0017** of headroom on the $1.00 target. *A partial ship that makes live
+runs more expensive is worse than a smaller one.*
+
+**REFUSED.** §5.6 rule 3's demotion — see the box beside the rule itself. G5 measures the marked grey screen at
+`LER` 0.2278 against a 0.28 ceiling, so clause C does **not** carry the refusal and clause D's occupancy limb is
+the only thing standing between the owner's complaint and the gate.
+
+## 11.4 THE FOLLOW-UP — costed, and the real fix
+
+**`headline_focus` and heroless `slide.html` get a real bounded OBJECT derived from their own copy.** Not more
+ground. §5.5's `coverRemedy` already builds exactly this: `deviceFromText` reads the strongest `kind: "stat"` fact
+card with a deterministic regex over copy the run already holds. **$0.00, no model call, no prompt string changes**
+— the same cost profile as this whole phase.
+
+It is also what the reference plates do, and §4 recorded it without following it: rf-05's near-empty cover carries
+one stitched photograph and nothing else; rf-11's statement slide carries ten saturated highlighter blocks. **The
+reference execution is an object on a quiet ground. We took the quiet ground and skipped the object.**
+
+Scope, so the next phase starts costed rather than from scratch:
+
+1. Extend the `dead-space` remedy's cover limb (§5.5) to the **interior** role for the two statement archetypes.
+2. A plate whose copy carries no figure gets the eyebrow-rail plinth fallback, and a plate with neither **fails
+   clause C, correctly** — that is the floor discriminating, not a regression.
+3. Only then delete `.copy-art` from both files, and only in the same PR as the object.
+4. Re-run the gate-zero sweep and set `OCCUPIED_SHARE_FLOOR.interior` from the band it prints — **from CI, and from
+   a tree where the populated rows are objects rather than decoration.**
+
+## 11.5 Still open, all named, none of them guessed at
+
+1. **`stat-callout.html`**, `LER` 0.2750 at `en ltr short s`, rectangle `(0,0 → 1080,340)` — over the sweep's 1.15×
+   margin, under the 0.28 ceiling. Exposed by this branch's own `.sc-rail` guard: the rail used to break the top
+   band on every render, including empty ones, and now that it is content-guarded a fixture with no eyebrow leaves
+   the band whole. The guard is right; the composition owes the top of the plate something.
+2. **`closer.html`**, `LER` 0.2278 (en) / 0.2306 (he), rectangle `(0,0 → 1080,328/332)` — genuinely over the 0.22
+   closer ceiling.
+3. **G2, `cover.html` with every copy slot empty**: `occ` **0.06%**, `LER` **51.67%**. The occupancy limb passes;
+   the rectangle limb does not. 0.06% is ≈58 cells of 97,200, and 51.67% is the algebraic signature of a handful of
+   cells near the plate's mid-line — one obstruction at the centroid halves the largest empty rectangle. It is the
+   same shape `.stat-band` produced on `stat-callout` before it was guarded. **Naming the element needs one render
+   with a cell map; it is not guessed at here.**
+4. **`closer.html`'s `#takeaway` plinth is the same object as `.hf-plate`** and has not been re-examined against
+   §11.1. The closer clears clause E on its recap strip and ask band regardless, so no guard is currently blind —
+   but its `occ` band of 0.5722–0.6681, which `OCCUPIED_SHARE_FLOOR.closer = 0.31` is derived from, **includes the
+   plinth's area.** If a later pass removes it, 0.31 must be re-derived from a fresh sweep and not inherited.
+
+Every failing rectangle in 1 and 2 is at `y = 0`, full width, 328–340px tall: the band between the top of the plate
+and the first content, on archetypes whose eyebrow slot is empty in the fixture. One defect, two faces, one
+composition answer — which is the same answer §11.4 gives the statement archetypes.

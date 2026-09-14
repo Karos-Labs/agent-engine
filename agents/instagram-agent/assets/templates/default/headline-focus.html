@@ -32,87 +32,47 @@
   measured as a ground and looked like nothing: a statement in the lower third
   of a grey plate, which is the defect verbatim.
 
-  That pass's answer was a LOUD GROUND: a 45-degree hairline field at 22% of
-  the foreground plus two accent diagonal bands, on the argument that a
-  texture never COVERS a cell and therefore cannot read as a drawn device.
+  What actually had to change is WHICH property does the work:
 
-  ── 2026-09-14, RFC-20 P2: THAT ANSWER WAS THE DEFECT, AND IT IS DELETED. ──
+  * A ground must be VISIBLE. Nothing about clause E (the cover role's
+    imagery-or-device floor) requires a ground to be invisible; it requires it
+    not to be a DRAWN DEVICE. Those are different properties, and the
+    measurement already separates them: a device is a COVERED cell (48 of 64
+    samples are ink) with almost no colour variety, while a texture — however
+    strong its contrast — never covers the cells it crosses. So the texture
+    here is now loud (2px rules every 14px at 24% of the foreground, plus an
+    accent diagonal band at full strength) and carries no graphic share at all.
+  * The composition, not the decoration, fills the plate. The lockup used to
+    be one bottom-anchored block with two thirds of the frame above it empty.
+    It is now a three-part column — a kicker rail at the top under a full-
+    measure hairline, the statement set in the optical centre, the body at the
+    foot — so the type itself is what occupies the frame.
+  * The plate is no longer FLAT. A sub-ink tonal wash (see `.ground`) takes
+    `flatBackgroundShare` from ~0.88 to well under the interest floor's 0.70
+    ceiling, which is the honest way out of clause D: that clause is a
+    CONJUNCTION (flat AND idle), and a plate with a real ground is not flat.
 
-  The argument was true about clause E and irrelevant to clauses C, D and G,
-  which is where the owner's complaint actually lives. `occupiedShare` counts
-  a cell whose MEAN has left the ground, covered or not, so a full-field hatch
-  counted as content everywhere it reached — and `largestEmptyRectShare`,
-  which `slide-metrics.ts` calls "the metric that names the complaint",
-  measured the hatch rather than the slide. Measured on this tree through real
-  Chromium (`measureSlidePng`, 1080x1440 @2, msedge channel):
+  What this archetype deliberately still does NOT carry is a drawn device, and
+  `__tests__/interest-floor-calibration.test.ts` pins that: a `headline_focus`
+  judged at the cover role must report `no-device`. That is not a metric being
+  protected — it is this archetype's editorial identity. It is the one quiet,
+  all-type turn in the set, the floor exempts interiors from clause E for
+  exactly that reason, and a slide that wants a device has `html:device`
+  or another archetype. So: every element on this plate is either type, a
+  texture, or a rule — no filled block anywhere, and no outline heavy enough
+  to cover a cell.
 
-    shipped, ONE SHORT HEADLINE (the owner's grey screen)   occ 50.70  LER 8.89
-    shipped, composed (kicker + statement + body)           occ 52.33  LER 8.85
+  ── The two ground variants ──
 
-  Two plates a reader would describe completely differently, 1.6 points apart,
-  BOTH PASSING. The floor could not refuse the thing it was built to refuse.
-
-  So this file now keeps THE GROUND RULE (RFC-20 §5.0): every painted layer is
-  either MATERIAL — below the measurement's flat tolerance, contributing zero
-  to every share — or AN OBJECT, bounded, its extent a function of the CONTENT
-  and never of the leftover space, and switched off by a `body:has()` guard
-  when that content is absent. Nothing in between; no full-bleed layer may
-  carry ink.
-
-  What that means here, layer by layer:
-
-  * `.ground` paints NOTHING. It is the mount point for `ground-material.ts`'s
-    turbulence material, which is spliced onto `.ground::after` at
-    materialisation time and is sub-ink by construction. Its own tonal wash is
-    gone — see `.ground`'s block for the measurement that forced that, which
-    is not the one you would expect.
-  * `.copy-art` IS GONE, both variants. The hatch, the dash screen and the two
-    accent bands all had their extent set by the elastic field, i.e. by
-    whatever the copy failed to use.
-  * `.hf-plate`, the PLINTH, is new and is the only filled thing on the plate.
-    It hugs the statement, it cannot absorb leftover space, and it is what
-    converts copy volume into measurable area.
-  * The composition still fills the frame, which is the half decoration could
-    never do: a kicker rail at the top, the statement on its plinth in the
-    middle, the body at the foot.
-
-  ── UNRESOLVED, AND IT IS A BLOCKING FINDING RATHER THAN A DESIGN NOTE. ──
-
-  WHENEVER THE PLINTH PAINTS, THIS ARCHETYPE MEASURES AS A DRAWN DEVICE.
-  MEASURED-EDGE over the six combinations `interest-floor-calibration.test.ts`
-  renders at the cover role, the plinth measures **32.5-41.3%** of
-  imagery-or-device against a 10% floor, so `no-device` goes silent and a
-  statement slide is ACCEPTED as a cover.
-
-  An earlier revision of this comment called that "a deliberate change of
-  editorial identity" that "supersedes the `no-device` expectation that
-  `__tests__/interest-floor-calibration.test.ts` pins for it". **That was the
-  wrong call and it is withdrawn.** `default:cover-carries-device`
-  (`visual-qa-pre-checks.ts`) is a shipped product rule and `headline_focus` is
-  its one intentional exception; a template comment is not where a shipped rule
-  gets reversed, and RFC-20 Part 8 item 2 committed this phase to no clause-E
-  re-calibration at all.
-
-  It also cannot be fixed by tuning the fill, and the reason is structural
-  rather than a matter of trying harder. RFC-20 §5.0 reads it straight out of
-  `slide-metrics.ts:866-919`: `covered` (48/64) implies `carriesInk` (4/64), so
-  `imageryOrDeviceShare` is a SUBSET of `occupiedShare` cell for cell. **There
-  is no amplitude, tint or pitch at which paint is visible to clauses C and D
-  and invisible to clause E.** A plinth that closes an empty rectangle
-  necessarily carries clause E. So this archetype may have a filled plinth OR
-  it may keep its `no-device` exception, and it cannot have both. That is an
-  RFC-14/RFC-17 decision about what a `headline_focus` slide IS, it is owed an
-  argument rather than a side effect of a fill colour, and the two assertions
-  in `interest-floor-calibration.test.ts` are deliberately left RED until it is
-  taken. The `body.gr-glyph` block below carries the rest of the numbers.
-
-  ── The two ground variants, after the deletion ──
-
-    * `gr-grid` (the default): nothing behind the plinth at all.
+    * `gr-grid` (the default): the 45-degree hairline FIELD plus two accent
+      diagonal bands. This archetype is the house texture's one home in the
+      bundled set — see the note below on why it lives here and nowhere else.
     * `gr-glyph`: a LARGE TYPOGRAPHIC MARK — a display-face numeral bleeding
-      off the start corner, outlined heavily enough to READ. The outline is
-      load-bearing: a FILLED numeral covers every cell inside it and measured
-      12.7% of device share as pure decoration.
+      off the start corner, outlined heavily enough to READ — over a screen of
+      short horizontal DASHES, with the accent spent on one solid rule capping
+      the field's head. Not the same texture mirrored: a dash screen and a
+      hairline field are different marks, and the whole point of the second
+      variant is that two consecutive slides never wear the same ground.
 
   ── 2026-09-11 (third pass): WHY THE DIAGONAL FIELD LIVES ONLY HERE ──
 
@@ -222,76 +182,28 @@
     padding: 104px var(--mx) 112px;
   }
 
-  /* ── L1: THE GROUND. IT IS THE MATERIAL'S MOUNT POINT AND IT PAINTS
-        NOTHING OF ITS OWN. ──
+  /* ── L1: the tonal wash, FULL BLEED, and it lives in the 12-18 BAND. ──
+     The measurement has two lines: a pixel is GROUND within 12 of the ground
+     colour and INK beyond 18, and the band between them is counted in
+     nothing. That band is exactly what a ground wash is — a tone a reader can
+     see that is not a mark — so both stops are placed inside it (7% of the
+     foreground token is 15.1, 15% of a typical accent is 13.8). Three things
+     follow, and all three are wanted: the wash may bleed to the frame edge
+     without putting ink in the band `clippedEdgeShare` reads; it takes the
+     plate OFF "flat", which is the honest way past clause D (a conjunction:
+     flat AND idle — a plate with a ground is not flat); and it cannot be
+     mistaken for content, so `contentOccupiedShare` keeps meaning "something
+     to read".
 
-     This div used to carry a two-layer tonal wash — a radial in the start
-     corner plus a 196-degree linear — both placed inside the measurement's
-     12-18 band, i.e. visible tone that is not ink. The reasoning was sound on
-     the three shares it named (the wash contributed nothing to `inkShare`,
-     `occupiedShare` or `clippedEdgeShare`) and it missed a fourth thing the
-     wash does contribute to, which turns out to be the one that matters most:
-
-     ── 2026-09-14, RFC-20 P2: A GRADED WASH MOVES `backgroundHex`, AND
-        `backgroundHex` IS THE ANCHOR EVERY OTHER SHARE IS MEASURED FROM. ──
-
-     `slide-metrics.ts` takes the slide's ground to be the MODAL 5-bit bin
-     over the plate's low-variance cells (`:664-733`). A flat ground is one
-     bin and wins that vote outright. A GRADED wash spreads the same pixels
-     across several bins, and this file's pair — a radial covering the start
-     corner and a linear covering the far end — left very little of the plate
-     at the untinted `--bg` at all. The modal bin was therefore small, and the
-     moment a real drawn object appeared it took the vote.
-
-     Measured on this tree through real Chromium (`measureSlidePng`, 1080x1440
-     @2, msedge channel), with the wash present and the new `.hf-plate`:
-
-       composed   backgroundHex #323235  <- THE PLINTH'S OWN FILL
-                  iod 38.84   flat 33.99   clippedEdgeShare 1.37%
-       grey       backgroundHex #323235
-                  iod 47.86   flat 25.70   clippedEdgeShare 1.37%
-
-     Every number there is wrong, and wrong in a direction no clause would
-     catch as a ground defect. With the plate's real ground re-labelled as
-     "ink", the ENTIRE UNPAINTED GROUND became a covered flat low-colour
-     region — a drawn device — and `clippedEdgeShare` read 1.37% against a
-     0.4% ceiling, so clause B would have failed every composed statement
-     slide this archetype ships, for ink that is not there.
-
-     With the wash gone the same two plates report a `backgroundHex` equal to
-     `--bg` exactly, and `clippedEdgeShare` 0.00%. (The token is not spelled
-     out here: `slide-devices-rtl.test.ts` strips the `:root` block and then
-     refuses the ground and foreground literals anywhere else in the sheet,
-     comments included, so that no rule can quietly hard-code a kit's colours.)
-
-     This is the same failure RFC-20 §5.1 names when it specifies the material
-     ground: two OPPOSED tooth layers, "so the modal cell colour does not
-     drift and `backgroundHex` cannot flip — the failure that invalidated
-     every grain-sweep row". A one-sided wash is not symmetric about the
-     ground, so it drifts the mode by construction. Under the Ground Rule it
-     is neither MATERIAL (it does not contribute zero to every share — it
-     moves the anchor of all of them) nor AN OBJECT (it is full-bleed and
-     bound to no content). It is the "nothing in between" the rule forbids.
-
-     WHAT REPLACES IT is `ground-material.ts`'s turbulence material, spliced
-     onto `.ground::after` through `extraHeadHtml` at materialisation time.
-     That layer is bounded below `FLAT_TOL` and symmetric by construction, so
-     it is visible tone that moves no measurement — which is what this wash
-     was always trying to be. The div stays, unpainted, as its mount point,
-     and a template with no sheet spliced into it renders a clean ground,
-     which is a correct plate rather than a broken one.
-
-     THE COST, STATED RATHER THAN HIDDEN: the wash was what took
-     `flatBackgroundShare` from ~0.88 to under clause D's 0.70 ceiling, so
-     removing it RE-ARMS that limb on this archetype. That is a strengthening
-     and not a regression — clause D is a conjunction (flat AND idle) and a
-     composed plate is not idle. Measured on this tree, composed plates land
-     at 57.15-67.25% flat across s/m/l x ltr/rtl, all clear of the ceiling;
-     the grey screen lands at 72.09% flat, over it, and is refused by clause C
-     at `largestEmptyRectShare` 35.00% before clause D is even reached.
-     RFC-20 Part 8 item 4 records the wash as a defect this phase would not
-     fix; the plinth made it one this phase cannot ship around. */
-  .ground { position: absolute; inset: 0; z-index: 0; }
+     The two washes are kept spatially APART (one in the start corner, one at
+     the far end) rather than layered: two 15-unit tones stacked would sum
+     past 18 and become a drawn field, which is not what this is. */
+  .ground {
+    position: absolute; inset: 0; z-index: 0;
+    background-image:
+      radial-gradient(104% 62% at 2% 0%, color-mix(in srgb, var(--fg) 7%, transparent) 0%, transparent 80%),
+      linear-gradient(196deg, transparent 40%, color-mix(in srgb, var(--wash) 8%, transparent) 100%);
+  }
 
   /* ── L2: the texture and the accent geometry, ON THE STATEMENT FIELD. ──
 
@@ -315,146 +227,166 @@
      D and G on the pixels alone, and a plate whose middle is hollow reports
      the hole.
 
-     ── 2026-09-14, RFC-20 P2: THE 45-DEGREE SCREEN IS DELETED. ──
+     The texture is 2px rules every 9px at 22% of the foreground: about 48
+     units of contrast, a real pinstripe at feed size, where the pre-rework
+     14%/1.5px/18px was 31 units at half the duty and reproduced as nothing on
+     a dim phone. The PITCH is the number that had to be re-derived once the
+     texture stopped being full-bleed, and it was derived from the instrument:
+     a measurement cell is 4 design px, so a 2px rule on a `p`px pitch marks
+     `(2+4)/p` of the cells it crosses. At the old 13px pitch that is 46% —
+     the field looked textured and measured half empty, and this archetype sat
+     6 points under the interior occupancy floor with no margin. At 9px it is
+     67%, which puts a field-bearing plate at ~53% occupied against a 30%
+     floor and keeps the calibration's 8-point margin.
 
-     The texture above was 2px rules every 9px at 22% of the foreground, and
-     the note it replaces argued — correctly, on its own instrument — that a
-     2px rule can never cover 48 of a cell's 64 samples, so the screen was a
-     texture and not a device. That is true and it was the wrong question.
-     `occupiedShare` and `contentOccupiedShare` do not ask whether a cell is
-     COVERED; they ask whether it carries ink OR whether its MEAN has left the
-     ground (`slide-metrics.ts:896-919`). A 22% hatch on a 9px pitch moves the
-     mean of the cells it crosses past `tol.ink` on the high-duty phases, so
-     the screen counted as content over most of the field.
+     It stays a TEXTURE and not a device at either pitch, and that is a
+     property of the RULE WIDTH rather than of the pitch: a 2px rule cannot
+     fill three quarters of a 4px cell, so no cell it crosses can ever reach
+     the 48-of-64 coverage the measurement requires before it counts as
+     drawn. That is what keeps `headline_focus` under the cover role's device
+     floor — its editorial identity, pinned by the calibration test.
 
-     Measured on this tree through real Chromium (`measureSlidePng`, 1080x1440
-     @2, msedge channel), the shipped plate:
+     A single 45-degree direction rather than a grid, because a grid's
+     crossings fill whole cells at their intersections — which WOULD read as
+     device coverage, and would quietly undo `default:cover-carries-device`
+     for a statement slide.
 
-       headline_focus, ONE SHORT HEADLINE ("the grey screen")  occ 50.70  LER 8.89
-       headline_focus, composed (kicker + statement + body)    occ 52.33  LER 8.85
+     The accent geometry is TWO bands, 3px rules every 46px (~6.5% duty) — 300px
+     across the field's head and 200px across its foot, placed with
+     `background-size` and `-position` so each repeat is confined to a band
+     rather than covering the field. Enough accent for the eye to land on;
+     nowhere near the coverage a drawn device needs (this plate measures 5-9%
+     of imagery-or-device against a 10% floor it must stay under, which is
+     `headline_focus`'s editorial identity).
+     Two rather than one because the statement is centred in its field: with a
+     band only at the head, a short statement left the bottom quarter of the
+     plate as bare texture and the plate read bottom-empty. Bands at both ends
+     frame the statement instead of hanging above it. */
+  .copy-art {
+    background-image:
+      repeating-linear-gradient(45deg,
+        var(--accent) 0 3px, transparent 3px 46px),
+      repeating-linear-gradient(45deg,
+        var(--accent) 0 3px, transparent 3px 46px),
+      repeating-linear-gradient(45deg,
+        color-mix(in srgb, var(--fg) 22%, transparent) 0 2px,
+        transparent 2px 9px);
+    background-size: 100% 300px, 100% 200px, auto;
+    background-repeat: no-repeat, no-repeat, repeat;
+    background-position: 0 0, 0 100%, 0 0;
+  }
+  /* The guard. No statement, no field — see the block above. Asked of the
+     statement's CHILDREN, because `.hf-headline` is a twin-slot pair now (see
+     the twin-slot block below) and a host with two element children can never
+     match `:empty`. Left as `#headline:empty` the guard would have gone
+     permanently silent and an empty plate would have kept the field paint. */
+  body:not(:has(#headline > span:not(:empty))) .copy-art { background-image: none; }
 
-     1.6 points of occupancy and 0.04 points of empty rectangle between the
-     owner's own complaint and a fully composed plate, and BOTH PASS clauses C
-     and D. RFC-20 §5.4 calls that this phase's acceptance condition, and it
-     is reproduced here on the real template rather than on a synthetic one.
-     A bar that cannot refuse the thing it was built for is worthless, and the
-     screen is what disarmed it.
+  /* ── THE ALTERNATIVE GROUND: A LARGE TYPOGRAPHIC MARK ON A DASH SCREEN. ──
 
-     So THE GROUND RULE (RFC-20 §5.0) applies, and it is absolute: every
-     painted layer is either MATERIAL — below the measurement's flat tolerance,
-     contributing zero to every share — or AN OBJECT, bounded, its extent a
-     function of the CONTENT and never of the leftover space, and switched off
-     by a `body:has()` guard when that content is absent. Nothing in between.
-     No full-bleed layer may carry ink. The screen was neither: it was ink
-     sized by the elastic field, i.e. by whatever the copy failed to use.
+     This used to be the same texture mirrored to 135 degrees, which is the
+     same mark at another angle — two consecutive slides wearing it still read
+     as one wallpaper, which is the defect this variant exists to break. It is
+     now a different mark: a field of short horizontal DASHES (a 10x2.6px
+     tick on a 17x7 tile), so the ground reads as a measured rule rather than
+     as a hatch, and the giant outlined numeral below is what the eye actually
+     lands on.
 
-     What replaces it is `.hf-plate`, the PLINTH — see its own block below. It
-     is not decoration swapped for decoration: a plinth that hugs its copy is
-     the mechanism that converts how much was written into measurable area,
-     which is the only reason a clause-D floor can separate a composed plate
-     from a neglected one at all.
+     THE TILE IS 17x7 AND THAT DENSITY WAS MEASURED, four times, because a
+     mark here has to do two jobs at once: be a different SHAPE from the grid
+     variant's hatch, and still take the plate off "flat and idle". Clause D
+     is a conjunction, so a ground that marks too few cells fails a slide that
+     is manifestly not idle. Measured through `measureSlidePng` over real
+     Chromium (`.local/probe-template.mjs`, this working tree):
 
-     ── AND THE TWO ACCENT BANDS GO WITH IT, WHICH IS THE PART THAT HAD TO BE
-        MEASURED RATHER THAN ARGUED. ──
+       dash    tile     occupied   flat     verdict (interior floor 30%,
+                                             + the calibration's 8-point margin)
+       10x2.4  30x22      19.4%   87.8%    clause D — a plate marked at 21%
+       10x2.6  20x9       37.9%   83.1%    thin margin, 0.1 point of room
+       10x2.6  17x6       50.5%   76.8%    ok, and level with the grid
+                                             variant's own 51.7% — but see the
+                                             `l`-scale defect below
+       10x2.6  17x7       49.5%   76.5%    ok at EVERY type scale
 
-     The first attempt at this change deleted only the hatch and kept the
-     accent geometry — two 45-degree band, 3px rules every 46px, 300px across
-     the field's head and 200px across its foot. They are small, they carry
-     almost no area, and they looked like exactly the kind of bounded object
-     the Ground Rule admits. They are not, and the reason is the second half
-     of the rule rather than the first: THEIR EXTENT IS A FUNCTION OF THE
-     LEFTOVER SPACE. `.hf-field` is `flex: 1 1 auto`, so the band at
-     `0 100%` is anchored wherever the copy stopped, and the pair of them
-     between them straddle whatever gap a short statement leaves.
+     The arithmetic behind the last two rows: a dash `w` wide and `h` tall on a
+     `px` by `py` tile touches roughly `((w+4)/px) * ((h+4)/py)` of the 4px
+     cells, which is 0.82 * 0.94 here. Anti-aliasing costs the estimate a few
+     points at every size, which is why this is a measured table and not a
+     formula.
 
-     Measured on this tree through real Chromium, `largestEmptyRectShare` on
-     the owner's grey screen (one short headline and nothing else), against a
-     0.28 interior ceiling:
+     ── 2026-09-12: THE MARK IS NOT A FUNCTION OF `--ts`, AND THAT WAS A BUG
+        RATHER THAN A TASTE CALL. ──
 
-       screen deleted, accent bands kept       10.20%   <- clause C still PASSES
-       screen deleted, accent bands deleted    35.00%   <- clause C FIRES
+     Every length in this mark — both ellipse radii and both tile axes — used
+     to be written `calc(Npx * var(--ts))`. That made the SCREEN a function of
+     the reviewer's TYPE scale (the numeral below still scales, and should —
+     see its own note),
+     which is wrong on its face (`fontScale` is a control over the copy, not
+     over the brand's plate), buys nothing (a tile that grows keeps its duty
+     cycle, so the mark looks the same at a coarser pitch) and — the part that
+     broke a product guarantee — MOVES THE MEASUREMENT. A measurement cell is
+     4 DESIGN px and does not scale, so at `l` (--ts 1.18) the 2.6px dash
+     became 3.07px: 77% of a cell's rows instead of 65%, and where the dash
+     crossed a glyph stem the two SUMMED past the 48-of-64 coverage that makes
+     a cell count as a drawn device.
 
-     and the composed plate over the same pair, 6.79% against 16.11%, which
-     still passes. The bands were doing precisely what the hatch was doing —
-     breaking up a hole so no clause could see it — at a twentieth of the ink.
-     That is the whole defect in miniature, and the acceptance condition for
-     this phase is that the floor refuses the owner's grey screen. It does not
-     while they are on the plate. So `.copy-art` is gone from this file
-     entirely, class and rules: an archetype whose ground paints nothing is
-     not a deficiency here, it is the Ground Rule's (a) case.
+     `imageryOrDeviceShare` for this plate with LONG copy, measured through
+     `measureSlidePng` over real Chromium on this tree (`.local/band-sweep.mjs`):
 
-     WHAT CARRIES THE ACCENT NOW, all of it bounded and content-guarded, and
-     none of it able to hide a hole: `.hf-rail` under the kicker,
-     `.stat-band` under the statement, `.body-text`'s accent border, and on
-     the `gr-glyph` variant the outlined display numeral. */
+       scale   as it was    screen de-scaled, 17x7
+         s        5.7%           5.2%
+         m        7.0%           6.9%
+         l       11.1%           7.1%
 
-  /* ── THE ALTERNATIVE GROUND: A LARGE TYPOGRAPHIC MARK UNDER AN ACCENT CAP. ──
+     `IMAGERY_OR_DEVICE_FLOOR` is 0.10. At `l` this archetype was therefore
+     measuring as a plate that CARRIES A DEVICE, its clause E went silent, and
+     a statement slide was accepted as a cover on the strength of its
+     wallpaper — the exact condition the floor exists to refuse. That is now
+     fixed in the mark rather than in the constant; see the fifth-pass band
+     beside `IMAGERY_OR_DEVICE_FLOOR`.
 
-     ── 2026-09-14, RFC-20 P2: THE DASH SCREEN IS DELETED TOO. ──
+     WHAT THE GUARANTEE IS, STATED AT EVERY SCALE THIS TIME. This archetype
+     must report `no-device` at the cover role (pinned by the sweep in
+     `interest-floor-calibration.test.ts`, which renders both grounds x s/m/l
+     precisely so this claim cannot be made from one sample again). Measured
+     now, glyph ground / grid ground, LONG copy:
 
-     This variant carried a field of short horizontal DASHES (a 10x2.6px tick
-     on a 17x7 tile at 22% of the foreground) under a solid accent rule. The
-     dash screen is the same defect as the grid variant's 45-degree hatch
-     wearing a different shape, and deleting one without the other would have
-     left it alive on half the slides this archetype ships: a screen is ink
-     whose extent is the leftover space, `occupiedShare` counts a cell whose
-     MEAN has left the ground and not only a COVERED one, and the whole
-     argument the previous note made (that a 2.6px dash cannot cover 48 of 64
-     samples, so it is "a texture and not a device") answers a question the
-     emptiness clauses never asked. The Ground Rule is in the `.copy-art`
-     block above with the measurement.
+       s   5.2% / 4.9%     m   6.9% / 6.7%     l   7.1% / 7.0%
 
-     Two measured facts from that note are kept because they remain true and a
-     future revision will need them:
+     — the two variants are level at every scale and every one of the six is
+     under the floor with 2.9 points of room or better, so the editorial
+     identity survives the change of mark at all three scales. The earlier
+     revision of this note asserted the same conclusion from the `m` row
+     alone (5.4% against the grid's 4.8%); both of those figures were right
+     and the conclusion was false one scale up, which is why the numbers here
+     are a row rather than a pair.
 
-       * A MARK IS NOT A FUNCTION OF `--ts`. A measurement cell is 4 DESIGN px
-         and does not scale, so a length written `calc(Npx * var(--ts))` moves
-         the measurement: at `l` a 2.6px dash became 3.07px and, where it
-         crossed a glyph stem, the two SUMMED past the 48-of-64 coverage that
-         makes a cell a drawn device. `imageryOrDeviceShare` with LONG copy
-         went 5.7 / 7.0 / 11.1% across s/m/l as it was, against a 10% floor
-         this archetype must stay UNDER, and 5.2 / 6.9 / 7.1% de-scaled. The
-         numeral below still scales, deliberately, and its own note says why.
-       * THE OUTLINE ON THE NUMERAL IS NOT A STYLE CHOICE. A FILLED numeral is
-         a filled SHAPE: at 9% of the foreground its interior sits 19 units
-         off the ground, past the ink line, so every cell inside it counts as
-         a covered low-colour cell — a drawn device — and this plate measured
-         12.7% of device share from a decoration nobody had counted.
+     THE DASH'S CONTRAST IS 22% AND THAT CAME FROM READING IT, NOT FROM THE
+     METRIC. A mark pixel is INK at 18 units off the ground and 22% of `--fg`
+     is 47 units, so every share the floor reads is identical at 22% and at
+     the 34% this shipped with (measured to the tenth of a point across s/m/l:
+     the alpha moves nothing). What is not identical is the 33px body
+     paragraph sitting on it: a 6px-pitch horizontal screen at 34% beats
+     against the body's own 1.55 line rhythm and the paragraph greys out. So
+     the tile is chosen for the emptiness clauses and the contrast is chosen
+     for reading, and those are two independent decisions now.
 
-     ── AND ONE CLAIM THAT USED TO BE HERE IS NOW FALSE. READ THIS BEFORE
-        TOUCHING `interest-floor-calibration.test.ts`. ──
+     The tile also bounds the largest empty rectangle inside the field to one
+     7x5 gap, which is nothing.
 
-     This block used to state, and the file header still stated one revision
-     ago, that "a `headline_focus` judged at the cover role must report
-     `no-device`" — the archetype's editorial identity, pinned by the
-     calibration sweep. THE PLINTH ENDS THAT. A filled card behind the
-     statement is a covered, flat, low-colour region and the instrument calls
-     it what it is. Measured on this tree through real Chromium:
-
-       headline_focus, composed, plinth on   imageryOrDeviceShare  38.51%
-       headline_focus, grey screen           imageryOrDeviceShare  27.73%
-
-     against an `IMAGERY_OR_DEVICE_FLOOR` of 0.10. This archetype now CARRIES
-     a device, at every copy length, deliberately.
-
-     That is RFC-20 §5.4's consequence 1 stated from the other side — "the
-     plinth answers clause D's occupancy AND clause E's device floor with one
-     object" — and it is the reason §5.6 leaves `IMAGERY_OR_DEVICE_FLOOR` at
-     0.10 rather than re-calibrating it. It is a real change of identity and
-     not a measurement artefact: the plate genuinely has a drawn thing on it
-     now, which is what the reference pixels do (`rf-05` carries one bounded
-     object and nothing else) and what "one quiet all-type turn" never did.
-     The calibration test's `no-device` expectation for this archetype is
-     therefore superseded by RFC-20 and must be re-stated, not worked around
-     by shrinking the plinth.
-
-     What is left of the glyph variant is its real subject: the giant outlined
-     numeral, and nothing behind it. The two grounds differ in whether a
-     numeral is present, which was always the part a reader could tell apart —
-     the screens underneath them were the part that made every plate in the
-     set read as one wallpaper. The `gr-glyph` accent cap rule went with
-     `.copy-art`; the accent on both variants is now `.hf-rail`,
-     `.stat-band` and `.body-text`'s border, all bounded and all guarded. */
+     The accent is spent on ONE solid rule capping the field's head rather
+     than on two diagonal bands. A diagonal band is the grid variant's
+     signature; giving the glyph variant a horizontal cap means the two
+     grounds differ in their accent geometry as well as in their texture. */
+  body.gr-glyph .copy-art {
+    background-image:
+      linear-gradient(to bottom, var(--accent) 0 calc(10px * var(--ts, 1)), transparent 0),
+      radial-gradient(ellipse 5px 1.3px at 50% 50%,
+        color-mix(in srgb, var(--fg) 22%, transparent) 0 100%, transparent 100%);
+    background-size: 100% 100%, 17px 7px;
+    background-repeat: no-repeat, repeat;
+    background-position: 0 0, 0 0;
+  }
   .ground-glyph { display: none; }
   /* Furniture, but furniture that paints ink, so it answers to the same rule:
      a plate with no statement on it paints no numeral either. */
@@ -513,13 +445,7 @@
     display: flex; flex-direction: column; justify-content: center;
     margin-inline: calc(16px - var(--mx)); padding-inline: calc(var(--mx) - 16px);
     margin-block-start: calc(30px * var(--ts, 1));
-    /* NO BLOCK PADDING. It existed to keep the copy off the texture's top and
-       bottom edges; the texture is gone and `.hf-plate` carries its own inset
-       now. Keeping both put the plate 45px over its own box at `l` with the
-       calibration's LONG copy — measured, `.hf-field` scrollHeight 1164
-       against clientHeight 1119 — which `probePage` reports and clause B
-       fails. Two nested paddings for one job is how that happens. */
-    padding-block: 0;
+    padding-block: calc(44px * var(--ts, 1));
   }
   /* THE STATEMENT BLOCK NEVER SHRINKS BELOW ITS OWN CONTENT, and that is a
      correctness rule rather than a taste one.
@@ -542,239 +468,6 @@
      it and fails clause B. Overflow that cannot be designed away must at
      least be visible. */
   .copy { flex: 0 0 auto; display: flex; flex-direction: column; }
-  /* ── THE PLINTH (RFC-20 §5.3). THE ONE FILLED OBJECT ON THIS PLATE, AND IT
-        IS NOT DECORATION. ──
-
-     The screen this file used to wear is gone (see `.copy-art`). What takes
-     its place is a bounded filled card behind the statement, and the reason
-     it is here is measured rather than aesthetic.
-
-     RFC-20 §5.4's strongest single measurement is that `occupiedShare` ON
-     TYPE ALONE cannot separate a short populated plate from a neglected one —
-     6.74 against 6.69. Type is glyphs on a ground: the area it occupies is a
-     function of how many letters there are and almost nothing else, and two
-     plates a reader would describe completely differently land within five
-     hundredths of a point. A floor on bare type is hopeless, which is why
-     every previous pass reached for a ground that painted regardless.
-
-     A plinth that HUGS ITS COPY converts copy volume into covered area. The
-     more the statement says, the taller and wider the card behind it, and the
-     bands separate: 26.20% occupied for a composed plate against 3.11% for
-     the owner's grey screen carrying its own guard-ON plinth.
-
-     THE THREE SIZING DECLARATIONS ARE THE WHOLE DESIGN, and `flex: 1 1 auto`
-     here would reproduce `cover.html`'s second-pass defect verbatim — a box
-     that absorbs the leftover space measures the emptiness rather than the
-     content, so the LESS the slide had to say the better it would score.
-
-       * `inline-size: fit-content` — the card is as wide as its widest line.
-       * `max-inline-size: 100%` — the cap. `.hf-field`'s content box is
-         already the plate's full measure (`1080 - 2 * var(--mx)`, via the
-         cancelling negative margin and padding above), so `100%` HERE is
-         RFC-20's `calc(100% - 2*var(--mx))` OF THE PLATE, expressed against
-         the box this element actually lives in. Written the other way it
-         would take a further 128px off a measure that is already inset and
-         reflow every statement in the set.
-       * `block-size: fit-content` + `align-self: start` — it is exactly as
-         tall as its content and it hugs the inline-start edge; it can never
-         stretch to the field.
-
-     THE FILL IS `--fg` AT 12% MIXED INTO `--bg`, NOT INTO `transparent`, and
-     the difference is the whole point. 12% of the bundled ground's 215.4-unit
-     foreground-to-ground distance is 25.8 units: clear of the 18-unit ink
-     line with margin for anti-aliasing, so every cell inside it is COVERED,
-     and with a single flat colour `distinct <= 3` holds, so it lands in the
-     `graphic` bucket and reads to the instrument as the drawn device it
-     visually is. Mixed into `transparent` instead it would be a translucent
-     film whose measured distance depended on whatever it happened to be lying
-     over — which is how a "tone" becomes ink on a pale kit, the failure the
-     `--wash` token block at the top of this file records.
-
-     LOGICAL PROPERTIES THROUGHOUT and no `deg` anywhere in the fill, so the
-     card mirrors under `dir="rtl"` with no RTL branch: `align-self: start`,
-     `inline-size`, `padding-inline`. A `deg` angle does not mirror under
-     `dir` the way logical properties do — that is why `--mk-ink-angle` exists
-     in the shared mark sheet — so the fill is deliberately a flat colour and
-     not a gradient. */
-  .hf-plate {
-    inline-size: fit-content;
-    max-inline-size: 100%;
-    block-size: fit-content;
-    align-self: start;
-    padding-inline: 44px;
-    padding-block: 48px;
-    /* ── THE FILL IS A 10-15% SHADE ACROSS THE CARD, NOT A FLAT 12%, AND THE
-          REASON IS THE INSTRUMENT RATHER THAN THE EYE. ──
-       RFC-20 §5.3 specifies `color-mix(in srgb, var(--fg) 12%, var(--bg))`.
-       Shipped flat, that is a single 5-bit bin covering a third to a half of
-       the plate — and `slide-metrics.ts` takes `backgroundHex` to be the MODAL
-       bin over the plate's low-variance cells (`:664-733`), so on long copy
-       the CARD wins that vote and becomes the measured "ground". Measured on
-       this tree through real Chromium over the calibration's six fixtures x
-       three type scales, with a flat fill: 3 of 18 `slide.html` rows and 2 of
-       18 `closer.html` rows came back with `backgroundHex` set to the card,
-       and on those rows the plate's real ground was re-labelled ink and
-       `clippedEdgeShare` read 2.58% against a 0.4% ceiling — clause B failing
-       on ink that is not there. With the shade: 0 of 18 on every archetype and
-       `clippedEdgeShare` 0.00% everywhere.
-
-       Two stops five points apart split the card's mass across bins while
-       changing nothing else: 10% of the bundled foreground-to-ground distance
-       is 21.5 units and 15% is 32.3, both clear of the 18-unit ink line with
-       room for anti-aliasing, so every cell stays COVERED; the shade moves
-       0.03 units across a 4px cell, so `distinct <= 3` holds and the card
-       stays in the `graphic` bucket. Midpoint 12.5%, which is the value
-       RFC-20 derived.
-
-       `to bottom` and not a `deg`: it is the block axis, identical under
-       `dir="rtl"` in a horizontal writing mode, so the card still needs no RTL
-       branch. Mixed into `--bg` rather than into `transparent`, so the card's
-       measured distance is a property of the kit and not of whatever it
-       happens to be lying over.
-
-       ── THE FILL IS GONE, AND THE REASON IS A CI RENDER, NOT A PREFERENCE. ──
-
-       Run 34800700580 measured this card through real Chromium. On a plate
-       carrying no imagery and no drawn device it reported
-       `imageryOrDeviceShare` 32.0-41.2% against `IMAGERY_OR_DEVICE_FLOOR`
-       0.10 — three to four times over — so `headline_focus` was ACCEPTED as a
-       cover at every type scale and on both grounds, and
-       `interest-floor-calibration.test.ts`'s `default:cover-carries-device`
-       guard stopped firing. The same fill also took `flatBackgroundShare` from
-       ~92% to 56.5-65.4%, under `FLAT_BACKGROUND_CEILING` 0.70, which disarms
-       clause D's FIRST limb on every plate that wears it; took `textShare`
-       from ~33% to 1.0-1.8%, which disarms clause F; and at `fontScale l` on
-       `slide.html` still won `backgroundHex`'s modal vote, which false-fired
-       clause B (`clipped`). One object, four clauses.
-
-       It is not repairable by choosing a different percentage. RFC-20 §5.0's
-       own structural fact is that `imageryOrDeviceShare` is a cell-for-cell
-       SUBSET of `occupiedShare`: a fill at or over `tol.ink` = 18 units is
-       `covered` and therefore `graphic`, and a fill under `FLAT_TOL` = 12 is
-       invisible to every share. The 12-18 band in between is closed by
-       `MATERIAL_PEAK_DELTA`'s own note — it takes `flatBackgroundShare` under
-       0.70 and disarms clause D. **There is no plinth that pays clause D
-       without disarming clause E.** The card therefore keeps its geometry —
-       the inset is what breaks the empty band up — and paints nothing. */
-  }
-  /* ── THE CARD'S INSET IS NOT A FUNCTION OF `--ts`, AND AT `s` IT GROWS. ──
-     Two separate reasons, both measured.
-
-     (1) `--ts` is the reviewer's control over TYPE. The card is a drawn
-     object, and this directory's standing rule — stated at length beside
-     `slide.html`'s dot tile and `headline-focus`'s own dash screen — is that a
-     mark is not a function of the type scale. Written `calc(44px * var(--ts))`
-     the inset grew 18% at `l` on a plate that did not grow, and with the
-     calibration's LONG copy that was exactly the 45px this file's `.hf-field`
-     was then overflowing by.
-
-     (2) At `s` every block on the plate is 15% shorter and the air is 15%
-     taller — `cover.html`'s third-pass note measured the same effect on its
-     own geometry. The card is the one element that can absorb that air
-     without pretending the slide said more than it did, so at `s` it takes a
-     more generous inset. Measured, `largestEmptyRectShare` at `s`:
-
-       card inset                en-short   en-medium   he-short   he-medium
-       44/48 flat                  26.02      23.15       29.47      25.67
-       64 inline / 96 block        23.63      20.77       27.09      23.29
-
-     ── AN OPEN §5.6 RULE-2 FINDING, NOT AN ACCEPTED RESIDUAL. ──
-
-     This block used to call the rows below "the residual, recorded rather than
-     papered over", which reads as a decision that has been taken. It has not
-     been. `interest-floor-calibration.test.ts:631` and `:801` assert ZERO
-     findings at `CALIBRATION_MARGIN`, those assertions are unchanged, and
-     these rows are **RED in CI**. Recording a failure in a template comment
-     does not make a red assertion green, and the honest status is: RFC-20
-     §5.6 decision rule 2 applies — the first remedy is the TEMPLATE, the
-     constant does not move, and the work is not done. It is listed as open in
-     the PR body rather than banked here.
-
-
-     `interest-floor-calibration.test.ts` does not assert the ceiling, it
-     asserts the ceiling WITH `CALIBRATION_MARGIN = 0.08` — so a bundled
-     archetype has to measure `largestEmptyRectShare` <= 0.20 at the interior
-     role, not <= 0.28. Measured here over the calibration's own six fixtures
-     x three type scales (real Chromium, msedge channel), with everything in
-     this file as it now stands:
-
-       worst 23.77 (he-short/s); over 0.20 on en-short/s 23.63, en-short/m
-       23.35, he-short/s 23.77, he-short/m 23.72, he-short/l 20.46,
-       he-medium/s 23.29, he-medium/m 23.02. Every other row is 9.38-19.25.
-       Nothing anywhere is over the 0.28 CEILING, and no plate overflows.
-
-     Before this phase the same rows all measured 5.9-10.2 and passed — on the
-     hatch, which painted the hole rather than filling it. These numbers are
-     the first honest ones this archetype has produced, and the residual is
-     real: a 24-character statement and a 44-character body on a 1080x1440
-     plate genuinely leave a quarter of the frame empty at the small type
-     scale, and no amount of card inset changes that. THE REMEDY IS
-     COMPOSITION, NOT A LOWER BAR — RFC-20 §5.5's `dead-space` limb, which is
-     the relayout half of this phase and lands in the same PR. What must not
-     happen is `CALIBRATION_MARGIN` being reduced to admit these rows; that is
-     the exact move RFC-20 exists to refuse. */
-  body.ts-s .hf-plate { padding-inline: 64px; padding-block: 96px; }
-  /* ── THE GUARD ASKS FOR THE BODY, NOT JUST THE HEADLINE, AND THAT IS THE
-        WHOLE OF THIS PHASE'S ACCEPTANCE CONDITION. ──
-
-     The form is the one this directory has used since `cover.html`'s second
-     pass, asked of the TWIN'S CHILDREN rather than of the host: `.hf-headline`
-     and `.body-text` are twin-slot pairs (see the twin-slot block below) and so
-     have two element children on every render, which means `#headline:empty`
-     would be permanently false and a guard written that way permanently
-     silent. An empty plate would then acquire a filled card — ink with no
-     content to justify it, which is precisely what RFC-20 guard G2 refuses.
-
-     WHAT CHANGED, AND WHY IT IS A BUG FIX RATHER THAN A TIGHTENING OF TASTE.
-     The guard used to read `:has(#headline > span:not(:empty))` — it painted
-     the card whenever a headline existed. But the plinth's ENTIRE
-     justification (RFC-20 §5.3) is that it "converts copy VOLUME into
-     measurable area", and a plate carrying a headline and nothing else has no
-     volume to convert. On that plate the card is not a plinth; it is a painted
-     field whose extent is set by the type size, which is the Ground Rule's
-     case (b) failing its own second clause: *its extent a function of the
-     CONTENT and never of the leftover space*.
-
-     MEASURED-EDGE, the real pipeline (`createRenderCarousel({probe,measure})`
-     -> `measureSlidePng`) with all four production head sheets including the
-     ground material, both ground variants x three type scales. GREY is the
-     owner's own complaint reduced to a fixture and is exactly the plate
-     `interest-floor-calibration.test.ts`'s G1 builds: one short headline, no
-     kicker, no body, no device.
-
-                              occ            flat           LER            iod
-       GREY, guard on head    0.2791-0.3004  0.7103-0.7221  0.3500         0.2763-0.3152
-       GREY, guard on body    0.0285-0.0746  0.9463-0.9790  0.3611-0.4056  0.0166-0.0412
-       composed, short copy   0.2928-0.3545  0.6646-0.7163  0.2222-0.2778  0.2739-0.3199
-
-     Read the first two rows against the third. **With the guard on the
-     headline the grey screen is indistinguishable from a composed plate on
-     every metric the floor owns** — occ 0.2791-0.3004 against 0.2928-0.3545,
-     `iod` 0.2763-0.3152 against 0.2739-0.3199. It was refused, but by clause C
-     alone and on a 1.2-point margin, and at the cover role it **passed clause
-     E**: the owner's grey screen was reporting that it carried a drawn device.
-     That is defect 1 rebuilt out of the object that was supposed to close it.
-
-     With the guard on the body the same plate measures `LER` 0.3611-0.4056
-     (clause C fires), `flat` 0.9463-0.9790 with `occ` 0.0285-0.0746 (clause D
-     fires) and `iod` 0.0166-0.0412 (clause E fires at the cover role).
-     **Refused by three independent clauses, decorated and bare, at s, m and l,
-     on both grounds.**
-
-     AND IT COSTS NOTHING, which is the part that had to be measured rather
-     than hoped for. A composed plate keeps its card — the short-copy row is
-     unchanged to 4 dp either way — so there are ZERO new false refusals, and a
-     false refusal here would cost a $0.181 drafting attempt out of three
-     against $0.0017 of headroom. **No threshold moved to achieve any of this.**
-
-     It is also what turns `OCCUPIED_SHARE_FLOOR.interior` from a coincidence
-     into a band: the flat-gated interior gap goes from 0.0117 wide to 0.2375
-     wide, and that constant's doc comment carries both readings.
-
-     `.body-text` rather than `.hf-foot`: the foot is a layout box that exists
-     on every render, so asking it would be asking nothing. */
-  body:not(:has(#headline > span:not(:empty))) .hf-plate,
-  body:not(:has(.body-text > span:not(:empty))) .hf-plate { background: none; }
   .hf-foot { flex: 0 0 auto; margin-block-start: calc(46px * var(--ts, 1)); }
 
   /* An optional number device sits above the statement, inside the elastic
@@ -795,28 +488,6 @@
      upper third reading as a hole. A 3px rule covers no cell, so it is
      geometry the reader sees and the device floor does not. */
   .hf-rail { block-size: 2px; background: color-mix(in srgb, var(--fg) 48%, transparent); margin-block-start: calc(26px * var(--ts, 1)); }
-  /* ── THE FURNITURE ANSWERS TO THE GROUND RULE TOO (RFC-20 P2). ──
-     `.hf-rail` is a full-measure 2px rule at 48% of the foreground — 103
-     units off the ground, so every cell row it crosses is ink and OCCUPIED —
-     and `.stat-band` is a 200x14 accent block. Both used to paint on every
-     render, including one with nothing on it.
-
-     Neither is large, and that is why this went unnoticed for six phases:
-     measured on this tree through real Chromium, a `headline_focus` with
-     EVERY SLOT EMPTY reported `occupiedShare` 0.45% — trivial — and
-     `largestEmptyRectShare` 68.63%, because a full-width rule across the top
-     and an accent block in the middle CUT THE EMPTY RECTANGLE INTO PIECES.
-     `largestEmptyRect` is one contiguous rectangle, so a 2px hairline costs it
-     a third of the plate. An empty plate measured as though a third of it
-     were composed, on 0.45% of ink.
-
-     A rule under a kicker that is not there is not a rule and an accent mark
-     after a statement that is not there is not punctuation; both are ink an
-     empty plate acquired. Guarded, the same render measures `occupiedShare`
-     0.00% and `largestEmptyRectShare` 100.00%, which is what RFC-20 guard G2
-     asserts for every archetype at every role. */
-  body:not(:has(.kicker:not(:empty))) .hf-rail { display: none; }
-  body:not(:has(#headline > span:not(:empty))) .stat-band { display: none; }
 
   .hf-headline {
     /* Weight 500, not 600. A 118px Fraunces at 600 has stems thick enough to
@@ -847,17 +518,6 @@
   .hf-headline.small { font-size: calc(104px * var(--ts, 1)); line-height: 1.08; }
   .hf-headline.tiny { font-size: calc(86px * var(--ts, 1)); line-height: 1.12; }
   .hf-headline.micro { font-size: calc(68px * var(--ts, 1)); line-height: 1.16; }
-  /* ── A FIFTH STEP, AND ONLY `l` EVER REACHES IT (RFC-20 P2). ──
-     `micro` was the floor, and at `l` a long statement set at 68 x 1.18 = 80px
-     over the plinth's narrowed measure took SIX lines and put the composition
-     41px outside `.hf-field` — measured, scrollHeight 1160 against clientHeight
-     1119, which `probePage` reports and clause B fails on. The plinth's inset
-     is what the plate no longer had room for, and the honest place to find it
-     is the same one the other four steps come from: the statement is sized to
-     what fits. This is the fourth time a ladder in this directory has grown a
-     bottom step for exactly this reason; see `cover.html`'s `huge` for the one
-     that grew upward instead. */
-  .hf-headline.nano { font-size: calc(58px * var(--ts, 1)); line-height: 1.2; }
 
   /* The accent band under the statement. 200x14 rather than the set's
      standing 132x12: on a 1080px plate the smaller bar reads as a detail
@@ -940,8 +600,8 @@
     <div class="kicker">{{kicker}}</div>
     <div class="hf-rail"></div>
   </div>
-  <div class="hf-field">
-    <div class="copy hf-plate">
+  <div class="hf-field copy-art">
+    <div class="copy">
       <div class="hf-device">{{html:device}}</div>
       <div class="hf-headline" id="headline"><span class="mk-runs">{{html:headlineRuns}}</span><span class="mk-plain">{{headline}}</span></div>
       <div class="stat-band"></div>
@@ -994,10 +654,7 @@
       var h = document.getElementById("headline");
       var len = mkLen(h);
       var big = document.body.classList.contains("ts-l");
-      // `nano` is reachable at `l` only: the plinth's inset costs the plate a
-      // line's worth of room and `l` is the scale that has none to give. See
-      // the `.hf-headline.nano` block for the measurement.
-      if (len > (big ? 78 : 100)) h.className = big ? "hf-headline nano" : "hf-headline micro";
+      if (len > (big ? 78 : 100)) h.className = "hf-headline micro";
       else if (len > (big ? 50 : 60)) h.className = "hf-headline tiny";
       else if (len > (big ? 27 : 32)) h.className = "hf-headline small";
       window.__CAROUSEL_READY__ = true;

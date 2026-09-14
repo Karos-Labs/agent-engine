@@ -200,7 +200,7 @@ describe("checkInterestFloor: every clause fires alone", () => {
   it("D — the sentence is the one the spec wrote, numbers included", () => {
     const verdict = check(metrics({ flatBackgroundShare: 0.93, occupiedShare: 0.08, imageryOrDeviceShare: 0.2 }), "interior", 5);
     expect(verdict.findings[0]?.sentence).toBe(
-      "slide 5 — 93% of the pixels were the background colour and only 8% of the frame was occupied (floor 19% for an interior slide).",
+      "slide 5 — 93% of the pixels were the background colour and only 8% of the frame was occupied (floor 30% for an interior slide).",
     );
     expect(verdict.findings[0]?.steer).toBe(
       "Either give slide 5 a device (figure, bars, before/after, timeline, versus) or merge it into slide 4 and let the carousel be one slide shorter.",
@@ -356,7 +356,7 @@ describe("checkInterestFloor: the bold type poster", () => {
  */
 describe("OCCUPIED_SHARE_FLOOR: the RFC-20 re-calibration", () => {
   it("is 0.18 / 0.19 / 0.30, and every other threshold this phase touched held", () => {
-    expect(OCCUPIED_SHARE_FLOOR).toEqual({ cover: 0.18, interior: 0.19, closer: 0.3 });
+    expect(OCCUPIED_SHARE_FLOOR).toEqual({ cover: 0.18, interior: 0.3, closer: 0.31 });
     // The siblings RFC-20 §5.6 lists as NOT moving, each with the measurement
     // that keeps it: the plinth alone is iod 0.2383 against 0.10; the cover's
     // 0.2361 rectangle is a hole at a named rectangle, not a tight ceiling;
@@ -400,37 +400,79 @@ describe("OCCUPIED_SHARE_FLOOR: the RFC-20 re-calibration", () => {
   // clause A is render integrity and short-circuits everything, so pinning it
   // to each plate's real ink would make these cases about whether the render
   // worked instead of about the band. Every other field is the measurement.
-  const composed = () =>
-    metrics({ flatBackgroundShare: 0.7163, occupiedShare: 0.2928, contentOccupiedShare: 0.2928, largestEmptyRectShare: 0.2778, imageryOrDeviceShare: 0.2739, textShare: 0.0237 });
+  // -- NINTH PASS: THESE ROWS ARE CI RENDERS, NOT EDGE, AND `composed` IS GONE. --
+  //
+  // `composed()` was a `headline_focus` plate at occ 0.2928 wearing `.hf-plate`.
+  // CI (34800700580) measured that card at `imageryOrDeviceShare` 32.0-51.4% on
+  // a plate with no imagery and no device -- it was `covered && distinct <= 3`,
+  // which is the literal definition of `graphicShare`, so **a decoration was
+  // being counted as the drawn device whose absence clause E exists to detect**,
+  // and `headline_focus` was accepted as a COVER at every type scale. The card
+  // is gone and the archetype is out of scope, so 0.2928 is not a number this
+  // tree produces and a fixture carrying it would be asserting the defect.
+  //
+  // What replaces it is the WORST row of each shipped role's band, off the
+  // 160-row gate-zero sweep on CI (34802291959) -- the plate closest to its own
+  // floor, so these cases are the band clearing the constant and not one
+  // comfortable plate.
+  const composedCover = () =>
+    metrics({ flatBackgroundShare: 0.6776, occupiedShare: 0.267, contentOccupiedShare: 0.211, largestEmptyRectShare: 0.1469, imageryOrDeviceShare: 0.2739, textShare: 0.0237 });
+  const composedCloser = () =>
+    metrics({ flatBackgroundShare: 0.4285, occupiedShare: 0.5722, contentOccupiedShare: 0.5692, largestEmptyRectShare: 0.2028, imageryOrDeviceShare: 0.3863, textShare: 0.1 });
+  // The NEGLECTED ceiling: the worst (highest-occupancy) of the sweep's eight
+  // controls, the owner's grey screen on the glyph ground.
   const greyScreen = () =>
-    metrics({ flatBackgroundShare: 0.9712, occupiedShare: 0.0372, contentOccupiedShare: 0.0372, largestEmptyRectShare: 0.3917, imageryOrDeviceShare: 0.0226, textShare: 0.01 });
+    metrics({ flatBackgroundShare: 0.9614, occupiedShare: 0.0562, contentOccupiedShare: 0.0515, largestEmptyRectShare: 0.3833, imageryOrDeviceShare: 0.0226, textShare: 0.01 });
+  // A COMPOSED statement plate with its decoration removed and nothing put in
+  // its place -- the sweep's lowest populated interior row, heroless
+  // `slide.html`. It is here to be compared with `greyScreen()` above, and the
+  // comparison is the reason `interior` did not move.
+  const strippedStatement = () =>
+    metrics({ flatBackgroundShare: 0.9726, occupiedShare: 0.0383, contentOccupiedShare: 0.037, largestEmptyRectShare: 0.3667, imageryOrDeviceShare: 0.0226, textShare: 0.02 });
+
+  it("admits the worst row of each shipped band at 1.15x -- and the closer at the rule's own literal", () => {
+    // The two roles RFC-20 actually re-calibrated. `interior` is not here
+    // because it did not move; see `strippedStatement` and the case below.
+    expect(kinds(check(composedCover(), "cover", 1)).filter((k) => k === "empty")).toEqual([]);
+    expect(kinds(check(composedCloser(), "closer", 6)).filter((k) => k === "empty")).toEqual([]);
+    expect(composedCover().occupiedShare / OCCUPIED_SHARE_FLOOR.cover).toBeGreaterThan(1.15);
+    expect(composedCloser().occupiedShare / OCCUPIED_SHARE_FLOOR.closer).toBeGreaterThan(1.15);
+  });
 
   /**
-   * The closer's own plate, which is a different archetype and a different
-   * number. MEASURED-EDGE off the gate-zero sweep's 19 closer rows, taken at
-   * the WORST (lowest-occupancy) row, `he rtl short l`: occ **0.5722**, which
-   * is the closer band's true floor. The composed `headline_focus` above is
-   * NOT a closer and is not held to it.
+   * WHY `interior` DID NOT MOVE, PINNED AS AN ASSERTION RATHER THAN A COMMENT.
    *
-   * `imageryOrDeviceShare` is INHERITED from the clause-E measurer rather than
-   * re-measured — the sweep prints occupancy, flatness and the rectangle, not
-   * `iod` — and it is here only to keep clause E quiet so the case is about
-   * clause D. Nothing asserts on it.
+   * RFC-20 5.6's decision rule 1 sets a constant from the midpoint of a gap
+   * between the populated band's floor and the neglected band's ceiling. On CI
+   * there is no gap at the interior role: the lowest populated row (heroless
+   * `slide.html`, 0.0383) is BELOW the highest neglected control (the owner's
+   * grey screen, 0.0562). **A composed statement plate stripped of its
+   * decoration measures as a neglected one, because that is what it is** --
+   * type on ground and nothing else.
+   *
+   * That is not a reason to pick a number between them; there is nothing
+   * between them. It is the measurement that says `headline_focus` and heroless
+   * `slide.html` need a real bounded object from their own copy (RFC-20 Part
+   * 11), and until they have one they keep their existing paint and their
+   * existing floor.
+   *
+   * BREAK IT: if a future pass makes `strippedStatement().occupiedShare` clear
+   * `greyScreen().occupiedShare`, this case goes red and the interior
+   * re-calibration is back on the table -- with a band behind it.
    */
-  const composedCloser = () =>
-    metrics({ flatBackgroundShare: 0.4287, occupiedShare: 0.5722, contentOccupiedShare: 0.5722, largestEmptyRectShare: 0.2028, imageryOrDeviceShare: 0.3863, textShare: 0.1 });
-
-  it("admits the composed plate at the role it belongs to — the false refusal a 0.30 floor would have cost $0.181", () => {
-    // `headline_focus` sits at slide 1 or mid-carousel, never last.
-    for (const role of ["cover", "interior"] as const) {
-      expect(kinds(check(composed(), role, role === "interior" ? 3 : 1)).filter((k) => k === "empty"), role).toEqual([]);
+  it("has NO interior band to calibrate from: the stripped statement plate sits under the neglected ceiling", () => {
+    expect(strippedStatement().occupiedShare).toBeLessThan(greyScreen().occupiedShare);
+    // And both are refused, which is the half that matters: whatever the
+    // interior floor is set to, it cannot admit one without admitting the
+    // other.
+    for (const plate of [strippedStatement, greyScreen]) {
+      const verdict = check(plate(), "interior", 3);
+      expect(verdict.ok).toBe(false);
+      expect(kinds(verdict)).toContain("empty");
     }
-    expect(kinds(check(composedCloser(), "closer", 6)).filter((k) => k === "empty")).toEqual([]);
-    // Each plate against its own role's floor, at the 1.15x margin the sweep
-    // gates on. The closer's row is the band's LOWEST of nineteen, so this is
-    // the whole closer band clearing 0.30 and not one comfortable plate.
-    expect(composed().occupiedShare / OCCUPIED_SHARE_FLOOR.interior).toBeGreaterThan(1.15);
-    expect(composedCloser().occupiedShare / OCCUPIED_SHARE_FLOOR.closer).toBeGreaterThan(1.15);
+    // The interior floor is therefore the value the tree shipped with, not a
+    // midpoint. Pinned so a later edit has to come past this case.
+    expect(OCCUPIED_SHARE_FLOOR.interior).toBe(0.3);
   });
 
   it("refuses the owner's grey screen at every role, on clause D AND on clause C", () => {
@@ -448,24 +490,22 @@ describe("OCCUPIED_SHARE_FLOOR: the RFC-20 re-calibration", () => {
    * re-calibration rather than a relaxation: the new numbers are not merely
    * looser, they are the ones that separate the two plates.
    */
-  it("the OLD floors get both halves wrong: the composed plate is falsely refused and 0.42 admits nothing it should", () => {
+  it("the OLD cover floor falsely refuses the whole measured cover band, and 0.42 admits nothing it should", () => {
     const old: Record<SlideRole, number> = { cover: 0.42, interior: 0.3, closer: 0.42 };
-    for (const role of ["cover", "interior"] as const) {
-      // A composed statement plate at 0.2928 is UNDER the old floor at BOTH
-      // roles — a false refusal, and at 0.181 a drafting attempt out of three.
-      expect(composed().occupiedShare, role).toBeLessThan(old[role]);
-      // …and over the new one, with the 1.15x margin the sweep gates on.
-      expect(composed().occupiedShare, role).toBeGreaterThan(OCCUPIED_SHARE_FLOOR[role] * 1.15);
-    }
-    // The closer's own plate. It clears the OLD floor too (0.5722 vs 0.42) —
-    // said plainly, because the honest reason `closer` moved is not that 0.42
-    // refused a real plate, it is that §5.6's pre-committed rule 1 puts the
-    // constant at the midpoint of a measured band and the midpoint is 0.29.
-    // The rule was written before the sweep ran so this row could not be
-    // argued either way afterwards, and 0.30 is one point stricter than it.
+    // The cover is the one role where 0.42 was a FALSE REFUSAL on real pixels:
+    // all 19 rendered cover rows sit at 0.2670-0.3517, i.e. entirely under it.
+    expect(composedCover().occupiedShare).toBeLessThan(old.cover);
+    expect(composedCover().occupiedShare).toBeGreaterThan(OCCUPIED_SHARE_FLOOR.cover * 1.15);
+    // The closer's own plate clears the OLD floor too (0.5722 vs 0.42) -- said
+    // plainly, because the honest reason `closer` moved is not that 0.42
+    // refused a real plate, it is that 5.6's pre-committed rule 1 puts the
+    // constant at the midpoint of a measured band and CI's midpoint is 0.31.
+    // The rule was written before the sweep ran so this row could not be argued
+    // either way afterwards, and 0.31 is STRICTER than the 0.30 this branch
+    // first proposed off Edge numbers.
     expect(composedCloser().occupiedShare).toBeGreaterThan(old.closer);
     expect(composedCloser().occupiedShare).toBeGreaterThan(OCCUPIED_SHARE_FLOOR.closer * 1.15);
-    // The grey screen is refused at every role by BOTH sets — which is why
+    // The grey screen is refused at every role by BOTH sets -- which is why
     // the old floor's failure on this mask is a false-POSITIVE problem. What
     // the old floor could not do is the SHIPPED-hatch case below.
     for (const role of ["cover", "interior", "closer"] as const) {

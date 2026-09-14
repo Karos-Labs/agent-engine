@@ -95,34 +95,11 @@
      reader calls unfinished. The wash stays inside the 12-18 band (a pixel is
      ground within 12 and ink beyond 18) so it may bleed to the frame edge;
      the texture carries ink, so it is inset 16px, because ink inside the 8px
-     bleed band is what `clippedEdgeShare` reads as clipped type.
-
-     ── 2026-09-14, RFC-20 P2: THE WASH IS GONE AND THIS DIV PAINTS NOTHING. ──
-
-     `slide-metrics.ts` takes the slide's ground to be the MODAL 5-bit bin over
-     the plate's low-variance cells (`:664-733`). A flat ground is ONE bin and
-     wins that vote outright; a GRADED wash spreads the same pixels over
-     several bins, so the modal bin shrinks — and the moment a real drawn
-     object appears on the plate, the object takes the vote and every share is
-     measured against the wrong anchor. On `headline-focus.html`, whose wash
-     was heavier, the new plinth did exactly that: `backgroundHex` came back as
-     the PLINTH's own fill, the untouched ground was re-labelled ink, and
-     `clippedEdgeShare` read 1.37% against a 0.4% ceiling on a plate with no
-     ink in the bleed band at all. This file gains the same plinth, so it gets
-     the same treatment before it can do the same thing.
-
-     WHAT REPLACES IT is `ground-material.ts`'s turbulence material, spliced
-     onto `.ground::after` through `extraHeadHtml`: bounded below `FLAT_TOL`
-     and SYMMETRIC about the ground by construction, which is precisely the
-     property (RFC-20 §5.1) that stops the modal cell colour drifting. This div
-     stays as its mount point, and a template rendered with no sheet spliced
-     into it shows a clean ground — a correct plate rather than a broken one.
-
-     The cost, stated: the wash was what took `flatBackgroundShare` off clause
-     D's 0.70 ceiling, so removing it RE-ARMS that limb here. Clause D is a
-     conjunction (flat AND idle) and a composed plate is not idle; the plinth
-     is what supplies the occupancy that answers it. */
-  .ground { position: absolute; inset: 0; z-index: 0; }
+     bleed band is what `clippedEdgeShare` reads as clipped type. */
+  .ground {
+    position: absolute; inset: 0; z-index: 0;
+    background-image: linear-gradient(188deg, transparent 46%, color-mix(in srgb, var(--wash) 8%, transparent) 100%);
+  }
   .bg { position: absolute; inset: 0; z-index: 1; }
   /* NO HERO, NO SCRIM OVER THE GROUND. `onerror` removes the <img>, which
      leaves `.bg` genuinely empty (the element is written on one line, so no
@@ -219,11 +196,7 @@
     display: flex; flex-direction: column; justify-content: center;
     margin-block: 128px 96px;
     margin-inline: calc(16px - var(--mx)); padding-inline: calc(var(--mx) - 16px);
-    /* NO BLOCK PADDING since RFC-20 P2. It kept the copy off the screen's top
-       and bottom edges; the screen is gone and `.hf-plate` carries its own
-       inset. Two nested paddings for one job is what put `headline-focus.html`
-       45px outside its own box at `l` before the same line was removed there. */
-    padding-block: 0;
+    padding-block: calc(56px * var(--ts, 1));
   }
   /* ── THE GROUND ALTERNATES SLIDE TO SLIDE, AND THIS IS THE ONE ARCHETYPE
         THAT NEEDS IT TO. ──
@@ -370,170 +343,38 @@
      derived. Both tile tightly enough that the largest empty rectangle INSIDE
      the field is one tile — a 10px square (dots) or a 9px column (rules) — so
      the rectangle the measurement finds is always one of the plate's own bare
-     margins rather than a hole in the mark.
-
-     ── 2026-09-14, RFC-20 P2: BOTH SCREENS ARE DELETED. ──
-
-     The dot screen and the column ruling are gone. Everything above is a true
-     account of how they were derived and it answers the wrong question. A
-     screen is not a device — that argument is sound — but `occupiedShare` and
-     `contentOccupiedShare` never asked whether a cell is COVERED. They ask
-     whether it carries ink OR whether its MEAN has left the ground
-     (`slide-metrics.ts:896-919`), and a 30% dot on a 10px tile clears that
-     over the whole field. So did the 24% column ruling. The accent GRIDLINES
-     every 212px were the same thing again at a coarser pitch, and they are the
-     clearest case of all: a full-field repeat has no relationship to the copy,
-     so a plate with one line on it and a plate with eight measure alike.
-
-     Measured on this tree through real Chromium (`measureSlidePng`, 1080x1440
-     @2, msedge channel), the shipped heroless plate:
-
-       one short headline (the owner's grey screen)   occ 40.05   LER 10.00
-       a full statement and body                      occ 43.09   LER 10.00
-
-     `largestEmptyRectShare` IDENTICAL TO TWO DECIMAL PLACES across a plate
-     that says almost nothing and one that says everything — which is this
-     file's own 2026-09-12 note ("One value, nine contents") repeating one
-     revision later, because that pass moved the screen into a sub-region
-     instead of removing it. THE GROUND RULE (RFC-20 §5.0) removes it: every
-     painted layer is either MATERIAL (below the flat tolerance, contributing
-     zero to every share) or AN OBJECT (bounded, its extent a function of the
-     CONTENT and never of the leftover space, switched off by a `body:has()`
-     guard). Nothing in between; no full-bleed layer may carry ink.
-
-     `.copy-art` NOW PAINTS NOTHING AT ALL, and that is the shape RFC-20 §5.2
-     asks for rather than a quieter screen. An intermediate revision of this
-     change kept a single bounded 12px accent rule here, capping the field's
-     head on odd slides and its foot on even ones — genuinely bounded,
-     genuinely guarded, and still the wrong home for it, because the field is
-     the leftover space and a rule pinned to the leftover space's edge moves
-     with the emptiness. The accent rule moved to the PLINTH'S OWN EDGE
-     instead, where its position is the copy's (see `.hf-plate` below), and
-     `template-mark-slots.test.ts`'s Ground-Rule source scan holds the line:
-     `.copy-art` may declare no `background-image` at all.
-
-     WHAT CARRIES THE ALTERNATION is therefore the plinth's accent cap: at the
-     card's HEAD on odd slides and at its FOOT on even ones. It is a border, it
-     is 12px, it is sized and placed by the card, and it cannot hide a hole.
-
-     And the real difference between two consecutive text_only slides is now
-     the PLINTH itself, whose size is their copy. Two slides that say different
-     things no longer look the same, which is what the owner's second complaint
-     ("בנוסף בגלל שזה חזרתי זה נראה AI") was actually about — a dot screen and
-     a column ruling were two wallpapers, and at feed size a reader told them
-     apart about as well as they told apart two grey plates. */
+     margins rather than a hole in the mark. */
+  body {
+    --gr-mark:
+      linear-gradient(to bottom, var(--accent) 0 calc(12px * var(--ts, 1)), transparent 0),
+      radial-gradient(circle 1.8px at 50% 50%,
+        color-mix(in srgb, var(--fg) 30%, transparent) 0 100%, transparent 100%);
+    --gr-tile: 100% 100%, 10px 10px;
+    --gr-repeat: no-repeat, repeat;
+  }
+  body[data-n$="0"], body[data-n$="2"], body[data-n$="4"], body[data-n$="6"], body[data-n$="8"] {
+    --gr-mark:
+      repeating-linear-gradient(to right,
+        color-mix(in srgb, var(--accent) 82%, transparent) 0 3px,
+        transparent 3px 212px),
+      repeating-linear-gradient(to right,
+        color-mix(in srgb, var(--fg) 24%, transparent) 0 2px,
+        transparent 2px 9px);
+    --gr-tile: auto, auto;
+    --gr-repeat: repeat, repeat;
+  }
   /* The statement's own guard, asked of the headline's CHILDREN. `.headline`
      is a twin-slot pair now (see the twin-slot block below), so it has two
      element children on every render and `:not(:empty)` on the host itself
      would be true on a plate with no statement on it — the ground mark would
      paint on an empty plate, which is the one thing this guard exists to
      prevent. "Has a non-empty twin" is the same question one level down. */
-  /* THE ACCENT CAP, on the plinth's own edge, under the same guard the ground
-     mark used to carry: the head of the card on odd slides, its foot on even
-     ones. `{{slideIndex}}` rather than `{{groundStyle}}` for the reason stated
-     above — the seeded walk says nothing about two `grid` slots in a row, and
-     an index alternates by construction. An attribute selector rather than a
-     class so a checkpoint written before the slot existed (`data-n=""`)
-     matches neither branch and falls through to the head cap. */
-  body:has(.bg:empty) .copy:has(.headline > span:not(:empty)) .hf-plate {
-    border-block-start: 12px solid var(--accent);
+  body:has(.bg:empty) .copy:has(.headline > span:not(:empty)) .copy-art {
+    background-image: var(--gr-mark);
+    background-size: var(--gr-tile);
+    background-repeat: var(--gr-repeat);
+    background-position: 0 0, 0 0;
   }
-  body[data-n$="0"]:has(.bg:empty) .copy:has(.headline > span:not(:empty)) .hf-plate,
-  body[data-n$="2"]:has(.bg:empty) .copy:has(.headline > span:not(:empty)) .hf-plate,
-  body[data-n$="4"]:has(.bg:empty) .copy:has(.headline > span:not(:empty)) .hf-plate,
-  body[data-n$="6"]:has(.bg:empty) .copy:has(.headline > span:not(:empty)) .hf-plate,
-  body[data-n$="8"]:has(.bg:empty) .copy:has(.headline > span:not(:empty)) .hf-plate {
-    border-block-start: 0; border-block-end: 12px solid var(--accent);
-  }
-  /* ── THE PLINTH (RFC-20 §5.3), ON THE HEROLESS PATH ONLY. ──
-
-     `headline-focus.html`'s `.hf-plate` block is the canonical note: why a
-     `fit-content` card that hugs its copy is the mechanism that makes "how
-     much was written" measurable as area, why `flex: 1 1 auto` here would
-     reproduce the defect being removed, why the fill is mixed into `--bg`
-     rather than into `transparent`, and why the whole thing is written in
-     logical properties with no `deg` in it so it mirrors under RTL.
-
-     THE ONE THING SPECIFIC TO THIS ARCHETYPE IS THE `body:has(.bg:empty)`
-     SCOPE, and it is load-bearing. With a photograph this file is a
-     photograph: the copy is a caption on a scrim in the lower third, and a
-     filled card behind it would be a grey box pasted onto somebody's picture.
-     The same rule already governs the statement's size ladder and the ground
-     mark above it — CSS decides which path this is, not JS, because at parse
-     time the hero's `onerror` may not have run yet. */
-  body:has(.bg:empty) .hf-plate {
-    inline-size: fit-content;
-    max-inline-size: 100%;
-    block-size: fit-content;
-    /* ── THE ONE THING THIS ARCHETYPE'S PLINTH HAS THAT THE OTHERS DO NOT. ──
-       A FLOOR, not an elastic height. `min-block-size` is a constant of the
-       template: the card never grows with the field, so it still cannot
-       measure the leftover space — which is the property the Ground Rule
-       actually asks for — and `.cl-ask`'s own 400px floor in `closer.html` is
-       the same device already shipping in this directory.
-
-       It is here and not in `headline-focus.html` because this plate has no
-       kicker. `headline-focus` opens with a full-measure rule under its
-       kicker, which caps the empty band at the top of the plate; a heroless
-       `slide` has nothing above the copy but the series badge, so the air
-       collects into one taller rectangle. Measured through real Chromium over
-       the calibration's six fixtures x three type scales x both slide
-       parities, worst `largestEmptyRectShare` against the 0.28 interior
-       ceiling:
-
-         no floor      28.61   over the ceiling on 6 of 36 rows, and `.copy-art`
-                               overflowed at `l` with long copy
-         floor 520px   28.61   overflow gone, ceiling still breached
-         floor 620px   25.56   clear on every row
-
-       620 rather than "whatever clears it": it is the height at which the card
-       stops being shorter than the band it has to break up, and the next step
-       down leaves the same six rows failing. */
-    min-block-size: 620px;
-    align-self: start;
-    padding-inline: 44px;
-    padding-block: 48px;
-    /* A 10-15% shade across the card rather than a flat 12%. `headline-focus
-       .html`'s `.hf-plate` block carries the measurement: shipped flat, the
-       card is one 5-bit bin large enough to win `backgroundHex`'s modal vote
-       on long copy, and THIS archetype is where that was caught — 3 of 18 rows
-       flipped and reported `clippedEdgeShare` 2.58% against a 0.4% ceiling for
-       ink that is not on the plate. Both stops stay clear of the 18-unit ink
-       line, so every cell is still covered and still `graphic`.
-
-       ── AND THAT LAST CLAUSE IS WHY THE FILL IS GONE. ──
-
-       "Still covered and still `graphic`" is the defect stated as if it were
-       the design. CI run 34800700580, real Chromium: this card took the
-       heroless plate to `imageryOrDeviceShare` 37.2-50.2% on a plate with no
-       imagery and no device (floor 0.10), `textShare` down to 1.0-1.8% from
-       ~33%, and `flatBackgroundShare` to 48.5-62.0% from ~92%. The 1x1
-       TRANSPARENT-hero fixture — the prep defect with no symptom — measured
-       37.2% where the guard expects under 3.5%, because `onerror` empties
-       `.bg` and this card then paints. At `fontScale l` it still won
-       `backgroundHex`'s modal vote and false-fired clause B (`clipped`).
-       See `headline-focus.html`'s `.hf-plate` block for why no percentage
-       fixes this. The card keeps its geometry and paints nothing. */
-  }
-  /* At `s` every block is 15% shorter and the air is 15% taller, so the card
-     takes a more generous inset — the only element on the plate that can
-     absorb that air without pretending the slide said more than it did. The
-     inset is in fixed px and never `calc(Npx * var(--ts))`, for the reason the
-     ground-mark note above states at length. */
-  body:has(.bg:empty).ts-s .hf-plate { padding-inline: 64px; padding-block: 96px; }
-  /* The guard, asked of the twin's CHILDREN — `.headline` is a twin-slot pair
-     and can never match `:empty` again, so the host form would be permanently
-     silent and an empty plate would acquire a filled card. */
-  body:not(:has(#headline > span:not(:empty))) .hf-plate { background: none; }
-  /* ── THE FURNITURE ANSWERS TO THE GROUND RULE TOO. ──
-     `.stat-band` is a 200x14 accent block that used to paint on every render,
-     including one with nothing on it. Measured on this tree, a `slide.html`
-     with EVERY SLOT EMPTY reported `occupiedShare` 0.21% — trivial — and
-     `largestEmptyRectShare` 75.56%, because `largestEmptyRect` is ONE
-     contiguous rectangle and a block sitting in the middle of the plate cuts
-     it in half. Guarded, the same render measures 0.00% and 100.00%, which is
-     what RFC-20 guard G2 asserts. */
-  body:not(:has(#headline > span:not(:empty))) .stat-band { display: none; }
   /* The statement carries the plate when the photograph does not, so it is
      set at the display size the composition needs rather than at a caption's.
 
@@ -574,17 +415,6 @@
      photograph path (where `.headline` is a 76px caption on a scrim, not the
      composition) matches no rule and changes nothing. */
   body:has(.bg:empty) .headline { font-size: calc(96px * var(--ts, 1)); line-height: 1.14; }
-  /* ── THE LADDER STEPS UP TOO NOW (RFC-20 P2), and the reason is measured. ──
-     With the dot screen and the column ruling gone, a 24-character statement
-     set at 96px leaves a quarter of the plate genuinely empty — measured
-     through real Chromium at `largestEmptyRectShare` 26.9-30.3% across the
-     calibration's short fixtures and three type scales, against a 0.28
-     interior ceiling. The screen used to paint that; the honest answer is the
-     one `cover.html` reached for when it added its own `huge`: a statement
-     with the whole plate to itself is set at the size the composition needs.
-     A bigger statement also makes a bigger plinth, which is where the
-     occupancy comes from. */
-  body:has(.bg:empty) .headline.huge { font-size: calc(124px * var(--ts, 1)); line-height: 1.08; }
   body:has(.bg:empty) .headline.small { font-size: calc(84px * var(--ts, 1)); line-height: 1.16; }
   body:has(.bg:empty) .headline.tiny { font-size: calc(74px * var(--ts, 1)); line-height: 1.2; }
   .headline {
@@ -671,11 +501,9 @@
   <div class="scrim"></div>
   <div class="copy">
     <div class="copy-art">
-      <div class="hf-plate">
-        <div class="headline" id="headline"><span class="mk-runs">{{html:headlineRuns}}</span><span class="mk-plain">{{headline}}</span></div>
-        <div class="body-text"><span class="mk-runs">{{html:bodyRuns}}</span><span class="mk-plain">{{body}}</span></div>
-        <div class="stat-band"></div>
-      </div>
+      <div class="headline" id="headline"><span class="mk-runs">{{html:headlineRuns}}</span><span class="mk-plain">{{headline}}</span></div>
+      <div class="body-text"><span class="mk-runs">{{html:bodyRuns}}</span><span class="mk-plain">{{body}}</span></div>
+      <div class="stat-band"></div>
     </div>
   </div>
   <script>
@@ -714,10 +542,6 @@
       var big = document.body.classList.contains("ts-l");
       if (len > (big ? 56 : 66)) h.className = "headline tiny";
       else if (len > (big ? 30 : 36)) h.className = "headline small";
-      // The step UP, RFC-20 P2. Declared only under `body:has(.bg:empty)`, so
-      // on the photograph path the class matches no rule and the caption keeps
-      // its own 76px — the same way every other step in this ladder works.
-      else if (len <= (big ? 24 : 28)) h.className = "headline huge";
       window.__CAROUSEL_READY__ = true;
     })();
   </script>
