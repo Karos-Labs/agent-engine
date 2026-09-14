@@ -205,7 +205,7 @@ describe("the setup meter is the run meter with two different numbers", () => {
     run.add("05-write-copy-attempt-1", undefined, 1.01);
     expect(run.crossedTarget).toBe(true);
     expect(targetCrossedNote(run, "05")).toContain("over the $1.00 target");
-    expect(run.canAfford(0.6)).toMatchObject({ reason: expect.stringContaining("over the $1.50 per-run ceiling") });
+    expect(run.canAfford(0.6)).toMatchObject({ reason: expect.stringContaining("over the $1.60 per-run ceiling") });
   });
 
   it("falls back to the run numbers for a limit computed badly, rather than throwing", () => {

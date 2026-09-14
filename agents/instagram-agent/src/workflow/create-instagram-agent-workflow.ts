@@ -7530,10 +7530,16 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // inherits attempt 1's answer rather than paying for a byte-identical one. Nothing has ever proved
       // the CARD: `07-self-check` only proves the writer quoted it.
       //
-      // Levered as the rescue-shaped work it is (§7.3): off when the plan has switched optional re-vets
-      // off, and off past the hard max. It is the same flag rung 3 of the budget ladder pulls, so both
-      // rescue paths go together.
-      if (leadClaim === undefined && budgetPlan.optionalRevets && meter.posture !== "cheapest-path") {
+      // NOT levered by the plan any more (owner, 2026-09-14): *"restore the lead-claim verification for
+      // client posts immediately — content quality beats a $0.007 saving."* Through 2026-09-13 this shared
+      // rung 3's `optionalRevets` flag with the rescue re-vets, which meant the pre-run ladder could delete
+      // the only check that the cover's claim is TRUE in order to land a $1.00 estimate. The ladder now
+      // adapts optional work only, and verifying the claim the whole post rests on is not optional work.
+      //
+      // The one guard that stays is the hard max, and it stays for the reason the owner gave it: past
+      // $1.60 we stop doing FURTHER work and ship what exists. That is a loop-breaker, not a saving —
+      // a run that reaches it has already paid for this step's $0.007 many times over.
+      if (leadClaim === undefined && meter.posture !== "cheapest-path") {
         const leadCard = (() => {
           // The card the COVER rests on: the angle's first `restsOn` claim, which `selectAngle` has already
           // proven names a card this run fetched. Falling back to slide 1's `sourceRef`, which

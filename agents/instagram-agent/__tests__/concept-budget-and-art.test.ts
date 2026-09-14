@@ -138,8 +138,13 @@ describe("run-budget — the concept is priced before anyone knows whether it fi
 
     // Phase 4 buys nothing by moving a ceiling. If one of these ever has to
     // change to make the mode fit, the mode is the thing that is wrong.
+    //
+    // The ceiling DID move, 1.50 -> 1.60, and it is worth being precise about
+    // who moved it: the owner did, on 2026-09-14, to state that its job is to
+    // break an infinite loop rather than to fail a run. No phase bought room
+    // with it, which is what this pair of literals is here to keep true.
     expect(TARGET_RUN_SPEND_USD).toBe(1.0);
-    expect(MAX_RUN_SPEND_USD).toBe(1.5);
+    expect(MAX_RUN_SPEND_USD).toBe(1.6);
     // The image ladder is module-private, so it is pinned through the only
     // door it has: the adaptations a cold run's plan reports, in order.
     // Phase 5 (RFC-18 §7.2) added $0.034 to $0.043 to a run, and a cold run had

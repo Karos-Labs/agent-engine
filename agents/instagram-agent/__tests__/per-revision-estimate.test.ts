@@ -5,6 +5,7 @@ import {
   PER_REVISION_ESTIMATE_USD,
   RunSpendMeter,
   STEP_COST_ESTIMATES_USD,
+  TARGET_RUN_SPEND_USD,
   revisionEstimateUsd,
 } from "../src/workflow/run-budget.js";
 
@@ -69,7 +70,7 @@ describe("PER_REVISION_ESTIMATE_USD / revisionEstimateUsd", () => {
     const verdict = meter.canAfford(PER_REVISION_ESTIMATE_USD);
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toContain("over the $1.50 per-run ceiling");
+    expect(verdict.reason).toContain("over the $1.60 per-run ceiling");
     // `canAfford` is a question about optional spend, not a refusal: crossing
     // the ceiling switches the posture to the cheapest complete path and the
     // round still delivers (owner's amendment, 2026-09-09).
@@ -114,11 +115,19 @@ describe("PER_REVISION_ESTIMATE_USD / revisionEstimateUsd", () => {
     );
 
     // A full three-attempt Hebrew round, which is what a reviewer's `revise`
-    // actually buys under the cold Hebrew plan: $0.7608. It is over half the
-    // $1.50 hard max on its own, and that is the honest reason the meter
-    // answers `canAfford` with "no" and the round runs anyway — the assertion
-    // directly above this one. RFC-19 adds no gate that can refuse it either.
+    // actually buys under the cold Hebrew plan: $0.7608. That is three
+    // quarters of the whole $1.00 target on its own, and very nearly half the
+    // $1.60 ceiling — the honest reason the meter answers `canAfford` with
+    // "no" and the round runs anyway, which is the assertion directly above
+    // this one. RFC-19 adds no gate that can refuse it either.
+    //
+    // The second bound below was `> MAX_RUN_SPEND_USD / 2` while the ceiling
+    // was $1.50. The owner moved the ceiling to $1.60 on 2026-09-14 and the
+    // round did not get cheaper, so the comparison is restated against the
+    // number that actually governs a reviewer's round — the TARGET — with the
+    // ceiling kept as the looser second bound rather than dropped.
     expect(revisionEstimateUsd({ attempts: 3, targetLanguage: true })).toBe(0.7608);
-    expect(revisionEstimateUsd({ attempts: 3, targetLanguage: true })).toBeGreaterThan(MAX_RUN_SPEND_USD / 2);
+    expect(revisionEstimateUsd({ attempts: 3, targetLanguage: true })).toBeGreaterThan(0.75 * TARGET_RUN_SPEND_USD);
+    expect(revisionEstimateUsd({ attempts: 3, targetLanguage: true })).toBeGreaterThan(0.45 * MAX_RUN_SPEND_USD);
   });
 });

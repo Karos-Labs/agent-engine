@@ -63,8 +63,20 @@ export const CANDIDATES_PER_PHOTO_SLIDE = 6;
 /** The owner's target per Instagram run: the number the pre-run plan is fitted to. */
 export const TARGET_RUN_SPEND_USD = 1.0;
 
-/** The owner's hard max per Instagram run: crossing it switches the live meter to the cheapest complete path. Never a hold. */
-export const MAX_RUN_SPEND_USD = 1.5;
+/**
+ * The owner's hard max per Instagram run. **Its purpose is to break an
+ * infinite loop, NOT to fail a run** (owner, 2026-09-14).
+ *
+ * Crossing it switches the live meter to the cheapest complete path: stop
+ * doing further OPTIONAL work, ship what already exists, and record the
+ * overrun so the next run is calibrated. It is never a hold and never a
+ * failure — verbatim, on spending past it: *"the money is already spent, it
+ * would be a waste"*. There is no cost condition anywhere in this workflow
+ * that fails a run.
+ *
+ * Raised 1.5 -> 1.6 by that same ruling, which named 1.60 as the number.
+ */
+export const MAX_RUN_SPEND_USD = 1.6;
 
 /**
  * Per-unit estimates the meter falls back to when a step reports no cost (or
@@ -928,7 +940,12 @@ export function remainingGenerationBudget(generatedSoFar: number, cap: number = 
 
 /** What a run is allowed to spend on, decided BEFORE the attempt loop and never tightened into a hold mid-way. */
 export interface RunBudgetPlan {
-  /** Self-check attempts in total (the initial draft plus returns to step 05): 3 by default, 2 when adapted. */
+  /**
+   * Self-check attempts in total (the initial draft plus returns to step 05).
+   * **Always 3 on a planned run since 2026-09-14** — the ladder's attempt rung
+   * was deleted because a quality attempt is not optional work. See rung 4's
+   * comment in `planRunBudget`.
+   */
   maxSelfCheckAttempts: number;
   /** Generated images allowed this run, all attempts and revisions together (≤ `GENERATED_IMAGES_PER_RUN_CAP`). */
   generatedImagesCap: number;
@@ -1149,13 +1166,19 @@ function rawEstimate(plan: RunBudgetPlan, shape: RunShape): RunCostEstimate["bre
     //    store's cache key makes a repeat of the same URL on attempt 2 free,
     //    which is why this is a `fixed` line and not a `perAttempt` one).
     //
-    //    It is tied to `plan.optionalRevets` because it IS rescue-shaped work:
-    //    a deterministic re-fetch of the one page the cover's claim rests on,
-    //    valuable when there is money for it and skippable when there is not.
-    //    That tie is load-bearing for RFC-18 §7.3's rung swap: the re-vet rung
-    //    now switches off BOTH rescue paths together, so it buys the rescue
-    //    line plus this $0.007 before the attempt lever is ever reached.
-    (plan.optionalRevets ? c.scraperExecution : 0);
+    //    UNCONDITIONAL since 2026-09-14. It used to be tied to
+    //    `plan.optionalRevets` on the theory that it was rescue-shaped work,
+    //    "valuable when there is money for it and skippable when there is
+    //    not". The owner ruled it is not skippable: it is the only proof the
+    //    claim the cover rests on is true, and content quality beats a $0.007
+    //    saving.
+    //
+    //    Pricing it unconditionally matters as much as running it
+    //    unconditionally. The step now fires on plans that pulled rung 3, so
+    //    an estimate that still zeroed it here would under-count exactly the
+    //    tightest plans — the flattery this file's own header warns about, in
+    //    the one place where the flattered plan is the one already in trouble.
+    c.scraperExecution;
   const photos = Math.max(0, shape.photoSlides);
   // A carousel cannot have more photo slides than slides; a shape that says
   // so is priced at the larger of the two rather than under-counting 08a4.
@@ -1469,7 +1492,7 @@ export interface RunBudgetDecision {
   spentBeforePlanUsd: number;
   /** Every lever pulled, in order, in the words the reviewer reads. Empty when the full plan fits. */
   adaptations: string[];
-  /** The one-line run note ("budget: estimate $1.21 > $1.00 → images capped at 4, one return to step 05 instead of two"). */
+  /** The one-line run note ("budget: estimate $1.21 > $1.00 → images capped at 4, trend evidence reduced to the one cached industry query"). */
   note: string;
 }
 
@@ -1518,8 +1541,14 @@ export function planRunBudget(
     estimate = estimateRunCost(plan, shape, ratio);
     adaptations.push("trend evidence reduced to the one cached industry query");
   }
-  // 3. Optional re-vets off — AND, since Phase 5, `07i1`'s lead-claim
-  //    verification with them: one flag, both rescue paths.
+  // 3. Optional re-vets off. THIS FLAG NO LONGER CARRIES `07i1`.
+  //
+  //    Phase 5 hung `07i1-verify-lead-claim` on this same flag — "one flag,
+  //    both rescue paths" — which made the pre-run ladder able to delete the
+  //    only proof that the cover's claim is true, to land a $1.00 estimate.
+  //    The owner reversed that on 2026-09-14; `07i1` now runs on every planned
+  //    run and is guarded only by the hard max. A rescue re-vet is optional by
+  //    its own name; verifying the claim the post rests on never was.
   //
   // ## RFC-18 §7.3 — this rung and the next one were SWAPPED, and it is a
   // ## precondition of the value gate, not an optimisation
@@ -1547,23 +1576,46 @@ export function planRunBudget(
   // $0.2906 — so the old order overshot by a quarter of the whole target to
   // recover a few cents, and did it by deleting a draft.
   //
-  // Not changed: the attempt lever still exists and still floors at 2, and the
-  // `WorkflowHeld` for genuine MECHANICAL exhaustion (07's slide check, craft
-  // hygiene) is untouched. What is guaranteed is narrower and exact: no
-  // judgment gate — value, relevance, language, numbers — can be starved into
-  // a hold by a budget decision.
+  // Not changed: the `WorkflowHeld` for genuine MECHANICAL exhaustion (07's
+  // slide check, craft hygiene) is untouched. What is guaranteed is narrower
+  // and exact: no judgment gate — value, relevance, language, numbers — can be
+  // starved into a hold by a budget decision.
+  //
+  // As of 2026-09-14 this is the LAST rung, and the attempt lever it was
+  // swapped ahead of no longer exists at all: the owner ruled the target may
+  // only adapt optional work. So the ordering argument above is now settled by
+  // construction rather than by sequence — there is nothing left below this
+  // rung to drop.
   if (!fits() && plan.optionalRevets) {
     plan = { ...plan, optionalRevets: false };
     estimate = estimateRunCost(plan, shape, ratio);
     adaptations.push("optional rescue re-vets skipped");
   }
-  // 4. Allowed self-check returns 2 -> 1. LAST, because it is the only rung
-  //    that makes the deliverable itself worse.
-  if (!fits() && plan.maxSelfCheckAttempts > 2) {
-    plan = { ...plan, maxSelfCheckAttempts: 2 };
-    estimate = estimateRunCost(plan, shape, ratio);
-    adaptations.push("one return to step 05 instead of two");
-  }
+  // 4. THERE IS NO RUNG 4. The attempt lever is DELETED (owner, 2026-09-14).
+  //
+  // It used to cut `maxSelfCheckAttempts` 3 -> 2 here, and its own comment
+  // above already conceded what it was: "the only rung that makes the
+  // deliverable itself worse". The owner's ruling is that $1.00 is a TARGET,
+  // and *the target adapts OPTIONAL work only* — a quality attempt is not
+  // optional work. Overrunning the target and recording the overrun beats
+  // delivering a worse post on budget.
+  //
+  // Every distorting constraint the 2026-09-13/14 work fought traces to this
+  // rung: the 0.181-vs-0.182 copy-price cliff, the emphasis re-encoding, the
+  // dropped `07i1` lead-claim verification. Removing it removes the reason
+  // any of them were load-bearing.
+  //
+  // What replaces it is not another lever but the RECORD: a plan that does
+  // not fit after rungs 1-3 runs anyway at three attempts, says so in `note`,
+  // and `recordRunOutcome` carries estimate-vs-actual into the next run's
+  // `ewmaRatio` and `overrunStreak`. That is the owner's "let it finish,
+  // deliver the post, log the overrun so we learn" — calibration after the
+  // fact, never a cut before it.
+  //
+  // `plan.maxSelfCheckAttempts` is therefore 3 on every planned run. The
+  // field stays because the setup meter and the tests still read it, and
+  // because a FUTURE lever that legitimately trades attempts (say, on a
+  // re-run of an already-delivered post) would set it here.
 
   const note =
     (fits()
