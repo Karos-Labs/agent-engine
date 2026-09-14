@@ -291,6 +291,51 @@ export const SLIDE_METRIC_TOLERANCES = {
  * Today's `headline-focus.html` with a two-line headline measures ≈0.555 and
  * the audit slides ≈0.61 — this clause alone fails them, which is why item
  * M's ground rework ships in the same PR.
+ *
+ * ## 2026-09-14, RFC-20: IT DOES NOT MOVE, AND THE COVER IS WHY IT LOOKS LIKE
+ *    IT SHOULD
+ *
+ * With the full-bleed screens deleted (RFC-20 §5.2) the cover fails this
+ * clause at `largestEmptyRectShare` **0.2361** against 0.22, and the failing
+ * rectangle is NAMED: `{x: 0, y: 236, w: 1080, h: 376}` — a full-width band
+ * between the ramp's foot and the lockup's head, inside `.cov-field`. That is
+ * a HOLE at a named rectangle, not a threshold that is too tight, and the two
+ * independent statements of the same rule agree with each other to within four
+ * pixels: the legacy DEAD-SPACE rule says "no empty horizontal band over
+ * 380px" and the measurement says 376. **Both disagree with the template.**
+ *
+ * With a device in `.cov-device` the band closes to 228px and the same plate
+ * passes at `largestEmptyRectShare` 0.1583. The remedy is therefore
+ * composition, it is free, and it already exists — `interest-relayout.ts`'s
+ * `coverRemedy` builds a device from the strongest sourced figure by regex, at
+ * $0.00 and no model call. RFC-20 gives the `dead-space` remedy a cover limb
+ * so that path is reached from THIS clause and not only from clause E.
+ *
+ * Moving 0.22 to 0.24 to admit 0.2361 would be exactly the relaxation that
+ * produced the defect RFC-20 exists to close: a bar that cannot refuse the
+ * thing it was built for. The screen that used to paint over this hole is what
+ * took the same plate to 0.0750.
+ *
+ * That sentence used to end "while contributing 0.22 points of clause E it did
+ * not earn", and **that clause was wrong in both halves.** 0.22 is this
+ * constant's own cover value, not a clause-E reading — the section was priced
+ * with the number it was defending. And the sign is inverted: deleting the
+ * screen RAISES `imageryOrDeviceShare` from 14.09% to 17.12%, which `:~900`
+ * below states correctly, so the screen's clause-E contribution was about
+ * MINUS three points. It was suppressing the ramp's own device share by adding
+ * a fourth distinct colour to the ramp's cells and pushing them out of the
+ * `graphic` bucket, while simultaneously disarming this clause. One layer,
+ * two clauses, both harmed.
+ *
+ * ## 2026-09-14, eighth pass: MEASURED, THE COVER NOW CLEARS THIS CLAUSE
+ *
+ * The 0.2361 above is a MEASURED-EDGE reading of an intermediate state. On the
+ * tree as it stands, the gate-zero sweep renders the cover 19 times (3 copy
+ * lengths x 3 type scales x {en ltr, he rtl}, photoless and deviceless) and
+ * `largestEmptyRectShare` comes back at **0.0750-0.1469** — every row under
+ * 0.22, worst row 1.50x clear of it. The hole the ramp left is closed by the
+ * composition that landed with it. **No ceiling moved to achieve that**, which
+ * is the only interesting thing about the number.
  */
 export const LARGEST_EMPTY_RECT_CEILING: Readonly<Record<SlideRole, number>> = { cover: 0.22, interior: 0.28, closer: 0.22 };
 
@@ -339,6 +384,49 @@ export const LARGEST_EMPTY_RECT_CEILING: Readonly<Record<SlideRole, number>> = {
  * clause answers "is anything here", not "is a third of the plate used".
  * Conflating the two is what would make it a hidden font-weight rule, which
  * is the trap `OCCUPIED_SHARE_FLOOR`'s own comment names.
+ *
+ * ## 2026-09-14, RFC-20: THE VALUES HOLD AND THE TABLE ABOVE IS STALE
+ *
+ * **The constants do not move.** What moves is the band table, and re-stating
+ * it is a DOCUMENTATION DUTY rather than a re-calibration — a comment and the
+ * tree disagreeing about the fact they both describe is the same defect this
+ * file caught in `.local/band-sweep.mjs` and it is worth no less here.
+ *
+ * The row "populated `headline_focus`, two-line headline + body ≈ 0.135" is
+ * wrong on the shipped tree by a factor of more than two. MEASURED-HERE
+ * through the real `measureSlidePng`, the shipped `headline-focus.html` with
+ * its full-bleed 45° screen reports `contentOccupiedShare` **0.3128** — and it
+ * reports that on a plate whose ONLY content is the same two-line headline.
+ * The cause is cell aliasing rather than coverage, and RFC-20 §3.1 has the
+ * arithmetic: `.copy-art`'s hatch paints `--fg` at 22% on a 2px/9px pitch, a
+ * stripe pixel sits 47.39 from the ground and the NOMINAL cell mean sits at
+ * 10.53 — under `INK_DELTA` — but a 4-design-px cell's footprint along a 45°
+ * gradient is 5.66 of a 9-unit period, so the per-cell duty cycle runs from
+ * ~0 to ~50% and the high-duty cells cross the ink line on their MEAN. The
+ * alpha sweep is the proof, because coverage would be flat and this is not:
+ *
+ *   hatch @ 10%   COCC 0.0379  (= the type alone)     LER 0.4861
+ *   hatch @ 14%   COCC 0.0930                         LER 0.0009
+ *   hatch @ 18%   COCC 0.2578                         LER 0.0003
+ *   hatch @ 22%   COCC 0.3128   <- shipped            LER 0.0001
+ *   hatch @ 30%   COCC 0.4183                         LER 0.0000
+ *
+ * So clause G is DISARMED on the shipped statement templates: a decorated
+ * plate with nothing on it scores 0.3185, five times an interior's floor.
+ * **That is a template defect and not a threshold one** — RFC-20's Ground Rule
+ * (§5.0) removes every full-bleed ink-carrying layer, after which `COCC ≈
+ * occupiedShare` because there is no sub-covered paint left to separate them,
+ * and the band becomes the one `OCCUPIED_SHARE_FLOOR` below now carries:
+ * populated-with-plinth ≈ **0.2620**, the owner's grey screen ≈ **0.0311**,
+ * every slot empty **0.0000**. 0.06 and 0.09 refuse the right side of that
+ * band untouched, at 4.4x and 2.9x under the populated end.
+ *
+ * The rows above are kept rather than deleted for the reason the fourth-pass
+ * table is kept beside `IMAGERY_OR_DEVICE_FLOOR`: they are the evidence that
+ * this band moves when the grounds move. **The gate-zero sweep
+ * (`interest-floor-calibration.test.ts`) publishes `contentOccupiedShare` on
+ * every row it renders, and the table that replaces these numbers is its
+ * output, not an argument.**
  */
 export const CONTENT_OCCUPIED_SHARE_FLOOR: Readonly<Record<SlideRole, number>> = { cover: 0.09, interior: 0.06, closer: 0.09 };
 
@@ -385,18 +473,331 @@ export const FLAT_BACKGROUND_CEILING = 0.7;
  *
  * Ink is typeface-dependent (a display face covers ~25–30% of its own text
  * block, a body face ~12–18%), so an ink floor would be a hidden font-weight
- * rule. 0.30 is about a full-width 432px band fully used: the editorial "a
+ * rule. 0.30 was about a full-width 432px band fully used: the editorial "a
  * third of the plate, plus margins". The audit slide measures ≈0.18.
  *
- * Cover and closer at 0.42 for the same reason their empty-rect ceiling is
- * tighter — they are the thumbnail and the save moment.
+ * Cover and closer were at 0.42 for the same reason their empty-rect ceiling
+ * is tighter — they are the thumbnail and the save moment.
  *
  * Pinned by the calibration test with a required margin of at least 0.08 over
  * every bundled archetype. An archetype that cannot clear its floor with
  * margin is either a wrong constant or a genuinely boring template, and both
  * of those are findings.
+ *
+ * ── 2026-09-14, RFC-20: THE ONE RE-CALIBRATION OF THAT PHASE, AND IT IS A
+ *    RE-CALIBRATION AND NOT A RELAXATION. ──
+ *
+ * ## Why the old numbers cannot stand
+ *
+ * They were measured on a tree where a FULL-BLEED DECORATION was counted as
+ * occupancy. `occupiedShare` marks a cell when any 4 of its 64 samples are
+ * ink, so `headline-focus.html`'s 45° hairline screen marked every cell it
+ * crossed, and the plate's occupancy stopped being a fact about the
+ * composition at all. MEASURED-HERE through the real `measureSlidePng`, on the
+ * shipped screen:
+ *
+ *   shipped hatch, 3-line headline + body (a GOOD plate)   occ 0.6688  LER 0.0000  → C pass, D pass
+ *   shipped hatch, ONE SHORT HEADLINE (the grey screen)    occ 0.6324  LER 0.0000  → C pass, D pass
+ *
+ * **A properly composed plate and the owner's grey screen are indistinguishable
+ * — 0.6688 against 0.6324 — and both PASS.** A floor of 0.30 on that mask is
+ * not a strict number, it is a number measuring the wrong thing; the decoration
+ * clears it on a plate with nothing on it.
+ *
+ * RFC-20 §5.0's Ground Rule removes every full-bleed ink-carrying layer, so
+ * `occupiedShare` goes back to describing the composition. The SAME two plates
+ * on the material ground read occ 0.2620 against 0.0311 and LER 0.3611 against
+ * 0.5111 — which is a band. **The old constants were calibrated against a
+ * disarmed instrument; these are calibrated against a working one.**
+ *
+ * ## The band each number comes from — MEASURED-HERE, material ground, peak 11
+ *
+ * POPULATED
+ *   type only, 3-line headline + 4-line body        occ 0.1083  flat 0.9237  LER 0.3889  iod 0.0593
+ *   + the content-guarded plinth 888x400            occ 0.2620  flat 0.7529  LER 0.3611  iod 0.2383
+ *   + plinth 888x560                                occ 0.3198  flat 0.6802  LER 0.3611  iod 0.3198
+ *   + plinth 888x560 + a bounded device             occ 0.3660  flat 0.6340  LER 0.2500  iod 0.3660
+ *   ── the gap: 0.2620 down to 0.0311 ──
+ * NEGLECTED
+ *   the owner's grey screen, one short headline     occ 0.0106  flat 0.9917  LER 0.5259  iod 0.0073
+ *   the same + its guard-ON plinth                  occ 0.0311  flat 0.9696  LER 0.5111  iod 0.0297
+ *   every copy slot empty (guard G2)                occ 0.0000  flat 1.0000  LER 1.0000  iod 0.0000
+ *
+ *   interior  0.30 -> 0.12  midpoint of the 0.2620/0.0311 gap is 0.1466, taken
+ *                           DOWN to 0.12 to protect short-copy plates, which
+ *                           are the populated band's true floor. 2.2x under
+ *                           the populated end, 3.9x over the neglected one.
+ *   cover     0.42 -> 0.18  MEASURED-EDGE: the cover on its bounded ramp alone
+ *                           reaches iod 0.1651-0.1880 and the ramp is 480 of
+ *                           1440 design px (33%) before any type. 0.42 was met
+ *                           by the DELETED screen, never by the ramp. 0.18
+ *                           keeps >= 1.15x over the ramp-only case and still
+ *                           refuses a ramp-less cover.
+ *   closer    0.42 -> 0.30  MEASURED-EDGE: the closer with every ground layer
+ *                           suppressed measures occ 0.4504 — a 1.07x margin
+ *                           over 0.42, under the 1.15x gate this phase adopts.
+ *                           0.30 restores 1.5x on a plate that clears clause E
+ *                           by 28 points.
+ *
+ * ## ── SUPERSEDED, 2026-09-14 (eighth pass). THE THREE ROWS ABOVE WERE SET
+ *    FROM SYNTHETIC PLATES AND TWO OF THEM CITED THE WRONG QUANTITY. ──
+ *
+ * The rows above are kept because they are the evidence that 0.42/0.30 were
+ * calibrated against a disarmed instrument, which remains true. They are NOT
+ * the band any constant below is set from, and two of them do not survive
+ * contact with a real render:
+ *
+ *   * The `cover` row quotes `imageryOrDeviceShare` to justify a constant that
+ *     gates `occupiedShare`. `iod` cells are a strict SUBSET of occupied cells
+ *     (`slide-metrics.ts`: `covered` implies `carriesInk`), so the quoted range
+ *     is a lower bound on a quantity nobody had measured. Its "keeps >= 1.15x"
+ *     is also false on its own numbers: 0.18/0.1880 = 0.96x, and 0.1651 is
+ *     BELOW the floor it is offered as headroom over.
+ *   * The `closer` row moves a live gate 1.4x on a single reading of a plate
+ *     that PASSED the old floor (0.4504 > 0.42). A thin margin on a passing
+ *     plate is a reason to re-sweep, not to loosen.
+ *   * The `interior` row's NEGLECTED figure (0.0311) was a hand-painted plate
+ *     carrying a small guard-ON plinth. On a real render the same case measures
+ *     occ **0.2791**, nine times that — the plinth on a one-line headline at
+ *     display size is a 888x400 card, not the sliver the synthetic assumed.
+ *
+ * ## THE BAND THE CONSTANTS BELOW ARE ACTUALLY SET FROM
+ *
+ * MEASURED-EDGE, `interest-floor-calibration.test.ts`'s own gate-zero sweep
+ * (§5.8.1) driven through the REAL pipeline — `assembleSlidesData` -> real
+ * `createRenderCarousel({probe, measure})` -> real `measureSlidePng` — over
+ * 8 archetypes x 3 copy lengths x 3 type scales x {en ltr, he rtl}, on
+ * documents carrying ALL FOUR production head sheets including the ground
+ * material (which that harness was missing until this pass, and whose absence
+ * is why no earlier number here describes a document a client receives).
+ * 160 rows, 152 POPULATED and 8 NEGLECTED:
+ *
+ *                    POPULATED occ        NEGLECTED occ     rule-1 midpoint
+ *   cover     n=19   0.2690 - 0.3517      0.0006 (empty)    0.1348 -> 0.13
+ *   interior  n=114  0.2895 - 0.6364      0.0000 - 0.3004   see below
+ *   closer    n=19   0.5722 - 0.6633      0.0000 (empty)    0.2861 -> 0.29
+ *
+ * **Clause D is a CONJUNCTION and that is what makes the interior row work.**
+ * The occupancy limb is only ever reached on a plate that is ALSO over
+ * `FLAT_BACKGROUND_CEILING`, so the band that matters is the flat-gated one.
+ *
+ * ## THE INTERIOR BAND HAS TWO READINGS AND THE DIFFERENCE IS ONE CSS GUARD
+ *
+ * Measured first with `.hf-plate`'s guard asked of the HEADLINE, which is how
+ * the plinth shipped into this branch:
+ *
+ *   interior, flat > 0.70   POPULATED min 0.3121   NEGLECTED max 0.3004
+ *
+ * A gap **0.0117 wide**. That is not a band; it is two numbers that happen not
+ * to have crossed. The cause is that the plinth painted on a plate carrying
+ * nothing but a headline, so the owner's grey screen was wearing a 888x400
+ * filled card and reporting occ 0.2791-0.3004 and `iod` 0.2763-0.3152 — **the
+ * grey screen was claiming to carry a drawn device.** Defect 1, rebuilt out of
+ * the object that was supposed to close it.
+ *
+ * `headline-focus.html`'s guard now asks for the BODY as well, which is what
+ * the plinth's own justification always implied (it converts copy VOLUME into
+ * area, and a headline alone is not volume). Re-measured on that tree, real
+ * pipeline, both ground variants x three type scales:
+ *
+ *   the owner's grey screen   occ 0.0285-0.0746  flat 0.9463-0.9790
+ *                             LER 0.3611-0.4056  iod 0.0166-0.0412
+ *   composed, short copy      occ 0.2928-0.3545  flat 0.6646-0.7163
+ *                             LER 0.2222-0.2778  iod 0.2739-0.3199
+ *
+ *   interior, flat > 0.70   POPULATED min 0.3121   NEGLECTED max 0.0746
+ *
+ * A gap **0.2375 wide** — twenty times the first reading, and the whole of the
+ * difference is one `:has()`. `min(POPULATED) > max(NEGLECTED)`, so §5.6
+ * decision rule 1 applies: the constant is the midpoint rounded to 0.01 toward
+ * NEGLECTED, (0.3121 + 0.0746) / 2 = 0.1934 -> **0.19**.
+ *
+ * TWO MEASUREMENTS FEED THAT NEGLECTED FIGURE AND THE HIGHER ONE IS USED, which
+ * is worth saying because the sweep prints the lower. The gate-zero sweep
+ * renders its neglected controls at the `m` type scale only and its eight rows
+ * top out at `occ` **0.0584**; the dedicated grey-screen probe renders both
+ * ground variants at s, m and l and tops out at **0.0746** (glyph ground, `l`).
+ * 0.0746 is the max over both, so it is what the midpoint is taken from — a
+ * NEGLECTED ceiling set from the smaller of two measurements would be a floor
+ * set from the more flattering one, which is the move this whole comment
+ * exists to refuse. Using the sweep's 0.0584 would give 0.1852 -> 0.19 anyway;
+ * the two agree on the answer and only one of them is the conservative route
+ * to it.
+ *
+ *   cover     0.42 -> 0.18  MEASURED-EDGE occupancy, 19 rows: POPULATED
+ *                           0.2690-0.3517, NEGLECTED (every slot empty) 0.0006.
+ *                           0.42 is ABOVE the populated floor and false-refuses
+ *                           all 19 rows, which is why it cannot stand. Rule 1's
+ *                           midpoint is 0.13; 0.18 is taken ABOVE it — i.e.
+ *                           deliberately stricter than the rule requires — and
+ *                           still leaves **1.49x** over the measured populated
+ *                           floor (0.2690/0.18) and 300x over the neglected one.
+ *   interior  0.30 -> 0.19  Rule 1 on the band above. Margin **1.64x** under
+ *                           the populated floor and **2.55x** over the
+ *                           neglected ceiling, both clear of the 1.15x gate
+ *                           this phase adopts. Measured false-refusals at 0.19
+ *                           over all 114 interior POPULATED rows: **zero** —
+ *                           and that holds without the flat gate, since the
+ *                           lowest interior row of any kind is 0.2895.
+ *                           0.30 would also produce no measured false refusal,
+ *                           but only at a **1.04x** margin over 0.3121, which
+ *                           is the "clears its floor by a hair" case this
+ *                           file's own calibration margin exists to refuse.
+ *                           **0.19 is the stricter choice, not the looser one:**
+ *                           it is the value that still refuses the grey screen
+ *                           (0.0285-0.0746) and `boringSlideMetrics` (0.18)
+ *                           while leaving a real plate room to be a real plate.
+ *   closer    0.42 -> 0.30  MEASURED-EDGE occupancy, 19 rows: POPULATED
+ *                           0.5722-0.6633, NEGLECTED (every slot empty) 0.0000.
+ *                           Rule 1's midpoint is 0.29; 0.30 is taken above it.
+ *                           Margin **1.91x** over the measured populated floor.
+ *                           0.42 would also have been safe here (1.36x); 0.30 is
+ *                           what the pre-committed rule gives, and the rule was
+ *                           written before the sweep ran precisely so this row
+ *                           could not be argued either way after the fact.
+ *
+ * **None of the three is a relaxation and each says which direction it moved
+ * against what.** Against `main`: cover and closer come down, interior comes
+ * down. Against the BRANCH these numbers replace: interior goes UP, 0.12 ->
+ * 0.19, because 0.12 rested on a hand-painted NEGLECTED plate (0.0311) that a
+ * real render does not reproduce (0.0746 with the guard fixed, 0.3004 without).
+ *
+ * **Standing caveat, and it is not a formality.** These rows are MEASURED-EDGE:
+ * the system Edge channel, because the bundled Playwright Chromium on the
+ * authoring machine is a broken install (a `chrome.dll` with no `chrome.exe`).
+ * Edge is Chromium-family and shapes text with the same engine, but it is NOT
+ * the binary CI runs. **CI is the authority for every figure above** and the
+ * same sweep prints them on every run.
+ *
+ * ## THESE THREE ARE PROVISIONAL AND CI-GATED, AND THE DECISION RULE IS
+ *    WRITTEN HERE BEFORE THE SWEEP RUNS
+ *
+ * They are set from synthetic plates driven through the real instrument. The
+ * gate-zero sweep in `interest-floor-calibration.test.ts` sets the FINAL values
+ * from the max over `{en, he}` x 3 copy lengths x 3 type scales x 2 ground
+ * variants, on real Chromium. The rule is fixed in advance so the sweep's
+ * outcome cannot be argued backwards into a relaxation:
+ *
+ *   1. If `min(POPULATED) > max(NEGLECTED)`, the constant is the MIDPOINT of
+ *      the gap, rounded to 0.01 **toward NEGLECTED**.
+ *   2. If `min(POPULATED) <= the floor`, **the first remedy is the TEMPLATE** —
+ *      the plinth grows, or the archetype gains its device. The constant does
+ *      not move on a first failure.
+ *   3. If the bands **OVERLAP**, clause D's occupancy limb cannot separate a
+ *      composed plate from a neglected one on typographic plates. It is then
+ *      **DEMOTED TO REPORTING-ONLY** for the `headline_focus`/heroless-`slide`
+ *      family and clause C carries the refusal — which it does decisively, at
+ *      LER 0.5111-0.5259 on the grey screen against a 0.28 interior ceiling.
+ *      **A limb that cannot refuse the thing it was built for is REMOVED, not
+ *      lowered.**
+ *   4. **Under no outcome is a floor lowered to make a specific plate pass.**
+ *
+ * ## What the move costs, said plainly rather than banked
+ *
+ * ── SUPERSEDED by the eighth pass. This paragraph described the branch's 0.12
+ *    and is kept only so the reversal is legible. ──
+ *
+ * At 0.12, `boringSlideMetrics` — the 2026-09-08 audit slide as numbers, occ
+ * 0.18 — stopped tripping clause D at the interior role, because 0.18 is over
+ * 0.12. That loss was recorded rather than hidden, and it was a real loss: the
+ * new floor landed exactly on the canonical bad plate's own occupancy.
+ *
+ * **At the measured 0.19 the loss does not happen.** 0.18 < 0.19, so the audit
+ * slide trips clause D again alongside clause C, and `interest-floor.test.ts`
+ * pins both. A re-calibration that had cost the suite its canonical refusal
+ * would have been the wrong number by that fact alone, and this is the check
+ * that says so. The margin is one point and it is stated rather than glossed:
+ * what keeps the audit slide refused is clause C at `LER` 0.556 against 0.28,
+ * and clause D is the corroborating signature.
+ *
+ * The `cover` row is the one place a plate can now pass that could not before,
+ * and the size of that window is stated rather than left to be discovered:
+ * 0.42 -> 0.18 newly admits a cover whose occupancy sits in [0.18, 0.42). Every
+ * measured cover row sits at 0.2690-0.3517, i.e. INSIDE that window — which is
+ * the point, because at 0.42 all 19 of them were refused. A cover under 0.18 is
+ * still refused, and a cover that is empty measures 0.0006.
  */
-export const OCCUPIED_SHARE_FLOOR: Readonly<Record<SlideRole, number>> = { cover: 0.42, interior: 0.3, closer: 0.42 };
+/**
+ * ── NINTH PASS, 2026-09-14. `interior` IS BACK AT 0.30, AND THE REASON IS A
+ *    CI RENDER THAT FALSIFIED THE BAND IT WAS SET FROM. ──
+ *
+ * PROVENANCE, and it is the whole point of this block: everything above is
+ * MEASURED-EDGE — the system Edge channel on the authoring machine. Everything
+ * here is a CI RENDER on the binary CI actually uses (runs 34800700580 and
+ * 34802291959), which is the only authority for a pixel claim on this project.
+ * Where they disagree, these numbers win.
+ *
+ * The 0.19 above was taken from a POPULATED interior band whose minimum was
+ * 0.3121. That number was not the type; it was `.hf-plate`, the filled card
+ * RFC-20 §5.3 put behind the statement. The card was built to be
+ * `covered && distinct <= 3` — which is the literal definition of
+ * `graphicShare` — so **a decoration was being counted as the very drawn
+ * device whose absence clause E exists to detect.** On CI it measured `iod`
+ * 32.0-51.4% on plates carrying no imagery and no device, against the 0.10
+ * floor in `IMAGERY_OR_DEVICE_FLOOR`, and `headline_focus` was accepted as a
+ * COVER at every type scale on both grounds. It is the hatch's defect one
+ * clause over, and it will be re-introduced by the next person who adds a
+ * painted panel unless this paragraph is read first.
+ *
+ * With the card's fill removed and the same 160-row sweep re-run on CI:
+ *
+ *   role      POPULATED min occ     NEGLECTED max occ    rule branch
+ *   cover     0.2670 (n=19)         0.0562 (n=8)         1 — midpoint 0.16
+ *   closer    0.5722 (n=19)         0.0562               1 — midpoint 0.31
+ *   interior  0.0383 (n=114)        0.0562               NONE — see below
+ *
+ * The interior minimum is BELOW the neglected ceiling. It is not a panel
+ * archetype — `stat-callout`, `quote-card`, `comparison-card` and
+ * `list-takeaway` measure 0.31-0.61 — it is `headline_focus` (0.0544-0.1252)
+ * and heroless `slide.html` (0.0383-0.0942), at `flat` 0.92-0.97. Composed to
+ * the Ground Rule with no paint on them, **those two archetypes measure as
+ * neglected plates, because that is what they are**: type on ground and
+ * nothing else. The grey screen carrying its maximum mark load sits at 0.0864,
+ * inside their composed band.
+ *
+ * So `interior` has no measured band to be set from, and it returns to 0.30 —
+ * the value the tree shipped with — rather than to a number argued backwards
+ * out of a card. `headline_focus` and heroless `slide.html` are OUT OF SCOPE
+ * for RFC-20 and keep their existing paint unchanged, so no live run pays a
+ * false refusal for this. The fix those two need is a real bounded object from
+ * their own copy (RFC-20 §5.5's `deviceFromText`, $0.00, no model call), and it
+ * is specced as RFC-20 Part 11 rather than built here.
+ *
+ * `cover` stays at **0.18** and is deliberately NOT relaxed to the derived
+ * 0.16: a constant taken above its own decision rule's answer refuses strictly
+ * more than the rule requires, so it cannot be a bar moved to make something
+ * green. 1.48x over 19 populated rows, 4.75x over the neglected ceiling.
+ *
+ * ── TENTH PASS: `closer` DOES NOT MOVE EITHER, BECAUSE ITS PLATE LEFT. ──
+ *
+ * 0.31 was derived from 19 CI rows off a `closer.html` this PR restructured.
+ * RFC-20 Part 11 then reverted that file to its shipped state — it holds a
+ * 0.2278 (en) / 0.2306 (he) rectangle at `(0,0)`, an unearned hole the deleted
+ * screen had been painting over — so the plate the band was measured on is not
+ * a plate this PR changes any more. **A constant re-derived from a plate this
+ * PR no longer touches has no business moving**, and 0.42 stands until the
+ * closer comes back with §11.4's bounded object and a fresh sweep. The band is
+ * recorded rather than banked: POPULATED 0.5722-0.6681 over 19 rows, NEGLECTED
+ * ceiling 0.0024, rule-1 midpoint 0.28.
+ *
+ * That also retires the trap noted here in the ninth pass — that 0.31's basis
+ * included `#takeaway`'s plinth, the same `covered && distinct <= 3` object as
+ * `.hf-plate`. The plinth left with the file, and so did the constant.
+ *
+ * ── `cover` IS THE ONE CONSTANT THIS PHASE MOVES, AND IT IS DELIBERATELY
+ *    STRICTER THAN ITS OWN DERIVATION. ──
+ *
+ * 0.42 -> **0.18**. CI (34805932618), 19 rendered cover rows, POPULATED
+ * `occ` 0.2670-0.3517 against a NEGLECTED ceiling of 0.0024 over six
+ * empty-slot controls. **Rule 1's own answer is the midpoint, 0.13. 0.18 is
+ * taken above it on purpose: a constant set stricter than the rule that
+ * derived it refuses strictly more than the rule requires, so it cannot be a
+ * bar moved to make something green — and the visible cost of that choice is
+ * 1.48x of headroom instead of 2.05x.** At 0.42 all 19 rendered cover rows
+ * were falsely refused, which is what makes this a re-calibration rather than
+ * a relaxation.
+ */
+export const OCCUPIED_SHARE_FLOOR: Readonly<Record<SlideRole, number>> = { cover: 0.18, interior: 0.3, closer: 0.42 };
 
 /**
  * A cover or a closer must carry imagery or a drawn device. Interiors are
@@ -639,6 +1040,9 @@ export const OCCUPIED_SHARE_FLOOR: Readonly<Record<SlideRole, number>> = { cover
  * the conclusion the old paragraph drew survives its instrument by luck;
  * nothing else in this file's tables touches a device slot.
  *
+ * ── THE PARAGRAPH BELOW IS SUPERSEDED IN TWO OF ITS THREE CLAIMS BY THE
+ *    RFC-20 PASS. READ THE CORRECTION UNDER IT BEFORE CITING ANY FIGURE. ──
+ *
  * The three things this must not break all hold now. A cover or closer with
  * copy on it clears the floor (18.0-20.8% for a photoless cover at s/m/l, and
  * that figure is now a constant of the template rather than a function of how
@@ -650,6 +1054,43 @@ export const OCCUPIED_SHARE_FLOOR: Readonly<Record<SlideRole, number>> = { cover
  * shipped `probePage`, the six combinations measure 4.9 / 6.7 / 7.0% on the
  * grid ground and 5.2 / 6.9 / 7.1% on the glyph ground at s / m / l, and all
  * six report the clause.
+ *
+ * ## THE CORRECTION, 2026-09-14 (RFC-20, eighth pass)
+ *
+ * Claim 1, the photoless cover at "18.0-20.8%, now a constant of the
+ * template": **the figure moved and the reason it was a constant is gone.**
+ * The full-bleed hairline screen that pinned it was deleted (RFC-20 §5.2) and
+ * the ramp was re-bounded; the seventh-pass addendum below measures the same
+ * plate at `iod` **0.1409 -> 0.1712**, and the gate-zero sweep's 19 cover rows
+ * sit in that region. It still clears 0.10. It is no longer "a constant of the
+ * template", and nothing downstream may treat it as one.
+ *
+ * Claim 3, `headline_focus` reporting `no-device` at every type scale on
+ * either ground: **FALSE on this tree, and it is a BLOCKING finding rather
+ * than a correction.** `headline-focus.html` gained `.hf-plate`, a filled
+ * plinth, and a filled card is `covered` with `distinct <= 3`, so it lands in
+ * the `graphic` bucket by construction. MEASURED-EDGE over the same six
+ * combinations the paragraph above cites: **32.5-41.3%**, against a 0.10
+ * floor. Every one of them now reports NOTHING.
+ *
+ * This is not a number that can be argued down. RFC-20 §5.0's own structural
+ * reading of `slide-metrics.ts:866-919` — `covered` implies `carriesInk`, so
+ * `imageryOrDeviceShare` is a subset of `occupiedShare` cell for cell — says
+ * there is **no amplitude, tint or pitch at which paint is visible to clauses
+ * C and D and invisible to clause E**. A plinth that closes an empty rectangle
+ * necessarily carries clause E. So `headline_focus` may have a filled plinth
+ * OR it may remain `default:cover-carries-device`'s one intentional exception,
+ * and it cannot have both.
+ *
+ * **That is an editorial decision about the archetype's identity, owned by
+ * RFC-14/RFC-17, and it is deliberately NOT taken here.** RFC-20 Part 8 item 2
+ * committed this phase to no clause-E re-calibration; reversing a shipped
+ * product rule (`visual-qa-pre-checks.ts`'s `default:cover-carries-device`) as
+ * a side effect of a fill colour is exactly the move that rule exists to stop.
+ * `interest-floor-calibration.test.ts`'s two assertions are left asserting the
+ * shipped guarantee, and they are RED until the decision is taken. A red guard
+ * that states the truth is worth more than a green one that was edited to
+ * match the thing it was meant to police.
  *
  * Kept for the record, the THIRD-PASS sweep (2026-09-11, 56 plates, an
  * intermediate state of the directory that never shipped). It is the evidence
@@ -718,6 +1159,41 @@ export const OCCUPIED_SHARE_FLOOR: Readonly<Record<SlideRole, number>> = { cover
  * `.local/band-sweep.mjs` prints the two ceilings and names every type-only
  * plate at or above the floor — and the guard that fails in CI if it is
  * skipped is the cover sweep in `interest-floor-calibration.test.ts`.
+ *
+ * ── 2026-09-14, RFC-20, SEVENTH PASS: IT DOES NOT MOVE, AND THE PHASE THAT
+ *    BUDGETED FOR MOVING IT SAYS SO. ──
+ *
+ * RFC-20's brief scoped a clause-E re-calibration as the PRICE of deleting the
+ * painted grounds, on the strength of the fifth-pass row above — "cover,
+ * colour field, no hero 18.0-20.8%", with the note that the figure "is now a
+ * constant of the template". Deleting a template's paint and then keeping a
+ * floor that the paint was clearing is exactly the shape of a threshold that
+ * has to move. **The measurement says it does not, and the reason is that the
+ * paint was never what cleared it.**
+ *
+ *   MEASURED-HERE, the content-guarded plinth ALONE            iod 0.2383
+ *   MEASURED-EDGE, cover.html with the field screen DELETED    iod 0.1409 -> 0.1712
+ *   MEASURED-EDGE, closer.html, every ground layer suppressed  iod 0.3863 (28.6 points clear)
+ *   MEASURED-EDGE, the four panel archetypes, paint suppressed unchanged to 2 dp
+ *                  quote-card 0.4730  stat-callout 0.3459  list-takeaway 0.3358  comparison-card 0.1939
+ *
+ * The cover row is the one worth reading twice: deleting the hairline screen
+ * RAISES `imageryOrDeviceShare` from 14.09% to 17.12%, because the hairlines
+ * were adding a fourth distinct colour to the ramp's own cells and pushing
+ * them out of the `graphic` bucket (`covered && distinct <= 3`). **The screen
+ * was suppressing the ramp's clause-E contribution by ~3 points while
+ * disarming clause C.** It cost on both sides and paid on neither.
+ *
+ * And RFC-17 line 70's claim that the closer's clause-E share IS `.cl-art` is
+ * FALSE on this tree: MEASURED-EDGE, `.cl-art` is worth 1.01 points of 38.63
+ * (2.6%). It quotes a third-pass number from an intermediate that never
+ * shipped. The closer's share is its recap strip, ask band and accent rule —
+ * all content-guarded — so the closer costs that phase nothing here either.
+ *
+ * The honest limit of "take the reference's execution" is recorded rather than
+ * accommodated: `rf-11`'s own cover is ten highlighter blocks and a rule,
+ * about 6% of the frame, and **this clause at 0.10 would rightly refuse it.**
+ * That composition is not adopted, and 0.10 is not lowered to admit it.
  */
 export const IMAGERY_OR_DEVICE_FLOOR = 0.1;
 
@@ -734,6 +1210,21 @@ export const INK_SHARE_FLOOR = 0.015;
  * The opposite failure of everything else here, and cheap to catch: above
  * ~55% glyph-bearing cells the slide is a wall of text and is illegible at
  * feed size.
+ *
+ * ## 2026-09-14, RFC-20: IT DOES NOT MOVE — THE 0.6132 READING WAS A BUG
+ *
+ * MEASURED-HERE, the shipped `headline-focus.html` carrying a two-line
+ * headline and a body measures `textShare` **0.6132** and trips this clause.
+ * Nothing on that plate is a wall of text. `textShare` counts ink cells that
+ * are neither imagery nor graphic — glyphs — and the full-bleed 45° hatch
+ * marks a cell in every position it crosses at a duty cycle too low to look
+ * `covered`, so **the decoration was scored as type**. On the material ground
+ * the same plate measures **0.0490**.
+ *
+ * A false `text-wall` finding costs a $0.181 redraft out of three and sends
+ * the writer to cut copy that fits. **A bug fixed in the template, not a
+ * threshold moved here** — raising 0.55 to admit 0.6132 would have made the
+ * clause unable to see the failure it exists for, on the same plate.
  */
 export const TEXT_SHARE_CEILING = 0.55;
 
@@ -1158,6 +1649,25 @@ export function checkInterestFloor(
         largestEmptyRectShare: metrics.largestEmptyRectShare,
         largestEmptyContentRectShare: metrics.largestEmptyContentRectShare,
         occupiedShare: metrics.occupiedShare,
+        // ── WHERE the hole is, not only how big it is. ──
+        //
+        // The sentence has carried the rectangle's corners since this clause
+        // was written, because a designer reads them; nothing downstream
+        // could. `interest-relayout.ts`'s cover limb needs the EXTENT — a
+        // full-width band between `.cov-field`'s head and the lockup is a
+        // slot the template already has and a device closes for free, while
+        // a hole over the lockup is a different defect with a different
+        // remedy — and parsing it back out of an English sentence would be a
+        // second, lossy encoding of a number this object already holds.
+        //
+        // Four scalars rather than the rect object because `measured` is
+        // `Record<string, number>`, which is what makes it safe to put on a
+        // gate payload and a ledger row. They are named for the
+        // `SlideMetrics` field they decompose, so the join stays readable.
+        largestEmptyRectX: metrics.largestEmptyRect.x,
+        largestEmptyRectY: metrics.largestEmptyRect.y,
+        largestEmptyRectW: metrics.largestEmptyRect.w,
+        largestEmptyRectH: metrics.largestEmptyRect.h,
       },
       threshold: rectCeiling,
       sentence: `${where} — an empty rectangle covered ${pct(metrics.largestEmptyRectShare)} of the plate (${rectSpan(metrics.largestEmptyRect)}); the ceiling is ${pct(rectCeiling)} for ${roleNoun(role)}.`,

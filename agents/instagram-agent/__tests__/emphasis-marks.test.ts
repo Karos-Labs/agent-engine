@@ -7,9 +7,12 @@ import { colourDistance } from "../../../packages/tools/karos-publish/src/slide-
 import { contrastRatio } from "../src/workflow/brand-render-tokens.js";
 import {
   ACCENT_EXCLUSION,
+  MARK_GROUND_CONTRAST_FLOOR,
+  MARK_HOST_INK_ALPHA,
   MARK_KINDS,
   MARK_RING_MAX,
   MARK_SEPARATION,
+  MARK_TEXT_CONTRAST_FLOOR,
   MARK_TOL,
   MAX_MARKED_SHARE,
   MAX_MARKS_PER_FIELD,
@@ -20,6 +23,7 @@ import {
   buildMarkRing,
   buildMarkedRuns,
   collectEmphasisIssues,
+  markCapabilitiesFor,
   markColourDistance,
   markCssBlock,
   markKindsFor,
@@ -27,6 +31,7 @@ import {
   normaliseEmphasis,
   resolveSlideMarks,
   ringIndexesFor,
+  slideMarkKinds,
   slideMarkSeed,
   type MarkField,
   type MarkKind,
@@ -67,10 +72,27 @@ const DARK_INK = "#17181C";
 /** Three in-kit hexes, pairwise separable, all legible on `DARK_GROUND`. */
 const DARK_KIT = { brandAccent: "#FF6B2C", palette: ["#4ADE80", "#38BDF8", "#C084FC"] } as const;
 
+/**
+ * The three ring slots the resolver fixtures below mark with, and what each
+ * can be drawn as on `DARK_GROUND`/`LIGHT_INK`.
+ *
+ * REAL COLOURS, not placeholders, and that is load-bearing since RFC-20:
+ * `resolveSlideMarks` now re-asserts every (colour, kind) pair against its own
+ * kind's floor at the point of emission, so a context carrying invented hexes
+ * would have every mark in this file silently degrade to plain type and most
+ * of the resolver's tests would go green measuring nothing.
+ */
+const CTX_HEXES = ["#FF6B2C", "#4ADE80", "#38BDF8"] as const;
+const CTX_KINDS: readonly MarkKind[] = ["underline", "swish", "double"];
+
 const ctx = (over: Partial<SlideMarkContext & { alreadyAccepted: number }> = {}): SlideMarkContext & { alreadyAccepted: number } => ({
   dir: "ltr",
   allowedIndexes: [0, 1, 2],
-  kinds: ["underline", "swish", "double"],
+  kinds: CTX_KINDS,
+  kindsByIndex: [CTX_KINDS, CTX_KINDS, CTX_KINDS],
+  hexes: [...CTX_HEXES],
+  groundHex: DARK_GROUND,
+  fgHex: LIGHT_INK,
   seed: 12345,
   alreadyAccepted: 0,
   ...over,
@@ -302,8 +324,16 @@ describe("resolveSlideMarks — pure, total, and it drops rather than fails", ()
     expect(join(out.runs)).toBe(field);
   });
 
+  /**
+   * Since RFC-20 "no legible kind" is a PER-SLOT fact, so the second fixture
+   * empties `kindsByIndex` rather than `kinds`: a slot can be allowed (far
+   * enough from this slide's accent) and still be drawable as nothing, which
+   * is exactly the `quote_card`-plus-highlighter case below. `kinds` is
+   * emptied alongside it because it is the union of the same thing and a
+   * context where the two disagree is not a state any caller can produce.
+   */
   it("marks nothing and says why when the slide has no allowed colour or no legible kind", () => {
-    for (const broken of [ctx({ allowedIndexes: [] }), ctx({ kinds: [] })]) {
+    for (const broken of [ctx({ allowedIndexes: [] }), ctx({ kinds: [], kindsByIndex: [[], [], []] })]) {
       const out = resolveSlideMarks("headline", "Plot twist ahead of everyone", dec("twist"), broken);
       expect(out.accepted).toBe(0);
       expect(out.runs).toEqual([{ text: "Plot twist ahead of everyone" }]);
@@ -555,23 +585,66 @@ describe("buildMarkRing — measurability is a SELECTION criterion", () => {
   });
 
   /**
-   * `groundMayInvert` PREFERS the both-grounds ring — it does not demand it.
+   * `groundMayInvert` PREFERS the both-grounds ring — it does not demand it,
+   * and since RFC-20 §6.2 item 8 it intersects CAPABILITY rather than
+   * membership.
    *
-   * A kit with a spare hue that clears both floors loses the member that does
-   * not, which is the whole point of the option. What it must NEVER do is
-   * return an empty ring while a perfectly legible one exists against the
-   * primary ground: see the test below this one for what that cost.
+   * The pairs it walks are (GROUND, INK), not two grounds: on an inverted
+   * slide the kit's `--fg` IS the ground and its `--bg` is the ink. A member
+   * survives when it is legible as at least one kind on each pair, and it
+   * keeps the union of what it can do on each — so `#7A5AA8` here carries
+   * `underline`/`swish`/`double` on the dark ground and gains `ink` on the
+   * pale one, rather than being judged by one ratio that means different
+   * things at each end.
+   *
+   * BREAK IT: pass `[groundHex, fgHex]` as two bare grounds against one fixed
+   * ink, which is what "two membership sets" amounted to. `block` then has no
+   * pair to be true of and every capability set on the inverted side collapses
+   * to the old 3:1 test — this test's `block` assertions go red and the
+   * fallback below fires on a kit that does not need it.
    */
-  it("prefers a member legible on BOTH grounds when the run may invert, while the strict ring survives", () => {
+  it("intersects CAPABILITY per member when the run may invert, and keeps what each ground grants", () => {
     const kit = { brandAccent: "#C084FC", palette: ["#7A5AA8"] };
-    const plain = buildMarkRing(kit, DARK_GROUND, "#FAF7F0", []);
     const inverting = buildMarkRing(kit, DARK_GROUND, "#FAF7F0", [], { groundMayInvert: true });
-    // The premise: the strict pass keeps at least one member, so the fallback
-    // below is NOT what produced this result.
-    expect(inverting.hexes.length).toBeGreaterThan(0);
-    expect(plain.hexes).toContain("#C084FC");
-    expect(inverting.hexes).not.toContain("#C084FC");
-    expect(inverting.notes.some((n) => n.includes("mark floor"))).toBe(true);
+    expect(inverting.hexes).toContain("#C084FC");
+    // The strict pass SUCCEEDED, so this is not the fallback's output.
+    expect(inverting.notes.some((n) => n.includes("rebuilt against the ground alone"))).toBe(false);
+    const purple = inverting.kindsByIndex[inverting.hexes.indexOf("#C084FC")]!;
+    // Granted on the DARK pair (3:1 against #17181C) …
+    expect(purple).toContain("underline");
+    // … and on the INVERTED one, where #FAF7F0 is the ground, #17181C is the
+    // ink and the ink reads on this purple at better than 4.5:1. Neither pair
+    // grants both, and the member keeps both.
+    expect(purple).toContain("block");
+    expect(contrastRatio("#C084FC", "#FAF7F0")).toBeLessThan(MARK_GROUND_CONTRAST_FLOOR);
+    expect(contrastRatio("#17181C", "#C084FC")).toBeGreaterThanOrEqual(MARK_TEXT_CONTRAST_FLOOR);
+  });
+
+  /**
+   * THE FALLBACK IS STILL REACHABLE — "far less often" is not "never", and a
+   * fallback no test can reach is dead code pretending to be a safety net.
+   *
+   * The kit is constructed, and it has to be: on the SHIPPED pair
+   * (`#17181C`/`#F5F3EF`) no colour can be legible on the dark ground and dead
+   * on the inverted one, because the two bands do not overlap — a colour needs
+   * luminance >= 0.135 to clear 3:1 on `#17181C` and > 0.266 to fail 3:1 on
+   * `#F5F3EF`, while `block` on the inverted side needs < 0.228. That is worth
+   * writing down: it is WHY the shipped dark kit's strict pass now succeeds,
+   * and it means this branch is reached only by a kit with a mid-tone ink.
+   */
+  it("still falls back to the primary ground when a member really is dead on the inverted one", () => {
+    const MID_INK = "#9A9A9A";
+    const kit = { brandAccent: "#2F6FC4", palette: ["#7A5AA8"] };
+    // The premise, measured rather than assumed: each member is legible on the
+    // dark ground and legible as NOTHING once the pair inverts.
+    for (const hex of ["#2F6FC4", "#7A5AA8"]) {
+      expect(markCapabilitiesFor(hex, DARK_GROUND, MID_INK).length).toBeGreaterThan(0);
+      expect(markCapabilitiesFor(hex, MID_INK, DARK_GROUND)).toEqual([]);
+    }
+    const ring = buildMarkRing(kit, DARK_GROUND, MID_INK, [], { groundMayInvert: true });
+    expect(ring.hexes.length, "the mark ring is empty — this run would paint nothing at all").toBeGreaterThan(0);
+    expect(ring.rotation).not.toBe("none");
+    expect(ring.notes.some((n) => n.includes("rebuilt against the ground alone"))).toBe(true);
   });
 
   /**
@@ -594,10 +667,19 @@ describe("buildMarkRing — measurability is a SELECTION criterion", () => {
    * shipping run emitted ZERO `.mk` elements plus one drop per declared span,
    * on every archetype.
    *
-   * This test drives `runMarkRing()`'s EXACT argument shape. Restore
-   * `groundMayInvert: true` without the fallback and it refuses.
+   * This test drives `runMarkRing()`'s EXACT argument shape.
+   *
+   * WHAT RFC-20 CHANGED ABOUT IT, and why the assertion moved rather than
+   * softened. The blocker was "a shipping run emits zero `.mk` elements", and
+   * that is still what this test refuses. What changed is the ROUTE: the
+   * strict pass no longer comes back empty, because a member the old cull
+   * judged by one 3:1 ratio against the near-white ink is now judged by the
+   * test belonging to the kind it would be drawn as — and on the inverted
+   * paper ground that kind is `block`, which every member clears. The ring is
+   * byte-identical to the single-ground ring either way, which is asserted
+   * below; only the notes differ.
    */
-  it("falls back to the primary ground when the both-grounds intersection is EMPTY — the shape runMarkRing passes", () => {
+  it("emits a non-empty ring for the shape runMarkRing passes, and now clears the STRICT pass", () => {
     const palette: readonly string[] = DARK_KIT.palette;
     const ring = buildMarkRing(
       { brandAccent: DARK_KIT.brandAccent, palette },
@@ -607,19 +689,18 @@ describe("buildMarkRing — measurability is a SELECTION criterion", () => {
       { groundMayInvert: true },
     );
     // The premise, stated so this cannot pass by the kit having got easier:
-    // the strict intersection really is empty on this kit.
+    // under the OLD pre-kind cull the strict intersection really was empty.
     const candidates: readonly string[] = [DARK_KIT.brandAccent, ...DARK_KIT.palette];
-    const strict = candidates.filter((hex) => contrastRatio(hex, LIGHT_INK) >= 3);
-    expect(strict, "this kit no longer exercises the empty-intersection case").toEqual([]);
+    const legacyStrict = candidates.filter((hex) => contrastRatio(hex, LIGHT_INK) >= MARK_GROUND_CONTRAST_FLOOR);
+    expect(legacyStrict, "this kit no longer exercises the empty-intersection case").toEqual([]);
 
     expect(ring.hexes.length, "the mark ring is empty — this run would paint nothing at all").toBeGreaterThan(0);
     expect(ring.rotation).not.toBe("none");
-    // Identical to the single-ground ring, so the fallback is the SAME
-    // derivation and not a second, looser one.
+    // Identical to the single-ground ring — the shipped kit is UNCHANGED by
+    // this phase, which is the claim RFC-20 §6.1's dark row makes.
     expect(ring.hexes).toEqual(buildMarkRing({ brandAccent: DARK_KIT.brandAccent, palette }, DARK_GROUND, LIGHT_INK, []).hexes);
-    // And it says so, keeping the strict pass's own refusals in the trace.
-    expect(ring.notes.some((n) => n.includes("rebuilt against the ground alone"))).toBe(true);
-    expect(ring.notes.some((n) => n.includes("mark floor"))).toBe(true);
+    // And it got there through the strict pass, so nothing was refused at all.
+    expect(ring.notes).toEqual([]);
   });
 
   it("still returns an empty ring when NEITHER ground yields a member — the fallback is not a licence", () => {
@@ -761,92 +842,549 @@ describe("markKindsFor — the ground decides, and #17181C is our case", () => {
   });
 
   /**
-   * A STANDING FINDING, pinned so it cannot be lost, not a passing grade.
+   * THE STANDING FINDING IS DISCHARGED — and this is what replaced it.
    *
-   * `buildMarkRing` admits a candidate only at >=3:1 CONTRAST against the
-   * ground, and `block` then needs the ink to clear 4.5:1 ON that candidate.
-   * On paper those two squeeze from opposite sides, and a classic highlighter
-   * yellow — the exact thing `rf-11` paints ten of — is refused by the ring
-   * before the kind set is ever computed. `block` survives only in a narrow
-   * mid-tone band.
+   * Two tests used to sit here: "a highlighter yellow is refused by the ring
+   * floor on paper" and "rf-11's own five colours produce an EMPTY ring". The
+   * second carried an explicit instruction — *"IF YOU ARE HERE BECAUSE THIS
+   * TEST WENT RED … if you made that happen deliberately, delete this test and
+   * say so in the RFC"* — and RFC-20 §6 is that RFC. Both are deleted here,
+   * deliberately, and the block below is the replacement. It asserts the
+   * OPPOSITE outcome on the same pixels, and it asserts the reason.
    *
-   * This changes NOTHING for the bundled kit, whose #17181C ground refuses
-   * `block` anyway, which is why it is recorded rather than fixed here. The
-   * fix belongs to whoever revisits the ring: the pixel metric measures a
-   * marked cell by `colourDistance` from the ground, NOT by contrast ratio, so
-   * a pale yellow on white paper IS measurable by the instrument that will
-   * judge it — the ring is rejecting colours its own measurement can see.
+   * The finding's own prescription is what was built: *"admit `block` on what
+   * the pixel metric can see while keeping `contrastRatio` for the three
+   * adjacent kinds."* RFC-20 sharpened it — `block` is admitted on the test
+   * that actually governs it (the ink's contrast ON the swatch, 4.5:1, which
+   * is STRICTER than the 3:1 it replaces), while `markColourDistance >
+   * MARK_TOL` stays as the separability cull it always was.
    */
-  it("RECORDS THE LIMIT: a highlighter yellow is refused by the ring floor on paper, so `block` cannot look like rf-11", () => {
-    const highlighter = "#FFE44D";
-    expect(contrastRatio(highlighter, "#FFFFFF")).toBeLessThan(3); // refused by the ring…
-    expect(contrastRatio(DARK_INK, highlighter)).toBeGreaterThan(4.5); // …though ink on it reads perfectly.
-    // And the instrument that judges the pixels CAN see it against the paper.
-    expect(markColourDistance(highlighter, "#FFFFFF")).toBeGreaterThan(MARK_TOL);
-    const ring = buildMarkRing({ brandAccent: highlighter, palette: [] }, "#FFFFFF", DARK_INK, []);
-    expect(ring.hexes).not.toContain(highlighter);
+  it("DISCHARGES THE FINDING: rf-11's own colours now populate a ring on rf-11's own paper", () => {
+    const PAPER = "#EDEBE6";
+    const RF11 = ["#F2ED3A", "#A8E5E5", "#C6EF5A", "#FFE44D"];
+    const ring = buildMarkRing({ brandAccent: "#888888", palette: RF11 }, PAPER, DARK_INK, []);
+    expect(ring.hexes.length).toBeGreaterThan(0);
+    expect(ring.rotation).not.toBe("none");
+    // Every member is admitted for `block` and for `block` ALONE — which is
+    // the honest result. A highlighter is far from the paper in hue and close
+    // to it in luminance, so it can sit BEHIND a word and cannot be drawn as a
+    // rule beside one. The old code judged it only by the second test.
+    ring.hexes.forEach((hex, i) => {
+      expect(ring.kindsByIndex[i], hex).toEqual(["block"]);
+      expect(contrastRatio(hex, PAPER)).toBeLessThan(MARK_GROUND_CONTRAST_FLOOR);
+      expect(contrastRatio(DARK_INK, hex)).toBeGreaterThanOrEqual(MARK_TEXT_CONTRAST_FLOOR);
+    });
+    // And the dark ground is still the dark ground: `block` is refused there
+    // for every colour there is, because `groundIsLighterThanInk` is false and
+    // no mark colour can make it true.
+    for (const hex of ["#F2ED3A", "#0088CC", "#FFFFFF"]) {
+      expect(markCapabilitiesFor(hex, DARK_GROUND, LIGHT_INK)).not.toContain("block");
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// RFC-20 §6 — kind-aware admission, and the quantifier that had to go
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * The reference accounts' own situation, and the kit every number in RFC-20
+ * §6.4 was measured on. Re-measured here rather than inherited — each figure
+ * below is asserted, not quoted.
+ */
+const PAPER_GROUND = "#F0EAE6";
+const PAPER_INK = "#12100E";
+/** rf-11's highlighter yellow: 1.02:1 against the paper, 15.55:1 for the ink ON it. */
+const HIGHLIGHTER = "#FFEB3B";
+/** A dark navy: 5.62:1 against the paper, 2.83:1 for the ink ON it. The opposite squeeze. */
+const NAVY = "#1D4ED8";
+/** rf-11's lilac — 16.2 from the paper on the PIXEL metric's own scale, and refused for that reason alone. */
+const LILAC = "#E8D4F0";
+
+/** Which kinds a colour must be legible as, re-derived from RFC-20 §6.2 rather than called out of the module. */
+/**
+ * The ink a reader actually gets inside a `block` run, re-derived here rather
+ * than imported, so this check is an independent statement of the rule and not
+ * a restatement of the implementation. `color-mix(in srgb, …)` is a plain
+ * channel-wise lerp of the 0-255 values.
+ */
+const compositedInk = (ink: string, mark: string): string => {
+  const rgb = (h: string): [number, number, number] => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)) as [number, number, number];
+  const [ir, ig, ib] = rgb(ink);
+  const [mr, mg, mb] = rgb(mark);
+  const lerp = (a: number, b: number): number => Math.round(a * MARK_HOST_INK_ALPHA + b * (1 - MARK_HOST_INK_ALPHA));
+  return `#${[lerp(ir, mr), lerp(ig, mg), lerp(ib, mb)].map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+};
+
+const satisfiesOwnFloor = (hex: string, kind: MarkKind, ground: string, ink: string): boolean => {
+  if (kind === "block") {
+    const groundIsLighter = contrastRatio(ground, "#FFFFFF") < contrastRatio(ink, "#FFFFFF");
+    // The EFFECTIVE ink, not the kit token: no bundled archetype paints its
+    // body ink neat, and over a block swatch the softening composites the
+    // glyphs toward the swatch. See `MARK_HOST_INK_ALPHA`.
+    return groundIsLighter && contrastRatio(compositedInk(ink, hex), hex) >= MARK_TEXT_CONTRAST_FLOOR;
+  }
+  if (kind === "ink") return contrastRatio(hex, ground) >= MARK_TEXT_CONTRAST_FLOOR;
+  return contrastRatio(hex, ground) >= MARK_GROUND_CONTRAST_FLOOR;
+};
+
+/**
+ * THE OLD ALGORITHM, re-implemented here so the superset claim is CHECKABLE
+ * rather than asserted.
+ *
+ * A pre-kind cull at 3:1 against every ground, then a kind set admitted only
+ * when its precondition held for EVERY member. Deliberately a copy: a superset
+ * claim that called the new code to compute the old answer would prove
+ * nothing, and this is the one place in the suite where duplication is the
+ * point rather than the risk.
+ *
+ * IT REPRODUCES THE WHOLE OLD PIPELINE, not just the old legibility predicate,
+ * and the difference is not pedantry — it is a finding. Admission is
+ * order-dependent: `MARK_SEPARATION` drops the LATER of two near-identical
+ * members and `MARK_RING_MAX` caps the ring at six, so a version that admits
+ * MORE candidates can in principle displace a member the old one kept, and the
+ * pair set would then not be a superset at all. Leaving those two filters out
+ * of this reference produced a false failure on the first run of the sweep
+ * (`#297443|underline`, reported as lost when the old ring had never legally
+ * held it). With them in, the sweep reports ZERO losses over 1,000 kits — so
+ * the superset property survives the ordering, which is worth knowing rather
+ * than assuming.
+ */
+const legacyPairs = (
+  palette: readonly string[],
+  ground: string,
+  ink: string,
+  options?: { refuseBlock?: boolean },
+): Set<string> => {
+  const ring: string[] = [];
+  for (const hex of palette) {
+    if (ring.length >= MARK_RING_MAX) break;
+    if (markColourDistance(hex, ground) <= MARK_TOL || markColourDistance(hex, ink) <= MARK_TOL) continue;
+    if (contrastRatio(hex, ground) < MARK_GROUND_CONTRAST_FLOOR) continue;
+    if (ring.some((prev) => markColourDistance(hex, prev) < MARK_SEPARATION)) continue;
+    ring.push(hex);
+  }
+  const out = new Set<string>();
+  if (ring.length === 0) return out;
+  const kinds: MarkKind[] = [];
+  const groundIsLighter = contrastRatio(ground, "#FFFFFF") < contrastRatio(ink, "#FFFFFF");
+  if (options?.refuseBlock !== true && groundIsLighter && ring.every((h) => contrastRatio(ink, h) >= MARK_TEXT_CONTRAST_FLOOR)) kinds.push("block");
+  if (ring.every((h) => contrastRatio(h, ground) >= MARK_GROUND_CONTRAST_FLOOR)) kinds.push("underline", "swish", "double");
+  if (ring.every((h) => contrastRatio(h, ground) >= MARK_TEXT_CONTRAST_FLOOR)) kinds.push("ink");
+  for (const hex of ring) for (const kind of kinds) out.add(`${hex}|${kind}`);
+  return out;
+};
+
+describe("RFC-20 §6.4 — the two-sided pin: the two squeezes are provably independent", () => {
+  /**
+   * THE SHARPEST FALSIFICATION THIS PHASE HAS, and it is two-sided on purpose.
+   *
+   * A one-sided pin ("the highlighter is admitted") would also pass if the
+   * change had simply dropped a floor. This one demands that the SAME kit
+   * admit each colour for the kind its own numbers support and REFUSE it for
+   * the kind they do not — in opposite directions. Only a per-kind test can
+   * satisfy both halves at once.
+   *
+   * REVERT TEST (run, not reasoned about): restore the pre-kind
+   * `contrastRatio(hex, ground) >= 3` cull ahead of admission and `#FFEB3B` is
+   * culled at 1.02:1 before `block` is ever considered — the first half cannot
+   * be satisfied at all. Restore `every()` on top of that and the paper ring
+   * yields `block` for nobody, because `#1D4ED8` vetoes it for the whole run.
+   */
+  it("admits #FFEB3B for `block` and refuses it for `underline`; #1D4ED8 the other way round", () => {
+    // The four numbers, measured here against the shipped formula.
+    expect(contrastRatio(HIGHLIGHTER, PAPER_GROUND)).toBeCloseTo(1.02, 2);
+    expect(contrastRatio(PAPER_INK, HIGHLIGHTER)).toBeCloseTo(15.55, 2);
+    expect(contrastRatio(NAVY, PAPER_GROUND)).toBeCloseTo(5.62, 2);
+    expect(contrastRatio(PAPER_INK, NAVY)).toBeCloseTo(2.83, 2);
+
+    const yellow = markCapabilitiesFor(HIGHLIGHTER, PAPER_GROUND, PAPER_INK);
+    expect(yellow).toContain("block");
+    expect(yellow).not.toContain("underline");
+    expect(yellow).not.toContain("swish");
+    expect(yellow).not.toContain("double");
+    expect(yellow).not.toContain("ink");
+
+    const navy = markCapabilitiesFor(NAVY, PAPER_GROUND, PAPER_INK);
+    expect(navy).toContain("underline");
+    expect(navy).not.toContain("block");
+
+    // And it survives the whole ring, not just the predicate — both in one
+    // kit, so neither is admitted by being alone.
+    const ring = buildMarkRing({ brandAccent: HIGHLIGHTER, palette: [NAVY] }, PAPER_GROUND, PAPER_INK, []);
+    expect(ring.hexes).toContain(HIGHLIGHTER);
+    expect(ring.hexes).toContain(NAVY);
+    expect(ring.kindsByIndex[ring.hexes.indexOf(HIGHLIGHTER)]).toEqual(["block"]);
+    expect(ring.kindsByIndex[ring.hexes.indexOf(NAVY)]).toEqual(["underline", "swish", "double", "ink"]);
   });
 
   /**
-   * THE SAME FINDING AT ITS REAL SIZE, added by the integrator after measuring
-   * it rather than reasoning about it. The pin above says a highlighter yellow
-   * is refused. That undersells it in the way that matters to a client:
+   * BREAK 1 OF 4 — draw the rotation's kind from the UNION instead of the
+   * member's own set, and the pairing guard must refuse the result.
    *
-   *   Hand the ring the FIVE colours `rf-11` actually paints, on `rf-11`'s own
-   *   paper ground, and the ring comes back EMPTY. Not "block degrades to
-   *   underline" — `rotation: "none"`, every field renders plain, and the run
-   *   silently marks nothing at all while still paying for the declaration.
+   * This is the break the RFC names first, and it is performed here rather
+   * than described: the context below hands slot 0 the ring's UNION, which is
+   * exactly what indexing a flattened kind list would produce. `#FFEB3B` is
+   * then eligible for `underline` at 1.02:1 against the paper — a mark nobody
+   * can see, on the very plate this phase exists to fix.
    *
-   * Every one is refused at 1.04–1.25:1 against the paper. That is not a
-   * mis-set threshold, it is a category error: a highlighter works by sitting
-   * CLOSE to the paper in luminance and far from it in hue, and contrast ratio
-   * is a luminance-only metric that is structurally incapable of seeing it.
-   * `markColourDistance` — already in this module, and already what the PIXEL
-   * metric uses to decide a cell is marked — sees all five easily, which is
-   * asserted below so the two instruments' disagreement is on the record.
-   *
-   * NOT FIXED HERE, DELIBERATELY, and the fix is NOT to lower the floor:
-   * dropping `MARK_GROUND_CONTRAST_FLOOR` would also admit pale marks for
-   * `underline`/`swish`/`double`, which draw NEXT TO the glyphs and genuinely
-   * do need luminance contrast. The shape of the real fix is to admit `block`
-   * on `markColourDistance` while keeping `contrastRatio` for the three
-   * adjacent kinds. That changes ring composition on every pale kit, so it
-   * needs the Chromium calibration pass, and it is a design decision rather
-   * than an integration repair.
-   *
-   * IF YOU ARE HERE BECAUSE THIS TEST WENT RED: that is the point. It is an
-   * equality, so it fails the moment the ring starts admitting these colours.
-   * If you made that happen deliberately, delete this test and say so in the
-   * RFC. If you did not, you have just changed the ring by accident.
+   * *If the guard does not refuse it, the guard is the bug.*
    */
-  it("RECORDS THE LIMIT, FULL SIZE: rf-11's own five colours on rf-11's own ground produce an EMPTY ring", () => {
-    const PAPER = "#EDEBE6";
-    const RF11 = ["#F2ED3A", "#A8E5E5", "#E2CCF2", "#C6EF5A", "#FFE44D"];
-    // PREMISE FIRST, so an empty ring can never mean "the call ignored the
-    // palette". The SAME five colours against the bundled dark ground DO
-    // populate a ring — so `[]` below is the paper ground refusing them, not
-    // this test measuring nothing.
-    const control = buildMarkRing({ brandAccent: "#888888", palette: RF11 }, DARK_GROUND, LIGHT_INK, []);
-    expect(control.hexes.length).toBeGreaterThan(0);
+  it("BREAK 1: a union-drawn (#FFEB3B, underline) at 1.02:1 is refused at the point of emission", () => {
+    const ring = buildMarkRing({ brandAccent: HIGHLIGHTER, palette: [NAVY] }, PAPER_GROUND, PAPER_INK, []);
+    const union = markKindsFor(PAPER_GROUND, PAPER_INK, ring.hexes);
+    // The premise: the union really does offer `underline` for a slot that
+    // cannot carry it. Without this the test could pass on an empty union.
+    expect(union).toContain("underline");
+    expect(ring.kindsByIndex[ring.hexes.indexOf(HIGHLIGHTER)]).not.toContain("underline");
 
-    const ring = buildMarkRing({ brandAccent: "#888888", palette: RF11 }, PAPER, DARK_INK, []);
-    expect(ring.hexes).toEqual([]);
-    expect(ring.rotation).toBe("none");
-    // Each one, refused by the ring — and each one plainly visible to the
-    // instrument that would have judged the rendered pixels.
-    for (const hex of RF11) {
-      expect(contrastRatio(hex, PAPER)).toBeLessThan(3);
-      expect(markColourDistance(hex, PAPER)).toBeGreaterThan(MARK_TOL);
+    const broken = resolveSlideMarks("headline", "Save this before the quarter closes", dec("Save this"), {
+      dir: "ltr",
+      allowedIndexes: [ring.hexes.indexOf(HIGHLIGHTER)],
+      kinds: union,
+      // THE BREAK: every slot gets the union.
+      kindsByIndex: ring.hexes.map(() => union),
+      hexes: ring.hexes,
+      groundHex: PAPER_GROUND,
+      fgHex: PAPER_INK,
+      seed: 3,
+      alreadyAccepted: 0,
+    });
+    // The guard refuses it, names the pair, and DEGRADES — never holds.
+    expect(broken.runs.some((r) => r.mark !== undefined)).toBe(false);
+    expect(broken.accepted).toBe(0);
+    expect(broken.drops.length).toBeGreaterThan(0);
+    expect(broken.drops[0]!.reason).toContain(HIGHLIGHTER);
+    expect(broken.drops[0]!.reason).toContain("plain type");
+    // The text is intact: a refused mark costs the reader nothing.
+    expect(broken.runs.map((r) => r.text).join("")).toBe("Save this before the quarter closes");
+
+    // The control: the SAME call with the member's own set paints.
+    const honest = resolveSlideMarks("headline", "Save this before the quarter closes", dec("Save this"), {
+      dir: "ltr",
+      allowedIndexes: [ring.hexes.indexOf(HIGHLIGHTER)],
+      kinds: union,
+      kindsByIndex: ring.kindsByIndex,
+      hexes: ring.hexes,
+      groundHex: PAPER_GROUND,
+      fgHex: PAPER_INK,
+      seed: 3,
+      alreadyAccepted: 0,
+    });
+    expect(honest.runs.find((r) => r.mark !== undefined)?.mark?.kind).toBe("block");
+  });
+
+  /**
+   * BREAK 2 OF 4 — `MARK_TEXT_CONTRAST_FLOOR` -> 1.
+   *
+   * Performed by re-deriving admission at the broken floor and asserting the
+   * REAL module disagrees. `#7A7000` is a dark olive on paper: the paper is
+   * lighter than the ink, so `groundIsLighterThanInk` holds and the ONLY thing
+   * standing between this colour and a `block` is the floor — the ink reads on
+   * it at 3.75:1, which a floor of 1 admits and 4.5 refuses. A swatch that
+   * dark behind near-black type is exactly the illegible mark the floor is
+   * for, and the fixture is chosen so no OTHER clause can take the credit.
+   */
+  it("BREAK 2: an unreadable `block` stays refused — the admission floor is the real constant", () => {
+    const MUD = "#7A7000";
+    const onMark = contrastRatio(PAPER_INK, MUD);
+    // The premise, in three parts, so a refusal below can only be the floor:
+    // the colour is separable, the ground IS lighter than the ink, and the
+    // contrast lands between a broken floor of 1 and the real one.
+    expect(markColourDistance(MUD, PAPER_GROUND)).toBeGreaterThan(MARK_TOL);
+    expect(markColourDistance(MUD, PAPER_INK)).toBeGreaterThan(MARK_TOL);
+    expect(contrastRatio(PAPER_GROUND, "#FFFFFF")).toBeLessThan(contrastRatio(PAPER_INK, "#FFFFFF"));
+    expect(onMark).toBeGreaterThan(1);
+    expect(onMark).toBeLessThan(MARK_TEXT_CONTRAST_FLOOR);
+
+    expect(markCapabilitiesFor(MUD, PAPER_GROUND, PAPER_INK)).not.toContain("block");
+    // …and it is NOT simply dropped: it is admitted for the kinds it can
+    // carry, which is what makes this a per-kind refusal rather than a cull.
+    expect(markCapabilitiesFor(MUD, PAPER_GROUND, PAPER_INK)).toContain("underline");
+
+    const ring = buildMarkRing({ brandAccent: MUD, palette: [] }, PAPER_GROUND, PAPER_INK, []);
+    const at = ring.hexes.indexOf(MUD);
+    expect(at).toBeGreaterThanOrEqual(0);
+    expect(ring.kindsByIndex[at]).not.toContain("block");
+    // The union DOES contain `block` here, and that is not a hole — a one-hue
+    // kit falls to the tint ladder, and a tint lerped toward this paper ground
+    // is lighter than its parent and clears the floor honestly. So the claim
+    // is made where it belongs, on every member: nothing carries `block`
+    // without earning it, and the mud is not among them.
+    ring.hexes.forEach((h, i) => {
+      if (ring.kindsByIndex[i]!.includes("block")) expect(contrastRatio(PAPER_INK, h), h).toBeGreaterThanOrEqual(MARK_TEXT_CONTRAST_FLOOR);
+    });
+  });
+
+  /**
+   * BREAK 3 OF 4 — drop the `groundIsLighterThanInk` conjunct.
+   *
+   * A SWEEP rather than a spot check, because a spot check on `DARK_KIT` would
+   * pass for the wrong reason: those four members also fail the ink-on-mark
+   * test, so removing the conjunct would not move them and the guard would be
+   * green while broken. The premise below finds the colours that WOULD be
+   * admitted without the conjunct and asserts there are some — then asserts
+   * the module admits none of them.
+   */
+  it("BREAK 3: `block` is refused on the #17181C ground for EVERY colour, not merely for this kit", () => {
+    let wouldBeAdmitted = 0;
+    let admitted = 0;
+    for (let r = 0; r < 256; r += 17) {
+      for (let g = 0; g < 256; g += 17) {
+        for (let b = 0; b < 256; b += 17) {
+          const hex = `#${[r, g, b].map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+          if (markColourDistance(hex, DARK_GROUND) <= MARK_TOL || markColourDistance(hex, LIGHT_INK) <= MARK_TOL) continue;
+          // What the code would do with the conjunct removed.
+          if (contrastRatio(LIGHT_INK, hex) >= MARK_TEXT_CONTRAST_FLOOR) wouldBeAdmitted++;
+          if (markCapabilitiesFor(hex, DARK_GROUND, LIGHT_INK).includes("block")) admitted++;
+        }
+      }
     }
-    // The other half of the squeeze, and the reason the bundled kit is not a
-    // way out: on the shipped #17181C ground `block` is refused for every
-    // colour there is, because `groundIsLighter` is false and no mark colour
-    // can make it true. Swept 4096 colours at 17-step resolution; zero admit
-    // `block`. Three spot checks stand in for the sweep here.
-    for (const hex of ["#F2ED3A", "#0088CC", "#FFFFFF"]) {
-      const darkRing = buildMarkRing({ brandAccent: "#888888", palette: [hex] }, DARK_GROUND, LIGHT_INK, []);
-      if (darkRing.hexes.length === 0) continue;
-      expect(markKindsFor(DARK_GROUND, LIGHT_INK, darkRing.hexes)).not.toContain("block");
+    // The premise, so a zero below cannot mean "the sweep measured nothing".
+    expect(wouldBeAdmitted, "the sweep found no colour the broken conjunct would admit").toBeGreaterThan(100);
+    expect(admitted, "`block` was admitted on a ground darker than its ink").toBe(0);
+  });
+
+  /**
+   * BREAK 4 OF 4 — drop the `MARK_TOL` cull.
+   *
+   * `#E8D4F0` is rf-11's own lilac and it sits at 16.2 from the paper on
+   * `slide-metrics.ts`'s own weighted-RGB scale — INSIDE the resolution of the
+   * instrument that will later decide whether the cell was marked. The ink
+   * reads on it at 13.66:1, so kind-aware admission alone would take it
+   * happily; only the separability cull refuses it, and that cull is the thing
+   * that stops this phase being a general loosening.
+   */
+  it("BREAK 4: #E8D4F0 at 16.2 from the paper is refused for EVERY kind, though `block` would take it", () => {
+    expect(markColourDistance(LILAC, PAPER_GROUND)).toBeCloseTo(16.2, 1);
+    expect(markColourDistance(LILAC, PAPER_GROUND)).toBeLessThan(MARK_TOL);
+    // The premise: legibility alone would admit it.
+    expect(contrastRatio(PAPER_INK, LILAC)).toBeGreaterThanOrEqual(MARK_TEXT_CONTRAST_FLOOR);
+    expect(markCapabilitiesFor(LILAC, PAPER_GROUND, PAPER_INK)).toContain("block");
+
+    const ring = buildMarkRing({ brandAccent: HIGHLIGHTER, palette: [LILAC, NAVY] }, PAPER_GROUND, PAPER_INK, []);
+    expect(ring.hexes).not.toContain(LILAC);
+    expect(ring.notes.some((n) => n.includes(LILAC) && n.includes(`within ${MARK_TOL}`))).toBe(true);
+    // And the ring it was dropped from is otherwise healthy, so this is a
+    // refusal and not an empty fixture. (The ring is two HUES; a two-hue kit
+    // is under MIN_HUE_RING, so the tint ladder tops it up — which is the
+    // pre-existing behaviour and not this phase's doing.)
+    expect(ring.hexes.filter((h) => [HIGHLIGHTER, LILAC, NAVY].includes(h))).toEqual([HIGHLIGHTER, NAVY]);
+    // Every tint the ladder added is separable too — the cull now applies to
+    // the tint path, which it did not before RFC-20.
+    for (const h of ring.hexes) expect(markColourDistance(h, PAPER_GROUND)).toBeGreaterThan(MARK_TOL);
+  });
+
+  /**
+   * THE OTHER HALF OF THE SQUEEZE — `every()` is gone.
+   *
+   * MEASURED: a kind-aware admission ALONE still yields `block` for nobody on
+   * this kit, because `#1D4ED8` — perfectly legible, and admitted for four
+   * kinds — reads at 2.83:1 under the ink and vetoes `block` for the whole
+   * ring. Both defects had to be repaired together, and this is the test that
+   * says so.
+   */
+  it("one dark member no longer vetoes `block` for the whole run", () => {
+    const ring = buildMarkRing({ brandAccent: HIGHLIGHTER, palette: [NAVY] }, PAPER_GROUND, PAPER_INK, []);
+    // The veto, reproduced: under `every()` the answer was nothing.
+    expect(ring.hexes.every((h) => contrastRatio(PAPER_INK, h) >= MARK_TEXT_CONTRAST_FLOOR)).toBe(false);
+    // And the answer now.
+    expect(markKindsFor(PAPER_GROUND, PAPER_INK, ring.hexes)).toContain("block");
+    const perMember = ring.hexes.map((_, i) => ring.kindsByIndex[i]!);
+    expect(perMember.some((k) => k.includes("block"))).toBe(true);
+    expect(perMember.every((k) => k.includes("block"))).toBe(false);
+  });
+
+  /**
+   * `ringIndexesFor`'s new limb, and it is LOAD-BEARING rather than tidy.
+   *
+   * On `quote_card` the archetype refuses `block` outright, and a paper kit's
+   * highlighter can be drawn as NOTHING ELSE. Without this limb the rotation
+   * selects a colour with no kind at all and the slide silently marks nothing
+   * while reporting a colour it chose.
+   *
+   * BREAK IT: drop the `markCapabilitiesFor(...).length === 0` line. The
+   * highlighter's slot comes back and the `quote_card` assertion below fails.
+   */
+  it("excludes a block-only member from a slide that refuses `block`, and keeps it otherwise", () => {
+    const ring = buildMarkRing({ brandAccent: HIGHLIGHTER, palette: [NAVY] }, PAPER_GROUND, PAPER_INK, []);
+    const yellowAt = ring.hexes.indexOf(HIGHLIGHTER);
+    const navyAt = ring.hexes.indexOf(NAVY);
+    const slide = { groundHex: PAPER_GROUND, fgHex: PAPER_INK };
+    expect(ringIndexesFor(ring, undefined, slide)).toContain(yellowAt);
+    const quote = ringIndexesFor(ring, undefined, { ...slide, refuseBlock: true });
+    expect(quote).not.toContain(yellowAt);
+    expect(quote).toContain(navyAt);
+    // Without the slide it is pure accent exclusion — today's behaviour, for
+    // the inventory callers that have no slide.
+    expect(ringIndexesFor(ring, undefined)).toContain(yellowAt);
+  });
+
+  /**
+   * THE PROPERTY SWEEP — ~4,000 synthetic kits, both luminance polarities,
+   * with and without `refuseBlock` and inversion.
+   *
+   * Three properties, and the third is the one that makes this a repair rather
+   * than a rewrite:
+   *
+   *  1. every emitted (hex, kind) pair satisfies THAT KIND's own floor against
+   *     the exact ground the slide renders on;
+   *  2. no colour inside `MARK_TOL` of a ground or an ink is ever admitted for
+   *     any kind;
+   *  3. the admitted pair set is a SUPERSET of what the old algorithm emitted
+   *     — checked against a re-implementation of the old algorithm, not
+   *     against the new code.
+   */
+  it("holds all three properties over ~4,000 synthetic kits", () => {
+    // A deterministic LCG, so a failure is reproducible from the seed alone.
+    let state = 0x2545f491;
+    const next = (): number => (state = (Math.imul(state, 1664525) + 1013904223) >>> 0);
+    const chan = (): number => next() % 256;
+    const hex = (): string => `#${[chan(), chan(), chan()].map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+
+    let kits = 0;
+    let evaluations = 0;
+    let blockPairs = 0;
+    let supersetChecks = 0;
+    let narrowedByHostAlpha = 0;
+    for (let k = 0; k < 1000; k++) {
+      // Both polarities: a paper kit and a dark kit, alternating.
+      const light = k % 2 === 0;
+      const ground = light ? `#${[240 + (next() % 16), 235 + (next() % 16), 230 + (next() % 16)].map((c) => Math.min(255, c).toString(16).padStart(2, "0")).join("")}` : `#${[next() % 32, next() % 32, next() % 32].map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+      const ink = light ? `#${[next() % 32, next() % 32, next() % 32].map((c) => c.toString(16).padStart(2, "0")).join("")}` : `#${[240 + (next() % 16), 235 + (next() % 16), 230 + (next() % 16)].map((c) => Math.min(255, c).toString(16).padStart(2, "0")).join("")}`;
+      const palette = [hex(), hex(), hex(), hex()];
+      kits++;
+
+      for (const mayInvert of [false, true]) {
+        const ring = buildMarkRing({ brandAccent: palette[0]!, palette: palette.slice(1) }, ground, ink, [], { groundMayInvert: mayInvert });
+        // Property 2 — the honest cull, on every surface the ring was built
+        // against. When the run may invert, BOTH members of the pair are
+        // surfaces.
+        const surfaces = mayInvert ? [ground, ink] : [ground, ink];
+        for (const h of ring.hexes) {
+          for (const s of surfaces) {
+            expect(markColourDistance(h, s), `${h} was admitted within ${MARK_TOL} of ${s}`).toBeGreaterThan(MARK_TOL);
+          }
+        }
+
+        for (const refuseBlock of [false, true]) {
+          // The pairs the ring renders on each ground it can land on.
+          for (const pair of mayInvert ? [[ground, ink], [ink, ground]] : [[ground, ink]]) {
+            const [g, f] = pair as [string, string];
+            const { kindsByIndex, kinds } = slideMarkKinds(ring, g, f, { refuseBlock });
+            evaluations++;
+            // Property 1 — every emitted pair clears its OWN kind's floor.
+            kindsByIndex.forEach((set, i) => {
+              const h = ring.hexes[i]!;
+              for (const kind of set) {
+                if (kind === "block") blockPairs++;
+                expect(refuseBlock && kind === "block", `refuseBlock admitted a block for ${h}`).toBe(false);
+                expect(satisfiesOwnFloor(h, kind, g, f), `${h} as ${kind} on ${g}/${f}`).toBe(true);
+              }
+            });
+            // The union really is the union — `kinds` must not invent a kind
+            // no member carries, which is what would happen if `every()` came
+            // back as an `some()` by accident.
+            for (const kind of kinds) expect(kindsByIndex.some((set) => set.includes(kind))).toBe(true);
+
+            // Property 3 — superset of the old algorithm, on the primary pair
+            // (which is the only one the old algorithm could express).
+            if (!mayInvert) {
+              const before = legacyPairs(palette, g, f, { refuseBlock });
+              const after = new Set<string>();
+              kindsByIndex.forEach((set, i) => {
+                for (const kind of set) after.add(`${ring.hexes[i]!}|${kind}`);
+              });
+              for (const pairKey of before) {
+                supersetChecks++;
+                if (after.has(pairKey)) continue;
+                // ── THE ONE SANCTIONED EXCEPTION, AND IT IS CHECKED RATHER
+                //    THAN EXCUSED. ──
+                //
+                // RFC-20 §6.3 claimed the new pair set is a superset "by
+                // construction". It is not, in exactly one direction: `block`
+                // admission now measures the host's EFFECTIVE ink rather than
+                // the kit token (`MARK_HOST_INK_ALPHA`), so a swatch the old
+                // algorithm admitted on a ratio the reader never gets is now
+                // refused. That is a repair and it is strictly STRICTER, so
+                // the honest invariant is "superset, except where the old
+                // answer was wrong" — and the `expect`s below are what stop
+                // that sentence from excusing anything else. A dropped pair
+                // must be a `block`, it must have cleared 4.5 on the neat
+                // token, and it must fail 4.5 on the composited ink.
+                const [droppedHex, droppedKind] = pairKey.split("|") as [string, MarkKind];
+                expect(droppedKind, `the old algorithm emitted ${pairKey} and the new one does not`).toBe("block");
+                expect(contrastRatio(f, droppedHex), `${pairKey} was dropped but did not clear the neat-token floor either`).toBeGreaterThanOrEqual(MARK_TEXT_CONTRAST_FLOOR);
+                expect(contrastRatio(compositedInk(f, droppedHex), droppedHex), `${pairKey} was dropped but its composited ink clears the floor`).toBeLessThan(MARK_TEXT_CONTRAST_FLOOR);
+                narrowedByHostAlpha++;
+              }
+            }
+          }
+        }
+      }
+    }
+    // The sweep's own premises, so none of the above can pass by measuring
+    // nothing: it really ran, it really produced `block` pairs (the thing this
+    // phase unlocks), and it really had old pairs to be a superset of.
+    expect(kits).toBe(1000);
+    expect(evaluations).toBeGreaterThan(4000);
+    expect(blockPairs, "the sweep produced no `block` at all").toBeGreaterThan(0);
+    expect(supersetChecks, "the superset property was never exercised").toBeGreaterThan(0);
+    // And the exception was exercised too — otherwise the block above is dead
+    // code and `MARK_HOST_INK_ALPHA` could be 1.0 with nothing noticing.
+    expect(narrowedByHostAlpha, "no pair was ever narrowed by the host's ink alpha — the effective-ink correction is inert here").toBeGreaterThan(0);
+  });
+
+  /**
+   * THE ONE THING THAT MUST NOT MOVE: the shipped dark kit.
+   *
+   * RFC-20 §6.1's dark row claims this change is inert on every client we run
+   * today, and an inertness claim is worth nothing unless a test holds it.
+   */
+  it("is INERT on the bundled #17181C kit — same ring, same absence of `block`", () => {
+    for (const mayInvert of [false, true]) {
+      const ring = buildMarkRing(DARK_KIT, DARK_GROUND, LIGHT_INK, [], { groundMayInvert: mayInvert });
+      expect(ring.hexes).toEqual(["#FF6B2C", "#4ADE80", "#38BDF8", "#C084FC"]);
+      expect(ring.rotation).toBe("hue");
+      const { kinds, kindsByIndex } = slideMarkKinds(ring, DARK_GROUND, LIGHT_INK);
+      expect(kinds).toEqual(["underline", "swish", "double", "ink"]);
+      for (const set of kindsByIndex) expect(set).toEqual(["underline", "swish", "double", "ink"]);
+    }
+  });
+
+  /**
+   * THE SOURCE SCAN, and it is the only thing that can hold an OPTIONAL
+   * parameter honest.
+   *
+   * `ringIndexesFor`'s slide constraint and `SlideMarkContext`'s emission
+   * inputs are optional so that `emphasis-marks-rtl.test.ts` — which composes
+   * a context by hand to exercise Phase 4's bidi isolation, and which RFC-20
+   * §5.9 forbids editing — keeps compiling. That is a real reason and it comes
+   * with a real cost: omitting them is SILENT. Both production call sites are
+   * pinned here instead.
+   */
+  it("both production call sites pass the slide constraint and the emission inputs", () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const slidesData = readFileSync(path.join(here, "../src/workflow/slides-data.ts"), "utf8");
+    const studio = readFileSync(path.join(here, "../src/workflow/template-studio.ts"), "utf8");
+
+    // `ringIndexesFor` is never called with two arguments in production.
+    for (const [name, src] of [["slides-data.ts", slidesData], ["template-studio.ts", studio]] as const) {
+      const calls = [...src.matchAll(/ringIndexesFor\(([^;]*?)\)[,;\n]/gs)];
+      expect(calls.length, `${name} does not call ringIndexesFor`).toBeGreaterThan(0);
+      for (const call of calls) {
+        expect(call[1], `${name} calls ringIndexesFor without the slide constraint`).toMatch(/groundHex/);
+        expect(call[1], `${name} calls ringIndexesFor without refuseBlock`).toMatch(/refuseBlock/);
+      }
+    }
+    // And the resolver gets the per-member kinds plus what it needs to
+    // re-assert the pair at emission.
+    for (const [name, src] of [["slides-data.ts", slidesData], ["template-studio.ts", studio]] as const) {
+      const call = /resolveSlideMarks\([\s\S]*?\n\s*\}\);/.exec(src);
+      expect(call, `${name} does not call resolveSlideMarks`).not.toBeNull();
+      for (const field of ["kindsByIndex", "hexes", "groundHex", "fgHex", "refuseBlock"]) {
+        expect(call![0], `${name} omits \`${field}\` from the mark context`).toContain(field);
+      }
     }
   });
 });
@@ -857,40 +1395,72 @@ describe("markKindsFor — the ground decides, and #17181C is our case", () => {
 
 describe("markRotation — seeded, never random", () => {
   const kinds: MarkKind[] = ["underline", "swish", "double", "ink"];
+  /** Every slot carries the same set — the pre-RFC-20 world, where colour and kind were independent axes. */
+  const uniform = (slots: number, set: readonly MarkKind[] = kinds): MarkKind[][] => Array.from({ length: slots }, () => [...set]);
 
   it("never gives two CONSECUTIVE marks the same colour, at every seed", () => {
     for (let seed = 0; seed < 300; seed++) {
       for (const allowed of [[0, 1], [0, 1, 2], [1, 3, 4, 5]]) {
+        const by = uniform(6);
         for (let ord = 0; ord < 5; ord++) {
-          expect(markRotation(seed, ord, allowed, kinds)!.colourIndex).not.toBe(markRotation(seed, ord + 1, allowed, kinds)!.colourIndex);
+          expect(markRotation(seed, ord, allowed, by)!.colourIndex).not.toBe(markRotation(seed, ord + 1, allowed, by)!.colourIndex);
         }
       }
     }
   });
 
+  /**
+   * The second published invariant, with RFC-20's qualifier: it holds whenever
+   * the two selected colours share a kind set of >= 2 members, which is every
+   * slide of every dark kit we ship. The fixture makes the sets equal on
+   * purpose — the case where they differ is covered by the pairing guard
+   * below, and there the kinds differ because the SETS do.
+   */
   it("puts at least TWO kinds on a slide whenever it puts two marks on it, at every seed", () => {
     for (let seed = 0; seed < 300; seed++) {
-      expect(markRotation(seed, 0, [0, 1], kinds)!.kind).not.toBe(markRotation(seed, 1, [0, 1], kinds)!.kind);
+      const by = uniform(2);
+      expect(markRotation(seed, 0, [0, 1], by)!.kind).not.toBe(markRotation(seed, 1, [0, 1], by)!.kind);
     }
   });
 
   it("only ever returns a colour the slide is ALLOWED and a kind that is legible", () => {
     for (let seed = 0; seed < 200; seed++) {
       for (let ord = 0; ord < 6; ord++) {
-        const r = markRotation(seed, ord, [2, 4], ["swish", "ink"])!;
+        const by = uniform(5, ["swish", "ink"]);
+        const r = markRotation(seed, ord, [2, 4], by)!;
         expect([2, 4]).toContain(r.colourIndex);
         expect(["swish", "ink"]).toContain(r.kind);
       }
     }
   });
 
+  /**
+   * RFC-20 §6.2 item 5 — THE BOUND. The kind comes from the set belonging to
+   * the slot the rotation landed on, never from a set shared by the ring.
+   *
+   * BREAK IT: index `kindsByIndex` by `ordinal` instead of by `colourIndex`,
+   * or flatten it to a union before indexing. Either makes slot 1 emit `block`
+   * here, and slot 1 cannot carry `block`.
+   */
+  it("draws the kind from the SELECTED COLOUR'S own set, never from a union", () => {
+    const by: MarkKind[][] = [["block"], ["underline"], ["ink"]];
+    for (let seed = 0; seed < 400; seed++) {
+      for (let ord = 0; ord < 4; ord++) {
+        const r = markRotation(seed, ord, [0, 1, 2], by)!;
+        expect(by[r.colourIndex], `slot ${r.colourIndex} was drawn as ${r.kind}`).toContain(r.kind);
+      }
+    }
+  });
+
   it("degrades rather than throws when there is nothing to rotate through", () => {
-    expect(markRotation(1, 0, [], kinds)).toBeUndefined();
-    expect(markRotation(1, 0, [0], [])).toBeUndefined();
+    expect(markRotation(1, 0, [], uniform(2))).toBeUndefined();
+    expect(markRotation(1, 0, [0], [[]])).toBeUndefined();
+    // A slot outside the table is the same answer, not a crash.
+    expect(markRotation(1, 0, [7], [[], []])).toBeUndefined();
   });
 
   it("survives a single allowed slot and a single kind without dividing by zero", () => {
-    expect(markRotation(7, 3, [2], ["ink"])).toEqual({ colourIndex: 2, kind: "ink" });
+    expect(markRotation(7, 3, [2], [[], [], ["ink"]])).toEqual({ colourIndex: 2, kind: "ink" });
   });
 
   it("slideMarkSeed is stable per slide and differs across slides", () => {

@@ -250,10 +250,9 @@
      pale kit too, which the flat 88% field it replaces did not: `#EFC75E`
      measured 45.7% there, over the ceiling, on every cover that kit shipped.
 
-     The texture runs the field's FULL extent rather than the ramp's, because
-     the field's extent is the region the composition occupies and the mask
-     the empty-rectangle clause reads should say so. Below the field it stops
-     dead — there is no full-plate texture in this directory any more.
+     The field carries NO texture at all since RFC-20 P2 — the ramp is the
+     only ink `.cov-field` paints, and the block below says why. There is no
+     full-bleed ink-carrying layer anywhere in this directory any more.
 
      ── 2026-09-12, THIRD PASS: THE RAMP IS 480px, NOT "WHATEVER IS LEFT". ──
 
@@ -330,28 +329,114 @@
      trade worth making; what the cap was FOR — decoration that stops growing
      when the copy shrinks — the bounded ramp already delivers on its own.
 
-     What is left below the band is therefore a screened tint rather than a
-     colour plate: a 2px/14px rule system on ground, which is the same
-     treatment every other archetype's field carries and which the measurement
-     scores as a mark rather than as a device. The honest statement of what
-     this file now does is "a bounded masthead plate over a screened field",
-     not "a colour field sized by whatever the copy left over".
+     ── 2026-09-14, RFC-20 P2: THE SCREEN IS GONE, AND THAT IS THE POINT. ──
 
-     AND THE SCREEN IS NOW LOAD-BEARING FOR CLAUSE C, which it was not before,
-     so it is worth saying plainly rather than leaving for the next reviewer to
-     find. Re-rendered with only the `repeating-linear-gradient` layer removed
-     (short copy, `m`): `largestEmptyRectShare` goes from 9.8% to 29.4% and
-     `edgeDensity` from 0.127 to 0.055. Before this pass the same experiment
-     moved it 10.4% -> 12.5%, because the RAMP was the thing covering that
-     region. What changed is which layer holds the region, not whether one
-     does — and a screened region genuinely is the directory's standing answer
-     to "how does a plate occupy space without pretending to be a picture"
-     (see the WHY A MARK AT ALL note below, and the identical argument in
-     `headline-focus.html` and `slide.html`). What a photoless, deviceless
-     cover with a 24-character title does NOT have is more content to put
-     there; the three honest options are a screened field, a bare field that
-     clause C fails, or a bigger title, and this file now does the first and
-     the third.
+     The fourth pass's own note (kept below in outline because the reasoning
+     matters) argued that the screen was LOAD-BEARING FOR CLAUSE C: removing
+     it took `largestEmptyRectShare` from 9.8% to 29.4%, so the screen was
+     holding the region below the band. That measurement was right and the
+     conclusion was the defect RFC-20 exists to remove.
+
+     A full-bleed ink-carrying layer does not hold a region; it hides one. It
+     paints the SAME cells whether the slide has something to say or nothing,
+     so `largestEmptyRectShare` and `occupiedShare` stop being measurements of
+     the slide and become constants of the template — which is the failure
+     `headline-focus.html` and `slide.html` carried in the identical shape.
+     Measured on this tree through real Chromium (`measureSlidePng`, 1080x1440
+     @2, msedge channel, the same instrument the fourth pass used):
+
+       cover, shipped, title only ("the grey screen")   occ 34.90  LER 14.17
+       cover, shipped, composed (eyebrow+title+body)    occ 35.38  LER  7.50
+
+     0.35 points of occupancy between a cover with one short line on it and a
+     cover with a full lockup, and both comfortably inside every ceiling. The
+     screen was the reason. THE GROUND RULE (RFC-20 §5.0) is the replacement,
+     and it is absolute: every painted layer in this directory is either
+     MATERIAL — below the measurement's flat tolerance, contributing zero to
+     every share — or AN OBJECT, bounded, its extent a function of the CONTENT
+     and never of the leftover space, and switched off by a `body:has()` guard
+     when that content is absent. Nothing in between. No full-bleed layer may
+     carry ink.
+
+     So the screen is deleted and the RAMP stays: it is 480px (bounded), it is
+     guarded on the title, and it is what the file always meant by "a bounded
+     masthead plate". The hole the screen was covering is real and it is now
+     reported rather than painted over — RFC-20 §5.5 names the failing
+     rectangle (a full-width band between the ramp's foot and the lockup's
+     head) and the remedy is composition: a device in `.cov-device`, which
+     `interest-relayout.ts`'s `coverRemedy` already builds from a stat fact
+     card for $0.00. A cover with neither a figure nor a picture FAILS clause
+     C, and that is correct — it is the floor discriminating between a cover
+     that has something to say and one that does not, for the first time.
+
+     Deleting it also RAISES the ramp's own clause-E contribution, which is
+     the part that reads backwards until you look at the buckets: the
+     hairlines were adding a fourth distinct colour to the ramp's cells and
+     pushing them out of the `graphic` bucket at `distinct <= 3`. The screen
+     was suppressing the device share it was supposed to be helping.
+
+     ── HOW BIG THE HOLE IS, AND THE ONE FIX THAT WAS TRIED AND REFUSED. ──
+
+     ── SUPERSEDED. THIS TABLE DESCRIBES A BARE TEMPLATE RENDER AND THE COVER
+        DOES NOT MEASURE LIKE THIS THROUGH THE REAL PIPELINE. ──
+
+     Measured over the calibration's six fixtures x three type scales,
+     photoless and deviceless, against the cover role's 0.22 ceiling:
+
+       as it now stands, no device      15 of 18 rows over, worst 43.06
+       with a bounded device in .cov-device   2 of 18 over, worst 28.33
+
+     Re-measured through the REAL pipeline — `assembleSlidesData` -> real
+     `createRenderCarousel({probe,measure})` -> real `measureSlidePng`, on a
+     document carrying all four production head sheets, over the gate-zero
+     sweep's 19 cover rows (3 copy lengths x 3 type scales x {en ltr, he rtl}),
+     photoless and deviceless:
+
+       largestEmptyRectShare  0.0750 - 0.1469        0 of 19 rows over 0.22
+                                                     worst row 1.50x clear
+
+     **The hole is closed and no ceiling moved to close it.** The two readings
+     disagree because the first was taken on a hand-materialised template
+     without the device sheet, the mark sheet or the ground material, and the
+     caveat under the second row of the old table ("the device in that second
+     row is a hand-styled stand-in, because the real `deviceCssBlock()` sheet
+     is spliced at materialisation time and a bare template render has no
+     access to it") applies to the FIRST row just as much — it was simply not
+     noticed there. A render that is missing three of the four head sheets is
+     not this file, and a number taken off one is not this file's number.
+
+     The old table is kept because the paragraph below turns on it: the
+     eyebrow-contrast argument that refuses the deeper ramp stops is still
+     correct and still worth having, and it was reached through this table.
+
+     So the remedy really is the one RFC-20 §5.5 names — a device built by
+     `interest-relayout.ts`'s `coverRemedy` from the strongest stat fact card,
+     deterministic regex over copy the run already holds, $0.00 — and this
+     file is not where it lands. (Caveat, stated: the device in that second row
+     is a hand-styled stand-in, because the real `deviceCssBlock()` sheet is
+     spliced at materialisation time and a bare template render has no access
+     to it. The shape of the answer is solid; the exact figure is CI's.)
+
+     THE OBVIOUS TEMPLATE FIX WAS TRIED AND IT IS REFUSED ON A MEASUREMENT,
+     which is worth recording so the next reader does not spend the afternoon
+     on it. Only the ramp's top ~225px carries INK — below that its alpha is
+     under the 18-unit line — so the "480px bounded masthead" is half invisible
+     to the instrument, and re-deriving the stops to run ink to ~430px
+     (0.95/0.62@170/0.34@320/wash@430/0@520) takes the failures from 15 rows to
+     9 with no overflow and no clause-E cost (`iod` 26.4-33.3%, still far under
+     `FULL_BLEED_IMAGERY_SHARE`'s 50%). It also puts the EYEBROW on a ramp that
+     has not dissolved. The eyebrow sits at the field's foot, which at `l` with
+     long copy is only 229px down the ramp, and `--fg` over that ground:
+
+       kit                    shipped stops      deeper stops    bar
+       bundled #C4552F          14.25:1             8.33:1      4.5:1
+       pale    #EFC75E          12.43:1             4.23:1      FAILS
+       light   #8FD6C8          12.46:1             4.31:1      FAILS
+
+     The dissolution IS the eyebrow's protection — the note beside `.cov-field`
+     has always said so and now it has a table. A 9-row improvement bought with
+     an unreadable kicker on every pale kit is not an improvement, so the stops
+     do not move and the hole stays reported rather than painted over.
 
      `.headline` also gained a `huge` step upward, the first time this ladder
      has stepped UP. A cover with a 24-character title was setting it at 104px
@@ -376,51 +461,33 @@
     padding: calc(84px * var(--ts, 1)) calc(var(--mx) - 16px) calc(44px * var(--ts, 1));
     display: flex; flex-direction: column; justify-content: flex-end;
     overflow: hidden;
-    /* ── THE MARK ON THE PLATE IS A HORIZONTAL SCREEN, AND THE ANGLE IS THE
-          POINT. ──
-       Every archetype in this directory used to carry the same 45-degree
-       hairline field: six of the eight bundled plates rendered side by side
-       were one wallpaper with different words on it, which is the owner's
-       second complaint verbatim ("בנוסף בגלל שזה חזרתי זה נראה AI" —
-       repetition is what reads as machine-made). The set now spends a
-       different MARK per archetype — see each file's own note — and this one
-       is the cover's: fine horizontal rules across a colour ramp, which is
-       what a screen-printed tint looks like. It is the mark that belongs on a
-       masthead, and at a glance it is not the statement slide's diagonal.
+    /* ── ONE LAYER: THE BOUNDED MASTHEAD RAMP. ──
+       The 2px/14px horizontal screen that used to sit over this ramp was
+       deleted by RFC-20 P2; the block above carries the measurement and the
+       Ground Rule that forbids it. What is left is an OBJECT in the Ground
+       Rule's sense: 480 design px measured from the field's block-start,
+       `no-repeat`, switched off entirely by the two guards below when there
+       is no title or when a photograph loaded.
 
-       WHY A MARK AT ALL, rather than the bare ramp. The measurement has no
-       state between "invisible" and "a drawn device": a uniform tone either
-       sits under the 18-unit ink line, where no pixel is ink and the cell's
-       mean has not left the ground, so the cell is UNOCCUPIED — or it clears
-       it, and then all 64 samples are ink, the cell is COVERED, and it counts
-       as a drawn device. Only a partial-coverage mark can occupy a region
-       without becoming one. That is why the whole set reached for hairlines,
-       and it is why the honest variety is in the mark's SHAPE (rules, dots,
-       dashes, a glyph's outline) rather than in taking the mark away. A 2px
-       rule on a 14px pitch marks (2+4)/14 of the cell rows it crosses and can
-       never fill three quarters of a 4px cell, so the plate's device share
-       stays the RAMP's and the largest empty rectangle inside the field stays
-       one 12px band (under 1% of the frame).
-
-       The screen REPEATS over the whole field; the ramp does not repeat and
-       is 480px tall. That difference is the third pass's whole change — see
-       the block above for the measurement. The ramp's stops are the same five
-       it always had, restated as px against 480 (0.95 at 0, 0.42 at 134,
-       wash at 240, 0.04 at 365, gone at 480), so the colour reads exactly as
-       it did; only its extent stopped being a function of the copy. */
+       The ramp's stops are the same five it always had, expressed as px
+       against 480 (0.95 at 0, 0.42 at 134, wash at 240, 0.04 at 365, gone at
+       480), so the colour reads exactly as it did. On the bundled accent/
+       ground pair the accent is ~92 units from the ground, so an alpha `a`
+       lands `92a` away: the part of the band that measures as a DRAWN DEVICE
+       is its own top ~47% and the part that measures as ACCENT is its top
+       ~9%, which is what keeps the cover clear of `IMAGERY_OR_DEVICE_FLOOR`
+       at one end and of `FULL_BLEED_IMAGERY_SHARE` and `ACCENT_MAX_SHARE` at
+       the other, at every copy length rather than as a function of one. */
     background-image:
-      repeating-linear-gradient(to bottom,
-        color-mix(in srgb, var(--fg) 20%, transparent) 0 2px,
-        transparent 2px 14px),
       linear-gradient(to bottom,
         color-mix(in srgb, var(--accent) 95%, transparent) 0px,
         color-mix(in srgb, var(--accent) 42%, transparent) 134px,
         color-mix(in srgb, var(--wash) 8%, transparent) 240px,
         color-mix(in srgb, var(--accent) 4%, transparent) 365px,
         transparent 480px);
-    background-size: auto, 100% 480px;
-    background-repeat: repeat, no-repeat;
-    background-position: 0 0, 0 0;
+    background-size: 100% 480px;
+    background-repeat: no-repeat;
+    background-position: 0 0;
   }
   /* The two guards. A photograph replaces the field; a cover with no title is
      not a title card and must not measure as one.
@@ -525,6 +592,25 @@
      the previous revision's 40px accent-ink shelf did, at a hundredth of the
      coverage and with no accent budget spent on it. */
   .cov-rail { block-size: 2px; background: color-mix(in srgb, var(--fg) 46%, transparent); margin-block-start: calc(22px * var(--ts, 1)); }
+  /* ── THE FURNITURE ANSWERS TO THE GROUND RULE TOO (RFC-20 P2). ──
+     `.cov-rail` is a full-measure 2px rule at 46% of the foreground — 99
+     units off the ground, so every cell row it crosses is INK and OCCUPIED —
+     and it used to paint on every render, including one with no eyebrow to
+     underline. `.stat-band` is a 200x14 accent block and did the same.
+
+     Neither is large, and that is exactly why this was invisible: measured on
+     this tree through real Chromium, a cover with EVERY SLOT EMPTY reported
+     `occupiedShare` 0.45% (harmless) and `largestEmptyRectShare` 78.89% —
+     because a full-width rule across the plate's upper third and an accent
+     block below it CUT THE EMPTY RECTANGLE IN THREE. An empty plate measured
+     as though a fifth of it were composed. With both guarded it measures
+     `occupiedShare` 0.00% and `largestEmptyRectShare` 100.00%, which is what
+     RFC-20 guard G2 asserts for every archetype at every role.
+
+     A rule under an eyebrow that is not there is not a rule, it is ink an
+     empty plate acquired; the same sentence the `.cov-field` guards above
+     have always made, applied to the furniture that was exempt from it. */
+  body:not(:has(.eyebrow:not(:empty))) .cov-rail { display: none; }
 
   /* `.headline` rather than a cover-specific class name on purpose: it is one
      of `script-fonts.ts`'s DISPLAY_SELECTORS, so a Hebrew or Arabic cover
@@ -551,8 +637,11 @@
   .headline.tiny { font-size: calc(66px * var(--ts, 1)); line-height: 1.14; }
 
   /* One accent mark under the title, sized to the plate rather than to the
-     legacy 132x12 detail. */
+     legacy 132x12 detail. Guarded on the title for the reason the `.cov-rail`
+     block above states: it is punctuation after a statement, and with no
+     statement it is only ink on an empty plate. */
   .stat-band { inline-size: calc(200px * var(--ts, 1)); block-size: calc(14px * var(--ts, 1)); background: var(--accent); margin-block-start: calc(28px * var(--ts, 1)); }
+  body:not(:has(#title > span:not(:empty))) .stat-band { display: none; }
 
   .body-text {
     font-family: var(--f-body); font-weight: 400; font-size: calc(32px * var(--ts, 1)); line-height: 1.5;

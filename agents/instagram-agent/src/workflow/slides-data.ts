@@ -10,10 +10,10 @@ import {
   buildMarkedRuns,
   collectEmphasisIssues,
   assignSpansToFields,
-  markKindsFor,
   normaliseEmphasis,
   resolveSlideMarks,
   ringIndexesFor,
+  slideMarkKinds,
   slideMarkSeed,
   type EmphasisIssue,
   type MarkDrop,
@@ -1092,6 +1092,18 @@ export interface SlideMarkPlan {
   /** This slide's EFFECTIVE ground and ink, after IGSTYLE-10's ground/fg inversion — the pair the kind set is computed from. */
   groundHex: string;
   fgHex: string;
+  /**
+   * RFC-20 — whether THIS slide's archetype refuses `block` outright
+   * (`quote_card`'s italic, whose background box is a parallelogram the CSS
+   * cannot follow).
+   *
+   * Carried on the plan rather than re-derived from `layout` in two places.
+   * Since RFC-20 it is an input to `ringIndexesFor` as well as to the kind
+   * sets — a member whose ONLY capability is `block` must not be handed to a
+   * slide that refuses `block` — and two spellings of `layout === "quote_card"`
+   * that could drift are how a colour comes to be allowed with no kind at all.
+   */
+  refuseBlock: boolean;
   /** `slideMarkSeed(paletteSeed, slide.n)`. */
   seed: number;
 }
@@ -1103,14 +1115,16 @@ export interface SlideMarkResult {
   /** Every declared span this slide could not mark, and why. Facts, never findings. */
   drops: MarkDrop[];
   /**
-   * The kinds `markKindsFor` admitted for THIS slide's effective ground.
+   * The UNION of the kinds `slideMarkKinds` admitted for THIS slide's
+   * effective ground, over every member of the ring.
    *
    * Carried so the pixel instrument knows what it is allowed to expect.
    * `markedShare` / `markColourCount` count cells that are COVERED (48 of 64
    * samples non-ground) and FLAT — a definition only `block`, the highlighter
    * swatch, can ever satisfy. `underline` (.07em), `swish` (.20em), `double`
    * (.09em + .04em) and `ink` (glyph-clipped) structurally cannot, so on any
-   * ground darker than its ink — where `markKindsFor` refuses `block` — both
+   * ground darker than its ink — where `block` is refused for every colour
+   * there is, `groundIsLighterThanInk` being false — both
    * numbers are 0 on every slide no matter how well the marks painted. Without
    * this field `interest-floor.ts`'s `marks-not-visible` warning fires on
    * every marked slide of every dark-kit run, which is a warning reviewers
@@ -1198,8 +1212,16 @@ function contentFor(
   // ground (finding 2: `rf-6` proves the ground decides), with one
   // archetype-level refusal: `quote_card`'s `.quote-text` is italic, and an
   // italic run's background box is a parallelogram the CSS cannot follow.
-  const markKinds =
-    plan === undefined ? [] : markKindsFor(plan.groundHex, plan.fgHex, plan.ring.hexes, { refuseBlock: layout === "quote_card" });
+  //
+  // RFC-20 — PER MEMBER, not one set shared by the whole ring. `kindsByIndex`
+  // is what binds the rotation (the pairing is what has to be legible, so it
+  // is checked where the pairing is made); `kinds` is the union, and is what
+  // `SlideMarkResult.kinds` carries so `interest-floor.ts` can tell whether
+  // `markedShare` is structurally able to be non-zero on this slide at all.
+  const { kindsByIndex: markKindsByIndex, kinds: markKinds } =
+    plan === undefined
+      ? { kindsByIndex: [] as MarkKind[][], kinds: [] as MarkKind[] }
+      : slideMarkKinds(plan.ring, plan.groundHex, plan.fgHex, { refuseBlock: plan.refuseBlock });
   /**
    * RFC-17 — the wire's two declaration forms collapsed to one, ONCE per
    * slide.
@@ -1294,6 +1316,13 @@ function contentFor(
       dir,
       allowedIndexes: plan.allowedIndexes,
       kinds: markKinds,
+      kindsByIndex: markKindsByIndex,
+      // RFC-20 §6.2 item 6 — the inputs the emission point re-asserts the
+      // pairing against, before it writes a `.mk` span.
+      hexes: plan.ring.hexes,
+      groundHex: plan.groundHex,
+      fgHex: plan.fgHex,
+      refuseBlock: plan.refuseBlock,
       seed: plan.seed,
       alreadyAccepted: marksAccepted,
     });
@@ -2154,13 +2183,20 @@ export function assembleSlidesData(params: {
     const { used: inverted } = decideGroundFgInversion(slide.n, params.paletteSeed, slideAccentColor, params.groundFgInversion);
     const effectiveGround = inverted ? params.foregroundHex : params.groundHex;
     const effectiveFg = inverted ? params.groundHex : params.foregroundHex;
+    // RFC-20 — `refuseBlock` is resolved HERE, where `layout` already is, and
+    // travels on the plan. It narrows `ringIndexesFor` as well as the kind
+    // sets: on a paper kit a highlighter yellow's only capability is `block`,
+    // and a `quote_card` that refuses `block` must not be offered that slot at
+    // all, or the rotation selects a colour it can draw as nothing.
+    const refuseBlock = layout === "quote_card";
     const markPlan: SlideMarkPlan | undefined =
       markRing !== undefined && effectiveGround !== undefined && effectiveFg !== undefined
         ? {
             ring: markRing,
-            allowedIndexes: ringIndexesFor(markRing, slideAccentColor),
+            allowedIndexes: ringIndexesFor(markRing, slideAccentColor, { groundHex: effectiveGround, fgHex: effectiveFg, refuseBlock }),
             groundHex: effectiveGround,
             fgHex: effectiveFg,
+            refuseBlock,
             seed: slideMarkSeed(params.paletteSeed, slide.n),
           }
         : undefined;
