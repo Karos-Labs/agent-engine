@@ -137,7 +137,9 @@ where Chromium is not installed — pixel truth comes from CI). Root `tsc --noEm
 
 # Part 2 — Ruling 2, the semantic floor
 
-**Status: not yet implemented.** Specified here so the work is not re-derived.
+**Status: candidate 3 written and FALSIFIED; the sweep now measures candidates 4 and 5.**
+No threshold in `interest-floor.ts` has moved, and none may until a candidate faces its controls
+(RFC-17 §3.4).
 
 ## 2.1 The evidence that the instrument is overfitted, counted
 
@@ -172,12 +174,100 @@ From RFC-20 §11, and it is the design constraint rather than a remark:
 > because they are confident. The bounded object must therefore be built as a COMPOSITION; if it is
 > built as a way to pass a number, it will be the plate again.*
 
-## 2.4 Direction
+## 2.4 Why a lower number cannot fix this, in the repo's own measurements
+
+The obvious move is to lower `OCCUPIED_SHARE_FLOOR`. It does not work, and two tables in the repo
+say why.
+
+`OCCUPIED_SHARE_FLOOR`'s own comment, from real renders on the material ground:
+
+    POPULATED   type only, 3-line headline + 4-line body    occ 0.1083  flat 0.9237
+    NEGLECTED   the owner's grey screen, one short headline  occ 0.0106  flat 0.9917
+
+Occupancy separates those two by 10x, so a floor in the gap looks available. But the plate this
+ruling is actually about — one enormous confident line on bare ground — sits at the NEGLECTED end
+of that axis, beside the grey screen, **because both are one short line**. And `boringSlideMetrics`,
+measured off the real 2026-09-08 Karos Labs renders, reads `occ 0.18` — HIGHER than the populated
+type-only plate it is supposed to lose to.
+
+The difference between a confident one-liner and a neglected one is not how much was said. It is
+**type scale, marking and material**, and no threshold on an area metric can see it. The owner is
+right that the instrument is the bug.
+
+## 2.5 CANDIDATE 3, WRITTEN AND FALSIFIED — `contentOccupiedShare / occupiedShare`
+
+RFC-17 §3.4 records two candidates already dead: `imageryOrDeviceShare / contentOccupiedShare`
+scored the owner's decorated grey screen BETTER than both good reference plates, and a content-span
+ratio read 1.00 on every real reference plate. Its standing rule: *"Until a third survives its
+controls, no threshold in this file moves."*
+
+A third was written. The reasoning was sound on its face: `occupiedShare` marks a cell when any 4
+of its 64 samples carry ink, while `contentOccupiedShare` marks it only when the cell's mean has
+left the ground. A thin stroke at body size touches many cells and fills none; a display stroke
+fills what it touches. So the ratio should read type scale — and, as a bonus, a decorative ground
+would push it DOWN, which is the property that killed candidate 1.
+
+**It is falsified by a control already in this repo, and decisively.** `boringSlideMetrics` — the
+owner's own grey screen, measured off real renders — sets `contentOccupiedShare === occupiedShare
+=== 0.18`, and its fixture comment says exactly why: *"it carried no ground treatment at all, so
+every mark on it was content."* **Candidate 3 scores 1.00 on the defect plate.** A ratio that gives
+the thing the floor exists to catch a perfect score cannot be the bar a good plate must clear.
+
+The error is worth naming because it is repeatable: the ratio measures DECORATION versus CONTENT,
+not stroke weight. At a 4px cell grid the coverage test is not sensitive enough to separate a body
+stroke from a display stroke, and on an undecorated plate the two masks coincide by construction.
+The code was written, reverted before it shipped, and is recorded here rather than in a branch.
+
+## 2.6 CANDIDATES 4 AND 5, AND THE INSTRUMENT THAT WILL DECIDE THEM
+
+Both have a physical claim behind them rather than an analogy:
+
+- **Candidate 4 — `inkShare / occupiedShare`.** How much real ink sits inside the cells a plate
+  touched. Fat display strokes fill them; body-size strokes graze them. Unlike candidate 3 this
+  reads the ink mask rather than a second occupancy mask, so an undecorated plate cannot force it
+  to 1. On `boringSlideMetrics` it reads 0.045/0.18 = **0.25**.
+- **Candidate 5 — `edgeDensity`.** Perimeter per unit ink, which falls as a glyph grows. Already
+  measured on every slide, already carrying a floor (`EDGE_DENSITY_FLOOR` 0.06) for an unrelated
+  reason. On `boringSlideMetrics` it reads **0.22**.
+
+**The instrument is the gate-zero sweep**, and it did not need to be built — it renders 100+
+populated plates across eight archetypes, three copy lengths, **three type scales** and two scripts
+on real Chromium, plus its neglected controls. It simply was not printing the columns. It now
+prints `ink`, `text`, `edge`, `iod` and content centroid per row, a POPULATED-versus-NEGLECTED
+spread for each candidate, and a **scale ladder**: the same copy at fontScale s, m and l.
+
+That ladder is the decisive test and it costs nothing extra. A real type-scale proxy must order
+s → m → l monotonically on identical copy. A candidate that does not is measuring something else,
+and it is better to learn that from a table than from a shipped threshold.
+
+## 2.7 What still has no control, and must be built before the threshold moves
+
+The repo has a measured NEGLECTED plate and measured POPULATED plates. **It has no measured
+GOOD-SIMPLICITY plate** — the reference slides were read as images in an earlier session and never
+stored, and `interest-floor-calibration.test.ts`'s own §11.6 records the grey-screen control as
+UNPAID after RFC-20 cut `headline-focus.html`'s statement archetypes out of scope.
+
+So the remaining work, in order:
+
+1. Read the sweep's candidate table off CI and pick whichever separator orders the scale ladder.
+2. Restore the grey-screen control and add its CONFIDENT counterpart — the same copy at display
+   scale — so the pair differs in exactly one variable.
+3. Only then move a threshold, and quote the band it came from in the constant's doc comment.
+
+## 2.8 Direction, once the number exists
 
 Measure the ELEMENTS that make the reference plates work — marked per-word emphasis, a real
 material ground, a composition that moves between slides, a structural reason for the slide count —
-rather than dry occupancy. Re-calibrate via the CI sweep RFC-20 specifies. Do not hand-tune a
-threshold to make a plate pass: that is how the instrument got overfitted the first time.
+rather than dry occupancy. Do not hand-tune a threshold to make one plate pass: that is how the
+instrument got overfitted the first time.
+
+**One boundary decided in advance.** When the waiver lands it applies to clauses C, D and clause
+G's content limb — the emptiness clauses. It must NOT reach clause A (nothing painted), A2 (the
+stylesheet did not arrive), B (clipped), F (a wall of text) or G's `noType` limb, which are
+integrity rather than composition. Clause E (a cover carries something other than type) is an open
+question: `@karoslabs`'s text-only `playbook` plate would fail it, but a display-size glyph may
+register as `graphicShare` and clear it on its own. That is a measurement, not an argument, and it
+belongs in the same sweep.
 
 ---
 

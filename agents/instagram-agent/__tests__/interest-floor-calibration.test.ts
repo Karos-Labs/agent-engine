@@ -2064,6 +2064,39 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
         flat: number;
         ler: number;
         cocc: number;
+        /* ── RFC-21 §2: the candidate columns. Reported, gating NOTHING. ──
+         *
+         * The owner ruled on 2026-09-14 that the floor must measure semantic
+         * and structural value rather than dry occupancy, because four plates
+         * from his own ground truth are good and would fail clauses C and D:
+         * two one-line statements, a pair of silhouettes, a text-only numbered
+         * list and a single large numeral. RFC-17 §3.4's standing rule is that
+         * no threshold in `interest-floor.ts` moves until a candidate
+         * separator survives its controls, and two have already failed.
+         *
+         * A THIRD was written and falsified before it shipped, and the control
+         * that killed it is already in this repo: `contentOccupiedShare /
+         * occupiedShare` reads **1.00 on `boringSlideMetrics`** — the owner's
+         * own grey screen, measured off the 2026-09-08 Karos Labs renders —
+         * because that plate carried no ground treatment, so every mark on it
+         * was content. A ratio that scores the defect plate perfectly cannot
+         * be the bar a good plate has to clear. See RFC-21 §2.3.
+         *
+         * What the next candidate needs is a TYPE-SCALE proxy, and the two
+         * with a physical claim behind them are `inkShare / occupiedShare`
+         * (how much real ink is inside the cells a plate touched — fat display
+         * strokes fill them, body-size strokes graze them) and `edgeDensity`
+         * (perimeter per unit ink, which falls as a glyph grows). This sweep
+         * already renders 100+ populated plates at THREE TYPE SCALES in two
+         * scripts, so it is the instrument that can answer it — it simply was
+         * not printing the columns. Now it does, and the band summary below
+         * reports each candidate's spread per band so the next pass reads a
+         * measurement instead of proposing a fourth guess. */
+        ink: number;
+        text: number;
+        edge: number;
+        iod: number;
+        centroidY: number;
       }
       const rows: SweepRow[] = [];
       /** The margin RFC-20 §5.8.1 gates on: every real plate clears its role's number by at least this factor. */
@@ -2113,6 +2146,11 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
         for (const [index, entry] of measured.entries()) {
           const role = roleAt(index, measured.length);
           if (!OUT_OF_SCOPE.has(templateBasename(entry.template))) rows.push({
+            ink: entry.metrics.inkShare,
+            text: entry.metrics.textShare,
+            edge: entry.metrics.edgeDensity,
+            iod: entry.metrics.imageryOrDeviceShare,
+            centroidY: entry.metrics.contentCentroid.y,
             band,
             label,
             archetype: templateBasename(entry.template),
@@ -2221,6 +2259,11 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
         // neglected plate refused here is refused everywhere. Scoring these at
         // the cover role would flatter the controls with clause E.
         rows.push({
+          ink: entry.metrics.inkShare,
+          text: entry.metrics.textShare,
+          edge: entry.metrics.edgeDensity,
+          iod: entry.metrics.imageryOrDeviceShare,
+          centroidY: entry.metrics.contentCentroid.y,
           band: "NEGLECTED",
           // Every control is now an empty-slot render: the two grey-screen
           // rows were `headline-focus.html` and left with it (see OUT_OF_SCOPE).
@@ -2242,13 +2285,66 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
 
       // ── THE TABLE ──
       const fmt = (v: number): string => v.toFixed(4);
+      /** A share against a share, or NaN when the denominator is zero — which prints as a gap rather than as a flattering 0. */
+      const ratio = (a: number, b: number): number => (b <= 0 ? Number.NaN : a / b);
       const printed = [
         "",
         "RFC-20 GATE-ZERO SWEEP — clause C and BOTH LIMBS of clause D",
-        `${"band".padEnd(10)} ${"case".padEnd(30)} ${"template".padEnd(17)} ${"role".padEnd(9)} ${"occ".padEnd(8)} ${"flat".padEnd(8)} ${"LER".padEnd(8)} COCC`,
-        ...rows.map((r) => `${r.band.padEnd(10)} ${r.label.padEnd(30)} ${r.archetype.padEnd(17)} ${r.role.padEnd(9)} ${fmt(r.occ).padEnd(8)} ${fmt(r.flat).padEnd(8)} ${fmt(r.ler).padEnd(8)} ${fmt(r.cocc)}`),
+        `${"band".padEnd(10)} ${"case".padEnd(30)} ${"template".padEnd(17)} ${"role".padEnd(9)} ${"occ".padEnd(8)} ${"flat".padEnd(8)} ${"LER".padEnd(8)} ${"COCC".padEnd(8)} ` +
+          `${"ink".padEnd(8)} ${"text".padEnd(8)} ${"edge".padEnd(8)} ${"iod".padEnd(8)} ${"cy".padEnd(8)} ${"c/o".padEnd(8)} i/o`,
+        ...rows.map(
+          (r) =>
+            `${r.band.padEnd(10)} ${r.label.padEnd(30)} ${r.archetype.padEnd(17)} ${r.role.padEnd(9)} ${fmt(r.occ).padEnd(8)} ${fmt(r.flat).padEnd(8)} ` +
+            `${fmt(r.ler).padEnd(8)} ${fmt(r.cocc).padEnd(8)} ${fmt(r.ink).padEnd(8)} ${fmt(r.text).padEnd(8)} ${fmt(r.edge).padEnd(8)} ${fmt(r.iod).padEnd(8)} ` +
+            `${fmt(r.centroidY).padEnd(8)} ${fmt(ratio(r.cocc, r.occ)).padEnd(8)} ${fmt(ratio(r.ink, r.occ))}`,
+        ),
         "",
       ];
+
+      // ── RFC-21 §2: THE CANDIDATE SEPARATORS, SPREAD PER BAND ──
+      //
+      // Printed rather than asserted, because this sweep is where the next
+      // pass gets its numbers and RFC-17 §3.4 forbids moving a threshold
+      // before a candidate has faced its controls. A candidate separates only
+      // if its POPULATED range and its NEGLECTED range do not overlap; the
+      // ranges are printed side by side so that is readable in one line rather
+      // than reconstructed from 100+ rows.
+      //
+      // The scale axis is already in the data: every POPULATED carousel is
+      // rendered at fontScale s, m and l with the SAME copy, so a real
+      // type-scale proxy must order those three consistently. A candidate that
+      // does not is measuring something else.
+      const spread = (name: string, of: (r: SweepRow) => number): string => {
+        const within = (band: SweepRow["band"]): string => {
+          const vs = rows.filter((r) => r.band === band).map(of).filter((v) => Number.isFinite(v));
+          if (vs.length === 0) return `${band} n=0`;
+          const sorted = [...vs].sort((a, b) => a - b);
+          return `${band} n=${String(vs.length).padStart(3)} [${fmt(sorted[0]!)} .. ${fmt(sorted.at(-1)!)}] median ${fmt(sorted[Math.floor(sorted.length / 2)]!)}`;
+        };
+        return `${name.padEnd(22)} ${within("POPULATED").padEnd(52)} ${within("NEGLECTED")}`;
+      };
+      printed.push("", "RFC-21 §2 CANDIDATE SEPARATORS — reported, gating nothing:");
+      printed.push(spread("cocc/occ (candidate 3)", (r) => ratio(r.cocc, r.occ)));
+      printed.push(spread("ink/occ (candidate 4)", (r) => ratio(r.ink, r.occ)));
+      printed.push(spread("edgeDensity (candidate 5)", (r) => r.edge));
+      printed.push(spread("textShare", (r) => r.text));
+      printed.push(spread("content centroid y", (r) => r.centroidY));
+      // The scale ladder, which is the half a band summary cannot show: the
+      // SAME copy at s, m and l. A type-scale proxy must move monotonically
+      // across these three, and whichever candidate does is the one to take to
+      // a control next.
+      for (const candidate of [
+        ["cocc/occ", (r: SweepRow) => ratio(r.cocc, r.occ)] as const,
+        ["ink/occ", (r: SweepRow) => ratio(r.ink, r.occ)] as const,
+        ["edge", (r: SweepRow) => r.edge] as const,
+      ]) {
+        const at = (scale: string): string => {
+          const vs = rows.filter((r) => r.band === "POPULATED" && r.label.endsWith(` ${scale}`)).map(candidate[1]).filter((v) => Number.isFinite(v));
+          return vs.length === 0 ? "—" : fmt(vs.reduce((a, b) => a + b, 0) / vs.length);
+        };
+        printed.push(`${`scale ladder ${candidate[0]}`.padEnd(22)} s ${at("s")}   m ${at("m")}   l ${at("l")}`);
+      }
+      printed.push("");
 
       // ── THE BANDS, AND WHICH DECISION-RULE BRANCH THEY LAND ON ──
       const neglectedRows = rows.filter((r) => r.band === "NEGLECTED");
