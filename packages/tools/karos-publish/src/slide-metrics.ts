@@ -552,6 +552,11 @@ export const SlideProbeSchema = z.object({
     .describe(
       "Of those, the ones whose computed style actually paints: a background image other than `none`, or a transparent colour with `background-clip: text` (the dark-ground kind, where the mark is in the glyphs). `markRuns > 0 && markRunsPainted === 0` is the stylesheet not arriving, which no redraft can fix.",
     ),
+  displayTypeScale: z
+    .number()
+    .describe(
+      "The largest rendered font size on the plate, as a fraction of frame height. 0 when nothing text-bearing rendered. The typography half of what makes a plate interesting — a consumer reads it beside `groundInkContrast` (the contrast half) and `imageryOrDeviceShare` (the visuals half), which are the three things a good plate has and a neglected one does not.",
+    ),
 });
 export type SlideProbe = z.infer<typeof SlideProbeSchema>;
 
