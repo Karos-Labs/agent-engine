@@ -139,10 +139,10 @@ where Chromium is not installed — pixel truth comes from CI). Root `tsc --noEm
 
 # Part 2 — Ruling 2, the semantic floor
 
-**Status: candidates 3 and 4 FALSIFIED. Candidate 5 — `edgeDensity` — SURVIVES ITS CONTROLS,
-measured, on the first sweep that printed it.** It is the first separator to do so after three
-failures. No threshold in `interest-floor.ts` has moved yet, and §2.7 says what is still missing
-before one can be set.
+**Status: candidates 3 and 4 FALSIFIED. Candidate 5 — `edgeDensity` — is CONFIRMED as a type-scale
+proxy on every template with no averaging (§2.6.2), and FALSIFIED as a standalone threshold by the
+same table.** The form it has to take is a conjunction with `textShare`, and the row that sets its
+number does not exist yet (§2.7 step 2b). No threshold in `interest-floor.ts` has moved.
 
 ## 2.1 The evidence that the instrument is overfitted, counted
 
@@ -286,6 +286,57 @@ constant gets set. And the scale ladder moves only 13% across the whole `s`→`l
 gradient is genuine but shallow within the type sizes we actually ship; the reference plates set
 type far larger than our `l`.
 
+## 2.6.2 THE CONTROL PAIR — CI 34833492341, and it FALSIFIES THE THRESHOLD WHILE CONFIRMING THE PROXY
+
+The pair renders one short statement through `cover`, `headline-focus` and `closer` at three type
+scales, one variable apart:
+
+```
+scale  template          role       occ      flat     LER      ink      text     EDGE     iod      verdict
+s      cover             cover      0.2655   0.6765   0.1541   0.2066   0.1623   0.1051   0.1032   pass
+m      cover             cover      0.2751   0.6680   0.1427   0.2153   0.1645   0.1027   0.1106   pass
+l      cover             cover      0.2919   0.6561   0.1505   0.2274   0.1699   0.0992   0.1220   pass
+s      headline-focus    interior   0.4974   0.7809   0.0871   0.2038   0.4727   0.3122   0.0247   pass
+m      headline-focus    interior   0.4949   0.7768   0.0912   0.2078   0.4645   0.3018   0.0303   pass
+l      headline-focus    interior   0.4918   0.7714   0.0935   0.2133   0.4519   0.2886   0.0399   pass
+s      closer            closer     0.5941   0.5077   0.0341   0.4875   0.3631   0.0627   0.2310   pass
+m      closer            closer     0.6091   0.4905   0.0257   0.5045   0.3572   0.0612   0.2519   pass
+l      closer            closer     0.6076   0.4888   0.0163   0.5063   0.2706   0.0588   0.3370   pass
+```
+
+**THE PROXY IS CONFIRMED.** `edgeDensity` falls monotonically with type scale on **every template**,
+with no averaging to hide behind: cover 0.1051 → 0.0992, headline-focus 0.3122 → 0.2886, closer
+0.0627 → 0.0588. More ink is painted at `l` in every case, so the scales really did differ. The
+geometric claim holds.
+
+**AND THE THRESHOLD IS FALSIFIED, by the same table.** `headline-focus` reads **0.2886–0.3122 at
+every scale — ABOVE the 0.2365 floor of the neglected band** — while passing every clause. §2.6.1's
+clean separation was an artefact of scope: `headline-focus` is in the sweep's `OUT_OF_SCOPE` set, so
+its rows were never in the POPULATED band that made the gap look clean.
+
+The reason is not subtle once measured. `edgeDensity` is perimeter per unit ink, i.e. **stroke
+fineness**, and *two completely different plates have fine strokes*: an empty one, and a
+text-dense one. `headline-focus` carries `textShare` 0.45–0.47. **A ceiling on `edgeDensity` alone
+would refuse the densest real plates and the emptiest ones with the same number.**
+
+**So candidate 5 is a proxy, not a gate, and the correct form is a CONJUNCTION** — the same shape
+clause D already uses. `textShare` separates the two populations cleanly and in the other direction:
+populated [0.0837 .. 0.3592] against neglected [0.0006 .. 0.0191], a 4.4x gap, with
+`headline-focus` at 0.45 far above both. So:
+
+> Among plates that carry LITTLE (low `textShare`, low occupancy), `edgeDensity` separates the
+> confident from the neglected: display type paints few, fat strokes and scores low; a small
+> headline parked on flat ground paints many fine ones and scores high. A text-dense plate is
+> excluded by its own `textShare` and never reaches the question.
+
+That is the rule to build, and every number above supports it. What it still needs is the row that
+sets its number: a plate with ONE line at display scale and nothing else — which none of the three
+archetypes here renders, because all of them carry a body.
+
+**This is what the control pair was for.** It cost one CI run and it caught a threshold that the
+aggregate table would have justified and that would have refused our own densest archetypes in
+production.
+
 ## 2.7 What still has no control, and must be built before the threshold moves
 
 The six NEGLECTED controls in §2.6.1 are **empty-slot renders** — every copy slot blank. They prove
@@ -300,11 +351,14 @@ So the remaining work, in order:
 
 1. ~~Read the sweep's candidate table and pick the separator that orders the scale ladder.~~
    **DONE — candidate 5, `edgeDensity`.** §2.6.1.
-2. **Build the pair that differs in exactly one variable:** the same short headline rendered at
-   display scale and at body scale, on the same ground, through `headline-focus.html`. That is the
-   owner's grey screen and its confident twin, and it is the only control that can set a THRESHOLD
-   rather than confirm a direction. Expect the confident plate near the populated floor (~0.03–0.06)
-   and the timid one above it; the threshold goes in the gap, quoted from the table.
+2. ~~Build the pair that differs in exactly one variable.~~ **DONE — §2.6.2.** It confirmed the
+   proxy and falsified the single-metric threshold in the same table.
+2b. **Build the ONE-LINE plate.** Every archetype in the pair carries a body, so none of them is the
+   plate the ruling is about. The row still missing is a statement plate with one line at display
+   scale and nothing else, against the same line set small on the same ground — the owner's grey
+   screen and its confident twin. `headline-focus.html`'s statement archetypes were cut by RFC-20
+   and are the natural home for it (§11.4 owns that work). Until that row exists there is no gap to
+   put a number in.
 3. Then wire it, and only into clauses C, D and clause G's content limb — never into A, A2, B, F or
    G's `noType` limb (§2.8). A waiver that admits the plate the floor was built for would be worse
    than no waiver, so the acceptance condition is written as a pair: **the confident plate is
