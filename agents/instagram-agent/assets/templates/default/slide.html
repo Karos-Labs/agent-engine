@@ -117,6 +117,14 @@
       color-mix(in srgb, var(--bg) 96%, transparent) 0%, color-mix(in srgb, var(--bg) 86%, transparent) 22%,
       color-mix(in srgb, var(--bg) 52%, transparent) 42%, color-mix(in srgb, var(--bg) 0%, transparent) 62%);
   }
+  /* ── THE SAME SCRIM, THE SAME ARGUMENT — `cover.html` carries it in full. ──
+     This file's heroless path is the one `text_only` always takes and the one
+     the bounded object was built for, so it is the plate where an invisible
+     full-bleed layer costs the most. `.bg:empty` rather than `:not(:has(.hero))`
+     because this template's `onerror` empties a wrapper instead of removing a
+     top-level node; it is the same condition every other heroless rule in this
+     sheet already keys off. */
+  body:has(.bg:empty) .scrim { display: none; }
   .copy { position: absolute; left: var(--mx); right: var(--mx); bottom: 96px; z-index: 4; }
   /* ── THE HEROLESS PLATE. ──
      With a photograph this archetype is a photograph: the copy sits on the

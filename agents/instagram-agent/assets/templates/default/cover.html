@@ -573,6 +573,47 @@
     box-shadow: 0 0 calc(16px * var(--ts, 1)) calc(4px * var(--ts, 1)) color-mix(in srgb, var(--bg) 82%, transparent);
   }
 
+  /* ── RFC-20 §11.5 ITEM 3: A SCRIM WITH NO PHOTOGRAPH UNDER IT. ──
+
+     §11.5 left `cover.html`'s blank plate open at `occupiedShare` **0.06%**
+     and `largestEmptyRectShare` **51.67%**, with the note: *"0.06% is ≈58
+     cells of 97,200, and 51.67% is the algebraic signature of a handful of
+     cells near the plate's mid-line — one obstruction at the centroid halves
+     the largest empty rectangle. Naming the element needs one render with a
+     cell map; it is not guessed at here."*
+
+     **It is the scrims, and the number names them.** `.scrim` is bottom-
+     anchored and `block-size: 52%`, so its upper edge sits at y = 48% of the
+     plate. A largest-empty-rectangle that cannot cross that row is either the
+     48% above it or the **52%** below — and 51.67% is that 52% less the
+     handful of cells the edge itself occupies. The share the clause reported
+     and the scrim's own declared height are the same number.
+
+     WHY IT MARKS ANY CELLS AT ALL, since it paints nothing a reader can see:
+     both scrims composite `color-mix(in srgb, var(--bg) N%, transparent)`
+     over a ground that IS `var(--bg)`. The composite is `--bg` exactly, at
+     every stop, so the layer is invisible by construction — but the 8-bit
+     rounding at its boundary row is not exactly zero, and `slide-metrics.ts`
+     marks a cell on an ABSOLUTE distance from the ground. A seam one cell
+     tall is enough to cut the plate in two for a metric that finds ONE
+     contiguous rectangle. This is [[furniture-guards-read-the-subject]]'s
+     rule restated at its limit: **position, not area** — 58 cells of nothing
+     move the number 48 points.
+
+     THE FIX IS THE LAYER'S OWN STATED PURPOSE. A scrim exists so that copy
+     stays readable over a PHOTOGRAPH; this file's own comments say so twice
+     (*"which is what a photo-header scrim is"*, *"it costs the photograph
+     nothing a reader would notice"*). With no photograph there is nothing to
+     scrim, the copy sits on flat brand ground at full contrast, and the layer
+     is a full-bleed layer the plate has not earned — which is RFC-20 §5.0's
+     Ground Rule, and §11.1's class finding one layer over.
+
+     `body:has(.hero)` is exactly the right condition and the file already
+     uses it: `onerror` REMOVES the `<img>` rather than hiding it, so the
+     selector is false precisely when no photograph loaded. A hero render is
+     byte-identical. */
+  body:not(:has(.hero)) .scrim, body:not(:has(.hero)) .scrim-top { display: none; }
+
   .cov-device { inline-size: 100%; }
   .cov-device:empty { display: none; }
 

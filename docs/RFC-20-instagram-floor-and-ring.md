@@ -1399,6 +1399,22 @@ map; it is not guessed at here."* It still is not guessed at. **`contentBBox` IS
 and it has been on every measured slide since the metric shipped — nobody had printed it.** G2 now prints the ink
 bounding box and the hole's corners on every row and on every failure, so the element names itself.
 
+**And then the number named it before the render did.** `.scrim` is bottom-anchored with `block-size: 52%`, so its
+upper edge sits at y = 48% of the plate: a largest-empty-rectangle that cannot cross that row is either the 48%
+above it or the **52%** below, and **51.67% is that 52% less the handful of cells the edge itself occupies.** The
+share the clause reported and the scrim's own declared height are the same number.
+
+It marks cells while painting nothing a reader can see. Both scrims composite `color-mix(in srgb, var(--bg) N%,
+transparent)` over a ground that IS `var(--bg)`, so the composite is `--bg` exactly at every stop — but the 8-bit
+rounding at the boundary row is not exactly zero, and every mask in `slide-metrics.ts` is cut at an ABSOLUTE
+distance. **58 cells of nothing move the number 48 points**, which is §11.5's own lesson at its limit: position,
+not area.
+
+The fix is the layer's stated purpose. A scrim exists so copy stays readable over a PHOTOGRAPH — `cover.html` says
+so twice in its own comments — and with no photograph there is nothing to scrim, the copy sits on flat brand ground
+at full contrast, and the layer is a full-bleed layer the plate has not earned. Guarded on `body:has(.hero)` (and
+`.bg:empty` on `slide.html`), a hero render is byte-identical and a heroless one loses an invisible seam.
+
 ### What the re-layout stopped doing
 
 `deviceFromText` is deterministic over a slide's own headline, body and source — the identical inputs
