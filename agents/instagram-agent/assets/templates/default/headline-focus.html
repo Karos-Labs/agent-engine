@@ -622,6 +622,27 @@
      is present and empty on every render that carries no device — see its own
      `:empty` rule. */
   body:has(.hf-device .dv) .stat-band { display: none; }
+  /* ── THE GROUND RULE, WHICH THIS BAR HAS BEEN OUTSIDE OF THE WHOLE TIME. ──
+
+     RFC-20 §5.0: *tone may paint anywhere, ink only inside a region the
+     composition occupies, and only when the content that justifies it is
+     present.* A 200x14 solid accent bar is ink, and until now it painted on a
+     plate with no statement on it — the only thing in frame, sitting on the
+     centre line, which is the worst place for it: `largestEmptyRectangle`
+     finds ONE contiguous rectangle, so a mark at the centroid roughly halves
+     the number G2 reads.
+
+     `cover.html` and `stat-callout.html` already guard their own `.stat-band`
+     on the slot it decorates (`#title`, `#figure`); these two were the
+     exception rather than the rule, and the exception is not deliberate —
+     RFC-20 §11.3 CUT both files from the phase that added the other guards,
+     so the bar was never reached. It is reached now that they are back in
+     scope, and it comes into line rather than acquiring a special case.
+
+     Asked of the statement's CHILDREN for the same reason every other guard
+     in this file is: `#headline` is a twin-slot pair and can never match
+     `:empty` again, so the plain form would be permanently silent. */
+  body:not(:has(#headline > span:not(:empty))) .stat-band { display: none; }
 
   .body-text {
     font-family: var(--f-body); font-weight: 400; font-size: calc(33px * var(--ts, 1)); line-height: 1.55;

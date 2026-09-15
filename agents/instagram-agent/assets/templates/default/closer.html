@@ -499,6 +499,18 @@
 
   /* The one accent moment above the ask. */
   .cl-rule { inline-size: calc(240px * var(--ts, 1)); block-size: calc(14px * var(--ts, 1)); background: var(--accent); margin-block: calc(40px * var(--ts, 1)) 0; }
+  /* ── THE GROUND RULE. ──
+     RFC-20 §5.0: ink only inside a region the composition occupies, and only
+     when the content that justifies it is present. A 240x14 solid accent bar
+     is ink, and on a plate with no takeaway it was the only thing in frame —
+     sitting near the centre line, which is the worst place for it, because
+     `largestEmptyRectangle` finds ONE contiguous rectangle and a mark at the
+     centroid roughly halves the number G2 reads.
+     This guard was written once and reverted with `a3bf8f7`, which cut this
+     file from the phase rather than judging the guard. The file is back in
+     scope with the bounded object (§11.4) and so is the guard, unchanged, on
+     the same slot the field paint above already reads. */
+  body:not(:has(#takeaway > span:not(:empty))) .cl-rule { display: none; }
 
   /* ── THE ASK HAS A LADDER NOW, and it is the piece that was missing. ──
      `.cl-ask` is `flex: 0 0 auto` with a 400px floor, so its height is its
