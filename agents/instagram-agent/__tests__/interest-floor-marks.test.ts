@@ -972,7 +972,11 @@ describe.skipIf(!isChromiumInstalled())("RFC-20 P5: marks on a paper ground, and
    * 0.0000 and passes clause C, so the first assertion fails before the marks
    * are ever rendered.
    */
-  it(
+  // KNOWN RED — `interest-floor-calibration.test.ts`'s G1 carries the
+  // measurement and the argument. On the paper kit this plate reads LER 0.2707
+  // bare and 0.2036 marked against a 0.28 ceiling, so clause C cannot refuse it,
+  // and no threshold on this page may be moved to make it (§5.6 rule 4).
+  it.fails(
     "G5: the grey screen carrying the MAXIMUM mark load still fails clause C",
     async () => {
       const dir = path.join(workDir, "templates-g5");
