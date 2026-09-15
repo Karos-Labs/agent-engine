@@ -398,6 +398,15 @@
     margin-block-end: calc(28px * var(--ts, 1));
   }
   .sc-figure-band:not(:has(img)) { display: none; }
+  /* ── THE BAND DOES NOT ADD HEIGHT, IT TAKES IT FROM THE SLAB. ──
+     Measured on CI 34996343379: `en ltr long l` reported `clipped` once this
+     archetype carried a picture, because a 300px band plus a 660px slab plus a
+     long body at `l` (where every sibling is 18% taller) is more than the plate
+     has. The slab is the elastic part by design - its own comment calls it "a
+     FILLED region, about 40% of the frame" and caps it for the full-bleed
+     exemption - so the band's height comes out of the cap rather than out of
+     the plate. 380 + 300 is the 680 the uncapped composition already fits. */
+  body:has(.sc-figure-band img) .num-zone { max-block-size: calc(380px * var(--ts, 1)); }
   .sc-figure-band img { inline-size: 100%; block-size: 100%; object-fit: cover; display: block; }
   /* The one mark it carries: the brand rule that ties it to the plate. */
   .sc-figure-band::after {
