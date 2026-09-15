@@ -96,7 +96,30 @@ export const ARCHETYPE_TEMPLATE_FILES: readonly string[] = Object.values(LAYOUT_
  * over), so membership here buys image SOURCING, never a dependency on the
  * sourcing succeeding.
  */
-export const HERO_IMAGE_LAYOUTS: ReadonlySet<InstagramSlideLayout> = new Set<InstagramSlideLayout>(["photo", "cover"]);
+/**
+ * ── WIDENED 2026-09-15 (RFC-21 Part 2): PANELS CARRY PICTURES NOW. ──
+ *
+ * This was `photo` and `cover` — the only two archetypes whose templates
+ * declared an `{{image:hero}}` slot — and the consequence was measured on
+ * `thepitchbydeel` pubsub-21559620763659451: **8 slides, 0 images**, because a
+ * draft that reaches for structured panels sourced nothing at all. The owner:
+ * *add image slots and sometimes use striking images in other layouts too, so
+ * we are not limited to cover and slide.html.*
+ *
+ * `stat_callout` and `quote_card` now declare `.sc-figure-band` — a BOUNDED
+ * band, not a background. The distinction is the whole design: a full-bleed
+ * photograph behind a panel puts its type on an uncontrolled ground (the
+ * contrast gate can promise nothing over a picture) and re-introduces the
+ * full-frame layer RFC-20 §11.1 spent a phase removing. A band sits beside the
+ * content and owns every share it moves.
+ *
+ * The other four are still absent and for a reason rather than an oversight:
+ * `comparison_card` is two columns that would need two pictures to stay
+ * symmetrical, `list_takeaway` is a rows panel with no room, `headline_focus`
+ * and `text_only` carry the bounded OBJECT instead (RFC-20 §11.4) and a
+ * photograph would compete with it.
+ */
+export const HERO_IMAGE_LAYOUTS: ReadonlySet<InstagramSlideLayout> = new Set<InstagramSlideLayout>(["photo", "cover", "stat_callout", "quote_card"]);
 
 /**
  * Which layouts declare a `{{html:device}}` slot, so a device on a slide
@@ -2298,7 +2321,9 @@ export function assembleSlidesData(params: {
         ...(params.bcp47 !== undefined ? { bcp47: params.bcp47 } : {}),
       },
     );
-    // Only `photo` and `cover` consume a hero image (`HERO_IMAGE_LAYOUTS`).
+    // Which archetypes consume a hero image: see `HERO_IMAGE_LAYOUTS`, which
+    // is four wide since RFC-21 Part 2 — the two full-bleed ones and the two
+    // panels that declare a bounded `.sc-figure-band`.
     // Every other archetype is typographic by design, so attaching one would
     // either be ignored by its template or — worse, for a template that did
     // grow a background slot later — quietly reintroduce the "every slide

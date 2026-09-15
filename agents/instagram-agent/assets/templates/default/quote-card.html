@@ -219,15 +219,59 @@
      this guard exists to make it fail. */
   .quote-block:has(.quote-text > span:not(:empty)) {
     border-inline-start: calc(14px * var(--ts, 1)) solid var(--accent);
+    /* ── 2026-09-15: THE DOT FIELD IS DELETED. ──
+       A `repeating-radial-gradient` of 2px dots on a 22px pitch is the one the
+       owner named directly: ״לפעמים אתה עושה נקודות ברקע שממש קשה להסתכל על
+       זה״ — dots in the background that are genuinely hard to look at. It is
+       the same rule every other texture in this directory went under
+       (restraint reference rule 1) and it survived the first sweep only
+       because that pass matched `repeating-linear-gradient` and this one is
+       radial. The panel keeps its accent tint and its 14px accent border. */
     background-image:
-      repeating-radial-gradient(circle at 50% 50%,
-        color-mix(in srgb, var(--fg) 15%, transparent) 0 2px,
-        transparent 2px 22px),
       linear-gradient(162deg,
         color-mix(in srgb, var(--accent) 14%, transparent) 0%,
         color-mix(in srgb, var(--accent) 8%, transparent) 100%);
   }
 
+  /* ── AN IMAGE ON A PANEL ARCHETYPE (RFC-21 Part 2). ──
+
+     Until now only `cover.html` and `slide.html` declared an `{{image:hero}}`
+     slot, so `HERO_IMAGE_LAYOUTS` was two archetypes wide and a carousel that
+     reached for structured panels sourced **no pictures at all** — measured on
+     `thepitchbydeel` pubsub-21559620763659451, 8 slides, 0 images. The imagery
+     floor fixes the COUNT by promoting `text_only` slides; this fixes the
+     RANGE, so a post does not have to choose between a designed panel and a
+     photograph.
+
+     THE OWNER'S BRIEF, 2026-09-15: *add image/illustration slots and sometimes
+     use striking images in other layouts too (beside a stat or a card), so we
+     are not limited to cover and slide.html.*
+
+     IT IS A BAND, NOT A BACKGROUND, and that is the whole design of it. A
+     full-bleed photograph behind a panel would put the panel's type on an
+     uncontrolled ground — the contrast gate cannot promise anything over a
+     picture — and it would re-introduce exactly the full-frame layer RFC-20
+     §11.1 spent a phase removing. A bounded band sits BESIDE the content, has
+     its own edges, and every share it moves is its own.
+
+     `:empty` collapses it, so a slide with no picture is byte-identical to
+     before. `object-fit: cover` on a fixed band means a portrait or a
+     landscape both fill it without distortion, and `onerror` removes the node
+     rather than hiding it — a removed node leaves no broken-image glyph, which
+     is the same rule `cover.html` and `slide.html` already follow. */
+  .sc-figure-band {
+    position: relative; z-index: 3; flex: 0 0 auto;
+    block-size: calc(300px * var(--ts, 1)); inline-size: 100%;
+    overflow: hidden; border-radius: 2px;
+    margin-block-end: calc(28px * var(--ts, 1));
+  }
+  .sc-figure-band:not(:has(img)) { display: none; }
+  .sc-figure-band img { inline-size: 100%; block-size: 100%; object-fit: cover; display: block; }
+  /* The one mark it carries: the brand rule that ties it to the plate. */
+  .sc-figure-band::after {
+    content: ""; position: absolute; inset-block-end: 0; inset-inline: 0;
+    block-size: calc(8px * var(--ts, 1)); background: var(--accent);
+  }
   .quote-mark {
     font-family: var(--f-display); font-style: italic; font-weight: 400;
     font-size: calc(180px * var(--ts, 1)); line-height: 0.55; color: var(--accent);
@@ -330,6 +374,7 @@
     <div class="eyebrow">{{kicker}}</div>
     <div class="qc-rail"></div>
   </div>
+  <div class="sc-figure-band"><img src="{{image:hero}}" onerror="this.remove()" alt="" /></div>
   <div class="quote-block">
     <div class="quote-mark">&ldquo;</div>
     <div class="quote-text" id="quote"><span class="mk-runs">{{html:quoteRuns}}</span><span class="mk-plain">{{quoteText}}</span></div>
