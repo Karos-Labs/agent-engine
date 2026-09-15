@@ -7,6 +7,7 @@ import {
   DISPLAY_TYPE_SCALE_FLOOR,
   FLAT_BACKGROUND_CEILING,
   FULL_BLEED_IMAGERY_SHARE,
+  CLOSER_IMAGERY_OR_DEVICE_FLOOR,
   CONTENT_ELEMENT_FLOOR,
   IMAGERY_OR_DEVICE_FLOOR,
   INK_SHARE_FLOOR,
@@ -477,8 +478,15 @@ describe("checkInterestFloor: every clause fires alone", () => {
   });
 
   it("E — boundary: exact to 0.001, and the closer's steer names the closer's own remedies", () => {
+    // THE COVER'S BAR IS UNTOUCHED, and asserting it here is the point: the
+    // closer's floor was re-derived on the de-decorated tree and the cover's
+    // was not, because `default:cover-carries-device` rests on it.
     expect(check(metrics({ imageryOrDeviceShare: IMAGERY_OR_DEVICE_FLOOR + EPS }), "cover", 1).ok).toBe(true);
-    const verdict = check(metrics({ imageryOrDeviceShare: IMAGERY_OR_DEVICE_FLOOR - EPS }), "closer", 6);
+    expect(kinds(check(metrics({ imageryOrDeviceShare: IMAGERY_OR_DEVICE_FLOOR - EPS }), "cover", 1))).toContain("no-device");
+    // The closer reads its own floor, and a plate between the two is a defect
+    // on a cover and a legitimate closer.
+    expect(kinds(check(metrics({ imageryOrDeviceShare: CLOSER_IMAGERY_OR_DEVICE_FLOOR + EPS }), "closer", 6))).toEqual([]);
+    const verdict = check(metrics({ imageryOrDeviceShare: CLOSER_IMAGERY_OR_DEVICE_FLOOR - EPS }), "closer", 6);
     expect(kinds(verdict)).toEqual(["no-device"]);
     expect(verdict.findings[0]?.steer).toMatch(/recap this post's own figures as a strip/);
     expect(verdict.findings[0]?.steer).toMatch(/question the reader can answer/);
