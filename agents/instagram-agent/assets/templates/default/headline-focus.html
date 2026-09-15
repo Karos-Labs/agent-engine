@@ -605,6 +605,32 @@
      bundled typographic archetype that renders it. */
   .hf-device { margin-block-end: calc(44px * var(--ts, 1)); }
   .hf-device:empty { display: none; }
+  /* ── AND IT IS CAPPED, BECAUSE THE FIELD HAS TO HOLD EVERYTHING ELSE. ──
+
+     `slide-devices.ts` sets a figure at 200px and the library is right to: on
+     a `cover` the numeral IS the plate. Here it shares an elastic field with
+     a kicker, a display statement, an accent band and a body paragraph, and
+     at `l` every one of them is 18% taller.
+
+     MEASURED, on CI 34963600799, the first render where this archetype
+     carried a device at every scale: `probe.overflow` fired at `fontScale l`
+     and clause B reported `clipped` with `clippedEdgeShare` **0.000294** —
+     three per cent of the 0.004 ceiling. **The pixel limb was nowhere near
+     firing; the DOM limb caught it**, which is the block-start overflow limb
+     `probePage` grew after `headline-focus` printed its headline 155px above
+     its own parent and every instrument in the tree called the plate clean.
+     It is the same file, the same field and the same failure mode, caught by
+     the limb that was added for it.
+
+     150/118/88 against the library's 200/150/108 — the `--dv-figure--mid`
+     step, one rung down the library's own ladder rather than a new scale, so
+     a figure here is the same object at a smaller size and not a different
+     one. `slide.html` makes the same reduction for the same reason and its
+     slot says so. */
+  .hf-device .dv-figure { font-size: calc(150px * var(--ts, 1)); }
+  .hf-device .dv-figure--mid { font-size: calc(118px * var(--ts, 1)); }
+  .hf-device .dv-figure--small { font-size: calc(88px * var(--ts, 1)); }
+  .hf-device .dv { margin-block-start: 0; }
 
   .kicker {
     font-family: var(--f-mono); font-weight: 600; font-size: calc(24px * var(--ts, 1));
