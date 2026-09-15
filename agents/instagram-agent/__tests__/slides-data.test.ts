@@ -411,13 +411,14 @@ describe("archetype layouts (legacy port)", () => {
     );
     expect(quote.slides[0]!.images, "a quote card declares .sc-figure-band and should carry the vetted image").toEqual({ hero: "photos/n1.jpg" });
 
-    // The archetypes that still declare no slot: a vetted image existing does
-    // not make a rows panel into a photo slide.
-    const list = assemble(
-      { slides: [slide({ layout: "list_takeaway", items: [{ title: "one" }, { title: "two" }] })] } as InstagramCopyOutput,
+    // The archetypes that still declare no slot. All four PANELS carry a band
+    // now; `headline_focus` does not, because it carries the bounded OBJECT
+    // instead (RFC-20 §11.4) and a photograph would compete with it.
+    const statement = assemble(
+      { slides: [slide({ layout: "headline_focus", kicker: "the turn" })] } as InstagramCopyOutput,
       selections,
     );
-    expect(list.slides[0]!.images).toEqual({});
+    expect(statement.slides[0]!.images).toEqual({});
   });
 
   it("passes an optional kicker through, and omits the slot entirely when unset", () => {

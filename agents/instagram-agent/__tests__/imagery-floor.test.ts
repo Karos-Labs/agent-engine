@@ -45,7 +45,7 @@ describe("enforceImageryFloor", () => {
     // archetypes that still carry no picture. The defect is the same one — a
     // structured draft sourcing nothing — and it is now harder to reach, which
     // is the point of widening the set.
-    const shipped = carousel("comparison_card", "text_only", "list_takeaway", "text_only", "headline_focus", "text_only", "closer", "custom");
+    const shipped = carousel("headline_focus", "text_only", "custom", "text_only", "headline_focus", "text_only", "closer", "custom");
     expect(capable(shipped), "the fixture is not the imageless carousel this case is about").toBe(0);
 
     const out = enforceImageryFloor(shipped);
@@ -54,7 +54,7 @@ describe("enforceImageryFloor", () => {
     expect(out.shortfallReason).toBeUndefined();
     // Lowest slide number first: an early photograph is what earns the swipe.
     expect(out.promotions.map((p) => p.slide)).toEqual([2, 4, 6]);
-    expect(layoutsOf(out.copy)).toEqual(["comparison_card", "photo", "list_takeaway", "photo", "headline_focus", "photo", "closer", "custom"]);
+    expect(layoutsOf(out.copy)).toEqual(["headline_focus", "photo", "custom", "photo", "headline_focus", "photo", "closer", "custom"]);
   });
 
   it("LEAVES A CAROUSEL THAT ALREADY MET THE FLOOR COMPLETELY ALONE — it only ever adds", () => {
@@ -85,7 +85,7 @@ describe("enforceImageryFloor", () => {
     // argument for promoting one. A `stat_callout` carries a figure, a
     // `quote_card` an attribution, a `list_takeaway` its rows; converting one
     // into a photograph throws away the content that made it that shape.
-    const structured = carousel("comparison_card", "list_takeaway", "headline_focus", "closer", "custom", "comparison_card", "cover", "list_takeaway");
+    const structured = carousel("headline_focus", "custom", "headline_focus", "closer", "custom", "closer", "cover", "custom");
     const out = enforceImageryFloor(structured);
     expect(out.promotions).toEqual([]);
     expect(layoutsOf(out.copy)).toEqual(layoutsOf(structured));
@@ -95,7 +95,7 @@ describe("enforceImageryFloor", () => {
     // Seven designed archetypes and one text_only: the floor cannot be met and
     // the honest answer is to say so, not to convert a quote card. The run
     // continues — this module never holds anything.
-    const dense = carousel("comparison_card", "list_takeaway", "headline_focus", "closer", "custom", "comparison_card", "list_takeaway", "text_only");
+    const dense = carousel("headline_focus", "closer", "custom", "headline_focus", "custom", "closer", "headline_focus", "text_only");
     const out = enforceImageryFloor(dense);
     expect(out.promotions.map((p) => p.slide)).toEqual([8]);
     expect(out.after).toBe(1);
@@ -104,7 +104,7 @@ describe("enforceImageryFloor", () => {
   });
 
   it("returns a NEW copy and mutates nothing, because the draft it is handed is checkpointed", () => {
-    const before = carousel("comparison_card", "text_only", "text_only", "text_only", "headline_focus", "closer", "custom", "list_takeaway");
+    const before = carousel("headline_focus", "text_only", "text_only", "text_only", "headline_focus", "closer", "custom", "custom");
     const snapshot = JSON.stringify(before);
     const out = enforceImageryFloor(before);
     expect(JSON.stringify(before), "a resumed run would see a different input from the one that was recorded").toBe(snapshot);
@@ -112,7 +112,7 @@ describe("enforceImageryFloor", () => {
   });
 
   it("is idempotent: running it twice promotes nothing the second time", () => {
-    const once = enforceImageryFloor(carousel("comparison_card", "text_only", "text_only", "text_only", "headline_focus", "closer", "custom", "list_takeaway"));
+    const once = enforceImageryFloor(carousel("headline_focus", "text_only", "text_only", "text_only", "headline_focus", "closer", "custom", "custom"));
     const twice = enforceImageryFloor(once.copy);
     expect(once.promotions.length).toBeGreaterThan(0);
     expect(twice.promotions).toEqual([]);

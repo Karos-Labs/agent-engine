@@ -173,6 +173,54 @@
      the head grows into whatever the panel leaves and may never shrink below
      its own content, so a four-row list at `l` takes the space back rather
      than pushing the headline off the plate. */
+  /* ── AN IMAGE ON A PANEL ARCHETYPE (RFC-21 Part 2). ──
+
+     Until now only `cover.html` and `slide.html` declared an `{{image:hero}}`
+     slot, so `HERO_IMAGE_LAYOUTS` was two archetypes wide and a carousel that
+     reached for structured panels sourced **no pictures at all** — measured on
+     `thepitchbydeel` pubsub-21559620763659451, 8 slides, 0 images. The imagery
+     floor fixes the COUNT by promoting `text_only` slides; this fixes the
+     RANGE, so a post does not have to choose between a designed panel and a
+     photograph.
+
+     THE OWNER'S BRIEF, 2026-09-15: *add image/illustration slots and sometimes
+     use striking images in other layouts too (beside a stat or a card), so we
+     are not limited to cover and slide.html.*
+
+     IT IS A BAND, NOT A BACKGROUND, and that is the whole design of it. A
+     full-bleed photograph behind a panel would put the panel's type on an
+     uncontrolled ground — the contrast gate cannot promise anything over a
+     picture — and it would re-introduce exactly the full-frame layer RFC-20
+     §11.1 spent a phase removing. A bounded band sits BESIDE the content, has
+     its own edges, and every share it moves is its own.
+
+     `:empty` collapses it, so a slide with no picture is byte-identical to
+     before. `object-fit: cover` on a fixed band means a portrait or a
+     landscape both fill it without distortion, and `onerror` removes the node
+     rather than hiding it — a removed node leaves no broken-image glyph, which
+     is the same rule `cover.html` and `slide.html` already follow. */
+  .sc-figure-band {
+    position: relative; z-index: 3; flex: 0 0 auto;
+    block-size: calc(300px * var(--ts, 1)); inline-size: 100%;
+    overflow: hidden; border-radius: 2px;
+    margin-block-end: calc(28px * var(--ts, 1));
+  }
+  .sc-figure-band:not(:has(img)) { display: none; }
+  /* ── THE BAND DOES NOT ADD HEIGHT, IT TAKES IT FROM THE SLAB. ──
+     Measured on CI 34996343379: `en ltr long l` reported `clipped` once this
+     archetype carried a picture, because a 300px band plus a 660px slab plus a
+     long body at `l` (where every sibling is 18% taller) is more than the plate
+     has. The slab is the elastic part by design - its own comment calls it "a
+     FILLED region, about 40% of the frame" and caps it for the full-bleed
+     exemption - so the band's height comes out of the cap rather than out of
+     the plate. 380 + 300 is the 680 the uncapped composition already fits. */
+  body:has(.sc-figure-band img) .num-zone { max-block-size: calc(380px * var(--ts, 1)); }
+  .sc-figure-band img { inline-size: 100%; block-size: 100%; object-fit: cover; display: block; }
+  /* The one mark it carries: the brand rule that ties it to the plate. */
+  .sc-figure-band::after {
+    content: ""; position: absolute; inset-block-end: 0; inset-inline: 0;
+    block-size: calc(8px * var(--ts, 1)); background: var(--accent);
+  }
   .lt-head { position: relative; z-index: 3; flex: 1 1 auto; display: flex; flex-direction: column; }
   /* ── THE HEAD IS A FIELD NOW, AND IT HAS TO BE. ──
      Shrinking the panel to its rows (see `.me-rows`) moved 300-500px of plate
@@ -489,6 +537,7 @@
   <div class="ground" aria-hidden="true"></div>
   <div class="brand-badge">{{seriesBadge}}</div>
   <div class="brand-handle"><bdi dir="ltr">{{brandHandle}}</bdi></div>
+  <div class="sc-figure-band"><img src="{{image:hero}}" onerror="this.remove()" alt="" /></div>
   <div class="lt-head">
     <div class="eyebrow">{{kicker}}</div>
     <div class="lt-rail"></div>

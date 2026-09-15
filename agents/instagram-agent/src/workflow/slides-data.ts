@@ -113,13 +113,28 @@ export const ARCHETYPE_TEMPLATE_FILES: readonly string[] = Object.values(LAYOUT_
  * full-frame layer RFC-20 §11.1 spent a phase removing. A band sits beside the
  * content and owns every share it moves.
  *
- * The other four are still absent and for a reason rather than an oversight:
- * `comparison_card` is two columns that would need two pictures to stay
- * symmetrical, `list_takeaway` is a rows panel with no room, `headline_focus`
- * and `text_only` carry the bounded OBJECT instead (RFC-20 §11.4) and a
- * photograph would compete with it.
+ * ── AND THEN COMPARISON AND LIST JOINED THEM. ──
+ *
+ * They were left out on the argument that two columns need two pictures to
+ * stay symmetrical and a rows panel has no room. **That was about taste, not
+ * about possibility**, and the measurement settled it: at the cover role with
+ * their textures deleted these two report a hole exactly as `quote_card` did
+ * (CI 34996343379, `quote_card @ first`: `LER` 23.9% against a 22% ceiling,
+ * `iod` 2.7% against 10%). A band ABOVE the columns or above the rows is the
+ * same bounded object the other two carry, in the same place, and it answers
+ * the hole with a picture rather than with a lower ceiling.
+ *
+ * `headline_focus` and `text_only` stay out: they carry the bounded OBJECT
+ * instead (RFC-20 §11.4) and a photograph would compete with it.
  */
-export const HERO_IMAGE_LAYOUTS: ReadonlySet<InstagramSlideLayout> = new Set<InstagramSlideLayout>(["photo", "cover", "stat_callout", "quote_card"]);
+export const HERO_IMAGE_LAYOUTS: ReadonlySet<InstagramSlideLayout> = new Set<InstagramSlideLayout>([
+  "photo",
+  "cover",
+  "stat_callout",
+  "quote_card",
+  "comparison_card",
+  "list_takeaway",
+]);
 
 /**
  * Which layouts declare a `{{html:device}}` slot, so a device on a slide
