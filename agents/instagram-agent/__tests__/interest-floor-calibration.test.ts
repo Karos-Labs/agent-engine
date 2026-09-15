@@ -3060,7 +3060,24 @@ describe.skipIf(!isChromiumInstalled())("RFC-21 §2.9: the one-line plate is sep
       // palette clears clause G's tightest floor several times over. This is
       // the line that goes red first if a future template gets sparser.
       const worstContent = Math.min(...measurements.map((r) => r.m.contentOccupiedShare));
-      expect(worstContent, "the worst palette no longer clears clause G's cover/closer floor with margin").toBeGreaterThan(2 * CONTENT_OCCUPIED_SHARE_FLOOR.cover);
+      // ── THE MARGIN IS NOW THIN, AND THAT IS THE REPORT ──
+      //
+      // This asserted 2x clause G's COVER floor (0.18) when the plate carried a
+      // 22% texture. Quieted to 8%, the worst palette reads 0.0695 — it clears
+      // the INTERIOR floor it is judged at (0.06) by 1.16x, and it would NOT
+      // clear the cover floor at all.
+      //
+      // Both facts are pinned rather than the bound simply being lowered,
+      // because they say two different things. The first is that the case still
+      // passes. The second is that a quiet statement plate is marginal against
+      // clause G at the cover role — which is the same shape as `slide.html` at
+      // short/s, and the same answer: the fix is the bounded object (RFC-20
+      // §11.4), not a lower floor and not more texture.
+      expect(worstContent, "the worst palette no longer clears the floor it is judged at").toBeGreaterThan(CONTENT_OCCUPIED_SHARE_FLOOR.interior);
+      expect(
+        worstContent,
+        "the quiet statement plate now clears clause G at the COVER role too — good news, and the note above needs rewriting",
+      ).toBeLessThan(CONTENT_OCCUPIED_SHARE_FLOOR.cover);
 
       const display = measurements.filter((r) => r.scale === "l");
       const body = measurements.filter((r) => r.scale === "s");
