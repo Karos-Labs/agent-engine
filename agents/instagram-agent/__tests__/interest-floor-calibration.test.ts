@@ -839,47 +839,16 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
             // degrading a `text_only` elsewhere would make every number below
             // a fact about a different template.
             expect(templateBasename(entry.template), `slide ${entry.n} @ ${lengthLabel}/${fontScale} did not render slide.html`).toBe("slide");
-            // ── ONE RECORDED DEBT: `short`/`s`. A DEBT, NOT A PASS. ──
-            //
-            // With the full-plate texture quieted from 22% to 8%, this plate
-            // measures `contentOccupiedShare` 0.0414 against clause G's 0.06
-            // interior floor. The texture was inflating the CONTENT mask too: a
-            // dense hairline pushes a cell's mean off the ground, so cells
-            // carrying nothing to read were counted as carrying something.
-            // RFC-20 §11.1 found the same thing about clause E — *"a decoration
-            // was being counted as the device whose absence clause E detects"* —
-            // and this is that finding again, one clause over.
-            //
-            // THE FLOOR IS NOT LOWERED. RFC-20 §5.6 rule 4: *under no outcome is
-            // a floor lowered to make a specific plate pass.* And the plate
-            // really is thin — a short headline and a short body at the smallest
-            // type scale on a heroless template is 4% of the frame carrying
-            // anything to read. A live run that produced it would be returned to
-            // the writer with "give it something a reader can take away", which
-            // is the right steer.
-            //
-            // HOW IT LEAVES: the bounded object (RFC-20 §11.4), which is the fix
-            // for exactly this shape and is its own phase. Not by re-decorating,
-            // which is what created the debt.
-            //
-            // THE RATCHET: every OTHER length and scale stays clean, and this one
-            // carries exactly one clause at no worse than the recorded figure. A
-            // second clause here, or a lower share, fails.
-            const found = checkInterestFloor(entry.metrics, entry.probe, "interior", optsFor(entry)).findings;
-            if (lengthLabel === "short" && fontScale === "s") {
-              expect(found.map((f) => f.kind), "slide.html @ short/s is a RECORDED DEBT, not a pass — a second clause means something else broke").toEqual([
-                "empty",
-              ]);
-              expect(entry.metrics.contentOccupiedShare, "slide.html @ short/s got WORSE than the recorded 0.0414 — the debt is a ratchet").toBeGreaterThanOrEqual(
-                0.041,
-              );
-            } else {
-              expect(found, `slide.html @ ${lengthLabel}/${fontScale}`).toEqual([]);
-              expect(
-                findingsAtMargin(entry, "interior", CALIBRATION_MARGIN),
-                `slide.html @ ${lengthLabel}/${fontScale} has under ${CALIBRATION_MARGIN} margin`,
-              ).toEqual([]);
-            }
+            // NO CARVE-OUT. An earlier push of this branch recorded `short`/`s`
+            // as a debt at `contentOccupiedShare` 0.0414 against clause G's 0.06;
+            // on the tree that actually ships it clears, so the debt is deleted
+            // rather than re-measured downward — which is the rule the gate-zero
+            // ratchet states about its own entries.
+            expect(checkInterestFloor(entry.metrics, entry.probe, "interior", optsFor(entry)).findings, `slide.html @ ${lengthLabel}/${fontScale}`).toEqual([]);
+            expect(
+              findingsAtMargin(entry, "interior", CALIBRATION_MARGIN),
+              `slide.html @ ${lengthLabel}/${fontScale} has under ${CALIBRATION_MARGIN} margin`,
+            ).toEqual([]);
             expect(entry.probe.overflow, `slide.html @ ${lengthLabel}/${fontScale} overflows: ${entry.probe.overflowing.join(", ")}`).toBe(false);
           }
         }
@@ -2533,7 +2502,8 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
         "he rtl medium s → stat-callout @ interior|occ": 0.3321,
         "he rtl medium s → comparison-card @ interior|occ": 0.2966,
         "he rtl long s → stat-callout @ interior|occ": 0.3435,
-        "he rtl long s → comparison-card @ interior|occ": 0.3141,
+        // 0.3141 -> 0.3140: the alignment walk, third and last of these rows.
+        "he rtl long s → comparison-card @ interior|occ": 0.314,
       };
       const seenBaseline = new Set<string>();
 
@@ -2959,9 +2929,9 @@ describe.skipIf(!isChromiumInstalled())("RFC-21 §2.9: the one-line plate is sep
       // The result is worth stating plainly, because it decides which metric a
       // future threshold may be calibrated on:
       //
-      //   INVARIANT   inkShare, textShare
+      //   INVARIANT   textShare, and only textShare
       //   NOT         contentOccupiedShare, flatBackgroundShare, edgeDensity,
-      //               occupiedShare
+      //               occupiedShare, inkShare
       //
       // TWO metrics moved out of the INVARIANT column when the decoration was
       // quieted, and the pattern is the same for both: every CELL mask reads
@@ -3018,7 +2988,15 @@ describe.skipIf(!isChromiumInstalled())("RFC-21 §2.9: the one-line plate is sep
         expect(spreadOf(scale, (r) => r.m.occupiedShare), `occupiedShare stopped moving with the palette at ${scale} — re-read the note above`).toBeGreaterThan(
           0.02,
         );
-        expect(spreadOf(scale, (r) => r.m.inkShare), `inkShare moved with the palette at ${scale}`).toBeLessThan(0.02);
+        // `inkShare` moved sides as well, at 0.0832 of spread. On a quiet plate
+        // that leaves `textShare` as the ONLY palette-invariant share here, and
+        // the reason is now unmistakable: every ink-derived mask is thresholded
+        // at an ABSOLUTE `tol.ink`, so once the decoration is gone and the ink is
+        // all glyph antialiasing, how much of it clears that threshold is a
+        // function of the brand's ground-to-ink distance. `textShare` survives
+        // because it is a RATIO OF CELL CLASSES rather than a count against a
+        // tolerance.
+        expect(spreadOf(scale, (r) => r.m.inkShare), `inkShare stopped moving with the palette at ${scale} — re-read the note above`).toBeGreaterThan(0.02);
         expect(spreadOf(scale, (r) => r.m.textShare), `textShare moved with the palette at ${scale}`).toBeLessThan(0.02);
         // `edgeDensity` is asserted to MOVE, which is the inverted guard: it was
         // invariant on the decorated tree and is not on the quiet one, and a
