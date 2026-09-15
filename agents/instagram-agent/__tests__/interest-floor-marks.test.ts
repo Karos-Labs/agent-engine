@@ -913,17 +913,118 @@ describe.skipIf(!isChromiumInstalled())("RFC-20 P5: marks on a paper ground, and
   // ───────────────────────────────────────────────────────────────────────
   // G5 — the owner's grey screen, at maximum mark load
   // ───────────────────────────────────────────────────────────────────────
-  // ── G5 TRAVELLED OUT OF THIS PR WITH THE FEATURE IT TESTS. ──
+  // ── G5 CAME BACK WITH THE FEATURE IT TESTS, UNWEAKENED. ──
   //
-  // Its subject is the owner's grey screen, which is a `headline_focus`
-  // plate, and RFC-20 Part 11 cut that archetype from this phase. A guard
-  // left behind testing work that is not there is not a guard. It is NOT
-  // deleted: RFC-20 §11.4 lists it by name, with its calibration-file
-  // sibling, as returning WITH the bounded-object work — unweakened, which
-  // is the only way it may return. The measurement it was carrying is
-  // preserved beside §5.6 rule 3, because it is what refuses that rule's
-  // demotion: the marked grey screen measures `LER` 0.2278 against a 0.28
-  // ceiling, so clause C does NOT carry the refusal.
+  // Restored byte-for-byte from `1994347^`, the commit that sent it out with
+  // its calibration-file sibling. Its subject is the owner's grey screen — a
+  // `headline_focus` plate — and RFC-20 Part 11 had cut that archetype, so
+  // on the cut tree this was a red light with nothing behind it.
+  //
+  // The measurement it was carrying, preserved beside §5.6 rule 3, was that
+  // the marked grey screen measured `LER` 0.2278 against a 0.28 ceiling — so
+  // clause C did NOT carry the refusal, which is what refused that rule's
+  // demotion at the time. **That number was taken over the hatch.** With the
+  // hatch deleted and a bounded object in its place (§11.4) the plate this
+  // case renders is a different plate, and this is the case that says
+  // whether the marks can close the hole on it.
+
+
+  /**
+   * THE ACCEPTANCE CONDITION OF THIS PHASE, with the one thing that could
+   * have undone it bolted on.
+   *
+   * The plate is the owner's grey screen as RFC-20 §5.4 defines it: ONE short
+   * headline on `headline_focus`, every other slot empty. On the shipped tree
+   * that plate measures `largestEmptyRectShare` **0.0000** and PASSES clause
+   * C, because `.copy-art`'s full-bleed 45-degree screen fills the empty
+   * rectangle with paint — and a properly composed plate measures 0.0000 too,
+   * so the floor cannot tell them apart. With the screen deleted it measures
+   * ~0.51-0.53 and clause C refuses it.
+   *
+   * Then the marks. `MAX_MARKS_PER_SLIDE` is 5 and every one of them is a
+   * `block`, which is the worst case the system can produce: a `block` is the
+   * only kind that paints AREA, and painted area is what closes an empty
+   * rectangle. If five of them could take `largestEmptyRectShare` back under
+   * the ceiling, the re-armed floor would be disarmed again by our own
+   * highlighters and this phase would have moved the defect rather than fixed
+   * it.
+   *
+   * WHY IT IS NOT VACUOUS, asserted rather than assumed: the premise
+   * `markRuns === markRunsPainted === MAX_MARKS_PER_SLIDE` runs FIRST. A
+   * fixture whose spans silently failed to resolve would render plain type
+   * and "still fails clause C" would be a sentence about nothing.
+   *
+   * MEASURED in an Edge-channel pre-flight on the real templates (a local
+   * pre-flight, not authority): this exact plate reads `LER` **0.2917**
+   * against the 0.28 interior ceiling bare, and **0.2917** with all five
+   * blocks on it — the swatches did not move the empty rectangle by a single
+   * cell, because they sit on lines that are already occupied. Both renders
+   * return `ok: false` with `dead-space`. The margin over the ceiling is
+   * 1.04x and that is thin, but it is thin in the SAFE direction: a plate
+   * that drifted under the ceiling would turn this test red rather than
+   * green, and a green-by-luck is the failure mode a floor cannot survive.
+   *
+   * BREAK IT: set `LARGEST_EMPTY_RECT_CEILING.interior` to 0.9. Both
+   * refusals go red, which proves the assertion is REACHED rather than
+   * vacuously satisfied by some other clause's finding.
+   *
+   * REVERT TEST: without P2's screen deletion the bare plate measures `LER`
+   * 0.0000 and passes clause C, so the first assertion fails before the marks
+   * are ever rendered.
+   */
+  it(
+    "G5: the grey screen carrying the MAXIMUM mark load still fails clause C",
+    async () => {
+      const dir = path.join(workDir, "templates-g5");
+      await materializePaperKit(dir);
+
+      // One short headline, nothing else — and long enough to carry five
+      // marks, because five is the bound under test. Marking five of its
+      // seven words is the largest painted area this system can put on the
+      // owner's own composition.
+      const HEADLINE = "Intake is the bottleneck for every marketing team";
+      const SPANS = ["Intake", "the bottleneck", "every", "marketing", "team"];
+      expect(SPANS, "the fixture must carry exactly MAX_MARKS_PER_SLIDE marks or it is not the maximum load").toHaveLength(MAX_MARKS_PER_SLIDE);
+
+      const ring = paperRing!;
+      const colourIndexes = ring.hexes.map((_, i) => i);
+      const bare = await renderOne(dir, "g5-bare", "headline-focus.html", plateFields({ headline: HEADLINE }), {}, []);
+      const marked = await renderOne(
+        dir,
+        "g5-marked",
+        "headline-focus.html",
+        plateFields({ headline: HEADLINE }),
+        { headlineRuns: handMarked(HEADLINE, SPANS, colourIndexes, "ltr") },
+        ring.hexes,
+      );
+
+      console.log(
+        `[RFC-20 G5] bare  LER ${bare.metrics.largestEmptyRectShare.toFixed(4)} occ ${bare.metrics.occupiedShare.toFixed(4)} ` +
+          `iod ${bare.metrics.imageryOrDeviceShare.toFixed(4)} marked% ${((bare.metrics.markedShare ?? 0) * 100).toFixed(2)}\n` +
+          `[RFC-20 G5] x${MAX_MARKS_PER_SLIDE} block  LER ${marked.metrics.largestEmptyRectShare.toFixed(4)} occ ${marked.metrics.occupiedShare.toFixed(4)} ` +
+          `iod ${marked.metrics.imageryOrDeviceShare.toFixed(4)} marked% ${((marked.metrics.markedShare ?? 0) * 100).toFixed(2)} colours ${marked.metrics.markColourCount}`,
+      );
+
+      // ── THE PREMISE. Five runs asked for, five painted, or nothing below
+      //    this line is a statement about marks.
+      expect(marked.probe.markRuns, "the five-mark fragment did not reach the DOM — the mark load is under-built").toBe(MAX_MARKS_PER_SLIDE);
+      expect(marked.probe.markRunsPainted, "the mark stylesheet did not arrive — the swatches painted nothing to close a hole with").toBe(MAX_MARKS_PER_SLIDE);
+
+      // ── THE GUARD. The bare grey screen is refused, and the maximally
+      //    marked one is refused on the SAME clause.
+      const bareVerdict = check(bare.metrics, bare.probe, "interior", 1);
+      const markedVerdict = check(marked.metrics, marked.probe, "interior", 1);
+      expect(kindsOf(bareVerdict), `the bare grey screen passed clause C at LER ${bare.metrics.largestEmptyRectShare.toFixed(4)}`).toContain("dead-space");
+      expect(
+        kindsOf(markedVerdict),
+        `five block marks closed the hole: LER went ${bare.metrics.largestEmptyRectShare.toFixed(4)} -> ${marked.metrics.largestEmptyRectShare.toFixed(4)} ` +
+          `against a ${LARGEST_EMPTY_RECT_CEILING.interior} ceiling`,
+      ).toContain("dead-space");
+      expect(bareVerdict.ok).toBe(false);
+      expect(markedVerdict.ok).toBe(false);
+    },
+    600_000,
+  );
 
 
   /**

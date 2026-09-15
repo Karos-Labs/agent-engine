@@ -121,6 +121,21 @@
   }
   .eyebrow:empty { display: none; }
   .cmp-rail { block-size: 2px; background: color-mix(in srgb, var(--fg) 48%, transparent); margin-block-start: calc(24px * var(--ts, 1)); }
+  /* ── The Ground Rule and §11.5 together — `stat-callout.html`'s `.sc-rail`
+        carries the full argument and this file is the same shape one
+        archetype over. ──
+     MEASURED-EDGE: every copy slot empty gave `occupiedShare` 1.94% and
+     `largestEmptyRectShare` 31.67% — the worst blank plate in the set. The
+     panel FILLS were already content-guarded on `.cmp-label`; four things
+     were not, and drew a whole comparison diagram on a plate with no
+     comparison on it: this rail, the two `.cmp-col` borders, the two
+     `.cmp-rule` bars and the winner's corner diamond.
+     THE SUBJECT OF A COMPARISON CARD IS ITS LABELS, so all five read
+     `.cmp-label` — including the rail, which used to read `.eyebrow` and
+     therefore vanished from a populated card whose writer wrote no kicker.
+     With the guards and with a card on the plate: occ 0.00 / LER 100.00
+     blank, and no (0,0) band populated. */
+  body:not(:has(.cmp-label:not(:empty))) .cmp-rail { display: none; }
 
   .cmp-head {
     z-index: 3;
@@ -238,6 +253,14 @@
   }
   .cmp-rule { width: 72px; height: 5px; background: var(--line); margin: 30px 0; }
   .cmp-col.win .cmp-rule { background: var(--accent); }
+  /* The Ground Rule — see `.cmp-rail` above. The border and the diamond go to
+     `transparent` rather than `display: none` so the empty cards keep their
+     boxes and the row keeps its geometry: the guard must remove PAINT, not
+     rearrange a layout that a populated plate depends on. */
+  body:not(:has(.cmp-label:not(:empty))) .cmp-col,
+  body:not(:has(.cmp-label:not(:empty))) .cmp-col.win { border-color: transparent; }
+  body:not(:has(.cmp-label:not(:empty))) .cmp-rule { display: none; }
+  body:not(:has(.cmp-label:not(:empty))) .cmp-col.win::after { display: none; }
   .cmp-body {
     font-family: var(--f-body); font-weight: 400; font-size: calc(32px * var(--ts, 1)); line-height: 1.5;
     color: color-mix(in srgb, var(--fg) 78%, transparent); text-wrap: pretty;

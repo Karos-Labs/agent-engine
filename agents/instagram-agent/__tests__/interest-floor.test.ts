@@ -593,19 +593,39 @@ describe("OCCUPIED_SHARE_FLOOR: the RFC-20 re-calibration", () => {
     for (const plate of [strippedStatement, greyScreen]) {
       const verdict = check(plate(), "interior", 3);
       expect(verdict.ok).toBe(false);
-      expect(kinds(verdict)).toContain("empty");
+      // `dead-space` rather than `empty`, since 2026-09-15. Clause G asks the
+      // DOM whether any type painted, and on BOTH of these plates it did —
+      // the grey screen is one real headline in a real display face. That is
+      // the honest answer and it is not a weakening: what refuses these two
+      // is clause C, a hole with no subject in frame, which is the clause
+      // that can actually see the difference between them and a composed
+      // plate. A clause G that fired here was firing on `contentOccupiedShare`
+      // — a number that swings 0.032 with the client's brand palette, on a
+      // floor of 0.06.
+      expect(kinds(verdict)).toContain("dead-space");
     }
     // The interior floor is therefore the value the tree shipped with, not a
     // midpoint. Pinned so a later edit has to come past this case.
     expect(OCCUPIED_SHARE_FLOOR.interior).toBe(0.3);
   });
 
-  it("refuses the owner's grey screen at every role, on clause D AND on clause C", () => {
+  it("refuses the owner's grey screen at every role — on clause C, and at cover and closer on clause E too", () => {
+    // WHICH CLAUSES, named rather than left to `ok`. The plate is one short
+    // headline on flat ground and it has to be refused everywhere; the point
+    // of naming the clause is that a later change which swaps one refusal for
+    // another has to come past this line and say so.
+    //
+    // It was `empty` AND `dead-space` until 2026-09-15. Clause G now asks the
+    // DOM whether any type painted at all, and on this plate it did — so
+    // clause G is silent here, correctly, and clause C carries it. See clause
+    // G's own comment for why the pixel limb it used to fire on cannot be a
+    // gate: `contentOccupiedShare` spreads 0.032 across brand palettes
+    // against a floor of 0.06.
     for (const role of ["cover", "interior", "closer"] as const) {
       const verdict = check(greyScreen(), role, role === "interior" ? 3 : 1);
       expect(verdict.ok, role).toBe(false);
-      expect(kinds(verdict), role).toContain("empty");
       expect(kinds(verdict), role).toContain("dead-space");
+      if (role !== "interior") expect(kinds(verdict), role).toContain("no-device");
     }
   });
 
@@ -692,11 +712,32 @@ describe("checkInterestFloor: clause G — a decorated empty plate", () => {
     }
   });
 
-  it("boundary: exact to 0.001 at each role's own content floor", () => {
+  it("boundary, PIXEL limb: exact to 0.001 at each role's own content floor — and only with no probe", () => {
+    // The pixel limb is the fallback for a caller with no DOM probe, and this
+    // is the case that keeps it honest at its own boundary. `undefined` for
+    // the probe is not a convenience here, it is the CONDITION: with a probe
+    // present this limb does not run at all, which the second half asserts.
     for (const role of ["interior", "cover", "closer"] as const) {
       const floor = CONTENT_OCCUPIED_SHARE_FLOOR[role];
-      expect(kinds(check(metrics({ contentOccupiedShare: floor }), role)), role).toEqual([]);
-      expect(kinds(check(metrics({ contentOccupiedShare: floor - EPS }), role)), role).toEqual(["empty"]);
+      const at = (v: number) => kinds(checkInterestFloor(metrics({ contentOccupiedShare: v }), undefined, role, { slide: 3 }));
+      expect(at(floor), role).toEqual([]);
+      expect(at(floor - EPS), role).toEqual(["empty"]);
+      // WITH a probe, the same pixel value says nothing. This is the whole
+      // change of 2026-09-15 in one line: on the production path, where a
+      // probe always exists, a palette-dependent share stopped gating.
+      expect(kinds(check(metrics({ contentOccupiedShare: floor - EPS }), role)), role).toEqual([]);
+    }
+  });
+
+  it("boundary, DOM limb: exact at PROBE_TEXT_BOX_SHARE_FLOOR, and the same at every role", () => {
+    // ONE number for all three roles, deliberately. The pixel floor is
+    // per-role because a cover and an interior carry different amounts of
+    // furniture; "did any type paint at all" is the same question everywhere,
+    // and giving it three answers would be three places to drift.
+    for (const role of ["interior", "cover", "closer"] as const) {
+      const at = (v: number) => kinds(checkInterestFloor(metrics(), passingSlideProbe(3, { textBoxShare: v }), role, { slide: 3 }));
+      expect(at(PROBE_TEXT_BOX_SHARE_FLOOR), role).toEqual([]);
+      expect(at(PROBE_TEXT_BOX_SHARE_FLOOR - EPS), role).toEqual(["empty"]);
     }
   });
 
@@ -747,8 +788,12 @@ describe("checkInterestFloor: clause G — a decorated empty plate", () => {
     // WARNING (the demoted occupancy measurement) — and the invariant this case
     // was written for is stronger rather than weaker: with one clause left that
     // can say `empty`, a second occurrence means a clause fired twice.
+    // Unreadable is now stated on the DOM, which is where clause G reads it.
+    // The pixel numbers are kept exactly as they were so the plate is the same
+    // plate: idle, 97% flat, 3% occupied, carrying a device — and with no type
+    // box on it.
     const idleAndUnreadable = metrics({ flatBackgroundShare: 0.97, occupiedShare: 0.03, contentOccupiedShare: 0.03, imageryOrDeviceShare: 0.2 });
-    const verdict = check(idleAndUnreadable, "interior", 3);
+    const verdict = checkInterestFloor(idleAndUnreadable, passingSlideProbe(3, { textBoxShare: 0.004 }), "interior", { slide: 3 });
     expect(kinds(verdict).filter((k) => k === "empty"), "a clause fired twice for one plate").toHaveLength(1);
     // Both masks are still SPOKEN FOR — one refuses, one reports — so nothing
     // about this plate became invisible when the gate moved.
@@ -839,9 +884,10 @@ describe("the steer the writer receives", () => {
       // `bare` since 2026-09-14: clause C waives a plate that carries a
       // subject, so a dead-space specimen has to be a plate with none.
       ...check(bare({ largestEmptyRectShare: 0.42 }), "cover", 1).findings.filter((f) => f.kind === "dead-space"),
-      // Clause D is reporting-only, so the `empty` specimen now comes from
-      // clause G — nothing to READ — which was always the substantive limb.
-      ...check(metrics({ contentOccupiedShare: 0.01 }), "interior", 5).findings,
+      // Clause D is reporting-only, so the `empty` specimen comes from clause
+      // G — nothing to READ — which was always the substantive limb, and since
+      // 2026-09-15 it reads the DOM rather than the pixels.
+      ...checkInterestFloor(metrics(), passingSlideProbe(5, { textBoxShare: 0.004 }), "interior", { slide: 5 }).findings,
       ...check(metrics({ imageryOrDeviceShare: 0 }), "closer", 6).findings,
       ...check(metrics({ textShare: 0.61 }), "interior", 4).findings,
     ];
@@ -967,9 +1013,15 @@ function findingFor(kind: InterestFinding["kind"], slide: number, role: SlideRol
     // it is exercising the waiver instead of the clause.
     "dead-space": { largestEmptyRectShare: 0.45, imageryShare: 0, graphicShare: 0, imageryOrDeviceShare: 0 },
     // Clause D was demoted to reporting-only on 2026-09-14, so an `empty`
-    // finding now comes from clause G — nothing to READ on the plate — which is
+    // finding comes from clause G — nothing to READ on the plate — which is
     // the limb that was always the substantive one.
-    empty: { contentOccupiedShare: 0.01 },
+    //
+    // 2026-09-15: and clause G reads the DOM now, so this row carries NO
+    // pixel override at all — see `EMPTY_PROBE` below. A fixture that
+    // produced this finding from `contentOccupiedShare` alone was describing
+    // a plate measured on the DECORATED tree, where the number it moved was
+    // the texture's rather than the copy's.
+    empty: {},
     "no-device": { imageryShare: 0, graphicShare: 0, imageryOrDeviceShare: 0 },
     "text-wall": { textShare: 0.7 },
     // Unreachable through this helper, and that is the clause's whole point:
@@ -979,7 +1031,15 @@ function findingFor(kind: InterestFinding["kind"], slide: number, role: SlideRol
     // `interest-floor-marks.test.ts`.
     "marks-missing": {},
   };
-  const verdict = checkInterestFloor(metrics(byKind[kind]), passingSlideProbe(slide), role, { slide });
+  // The DOM side of the same table, and `empty` is the only row that needs
+  // one: clause G's refusal is `probe.textBoxShare` below
+  // `PROBE_TEXT_BOX_SHARE_FLOOR`, which is what "this plate carries nothing
+  // to read" means once the question is asked of the document rather than of
+  // the pixels. Every other clause still reads metrics.
+  const byKindProbe: Partial<Record<InterestFinding["kind"], Parameters<typeof passingSlideProbe>[1]>> = {
+    empty: { textBoxShare: 0.004 },
+  };
+  const verdict = checkInterestFloor(metrics(byKind[kind]), passingSlideProbe(slide, byKindProbe[kind]), role, { slide });
   const finding = verdict.findings.find((f) => f.kind === kind);
   if (finding === undefined) throw new Error(`fixture did not produce a "${kind}" finding at role ${role}`);
   return finding;

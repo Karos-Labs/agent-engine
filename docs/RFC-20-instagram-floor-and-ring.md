@@ -1316,3 +1316,94 @@ RFC-20 touches either side of any of these comparisons.
 
 Every green run prints the table, prefixed *"recorded baseline debt(s), NOT passes"*, so a passing build still
 says what it is carrying.
+
+---
+
+## 11.11 THE BOUNDED OBJECT, SHIPPED — and what it cost the instrument
+
+**This section closes §11.4.** Everything §11.4 scoped is done except one item, which is REFUSED rather than
+deferred, and the refusal is §11.1's own finding applied to §11.4's own proposal.
+
+### What shipped
+
+| §11.4 item | outcome |
+|---|---|
+| 1. Extend the device remedy to the interior role for the two statement archetypes | **Done, and not as a remedy.** `bounded-object.ts` composes the object at COMPOSE time, before the first render, so the plate is designed around its object instead of patched into having one. |
+| 2. Eyebrow-rail plinth fallback for a plate with no figure | **REFUSED.** See below. |
+| 3. Delete `.copy-art` from both files, in the same PR as the object | **Done**, plus `closer.html`'s band rhythm, which was the same shape and was not on the list. |
+| 4. Re-run the gate-zero sweep and re-derive `OCCUPIED_SHARE_FLOOR.interior` from it | **Discharged by the rebuild, as §11.4's own ⚠ box anticipated.** PR #124 demoted clause D's occupancy limb to reporting-only, so there is no interior occupancy floor left to derive. The sweep scores both files again and prints their bands; nothing gates on them. |
+| 5. Remove `groundMaterialCssBlock`'s `body:not(:has(.copy-art))` guard, re-run the A/B case at 0.0005 | **Done**, and `GROUND_MATERIAL_MOUNTED` is `true`. The bound is unchanged. |
+| The five travelling guards | **Restored byte-for-byte from `1994347^`.** Not one assertion, threshold or message was edited on the way back. |
+
+### The refusal, because it is the more useful half
+
+§11.4 item 2 reads: *"a plate whose copy carries no figure gets the eyebrow-rail plinth fallback."* **A plinth is
+a painted panel a plate has not earned.** §11.1 measured one disarming clauses B, D, E and F at once and closes
+with *there is no plinth that pays clause D without disarming clause E.* Building one back as the fallback for
+the object would be the third instance of the same defect inside one phase — the hatch, the plinth, and then the
+plinth again wearing the object's name.
+
+So a statement plate has **three** subjects and there is no fourth: a device the writer composed, a figure device
+built from the slide's own copy, or its own typography at display scale (`plateSubject`'s DOM limb). **A plate
+with none of the three is refused, and that is the floor discriminating rather than a regression** — which is
+what §11.4 item 2's own second half already said.
+
+### What it cost the instrument, which is the part worth reading
+
+Deleting the screens moved a number the floor was gating on, and the honest response was not to re-fit it.
+
+**`contentOccupiedShare` was measuring the decoration.** The alpha sweep beside `CONTENT_OCCUPIED_SHARE_FLOOR`
+says it in one column: the same `headline_focus` plate, same two-line headline, reads **0.3128** with the hatch at
+22% and **0.0379** — the type alone — at 10%. Clause G's interior floor is **0.06**. So with the hatch deleted the
+clause refuses a plate composed exactly as designed, and the floor cannot be lowered to fit it: PR #124 measured
+this share spreading **0.032** across four brand palettes on a quiet plate, which is more than half the floor's
+own value.
+
+> **A floor whose palette spread is half its own value is not a floor. It is a coin weighted by the client's
+> brand book.**
+
+**So clause G's refusal moved to the DOM.** `probe.textBoxShare` — the summed area of the text-bearing leaf boxes
+— is what decides now, against `PROBE_TEXT_BOX_SHARE_FLOOR`. A populated slide's copy lockup measures 0.1–0.4 and
+a render whose copy never arrived measures 0, because every template hides its empty slots: a 10–40× band against
+a floor, where the pixel limb's own recorded debt sat at 0.0414 against 0.06. No palette can reach a bounding box.
+The pixel limb is **kept as the fallback for a caller with no probe** and its finding says so in the sentence.
+
+**And the constant was NOT raised to compensate.** `PROBE_TEXT_BOX_SHARE_FLOOR` was calibrated as one of two
+limbs and deliberately biased toward false passes; carrying the refusal alone it is a weaker clause than the pair
+was. §5.6 rule 4 forbids moving a floor to suit a plate and it forbids it in this direction too. What ships
+instead is the measurement that would let it move honestly: **the gate-zero sweep now prints `textBoxShare` and
+`displayTypeScale` on every row and summarises both bands per role.** Those two are the only columns in that
+table a palette cannot reach, and therefore the only two a future floor may be set from.
+
+### §11.5's three holes, closed by asking the guard a different question
+
+The three open items were all one defect. The Ground Rule says furniture may not paint on a plate with no content
+— with every slot empty `stat-callout` reported `largestEmptyRectShare` **64.99%** against G2's 90% bar, because a
+full-measure hairline across a blank plate splits its empty rectangle in two. §11.5 says the opposite thing about
+the same rail: guarded on `.eyebrow`, a POPULATED plate whose writer supplied no kicker loses the rail too, and
+then measures **0.2750** at `(0,0 → 1080,340)` — the band between the top of the plate and the first content.
+`closer.html` is the same rail, same corner, at **0.2278**/**0.2306**.
+
+**Both are right, and the eyebrow was the wrong thing to ask about.** The question the Ground Rule actually asks
+is *does this plate carry content*, not *did this particular optional slot arrive*. Asked of the plate's own
+subject — the figure on a stat callout, the labels on a comparison card, the takeaway on a closer — one selector
+answers both: an empty plate has no subject, so nothing paints and G2 is satisfied; a populated plate has one
+whether or not it has a kicker, so the rail paints, breaks the top band, and §11.5's rectangle closes.
+
+That is the owner's instruction of 2026-09-15 — *use the position of `largestEmptyRect` to prevent the hole in the
+middle* — applied where it decides something. Same rail, same 2px, and the difference between furniture on a blank
+plate and a rule that closes a 340px band is **where it sits relative to content**.
+
+§11.5 item 3 (`cover.html`'s empty plate at `LER` 51.67%) said *"naming the element needs one render with a cell
+map; it is not guessed at here."* It still is not guessed at. **`contentBBox` IS that cell map, in four numbers,
+and it has been on every measured slide since the metric shipped — nobody had printed it.** G2 now prints the ink
+bounding box and the hole's corners on every row and on every failure, so the element names itself.
+
+### What the re-layout stopped doing
+
+`deviceFromText` is deterministic over a slide's own headline, body and source — the identical inputs
+`boundedObjectFor` reads. So on `headline_focus` and `text_only` the free re-layout's `attach-device` remedy could
+only ever re-offer the device the plate was **already wearing**: a byte-identical re-render at `08a1c`, an
+identical failure at `08a1d`, and the attempt's one free chance spent on nothing. That is the exact defect
+`DEVICE_SLOT_ARCHETYPES` exists to prevent, reached from the other side. The planner is now handed the COMPOSED
+copy and skips a device the plate already carries, so it falls through to a remedy that can actually move a pixel.

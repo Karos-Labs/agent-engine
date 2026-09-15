@@ -362,8 +362,25 @@ describe("07k-skeleton-variety (item P): repetition is refused before a render, 
   it("recomputes the signature AFTER the free re-layout, so the gate, the deliverable and the belief all name the same carousel", async () => {
     env = await setupTestEnvironment({ seedTopics: Array.from({ length: 12 }, (_, i) => `skeleton relayout topic ${i + 1}`) });
     // Slide 2 is a `headline_focus` that fails the floor on the first render
-    // only, so `08a1b` attaches a figure device from its own text — a change
-    // whose ONLY signature effect is the `+figure` suffix on slide 2's token.
+    // only, so `08a1b` re-lays it out — and the remedy it reaches for is a
+    // `switch-archetype`, which changes slide 2's archetype token.
+    //
+    // ── IT USED TO BE `attach-device`, AND WHY IT IS NOT IS THE POINT. ──
+    //
+    // RFC-20 §11.4 composes a bounded object onto every `headline_focus` and
+    // `text_only` slide BEFORE the first render, from the slide's own text
+    // and its own source — the identical inputs `deviceFromText` reads in the
+    // remedy. So on these two archetypes `attach-device` can only ever
+    // re-offer the device the plate is already wearing, and the planner now
+    // refuses to: a byte-identical re-render at `08a1c` is the attempt's one
+    // free chance spent on nothing.
+    //
+    // The case is kept on the SAME slide and the same failure rather than
+    // moved somewhere the old remedy still fires, because what it guards is
+    // not which remedy ran — it is that the signature is recomputed after
+    // whichever one did. Every remedy kind except `font-scale` and
+    // `re-render` changes a token, and this one changes an archetype, which
+    // is a larger change than the `+figure` suffix it replaces.
     const drafted = goodCopyOutput();
     const copy: InstagramCopyOutput = {
       ...drafted,
@@ -389,7 +406,7 @@ describe("07k-skeleton-variety (item P): repetition is refused before a render, 
     const plan = steps.find((s) => s.stepId === "08a1b-relayout-for-interest-attempt-1")?.output as
       | { changes: Array<{ kind: string; slide: number }> }
       | undefined;
-    expect(plan?.changes[0]).toMatchObject({ kind: "attach-device", slide: 2 });
+    expect(plan?.changes[0]).toMatchObject({ kind: "switch-archetype", slide: 2 });
 
     const preRender = (steps.find((s) => s.stepId === "07k-skeleton-variety-attempt-1")?.output as { signature: string }).signature;
     const reported = (steps.find((s) => s.stepId === "08a1e-skeleton-occupancy-attempt-1")?.output as { signature: string }).signature;
@@ -407,8 +424,18 @@ describe("07k-skeleton-variety (item P): repetition is refused before a render, 
     // ...and it is NOT the pre-render one, which is what made this a defect
     // rather than a tidy-up.
     expect(reported).not.toBe(preRender);
-    expect(reported).toContain("headline_focus+figure");
-    expect(preRender).not.toContain("+figure");
+    // The pre-render signature names `headline_focus` and the reported one
+    // does not, which is the archetype switch showing up in the tokens. Read
+    // as a PAIR rather than as one literal: the remedy table picks the target
+    // from the slide's own filled content blocks, so pinning the exact
+    // archetype here would make this case fail when that table is extended,
+    // for a reason that has nothing to do with what it guards.
+    expect(preRender).toContain("headline_focus");
+    expect(reported).not.toContain("headline_focus");
+    // AND THE DEVICE IS ON BOTH, which is the §11.4 half: the bounded object
+    // is composed before the FIRST render, so `+figure` is not something the
+    // re-layout added and must not read as though it were.
+    expect(preRender).toContain("+figure");
   }, 90000);
 
   /**

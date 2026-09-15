@@ -564,8 +564,25 @@ function turbulenceLayerUri(layer: GroundMaterialLayer, tilePx: number): string 
  * gives those archetypes a bounded object (§11.4), and re-run the A/B case at
  * its unchanged 0.0005 bound** — which is also where
  * `body:not(:has(.copy-art))` below comes out.
+ *
+ * ── 2026-09-15: THAT PR IS THIS ONE, AND THE CONSTANT IS `true`. ──
+ *
+ * The two archetypes named above have a bounded object now
+ * (`bounded-object.ts`) and their screens are deleted, so the condition the
+ * rule states is met by the composition rather than waived. `.copy-art` no
+ * longer exists in any bundled template, which is why the selector below is
+ * gone rather than negated: a guard whose subject cannot occur is not a
+ * guard, it is a sentence about the past, and the past is in the comment
+ * where it belongs.
+ *
+ * **The 0.0005 A/B bound is UNCHANGED and is what arbitrates this.** It was
+ * never widened to let the material through — the coupling it caught was
+ * real, its cause was the hatch putting tens of thousands of cells on a
+ * threshold boundary, and the hatch is what went. If the bound fires again
+ * on this tree then some plate still carries a screen and the right move is
+ * to find it, not to raise the number.
  */
-export const GROUND_MATERIAL_MOUNTED: boolean = false;
+export const GROUND_MATERIAL_MOUNTED: boolean = true;
 
 export function groundMaterialCssBlock(tokens: GroundMaterialTokens, seedKey: string): string {
   const plan = groundMaterialPlan(tokens, seedKey);
@@ -581,23 +598,24 @@ export function groundMaterialCssBlock(tokens: GroundMaterialTokens, seedKey: st
    layer contributes 0 to inkShare, occupiedShare, contentOccupiedShare and
    imageryOrDeviceShare and removes nothing from the empty-rectangle mask.
 
-   ── WITHHELD FROM A DOCUMENT THAT STILL CARRIES A FULL-BLEED SCREEN. ──
-   \`body:not(:has(.copy-art))\` is not a template allowlist; it is the Ground
-   Rule's own condition, asked of the document. "Sub-ink by construction"
-   above is a statement about a BARE ground, and it stops being true over a
-   screen: measured on CI 34804038775, splicing this sheet onto a plate
-   wearing \`.copy-art\`'s 22% hatch moved \`flatBackgroundShare\` 0.123 points
-   (0.7962 against 0.7974) where the A/B case bounds it at 0.0005. The cause
-   is the same boundary-tipping RFC-20 §5.1a already records for \`iod\` on a
-   flat fill — a sub-ink grain changes no pixel's ink status but can tip a
-   cell whose mean sits exactly on \`tol.ink\`, and a hatch puts tens of
-   thousands of cells on that boundary. On a bare ground there is no boundary
-   to tip and every share is identical to 3 dp.
-   \`headline-focus.html\` and \`slide.html\` are the two files that still carry
-   one; RFC-20 Part 11 cut them from this phase, and this selector is what
-   keeps them byte-identical in their measurements as well as in their source.
-   The guard comes out in the same PR as their screens. */
-body:not(:has(.copy-art)) .ground::after {
+   ── THE WITHHOLDING GUARD IS GONE, AND THIS IS WHY IT WAS HERE. ──
+   It read \`body:not(:has(.copy-art))\` — not a template allowlist but the
+   Ground Rule's own condition, asked of the document. "Sub-ink by
+   construction" above is a statement about a BARE ground and it stopped
+   being true over a screen: measured on CI 34804038775, splicing this sheet
+   onto a plate wearing \`.copy-art\`'s 22% hatch moved \`flatBackgroundShare\`
+   0.123 points (0.7962 against 0.7974) where the A/B case bounds it at
+   0.0005. The cause is the same boundary-tipping RFC-20 §5.1a records for
+   \`iod\` on a flat fill — a sub-ink grain changes no pixel's ink status but
+   can tip a cell whose mean sits exactly on \`tol.ink\`, and a hatch puts
+   tens of thousands of cells on that boundary. On a bare ground there is no
+   boundary to tip and every share is identical to 3 dp.
+   \`headline-focus.html\` and \`slide.html\` were the two files carrying a
+   screen. RFC-20 §11.4 deleted both in the same PR that gave those plates a
+   bounded object, so the guard's subject cannot occur and the selector comes
+   out unnegated. **The 0.0005 bound is unchanged**, and it is now measured
+   over a tree with nothing for the grain to tip. */
+.ground::after {
   content: "";
   position: absolute;
   inset: 0;

@@ -180,6 +180,7 @@ import {
   TEXT_SHARE_CEILING,
   type InterestFloorReport,
 } from "./interest-floor.js";
+import { composeBoundedObjects, type BoundedObjectDecision } from "./bounded-object.js";
 import { planInterestRelayout, type InterestRelayoutPlan } from "./interest-relayout.js";
 // RFC-19 §4 item 17 — the deterministic headline fact cards `04b` falls back to, and the one hold it keeps.
 import { headlineFallbackResearch, NO_READABLE_SOURCE } from "./research-fallback.js";
@@ -5095,6 +5096,18 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        */
       emphasisIssues: EmphasisIssue[];
       /**
+       * RFC-20 §11.4 — what the bounded object did to each statement plate:
+       * `kept` (the writer composed its own device), `composed` (built from a
+       * figure already in that slide's copy) or `refused` (no figure, no
+       * source — and nothing invented to cover it).
+       *
+       * ABSENT rather than empty when the post has no `headline_focus` and
+       * no `text_only` slide, which is the same asymmetry `selfCheck` uses:
+       * a field attached to every post says nothing, and this one is here to
+       * explain the plates that are about to report an emptiness finding.
+       */
+      boundedObjects?: BoundedObjectDecision[];
+      /**
        * RFC-19 (Phase 6) — every QUALITY GATE that refused the attempt that actually shipped.
        *
        * Absent, never empty, on a clean run: the marker's own asymmetry (`self-check-degrade.ts`). Present
@@ -5760,6 +5773,21 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        * degrades to plain type, and none of it can hold or fail a run.
        */
       let emphasisIssues: EmphasisIssue[] = [];
+      /**
+       * RFC-20 §11.4 — what the bounded object did to this run's statement
+       * plates, from the LAST assembly, which is the one that rendered.
+       *
+       * Same lifecycle and the same WARN-only footing as `emphasisIssues`
+       * directly above: written by `assembleForAttempt`, read by the draft
+       * report, and unable to hold or fail anything.
+       *
+       * The `refused` rows are the ones that matter. A plate recorded as
+       * refused is a plate whose own copy carried no standalone figure, and
+       * **nothing was invented to cover it** — so if that plate then reports
+       * clause C or clause G, this row is the whole explanation, and the
+       * remedy is the writer's rather than the renderer's.
+       */
+      let boundedObjectDecisions: BoundedObjectDecision[] = [];
       /**
        * RFC-17 — the kinds each slide's ground actually admitted, from the
        * assembly that built the document `08a1` is about to measure.
@@ -8357,12 +8385,41 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           series === undefined
             ? frozen.brandTokens
             : { ...frozen.brandTokens, seriesBadge: seriesBadgeFor(series, frozen.brandTokens.seriesBadge) };
+        /**
+         * ── THE BOUNDED OBJECT (RFC-20 §11.4), COMPOSED BEFORE ASSEMBLY. ──
+         *
+         * `headline_focus` and heroless `slide.html` are the two archetypes
+         * that carry no photograph and no structured panel, and RFC-20 §11.2
+         * measured what that leaves: type on ground and nothing else, below
+         * the sweep's own neglected controls. The phase covered for it twice
+         * with paint — a plinth, then a hatch — and §11.1 is the record of
+         * what paint does to the instrument. This is the other answer: a
+         * bounded object built from a figure already in the slide's own copy,
+         * at **$0.00 and no model call**.
+         *
+         * HERE rather than inside `assembleSlidesData` for two reasons. The
+         * fact cards are in scope here and are not a parameter of that
+         * function, and putting it at the top of `assembleForAttempt` means
+         * all three assemblies in one attempt (07c, the typographic fallback
+         * at 08a, the free re-layout's re-render at 08a1c) compose the same
+         * objects from the same copy. It returns a new draft rather than
+         * mutating one, so the second assembly is not a function of the first.
+         *
+         * A slide whose own copy carries no standalone figure gets NOTHING —
+         * see `composeBoundedObjects`. Prep run `pubsub-21839432908803804`
+         * shipped a fabricated `2` pulled out of the word `B2B` with a real
+         * company printed under it as the source, and the rule that came out
+         * of it is absolute: a plate with nothing honest to put in frame goes
+         * to the floor as it is.
+         */
+        const bounded = composeBoundedObjects(copyForAssembly, promptFacts);
+        boundedObjectDecisions = bounded.decisions;
         const assembled = assembleSlidesData({
           clientSlug: wf.clientSlug,
           postId: runClaim.postId,
           repoRoot: options.repoRoot,
           brandTokens: brandTokensForAssembly,
-          copy: copyForAssembly,
+          copy: bounded.copy,
           selections: selectionsForAssembly,
           canvas: frozen.styleConfig.canvas,
           availableTemplates,
@@ -8769,7 +8826,32 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // archetype its own content calls for, step the type scale, move a
         // sentence to the caption. `undefined` means the table had nothing
         // to try, which is exactly what the paid redraft is for.
-        const plan = planInterestRelayout(copy, selections, promptFacts, floor.findings, { styleOverrides: slideStyleOverrides });
+        // THE COMPOSED COPY, NOT THE DRAFT — RFC-20 §11.4.
+        //
+        // `assembleForAttempt` composes a bounded object onto every
+        // `headline_focus` and `text_only` slide before it renders, and it
+        // returns a new draft rather than mutating this one, so `copy` does
+        // not know what the pixels it just measured actually carried. Handing
+        // the planner the draft made its cheapest remedy a lie on precisely
+        // the two commonest failure kinds: `deviceFromText` is deterministic
+        // over the slide's own headline, body and source, so re-offering
+        // `attach-device` there proposes the device the plate is ALREADY
+        // wearing — a byte-identical re-render at `08a1c`, an identical
+        // failure at `08a1d`, and the attempt's one free chance spent on
+        // nothing. That is the same defect `interest-relayout.ts`'s own
+        // `DEVICE_SLOT_ARCHETYPES` guard exists to prevent, reached from the
+        // other side.
+        //
+        // Composed here rather than reused from the assembly because this is
+        // a pure function of the same two inputs — it cannot disagree — and a
+        // variable carried across 400 lines to be read once can.
+        //
+        // The plan's CHANGES are still applied to `copy` below, so the draft
+        // the deliverable reports stays the writer's. What moves here is only
+        // what the planner is allowed to SEE.
+        const plan = planInterestRelayout(composeBoundedObjects(copy, promptFacts).copy, selections, promptFacts, floor.findings, {
+          styleOverrides: slideStyleOverrides,
+        });
         if (plan !== undefined) {
           interestRelayout = await wf.step.code(rev(`08a1b-relayout-for-interest-attempt-${attempt}`), () => plan);
           // Every mutation the re-layout makes is built into a CANDIDATE and
@@ -9629,6 +9711,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // RFC-17 — what the shipped assembly's marks could not do. Reported,
         // never gated; an empty array is the ordinary case.
         emphasisIssues,
+        // RFC-20 §11.4 — the bounded object's own decisions, ABSENT rather
+        // than empty when this post has no statement plate at all. Present
+        // and full of `refused` rows is the interesting case and the one a
+        // reviewer reading a clause-C or clause-G finding needs next.
+        ...(boundedObjectDecisions.length > 0 ? { boundedObjects: boundedObjectDecisions } : {}),
         // RFC-19 — ABSENT, never empty, when nothing refused. The asymmetry is the contract: a marker
         // attached to every clean post is the "silently shipping a bad post" failure in reverse.
         ...(finalSelfCheckFindings.length > 0

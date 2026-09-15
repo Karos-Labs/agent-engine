@@ -216,10 +216,48 @@ describe("default:cover-carries-device", () => {
     expect(DEFAULT_RENDER_RULES.find((r) => r.id === "default:cover-carries-device")?.description).toContain("`device` on the slide");
   });
 
-  it("still fails a headline_focus cover whose device was DROPPED rather than painted", () => {
-    // `text_only` declares no device slot, so `contentFor` drops the fragment.
-    // The rule reads the assembled slide, so a device the reader never sees
-    // does not satisfy it.
+  it("still fails a cover whose device was DROPPED rather than painted", () => {
+    // A `photo` cover that never got its photograph. It renders `slide.html`,
+    // which is not one of the archetypes that carries the frame on its own,
+    // and `contentFor` drops its device fragment — so the rule sees a headline
+    // alone on empty ground, which is what it exists to refuse. The property
+    // is about the DROP; the archetype is just a vehicle for it.
+    //
+    // IT USED TO BE `text_only`, AND THAT ARCHETYPE HAS A SLOT NOW. RFC-20
+    // §11.4 gave heroless `slide.html` a `.sl-device` slot and put `text_only`
+    // into `DEVICE_SLOT_LAYOUTS`, so a device there reaches the pixels and
+    // correctly satisfies this rule. The case moved to an archetype that still
+    // drops rather than being softened, because what it guards is unchanged.
+    //
+    // `photo` is the right replacement rather than an arbitrary one: it is the
+    // archetype §11.4 deliberately LEFT OUT of `DEVICE_SLOT_LAYOUTS` while
+    // adding its sibling, on the grounds that a photo slide's subject is its
+    // photograph. This case is now what holds that exclusion in place — and
+    // the same file renders both, so it cannot be satisfied by the template
+    // alone.
+    const { copy, selections } = copyWith([
+      {
+        layout: "photo",
+        device: { kind: "figure", value: "42%", label: "of teams onboard by hand", source: "internal survey" },
+      },
+      { hero: true }, { hero: true }, { hero: true }, { hero: true }, CLOSER_WITH_QUESTION,
+    ]);
+    const data = assemble(copy, selections);
+    expect(data.slides[0]?.htmlFragments?.["device"]).toBeUndefined();
+    expect(failuresFor(checkDefaultRenderRules(data, copy), "default:cover-carries-device")).toHaveLength(1);
+  });
+
+  it("passes a text_only cover that carries a device, because RFC-20 §11.4 gave that archetype a slot", () => {
+    // THE OTHER HALF OF THE CASE ABOVE, and the one that would catch the slot
+    // being removed again. `slide.html`'s heroless path declares `.sl-device`
+    // and `DEVICE_SLOT_LAYOUTS` names `text_only`, so the fragment reaches the
+    // plate — which is the whole of the bounded object at the render layer.
+    //
+    // Read as a PAIR with the case directly above, which renders the same
+    // file with `layout: "photo"` and asserts the device is dropped. Together
+    // they say the split is on the LAYOUT and not on the template — a photo
+    // slide's subject is its photograph, and a device painted under a
+    // full-frame hero is the "device the reader never sees" this rule refuses.
     const { copy, selections } = copyWith([
       {
         layout: "text_only",
@@ -228,8 +266,8 @@ describe("default:cover-carries-device", () => {
       { hero: true }, { hero: true }, { hero: true }, { hero: true }, CLOSER_WITH_QUESTION,
     ]);
     const data = assemble(copy, selections);
-    expect(data.slides[0]?.htmlFragments?.["device"]).toBeUndefined();
-    expect(failuresFor(checkDefaultRenderRules(data, copy), "default:cover-carries-device")).toHaveLength(1);
+    expect(data.slides[0]?.htmlFragments?.["device"]).toBeTruthy();
+    expect(failuresFor(checkDefaultRenderRules(data, copy), "default:cover-carries-device")).toHaveLength(0);
   });
 
   it("recognises an IGSTYLE-10 '-inv' sibling template as the same archetype", () => {
