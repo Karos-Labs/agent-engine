@@ -377,6 +377,17 @@ export function fakeRenderCarousel(realTool: AgentToolRegistry[string], opts: Fa
 
 /** True when a real Chromium binary is actually installed for Playwright in this environment (checked via its own default cache directory layout, no `playwright` API import needed). Gates the one genuinely-real, Chromium-backed end-to-end test so `npm run test` never flakes on an environment where the browser binary hasn't been downloaded (RFC-03 §5's own documented "known gap"). */
 export function isChromiumInstalled(): boolean {
+  // A CHANNEL COUNTS AS INSTALLED. `KAROS_BROWSER_CHANNEL` tells the renderer
+  // to launch a browser that is already on the machine (see render-carousel.ts
+  // for why it exists). When it is set, the pinned build is beside the point:
+  // skipping every render test because Playwright's own download stalled, while
+  // a perfectly good Chrome sits on the same disk, is how a pixel defect became
+  // a 25-minute CI round trip per guess.
+  //
+  // Unset in CI, so CI decides exactly as it did before.
+  const channel = process.env["KAROS_BROWSER_CHANNEL"];
+  if (channel !== undefined && channel.trim().length > 0) return true;
+
   const cacheDir =
     process.env["PLAYWRIGHT_BROWSERS_PATH"] ||
     (process.platform === "win32"

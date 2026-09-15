@@ -657,7 +657,33 @@ export function createRenderCarousel(mediaStore?: GcsArtifactStoreLike) {
         return toolingError(`playwright is not installed/available: ${err instanceof Error ? err.message : String(err)}`);
       }
 
-      const browser = await chromium.launch();
+      /**
+       * ── `KAROS_BROWSER_CHANNEL`: RENDER LOCALLY ON A BROWSER THAT IS ALREADY
+       *    INSTALLED. ──
+       *
+       * Unset everywhere but a developer machine, so CI and prep launch exactly
+       * the browser they launched before this line existed: Playwright's own
+       * pinned build, which is the one every calibrated threshold in
+       * `interest-floor.ts` was measured against.
+       *
+       * It exists because of what its absence cost. Playwright's installer
+       * stalls partway through on this project's Windows machines (antivirus,
+       * reproducibly, after `chrome.dll`), which leaves the full `chromium-NNNN`
+       * build on disk and the `chromium_headless_shell-NNNN` build that
+       * `launch()` actually defaults to missing. Every render test then
+       * self-skips, and **a defect that only pixels can see becomes a
+       * ~25-minute CI round trip per guess.** Three template defects in a row
+       * were diagnosed that way, one of them twice, which is not a way to work.
+       *
+       * `KAROS_BROWSER_CHANNEL=chrome` launches installed Google Chrome and the
+       * same suite runs in minutes. A channel is a different build from the
+       * pinned one, so a share measured under it is indicative rather than
+       * authoritative and CI stays the source of truth for a THRESHOLD. For
+       * layout facts — does this element overflow its own box, does that band
+       * collapse — it is the same engine and the same answer.
+       */
+      const channel = process.env["KAROS_BROWSER_CHANNEL"]?.trim();
+      const browser = await chromium.launch(channel !== undefined && channel.length > 0 ? { channel } : {});
       try {
         const page = await browser.newPage({
           viewport: { width: input.canvas.w, height: input.canvas.h },
