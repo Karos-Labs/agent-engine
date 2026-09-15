@@ -423,6 +423,14 @@ const PINNED_SCALARS: Readonly<Record<string, number>> = {
   // other. That this guard went red the moment they were added is the guard
   // working: an added floor fails as loudly as a moved one.
   DISPLAY_TYPE_SCALE_FLOOR: 0.055,
+  // And the POSITION test that qualifies the waiver. A subject earns a plate
+  // its quiet only when the hole sits against a margin; a hole crossing 90%
+  // of either axis separates content from content and is never waived. Both
+  // shapes are real plates measured on real Chromium -- `@semrush`'s corner
+  // at 0.37 and a hollow `closer.html` at 0.5556 -- and share alone will
+  // never tell them apart, which is why a geometry constant exists here at
+  // all.
+  SPANNING_HOLE_AXIS_SHARE: 0.9,
   SUBJECT_IMAGERY_MULTIPLE: 1,
 };
 
