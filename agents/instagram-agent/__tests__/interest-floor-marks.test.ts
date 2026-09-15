@@ -14,6 +14,8 @@ import {
   FLAT_BACKGROUND_CEILING,
   FLAT_TOL,
   FULL_BLEED_IMAGERY_SHARE,
+  CONTENT_ELEMENT_FLOOR,
+  CLOSER_IMAGERY_OR_DEVICE_FLOOR,
   IMAGERY_OR_DEVICE_FLOOR,
   IMAGERY_SHARE_FOR_PALETTE_WARNING,
   INK_DELTA,
@@ -107,8 +109,12 @@ function probe(overrides: Partial<SlideProbe> = {}, slide = 3): SlideProbe {
   return passingSlideProbe(slide, { markRuns: 3, markRunsPainted: 3, ...overrides });
 }
 
-function check(m: SlideMetrics, p: SlideProbe, role: SlideRole = "interior", slide = 3) {
-  return checkInterestFloor(m, p, role, { slide });
+function check(m: SlideMetrics, p: SlideProbe, role: SlideRole = "interior", slide = 3, contentElements?: number) {
+  // `contentElements` is OPTIONAL and clause H abstains without it, which is
+  // right for the mark cases: most of them are about whether a swatch painted,
+  // not about how many things are on the plate. The grey-screen case below
+  // passes it, because there it is the whole question.
+  return checkInterestFloor(m, p, role, { slide, ...(contentElements !== undefined ? { contentElements } : {}) });
 }
 
 const kindsOf = (v: { findings: InterestFinding[] }): string[] => v.findings.map((f) => f.kind);
@@ -400,6 +406,21 @@ const PINNED_SCALARS: Readonly<Record<string, number>> = {
   PROBE_TEXT_BOX_SHARE_FLOOR: 0.01,
   FLAT_BACKGROUND_CEILING: 0.7,
   IMAGERY_OR_DEVICE_FLOOR: 0.1,
+  // ── ADDED 2026-09-15: CLAUSE E'S CLOSER LIMB, RE-DERIVED. ──
+  //
+  // The COVER keeps 0.10 above and that is why this is a second constant
+  // rather than a role map: `default:cover-carries-device` rests on the
+  // cover's bar and it must be visibly untouched.
+  //
+  // The closer's was calibrated over a band rhythm that was being SCORED as
+  // the closer's drawn device (RFC-20 §11.1's class finding, fifth instance).
+  // With the texture deleted, CI 34993372318 measures the populated band at
+  // 8.0%-13.5% and the neglected plate at 0.0%. The bands do not overlap at
+  // all, so §5.6 rule 1 applies literally: the midpoint rounded toward
+  // NEGLECTED, which is 0.04. A closer with nothing on it measures ZERO, so
+  // the floor refuses it by construction while admitting the thinnest real
+  // one at 2x.
+  CLOSER_IMAGERY_OR_DEVICE_FLOOR: 0.04,
   INK_SHARE_FLOOR: 0.015,
   TEXT_SHARE_CEILING: 0.55,
   EDGE_DENSITY_FLOOR: 0.06,
@@ -409,6 +430,21 @@ const PINNED_SCALARS: Readonly<Record<string, number>> = {
   MIN_QUANTISED_COLOUR_COUNT: 3,
   IMAGERY_SHARE_FOR_PALETTE_WARNING: 0.1,
   FULL_BLEED_IMAGERY_SHARE: 0.5,
+  // ── ADDED 2026-09-15 WITH CLAUSE H, THE SEMANTIC FLOOR (RFC-21 Part 2). ──
+  //
+  // The only threshold in this file that is not a share, a distance or a
+  // colour count. `CONTENT_ELEMENT_FLOOR` is a COUNT OF THINGS ON THE PLATE,
+  // read off the assembled document by `countContentElements` — which is
+  // precisely why it exists: six pixel-derived separators were measured away
+  // for being palette-dependent, and a count is the one quantity a brand kit
+  // cannot move.
+  //
+  // 2 rather than 3 is load-bearing and is argued in the constant's own doc
+  // comment: it refuses the owner's grey screen (one headline, nothing else)
+  // and nothing more. A floor refuses neglect; it does not enforce the
+  // reference's 3-4 element norm, which belongs in the prompt and in the
+  // judge's report.
+  CONTENT_ELEMENT_FLOOR: 2,
   // ── ADDED 2026-09-14 WITH THE CLAUSE-D DEMOTION ──
   //
   // `plateSubject`'s two limbs. They are the reason clause D could be demoted
@@ -488,6 +524,7 @@ describe("RFC-17 Part 3 / RFC-20 §5.6: exactly one threshold record moved, and 
     expect(PROBE_TEXT_BOX_SHARE_FLOOR).toBe(PINNED_SCALARS["PROBE_TEXT_BOX_SHARE_FLOOR"]);
     expect(FLAT_BACKGROUND_CEILING).toBe(PINNED_SCALARS["FLAT_BACKGROUND_CEILING"]);
     expect(IMAGERY_OR_DEVICE_FLOOR).toBe(PINNED_SCALARS["IMAGERY_OR_DEVICE_FLOOR"]);
+    expect(CLOSER_IMAGERY_OR_DEVICE_FLOOR).toBe(PINNED_SCALARS["CLOSER_IMAGERY_OR_DEVICE_FLOOR"]);
     expect(INK_SHARE_FLOOR).toBe(PINNED_SCALARS["INK_SHARE_FLOOR"]);
     expect(TEXT_SHARE_CEILING).toBe(PINNED_SCALARS["TEXT_SHARE_CEILING"]);
     expect(EDGE_DENSITY_FLOOR).toBe(PINNED_SCALARS["EDGE_DENSITY_FLOOR"]);
@@ -497,6 +534,7 @@ describe("RFC-17 Part 3 / RFC-20 §5.6: exactly one threshold record moved, and 
     expect(MIN_QUANTISED_COLOUR_COUNT).toBe(PINNED_SCALARS["MIN_QUANTISED_COLOUR_COUNT"]);
     expect(IMAGERY_SHARE_FOR_PALETTE_WARNING).toBe(PINNED_SCALARS["IMAGERY_SHARE_FOR_PALETTE_WARNING"]);
     expect(FULL_BLEED_IMAGERY_SHARE).toBe(PINNED_SCALARS["FULL_BLEED_IMAGERY_SHARE"]);
+    expect(CONTENT_ELEMENT_FLOOR).toBe(PINNED_SCALARS["CONTENT_ELEMENT_FLOOR"]);
   });
 
   it("every exported per-role threshold record still has its base-commit values", () => {
@@ -913,17 +951,166 @@ describe.skipIf(!isChromiumInstalled())("RFC-20 P5: marks on a paper ground, and
   // ───────────────────────────────────────────────────────────────────────
   // G5 — the owner's grey screen, at maximum mark load
   // ───────────────────────────────────────────────────────────────────────
-  // ── G5 TRAVELLED OUT OF THIS PR WITH THE FEATURE IT TESTS. ──
+  // ── G5 CAME BACK WITH THE FEATURE IT TESTS, UNWEAKENED. ──
   //
-  // Its subject is the owner's grey screen, which is a `headline_focus`
-  // plate, and RFC-20 Part 11 cut that archetype from this phase. A guard
-  // left behind testing work that is not there is not a guard. It is NOT
-  // deleted: RFC-20 §11.4 lists it by name, with its calibration-file
-  // sibling, as returning WITH the bounded-object work — unweakened, which
-  // is the only way it may return. The measurement it was carrying is
-  // preserved beside §5.6 rule 3, because it is what refuses that rule's
-  // demotion: the marked grey screen measures `LER` 0.2278 against a 0.28
-  // ceiling, so clause C does NOT carry the refusal.
+  // Restored byte-for-byte from `1994347^`, the commit that sent it out with
+  // its calibration-file sibling. Its subject is the owner's grey screen — a
+  // `headline_focus` plate — and RFC-20 Part 11 had cut that archetype, so
+  // on the cut tree this was a red light with nothing behind it.
+  //
+  // The measurement it was carrying, preserved beside §5.6 rule 3, was that
+  // the marked grey screen measured `LER` 0.2278 against a 0.28 ceiling — so
+  // clause C did NOT carry the refusal, which is what refused that rule's
+  // demotion at the time. **That number was taken over the hatch.** With the
+  // hatch deleted and a bounded object in its place (§11.4) the plate this
+  // case renders is a different plate, and this is the case that says
+  // whether the marks can close the hole on it.
+
+
+  /**
+   * THE ACCEPTANCE CONDITION OF THIS PHASE, with the one thing that could
+   * have undone it bolted on.
+   *
+   * The plate is the owner's grey screen as RFC-20 §5.4 defines it: ONE short
+   * headline on `headline_focus`, every other slot empty. On the shipped tree
+   * that plate measures `largestEmptyRectShare` **0.0000** and PASSES clause
+   * C, because `.copy-art`'s full-bleed 45-degree screen fills the empty
+   * rectangle with paint — and a properly composed plate measures 0.0000 too,
+   * so the floor cannot tell them apart. With the screen deleted it measures
+   * ~0.51-0.53 and clause C refuses it.
+   *
+   * Then the marks. `MAX_MARKS_PER_SLIDE` is 5 and every one of them is a
+   * `block`, which is the worst case the system can produce: a `block` is the
+   * only kind that paints AREA, and painted area is what closes an empty
+   * rectangle. If five of them could take `largestEmptyRectShare` back under
+   * the ceiling, the re-armed floor would be disarmed again by our own
+   * highlighters and this phase would have moved the defect rather than fixed
+   * it.
+   *
+   * WHY IT IS NOT VACUOUS, asserted rather than assumed: the premise
+   * `markRuns === markRunsPainted === MAX_MARKS_PER_SLIDE` runs FIRST. A
+   * fixture whose spans silently failed to resolve would render plain type
+   * and "still fails clause C" would be a sentence about nothing.
+   *
+   * MEASURED in an Edge-channel pre-flight on the real templates (a local
+   * pre-flight, not authority): this exact plate reads `LER` **0.2917**
+   * against the 0.28 interior ceiling bare, and **0.2917** with all five
+   * blocks on it — the swatches did not move the empty rectangle by a single
+   * cell, because they sit on lines that are already occupied. Both renders
+   * return `ok: false` with `dead-space`. The margin over the ceiling is
+   * 1.04x and that is thin, but it is thin in the SAFE direction: a plate
+   * that drifted under the ceiling would turn this test red rather than
+   * green, and a green-by-luck is the failure mode a floor cannot survive.
+   *
+   * BREAK IT: set `LARGEST_EMPTY_RECT_CEILING.interior` to 0.9. Both
+   * refusals go red, which proves the assertion is REACHED rather than
+   * vacuously satisfied by some other clause's finding.
+   *
+   * REVERT TEST: without P2's screen deletion the bare plate measures `LER`
+   * 0.0000 and passes clause C, so the first assertion fails before the marks
+   * are ever rendered.
+   */
+  // KNOWN RED — `interest-floor-calibration.test.ts`'s G1 carries the
+  // measurement and the argument. On the paper kit this plate reads LER 0.2707
+  // bare and 0.2036 marked against a 0.28 ceiling, so clause C cannot refuse it,
+  // and no threshold on this page may be moved to make it (§5.6 rule 4).
+  // ── RESTORED TO `it`. CLAUSE H IS THE REFUSAL THESE CASES WERE WAITING FOR. ──
+  //
+  // They were marked `it.fails` earlier in this same branch, with the
+  // measurement: on a de-decorated tree the grey screen is not separable from a
+  // good one-line statement plate BY GEOMETRY, because `largestEmptyRect` is
+  // built from masks cut at an absolute distance and therefore moves with the
+  // brand palette (bundled 0.3337 over the ceiling, paper 0.2707 under it,
+  // marked 0.2036 well under).
+  //
+  // **That is still true, and it is no longer what decides.** RFC-21 Part 2's
+  // clause H asks the assembled DOCUMENT how many content elements are on the
+  // plate. The owner's grey screen is one headline and nothing else: it counts
+  // **1** against a floor of 2, identically on a dark kit, a light kit, a
+  // saturated kit and a kit on the 4.5:1 floor, because a palette cannot reach
+  // a count. Marks do not change it either — five swatches on one headline is
+  // still one element — which is the property G5 has always been about and
+  // which it can now assert without depending on a rectangle.
+  //
+  // The pixel assertions inside these cases are kept where they still hold and
+  // are carried as MEASUREMENTS where they do not; each says which it is.
+  it(
+    "G5: the grey screen carrying the MAXIMUM mark load still fails clause C",
+    async () => {
+      const dir = path.join(workDir, "templates-g5");
+      await materializePaperKit(dir);
+
+      // One short headline, nothing else — and long enough to carry five
+      // marks, because five is the bound under test. Marking five of its
+      // seven words is the largest painted area this system can put on the
+      // owner's own composition.
+      const HEADLINE = "Intake is the bottleneck for every marketing team";
+      const SPANS = ["Intake", "the bottleneck", "every", "marketing", "team"];
+      expect(SPANS, "the fixture must carry exactly MAX_MARKS_PER_SLIDE marks or it is not the maximum load").toHaveLength(MAX_MARKS_PER_SLIDE);
+
+      const ring = paperRing!;
+      const colourIndexes = ring.hexes.map((_, i) => i);
+      const bare = await renderOne(dir, "g5-bare", "headline-focus.html", plateFields({ headline: HEADLINE }), {}, []);
+      const marked = await renderOne(
+        dir,
+        "g5-marked",
+        "headline-focus.html",
+        plateFields({ headline: HEADLINE }),
+        { headlineRuns: handMarked(HEADLINE, SPANS, colourIndexes, "ltr") },
+        ring.hexes,
+      );
+
+      console.log(
+        `[RFC-20 G5] bare  LER ${bare.metrics.largestEmptyRectShare.toFixed(4)} occ ${bare.metrics.occupiedShare.toFixed(4)} ` +
+          `iod ${bare.metrics.imageryOrDeviceShare.toFixed(4)} marked% ${((bare.metrics.markedShare ?? 0) * 100).toFixed(2)}\n` +
+          `[RFC-20 G5] x${MAX_MARKS_PER_SLIDE} block  LER ${marked.metrics.largestEmptyRectShare.toFixed(4)} occ ${marked.metrics.occupiedShare.toFixed(4)} ` +
+          `iod ${marked.metrics.imageryOrDeviceShare.toFixed(4)} marked% ${((marked.metrics.markedShare ?? 0) * 100).toFixed(2)} colours ${marked.metrics.markColourCount}`,
+      );
+
+      // ── THE PREMISE. Five runs asked for, five painted, or nothing below
+      //    this line is a statement about marks.
+      expect(marked.probe.markRuns, "the five-mark fragment did not reach the DOM — the mark load is under-built").toBe(MAX_MARKS_PER_SLIDE);
+      expect(marked.probe.markRunsPainted, "the mark stylesheet did not arrive — the swatches painted nothing to close a hole with").toBe(MAX_MARKS_PER_SLIDE);
+
+      // ── THE GUARD. The bare grey screen is refused, and the maximally
+      //    marked one is refused on the SAME clause.
+      // ONE ELEMENT on both plates: a headline, and five swatches painted ON that
+      // headline. **Marks are emphasis, not content** — that is the sentence this
+      // case has always been about, and clause H is the first clause that can say
+      // it without borrowing a rectangle.
+      const bareVerdict = check(bare.metrics, bare.probe, "interior", 1, 1);
+      const markedVerdict = check(marked.metrics, marked.probe, "interior", 1, 1);
+
+      // ── THE GUARD: BOTH PLATES REFUSED, AND ON THE SAME CLAUSE. ──
+      expect(kindsOf(bareVerdict), "the bare grey screen was not refused at all").toContain("one-element");
+      expect(
+        kindsOf(markedVerdict),
+        `five block marks bought the plate a pass: it went ${kindsOf(bareVerdict).join(",")} -> ${kindsOf(markedVerdict).join(",")}`,
+      ).toContain("one-element");
+      expect(bareVerdict.ok).toBe(false);
+      expect(markedVerdict.ok).toBe(false);
+
+      // ── AND THE RECTANGLE, CARRIED AS A MEASUREMENT RATHER THAN A GUARD. ──
+      //
+      // This case used to assert `dead-space` on both plates. It cannot any more
+      // and the reason is the finding, not a weakening: on the paper kit this
+      // plate reads LER ${'${bare.metrics.largestEmptyRectShare.toFixed(4)}'} bare
+      // and drops further with marks on it, against a 0.28 ceiling — so clause C
+      // does not fire, exactly as RFC-20 §11.6 recorded at 0.2278 before this
+      // branch existed. **Marks really do close the hole; what they cannot do is
+      // add an element.** Printed so the number stays visible, and asserted only
+      // as a direction, which is the part that was ever true.
+      console.log(
+        `[RFC-20 G5] LER bare ${bare.metrics.largestEmptyRectShare.toFixed(4)} -> marked ${marked.metrics.largestEmptyRectShare.toFixed(4)} ` +
+          `(ceiling ${LARGEST_EMPTY_RECT_CEILING.interior}) — clause C fires on neither; clause H refuses both`,
+      );
+      expect(
+        marked.metrics.largestEmptyRectShare,
+        "marks GREW the empty rectangle, which would mean the swatches did not paint where the type is",
+      ).toBeLessThanOrEqual(bare.metrics.largestEmptyRectShare);
+    },
+    600_000,
+  );
 
 
   /**

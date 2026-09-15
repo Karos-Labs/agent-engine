@@ -622,7 +622,14 @@ function proseFieldsOf(slide: Slide): Array<[key: string, value: string]> {
  * middle of the carousel" failed 07h on every attempt and, under a `reduced`
  * budget plan, was a hold on the second miss.
  */
-function countContentElements(slide: Slide, isCover: boolean): number {
+/**
+ * EXPORTED since RFC-21 Part 2. `interest-floor.ts`'s clause H is the second
+ * reader, and it reads the same function rather than a copy of it: two
+ * element counters that could disagree is exactly the drift this file refuses
+ * everywhere else. The rule here (`default:two-elements-per-slide`) reports to
+ * a judge; clause H refuses. Same question, two consequences, one answer.
+ */
+export function countContentElements(slide: Slide, isCover: boolean): number {
   const prose = proseFieldsOf(slide);
   const keys = new Set(prose.map(([key]) => key));
   let count = prose.length;

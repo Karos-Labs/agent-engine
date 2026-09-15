@@ -196,16 +196,33 @@
      The accent is spent on ONE solid rule capping the field's head, not on a
      diagonal band: a diagonal band is `headline-focus.html`'s signature, and
      two archetypes sharing a signature is the defect this pass removes. */
+  /* ── 2026-09-15: THE BAND RHYTHM IS DELETED, THE ACCENT CAP STAYS
+        (RFC-20 §11.4). ──
+     The paragraph above is the record of a texture that no longer exists,
+     kept because its arithmetic is still true and the next person to reach
+     for a field texture needs it. The 6px-every-30px ruling at 20% of `--fg`
+     covered the whole field, and the restraint reference's rule 1 is
+     *texture only at near-ground value, never a field you can read as a
+     pattern.* This one read as a pattern.
+     `slide.html` and `headline-focus.html` lost theirs in the same pass and
+     for the same three reasons; `slide.html`'s header block states them in
+     full. The short version is the third one: the clause that required the
+     ink is gone (PR #124 demoted clause D's occupancy limb to
+     reporting-only), so the texture was paying a bill nobody sends.
+     WHAT STAYS is the sentence the paragraph above ends on — *the accent is
+     spent on ONE solid rule capping the field's head* — which is now the
+     whole of this file's field paint. A 10px bar is punctuation; a ruling
+     over 1000x800px was a surface. */
+  /* The cap is SHORT — `headline-focus.html`'s `.hf-field` carries the
+     measurement. Same 240px measure as `.cl-rule` below it, which is the
+     point: one accent width for the whole directory. */
   .cl-art {
-    background-image:
-      linear-gradient(to bottom, var(--accent) 0 calc(10px * var(--ts, 1)), transparent 0),
-      repeating-linear-gradient(to bottom,
-        color-mix(in srgb, var(--fg) 20%, transparent) 0 6px,
-        transparent 6px 30px);
-    background-size: 100% 100%, auto;
-    background-repeat: no-repeat, repeat;
-    background-position: 0 0, 0 0;
+    background-image: linear-gradient(to bottom, var(--accent) 0 calc(10px * var(--ts, 1)), transparent 0);
+    background-size: calc(240px * var(--ts, 1)) 100%;
+    background-repeat: no-repeat;
+    background-position: var(--cap-x, 0) 0;
   }
+  body[dir="rtl"], html[dir="rtl"] body { --cap-x: 100%; }
   /* The alternative ground: a display-face numeral bleeding off the start
      corner, over a TIGHTER band rhythm — 4px bars every 20px, so the two
      closers differ in the weight and the count of their bands as well as in
@@ -218,12 +235,16 @@
      a filled SHAPE, and every cell inside it then counts as a drawn device;
      the budget goes into stroke CONTRAST instead, which costs no coverage at
      all. */
+  /* The tighter band rhythm goes with the grid variant's — same three
+     reasons. The two closers now differ in WHERE the accent cap sits and in
+     whether the numeral is present, which is two axes of difference for one
+     mark instead of two wallpapers: the glyph variant caps the field's FOOT,
+     so the eye enters at the numeral and leaves at the rule rather than the
+     other way round. `slide.html` makes the same substitution, position for
+     texture, between its odd and even plates. */
   body.gr-glyph .cl-art {
-    background-image:
-      linear-gradient(to bottom, var(--accent) 0 calc(10px * var(--ts, 1)), transparent 0),
-      repeating-linear-gradient(to bottom,
-        color-mix(in srgb, var(--fg) 22%, transparent) 0 4px,
-        transparent 4px 20px);
+    background-image: linear-gradient(to top, var(--accent) 0 calc(10px * var(--ts, 1)), transparent 0);
+    background-position: var(--cap-x, 0) 100%;
   }
   /* The guards. No takeaway, no field; and furniture that paints ink answers
      to the same rule, so the numeral goes with it.
@@ -280,6 +301,19 @@
   /* The top anchor, the elastic column, and the ask that sits on the band. */
   .cl-head { position: relative; z-index: 3; flex: 0 0 auto; }
   .cl-rail { block-size: 2px; background: color-mix(in srgb, var(--fg) 48%, transparent); margin-block-start: calc(24px * var(--ts, 1)); }
+  /* ── The Ground Rule and §11.5 together — `stat-callout.html`'s `.sc-rail`
+        carries the full argument. ──
+     §11.5 item 2 is this file: `largestEmptyRectShare` 0.2278 (en) and
+     0.2306 (he) at `(0,0 → 1080,328/332)`, over the 0.22 closer ceiling, on
+     a populated plate whose eyebrow slot the fixture left empty. Same rail,
+     same corner, same one-word cause as the stat callout.
+     THE SUBJECT OF A CLOSER IS ITS TAKEAWAY, and the guard reads it the same
+     way the field paint above does — asked of the twin's CHILDREN, because
+     `#takeaway` is a twin-slot pair and can never match `:empty` again. */
+  body:not(:has(#takeaway > span:not(:empty))) .cl-rail { display: none; }
+  /* The rail keeps the head's height when the eyebrow is missing, so the
+     freed 24px does not go back to the gap this guard exists to close. */
+  body:has(#takeaway > span:not(:empty)) .eyebrow:empty + .cl-rail { margin-block-start: calc(56px * var(--ts, 1)); }
   /* The field runs the full measure inside the 16px frame — wider than the
      body's own 64px margin, so it reads as a field rather than as a
      highlighted paragraph. The negative inline margin and the matching inline
@@ -364,9 +398,6 @@
        obeys it. Fine here rather than architectural: the band is only 400px
        tall and a 68px rhythm inside it would read as two stripes. */
     background-image:
-      repeating-linear-gradient(to bottom,
-        color-mix(in srgb, var(--fg) 12%, transparent) 0 2px,
-        transparent 2px 11px),
       linear-gradient(to top,
         color-mix(in srgb, var(--accent) 40%, transparent) 0%,
         color-mix(in srgb, var(--accent) 24%, transparent) 100%);
@@ -394,12 +425,9 @@
      against the real `--bg`) exactly zero ink in the bleed band. */
   .cl-recap:not(:empty) {
     background-image:
-      repeating-linear-gradient(to bottom,
-        color-mix(in srgb, var(--fg) 12%, transparent) 0 2px,
-        transparent 2px 11px),
       linear-gradient(162deg,
-        color-mix(in srgb, var(--accent) 30%, var(--bg)) 0%,
-        color-mix(in srgb, var(--accent) 18%, var(--bg)) 100%);
+        color-mix(in srgb, var(--accent) 14%, transparent) 0%,
+        color-mix(in srgb, var(--accent) 8%, transparent) 100%);
     padding: calc(34px * var(--ts, 1)) calc(30px * var(--ts, 1)) calc(28px * var(--ts, 1));
     margin-block-end: calc(56px * var(--ts, 1));
     border-block-start: calc(6px * var(--ts, 1)) solid var(--accent);
@@ -469,6 +497,18 @@
 
   /* The one accent moment above the ask. */
   .cl-rule { inline-size: calc(240px * var(--ts, 1)); block-size: calc(14px * var(--ts, 1)); background: var(--accent); margin-block: calc(40px * var(--ts, 1)) 0; }
+  /* ── THE GROUND RULE. ──
+     RFC-20 §5.0: ink only inside a region the composition occupies, and only
+     when the content that justifies it is present. A 240x14 solid accent bar
+     is ink, and on a plate with no takeaway it was the only thing in frame —
+     sitting near the centre line, which is the worst place for it, because
+     `largestEmptyRectangle` finds ONE contiguous rectangle and a mark at the
+     centroid roughly halves the number G2 reads.
+     This guard was written once and reverted with `a3bf8f7`, which cut this
+     file from the phase rather than judging the guard. The file is back in
+     scope with the bounded object (§11.4) and so is the guard, unchanged, on
+     the same slot the field paint above already reads. */
+  body:not(:has(#takeaway > span:not(:empty))) .cl-rule { display: none; }
 
   /* ── THE ASK HAS A LADDER NOW, and it is the piece that was missing. ──
      `.cl-ask` is `flex: 0 0 auto` with a 400px floor, so its height is its

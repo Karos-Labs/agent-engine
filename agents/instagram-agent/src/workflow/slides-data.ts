@@ -96,7 +96,86 @@ export const ARCHETYPE_TEMPLATE_FILES: readonly string[] = Object.values(LAYOUT_
  * over), so membership here buys image SOURCING, never a dependency on the
  * sourcing succeeding.
  */
-export const HERO_IMAGE_LAYOUTS: ReadonlySet<InstagramSlideLayout> = new Set<InstagramSlideLayout>(["photo", "cover"]);
+/**
+ * ── WIDENED 2026-09-15 (RFC-21 Part 2): PANELS CARRY PICTURES NOW. ──
+ *
+ * This was `photo` and `cover` — the only two archetypes whose templates
+ * declared an `{{image:hero}}` slot — and the consequence was measured on
+ * `thepitchbydeel` pubsub-21559620763659451: **8 slides, 0 images**, because a
+ * draft that reaches for structured panels sourced nothing at all. The owner:
+ * *add image slots and sometimes use striking images in other layouts too, so
+ * we are not limited to cover and slide.html.*
+ *
+ * `stat_callout` and `quote_card` now declare `.sc-figure-band` — a BOUNDED
+ * band, not a background. The distinction is the whole design: a full-bleed
+ * photograph behind a panel puts its type on an uncontrolled ground (the
+ * contrast gate can promise nothing over a picture) and re-introduces the
+ * full-frame layer RFC-20 §11.1 spent a phase removing. A band sits beside the
+ * content and owns every share it moves.
+ *
+ * ── AND THEN COMPARISON AND LIST JOINED THEM. ──
+ *
+ * They were left out on the argument that two columns need two pictures to
+ * stay symmetrical and a rows panel has no room. **That was about taste, not
+ * about possibility**, and the measurement settled it: at the cover role with
+ * their textures deleted these two report a hole exactly as `quote_card` did
+ * (CI 34996343379, `quote_card @ first`: `LER` 23.9% against a 22% ceiling,
+ * `iod` 2.7% against 10%). A band ABOVE the columns or above the rows is the
+ * same bounded object the other two carry, in the same place, and it answers
+ * the hole with a picture rather than with a lower ceiling.
+ *
+ * `headline_focus` and `text_only` stay out: they carry the bounded OBJECT
+ * instead (RFC-20 §11.4) and a photograph would compete with it.
+ */
+export const HERO_IMAGE_LAYOUTS: ReadonlySet<InstagramSlideLayout> = new Set<InstagramSlideLayout>([
+  "photo",
+  "cover",
+  "stat_callout",
+  "quote_card",
+  "comparison_card",
+  "list_takeaway",
+]);
+
+/**
+ * The two archetypes where the picture IS the plate.
+ *
+ * ## Why this is a SECOND set and not a rename of the one above
+ *
+ * `HERO_IMAGE_LAYOUTS` answers a SOURCING question: which archetypes declare
+ * an `{{image:hero}}` slot, so which slides are worth spending a stock lookup
+ * on. It went from two members to six when the four panel archetypes got their
+ * bounded `.sc-figure-band`, and that was right.
+ *
+ * This set answers a COMPOSITION question, and the two answers are genuinely
+ * different because the two pictures are genuinely different. On `cover.html`
+ * and `slide.html` the photograph is full-bleed: it is the ground, the copy sits
+ * on it behind a scrim, and a reader scrolling past sees a PHOTOGRAPH. On the
+ * four panels the image is a 300px band inside a 1440px plate, beside type that
+ * keeps its own controlled ground - about 21% of the frame, deliberately bounded
+ * (RFC-20 §11.1: a full-frame layer a plate has not earned gets scored by some
+ * clause as the evidence that clause was built to look for). A reader scrolling
+ * past that sees a TYPOGRAPHIC SLIDE WITH AN ACCENT, which is what it is.
+ *
+ * ## The defect that made the distinction load-bearing
+ *
+ * The owner's rule, 2026-09-15: *"שילוב תמונות ב-3 עד 5 שקופיות לאורך הפוסט"* -
+ * images in 3 to 5 slides across the post, with the rest leaning on clean
+ * typography, data or graphic objects.
+ *
+ * `MIN_PICTURE_SLIDES` counted `HERO_IMAGE_LAYOUTS`, so once that set
+ * reached six members a carousel of three panels with three 300px bands and no
+ * photograph anywhere MET the floor and was returned untouched. That is the
+ * imageless post the floor was written to refuse, one level up: the count said
+ * three and a reader would say none. Widening the sourcing set quietly widened
+ * the floor's own definition of a picture, which nothing asked it to do.
+ *
+ * So the band is a bonus and is counted toward neither bound, and the floor and
+ * the ceiling both read THIS set. `text_only` is absent for the same reason it
+ * is the only promotable archetype: it resolves to `slide.html` with no image
+ * sourced, so promoting it to `photo` changes nothing but whether a picture was
+ * asked for.
+ */
+export const FULL_BLEED_IMAGE_LAYOUTS: ReadonlySet<InstagramSlideLayout> = new Set<InstagramSlideLayout>(["photo", "cover"]);
 
 /**
  * Which layouts declare a `{{html:device}}` slot, so a device on a slide
@@ -109,8 +188,26 @@ export const HERO_IMAGE_LAYOUTS: ReadonlySet<InstagramSlideLayout> = new Set<Ins
  * same space. Every OTHER bundled archetype is absent because its own
  * template has no device slot, and emitting a fragment nothing renders would
  * let `default:numbers-are-devices` pass on a figure the reader never sees.
+ *
+ * ── `text_only` JOINED THIS SET WITH THE BOUNDED OBJECT (RFC-20 §11.4). ──
+ *
+ * `slide.html` now declares a `.sl-device` slot on its HEROLESS path, which
+ * is the path `text_only` always takes, and `bounded-object.ts` composes the
+ * figure that fills it. Before that this archetype had no way to carry a
+ * subject at all: RFC-20 §11.2 measured it at `occupiedShare` 0.0383–0.0942
+ * with `flatBackgroundShare` 0.92–0.97, which is type on ground and nothing
+ * else, and the phase covered for it with a full-plate hatch instead of an
+ * object (§11.1 is what that cost).
+ *
+ * **`photo` is NOT in the set even though it renders the same file**, and the
+ * asymmetry is the point rather than an oversight: a `photo` slide's subject
+ * is its photograph. Its device slot would sit under a hero that covers the
+ * frame, which is the "fragment nothing renders" case above, one archetype
+ * over. A `photo` slide that loses its picture is reassigned to `text_only`
+ * before assembly (`InstagramSlideLayoutSchema`), so the heroless plate gets
+ * its object through the membership that names it.
  */
-const DEVICE_SLOT_LAYOUTS: ReadonlySet<InstagramSlideLayout> = new Set<InstagramSlideLayout>(["cover", "headline_focus"]);
+const DEVICE_SLOT_LAYOUTS: ReadonlySet<InstagramSlideLayout> = new Set<InstagramSlideLayout>(["cover", "headline_focus", "text_only"]);
 
 /**
  * How many earlier slides a `closer` needs before its recap strip is worth
@@ -2280,7 +2377,9 @@ export function assembleSlidesData(params: {
         ...(params.bcp47 !== undefined ? { bcp47: params.bcp47 } : {}),
       },
     );
-    // Only `photo` and `cover` consume a hero image (`HERO_IMAGE_LAYOUTS`).
+    // Which archetypes consume a hero image: see `HERO_IMAGE_LAYOUTS`, which
+    // is four wide since RFC-21 Part 2 — the two full-bleed ones and the two
+    // panels that declare a bounded `.sc-figure-band`.
     // Every other archetype is typographic by design, so attaching one would
     // either be ignored by its template or — worse, for a template that did
     // grow a background slot later — quietly reintroduce the "every slide

@@ -2,6 +2,7 @@ import { describe, expect, it, afterEach } from "vitest";
 import type { AgentTool, AgentToolRegistry } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
+import { enforceImageryBand } from "../src/workflow/imagery-floor.js";
 import {
   MIN_SKELETON_DISTANCE,
   SKELETON_BELIEF_KEY,
@@ -19,6 +20,7 @@ import {
   fakeRouterSequence,
   finalTurn,
   goodCopyOutput,
+  signatureOfGoodCopy,
   goodImageCandidatePool,
   goodImageVettingOutput,
   goodRelevanceVerdict,
@@ -28,6 +30,7 @@ import {
   makePromptStore,
   qaTurnInputs,
   passingSlideMetrics,
+  passingSlideProbe,
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
@@ -55,12 +58,19 @@ import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS, happyTurns, standardTurns
 
 const base = { clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
-/** `goodCopyOutput()` is six `photo` slides, so every one resolves to the client's own `slide.html` with a hero. */
-function signatureOfGoodCopy(): string {
-  return skeletonSignature(
-    goodCopyOutput().slides.map((slide) => ({ n: slide.n, template: "slide.html", hasImage: true })),
-  );
-}
+/*
+ * `signatureOfGoodCopy` now lives in `test-helpers.ts` and is DERIVED. The
+ * three lines that used to be here read
+ *
+ *     goodCopyOutput().slides.map((slide) => ({ n: slide.n, template: "slide.html", hasImage: true }))
+ *
+ * under the comment "six `photo` slides, so every one resolves to the client's
+ * own `slide.html` with a hero". The imagery band ended both halves of that on
+ * the same day, and a stale signature here does not fail loudly: the gate sees
+ * two different signatures, finds no repeat, never buys a second attempt, and
+ * the failure surfaces as a missing `05-write-copy-attempt-2` four assertions
+ * later. The helper's own doc comment carries the rest.
+ */
 
 function lastWeek(signature: string, runId = "run_last_week"): SkeletonHistory {
   const entry: SkeletonEntry = {
@@ -76,13 +86,29 @@ function lastWeek(signature: string, runId = "run_last_week"): SkeletonHistory {
   return { version: 1, entries: [entry] };
 }
 
-/** Slide 2 becomes a `stat_callout`: exactly ONE position of six changes, which is a 0.17 near-match. */
+/**
+ * Exactly ONE position of six changes, which is a 0.17 near-match.
+ *
+ * The swapped slide is one the IMAGERY BAND HAS ALREADY MADE TYPOGRAPHIC, and
+ * that is the whole reason this function is not three lines. It used to swap
+ * slide 2, a `photo`, for a `stat_callout` — which after the band changes two
+ * tokens rather than one: the swapped position, and the position of whichever
+ * slide the band no longer has to demote now that the carousel is a picture
+ * short. The measured distance was 0.33 and the case is about 0.17.
+ *
+ * A `text_only` slide and a `stat_callout` are both outside
+ * `FULL_BLEED_IMAGE_LAYOUTS`, so swapping one for the other leaves the picture
+ * count untouched, the band with nothing further to do, and exactly one token
+ * different from `signatureOfGoodCopy()`.
+ */
 function copyWithOneSwap(): InstagramCopyOutput {
-  const copy = goodCopyOutput();
+  const copy = enforceImageryBand(goodCopyOutput()).copy;
+  const swap = copy.slides.findIndex((slide) => (slide.layout ?? "photo") === "text_only");
+  if (swap < 0) throw new Error("the imagery band demoted nothing, so this fixture cannot make a one-token swap");
   return {
     ...copy,
     slides: copy.slides.map((slide, i) =>
-      i === 1
+      i === swap
         ? {
             ...slide,
             layout: "stat_callout" as const,
@@ -197,13 +223,9 @@ describe("07k-skeleton-variety (item P): repetition is refused before a render, 
 
   it("SOFT clause: a 0.17 near-match returns on attempt 1 and only WARNS from attempt 2", async () => {
     const previous = signatureOfGoodCopy();
-    const near = skeletonSignature(
-      copyWithOneSwap().slides.map((slide) => ({
-        n: slide.n,
-        template: slide.layout === "stat_callout" ? "stat-callout.html" : "slide.html",
-        hasImage: slide.layout === "photo",
-      })),
-    );
+    // Through the same derivation as `previous`, or the two strings differ by
+    // the derivation as well as by the swap and the distance means nothing.
+    const near = signatureOfGoodCopy(copyWithOneSwap());
     expect(skeletonDistance({ signature: near }, { signature: previous })).toBe(0.17);
     expect(0.17).toBeLessThan(MIN_SKELETON_DISTANCE);
 
@@ -312,11 +334,21 @@ describe("07k-skeleton-variety (item P): repetition is refused before a render, 
     const qaInput = qaTurnInputs(router)[0];
     const warnings = qaInput?.["skeletonWarnings"] as string[] | undefined;
     expect(warnings, `08b received no skeletonWarnings: ${JSON.stringify(Object.keys(qaInput ?? {}))}`).toBeDefined();
-    // Three, not five: the signature's tokens are `role:archetype`, so the
-    // cover-to-interior and interior-to-closer pairs differ by role and only
-    // the three interior-to-interior pairs are candidates. That is the clause
-    // working as written, and it is why the token carries the role at all.
-    expect(warnings!.length).toBe(3);
+    // TWO, and the arithmetic is worth writing out because both halves of it
+    // are the clause working as designed.
+    //
+    // The signature's tokens are `role:archetype`, so of the five adjacent
+    // pairs on a six-slide carousel the cover-to-interior and
+    // interior-to-closer pairs differ by role and never match: three
+    // interior-to-interior pairs are candidates, which is why the token
+    // carries the role at all. Then the imagery band demotes slide 5 of this
+    // all-photo fixture, so the (4, 5) pair is `photo` against `text_only` and
+    // two candidates are left.
+    //
+    // Was three. The band did not weaken this clause; it removed one of the
+    // repetitions the clause exists to complain about, which is the clause and
+    // the band agreeing about the same defect from two directions.
+    expect(warnings!.length).toBe(2);
     expect(warnings![0]).toContain("slides 2 and 3");
     expect(warnings![0]).toContain("54%");
     expect(warnings![0]).toContain("one slide shown twice");
@@ -362,8 +394,25 @@ describe("07k-skeleton-variety (item P): repetition is refused before a render, 
   it("recomputes the signature AFTER the free re-layout, so the gate, the deliverable and the belief all name the same carousel", async () => {
     env = await setupTestEnvironment({ seedTopics: Array.from({ length: 12 }, (_, i) => `skeleton relayout topic ${i + 1}`) });
     // Slide 2 is a `headline_focus` that fails the floor on the first render
-    // only, so `08a1b` attaches a figure device from its own text — a change
-    // whose ONLY signature effect is the `+figure` suffix on slide 2's token.
+    // only, so `08a1b` re-lays it out — and the remedy it reaches for is a
+    // `switch-archetype`, which changes slide 2's archetype token.
+    //
+    // ── IT USED TO BE `attach-device`, AND WHY IT IS NOT IS THE POINT. ──
+    //
+    // RFC-20 §11.4 composes a bounded object onto every `headline_focus` and
+    // `text_only` slide BEFORE the first render, from the slide's own text
+    // and its own source — the identical inputs `deviceFromText` reads in the
+    // remedy. So on these two archetypes `attach-device` can only ever
+    // re-offer the device the plate is already wearing, and the planner now
+    // refuses to: a byte-identical re-render at `08a1c` is the attempt's one
+    // free chance spent on nothing.
+    //
+    // The case is kept on the SAME slide and the same failure rather than
+    // moved somewhere the old remedy still fires, because what it guards is
+    // not which remedy ran — it is that the signature is recomputed after
+    // whichever one did. Every remedy kind except `font-scale` and
+    // `re-render` changes a token, and this one changes an archetype, which
+    // is a larger change than the `+figure` suffix it replaces.
     const drafted = goodCopyOutput();
     const copy: InstagramCopyOutput = {
       ...drafted,
@@ -377,6 +426,19 @@ describe("07k-skeleton-variety (item P): repetition is refused before a render, 
           if (slide.n === 1) renders += 1;
           return renders === 1 && slide.n === 2 ? boringSlideMetrics() : passingSlideMetrics();
         },
+        // ── THE FAILURE IS STATED ON THE PROBE NOW, NOT ONLY ON THE PIXELS. ──
+        //
+        // `boringSlideMetrics()` alone no longer fails a slide at the INTERIOR
+        // role: RFC-21 Part 2 demoted clause C there (it gave four verdicts on
+        // four brand palettes for one plate) and clause H refuses on the element
+        // count instead, which this slide clears with a headline and a body.
+        //
+        // So the fixture says what it means: a plate whose copy did not reach it.
+        // `textBoxShare` under `PROBE_TEXT_BOX_SHARE_FLOOR` is clause G's DOM
+        // limb, it gates at every role, and it is colour-agnostic — which is the
+        // whole reason the floor was rebuilt around it. Same slide, same render,
+        // same remedy ladder; only the clause that notices has changed.
+        probe: (slide) => (renders === 1 && slide.n === 2 ? { ...passingSlideProbe(slide.n), textBoxShare: 0.004 } : passingSlideProbe(slide.n)),
       }),
     };
     const router = fakeRouterSequence([
@@ -389,7 +451,7 @@ describe("07k-skeleton-variety (item P): repetition is refused before a render, 
     const plan = steps.find((s) => s.stepId === "08a1b-relayout-for-interest-attempt-1")?.output as
       | { changes: Array<{ kind: string; slide: number }> }
       | undefined;
-    expect(plan?.changes[0]).toMatchObject({ kind: "attach-device", slide: 2 });
+    expect(plan?.changes[0]).toMatchObject({ kind: "switch-archetype", slide: 2 });
 
     const preRender = (steps.find((s) => s.stepId === "07k-skeleton-variety-attempt-1")?.output as { signature: string }).signature;
     const reported = (steps.find((s) => s.stepId === "08a1e-skeleton-occupancy-attempt-1")?.output as { signature: string }).signature;
@@ -407,8 +469,18 @@ describe("07k-skeleton-variety (item P): repetition is refused before a render, 
     // ...and it is NOT the pre-render one, which is what made this a defect
     // rather than a tidy-up.
     expect(reported).not.toBe(preRender);
-    expect(reported).toContain("headline_focus+figure");
-    expect(preRender).not.toContain("+figure");
+    // The pre-render signature names `headline_focus` and the reported one
+    // does not, which is the archetype switch showing up in the tokens. Read
+    // as a PAIR rather than as one literal: the remedy table picks the target
+    // from the slide's own filled content blocks, so pinning the exact
+    // archetype here would make this case fail when that table is extended,
+    // for a reason that has nothing to do with what it guards.
+    expect(preRender).toContain("headline_focus");
+    expect(reported).not.toContain("headline_focus");
+    // AND THE DEVICE IS ON BOTH, which is the §11.4 half: the bounded object
+    // is composed before the FIRST render, so `+figure` is not something the
+    // re-layout added and must not read as though it were.
+    expect(preRender).toContain("+figure");
   }, 90000);
 
   /**

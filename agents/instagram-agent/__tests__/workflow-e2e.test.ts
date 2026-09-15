@@ -11,6 +11,7 @@ import {
   fakeRouterSequence,
   finalTurn,
   goodCopyOutput,
+  signatureOfGoodCopy,
   goodImageCandidatePool,
   goodImageVettingOutput,
   goodResearchOutput,
@@ -168,6 +169,11 @@ const HAPPY_PATH_STEP_IDS = [
   // recognised entity, so the selector declines and nothing downstream fires.
   // That absence is the "sometimes, not always" constraint measured on the
   // default story.
+  // The imagery band's record (owner rule, 2026-09-15: pictures on 3 to 5
+  // slides). Checkpointed rather than inline because it writes a ledger event,
+  // and a resumed run that replays this leg would otherwise write it twice —
+  // which `resume-idempotency.test.ts` measures on the whole tool-call census.
+  "04m2-imagery-band-attempt-1",
   "04m-concept-eligibility",
   "05-write-copy-attempt-1",
   "06-vet-images-attempt-1",
@@ -187,6 +193,12 @@ const HAPPY_PATH_STEP_IDS = [
   // render is spent — present because this fixture's config declares no
   // render rules of its own.
   "07h-default-render-rules-attempt-1",
+  // The slide word budget (owner rule, 2026-09-15: 20 to 30 words a slide, the
+  // detail to the caption). UNCONDITIONAL, unlike `07h` above, which is why it
+  // is here rather than beside it in the client-rules branch: a client's own
+  // render rules replace the house LAYOUT rules, and whether the copy can be
+  // read at feed size is not a layout preference.
+  "07h2-word-budget-attempt-1",
   // Phase 5 (RFC-18 §2 and §4): the FREE half of the value gate, then the paid
   // judge. `07i` and `07i2` are `wf.step.code` and cost nothing; `07i1` is the
   // one deterministic ScrappyCoco re-read of the card the cover rests on, and
@@ -593,9 +605,10 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     expect(payload?.skeleton?.repeatedPrevious).toBe(false);
     expect(payload?.skeleton?.previous).toBeUndefined();
     expect(payload?.skeleton?.recent).toEqual([]);
-    expect(payload?.skeleton?.signature).toBe(
-      skeletonSignature(goodCopyOutput().slides.map((slide) => ({ n: slide.n, template: "slide.html", hasImage: true }))),
-    );
+    // Derived, never a literal — see `signatureOfGoodCopy`. What this asserts is
+    // that the belief the run writes back names the carousel it actually
+    // rendered, including what the imagery band and the bounded object did to it.
+    expect(payload?.skeleton?.signature).toBe(signatureOfGoodCopy());
 
     await engine.resolveGate(runId, "09a-batch-review-r0", { decision: "approve", actor: "jane@karoslabs.com", at: new Date().toISOString() });
     expect((await engine.run(workflowFn, { ...params, runId })).status).toBe("completed");
@@ -608,7 +621,12 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     const history = readSkeletonHistory(beliefs);
     expect(history.entries).toHaveLength(1);
     expect(history.entries[0]!.runId).toBe(runId);
-    expect(history.entries[0]!.archetypes).toEqual(["photo", "photo", "photo", "photo", "photo", "photo"]);
+    // Four pictures and two typographic plates, which is the imagery band: this
+    // fixture asks for six `photo` slides and `ceilingFor(6)` puts four in force,
+    // so `04m2` hands the last two back before anything is sourced. Written out
+    // rather than derived, because the point of this assertion is that the belief
+    // records what SHIPPED and not what the writer asked for.
+    expect(history.entries[0]!.archetypes).toEqual(["photo", "photo", "photo", "photo", "text_only", "text_only"]);
     expect(history.entries[0]!.roles).toEqual(["cover", "interior", "interior", "interior", "interior", "closer"]);
     expect(history.entries[0]!.edited).toBe(false);
     expect(beliefs?.[RUN_BUDGET_BELIEF_KEY]).toBeDefined();

@@ -15,6 +15,7 @@ import {
   makePromptStore,
   setupTestEnvironment,
   type TestEnvironment,
+  pictureSlidesOfGoodCopy,
 } from "./test-helpers.js";
 import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
@@ -101,7 +102,11 @@ describe("P0 parity-audit Fix 4: image rights/watermark verification holds the w
   it("downgrades to text-only rather than shipping it when a slide's selected image is watermarkFree: false", async () => {
     const promptStore = makePromptStore();
     const vetting = selectionsWith();
-    vetting.selections = vetting.selections.map((s) => (s.n === 5 ? { ...s, watermarkFree: false, claimMatch: 5, claimMatchReason: "shows the claimed subject (instagram-image-vet@3 fixture)" } : s));
+    // The last slide that still asks for a picture: a watermark on a slide the
+    // imagery band already made typographic is a watermark on nothing, and the
+    // literal 5 this used to be became exactly that.
+    const WATERMARKED = pictureSlidesOfGoodCopy().at(-1)!;
+    vetting.selections = vetting.selections.map((s) => (s.n === WATERMARKED ? { ...s, watermarkFree: false, claimMatch: 5, claimMatchReason: "shows the claimed subject (instagram-image-vet@3 fixture)" } : s));
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(goodCopyOutput()),
@@ -124,7 +129,7 @@ describe("P0 parity-audit Fix 4: image rights/watermark verification holds the w
     expect(result.status).toBe("completed");
     const stepRecords = await durableStore.listSteps("instagram_run_reuse_rights_watermark");
     const downgradeStep = stepRecords.find((s) => s.stepId === "07a-downgrade-unfillable-slides-attempt-1");
-    expect((downgradeStep?.output as { downgraded: number[] } | undefined)?.downgraded).toEqual([5]);
+    expect((downgradeStep?.output as { downgraded: number[] } | undefined)?.downgraded).toEqual([WATERMARKED]);
     expect((downgradeStep?.output as { reason: string } | undefined)?.reason).toMatch(/not watermark-free/i);
   });
 });

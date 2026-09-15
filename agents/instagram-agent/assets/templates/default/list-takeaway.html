@@ -173,6 +173,95 @@
      the head grows into whatever the panel leaves and may never shrink below
      its own content, so a four-row list at `l` takes the space back rather
      than pushing the headline off the plate. */
+  /* ── AN IMAGE ON A PANEL ARCHETYPE (RFC-21 Part 2). ──
+
+     Until now only `cover.html` and `slide.html` declared an `{{image:hero}}`
+     slot, so `HERO_IMAGE_LAYOUTS` was two archetypes wide and a carousel that
+     reached for structured panels sourced **no pictures at all** — measured on
+     `thepitchbydeel` pubsub-21559620763659451, 8 slides, 0 images. The imagery
+     floor fixes the COUNT by promoting `text_only` slides; this fixes the
+     RANGE, so a post does not have to choose between a designed panel and a
+     photograph.
+
+     THE OWNER'S BRIEF, 2026-09-15: *add image/illustration slots and sometimes
+     use striking images in other layouts too (beside a stat or a card), so we
+     are not limited to cover and slide.html.*
+
+     IT IS A BAND, NOT A BACKGROUND, and that is the whole design of it. A
+     full-bleed photograph behind a panel would put the panel's type on an
+     uncontrolled ground — the contrast gate cannot promise anything over a
+     picture — and it would re-introduce exactly the full-frame layer RFC-20
+     §11.1 spent a phase removing. A bounded band sits BESIDE the content, has
+     its own edges, and every share it moves is its own.
+
+     `:empty` collapses it, so a slide with no picture is byte-identical to
+     before. `object-fit: cover` on a fixed band means a portrait or a
+     landscape both fill it without distortion, and `onerror` removes the node
+     rather than hiding it — a removed node leaves no broken-image glyph, which
+     is the same rule `cover.html` and `slide.html` already follow. */
+  /* ── THE PICTURE IS THE ELEMENT THAT YIELDS. ──
+
+     `flex: 0 1 auto` with a definite `block-size`, so in this column flex
+     container the band is the ONLY item that can shrink (every sibling is
+     `0 0 auto`). When a long body at `l` asks for more than the 1440px canvas
+     has, the band gives the space back instead of the copy being clipped.
+
+     WHY IT IS THE RIGHT ELEMENT TO GIVE, and this is the whole argument:
+     **text cannot shrink without being clipped, and a cover-fitted photograph
+     can shrink without losing anything.** `object-fit: cover` means a shorter
+     band crops a little more of the same picture at the same scale - no
+     distortion, no reflow, nothing hidden. Capping a text box instead is what
+     CI 35001921837 caught: *"2 element(s) overflow their own box (div.num-zone,
+     div#figure.num-figure), and 0% of the frame is ink inside the 8px bleed
+     band"* - nothing falling off the canvas, a fixed-size numeral hidden by a
+     box drawn smaller than it.
+
+     200px rather than 300: measured down when the same overflow appeared on
+     `stat-callout.html`, whose header carries the arithmetic. `min-block-size`
+     floors the shrink so the band cannot be squeezed to a sliver - at that
+     point it is neither a picture nor honest about being one, and clause E
+     would score a 30px stripe as this plate's drawn device. */
+  .sc-figure-band {
+    position: relative; z-index: 3; flex: 0 1 auto;
+    block-size: calc(200px * var(--ts, 1)); min-block-size: calc(110px * var(--ts, 1)); inline-size: 100%;
+    overflow: hidden; border-radius: 2px;
+    margin-block-end: calc(24px * var(--ts, 1));
+  }
+  /* ── THE COLLAPSE IS KEYED ON A NON-EMPTY `src`, NEVER ON `:has(img)`. ──
+
+     `fillTemplate` ERASES a slot nobody filled, so a slide with no picture
+     still renders `<img src="">` and the `<img>` element is still there.
+     `:not(:has(img))` is therefore FALSE on exactly the plates it was written
+     to collapse, and the band kept its 200px on every pictureless slide in the
+     set. That is what CI 35011946920 measured as `clipped` on
+     `en ltr long l -> stat-callout @ interior`, on a plate the sweep attaches
+     no image to at all — the band was eating the height the long body needed
+     and no amount of shrinking the figure was ever going to give it back.
+
+     `onerror="this.remove()"` does not cover it either, and that is the part
+     worth keeping. An empty `src` may or may not fire `error`, and if it does
+     it fires ASYNCHRONOUSLY: the DOM probe can read the document before the
+     handler runs, so the same template measures differently run to run. A
+     collapse rule has to be true at parse time. `onerror` stays for the case it
+     is actually for, a path that was filled and then failed to load.
+
+     This is the same lesson `slide.html` already carries at its `.scrim` rule:
+     *"`.bg:empty` rather than `:not(:has(.hero))` because this template's
+     `onerror` empties a wrapper instead of removing a top-level node"*. Same
+     defect, one archetype over, and the house pattern was already written down. */
+  .sc-figure-band:not(:has(img[src]:not([src=""]))) { display: none; }
+  /* NO SLAB CLAMP HERE. `.num-zone` is `stat-callout.html`'s figure slab and
+     this template has no element of that class - the rule that used to sit
+     here was copy-pasted with the band and matched nothing on either this
+     archetype or `list-takeaway.html`. Deleted rather than corrected: the
+     shrinking band above is what makes the composition fit, and it needs no
+     per-archetype clamp to do it. */
+  .sc-figure-band img { inline-size: 100%; block-size: 100%; object-fit: cover; display: block; }
+  /* The one mark it carries: the brand rule that ties it to the plate. */
+  .sc-figure-band::after {
+    content: ""; position: absolute; inset-block-end: 0; inset-inline: 0;
+    block-size: calc(8px * var(--ts, 1)); background: var(--accent);
+  }
   .lt-head { position: relative; z-index: 3; flex: 1 1 auto; display: flex; flex-direction: column; }
   /* ── THE HEAD IS A FIELD NOW, AND IT HAS TO BE. ──
      Shrinking the panel to its rows (see `.me-rows`) moved 300-500px of plate
@@ -223,12 +312,12 @@
      only. `> span:not(:empty)` asks the CHILDREN, matching the form the other
      four twin-bearing templates already use (`#title`, `#headline`,
      `#takeaway`, `.quote-text`). */
-  body:has(#head > span:not(:empty)) .lt-head {
-    background-image:
-      repeating-linear-gradient(to right,
-        color-mix(in srgb, var(--fg) 8%, transparent) 0 2px,
-        transparent 2px 14px);
-  }
+  /* ── 2026-09-15: THE LAST TEXTURE IN THE DIRECTORY, DELETED. ──
+     Every full-plate and panel-scoped hairline went in this phase; this head
+     band was the last one. Restraint reference rule 1 — *never a field you can
+     read as a pattern* — and the owner's own words on the render that prompted
+     it: ״קווים שמסגירים AI״, lines that give the machine away. What the head
+     keeps is its rule and its accent, which are geometry and colour. */
   /* `inline-block` so a client's `pill`/`brackets` badge variant wraps the
      words rather than painting a full-measure bar. */
   .eyebrow {
@@ -257,6 +346,19 @@
     padding-block-end: 0.12em;
   }
   .me-head.small { font-size: calc(52px * var(--ts, 1)); }
+  /* ── THE SAME `ts-l` STEP-DOWN, AND THE SAME REASON. ──
+
+     `stat-callout.html` carries the full argument. This plate hit it one
+     archetype later in the same sweep: with LONG copy at `l` the overflow is
+     on `html, body.ts-l` itself, so it is not one box drawn too small but the
+     whole composition being 18% larger than a frame that did not grow.
+
+     The head and the four-row ladder both come down, because both are set in
+     the display face and between them they are most of the plate. The rows'
+     existing `:has(.me-row:nth-child(4))` step already exists for exactly this
+     shape of problem at `m`; this is the same idea one scale up. */
+  body.ts-l .me-head { font-size: calc(54px * var(--ts, 1)); }
+  body.ts-l .me-head.small { font-size: calc(44px * var(--ts, 1)); }
 
   /* RFC-17 twin slot. `.me-head` hosts BOTH `html:headlineRuns` (marked)
      and `headline` (plain, escaped); whichever arrives filled wins and the
@@ -354,12 +456,9 @@
   .me-rows:not(:empty) {
     border-block-start: calc(8px * var(--ts, 1)) solid var(--accent);
     background-image:
-      repeating-linear-gradient(to right,
-        color-mix(in srgb, var(--fg) 14%, transparent) 0 2px,
-        transparent 2px 15px),
       linear-gradient(164deg,
-        color-mix(in srgb, var(--accent) 28%, var(--bg)) 0%,
-        color-mix(in srgb, var(--accent) 15%, var(--bg)) 100%);
+        color-mix(in srgb, var(--accent) 13%, transparent) 0%,
+        color-mix(in srgb, var(--accent) 7%, transparent) 100%);
   }
   /* ── THE ROW IS SIZED BY ITS OWN COPY, AND IT IS A NUMBERED ROW. ──
 
@@ -415,6 +514,8 @@
   .me-rows:has(.me-row:nth-child(4)) .me-row { padding: calc(24px * var(--ts, 1)) 0; }
   .me-rows:has(.me-row:nth-child(4)) .me-title { font-size: calc(40px * var(--ts, 1)); }
   .me-rows:has(.me-row:nth-child(4)) .me-note { font-size: calc(26px * var(--ts, 1)); }
+  body.ts-l .me-rows:has(.me-row:nth-child(4)) .me-title { font-size: calc(34px * var(--ts, 1)); }
+  body.ts-l .me-rows:has(.me-row:nth-child(4)) .me-note { font-size: calc(22px * var(--ts, 1)); }
   /* THE MARKER IS THE RANK, and on this archetype only — `comparison-card.html`
      keeps the set's rotated square, because a two-column comparison has no
      order to count. A fixed column so every numeral starts at the same x and
@@ -492,6 +593,7 @@
   <div class="ground" aria-hidden="true"></div>
   <div class="brand-badge">{{seriesBadge}}</div>
   <div class="brand-handle"><bdi dir="ltr">{{brandHandle}}</bdi></div>
+  <div class="sc-figure-band"><img src="{{image:hero}}" onerror="this.remove()" alt="" /></div>
   <div class="lt-head">
     <div class="eyebrow">{{kicker}}</div>
     <div class="lt-rail"></div>

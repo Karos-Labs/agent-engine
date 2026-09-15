@@ -1210,6 +1210,58 @@ export const OCCUPIED_SHARE_FLOOR: Readonly<Record<SlideRole, number>> = { cover
 export const IMAGERY_OR_DEVICE_FLOOR = 0.1;
 
 /**
+ * ── CLAUSE E AT THE CLOSER ROLE, RE-DERIVED FROM A TREE WITH NO TEXTURE. ──
+ *
+ * `IMAGERY_OR_DEVICE_FLOOR` above stays 0.10 and the COVER keeps it. This is a
+ * second constant rather than a role map because the cover's bar is
+ * load-bearing (`default:cover-carries-device` rests on it) and must be
+ * visibly untouched by anything done for the closer.
+ *
+ * ## The measurement
+ *
+ * CI 34993372318, gate-zero sweep, `closer.html` on the de-decorated tree:
+ *
+ * ```
+ *   POPULATED   8.0% .. 13.5%   (six rows: s/m/l, pale accent, cta slot, +device)
+ *   NEGLECTED   0.0%            (every copy slot empty)
+ * ```
+ *
+ * Every populated row was PASSING at 0.10 before this phase deleted the
+ * closer's band rhythm. It is not passing now, and the reason is the finding
+ * rather than a regression: **the texture was being scored as the drawn
+ * device.** A repeating 6px-on-30px ruling at 20% of `--fg` produces covered,
+ * low-colour-count cells, which is `slide-metrics.ts`'s literal definition of
+ * a `graphic`, and `imageryOrDeviceShare = imageryShare + graphicShare`.
+ *
+ * RFC-20 §11.1 states it as a class and this is its FIFTH instance: the hatch
+ * was scored as type, the plinth as a device, the screen as content, the
+ * scrims as the cover's device, and now the closer's band rhythm as the
+ * closer's. **A floor calibrated over a decoration is a floor calibrated on
+ * the decoration.**
+ *
+ * ## Why re-deriving is not lowering a bar to fit a plate
+ *
+ * §5.6 rule 4 forbids moving a floor to make a specific plate pass, and this
+ * is the case that rule's own sweep exists to distinguish: the INPUT changed,
+ * because a layer that was inflating it is gone. Rule 1 is the decision
+ * procedure and it is applied literally here — the bands separate completely
+ * (8.0 against 0.0, no overlap at all), so the floor is their midpoint rounded
+ * toward NEGLECTED: **0.04**.
+ *
+ * The separation is what makes it safe. A closer with nothing on it measures
+ * ZERO, not 3%, so 0.04 refuses the neglected plate by construction while
+ * admitting the thinnest real one at 2x.
+ *
+ * ## What still carries the closer
+ *
+ * Its accent rule, its ask band's border and accent gradient, and the recap
+ * strip when there are earlier slides to recap. All three are drawn objects
+ * the composition earned. What it no longer has is a wallpaper standing in for
+ * them.
+ */
+export const CLOSER_IMAGERY_OR_DEVICE_FLOOR = 0.04;
+
+/**
  * **Not taste — render integrity.** A single 74px headline line on its own
  * measures ≈0.015–0.02 ink; below that there is no readable content at all,
  * which means a font failed to load, a slot came through empty, or the
@@ -1341,7 +1393,68 @@ export const FULL_BLEED_IMAGERY_SHARE = 0.5;
  * (`interest-relayout.ts`) can switch on it and the ledger row can be
  * grouped by it.
  */
-export type InterestFailureKind = "render-integrity" | "marks-missing" | "clipped" | "dead-space" | "empty" | "no-device" | "text-wall";
+export type InterestFailureKind = "render-integrity" | "marks-missing" | "clipped" | "dead-space" | "empty" | "no-device" | "text-wall" | "one-element";
+
+/**
+ * ── CLAUSE H: HOW MANY THINGS ARE ON THIS PLATE. THE SEMANTIC FLOOR. ──
+ *
+ * RFC-21 Part 2, and it is the answer to a question this project has now
+ * asked six times and answered wrong six times.
+ *
+ * ## What the six failures have in common
+ *
+ * `occupiedShare`, `contentOccupiedShare`, `flatBackgroundShare`,
+ * `edgeDensity`, `contentOccupiedShare / occupiedShare`, `displayTypeScale` —
+ * six proposed separators, each falsified with its own control
+ * (`instagram-floor-candidates-falsified`). And then the clauses built on
+ * them fell the same way: clause D's occupancy limb (PR #124), clause G's
+ * pixel limb, and `largestEmptyRect` itself, which RFC-21 §2.9 measured
+ * giving **four different verdicts on four brand palettes for one plate**.
+ *
+ * > **Every mask in `slide-metrics.ts` is cut at an ABSOLUTE distance, so on a
+ * > quiet plate nothing measured off the pixels is palette-invariant — not a
+ * > share, and not a rectangle derived from one.**
+ *
+ * The owner ruled this out in words on 2026-09-14 — *make sure the metrics are
+ * agnostic to colour and rest on the absence of ELEMENTS, STRUCTURE and
+ * contrast* — and the sentence contains the answer the measurements kept
+ * circling: **count the elements.**
+ *
+ * ## Why this one cannot have the defect
+ *
+ * It reads no pixels. `countContentElements` reads the ASSEMBLED document:
+ * the prose fields that survived `LAYOUT_FIELD_KEYS`, the hero image, a
+ * list's rows fragment, a device fragment, a closer's recap strip. A brand
+ * palette cannot reach any of them. Re-skin the whole kit and the count is
+ * identical, which is the property six pixel candidates could not offer.
+ *
+ * **And it is the reference's own rule.** `docs/instagram-restraint-reference.md`
+ * counted `@semrush` and `@buffer` at *three or four element groups* and the
+ * prep render the owner rejected at **nine, three of which said the same
+ * sentence.* The professional bar was already written down as a COUNT.
+ *
+ * ## The floor is 2, and deliberately not 3
+ *
+ * The owner's grey screen is one headline and nothing else: **1**. A plate
+ * carrying a statement and a body is **2**. A composed statement plate with
+ * its bounded object is **3**.
+ *
+ * 2 refuses exactly the plate the complaint named and nothing more. 3 would
+ * refuse every honest headline-and-body slide whose copy carries no figure —
+ * and while RFC-20 §11.4 argues such a plate *should* carry an object, a gate
+ * is the wrong instrument for an argument about craft. **A floor refuses
+ * neglect; it does not enforce a target.** The 3-4 norm belongs in the prompt
+ * and in `default:two-elements-per-slide`'s report to the judge, which reads
+ * this same counter.
+ *
+ * ## What it is NOT
+ *
+ * Not a replacement for clause E — a cover still has to carry a photograph or
+ * a device, and that is a question about WHICH elements rather than how many.
+ * Not a replacement for clause F — a wall of text has plenty of elements.
+ * This clause answers one question: **is there more than one thing here.**
+ */
+export const CONTENT_ELEMENT_FLOOR = 2;
 
 /** Facts a reviewer and `08b` should see, that must never fail an attempt. */
 export type InterestWarningKind =
@@ -1380,6 +1493,22 @@ export interface InterestWarning {
 export interface InterestFloorOptions {
   /** This slide's carousel position. Every finding names it, and the waiver is keyed on it. */
   slide: number;
+  /**
+   * How many content elements the ASSEMBLED slide carries — clause H's whole
+   * input, from `countContentElements` (`visual-qa-pre-checks.ts`).
+   *
+   * SUPPLIED rather than derived, the same contract `groundHex` has in
+   * `measure`: this module reads `SlideMetrics`, and the element count is a
+   * fact about the assembled DOCUMENT that only the caller holds. Deriving it
+   * here would mean a second counter that can disagree with the one
+   * `default:two-elements-per-slide` reads, which is the drift clause H exists
+   * to avoid.
+   *
+   * ABSENT means unknown and clause H ABSTAINS. A clause that guesses at its
+   * own input is worse than one that sits out, and a unit fixture or a template
+   * probe legitimately has no assembled slide to count.
+   */
+  contentElements?: number | undefined;
   /**
    * `downgradedForImagesThisAttempt` from the workflow — which slides THIS
    * attempt shipped text-only for want of a picture.
@@ -1515,10 +1644,43 @@ export function plateSubject(metrics: SlideMetrics, probe: SlideProbe | undefine
   if (metrics.imageryOrDeviceShare >= IMAGERY_OR_DEVICE_FLOOR * SUBJECT_IMAGERY_MULTIPLE) {
     return `it carries imagery or a drawn device over ${pct(metrics.imageryOrDeviceShare)} of the frame`;
   }
-  const type = probe?.displayTypeScale;
-  if (type !== undefined && type >= DISPLAY_TYPE_SCALE_FLOOR) {
-    return `its type is set at display scale (${pct(type)} of frame height, floor ${pct(DISPLAY_TYPE_SCALE_FLOOR)})`;
-  }
+  // ── THE TYPE LIMB IS WITHDRAWN. IT WAIVED THE PLATE THIS PHASE EXISTS TO
+  //    REFUSE, AND THE SWEEP IS WHAT CAUGHT IT. ──
+  //
+  // It read: *a plate whose type is set at display scale is its own subject*,
+  // and `DISPLAY_TYPE_SCALE_FLOOR` shipped PROVISIONAL with its own comment
+  // saying the gate-zero table had to settle it rather than an eye. The table
+  // settled it, on CI 34960136572, and the answer is no.
+  //
+  //     headline-focus @ fontScale s   displayTypeScale  0.2715
+  //     DISPLAY_TYPE_SCALE_FLOOR                         0.055
+  //     the owner's GREY SCREEN                          the same 0.2715
+  //
+  // **The grey screen is one short headline in a display face.** It reads the
+  // same `displayTypeScale` as a fully composed statement plate, because it is
+  // the same type at the same size — so the limb waived it, and G1 reported
+  // `LER 0.3337` against a 0.28 ceiling with the verdict PASS. A bar that
+  // cannot refuse the thing it was built for is worthless, and a waiver that
+  // excuses it is worse: it makes the bar look like it works.
+  //
+  // This is the sixth separator this project has proposed and measured away
+  // (`instagram-floor-candidates-falsified` holds the other five), and it
+  // fails for the family reason: **a property the good plate and the bad plate
+  // share cannot separate them.** The owner's words it was built on —
+  // *interest comes from bold typography, excellent contrast and strong
+  // visuals* — are about what makes a plate GOOD, and the grey screen has the
+  // typography. What it has not got is anything else.
+  //
+  // So the imagery-or-device limb stands alone, and that is the reading RFC-20
+  // §4 recorded from the reference plates in the first place: *the reference
+  // execution is an OBJECT on a quiet ground.* `@semrush`'s empty lower-left
+  // is earned by a four-node diagram, not by the size of its headline.
+  //
+  // `DISPLAY_TYPE_SCALE_FLOOR` is kept and still printed by the sweep, because
+  // the measurement is worth having and because a constant deleted is a
+  // constant somebody re-invents. Nothing reads it as a gate.
+  void DISPLAY_TYPE_SCALE_FLOOR;
+  void probe;
   return undefined;
 }
 
@@ -1603,6 +1765,19 @@ export function canPaintDevice(archetype: string | undefined): boolean {
   return DEVICE_SLOT_BASENAMES.has(base) || base.startsWith("custom-");
 }
 
+/**
+ * How many content elements the ASSEMBLED slide carries, for clause H.
+ *
+ * Supplied rather than derived, and that is the same contract `groundHex` has
+ * in `measure`: this module reads `SlideMetrics`, and the element count is a
+ * fact about the assembled DOCUMENT that only the caller holds. Deriving it
+ * here would mean a second counter that can disagree with
+ * `countContentElements`, which is the drift clause H exists to avoid.
+ *
+ * ABSENT means unknown, and clause H abstains — it never guesses. A caller
+ * with no assembled slide (a unit fixture, a template probe) gets every other
+ * clause and not this one, which is the same posture `markKinds` takes.
+ */
 export function checkInterestFloor(
   metrics: SlideMetrics,
   probe: SlideProbe | undefined,
@@ -1778,7 +1953,45 @@ export function checkInterestFloor(
   // `holeSpansFrame`.
   const subject = holeSpansFrame(metrics.largestEmptyRect) ? undefined : plateSubject(metrics, probe);
   const rectCeiling = LARGEST_EMPTY_RECT_CEILING[role];
-  if (metrics.largestEmptyRectShare > rectCeiling) {
+  // ── C REPORTS AT THE INTERIOR ROLE. CLAUSE H CARRIES THE REFUSAL. ──
+  //
+  // RFC-21 §2.9 is the owner's colour-agnosticism test made executable — one
+  // plate, four brand palettes, the verdict must be identical. On the
+  // de-decorated tree it is not, at `fontScale l` (CI 34963600799):
+  //
+  //     bundled dark        dead-space
+  //     light ground        pass
+  //     saturated blue      pass
+  //     on the 4.5:1 floor  pass
+  //
+  // `largestEmptyRect` is built from the `empty` mask — no ink AND a mean that
+  // has not left the ground, two ABSOLUTE thresholds. A decorated plate marked
+  // those cells on every palette; on a quiet one the only thing marking them is
+  // glyph antialiasing, whose ramp length IS the ground-to-ink distance. So the
+  // hole grows and shrinks with the client's brand book.
+  //
+  // **THIS DEMOTION WAS TRIED ONCE AND REVERTED, AND THE DIFFERENCE IS CLAUSE
+  // H.** Earlier in this same branch it took nine unit cases red and left the
+  // owner's grey screen refused by NOTHING, which is not a trade worth making:
+  // a clause that is wrong in one dimension is not improved by deleting it, it
+  // is improved by REPLACING it. Clause H — count the elements on the assembled
+  // document — refuses that plate now, on a number no palette can move, so the
+  // demotion costs nothing it used to cost.
+  //
+  // Third clause to reach this conclusion and the same cause every time: clause
+  // D's occupancy limb (PR #124), clause G's pixel limb, and now this. **No
+  // number moved** — the ceiling is untouched at every role, so §5.6 rule 4 is
+  // not being worked around.
+  //
+  // STILL GATING AT COVER AND CLOSER, and that is not a hedge. Both roles carry
+  // imagery by construction, so their rectangle is a fact about a photograph
+  // rather than about antialiasing, and a hollow cover or a hollow closer is a
+  // composition failure no other clause is built to see.
+  //
+  // The rectangle, its corners and the subject are still computed, still on
+  // every finding's `measured`, still on the gate payload, and still read by
+  // `interest-relayout.ts`'s cover limb.
+  if (metrics.largestEmptyRectShare > rectCeiling && role !== "interior") {
     // WAIVED rather than skipped when the plate carries a subject. The hole
     // is real either way and the reviewer, the judge and the ledger should
     // all still see it with the reason it was allowed -- the same posture
@@ -1858,14 +2071,15 @@ export function checkInterestFloor(
   const occupiedFloor = OCCUPIED_SHARE_FLOOR[role];
   const lowOccupancy = metrics.flatBackgroundShare > FLAT_BACKGROUND_CEILING && metrics.occupiedShare < occupiedFloor;
   // ── E — a cover or a closer carries something other than type. ──
-  if (role !== "interior" && metrics.imageryOrDeviceShare < IMAGERY_OR_DEVICE_FLOOR) {
+  const deviceFloor = role === "closer" ? CLOSER_IMAGERY_OR_DEVICE_FLOOR : IMAGERY_OR_DEVICE_FLOOR;
+  if (role !== "interior" && metrics.imageryOrDeviceShare < deviceFloor) {
     const finding: InterestFinding = {
       slide,
       role,
       kind: "no-device",
       measured: { imageryOrDeviceShare: metrics.imageryOrDeviceShare, imageryShare: metrics.imageryShare, graphicShare: metrics.graphicShare },
-      threshold: IMAGERY_OR_DEVICE_FLOOR,
-      sentence: `${where} — imagery and drawn devices cover ${pct(metrics.imageryOrDeviceShare)} of the frame (floor ${pct(IMAGERY_OR_DEVICE_FLOOR)} for ${roleNoun(role)}); this is type on ground and nothing else.`,
+      threshold: deviceFloor,
+      sentence: `${where} — imagery and drawn devices cover ${pct(metrics.imageryOrDeviceShare)} of the frame (floor ${pct(deviceFloor)} for ${roleNoun(role)}); this is type on ground and nothing else.`,
       steer:
         role === "cover"
           ? `A cover carries a photograph, a title card over a graphic ground, or a figure device — a headline on flat ground is not a cover. Give slide ${slide} a real visualNeed, or ${deviceSteer("a device built from the strongest number in this post")}.`
@@ -1903,10 +2117,66 @@ export function checkInterestFloor(
   // this has no flat-background limb — it does not need one. "There is
   // nothing here to read" is a defect whatever the ground is doing, and a
   // busy ground is exactly the case the conjunction in D lets through.
+  //
+  // ── 2026-09-15: THE DOM LIMB DECIDES, AND THE PIXEL LIMB REPORTS. ──
+  //
+  // This clause had two limbs and they asked the same question twice, once
+  // off the pixels (`contentOccupiedShare`) and once off the document
+  // (`probe.textBoxShare`). Three measurements say the DOM limb is the one
+  // that should carry the refusal, and none of them is a preference.
+  //
+  // **1. The pixel limb is not colour-agnostic, and the owner required that
+  // it be.** His instruction, 2026-09-14: *"every company has completely
+  // different brand colours — make sure the metrics are agnostic to colour
+  // and rest on the absence of elements, structure and contrast rather than
+  // on thresholds fitted to one palette."* Measured on PR #124 across four
+  // brand palettes from 4.54:1 to 17.4:1: on a QUIET plate
+  // `contentOccupiedShare` spreads **0.032** with the brand and nothing else
+  // changed. The floor it is compared against is **0.06**. A threshold whose
+  // palette spread is half its own value is not a threshold; it is a coin
+  // weighted by the client's brand book. Every mask in `slide-metrics.ts` is
+  // cut at an ABSOLUTE distance, and on a plate whose ink is glyph
+  // antialiasing the length of that ramp IS the ground-to-ink distance.
+  //
+  // **2. The pixel limb was measuring the decoration.** `.copy-art`'s hatch
+  // at 22% took a plate whose only content was a two-line headline to
+  // `contentOccupiedShare` 0.3128; the same plate at 10% reads 0.0379, which
+  // is the type alone. The whole alpha sweep is in
+  // `CONTENT_OCCUPIED_SHARE_FLOOR`'s own comment. RFC-20 §11.1 states the
+  // class: *any full-frame painted layer that a plate has not earned will be
+  // scored by some clause as the evidence that clause was built to look for.*
+  // This is that sentence about this clause. **The hatch is deleted now
+  // (§11.4), so the number this limb reads has lost the thing that was
+  // holding it up** — and the honest response to that is to stop gating on
+  // it, not to re-fit it to the plate that is left.
+  //
+  // **3. The DOM limb separates far better.** `textBoxShare` is the summed
+  // area of the text-bearing leaf boxes: a populated slide's copy lockup
+  // alone measures 0.1-0.4 and a render whose copy never arrived measures 0,
+  // because every template hides its empty slots. That is a 10-40x band
+  // against `PROBE_TEXT_BOX_SHARE_FLOOR`, where the pixel limb's own debt row
+  // sat at 0.0414 against 0.06 — inside its palette spread.
+  //
+  // WHAT THIS COSTS, STATED RATHER THAN GLOSSED. `PROBE_TEXT_BOX_SHARE_FLOOR`
+  // was calibrated as ONE OF TWO limbs and deliberately biased toward false
+  // PASSES (its own comment says so). Carrying the refusal alone, it is a
+  // weaker clause than the pair was, and **that constant is not raised here
+  // to compensate** — RFC-20 §5.6 rule 4 forbids moving a floor to suit a
+  // plate, and it forbids it in this direction too. What ships instead is the
+  // measurement that would let it move honestly: the gate-zero sweep now
+  // prints `textBoxShare` on every row and summarises its band per role, so
+  // the next pass sets this floor from a table rather than from an argument.
+  //
+  // THE PIXEL LIMB IS KEPT AS A FALLBACK, not deleted, for the one case the
+  // DOM cannot answer: a caller with no probe. `checkInterestFloor` takes
+  // `probe` as optional and several call sites pass none, and a clause that
+  // silently stops running for them would be worse than a palette-dependent
+  // one. On that path the finding says which limb spoke.
   const contentFloor = CONTENT_OCCUPIED_SHARE_FLOOR[role];
   const typeShare = probe?.textBoxShare;
   const noType = typeShare !== undefined && typeShare < PROBE_TEXT_BOX_SHARE_FLOOR;
-  if (metrics.contentOccupiedShare < contentFloor || noType) {
+  const noContentPixels = typeShare === undefined && metrics.contentOccupiedShare < contentFloor;
+  if (noType || noContentPixels) {
     findings.push({
       slide,
       role,
@@ -1921,11 +2191,45 @@ export function checkInterestFloor(
       threshold: noType ? PROBE_TEXT_BOX_SHARE_FLOOR : contentFloor,
       sentence: noType
         ? `${where} — the document carries no text box at all (${pct(typeShare ?? 0)} of the plate, floor ${pct(PROBE_TEXT_BOX_SHARE_FLOOR)}) while ${pct(metrics.occupiedShare)} of the frame is painted: the ground layers rendered and the copy did not.`
-        : `${where} — only ${pct(metrics.contentOccupiedShare)} of the frame carries anything to read (floor ${pct(contentFloor)} for ${roleNoun(role)}), ` +
-          `against ${pct(metrics.occupiedShare)} of the frame carrying a mark of any kind: the difference is ground decoration, and the largest region with no content in it covers ${pct(metrics.largestEmptyContentRectShare)}.`,
+        : `${where} — measured on the PIXELS because this render carried no DOM probe: only ${pct(metrics.contentOccupiedShare)} of the frame carries anything to read ` +
+          `(floor ${pct(contentFloor)} for ${roleNoun(role)}), against ${pct(metrics.occupiedShare)} of the frame carrying a mark of any kind, and the largest region with no content in it covers ${pct(metrics.largestEmptyContentRectShare)}. ` +
+          `This limb is palette-dependent (spread 0.032 across brand palettes) and runs only when the probe is absent.`,
       steer:
         `Slide ${slide} is a decorated empty plate: its ground treatment is painting and its content is not. ` +
         `Check that the headline and body actually reached it, then give it something a reader can take away — ${deviceSteer("a device built from its own figure")}, a second content element — or merge it into ${slide > 1 ? `slide ${slide - 1}` : "the next slide"}.`,
+    });
+  }
+
+  // ── H — nothing to carry the plate. THE SEMANTIC FLOOR (RFC-21 Part 2). ──
+  //
+  // `CONTENT_ELEMENT_FLOOR`'s own comment carries the argument: six pixel
+  // separators were measured away, and the clauses built on them turned out to
+  // be palette-dependent one after another, because every mask in
+  // `slide-metrics.ts` is cut at an absolute distance. This clause reads no
+  // pixels at all. It asks the ASSEMBLED DOCUMENT how many things are on it.
+  //
+  // It is the clause that refuses the owner's grey screen, and it refuses it
+  // identically on every brand: one headline and nothing else counts 1, on a
+  // dark kit, a light kit, a saturated kit and a kit on the 4.5:1 floor.
+  //
+  // ABSTAINS when the caller supplied no count. A clause that guesses at its
+  // own input is worse than one that sits out, and `interest-floor.test.ts`
+  // asserts the abstention so it cannot become an accidental pass.
+  const elements = opts.contentElements;
+  if (elements !== undefined && elements < CONTENT_ELEMENT_FLOOR) {
+    findings.push({
+      slide,
+      role,
+      kind: "one-element",
+      measured: { contentElements: elements },
+      threshold: CONTENT_ELEMENT_FLOOR,
+      sentence:
+        `${where} — the plate carries ${elements === 0 ? "nothing" : "one element"} (floor ${CONTENT_ELEMENT_FLOOR}): ` +
+        `a headline on empty ground is not a slide, whatever the ground is doing.`,
+      steer:
+        `Give slide ${slide} a second thing to look at, from what the post already has: the body line it is missing, ` +
+        `${deviceSteer("a device built from a figure in its own copy")}, a photograph, or the source it is citing. ` +
+        `If there is nothing to add, merge it into ${slide > 1 ? `slide ${slide - 1}` : "the next slide"} — the reference accounts carry three or four element groups per plate, never one.`,
     });
   }
 
@@ -2173,6 +2477,11 @@ export function checkSlidesInterestFloor(
   opts: {
     downgradedForImages?: ReadonlySet<number> | undefined;
     archetypeBySlide?: ReadonlyMap<number, string> | undefined;
+    /**
+     * RFC-21 Part 2 — `countContentElements` per slide, from the assembled
+     * document. Clause H's whole input; absent slides make it abstain.
+     */
+    contentElementsBySlide?: ReadonlyMap<number, number> | undefined;
     /** RFC-17 — `assembleSlidesData`'s `markReportOut.kindsBySlide`. See `InterestFloorOptions.markKinds`. */
     markKindsBySlide?: ReadonlyMap<number, readonly string[]> | undefined;
   } = {},
@@ -2193,6 +2502,7 @@ export function checkSlidesInterestFloor(
         slide: slide.n,
         ...(opts.downgradedForImages !== undefined ? { downgradedForImages: opts.downgradedForImages } : {}),
         ...(archetype !== undefined ? { archetype } : {}),
+        ...(opts.contentElementsBySlide?.get(slide.n) !== undefined ? { contentElements: opts.contentElementsBySlide.get(slide.n)! } : {}),
         ...(markKinds !== undefined ? { markKinds } : {}),
       }),
     );

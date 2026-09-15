@@ -180,6 +180,9 @@ import {
   TEXT_SHARE_CEILING,
   type InterestFloorReport,
 } from "./interest-floor.js";
+import { composeBoundedObjects, type BoundedObjectDecision } from "./bounded-object.js";
+import { checkSlideWordBudget, formatWordBudgetFindings, MAX_WORDS_PER_SLIDE } from "./slide-word-budget.js";
+import { ceilingFor, enforceImageryBand, MIN_PICTURE_SLIDES, type ImageryDemotion, type ImageryPromotion } from "./imagery-floor.js";
 import { planInterestRelayout, type InterestRelayoutPlan } from "./interest-relayout.js";
 // RFC-19 §4 item 17 — the deterministic headline fact cards `04b` falls back to, and the one hold it keeps.
 import { headlineFallbackResearch, NO_READABLE_SOURCE } from "./research-fallback.js";
@@ -339,6 +342,7 @@ import {
   resolveRenderRules,
   templateBasename,
   type ContrastFact,
+  countContentElements,
 } from "./visual-qa-pre-checks.js";
 import { parseStyleDirective, applyIntents, type StyleDirectiveResult, type StyleIntent, type StyleRefusal } from "./style-directive.js";
 import {
@@ -5095,6 +5099,39 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        */
       emphasisIssues: EmphasisIssue[];
       /**
+       * RFC-20 §11.4 — what the bounded object did to each statement plate:
+       * `kept` (the writer composed its own device), `composed` (built from a
+       * figure already in that slide's copy) or `refused` (no figure, no
+       * source — and nothing invented to cover it).
+       *
+       * ABSENT rather than empty when the post has no `headline_focus` and
+       * no `text_only` slide, which is the same asymmetry `selfCheck` uses:
+       * a field attached to every post says nothing, and this one is here to
+       * explain the plates that are about to report an emptiness finding.
+       */
+      boundedObjects?: BoundedObjectDecision[];
+      /**
+       * RFC-21 — the imagery floor's promotions: `text_only` slides turned into
+       * `photo` so the carousel could ask for enough pictures. ABSENT when the
+       * draft already met the floor.
+       *
+       * A promotion is a REQUEST for a picture and never a promise of one: if
+       * sourcing finds nothing the slide is reassigned back to `text_only` and
+       * ships heroless, which `downgradedForImages` already reports.
+       */
+      imageryPromotions?: ImageryPromotion[];
+      /**
+       * The other end of the band: which slides gave a photograph back, so the
+       * post could carry the typography and the figures the owner's rule asks
+       * for alongside the pictures.
+       *
+       * A demotion is not a loss of information the way a failed promotion is:
+       * the slide keeps its whole statement and lands on the plate the bounded
+       * object was built for. Absent rather than empty on a draft the writer
+       * composed inside the band.
+       */
+      imageryDemotions?: ImageryDemotion[];
+      /**
        * RFC-19 (Phase 6) — every QUALITY GATE that refused the attempt that actually shipped.
        *
        * Absent, never empty, on a clean run: the marker's own asymmetry (`self-check-degrade.ts`). Present
@@ -5760,6 +5797,25 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        * degrades to plain type, and none of it can hold or fail a run.
        */
       let emphasisIssues: EmphasisIssue[] = [];
+      /** RFC-21 — which slides the imagery band promoted this run, for the draft report. Empty on a post the writer composed with enough pictures. */
+      let imageryPromotions: ImageryPromotion[] = [];
+      /** RFC-21 — and which it demoted, for a draft that reached for a photograph on nearly every plate. */
+      let imageryDemotions: ImageryDemotion[] = [];
+      /**
+       * RFC-20 §11.4 — what the bounded object did to this run's statement
+       * plates, from the LAST assembly, which is the one that rendered.
+       *
+       * Same lifecycle and the same WARN-only footing as `emphasisIssues`
+       * directly above: written by `assembleForAttempt`, read by the draft
+       * report, and unable to hold or fail anything.
+       *
+       * The `refused` rows are the ones that matter. A plate recorded as
+       * refused is a plate whose own copy carried no standalone figure, and
+       * **nothing was invented to cover it** — so if that plate then reports
+       * clause C or clause G, this row is the whole explanation, and the
+       * remedy is the writer's rather than the renderer's.
+       */
+      let boundedObjectDecisions: BoundedObjectDecision[] = [];
       /**
        * RFC-17 — the kinds each slide's ground actually admitted, from the
        * assembly that built the document `08a1` is about to measure.
@@ -6164,6 +6220,77 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         shippedAttempt = attempt;
         // Depth 1 — copy that cleared its own schema. Every deeper checkpoint below replaces it.
         recordSalvage(attempt, 1, copy);
+      }
+
+      // ── 04m2: THE IMAGERY BAND — before anything asks for a picture. ──
+      //
+      // MEASURED on two real prep runs, same agent, same week, same budget:
+      // `karoslabs` pubsub-21551118258353204 shipped 5 of 8 slides with a hero
+      // image (one of them AI-generated); `thepitchbydeel`
+      // pubsub-21559620763659451 shipped **0 of 8**. Images are sourced only
+      // for `HERO_IMAGE_LAYOUTS`, so the number of pictures in a post was
+      // decided entirely by the copy model's layout choices and nothing
+      // enforced a floor — while `DEFAULT_RUN_SHAPE.photoSlides` priced six on
+      // every run. The owner's words: *"it makes no sense that the budget pays
+      // for 6 and the post comes out with 0."*
+      //
+      // HERE, and the position is the whole point: after the copy is final and
+      // BEFORE 04n binds the concept or any tier sources a picture, so a
+      // promoted slide is eligible for the concept, the library, stock, the
+      // scraper and the generator on exactly the same terms as a slide the
+      // writer chose. Placed after sourcing it would promote slides nothing
+      // would ever fill.
+      //
+      // $0.00 and deterministic — it changes one enum on one slide, in either
+      // direction, and it promotes or demotes only `text_only`/`photo`, which
+      // resolve to the same template and differ by nothing but whether an image
+      // was found.
+      //
+      // BOTH ENDS since 2026-09-15, on the owner's rule: *"images in 3 to 5
+      // slides across the post, and the rest lean on clean typography, data or
+      // graphic objects."* The floor was only ever a bottom, so nothing stopped
+      // a draft choosing eight photographs — the one-rhythm post the copy prompt
+      // warns against. Between 3 and 5 this step is a no-op and returns the copy
+      // object by identity.
+      const imagery = enforceImageryBand(copy);
+      if (imagery.promotions.length > 0 || imagery.demotions.length > 0) {
+        copy = imagery.copy;
+        imageryPromotions = imagery.promotions;
+        imageryDemotions = imagery.demotions;
+        // ── CHECKPOINTED, because a resumed run must not write it twice. ──
+        //
+        // `enforceImageryBand` is pure and `copy` is rebuilt identically on a
+        // resume, so the DECISION replays for free; the ledger write is the one
+        // side effect, and outside a step it re-executes every time the engine
+        // replays this leg. `resume-idempotency.test.ts` compares the whole
+        // tool-call census before and after a resume and caught it at
+        // `ledger.appendEvent: 5 -> 6` the first time this step had anything to
+        // report — the floor only ever fired on fixtures that needed no
+        // promotion, so the same shape had been latent here since 04m2 was
+        // written.
+        await wf.step.code(rev(`04m2-imagery-band-attempt-${attempt}`), async () => {
+          try {
+            await tools["ledger.appendEvent"]?.execute(
+              {
+                runId: wf.runId,
+                eventId: `${wf.runId}__imagery-band-attempt-${attempt}`,
+                level: "info",
+                message:
+                  `attempt ${attempt}: the imagery band ` +
+                  (imagery.promotions.length > 0
+                    ? `promoted ${imagery.promotions.length} text_only slide(s) to photo: ${imagery.promotions.map((p) => `slide ${p.slide}`).join(", ")}`
+                    : `demoted ${imagery.demotions.length} photo slide(s) to text_only: ${imagery.demotions.map((d) => `slide ${d.slide}`).join(", ")}`) +
+                  ` (${imagery.before} -> ${imagery.after} picture slides, band ${MIN_PICTURE_SLIDES}-${ceilingFor(copy.slides.length)})` +
+                  (imagery.shortfallReason !== undefined ? ` — SHORT: ${imagery.shortfallReason}` : "") +
+                  (imagery.excessReason !== undefined ? ` — OVER: ${imagery.excessReason}` : ""),
+              },
+              { ctx },
+            );
+          } catch (error) {
+            console.error("04m2-imagery-band: could not record the change", error);
+          }
+          return { promotions: imagery.promotions, demotions: imagery.demotions, before: imagery.before, after: imagery.after };
+        });
       }
 
       // ── 04n: bind the concept to ONE slide — or discard it, silently and for free (RFC-16 §2.3/§2.4) ──
@@ -8357,12 +8484,41 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           series === undefined
             ? frozen.brandTokens
             : { ...frozen.brandTokens, seriesBadge: seriesBadgeFor(series, frozen.brandTokens.seriesBadge) };
+        /**
+         * ── THE BOUNDED OBJECT (RFC-20 §11.4), COMPOSED BEFORE ASSEMBLY. ──
+         *
+         * `headline_focus` and heroless `slide.html` are the two archetypes
+         * that carry no photograph and no structured panel, and RFC-20 §11.2
+         * measured what that leaves: type on ground and nothing else, below
+         * the sweep's own neglected controls. The phase covered for it twice
+         * with paint — a plinth, then a hatch — and §11.1 is the record of
+         * what paint does to the instrument. This is the other answer: a
+         * bounded object built from a figure already in the slide's own copy,
+         * at **$0.00 and no model call**.
+         *
+         * HERE rather than inside `assembleSlidesData` for two reasons. The
+         * fact cards are in scope here and are not a parameter of that
+         * function, and putting it at the top of `assembleForAttempt` means
+         * all three assemblies in one attempt (07c, the typographic fallback
+         * at 08a, the free re-layout's re-render at 08a1c) compose the same
+         * objects from the same copy. It returns a new draft rather than
+         * mutating one, so the second assembly is not a function of the first.
+         *
+         * A slide whose own copy carries no standalone figure gets NOTHING —
+         * see `composeBoundedObjects`. Prep run `pubsub-21839432908803804`
+         * shipped a fabricated `2` pulled out of the word `B2B` with a real
+         * company printed under it as the source, and the rule that came out
+         * of it is absolute: a plate with nothing honest to put in frame goes
+         * to the floor as it is.
+         */
+        const bounded = composeBoundedObjects(copyForAssembly, promptFacts);
+        boundedObjectDecisions = bounded.decisions;
         const assembled = assembleSlidesData({
           clientSlug: wf.clientSlug,
           postId: runClaim.postId,
           repoRoot: options.repoRoot,
           brandTokens: brandTokensForAssembly,
-          copy: copyForAssembly,
+          copy: bounded.copy,
           selections: selectionsForAssembly,
           canvas: frozen.styleConfig.canvas,
           availableTemplates,
@@ -8542,6 +8698,51 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             ...(drr.failures[0]?.slide !== undefined ? { slide: drr.failures[0].slide } : {}),
           });
         }
+      }
+
+      // ── 07h2: THE WORD BUDGET — short and readable, counted. ──
+      //
+      // The owner's rule, 2026-09-15: *"קצר וקריא: מגבלת מילים של עד 20-30
+      // מילים לשקופית (הפירוט המלא שייך לקפשן)."* Short and readable, up to
+      // 20-30 words a slide, and the full detail belongs to the caption.
+      //
+      // UNCONDITIONAL, unlike `07h` above, and that placement is the claim.
+      // `renderRuleSource === "client"` replaces the four house LAYOUT rules
+      // with the client's, which is right: how a slide is composed is theirs to
+      // specify. Whether the copy on it can be read at feed size is not a
+      // layout preference, and `checkCraftHygiene` at `07b` is unconditional
+      // for exactly the same reason.
+      //
+      // FREE, and earlier than the pixels. Clause F (`TEXT_SHARE_CEILING`)
+      // already refuses a plate that measures as a wall of text, but it costs a
+      // render to find out and the relayout ladder answers it by dropping the
+      // slide's `fontScale` a step - which is how long copy became unreadable
+      // type. Counting the words here catches the same defect before a render
+      // is spent and before anything has shrunk to fit.
+      //
+      // Never a hold: on the final attempt the finding goes to the judge and
+      // the reviewer, the same road every other quality finding in this step
+      // takes.
+      const wordBudget = await wf.step.code(rev(`07h2-word-budget-attempt-${attempt}`), () =>
+        checkSlideWordBudget(slidesDataAttempt, copy),
+      );
+      if (wordBudget.length > 0) {
+        if (!isFinalAttempt) {
+          returnToCopyWith(
+            `slide word budget exceeded on attempt ${attempt} (no render spent, limit ${MAX_WORDS_PER_SLIDE} words a slide): ` +
+              formatWordBudgetFindings(wordBudget),
+          );
+          continue;
+        }
+        recordSelfCheckFinding({
+          gate: "render-rules",
+          step: rev(`07h2-word-budget-attempt-${attempt}`),
+          kind: "house-rule",
+          detail: `the slide word budget was exceeded on the final attempt: ${formatWordBudgetFindings(wordBudget)}`,
+          remedy: "waived",
+          remedyNote: "left to the visual-QA judge and the human reviewer rather than held",
+          slide: wordBudget[0]!.slide,
+        });
       }
 
       // ── 07k: the cross-run variety check (Phase 2, item P) ──
@@ -8733,6 +8934,16 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // RFC-17 — see `markKindsBySlide`'s declaration: without it the
           // `marks-not-visible` warning is unconditional on every dark kit.
           markKindsBySlide,
+          // RFC-21 Part 2 — clause H, the semantic floor. Counted off the
+          // document that was just RENDERED (`slidesDataForQa`), never off the
+          // copy: a device the writer declared on an archetype with no slot for
+          // it is dropped by `contentFor` without a word, and a plate must not
+          // be credited with an element the reader never sees. Same counter
+          // `default:two-elements-per-slide` reads, so the gate and the judge
+          // cannot disagree about what is on a plate.
+          contentElementsBySlide: new Map(
+            slidesDataForQa.slides.map((sl, index) => [sl.n, countContentElements(sl, index === 0)] as const),
+          ),
         }),
       );
       let interestRelayout: InterestRelayoutPlan | undefined;
@@ -8769,7 +8980,32 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // archetype its own content calls for, step the type scale, move a
         // sentence to the caption. `undefined` means the table had nothing
         // to try, which is exactly what the paid redraft is for.
-        const plan = planInterestRelayout(copy, selections, promptFacts, floor.findings, { styleOverrides: slideStyleOverrides });
+        // THE COMPOSED COPY, NOT THE DRAFT — RFC-20 §11.4.
+        //
+        // `assembleForAttempt` composes a bounded object onto every
+        // `headline_focus` and `text_only` slide before it renders, and it
+        // returns a new draft rather than mutating this one, so `copy` does
+        // not know what the pixels it just measured actually carried. Handing
+        // the planner the draft made its cheapest remedy a lie on precisely
+        // the two commonest failure kinds: `deviceFromText` is deterministic
+        // over the slide's own headline, body and source, so re-offering
+        // `attach-device` there proposes the device the plate is ALREADY
+        // wearing — a byte-identical re-render at `08a1c`, an identical
+        // failure at `08a1d`, and the attempt's one free chance spent on
+        // nothing. That is the same defect `interest-relayout.ts`'s own
+        // `DEVICE_SLOT_ARCHETYPES` guard exists to prevent, reached from the
+        // other side.
+        //
+        // Composed here rather than reused from the assembly because this is
+        // a pure function of the same two inputs — it cannot disagree — and a
+        // variable carried across 400 lines to be read once can.
+        //
+        // The plan's CHANGES are still applied to `copy` below, so the draft
+        // the deliverable reports stays the writer's. What moves here is only
+        // what the planner is allowed to SEE.
+        const plan = planInterestRelayout(composeBoundedObjects(copy, promptFacts).copy, selections, promptFacts, floor.findings, {
+          styleOverrides: slideStyleOverrides,
+        });
         if (plan !== undefined) {
           interestRelayout = await wf.step.code(rev(`08a1b-relayout-for-interest-attempt-${attempt}`), () => plan);
           // Every mutation the re-layout makes is built into a CANDIDATE and
@@ -9629,6 +9865,17 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // RFC-17 — what the shipped assembly's marks could not do. Reported,
         // never gated; an empty array is the ordinary case.
         emphasisIssues,
+        // RFC-20 §11.4 — the bounded object's own decisions, ABSENT rather
+        // than empty when this post has no statement plate at all. Present
+        // and full of `refused` rows is the interesting case and the one a
+        // reviewer reading a clause-C or clause-G finding needs next.
+        ...(boundedObjectDecisions.length > 0 ? { boundedObjects: boundedObjectDecisions } : {}),
+        // RFC-21 — which slides the imagery band moved, and which way. ABSENT
+        // rather than empty on a post whose writer chose a mix already inside
+        // the band, which is the same asymmetry every other marker on this
+        // object uses.
+        ...(imageryPromotions.length > 0 ? { imageryPromotions } : {}),
+        ...(imageryDemotions.length > 0 ? { imageryDemotions } : {}),
         // RFC-19 — ABSENT, never empty, when nothing refused. The asymmetry is the contract: a marker
         // attached to every clean post is the "silently shipping a bad post" failure in reverse.
         ...(finalSelfCheckFindings.length > 0

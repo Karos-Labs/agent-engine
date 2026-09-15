@@ -501,9 +501,40 @@ export function deriveBrandRenderTokens(brand: unknown, brandTokens: BrandTokens
     if (value !== undefined) cssVars[varName] = value;
   }
 
-  // ── fonts: explicit override > brand.json families > none ──
-  const display = asFontFamily(overrides.fontDisplay) ?? asFontFamily((b["fonts"] as Record<string, unknown> | undefined)?.["heading"]);
-  const body = asFontFamily(overrides.fontBody) ?? asFontFamily((b["fonts"] as Record<string, unknown> | undefined)?.["body"]);
+  // ── fonts: explicit override > brand kit, in every spelling a kit uses > none ──
+  //
+  // THIS READ WAS TOO NARROW AND A REAL CLIENT LOST ITS DISPLAY FACE TO IT.
+  //
+  // Measured on `karoslabs`, 2026-09-15. The portal's client record carries
+  // `brandingGuidelines.fontHeading = "Space Grotesk"`; `client/brand.json`,
+  // which is what this function is handed, carries `fonts.heading = "Inter"`.
+  // Every headline the agent has ever rendered for that client has been Inter,
+  // and the owner's complaint — *"you didn't use the company's fonts"* — is
+  // exactly right.
+  //
+  // **The value is lost before it reaches this repo**, in whatever writes
+  // `client/brand.json` from the client record, and that is where the real fix
+  // belongs. What is wrong HERE is narrower and still worth fixing: this read
+  // knew ONE spelling. A kit that says `fontHeading` at its root, or
+  // `fonts.display`, or `typography.heading` — all shapes the portal and the
+  // branding agents have used — silently produced no face at all and fell back
+  // to the bundled stack, with no warning anywhere.
+  //
+  // So it reads every spelling, most specific first. A kit that carries none
+  // still renders on the fallback stack exactly as before; a kit that carries
+  // any of them now paints it.
+  const brandFont = (...paths: Array<[string] | [string, string]>): string | undefined => {
+    for (const path of paths) {
+      const raw = path.length === 1 ? b[path[0]] : (b[path[0]] as Record<string, unknown> | undefined)?.[path[1]!];
+      const family = asFontFamily(raw);
+      if (family !== undefined) return family;
+    }
+    return undefined;
+  };
+  const display =
+    asFontFamily(overrides.fontDisplay) ??
+    brandFont(["fonts", "heading"], ["fonts", "display"], ["fontHeading"], ["fontDisplay"], ["typography", "heading"], ["typography", "display"]);
+  const body = asFontFamily(overrides.fontBody) ?? brandFont(["fonts", "body"], ["fontBody"], ["typography", "body"]);
   const mono = asFontFamily(overrides.fontMono);
   if (display !== undefined) {
     cssVars["--f-display"] = `'${display}', ${FALLBACK_STACKS.display}`;

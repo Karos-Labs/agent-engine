@@ -2,22 +2,7 @@ import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import type { AgentContext, AgentToolRegistry } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
-import {
-  goodRelevanceVerdict,
-  goodTrendScoutOutput,
-  fakeRouterSequence,
-  finalTurn,
-  goodBrandTokens,
-  goodCopyOutput,
-  goodImageCandidatePool,
-  goodResearchOutput,
-  goodStyleConfig,
-  goodVisualQaOutput,
-  fakeRenderCarousel,
-  makePromptStore,
-  setupTestEnvironment,
-  type TestEnvironment,
-} from "./test-helpers.js";
+import { fakeRenderCarousel, fakeRouterSequence, finalTurn, goodBrandTokens, goodCopyOutput, goodImageCandidatePool, goodRelevanceVerdict, goodResearchOutput, goodStyleConfig, goodTrendScoutOutput, goodVisualQaOutput, makePromptStore, pictureSlidesOfGoodCopy, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 
@@ -85,12 +70,21 @@ describe("08-render-carousel: the three-way outcome mapping, never confused (RFC
     const steps = await durableStore.listSteps(params.runId);
     // The pre-flight is what caught it, upstream of the renderer.
     const gone = steps.find((s) => s.stepId === "06f-verify-images-on-disk-attempt-1")?.output as number[] | undefined;
+    // Every slide the VETTING fixture selected an image for, which is all six:
+    // this case hands the model a selection per slide and then deletes every
+    // file, so `06f` verifies six paths and `07a` downgrades the six it was
+    // handed, whatever the imagery band did to the layouts upstream.
     expect(gone).toEqual(copy.slides.map((s) => s.n));
     // And it flowed into the ordinary downgrade path, not a bespoke one.
     const downgrade = steps.find((s) => s.stepId === "07a-downgrade-unfillable-slides-attempt-1")?.output as
       | { downgraded: number[]; reason: string }
       | undefined;
-    expect(downgrade?.downgraded).toEqual(copy.slides.map((s) => s.n));
+    // ...and the DOWNGRADE is the narrower set, MEASURED: only a slide that was
+    // going to render a picture can be downgraded for losing one, and after the
+    // imagery band that is four of the six. The gap between this list and `gone`
+    // above is the band, which makes the pair of them the one assertion in this
+    // file that would go quiet if the band stopped working.
+    expect(downgrade?.downgraded).toEqual(pictureSlidesOfGoodCopy(copy));
     expect(downgrade?.reason).toMatch(/no longer on disk/i);
     // Delivered, with no image attached to any slide.
     expect(steps.map((s) => s.stepId)).toContain("09b-deliver-and-log");

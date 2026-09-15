@@ -219,15 +219,121 @@
      this guard exists to make it fail. */
   .quote-block:has(.quote-text > span:not(:empty)) {
     border-inline-start: calc(14px * var(--ts, 1)) solid var(--accent);
+    /* ── 2026-09-15: THE DOT FIELD IS DELETED. ──
+       A `repeating-radial-gradient` of 2px dots on a 22px pitch is the one the
+       owner named directly: ״לפעמים אתה עושה נקודות ברקע שממש קשה להסתכל על
+       זה״ — dots in the background that are genuinely hard to look at. It is
+       the same rule every other texture in this directory went under
+       (restraint reference rule 1) and it survived the first sweep only
+       because that pass matched `repeating-linear-gradient` and this one is
+       radial. The panel keeps its accent tint and its 14px accent border. */
     background-image:
-      repeating-radial-gradient(circle at 50% 50%,
-        color-mix(in srgb, var(--fg) 15%, transparent) 0 2px,
-        transparent 2px 22px),
       linear-gradient(162deg,
-        color-mix(in srgb, var(--accent) 30%, var(--bg)) 0%,
-        color-mix(in srgb, var(--accent) 16%, var(--bg)) 100%);
+        color-mix(in srgb, var(--accent) 14%, transparent) 0%,
+        color-mix(in srgb, var(--accent) 8%, transparent) 100%);
   }
 
+  /* ── AN IMAGE ON A PANEL ARCHETYPE (RFC-21 Part 2). ──
+
+     Until now only `cover.html` and `slide.html` declared an `{{image:hero}}`
+     slot, so `HERO_IMAGE_LAYOUTS` was two archetypes wide and a carousel that
+     reached for structured panels sourced **no pictures at all** — measured on
+     `thepitchbydeel` pubsub-21559620763659451, 8 slides, 0 images. The imagery
+     floor fixes the COUNT by promoting `text_only` slides; this fixes the
+     RANGE, so a post does not have to choose between a designed panel and a
+     photograph.
+
+     THE OWNER'S BRIEF, 2026-09-15: *add image/illustration slots and sometimes
+     use striking images in other layouts too (beside a stat or a card), so we
+     are not limited to cover and slide.html.*
+
+     IT IS A BAND, NOT A BACKGROUND, and that is the whole design of it. A
+     full-bleed photograph behind a panel would put the panel's type on an
+     uncontrolled ground — the contrast gate cannot promise anything over a
+     picture — and it would re-introduce exactly the full-frame layer RFC-20
+     §11.1 spent a phase removing. A bounded band sits BESIDE the content, has
+     its own edges, and every share it moves is its own.
+
+     `:empty` collapses it, so a slide with no picture is byte-identical to
+     before. `object-fit: cover` on a fixed band means a portrait or a
+     landscape both fill it without distortion, and `onerror` removes the node
+     rather than hiding it — a removed node leaves no broken-image glyph, which
+     is the same rule `cover.html` and `slide.html` already follow. */
+  /* ── THE PICTURE IS THE ELEMENT THAT YIELDS. ──
+
+     `flex: 0 1 auto` with a definite `block-size`, so in this column flex
+     container the band is the ONLY item that can shrink (every sibling is
+     `0 0 auto`). When a long body at `l` asks for more than the 1440px canvas
+     has, the band gives the space back instead of the copy being clipped.
+
+     WHY IT IS THE RIGHT ELEMENT TO GIVE, and this is the whole argument:
+     **text cannot shrink without being clipped, and a cover-fitted photograph
+     can shrink without losing anything.** `object-fit: cover` means a shorter
+     band crops a little more of the same picture at the same scale - no
+     distortion, no reflow, nothing hidden. Capping a text box instead is what
+     CI 35001921837 caught: *"2 element(s) overflow their own box (div.num-zone,
+     div#figure.num-figure), and 0% of the frame is ink inside the 8px bleed
+     band"* - nothing falling off the canvas, a fixed-size numeral hidden by a
+     box drawn smaller than it.
+
+     200px rather than 300: measured down when the same overflow appeared on
+     `stat-callout.html`, whose header carries the arithmetic. `min-block-size`
+     floors the shrink so the band cannot be squeezed to a sliver - at that
+     point it is neither a picture nor honest about being one, and clause E
+     would score a 30px stripe as this plate's drawn device. */
+  .sc-figure-band {
+    position: relative; z-index: 3; flex: 0 1 auto;
+    block-size: calc(200px * var(--ts, 1)); min-block-size: calc(110px * var(--ts, 1)); inline-size: 100%;
+    overflow: hidden; border-radius: 2px;
+    margin-block-end: calc(24px * var(--ts, 1));
+  }
+  /* ── THE COLLAPSE IS KEYED ON A NON-EMPTY `src`, NEVER ON `:has(img)`. ──
+
+     `fillTemplate` ERASES a slot nobody filled, so a slide with no picture
+     still renders `<img src="">` and the `<img>` element is still there.
+     `:not(:has(img))` is therefore FALSE on exactly the plates it was written
+     to collapse, and the band kept its 200px on every pictureless slide in the
+     set. That is what CI 35011946920 measured as `clipped` on
+     `en ltr long l -> stat-callout @ interior`, on a plate the sweep attaches
+     no image to at all — the band was eating the height the long body needed
+     and no amount of shrinking the figure was ever going to give it back.
+
+     `onerror="this.remove()"` does not cover it either, and that is the part
+     worth keeping. An empty `src` may or may not fire `error`, and if it does
+     it fires ASYNCHRONOUSLY: the DOM probe can read the document before the
+     handler runs, so the same template measures differently run to run. A
+     collapse rule has to be true at parse time. `onerror` stays for the case it
+     is actually for, a path that was filled and then failed to load.
+
+     This is the same lesson `slide.html` already carries at its `.scrim` rule:
+     *"`.bg:empty` rather than `:not(:has(.hero))` because this template's
+     `onerror` empties a wrapper instead of removing a top-level node"*. Same
+     defect, one archetype over, and the house pattern was already written down. */
+  .sc-figure-band:not(:has(img[src]:not([src=""]))) { display: none; }
+  .sc-figure-band img { inline-size: 100%; block-size: 100%; object-fit: cover; display: block; }
+  /* ── AND THE PANEL STOPS SHRINKING WHEN A PICTURE IS ON THE PLATE. ──
+
+     `.quote-block` is `flex: 1 1 auto` with `min-block-size: 0`. It GROWS to
+     fill the gap, which is what its own comment above is about, and it also
+     SHRINKS below its own content, which nothing above is about and which is
+     how `stat-callout.html` came to report `clipped` twice.
+
+     The band is `flex: 0 1 auto` so that IT is what gives a pixel back when a
+     long body at `l` asks for more than the canvas has. With two shrinkable
+     items a browser splits the overflow between them in proportion to their
+     base sizes, so this one would take the larger share and clip its own text:
+     the band would be the element that yields in the comment and not in the
+     layout. `1 0 auto` keeps the grow and drops the shrink.
+
+     Scoped to `:has(.sc-figure-band img)`, so a plate with no picture keeps the
+     exact flex it had before the band existed and every share the calibration
+     measured on it still holds. */
+  body:has(.sc-figure-band img[src]:not([src=""])) .quote-block { flex: 1 0 auto; }
+  /* The one mark it carries: the brand rule that ties it to the plate. */
+  .sc-figure-band::after {
+    content: ""; position: absolute; inset-block-end: 0; inset-inline: 0;
+    block-size: calc(8px * var(--ts, 1)); background: var(--accent);
+  }
   .quote-mark {
     font-family: var(--f-display); font-style: italic; font-weight: 400;
     font-size: calc(180px * var(--ts, 1)); line-height: 0.55; color: var(--accent);
@@ -250,9 +356,35 @@
      the CHILDREN for the same reason the panel guard above is: `.quote-text`
      is a twin-slot pair and is never `:empty` itself. */
   .quote-block:not(:has(.quote-text > span:not(:empty))) .quote-mark { display: none; }
+  /* ── A SHORT PULL QUOTE IS SET LARGE, and 84px was not large. ──
+
+     MEASURED, CI 35024757753: `he rtl short s -> quote-card @ interior` was
+     refused with `render-integrity` — *"only 0.9% of the frame carries any ink
+     at all (floor 1.5%); the render looks broken, not boring"*. Nothing was
+     broken. A short Hebrew quote at the reviewer's SMALLEST type step is
+     84 x 0.85 x 0.94 = 67px over about forty characters, and forty characters
+     of 67px type on a 1080x1440 plate is genuinely almost nothing.
+
+     WHAT HAD BEEN HOLDING THAT NUMBER UP, and this is the point: the radial
+     dot field this phase deleted. `inkShare` counts INK cells, and a field of
+     small dots at a low duty cycle is read as ink rather than as a covered
+     graphic — so the decoration was being scored as the plate's content, which
+     is RFC-20 §11.1's class finding in reverse. Removing it did not break this
+     plate; it revealed that the plate had never carried enough of its own.
+
+     The panel's tint cannot fix it either, and that is worth stating so nobody
+     tries: a flat bounded region at or under three distinct colours is a
+     GRAPHIC cell, not an ink cell, so no amount of accent tone moves
+     `inkShare` by a pixel. Only glyphs do.
+
+     So the type comes up, which is also just what a quote card is for. The
+     ladder below is unchanged and still steps on character count, so this
+     raises only the quotes that were already SHORT enough to stay on the base
+     rung: at or under 90 characters at `s`/`m`, at or under 70 at `l`. A long
+     quote is `.small` or `.tiny` exactly as before and never sees 108px. */
   .quote-text {
     font-family: var(--f-display); font-style: italic; font-weight: 500;
-    font-size: calc(84px * var(--ts, 1)); line-height: 1.26; letter-spacing: -0.008em; text-wrap: balance;
+    font-size: calc(108px * var(--ts, 1)); line-height: 1.24; letter-spacing: -0.008em; text-wrap: balance;
     padding-block-end: 0.22em;
   }
   .quote-text.small { font-size: calc(64px * var(--ts, 1)); line-height: 1.24; }
@@ -330,6 +462,7 @@
     <div class="eyebrow">{{kicker}}</div>
     <div class="qc-rail"></div>
   </div>
+  <div class="sc-figure-band"><img src="{{image:hero}}" onerror="this.remove()" alt="" /></div>
   <div class="quote-block">
     <div class="quote-mark">&ldquo;</div>
     <div class="quote-text" id="quote"><span class="mk-runs">{{html:quoteRuns}}</span><span class="mk-plain">{{quoteText}}</span></div>

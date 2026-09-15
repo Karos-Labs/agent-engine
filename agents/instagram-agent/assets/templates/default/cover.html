@@ -573,6 +573,82 @@
     box-shadow: 0 0 calc(16px * var(--ts, 1)) calc(4px * var(--ts, 1)) color-mix(in srgb, var(--bg) 82%, transparent);
   }
 
+  /* ── RFC-20 §11.5 ITEM 3: A SCRIM WITH NO PHOTOGRAPH UNDER IT. ──
+
+     §11.5 left `cover.html`'s blank plate open at `occupiedShare` **0.06%**
+     and `largestEmptyRectShare` **51.67%**, with the note: *"0.06% is ≈58
+     cells of 97,200, and 51.67% is the algebraic signature of a handful of
+     cells near the plate's mid-line — one obstruction at the centroid halves
+     the largest empty rectangle. Naming the element needs one render with a
+     cell map; it is not guessed at here."*
+
+     **It is the scrims, and the number names them.** `.scrim` is bottom-
+     anchored and `block-size: 52%`, so its upper edge sits at y = 48% of the
+     plate. A largest-empty-rectangle that cannot cross that row is either the
+     48% above it or the **52%** below — and 51.67% is that 52% less the
+     handful of cells the edge itself occupies. The share the clause reported
+     and the scrim's own declared height are the same number.
+
+     WHY IT MARKS ANY CELLS AT ALL, since it paints nothing a reader can see:
+     both scrims composite `color-mix(in srgb, var(--bg) N%, transparent)`
+     over a ground that IS `var(--bg)`. The composite is `--bg` exactly, at
+     every stop, so the layer is invisible by construction — but the 8-bit
+     rounding at its boundary row is not exactly zero, and `slide-metrics.ts`
+     marks a cell on an ABSOLUTE distance from the ground. A seam one cell
+     tall is enough to cut the plate in two for a metric that finds ONE
+     contiguous rectangle. This is [[furniture-guards-read-the-subject]]'s
+     rule restated at its limit: **position, not area** — 58 cells of nothing
+     move the number 48 points.
+
+     THE FIX IS THE LAYER'S OWN STATED PURPOSE. A scrim exists so that copy
+     stays readable over a PHOTOGRAPH; this file's own comments say so twice
+     (*"which is what a photo-header scrim is"*, *"it costs the photograph
+     nothing a reader would notice"*). With no photograph there is nothing to
+     scrim, the copy sits on flat brand ground at full contrast, and the layer
+     is a full-bleed layer the plate has not earned — which is RFC-20 §5.0's
+     Ground Rule, and §11.1's class finding one layer over.
+
+     `body:has(.hero)` is exactly the right condition and the file already
+     uses it: `onerror` REMOVES the `<img>` rather than hiding it, so the
+     selector is false precisely when no photograph loaded. A hero render is
+     byte-identical. */
+  /* ── AND ON THIS FILE THE GUARD IS WITHDRAWN, BECAUSE IT WAS MEASURED. ──
+
+     Pushed and rendered on CI 34956752073. `slide.html`'s half of this change
+     is kept — its blank plate went from a 48-point seam to `occ 0.00 / LER
+     100.00`, which is the whole point. **The cover's half made four things
+     worse at once, and every one of them says the same sentence:**
+
+       G2, blank cover      occ 0.06 -> 0.22, LER 51.67 -> 24.72
+       gate-zero, cover s   iod 0.0898 against clause E's 0.10 floor  FAIL
+       gate-zero, cover m   iod 0.0977                                FAIL
+       marked cover, short  textShare 0.4979 against a 0.47 ceiling   FAIL
+
+     **The scrims were being scored as the cover's drawn device.** A scrim is
+     COVERED and has at most three distinct colours, which is
+     `slide-metrics.ts`'s literal definition of a `graphic` cell, and
+     `imageryOrDeviceShare = imageryShare + graphicShare`. Take them away and
+     the cells do not disappear — they are re-classified as TEXT, which is why
+     `textShare` rose by the same order it fell by. RFC-20 §11.1 states this as
+     a class: *any full-frame painted layer that a plate has not earned will be
+     scored by some clause as the evidence that clause was built to look for.*
+     The hatch was scored as type, the plinth as a device, the screen as
+     content — **and this is the fourth instance, on a layer nobody suspected
+     because it paints nothing a reader can see.**
+
+     WHY IT IS RECORDED RATHER THAN ACTED ON. Clearing it honestly means the
+     cover's `iod` no longer includes a scrim, and `IMAGERY_OR_DEVICE_FLOOR`
+     was calibrated on renders where it did — so the clause needs its own
+     re-sweep, which is a phase and not a line. RFC-20 §11.4 did not scope it
+     and §5.6 rule 4 forbids the shortcut of lowering the floor instead. What
+     ships is the measurement above and the guard withdrawn from this file
+     only, so the cover is byte-identical to `main` while the defect is
+     written down where the next pass will hit it.
+
+     §11.5 item 3's 51.67% is therefore still open on the cover and is now
+     UNDERSTOOD rather than merely named: `.scrim` is `block-size: 52%`, its
+     upper edge sits at y = 48%, and 51.67% is the 52% below it. */
+
   .cov-device { inline-size: 100%; }
   .cov-device:empty { display: none; }
 

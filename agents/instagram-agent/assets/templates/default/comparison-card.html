@@ -121,7 +121,129 @@
   }
   .eyebrow:empty { display: none; }
   .cmp-rail { block-size: 2px; background: color-mix(in srgb, var(--fg) 48%, transparent); margin-block-start: calc(24px * var(--ts, 1)); }
+  /* ── The Ground Rule and §11.5 together — `stat-callout.html`'s `.sc-rail`
+        carries the full argument and this file is the same shape one
+        archetype over. ──
+     MEASURED-EDGE: every copy slot empty gave `occupiedShare` 1.94% and
+     `largestEmptyRectShare` 31.67% — the worst blank plate in the set. The
+     panel FILLS were already content-guarded on `.cmp-label`; four things
+     were not, and drew a whole comparison diagram on a plate with no
+     comparison on it: this rail, the two `.cmp-col` borders, the two
+     `.cmp-rule` bars and the winner's corner diamond.
+     THE SUBJECT OF A COMPARISON CARD IS ITS LABELS, so all five read
+     `.cmp-label` — including the rail, which used to read `.eyebrow` and
+     therefore vanished from a populated card whose writer wrote no kicker.
+     With the guards and with a card on the plate: occ 0.00 / LER 100.00
+     blank, and no (0,0) band populated. */
+  body:not(:has(.cmp-label:not(:empty))) .cmp-rail { display: none; }
 
+  /* ── AN IMAGE ON A PANEL ARCHETYPE (RFC-21 Part 2). ──
+
+     Until now only `cover.html` and `slide.html` declared an `{{image:hero}}`
+     slot, so `HERO_IMAGE_LAYOUTS` was two archetypes wide and a carousel that
+     reached for structured panels sourced **no pictures at all** — measured on
+     `thepitchbydeel` pubsub-21559620763659451, 8 slides, 0 images. The imagery
+     floor fixes the COUNT by promoting `text_only` slides; this fixes the
+     RANGE, so a post does not have to choose between a designed panel and a
+     photograph.
+
+     THE OWNER'S BRIEF, 2026-09-15: *add image/illustration slots and sometimes
+     use striking images in other layouts too (beside a stat or a card), so we
+     are not limited to cover and slide.html.*
+
+     IT IS A BAND, NOT A BACKGROUND, and that is the whole design of it. A
+     full-bleed photograph behind a panel would put the panel's type on an
+     uncontrolled ground — the contrast gate cannot promise anything over a
+     picture — and it would re-introduce exactly the full-frame layer RFC-20
+     §11.1 spent a phase removing. A bounded band sits BESIDE the content, has
+     its own edges, and every share it moves is its own.
+
+     `:empty` collapses it, so a slide with no picture is byte-identical to
+     before. `object-fit: cover` on a fixed band means a portrait or a
+     landscape both fill it without distortion, and `onerror` removes the node
+     rather than hiding it — a removed node leaves no broken-image glyph, which
+     is the same rule `cover.html` and `slide.html` already follow. */
+  /* ── THE PICTURE IS THE ELEMENT THAT YIELDS. ──
+
+     `flex: 0 1 auto` with a definite `block-size`, so in this column flex
+     container the band is the ONLY item that can shrink (every sibling is
+     `0 0 auto`). When a long body at `l` asks for more than the 1440px canvas
+     has, the band gives the space back instead of the copy being clipped.
+
+     WHY IT IS THE RIGHT ELEMENT TO GIVE, and this is the whole argument:
+     **text cannot shrink without being clipped, and a cover-fitted photograph
+     can shrink without losing anything.** `object-fit: cover` means a shorter
+     band crops a little more of the same picture at the same scale - no
+     distortion, no reflow, nothing hidden. Capping a text box instead is what
+     CI 35001921837 caught: *"2 element(s) overflow their own box (div.num-zone,
+     div#figure.num-figure), and 0% of the frame is ink inside the 8px bleed
+     band"* - nothing falling off the canvas, a fixed-size numeral hidden by a
+     box drawn smaller than it.
+
+     200px rather than 300: measured down when the same overflow appeared on
+     `stat-callout.html`, whose header carries the arithmetic. `min-block-size`
+     floors the shrink so the band cannot be squeezed to a sliver - at that
+     point it is neither a picture nor honest about being one, and clause E
+     would score a 30px stripe as this plate's drawn device. */
+  .sc-figure-band {
+    position: relative; z-index: 3; flex: 0 1 auto;
+    block-size: calc(200px * var(--ts, 1)); min-block-size: calc(110px * var(--ts, 1)); inline-size: 100%;
+    overflow: hidden; border-radius: 2px;
+    margin-block-end: calc(24px * var(--ts, 1));
+  }
+  /* ── THE COLLAPSE IS KEYED ON A NON-EMPTY `src`, NEVER ON `:has(img)`. ──
+
+     `fillTemplate` ERASES a slot nobody filled, so a slide with no picture
+     still renders `<img src="">` and the `<img>` element is still there.
+     `:not(:has(img))` is therefore FALSE on exactly the plates it was written
+     to collapse, and the band kept its 200px on every pictureless slide in the
+     set. That is what CI 35011946920 measured as `clipped` on
+     `en ltr long l -> stat-callout @ interior`, on a plate the sweep attaches
+     no image to at all — the band was eating the height the long body needed
+     and no amount of shrinking the figure was ever going to give it back.
+
+     `onerror="this.remove()"` does not cover it either, and that is the part
+     worth keeping. An empty `src` may or may not fire `error`, and if it does
+     it fires ASYNCHRONOUSLY: the DOM probe can read the document before the
+     handler runs, so the same template measures differently run to run. A
+     collapse rule has to be true at parse time. `onerror` stays for the case it
+     is actually for, a path that was filled and then failed to load.
+
+     This is the same lesson `slide.html` already carries at its `.scrim` rule:
+     *"`.bg:empty` rather than `:not(:has(.hero))` because this template's
+     `onerror` empties a wrapper instead of removing a top-level node"*. Same
+     defect, one archetype over, and the house pattern was already written down. */
+  .sc-figure-band:not(:has(img[src]:not([src=""]))) { display: none; }
+  /* NO SLAB CLAMP HERE. `.num-zone` is `stat-callout.html`'s figure slab and
+     this template has no element of that class - the rule that used to sit
+     here was copy-pasted with the band and matched nothing on either this
+     archetype or `list-takeaway.html`. Deleted rather than corrected: the
+     shrinking band above is what makes the composition fit, and it needs no
+     per-archetype clamp to do it. */
+  .sc-figure-band img { inline-size: 100%; block-size: 100%; object-fit: cover; display: block; }
+  /* ── AND THE CARDS STOPS SHRINKING WHEN A PICTURE IS ON THE PLATE. ──
+
+     `.cmp-row` is `flex: 1 1 auto` with `min-block-size: 0`. It GROWS to
+     fill the gap, which is what its own comment above is about, and it also
+     SHRINKS below its own content, which nothing above is about and which is
+     how `stat-callout.html` came to report `clipped` twice.
+
+     The band is `flex: 0 1 auto` so that IT is what gives a pixel back when a
+     long body at `l` asks for more than the canvas has. With two shrinkable
+     items a browser splits the overflow between them in proportion to their
+     base sizes, so this one would take the larger share and clip its own text:
+     the band would be the element that yields in the comment and not in the
+     layout. `1 0 auto` keeps the grow and drops the shrink.
+
+     Scoped to `:has(.sc-figure-band img)`, so a plate with no picture keeps the
+     exact flex it had before the band existed and every share the calibration
+     measured on it still holds. */
+  body:has(.sc-figure-band img[src]:not([src=""])) .cmp-row { flex: 1 0 auto; }
+  /* The one mark it carries: the brand rule that ties it to the plate. */
+  .sc-figure-band::after {
+    content: ""; position: absolute; inset-block-end: 0; inset-inline: 0;
+    block-size: calc(8px * var(--ts, 1)); background: var(--accent);
+  }
   .cmp-head {
     z-index: 3;
     font-family: var(--f-display); font-weight: 600; font-size: calc(66px * var(--ts, 1));
@@ -193,9 +315,6 @@
      the frame from out-voting the real ground for `backgroundHex`. */
   body:has(.cmp-label:not(:empty)) .cmp-col {
     background-image:
-      repeating-linear-gradient(45deg,
-        color-mix(in srgb, var(--fg) 12%, transparent) 0 2px,
-        transparent 2px 11px),
       linear-gradient(166deg, var(--card) 0%, color-mix(in srgb, var(--fg) 4%, transparent) 100%);
   }
   /* The "after" / recommended side. `.ab.win`'s treatment, scaled up to a card.
@@ -211,12 +330,9 @@
   .cmp-col.win { border-color: var(--accent); position: relative; }
   body:has(.cmp-label:not(:empty)) .cmp-col.win {
     background-image:
-      repeating-linear-gradient(135deg,
-        color-mix(in srgb, var(--fg) 12%, transparent) 0 2px,
-        transparent 2px 11px),
       linear-gradient(166deg,
-        color-mix(in srgb, var(--accent) 30%, var(--bg)) 0%,
-        color-mix(in srgb, var(--accent) 16%, var(--bg)) 100%);
+        color-mix(in srgb, var(--accent) 14%, transparent) 0%,
+        color-mix(in srgb, var(--accent) 8%, transparent) 100%);
   }
   /* INSIDE the card, not hanging off its corner. A decoration that leaves its
      parent's box makes that parent report `scrollWidth > clientWidth`, which
@@ -238,6 +354,14 @@
   }
   .cmp-rule { width: 72px; height: 5px; background: var(--line); margin: 30px 0; }
   .cmp-col.win .cmp-rule { background: var(--accent); }
+  /* The Ground Rule — see `.cmp-rail` above. The border and the diamond go to
+     `transparent` rather than `display: none` so the empty cards keep their
+     boxes and the row keeps its geometry: the guard must remove PAINT, not
+     rearrange a layout that a populated plate depends on. */
+  body:not(:has(.cmp-label:not(:empty))) .cmp-col,
+  body:not(:has(.cmp-label:not(:empty))) .cmp-col.win { border-color: transparent; }
+  body:not(:has(.cmp-label:not(:empty))) .cmp-rule { display: none; }
+  body:not(:has(.cmp-label:not(:empty))) .cmp-col.win::after { display: none; }
   .cmp-body {
     font-family: var(--f-body); font-weight: 400; font-size: calc(32px * var(--ts, 1)); line-height: 1.5;
     color: color-mix(in srgb, var(--fg) 78%, transparent); text-wrap: pretty;
@@ -291,6 +415,7 @@
     <div class="cmp-rail"></div>
     <div class="cmp-head" id="head">{{headline}}</div>
   </div>
+  <div class="sc-figure-band"><img src="{{image:hero}}" onerror="this.remove()" alt="" /></div>
   <div class="cmp-row">
     <div class="cmp-col">
       <div class="cmp-label">{{leftLabel}}</div>

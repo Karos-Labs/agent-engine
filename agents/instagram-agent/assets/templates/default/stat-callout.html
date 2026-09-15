@@ -148,6 +148,51 @@
     letter-spacing: 0.22em; text-transform: uppercase; color: var(--accent);
   }
   .sc-rail { block-size: 2px; background: color-mix(in srgb, var(--fg) 48%, transparent); margin-block-start: calc(24px * var(--ts, 1)); }
+  /* ── RFC-20 §5.0 (the Ground Rule) AND §11.5, WHICH PULL OPPOSITE WAYS,
+        RESOLVED BY ASKING THE GUARD A DIFFERENT QUESTION. ──
+
+     THE GROUND RULE says furniture may not paint on a plate with no content:
+     with every slot empty this file reported `largestEmptyRectShare` 64.99%
+     against G2's 90% bar, because a full-measure hairline across a blank
+     plate splits its empty rectangle in two. A plate that cannot report
+     itself blank cannot be told apart from a neglected one.
+
+     §11.5 says the OPPOSITE thing about the same rail. Guarded on
+     `.eyebrow`, a POPULATED plate whose writer supplied no kicker loses the
+     rail too — and then measures a 0.2750 rectangle at `(0,0 → 1080,340)`,
+     the band between the top of the plate and the first content. RFC-20
+     §11.5 recorded that as open with the note *"the guard is right; the
+     composition owes the top of the plate something"*, and left it unfixed
+     because there was no basis to pick a composition without a render.
+
+     **BOTH ARE RIGHT, AND THE EYEBROW WAS THE WRONG THING TO ASK ABOUT.**
+     The question the Ground Rule actually asks is *does this plate carry
+     content* — not *did this particular optional slot arrive*. Asked of the
+     plate's own subject, one selector answers both: an empty plate has no
+     subject, so nothing paints and G2 is satisfied; a populated plate has
+     one whether or not it has a kicker, so the rail paints, breaks the top
+     band, and §11.5's rectangle closes.
+
+     WHICH SLOT IS "THE SUBJECT" IS PER-FILE and is named at each guard: the
+     figure on a stat callout, the labels on a comparison card, the takeaway
+     on a closer. Never the eyebrow, and never the ground, which is the
+     distinction this whole part of RFC-20 is about.
+
+     THE USER'S OWN INSTRUCTION, 2026-09-15: *use the position of
+     `largestEmptyRect` to prevent the hole in the middle.* Position is
+     exactly what separates these two cases — same rail, same 2px, and the
+     difference between furniture on a blank plate and a rule that closes a
+     340px band is where it sits relative to content. */
+  /* THE SUBJECT OF A STAT CALLOUT IS ITS FIGURE. `#figure` rather than
+     `> span:not(:empty)` because this slot is not a mark host — the emphasis
+     system wraps only headline and body hosts in twin spans — so a bare
+     `:not(:empty)` is the right reader here and the same one `.stat-band`
+     below already uses. */
+  body:not(:has(#figure:not(:empty))) .sc-rail { display: none; }
+  /* AND THE RAIL KEEPS ITS BOX WHEN THE EYEBROW IS MISSING. `display: none`
+     on the rail would let `.sc-head` collapse to nothing and hand the 24px
+     back to the gap below it, which is the band this is closing. */
+  body:has(#figure:not(:empty)) .eyebrow:empty + .sc-rail { margin-block-start: calc(56px * var(--ts, 1)); }
 
   /* ── The stat slab. A FILLED, low-colour-count region is what the
         measurement calls a drawn device, and this one is about 40% of the
@@ -243,17 +288,46 @@
      cell, and an untextured panel over 40% of the frame is the largest flat
      region on the plate, so it wins that vote and the brand ground is
      measured as brown (see the note below). */
+  /* ── 2026-09-15: THE GRAPH PAPER IS DELETED AND THE SLAB STOPS BEING BROWN. ──
+
+     TWO DEFECTS, ONE RULE, AND BOTH WERE NAMED IN WRITING BEFORE THEY WERE
+     FIXED. `docs/instagram-restraint-reference.md` closes with them:
+
+       * *"the accent at partial opacity over `#17181C` is a brown, not the
+         brand orange - and that is worth fixing, but as a colour derivation
+         rather than by eye"*;
+       * rule 1, *"texture only at near-ground value, never a field you can
+         read as a pattern"*.
+
+     Seen on the render the owner rejected (`pubsub-21850131523417857`, slide
+     5) both are plainly there: a muddy brown panel carrying a visible sheet of
+     graph paper. His words were ״רקע ממש מבולגן״ and ״קווים שמסגירים AI״ - a
+     messy background, and lines that give the machine away.
+
+     THE BROWN IS ARITHMETIC. `color-mix(accent 32%, bg)` interpolates toward
+     the GROUND, and on a dark kit the ground is `#17181C`, so a saturated
+     orange mixed a third of the way to near-black lands on brown. It is not a
+     bad choice of percentage; **mixing an accent toward a dark ground is a
+     desaturation operation**, and no percentage of it produces the brand
+     colour. The derivation has to keep the accent's own hue and move only its
+     ALPHA over the ground, which is what `color-mix(..., transparent)` does -
+     the same form every other accent in this directory already uses.
+
+     14% and 8%: the slab stays a panel the eye reads as brand-coloured rather
+     than as a surface competing with the numeral standing on it, and the pair
+     keeps the gradient the note below wants for the modal-colour vote.
+
+     THE GRAPH PAPER GOES, with every other texture this phase deleted. Its
+     own comment argued it was "a plotting grid, the one ground in the
+     directory that says something about the content standing on it" - which
+     is a good sentence about a mark nobody has to look through to read a 200px
+     numeral. At 15% of `--fg` on a 13x17px pitch it is a pattern, and rule 1
+     does not have an exception for a well-argued pattern. */
   body:has(#figure:not(:empty)) .num-zone {
     background-image:
-      repeating-linear-gradient(to right,
-        color-mix(in srgb, var(--fg) 15%, transparent) 0 1.5px,
-        transparent 1.5px 17px),
-      repeating-linear-gradient(to bottom,
-        color-mix(in srgb, var(--fg) 15%, transparent) 0 2px,
-        transparent 2px 13px),
       linear-gradient(158deg,
-        color-mix(in srgb, var(--accent) 32%, var(--bg)) 0%,
-        color-mix(in srgb, var(--accent) 17%, var(--bg)) 100%);
+        color-mix(in srgb, var(--accent) 14%, transparent) 0%,
+        color-mix(in srgb, var(--accent) 8%, transparent) 100%);
     border-block-start: calc(8px * var(--ts, 1)) solid var(--accent);
   }
 
@@ -273,9 +347,57 @@
   }
   .num-figure.mid { font-size: calc(220px * var(--ts, 1)); }
   .num-figure.small { font-size: calc(150px * var(--ts, 1)); }
+  /* ── THE LADDER STEPS DOWN AT `ts-l`, BECAUSE THE CANVAS DOES NOT STEP UP. ──
+
+     `body.ts-l` multiplies every size on the plate by 1.18. The 1080x1440
+     canvas is not multiplied by anything, so at the reviewer's largest type
+     step the composition has 18% more type to fit in the same frame, and this
+     archetype is the one with no slack left: measured on real Chromium, the
+     sweep's LONG copy at `l` reported `clipped` naming
+     `div.num-zone, div#figure.num-figure` — the slab squeezed by the footnote
+     below it, and a 354px numeral inside a box drawn 567px tall.
+
+     THREE OTHER FIXES WERE TRIED FIRST AND ARE WORTH KNOWING ABOUT, because
+     each of them looks right and none of them works:
+
+       - CAP THE SLAB (`max-block-size`). A cap does not shrink what is inside
+         it; it hides it. This is what produced the second `clipped` run.
+       - STOP THE SLAB SHRINKING (`flex: 1 0 auto`). The overflow moves from
+         the slab to `html, body` — the plate is 1554px of content in a 1440px
+         frame either way, and now nothing absorbs it.
+       - SHORTEN THE FIXTURE. Tempting, and half-defensible now that
+         `07h2-word-budget` caps a slide at 30 words while this fixture is 69:
+         but it moved the failure to `headline-focus`, because shorter copy
+         fits under `MAX_COPY_FOR_OBJECT` and the plate then gains a bounded
+         object it did not have. Changing an input to make a plate pass is the
+         move RFC-20 §5.6 rule 4 is about, one level up from the threshold.
+
+     So the type comes down, which is the one change that removes height
+     without removing content or hiding it. Only at `l`: `s` and `m` are
+     untouched and every share calibrated on them still holds.
+
+     THE FIGURE, NOT THE BODY, and that is a composition decision rather than
+     an arithmetic one. A stat plate's body is the evidence for its number and
+     a reader has to be able to read it; the numeral is already the largest
+     thing in the frame by a factor of five and loses nothing by being large
+     rather than enormous. 170/140/110 against the base 300/220/150 is
+     ~200px rendered at `l`, which still clears the slab's device share (the
+     sweep re-measures `imageryOrDeviceShare` and clause E would refuse it if
+     it did not). */
+  body.ts-l .num-figure { font-size: calc(170px * var(--ts, 1)); }
+  body.ts-l .num-figure.mid { font-size: calc(140px * var(--ts, 1)); }
+  body.ts-l .num-figure.small { font-size: calc(110px * var(--ts, 1)); }
 
   /* The one full-strength accent mark inside the slab. */
   .stat-band { inline-size: calc(200px * var(--ts, 1)); block-size: calc(14px * var(--ts, 1)); background: var(--accent); margin-block-start: calc(8px * var(--ts, 1)); }
+  /* The Ground Rule again — see `.sc-rail` above for the whole argument.
+     This bar belongs to the figure: with no figure there is no slab for it
+     to mark, and an unguarded 200x14 solid in the middle of a blank plate is
+     half of what took G2's empty-plate rectangle to 64.99%.
+     `headline-focus.html` guards its own `.stat-band` on the same principle,
+     and here the guard reads the same slot the rail's does, so the plate
+     draws completely or not at all. */
+  body:not(:has(#figure:not(:empty))) .stat-band { display: none; }
 
   .num-label {
     font-family: var(--f-display); font-weight: 500; font-size: calc(54px * var(--ts, 1));
@@ -283,6 +405,161 @@
     max-inline-size: 820px; text-wrap: balance; padding-block-end: 0.14em;
   }
 
+  /* ── AN IMAGE ON A PANEL ARCHETYPE (RFC-21 Part 2). ──
+
+     Until now only `cover.html` and `slide.html` declared an `{{image:hero}}`
+     slot, so `HERO_IMAGE_LAYOUTS` was two archetypes wide and a carousel that
+     reached for structured panels sourced **no pictures at all** — measured on
+     `thepitchbydeel` pubsub-21559620763659451, 8 slides, 0 images. The imagery
+     floor fixes the COUNT by promoting `text_only` slides; this fixes the
+     RANGE, so a post does not have to choose between a designed panel and a
+     photograph.
+
+     THE OWNER'S BRIEF, 2026-09-15: *add image/illustration slots and sometimes
+     use striking images in other layouts too (beside a stat or a card), so we
+     are not limited to cover and slide.html.*
+
+     IT IS A BAND, NOT A BACKGROUND, and that is the whole design of it. A
+     full-bleed photograph behind a panel would put the panel's type on an
+     uncontrolled ground — the contrast gate cannot promise anything over a
+     picture — and it would re-introduce exactly the full-frame layer RFC-20
+     §11.1 spent a phase removing. A bounded band sits BESIDE the content, has
+     its own edges, and every share it moves is its own.
+
+     `:empty` collapses it, so a slide with no picture is byte-identical to
+     before. `object-fit: cover` on a fixed band means a portrait or a
+     landscape both fill it without distortion, and `onerror` removes the node
+     rather than hiding it — a removed node leaves no broken-image glyph, which
+     is the same rule `cover.html` and `slide.html` already follow. */
+  /* ── THE PICTURE IS THE ELEMENT THAT YIELDS. ──
+
+     `flex: 0 1 auto` with a definite `block-size`, so in this column flex
+     container the band is the ONLY item that can shrink (every sibling is
+     `0 0 auto`). When a long body at `l` asks for more than the 1440px canvas
+     has, the band gives the space back instead of the copy being clipped.
+
+     WHY IT IS THE RIGHT ELEMENT TO GIVE, and this is the whole argument:
+     **text cannot shrink without being clipped, and a cover-fitted photograph
+     can shrink without losing anything.** `object-fit: cover` means a shorter
+     band crops a little more of the same picture at the same scale - no
+     distortion, no reflow, nothing hidden. Capping a text box instead is what
+     CI 35001921837 caught: *"2 element(s) overflow their own box (div.num-zone,
+     div#figure.num-figure), and 0% of the frame is ink inside the 8px bleed
+     band"* - nothing falling off the canvas, a fixed-size numeral hidden by a
+     box drawn smaller than it.
+
+     200px rather than 300: measured down when the same overflow appeared on
+     `stat-callout.html`, whose header carries the arithmetic. `min-block-size`
+     floors the shrink so the band cannot be squeezed to a sliver - at that
+     point it is neither a picture nor honest about being one, and clause E
+     would score a 30px stripe as this plate's drawn device. */
+  .sc-figure-band {
+    position: relative; z-index: 3; flex: 0 1 auto;
+    block-size: calc(200px * var(--ts, 1)); min-block-size: calc(110px * var(--ts, 1)); inline-size: 100%;
+    overflow: hidden; border-radius: 2px;
+    margin-block-end: calc(24px * var(--ts, 1));
+  }
+  /* ── THE COLLAPSE IS KEYED ON A NON-EMPTY `src`, NEVER ON `:has(img)`. ──
+
+     `fillTemplate` ERASES a slot nobody filled, so a slide with no picture
+     still renders `<img src="">` and the `<img>` element is still there.
+     `:not(:has(img))` is therefore FALSE on exactly the plates it was written
+     to collapse, and the band kept its 200px on every pictureless slide in the
+     set. That is what CI 35011946920 measured as `clipped` on
+     `en ltr long l -> stat-callout @ interior`, on a plate the sweep attaches
+     no image to at all — the band was eating the height the long body needed
+     and no amount of shrinking the figure was ever going to give it back.
+
+     `onerror="this.remove()"` does not cover it either, and that is the part
+     worth keeping. An empty `src` may or may not fire `error`, and if it does
+     it fires ASYNCHRONOUSLY: the DOM probe can read the document before the
+     handler runs, so the same template measures differently run to run. A
+     collapse rule has to be true at parse time. `onerror` stays for the case it
+     is actually for, a path that was filled and then failed to load.
+
+     This is the same lesson `slide.html` already carries at its `.scrim` rule:
+     *"`.bg:empty` rather than `:not(:has(.hero))` because this template's
+     `onerror` empties a wrapper instead of removing a top-level node"*. Same
+     defect, one archetype over, and the house pattern was already written down. */
+  .sc-figure-band:not(:has(img[src]:not([src=""]))) { display: none; }
+
+  /* ── A BANDED PLATE IS A DIFFERENT COMPOSITION, NOT THE SAME ONE SQUEEZED. ──
+
+     THE FIRST ATTEMPT AND WHY IT FAILED, because the failure is the lesson.
+     CI 34996343379 reported `clipped` on `en ltr long l` as soon as this
+     archetype carried a picture, so the band's height was taken out of the
+     slab's cap: `max-block-size: 380px` under `body:has(.sc-figure-band img[src]:not([src=""]))`.
+     CI 35001921837 then reported clipped AGAIN, and the finding named the
+     reason exactly - *"2 element(s) overflow their own box (div.num-zone,
+     div#figure.num-figure), and 0% of the frame is ink inside the 8px bleed
+     band"*. Nothing was falling off the canvas. **The slab's content is
+     FIXED-SIZE, so capping the box does not shrink what is in it - it hides
+     it.** A 300px numeral cannot be squeezed into 380px of box that also holds
+     52px of padding twice, an accent bar and a label. `flex: 1 1 auto` makes
+     the slab elastic; it does not make a font-size elastic, and only one of
+     those two things was ever true.
+
+     SO THE FIGURE STEPS DOWN INSTEAD, through the ladder the template already
+     has. `.num-figure.small` is 150px and the script below already assigns it
+     for a figure over six characters; a picture on the plate is the second
+     reason to reach for it. The slab keeps its elastic `flex` and its 660px
+     cap, and now genuinely fits inside them.
+
+     THE ARITHMETIC, at `l` (`--ts: 1.18`) on the 1440px canvas, which is the
+     case that failed. Body padding is 96 + 88 = 184 and is NOT scaled, so
+     1256px is the budget:
+
+       .sc-head     eyebrow 22 + rail 2 + 24 margin, x1.18            ~ 90
+       band         200 + 24 margin, x1.18                             264
+       .num-zone    figure 150 + 0.28em pad-end, stat-band 14 + 8,
+                    label, 36 padding x2, 24 margin-block x2, x1.18   ~ 455
+       .sc-foot     body 31/1.55 over four lines + source 17 + 30     ~ 294
+                                                                  ---------
+                                                                     ~ 1103
+
+     153px of headroom, where the capped version was over by ~270. The slab's
+     own padding and margin come down with the figure because they were set for
+     a 300px numeral: 52 -> 36 and 40 -> 24 keeps the same optical ratio around
+     a smaller one rather than parking a ring of dead ground around it, which
+     clause C would read as exactly what it is.
+
+     AND THE SLAB STOPS SHRINKING, which is the line that makes the band's
+     `flex: 0 1 auto` mean anything at all. `.num-zone` is `flex: 1 1 auto` with
+     `min-block-size: 0` — it GROWS to fill the gap, by design, and it also
+     SHRINKS below its own content, which is the exact mechanism that produced
+     the clip. With both it and the band shrinkable, a browser distributes the
+     overflow between them in proportion to their base sizes, so the slab would
+     take the larger share and hide its numeral again: the band would be the
+     element that yields in the comment and not in the layout.
+
+     `1 0 auto` keeps the grow and drops the shrink. The stretch that clause C
+     needs is untouched, the band is now the only item on the plate that can
+     give a pixel back, and the worst case this arithmetic does not cover — a
+     two-line sub-label over a five-line body — comes out of the picture rather
+     than out of the type. That is what `min-block-size` on the band is the
+     floor for.
+
+     WHAT IT COSTS THE GATES, checked rather than assumed. The slab is smaller,
+     so clause E's `imageryOrDeviceShare` loses some of it - and the band pays
+     it back: 200 x 1080 of the 1080 x 1440 frame is 13.9% of drawn imagery on
+     its own, against a 10% floor, before the slab is counted at all. And the
+     slab moving further from `FULL_BLEED_IMAGERY_SHARE` is the safe direction:
+     its own cap comment exists to keep it UNDER that line so clause B's pixel
+     limb stays armed. */
+  body:has(.sc-figure-band img[src]:not([src=""])) .num-figure,
+  body:has(.sc-figure-band img[src]:not([src=""])) .num-figure.mid { font-size: calc(150px * var(--ts, 1)); }
+  body:has(.sc-figure-band img[src]:not([src=""])) .num-zone {
+    /* Grow, never shrink - see the note above. */
+    flex: 1 0 auto;
+    padding: calc(36px * var(--ts, 1)) calc(48px * var(--ts, 1));
+    margin-block: calc(24px * var(--ts, 1));
+  }
+  .sc-figure-band img { inline-size: 100%; block-size: 100%; object-fit: cover; display: block; }
+  /* The one mark it carries: the brand rule that ties it to the plate. */
+  .sc-figure-band::after {
+    content: ""; position: absolute; inset-block-end: 0; inset-inline: 0;
+    block-size: calc(8px * var(--ts, 1)); background: var(--accent);
+  }
   .sc-foot { position: relative; z-index: 3; flex: 0 0 auto; }
   .num-body {
     font-family: var(--f-body); font-weight: 400; font-size: calc(31px * var(--ts, 1)); line-height: 1.55;
@@ -332,6 +609,7 @@
     <div class="eyebrow">{{kicker}}</div>
     <div class="sc-rail"></div>
   </div>
+  <div class="sc-figure-band"><img src="{{image:hero}}" onerror="this.remove()" alt="" /></div>
   <div class="num-zone">
     <div class="num-figure" id="figure">{{figure}}</div>
     <div class="stat-band"></div>

@@ -262,25 +262,115 @@
      band only at the head, a short statement left the bottom quarter of the
      plate as bare texture and the plate read bottom-empty. Bands at both ends
      frame the statement instead of hanging above it. */
-  .copy-art {
+  /* ── 2026-09-15: THE HATCH IS DELETED AND THE ACCENT GEOMETRY IS KEPT
+        (RFC-20 §11.4). ──
+
+     Everything above this line is the record of a texture that no longer
+     exists, and it is kept because the ARITHMETIC in it is still true and
+     the next person to reach for a field texture needs it. What changed is
+     not the arithmetic; it is what the plate carries instead.
+
+     The third layer — a 45-degree hairline at 8% of `--fg` on a 14px pitch,
+     covering the whole field — is gone. Three reasons, and none of them is
+     that it looked bad on its own:
+
+       * `docs/instagram-restraint-reference.md` rule 1, harvested from the
+         accounts that ship this format professionally: *one ground per post,
+         flat; texture only at near-ground value; never a field you can read
+         as a pattern.*
+       * RFC-20 §11.1's class finding: an unearned full-frame painted layer
+         is scored by some clause as the evidence that clause was built to
+         find. This one was scored as CONTENT — quieting it from 22% to 8%
+         moved `contentOccupiedShare` on plates whose copy never changed.
+       * The clause that required it is gone (PR #124 demoted clause D's
+         occupancy limb to reporting-only), so the texture was paying a bill
+         nobody sends any more.
+
+     THE TWO ACCENT BANDS STAY, and the distinction is the one the reference
+     draws in its rule 4 — *colour is information or punctuation, never a
+     surface.* A 300px band at the field's head and a 200px band at its foot
+     are bounded marks that frame the statement; they are confined by
+     `background-size`/`-position` to those two bands and cover no part of
+     the field between them. That is punctuation. A hairline over the whole
+     field was a surface.
+
+     The plate's SUBJECT is now the statement itself plus the bounded object
+     in `.hf-device` (`bounded-object.ts`), which is what §11.4 asked for and
+     what §4 recorded the reference doing. */
+  /* ── AND THE TWO BANDS BECAME TWO RULES, WHICH IS THE SAME GEOMETRY
+        WITHOUT THE PATTERN. ──
+
+     The first pass of this section kept the accent bands as they were — two
+     zones of 45-degree accent hairlines, 3px every 46px, 300px tall at the
+     field's head and 200px at its foot — on the argument that a band confined
+     by `background-size` is punctuation rather than a surface. **Read back
+     against the rule it cites, that argument does not hold.** The restraint
+     reference's rule 1 is *never a field you can read as a pattern*, and 300
+     vertical pixels of repeating diagonal hairline at FULL accent is a
+     pattern by any reading of that sentence. Confinement changed where it
+     was, not what it was.
+
+     So they are two solid rules now: the field's head and its foot, capped.
+     The stated reason for having TWO survives intact — *the statement is
+     centred in its field; with a band only at the head a short statement left
+     the bottom quarter reading empty, and marks at both ends frame the
+     statement instead of hanging above it* — and it is the POSITION that
+     does that work, not the texture.
+
+     THE WHOLE BUNDLED SET IS NOW ONE TREATMENT. `slide.html` caps its field
+     at the head or the foot by slide parity, `closer.html` at the head or the
+     foot by ground variant, and this file at both. One accent rule per field
+     edge, no accent texture anywhere in the directory, and the variety lives
+     in WHICH edges a given archetype uses. That consistency is the half of
+     the owner's 2026-09-15 brief that the object does not cover: *tight and
+     consistent*, not eight files each solving the same problem differently.
+
+     14px rather than the 10px `closer.html` and `slide.html` use, because
+     this field carries the largest type in the set and a rule has to hold its
+     own against it. */
+  /* ── THE CAP IS SHORT, AND THE MEASUREMENT IS WHY (CI 34956752073). ──
+
+     The first version of this rule ran the full measure. It was wrong twice
+     over and the instrument caught both.
+
+     **It disarmed clause C on the plate this whole phase exists to refuse.**
+     `largestEmptyRectangle` finds ONE contiguous rectangle, so a full-width
+     bar across the field cuts the plate's empty region in two. G1's subject —
+     the owner's grey screen, one short headline and nothing else — measured
+     `LER` **0.2222** against a 0.28 ceiling and **PASSED clause C**, and G5
+     measured the same plate at maximum mark load at **0.2036**. Two caps, two
+     cuts, and the acceptance condition of the phase goes green for the wrong
+     reason. RFC-20 §11.1 states the class — *any full-frame painted layer that
+     a plate has not earned will be scored by some clause as the evidence that
+     clause was built to look for* — and a rule that spans the frame is a
+     full-frame layer however thin it is. **Position, not area: 14px of ink
+     moved the number 6 points and flipped a verdict.**
+
+     **And it was not punctuation.** The restraint reference's rule 4 is
+     *colour is information or punctuation, never a surface*; `@semrush` spends
+     its whole colour budget on one diagram and one arrow. Every other accent
+     mark in this directory is already short — `.stat-band` 200px, `.cl-rule`
+     240px, the device library's own `.dv-rule` 132px — and a 1080px bar was
+     the only wall among them.
+
+     240px, which is `.cl-rule`'s width, so the set has one accent measure. */
+  .hf-field {
     background-image:
-      repeating-linear-gradient(45deg,
-        var(--accent) 0 3px, transparent 3px 46px),
-      repeating-linear-gradient(45deg,
-        var(--accent) 0 3px, transparent 3px 46px),
-      repeating-linear-gradient(45deg,
-        color-mix(in srgb, var(--fg) 8%, transparent) 0 2px,
-        transparent 2px 14px);
-    background-size: 100% 300px, 100% 200px, auto;
-    background-repeat: no-repeat, no-repeat, repeat;
-    background-position: 0 0, 0 100%, 0 0;
+      linear-gradient(to bottom, var(--accent) 0 calc(14px * var(--ts, 1)), transparent 0),
+      linear-gradient(to top, var(--accent) 0 calc(14px * var(--ts, 1)), transparent 0);
+    background-size: calc(240px * var(--ts, 1)) 100%, calc(240px * var(--ts, 1)) 100%;
+    background-repeat: no-repeat, no-repeat;
+    /* `inset-inline` rather than `0`, so the caps range with the copy in both
+       directions instead of hanging off the wrong edge in Hebrew. */
+    background-position: var(--cap-x, 0) 0, var(--cap-x, 0) 100%;
   }
+  body[dir="rtl"] .hf-field, html[dir="rtl"] .hf-field { --cap-x: 100%; }
   /* The guard. No statement, no field — see the block above. Asked of the
      statement's CHILDREN, because `.hf-headline` is a twin-slot pair now (see
      the twin-slot block below) and a host with two element children can never
      match `:empty`. Left as `#headline:empty` the guard would have gone
      permanently silent and an empty plate would have kept the field paint. */
-  body:not(:has(#headline > span:not(:empty))) .copy-art { background-image: none; }
+  body:not(:has(#headline > span:not(:empty))) .hf-field { background-image: none; }
 
   /* ── THE ALTERNATIVE GROUND: A LARGE TYPOGRAPHIC MARK ON A DASH SCREEN. ──
 
@@ -378,14 +468,22 @@
      than on two diagonal bands. A diagonal band is the grid variant's
      signature; giving the glyph variant a horizontal cap means the two
      grounds differ in their accent geometry as well as in their texture. */
-  body.gr-glyph .copy-art {
-    background-image:
-      linear-gradient(to bottom, var(--accent) 0 calc(10px * var(--ts, 1)), transparent 0),
-      radial-gradient(ellipse 5px 1.3px at 50% 50%,
-        color-mix(in srgb, var(--fg) 22%, transparent) 0 100%, transparent 100%);
-    background-size: 100% 100%, 17px 7px;
-    background-repeat: no-repeat, repeat;
-    background-position: 0 0, 0 0;
+  /* The dash screen is deleted for the same three reasons as the grid
+     variant's hatch — see that block. Its 17x7 tile density was measured
+     four times and the note above is kept for whoever needs the arithmetic;
+     what the measuring was FOR was taking the plate off clause D's "flat and
+     idle", and clause D no longer refuses anything.
+
+     The single solid accent rule capping the field's head stays, and it is
+     now the whole of the glyph variant's accent geometry against the grid
+     variant's two diagonal bands. The two grounds therefore still differ in
+     their accent GEOMETRY, which the block above says is the point of having
+     two — and they no longer differ by wearing two different wallpapers. */
+  body.gr-glyph .hf-field {
+    background-image: linear-gradient(to bottom, var(--accent) 0 calc(10px * var(--ts, 1)), transparent 0);
+    background-size: 100% 100%;
+    background-repeat: no-repeat;
+    background-position: 0 0;
   }
   .ground-glyph { display: none; }
   /* Furniture, but furniture that paints ink, so it answers to the same rule:
@@ -507,6 +605,32 @@
      bundled typographic archetype that renders it. */
   .hf-device { margin-block-end: calc(44px * var(--ts, 1)); }
   .hf-device:empty { display: none; }
+  /* ── AND IT IS CAPPED, BECAUSE THE FIELD HAS TO HOLD EVERYTHING ELSE. ──
+
+     `slide-devices.ts` sets a figure at 200px and the library is right to: on
+     a `cover` the numeral IS the plate. Here it shares an elastic field with
+     a kicker, a display statement, an accent band and a body paragraph, and
+     at `l` every one of them is 18% taller.
+
+     MEASURED, on CI 34963600799, the first render where this archetype
+     carried a device at every scale: `probe.overflow` fired at `fontScale l`
+     and clause B reported `clipped` with `clippedEdgeShare` **0.000294** —
+     three per cent of the 0.004 ceiling. **The pixel limb was nowhere near
+     firing; the DOM limb caught it**, which is the block-start overflow limb
+     `probePage` grew after `headline-focus` printed its headline 155px above
+     its own parent and every instrument in the tree called the plate clean.
+     It is the same file, the same field and the same failure mode, caught by
+     the limb that was added for it.
+
+     150/118/88 against the library's 200/150/108 — the `--dv-figure--mid`
+     step, one rung down the library's own ladder rather than a new scale, so
+     a figure here is the same object at a smaller size and not a different
+     one. `slide.html` makes the same reduction for the same reason and its
+     slot says so. */
+  .hf-device .dv-figure { font-size: calc(150px * var(--ts, 1)); }
+  .hf-device .dv-figure--mid { font-size: calc(118px * var(--ts, 1)); }
+  .hf-device .dv-figure--small { font-size: calc(88px * var(--ts, 1)); }
+  .hf-device .dv { margin-block-start: 0; }
 
   .kicker {
     font-family: var(--f-mono); font-weight: 600; font-size: calc(24px * var(--ts, 1));
@@ -559,6 +683,50 @@
     inline-size: calc(200px * var(--ts, 1)); block-size: calc(14px * var(--ts, 1));
     background: var(--accent); margin-block-start: calc(36px * var(--ts, 1));
   }
+  /* ── ONE ACCENT MARK PER PLATE, AND THE DEVICE'S OWN IS THE BETTER ONE. ──
+
+     A figure device paints its own accent rule (`.dv-rule`, 132x12) directly
+     under its numeral. With `.stat-band` also painting, a plate carrying a
+     bounded object shows TWO accent bars in the same column, 36px apart,
+     saying the same thing at two sizes.
+
+     `docs/instagram-restraint-reference.md` rule 4: *colour is information
+     or punctuation, never a surface.* Punctuation repeated is not
+     punctuation. The count is the other half of it — the reference plates
+     carry three or four element groups and the prep render the owner
+     rejected carried NINE, *"three of which said the same sentence"*. Two
+     accent bars is that sentence at the mark level.
+
+     THE DEVICE'S RULE WINS because it belongs to something: it sits under a
+     figure and above that figure's label. `.stat-band` is a standing detail
+     with nothing either side of it, so it is the one that yields. On a plate
+     with no device nothing changes and the band paints exactly as before.
+
+     `:has()` on the slot rather than on the fragment, because `.hf-device`
+     is present and empty on every render that carries no device — see its own
+     `:empty` rule. */
+  body:has(.hf-device .dv) .stat-band { display: none; }
+  /* ── THE GROUND RULE, WHICH THIS BAR HAS BEEN OUTSIDE OF THE WHOLE TIME. ──
+
+     RFC-20 §5.0: *tone may paint anywhere, ink only inside a region the
+     composition occupies, and only when the content that justifies it is
+     present.* A 200x14 solid accent bar is ink, and until now it painted on a
+     plate with no statement on it — the only thing in frame, sitting on the
+     centre line, which is the worst place for it: `largestEmptyRectangle`
+     finds ONE contiguous rectangle, so a mark at the centroid roughly halves
+     the number G2 reads.
+
+     `cover.html` and `stat-callout.html` already guard their own `.stat-band`
+     on the slot it decorates (`#title`, `#figure`); these two were the
+     exception rather than the rule, and the exception is not deliberate —
+     RFC-20 §11.3 CUT both files from the phase that added the other guards,
+     so the bar was never reached. It is reached now that they are back in
+     scope, and it comes into line rather than acquiring a special case.
+
+     Asked of the statement's CHILDREN for the same reason every other guard
+     in this file is: `#headline` is a twin-slot pair and can never match
+     `:empty` again, so the plain form would be permanently silent. */
+  body:not(:has(#headline > span:not(:empty))) .stat-band { display: none; }
 
   .body-text {
     font-family: var(--f-body); font-weight: 400; font-size: calc(33px * var(--ts, 1)); line-height: 1.55;
@@ -631,7 +799,7 @@
     <div class="kicker">{{kicker}}</div>
     <div class="hf-rail"></div>
   </div>
-  <div class="hf-field copy-art">
+  <div class="hf-field">
     <div class="copy">
       <div class="hf-device">{{html:device}}</div>
       <div class="hf-headline" id="headline"><span class="mk-runs">{{html:headlineRuns}}</span><span class="mk-plain">{{headline}}</span></div>
