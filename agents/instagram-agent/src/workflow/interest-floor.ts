@@ -1341,7 +1341,68 @@ export const FULL_BLEED_IMAGERY_SHARE = 0.5;
  * (`interest-relayout.ts`) can switch on it and the ledger row can be
  * grouped by it.
  */
-export type InterestFailureKind = "render-integrity" | "marks-missing" | "clipped" | "dead-space" | "empty" | "no-device" | "text-wall";
+export type InterestFailureKind = "render-integrity" | "marks-missing" | "clipped" | "dead-space" | "empty" | "no-device" | "text-wall" | "one-element";
+
+/**
+ * ── CLAUSE H: HOW MANY THINGS ARE ON THIS PLATE. THE SEMANTIC FLOOR. ──
+ *
+ * RFC-21 Part 2, and it is the answer to a question this project has now
+ * asked six times and answered wrong six times.
+ *
+ * ## What the six failures have in common
+ *
+ * `occupiedShare`, `contentOccupiedShare`, `flatBackgroundShare`,
+ * `edgeDensity`, `contentOccupiedShare / occupiedShare`, `displayTypeScale` —
+ * six proposed separators, each falsified with its own control
+ * (`instagram-floor-candidates-falsified`). And then the clauses built on
+ * them fell the same way: clause D's occupancy limb (PR #124), clause G's
+ * pixel limb, and `largestEmptyRect` itself, which RFC-21 §2.9 measured
+ * giving **four different verdicts on four brand palettes for one plate**.
+ *
+ * > **Every mask in `slide-metrics.ts` is cut at an ABSOLUTE distance, so on a
+ * > quiet plate nothing measured off the pixels is palette-invariant — not a
+ * > share, and not a rectangle derived from one.**
+ *
+ * The owner ruled this out in words on 2026-09-14 — *make sure the metrics are
+ * agnostic to colour and rest on the absence of ELEMENTS, STRUCTURE and
+ * contrast* — and the sentence contains the answer the measurements kept
+ * circling: **count the elements.**
+ *
+ * ## Why this one cannot have the defect
+ *
+ * It reads no pixels. `countContentElements` reads the ASSEMBLED document:
+ * the prose fields that survived `LAYOUT_FIELD_KEYS`, the hero image, a
+ * list's rows fragment, a device fragment, a closer's recap strip. A brand
+ * palette cannot reach any of them. Re-skin the whole kit and the count is
+ * identical, which is the property six pixel candidates could not offer.
+ *
+ * **And it is the reference's own rule.** `docs/instagram-restraint-reference.md`
+ * counted `@semrush` and `@buffer` at *three or four element groups* and the
+ * prep render the owner rejected at **nine, three of which said the same
+ * sentence.* The professional bar was already written down as a COUNT.
+ *
+ * ## The floor is 2, and deliberately not 3
+ *
+ * The owner's grey screen is one headline and nothing else: **1**. A plate
+ * carrying a statement and a body is **2**. A composed statement plate with
+ * its bounded object is **3**.
+ *
+ * 2 refuses exactly the plate the complaint named and nothing more. 3 would
+ * refuse every honest headline-and-body slide whose copy carries no figure —
+ * and while RFC-20 §11.4 argues such a plate *should* carry an object, a gate
+ * is the wrong instrument for an argument about craft. **A floor refuses
+ * neglect; it does not enforce a target.** The 3-4 norm belongs in the prompt
+ * and in `default:two-elements-per-slide`'s report to the judge, which reads
+ * this same counter.
+ *
+ * ## What it is NOT
+ *
+ * Not a replacement for clause E — a cover still has to carry a photograph or
+ * a device, and that is a question about WHICH elements rather than how many.
+ * Not a replacement for clause F — a wall of text has plenty of elements.
+ * This clause answers one question: **is there more than one thing here.**
+ */
+export const CONTENT_ELEMENT_FLOOR = 2;
 
 /** Facts a reviewer and `08b` should see, that must never fail an attempt. */
 export type InterestWarningKind =
@@ -1380,6 +1441,22 @@ export interface InterestWarning {
 export interface InterestFloorOptions {
   /** This slide's carousel position. Every finding names it, and the waiver is keyed on it. */
   slide: number;
+  /**
+   * How many content elements the ASSEMBLED slide carries — clause H's whole
+   * input, from `countContentElements` (`visual-qa-pre-checks.ts`).
+   *
+   * SUPPLIED rather than derived, the same contract `groundHex` has in
+   * `measure`: this module reads `SlideMetrics`, and the element count is a
+   * fact about the assembled DOCUMENT that only the caller holds. Deriving it
+   * here would mean a second counter that can disagree with the one
+   * `default:two-elements-per-slide` reads, which is the drift clause H exists
+   * to avoid.
+   *
+   * ABSENT means unknown and clause H ABSTAINS. A clause that guesses at its
+   * own input is worse than one that sits out, and a unit fixture or a template
+   * probe legitimately has no assembled slide to count.
+   */
+  contentElements?: number | undefined;
   /**
    * `downgradedForImagesThisAttempt` from the workflow — which slides THIS
    * attempt shipped text-only for want of a picture.
@@ -1636,6 +1713,19 @@ export function canPaintDevice(archetype: string | undefined): boolean {
   return DEVICE_SLOT_BASENAMES.has(base) || base.startsWith("custom-");
 }
 
+/**
+ * How many content elements the ASSEMBLED slide carries, for clause H.
+ *
+ * Supplied rather than derived, and that is the same contract `groundHex` has
+ * in `measure`: this module reads `SlideMetrics`, and the element count is a
+ * fact about the assembled DOCUMENT that only the caller holds. Deriving it
+ * here would mean a second counter that can disagree with
+ * `countContentElements`, which is the drift clause H exists to avoid.
+ *
+ * ABSENT means unknown, and clause H abstains — it never guesses. A caller
+ * with no assembled slide (a unit fixture, a template probe) gets every other
+ * clause and not this one, which is the same posture `markKinds` takes.
+ */
 export function checkInterestFloor(
   metrics: SlideMetrics,
   probe: SlideProbe | undefined,
@@ -2019,6 +2109,39 @@ export function checkInterestFloor(
     });
   }
 
+  // ── H — nothing to carry the plate. THE SEMANTIC FLOOR (RFC-21 Part 2). ──
+  //
+  // `CONTENT_ELEMENT_FLOOR`'s own comment carries the argument: six pixel
+  // separators were measured away, and the clauses built on them turned out to
+  // be palette-dependent one after another, because every mask in
+  // `slide-metrics.ts` is cut at an absolute distance. This clause reads no
+  // pixels at all. It asks the ASSEMBLED DOCUMENT how many things are on it.
+  //
+  // It is the clause that refuses the owner's grey screen, and it refuses it
+  // identically on every brand: one headline and nothing else counts 1, on a
+  // dark kit, a light kit, a saturated kit and a kit on the 4.5:1 floor.
+  //
+  // ABSTAINS when the caller supplied no count. A clause that guesses at its
+  // own input is worse than one that sits out, and `interest-floor.test.ts`
+  // asserts the abstention so it cannot become an accidental pass.
+  const elements = opts.contentElements;
+  if (elements !== undefined && elements < CONTENT_ELEMENT_FLOOR) {
+    findings.push({
+      slide,
+      role,
+      kind: "one-element",
+      measured: { contentElements: elements },
+      threshold: CONTENT_ELEMENT_FLOOR,
+      sentence:
+        `${where} — the plate carries ${elements === 0 ? "nothing" : "one element"} (floor ${CONTENT_ELEMENT_FLOOR}): ` +
+        `a headline on empty ground is not a slide, whatever the ground is doing.`,
+      steer:
+        `Give slide ${slide} a second thing to look at, from what the post already has: the body line it is missing, ` +
+        `${deviceSteer("a device built from a figure in its own copy")}, a photograph, or the source it is citing. ` +
+        `If there is nothing to add, merge it into ${slide > 1 ? `slide ${slide - 1}` : "the next slide"} — the reference accounts carry three or four element groups per plate, never one.`,
+    });
+  }
+
   return { slide, role, ok: findings.length === 0, findings, waived, warnings: interestWarningsFor(metrics, role, slide, probe, opts.markKinds), metrics };
 }
 
@@ -2263,6 +2386,11 @@ export function checkSlidesInterestFloor(
   opts: {
     downgradedForImages?: ReadonlySet<number> | undefined;
     archetypeBySlide?: ReadonlyMap<number, string> | undefined;
+    /**
+     * RFC-21 Part 2 — `countContentElements` per slide, from the assembled
+     * document. Clause H's whole input; absent slides make it abstain.
+     */
+    contentElementsBySlide?: ReadonlyMap<number, number> | undefined;
     /** RFC-17 — `assembleSlidesData`'s `markReportOut.kindsBySlide`. See `InterestFloorOptions.markKinds`. */
     markKindsBySlide?: ReadonlyMap<number, readonly string[]> | undefined;
   } = {},
@@ -2283,6 +2411,7 @@ export function checkSlidesInterestFloor(
         slide: slide.n,
         ...(opts.downgradedForImages !== undefined ? { downgradedForImages: opts.downgradedForImages } : {}),
         ...(archetype !== undefined ? { archetype } : {}),
+        ...(opts.contentElementsBySlide?.get(slide.n) !== undefined ? { contentElements: opts.contentElementsBySlide.get(slide.n)! } : {}),
         ...(markKinds !== undefined ? { markKinds } : {}),
       }),
     );

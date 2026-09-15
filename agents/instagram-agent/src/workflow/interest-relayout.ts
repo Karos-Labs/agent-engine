@@ -452,7 +452,13 @@ function recapRowsBefore(copy: InstagramCopyOutput, slideN: number): RelayoutRec
  * wrong once the sheet lands. The re-render is free and it re-measures
  * everything.
  */
-const KIND_PRIORITY: readonly InterestFailureKind[] = ["render-integrity", "marks-missing", "clipped", "no-device", "dead-space", "empty", "text-wall"];
+// `one-element` sits directly after the render-integrity kinds and ahead of
+// every geometric one, because it is the only kind on this list that is a
+// statement about CONTENT rather than about pixels. A plate carrying one
+// element will usually also report a hole; remedying the hole first would
+// spend the attempt's one free chance moving type around a plate that has
+// nothing on it.
+const KIND_PRIORITY: readonly InterestFailureKind[] = ["render-integrity", "marks-missing", "clipped", "one-element", "no-device", "dead-space", "empty", "text-wall"];
 
 /**
  * At most one free change per failing slide, or `undefined` when the table
@@ -522,6 +528,13 @@ const UNREMEDIED_DETAIL: Readonly<Record<InterestFailureKind, string>> = {
   // `undefined` in an operator's trace.
   "marks-missing": "a re-render was already spent on it, and no copy change can make a stylesheet load",
   clipped: "its type is already at the smallest scale",
+  // The honest one. A plate with one element needs a SECOND ELEMENT, and the
+  // only second element this module can produce for free is a device built
+  // from a figure the slide already states. With no figure, or on an archetype
+  // that paints no device, there is nothing free left — and that is exactly
+  // what the paid redraft is for. Inventing the element here is the
+  // `pubsub-21839432908803804` failure mode by another route.
+  "one-element": "its own copy carries no figure to set as a device, and nothing else can be added without writing it",
   "no-device": "no unused vetted image, no sourced figure, and no colour-block ground left to try",
   "dead-space": "no figure in its own text, no unclaimed content-shaped archetype, and its type is already at the largest scale",
   empty: "no figure in its own text, no unclaimed content-shaped archetype, and its type is already at the largest scale",
@@ -573,6 +586,30 @@ function remedyFor(
       return role === "closer"
         ? closerRemedy(slide, copy)
         : coverRemedy(slide, copy, selections, factCards);
+
+    // ── `one-element` GETS THE DEVICE LIMB AND NOTHING ELSE. ──
+    //
+    // It shares the branch below because the device limb is identical, but it
+    // must not fall through to the two after it: a `switch-archetype` moves a
+    // plate's one element into a different template and a `font-scale` step
+    // makes it bigger. **Neither adds an element**, so both would re-render
+    // byte-identically in the way that matters and burn the attempt's one free
+    // chance — the exact defect the device limb's own guard is written to
+    // prevent, one kind over. The early return is what keeps that true.
+    case "one-element": {
+      const source = sourceForSlide(slide, factCards);
+      const device = source !== undefined ? deviceFromText(`${slide.headline} ${slide.body}`, source) : undefined;
+      const current = (slide.layout ?? "photo") as RelayoutArchetype;
+      if (device !== undefined && DEVICE_SLOT_ARCHETYPES.has(current) && slide.device === undefined) {
+        return {
+          kind: "attach-device",
+          slide: slideN,
+          device,
+          reason: `slide ${slideN} carries one element and already states the figure ${device.value}; setting it as a device gives the plate a second thing to look at`,
+        };
+      }
+      return undefined;
+    }
 
     case "dead-space":
     case "empty": {

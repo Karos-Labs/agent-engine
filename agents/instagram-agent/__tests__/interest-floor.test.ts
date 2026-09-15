@@ -7,6 +7,7 @@ import {
   DISPLAY_TYPE_SCALE_FLOOR,
   FLAT_BACKGROUND_CEILING,
   FULL_BLEED_IMAGERY_SHARE,
+  CONTENT_ELEMENT_FLOOR,
   IMAGERY_OR_DEVICE_FLOOR,
   INK_SHARE_FLOOR,
   INTEREST_FINDING_SEPARATOR,
@@ -258,6 +259,83 @@ describe("checkInterestFloor: every clause fires alone", () => {
    * Almost the same share as the corner hole above. The difference is that one
    * sits against a margin and the other cuts the plate in two.
    */
+  /**
+   * ── CLAUSE H: THE SEMANTIC FLOOR (RFC-21 Part 2). ──
+   *
+   * The clause that ends a six-candidate search. `CONTENT_ELEMENT_FLOOR`'s own
+   * comment carries the argument; what this case holds is the three properties
+   * that make it different in kind from everything that came before it.
+   *
+   * 1. **It reads no pixels**, so it cannot be palette-dependent — asserted by
+   *    driving the same count through four wildly different metric objects.
+   * 2. **It ABSTAINS when it has no count**, rather than guessing. An
+   *    abstention looks exactly like a pass from the outside, so it is pinned.
+   * 3. **It refuses the owner's grey screen**, which is the whole point, and it
+   *    is the first clause in this file that can do so on a number a brand kit
+   *    cannot move.
+   */
+  it("H — one element is refused, two is not, and the verdict does not move with the pixels", () => {
+    // The owner's grey screen: one headline, nothing else.
+    const one = checkInterestFloor(metrics(), passingSlideProbe(3), "interior", { slide: 3, contentElements: 1 });
+    expect(one.findings.map((f) => f.kind)).toEqual(["one-element"]);
+    expect(one.findings[0]?.measured["contentElements"]).toBe(1);
+    expect(one.findings[0]?.threshold).toBe(CONTENT_ELEMENT_FLOOR);
+    // A statement and a body is a slide.
+    expect(checkInterestFloor(metrics(), passingSlideProbe(3), "interior", { slide: 3, contentElements: 2 }).findings).toEqual([]);
+    // Zero is the empty plate, and the sentence says so differently.
+    const none = checkInterestFloor(metrics(), passingSlideProbe(3), "interior", { slide: 3, contentElements: 0 });
+    expect(none.findings[0]?.sentence).toMatch(/carries nothing/u);
+    expect(one.findings[0]?.sentence).toMatch(/one element/u);
+
+    // ── THE PROPERTY SIX PIXEL CANDIDATES COULD NOT OFFER. ──
+    //
+    // Four metric objects that could not be more different — a dark plate, a
+    // bright one, one that is mostly imagery, one that is nearly bare — and the
+    // verdict is identical, because the clause never looks at any of them.
+    // RFC-21 §2.9 renders this same property over four real brand palettes on
+    // real Chromium; this is its Chromium-free twin and it runs on every push.
+    for (const m of [
+      metrics({ inkShare: 0.02, occupiedShare: 0.10, flatBackgroundShare: 0.97 }),
+      metrics({ inkShare: 0.40, occupiedShare: 0.90, flatBackgroundShare: 0.05 }),
+      metrics({ imageryShare: 0.8, imageryOrDeviceShare: 0.8, contentOccupiedShare: 0.8 }),
+      metrics({ contentOccupiedShare: 0.02, largestEmptyRectShare: 0.9 }),
+    ]) {
+      expect(
+        checkInterestFloor(m, passingSlideProbe(3), "interior", { slide: 3, contentElements: 1 }).findings.map((f) => f.kind),
+        "clause H changed its mind about a one-element plate because the PIXELS changed",
+      ).toContain("one-element");
+    }
+  });
+
+  it("H — ABSTAINS when the caller supplies no count, and an abstention is not a pass", () => {
+    // Every other case in this file omits `contentElements`, so if this clause
+    // fired on an absent count it would fire on all of them. The abstention is
+    // load-bearing and is therefore asserted rather than assumed.
+    const noCount = checkInterestFloor(metrics(), passingSlideProbe(3), "interior", { slide: 3 });
+    expect(noCount.findings.map((f) => f.kind)).not.toContain("one-element");
+    // And the thing that makes the abstention safe: the caller that matters
+    // always supplies it. `checkSlidesInterestFloor` reads
+    // `contentElementsBySlide`, and the workflow builds that from the RENDERED
+    // document — see its call site.
+    expect(checkInterestFloor(metrics(), passingSlideProbe(3), "interior", { slide: 3, contentElements: 1 }).ok).toBe(false);
+  });
+
+  it("H — every role gets the same floor, because \"is there more than one thing here\" is the same question everywhere", () => {
+    // The other floors in this file are per-role because a cover and an interior
+    // carry different amounts of furniture. This one is not, deliberately: three
+    // answers to one question would be three places to drift. A cover's EXTRA
+    // requirement — a photograph or a device — is clause E's job, and the two
+    // are asserted together here so the division of labour is visible.
+    for (const role of ["cover", "interior", "closer"] as const) {
+      expect(checkInterestFloor(metrics(), passingSlideProbe(1), role, { slide: 1, contentElements: 1 }).findings.map((f) => f.kind), role).toContain(
+        "one-element",
+      );
+      expect(checkInterestFloor(metrics(), passingSlideProbe(1), role, { slide: 1, contentElements: 2 }).findings.map((f) => f.kind), role).not.toContain(
+        "one-element",
+      );
+    }
+  });
+
   it("C — a hole that SPANS the frame is never waived, however strong the subject", () => {
     const band = { largestEmptyRect: { x: 0, y: 320, w: 1080, h: 800 }, largestEmptyRectShare: 0.5556 };
     // A full-frame photograph is the strongest subject there is, and it still
@@ -1038,6 +1116,9 @@ function findingFor(kind: InterestFinding["kind"], slide: number, role: SlideRol
     empty: {},
     "no-device": { imageryShare: 0, graphicShare: 0, imageryOrDeviceShare: 0 },
     "text-wall": { textShare: 0.7 },
+    // Clause H reads no metrics at all — it reads `opts.contentElements`, which
+    // `byKindOpts` below supplies. The empty object is the honest entry.
+    "one-element": {},
     // Unreachable through this helper, and that is the clause's whole point:
     // `marks-missing` is DOM-anchored (it reads the probe's `markRuns` /
     // `markRunsPainted`), and `passingSlideProbe` declares no mark runs, so no
@@ -1053,7 +1134,11 @@ function findingFor(kind: InterestFinding["kind"], slide: number, role: SlideRol
   const byKindProbe: Partial<Record<InterestFinding["kind"], Parameters<typeof passingSlideProbe>[1]>> = {
     empty: { textBoxShare: 0.004 },
   };
-  const verdict = checkInterestFloor(metrics(byKind[kind]), passingSlideProbe(slide, byKindProbe[kind]), role, { slide });
+  // Clause H abstains unless the caller supplies a count, so only its own row
+  // sets one — every other kind keeps the abstention, which is what stops this
+  // helper from producing two findings where the case wants one.
+  const byKindElements: Partial<Record<InterestFinding["kind"], number>> = { "one-element": 1 };
+  const verdict = checkInterestFloor(metrics(byKind[kind]), passingSlideProbe(slide, byKindProbe[kind]), role, { slide, ...(byKindElements[kind] !== undefined ? { contentElements: byKindElements[kind] } : {}) });
   const finding = verdict.findings.find((f) => f.kind === kind);
   if (finding === undefined) throw new Error(`fixture did not produce a "${kind}" finding at role ${role}`);
   return finding;
