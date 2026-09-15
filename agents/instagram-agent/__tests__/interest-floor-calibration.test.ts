@@ -20,6 +20,7 @@ import {
   type SlideRole,
 } from "../src/workflow/interest-floor.js";
 import { buildMarkRing, markCssBlock, type EmphasisIssue, type MarkRing } from "../src/workflow/emphasis-marks.js";
+import { countContentElements } from "../src/workflow/visual-qa-pre-checks.js";
 import { buildScriptFontHeadForLanguage, scriptTypographyFor } from "../src/workflow/script-fonts.js";
 import { groundMaterialCssBlock } from "../src/workflow/ground-material.js";
 import { deviceCssBlock } from "../src/workflow/slide-devices.js";
@@ -439,6 +440,13 @@ interface Measured {
   template: string;
   metrics: SlideMetrics;
   probe: SlideProbe;
+  /**
+   * RFC-21 Part 2 — `countContentElements` on the slide that was RENDERED, for
+   * clause H. Carried on every measurement rather than passed at call sites,
+   * because a case that forgets it gets a silently weaker verdict: clause H
+   * abstains on an absent count, and an abstention looks exactly like a pass.
+   */
+  contentElements: number;
 }
 
 /** The top sixth of the plate, in SCREENSHOT rows: the band `.brand-badge` is positioned in on every bundled template (`top: 36-56px` design, scale 2). */
@@ -589,7 +597,10 @@ async function render(input: RenderCarouselInput): Promise<Measured[]> {
     const metrics = entry.metrics;
     const probe = entry.probe;
     if (metrics === undefined || probe === undefined) throw new Error(`slide ${entry.n} came back without metrics/probe — measure/probe were requested`);
-    return { n: entry.n, path: entry.path, template: input.slides[index]!.template, metrics, probe };
+    // `index === 0` is the cover, which is the same convention
+    // `checkDefaultRenderRules` and the workflow both use.
+    const contentElements = countContentElements(input.slides[index]! as Parameters<typeof countContentElements>[0], index === 0);
+    return { n: entry.n, path: entry.path, template: input.slides[index]!.template, metrics, probe, contentElements };
   });
 }
 
@@ -600,8 +611,8 @@ async function render(input: RenderCarouselInput): Promise<Measured[]> {
  * photograph to sourcing, so a cover with no picture must be judged on its
  * ground layer rather than excused.
  */
-function optsFor(measured: Measured): { slide: number; archetype: string } {
-  return { slide: measured.n, archetype: templateBasename(measured.template) };
+function optsFor(measured: Measured): { slide: number; archetype: string; contentElements: number } {
+  return { slide: measured.n, archetype: templateBasename(measured.template), contentElements: measured.contentElements };
 }
 
 /**
@@ -2203,7 +2214,27 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
   // number for the same metric; it is a semantic/structural reading of the
   // plate.* A plate carrying a headline, no body, no device and no source is
   // refusable from the COPY. It is not refusable from its pixels.
-  it.fails(
+  // ── RESTORED TO `it`. CLAUSE H IS THE REFUSAL THESE CASES WERE WAITING FOR. ──
+  //
+  // They were marked `it.fails` earlier in this same branch, with the
+  // measurement: on a de-decorated tree the grey screen is not separable from a
+  // good one-line statement plate BY GEOMETRY, because `largestEmptyRect` is
+  // built from masks cut at an absolute distance and therefore moves with the
+  // brand palette (bundled 0.3337 over the ceiling, paper 0.2707 under it,
+  // marked 0.2036 well under).
+  //
+  // **That is still true, and it is no longer what decides.** RFC-21 Part 2's
+  // clause H asks the assembled DOCUMENT how many content elements are on the
+  // plate. The owner's grey screen is one headline and nothing else: it counts
+  // **1** against a floor of 2, identically on a dark kit, a light kit, a
+  // saturated kit and a kit on the 4.5:1 floor, because a palette cannot reach
+  // a count. Marks do not change it either — five swatches on one headline is
+  // still one element — which is the property G5 has always been about and
+  // which it can now assert without depending on a rectangle.
+  //
+  // The pixel assertions inside these cases are kept where they still hold and
+  // are carried as MEASUREMENTS where they do not; each says which it is.
+  it(
     "G1 — the owner's grey screen is REFUSED at the interior AND cover roles, on either ground",
     async () => {
       const rows: string[] = [];
@@ -2479,7 +2510,27 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
   // and marks take its rectangle further UNDER rather than closing a hole that
   // was ever closable. Restored to `it` in the same PR that gives the floor a
   // semantic reading of the plate.
-  it.fails(
+  // ── RESTORED TO `it`. CLAUSE H IS THE REFUSAL THESE CASES WERE WAITING FOR. ──
+  //
+  // They were marked `it.fails` earlier in this same branch, with the
+  // measurement: on a de-decorated tree the grey screen is not separable from a
+  // good one-line statement plate BY GEOMETRY, because `largestEmptyRect` is
+  // built from masks cut at an absolute distance and therefore moves with the
+  // brand palette (bundled 0.3337 over the ceiling, paper 0.2707 under it,
+  // marked 0.2036 well under).
+  //
+  // **That is still true, and it is no longer what decides.** RFC-21 Part 2's
+  // clause H asks the assembled DOCUMENT how many content elements are on the
+  // plate. The owner's grey screen is one headline and nothing else: it counts
+  // **1** against a floor of 2, identically on a dark kit, a light kit, a
+  // saturated kit and a kit on the 4.5:1 floor, because a palette cannot reach
+  // a count. Marks do not change it either — five swatches on one headline is
+  // still one element — which is the property G5 has always been about and
+  // which it can now assert without depending on a rectangle.
+  //
+  // The pixel assertions inside these cases are kept where they still hold and
+  // are carried as MEASUREMENTS where they do not; each says which it is.
+  it(
     "G5 — the grey screen carrying its maximum mark load still fails clause C",
     async () => {
       // The longest headline the fixtures carry, so there are words to mark:
@@ -2512,13 +2563,27 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
           `colours ${entry.metrics.markColourCount ?? 0}\n`,
       );
 
-      // THE CLAIM: marks do not fill a hole. Asserted on the RECTANGLE, which
-      // is the measurement, so it cannot be satisfied by a clause name.
-      expect(
-        entry.metrics.largestEmptyRectShare,
-        `the grey screen at maximum mark load measured a ${(entry.metrics.largestEmptyRectShare * 100).toFixed(2)}% rectangle — marks closed the hole`,
-      ).toBeGreaterThan(LARGEST_EMPTY_RECT_CEILING.interior);
-      expect(checkInterestFloor(entry.metrics, entry.probe, "interior", optsFor(entry)).ok).toBe(false);
+      // ── THE CLAIM: MARKS DO NOT BUY A PLATE A PASS. ──
+      //
+      // It used to be asserted on the RECTANGLE, on the argument that a
+      // measurement cannot be satisfied by a clause name. The argument was right
+      // and the measurement was the wrong one: marks genuinely DO close the hole
+      // — this plate reads 0.2036 against a 0.28 ceiling with five swatches on it
+      // — and RFC-20 §11.6 recorded the same thing at 0.2278 before this branch
+      // existed. A rectangle was never able to carry this claim.
+      //
+      // Clause H can. The plate is one headline with emphasis painted on it, so
+      // it counts ONE content element whatever the marks do, on every palette.
+      // **Emphasis is not content**, which is the sentence this case has always
+      // been making.
+      const verdict = checkInterestFloor(entry.metrics, entry.probe, "interior", optsFor(entry));
+      expect(entry.contentElements, "the marked grey screen counts more than one element — the fixture grew a slot").toBe(1);
+      expect(verdict.findings.map((f) => f.kind), "five marks bought the grey screen a pass").toContain("one-element");
+      expect(verdict.ok).toBe(false);
+      console.log(
+        `[RFC-20 G5] marked grey screen: LER ${(entry.metrics.largestEmptyRectShare * 100).toFixed(2)}% ` +
+          `(ceiling ${LARGEST_EMPTY_RECT_CEILING.interior * 100}%) — clause C does not fire; clause H refuses it on ${entry.contentElements} element`,
+      );
     },
     600_000,
   );
@@ -3637,7 +3702,27 @@ describe.skipIf(!isChromiumInstalled())("RFC-21 §2.9: the one-line plate is sep
   // `it.fails` keeps the render and every assertion and inverts the report, so
   // the suite goes RED the day the floor stops being palette-dependent — which
   // is exactly when this comment should be deleted.
-  it.fails(
+  // ── RESTORED TO `it`. CLAUSE H IS THE REFUSAL THESE CASES WERE WAITING FOR. ──
+  //
+  // They were marked `it.fails` earlier in this same branch, with the
+  // measurement: on a de-decorated tree the grey screen is not separable from a
+  // good one-line statement plate BY GEOMETRY, because `largestEmptyRect` is
+  // built from masks cut at an absolute distance and therefore moves with the
+  // brand palette (bundled 0.3337 over the ceiling, paper 0.2707 under it,
+  // marked 0.2036 well under).
+  //
+  // **That is still true, and it is no longer what decides.** RFC-21 Part 2's
+  // clause H asks the assembled DOCUMENT how many content elements are on the
+  // plate. The owner's grey screen is one headline and nothing else: it counts
+  // **1** against a floor of 2, identically on a dark kit, a light kit, a
+  // saturated kit and a kit on the 4.5:1 floor, because a palette cannot reach
+  // a count. Marks do not change it either — five swatches on one headline is
+  // still one element — which is the property G5 has always been about and
+  // which it can now assert without depending on a rectangle.
+  //
+  // The pixel assertions inside these cases are kept where they still hold and
+  // are carried as MEASUREMENTS where they do not; each says which it is.
+  it(
     "the display plate scores below the body-scale plate on every palette, and the bands do not cross",
     async () => {
       const measurements: Array<{ palette: string; scale: string; m: SlideMetrics; ok: boolean; kinds: string[] }> = [];

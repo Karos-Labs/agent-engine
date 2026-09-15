@@ -573,3 +573,91 @@ a format that cannot be filled.**
 The CANDIDATE path. `customArchetype` still renders model-authored markup to the client on the run
 that invents it. Now that the composition vocabulary exists, narrowing it no longer costs the variety
 it used to — which is precisely the condition §3.5 said had to be met first.
+
+---
+
+# 12. CLAUSE H — THE SEMANTIC FLOOR (RFC-21 Part 2)
+
+**This closes the question Part 11 kept re-opening, and it closes it by changing what is measured rather than
+what the number is.**
+
+## 12.1 The six failures, and the one thing they share
+
+| candidate / clause | how it died |
+|---|---|
+| `occupiedShare` (clause D) | demanded decoration, and accepted it from anywhere — PR #124 |
+| `contentOccupiedShare` (clause G, pixel limb) | palette spread **0.9404** on a quiet plate |
+| `flatBackgroundShare` | moves with the material at `flat` 0.925 |
+| `edgeDensity` | five refusals; finally, moves **both ways** across templates in one run |
+| `contentOccupiedShare / occupiedShare` | reads **1.00** on the defect plate itself |
+| `displayTypeScale` (`plateSubject`'s type limb) | waived the grey screen at **0.2715** against a 0.055 floor |
+
+And then the geometry went the same way. RFC-21 §2.9 measured `largestEmptyRect` giving **four different verdicts
+on four brand palettes for one plate**: `bundled dark = dead-space`, the other three `pass`.
+
+> **Every mask in `slide-metrics.ts` is cut at an ABSOLUTE distance, so on a quiet plate nothing measured off the
+> pixels is palette-invariant — not a share, and not a rectangle derived from one.**
+
+That sentence is the whole of Part 11 and Part 12's premise. It also means a seventh pixel candidate was never
+going to work, and proposing one would have been the eighth cycle of the same mistake.
+
+## 12.2 The answer was in the ruling all along
+
+The owner, 2026-09-14: *make sure the metrics are agnostic to colour and rest on the absence of **elements,
+structure** and contrast rather than on thresholds fitted to one palette.*
+
+**Count the elements.** `countContentElements` already existed — `visual-qa-pre-checks.ts` has read it since
+Phase 2 for `default:two-elements-per-slide`, which reports to the judge. Clause H reads **the same function**,
+and refuses.
+
+It counts what the ASSEMBLED document carries: the prose fields that survived `LAYOUT_FIELD_KEYS`, the hero
+image, a list's rows fragment, a device fragment, a closer's recap strip. **A brand palette cannot reach any of
+them.** Re-skin the entire kit and the count is identical — the property six pixel candidates could not offer.
+
+And it is the reference's own rule, already written down as a count: `@semrush` and `@buffer` carry **three or
+four element groups**; the prep render the owner rejected carried **nine, three of which said the same sentence**.
+
+## 12.3 The floor is 2, and deliberately not 3
+
+```
+the owner's grey screen  one headline, nothing else        1   REFUSED
+a statement and a body                                     2   passes
+a composed statement plate with its bounded object         3   passes
+```
+
+2 refuses exactly the plate the complaint named and nothing more. 3 would refuse every honest
+headline-and-body slide whose copy carries no figure — and while §11.4 argues such a plate *should* carry an
+object, **a gate is the wrong instrument for an argument about craft. A floor refuses neglect; it does not
+enforce a target.** The 3–4 norm belongs in the prompt and in the judge's report.
+
+## 12.4 What it is not
+
+Not a replacement for clause E — a cover still has to carry a photograph or a device, and that is a question
+about *which* elements. Not a replacement for clause F — a wall of text has plenty of elements. Clause H answers
+one question: **is there more than one thing here.**
+
+It **abstains** when the caller supplies no count, and the abstention is asserted, because an abstention looks
+exactly like a pass from outside.
+
+## 12.5 What it let us restore
+
+G1, G5 and RFC-21 §2.9 were marked `it.fails` earlier in this same branch — known-red, with the measurement that
+the grey screen is not separable by geometry (bundled `LER` 0.3337 over the ceiling, paper 0.2707 under, marked
+0.2036 well under). **All three are back to `it`.**
+
+G5 is the one worth reading. Its claim was always *marks cannot buy a plate a pass*, and it asserted that on the
+rectangle — which was the wrong measurement, because **marks genuinely do close the hole** (§11.6 recorded 0.2278
+before this branch existed). Clause H carries the claim properly: five swatches painted on one headline is still
+**one element**. *Emphasis is not content.*
+
+## 12.6 The remedy, and the one thing it may not do
+
+`one-element` sits high in `KIND_PRIORITY` — after the render-integrity kinds, ahead of every geometric one —
+because it is the only kind on that list that is a statement about content. A plate carrying one element usually
+also reports a hole, and remedying the hole first would spend the attempt's free chance moving type around a
+plate that has nothing on it.
+
+Its only free remedy is a device built from a figure the slide already states. **It deliberately does not fall
+through to `switch-archetype` or `font-scale`**: neither adds an element, so both would re-render identically in
+the way that matters. With no figure there is no free remedy and the paid redraft is what that case is for —
+**inventing the element is the `pubsub-21839432908803804` failure mode by another route.**

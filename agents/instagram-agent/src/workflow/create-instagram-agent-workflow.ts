@@ -340,6 +340,7 @@ import {
   resolveRenderRules,
   templateBasename,
   type ContrastFact,
+  countContentElements,
 } from "./visual-qa-pre-checks.js";
 import { parseStyleDirective, applyIntents, type StyleDirectiveResult, type StyleIntent, type StyleRefusal } from "./style-directive.js";
 import {
@@ -8790,6 +8791,16 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // RFC-17 — see `markKindsBySlide`'s declaration: without it the
           // `marks-not-visible` warning is unconditional on every dark kit.
           markKindsBySlide,
+          // RFC-21 Part 2 — clause H, the semantic floor. Counted off the
+          // document that was just RENDERED (`slidesDataForQa`), never off the
+          // copy: a device the writer declared on an archetype with no slot for
+          // it is dropped by `contentFor` without a word, and a plate must not
+          // be credited with an element the reader never sees. Same counter
+          // `default:two-elements-per-slide` reads, so the gate and the judge
+          // cannot disagree about what is on a plate.
+          contentElementsBySlide: new Map(
+            slidesDataForQa.slides.map((sl, index) => [sl.n, countContentElements(sl, index === 0)] as const),
+          ),
         }),
       );
       let interestRelayout: InterestRelayoutPlan | undefined;
