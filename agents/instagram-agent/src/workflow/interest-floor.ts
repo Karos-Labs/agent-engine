@@ -1901,7 +1901,45 @@ export function checkInterestFloor(
   // `holeSpansFrame`.
   const subject = holeSpansFrame(metrics.largestEmptyRect) ? undefined : plateSubject(metrics, probe);
   const rectCeiling = LARGEST_EMPTY_RECT_CEILING[role];
-  if (metrics.largestEmptyRectShare > rectCeiling) {
+  // ── C REPORTS AT THE INTERIOR ROLE. CLAUSE H CARRIES THE REFUSAL. ──
+  //
+  // RFC-21 §2.9 is the owner's colour-agnosticism test made executable — one
+  // plate, four brand palettes, the verdict must be identical. On the
+  // de-decorated tree it is not, at `fontScale l` (CI 34963600799):
+  //
+  //     bundled dark        dead-space
+  //     light ground        pass
+  //     saturated blue      pass
+  //     on the 4.5:1 floor  pass
+  //
+  // `largestEmptyRect` is built from the `empty` mask — no ink AND a mean that
+  // has not left the ground, two ABSOLUTE thresholds. A decorated plate marked
+  // those cells on every palette; on a quiet one the only thing marking them is
+  // glyph antialiasing, whose ramp length IS the ground-to-ink distance. So the
+  // hole grows and shrinks with the client's brand book.
+  //
+  // **THIS DEMOTION WAS TRIED ONCE AND REVERTED, AND THE DIFFERENCE IS CLAUSE
+  // H.** Earlier in this same branch it took nine unit cases red and left the
+  // owner's grey screen refused by NOTHING, which is not a trade worth making:
+  // a clause that is wrong in one dimension is not improved by deleting it, it
+  // is improved by REPLACING it. Clause H — count the elements on the assembled
+  // document — refuses that plate now, on a number no palette can move, so the
+  // demotion costs nothing it used to cost.
+  //
+  // Third clause to reach this conclusion and the same cause every time: clause
+  // D's occupancy limb (PR #124), clause G's pixel limb, and now this. **No
+  // number moved** — the ceiling is untouched at every role, so §5.6 rule 4 is
+  // not being worked around.
+  //
+  // STILL GATING AT COVER AND CLOSER, and that is not a hedge. Both roles carry
+  // imagery by construction, so their rectangle is a fact about a photograph
+  // rather than about antialiasing, and a hollow cover or a hollow closer is a
+  // composition failure no other clause is built to see.
+  //
+  // The rectangle, its corners and the subject are still computed, still on
+  // every finding's `measured`, still on the gate payload, and still read by
+  // `interest-relayout.ts`'s cover limb.
+  if (metrics.largestEmptyRectShare > rectCeiling && role !== "interior") {
     // WAIVED rather than skipped when the plate carries a subject. The hole
     // is real either way and the reviewer, the judge and the ledger should
     // all still see it with the reason it was allowed -- the same posture

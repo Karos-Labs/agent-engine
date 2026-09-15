@@ -195,9 +195,14 @@ describe("checkInterestFloor: every clause fires alone", () => {
   });
 
   it("C — boundary: the interior ceiling is looser than the cover's, and each is exact to 0.001", () => {
-    // Interiors are exempt from clause E, so a bare interior reports dead-space alone.
+    // ── THE INTERIOR ROLE REPORTS RATHER THAN GATES (RFC-21 Part 2). ──
+    // Clause C's own comment carries the measurement: `largestEmptyRect` gives
+    // four verdicts on four brand palettes for one plate, so it cannot gate
+    // colour-agnostically, and clause H refuses that plate instead. The CEILING
+    // relationship this case pins is unchanged and still load-bearing, because
+    // cover and closer still gate on it.
     expect(check(bare({ largestEmptyRectShare: LARGEST_EMPTY_RECT_CEILING.interior - EPS }), "interior").ok).toBe(true);
-    expect(kinds(check(bare({ largestEmptyRectShare: LARGEST_EMPTY_RECT_CEILING.interior + EPS }), "interior"))).toEqual(["dead-space"]);
+    expect(kinds(check(bare({ largestEmptyRectShare: 0.99 }), "interior")), "clause C gates at the interior role again").toEqual([]);
     expect(check(bare({ largestEmptyRectShare: LARGEST_EMPTY_RECT_CEILING.cover - EPS }), "cover").findings.map((f) => f.kind)).toEqual(["no-device"]);
     expect(kinds(check(bare({ largestEmptyRectShare: LARGEST_EMPTY_RECT_CEILING.cover + EPS }), "cover"))).toEqual(["dead-space", "no-device"]);
     // 0.25 sits between the two: legitimate mid-carousel, a defect on a cover.
@@ -220,7 +225,8 @@ describe("checkInterestFloor: every clause fires alone", () => {
     // is a different plate and gets its own case below.
     const hole = { largestEmptyRect: { x: 0, y: 640, w: 720, h: 800 }, largestEmptyRectShare: 0.37 };
     // Imagery in frame: the hole is composition.
-    const withImagery = check(metrics(hole), "interior");
+    // At the COVER role, which is where clause C still gates.
+    const withImagery = check(metrics({ ...hole, imageryOrDeviceShare: 0.6, imageryShare: 0.6 }), "cover", 1);
     expect(withImagery.findings.map((f) => f.kind)).not.toContain("dead-space");
     expect(withImagery.waived.map((f) => f.kind)).toContain("dead-space");
     expect(withImagery.waived[0]?.waivedReason).toMatch(/imagery or a drawn device/u);
@@ -240,7 +246,7 @@ describe("checkInterestFloor: every clause fires alone", () => {
     // reading RFC-20 §4 took off the reference plates — `@semrush`'s empty
     // quadrant is earned by a four-node diagram, not by the size of its
     // headline.
-    const hugeType = checkInterestFloor(bare(hole), { ...passingSlideProbe(3), displayTypeScale: 0.3 }, "interior", { slide: 3 });
+    const hugeType = checkInterestFloor(bare(hole), { ...passingSlideProbe(1), displayTypeScale: 0.3 }, "cover", { slide: 1 });
     expect(hugeType.findings.map((f) => f.kind), "display-scale type bought a hole it has not earned").toContain("dead-space");
     expect(hugeType.waived, "a withdrawn limb is still waiving").toEqual([]);
     // And the floor it used to read is still exported, still printed by the
@@ -351,11 +357,11 @@ describe("checkInterestFloor: every clause fires alone", () => {
     // A band on the OTHER axis spans too — a plate cut left from right is cut
     // just the same as one cut top from bottom.
     const column = { largestEmptyRect: { x: 0, y: 0, w: 560, h: 1440 }, largestEmptyRectShare: 0.52 };
-    expect(check(metrics(column), "interior").findings.map((f) => f.kind)).toContain("dead-space");
+    expect(check(metrics(column), "cover", 1).findings.map((f) => f.kind)).toContain("dead-space");
     // And the corner shape is still waived, so this case is measuring POSITION
     // rather than having quietly switched the waiver off.
     const corner = { largestEmptyRect: { x: 0, y: 640, w: 720, h: 800 }, largestEmptyRectShare: 0.37 };
-    expect(check(metrics(corner), "interior").waived.map((f) => f.kind)).toContain("dead-space");
+    expect(check(metrics(corner), "cover", 1).waived.map((f) => f.kind)).toContain("dead-space");
   });
 
   /**
@@ -365,10 +371,17 @@ describe("checkInterestFloor: every clause fires alone", () => {
    * let it through.
    */
   it("THE GREY SCREEN IS STILL REFUSED, with clause D reporting rather than gating", () => {
+    // ONE ELEMENT — the grey screen is a headline and nothing else, which is
+    // what RFC-21 Part 2's clause H counts. It is supplied at every role because
+    // the plate is the same plate at every role.
     for (const role of ["cover", "interior", "closer"] as const) {
-      const verdict = check(boringSlideMetrics(), role);
+      const verdict = checkInterestFloor(boringSlideMetrics(), passingSlideProbe(3), role, { slide: 3, contentElements: 1 });
       expect(verdict.ok, `the grey screen passed at ${role}`).toBe(false);
-      expect(verdict.findings.map((f) => f.kind), `at ${role}`).toContain("dead-space");
+      // Clause C still gates at cover and closer; at the interior role it
+      // reports and clause H refuses. The plate is refused everywhere either
+      // way, and WHICH clause speaks is named so a later change has to come past
+      // this line rather than quietly swapping one refusal for none.
+      expect(verdict.findings.map((f) => f.kind), `at ${role}`).toContain(role === "interior" ? "one-element" : "dead-space");
     }
     // And the demoted measurement is still REPORTED, so the number a reader
     // goes looking for is present rather than missing.
@@ -683,7 +696,11 @@ describe("OCCUPIED_SHARE_FLOOR: the RFC-20 re-calibration", () => {
     // interior floor is set to, it cannot admit one without admitting the
     // other.
     for (const plate of [strippedStatement, greyScreen]) {
-      const verdict = check(plate(), "interior", 3);
+      // ONE ELEMENT, which is what both of these plates are: a stripped
+      // statement and the grey screen. Clause H is what refuses them since
+      // RFC-21 Part 2, and it refuses them identically on every palette —
+      // which is the property clause C could not offer.
+      const verdict = checkInterestFloor(plate(), passingSlideProbe(3), "interior", { slide: 3, contentElements: 1 });
       expect(verdict.ok).toBe(false);
       // `dead-space` rather than `empty`, since 2026-09-15. Clause G asks the
       // DOM whether any type painted, and on BOTH of these plates it did —
@@ -694,7 +711,12 @@ describe("OCCUPIED_SHARE_FLOOR: the RFC-20 re-calibration", () => {
       // plate. A clause G that fired here was firing on `contentOccupiedShare`
       // — a number that swings 0.032 with the client's brand palette, on a
       // floor of 0.06.
-      expect(kinds(verdict)).toContain("dead-space");
+      // `one-element`, not `dead-space`: RFC-21 Part 2 moved the refusal off the
+      // rectangle and onto the element count, which is the only one of the two a
+      // brand palette cannot move. The property this case pins — **whatever the
+      // interior floor is, it cannot admit one of these without admitting the
+      // other** — is unchanged and is what the title is about.
+      expect(kinds(verdict)).toContain("one-element");
     }
     // The interior floor is therefore the value the tree shipped with, not a
     // midpoint. Pinned so a later edit has to come past this case.
@@ -714,9 +736,13 @@ describe("OCCUPIED_SHARE_FLOOR: the RFC-20 re-calibration", () => {
     // gate: `contentOccupiedShare` spreads 0.032 across brand palettes
     // against a floor of 0.06.
     for (const role of ["cover", "interior", "closer"] as const) {
-      const verdict = check(greyScreen(), role, role === "interior" ? 3 : 1);
+      const verdict = checkInterestFloor(greyScreen(), passingSlideProbe(1), role, { slide: role === "interior" ? 3 : 1, contentElements: 1 });
       expect(verdict.ok, role).toBe(false);
-      expect(kinds(verdict), role).toContain("dead-space");
+      // At COVER and CLOSER clause C still gates and still speaks. At INTERIOR it
+      // reports and clause H refuses — see clause C's own comment for the
+      // measurement that moved it. The plate is refused at every role either way,
+      // which is what the title claims.
+      expect(kinds(verdict), role).toContain(role === "interior" ? "one-element" : "dead-space");
       if (role !== "interior") expect(kinds(verdict), role).toContain("no-device");
     }
   });
@@ -871,7 +897,17 @@ describe("checkInterestFloor: clause G — a decorated empty plate", () => {
     // — there is only one clause left that can say `empty` — and the case is
     // kept because the day a second one appears this line is where it shows.
     expect(kinds(check(boringSlideMetrics(), "interior", 3)).filter((k) => k === "empty")).toHaveLength(0);
-    expect(kinds(check(boringSlideMetrics(), "interior", 3)).sort()).toEqual(["dead-space"]);
+    // At the interior role clause C now REPORTS (RFC-21 Part 2), so this plate
+    // produces nothing from the pixels at all — and that is the point of the
+    // case rather than a hole in it: the never-double-report property is
+    // strongest when only one clause can speak. Clause H refuses this plate on
+    // its element count, which the case below supplies; here the assertion is
+    // that the PIXEL clauses stay silent and do not pile up.
+    expect(kinds(check(boringSlideMetrics(), "interior", 3)).sort()).toEqual([]);
+    expect(
+      checkInterestFloor(boringSlideMetrics(), passingSlideProbe(3), "interior", { slide: 3, contentElements: 1 }).findings.map((f) => f.kind),
+      "nothing refuses the grey screen at the interior role",
+    ).toEqual(["one-element"]);
     // And the demoted measurement still fires on it, as a report.
     expect(check(boringSlideMetrics(), "interior", 3).warnings.map((w) => w.kind)).toContain("low-occupancy");
     // A plate that is genuinely idle AND has nothing to read used to trip D and
@@ -1138,7 +1174,17 @@ function findingFor(kind: InterestFinding["kind"], slide: number, role: SlideRol
   // sets one — every other kind keeps the abstention, which is what stops this
   // helper from producing two findings where the case wants one.
   const byKindElements: Partial<Record<InterestFinding["kind"], number>> = { "one-element": 1 };
-  const verdict = checkInterestFloor(metrics(byKind[kind]), passingSlideProbe(slide, byKindProbe[kind]), role, { slide, ...(byKindElements[kind] !== undefined ? { contentElements: byKindElements[kind] } : {}) });
+  // `dead-space` gates at COVER and CLOSER only since RFC-21 Part 2: clause C
+  // reports at the interior role and clause H carries the refusal there. Asked
+  // at `interior` this helper would come back empty, so it asks at the role the
+  // clause still speaks at rather than silently producing nothing.
+  // CLOSER rather than cover: the cover role has its own limb in
+  // `planInterestRelayout` (`.cov-field`'s empty device slot), so a specimen
+  // built at the cover role would exercise that limb instead of the ladder
+  // these cases are about. The closer gates on clause C identically and has
+  // no such limb.
+  const roleFor = kind === "dead-space" && role === "interior" ? "closer" : role;
+  const verdict = checkInterestFloor(metrics(byKind[kind]), passingSlideProbe(slide, byKindProbe[kind]), roleFor, { slide, ...(byKindElements[kind] !== undefined ? { contentElements: byKindElements[kind] } : {}) });
   const finding = verdict.findings.find((f) => f.kind === kind);
   if (finding === undefined) throw new Error(`fixture did not produce a "${kind}" finding at role ${role}`);
   return finding;

@@ -661,3 +661,57 @@ Its only free remedy is a device built from a figure the slide already states. *
 through to `switch-archetype` or `font-scale`**: neither adds an element, so both would re-render identically in
 the way that matters. With no figure there is no free remedy and the paid redraft is what that case is for —
 **inventing the element is the `pubsub-21839432908803804` failure mode by another route.**
+
+---
+
+# 13. THE IMAGERY FLOOR
+
+## 13.1 Two runs, same week, same budget
+
+```
+karoslabs       pubsub-21551118258353204   8 slides   5 with a hero image
+                                                      (one AI-GENERATED, n4-gen0.png)
+thepitchbydeel  pubsub-21559620763659451   8 slides   0
+```
+
+Nothing was broken in either. Images are sourced only for `HERO_IMAGE_LAYOUTS` — `photo` and `cover`, the only
+two archetypes whose templates declare an `{{image:hero}}` slot. **So the number of pictures in a post was
+decided entirely by the copy model's layout choices, and nothing ever enforced a floor on it.**
+
+Meanwhile `DEFAULT_RUN_SHAPE.photoSlides` is **6**: every run plans, prices and reserves spend for six image
+slides. The owner, 2026-09-15: *"it makes no sense that the budget pays for 6 and the post comes out with 0."*
+
+**The two halves of the system had disagreed about this for the whole of the agent's life, and no gate could see
+it** — every clause in `interest-floor.ts` judges a slide that has already been composed, and a carousel that
+never asked for a picture is not a failing slide, it is eight passing ones.
+
+## 13.2 Promotion, not a gate
+
+`enforceImageryFloor` runs at **04m2**, after the copy is final and **before** 04n binds the concept or any tier
+sources anything. Under the floor, it promotes `text_only` slides to `photo`, lowest slide number first.
+
+- **$0.00 and deterministic.** It changes one enum on one slide and lets the existing ladder — client upload,
+  library, stock, scrape, **generate** — do the rest. That ladder already works: the `karoslabs` run's fourth
+  slide is an AI-generated image it produced unaided.
+- **It only ever ADDS.** A draft that chose its own photographs is returned untouched.
+- **It promotes `text_only` and nothing else.** `text_only` and `photo` resolve to the *same template*; the
+  difference between them is nothing but whether an image was found, so promoting one is not a design change at
+  all. Every other archetype is a designed shape whose content would have nowhere to go, and converting a
+  `stat_callout` into a photograph throws away the figure that made it a stat callout.
+- **A promotion is a request for a picture, never a promise of one.** If sourcing finds nothing the slide is
+  reassigned back to `text_only` and ships heroless, with `downgradedForImages` waiving clause E — unchanged
+  behaviour.
+- **It never holds.** A carousel too dense to reach the floor reports a shortfall and continues, per
+  `budgets-adapt-never-hold`.
+
+## 13.3 The floor is 3, and it is a composition number
+
+Not 6. `photoSlides: 6` is what the run may **spend**; enforcing it as a composition target would make three
+quarters of every carousel a photograph and produce exactly the post prompt `instagram-copy` warns against —
+*"one rhythm, reads as filler."* The budget over-estimating is the safe direction and the owner's own rule.
+
+3 comes from `docs/instagram-restraint-reference.md`: `@semrush` and `@buffer` carry a real photograph or a real
+diagram on roughly every third plate — never on every one, and never on none. On an 8-slide carousel that is 3.
+
+**It is a floor, not a target.** A draft that wants five photographs keeps five. What it refuses is the shape it
+was written for: a post with one picture, or none.
