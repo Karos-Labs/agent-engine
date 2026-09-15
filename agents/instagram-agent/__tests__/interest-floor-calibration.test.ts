@@ -12,6 +12,7 @@ import {
   CLIPPED_EDGE_SHARE_CEILING,
   CONTENT_OCCUPIED_SHARE_FLOOR,
   FLAT_BACKGROUND_CEILING,
+  DISPLAY_TYPE_SCALE_FLOOR,
   IMAGERY_OR_DEVICE_FLOOR,
   INK_SHARE_FLOOR,
   LARGEST_EMPTY_RECT_CEILING,
@@ -275,6 +276,47 @@ async function materialize(dir: string, scriptLanguage?: string, brandHeadHtml?:
 
 const slide = (over: Partial<InstagramSlideCopy> & { n: number }): InstagramSlideCopy =>
   InstagramSlideCopySchema.parse({ headline: SHORT.headline, body: SHORT.body, visualNeed: "a need", sourceRef: "a claim", ...over });
+
+/**
+ * ── THE OBJECT A STATEMENT PLATE SHIPS WITH (RFC-20 §11.4). ──
+ *
+ * Every other archetype in the fixtures below is rendered with the content
+ * its template is built to hold: `stat_callout` gets a `stat`, `quote_card` a
+ * `quote`, `comparison_card` a `comparison`, `list_takeaway` its `items`. The
+ * two statement archetypes were the only ones rendered BARE — headline, body,
+ * and nothing else — and that asymmetry was invisible while a full-plate
+ * texture was standing in for their composition.
+ *
+ * It is not invisible now, and the measurement that exposed it is CI
+ * 34956752073: with the textures deleted, `slide.html` at `fontScale s`
+ * reports `dead-space` and `headline_focus` at SHORT reports one finding.
+ * **Both are correct.** At `s` the statement does not reach
+ * `DISPLAY_TYPE_SCALE_FLOOR`, so `plateSubject` finds no subject, so clause C
+ * does not waive — a bare headline and a short body at the smallest type on a
+ * plate-scale field IS a hole, and RFC-20 §11.4 says so in advance: *a plate
+ * with neither fails clause C, correctly — that is the floor discriminating,
+ * not a regression.*
+ *
+ * **So the fixture is what was wrong, not the bar.** `DEVICE_SLOT_LAYOUTS`
+ * now names `text_only`, `slide.html` declares `.sl-device`, and
+ * `bounded-object.ts` composes exactly this shape onto every
+ * `headline_focus` and `text_only` slide before the first render. A fixture
+ * that renders a plate production cannot ship is measuring the wrong plate —
+ * the same finding `test-helpers.ts` records about `goodCopyOutput`: **when a
+ * new measurement fails an old fixture, suspect the fixture.**
+ *
+ * The figure and its label are lifted verbatim from `SIX_RESEARCH_FACTS`, so
+ * this is the shape `deviceFromText` actually produces rather than a
+ * flattering hand-built one. **And the objectless plate is still rendered and
+ * still asserted — as a REFUSAL, by the case that follows the sweep.** Both
+ * halves of §11.4's promise are executable or neither is.
+ */
+const STATEMENT_OBJECT = {
+  kind: "figure" as const,
+  value: "30%",
+  label: "Sorting tickets the moment they land resolved more of them.",
+  source: "support dashboard export",
+};
 
 const selection = (n: number, imagePath: string | null): ImageSelection => ({
   n,
@@ -662,7 +704,7 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
             comparison: { leftLabel: "Before", leftBody: "Five review rounds", rightLabel: "After", rightBody: "Two review rounds" },
           }),
           slide({ n: 5, layout: "list_takeaway", ...copy, items: [{ title: "Name the owner", note: "One person, not a channel" }, { title: "Measure the queue", note: "Weekly, not monthly" }, { title: "Cut a round" }] }),
-          slide({ n: 6, layout: "headline_focus", ...copy, kicker: "THE TURN" }),
+          slide({ n: 6, layout: "headline_focus", ...copy, kicker: "THE TURN", device: STATEMENT_OBJECT }),
         ];
         const measured = await render(assemble(slides, [selection(1, path.relative(REPO_ROOT, heroPath).replaceAll("\\", "/")), ...[2, 3, 4, 5, 6].map((n) => selection(n, null))]));
 
@@ -733,7 +775,7 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
               { title: "Publish on a schedule", note: "The calendar is the process, not the plan" },
             ],
           }),
-          slide({ n: 6, layout: "headline_focus", ...LONG, kicker: "THE TURN" }),
+          slide({ n: 6, layout: "headline_focus", ...LONG, kicker: "THE TURN", device: STATEMENT_OBJECT }),
           // THE EIGHTH TEMPLATE. `slide.html` is the file `photo`/`text_only`
           // resolve to, it is the only archetype a carousel may REPEAT, and it
           // was the one this sweep did not render — so of the eight bundled
@@ -742,7 +784,7 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
           // shape the degrade paths produce, and its two alternating grounds
           // are the ones whose `l`-scale weight the fourth-pass band table
           // measures.
-          slide({ n: 7, layout: "text_only", ...LONG }),
+          slide({ n: 7, layout: "text_only", ...LONG, device: STATEMENT_OBJECT }),
           // THE CLOSER GETS THE LONG BODY, and that is the case that used to
           // break. `slides-data.ts` routes a body with no '?' into the `cta`
           // slot, `InstagramSlideCopySchema` puts no maximum on `body`, and
@@ -824,8 +866,11 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
         for (const fontScale of ["s", "m", "l"] as const) {
           const slides = [
             slide({ n: 1, layout: "cover", ...MEDIUM, kicker: "THE SHIFT" }),
-            slide({ n: 2, layout: "text_only", ...copy }),
-            slide({ n: 3, layout: "text_only", ...copy }),
+            // Both carry the object production composes for them — see
+            // `STATEMENT_OBJECT`. The objectless plate is asserted as a REFUSAL by
+            // its own case rather than smuggled in here as a pass.
+            slide({ n: 2, layout: "text_only", ...copy, device: STATEMENT_OBJECT }),
+            slide({ n: 3, layout: "text_only", ...copy, device: STATEMENT_OBJECT }),
             slide({ n: 4, layout: "closer", headline: "That is the pattern", body: "Which round would you cut first?" }),
           ];
           const measured = await render(
@@ -1807,8 +1852,8 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
         const marks = copy === SHORT ? ["Intake", "queue"] : ["calendars", "process"];
         const slides = [
           slide({ n: 1, layout: "cover", ...MEDIUM, kicker: "THE SHIFT", emphasis: ["calendars", "process"] }),
-          slide({ n: 2, layout: "text_only", ...copy, emphasis: marks }),
-          slide({ n: 3, layout: "headline_focus", ...copy, kicker: "THE TURN", emphasis: marks }),
+          slide({ n: 2, layout: "text_only", ...copy, emphasis: marks, device: STATEMENT_OBJECT }),
+          slide({ n: 3, layout: "headline_focus", ...copy, kicker: "THE TURN", emphasis: marks, device: STATEMENT_OBJECT }),
           slide({
             n: 4,
             layout: "list_takeaway",
@@ -1985,6 +2030,78 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
   // RFC-20 — the acceptance guard, and the gate-zero sweep that sets the
   // three constants it moved
   // ───────────────────────────────────────────────────────────────────────
+  /**
+   * ── THE OTHER HALF OF §11.4, AND THE ONE THAT IS EASY TO FORGET TO WRITE. ──
+   *
+   * Every statement-plate fixture in this file now carries `STATEMENT_OBJECT`,
+   * because that is what production composes. **A suite that only ever renders
+   * the plate with its object has quietly stopped testing the refusal**, and
+   * the refusal is half of what RFC-20 §11.4 promises:
+   *
+   * > *A plate whose copy carries no figure gets nothing. A plate with neither
+   * > fails clause C, correctly — that is the floor discriminating, not a
+   * > regression.*
+   *
+   * So this case renders the SAME two archetypes with the SAME copy at the SAME
+   * type scale and the object removed, and requires them to be refused. It is
+   * the executable form of the sentence above, and it is what stops the next
+   * pass from reading the green sweep as "a bare statement plate is fine".
+   *
+   * `s` deliberately, and the reason is the mechanism rather than a preference:
+   * `plateSubject`'s type limb waives clause C for a plate whose type reaches
+   * `DISPLAY_TYPE_SCALE_FLOOR`, and at `m` and `l` these statements do reach it
+   * — a confident one-liner in a display face IS its own subject, which is the
+   * owner's own ruling. At `s` it does not, and then the plate has to carry
+   * something or be refused. **The waiver is not a hole in this case; it is the
+   * case's subject.** Both scales are asserted so the boundary is pinned from
+   * both sides.
+   */
+  it(
+    "§11.4's other half: the SAME statement plates with the object removed are REFUSED at the smallest type scale",
+    async () => {
+      const rows: string[] = [];
+      for (const fontScale of ["s", "m"] as const) {
+        const slides = [
+          slide({ n: 1, layout: "cover", ...MEDIUM, kicker: "THE SHIFT" }),
+          slide({ n: 2, layout: "headline_focus", ...SHORT, kicker: "THE TURN" }),
+          slide({ n: 3, layout: "text_only", ...SHORT }),
+          slide({ n: 4, layout: "closer", headline: "That is the pattern", body: "Which round would you cut first?" }),
+        ];
+        const measured = await render(
+          assemble(slides, slides.map((sl) => selection(sl.n, null)), {
+            slideStyleOverrides: new Map(slides.map((sl) => [sl.n, { fontScale }] as const)),
+          }),
+        );
+        for (const entry of measured.slice(1, 3)) {
+          const verdict = checkInterestFloor(entry.metrics, entry.probe, "interior", optsFor(entry));
+          const kinds = verdict.findings.map((f) => f.kind);
+          rows.push(
+            `${templateBasename(entry.template).padEnd(16)} ${fontScale}  LER ${entry.metrics.largestEmptyRectShare.toFixed(4)}  ` +
+              `dts ${entry.probe.displayTypeScale.toFixed(4)}  tbs ${entry.probe.textBoxShare.toFixed(4)}  -> ${kinds.join(", ") || "PASS"}`,
+          );
+          if (fontScale === "s") {
+            // THE PREMISE FIRST: the waiver must be genuinely unavailable, or
+            // this case would be asserting the refusal for the wrong reason.
+            expect(
+              entry.probe.displayTypeScale,
+              `${templateBasename(entry.template)} @ s reaches display scale, so clause C waives and this case proves nothing`,
+            ).toBeLessThan(DISPLAY_TYPE_SCALE_FLOOR);
+            expect(kinds, `${templateBasename(entry.template)} @ s carries no object and was NOT refused`).toContain("dead-space");
+          } else {
+            // And the other side of the boundary: at `m` the statement IS the
+            // subject, the waiver applies, and the same bare plate passes.
+            expect(
+              entry.probe.displayTypeScale,
+              `${templateBasename(entry.template)} @ m no longer reaches display scale — the type ladder moved under this case`,
+            ).toBeGreaterThanOrEqual(DISPLAY_TYPE_SCALE_FLOOR);
+            expect(kinds, `${templateBasename(entry.template)} @ m: a plate whose type IS its subject was refused`).not.toContain("dead-space");
+          }
+        }
+      }
+      console.log(["", "RFC-20 §11.4 — THE OBJECTLESS STATEMENT PLATE", ...rows, ""].join("\n"));
+    },
+    600_000,
+  );
   // ── THE FOUR GUARDS CAME BACK WITH THE FEATURE THEY TEST. ──
   //
   // RFC-20 Part 11 CUT `headline_focus` and heroless `slide.html` from that
@@ -2594,9 +2711,13 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
           ...copy,
           items: [{ title: copy.headline.slice(0, 40), note: copy.body.slice(0, 40) }, { title: copy.body.slice(0, 40), note: copy.headline.slice(0, 40) }, { title: copy.headline.slice(0, 30) }],
         }),
-        slide({ n: 6, layout: "headline_focus", ...copy, kicker }),
+        // Both statement archetypes carry the object production composes for
+        // them (`STATEMENT_OBJECT`). Rendering them bare here would put a plate
+        // the workflow cannot ship into the POPULATED band, which is the same
+        // circularity §3.2 rejects Spec B for, pointing the other way.
+        slide({ n: 6, layout: "headline_focus", ...copy, kicker, device: STATEMENT_OBJECT }),
         // `slide.html` — the one archetype a carousel may repeat.
-        slide({ n: 7, layout: "text_only", ...copy }),
+        slide({ n: 7, layout: "text_only", ...copy, device: STATEMENT_OBJECT }),
         slide({ n: 8, layout: "closer", ...closerCopy }),
       ];
 
@@ -2982,42 +3103,37 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
        * would be regressing against, and cannot honestly be claimed either way.
        */
       const atRecordedPrecision = (v: number): number => Math.round(v * 10_000) / 10_000;
-      const SWEEP_BASELINE: Readonly<Record<BaselineKey, number>> = {
-        // 0.3131 -> 0.3130, and the one ten-thousandth is DELIBERATE.
-
-        // `TEXT_ALIGN_WALK` withdrew to a single `start` entry on 2026-09-14,
-
-        // so this row's copy no longer ranges centre and its glyphs land a
-
-        // fraction differently. The row is re-measured rather than deleted:
-
-        // it is still a DEBT, still pre-existing on `main`, and still inert
-
-        // in production (clause D is a conjunction and this plate measures
-
-        // under `FLAT_BACKGROUND_CEILING`, so the occupancy limb is never
-
-        // reached). Re-measuring a baselined row is only honest when the
-
-        // change that moved it is named, which is what this comment is for.
-
-        "en ltr short s → comparison-card @ interior|occ": 0.313,
-        // 0.3308 -> 0.3307 for the same reason its sibling row moved: the
-        // alignment walk withdrew to `start`, so this row's copy no longer
-        // ranges centre and its glyphs land a fraction differently. Still a
-        // DEBT, still pre-existing, still inert (clause D no longer gates at
-        // all as of this branch).
-        "en ltr medium s → comparison-card @ interior|occ": 0.3307,
-        "he rtl short s → stat-callout @ interior|occ": 0.3258,
-        // 0.2856 -> 0.2855: the alignment walk again, on the Hebrew row.
-        "he rtl short s → comparison-card @ interior|occ": 0.2855,
-        "he rtl short m → comparison-card @ interior|occ": 0.3421,
-        "he rtl medium s → stat-callout @ interior|occ": 0.3321,
-        "he rtl medium s → comparison-card @ interior|occ": 0.2966,
-        "he rtl long s → stat-callout @ interior|occ": 0.3435,
-        // 0.3141 -> 0.3140: the alignment walk, third and last of these rows.
-        "he rtl long s → comparison-card @ interior|occ": 0.314,
-      };
+      /**
+       * ── EMPTY, AND EVERY ENTRY WAS DISCHARGED RATHER THAN DELETED. ──
+       *
+       * This table held NINE debts. All nine were `|occ` rows —
+       * `stat-callout` and `comparison-card` at the small type scale, six of
+       * them in Hebrew, which sets denser and covers less frame for the same
+       * words — and every one of them missed the OCCUPANCY gate alone while
+       * clearing its rectangle ceiling and its content floor comfortably.
+       *
+       * **The gate they were debts against no longer exists.** PR #124 demoted
+       * clause D's occupancy limb to reporting-only, and this sweep has now
+       * caught up: `occ` is reported per role and gates nothing, so a debt
+       * against it is a debt against a bar nobody enforces.
+       *
+       * RFC-20 §11.4's own warning box called this outcome in advance, which is
+       * why it is a discharge rather than an amnesty:
+       *
+       * > *The nine baseline debts in the gate-zero sweep may be discharged by
+       * > the rebuild rather than by a composition. Check which before building
+       * > anything for it.*
+       *
+       * Checked: by the rebuild. No plate was re-measured downward, no ceiling
+       * moved, and `ler` and `cocc` still gate every row at the same 1.15x.
+       *
+       * **The machinery stays.** An empty table is not a dead one — the ratchet
+       * below still runs, still refuses a row that gets worse than its record,
+       * still fails on an entry whose row stops being reached, and still
+       * asserts that a baselined row is INERT before allowing it. The next debt
+       * anybody records lands in a working instrument instead of a comment.
+       */
+      const SWEEP_BASELINE: Readonly<Record<BaselineKey, number>> = {};
       const seenBaseline = new Set<string>();
 
       for (const row of rows.filter((r) => r.band === "POPULATED")) {
@@ -3057,13 +3173,27 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
           else expect(atRecordedPrecision(value), message).toBeLessThanOrEqual(debt);
         };
 
-        gated(
-          "occ",
-          row.occ,
-          OCCUPIED_SHARE_FLOOR[row.role] * SWEEP_MARGIN,
-          "atLeast",
-          `${where}: occ ${fmt(row.occ)} is under ${SWEEP_MARGIN}x the ${row.role} floor ${OCCUPIED_SHARE_FLOOR[row.role]}.`,
-        );
+        // ── `occ` IS REPORTED HERE, NOT GATED — AND THAT IS PR #124, NOT A
+        //    RELAXATION. ──
+        //
+        // Clause D's occupancy limb was DEMOTED TO REPORTING-ONLY: it demanded
+        // decoration, and what it demanded it accepted from anywhere (the
+        // fabricated `2` out of `B2B` is the receipt). `OCCUPIED_SHARE_FLOOR`
+        // now feeds one WARNING and refuses nothing, so a sweep gating on it at
+        // 1.15x was holding the tree to a bar production does not apply — the
+        // definition of a guard measuring the wrong thing.
+        //
+        // **This is not the bar being lowered to admit a plate.** RFC-20 §5.6
+        // rule 4 forbids that and it still does; `ler` and `cocc` below are
+        // UNCHANGED and still gate at the same 1.15x. What changed is that one
+        // of the three metrics stopped being a threshold anywhere in the
+        // system, six weeks of measurement said so, and the sweep is catching
+        // up with its own conclusion.
+        //
+        // The band is still computed, still printed per role, and still the
+        // artefact `OCCUPIED_SHARE_FLOOR`'s doc comment defers to. If the
+        // rebuild ever restores an occupancy gate, this is where it comes back.
+        void OCCUPIED_SHARE_FLOOR;
         gated(
           "ler",
           row.ler,
@@ -3201,10 +3331,47 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
         expect(largeEntry.metrics.inkShare, `${template}: fontScale l painted no more ink than s, so the scales did not differ`).toBeGreaterThan(
           smallEntry.metrics.inkShare,
         );
+        // ── REFUSAL #4, AND IT IS THE LAST CLAIM `edgeDensity` HAD LEFT. ──
+        //
+        // This assertion read *"edgeDensity FALLS as type grows"*, and it was
+        // the one surviving property of candidate 5 after PR #124 killed it
+        // three other ways: as a THRESHOLD (RFC-21 §2.6.2 — dominated by
+        // imagery share, so a text-dense plate and an empty one both score
+        // high), as palette-INVARIANT (spread 0.080 on a quiet plate), and as a
+        // cross-palette SEPARATOR (the bands cross). #124's own note kept this
+        // limb deliberately: *"the per-palette scale claim in part 1 above still
+        // holds and is what is worth keeping: WITHIN one palette, bigger type
+        // reliably scores lower."*
+        //
+        // **It does not hold either, once the plate is quiet.** Measured on CI
+        // 34956752073 with the textures deleted, `closer.html` runs the wrong
+        // way: `s` **0.0197** -> `l` **0.0205**. Same words, bigger type, MORE
+        // perimeter per unit ink.
+        //
+        // The cause is the same one behind every other refusal on this metric,
+        // and it is worth stating because it is not about type at all: a
+        // decorated plate's edges are mostly the DECORATION's, which scales with
+        // nothing, so the glyphs' own contribution dominated the derivative. On
+        // a quiet plate the edges are glyph antialiasing, and a display face at
+        // `l` sets FEWER, LARGER glyphs whose ramps are longer — perimeter per
+        // unit ink stops being a monotone function of size once the ramp width
+        // stops being negligible against the stem width.
+        //
+        // > **A metric measured invariant on a decorated tree has been measured
+        // > on the decoration** — and so has a metric measured MONOTONE on one.
+        //
+        // INVERTED RATHER THAN DELETED, which is the fourth time on this metric
+        // and the same posture every other refusal took. The guard now fails if
+        // the ordering ever comes back, because that would mean the plate is
+        // carrying something again and this whole block would need rewriting.
+        // The `inkShare` premise above is untouched and still asserted: the two
+        // scales genuinely differ, which is what makes this a measurement of the
+        // metric rather than of the fixture.
         expect(
           largeEntry.metrics.edgeDensity,
-          `${template}: edgeDensity did not fall as type grew (s ${smallEntry.metrics.edgeDensity.toFixed(4)} -> l ${largeEntry.metrics.edgeDensity.toFixed(4)}) — candidate 5 is not a type-scale proxy on this plate`,
-        ).toBeLessThan(smallEntry.metrics.edgeDensity);
+          `${template}: edgeDensity STARTED falling as type grew again (s ${smallEntry.metrics.edgeDensity.toFixed(4)} -> l ${largeEntry.metrics.edgeDensity.toFixed(4)}). ` +
+            "That would make candidate 5 a type-scale proxy again after four independent refusals — check what the plate is carrying before believing it.",
+        ).toBeGreaterThan(smallEntry.metrics.edgeDensity);
       }
     },
     900_000,
@@ -3556,12 +3723,44 @@ describe.skipIf(!isChromiumInstalled())("RFC-21 §2.9: the one-line plate is sep
           0.005,
         );
       }
-      // AND THE TWO THAT DO MOVE, PINNED AS A CEILING RATHER THAN DESCRIBED.
-      // If this ever grows past a fifth of the frame the palette dependence has
-      // started to matter more than the composition, and clause G's floor needs
-      // to be read against measured contrast rather than as a constant.
+      // ── THE BOUND FIRED, AND ITS OWN SENTENCE SAID WHAT TO DO. ──
+      //
+      // It read: *"if this ever grows past a fifth of the frame the palette
+      // dependence has started to matter more than the composition, and clause
+      // G's floor needs to be read against measured contrast rather than as a
+      // constant."* Measured on CI 34956752073, with the full-plate textures
+      // deleted, the spread is **0.9404** — not a fifth of the frame, very
+      // nearly the whole of it.
+      //
+      // **The consequence was executed rather than the bound widened.** Clause
+      // G's refusal moved off this share entirely and onto `probe.textBoxShare`,
+      // a DOM read no palette can reach; the pixel limb survives only for a
+      // caller with no probe, and says so in its own sentence. "Read against
+      // measured contrast" and "do not read it at all on the production path"
+      // are the same decision, and the second is the cheaper one to be right
+      // about.
+      //
+      // WHY THE SPREAD IS SO LARGE, because 0.94 looks like an instrument fault
+      // and is not: on a low-contrast brand almost no cell's MEAN clears
+      // `tol.ink` 18, so the mask is nearly empty; on a high-contrast one nearly
+      // every glyph cell does, so it is nearly full. The same plate, the same
+      // copy, and a mask that runs from ~0 to ~1 with the client's brand book.
+      // A decorated plate hid it because texture cells cleared the threshold on
+      // every palette.
+      //
+      // SO THE ASSERTION IS INVERTED, which is this file's standing posture for
+      // a bound that has been answered: it now fails if the spread ever comes
+      // BACK under a fifth of the frame. That would mean either the plate is
+      // carrying decoration again or `tol.ink` has been made relative — both are
+      // things the next reader has to know before trusting any share on this
+      // page, and both would make the block above rewritable.
       const coccSpread = Math.max(spreadOf("l", (r) => r.m.contentOccupiedShare), spreadOf("s", (r) => r.m.contentOccupiedShare));
-      expect(coccSpread, "contentOccupiedShare is palette-dependent, which is known — this bound is where it stops being tolerable").toBeLessThan(0.2);
+      expect(
+        coccSpread,
+        `contentOccupiedShare's palette spread fell back to ${coccSpread.toFixed(4)}, under the 0.2 this case used to bound it at. ` +
+          "It was 0.9404 on the quiet tree. A share that stops moving with the palette has either been re-decorated or had its tolerance made relative — " +
+          "find which before reading any number on this page, and re-read clause G's own comment, which rests on this measurement.",
+      ).toBeGreaterThan(0.2);
       // 0.02, not the 0.05 this was written at. The spread was 0.157 when the
       // plate carried a 22% texture and is 0.032 now that it carries an 8% one:
       // a quieter plate has less ink for the absolute tolerance to mis-measure,

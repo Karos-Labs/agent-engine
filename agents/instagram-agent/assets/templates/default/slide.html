@@ -404,18 +404,23 @@
      `background-size`/`-repeat`/`-position` are still driven by custom
      properties so the paint rule below stays one rule; only the values
      changed, and `--gr-pos` is new because the alternation now lives in it. */
+  /* The cap is SHORT — `headline-focus.html`'s `.hf-field` carries the
+     measurement that made it short, and it is the same 240px measure the
+     whole directory now uses. A full-measure bar across this field cut its
+     empty rectangle in two and took clause C off the plate. */
   body {
     --gr-mark: linear-gradient(to bottom, var(--accent) 0 calc(12px * var(--ts, 1)), transparent 0);
-    --gr-tile: 100% 100%;
+    --gr-tile: calc(240px * var(--ts, 1)) 100%;
     --gr-repeat: no-repeat;
-    --gr-pos: 0 0;
+    --gr-pos: var(--cap-x, 0) 0;
   }
   body[data-n$="0"], body[data-n$="2"], body[data-n$="4"], body[data-n$="6"], body[data-n$="8"] {
     --gr-mark: linear-gradient(to top, var(--accent) 0 calc(12px * var(--ts, 1)), transparent 0);
-    --gr-tile: 100% 100%;
+    --gr-tile: calc(240px * var(--ts, 1)) 100%;
     --gr-repeat: no-repeat;
-    --gr-pos: 0 100%;
+    --gr-pos: var(--cap-x, 0) 100%;
   }
+  body[dir="rtl"], html[dir="rtl"] body { --cap-x: 100%; }
   /* The statement's own guard, asked of the headline's CHILDREN. `.headline`
      is a twin-slot pair now (see the twin-slot block below), so it has two
      element children on every render and `:not(:empty)` on the host itself

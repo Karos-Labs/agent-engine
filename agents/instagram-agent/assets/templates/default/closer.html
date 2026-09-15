@@ -213,12 +213,16 @@
      spent on ONE solid rule capping the field's head* — which is now the
      whole of this file's field paint. A 10px bar is punctuation; a ruling
      over 1000x800px was a surface. */
+  /* The cap is SHORT — `headline-focus.html`'s `.hf-field` carries the
+     measurement. Same 240px measure as `.cl-rule` below it, which is the
+     point: one accent width for the whole directory. */
   .cl-art {
     background-image: linear-gradient(to bottom, var(--accent) 0 calc(10px * var(--ts, 1)), transparent 0);
-    background-size: 100% 100%;
+    background-size: calc(240px * var(--ts, 1)) 100%;
     background-repeat: no-repeat;
-    background-position: 0 0;
+    background-position: var(--cap-x, 0) 0;
   }
+  body[dir="rtl"], html[dir="rtl"] body { --cap-x: 100%; }
   /* The alternative ground: a display-face numeral bleeding off the start
      corner, over a TIGHTER band rhythm — 4px bars every 20px, so the two
      closers differ in the weight and the count of their bands as well as in
@@ -240,7 +244,7 @@
      texture, between its odd and even plates. */
   body.gr-glyph .cl-art {
     background-image: linear-gradient(to top, var(--accent) 0 calc(10px * var(--ts, 1)), transparent 0);
-    background-position: 0 100%;
+    background-position: var(--cap-x, 0) 100%;
   }
   /* The guards. No takeaway, no field; and furniture that paints ink answers
      to the same rule, so the numeral goes with it.

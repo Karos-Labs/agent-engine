@@ -1423,3 +1423,101 @@ only ever re-offer the device the plate was **already wearing**: a byte-identica
 identical failure at `08a1d`, and the attempt's one free chance spent on nothing. That is the exact defect
 `DEVICE_SLOT_ARCHETYPES` exists to prevent, reached from the other side. The planner is now handed the COMPOSED
 copy and skips a device the plate already carries, so it falls through to a remedy that can actually move a pixel.
+
+### 11.11a WHAT CI SAID — 34956752073, twelve failures and four causes
+
+The first push of this section was measured on real Chromium and **failed twelve assertions**. Every one is
+recorded here because four of them are findings rather than mistakes, and two of the mistakes were mine.
+
+#### Cause 1 — the scrims are scored as the cover's drawn device (a FINDING)
+
+Guarding `.scrim`/`.scrim-top` on `body:has(.hero)` was right on `slide.html` — its blank plate went from a
+48-point seam to `occ 0.00 / LER 100.00`. On `cover.html` it made four things worse at once:
+
+| | |
+|---|---|
+| G2, blank cover | `occ` 0.06 → **0.22**, `LER` 51.67 → **24.72** |
+| gate-zero, cover `s` | `iod` **0.0898** against clause E's 0.10 floor — FAIL |
+| gate-zero, cover `m` | `iod` **0.0977** — FAIL |
+| marked cover, short | `textShare` **0.4979** against a 0.47 ceiling — FAIL |
+
+**A scrim is COVERED and carries at most three distinct colours, which is `slide-metrics.ts`'s literal
+definition of a `graphic` cell — and `imageryOrDeviceShare = imageryShare + graphicShare`.** Take it away and
+the cells do not vanish; they are re-classified as TEXT, which is why `textShare` rose by the order `iod` fell.
+
+> **§11.1's class, fourth instance: the hatch was scored as type, the plinth as a drawn device, the screen as
+> content — and now the scrim, a layer that paints nothing a reader can see, as the cover's device.**
+
+**RECORDED, NOT ACTED ON.** Clearing it honestly means the cover's `iod` stops including a scrim, and
+`IMAGERY_OR_DEVICE_FLOOR` was calibrated on renders where it did — a re-sweep of clause E, which is a phase and
+not a line. The guard is withdrawn from `cover.html` only, so the cover is byte-identical to `main`.
+
+#### Cause 2 — a full-measure rule disarms clause C (MY MISTAKE)
+
+The field caps shipped at the full measure. `largestEmptyRectangle` finds ONE contiguous rectangle, so a
+full-width bar cuts the plate's empty region in two:
+
+```
+G1  the owner's grey screen        LER 0.2222 against a 0.28 ceiling   PASSED clause C
+G5  the same plate, max mark load  LER 0.2036                          PASSED clause C
+```
+
+**The acceptance condition of the whole phase went green for the wrong reason, and the cause was 14px of ink I
+added.** A rule that spans the frame is a full-frame layer however thin it is: position, not area. The caps are
+240px now — `.cl-rule`'s width, so the directory has one accent measure — and every other accent mark in the set
+was already short (`.stat-band` 200, `.cl-rule` 240, `.dv-rule` 132). The 1080px bar was the only wall among them,
+and the restraint reference's rule 4 had already refused it in words.
+
+#### Cause 3 — the material ground's own A/B bound refused the mount (MY MISTAKE)
+
+```
+flatBackgroundShare   0.9248716 bare   0.9266884 with the material
+moved                 0.0018168        against a 0.0005 bound
+```
+
+**The bound is not widened. The mount comes off**, and `GROUND_MATERIAL_MOUNTED` is `false` again. The cause is
+not a surviving screen — it is the hatch's mechanism inverted. A hatch tipped cells by putting tens of thousands
+of them on `tol.ink`; a bare plate at `flat` **0.925** has tens of thousands sitting on `tol.flat` instead, and a
+sub-ink grain moves that boundary just as easily. **Quieting the tree did not remove the coupling; it moved which
+threshold the coupling acts on.**
+
+#### Cause 4 — the fixtures rendered a plate production cannot ship
+
+`slide.html @ s` reported `dead-space`; `headline_focus @ short` reported one finding. **Both are correct.** At
+`s` the statement does not reach `DISPLAY_TYPE_SCALE_FLOOR`, so `plateSubject` finds no subject and clause C does
+not waive — and §11.4 says so in advance: *a plate with neither fails clause C, correctly.*
+
+Every other archetype in those fixtures is rendered with the content its template is built to hold — a `stat`, a
+`quote`, a `comparison`, its `items`. The two statement archetypes were the only ones rendered bare, and that
+asymmetry was invisible while a texture stood in for their composition. **The fixture was wrong, not the bar**,
+which is the finding `test-helpers.ts` already records about `goodCopyOutput`: *when a new measurement fails an
+old fixture, suspect the fixture.*
+
+They carry `STATEMENT_OBJECT` now — and **the objectless plate is still rendered and still asserted, as a
+REFUSAL**, by a case that pins both sides of the waiver boundary: refused at `s` where the type is not its own
+subject, passing at `m` where it is. Both halves of §11.4's promise are executable or neither is.
+
+#### And two bounds that had been waiting to be answered
+
+**`contentOccupiedShare`'s palette spread is 0.9404.** The bound was 0.2, and its own sentence said what to do if
+it fired: *clause G's floor needs to be read against measured contrast rather than as a constant.* The consequence
+was executed — clause G's refusal moved to the DOM — and the assertion is INVERTED, so it now fails if the spread
+ever falls back under 0.2. On a low-contrast brand almost no cell's mean clears `tol.ink`, so the mask is nearly
+empty; on a high-contrast one nearly every glyph cell does. Same plate, same copy, a mask running ~0 to ~1 with
+the client's brand book.
+
+**`edgeDensity` is refused a fourth time.** PR #124 killed it as a threshold, as palette-invariant, and as a
+cross-palette separator, and deliberately kept one claim: *within one palette, bigger type reliably scores lower.*
+On the quiet tree `closer.html` runs the wrong way — `s` **0.0197** → `l` **0.0205**. On a decorated plate the
+edges are mostly the decoration's, so the glyphs' contribution dominated the derivative; on a quiet one they are
+glyph antialiasing, and perimeter per unit ink stops being monotone in size once ramp width stops being negligible
+against stem width. **A metric measured invariant on a decorated tree was measured on the decoration — and so was
+a metric measured monotone on one.** Inverted, not deleted, like the other three.
+
+#### The nine baseline debts are discharged
+
+All nine were `|occ` rows. `occ` stops gating in this sweep, because clause D's occupancy limb stopped gating in
+PR #124 and the sweep was holding the tree to a bar production does not apply. `ler` and `cocc` are unchanged and
+still gate every row at 1.15×. §11.4's own warning box called it: *the nine baseline debts may be discharged by
+the rebuild rather than by a composition.* **Checked: by the rebuild.** The ratchet machinery stays, empty and
+working, for the next debt anybody records.

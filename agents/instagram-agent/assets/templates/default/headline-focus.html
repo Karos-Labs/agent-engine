@@ -328,14 +328,43 @@
      14px rather than the 10px `closer.html` and `slide.html` use, because
      this field carries the largest type in the set and a rule has to hold its
      own against it. */
+  /* ── THE CAP IS SHORT, AND THE MEASUREMENT IS WHY (CI 34956752073). ──
+
+     The first version of this rule ran the full measure. It was wrong twice
+     over and the instrument caught both.
+
+     **It disarmed clause C on the plate this whole phase exists to refuse.**
+     `largestEmptyRectangle` finds ONE contiguous rectangle, so a full-width
+     bar across the field cuts the plate's empty region in two. G1's subject —
+     the owner's grey screen, one short headline and nothing else — measured
+     `LER` **0.2222** against a 0.28 ceiling and **PASSED clause C**, and G5
+     measured the same plate at maximum mark load at **0.2036**. Two caps, two
+     cuts, and the acceptance condition of the phase goes green for the wrong
+     reason. RFC-20 §11.1 states the class — *any full-frame painted layer that
+     a plate has not earned will be scored by some clause as the evidence that
+     clause was built to look for* — and a rule that spans the frame is a
+     full-frame layer however thin it is. **Position, not area: 14px of ink
+     moved the number 6 points and flipped a verdict.**
+
+     **And it was not punctuation.** The restraint reference's rule 4 is
+     *colour is information or punctuation, never a surface*; `@semrush` spends
+     its whole colour budget on one diagram and one arrow. Every other accent
+     mark in this directory is already short — `.stat-band` 200px, `.cl-rule`
+     240px, the device library's own `.dv-rule` 132px — and a 1080px bar was
+     the only wall among them.
+
+     240px, which is `.cl-rule`'s width, so the set has one accent measure. */
   .hf-field {
     background-image:
       linear-gradient(to bottom, var(--accent) 0 calc(14px * var(--ts, 1)), transparent 0),
       linear-gradient(to top, var(--accent) 0 calc(14px * var(--ts, 1)), transparent 0);
-    background-size: 100% 100%, 100% 100%;
+    background-size: calc(240px * var(--ts, 1)) 100%, calc(240px * var(--ts, 1)) 100%;
     background-repeat: no-repeat, no-repeat;
-    background-position: 0 0, 0 100%;
+    /* `inset-inline` rather than `0`, so the caps range with the copy in both
+       directions instead of hanging off the wrong edge in Hebrew. */
+    background-position: var(--cap-x, 0) 0, var(--cap-x, 0) 100%;
   }
+  body[dir="rtl"] .hf-field, html[dir="rtl"] .hf-field { --cap-x: 100%; }
   /* The guard. No statement, no field — see the block above. Asked of the
      statement's CHILDREN, because `.hf-headline` is a twin-slot pair now (see
      the twin-slot block below) and a host with two element children can never
