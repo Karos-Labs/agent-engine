@@ -599,6 +599,29 @@
     inline-size: calc(200px * var(--ts, 1)); block-size: calc(14px * var(--ts, 1));
     background: var(--accent); margin-block-start: calc(36px * var(--ts, 1));
   }
+  /* ── ONE ACCENT MARK PER PLATE, AND THE DEVICE'S OWN IS THE BETTER ONE. ──
+
+     A figure device paints its own accent rule (`.dv-rule`, 132x12) directly
+     under its numeral. With `.stat-band` also painting, a plate carrying a
+     bounded object shows TWO accent bars in the same column, 36px apart,
+     saying the same thing at two sizes.
+
+     `docs/instagram-restraint-reference.md` rule 4: *colour is information
+     or punctuation, never a surface.* Punctuation repeated is not
+     punctuation. The count is the other half of it — the reference plates
+     carry three or four element groups and the prep render the owner
+     rejected carried NINE, *"three of which said the same sentence"*. Two
+     accent bars is that sentence at the mark level.
+
+     THE DEVICE'S RULE WINS because it belongs to something: it sits under a
+     figure and above that figure's label. `.stat-band` is a standing detail
+     with nothing either side of it, so it is the one that yields. On a plate
+     with no device nothing changes and the band paints exactly as before.
+
+     `:has()` on the slot rather than on the fragment, because `.hf-device`
+     is present and empty on every render that carries no device — see its own
+     `:empty` rule. */
+  body:has(.hf-device .dv) .stat-band { display: none; }
 
   .body-text {
     font-family: var(--f-body); font-weight: 400; font-size: calc(33px * var(--ts, 1)); line-height: 1.55;
