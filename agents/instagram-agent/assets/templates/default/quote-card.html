@@ -356,9 +356,35 @@
      the CHILDREN for the same reason the panel guard above is: `.quote-text`
      is a twin-slot pair and is never `:empty` itself. */
   .quote-block:not(:has(.quote-text > span:not(:empty))) .quote-mark { display: none; }
+  /* ── A SHORT PULL QUOTE IS SET LARGE, and 84px was not large. ──
+
+     MEASURED, CI 35024757753: `he rtl short s -> quote-card @ interior` was
+     refused with `render-integrity` — *"only 0.9% of the frame carries any ink
+     at all (floor 1.5%); the render looks broken, not boring"*. Nothing was
+     broken. A short Hebrew quote at the reviewer's SMALLEST type step is
+     84 x 0.85 x 0.94 = 67px over about forty characters, and forty characters
+     of 67px type on a 1080x1440 plate is genuinely almost nothing.
+
+     WHAT HAD BEEN HOLDING THAT NUMBER UP, and this is the point: the radial
+     dot field this phase deleted. `inkShare` counts INK cells, and a field of
+     small dots at a low duty cycle is read as ink rather than as a covered
+     graphic — so the decoration was being scored as the plate's content, which
+     is RFC-20 §11.1's class finding in reverse. Removing it did not break this
+     plate; it revealed that the plate had never carried enough of its own.
+
+     The panel's tint cannot fix it either, and that is worth stating so nobody
+     tries: a flat bounded region at or under three distinct colours is a
+     GRAPHIC cell, not an ink cell, so no amount of accent tone moves
+     `inkShare` by a pixel. Only glyphs do.
+
+     So the type comes up, which is also just what a quote card is for. The
+     ladder below is unchanged and still steps on character count, so this
+     raises only the quotes that were already SHORT enough to stay on the base
+     rung: at or under 90 characters at `s`/`m`, at or under 70 at `l`. A long
+     quote is `.small` or `.tiny` exactly as before and never sees 108px. */
   .quote-text {
     font-family: var(--f-display); font-style: italic; font-weight: 500;
-    font-size: calc(84px * var(--ts, 1)); line-height: 1.26; letter-spacing: -0.008em; text-wrap: balance;
+    font-size: calc(108px * var(--ts, 1)); line-height: 1.24; letter-spacing: -0.008em; text-wrap: balance;
     padding-block-end: 0.22em;
   }
   .quote-text.small { font-size: calc(64px * var(--ts, 1)); line-height: 1.24; }
