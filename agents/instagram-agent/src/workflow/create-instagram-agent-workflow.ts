@@ -181,6 +181,7 @@ import {
   type InterestFloorReport,
 } from "./interest-floor.js";
 import { composeBoundedObjects, type BoundedObjectDecision } from "./bounded-object.js";
+import { enforceImageryFloor, MIN_IMAGE_CAPABLE_SLIDES, type ImageryPromotion } from "./imagery-floor.js";
 import { planInterestRelayout, type InterestRelayoutPlan } from "./interest-relayout.js";
 // RFC-19 §4 item 17 — the deterministic headline fact cards `04b` falls back to, and the one hold it keeps.
 import { headlineFallbackResearch, NO_READABLE_SOURCE } from "./research-fallback.js";
@@ -5109,6 +5110,16 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        */
       boundedObjects?: BoundedObjectDecision[];
       /**
+       * RFC-21 — the imagery floor's promotions: `text_only` slides turned into
+       * `photo` so the carousel could ask for enough pictures. ABSENT when the
+       * draft already met the floor.
+       *
+       * A promotion is a REQUEST for a picture and never a promise of one: if
+       * sourcing finds nothing the slide is reassigned back to `text_only` and
+       * ships heroless, which `downgradedForImages` already reports.
+       */
+      imageryPromotions?: ImageryPromotion[];
+      /**
        * RFC-19 (Phase 6) — every QUALITY GATE that refused the attempt that actually shipped.
        *
        * Absent, never empty, on a clean run: the marker's own asymmetry (`self-check-degrade.ts`). Present
@@ -5774,6 +5785,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        * degrades to plain type, and none of it can hold or fail a run.
        */
       let emphasisIssues: EmphasisIssue[] = [];
+      /** RFC-21 — which slides the imagery floor promoted this run, for the draft report. Empty on a post the writer composed with enough pictures. */
+      let imageryPromotions: ImageryPromotion[] = [];
       /**
        * RFC-20 §11.4 — what the bounded object did to this run's statement
        * plates, from the LAST assembly, which is the one that rendered.
@@ -6193,6 +6206,52 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         shippedAttempt = attempt;
         // Depth 1 — copy that cleared its own schema. Every deeper checkpoint below replaces it.
         recordSalvage(attempt, 1, copy);
+      }
+
+      // ── 04m2: THE IMAGERY FLOOR — before anything asks for a picture. ──
+      //
+      // MEASURED on two real prep runs, same agent, same week, same budget:
+      // `karoslabs` pubsub-21551118258353204 shipped 5 of 8 slides with a hero
+      // image (one of them AI-generated); `thepitchbydeel`
+      // pubsub-21559620763659451 shipped **0 of 8**. Images are sourced only
+      // for `HERO_IMAGE_LAYOUTS`, so the number of pictures in a post was
+      // decided entirely by the copy model's layout choices and nothing
+      // enforced a floor — while `DEFAULT_RUN_SHAPE.photoSlides` priced six on
+      // every run. The owner's words: *"it makes no sense that the budget pays
+      // for 6 and the post comes out with 0."*
+      //
+      // HERE, and the position is the whole point: after the copy is final and
+      // BEFORE 04n binds the concept or any tier sources a picture, so a
+      // promoted slide is eligible for the concept, the library, stock, the
+      // scraper and the generator on exactly the same terms as a slide the
+      // writer chose. Placed after sourcing it would promote slides nothing
+      // would ever fill.
+      //
+      // $0.00 and deterministic — it changes one enum on one slide. It only
+      // ever ADDS, so a draft that chose its own photographs is untouched, and
+      // it promotes only `text_only`, which resolves to the same template as
+      // `photo` and differs from it by nothing but whether an image was found.
+      const imagery = enforceImageryFloor(copy);
+      if (imagery.promotions.length > 0) {
+        copy = imagery.copy;
+        imageryPromotions = imagery.promotions;
+        try {
+          await tools["ledger.appendEvent"]?.execute(
+            {
+              runId: wf.runId,
+              eventId: `${wf.runId}__imagery-floor-attempt-${attempt}`,
+              level: "info",
+              message:
+                `attempt ${attempt}: the imagery floor promoted ${imagery.promotions.length} text_only slide(s) to photo ` +
+                `(${imagery.before} -> ${imagery.after} image-capable of ${MIN_IMAGE_CAPABLE_SLIDES} required): ` +
+                imagery.promotions.map((p) => `slide ${p.slide}`).join(", ") +
+                (imagery.shortfallReason !== undefined ? ` — SHORT: ${imagery.shortfallReason}` : ""),
+            },
+            { ctx },
+          );
+        } catch (error) {
+          console.error("04m2-imagery-floor: could not record the promotion", error);
+        }
       }
 
       // ── 04n: bind the concept to ONE slide — or discard it, silently and for free (RFC-16 §2.3/§2.4) ──
@@ -9727,6 +9786,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // and full of `refused` rows is the interesting case and the one a
         // reviewer reading a clause-C or clause-G finding needs next.
         ...(boundedObjectDecisions.length > 0 ? { boundedObjects: boundedObjectDecisions } : {}),
+        // RFC-21 — which slides the imagery floor promoted. ABSENT rather than
+        // empty on a post whose writer chose enough pictures, which is the same
+        // asymmetry every other marker on this object uses.
+        ...(imageryPromotions.length > 0 ? { imageryPromotions } : {}),
         // RFC-19 — ABSENT, never empty, when nothing refused. The asymmetry is the contract: a marker
         // attached to every clean post is the "silently shipping a bad post" failure in reverse.
         ...(finalSelfCheckFindings.length > 0
