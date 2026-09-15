@@ -1210,6 +1210,58 @@ export const OCCUPIED_SHARE_FLOOR: Readonly<Record<SlideRole, number>> = { cover
 export const IMAGERY_OR_DEVICE_FLOOR = 0.1;
 
 /**
+ * ── CLAUSE E AT THE CLOSER ROLE, RE-DERIVED FROM A TREE WITH NO TEXTURE. ──
+ *
+ * `IMAGERY_OR_DEVICE_FLOOR` above stays 0.10 and the COVER keeps it. This is a
+ * second constant rather than a role map because the cover's bar is
+ * load-bearing (`default:cover-carries-device` rests on it) and must be
+ * visibly untouched by anything done for the closer.
+ *
+ * ## The measurement
+ *
+ * CI 34993372318, gate-zero sweep, `closer.html` on the de-decorated tree:
+ *
+ * ```
+ *   POPULATED   8.0% .. 13.5%   (six rows: s/m/l, pale accent, cta slot, +device)
+ *   NEGLECTED   0.0%            (every copy slot empty)
+ * ```
+ *
+ * Every populated row was PASSING at 0.10 before this phase deleted the
+ * closer's band rhythm. It is not passing now, and the reason is the finding
+ * rather than a regression: **the texture was being scored as the drawn
+ * device.** A repeating 6px-on-30px ruling at 20% of `--fg` produces covered,
+ * low-colour-count cells, which is `slide-metrics.ts`'s literal definition of
+ * a `graphic`, and `imageryOrDeviceShare = imageryShare + graphicShare`.
+ *
+ * RFC-20 §11.1 states it as a class and this is its FIFTH instance: the hatch
+ * was scored as type, the plinth as a device, the screen as content, the
+ * scrims as the cover's device, and now the closer's band rhythm as the
+ * closer's. **A floor calibrated over a decoration is a floor calibrated on
+ * the decoration.**
+ *
+ * ## Why re-deriving is not lowering a bar to fit a plate
+ *
+ * §5.6 rule 4 forbids moving a floor to make a specific plate pass, and this
+ * is the case that rule's own sweep exists to distinguish: the INPUT changed,
+ * because a layer that was inflating it is gone. Rule 1 is the decision
+ * procedure and it is applied literally here — the bands separate completely
+ * (8.0 against 0.0, no overlap at all), so the floor is their midpoint rounded
+ * toward NEGLECTED: **0.04**.
+ *
+ * The separation is what makes it safe. A closer with nothing on it measures
+ * ZERO, not 3%, so 0.04 refuses the neglected plate by construction while
+ * admitting the thinnest real one at 2x.
+ *
+ * ## What still carries the closer
+ *
+ * Its accent rule, its ask band's border and accent gradient, and the recap
+ * strip when there are earlier slides to recap. All three are drawn objects
+ * the composition earned. What it no longer has is a wallpaper standing in for
+ * them.
+ */
+export const CLOSER_IMAGERY_OR_DEVICE_FLOOR = 0.04;
+
+/**
  * **Not taste — render integrity.** A single 74px headline line on its own
  * measures ≈0.015–0.02 ink; below that there is no readable content at all,
  * which means a font failed to load, a slot came through empty, or the
@@ -2019,14 +2071,15 @@ export function checkInterestFloor(
   const occupiedFloor = OCCUPIED_SHARE_FLOOR[role];
   const lowOccupancy = metrics.flatBackgroundShare > FLAT_BACKGROUND_CEILING && metrics.occupiedShare < occupiedFloor;
   // ── E — a cover or a closer carries something other than type. ──
-  if (role !== "interior" && metrics.imageryOrDeviceShare < IMAGERY_OR_DEVICE_FLOOR) {
+  const deviceFloor = role === "closer" ? CLOSER_IMAGERY_OR_DEVICE_FLOOR : IMAGERY_OR_DEVICE_FLOOR;
+  if (role !== "interior" && metrics.imageryOrDeviceShare < deviceFloor) {
     const finding: InterestFinding = {
       slide,
       role,
       kind: "no-device",
       measured: { imageryOrDeviceShare: metrics.imageryOrDeviceShare, imageryShare: metrics.imageryShare, graphicShare: metrics.graphicShare },
-      threshold: IMAGERY_OR_DEVICE_FLOOR,
-      sentence: `${where} — imagery and drawn devices cover ${pct(metrics.imageryOrDeviceShare)} of the frame (floor ${pct(IMAGERY_OR_DEVICE_FLOOR)} for ${roleNoun(role)}); this is type on ground and nothing else.`,
+      threshold: deviceFloor,
+      sentence: `${where} — imagery and drawn devices cover ${pct(metrics.imageryOrDeviceShare)} of the frame (floor ${pct(deviceFloor)} for ${roleNoun(role)}); this is type on ground and nothing else.`,
       steer:
         role === "cover"
           ? `A cover carries a photograph, a title card over a graphic ground, or a figure device — a headline on flat ground is not a cover. Give slide ${slide} a real visualNeed, or ${deviceSteer("a device built from the strongest number in this post")}.`

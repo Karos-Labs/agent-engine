@@ -15,6 +15,7 @@ import {
   FLAT_TOL,
   FULL_BLEED_IMAGERY_SHARE,
   CONTENT_ELEMENT_FLOOR,
+  CLOSER_IMAGERY_OR_DEVICE_FLOOR,
   IMAGERY_OR_DEVICE_FLOOR,
   IMAGERY_SHARE_FOR_PALETTE_WARNING,
   INK_DELTA,
@@ -405,6 +406,21 @@ const PINNED_SCALARS: Readonly<Record<string, number>> = {
   PROBE_TEXT_BOX_SHARE_FLOOR: 0.01,
   FLAT_BACKGROUND_CEILING: 0.7,
   IMAGERY_OR_DEVICE_FLOOR: 0.1,
+  // ── ADDED 2026-09-15: CLAUSE E'S CLOSER LIMB, RE-DERIVED. ──
+  //
+  // The COVER keeps 0.10 above and that is why this is a second constant
+  // rather than a role map: `default:cover-carries-device` rests on the
+  // cover's bar and it must be visibly untouched.
+  //
+  // The closer's was calibrated over a band rhythm that was being SCORED as
+  // the closer's drawn device (RFC-20 §11.1's class finding, fifth instance).
+  // With the texture deleted, CI 34993372318 measures the populated band at
+  // 8.0%-13.5% and the neglected plate at 0.0%. The bands do not overlap at
+  // all, so §5.6 rule 1 applies literally: the midpoint rounded toward
+  // NEGLECTED, which is 0.04. A closer with nothing on it measures ZERO, so
+  // the floor refuses it by construction while admitting the thinnest real
+  // one at 2x.
+  CLOSER_IMAGERY_OR_DEVICE_FLOOR: 0.04,
   INK_SHARE_FLOOR: 0.015,
   TEXT_SHARE_CEILING: 0.55,
   EDGE_DENSITY_FLOOR: 0.06,
@@ -508,6 +524,7 @@ describe("RFC-17 Part 3 / RFC-20 §5.6: exactly one threshold record moved, and 
     expect(PROBE_TEXT_BOX_SHARE_FLOOR).toBe(PINNED_SCALARS["PROBE_TEXT_BOX_SHARE_FLOOR"]);
     expect(FLAT_BACKGROUND_CEILING).toBe(PINNED_SCALARS["FLAT_BACKGROUND_CEILING"]);
     expect(IMAGERY_OR_DEVICE_FLOOR).toBe(PINNED_SCALARS["IMAGERY_OR_DEVICE_FLOOR"]);
+    expect(CLOSER_IMAGERY_OR_DEVICE_FLOOR).toBe(PINNED_SCALARS["CLOSER_IMAGERY_OR_DEVICE_FLOOR"]);
     expect(INK_SHARE_FLOOR).toBe(PINNED_SCALARS["INK_SHARE_FLOOR"]);
     expect(TEXT_SHARE_CEILING).toBe(PINNED_SCALARS["TEXT_SHARE_CEILING"]);
     expect(EDGE_DENSITY_FLOOR).toBe(PINNED_SCALARS["EDGE_DENSITY_FLOOR"]);
