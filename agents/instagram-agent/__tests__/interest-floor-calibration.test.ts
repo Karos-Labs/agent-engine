@@ -3380,11 +3380,21 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
       // rows, including clause B's DOM limb, clause G's `textBoxShare` and clause
       // H's element count. A populated plate the floor refuses is a template
       // finding whatever any individual share says.
+      //
+      // SOFT, so one run names every refused row. A hard `expect` here threw
+      // on the first refusal and hid the rest behind it, which is how the
+      // nine baseline debts above "surfaced one CI cycle at a time", and how
+      // eight CI runs on 2026-09-15 each bought exactly one finding for
+      // seventeen minutes — while fourteen refused Hebrew rows sat behind
+      // `en ltr long l` unreported, because the English rows run first. The
+      // test still fails on any refusal (`expect.soft` records and continues)
+      // but the log carries the whole list, and a fix is checked against all
+      // of it in one push.
       for (const m of populatedMeasured) {
         const verdict = checkInterestFloor(m.entry.metrics, m.entry.probe, m.role, optsFor(m.entry));
-        expect(verdict.findings.map((f) => f.kind), `${m.label} → ${templateBasename(m.entry.template)} @ ${m.role} was REFUSED by the floor. ${TEMPLATE_IS_THE_BUG}`).toEqual(
-          [],
-        );
+        expect
+          .soft(verdict.findings.map((f) => f.kind), `${m.label} → ${templateBasename(m.entry.template)} @ ${m.role} was REFUSED by the floor. ${TEMPLATE_IS_THE_BUG}`)
+          .toEqual([]);
       }
 
       for (const row of rows.filter((r) => r.band === "POPULATED")) {

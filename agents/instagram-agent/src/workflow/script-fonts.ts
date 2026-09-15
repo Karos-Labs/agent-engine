@@ -303,6 +303,20 @@ export function buildScriptFontHeadHtml(script: string, spec: ScriptTypography, 
   // script added to `SCRIPT_TYPOGRAPHY` cannot get one without the other.
   css.push(`${DISPLAY_SELECTORS.join(", ")} { line-height: ${spec.lineHeight.display}; padding-block-end: 0.22em; }`);
   css.push(`${BODY_SELECTORS.join(", ")} { line-height: ${spec.lineHeight.body}; }`);
+  // The bounded object's numeral (`slide-devices.ts`, `.dv-figure`) keeps
+  // its designed `line-height: 0.95` — it is a standalone figure, not a run
+  // of text, and it is not on `DISPLAY_SELECTORS` for the same reason
+  // `.num-figure` is not. But its 0.16em descender allowance was measured
+  // on Fraunces, and the line box is set by the FIRST face in the stack,
+  // which here is the script's. Measured in real Chromium, 2026-09-15, a
+  // 200px "30%" at 0.95: Fraunces needs 0.140em, Rubik 0.115em, Assistant
+  // 0.175em — and Heebo 0.260em. So every Hebrew `headline_focus` and
+  // `text_only` plate carrying a figure reported `probe.overflow` on
+  // `div.dv-figure` and was refused as `clipped`, at every copy length and
+  // type scale (twelve of the sweep's 27 Hebrew interior rows). 0.30em
+  // leaves the same kind of room over the measurement that 0.22em leaves
+  // over 0.177em above.
+  css.push(`.dv-figure { padding-block-end: 0.30em; }`);
   // Tracking, on the SAME two selector lists and for the same reason the
   // leading is: the templates' values were chosen for Latin display faces and
   // are actively harmful to Hebrew (see `ScriptTypography.letterSpacing`).
