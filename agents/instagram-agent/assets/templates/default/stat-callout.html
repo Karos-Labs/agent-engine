@@ -461,6 +461,22 @@
      a smaller one rather than parking a ring of dead ground around it, which
      clause C would read as exactly what it is.
 
+     AND THE SLAB STOPS SHRINKING, which is the line that makes the band's
+     `flex: 0 1 auto` mean anything at all. `.num-zone` is `flex: 1 1 auto` with
+     `min-block-size: 0` — it GROWS to fill the gap, by design, and it also
+     SHRINKS below its own content, which is the exact mechanism that produced
+     the clip. With both it and the band shrinkable, a browser distributes the
+     overflow between them in proportion to their base sizes, so the slab would
+     take the larger share and hide its numeral again: the band would be the
+     element that yields in the comment and not in the layout.
+
+     `1 0 auto` keeps the grow and drops the shrink. The stretch that clause C
+     needs is untouched, the band is now the only item on the plate that can
+     give a pixel back, and the worst case this arithmetic does not cover — a
+     two-line sub-label over a five-line body — comes out of the picture rather
+     than out of the type. That is what `min-block-size` on the band is the
+     floor for.
+
      WHAT IT COSTS THE GATES, checked rather than assumed. The slab is smaller,
      so clause E's `imageryOrDeviceShare` loses some of it - and the band pays
      it back: 200 x 1080 of the 1080 x 1440 frame is 13.9% of drawn imagery on
@@ -471,6 +487,8 @@
   body:has(.sc-figure-band img) .num-figure,
   body:has(.sc-figure-band img) .num-figure.mid { font-size: calc(150px * var(--ts, 1)); }
   body:has(.sc-figure-band img) .num-zone {
+    /* Grow, never shrink - see the note above. */
+    flex: 1 0 auto;
     padding: calc(36px * var(--ts, 1)) calc(48px * var(--ts, 1));
     margin-block: calc(24px * var(--ts, 1));
   }
