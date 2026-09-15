@@ -390,19 +390,34 @@ describe("archetype layouts (legacy port)", () => {
     expect(data.slides.map((s) => s.template)).toEqual(["slide.html", "slide.html", "slide.html", "slide.html"]);
   });
 
-  it("attaches a hero image only to a photo slide, never to a typographic archetype", () => {
+  it("attaches a hero image only to an archetype that declares a slot for one", () => {
     const selections: ImageSelection[] = [
       { n: 1, imagePath: "photos/n1.jpg", reason: "matches", license: "CC0", rightsUsable: true, watermarkFree: true, claimMatch: 5, claimMatchReason: "shows the claimed subject" },
     ];
     const photo = assemble({ slides: [slide({ layout: "photo" })] } as InstagramCopyOutput, selections);
     expect(photo.slides[0]!.images).toEqual({ hero: "photos/n1.jpg" });
 
-    // A vetted image existing does not make a quote card into a photo slide.
+    // ── AND A QUOTE CARD IS A PICTURE SLIDE NOW (RFC-21 Part 2). ──
+    //
+    // `quote_card` and `stat_callout` joined `HERO_IMAGE_LAYOUTS` when they got
+    // their bounded `.sc-figure-band`, because `HERO_IMAGE_LAYOUTS` being two
+    // archetypes wide is why a structured draft sourced no pictures at all
+    // (thepitchbydeel pubsub-21559620763659451: 8 slides, 0 images). So the
+    // assertion flips for those two and the CLAIM this case makes is unchanged:
+    // an image reaches a slide only when its archetype declares a slot for it.
     const quote = assemble(
       { slides: [slide({ layout: "quote_card", quote: { text: "q", attribution: "a" } })] } as InstagramCopyOutput,
       selections,
     );
-    expect(quote.slides[0]!.images).toEqual({});
+    expect(quote.slides[0]!.images, "a quote card declares .sc-figure-band and should carry the vetted image").toEqual({ hero: "photos/n1.jpg" });
+
+    // The archetypes that still declare no slot: a vetted image existing does
+    // not make a rows panel into a photo slide.
+    const list = assemble(
+      { slides: [slide({ layout: "list_takeaway", items: [{ title: "one" }, { title: "two" }] })] } as InstagramCopyOutput,
+      selections,
+    );
+    expect(list.slides[0]!.images).toEqual({});
   });
 
   it("passes an optional kicker through, and omits the slot entirely when unset", () => {
