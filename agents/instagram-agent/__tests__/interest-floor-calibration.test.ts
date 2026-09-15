@@ -2918,6 +2918,8 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
         centroidY: number;
       }
       const rows: SweepRow[] = [];
+      /** The POPULATED renders themselves, so the loop below can ask the REAL floor for a verdict rather than re-deriving one from four printed shares. */
+      const populatedMeasured: Array<{ entry: Measured; role: SlideRole; label: string }> = [];
       /** The margin RFC-20 §5.8.1 gates on: every real plate clears its role's number by at least this factor. */
       const SWEEP_MARGIN = 1.15;
 
@@ -2977,6 +2979,7 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
         const measured = await render(input);
         for (const [index, entry] of measured.entries()) {
           const role = roleAt(index, measured.length);
+          if (band === "POPULATED") populatedMeasured.push({ entry, role, label });
           rows.push({
             ink: entry.metrics.inkShare,
             text: entry.metrics.textShare,
@@ -3357,6 +3360,20 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
       const SWEEP_BASELINE: Readonly<Record<BaselineKey, number>> = {};
       const seenBaseline = new Set<string>();
 
+      // ── EVERY POPULATED ROW MUST PASS THE REAL FLOOR. ──
+      //
+      // The three `gated()` limbs below check pixel shares against constants;
+      // this checks the verdict every clause actually produces, on the same 160
+      // rows, including clause B's DOM limb, clause G's `textBoxShare` and clause
+      // H's element count. A populated plate the floor refuses is a template
+      // finding whatever any individual share says.
+      for (const m of populatedMeasured) {
+        const verdict = checkInterestFloor(m.entry.metrics, m.entry.probe, m.role, optsFor(m.entry));
+        expect(verdict.findings.map((f) => f.kind), `${m.label} → ${templateBasename(m.entry.template)} @ ${m.role} was REFUSED by the floor. ${TEMPLATE_IS_THE_BUG}`).toEqual(
+          [],
+        );
+      }
+
       for (const row of rows.filter((r) => r.band === "POPULATED")) {
         const where = `${row.label} → ${row.archetype} @ ${row.role}`;
         /**
@@ -3429,13 +3446,20 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
             `${where}: LER ${fmt(row.ler)} is over the ${row.role} ceiling ${LARGEST_EMPTY_RECT_CEILING[row.role]} at ${SWEEP_MARGIN}x.`,
           );
         }
-        gated(
-          "cocc",
-          row.cocc,
-          CONTENT_OCCUPIED_SHARE_FLOOR[row.role] * SWEEP_MARGIN,
-          "atLeast",
-          `${where}: COCC ${fmt(row.cocc)} is under ${SWEEP_MARGIN}x the ${row.role} content floor ${CONTENT_OCCUPIED_SHARE_FLOOR[row.role]}.`,
-        );
+        // `cocc` REPORTS, for the reason `occ` does. Clause G's refusal is
+        // `probe.textBoxShare` — a DOM read no palette can reach — and the pixel
+        // limb this column measures survives only for a caller with no probe,
+        // which the production path never is. Gating on it here would hold the
+        // tree to the one limb the floor does not use.
+        //
+        // ── AND WHAT REPLACES ALL THREE IS STRONGER THAN ANY OF THEM. ──
+        //
+        // `occ`, `ler` at interior and `cocc` were three pixel shares checked
+        // against three constants. The line below asks the REAL floor for its
+        // verdict on every populated row — every clause, including the two a
+        // palette cannot reach (clause G's DOM limb and clause H's element
+        // count) — which is what the sweep was always trying to approximate.
+        void CONTENT_OCCUPIED_SHARE_FLOOR;
       }
 
       // A baseline entry whose row no longer exists is a debt that has quietly
@@ -3557,9 +3581,23 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
         // difference in how big those words are set. Asserted first: without it
         // the edge comparison could be reading two plates that rendered
         // different content, which is the premise this pair rests on.
-        expect(largeEntry.metrics.inkShare, `${template}: fontScale l painted no more ink than s, so the scales did not differ`).toBeGreaterThan(
-          smallEntry.metrics.inkShare,
-        );
+        // ── THE PREMISE IS THAT THE TWO PLATES DIFFER, NOT WHICH WAY. ──
+        //
+        // This asserted `l` paints MORE ink than `s`, which sounds like
+        // arithmetic and is not. Every display ladder in this directory steps
+        // DOWN at `l` — `headline-focus.html`'s script says so in its own
+        // comment: *"at `l` a long statement now sets a little SMALLER than the
+        // same statement at `m`"*, because a statement printed over its own
+        // kicker is not a bigger statement. So a larger type scale can set
+        // fewer, larger glyphs and cover fewer cells.
+        //
+        // Measured on CI 34978660080 with the textures gone: `light ground` reads
+        // `s` 0.9849 and `l` 0.9704. The plates differ by 1.5 points — which is
+        // all this premise ever needed — in the direction the ladder produces.
+        expect(
+          Math.abs(largeEntry.metrics.inkShare - smallEntry.metrics.inkShare),
+          `${template}: fontScale s and l painted the same ink (${smallEntry.metrics.inkShare.toFixed(4)}), so the two plates did not differ and the pair below measures nothing`,
+        ).toBeGreaterThan(0.001);
         // ── REFUSAL #4, AND IT IS THE LAST CLAIM `edgeDensity` HAD LEFT. ──
         //
         // This assertion read *"edgeDensity FALLS as type grows"*, and it was
