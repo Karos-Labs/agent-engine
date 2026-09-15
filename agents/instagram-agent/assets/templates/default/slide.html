@@ -478,6 +478,29 @@
   /* The accent mark under the copy (legacy `.stat-band`), sized to the plate
      rather than to the legacy 96x10 detail. */
   .stat-band { width: 200px; height: 14px; background: var(--accent); margin-top: 30px; }
+  /* ── ONE ACCENT MARK PER PLATE, AND THE DEVICE'S OWN IS THE BETTER ONE. ──
+
+     A figure device paints its own accent rule (`.dv-rule`, 132x12) directly
+     under its numeral. With `.stat-band` also painting, a plate carrying a
+     bounded object shows TWO accent bars in the same column, 36px apart,
+     saying the same thing at two sizes.
+
+     `docs/instagram-restraint-reference.md` rule 4: *colour is information
+     or punctuation, never a surface.* Punctuation repeated is not
+     punctuation. The count is the other half of it — the reference plates
+     carry three or four element groups and the prep render the owner
+     rejected carried NINE, *"three of which said the same sentence"*. Two
+     accent bars is that sentence at the mark level.
+
+     THE DEVICE'S RULE WINS because it belongs to something: it sits under a
+     figure and above that figure's label. `.stat-band` is a standing detail
+     with nothing either side of it, so it is the one that yields. On a plate
+     with no device nothing changes and the band paints exactly as before.
+
+     `:has()` on the slot rather than on the fragment, because `.sl-device`
+     is present and empty on every render that carries no device — see its own
+     `:empty` rule. */
+  body:has(.sl-device .dv) .stat-band { display: none; }
 
   /* ── THE BOUNDED OBJECT'S SLOT (RFC-20 §11.4). ──
 
