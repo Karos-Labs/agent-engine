@@ -351,6 +351,6 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyOutput> {
     // It FAILS OPEN, which is why it is additive rather than a rewrite: a run
     // whose series step did not complete sends no `seriesDirective`, §29 says
     // so explicitly, and the draft reads identically to @18.
-    skillRef: "instagram-copy@19",
+    skillRef: "instagram-copy@20",
   };
 }

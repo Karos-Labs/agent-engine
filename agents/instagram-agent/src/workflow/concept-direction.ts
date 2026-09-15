@@ -856,6 +856,30 @@ export const ConceptSchema = z.object({
   paletteRole: z.string().min(1).max(120),
   /** A RELATIVE production note — how far toward the dramatic end of the LOCKED style to push. Never a style. */
   productionNote: z.string().max(100).optional(),
+  /**
+   * ── THE ILLUSTRATION DECLARATION (owner ruling, 2026-09-15). ──
+   *
+   * A concept may name a recognisable public figure — Sam Altman on an
+   * OpenAI slide, Michael Jordan on a Jordan slide — **only when it is drawn
+   * as an obvious illustration rather than rendered as a photograph.**
+   *
+   * The line is not about who may appear; it is about what the picture
+   * CLAIMS. A photoreal generated image of a real person is a fabricated
+   * photographic record: it shows them somewhere they never were, and a
+   * reader has no way to tell it from a real one. A flat vector portrait or
+   * an editorial-cartoon treatment makes the same point and claims nothing —
+   * the same tradition a newspaper's opinion page has used for a century.
+   * That is why this is a STYLE declaration and not a permission flag.
+   *
+   * L9 reads it below, and reads it strictly: the style has to be one of
+   * `ILLUSTRATION_STYLES`, named in the `scene` the generator is actually
+   * handed, so a concept cannot declare `illustrated` here and then ask the
+   * diffusion model for a photograph. Retrieval (`source: "stock"`) is
+   * untouched by any of this — a licensed editorial photograph of a real
+   * person is a real photograph, and prompt @20 §6 tells the writer to ask
+   * for it by name.
+   */
+  illustrationStyle: z.string().max(60).optional(),
   /** Third-party marks the concept uses. Empty unless the permit names them. */
   usesPermittedMarks: z.array(z.string().min(1)).max(3).default([]),
   /** The lower third the headline sits on — how it is darkened or cleared. Required. */
@@ -965,6 +989,54 @@ const SIMILE_MARKERS: readonly string[] = ["like a", "like an", "as if", "כמו
  * concepts for nothing. `MARK_CUES` can afford them because by then the
  * picture exists and a drop is the last line before publication.
  */
+/**
+ * The treatments that make a generated depiction unmistakably a DRAWING.
+ *
+ * Each one is a whole visual language a diffusion model reliably obeys and a
+ * reader reliably reads as artwork. Deliberately short and deliberately not
+ * extensible by the model: a free-text style field would be satisfied by
+ * "cinematic illustration", which is a photograph with a filter on it.
+ *
+ * `photoreal`, `photographic`, `realistic`, `render` and their kin are absent
+ * for the obvious reason and `L9_PHOTOREAL_CUES` refuses them by name.
+ */
+export const ILLUSTRATION_STYLES: readonly string[] = [
+  "flat vector",
+  "editorial cartoon",
+  "line drawing",
+  "ink drawing",
+  "halftone print",
+  "risograph",
+  "screen print",
+  "poster art",
+  "paper cut",
+  "low poly",
+];
+
+/** Words that would turn a declared illustration back into a fabricated photograph. */
+export const L9_PHOTOREAL_CUES: readonly string[] = ["photoreal", "photo real", "photorealistic", "photograph", "photographic", "lifelike", "hyperreal", "realistic portrait"];
+
+/**
+ * Whether this concept has earned the right to name a public figure.
+ *
+ * BOTH halves are required and each is load-bearing. The declaration says the
+ * author intended an illustration; the `scene` check says the generator was
+ * actually told to draw one, and `scene` is the only field that reaches the
+ * diffusion model (`conceptPrompt = concept.scene`). A declaration with a
+ * photographic scene under it is exactly the shape this guard exists to
+ * catch, and it is the same reasoning L9's mark limb already uses about
+ * `usesPermittedMarks`.
+ */
+export function isDeclaredIllustration(concept: { illustrationStyle?: string | undefined; scene: string }): boolean {
+  const declared = norm(concept.illustrationStyle ?? "");
+  if (declared.length === 0) return false;
+  const style = ILLUSTRATION_STYLES.find((s) => containsPhrase(declared, norm(s)));
+  if (style === undefined) return false;
+  const scene = norm(concept.scene);
+  if (!containsPhrase(scene, norm(style))) return false;
+  return !L9_PHOTOREAL_CUES.some((cue) => containsPhrase(scene, norm(cue)));
+}
+
 const SCENE_MARK_CUES: readonly string[] = ["logo", "logos", "wordmark", "brand mark", "brandmark", "trademark", "crest", "emblem", "insignia", "mascot", "לוגו", "סמל"];
 
 function forbidHit(texts: readonly string[], forbid: readonly string[]): { cue: string; text: string } | undefined {
@@ -1120,9 +1192,23 @@ export function checkConceptLegibility(concept: Concept, context: ConceptLegibil
   // palette token, so without them L2 and L9 would contradict each other and
   // every concept would be discarded.
   const ownWorld = palette.map((token) => norm(token)).filter((token) => token.length > 0);
-  const entityCues = context.entities
-    .map((entity) => norm(entity))
-    .filter((entity) => entity.length >= 3 && !allowed.has(entity) && !ownWorld.some((token) => containsPhrase(entity, token) || containsPhrase(token, entity)));
+  // ── AND A DECLARED ILLUSTRATION MAY NAME A PUBLIC FIGURE. ──
+  //
+  // Owner ruling, 2026-09-15: generating recognisable figures is approved
+  // where it is relevant to the slide. What is NOT approved, and what this
+  // keeps refusing, is a fabricated PHOTOGRAPH of a real person — see
+  // `illustrationStyle` on the schema for why the line sits there rather than
+  // on identity.
+  //
+  // The mark limb below is untouched: a client's right to draw somebody
+  // else's LOGO is a trademark question that a drawing style does not answer,
+  // and `thirdPartyMarks` is still the only thing that grants it.
+  const illustrated = isDeclaredIllustration(concept);
+  const entityCues = illustrated
+    ? []
+    : context.entities
+        .map((entity) => norm(entity))
+        .filter((entity) => entity.length >= 3 && !allowed.has(entity) && !ownWorld.some((token) => containsPhrase(entity, token) || containsPhrase(token, entity)));
   // The generic mark nouns, per word, so "the Apple logo" is caught by the
   // noun even when the name is one the story never recognised. Suspended when
   // the permit grants something, on the same reasoning as `checkConceptRendered`.

@@ -1,4 +1,4 @@
-# Instagram Copy Craft Guide, v19
+# Instagram Copy Craft Guide, v20
 
 **What changed at v19.** Everything v18 says still stands. v19 adds ONE
 section, §29 "Your series": when the input carries a `seriesDirective`, the
@@ -216,7 +216,7 @@ So:
 
 ### Name the actual subject when the slide is about a real thing
 
-This is where most briefs go wrong, and the failure is not a rule violation —
+This is where most briefs go wrong, and the failure is not a rule violation , 
 it is a failure of nerve. A slide about ChatGPT's reach that asks for "a bright
 modern open-plan office with people collaborating" has thrown away everything
 that made the slide worth reading. The picture is now interchangeable with the
@@ -227,7 +227,7 @@ invisible.
 surface on a real screen. The building. The object. The place. The moment the
 story actually happened in. A slide about ChatGPT gets a phone showing a chat
 interface mid-answer, or a laptop in a dark room with a cursor blinking in an
-empty prompt — not an office. A slide about a supply chain gets a container
+empty prompt: not an office. A slide about a supply chain gets a container
 yard at dusk, not "a team discussing logistics".
 
 Ask yourself what a sharp art director at a magazine would put next to this
@@ -238,15 +238,15 @@ sentence. It is almost never a stock office.
 `source` (section 22) decides this, and the two answers are genuinely
 different because the risks are different.
 
-**`source: "generate"` — no named real people, brands, products or logos.**
+**`source: "generate"`: no named real people, brands, products or logos.**
 A generator does not retrieve a likeness, it FABRICATES one, and a fabricated
 photograph of a real person is a different object from a photograph of them:
 it shows them doing something they never did. The same is true of a logo it
-invents into a scene. Describe the role and the moment — "someone
-mid-explanation at a whiteboard" — and never an identity. This is not a
+invents into a scene. Describe the role and the moment: "someone
+mid-explanation at a whiteboard": and never an identity. This is not a
 preference and no brief may override it.
 
-**`source: "stock"` — name it.** Retrieval is the opposite operation: the
+**`source: "stock"`: name it.** Retrieval is the opposite operation: the
 library returns a real, licensed, editorial photograph of a real thing, and
 asking for "a technology company's headquarters" instead of the company you
 mean gets you a worse picture of the same subject. Ask for the product, the
@@ -256,8 +256,8 @@ used honestly is refused there rather than avoided here.
 
 **A public figure who IS the subject appears, when the picture is retrieved.**
 If the slide is about Michael Jordan, the reader should see Michael Jordan. If
-it is about a company, show that company — its building, its product on a real
-screen, its founder on stage if the founder is what the slide is about — and
+it is about a company, show that company: its building, its product on a real
+screen, its founder on stage if the founder is what the slide is about: and
 show it on the COVER, where it does the most work. Asking for "a basketball
 player mid-jump" on a Jordan slide is the same failure of nerve as asking for
 an office on a ChatGPT slide: it throws away the one thing that made the post
@@ -267,22 +267,35 @@ This is ordinary editorial practice and the guards for it already exist
 downstream, which is why the brief does not need to be timid: the vetting step
 checks licence, rights, watermark and whether the picture actually shows the
 claimed subject, and refuses anything that fails. A brief that avoids naming
-the subject does not make the post safer — it makes it duller, and it hides the
+the subject does not make the post safer: it makes it duller, and it hides the
 decision from the step built to judge it.
 
-**The hard line stays where the risk actually is: `source: "generate"`.** A
-generator does not retrieve a likeness, it FABRICATES one, and an invented
-photograph of a real person shows them doing something they never did. Same for
-a logo it paints into a scene. For generated scenes, describe the role and the
-moment and never an identity — and where a run has a consent record
-(`thirdPartyMarks`, `publicFigures`), that record is the only thing that widens
-it.
+**`source: "generate"`: a recognisable figure may appear, DRAWN.** Generating
+Sam Altman for an OpenAI slide or Michael Jordan for a Jordan slide is approved
+and often the right call: the picture is about them, so they should be in it.
+
+The one hard line is what the picture CLAIMS. A photoreal generated image of a
+real person is a photographic record of something that never happened, and a
+reader has no way to tell it from a real one. A drawing makes the same point
+and claims nothing, which is the tradition an opinion page has used for a
+century.
+
+So when the concept names a real person, it declares an `illustrationStyle`
+from the fixed list (flat vector, editorial cartoon, line drawing, ink drawing,
+halftone print, risograph, screen print, poster art, paper cut, low poly) and
+writes that same treatment into `scene`, which is the only field the generator
+is handed. A declaration with a photographic brief under it is refused by code,
+not by judgment: see clause L9. Never ask for "photoreal", "lifelike",
+"hyperreal" or "cinematic" alongside a named person.
+
+Logos and brand marks are a separate question that a drawing style does not
+answer, and they still need a consent record.
 
 ### Ask for something that looks like now
 
 A picture that could have been taken in 2015 makes a post about this quarter
-read as filler. Where a scene has a period to it — a screen, a device, a
-workplace, a street — say so: "a current-generation phone", "an office as it
+read as filler. Where a scene has a period to it: a screen, a device, a
+workplace, a street: say so: "a current-generation phone", "an office as it
 looks today". Do not date it with a year; date it with what is in frame.
 
 A good scene reads like a photographer's brief you could shoot this
