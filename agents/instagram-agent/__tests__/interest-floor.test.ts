@@ -214,7 +214,10 @@ describe("checkInterestFloor: every clause fires alone", () => {
    * has checked can refuse.
    */
   it("C — a plate that carries a SUBJECT is allowed its quiet; one that carries nothing is not", () => {
-    const hole = { largestEmptyRect: { x: 0, y: 0, w: 1080, h: 800 }, largestEmptyRectShare: 0.52 };
+    // A CORNER hole, the `@semrush` shape: two thirds of the width, half the
+    // height, touching two edges and crossing neither axis. A full-width band
+    // is a different plate and gets its own case below.
+    const hole = { largestEmptyRect: { x: 0, y: 640, w: 720, h: 800 }, largestEmptyRectShare: 0.37 };
     // Imagery in frame: the hole is composition.
     const withImagery = check(metrics(hole), "interior");
     expect(withImagery.findings.map((f) => f.kind)).not.toContain("dead-space");
@@ -228,6 +231,39 @@ describe("checkInterestFloor: every clause fires alone", () => {
     // And NEITHER: refused, exactly as before.
     const neither = checkInterestFloor(bare(hole), { ...passingSlideProbe(3), displayTypeScale: DISPLAY_TYPE_SCALE_FLOOR - 0.001 }, "interior", { slide: 3 });
     expect(neither.findings.map((f) => f.kind)).toContain("dead-space");
+  });
+
+  /**
+   * THE HOLLOW PLATE, and it is the control that proves the waiver can still
+   * refuse. Found on CI 34897578476: `closer.html` with an eyebrow at the top,
+   * a CTA at the foot and NOTHING between them measured
+   * `largestEmptyRectShare` 0.5556 at full width — and it carries a hero, so
+   * the subject test waived it. A genuinely hollow plate passing because of a
+   * picture at the other end of it.
+   *
+   * Almost the same share as the corner hole above. The difference is that one
+   * sits against a margin and the other cuts the plate in two.
+   */
+  it("C — a hole that SPANS the frame is never waived, however strong the subject", () => {
+    const band = { largestEmptyRect: { x: 0, y: 320, w: 1080, h: 800 }, largestEmptyRectShare: 0.5556 };
+    // A full-frame photograph is the strongest subject there is, and it still
+    // does not buy this plate the hole.
+    const withHero = checkInterestFloor(
+      metrics({ ...band, imageryShare: 0.6, imageryOrDeviceShare: 0.6 }),
+      { ...passingSlideProbe(7), displayTypeScale: 0.2 },
+      "closer",
+      { slide: 7 },
+    );
+    expect(withHero.findings.map((f) => f.kind)).toContain("dead-space");
+    expect(withHero.waived.map((f) => f.kind)).not.toContain("dead-space");
+    // A band on the OTHER axis spans too — a plate cut left from right is cut
+    // just the same as one cut top from bottom.
+    const column = { largestEmptyRect: { x: 0, y: 0, w: 560, h: 1440 }, largestEmptyRectShare: 0.52 };
+    expect(check(metrics(column), "interior").findings.map((f) => f.kind)).toContain("dead-space");
+    // And the corner shape is still waived, so this case is measuring POSITION
+    // rather than having quietly switched the waiver off.
+    const corner = { largestEmptyRect: { x: 0, y: 640, w: 720, h: 800 }, largestEmptyRectShare: 0.37 };
+    expect(check(metrics(corner), "interior").waived.map((f) => f.kind)).toContain("dead-space");
   });
 
   /**

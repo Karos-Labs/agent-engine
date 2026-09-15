@@ -1456,6 +1456,49 @@ export const DISPLAY_TYPE_SCALE_FLOOR = 0.055;
 export const SUBJECT_IMAGERY_MULTIPLE = 1.0;
 
 /**
+ * The canvas every bundled template declares, in design px.
+ *
+ * A literal rather than a parameter because `largestEmptyRect` is already
+ * reported in these units and every template hard-codes
+ * `html, body { width: 1080px; height: 1440px }`. `interest-floor.test.ts`
+ * asserts that against the template files, so a canvas that ever changes fails
+ * here rather than silently re-scaling a geometry test.
+ */
+export const DESIGN_CANVAS = { w: 1080, h: 1440 } as const;
+
+/**
+ * How much of an axis a hole has to cross before it is CUTTING THE PLATE IN
+ * TWO rather than sitting at its margin.
+ *
+ * 0.9, and the two cases it separates are both real plates:
+ *
+ *   * `@semrush`'s reference cover leaves its whole lower-left quadrant empty —
+ *     roughly two thirds of the width and half the height — and the quiet is
+ *     what lets its four-node diagram read. That hole touches two edges and
+ *     crosses neither axis.
+ *   * `closer.html` with a hollow middle puts an eyebrow at the top, a CTA at
+ *     the foot and NOTHING between them. Measured on real Chromium at
+ *     `largestEmptyRectShare` 0.5556, full width. That hole separates content
+ *     from content, and the plate reads as two disconnected pieces.
+ *
+ * **Same share, opposite meaning, and the difference is position.** The rect
+ * has carried its own corners since the clause was written, for the re-layout
+ * planner; this is the second reader of them.
+ */
+export const SPANNING_HOLE_AXIS_SHARE = 0.9;
+
+/**
+ * Whether an empty rectangle crosses the frame rather than sitting against it.
+ *
+ * A hole at a margin is composition. A hole that spans the plate is a gap in
+ * the middle of the reading order, whatever else is in frame — which is why
+ * this is checked BEFORE `plateSubject` can waive anything.
+ */
+export function holeSpansFrame(rect: SlideMetrics["largestEmptyRect"], canvas: { w: number; h: number } = DESIGN_CANVAS): boolean {
+  return rect.w >= canvas.w * SPANNING_HOLE_AXIS_SHARE || rect.h >= canvas.h * SPANNING_HOLE_AXIS_SHARE;
+}
+
+/**
  * What this plate carries, if anything, that earns it a quiet region — or
  * `undefined` when it carries neither.
  *
@@ -1725,7 +1768,15 @@ export function checkInterestFloor(
   // fill it, and that matters because the remedy for this finding is
   // `planInterestRelayout` attaching a device -- which on a live run
   // fabricated the digit `2` out of the word `B2B`.
-  const subject = plateSubject(metrics, probe);
+  //
+  // AND A SUBJECT DOES NOT EXCUSE A HOLE THAT SPANS THE FRAME. Measured on CI
+  // 34897578476: `closer.html` with an eyebrow at the top, a CTA at the foot
+  // and nothing between them carries a hero image, so it has a subject, and it
+  // was WAIVED — a genuinely hollow plate passing because of a picture at the
+  // other end of it. `@semrush`'s hole and that one measure almost the same
+  // share; one sits in a corner and the other cuts the plate in two. See
+  // `holeSpansFrame`.
+  const subject = holeSpansFrame(metrics.largestEmptyRect) ? undefined : plateSubject(metrics, probe);
   const rectCeiling = LARGEST_EMPTY_RECT_CEILING[role];
   if (metrics.largestEmptyRectShare > rectCeiling) {
     // WAIVED rather than skipped when the plate carries a subject. The hole
