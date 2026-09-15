@@ -251,7 +251,16 @@ describe("the DOM instrument and the PIXEL instrument measure different things",
    * could be smuggled in from either direction.
    */
   it("markColourCount gates NOTHING in either direction", () => {
-    const empty = { largestEmptyRectShare: LARGEST_EMPTY_RECT_CEILING.closer + 0.1, occupiedShare: 0.09 };
+    // `imageryOrDeviceShare: 0` since 2026-09-14: clause C waives a plate that
+    // carries a subject, and this case needs a plate that is genuinely empty or
+    // it is measuring the waiver rather than the mark count.
+    const empty = {
+      largestEmptyRectShare: LARGEST_EMPTY_RECT_CEILING.closer + 0.1,
+      occupiedShare: 0.09,
+      imageryShare: 0,
+      graphicShare: 0,
+      imageryOrDeviceShare: 0,
+    };
     const withMarks = check(measured({ ...empty, markColourCount: 6, markedShare: 0.2 }), probe(), "closer");
     const withoutMarks = check(measured({ ...empty, markColourCount: 0, markedShare: 0 }), probe({ markRuns: 0, markRunsPainted: 0 }), "closer");
     // Six mark colours buy the empty plate nothing...
@@ -400,6 +409,29 @@ const PINNED_SCALARS: Readonly<Record<string, number>> = {
   MIN_QUANTISED_COLOUR_COUNT: 3,
   IMAGERY_SHARE_FOR_PALETTE_WARNING: 0.1,
   FULL_BLEED_IMAGERY_SHARE: 0.5,
+  // ── ADDED 2026-09-14 WITH THE CLAUSE-D DEMOTION ──
+  //
+  // `plateSubject`'s two limbs. They are the reason clause D could be demoted
+  // at all: a plate is allowed a quiet region when it carries imagery or a
+  // drawn device (`SUBJECT_IMAGERY_MULTIPLE` x `IMAGERY_OR_DEVICE_FLOOR`) or
+  // when its type is set at display scale (`DISPLAY_TYPE_SCALE_FLOOR`, read
+  // off the DOM probe rather than from the pixels).
+  //
+  // The multiple is 1.0 ON PURPOSE -- the same bar clause E already uses.
+  // Inventing a second, stricter number here would be two bars for one
+  // question, and the next person to move one would not know to move the
+  // other. That this guard went red the moment they were added is the guard
+  // working: an added floor fails as loudly as a moved one.
+  DISPLAY_TYPE_SCALE_FLOOR: 0.055,
+  // And the POSITION test that qualifies the waiver. A subject earns a plate
+  // its quiet only when the hole sits against a margin; a hole crossing 90%
+  // of either axis separates content from content and is never waived. Both
+  // shapes are real plates measured on real Chromium -- `@semrush`'s corner
+  // at 0.37 and a hollow `closer.html` at 0.5556 -- and share alone will
+  // never tell them apart, which is why a geometry constant exists here at
+  // all.
+  SPANNING_HOLE_AXIS_SHARE: 0.9,
+  SUBJECT_IMAGERY_MULTIPLE: 1,
 };
 
 /**

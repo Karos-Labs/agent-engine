@@ -21,7 +21,7 @@ import {
   type FakeRenderCarouselOptions,
   type TestEnvironment,
 } from "./test-helpers.js";
-import { FLAT_BACKGROUND_CEILING, OCCUPIED_SHARE_FLOOR, type SlideMetrics } from "../src/workflow/interest-floor.js";
+import { FLAT_BACKGROUND_CEILING, IMAGERY_OR_DEVICE_FLOOR, OCCUPIED_SHARE_FLOOR, type SlideMetrics } from "../src/workflow/interest-floor.js";
 import { VALUE_TURN_NO_FINDINGS, happyTurns, standardTurns } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 import { goodTrendScoutOutput, goodResearchOutput, goodImageVettingOutput, goodRelevanceVerdict, goodVisualQaOutput } from "./test-helpers.js";
@@ -289,7 +289,15 @@ describe("08a1-interest-floor: where it runs and what it costs", () => {
     expect(result.status).toBe("awaiting_gate");
     expect(stepIds).toContain("05-write-copy-attempt-2");
 
-    // The fixture's premise, asserted rather than assumed: clause D can only
+    // The fixture's premise, asserted rather than assumed. Clause D was demoted
+    // to reporting-only on 2026-09-14, so the plate is still under its occupancy
+    // floor -- the measurement is unchanged -- but that is no longer what returns
+    // the draft. What returns it is clause C: `boringSlideMetrics` carries
+    // `imageryOrDeviceShare` 0.004, so it has no SUBJECT and does not earn its
+    // hole. The day this plate acquires a subject the case should stop returning
+    // and somebody should know why, so both halves are pinned.
+    expect(idleUnderTheNewFloor.imageryOrDeviceShare).toBeLessThan(IMAGERY_OR_DEVICE_FLOOR);
+    // Clause D can only
     // speak if the plate is under the floor that ships today.
     expect(idleUnderTheNewFloor.occupiedShare).toBeLessThan(OCCUPIED_SHARE_FLOOR.cover);
     expect(idleUnderTheNewFloor.flatBackgroundShare).toBeGreaterThan(FLAT_BACKGROUND_CEILING);
@@ -299,8 +307,10 @@ describe("08a1-interest-floor: where it runs and what it costs", () => {
     const steer = String(inputs[1]?.["selfCheckSteer"] ?? "");
     // The slide number, the measured share, and the word the owner used.
     expect(steer).toMatch(/slide 1\b/);
-    expect(steer).toMatch(/93%/);
-    expect(steer).toMatch(/flat|background colour/i);
+    // 56% is the hole clause C measured; 93% was clause D's flat share, which
+    // reports rather than steers since the demotion.
+    expect(steer).toMatch(/56%/);
+    expect(steer).toMatch(/empty rectangle/i);
     // A mechanism the writer controls, never an aesthetic.
     expect(steer).toMatch(/device|visualNeed|merge/);
   }, 40000);

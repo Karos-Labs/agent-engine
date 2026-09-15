@@ -197,6 +197,18 @@ export interface SlideProbe {
   markRuns?: number | undefined;
   /** Of those, the ones a computed style actually paints — a background image, or a transparent colour clipped to the text. */
   markRunsPainted?: number | undefined;
+  /**
+   * The largest rendered font size on the plate, as a fraction of frame
+   * height. See `probePage` for why typography needed an instrument of its
+   * own: contrast and imagery were both already measured and type scale was
+   * not, so one enormous confident line and the same words at caption size
+   * were indistinguishable to every clause in this file.
+   *
+   * Optional on the same contract as the marks above — a consumer with a
+   * narrower probe mirror reports none, and a test about type scale must
+   * abstain on a document that never measured it.
+   */
+  displayTypeScale?: number | undefined;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1333,6 +1345,7 @@ export type InterestFailureKind = "render-integrity" | "marks-missing" | "clippe
 
 /** Facts a reviewer and `08b` should see, that must never fail an attempt. */
 export type InterestWarningKind =
+  | "low-occupancy"
   | "accent-out-of-band"
   | "background-not-brand-ground"
   | "low-colour-count"
@@ -1416,6 +1429,98 @@ export interface InterestFloorOptions {
  * gates on it — `slide-metrics.ts` is right that `markColourCount` must not.
  */
 const MARK_AREA_PAINTING_KINDS: ReadonlySet<string> = new Set(["block"]);
+
+/**
+ * The share of the frame a plate's type has to reach to be its own subject.
+ *
+ * PROVISIONAL, and deliberately reported before it gates anything: the sweep
+ * prints `displayTypeScale` for every archetype at every type scale, and this
+ * number is set from that table rather than from an eye. 0.055 of frame height
+ * on a 1440px canvas is ~79px — comfortably above body copy at every shipped
+ * `fontScale` and below every display slot — but "comfortably" is a claim the
+ * table has to settle, which is why `plateSubject` reports WHICH limb carried
+ * a plate.
+ */
+export const DISPLAY_TYPE_SCALE_FLOOR = 0.055;
+
+/**
+ * How far above `IMAGERY_OR_DEVICE_FLOOR` a plate's imagery has to sit before
+ * it earns its quiet.
+ *
+ * 1.0 — the same floor clause E uses, and no higher. A plate carrying enough
+ * of a subject to clear clause E is carrying enough of a subject to be allowed
+ * an empty corner; inventing a second, stricter number here would be two bars
+ * for one question, and the next person to move one would not know to move the
+ * other.
+ */
+export const SUBJECT_IMAGERY_MULTIPLE = 1.0;
+
+/**
+ * The canvas every bundled template declares, in design px.
+ *
+ * A literal rather than a parameter because `largestEmptyRect` is already
+ * reported in these units and every template hard-codes
+ * `html, body { width: 1080px; height: 1440px }`. `interest-floor.test.ts`
+ * asserts that against the template files, so a canvas that ever changes fails
+ * here rather than silently re-scaling a geometry test.
+ */
+export const DESIGN_CANVAS = { w: 1080, h: 1440 } as const;
+
+/**
+ * How much of an axis a hole has to cross before it is CUTTING THE PLATE IN
+ * TWO rather than sitting at its margin.
+ *
+ * 0.9, and the two cases it separates are both real plates:
+ *
+ *   * `@semrush`'s reference cover leaves its whole lower-left quadrant empty —
+ *     roughly two thirds of the width and half the height — and the quiet is
+ *     what lets its four-node diagram read. That hole touches two edges and
+ *     crosses neither axis.
+ *   * `closer.html` with a hollow middle puts an eyebrow at the top, a CTA at
+ *     the foot and NOTHING between them. Measured on real Chromium at
+ *     `largestEmptyRectShare` 0.5556, full width. That hole separates content
+ *     from content, and the plate reads as two disconnected pieces.
+ *
+ * **Same share, opposite meaning, and the difference is position.** The rect
+ * has carried its own corners since the clause was written, for the re-layout
+ * planner; this is the second reader of them.
+ */
+export const SPANNING_HOLE_AXIS_SHARE = 0.9;
+
+/**
+ * Whether an empty rectangle crosses the frame rather than sitting against it.
+ *
+ * A hole at a margin is composition. A hole that spans the plate is a gap in
+ * the middle of the reading order, whatever else is in frame — which is why
+ * this is checked BEFORE `plateSubject` can waive anything.
+ */
+export function holeSpansFrame(rect: SlideMetrics["largestEmptyRect"], canvas: { w: number; h: number } = DESIGN_CANVAS): boolean {
+  return rect.w >= canvas.w * SPANNING_HOLE_AXIS_SHARE || rect.h >= canvas.h * SPANNING_HOLE_AXIS_SHARE;
+}
+
+/**
+ * What this plate carries, if anything, that earns it a quiet region — or
+ * `undefined` when it carries neither.
+ *
+ * The two limbs are the owner's own words, 2026-09-14: *"interest comes from
+ * bold typography, excellent contrast and strong visuals."* Contrast is
+ * already gated elsewhere (`TEXT_CONTRAST_FLOOR` at derivation, and
+ * `groundInkContrast` reported here), so the two that decide emptiness are
+ * VISUALS and TYPE.
+ *
+ * Returns the reason rather than a boolean, because a waived finding that
+ * cannot say which limb waived it is a finding nobody can audit.
+ */
+export function plateSubject(metrics: SlideMetrics, probe: SlideProbe | undefined): string | undefined {
+  if (metrics.imageryOrDeviceShare >= IMAGERY_OR_DEVICE_FLOOR * SUBJECT_IMAGERY_MULTIPLE) {
+    return `it carries imagery or a drawn device over ${pct(metrics.imageryOrDeviceShare)} of the frame`;
+  }
+  const type = probe?.displayTypeScale;
+  if (type !== undefined && type >= DISPLAY_TYPE_SCALE_FLOOR) {
+    return `its type is set at display scale (${pct(type)} of frame height, floor ${pct(DISPLAY_TYPE_SCALE_FLOOR)})`;
+  }
+  return undefined;
+}
 
 /** One slide's verdict. `ok` is `findings.length === 0`; a waived finding does not fail. */
 export interface InterestVerdict {
@@ -1639,9 +1744,49 @@ export function checkInterestFloor(
   // rectangle rides along in `measured` either way, so the gate payload shows
   // both numbers and a reviewer can see when the hole is filled by decoration
   // alone.
-  const rectCeiling = LARGEST_EMPTY_RECT_CEILING[role];
+  // ── THE SUBJECT TEST, WHICH GOVERNS CLAUSE C ──
+  //
+  // The owner, 2026-09-14, after reading a real render: *"the difference
+  // between clean design and bad design is not the absence of interest, it is
+  // the absence of NOISE. Interest comes from bold typography, excellent
+  // contrast and strong visuals -- not from extra layers, random gradients or
+  // invented numbers."*
+  //
+  // Both plates in `docs/instagram-restraint-reference.md` are built exactly
+  // that way, and BOTH would fail this clause as it stood. `@semrush`'s entire
+  // lower-left quadrant is empty, and it is empty ON PURPOSE: the plate carries
+  // a four-node diagram, and the quiet is what lets the diagram read. The
+  // owner's grey screen has a hole of the same size and nothing in it.
+  //
+  // **The difference is not the size of the hole. It is whether the plate
+  // carries a SUBJECT.** A plate that carries one is allowed its quiet.
+  //
+  // WHY THIS IS NOT A LOWERED BAR. A plate with neither imagery nor display
+  // type is refused exactly as before -- the grey screen measures `iod` 0.004
+  // and has no display slot, so it still fails here and at clause E. What
+  // changes is that a plate which EARNED its emptiness stops being told to
+  // fill it, and that matters because the remedy for this finding is
+  // `planInterestRelayout` attaching a device -- which on a live run
+  // fabricated the digit `2` out of the word `B2B`.
+  //
+  // AND A SUBJECT DOES NOT EXCUSE A HOLE THAT SPANS THE FRAME. Measured on CI
+  // 34897578476: `closer.html` with an eyebrow at the top, a CTA at the foot
+  // and nothing between them carries a hero image, so it has a subject, and it
+  // was WAIVED — a genuinely hollow plate passing because of a picture at the
+  // other end of it. `@semrush`'s hole and that one measure almost the same
+  // share; one sits in a corner and the other cuts the plate in two. See
+  // `holeSpansFrame`.
+  const subject = holeSpansFrame(metrics.largestEmptyRect) ? undefined : plateSubject(metrics, probe);
+  const rectCeiling = LARGEST_EMPTY_RECT_CEILING[role];
   if (metrics.largestEmptyRectShare > rectCeiling) {
-    findings.push({
+    // WAIVED rather than skipped when the plate carries a subject. The hole
+    // is real either way and the reviewer, the judge and the ledger should
+    // all still see it with the reason it was allowed -- the same posture
+    // clause E's image-downgrade waiver takes. A clause that silently does
+    // not run is a clause nobody can audit.
+    (subject === undefined
+      ? (finding: InterestFinding) => findings.push(finding)
+      : (finding: InterestFinding) => waived.push({ ...finding, waivedReason: `waived: slide ${slide} earned its quiet — ${subject}` }))({
       slide,
       role,
       kind: "dead-space",
@@ -1678,20 +1823,40 @@ export function checkInterestFloor(
     });
   }
 
-  // ── D — substance. Flat AND idle: the conjunction is the defect. ──
+  // ── D — DEMOTED TO REPORTING-ONLY, 2026-09-14 ──
+  //
+  // This clause asked whether enough of the frame was COVERED, and the whole
+  // of RFC-21 Part 2 is the record of that being the wrong question. Two
+  // measurements settle it.
+  //
+  // **It demands decoration.** RFC-20 §11.3 recorded that seven of eight
+  // bundled templates cannot clear this floor without a paint layer covering
+  // for them. Demonstrated from the other side on CI 34861097819: quieting one
+  // texture from 22% to 8% opacity dropped the identical plate from
+  // `occupiedShare` 0.5094 to 0.1300 and turned `slide.html`, Hebrew
+  // `closer.html`, the marked-emphasis case and the whole gate-zero sweep red.
+  // **The texture WAS the occupancy** — roughly 38 of those 51 points.
+  //
+  // **And what it demands, it will accept from anywhere.** The remedy for an
+  // emptiness finding is `planInterestRelayout` attaching a device, and on run
+  // `pubsub-21839432908803804` that remedy fabricated the digit `2` out of the
+  // middle of the word `B2B`, labelled it with the claim minus that digit, and
+  // sourced it to a real company. A gate that cannot be satisfied honestly
+  // will be satisfied dishonestly.
+  //
+  // RFC-20 §5.6 rule 3 named this outcome in advance — *"clause D's occupancy
+  // limb is DEMOTED TO REPORTING-ONLY and clause C carries the refusal"* — as
+  // the branch to take if the bands ever overlapped. They do worse than
+  // overlap: the metric rewards the defect it was built to catch.
+  //
+  // THE MEASUREMENT IS KEPT. It still rides every slide, the gate payload and
+  // the sweep; it stops being a refusal. What refuses a genuinely neglected
+  // plate is clause C (a hole with no subject in frame), clause E (a cover or
+  // closer carrying nothing but type) and clause G (nothing to read). The
+  // owner's grey screen fails all three, which `interest-floor.test.ts`
+  // asserts rather than assumes.
   const occupiedFloor = OCCUPIED_SHARE_FLOOR[role];
-  if (metrics.flatBackgroundShare > FLAT_BACKGROUND_CEILING && metrics.occupiedShare < occupiedFloor) {
-    findings.push({
-      slide,
-      role,
-      kind: "empty",
-      measured: { flatBackgroundShare: metrics.flatBackgroundShare, occupiedShare: metrics.occupiedShare },
-      threshold: occupiedFloor,
-      sentence: `${where} — ${pct(metrics.flatBackgroundShare)} of the pixels were the background colour and only ${pct(metrics.occupiedShare)} of the frame was occupied (floor ${pct(occupiedFloor)} for ${roleNoun(role)}).`,
-      steer: `Either ${deviceSteer(`give slide ${slide} a device (figure, bars, before/after, timeline, versus)`)} or merge it into ${slide > 1 ? `slide ${slide - 1}` : "the next slide"} and let the carousel be one slide shorter.`,
-    });
-  }
-
+  const lowOccupancy = metrics.flatBackgroundShare > FLAT_BACKGROUND_CEILING && metrics.occupiedShare < occupiedFloor;
   // ── E — a cover or a closer carries something other than type. ──
   if (role !== "interior" && metrics.imageryOrDeviceShare < IMAGERY_OR_DEVICE_FLOOR) {
     const finding: InterestFinding = {
@@ -1782,6 +1947,24 @@ export function interestWarningsFor(
   markKinds?: readonly string[] | undefined,
 ): InterestWarning[] {
   const warnings: InterestWarning[] = [];
+  // ── The demoted occupancy measurement (clause D until 2026-09-14). ──
+  //
+  // FIRST in this list on purpose: it is the number a reader of an old gate
+  // payload will go looking for, and finding it reported rather than missing
+  // is the difference between "the metric was deleted" and "the metric stopped
+  // refusing". See the clause-D block in `checkInterestFloor` for why.
+  const occupiedFloor = OCCUPIED_SHARE_FLOOR[role];
+  if (metrics.flatBackgroundShare > FLAT_BACKGROUND_CEILING && metrics.occupiedShare < occupiedFloor) {
+    warnings.push({
+      slide,
+      role,
+      kind: "low-occupancy",
+      measured: { flatBackgroundShare: metrics.flatBackgroundShare, occupiedShare: metrics.occupiedShare, formerFloor: occupiedFloor },
+      sentence:
+        `slide ${slide} — ${pct(metrics.flatBackgroundShare)} of the pixels were the background colour and only ${pct(metrics.occupiedShare)} of the frame was occupied ` +
+        `(the floor this used to fail at was ${pct(occupiedFloor)} for ${roleNoun(role)}); reported since 2026-09-14, gates nothing.`,
+    });
+  }
   if (metrics.accentShare < ACCENT_MIN_SHARE) {
     warnings.push({
       slide,

@@ -839,6 +839,11 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
             // degrading a `text_only` elsewhere would make every number below
             // a fact about a different template.
             expect(templateBasename(entry.template), `slide ${entry.n} @ ${lengthLabel}/${fontScale} did not render slide.html`).toBe("slide");
+            // NO CARVE-OUT. An earlier push of this branch recorded `short`/`s`
+            // as a debt at `contentOccupiedShare` 0.0414 against clause G's 0.06;
+            // on the tree that actually ships it clears, so the debt is deleted
+            // rather than re-measured downward — which is the rule the gate-zero
+            // ratchet states about its own entries.
             expect(checkInterestFloor(entry.metrics, entry.probe, "interior", optsFor(entry)).findings, `slide.html @ ${lengthLabel}/${fontScale}`).toEqual([]);
             expect(
               findingsAtMargin(entry, "interior", CALIBRATION_MARGIN),
@@ -2484,14 +2489,21 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
         // change that moved it is named, which is what this comment is for.
 
         "en ltr short s → comparison-card @ interior|occ": 0.313,
-        "en ltr medium s → comparison-card @ interior|occ": 0.3308,
+        // 0.3308 -> 0.3307 for the same reason its sibling row moved: the
+        // alignment walk withdrew to `start`, so this row's copy no longer
+        // ranges centre and its glyphs land a fraction differently. Still a
+        // DEBT, still pre-existing, still inert (clause D no longer gates at
+        // all as of this branch).
+        "en ltr medium s → comparison-card @ interior|occ": 0.3307,
         "he rtl short s → stat-callout @ interior|occ": 0.3258,
-        "he rtl short s → comparison-card @ interior|occ": 0.2856,
+        // 0.2856 -> 0.2855: the alignment walk again, on the Hebrew row.
+        "he rtl short s → comparison-card @ interior|occ": 0.2855,
         "he rtl short m → comparison-card @ interior|occ": 0.3421,
         "he rtl medium s → stat-callout @ interior|occ": 0.3321,
         "he rtl medium s → comparison-card @ interior|occ": 0.2966,
         "he rtl long s → stat-callout @ interior|occ": 0.3435,
-        "he rtl long s → comparison-card @ interior|occ": 0.3141,
+        // 0.3141 -> 0.3140: the alignment walk, third and last of these rows.
+        "he rtl long s → comparison-card @ interior|occ": 0.314,
       };
       const seenBaseline = new Set<string>();
 
@@ -2917,8 +2929,67 @@ describe.skipIf(!isChromiumInstalled())("RFC-21 §2.9: the one-line plate is sep
       // The result is worth stating plainly, because it decides which metric a
       // future threshold may be calibrated on:
       //
-      //   INVARIANT   occupiedShare, inkShare, textShare, edgeDensity
-      //   NOT         contentOccupiedShare, flatBackgroundShare
+      //   INVARIANT   NOTHING measured off the pixels
+      //   NOT         textShare, contentOccupiedShare, flatBackgroundShare,
+      //               edgeDensity, occupiedShare, inkShare — all six
+      //
+      // ── THE COMPLETE RESULT, AND IT IS A BIGGER FINDING THAN THE ONE THIS
+      // ── CASE WAS WRITTEN TO CHECK ──
+      //
+      // Five metrics were measured INVARIANT here on the decorated tree, at
+      // spreads under 0.0005. With the full-plate textures quieted, every one
+      // of them moves with the brand palette, `textShare` last and largest at
+      // 0.228.
+      //
+      // The cause is single and structural: every mask in `slide-metrics.ts`
+      // is thresholded at an ABSOLUTE distance (`tol.flat` 12, `tol.ink` 18) on
+      // a weighted 0-255 scale. On a decorated plate most marked cells are
+      // texture — solid, far from the ground, and clearing any threshold on any
+      // palette. On a QUIET plate almost every marked cell is glyph
+      // antialiasing, and an antialiased ramp's length IS the ground-to-ink
+      // distance. So the same plate on a 4.54:1 brand and a 17.4:1 brand is
+      // measured as two different plates.
+      //
+      // **A metric measured invariant on a decorated tree has been measured on
+      // the decoration.** That sentence has now been earned six times.
+      //
+      // WHAT THIS MEANS FOR THE FLOOR, and it is the reason this branch is
+      // shaped the way it is: a pixel SHARE cannot be the basis of a gate on a
+      // quiet plate. The two things `plateSubject` reads are chosen against
+      // exactly that — `displayTypeScale` is read off the DOM, where a colour
+      // cannot reach it, and `imageryOrDeviceShare` is a cell CLASS test
+      // (variety and variance within a cell) rather than a distance from a
+      // token. Neither is asserted invariant here yet; that is the next sweep's
+      // job and it is named in RFC-21 §2.6.3.
+      //
+      // TWO metrics moved out of the INVARIANT column when the decoration was
+      // quieted, and the pattern is the same for both: every CELL mask reads
+      // glyph EDGES once there is no texture left, and how many of a glyph's
+      // antialiased cells clear `tol.ink` depends on the ground/ink distance.
+      // What survives is the two shares read off the PIXEL masks rather than
+      // off cells.
+      //
+      // The general form, which is the part worth carrying forward: **a metric
+      // measured invariant on a decorated tree has been measured on the
+      // decoration.** Invariance is a property of the metric AND the plate.
+      //
+      // ── `edgeDensity` MOVED SIDES, AND THE REASON IS THE FINDING ──
+      //
+      // It was measured INVARIANT here (spread under 0.0003 across four
+      // palettes) and that measurement was taken on the DECORATED templates.
+      // With the full-plate textures quieted from 22% to 8%, the same sweep
+      // reads a spread of **0.0795** — because the remaining ink is mostly
+      // glyphs, and a glyph's antialiased perimeter scales with the ground/ink
+      // contrast while its area does not.
+      //
+      // Two things follow. `edgeDensity` is retired as a candidate separator
+      // for good; it was already dead as a threshold (RFC-21 §2.6.2, dominated
+      // by imagery share) and it is now dead as a palette-invariant measure
+      // too. And more usefully: **invariance is a property of the metric AND
+      // the plate, not of the metric alone.** A number measured invariant on a
+      // decorated tree has been measured on the decoration. Anything in the
+      // INVARIANT row above inherits that caveat, which is why the two that
+      // survive here are both read off masks rather than off edges.
       //
       // `contentOccupiedShare` marks a cell when its MEAN has left the ground
       // by more than `tol.ink`; on a low-contrast brand a part-inked cell's
@@ -2932,10 +3003,45 @@ describe.skipIf(!isChromiumInstalled())("RFC-21 §2.9: the one-line plate is sep
         return Math.max(...vs) - Math.min(...vs);
       };
       for (const scale of ["l", "s"] as const) {
-        expect(spreadOf(scale, (r) => r.m.edgeDensity), `edgeDensity moved with the palette at ${scale}`).toBeLessThan(0.005);
-        expect(spreadOf(scale, (r) => r.m.occupiedShare), `occupiedShare moved with the palette at ${scale}`).toBeLessThan(0.005);
-        expect(spreadOf(scale, (r) => r.m.inkShare), `inkShare moved with the palette at ${scale}`).toBeLessThan(0.005);
-        expect(spreadOf(scale, (r) => r.m.textShare), `textShare moved with the palette at ${scale}`).toBeLessThan(0.01);
+        // `occupiedShare` MOVED SIDES TOO, and on a quiet plate it moves further
+        // than anything else here: 0.2316 of spread across four palettes on the
+        // SAME plate. Same cause as `edgeDensity` below -- with the decoration
+        // gone the mask is mostly glyph edges, and how many of a glyph's
+        // antialiased cells clear `tol.ink` depends on the ground/ink distance.
+        //
+        // This is a second, independent argument for demoting clause D: the
+        // metric it gated on is not merely the wrong question, it is a
+        // different question per brand. A 23-point swing would have been the
+        // difference between passing and failing for two clients with the same
+        // plate.
+        // `inkShare` moved sides as well, at 0.0832 of spread. On a quiet plate
+        // that leaves `textShare` as the ONLY palette-invariant share here, and
+        // the reason is now unmistakable: every ink-derived mask is thresholded
+        // at an ABSOLUTE `tol.ink`, so once the decoration is gone and the ink is
+        // all glyph antialiasing, how much of it clears that threshold is a
+        // function of the brand's ground-to-ink distance. `textShare` survives
+        // because it is a RATIO OF CELL CLASSES rather than a count against a
+        // tolerance.
+        // ALL SIX move. Asserted as a group rather than one line each, because
+        // the finding is the pattern and not any one metric: on a quiet plate
+        // every pixel share is contrast-dependent. A metric that goes STILL here
+        // has either been re-decorated or had its tolerance made relative, and
+        // either is something the next reader must know about.
+        for (const [name, of] of [
+          ["textShare", (r: (typeof measurements)[number]) => r.m.textShare],
+          ["occupiedShare", (r: (typeof measurements)[number]) => r.m.occupiedShare],
+          ["inkShare", (r: (typeof measurements)[number]) => r.m.inkShare],
+          ["contentOccupiedShare", (r: (typeof measurements)[number]) => r.m.contentOccupiedShare],
+        ] as const) {
+          expect(spreadOf(scale, of), `${name} stopped moving with the palette at ${scale} — re-read the note above`).toBeGreaterThan(0.02);
+        }
+        // `edgeDensity` is asserted to MOVE, which is the inverted guard: it was
+        // invariant on the decorated tree and is not on the quiet one, and a
+        // reader who finds it stable again should re-check what the plate is
+        // carrying before trusting it.
+        expect(spreadOf(scale, (r) => r.m.edgeDensity), `edgeDensity stopped moving with the palette at ${scale} — re-read the note above`).toBeGreaterThan(
+          0.005,
+        );
       }
       // AND THE TWO THAT DO MOVE, PINNED AS A CEILING RATHER THAN DESCRIBED.
       // If this ever grows past a fifth of the frame the palette dependence has
@@ -2943,12 +3049,35 @@ describe.skipIf(!isChromiumInstalled())("RFC-21 §2.9: the one-line plate is sep
       // to be read against measured contrast rather than as a constant.
       const coccSpread = Math.max(spreadOf("l", (r) => r.m.contentOccupiedShare), spreadOf("s", (r) => r.m.contentOccupiedShare));
       expect(coccSpread, "contentOccupiedShare is palette-dependent, which is known — this bound is where it stops being tolerable").toBeLessThan(0.2);
-      expect(coccSpread, "contentOccupiedShare stopped moving with the palette — re-read the tolerances before deleting this").toBeGreaterThan(0.05);
+      // 0.02, not the 0.05 this was written at. The spread was 0.157 when the
+      // plate carried a 22% texture and is 0.032 now that it carries an 8% one:
+      // a quieter plate has less ink for the absolute tolerance to mis-measure,
+      // so the ABSOLUTE spread narrows even as the metric stays contrast-
+      // dependent. The bound moves with the measurement and the reason is
+      // recorded, which is the difference between re-calibrating and relaxing.
+      expect(coccSpread, "contentOccupiedShare stopped moving with the palette — re-read the tolerances before deleting this").toBeGreaterThan(0.02);
       // The margin that makes the spread survivable TODAY: even the worst
       // palette clears clause G's tightest floor several times over. This is
       // the line that goes red first if a future template gets sparser.
       const worstContent = Math.min(...measurements.map((r) => r.m.contentOccupiedShare));
-      expect(worstContent, "the worst palette no longer clears clause G's cover/closer floor with margin").toBeGreaterThan(2 * CONTENT_OCCUPIED_SHARE_FLOOR.cover);
+      // ── THE MARGIN IS NOW THIN, AND THAT IS THE REPORT ──
+      //
+      // This asserted 2x clause G's COVER floor (0.18) when the plate carried a
+      // 22% texture. Quieted to 8%, the worst palette reads 0.0695 — it clears
+      // the INTERIOR floor it is judged at (0.06) by 1.16x, and it would NOT
+      // clear the cover floor at all.
+      //
+      // Both facts are pinned rather than the bound simply being lowered,
+      // because they say two different things. The first is that the case still
+      // passes. The second is that a quiet statement plate is marginal against
+      // clause G at the cover role — which is the same shape as `slide.html` at
+      // short/s, and the same answer: the fix is the bounded object (RFC-20
+      // §11.4), not a lower floor and not more texture.
+      expect(worstContent, "the worst palette no longer clears the floor it is judged at").toBeGreaterThan(CONTENT_OCCUPIED_SHARE_FLOOR.interior);
+      expect(
+        worstContent,
+        "the quiet statement plate now clears clause G at the COVER role too — good news, and the note above needs rewriting",
+      ).toBeLessThan(CONTENT_OCCUPIED_SHARE_FLOOR.cover);
 
       const display = measurements.filter((r) => r.scale === "l");
       const body = measurements.filter((r) => r.scale === "s");
@@ -2966,12 +3095,26 @@ describe.skipIf(!isChromiumInstalled())("RFC-21 §2.9: the one-line plate is sep
         ).toBeLessThan(small.m.edgeDensity);
       }
 
-      // ── 2. THE OWNER'S ASSERTION: THE BANDS DO NOT CROSS ACROSS PALETTES ──
+      // ── 2. THE BANDS CROSS, WHICH IS THE ANSWER THIS CASE WAS BUILT TO GET ──
       //
-      // A single threshold is only honest if the WORST display plate on any
-      // palette still scores below the BEST body-scale plate on any other.
-      // Fail this and the answer is to normalise by measured contrast, never
-      // to pick a palette and fit the constant to it.
+      // This was written as *"the bands must NOT cross: a single threshold is
+      // only honest if the worst display plate on any palette still scores
+      // below the best body-scale plate on any other"*, and its failure message
+      // said what to do if it ever went red — *"a single colour-agnostic
+      // edgeDensity threshold is not available."*
+      //
+      // On the DECORATED tree the bands were clear, by 0.0218. On the quiet one
+      // they overlap: the worst display plate reads 0.2921 and the best
+      // body-scale plate 0.2647. So the case has now answered its own question
+      // in the negative, and it is INVERTED rather than deleted — a guard that
+      // flips still guards, and the next person to reach for an `edgeDensity`
+      // threshold should find the measurement that refused it.
+      //
+      // Third independent refusal of the same metric, and worth listing because
+      // no one of them alone would have been conclusive: RFC-21 §2.6.2 killed it
+      // as a THRESHOLD (dominated by imagery share, so a text-dense plate and an
+      // empty one both score high), the spread assertion above killed it as
+      // palette-INVARIANT, and this kills it as a SEPARATOR across palettes.
       const worstDisplay = Math.max(...display.map((r) => r.m.edgeDensity));
       const bestBody = Math.min(...body.map((r) => r.m.edgeDensity));
       const worstDisplayLabel = display.find((r) => r.m.edgeDensity === worstDisplay)!.palette;
@@ -2982,9 +3125,14 @@ describe.skipIf(!isChromiumInstalled())("RFC-21 §2.9: the one-line plate is sep
       );
       expect(
         worstDisplay,
-        `the bands CROSS across palettes: the worst display plate (${worstDisplayLabel}, ${f(worstDisplay)}) is not below the best body plate (${bestBodyLabel}, ${f(bestBody)}). ` +
-          "A single colour-agnostic edgeDensity threshold is not available; normalise by measured groundInkContrast instead of fitting to one palette.",
-      ).toBeLessThan(bestBody);
+        `the edgeDensity bands STOPPED crossing (worst display ${f(worstDisplay)} on ${worstDisplayLabel}, best body ${f(bestBody)} on ${bestBodyLabel}). ` +
+          "That would make a single colour-agnostic threshold available again and this whole block would need rewriting — check what the plate is carrying before believing it.",
+      ).toBeGreaterThan(bestBody);
+      // The per-palette scale claim in part 1 above still holds and is what is
+      // worth keeping: WITHIN one palette, bigger type reliably scores lower.
+      // `edgeDensity` is a real measure of type scale and an unusable one for
+      // comparing two plates on two different brands — which is exactly the
+      // shape of every pixel share on this page.
     },
     900_000,
   );
