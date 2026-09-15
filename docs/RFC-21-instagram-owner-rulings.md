@@ -715,3 +715,20 @@ diagram on roughly every third plate — never on every one, and never on none. 
 
 **It is a floor, not a target.** A draft that wants five photographs keeps five. What it refuses is the shape it
 was written for: a post with one picture, or none.
+
+## 13.4 What it does to the scrim finding
+
+RFC-20 §11.11a recorded that `cover.html`'s scrims are scored as the cover's drawn device — a `graphic` cell is
+*covered, at most three distinct colours*, which a scrim is by construction, and `imageryOrDeviceShare =
+imageryShare + graphicShare`. Guarding them dropped a heroless cover to `iod` **0.0898** against clause E's 0.10
+floor, so the guard was withdrawn and the finding recorded rather than acted on.
+
+**The imagery floor changes what that finding costs.** The number it was measured on is a *heroless* cover — and
+`cover` is in `HERO_IMAGE_LAYOUTS`, so every carousel already asks for a picture on slide 1. What the floor adds
+is that a post whose writer chose an imageless layout mix now gets three sourcing attempts it would not have had,
+through a ladder that ends in generation. A cover carrying a real photograph measures `iod` far above the floor on
+imagery, not on a scrim.
+
+So the defect is unchanged and still open — clearing it honestly means re-sweeping clause E's own floor on a tree
+where the scrim no longer counts, which is a phase — but the plates it can mislead about are now the exception
+rather than the default. **Recorded here so the next pass sees both halves at once.**
