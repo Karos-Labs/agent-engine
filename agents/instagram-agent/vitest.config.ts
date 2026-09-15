@@ -41,6 +41,6 @@ export default defineConfig({
     // four browsers plus ~100 MB of buffers, which is inside what a CI runner
     // and a dev box both hold comfortably. Serialising everything would trade
     // a rare flake for a permanent five-minute wait on every run.
-    poolOptions: { threads: { maxThreads: 4 } },
+    maxWorkers: 4,
   },
 });
