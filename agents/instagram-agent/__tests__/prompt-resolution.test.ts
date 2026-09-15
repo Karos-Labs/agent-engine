@@ -460,8 +460,8 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // this asserts is that the rows exist at all, which is the step a prompt
     // bump most often forgets.
     const registry = readFileSync(path.join(PROMPTS_ROOT, "..", "..", "..", "scripts", "prompt-registry.ts"), "utf8");
-    expect(registry).toContain(`"14", "15", "16", "17", "18", "19"`);
-    expect(registry).toMatch(/promptId: "instagram-copy"[\s\S]{0,600}latestVersion: "19"/);
+    expect(registry).toContain(`"14", "15", "16", "17", "18", "19", "20"`);
+    expect(registry).toMatch(/promptId: "instagram-copy"[\s\S]{0,600}latestVersion: "20"/);
     // Phase 5 (RFC-18 §6.1). The packager's prompt is the one THIS phase added,
     // and the WIP commit this branch inherited had shipped both prompt files
     // with no registry row at all — which `check:prompts` fails on and which
@@ -484,13 +484,13 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     expect(registry).toContain(`{ promptId: "instagram-concept", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
   });
 
-  it("every agent reads the version this phase shipped: copy @19, post package @1, visual QA @4, image vet @5, art director @1, concept @1", async () => {
+  it("every agent reads the version this phase shipped: copy @20, post package @1, visual QA @4, image vet @5, art director @1, concept @1", async () => {
     // The last line of a prompt bump, and the one most often forgotten: a new
     // prompt file that no `skillRef` points at exists, resolves, and is read
     // by nothing.
     const promptStore = makePromptStore();
     const copy = new InstagramCopyAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
-    expect((copy as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-copy@19");
+    expect((copy as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-copy@20");
     const packager = new InstagramPostPackagerAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
     expect((packager as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-post-package@1");
     const qa = new InstagramVisualQaAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
@@ -503,14 +503,14 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     expect((concept as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-concept@1");
   });
 
-  it("instagram-copy@19, instagram-post-package@1, instagram-image-vet@5, instagram-art-director@1 and instagram-concept@1 resolve, each byte-identical to its own latest.md", async () => {
+  it("instagram-copy@20, instagram-post-package@1, instagram-image-vet@5, instagram-art-director@1 and instagram-concept@1 resolve, each byte-identical to its own latest.md", async () => {
     // Phase 3 (items Q and R). The byte comparison is the one `check:prompts`
     // makes too, and it is here as well because a drifted `latest.md` is the
     // failure mode where a run silently reads a DIFFERENT prompt from the one
     // its version pin names.
     const promptStore = makePromptStore();
     for (const [promptId, version, h1] of [
-      ["instagram-copy", "19", "# Instagram Copy Craft Guide, v19"],
+      ["instagram-copy", "20", "# Instagram Copy Craft Guide, v20"],
       ["instagram-post-package", "1", "# Instagram Post Package Guide, v1"],
       ["instagram-image-vet", "5", "# Instagram Image Vetting Craft Guide — v5"],
       ["instagram-art-director", "1", "# Instagram Art Direction Guide — v1"],
@@ -541,9 +541,33 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // to the same replacement character on both sides — and this repo's files
     // are CRLF, so a tool that normalises line endings on one of the two would
     // pass a decoded comparison while shipping a different file to the model.
+    // ── @20 IS LIVE, AND IT REVISES A SECTION RATHER THAN APPENDING ONE. ──
+    //
+    // Every bump before this one added a section, so this case could assert
+    // "the new file is the old file plus §N". @20 cannot be checked that way:
+    // it REWRITES §6's scene brief, because the defect it fixes was a rule
+    // inside that section ("no named real people, brands, products or logos"
+    // applied to every sourcing path) which is why a slide about ChatGPT asked
+    // for a stock office.
+    //
+    // **That does not weaken the immutability rule, and the assertions below
+    // are what show it.** The rule is that a PUBLISHED version never changes:
+    // @19 shipped, so 19.md is frozen and is asserted byte-for-byte against
+    // @18 exactly as before. A revision lands as a NEW number, which is what a
+    // version is for.
     const v19 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "19.md"));
+    const v20 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "20.md"));
     const latest = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "latest.md"));
-    expect(latest.equals(v19), "latest.md must be byte-identical to 19.md, not merely equivalent").toBe(true);
+    expect(latest.equals(v20), "latest.md must be byte-identical to 20.md, not merely equivalent").toBe(true);
+    expect(v19.equals(v20), "@19 and @20 are the same file, so the bump changed nothing").toBe(false);
+    const v20Text = v20.toString("utf8");
+    expect((v20Text.split(String.fromCharCode(10))[0] ?? "").replace(String.fromCharCode(13), "")).toBe("# Instagram Copy Craft Guide, v20");
+    for (const heading of ["## 24. Value:", "## 25. Take a position", "## 26. Rhythm", "## 27. The source's prose is not yours", "## 28. Marking", "## 29."]) {
+      expect(v20Text, `@20 must inherit ${heading}`).toContain(heading);
+    }
+    // And what it ADDS, which is the whole point of the bump.
+    expect(v20Text, "@20 must carry the rule that unblocked interesting imagery").toContain("Name the actual subject");
+    expect(v20Text, "@20 must split the identity rule by sourcing path").toContain("The identity rule depends on where the picture comes from");
 
     // Published versions are IMMUTABLE: @18 shipped on main and is what every
     // in-flight run and every pinned fixture still resolves, so the bump must

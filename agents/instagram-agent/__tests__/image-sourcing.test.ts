@@ -682,13 +682,26 @@ describe("archetype-aware sourcing", () => {
   it("sources and vets only the photo slides, and leaves a typographic archetype intact", async () => {
     const base = goodCopyOutput();
     // Slides 2 and 4 become typographic; the rest stay photo.
+    //
+    // `list_takeaway` and `comparison_card` rather than `stat_callout` and
+    // `quote_card`, which is not a cosmetic swap: those two JOINED
+    // `HERO_IMAGE_LAYOUTS` when they got their bounded `.sc-figure-band`
+    // (RFC-21 Part 2), so a fixture built on them would have all six slides
+    // sourced and this case would assert nothing. The two chosen here are the
+    // archetypes that genuinely still carry no picture: a rows panel and a
+    // two-column comparison, both of which would need a different composition
+    // rather than a band.
     const copy = {
       ...base,
       slides: base.slides.map((s) =>
         s.n === 2
-          ? { ...s, layout: "stat_callout" as const, stat: { figure: "30%", subLabel: "more tickets resolved", source: "support dashboard export" } }
+          ? { ...s, layout: "list_takeaway" as const, items: [{ title: "Name the owner" }, { title: "Measure the queue" }] }
           : s.n === 4
-            ? { ...s, layout: "quote_card" as const, quote: { text: "A thing was said.", attribution: "Someone, 2026" } }
+            ? {
+                ...s,
+                layout: "comparison_card" as const,
+                comparison: { leftLabel: "Before", leftBody: "Five rounds", rightLabel: "After", rightBody: "Two rounds" },
+              }
             : s,
       ),
     };
@@ -746,8 +759,8 @@ describe("archetype-aware sourcing", () => {
     const slidesData = steps.find((s) => s.stepId === "07c-emit-slides-data-attempt-1")?.output as
       | { slides: Array<{ n: number; template: string; images: Record<string, string> }> }
       | undefined;
-    expect(slidesData?.slides.find((s) => s.n === 2)?.template).toBe("stat-callout.html");
-    expect(slidesData?.slides.find((s) => s.n === 4)?.template).toBe("quote-card.html");
+    expect(slidesData?.slides.find((s) => s.n === 2)?.template).toBe("list-takeaway.html");
+    expect(slidesData?.slides.find((s) => s.n === 4)?.template).toBe("comparison-card.html");
     expect(slidesData?.slides.find((s) => s.n === 2)?.images).toEqual({});
     // A real photo slide still gets its picture.
     expect(slidesData?.slides.find((s) => s.n === 1)?.images).toEqual({ hero: pool[0]!.path });

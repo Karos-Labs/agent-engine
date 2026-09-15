@@ -7,7 +7,7 @@ import { fakeRouterSequence, makePromptStore, PROMPTS_ROOT } from "./test-helper
 
 /**
  * **THE FILENAME IS HISTORICAL. This suite tracks the copy prompt's LATEST version, not v17.** It was written
- * for @17 and now guards @19; renaming it is a deliberate act someone should do when nothing else is in
+ * for @17 and now guards @20; renaming it is a deliberate act someone should do when nothing else is in
  * flight, not a drive-by rename in a file other work is open in. Whoever touches it next: rename it then.
  *
  * Phase 5 (RFC-18 §3 and §6.1) — THE FIVE-STEP PROMPT BUMP, for BOTH prompts this phase ships, asserted as
@@ -48,12 +48,12 @@ const BUMPED = [
   {
     // FOLLOWS THE LIVE VERSION. Pinned at @17 these five steps would keep passing forever while guarding a
     // file no run loads any more — a guard that cannot fail in the way that matters, which is the failure
-    // mode this repo keeps catching. @19 is @18 plus section 29 and inherits all 28 of its sections, so
+    // mode this repo keeps catching. @20 is @18 plus section 29 and inherits all 28 of its sections, so
     // following costs this suite no coverage and restores it to the prompt a run actually reads.
     promptId: "instagram-copy",
-    version: "19",
-    h1: "# Instagram Copy Craft Guide, v19",
-    skillRef: "instagram-copy@19",
+    version: "20",
+    h1: "# Instagram Copy Craft Guide, v20",
+    skillRef: "instagram-copy@20",
     agent: () => new InstagramCopyAgent({ router: fakeRouterSequence([]), tools: {}, promptStore: makePromptStore() }),
   },
   {
@@ -69,7 +69,7 @@ const readPrompt = (promptId: string, file: string): string => readFileSync(path
 
 const skillRefOf = (agent: unknown): string => (agent as { config: { skillRef: string } }).config.skillRef;
 
-describe("the copy prompt bump: instagram-copy@19 (live) and instagram-post-package@1 (RFC-18 §12)", () => {
+describe("the copy prompt bump: instagram-copy@20 (live) and instagram-post-package@1 (RFC-18 §12)", () => {
   for (const { promptId, version, h1, skillRef, agent } of BUMPED) {
     describe(`${promptId}@${version}`, () => {
       it(`step 1: prompts/${promptId}/${version}.md exists and is not a stub`, () => {

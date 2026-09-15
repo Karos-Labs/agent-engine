@@ -498,7 +498,17 @@ describe("08a1-interest-floor: it can never become a fourth hold", () => {
       ...drafted,
       slides: drafted.slides.map((s) =>
         s.n === 1
-          ? { ...s, layout: "stat_callout" as const, stat: { figure: "30%", subLabel: "more tickets resolved", source: "support dashboard export" } }
+          // `comparison_card`, not `stat_callout`: that archetype joined
+          // `HERO_IMAGE_LAYOUTS` with its bounded image band (RFC-21 Part 2),
+          // so a cover built on it now gets sourced and vetted like any other
+          // picture slide and there would be nothing for the re-layout to
+          // promote. This case is about the promotion, so slide 1 has to be an
+          // archetype that still carries no picture of its own.
+          ? {
+              ...s,
+              layout: "comparison_card" as const,
+              comparison: { leftLabel: "Before", leftBody: "Five rounds", rightLabel: "After", rightBody: "Two rounds" },
+            }
           : s.n === 3
             ? { ...s, layout: "text_only" as const }
             : s,
