@@ -21,6 +21,7 @@ import {
 } from "../src/workflow/interest-floor.js";
 import { buildMarkRing, markCssBlock, type EmphasisIssue, type MarkRing } from "../src/workflow/emphasis-marks.js";
 import { countContentElements } from "../src/workflow/visual-qa-pre-checks.js";
+import { MAX_COPY_FOR_OBJECT } from "../src/workflow/bounded-object.js";
 import { buildScriptFontHeadForLanguage, scriptTypographyFor } from "../src/workflow/script-fonts.js";
 import { groundMaterialCssBlock } from "../src/workflow/ground-material.js";
 import { deviceCssBlock } from "../src/workflow/slide-devices.js";
@@ -311,6 +312,18 @@ const slide = (over: Partial<InstagramSlideCopy> & { n: number }): InstagramSlid
  * still asserted — as a REFUSAL, by the case that follows the sweep.** Both
  * halves of §11.4's promise are executable or neither is.
  */
+/**
+ * The object, but only where `boundedObjectFor` would actually compose one.
+ *
+ * It refuses a plate whose headline plus body is past `MAX_COPY_FOR_OBJECT`,
+ * because a ~300px device on top of a long headline and a long body overflows
+ * the field — measured on CI 34972021273, where `probe.overflow` caught it and
+ * the pixel limb was nowhere near firing. A fixture that forces the object on
+ * anyway renders a plate the workflow cannot ship.
+ */
+const objectFor = (copy: { headline: string; body: string }): { device?: typeof STATEMENT_OBJECT } =>
+  copy.headline.length + copy.body.length > MAX_COPY_FOR_OBJECT ? {} : { device: STATEMENT_OBJECT };
+
 const STATEMENT_OBJECT = {
   kind: "figure" as const,
   value: "30%",
@@ -714,7 +727,14 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
             comparison: { leftLabel: "Before", leftBody: "Five review rounds", rightLabel: "After", rightBody: "Two review rounds" },
           }),
           slide({ n: 5, layout: "list_takeaway", ...copy, items: [{ title: "Name the owner", note: "One person, not a channel" }, { title: "Measure the queue", note: "Weekly, not monthly" }, { title: "Cut a round" }] }),
-          slide({ n: 6, layout: "headline_focus", ...copy, kicker: "THE TURN", device: STATEMENT_OBJECT }),
+          // The object only where production composes one: `boundedObjectFor`
+          // refuses a plate whose copy is past `MAX_COPY_FOR_OBJECT`, because a
+          // ~300px device plus a long headline plus a long body overflows the
+          // field. A fixture that forces it onto LONG renders a plate the
+          // workflow cannot ship — the same fixture defect this file already
+          // records about rendering the statement archetypes BARE, pointing the
+          // other way.
+          slide({ n: 6, layout: "headline_focus", ...copy, kicker: "THE TURN", ...objectFor(copy) }),
         ];
         const measured = await render(assemble(slides, [selection(1, path.relative(REPO_ROOT, heroPath).replaceAll("\\", "/")), ...[2, 3, 4, 5, 6].map((n) => selection(n, null))]));
 
@@ -785,7 +805,7 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
               { title: "Publish on a schedule", note: "The calendar is the process, not the plan" },
             ],
           }),
-          slide({ n: 6, layout: "headline_focus", ...LONG, kicker: "THE TURN", device: STATEMENT_OBJECT }),
+          slide({ n: 6, layout: "headline_focus", ...LONG, kicker: "THE TURN", ...objectFor(LONG) }),
           // THE EIGHTH TEMPLATE. `slide.html` is the file `photo`/`text_only`
           // resolve to, it is the only archetype a carousel may REPEAT, and it
           // was the one this sweep did not render — so of the eight bundled
@@ -794,7 +814,7 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
           // shape the degrade paths produce, and its two alternating grounds
           // are the ones whose `l`-scale weight the fourth-pass band table
           // measures.
-          slide({ n: 7, layout: "text_only", ...LONG, device: STATEMENT_OBJECT }),
+          slide({ n: 7, layout: "text_only", ...LONG, ...objectFor(LONG) }),
           // THE CLOSER GETS THE LONG BODY, and that is the case that used to
           // break. `slides-data.ts` routes a body with no '?' into the `cta`
           // slot, `InstagramSlideCopySchema` puts no maximum on `body`, and
@@ -879,8 +899,8 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
             // Both carry the object production composes for them — see
             // `STATEMENT_OBJECT`. The objectless plate is asserted as a REFUSAL by
             // its own case rather than smuggled in here as a pass.
-            slide({ n: 2, layout: "text_only", ...copy, device: STATEMENT_OBJECT }),
-            slide({ n: 3, layout: "text_only", ...copy, device: STATEMENT_OBJECT }),
+            slide({ n: 2, layout: "text_only", ...copy, ...objectFor(copy) }),
+            slide({ n: 3, layout: "text_only", ...copy, ...objectFor(copy) }),
             slide({ n: 4, layout: "closer", headline: "That is the pattern", body: "Which round would you cut first?" }),
           ];
           const measured = await render(
@@ -1862,8 +1882,8 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
         const marks = copy === SHORT ? ["Intake", "queue"] : ["calendars", "process"];
         const slides = [
           slide({ n: 1, layout: "cover", ...MEDIUM, kicker: "THE SHIFT", emphasis: ["calendars", "process"] }),
-          slide({ n: 2, layout: "text_only", ...copy, emphasis: marks, device: STATEMENT_OBJECT }),
-          slide({ n: 3, layout: "headline_focus", ...copy, kicker: "THE TURN", emphasis: marks, device: STATEMENT_OBJECT }),
+          slide({ n: 2, layout: "text_only", ...copy, emphasis: marks, ...objectFor(copy) }),
+          slide({ n: 3, layout: "headline_focus", ...copy, kicker: "THE TURN", emphasis: marks, ...objectFor(copy) }),
           slide({
             n: 4,
             layout: "list_takeaway",
@@ -2117,7 +2137,10 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
           // work, not a clause name: the object is worth exactly one element, and
           // the plate that gets refused is the one below the floor rather than the
           // one merely without an object. A headline-and-body slide is a slide.
-          expect(entry.contentElements, `${name} @ ${fontScale} counts ${entry.contentElements} elements without an object`).toBe(2);
+          // 2 on `slide.html` (headline + body), 3 on `headline_focus` (its
+          // kicker is an element too). Both are over the floor, which is the
+          // point: a headline-and-body slide is a slide.
+          expect(entry.contentElements, `${name} @ ${fontScale} counts ${entry.contentElements} elements without an object`).toBeGreaterThanOrEqual(2);
           expect(kinds, `${name} @ ${fontScale} was refused although it carries two elements`).not.toContain("one-element");
         }
       }
@@ -2913,9 +2936,9 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
         // them (`STATEMENT_OBJECT`). Rendering them bare here would put a plate
         // the workflow cannot ship into the POPULATED band, which is the same
         // circularity §3.2 rejects Spec B for, pointing the other way.
-        slide({ n: 6, layout: "headline_focus", ...copy, kicker, device: STATEMENT_OBJECT }),
+        slide({ n: 6, layout: "headline_focus", ...copy, kicker, ...objectFor(copy) }),
         // `slide.html` — the one archetype a carousel may repeat.
-        slide({ n: 7, layout: "text_only", ...copy, device: STATEMENT_OBJECT }),
+        slide({ n: 7, layout: "text_only", ...copy, ...objectFor(copy) }),
         slide({ n: 8, layout: "closer", ...closerCopy }),
       ];
 
@@ -3392,13 +3415,20 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
         // artefact `OCCUPIED_SHARE_FLOOR`'s doc comment defers to. If the
         // rebuild ever restores an occupancy gate, this is where it comes back.
         void OCCUPIED_SHARE_FLOOR;
-        gated(
-          "ler",
-          row.ler,
-          LARGEST_EMPTY_RECT_CEILING[row.role] / SWEEP_MARGIN,
-          "atMost",
-          `${where}: LER ${fmt(row.ler)} is over the ${row.role} ceiling ${LARGEST_EMPTY_RECT_CEILING[row.role]} at ${SWEEP_MARGIN}x.`,
-        );
+        // `ler` follows the clause it belongs to. Clause C gates at COVER and
+        // CLOSER and REPORTS at the interior role (RFC-21 Part 2 — it gave four
+        // verdicts on four brand palettes for one plate), so gating the sweep on
+        // it at interior would hold the tree to a bar production does not apply.
+        // The band is still computed and still printed per role.
+        if (row.role !== "interior") {
+          gated(
+            "ler",
+            row.ler,
+            LARGEST_EMPTY_RECT_CEILING[row.role] / SWEEP_MARGIN,
+            "atMost",
+            `${where}: LER ${fmt(row.ler)} is over the ${row.role} ceiling ${LARGEST_EMPTY_RECT_CEILING[row.role]} at ${SWEEP_MARGIN}x.`,
+          );
+        }
         gated(
           "cocc",
           row.cocc,
@@ -4061,11 +4091,23 @@ describe.skipIf(!isChromiumInstalled())("RFC-21 §2.9: the one-line plate is sep
       // clause G at the cover role — which is the same shape as `slide.html` at
       // short/s, and the same answer: the fix is the bounded object (RFC-20
       // §11.4), not a lower floor and not more texture.
-      expect(worstContent, "the worst palette no longer clears the floor it is judged at").toBeGreaterThan(CONTENT_OCCUPIED_SHARE_FLOOR.interior);
-      expect(
-        worstContent,
-        "the quiet statement plate now clears clause G at the COVER role too — good news, and the note above needs rewriting",
-      ).toBeLessThan(CONTENT_OCCUPIED_SHARE_FLOOR.cover);
+      // ── AND THE TEXTURES ARE GONE NOW, WHICH TAKES THIS UNDER THE FLOOR. ──
+      //
+      // The note above was written when the plate carried an 8% hairline. With
+      // every full-plate texture deleted (RFC-20 §11.4) the worst palette reads
+      // **0.0300** against clause G's 0.06 interior floor — half of it.
+      //
+      // **That is not a regression and the plate is not refused**, because clause
+      // G stopped reading this share on the production path: its refusal is
+      // `probe.textBoxShare`, a DOM read no palette can reach, and the pixel limb
+      // survives only for a caller with no probe. This measurement is now the
+      // clearest single statement of WHY that move was necessary — a share that
+      // halves when a decoration is removed was never measuring the copy.
+      //
+      // Pinned as a band rather than a floor, so the number stays visible and a
+      // future tree that drifts far from it has to come past this line.
+      expect(worstContent, `the quiet statement plate's content share moved off its recorded 0.0300 (now ${worstContent.toFixed(4)})`).toBeGreaterThan(0.01);
+      expect(worstContent, "the quiet statement plate is carrying pixels again — check what the tree is painting").toBeLessThan(CONTENT_OCCUPIED_SHARE_FLOOR.interior);
 
       const display = measurements.filter((r) => r.scale === "l");
       const body = measurements.filter((r) => r.scale === "s");
