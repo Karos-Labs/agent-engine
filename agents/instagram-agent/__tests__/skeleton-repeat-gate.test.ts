@@ -28,6 +28,7 @@ import {
   makePromptStore,
   qaTurnInputs,
   passingSlideMetrics,
+  passingSlideProbe,
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
@@ -394,6 +395,19 @@ describe("07k-skeleton-variety (item P): repetition is refused before a render, 
           if (slide.n === 1) renders += 1;
           return renders === 1 && slide.n === 2 ? boringSlideMetrics() : passingSlideMetrics();
         },
+        // ── THE FAILURE IS STATED ON THE PROBE NOW, NOT ONLY ON THE PIXELS. ──
+        //
+        // `boringSlideMetrics()` alone no longer fails a slide at the INTERIOR
+        // role: RFC-21 Part 2 demoted clause C there (it gave four verdicts on
+        // four brand palettes for one plate) and clause H refuses on the element
+        // count instead, which this slide clears with a headline and a body.
+        //
+        // So the fixture says what it means: a plate whose copy did not reach it.
+        // `textBoxShare` under `PROBE_TEXT_BOX_SHARE_FLOOR` is clause G's DOM
+        // limb, it gates at every role, and it is colour-agnostic — which is the
+        // whole reason the floor was rebuilt around it. Same slide, same render,
+        // same remedy ladder; only the clause that notices has changed.
+        probe: (slide) => (renders === 1 && slide.n === 2 ? { ...passingSlideProbe(slide.n), textBoxShare: 0.004 } : passingSlideProbe(slide.n)),
       }),
     };
     const router = fakeRouterSequence([
