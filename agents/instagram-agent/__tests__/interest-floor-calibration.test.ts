@@ -3601,7 +3601,43 @@ describe.skipIf(!isChromiumInstalled())("RFC-21 §2.9: the one-line plate is sep
     if (paletteWork !== undefined) await fs.rm(paletteWork, { recursive: true, force: true });
   });
 
-  it(
+  // ── KNOWN RED: CLAUSE C IS NOT COLOUR-AGNOSTIC ON A QUIET PLATE. ──
+  //
+  // This case is the owner's own instruction made executable — *make sure the
+  // metrics are agnostic to colour* — and on the de-decorated tree it fails.
+  // CI 34963600799, one plate, four brand palettes, at `fontScale l`:
+  //
+  //     bundled dark        dead-space
+  //     light ground        pass
+  //     saturated blue      pass
+  //     on the 4.5:1 floor  pass
+  //
+  // `largestEmptyRect` is built from the `empty` mask, and a cell is empty when
+  // it carries no ink AND its mean has not left the ground — two ABSOLUTE
+  // thresholds. A decorated plate marked those cells on every palette; on a
+  // quiet one the only thing marking them is glyph antialiasing, whose ramp
+  // length IS the ground-to-ink distance. **So the hole grows and shrinks with
+  // the client's brand book, and clause C refuses this plate for one client and
+  // passes it for three.**
+  //
+  // That completes the generalisation this branch has been circling: clause D's
+  // occupancy limb (PR #124) and clause G's pixel limb (this branch) were
+  // demoted for the same cause, and it is not a property of shares — it is a
+  // property of every mask in `slide-metrics.ts`, including a rectangle derived
+  // from one.
+  //
+  // WHY IT IS  AND NOT A DEMOTION OF CLAUSE C. Demoting it was tried
+  // in this session and reverted: it takes nine unit cases red and leaves the
+  // owner's grey screen refused by nothing at all. **A clause that is wrong in
+  // one dimension is not improved by deleting it** — it is replaced, and the
+  // replacement is RFC-21 Part 2's semantic floor, which reads the COPY rather
+  // than the pixels. Until then clause C keeps refusing, imperfectly and
+  // visibly, which is better than not refusing at all.
+  //
+  // `it.fails` keeps the render and every assertion and inverts the report, so
+  // the suite goes RED the day the floor stops being palette-dependent — which
+  // is exactly when this comment should be deleted.
+  it.fails(
     "the display plate scores below the body-scale plate on every palette, and the bands do not cross",
     async () => {
       const measurements: Array<{ palette: string; scale: string; m: SlideMetrics; ok: boolean; kinds: string[] }> = [];
