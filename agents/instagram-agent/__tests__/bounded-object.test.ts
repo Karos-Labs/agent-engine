@@ -74,6 +74,66 @@ describe("boundedObjectFor: the object a statement plate can honestly carry", ()
     }
   });
 
+  /**
+   * ── THE INCIDENT ITSELF, RECONSTRUCTED FROM THE SHIPPED PIXELS. ──
+   *
+   * Not a paraphrase. Prep run `pubsub-21839432908803804` is still in the
+   * prep media bucket (`instagram/karoslabs/pubsub-21839432908803804/slide-1.png`)
+   * and the plate is legible: a display numeral reading **2**, an accent rule
+   * under it, the label *"Inbound pipeline loss isn't a product problem B B
+   * marketing teams are losing"*, and **`salesforce.com`** printed underneath
+   * as the source. The strings below are read off that render.
+   *
+   * THE RENDER ALSO PROVES HOW IT WAS BUILT, which is why the label matters as
+   * much as the figure. `"...problem B B marketing teams are losing"` is the
+   * HEADLINE and the BODY concatenated with the `2` cut out of `B2B` by
+   * position — so the caller passed `` `${headline} ${body}` `` as one string,
+   * a headline carries no full stop, and the sentence splitter saw a single
+   * sentence spanning both fields. Two defects in one label.
+   *
+   * BOTH ARE CLOSED AND BOTH ARE ASSERTED HERE:
+   *
+   *   1. `isStandaloneFigure` rejects a digit glued to a letter, so there is no
+   *      figure to build from and the plate carries NOTHING. Nothing is
+   *      invented to cover the gap — that is the refusal, not a fallback.
+   *   2. `boundedObjectFor` reads the body and the headline separately, so no
+   *      label can ever span the two fields again.
+   *
+   * **This case is the one in this file that may never be deleted.** Every
+   * other defect in this system makes a post look bad. This one made it WRONG,
+   * with a citation, on the cover, for a real client.
+   */
+  it("NEVER ships pubsub-21839432908803804 again: the fabricated `2`, its mangled label, and salesforce.com under it", () => {
+    const incident = slide({
+      headline: "Inbound pipeline loss isn't a product problem",
+      body: "B2B marketing teams are losing pipeline to an execution gap. The operating model is what needs to change.",
+      sourceRef: SIX_RESEARCH_FACTS[0]!.claim,
+    });
+
+    // 1. NO DEVICE AT ALL. The only digit on the plate is the one inside `B2B`.
+    expect(boundedObjectFor(incident, FACTS)).toBeUndefined();
+
+    // 2. And the run says so, in the words a reviewer needs.
+    const { copy, decisions } = composeBoundedObjects(copyOf({ ...incident, n: 1 }), FACTS);
+    expect(copy.slides[0]!.device).toBeUndefined();
+    expect(decisions[0]!.outcome).toBe("refused");
+    expect(decisions[0]!.reason).toContain("nothing was invented");
+
+    // 3. THE LABEL DEFECT, PINNED SEPARATELY — because fixing the figure alone
+    //    would leave it live for every slide that DOES carry an honest number.
+    //    Same shape of copy, one real figure in the body: the label must be the
+    //    body's own sentence and must not drag the headline into it.
+    const honest = slide({
+      headline: "Inbound pipeline loss is not a product problem",
+      body: "Teams that automated the weekly report saved 4 hours a week. The operating model is what needs to change.",
+      sourceRef: SIX_RESEARCH_FACTS[0]!.claim,
+    });
+    const device = boundedObjectFor(honest, FACTS)!;
+    expect(device.value).toBe("4");
+    expect(device.label).not.toContain("Inbound pipeline loss");
+    expect(device.label).toBe("Teams that automated the weekly report saved hours a week.");
+    expect(device.source).toBe("internal client survey");
+  });
   it("NEVER builds a device from a slide that cites no source, because an unsourced figure is the shape of a claim a reader should distrust", () => {
     expect(boundedObjectFor(slide({ sourceRef: undefined }), FACTS)).toBeUndefined();
     expect(boundedObjectFor(slide({ sourceRef: "   " }), FACTS)).toBeUndefined();
