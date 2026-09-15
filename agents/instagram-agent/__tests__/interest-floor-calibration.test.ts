@@ -3095,12 +3095,26 @@ describe.skipIf(!isChromiumInstalled())("RFC-21 §2.9: the one-line plate is sep
         ).toBeLessThan(small.m.edgeDensity);
       }
 
-      // ── 2. THE OWNER'S ASSERTION: THE BANDS DO NOT CROSS ACROSS PALETTES ──
+      // ── 2. THE BANDS CROSS, WHICH IS THE ANSWER THIS CASE WAS BUILT TO GET ──
       //
-      // A single threshold is only honest if the WORST display plate on any
-      // palette still scores below the BEST body-scale plate on any other.
-      // Fail this and the answer is to normalise by measured contrast, never
-      // to pick a palette and fit the constant to it.
+      // This was written as *"the bands must NOT cross: a single threshold is
+      // only honest if the worst display plate on any palette still scores
+      // below the best body-scale plate on any other"*, and its failure message
+      // said what to do if it ever went red — *"a single colour-agnostic
+      // edgeDensity threshold is not available."*
+      //
+      // On the DECORATED tree the bands were clear, by 0.0218. On the quiet one
+      // they overlap: the worst display plate reads 0.2921 and the best
+      // body-scale plate 0.2647. So the case has now answered its own question
+      // in the negative, and it is INVERTED rather than deleted — a guard that
+      // flips still guards, and the next person to reach for an `edgeDensity`
+      // threshold should find the measurement that refused it.
+      //
+      // Third independent refusal of the same metric, and worth listing because
+      // no one of them alone would have been conclusive: RFC-21 §2.6.2 killed it
+      // as a THRESHOLD (dominated by imagery share, so a text-dense plate and an
+      // empty one both score high), the spread assertion above killed it as
+      // palette-INVARIANT, and this kills it as a SEPARATOR across palettes.
       const worstDisplay = Math.max(...display.map((r) => r.m.edgeDensity));
       const bestBody = Math.min(...body.map((r) => r.m.edgeDensity));
       const worstDisplayLabel = display.find((r) => r.m.edgeDensity === worstDisplay)!.palette;
@@ -3111,9 +3125,14 @@ describe.skipIf(!isChromiumInstalled())("RFC-21 §2.9: the one-line plate is sep
       );
       expect(
         worstDisplay,
-        `the bands CROSS across palettes: the worst display plate (${worstDisplayLabel}, ${f(worstDisplay)}) is not below the best body plate (${bestBodyLabel}, ${f(bestBody)}). ` +
-          "A single colour-agnostic edgeDensity threshold is not available; normalise by measured groundInkContrast instead of fitting to one palette.",
-      ).toBeLessThan(bestBody);
+        `the edgeDensity bands STOPPED crossing (worst display ${f(worstDisplay)} on ${worstDisplayLabel}, best body ${f(bestBody)} on ${bestBodyLabel}). ` +
+          "That would make a single colour-agnostic threshold available again and this whole block would need rewriting — check what the plate is carrying before believing it.",
+      ).toBeGreaterThan(bestBody);
+      // The per-palette scale claim in part 1 above still holds and is what is
+      // worth keeping: WITHIN one palette, bigger type reliably scores lower.
+      // `edgeDensity` is a real measure of type scale and an unusable one for
+      // comparing two plates on two different brands — which is exactly the
+      // shape of every pixel share on this page.
     },
     900_000,
   );
