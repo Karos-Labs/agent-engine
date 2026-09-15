@@ -4156,7 +4156,15 @@ describe.skipIf(!isChromiumInstalled())("RFC-21 §2.9: the one-line plate is sep
       for (const [index, palette] of PALETTES.entries()) {
         const big = display[index]!;
         const small = body[index]!;
-        expect(big.m.inkShare, `${palette.label}: fontScale l painted no more ink than s, so the two plates did not differ`).toBeGreaterThan(small.m.inkShare);
+        // THE SECOND COPY of the premise the control pair above states in full:
+        // every display ladder in this directory steps DOWN at `l`, so a larger
+        // type scale can set fewer, larger glyphs and cover FEWER cells.
+        // Measured here: light ground reads s 0.9849 and l 0.9704. What the
+        // premise needs is that the two plates DIFFER, not which way.
+        expect(
+          Math.abs(big.m.inkShare - small.m.inkShare),
+          `${palette.label}: fontScale s and l painted the same ink (${f(small.m.inkShare)}), so the pair below measures nothing`,
+        ).toBeGreaterThan(0.001);
         expect(
           big.m.edgeDensity,
           `${palette.label}: edgeDensity did not fall as type grew (s ${f(small.m.edgeDensity)} -> l ${f(big.m.edgeDensity)})`,

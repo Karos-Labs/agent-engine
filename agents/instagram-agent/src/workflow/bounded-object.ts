@@ -326,7 +326,25 @@ export function deviceFromText(text: string, source: string): RelayoutFigureDevi
 export const BOUNDED_OBJECT_LAYOUTS: ReadonlySet<InstagramSlideLayout> = new Set<InstagramSlideLayout>(["headline_focus", "text_only"]);
 
 /** How much copy a statement plate can carry and still hold a ~300px device. See `boundedObjectFor`. */
-export const MAX_COPY_FOR_OBJECT = 300;
+export const MAX_COPY_FOR_OBJECT = 200;
+
+/*
+ * 200, MEASURED DOWN FROM 300 ON CI 34982681595.
+ *
+ * At 300 the MEDIUM fixture (63 + 152 = 215 characters) still received an
+ * object, and `headline_focus` at `fontScale l` reported `clipped` — the
+ * reviewer's largest type scale makes every sibling in the field 18% taller
+ * while the plate does not grow, so a ~300px device stops fitting well before
+ * the copy runs out.
+ *
+ * SHORT is ~100 characters and fits at every scale. MEDIUM does not. So the
+ * threshold sits between them, and that is not a compromise — it is the
+ * module's own scope arriving at its number. RFC-20 §11.2 measured the plate
+ * this object exists for at `occupiedShare` **0.0383-0.1252**: a statement
+ * with little on it. A plate carrying 215 characters is not that plate. It has
+ * something to read already, and the object would be a third block competing
+ * with it rather than the subject a thin plate is missing.
+ */
 
 /** A fact card as this module reads it — `ResearchFact` and `FactCardForPrompt` both satisfy it, and so does `RelayoutFactCard`. */
 export interface BoundedObjectFactCard {
