@@ -1515,10 +1515,43 @@ export function plateSubject(metrics: SlideMetrics, probe: SlideProbe | undefine
   if (metrics.imageryOrDeviceShare >= IMAGERY_OR_DEVICE_FLOOR * SUBJECT_IMAGERY_MULTIPLE) {
     return `it carries imagery or a drawn device over ${pct(metrics.imageryOrDeviceShare)} of the frame`;
   }
-  const type = probe?.displayTypeScale;
-  if (type !== undefined && type >= DISPLAY_TYPE_SCALE_FLOOR) {
-    return `its type is set at display scale (${pct(type)} of frame height, floor ${pct(DISPLAY_TYPE_SCALE_FLOOR)})`;
-  }
+  // ── THE TYPE LIMB IS WITHDRAWN. IT WAIVED THE PLATE THIS PHASE EXISTS TO
+  //    REFUSE, AND THE SWEEP IS WHAT CAUGHT IT. ──
+  //
+  // It read: *a plate whose type is set at display scale is its own subject*,
+  // and `DISPLAY_TYPE_SCALE_FLOOR` shipped PROVISIONAL with its own comment
+  // saying the gate-zero table had to settle it rather than an eye. The table
+  // settled it, on CI 34960136572, and the answer is no.
+  //
+  //     headline-focus @ fontScale s   displayTypeScale  0.2715
+  //     DISPLAY_TYPE_SCALE_FLOOR                         0.055
+  //     the owner's GREY SCREEN                          the same 0.2715
+  //
+  // **The grey screen is one short headline in a display face.** It reads the
+  // same `displayTypeScale` as a fully composed statement plate, because it is
+  // the same type at the same size — so the limb waived it, and G1 reported
+  // `LER 0.3337` against a 0.28 ceiling with the verdict PASS. A bar that
+  // cannot refuse the thing it was built for is worthless, and a waiver that
+  // excuses it is worse: it makes the bar look like it works.
+  //
+  // This is the sixth separator this project has proposed and measured away
+  // (`instagram-floor-candidates-falsified` holds the other five), and it
+  // fails for the family reason: **a property the good plate and the bad plate
+  // share cannot separate them.** The owner's words it was built on —
+  // *interest comes from bold typography, excellent contrast and strong
+  // visuals* — are about what makes a plate GOOD, and the grey screen has the
+  // typography. What it has not got is anything else.
+  //
+  // So the imagery-or-device limb stands alone, and that is the reading RFC-20
+  // §4 recorded from the reference plates in the first place: *the reference
+  // execution is an OBJECT on a quiet ground.* `@semrush`'s empty lower-left
+  // is earned by a four-node diagram, not by the size of its headline.
+  //
+  // `DISPLAY_TYPE_SCALE_FLOOR` is kept and still printed by the sweep, because
+  // the measurement is worth having and because a constant deleted is a
+  // constant somebody re-invents. Nothing reads it as a gate.
+  void DISPLAY_TYPE_SCALE_FLOOR;
+  void probe;
   return undefined;
 }
 

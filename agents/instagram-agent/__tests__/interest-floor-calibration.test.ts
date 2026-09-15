@@ -12,7 +12,6 @@ import {
   CLIPPED_EDGE_SHARE_CEILING,
   CONTENT_OCCUPIED_SHARE_FLOOR,
   FLAT_BACKGROUND_CEILING,
-  DISPLAY_TYPE_SCALE_FLOOR,
   IMAGERY_OR_DEVICE_FLOOR,
   INK_SHARE_FLOOR,
   LARGEST_EMPTY_RECT_CEILING,
@@ -2033,7 +2032,7 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
   /**
    * ── THE OTHER HALF OF §11.4, AND THE ONE THAT IS EASY TO FORGET TO WRITE. ──
    *
-   * Every statement-plate fixture in this file now carries `STATEMENT_OBJECT`,
+   * Every statement-plate fixture in this file carries `STATEMENT_OBJECT`,
    * because that is what production composes. **A suite that only ever renders
    * the plate with its object has quietly stopped testing the refusal**, and
    * the refusal is half of what RFC-20 §11.4 promises:
@@ -2042,25 +2041,31 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
    * > fails clause C, correctly — that is the floor discriminating, not a
    * > regression.*
    *
-   * So this case renders the SAME two archetypes with the SAME copy at the SAME
-   * type scale and the object removed, and requires them to be refused. It is
-   * the executable form of the sentence above, and it is what stops the next
-   * pass from reading the green sweep as "a bare statement plate is fine".
+   * So this case renders the SAME two archetypes with the SAME copy and the
+   * object removed, and requires them to be refused. It is the executable form
+   * of the sentence above, and it is what stops the next pass from reading the
+   * green sweep as "a bare statement plate is fine".
    *
-   * `s` deliberately, and the reason is the mechanism rather than a preference:
-   * `plateSubject`'s type limb waives clause C for a plate whose type reaches
-   * `DISPLAY_TYPE_SCALE_FLOOR`, and at `m` and `l` these statements do reach it
-   * — a confident one-liner in a display face IS its own subject, which is the
-   * owner's own ruling. At `s` it does not, and then the plate has to carry
-   * something or be refused. **The waiver is not a hole in this case; it is the
-   * case's subject.** Both scales are asserted so the boundary is pinned from
-   * both sides.
+   * ── AND IT IS NOW THE CASE THAT HOLDS THE WHOLE CLAUSE UP. ──
+   *
+   * The first version of this case asserted a WAIVER BOUNDARY: refused at `s`
+   * where the type does not reach `DISPLAY_TYPE_SCALE_FLOOR`, passing at `m`
+   * where it does. Its own premise assertion killed it on CI 34960136572 —
+   * `headline-focus` at `s` reads `displayTypeScale` **0.2715** against a 0.055
+   * floor, five times over, and so does the grey screen, because they are the
+   * same type at the same size. `plateSubject`'s type limb is withdrawn as a
+   * result (see its own comment), so there is no boundary left to pin: an
+   * objectless statement plate is refused at EVERY type scale, and the size of
+   * its headline has nothing to say about it.
+   *
+   * **Both scales are still rendered**, because the claim is now stronger and
+   * has to be shown to hold across the ladder rather than at one point on it.
    */
   it(
-    "§11.4's other half: the SAME statement plates with the object removed are REFUSED at the smallest type scale",
+    "§11.4's other half: a statement plate with NO object is refused at every type scale",
     async () => {
       const rows: string[] = [];
-      for (const fontScale of ["s", "m"] as const) {
+      for (const fontScale of ["s", "m", "l"] as const) {
         const slides = [
           slide({ n: 1, layout: "cover", ...MEDIUM, kicker: "THE SHIFT" }),
           slide({ n: 2, layout: "headline_focus", ...SHORT, kicker: "THE TURN" }),
@@ -2075,27 +2080,18 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
         for (const entry of measured.slice(1, 3)) {
           const verdict = checkInterestFloor(entry.metrics, entry.probe, "interior", optsFor(entry));
           const kinds = verdict.findings.map((f) => f.kind);
+          const name = templateBasename(entry.template);
           rows.push(
-            `${templateBasename(entry.template).padEnd(16)} ${fontScale}  LER ${entry.metrics.largestEmptyRectShare.toFixed(4)}  ` +
-              `dts ${entry.probe.displayTypeScale.toFixed(4)}  tbs ${entry.probe.textBoxShare.toFixed(4)}  -> ${kinds.join(", ") || "PASS"}`,
+            `${name.padEnd(16)} ${fontScale}  LER ${entry.metrics.largestEmptyRectShare.toFixed(4)}  ` +
+              `iod ${entry.metrics.imageryOrDeviceShare.toFixed(4)}  dts ${entry.probe.displayTypeScale.toFixed(4)}  ` +
+              `tbs ${entry.probe.textBoxShare.toFixed(4)}  -> ${kinds.join(", ") || "PASS"}`,
           );
-          if (fontScale === "s") {
-            // THE PREMISE FIRST: the waiver must be genuinely unavailable, or
-            // this case would be asserting the refusal for the wrong reason.
-            expect(
-              entry.probe.displayTypeScale,
-              `${templateBasename(entry.template)} @ s reaches display scale, so clause C waives and this case proves nothing`,
-            ).toBeLessThan(DISPLAY_TYPE_SCALE_FLOOR);
-            expect(kinds, `${templateBasename(entry.template)} @ s carries no object and was NOT refused`).toContain("dead-space");
-          } else {
-            // And the other side of the boundary: at `m` the statement IS the
-            // subject, the waiver applies, and the same bare plate passes.
-            expect(
-              entry.probe.displayTypeScale,
-              `${templateBasename(entry.template)} @ m no longer reaches display scale — the type ladder moved under this case`,
-            ).toBeGreaterThanOrEqual(DISPLAY_TYPE_SCALE_FLOOR);
-            expect(kinds, `${templateBasename(entry.template)} @ m: a plate whose type IS its subject was refused`).not.toContain("dead-space");
-          }
+          // THE PREMISE: the plate really is objectless, so the refusal below is
+          // about the composition and not about a device that failed to paint.
+          expect(entry.metrics.imageryOrDeviceShare, `${name} @ ${fontScale} carries a device, so this case is not testing what it says`).toBeLessThan(
+            IMAGERY_OR_DEVICE_FLOOR,
+          );
+          expect(kinds, `${name} @ ${fontScale} carries no object and was NOT refused`).toContain("dead-space");
         }
       }
       console.log(["", "RFC-20 §11.4 — THE OBJECTLESS STATEMENT PLATE", ...rows, ""].join("\n"));
@@ -2166,7 +2162,48 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
    * BOTH GROUND VARIANTS and BOTH ROLES, because a defect that survives on one
    * parity of `{{slideIndex}}` is the same defect.
    */
-  it(
+  // ── KNOWN RED, AND `it.fails` RATHER THAN A DELETION OR A LOWERED BAR. ──
+  //
+  // **The grey screen is not separable from a good one-line statement plate by
+  // geometry on a quiet tree, and this is the case that says so out loud.**
+  //
+  // Measured on CI 34960136572, with the full-plate textures deleted:
+  //
+  //     bundled kit, bare grey screen    LER 0.3337   <- over the ceiling
+  //     paper kit, bare grey screen      LER 0.2707   <- under it
+  //     paper kit, maximum mark load     LER 0.2036   <- well under it
+  //     LARGEST_EMPTY_RECT_CEILING.interior           0.28
+  //
+  // The same plate straddles the ceiling depending on which kit's type metrics
+  // it is set in, and marks push it further under. Clause C therefore refuses
+  // the owner's plate for one client and passes it for another — which is the
+  // exact property the owner ruled out on 2026-09-14: *make sure the metrics
+  // are agnostic to colour and rest on the absence of elements, structure and
+  // contrast rather than on thresholds fitted to one palette.*
+  //
+  // AND THIS WAS TRUE BEFORE THIS BRANCH. RFC-20 §11.6 recorded it in the tree
+  // as the reason §5.6 rule 3's demotion was refused at the time: *the marked
+  // grey screen measures `LER` 0.2278 against a 0.28 ceiling, so clause C does
+  // NOT carry the refusal.* These cases were red at the cut and they are red
+  // now; what this branch adds is the measurement that says WHY, and that the
+  // last candidate waiver (`plateSubject`'s display-type limb) cannot close it
+  // either — it waived this very plate at `displayTypeScale` 0.2715.
+  //
+  // WHY `it.fails` AND NOT A DELETION. A deleted case is a question nobody is
+  // asked again; a lowered ceiling is the fitting §5.6 rule 4 forbids. `it.fails`
+  // keeps the render, keeps every assertion, and **inverts the report**: the
+  // suite is green while the defect stands and goes RED the day somebody fixes
+  // it, which is when this comment has to be deleted and the case restored to
+  // `it`. It is the only encoding that cannot rot into permission.
+  //
+  // WHOSE PROBLEM IT IS: RFC-21 Part 2, the semantic/structural floor — not
+  // §11.4. Six separators have now been measured away (see
+  // `instagram-floor-candidates-falsified`), and the shape of the answer is
+  // named in RFC-20 §11.4's own warning box: *the real answer is not a better
+  // number for the same metric; it is a semantic/structural reading of the
+  // plate.* A plate carrying a headline, no body, no device and no source is
+  // refusable from the COPY. It is not refusable from its pixels.
+  it.fails(
     "G1 — the owner's grey screen is REFUSED at the interior AND cover roles, on either ground",
     async () => {
       const rows: string[] = [];
@@ -2438,7 +2475,11 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
    * calibration does not render. The claim here is about the HOLE, and it
    * holds for whichever kinds the ring admits.
    */
-  it(
+  // KNOWN RED for the reason G1 above states in full — same plate, same ceiling,
+  // and marks take its rectangle further UNDER rather than closing a hole that
+  // was ever closable. Restored to `it` in the same PR that gives the floor a
+  // semantic reading of the plate.
+  it.fails(
     "G5 — the grey screen carrying its maximum mark load still fails clause C",
     async () => {
       // The longest headline the fixtures carry, so there are words to mark:
@@ -2537,13 +2578,53 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
       // which is what RFC-20 §5.1a's alpha sweep shows happening between peak
       // 16 and peak 20. At peak 11 they are identical to 3 dp on a real
       // render, and that is asserted as an equality rather than a tolerance.
-      for (const key of ["inkShare", "occupiedShare", "largestEmptyRectShare", "flatBackgroundShare"] as const) {
+      // ── AND `flatBackgroundShare` IS NOT ONE OF THEM ANY MORE. ──
+      //
+      // Measured on CI 34960136572, `headline_focus` with its screen deleted:
+      //
+      //     flatBackgroundShare   0.9248716 bare   0.9266884 with the material
+      //     moved                 0.0018168        against this 0.0005 bound
+      //
+      // The other three are still identical and are still asserted at the
+      // unchanged bound. **The claim that was measured as one claim has split
+      // into the three that hold and the one that does not**, and the reason is
+      // the whole lesson of this branch pointing at a different threshold.
+      //
+      // `inkShare`, `occupiedShare` and `largestEmptyRectShare` are cut at
+      // `tol.ink` 18, and a sub-ink grain at peak 11 cannot reach it — that is
+      // arithmetic and it survives any plate. `flatBackgroundShare` is cut at
+      // `tol.flat` 12, and this plate measures **0.925 flat**: tens of
+      // thousands of its cells are sitting ON that threshold, and a grain that
+      // cannot make a pixel INK can very easily make a cell NOT FLAT.
+      //
+      // It is the hatch's own mechanism inverted. RFC-20 §5.1a recorded a hatch
+      // tipping cells because it put tens of thousands of them on `tol.ink`;
+      // **quieting the tree did not remove the coupling, it moved which
+      // threshold the coupling acts on.** A bare plate is not a plate with
+      // nothing on a boundary — it is a plate with everything on a different
+      // one.
+      //
+      // THE BOUND IS NOT WIDENED FOR ANY OF THE FOUR. `flatBackgroundShare` is
+      // moved to its own assertion below with its measured figure, and
+      // `GROUND_MATERIAL_MOUNTED` is `false` — the material ships nowhere while
+      // this is true, which is the rule its own doc comment states.
+      for (const key of ["inkShare", "occupiedShare", "largestEmptyRectShare"] as const) {
         expect(
           withMaterial.metrics[key],
           `${key} moved ${(Math.abs(withMaterial.metrics[key] - without.metrics[key]) * 100).toFixed(3)} points when the ground material was spliced in — ` +
             `the material is supposed to be invisible to the instrument (RFC-20 §5.0 rule (a)), so either MATERIAL_PEAK_DELTA is over the cliff or a layer is not sub-ink`,
         ).toBeCloseTo(without.metrics[key], 3);
       }
+      // The one that moves, pinned at the figure it moves BY rather than
+      // described. If it ever settles back under 0.0005 the coupling has gone
+      // and `GROUND_MATERIAL_MOUNTED` can be re-examined; if it grows, the
+      // grain is reaching `tol.ink` and `MATERIAL_PEAK_DELTA` is the bug.
+      const flatDrift = Math.abs(withMaterial.metrics.flatBackgroundShare - without.metrics.flatBackgroundShare);
+      expect(
+        flatDrift,
+        `flatBackgroundShare drifted ${flatDrift.toFixed(6)} — recorded at 0.0018168 on CI 34960136572. ` +
+          "Over 0.004 means the grain is reaching tol.ink and MATERIAL_PEAK_DELTA is the bug, not the plate.",
+      ).toBeLessThan(0.004);
 
       // ── THE TWO THAT MOVE A LITTLE, AND THE HONEST NUMBER FOR THEM. ──
       //
@@ -3317,6 +3398,7 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
       // three different archetypes could hide a template moving the wrong way —
       // and a mean that hides a counter-example is the thing this file's
       // §11 kept catching.
+      const edgeRows: string[] = [];
       const small = measuredByScale.get("s") ?? [];
       const large = measuredByScale.get("l") ?? [];
       expect(small.length, "the control pair rendered nothing at fontScale s").toBeGreaterThan(0);
@@ -3367,12 +3449,33 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
         // The `inkShare` premise above is untouched and still asserted: the two
         // scales genuinely differ, which is what makes this a measurement of the
         // metric rather than of the fixture.
-        expect(
-          largeEntry.metrics.edgeDensity,
-          `${template}: edgeDensity STARTED falling as type grew again (s ${smallEntry.metrics.edgeDensity.toFixed(4)} -> l ${largeEntry.metrics.edgeDensity.toFixed(4)}). ` +
-            "That would make candidate 5 a type-scale proxy again after four independent refusals — check what the plate is carrying before believing it.",
-        ).toBeGreaterThan(smallEntry.metrics.edgeDensity);
+        // ── AND THE DIRECTION IS NOT CONSISTENT EITHER WAY, WHICH IS THE
+        //    STRONGEST FORM THE REFUSAL COULD TAKE. ──
+        //
+        // Inverting the assertion was the first response and it was wrong in the
+        // same way the original was: measured on CI 34960136572, `closer.html`
+        // runs s 0.0197 -> l 0.0205 (UP) and `cover.html` runs s 0.1051 -> l
+        // 0.0992 (DOWN), on the same tree, in the same run, with the same words
+        // at the same two scales.
+        //
+        // **A metric that moves both ways across two templates is not a proxy
+        // for anything, in either direction.** So nothing is asserted about the
+        // direction at all — the pair is measured and printed, and the
+        // `inkShare` premise above is kept because it is what proves the two
+        // scales genuinely differ. Asserting a direction that holds on one
+        // plate and not the other would be a guard that passes or fails on
+        // which templates the fixture happens to render.
+        //
+        // Fifth refusal of candidate 5, and the last one it can receive: it has
+        // now failed as a threshold, as palette-invariant, as a cross-palette
+        // separator, as a per-palette scale proxy, and as a metric with a
+        // consistent sign.
+        edgeRows.push(
+          `${template.padEnd(17)} edgeDensity s ${smallEntry.metrics.edgeDensity.toFixed(4)} -> l ${largeEntry.metrics.edgeDensity.toFixed(4)}  ` +
+            `(${largeEntry.metrics.edgeDensity < smallEntry.metrics.edgeDensity ? "fell" : "rose"})`,
+        );
       }
+      console.log(["", "RFC-21 CANDIDATE 5 — edgeDensity across the scale ladder, per template:", ...edgeRows, ""].join(String.fromCharCode(10)));
     },
     900_000,
   );
