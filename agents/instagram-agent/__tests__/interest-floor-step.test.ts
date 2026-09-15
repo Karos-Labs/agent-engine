@@ -498,17 +498,15 @@ describe("08a1-interest-floor: it can never become a fourth hold", () => {
       ...drafted,
       slides: drafted.slides.map((s) =>
         s.n === 1
-          // `comparison_card`, not `stat_callout`: that archetype joined
-          // `HERO_IMAGE_LAYOUTS` with its bounded image band (RFC-21 Part 2),
-          // so a cover built on it now gets sourced and vetted like any other
-          // picture slide and there would be nothing for the re-layout to
-          // promote. This case is about the promotion, so slide 1 has to be an
-          // archetype that still carries no picture of its own.
-          ? {
-              ...s,
-              layout: "comparison_card" as const,
-              comparison: { leftLabel: "Before", leftBody: "Five rounds", rightLabel: "After", rightBody: "Two rounds" },
-            }
+          // `headline_focus`, and the reason is worth stating because it moved
+          // twice. All FOUR panel archetypes joined `HERO_IMAGE_LAYOUTS` with
+          // their bounded image band (RFC-21 Part 2), so a cover built on any of
+          // them now gets sourced and vetted like any other picture slide and
+          // there is nothing for the re-layout to promote. This case is about the
+          // PROMOTION, so slide 1 has to be an archetype that carries no picture
+          // of its own - and after the widening only `headline_focus` and
+          // `text_only` are left, because they carry the bounded OBJECT instead.
+          ? { ...s, layout: "headline_focus" as const, kicker: "THE SETUP" }
           : s.n === 3
             ? { ...s, layout: "text_only" as const }
             : s,
