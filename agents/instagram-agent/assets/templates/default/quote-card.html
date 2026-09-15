@@ -259,11 +259,33 @@
      landscape both fill it without distortion, and `onerror` removes the node
      rather than hiding it — a removed node leaves no broken-image glyph, which
      is the same rule `cover.html` and `slide.html` already follow. */
+  /* ── THE PICTURE IS THE ELEMENT THAT YIELDS. ──
+
+     `flex: 0 1 auto` with a definite `block-size`, so in this column flex
+     container the band is the ONLY item that can shrink (every sibling is
+     `0 0 auto`). When a long body at `l` asks for more than the 1440px canvas
+     has, the band gives the space back instead of the copy being clipped.
+
+     WHY IT IS THE RIGHT ELEMENT TO GIVE, and this is the whole argument:
+     **text cannot shrink without being clipped, and a cover-fitted photograph
+     can shrink without losing anything.** `object-fit: cover` means a shorter
+     band crops a little more of the same picture at the same scale - no
+     distortion, no reflow, nothing hidden. Capping a text box instead is what
+     CI 35001921837 caught: *"2 element(s) overflow their own box (div.num-zone,
+     div#figure.num-figure), and 0% of the frame is ink inside the 8px bleed
+     band"* - nothing falling off the canvas, a fixed-size numeral hidden by a
+     box drawn smaller than it.
+
+     200px rather than 300: measured down when the same overflow appeared on
+     `stat-callout.html`, whose header carries the arithmetic. `min-block-size`
+     floors the shrink so the band cannot be squeezed to a sliver - at that
+     point it is neither a picture nor honest about being one, and clause E
+     would score a 30px stripe as this plate's drawn device. */
   .sc-figure-band {
-    position: relative; z-index: 3; flex: 0 0 auto;
-    block-size: calc(300px * var(--ts, 1)); inline-size: 100%;
+    position: relative; z-index: 3; flex: 0 1 auto;
+    block-size: calc(200px * var(--ts, 1)); min-block-size: calc(110px * var(--ts, 1)); inline-size: 100%;
     overflow: hidden; border-radius: 2px;
-    margin-block-end: calc(28px * var(--ts, 1));
+    margin-block-end: calc(24px * var(--ts, 1));
   }
   .sc-figure-band:not(:has(img)) { display: none; }
   .sc-figure-band img { inline-size: 100%; block-size: 100%; object-fit: cover; display: block; }

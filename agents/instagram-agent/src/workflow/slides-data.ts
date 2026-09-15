@@ -137,6 +137,47 @@ export const HERO_IMAGE_LAYOUTS: ReadonlySet<InstagramSlideLayout> = new Set<Ins
 ]);
 
 /**
+ * The two archetypes where the picture IS the plate.
+ *
+ * ## Why this is a SECOND set and not a rename of the one above
+ *
+ * `HERO_IMAGE_LAYOUTS` answers a SOURCING question: which archetypes declare
+ * an `{{image:hero}}` slot, so which slides are worth spending a stock lookup
+ * on. It went from two members to six when the four panel archetypes got their
+ * bounded `.sc-figure-band`, and that was right.
+ *
+ * This set answers a COMPOSITION question, and the two answers are genuinely
+ * different because the two pictures are genuinely different. On `cover.html`
+ * and `slide.html` the photograph is full-bleed: it is the ground, the copy sits
+ * on it behind a scrim, and a reader scrolling past sees a PHOTOGRAPH. On the
+ * four panels the image is a 300px band inside a 1440px plate, beside type that
+ * keeps its own controlled ground - about 21% of the frame, deliberately bounded
+ * (RFC-20 §11.1: a full-frame layer a plate has not earned gets scored by some
+ * clause as the evidence that clause was built to look for). A reader scrolling
+ * past that sees a TYPOGRAPHIC SLIDE WITH AN ACCENT, which is what it is.
+ *
+ * ## The defect that made the distinction load-bearing
+ *
+ * The owner's rule, 2026-09-15: *"שילוב תמונות ב-3 עד 5 שקופיות לאורך הפוסט"* -
+ * images in 3 to 5 slides across the post, with the rest leaning on clean
+ * typography, data or graphic objects.
+ *
+ * `MIN_PICTURE_SLIDES` counted `HERO_IMAGE_LAYOUTS`, so once that set
+ * reached six members a carousel of three panels with three 300px bands and no
+ * photograph anywhere MET the floor and was returned untouched. That is the
+ * imageless post the floor was written to refuse, one level up: the count said
+ * three and a reader would say none. Widening the sourcing set quietly widened
+ * the floor's own definition of a picture, which nothing asked it to do.
+ *
+ * So the band is a bonus and is counted toward neither bound, and the floor and
+ * the ceiling both read THIS set. `text_only` is absent for the same reason it
+ * is the only promotable archetype: it resolves to `slide.html` with no image
+ * sourced, so promoting it to `photo` changes nothing but whether a picture was
+ * asked for.
+ */
+export const FULL_BLEED_IMAGE_LAYOUTS: ReadonlySet<InstagramSlideLayout> = new Set<InstagramSlideLayout>(["photo", "cover"]);
+
+/**
  * Which layouts declare a `{{html:device}}` slot, so a device on a slide
  * actually reaches the pixels.
  *

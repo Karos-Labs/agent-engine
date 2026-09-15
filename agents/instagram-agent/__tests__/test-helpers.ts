@@ -10,6 +10,10 @@ import { briefSegments, createAllKarosTools, WorkspaceStore, type ClientBrief } 
 import { createOfflineScraper, type ScraperProvider } from "@agent-engine/tool-karos-scraper";
 import { validateRenderInputs, type RenderCarouselInput, type RenderCarouselResult, type Slide } from "@agent-engine/tool-karos-publish";
 import { MemoryTemplateStore, TemplateDefinitionSchema, extractSupportedFields, type TemplateDefinition, type TemplateStore } from "@agent-engine/tool-karos-templates";
+import { enforceImageryBand } from "../src/workflow/imagery-floor.js";
+import { composeBoundedObjects } from "../src/workflow/bounded-object.js";
+import { rolesForSlideCount, skeletonSignature } from "../src/workflow/skeleton-memory.js";
+import { FULL_BLEED_IMAGE_LAYOUTS, assembleSlidesData } from "../src/workflow/slides-data.js";
 import type { TrendScoutOutput } from "@agent-engine/workflow";
 import type { BrandTokens, ImageCandidate, ImageVettingOutput, InstagramCopyOutput, ResearchFact, ResearchOutput, StyleConfig, VisualQaOutput } from "../src/workflow/types.js";
 import type { SlideMetrics, SlideProbe } from "../src/workflow/interest-floor.js";
@@ -498,11 +502,11 @@ const GOOD_VISUAL_NEEDS = [
 const GOOD_SLIDE_COPY: ReadonlyArray<{ headline: string; body: string }> = [
   {
     headline: "Stop hand-building the weekly report",
-    body: "Every team that handed it to the tool got about 4 hours a week back, which is most of a working morning nobody was billing for.",
+    body: "Every team that handed it to the tool got about 4 hours a week back, which is most of a working morning.",
   },
   {
     headline: "Triage on arrival, not once the queue is deep",
-    body: "Sorting tickets the moment they land resolved 30% more of them, and the queue stopped being the thing that decided everyone's afternoon.",
+    body: "Sorting tickets the moment they land resolved 30% more of them, so the queue stopped deciding everyone's afternoon.",
   },
   {
     headline: "A checklist is worth two working days",
@@ -510,7 +514,7 @@ const GOOD_SLIDE_COPY: ReadonlyArray<{ headline: string; body: string }> = [
   },
   {
     headline: "The number that says whether a change survives",
-    body: "Satisfaction inside the team went up 25% after this one, and a process the people running it resent does not last a busy quarter.",
+    body: "Satisfaction inside the team went up 25%, and a process the people running it resent does not last a quarter.",
   },
   {
     headline: "Five rounds of revisions became two",
@@ -518,7 +522,7 @@ const GOOD_SLIDE_COPY: ReadonlyArray<{ headline: string; body: string }> = [
   },
   {
     headline: "Onboarding now takes a week",
-    body: "It ran to 14 days and now runs to 7, the difference between a client who still remembers the sales call and one who does not.",
+    body: "It ran to 14 days and now runs to 7, which is the difference between remembering the sales call and not.",
   },
 ];
 
@@ -1068,4 +1072,96 @@ export async function setupTestEnvironment(
       await fs.rm(repoRoot, { recursive: true, force: true });
     },
   };
+}
+
+/**
+ * The slides of `goodCopyOutput()` that actually ASK FOR A PICTURE.
+ *
+ * `goodCopyOutput()` is six slides and every one of them is a `photo`, which
+ * made `copy.slides.map((s) => s.n)` the right answer to "which slides does
+ * image sourcing run for?" for the whole of this suite's life. The imagery band
+ * ended that: six pictures on a six-slide carousel is over the ceiling
+ * `ceilingFor(6)` puts in force, so `04m2` demotes the last two to `text_only`
+ * before `05b` asks any harvester for anything.
+ *
+ * DERIVED, never a literal `[1, 2, 3, 4]`, and the distinction is the point. A
+ * hard-coded list would say "four slides" where the test means "the slides that
+ * wanted a photograph", and the next change to either bound would then edit the
+ * number in nine files and the meaning in none of them. Every caller below
+ * asserts the same sentence it always asserted.
+ *
+ * The fixture is deliberately left all-`photo`. It is not a model post - the
+ * owner's rule is a MIX - but it is the input that gives the band something to
+ * bite on, and a fixture the band cannot touch would make every test built on
+ * it blind to the band's existence.
+ */
+export function pictureSlidesOfGoodCopy(copy: InstagramCopyOutput = goodCopyOutput()): number[] {
+  return enforceImageryBand(copy)
+    .copy.slides.filter((s) => FULL_BLEED_IMAGE_LAYOUTS.has(s.layout ?? "photo"))
+    .map((s) => s.n);
+}
+
+/**
+ * The skeleton signature `goodCopyOutput()` ACTUALLY produces, derived the way
+ * the workflow derives it rather than described.
+ *
+ * This used to be three lines in `skeleton-repeat-gate.test.ts`, above the
+ * comment *"`goodCopyOutput()` is six `photo` slides, so every one resolves to
+ * the client's own `slide.html` with a hero"*, and it hard-coded
+ * `hasImage: true` on all six. Both halves of that sentence stopped being true
+ * on the same day: the imagery band demotes the last two slides of a six-slide
+ * all-photo carousel (`ceilingFor(6)` is 4), and a demoted slide is exactly the
+ * plate the bounded object was built for, so it arrives at `07k` carrying a
+ * `+figure` device in its token.
+ *
+ * ## Why it is derived through the real functions and not written down
+ *
+ * Every test that seeds "last week's post" needs THIS RUN's signature, because
+ * what those tests assert is that an identical signature is refused. A literal
+ * string would have to be re-measured by hand every time any of four unrelated
+ * things moved — the band's two bounds, `boundedObjectFor`'s copy-length limit,
+ * `MIN_QUIET_SLIDES`, or the fixture's own copy — and a stale literal does not
+ * fail loudly here. It makes the repeat gate see two DIFFERENT signatures, find
+ * no repeat, never buy a second attempt, and the test then fails on a missing
+ * `05-write-copy-attempt-2` several assertions later, which is how this was
+ * found rather than how it should have been.
+ *
+ * So it runs the same three stages `04m2`, assembly and `07k` run, in order,
+ * and reads the token inputs off the assembled slides: the resolved template
+ * and whether a hero landed, plus `fields.deviceKind`, which is the RENDERED
+ * device kind rather than the copy's request for one. Same inputs, same
+ * function, same string.
+ */
+export function signatureOfGoodCopy(copy: InstagramCopyOutput = goodCopyOutput()): string {
+  const banded = enforceImageryBand(copy).copy;
+  const composed = composeBoundedObjects(
+    banded,
+    SIX_RESEARCH_FACTS.map((f) => ({ claim: f.claim, source: f.source })),
+  ).copy;
+  // A picture for every slide that still asks for one, which is what these
+  // fixtures' stubbed harvesters supply.
+  const selections: ImageSelection[] = composed.slides.map((slide) => ({
+    n: slide.n,
+    imagePath: FULL_BLEED_IMAGE_LAYOUTS.has(slide.layout ?? "photo") ? "fixtures/images/photo-1.png" : null,
+    reason: "fixture",
+    license: "CC0",
+    rightsUsable: true,
+    watermarkFree: true,
+    claimMatch: 5,
+    claimMatchReason: "fixture",
+  }));
+  const data = assembleSlidesData({
+    clientSlug: "acme",
+    postId: "post_sig",
+    repoRoot: "/repo",
+    brandTokens: goodBrandTokens(),
+    copy: composed,
+    selections,
+    canvas: { w: 1080, h: 1440, scale: 2, slides_min: 1, slides_max: 8 },
+  });
+  return skeletonSignature(
+    data.slides.map((sl) => ({ n: sl.n, template: sl.template, hasImage: sl.images?.["hero"] !== undefined })),
+    rolesForSlideCount(data.slides.length),
+    data.slides.map((sl) => sl.fields?.["deviceKind"] ?? ""),
+  );
 }

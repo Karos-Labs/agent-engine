@@ -2,6 +2,7 @@ import { describe, expect, it, afterEach } from "vitest";
 import type { AgentTool, AgentToolRegistry } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
+import { enforceImageryBand } from "../src/workflow/imagery-floor.js";
 import {
   MIN_SKELETON_DISTANCE,
   SKELETON_BELIEF_KEY,
@@ -19,6 +20,7 @@ import {
   fakeRouterSequence,
   finalTurn,
   goodCopyOutput,
+  signatureOfGoodCopy,
   goodImageCandidatePool,
   goodImageVettingOutput,
   goodRelevanceVerdict,
@@ -56,12 +58,19 @@ import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS, happyTurns, standardTurns
 
 const base = { clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
-/** `goodCopyOutput()` is six `photo` slides, so every one resolves to the client's own `slide.html` with a hero. */
-function signatureOfGoodCopy(): string {
-  return skeletonSignature(
-    goodCopyOutput().slides.map((slide) => ({ n: slide.n, template: "slide.html", hasImage: true })),
-  );
-}
+/*
+ * `signatureOfGoodCopy` now lives in `test-helpers.ts` and is DERIVED. The
+ * three lines that used to be here read
+ *
+ *     goodCopyOutput().slides.map((slide) => ({ n: slide.n, template: "slide.html", hasImage: true }))
+ *
+ * under the comment "six `photo` slides, so every one resolves to the client's
+ * own `slide.html` with a hero". The imagery band ended both halves of that on
+ * the same day, and a stale signature here does not fail loudly: the gate sees
+ * two different signatures, finds no repeat, never buys a second attempt, and
+ * the failure surfaces as a missing `05-write-copy-attempt-2` four assertions
+ * later. The helper's own doc comment carries the rest.
+ */
 
 function lastWeek(signature: string, runId = "run_last_week"): SkeletonHistory {
   const entry: SkeletonEntry = {
@@ -77,13 +86,29 @@ function lastWeek(signature: string, runId = "run_last_week"): SkeletonHistory {
   return { version: 1, entries: [entry] };
 }
 
-/** Slide 2 becomes a `stat_callout`: exactly ONE position of six changes, which is a 0.17 near-match. */
+/**
+ * Exactly ONE position of six changes, which is a 0.17 near-match.
+ *
+ * The swapped slide is one the IMAGERY BAND HAS ALREADY MADE TYPOGRAPHIC, and
+ * that is the whole reason this function is not three lines. It used to swap
+ * slide 2, a `photo`, for a `stat_callout` — which after the band changes two
+ * tokens rather than one: the swapped position, and the position of whichever
+ * slide the band no longer has to demote now that the carousel is a picture
+ * short. The measured distance was 0.33 and the case is about 0.17.
+ *
+ * A `text_only` slide and a `stat_callout` are both outside
+ * `FULL_BLEED_IMAGE_LAYOUTS`, so swapping one for the other leaves the picture
+ * count untouched, the band with nothing further to do, and exactly one token
+ * different from `signatureOfGoodCopy()`.
+ */
 function copyWithOneSwap(): InstagramCopyOutput {
-  const copy = goodCopyOutput();
+  const copy = enforceImageryBand(goodCopyOutput()).copy;
+  const swap = copy.slides.findIndex((slide) => (slide.layout ?? "photo") === "text_only");
+  if (swap < 0) throw new Error("the imagery band demoted nothing, so this fixture cannot make a one-token swap");
   return {
     ...copy,
     slides: copy.slides.map((slide, i) =>
-      i === 1
+      i === swap
         ? {
             ...slide,
             layout: "stat_callout" as const,
@@ -198,13 +223,9 @@ describe("07k-skeleton-variety (item P): repetition is refused before a render, 
 
   it("SOFT clause: a 0.17 near-match returns on attempt 1 and only WARNS from attempt 2", async () => {
     const previous = signatureOfGoodCopy();
-    const near = skeletonSignature(
-      copyWithOneSwap().slides.map((slide) => ({
-        n: slide.n,
-        template: slide.layout === "stat_callout" ? "stat-callout.html" : "slide.html",
-        hasImage: slide.layout === "photo",
-      })),
-    );
+    // Through the same derivation as `previous`, or the two strings differ by
+    // the derivation as well as by the swap and the distance means nothing.
+    const near = signatureOfGoodCopy(copyWithOneSwap());
     expect(skeletonDistance({ signature: near }, { signature: previous })).toBe(0.17);
     expect(0.17).toBeLessThan(MIN_SKELETON_DISTANCE);
 
@@ -313,11 +334,21 @@ describe("07k-skeleton-variety (item P): repetition is refused before a render, 
     const qaInput = qaTurnInputs(router)[0];
     const warnings = qaInput?.["skeletonWarnings"] as string[] | undefined;
     expect(warnings, `08b received no skeletonWarnings: ${JSON.stringify(Object.keys(qaInput ?? {}))}`).toBeDefined();
-    // Three, not five: the signature's tokens are `role:archetype`, so the
-    // cover-to-interior and interior-to-closer pairs differ by role and only
-    // the three interior-to-interior pairs are candidates. That is the clause
-    // working as written, and it is why the token carries the role at all.
-    expect(warnings!.length).toBe(3);
+    // TWO, and the arithmetic is worth writing out because both halves of it
+    // are the clause working as designed.
+    //
+    // The signature's tokens are `role:archetype`, so of the five adjacent
+    // pairs on a six-slide carousel the cover-to-interior and
+    // interior-to-closer pairs differ by role and never match: three
+    // interior-to-interior pairs are candidates, which is why the token
+    // carries the role at all. Then the imagery band demotes slide 5 of this
+    // all-photo fixture, so the (4, 5) pair is `photo` against `text_only` and
+    // two candidates are left.
+    //
+    // Was three. The band did not weaken this clause; it removed one of the
+    // repetitions the clause exists to complain about, which is the clause and
+    // the band agreeing about the same defect from two directions.
+    expect(warnings!.length).toBe(2);
     expect(warnings![0]).toContain("slides 2 and 3");
     expect(warnings![0]).toContain("54%");
     expect(warnings![0]).toContain("one slide shown twice");

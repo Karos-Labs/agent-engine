@@ -5,7 +5,7 @@ import type { AgentTool } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { MEDIA_LIBRARY_SEGMENTS, createMediaLibraryTools, type MediaLibraryDocument } from "@agent-engine/tool-karos-media";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
-import { fakeRenderCarousel, fakeRouterSequence, goodCopyOutput, goodResearchOutput, goodTrendScoutOutput, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import { fakeRenderCarousel, fakeRouterSequence, goodCopyOutput, goodResearchOutput, goodTrendScoutOutput, makePromptStore, pictureSlidesOfGoodCopy, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 import { standardTurns } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 
@@ -148,14 +148,20 @@ describe("instagram Tier 0: client-supplied media", () => {
     // One retrieval call for two more needs is the price of not shipping a
     // typographic slide where a picture was available. Client-only runs
     // (`mediaSource: "client"`) still harvest nothing — see below.
-    expect(seen.needs?.map((n) => n.n)).toEqual(copy.slides.map((s) => s.n));
+    // The slides that asked for a picture, which is no longer every slide: the
+    // imagery band demotes the last two of this all-photo fixture at 04m2,
+    // before 05b asks any harvester for anything.
+    expect(seen.needs?.map((n) => n.n)).toEqual(pictureSlidesOfGoodCopy(copy));
   });
 
   it("asks for every slide when nothing was attached, exactly as before Tier 0 existed", async () => {
     const seen: { needs?: Array<{ n: number }> } = {};
     const { copy } = await run({}, { "media.findImages": recordingFindImages(seen) });
 
-    expect(seen.needs?.map((n) => n.n)).toEqual(copy.slides.map((s) => s.n));
+    // The slides that asked for a picture, which is no longer every slide: the
+    // imagery band demotes the last two of this all-photo fixture at 04m2,
+    // before 05b asks any harvester for anything.
+    expect(seen.needs?.map((n) => n.n)).toEqual(pictureSlidesOfGoodCopy(copy));
   });
 
   it("ignores an attachment whose role is not a usable image slot", async () => {
@@ -244,7 +250,10 @@ describe("instagram Tier 0: client-supplied media", () => {
     );
     expect((seen.needs?.length ?? 0)).toBeGreaterThan(0);
     // Slot 1 is included since `instagram-image-vet@3` (see the Tier 0 test above).
-    expect(seen.needs?.map((n) => n.n)).toEqual(copy.slides.map((s) => s.n));
+    // The slides that asked for a picture, which is no longer every slide: the
+    // imagery band demotes the last two of this all-photo fixture at 04m2,
+    // before 05b asks any harvester for anything.
+    expect(seen.needs?.map((n) => n.n)).toEqual(pictureSlidesOfGoodCopy(copy));
   });
 
   // ── RFC-14 item T: the upload also joins the client's media library ──

@@ -140,8 +140,16 @@ describe("RFC-19: the workflow has exactly three WorkflowHeld sites, and each on
     // describes. A `>=` here let four be deleted before anything noticed, so this is pinned the way
     // `turns.ts`'s queues are: change the number only alongside the site you added or removed.
     //
-    // 15 = 11 bare `if (!isFinalAttempt)` + 4 compound `if (!isFinalAttempt && …)` (the `07`
+    // 16 = 12 bare `if (!isFinalAttempt)` + 4 compound `if (!isFinalAttempt && …)` (the `07`
     // `compliance-unverified` exemption among them).
+    //
+    // Was 15. The site ADDED, named here as this pin's own protocol requires: `07h2-word-budget`,
+    // the slide word budget (owner rule, 2026-09-15 — 20 to 30 words a slide, the detail to the
+    // caption). It belongs in this family for the reason the family exists: over the limit it
+    // `continue`s to a fresh draft, which is a real remedy while there are attempts left, and on
+    // the final attempt there is no draft left to ask for so the finding goes to the judge instead.
+    // A bare guard rather than a compound one, because unlike a judge outage a word count is never
+    // an absence of a verdict: the words are on the plate and code has read them.
     //
     // Was 16. The site REMOVED, deliberately and named here as this pin's own protocol requires: `08b`'s
     // `qaExec.status !== "completed"` branch. That is a judge OUTAGE, not a verdict, and Mechanism C's rule
@@ -151,6 +159,6 @@ describe("RFC-19: the workflow has exactly three WorkflowHeld sites, and each on
     // generative rescue and a full render each time. A judge that ANSWERED and refused is untouched and
     // still holds its bare guard one branch below.
     const guards = source.match(/if \(!isFinalAttempt[ )]/g) ?? [];
-    expect(guards.length).toBe(15);
+    expect(guards.length).toBe(16);
   });
 });
