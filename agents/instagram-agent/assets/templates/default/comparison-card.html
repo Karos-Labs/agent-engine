@@ -199,6 +199,24 @@
      shrinking band above is what makes the composition fit, and it needs no
      per-archetype clamp to do it. */
   .sc-figure-band img { inline-size: 100%; block-size: 100%; object-fit: cover; display: block; }
+  /* ── AND THE CARDS STOPS SHRINKING WHEN A PICTURE IS ON THE PLATE. ──
+
+     `.cmp-row` is `flex: 1 1 auto` with `min-block-size: 0`. It GROWS to
+     fill the gap, which is what its own comment above is about, and it also
+     SHRINKS below its own content, which nothing above is about and which is
+     how `stat-callout.html` came to report `clipped` twice.
+
+     The band is `flex: 0 1 auto` so that IT is what gives a pixel back when a
+     long body at `l` asks for more than the canvas has. With two shrinkable
+     items a browser splits the overflow between them in proportion to their
+     base sizes, so this one would take the larger share and clip its own text:
+     the band would be the element that yields in the comment and not in the
+     layout. `1 0 auto` keeps the grow and drops the shrink.
+
+     Scoped to `:has(.sc-figure-band img)`, so a plate with no picture keeps the
+     exact flex it had before the band existed and every share the calibration
+     measured on it still holds. */
+  body:has(.sc-figure-band img) .cmp-row { flex: 1 0 auto; }
   /* The one mark it carries: the brand rule that ties it to the plate. */
   .sc-figure-band::after {
     content: ""; position: absolute; inset-block-end: 0; inset-inline: 0;
