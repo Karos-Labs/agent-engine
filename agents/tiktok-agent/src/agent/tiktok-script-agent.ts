@@ -88,7 +88,18 @@ export class TikTokScriptAgent extends BaseAgent<ShortScript> {
     // `brand` and `strategy` in the input instead of fetching them.
     // Pinned to "9" (2026-09-10): v9 adds the optional per-beat `stat` (one
     // figure from the brief rendered as a stat card instead of footage).
-    skillRef: "tiktok-script@9",
+    // Pinned to "10" (2026-09-15): v10 is about whether anyone watches to the
+    // end. v9's shorts stated the thesis in beat 1 and explained it for
+    // twenty seconds, which is an essay read aloud: the three endorsed
+    // golden runs all have that shape. v10 asks for a hook that opens
+    // something the short has to close, names beat 2 as the PROOF beat and
+    // the most concrete line in the piece, and requires a last beat that
+    // lands somewhere the hook did not (`circularEndingIssues` is the check
+    // that makes that one real, in the same one-redraft note as the voice,
+    // shot and pitch lints). It also tells the writer what the render now
+    // does with `seconds`: on a voiced short the LINE is the clock, so a
+    // twenty-five-word beat is ten seconds on one picture. v9 stays frozen.
+    skillRef: "tiktok-script@10",
     // The same lint 07-compliance runs afterwards, run FIRST on the model's
     // own output so a tell comes back as feedback it can act on rather than
     // as a held run. Two revisions: the first fix is usually enough, the

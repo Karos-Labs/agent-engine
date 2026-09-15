@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildSrt } from "@agent-engine/tool-karos-video";
+import { buildKaraokeCaptionsAss, buildSrt } from "@agent-engine/tool-karos-video";
 import { downloadBrandLogo, planBrandLogoPlacement, readBrandLogoInk } from "@agent-engine/tool-karos-media";
 import {
   UNIT_PRICING,
@@ -44,7 +44,7 @@ import { TikTokMomentAgent } from "../agent/tiktok-moment-agent.js";
 import { TikTokScriptAgent } from "../agent/tiktok-script-agent.js";
 import { TikTokTopicScoutAgent } from "../agent/tiktok-topic-scout-agent.js";
 import { boundsFromTranscript, sentenceBoundedWords, type TranscriptWordLike } from "./clip-bounds.js";
-import { alignScriptToTimings, buildPhraseCues, cuesToSrt, scriptWords } from "./captions.js";
+import { alignScriptToTimings, beatHoldsFromTimings, buildPhraseCues, buildPhraseGroups, cuesToSrt, scriptWords } from "./captions.js";
 import {
   CLIP_DURATION_MAX_SECONDS,
   CLIP_DURATION_MIN_SECONDS,
@@ -171,6 +171,33 @@ const NARRATION_CHARS_PER_SECOND = 14;
 const TWO_SHOT_BEAT_SECONDS = 6;
 /** The second shot of a beat may be shorter than the beat: it only has to cover half the hold. */
 const SECOND_SHOT_MIN_SECONDS = 3;
+
+/**
+ * How fast a synthesized narrator speaks, in words a second, for predicting
+ * a beat's hold before the voice exists (2026-09-15). 2.6 is the measured
+ * pace of the prep runs' Chirp 3 voice at the configured 1.0-1.1 rate; it is
+ * only ever used to decide how many SHOTS a beat gets, never to time
+ * anything, so being a tenth out costs nothing.
+ */
+const NARRATION_WORDS_PER_SECOND = 2.6;
+
+/**
+ * How long this beat will really be on screen.
+ *
+ * `seconds` is what the writer asked for; on a VOICED short the render gives
+ * each beat the time its line actually takes to say (see
+ * `beatHoldsFromTimings`), which for a long line is several seconds more.
+ * The two-shot rule was reading `seconds`, so a beat the writer marked 4 and
+ * the voice held for 7 stayed on ONE clip for seven seconds: the longest
+ * hold in the short, on the beat with the most to say. Predicting the hold
+ * from the line's own length puts the second shot where the picture would
+ * otherwise hang. Exported for the test.
+ */
+export function expectedHoldSeconds(beat: { narration: string; seconds: number }, voiceover: boolean): number {
+  if (!voiceover) return beat.seconds;
+  const words = beat.narration.trim().split(/\s+/).filter((w) => w.length > 0).length;
+  return Math.max(beat.seconds, words / NARRATION_WORDS_PER_SECOND);
+}
 
 /** A music bed is a few minutes of compressed audio; anything past this is not a track. */
 const MAX_MUSIC_TRACK_BYTES = 25 * 1024 * 1024;
@@ -520,6 +547,43 @@ export function salesPitchIssues(script: ShortScript, direction: string | undefi
   return issues;
 }
 
+/** Enough of the hook's own words back in the closing line, and the short has gone in a circle. Both bars must be cleared, so a shared subject noun is not a finding. */
+const CIRCULAR_SHARED_WORDS = 3;
+const CIRCULAR_CONTAINMENT = 0.6;
+
+/**
+ * Whether the short ends where it started (2026-09-15).
+ *
+ * The prompt has asked since v6 for a last beat that "changes how the viewer
+ * sees what came before; it does not recap it", and nothing checked. A short
+ * whose closing line is the hook in other words has spent its last four
+ * seconds telling a viewer something they were told at second one, which is
+ * where they leave — and on a loop-to-start platform it is the one beat that
+ * decides whether the second watch happens.
+ *
+ * Measured on content words rather than on the sentence: a closing line that
+ * reuses the subject ("hire", "budget") is doing its job, one that reuses
+ * most of the hook is restating it. Both bars have to be cleared, and the
+ * three endorsed golden runs clear them comfortably (their closers share one
+ * or two words with their hooks). Beat 1 is exempt by construction: it IS
+ * the hook, which `repairScriptStructure` guarantees.
+ */
+export function circularEndingIssues(script: ShortScript): string[] {
+  const last = script.beats[script.beats.length - 1];
+  if (last === undefined || script.beats.length < 2) return [];
+  const hook = topicTokens(script.hook);
+  const closing = topicTokens(last.narration);
+  if (hook.size === 0 || closing.size === 0) return [];
+  let shared = 0;
+  for (const word of closing) if (hook.has(word)) shared++;
+  const containment = shared / Math.min(hook.size, closing.size);
+  if (shared < CIRCULAR_SHARED_WORDS || containment < CIRCULAR_CONTAINMENT) return [];
+  return [
+    `the last beat says the hook again ("${last.narration.slice(0, 60)}…" against "${script.hook.slice(0, 60)}…"); ` +
+      "the closing line has to leave the viewer somewhere the hook did not: the consequence, the thing to do differently, the turn",
+  ];
+}
+
 export function dropRepeatedBeats(script: ShortScript): ShortScript {
   const seen = new Set<string>();
   const kept = script.beats.filter((b) => {
@@ -556,6 +620,14 @@ export function normalizeCommentaryDashes(commentary: Commentary): Commentary {
 
 /** Every plate a generated short is built from stays on screen at least this long — under it a cut reads as a glitch. */
 const MIN_PLATE_HOLD_SECONDS = 2;
+
+/**
+ * The colour the word being said lights up in when the brand kit names no
+ * accent (2026-09-15). A warm yellow: the convention of the format, legible
+ * on any footage, and clearly not the white the rest of the phrase is set
+ * in. A brand WITH an accent uses its own.
+ */
+export const DEFAULT_CAPTION_HIGHLIGHT = "#FFD54F";
 
 /** The brand furniture the framed clip carries — every field beyond the two grounds optional, skipped when absent. */
 interface VideoBrand {
@@ -1492,6 +1564,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       overlays: readonly TitleCard[] = [],
       fit: "contain" | "cover" | "blur-fill" = "contain",
       captionFontName?: string,
+      captionsAssPath?: string,
     ): Promise<{ outputPath: string; durationSeconds: number | null }> => {
       const { logoPath, logoScrim } = await prepareLogo(workDir);
       const frameOutcome = await tools["video.brandFrame"]?.execute(
@@ -1511,6 +1584,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
             ...(logoPath !== undefined && logoScrim !== undefined ? { logoScrim } : {}),
           },
           ...(srtPath !== undefined ? { srtPath } : {}),
+          ...(captionsAssPath !== undefined ? { captionsAssPath } : {}),
         },
         { ctx },
       );
@@ -1860,12 +1934,14 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
                 const firstVoice = scriptVoiceIssues(first.repaired);
                 const firstShots = shotVarietyIssues(first.repaired);
                 const firstPitch = salesPitchIssues(first.repaired, runDirection.direction);
-                if (first.issues.length === 0 && firstVoice.length === 0 && firstShots.length === 0 && firstPitch.length === 0) return first.repaired;
+                const firstCircular = circularEndingIssues(first.repaired);
+                if (first.issues.length === 0 && firstVoice.length === 0 && firstShots.length === 0 && firstPitch.length === 0 && firstCircular.length === 0) return first.repaired;
                 const note = [
                   first.issues.length > 0 ? `Structure problem in your last draft: ${first.issues.join("; ")}. Rewrite so every beat carries its own line.` : undefined,
                   firstVoice.length > 0 ? `Voice problem in your last draft: ${firstVoice.join("; ")}. Keep the message; rewrite the lines as speech.` : undefined,
                   firstShots.length > 0 ? `Shot problem in your last draft: ${firstShots.join("; ")}. Keep the words; change only the stockQuery and visualBrief of the beats that share the place.` : undefined,
                   firstPitch.length > 0 ? `Pitch problem in your last draft: ${firstPitch.join("; ")}. Rewrite that beat so it ends on the idea, in the client's voice, with no offer and no address.` : undefined,
+                  firstCircular.length > 0 ? `Ending problem in your last draft: ${firstCircular.join("; ")}. Keep the hook; rewrite only the last beat so it lands somewhere new.` : undefined,
                 ]
                   .filter((s): s is string => s !== undefined)
                   .join("\n");
@@ -2025,7 +2101,9 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           };
           /** The second shot of a long beat: same query, the first clip excluded AND nothing titled like it (two clocks are one clock twice), half the length. Optional: a miss leaves one shot. */
           const withSecondShot = async (first: PlateResult): Promise<BeatPlates> => {
-            if (beat.seconds < TWO_SHOT_BEAT_SECONDS || tools["video.findStockClip"] === undefined) return { shots: [first] };
+            // Against the hold the beat will really get, not the seconds the
+            // writer asked for — see `expectedHoldSeconds`.
+            if (expectedHoldSeconds(beat, voiceover) < TWO_SHOT_BEAT_SECONDS || tools["video.findStockClip"] === undefined) return { shots: [first] };
             const second = await searchStock(query, SECOND_SHOT_MIN_SECONDS, `plate-${i + 1}-b`, first.sourceUrl);
             return { shots: second.ok ? [first, second.plate] : [first] };
           };
@@ -2231,16 +2309,30 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       const renderPass = (passRev: (id: string) => string, workDir: string) => wf.step.code(passRev("08-render"), async (): Promise<{ outputPath: string; durationSeconds: number | null; beatWindows: Array<{ index: number; start: number; end: number; narration: string }> }> => {
         await fs.mkdir(workDir, { recursive: true });
 
-        // How long each beat holds. With a voice, the plates stretch to cover
-        // it in proportion to how much each beat says; without one, the
-        // script's own seconds stand.
+        // How long each beat holds. With a voice, the picture changes where
+        // the VOICE changes beat (2026-09-15): the script's words are aligned
+        // to the transcript once, and each cut lands in the breath between
+        // one beat's last word and the next beat's first. The word-count
+        // proportion that used to place the cuts stays as the fallback for a
+        // voice with no word timings. Without a voice, the script's own
+        // seconds stand.
         const scripted = script.beats.map((b) => b.seconds);
+        const narrationWords = script.beats.map((b) => scriptWords([b.narration]));
+        const timed =
+          voice && voice.words.length > 0
+            ? alignScriptToTimings(
+                scriptWords(script.beats.map((b) => b.narration)),
+                voice.words.map((w) => ({ text: w.text, start: w.start, end: w.end })),
+                voice.durationSeconds ?? undefined,
+              )
+            : [];
         let holds: number[] = scripted;
         if (voice?.durationSeconds) {
-          const wordCounts = script.beats.map((b) => Math.max(1, b.narration.trim().split(/\s+/).length));
+          const wordCounts = narrationWords.map((ws) => Math.max(1, ws.length));
           const totalWords = wordCounts.reduce((a, b) => a + b, 0);
           const total = voice.durationSeconds + 0.4;
-          holds = wordCounts.map((n) => Math.max(MIN_PLATE_HOLD_SECONDS, (n / totalWords) * total));
+          const proportional = wordCounts.map((n) => Math.max(MIN_PLATE_HOLD_SECONDS, (n / totalWords) * total));
+          holds = beatHoldsFromTimings(timed, narrationWords.map((ws) => ws.length), total, proportional, MIN_PLATE_HOLD_SECONDS);
         }
         const boundaries = holds.reduce<number[]>((acc, h) => [...acc, (acc[acc.length - 1] ?? 0) + h], []);
 
@@ -2264,15 +2356,9 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         // hook is already the picture, twice is noise). Without a timed voice,
         // the on-screen text per beat, held for the beat.
         const cues =
-          voice && voice.words.length > 0
+          timed.length > 0
             ? cuesToSrt(
-                buildPhraseCues(
-                  alignScriptToTimings(
-                    scriptWords(script.beats.map((b) => b.narration)),
-                    voice.words.map((w) => ({ text: w.text, start: w.start, end: w.end })),
-                    voice.durationSeconds ?? undefined,
-                  ),
-                )
+                buildPhraseCues(timed)
                   .filter((cue) => cue.end > leadSeconds + 0.05)
                   .map((cue) => ({ ...cue, start: Math.max(cue.start, leadSeconds) })),
               )
@@ -2283,6 +2369,26 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
               );
         const srtPath = path.join(workDir, "captions.srt");
         await fs.writeFile(srtPath, cues, "utf8");
+
+        // The captions a viewer actually sees (2026-09-15): the same phrases,
+        // as a libass script in which the word being said lights up in the
+        // brand accent and steps forward. `video.brandFrame` burns it instead
+        // of the SRT when it exists; the SRT is still written beside it, so a
+        // reviewer reading the work directory (or a deployment whose
+        // brandFrame predates 1.4.0) has the plain captions. No model, no
+        // cost: the timings were already there for the SRT.
+        let captionsAssPath: string | undefined;
+        if (timed.length > 0) {
+          const groups = buildPhraseGroups(timed)
+            .filter((g) => g.end > leadSeconds + 0.05)
+            .map((g) => ({ end: g.end, words: g.words.map((w) => ({ text: w.text, start: Math.max(w.start, leadSeconds), end: Math.max(w.end, leadSeconds + 0.05) })) }));
+          const font = captionFontFor(language);
+          const ass = buildKaraokeCaptionsAss(groups, { accent: videoBrand.accent ?? DEFAULT_CAPTION_HIGHLIGHT, ...(font !== undefined ? { fontName: font } : {}) });
+          if (ass !== undefined) {
+            captionsAssPath = path.join(workDir, "captions.ass");
+            await fs.writeFile(captionsAssPath, ass, "utf8");
+          }
+        }
 
         const compose = tools["video.composeSequence"];
         if (compose === undefined) throw new WorkflowToolingFailure("video.composeSequence is not registered — an original short cannot be assembled");
@@ -2313,6 +2419,11 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
             }),
             outputPath: path.join(workDir, "sequence.mp4"),
             ...(voice ? { voiceoverPath: voice.path } : {}),
+            // The voice arrives at whatever level the vendor chose; the
+            // short leaves at -16 LUFS so a feed does not turn it down or
+            // up against the clip before it, and the music bed laid on
+            // afterwards sits under a known level (2026-09-15).
+            ...(voice ? { normalizeLoudness: true } : {}),
           },
           { ctx },
         );
@@ -2345,7 +2456,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         // Plates are portrait: fill the picture area edge to edge rather than
         // letterboxing a 9:16 clip inside a 9:12.7 region (the 2026-09-08
         // render had dark side bars either side of every plate).
-        const framed = await brandFrame(bedded.path, workDir, srtPath, titleCards, "cover", captionFontFor(language));
+        const framed = await brandFrame(bedded.path, workDir, srtPath, titleCards, "cover", captionFontFor(language), captionsAssPath);
         // Where each beat's footage sits in the finished clip, for the QA's
         // per-beat relevance read (the cold open is part of beat 1's window).
         const beatWindows = script.beats.map((b, i) => ({ index: i + 1, start: Number((i === 0 ? 0 : boundaries[i - 1]!).toFixed(2)), end: Number(boundaries[i]!.toFixed(2)), narration: b.narration }));

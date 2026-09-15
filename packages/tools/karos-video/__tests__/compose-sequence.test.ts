@@ -4,8 +4,11 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ComposeSequenceInputSchema,
+  LOUDNORM_FILTER,
+  MAX_STRETCH,
   buildComposeSequenceArgs,
   createComposeSequence,
+  stretchPlan,
   type ComposeSequenceProbe,
   type ComposeSequenceResult,
 } from "../src/tools/compose-sequence.js";
@@ -24,6 +27,8 @@ function filterOf(args: string[]): string {
 }
 
 const VIDEO_LEG = "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=30,format=yuv420p";
+/** The same leg with a slow-down ahead of the fps filter, for a plate shorter than its hold. */
+const stretchedLeg = (factor: string) => `scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,setpts=${factor}*PTS,fps=30,format=yuv420p`;
 const AFMT = "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo";
 
 describe("buildComposeSequenceArgs", () => {
@@ -75,11 +80,12 @@ describe("buildComposeSequenceArgs", () => {
     expect(filter).toContain("[a0][a1]concat=n=2:v=0:a=1[aout]");
   });
 
-  it("holdSeconds trims a longer plate and freezes a shorter one out to exactly the hold", () => {
+  it("holdSeconds trims a longer plate and SLOWS a shorter one out to exactly the hold (1.2.0), freezing only past MAX_STRETCH", () => {
     const input = ComposeSequenceInputSchema.parse({
       clips: [
         { path: "long.mp4", holdSeconds: 4 },
         { path: "short.mp4", holdSeconds: 6.5 },
+        { path: "tiny.mp4", holdSeconds: 6 },
       ],
       outputPath: "out.mp4",
     });
@@ -88,16 +94,75 @@ describe("buildComposeSequenceArgs", () => {
         clips: [
           { durationSeconds: 8, hasAudio: false },
           { durationSeconds: 5.2, hasAudio: false },
+          { durationSeconds: 3, hasAudio: false },
         ],
         voiceoverDurationSeconds: null,
       }),
     );
-    // Longer than the hold: trim only, no tpad.
+    // Longer than the hold: trim only, no tpad, no setpts.
     expect(filter).toContain(`[0:v]${VIDEO_LEG},trim=duration=4[v0]`);
-    // Shorter: trim (a no-op) then clone the last frame for the difference, decimals kept sane.
-    expect(filter).toContain(`[1:v]${VIDEO_LEG},trim=duration=6.5,tpad=stop_mode=clone:stop_duration=1.3[v1]`);
-    // The silent track covers the held total, 10.5s.
-    expect(filter).toContain("atrim=duration=10.5[aout]");
+    // 5.2 s under a 6.5 s hold is a 1.25x slow-down: within MAX_STRETCH, so
+    // the plate plays slower and nothing is frozen. No tpad on this leg.
+    expect(filter).toContain(`[1:v]${stretchedLeg("1.25")},trim=duration=6.5[v1]`);
+    // 3 s under a 6 s hold wants 2x: capped at 1.35 (covers 4.05 s), the
+    // remaining 1.95 s frozen — the lesser defect, and named as such.
+    expect(filter).toContain(`[2:v]${stretchedLeg("1.35")},trim=duration=6,tpad=stop_mode=clone:stop_duration=1.95[v2]`);
+    // The silent track covers the held total, 16.5s.
+    expect(filter).toContain("atrim=duration=16.5[aout]");
+  });
+
+  it("stretchPlan: no stretch for a plate that covers its hold, a shortfall under 0.15 s is frozen not re-timed, and the cap is MAX_STRETCH", () => {
+    expect(stretchPlan(8, 4)).toEqual({ factor: 1, freezeSeconds: 0 });
+    expect(stretchPlan(4, 4)).toEqual({ factor: 1, freezeSeconds: 0 });
+    expect(stretchPlan(null, 4)).toEqual({ factor: 1, freezeSeconds: 0 });
+    expect(stretchPlan(4, undefined)).toEqual({ factor: 1, freezeSeconds: 0 });
+    expect(stretchPlan(3.9, 4).factor).toBe(1);
+    expect(stretchPlan(3.9, 4).freezeSeconds).toBeCloseTo(0.1, 6);
+    expect(stretchPlan(5.2, 6.5)).toEqual({ factor: 1.25, freezeSeconds: 0 });
+    expect(stretchPlan(3, 6)).toEqual({ factor: MAX_STRETCH, freezeSeconds: 1.95 });
+  });
+
+  it("a slowed plate's own audio is atempo-stretched by the same factor so the ambient stays on the picture", () => {
+    const input = ComposeSequenceInputSchema.parse({
+      clips: [
+        { path: "a.mp4", holdSeconds: 5 },
+        { path: "b.mp4", holdSeconds: 5 },
+      ],
+      outputPath: "out.mp4",
+    });
+    const filter = filterOf(
+      buildComposeSequenceArgs(input, {
+        clips: [
+          { durationSeconds: 4, hasAudio: true },
+          { durationSeconds: 5, hasAudio: true },
+        ],
+        voiceoverDurationSeconds: null,
+      }),
+    );
+    // 4 → 5 s is 1.25x; the audio plays at 0.8 tempo, then is fitted to the hold as before.
+    expect(filter).toContain(`[0:a]${AFMT},atempo=0.8,atrim=duration=5,apad=whole_dur=5[a0]`);
+    expect(filter).toContain(`[1:a]${AFMT},atrim=duration=5,apad=whole_dur=5[a1]`);
+  });
+
+  it("normalizeLoudness ends the audio chain with loudnorm when there is audio to normalise, and never on a silent track", () => {
+    const withVoice = ComposeSequenceInputSchema.parse({ clips: [{ path: "a.mp4", holdSeconds: 4 }], outputPath: "out.mp4", voiceoverPath: "vo.mp3", normalizeLoudness: true });
+    const f1 = filterOf(buildComposeSequenceArgs(withVoice, { clips: [{ durationSeconds: 4, hasAudio: false }], voiceoverDurationSeconds: 3 }));
+    expect(f1).toContain("apad=whole_dur=4[apre]");
+    expect(f1.endsWith(`[apre]${LOUDNORM_FILTER}[aout]`)).toBe(true);
+
+    const ambientOnly = ComposeSequenceInputSchema.parse({ clips: [{ path: "a.mp4" }, { path: "b.mp4" }], outputPath: "out.mp4", normalizeLoudness: true });
+    const f2 = filterOf(buildComposeSequenceArgs(ambientOnly, { clips: [{ durationSeconds: 4, hasAudio: true }, { durationSeconds: 4, hasAudio: true }], voiceoverDurationSeconds: null }));
+    expect(f2).toContain("[a0][a1]concat=n=2:v=0:a=1[apre]");
+    expect(f2.endsWith(`[apre]${LOUDNORM_FILTER}[aout]`)).toBe(true);
+
+    const silent = ComposeSequenceInputSchema.parse({ clips: [{ path: "a.mp4" }], outputPath: "out.mp4", normalizeLoudness: true });
+    const f3 = filterOf(buildComposeSequenceArgs(silent, { clips: [{ durationSeconds: 4, hasAudio: false }], voiceoverDurationSeconds: null }));
+    expect(f3).not.toContain("loudnorm");
+    expect(f3).toContain("atrim=duration=4[aout]");
+
+    // Off by default: the graph is byte-identical to 1.1.0's for every existing caller.
+    const off = ComposeSequenceInputSchema.parse({ clips: [{ path: "a.mp4", holdSeconds: 4 }], outputPath: "out.mp4", voiceoverPath: "vo.mp3" });
+    expect(filterOf(buildComposeSequenceArgs(off, { clips: [{ durationSeconds: 4, hasAudio: false }], voiceoverDurationSeconds: 3 }))).not.toContain("loudnorm");
   });
 
   it("a move zooms the held plate 6% over its hold on a 2x-oversampled frame, after the hold is fixed; a plate without a hold stays static", () => {
@@ -124,8 +189,9 @@ describe("buildComposeSequenceArgs", () => {
     // 3 s at 30 fps = 90 frames, 0.06 over 89 steps.
     const step = (0.06 / 89).toFixed(6);
     expect(filter).toContain(`[0:v]${VIDEO_LEG},trim=duration=3,scale=2160:3840,zoompan=z='min(1+on*${step},1.060)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30,setsar=1,format=yuv420p[v0]`);
-    // The freeze comes first, then the move, so the frozen tail keeps moving.
-    expect(filter).toContain(`[1:v]${VIDEO_LEG},trim=duration=3,tpad=stop_mode=clone:stop_duration=1,scale=2160:3840,zoompan=z='max(1.060-on*${step},1)'`);
+    // 2 s under a 3 s hold wants 1.5x: slowed to 1.35 (covers 2.7 s), the last
+    // 0.3 s frozen; the freeze comes before the move, so the frozen tail keeps moving.
+    expect(filter).toContain(`[1:v]${stretchedLeg("1.35")},trim=duration=3,tpad=stop_mode=clone:stop_duration=0.3,scale=2160:3840,zoompan=z='max(1.060-on*${step},1)'`);
     // No hold: nothing to pace the move over, so none.
     expect(filter).toContain(`[2:v]${VIDEO_LEG}[v2]`);
     // The default is static.

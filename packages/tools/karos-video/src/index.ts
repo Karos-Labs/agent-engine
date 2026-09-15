@@ -39,6 +39,7 @@ export * from "./tools/render-overlays.js";
 export * from "./tools/materialize-inputs.js";
 export * from "./tools/clip-compose.js";
 export * from "./tools/compose-sequence.js";
+export * from "./tools/karaoke-captions.js";
 export * from "./tools/still-to-clip.js";
 export * from "./tools/mix-music.js";
 export * from "./tools/text-plate.js";

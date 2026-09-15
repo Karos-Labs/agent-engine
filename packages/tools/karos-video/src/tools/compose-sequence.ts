@@ -11,11 +11,49 @@ import { assertToolPath, probeDuration } from "./clip-compose.js";
 // under a spoken line is the cheapest thing that reads as filmed rather than
 // assembled. Static by default; a clip without a hold cannot be paced and
 // stays static whatever it asks.
-const TOOL_VERSION = "1.1.0";
+// 1.2.0 (2026-09-15) — a plate shorter than its hold is SLOWED before it is
+// frozen. `tpad=stop_mode=clone` held the last frame for the difference, and
+// a frame that stops moving under a voice that keeps talking reads as a
+// glitch; the visual QA lists "frozen frames" among the defects it fails a
+// clip for, and it was our own graph producing them whenever a voice ran a
+// little longer than the script had priced. Now the plate plays at up to
+// `MAX_STRETCH` (1.35x slower) to cover the hold, which on library footage
+// reads as deliberate slow motion, and only the remainder past that is
+// frozen. Its own audio is `atempo`-stretched by the same factor so the
+// ambient track stays on the picture. `normalizeLoudness` (off by default)
+// ends the audio chain with an EBU R128 `loudnorm` to -16 LUFS: a TTS voice
+// arrives at whatever level the vendor chose, and a short that is quieter
+// than the one before it in a feed is a short that gets scrolled.
+const TOOL_VERSION = "1.2.0";
 
 /** Total zoom of a `move` over the hold: 1.0 → 1.06. Light on purpose: a viewer should feel it, not see it. */
 export const MOVE_ZOOM_SPAN = 0.06;
+/**
+ * The most a short plate is slowed to reach its hold before the last frame
+ * is frozen for the rest. 1.35: at that factor a walking figure still walks
+ * and a slow move still moves; past it footage reads as stuttering, and a
+ * frozen tail is the lesser defect.
+ */
+export const MAX_STRETCH = 1.35;
+/** A shortfall under this many seconds is not worth re-timing a plate over; the frozen tail is shorter than a frame is noticed. */
+const MIN_STRETCH_SHORTFALL_SECONDS = 0.15;
 const OUTPUT_FPS = 30;
+/** The loudness target for a finished short: streaming platforms normalise to about -14 LUFS; -16 with a -1.5 dBTP ceiling leaves headroom for a music bed laid on top afterwards. */
+export const LOUDNORM_FILTER = "loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000";
+
+/**
+ * How a plate of `probed` seconds is fitted to `hold`: the slow-down factor
+ * (1 when none) and the seconds still frozen after it. Exported for the test.
+ */
+export function stretchPlan(probed: number | null, hold: number | undefined): { factor: number; freezeSeconds: number } {
+  if (hold === undefined || probed === null || probed <= 0 || probed >= hold) return { factor: 1, freezeSeconds: 0 };
+  const shortfall = hold - probed;
+  if (shortfall < MIN_STRETCH_SHORTFALL_SECONDS) return { factor: 1, freezeSeconds: Number(shortfall.toFixed(3)) };
+  const wanted = hold / probed;
+  const factor = Math.min(wanted, MAX_STRETCH);
+  const covered = probed * factor;
+  return { factor: Number(factor.toFixed(4)), freezeSeconds: Math.max(0, Number((hold - covered).toFixed(3))) };
+}
 
 /**
  * `video.composeSequence` — N generated/cut plates → one 9:16 clip, with an
@@ -33,9 +71,11 @@ const OUTPUT_FPS = 30;
  * - Every plate is normalised to the canvas (letterboxed on black, 30 fps,
  *   yuv420p, square pixels) so `concat` never sees mismatched streams — Veo
  *   plates and yt-dlp cuts arrive in whatever geometry they arrive in.
- * - `holdSeconds` pins a plate to an exact length: trimmed when longer,
- *   last-frame-frozen (`tpad=stop_mode=clone`) when shorter. Freezing rather
- *   than looping, because a 6s Veo plate looped to 8s visibly jumps.
+ * - `holdSeconds` pins a plate to an exact length: trimmed when longer;
+ *   when shorter, slowed by up to `MAX_STRETCH` (`setpts`, ahead of the fps
+ *   filter) and only then last-frame-frozen (`tpad=stop_mode=clone`) for
+ *   whatever the slow-down could not cover. Never looped: a 6s plate looped
+ *   to 8s visibly jumps.
  * - With a voiceover, the finished length is
  *   `max(voiceover + tailPadding, video)`: the video is frozen out to cover
  *   the speech plus a beat of silence, and the audio is padded out to cover
@@ -51,7 +91,7 @@ export const ComposeSequenceClipSchema = z.object({
     .number()
     .positive()
     .optional()
-    .describe("Trim/extend this clip to exactly this many seconds (freeze the last frame if it is shorter). Absent means the clip's own length."),
+    .describe("Trim/extend this clip to exactly this many seconds (slow it down by up to 1.35x if it is shorter, then freeze the last frame for the rest). Absent means the clip's own length."),
   move: z
     .enum(["none", "push-in", "pull-back"])
     .default("none")
@@ -84,6 +124,10 @@ export const ComposeSequenceInputSchema = z.object({
     .default(() => ({ w: 1080, h: 1920 }))
     .describe("Output canvas size in pixels. Defaults to 1080x1920 (9:16)."),
   tailPaddingSeconds: z.number().min(0).max(3).default(0.4).describe("Silence after the voiceover ends before the video cuts."),
+  normalizeLoudness: z
+    .boolean()
+    .default(false)
+    .describe("End the audio chain with an EBU R128 loudnorm to -16 LUFS / -1.5 dBTP, so a synthesized voice lands at a feed-consistent level. Off by default; a caller laying a music bed afterwards sets it here, before the bed."),
 });
 export type ComposeSequenceInput = z.infer<typeof ComposeSequenceInputSchema>;
 
@@ -132,16 +176,26 @@ export function buildComposeSequenceArgs(input: ComposeSequenceInput, probe: Com
   const effective: Array<number | null> = [];
 
   // ── Video legs ──
+  /** Per clip, the slow-down applied to reach its hold (1 = none); the ambient leg below matches it. */
+  const stretchFactors: number[] = [];
   for (let i = 0; i < n; i++) {
     const clip = input.clips[i]!;
     const probed = probe.clips[i]?.durationSeconds ?? null;
+    const stretch = stretchPlan(probed, clip.holdSeconds);
+    stretchFactors.push(stretch.factor);
+    // A plate shorter than its hold is slowed FIRST (`setpts` ahead of the
+    // fps filter, so the extra frames are spread evenly rather than
+    // duplicated in a burst), and only what the slow-down cannot cover is
+    // frozen. See `stretchPlan`.
     let chain =
       `scale=${w}:${h}:force_original_aspect_ratio=decrease,` +
-      `pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=30,format=yuv420p`;
+      `pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1` +
+      (stretch.factor > 1 ? `,setpts=${secs(stretch.factor)}*PTS` : "") +
+      `,fps=30,format=yuv420p`;
     if (clip.holdSeconds !== undefined) {
       chain += `,trim=duration=${secs(clip.holdSeconds)}`;
-      if (probed !== null && probed < clip.holdSeconds) {
-        chain += `,tpad=stop_mode=clone:stop_duration=${secs(clip.holdSeconds - probed)}`;
+      if (stretch.freezeSeconds > 0) {
+        chain += `,tpad=stop_mode=clone:stop_duration=${secs(stretch.freezeSeconds)}`;
       }
     }
     // The move comes AFTER the hold is fixed, so a frozen tail keeps moving
@@ -180,8 +234,12 @@ export function buildComposeSequenceArgs(input: ComposeSequenceInput, probe: Com
     for (let i = 0; i < n; i++) {
       const eff = effective[i] ?? null;
       if (probe.clips[i]!.hasAudio) {
+        // A slowed plate's own sound is slowed with it (atempo takes the
+        // reciprocal), so the ambient stays on the picture it belongs to.
+        const factor = stretchFactors[i] ?? 1;
+        const tempo = factor > 1 ? `,atempo=${secs(1 / factor)}` : "";
         const fit = eff !== null ? `,atrim=duration=${secs(eff)},apad=whole_dur=${secs(eff)}` : "";
-        filters.push(`[${i}:a]${AUDIO_FORMAT}${fit}[a${i}]`);
+        filters.push(`[${i}:a]${AUDIO_FORMAT}${tempo}${fit}[a${i}]`);
       } else {
         filters.push(`${SILENCE_SOURCE},atrim=duration=${secs(eff!)}[a${i}]`);
       }
@@ -213,6 +271,16 @@ export function buildComposeSequenceArgs(input: ComposeSequenceInput, probe: Com
     // video (`-shortest`) since anullsrc alone would run forever.
     filters.push(`${SILENCE_SOURCE}${videoDuration !== null ? `,atrim=duration=${secs(videoDuration)}` : ""}[aout]`);
     shortest = true;
+  }
+
+  // ── Loudness ──
+  // Applied to whatever the final audio is, but only when there is something
+  // to normalise: a silent track fed to loudnorm is a silent track plus a
+  // warning, and the gain it would compute is meaningless.
+  if (input.normalizeLoudness && (hasVoiceover || ambientOk)) {
+    const last = filters.length - 1;
+    filters[last] = filters[last]!.replace(/\[aout\]$/, "[apre]");
+    filters.push(`[apre]${LOUDNORM_FILTER}[aout]`);
   }
 
   return [
@@ -289,7 +357,7 @@ export function createComposeSequence(options: KarosVideoToolOptions = {}) {
   return defineTool<ComposeSequenceInput, ComposeSequenceResult>({
     name: "video.composeSequence",
     description:
-      "Concatenates 1-8 plates onto one 9:16 canvas (letterboxed, 30fps), optionally holding each to an exact length, and lays a voiceover over the plates' ducked ambient audio — the picture is frozen out to cover the speech plus a tail of silence. Pure ffmpeg; fails only over ffprobe/ffmpeg themselves.",
+      "Concatenates 1-8 plates onto one 9:16 canvas (letterboxed, 30fps), optionally holding each to an exact length (a short plate is slowed up to 1.35x before its last frame is frozen), and lays a voiceover over the plates' ducked ambient audio — the picture is frozen out to cover the speech plus a tail of silence. Optionally loudness-normalises the result to -16 LUFS. Pure ffmpeg; fails only over ffprobe/ffmpeg themselves.",
     version: TOOL_VERSION,
     inputSchema: ComposeSequenceInputSchema,
     async execute(input, { ctx }) {
