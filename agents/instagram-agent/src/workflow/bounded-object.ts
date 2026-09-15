@@ -325,6 +325,9 @@ export function deviceFromText(text: string, source: string): RelayoutFigureDevi
  */
 export const BOUNDED_OBJECT_LAYOUTS: ReadonlySet<InstagramSlideLayout> = new Set<InstagramSlideLayout>(["headline_focus", "text_only"]);
 
+/** How much copy a statement plate can carry and still hold a ~300px device. See `boundedObjectFor`. */
+export const MAX_COPY_FOR_OBJECT = 300;
+
 /** A fact card as this module reads it — `ResearchFact` and `FactCardForPrompt` both satisfy it, and so does `RelayoutFactCard`. */
 export interface BoundedObjectFactCard {
   claim: string;
@@ -355,6 +358,33 @@ export interface BoundedObjectDecision {
  * **There is no fallback limb.** See the module header: §11.4 proposed a
  * plinth and §11.1 is why it is refused.
  *
+ * ## IT DOES NOT COMPOSE ONTO A PLATE THAT IS ALREADY FULL
+ *
+ * Measured on CI 34972021273, the first render where these archetypes carried
+ * a device at every copy length: `headline_focus` at LONG and `slide.html` at
+ * `long/l` both reported `clipped`, and the pixel limb was nowhere near firing
+ * — `probe.overflow` caught it, the block-start limb that exists because this
+ * same file once printed its headline 155px above its own parent.
+ *
+ * The cause is arithmetic rather than a tuning miss. A figure device is a
+ * numeral, a rule, a label and a source: about 300px of fixed block that does
+ * not shrink with the copy. `.hf-field` and `.sl-field` are elastic but the
+ * plate is not, and at `l` every sibling in the field is 18% taller. A long
+ * headline plus a long body plus a fixed 300px block does not fit, and no
+ * figure size makes it fit without making the numeral pointless.
+ *
+ * **So the object is composed only where it is FOR.** RFC-20 §11.2 measured
+ * the problem it exists to solve: a statement plate with little on it, at
+ * `occupiedShare` 0.0383-0.1252. A plate carrying a long headline and a long
+ * body is not that plate — it already has something to read, and adding a
+ * third block to it is the "nine element groups" cover the restraint reference
+ * was harvested to refuse.
+ *
+ * `MAX_COPY_FOR_OBJECT` is read off the fixtures' own bands rather than
+ * guessed: the calibration renders SHORT, MEDIUM and LONG, the first two fit
+ * an object at every type scale and the third does not, and LONG is 90 + 307 =
+ * 397 characters against MEDIUM's ~200.
+ *
  * ## THE BODY IS READ FIRST, AND THE HEADLINE IS NEVER A LABEL
  *
  * The remedy path reads `` `${headline} ${body}` `` as one string, and at
@@ -382,6 +412,7 @@ export interface BoundedObjectDecision {
  * property the run-on above violated.
  */
 export function boundedObjectFor(slide: InstagramSlideCopy, factCards: readonly BoundedObjectFactCard[]): RelayoutFigureDevice | undefined {
+  if (slide.headline.length + slide.body.length > MAX_COPY_FOR_OBJECT) return undefined;
   const source = factCards.find((card) => card.claim === slide.sourceRef)?.source;
   if (source === undefined || source.trim().length === 0) return undefined;
 
