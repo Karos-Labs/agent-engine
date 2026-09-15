@@ -19,11 +19,16 @@ import { assertNoTraversalOrNul, assertWithinTenantWorkRoot } from "../sandbox.j
 // 1.2.1 (2026-09-10): `wrapOverlayText` takes a `maxLines` (default 3, as
 // before) so `video.textPlate` can wrap a line without losing its end. The
 // two tools here render exactly as before.
+// 1.4.0 (2026-09-15): `captionsAssPath` — a caller-built libass script burned
+// AS IS (no `force_style`), for word-highlight captions the SRT path cannot
+// express; see `karaoke-captions.ts`. When both are given the ASS wins and
+// the SRT is not burned: two caption tracks in one picture is the defect the
+// 2026-09-08 visual QA called "conflicting captioning styles".
 // 1.3.0 (2026-09-10): `fit: "blur-fill"` for a client's 16:9 frame on a 9:16
 // short: the whole picture kept, as `contain`, but the letterbox filled with
 // a blurred, darkened copy of the clip instead of the ground colour, the way
 // every podcast clip on the platform is cut. `contain` and `cover` unchanged.
-const TOOL_VERSION = "1.3.0";
+const TOOL_VERSION = "1.4.0";
 
 /** `blur-fill`: how soft the background copy is (boxblur luma radius, two passes) and how much darker, so the real picture reads as the subject. */
 const BLUR_FILL_RADIUS = 40;
@@ -228,7 +233,12 @@ export const BrandFrameInputSchema = z.object({
   videoPath: z.string().min(1).describe("Path to the source clip to composite the branded frame onto."),
   outputPath: z.string().min(1).describe("Path to write the finished, branded clip to."),
   brand: BrandFrameBrandSchema.describe("The brand inputs to composite — everything optional except the ground color the bars are painted in."),
-  srtPath: z.string().min(1).optional().describe("SRT file to burn as captions. Absent means no captions."),
+  srtPath: z.string().min(1).optional().describe("SRT file to burn as captions, styled by this tool (captionStyle). Absent means no captions. Ignored when captionsAssPath is given."),
+  captionsAssPath: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("A complete libass (.ass) script to burn as the captions, styles and all — e.g. from buildKaraokeCaptionsAss. Burned without force_style, so the caller owns the look; PlayResX/Y should be the canvas. Wins over srtPath."),
   fit: z
     .enum(["contain", "cover", "blur-fill"])
     .default("contain")
@@ -370,7 +380,12 @@ export function buildBrandFrameFilter(input: BrandFrameInput, furnitureAssPath?:
   if (furnitureAssPath !== undefined) {
     filters.push(`subtitles='${filterPath(furnitureAssPath)}'`);
   }
-  if (input.srtPath !== undefined) {
+  if (input.captionsAssPath !== undefined) {
+    // A caller-built script carries its own [V4+ Styles], margins in canvas
+    // pixels; force_style would overwrite exactly the per-word colours it
+    // exists to draw, so none is applied.
+    filters.push(`subtitles='${filterPath(input.captionsAssPath)}'`);
+  } else if (input.srtPath !== undefined) {
     // Forward slashes always: the subtitles filter parses backslashes as
     // escapes even on Windows, and Linux (production) only ever sees them.
     // `force_style` is what keeps the block off the bottom bar: libass's own
@@ -538,6 +553,15 @@ export function createBrandFrame(options: KarosVideoToolOptions = {}) {
           .catch(() => false);
         if (!readable) input = { ...input, srtPath: undefined };
       }
+      if (input.captionsAssPath !== undefined) {
+        // Same rule as the SRT: an unreadable caption file is skipped, the
+        // frame still ships — and `applied` says whether captions went on.
+        const readable = await fs
+          .access(input.captionsAssPath)
+          .then(() => true)
+          .catch(() => false);
+        if (!readable) input = { ...input, captionsAssPath: undefined };
+      }
       const effective: BrandFrameInput = { ...input, brand };
       const outDir = path.dirname(path.resolve(input.outputPath));
       await fs.mkdir(outDir, { recursive: true });
@@ -600,7 +624,7 @@ export function createBrandFrame(options: KarosVideoToolOptions = {}) {
         ...(brand.handle !== undefined ? ["handle"] : []),
         ...(brand.logoPath !== undefined ? ["logo"] : []),
         ...(brand.logoPath !== undefined && brand.logoScrim !== undefined ? ["logo-scrim"] : []),
-        ...(effective.srtPath !== undefined ? ["captions"] : []),
+        ...(effective.captionsAssPath !== undefined ? ["captions", "captions-karaoke"] : effective.srtPath !== undefined ? ["captions"] : []),
         ...(cardsDrawn > 0 ? ["overlays"] : []),
       ];
       return success<BrandFrameResult>({

@@ -8,7 +8,7 @@ import { FilePromptStore, type AgentToolRegistry, type CompletionResult, type Mo
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { BrandFrameInputSchema, ComposeSequenceInputSchema, MixMusicInputSchema, SelfEvalGateInputSchema, StillToClipInputSchema, SynthesizeVoiceInputSchema, TextPlateInputSchema, TranscribeInputSchema } from "@agent-engine/tool-karos-video";
 import { FindStockClipInputSchema, GenerateImageInputSchema, VisualQaGateInputSchema } from "@agent-engine/tool-karos-media";
-import { beatsNamedIn, createTikTokAgentWorkflow, dropRepeatedBeats, isFootageOnlyFeedback, repairScriptStructure, salesPitchIssues, scriptVoiceIssues, shotVarietyIssues } from "../src/workflow/create-tiktok-agent-workflow.js";
+import { beatsNamedIn, circularEndingIssues, createTikTokAgentWorkflow, dropRepeatedBeats, expectedHoldSeconds, isFootageOnlyFeedback, repairScriptStructure, salesPitchIssues, scriptVoiceIssues, shotVarietyIssues } from "../src/workflow/create-tiktok-agent-workflow.js";
 
 /**
  * The ORIGINAL-SHORT production pass in detail: the voiceover decision, the
@@ -688,20 +688,54 @@ describe("original short: script → plates → voice → captions → sequence 
     expect(h.frameArgs[0]!["overlays"]).toBeUndefined();
     expect(h.textArgs[0]).toMatchObject({ text: VOICED_SCRIPT.hook, durationSeconds: 2, ground: "#101418" });
 
-    // The sequence covers the voice: holds sum to voice + tail, proportional
-    // to how much each beat says; the cold open takes its seconds out of beat 1.
-    // Beat 2 says the most, so its hold (~6s) is long enough to cut in two;
-    // beat 3's hold (~3.5s) is not, so its second shot is left unused.
+    // The sequence covers the voice, and the picture changes where the VOICE
+    // changes beat (2026-09-15) rather than at a share of the total
+    // proportional to each beat's word count. The fixture times word i at
+    // `i * 0.43`, so beat 1's eleventh word ends at 4.70 and beat 2's first
+    // starts at 4.73: the cut belongs in that breath, at 4.715. The old rule
+    // put it at 11/37 of 13.5 = 4.01, seven tenths of a second BEFORE the
+    // speaker had finished the sentence — the picture cut mid-line, every
+    // line, on every voiced short.
     const compose = h.composeArgs[0]!;
     const clips = compose["clips"] as Array<{ path: string; holdSeconds: number }>;
     expect(clips.map((c) => path.basename(c.path))).toEqual(["plate-hook.mp4", "plate-1.mp4", "plate-2.mp4", "plate-2-b.mp4", "plate-3.mp4"]);
     const total = clips.reduce((sum, c) => sum + c.holdSeconds, 0);
     expect(total).toBeCloseTo(13.1 + 0.4, 1);
     expect(clips.every((c) => c.holdSeconds >= 1.9)).toBe(true);
-    expect(clips[0]!.holdSeconds).toBeCloseTo(clips[1]!.holdSeconds, 1);
+    // The cold open plus beat 1's remainder IS that boundary: the hook plate
+    // takes its two seconds out of beat 1's hold, so the two together end
+    // exactly where the spoken sentence does.
+    // (each hold reaches the compositor rounded to a hundredth of a second)
+    expect(clips[0]!.holdSeconds + clips[1]!.holdSeconds).toBeCloseTo(4.715, 2);
+    // Beat 2 ends in ITS breath too (word 27 ends 11.58, word 28 starts
+    // 11.61), less the 0.095 s beat 3 borrows to clear the two-second floor:
+    // the total is the voice's length, so a floored beat is paid for by the
+    // longest one rather than by running past the speech.
+    expect(clips[0]!.holdSeconds + clips[1]!.holdSeconds + clips[2]!.holdSeconds + clips[3]!.holdSeconds).toBeCloseTo(11.5, 1);
+    // Beat 2 says the most, so its hold is long enough to cut in two; beat
+    // 3's is not, so its second shot is left unused.
     expect(clips[2]!.holdSeconds + clips[3]!.holdSeconds).toBeGreaterThan(clips[0]!.holdSeconds + clips[1]!.holdSeconds);
     expect(clips[2]!.holdSeconds).toBeCloseTo(clips[3]!.holdSeconds, 2);
+    expect(clips[4]!.holdSeconds).toBeCloseTo(2, 2);
     expect(compose["voiceoverPath"]).toMatch(/voiceover\.mp3$/);
+    // A voiced short leaves at a known loudness, so a feed does not turn it
+    // up or down against the clip before it.
+    expect(compose["normalizeLoudness"]).toBe(true);
+
+    // The captions a viewer meets are the word-highlight script, not the SRT:
+    // the same phrases, with the word being said lit in the brand accent.
+    // The SRT is still written beside it for a reviewer reading the work dir.
+    const assPath = h.frameArgs[0]!["captionsAssPath"] as string;
+    expect(assPath).toMatch(/captions\.ass$/);
+    const ass = await fs.readFile(assPath, "utf8");
+    expect(ass).toContain("PlayResX: 1080");
+    // One event per word state, each showing the whole phrase.
+    expect(ass.split("\n").filter((l) => l.startsWith("Dialogue:")).length).toBeGreaterThan(20);
+    // This client's brand kit names no accent, so the highlight is the
+    // format's own warm yellow (#FFD54F), as &HAABBGGRR.
+    expect(ass).toContain("\\1c&H004FD5FF");
+    // Nothing is drawn while the cold open holds the hook.
+    expect(ass).not.toMatch(/Dialogue: 0,0:00:0[01]\./);
 
     // The visual QA watched the framed file with the right expectations.
     expect(h.qaArgs).toHaveLength(1);
@@ -1121,4 +1155,49 @@ describe("original short: real footage, then a still, never generated video (202
     const clips = h.composeArgs[0]!["clips"] as Array<{ holdSeconds: number }>;
     expect(clips.map((c) => c.holdSeconds)).toEqual([4, 3, 3, 3, 3]);
   }, 20_000);
+});
+
+describe("circularEndingIssues (v10: the last beat may not be the hook again)", () => {
+  const ending = (narration: string) => ({
+    ...VOICED_SCRIPT,
+    beats: [VOICED_SCRIPT.beats[0]!, VOICED_SCRIPT.beats[1]!, { ...VOICED_SCRIPT.beats[2]!, narration }],
+  });
+
+  it("names a closing line that restates the hook, and leaves one that lands somewhere new", () => {
+    // The fixture's own ending turns ("so write the role for the company you
+    // are becoming") — a different place from the hook's claim.
+    expect(circularEndingIssues(VOICED_SCRIPT)).toEqual([]);
+    const circular = circularEndingIssues(ending("The first hire really is the one you end up having to fire."));
+    expect(circular).toHaveLength(1);
+    expect(circular[0]).toContain("the last beat says the hook again");
+    expect(circular[0]).toContain("the turn");
+  });
+
+  it("a closing line that reuses the subject is not a finding: both bars have to be cleared", () => {
+    // "hire" and "first" come back, but the line goes somewhere else.
+    expect(circularEndingIssues(ending("Write the job description for month twelve, then hire against it."))).toEqual([]);
+  });
+
+  it("the three endorsed golden runs pass it — the check is a floor, not a new style", async () => {
+    const dir = path.join(HERE, "..", "evals", "golden-runs");
+    for (const file of await fs.readdir(dir)) {
+      const golden = JSON.parse(await fs.readFile(path.join(dir, file), "utf8")) as { endorsedOutput: Parameters<typeof circularEndingIssues>[0] };
+      expect(circularEndingIssues(golden.endorsedOutput), file).toEqual([]);
+    }
+  });
+});
+
+describe("expectedHoldSeconds (v10: a beat's shots follow how long it is SPOKEN)", () => {
+  it("a silent short keeps the scripted seconds; a voiced one takes the longer of the two", () => {
+    const short = { narration: "Plan first.", seconds: 4 as const };
+    const long = { narration: "You hire for the company you have, and by month six it is a different company with different problems and a different shape.", seconds: 4 as const };
+    expect(expectedHoldSeconds(short, false)).toBe(4);
+    expect(expectedHoldSeconds(long, false)).toBe(4);
+    // Two words at 2.6 words/s is under the scripted 4 s, so 4 s stands.
+    expect(expectedHoldSeconds(short, true)).toBe(4);
+    // Twenty-three words is ~8.8 s: the beat the writer labelled 4 will hold
+    // for more than twice that, which is what decides it gets a second shot.
+    expect(expectedHoldSeconds(long, true)).toBeCloseTo(23 / 2.6, 5);
+    expect(expectedHoldSeconds(long, true)).toBeGreaterThan(6);
+  });
 });
