@@ -398,9 +398,6 @@
        obeys it. Fine here rather than architectural: the band is only 400px
        tall and a 68px rhythm inside it would read as two stripes. */
     background-image:
-      repeating-linear-gradient(to bottom,
-        color-mix(in srgb, var(--fg) 12%, transparent) 0 2px,
-        transparent 2px 11px),
       linear-gradient(to top,
         color-mix(in srgb, var(--accent) 40%, transparent) 0%,
         color-mix(in srgb, var(--accent) 24%, transparent) 100%);
@@ -428,12 +425,9 @@
      against the real `--bg`) exactly zero ink in the bleed band. */
   .cl-recap:not(:empty) {
     background-image:
-      repeating-linear-gradient(to bottom,
-        color-mix(in srgb, var(--fg) 12%, transparent) 0 2px,
-        transparent 2px 11px),
       linear-gradient(162deg,
-        color-mix(in srgb, var(--accent) 30%, var(--bg)) 0%,
-        color-mix(in srgb, var(--accent) 18%, var(--bg)) 100%);
+        color-mix(in srgb, var(--accent) 14%, transparent) 0%,
+        color-mix(in srgb, var(--accent) 8%, transparent) 100%);
     padding: calc(34px * var(--ts, 1)) calc(30px * var(--ts, 1)) calc(28px * var(--ts, 1));
     margin-block-end: calc(56px * var(--ts, 1));
     border-block-start: calc(6px * var(--ts, 1)) solid var(--accent);

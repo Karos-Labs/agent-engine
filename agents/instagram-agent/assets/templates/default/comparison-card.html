@@ -208,9 +208,6 @@
      the frame from out-voting the real ground for `backgroundHex`. */
   body:has(.cmp-label:not(:empty)) .cmp-col {
     background-image:
-      repeating-linear-gradient(45deg,
-        color-mix(in srgb, var(--fg) 12%, transparent) 0 2px,
-        transparent 2px 11px),
       linear-gradient(166deg, var(--card) 0%, color-mix(in srgb, var(--fg) 4%, transparent) 100%);
   }
   /* The "after" / recommended side. `.ab.win`'s treatment, scaled up to a card.
@@ -226,12 +223,9 @@
   .cmp-col.win { border-color: var(--accent); position: relative; }
   body:has(.cmp-label:not(:empty)) .cmp-col.win {
     background-image:
-      repeating-linear-gradient(135deg,
-        color-mix(in srgb, var(--fg) 12%, transparent) 0 2px,
-        transparent 2px 11px),
       linear-gradient(166deg,
-        color-mix(in srgb, var(--accent) 30%, var(--bg)) 0%,
-        color-mix(in srgb, var(--accent) 16%, var(--bg)) 100%);
+        color-mix(in srgb, var(--accent) 14%, transparent) 0%,
+        color-mix(in srgb, var(--accent) 8%, transparent) 100%);
   }
   /* INSIDE the card, not hanging off its corner. A decoration that leaves its
      parent's box makes that parent report `scrollWidth > clientWidth`, which
