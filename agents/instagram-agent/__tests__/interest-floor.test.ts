@@ -223,14 +223,28 @@ describe("checkInterestFloor: every clause fires alone", () => {
     expect(withImagery.findings.map((f) => f.kind)).not.toContain("dead-space");
     expect(withImagery.waived.map((f) => f.kind)).toContain("dead-space");
     expect(withImagery.waived[0]?.waivedReason).toMatch(/imagery or a drawn device/u);
-    // Display-scale TYPE is the other way to carry a plate, and it is read off
-    // the DOM probe rather than the pixels.
-    const bigType = checkInterestFloor(bare(hole), { ...passingSlideProbe(3), displayTypeScale: DISPLAY_TYPE_SCALE_FLOOR }, "interior", { slide: 3 });
-    expect(bigType.findings.map((f) => f.kind)).not.toContain("dead-space");
-    expect(bigType.waived[0]?.waivedReason).toMatch(/display scale/u);
-    // And NEITHER: refused, exactly as before.
-    const neither = checkInterestFloor(bare(hole), { ...passingSlideProbe(3), displayTypeScale: DISPLAY_TYPE_SCALE_FLOOR - 0.001 }, "interior", { slide: 3 });
-    expect(neither.findings.map((f) => f.kind)).toContain("dead-space");
+    // ── DISPLAY-SCALE TYPE IS NOT A SUBJECT, AND THE SWEEP IS WHAT DECIDED
+    //    THAT. ──
+    //
+    // This case used to assert a second limb: a plate whose type reaches
+    // `DISPLAY_TYPE_SCALE_FLOOR` earns its quiet the way imagery does. CI
+    // 34960136572 measured `headline-focus` at fontScale `s` at
+    // `displayTypeScale` **0.2715** against that 0.055 floor — and the owner's
+    // grey screen reads the same number, because it is the same type at the
+    // same size. The limb waived the plate the phase exists to refuse.
+    //
+    // So it is withdrawn (see `plateSubject`), and what this case now pins is
+    // the ABSENCE: **however large the type, type alone does not buy a hole.**
+    // A plate with a strong headline and nothing else is refused, which is the
+    // reading RFC-20 §4 took off the reference plates — `@semrush`'s empty
+    // quadrant is earned by a four-node diagram, not by the size of its
+    // headline.
+    const hugeType = checkInterestFloor(bare(hole), { ...passingSlideProbe(3), displayTypeScale: 0.3 }, "interior", { slide: 3 });
+    expect(hugeType.findings.map((f) => f.kind), "display-scale type bought a hole it has not earned").toContain("dead-space");
+    expect(hugeType.waived, "a withdrawn limb is still waiving").toEqual([]);
+    // And the floor it used to read is still exported, still printed by the
+    // sweep, and read by nothing — asserted so a silent re-wiring is visible.
+    expect(DISPLAY_TYPE_SCALE_FLOOR, "the constant moved; if it gates again this case has to say so").toBe(0.055);
   });
 
   /**
