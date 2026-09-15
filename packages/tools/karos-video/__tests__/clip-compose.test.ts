@@ -155,6 +155,15 @@ describe("buildBrandFrameFilter", () => {
     expect(captionForceStyle(BrandFrameCaptionStyleSchema.parse({}), 1920, 200)).toContain("MarginV=38");
   });
 
+  it("burns a caller-built caption script AS IS when captionsAssPath is given, and the SRT is then not burned (1.4.0)", () => {
+    const filter = buildBrandFrameFilter({ ...base, srtPath: "C:\\work\\clip.srt", captionsAssPath: "C:\\work\\captions.ass" });
+    // The script owns its styles; a force_style would overwrite the per-word colours.
+    expect(filter).toContain("subtitles='C\\:/work/captions.ass'");
+    expect(filter).not.toContain("captions.ass':force_style");
+    // One caption track, never two in the same picture.
+    expect(filter).not.toContain("clip.srt");
+  });
+
   it("burns the furniture script BEFORE the captions, so cards and captions never share a zone", () => {
     const filter = buildBrandFrameFilter({ ...base, srtPath: "C:\\work\\clip.srt" }, "C:\\work\\furniture.ass");
     expect(filter.indexOf("furniture.ass")).toBeLessThan(filter.indexOf("clip.srt"));

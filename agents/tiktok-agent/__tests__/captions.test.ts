@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { alignScriptToTimings, buildPhraseCues, buildScriptCaptions, cuesToSrt, normalizeToken, scriptWords } from "../src/workflow/captions.js";
+import { alignScriptToTimings, beatHoldsFromTimings, buildPhraseCues, buildPhraseGroups, buildScriptCaptions, cuesToSrt, normalizeToken, scriptWords } from "../src/workflow/captions.js";
 
 /** A recognizer's take on a narration: each word timed 0.4s apart, with the mis-hearings the 2026-09-08 renders actually shipped. */
 function heard(words: readonly string[], step = 0.4) {
@@ -87,5 +87,63 @@ describe("cuesToSrt / buildScriptCaptions", () => {
     expect(srt).toContain("0.05%.");
     expect(srt).not.toContain("Sixteen");
     expect(srt.split("\n\n").length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("buildPhraseGroups", () => {
+  it("groups on the same boundaries as buildPhraseCues and keeps the words, so a karaoke script and an SRT show the same phrases", () => {
+    const words = alignScriptToTimings(scriptWords(["One two three four five. Six seven."]), heard(["One", "two", "three", "four", "five.", "Six", "seven."]));
+    const groups = buildPhraseGroups(words);
+    const cues = buildPhraseCues(words);
+    expect(groups.map((g) => g.words.map((w) => w.text).join(" "))).toEqual(cues.map((c) => c.text));
+    expect(groups.map((g) => g.end)).toEqual(cues.map((c) => c.end));
+    // The words survive with their own times — what a per-word highlight needs.
+    expect(groups[0]!.words[0]).toMatchObject({ text: "One", start: 0 });
+    expect(groups[0]!.words).toHaveLength(4);
+  });
+});
+
+describe("beatHoldsFromTimings", () => {
+  /** Three beats of 2, 3 and 2 words, spoken 0.5s apart with a 0.1s gap between beats. */
+  const timed = [
+    { text: "a", start: 0.0, end: 0.4 },
+    { text: "b.", start: 0.5, end: 0.9 },
+    // gap 0.9 → 1.5: the boundary belongs at 1.2
+    { text: "c", start: 1.5, end: 1.9 },
+    { text: "d", start: 2.0, end: 2.4 },
+    { text: "e.", start: 2.5, end: 2.9 },
+    // gap 2.9 → 3.5: boundary at 3.2
+    { text: "f", start: 3.5, end: 3.9 },
+    { text: "g.", start: 4.0, end: 4.4 },
+  ];
+
+  it("cuts in the breath between beats: each boundary is the midpoint of the silence, and the holds still sum to the voice", () => {
+    const holds = beatHoldsFromTimings(timed, [2, 3, 2], 5, [4, 6, 4], 0.5);
+    expect(holds).toEqual([1.2, 2, 1.8]);
+    expect(holds.reduce((a, b) => a + b, 0)).toBeCloseTo(5, 6);
+  });
+
+  it("floors a short beat and pays for it out of the longest one, never out of the total", () => {
+    // A minimum of 2 s makes beat 1 (1.2 s) and beat 3 (1.8 s) short; both
+    // are raised and beat 2 gives up the difference.
+    const holds = beatHoldsFromTimings(timed, [2, 3, 2], 6, [4, 6, 4], 2);
+    expect(holds[0]).toBe(2);
+    expect(holds[2]).toBeGreaterThanOrEqual(2);
+    expect(holds.reduce((a, b) => a + b, 0)).toBeCloseTo(6, 6);
+  });
+
+  it("falls back to the scripted proportion when there are no timings, when the counts do not add up, or when the voice cannot hold every beat at the floor", () => {
+    const scripted = [4, 6, 4];
+    // No timings at all: the scripted seconds, scaled to the voice.
+    expect(beatHoldsFromTimings([], [2, 3, 2], 7, scripted, 0.5)).toEqual([2, 3, 2]);
+    // A count that does not match the words: the alignment is not trustworthy, so nothing is inferred from it.
+    expect(beatHoldsFromTimings(timed, [2, 2, 2], 7, scripted, 0.5)).toEqual([2, 3, 2]);
+    // Three beats cannot each hold 3 s inside a 5 s voice: the old rule stands rather than inventing time.
+    const squeezed = beatHoldsFromTimings(timed, [2, 3, 2], 5, scripted, 3);
+    expect(squeezed.map((h) => Number(h.toFixed(4)))).toEqual([1.4286, 2.1429, 1.4286]);
+  });
+
+  it("returns nothing for no beats", () => {
+    expect(beatHoldsFromTimings(timed, [], 5, [], 2)).toEqual([]);
   });
 });

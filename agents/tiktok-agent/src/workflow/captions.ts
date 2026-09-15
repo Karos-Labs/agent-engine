@@ -147,14 +147,31 @@ const CLAUSE_END = /[,;:]["')\]]?$/u;
  * never past the next cue's start.
  */
 export function buildPhraseCues(words: readonly TimedWord[], options: PhraseCueOptions = {}): CaptionCue[] {
+  return buildPhraseGroups(words, options).map((g) => ({ text: g.words.map((w) => w.text).join(" "), start: g.words[0]!.start, end: g.end }));
+}
+
+/** A phrase cue that still knows its words — what the word-highlight captions are built from (2026-09-15). */
+export interface PhraseGroup {
+  words: TimedWord[];
+  /** When the phrase leaves the screen: the last word's end, stretched to `minSeconds`, never past the next phrase's start. */
+  end: number;
+}
+
+/**
+ * The grouping behind `buildPhraseCues`, with the words kept: the same
+ * boundaries (sentence end, clause end from `breakAtCommaFrom`, `maxWords`)
+ * and the same end-stretching, so a karaoke script and an SRT built from
+ * the same voice show the same phrases at the same moments.
+ */
+export function buildPhraseGroups(words: readonly TimedWord[], options: PhraseCueOptions = {}): PhraseGroup[] {
   const maxWords = options.maxWords ?? 4;
   const commaFrom = options.breakAtCommaFrom ?? 3;
   const minSeconds = options.minSeconds ?? 0.6;
-  const cues: CaptionCue[] = [];
+  const groups: PhraseGroup[] = [];
   let group: TimedWord[] = [];
   const flush = () => {
     if (group.length === 0) return;
-    cues.push({ text: group.map((w) => w.text).join(" "), start: group[0]!.start, end: group[group.length - 1]!.end });
+    groups.push({ words: group.map((w) => ({ ...w })), end: group[group.length - 1]!.end });
     group = [];
   };
   for (const word of words) {
@@ -162,14 +179,87 @@ export function buildPhraseCues(words: readonly TimedWord[], options: PhraseCueO
     if (SENTENCE_END.test(word.text) || group.length >= maxWords || (group.length >= commaFrom && CLAUSE_END.test(word.text))) flush();
   }
   flush();
-  for (let i = 0; i < cues.length; i++) {
-    const cue = cues[i]!;
-    const next = cues[i + 1];
-    const wanted = Math.max(cue.end, cue.start + minSeconds);
-    cue.end = next ? Math.min(wanted, next.start - 0.02) : wanted;
-    if (cue.end < cue.start + 0.05) cue.end = cue.start + 0.05;
+  for (let i = 0; i < groups.length; i++) {
+    const g = groups[i]!;
+    const next = groups[i + 1];
+    const start = g.words[0]!.start;
+    const wanted = Math.max(g.end, start + minSeconds);
+    g.end = next ? Math.min(wanted, next.words[0]!.start - 0.02) : wanted;
+    if (g.end < start + 0.05) g.end = start + 0.05;
   }
-  return cues;
+  return groups;
+}
+
+/**
+ * Where each beat's picture should change, read off the voice (2026-09-15).
+ *
+ * The render used to hold each plate for `(beat's words / all words) x the
+ * voice's length`: a guess at where the voice would be, and it was wrong
+ * by up to a second on every beat, so the picture cut mid-sentence or hung
+ * on after the line had ended. The same alignment that times the captions
+ * knows exactly when beat N's last word ends and beat N+1's first word
+ * starts; the cut belongs in the silence between them.
+ *
+ * Returns one hold per beat, in seconds, summing to `totalSeconds` (the
+ * voice plus its tail). Each boundary is the midpoint of the gap between the
+ * last word of one beat and the first of the next, so a breath is shared
+ * rather than glued to either side. Every hold is at least `minHold`; when
+ * one would be shorter, the shortfall is taken from its longer neighbours.
+ *
+ * `wordsPerBeat` says how many of `timed` belong to each beat, in order; the
+ * counts must sum to `timed.length`. With no timed words at all (or a count
+ * mismatch) the scripted seconds are returned scaled to `totalSeconds`, the
+ * old behaviour, so a run without word timings renders exactly as before.
+ */
+export function beatHoldsFromTimings(
+  timed: readonly TimedWord[],
+  wordsPerBeat: readonly number[],
+  totalSeconds: number,
+  fallbackSeconds: readonly number[],
+  minHold = 2,
+): number[] {
+  const n = wordsPerBeat.length;
+  const scaled = (): number[] => {
+    const sum = fallbackSeconds.reduce((a, b) => a + b, 0);
+    return sum > 0 ? fallbackSeconds.map((s) => (s / sum) * totalSeconds) : fallbackSeconds.map(() => totalSeconds / Math.max(1, n));
+  };
+  if (n === 0) return [];
+  if (timed.length === 0 || wordsPerBeat.reduce((a, b) => a + b, 0) !== timed.length || wordsPerBeat.some((c) => c < 1)) return scaled();
+
+  // Boundaries between beats: midpoint of the gap after each beat's last word.
+  const boundaries: number[] = [];
+  let index = 0;
+  for (let b = 0; b < n - 1; b++) {
+    index += wordsPerBeat[b]!;
+    const lastOfBeat = timed[index - 1]!;
+    const firstOfNext = timed[index]!;
+    const gapStart = lastOfBeat.end;
+    const gapEnd = Math.max(firstOfNext.start, gapStart);
+    boundaries.push(gapStart + (gapEnd - gapStart) / 2);
+  }
+  const edges = [0, ...boundaries, totalSeconds];
+  const holds = edges.slice(1).map((e, i) => e - edges[i]!);
+
+  // Floor every hold at `minHold`, paying for it out of the longest holds,
+  // so the total (the voice's length) never changes.
+  for (let pass = 0; pass < n; pass++) {
+    const short = holds.findIndex((h) => h < minHold - 1e-9);
+    if (short < 0) break;
+    let need = minHold - holds[short]!;
+    holds[short] = minHold;
+    const donors = holds
+      .map((h, i) => ({ h, i }))
+      .filter(({ i, h }) => i !== short && h > minHold)
+      .sort((a, b) => b.h - a.h);
+    for (const d of donors) {
+      if (need <= 0) break;
+      const give = Math.min(need, holds[d.i]! - minHold);
+      holds[d.i] = holds[d.i]! - give;
+      need -= give;
+    }
+    if (need > 1e-9) return scaled(); // the voice is too short for this many beats at this floor; the old rule stands
+  }
+  return holds.map((h) => Number(h.toFixed(3)));
 }
 
 function srtTime(seconds: number): string {
