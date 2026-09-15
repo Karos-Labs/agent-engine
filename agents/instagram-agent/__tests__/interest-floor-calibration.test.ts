@@ -21,6 +21,7 @@ import {
 } from "../src/workflow/interest-floor.js";
 import { buildMarkRing, markCssBlock, type EmphasisIssue, type MarkRing } from "../src/workflow/emphasis-marks.js";
 import { countContentElements } from "../src/workflow/visual-qa-pre-checks.js";
+import { HERO_IMAGE_LAYOUTS } from "../src/workflow/slides-data.js";
 import { MAX_COPY_FOR_OBJECT } from "../src/workflow/bounded-object.js";
 import { buildScriptFontHeadForLanguage, scriptTypographyFor } from "../src/workflow/script-fonts.js";
 import { groundMaterialCssBlock } from "../src/workflow/ground-material.js";
@@ -1434,7 +1435,19 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
             position === "first"
               ? [slide({ n: 1, ...MEDIUM, ...over }), slide({ n: 2, layout: "photo", ...SHORT }), slide({ n: 3, layout: "closer", headline: "That is the pattern", body: "Which round would you cut first?" })]
               : [slide({ n: 1, layout: "cover", ...MEDIUM, kicker: "THE SHIFT" }), slide({ n: 2, layout: "photo", ...SHORT }), slide({ n: 3, ...MEDIUM, ...over })];
-          const measured = await render(assemble(slides, [1, 2, 3].map((n) => selection(n, null))));
+          // ── AN IMAGE-CAPABLE ARCHETYPE GETS ITS IMAGE (RFC-21 Part 2). ──
+          //
+          // `stat_callout` and `quote_card` declare a bounded `.sc-figure-band`
+          // now and are in `HERO_IMAGE_LAYOUTS`, so production sources a picture
+          // for them. Rendering one here with `selection(n, null)` measures a
+          // plate the workflow no longer produces — the same fixture defect this
+          // file already records about the statement archetypes, one archetype
+          // family over. The two that still declare no slot are unaffected and
+          // keep their heroless render.
+          const heroRel = path.relative(REPO_ROOT, heroPath).replaceAll("\\", "/");
+          const subject = position === "first" ? 1 : 3;
+          const canCarry = HERO_IMAGE_LAYOUTS.has((over.layout ?? "photo") as Parameters<typeof HERO_IMAGE_LAYOUTS.has>[0]);
+          const measured = await render(assemble(slides, [1, 2, 3].map((n) => selection(n, n === subject && canCarry ? heroRel : n === 2 ? heroRel : null))));
           const entry = position === "first" ? measured[0]! : measured[2]!;
           report(`${label} @ ${position}`, role, entry);
 
