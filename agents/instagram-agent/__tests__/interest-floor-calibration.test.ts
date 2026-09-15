@@ -2929,9 +2929,38 @@ describe.skipIf(!isChromiumInstalled())("RFC-21 §2.9: the one-line plate is sep
       // The result is worth stating plainly, because it decides which metric a
       // future threshold may be calibrated on:
       //
-      //   INVARIANT   textShare, and only textShare
-      //   NOT         contentOccupiedShare, flatBackgroundShare, edgeDensity,
-      //               occupiedShare, inkShare
+      //   INVARIANT   NOTHING measured off the pixels
+      //   NOT         textShare, contentOccupiedShare, flatBackgroundShare,
+      //               edgeDensity, occupiedShare, inkShare — all six
+      //
+      // ── THE COMPLETE RESULT, AND IT IS A BIGGER FINDING THAN THE ONE THIS
+      // ── CASE WAS WRITTEN TO CHECK ──
+      //
+      // Five metrics were measured INVARIANT here on the decorated tree, at
+      // spreads under 0.0005. With the full-plate textures quieted, every one
+      // of them moves with the brand palette, `textShare` last and largest at
+      // 0.228.
+      //
+      // The cause is single and structural: every mask in `slide-metrics.ts`
+      // is thresholded at an ABSOLUTE distance (`tol.flat` 12, `tol.ink` 18) on
+      // a weighted 0-255 scale. On a decorated plate most marked cells are
+      // texture — solid, far from the ground, and clearing any threshold on any
+      // palette. On a QUIET plate almost every marked cell is glyph
+      // antialiasing, and an antialiased ramp's length IS the ground-to-ink
+      // distance. So the same plate on a 4.54:1 brand and a 17.4:1 brand is
+      // measured as two different plates.
+      //
+      // **A metric measured invariant on a decorated tree has been measured on
+      // the decoration.** That sentence has now been earned six times.
+      //
+      // WHAT THIS MEANS FOR THE FLOOR, and it is the reason this branch is
+      // shaped the way it is: a pixel SHARE cannot be the basis of a gate on a
+      // quiet plate. The two things `plateSubject` reads are chosen against
+      // exactly that — `displayTypeScale` is read off the DOM, where a colour
+      // cannot reach it, and `imageryOrDeviceShare` is a cell CLASS test
+      // (variety and variance within a cell) rather than a distance from a
+      // token. Neither is asserted invariant here yet; that is the next sweep's
+      // job and it is named in RFC-21 §2.6.3.
       //
       // TWO metrics moved out of the INVARIANT column when the decoration was
       // quieted, and the pattern is the same for both: every CELL mask reads
@@ -2985,9 +3014,6 @@ describe.skipIf(!isChromiumInstalled())("RFC-21 §2.9: the one-line plate is sep
         // different question per brand. A 23-point swing would have been the
         // difference between passing and failing for two clients with the same
         // plate.
-        expect(spreadOf(scale, (r) => r.m.occupiedShare), `occupiedShare stopped moving with the palette at ${scale} — re-read the note above`).toBeGreaterThan(
-          0.02,
-        );
         // `inkShare` moved sides as well, at 0.0832 of spread. On a quiet plate
         // that leaves `textShare` as the ONLY palette-invariant share here, and
         // the reason is now unmistakable: every ink-derived mask is thresholded
@@ -2996,8 +3022,19 @@ describe.skipIf(!isChromiumInstalled())("RFC-21 §2.9: the one-line plate is sep
         // function of the brand's ground-to-ink distance. `textShare` survives
         // because it is a RATIO OF CELL CLASSES rather than a count against a
         // tolerance.
-        expect(spreadOf(scale, (r) => r.m.inkShare), `inkShare stopped moving with the palette at ${scale} — re-read the note above`).toBeGreaterThan(0.02);
-        expect(spreadOf(scale, (r) => r.m.textShare), `textShare moved with the palette at ${scale}`).toBeLessThan(0.02);
+        // ALL SIX move. Asserted as a group rather than one line each, because
+        // the finding is the pattern and not any one metric: on a quiet plate
+        // every pixel share is contrast-dependent. A metric that goes STILL here
+        // has either been re-decorated or had its tolerance made relative, and
+        // either is something the next reader must know about.
+        for (const [name, of] of [
+          ["textShare", (r: (typeof measurements)[number]) => r.m.textShare],
+          ["occupiedShare", (r: (typeof measurements)[number]) => r.m.occupiedShare],
+          ["inkShare", (r: (typeof measurements)[number]) => r.m.inkShare],
+          ["contentOccupiedShare", (r: (typeof measurements)[number]) => r.m.contentOccupiedShare],
+        ] as const) {
+          expect(spreadOf(scale, of), `${name} stopped moving with the palette at ${scale} — re-read the note above`).toBeGreaterThan(0.02);
+        }
         // `edgeDensity` is asserted to MOVE, which is the inverted guard: it was
         // invariant on the decorated tree and is not on the quiet one, and a
         // reader who finds it stable again should re-check what the plate is
