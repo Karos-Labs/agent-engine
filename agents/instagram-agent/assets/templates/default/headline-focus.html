@@ -297,13 +297,42 @@
      The plate's SUBJECT is now the statement itself plus the bounded object
      in `.hf-device` (`bounded-object.ts`), which is what §11.4 asked for and
      what §4 recorded the reference doing. */
+  /* ── AND THE TWO BANDS BECAME TWO RULES, WHICH IS THE SAME GEOMETRY
+        WITHOUT THE PATTERN. ──
+
+     The first pass of this section kept the accent bands as they were — two
+     zones of 45-degree accent hairlines, 3px every 46px, 300px tall at the
+     field's head and 200px at its foot — on the argument that a band confined
+     by `background-size` is punctuation rather than a surface. **Read back
+     against the rule it cites, that argument does not hold.** The restraint
+     reference's rule 1 is *never a field you can read as a pattern*, and 300
+     vertical pixels of repeating diagonal hairline at FULL accent is a
+     pattern by any reading of that sentence. Confinement changed where it
+     was, not what it was.
+
+     So they are two solid rules now: the field's head and its foot, capped.
+     The stated reason for having TWO survives intact — *the statement is
+     centred in its field; with a band only at the head a short statement left
+     the bottom quarter reading empty, and marks at both ends frame the
+     statement instead of hanging above it* — and it is the POSITION that
+     does that work, not the texture.
+
+     THE WHOLE BUNDLED SET IS NOW ONE TREATMENT. `slide.html` caps its field
+     at the head or the foot by slide parity, `closer.html` at the head or the
+     foot by ground variant, and this file at both. One accent rule per field
+     edge, no accent texture anywhere in the directory, and the variety lives
+     in WHICH edges a given archetype uses. That consistency is the half of
+     the owner's 2026-09-15 brief that the object does not cover: *tight and
+     consistent*, not eight files each solving the same problem differently.
+
+     14px rather than the 10px `closer.html` and `slide.html` use, because
+     this field carries the largest type in the set and a rule has to hold its
+     own against it. */
   .hf-field {
     background-image:
-      repeating-linear-gradient(45deg,
-        var(--accent) 0 3px, transparent 3px 46px),
-      repeating-linear-gradient(45deg,
-        var(--accent) 0 3px, transparent 3px 46px);
-    background-size: 100% 300px, 100% 200px;
+      linear-gradient(to bottom, var(--accent) 0 calc(14px * var(--ts, 1)), transparent 0),
+      linear-gradient(to top, var(--accent) 0 calc(14px * var(--ts, 1)), transparent 0);
+    background-size: 100% 100%, 100% 100%;
     background-repeat: no-repeat, no-repeat;
     background-position: 0 0, 0 100%;
   }
