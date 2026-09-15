@@ -612,7 +612,42 @@
      uses it: `onerror` REMOVES the `<img>` rather than hiding it, so the
      selector is false precisely when no photograph loaded. A hero render is
      byte-identical. */
-  body:not(:has(.hero)) .scrim, body:not(:has(.hero)) .scrim-top { display: none; }
+  /* ── AND ON THIS FILE THE GUARD IS WITHDRAWN, BECAUSE IT WAS MEASURED. ──
+
+     Pushed and rendered on CI 34956752073. `slide.html`'s half of this change
+     is kept — its blank plate went from a 48-point seam to `occ 0.00 / LER
+     100.00`, which is the whole point. **The cover's half made four things
+     worse at once, and every one of them says the same sentence:**
+
+       G2, blank cover      occ 0.06 -> 0.22, LER 51.67 -> 24.72
+       gate-zero, cover s   iod 0.0898 against clause E's 0.10 floor  FAIL
+       gate-zero, cover m   iod 0.0977                                FAIL
+       marked cover, short  textShare 0.4979 against a 0.47 ceiling   FAIL
+
+     **The scrims were being scored as the cover's drawn device.** A scrim is
+     COVERED and has at most three distinct colours, which is
+     `slide-metrics.ts`'s literal definition of a `graphic` cell, and
+     `imageryOrDeviceShare = imageryShare + graphicShare`. Take them away and
+     the cells do not disappear — they are re-classified as TEXT, which is why
+     `textShare` rose by the same order it fell by. RFC-20 §11.1 states this as
+     a class: *any full-frame painted layer that a plate has not earned will be
+     scored by some clause as the evidence that clause was built to look for.*
+     The hatch was scored as type, the plinth as a device, the screen as
+     content — **and this is the fourth instance, on a layer nobody suspected
+     because it paints nothing a reader can see.**
+
+     WHY IT IS RECORDED RATHER THAN ACTED ON. Clearing it honestly means the
+     cover's `iod` no longer includes a scrim, and `IMAGERY_OR_DEVICE_FLOOR`
+     was calibrated on renders where it did — so the clause needs its own
+     re-sweep, which is a phase and not a line. RFC-20 §11.4 did not scope it
+     and §5.6 rule 4 forbids the shortcut of lowering the floor instead. What
+     ships is the measurement above and the guard withdrawn from this file
+     only, so the cover is byte-identical to `main` while the defect is
+     written down where the next pass will hit it.
+
+     §11.5 item 3's 51.67% is therefore still open on the cover and is now
+     UNDERSTOOD rather than merely named: `.scrim` is `block-size: 52%`, its
+     upper edge sits at y = 48%, and 51.67% is the 52% below it. */
 
   .cov-device { inline-size: 100%; }
   .cov-device:empty { display: none; }

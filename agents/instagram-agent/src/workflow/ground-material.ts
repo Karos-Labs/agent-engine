@@ -581,8 +581,34 @@ function turbulenceLayerUri(layer: GroundMaterialLayer, tilePx: number): string 
  * threshold boundary, and the hatch is what went. If the bound fires again
  * on this tree then some plate still carries a screen and the right move is
  * to find it, not to raise the number.
+ *
+ * ── IT FIRED, AND THE ANSWER IS THE ONE THE PARAGRAPH ABOVE PROMISED. ──
+ *
+ * CI 34956752073, on the de-decorated tree, `headline_focus`:
+ *
+ *     flatBackgroundShare   0.9248716 bare   0.9266884 with the material
+ *     moved                 0.0018168        against a 0.0005 bound
+ *
+ * **The bound is not widened. The mount comes off.** The cause is not a
+ * surviving screen — it is the opposite of the hatch, and that is the part
+ * worth writing down. A hatch tipped cells because it put tens of thousands
+ * of them ON `tol.ink`; a bare plate at `flat` **0.925** has tens of
+ * thousands of cells sitting exactly on `tol.flat` instead, and a sub-ink
+ * grain moves that boundary just as easily. **Quieting the tree did not
+ * remove the coupling; it moved which threshold the coupling acts on.**
+ *
+ * So the rule in this comment stands unchanged and simply reaches a
+ * different conclusion than it did an hour ago: an archetype gets the
+ * material ground only when its own composition clears the floor without
+ * paint, and "clears" now has to include this A/B case. The plan, the
+ * emitter and their nineteen Chromium-free guards all still run and pass;
+ * the three call sites keep their plumbing. What is withheld is the mount.
+ *
+ * `body:not(:has(.copy-art))` does NOT come back — that selector's subject no
+ * longer exists in any bundled template, and a guard whose subject cannot
+ * occur is a sentence about the past.
  */
-export const GROUND_MATERIAL_MOUNTED: boolean = true;
+export const GROUND_MATERIAL_MOUNTED: boolean = false;
 
 export function groundMaterialCssBlock(tokens: GroundMaterialTokens, seedKey: string): string {
   const plan = groundMaterialPlan(tokens, seedKey);
