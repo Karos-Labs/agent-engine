@@ -469,21 +469,35 @@
        `no-repeat`, switched off entirely by the two guards below when there
        is no title or when a photograph loaded.
 
-       The ramp's stops are the same five it always had, expressed as px
-       against 480 (0.95 at 0, 0.42 at 134, wash at 240, 0.04 at 365, gone at
-       480), so the colour reads exactly as it did. On the bundled accent/
+       The ramp's five stops, expressed as px against 480: 0.95 at 0, 0.42
+       at 190, wash at 290, 0.04 at 395, gone at 480. On the bundled accent/
        ground pair the accent is ~92 units from the ground, so an alpha `a`
        lands `92a` away: the part of the band that measures as a DRAWN DEVICE
-       is its own top ~47% and the part that measures as ACCENT is its top
-       ~9%, which is what keeps the cover clear of `IMAGERY_OR_DEVICE_FLOOR`
+       is its own top half and the part that measures as ACCENT is its top
+       ~10%, which is what keeps the cover clear of `IMAGERY_OR_DEVICE_FLOOR`
        at one end and of `FULL_BLEED_IMAGERY_SHARE` and `ACCENT_MAX_SHARE` at
-       the other, at every copy length rather than as a function of one. */
+       the other, at every copy length rather than as a function of one.
+
+       THE MIDDLE THREE STOPS MOVED DOWN 56/50/30px ON 2026-09-15, and the
+       sweep is why. The previous stops (134/240/365) put the cover at
+       `imageryOrDeviceShare` 0.102-0.106 in English at `s` and 0.0955-0.101
+       in Hebrew at `s` — UNDER the 0.10 floor on `he medium s` and
+       `he long s`, and within a point of it on every other small-scale row.
+       The ramp itself measures the same in both scripts; what the rows
+       differ by is the fat-stroke interiors of the display type, which the
+       measure counts as graphic cells and which Heebo at 0.94 x 0.85 has
+       fewer of. A device floor met by the headline's stroke width is not
+       met by the device, so the ramp now carries the floor on its own:
+       measured with the stops above, the cover reads 0.116-0.125 at `s` in
+       both scripts (worst row `he long s` 0.1157), accent share 0.042
+       against a 0.45 ceiling, and the largest empty rectangle is unchanged
+       to the cell. */
     background-image:
       linear-gradient(to bottom,
         color-mix(in srgb, var(--accent) 95%, transparent) 0px,
-        color-mix(in srgb, var(--accent) 42%, transparent) 134px,
-        color-mix(in srgb, var(--wash) 8%, transparent) 240px,
-        color-mix(in srgb, var(--accent) 4%, transparent) 365px,
+        color-mix(in srgb, var(--accent) 42%, transparent) 190px,
+        color-mix(in srgb, var(--wash) 8%, transparent) 290px,
+        color-mix(in srgb, var(--accent) 4%, transparent) 395px,
         transparent 480px);
     background-size: 100% 480px;
     background-repeat: no-repeat;
