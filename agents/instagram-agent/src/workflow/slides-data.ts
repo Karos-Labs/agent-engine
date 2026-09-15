@@ -109,8 +109,26 @@ export const HERO_IMAGE_LAYOUTS: ReadonlySet<InstagramSlideLayout> = new Set<Ins
  * same space. Every OTHER bundled archetype is absent because its own
  * template has no device slot, and emitting a fragment nothing renders would
  * let `default:numbers-are-devices` pass on a figure the reader never sees.
+ *
+ * ── `text_only` JOINED THIS SET WITH THE BOUNDED OBJECT (RFC-20 §11.4). ──
+ *
+ * `slide.html` now declares a `.sl-device` slot on its HEROLESS path, which
+ * is the path `text_only` always takes, and `bounded-object.ts` composes the
+ * figure that fills it. Before that this archetype had no way to carry a
+ * subject at all: RFC-20 §11.2 measured it at `occupiedShare` 0.0383–0.0942
+ * with `flatBackgroundShare` 0.92–0.97, which is type on ground and nothing
+ * else, and the phase covered for it with a full-plate hatch instead of an
+ * object (§11.1 is what that cost).
+ *
+ * **`photo` is NOT in the set even though it renders the same file**, and the
+ * asymmetry is the point rather than an oversight: a `photo` slide's subject
+ * is its photograph. Its device slot would sit under a hero that covers the
+ * frame, which is the "fragment nothing renders" case above, one archetype
+ * over. A `photo` slide that loses its picture is reassigned to `text_only`
+ * before assembly (`InstagramSlideLayoutSchema`), so the heroless plate gets
+ * its object through the membership that names it.
  */
-const DEVICE_SLOT_LAYOUTS: ReadonlySet<InstagramSlideLayout> = new Set<InstagramSlideLayout>(["cover", "headline_focus"]);
+const DEVICE_SLOT_LAYOUTS: ReadonlySet<InstagramSlideLayout> = new Set<InstagramSlideLayout>(["cover", "headline_focus", "text_only"]);
 
 /**
  * How many earlier slides a `closer` needs before its recap strip is worth

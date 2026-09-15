@@ -124,8 +124,38 @@
      a caption in the lower third of a bare plate IS the owner's complaint
      ("אתה רואה מסך אפור ברובו"), so the copy block stops being a caption and
      becomes the composition: it takes the frame inside the 16px margin and
-     centres itself, and a FIELD inside it — `.copy-art` — carries the texture
-     and the accent geometry.
+     centres itself, and a FIELD inside it — `.sl-field` — carries the object,
+     the copy and one accent mark.
+
+     ── 2026-09-15: THE FIELD STOPPED CARRYING A TEXTURE (RFC-20 §11.4). ──
+
+     It was `.copy-art`, and it painted a dot screen or a column ruling
+     across its whole area. That paint is gone, the class is renamed so no
+     selector can quietly find it again, and the field now carries a
+     `.sl-device` slot instead. The reasons are measured rather than a taste
+     call, and there are three:
+
+       * `docs/instagram-restraint-reference.md`, rule 1: *texture only at
+         near-ground value, never a field you can read as a pattern.* At 30%
+         and 24% of `--fg` these were patterns, and the owner's word for the
+         plate they produced was הוא לא נראה מקצועי בכלל.
+       * RFC-20 §11.1 measured what a full-frame painted layer does to the
+         instrument: whatever a clause was built to detect, an unearned paint
+         layer will be scored as the evidence for it. The hatch was scored as
+         TYPE (`textShare` 0.6132) and the plinth as a drawn DEVICE (`iod` up
+         to 0.514). This screen was scored as CONTENT — see the recorded debt
+         in `interest-floor-calibration.test.ts`, where quieting it dropped
+         `contentOccupiedShare` on a plate whose copy had not changed at all.
+       * The floor that required it is gone. Clause D's occupancy limb was
+         demoted to reporting-only in PR #124, and it was the only clause this
+         texture was ever paying.
+
+     WHAT REPLACES IT IS AN OBJECT, NOT LESS OF THE SAME THING. RFC-20 §4
+     recorded the reference execution and the phase did not follow it: *the
+     reference execution is an object on a quiet ground. We took the quiet
+     ground and skipped the object.* `.sl-device` is the object, composed at
+     $0.00 from a figure already in this slide's own copy
+     (`bounded-object.ts`), and the accent rule below is the one mark left.
 
      ── 2026-09-12: THE FIELD IS A SUB-REGION OF THE PLATE, NOT THE PLATE. ──
 
@@ -191,7 +221,7 @@
      body's own 64px margin, which is what makes it read as a field rather
      than as a highlighted paragraph. The negative inline margin and the
      matching inline padding cancel, so no glyph moves. */
-  body:has(.bg:empty) .copy-art {
+  body:has(.bg:empty) .sl-field {
     flex: 1 1 auto; min-block-size: 0;
     display: flex; flex-direction: column; justify-content: center;
     margin-block: 128px 96px;
@@ -344,24 +374,39 @@
      the field is one tile — a 10px square (dots) or a 9px column (rules) — so
      the rectangle the measurement finds is always one of the plate's own bare
      margins rather than a hole in the mark. */
+  /* ── WHAT IS LEFT OF THE ALTERNATION, AND WHY IT IS STILL AN ALTERNATION. ──
+
+     Both textures are deleted (see the header block). What survives is the
+     ONE mark that was never a texture: a single accent bar capping the
+     field's edge. `@semrush`'s reference plate spends its whole colour
+     budget on one diagram and one arrow, and `@buffer`'s on five small
+     squares — restraint-reference rule 4, *colour is information or
+     punctuation, never a surface*. A 12px bar is punctuation. A dot screen
+     over 1000x1100px is a surface.
+
+     THE ALTERNATION IS NOW IN THE MARK'S POSITION RATHER THAN IN ITS
+     TEXTURE, and this archetype still needs one: `photo` and `text_only` are
+     the two layouts `resolveLayout` allows more than once in a carousel, so
+     this is the only bundled file that can render twice in a row. Odd slides
+     cap the field at its head, even slides at its foot. Same ink, same
+     weight, opposite end — two consecutive statement plates read as a pair
+     with a rhythm rather than as one wallpaper, which is what the SHAPE
+     variation was for and all it was for.
+
+     `background-size`/`-repeat`/`-position` are still driven by custom
+     properties so the paint rule below stays one rule; only the values
+     changed, and `--gr-pos` is new because the alternation now lives in it. */
   body {
-    --gr-mark:
-      linear-gradient(to bottom, var(--accent) 0 calc(12px * var(--ts, 1)), transparent 0),
-      radial-gradient(circle 1.8px at 50% 50%,
-        color-mix(in srgb, var(--fg) 30%, transparent) 0 100%, transparent 100%);
-    --gr-tile: 100% 100%, 10px 10px;
-    --gr-repeat: no-repeat, repeat;
+    --gr-mark: linear-gradient(to bottom, var(--accent) 0 calc(12px * var(--ts, 1)), transparent 0);
+    --gr-tile: 100% 100%;
+    --gr-repeat: no-repeat;
+    --gr-pos: 0 0;
   }
   body[data-n$="0"], body[data-n$="2"], body[data-n$="4"], body[data-n$="6"], body[data-n$="8"] {
-    --gr-mark:
-      repeating-linear-gradient(to right,
-        color-mix(in srgb, var(--accent) 82%, transparent) 0 3px,
-        transparent 3px 212px),
-      repeating-linear-gradient(to right,
-        color-mix(in srgb, var(--fg) 24%, transparent) 0 2px,
-        transparent 2px 9px);
-    --gr-tile: auto, auto;
-    --gr-repeat: repeat, repeat;
+    --gr-mark: linear-gradient(to top, var(--accent) 0 calc(12px * var(--ts, 1)), transparent 0);
+    --gr-tile: 100% 100%;
+    --gr-repeat: no-repeat;
+    --gr-pos: 0 100%;
   }
   /* The statement's own guard, asked of the headline's CHILDREN. `.headline`
      is a twin-slot pair now (see the twin-slot block below), so it has two
@@ -369,11 +414,11 @@
      would be true on a plate with no statement on it — the ground mark would
      paint on an empty plate, which is the one thing this guard exists to
      prevent. "Has a non-empty twin" is the same question one level down. */
-  body:has(.bg:empty) .copy:has(.headline > span:not(:empty)) .copy-art {
+  body:has(.bg:empty) .copy:has(.headline > span:not(:empty)) .sl-field {
     background-image: var(--gr-mark);
     background-size: var(--gr-tile);
     background-repeat: var(--gr-repeat);
-    background-position: 0 0, 0 0;
+    background-position: var(--gr-pos);
   }
   /* The statement carries the plate when the photograph does not, so it is
      set at the display size the composition needs rather than at a caption's.
@@ -433,6 +478,41 @@
   /* The accent mark under the copy (legacy `.stat-band`), sized to the plate
      rather than to the legacy 96x10 detail. */
   .stat-band { width: 200px; height: 14px; background: var(--accent); margin-top: 30px; }
+
+  /* ── THE BOUNDED OBJECT'S SLOT (RFC-20 §11.4). ──
+
+     The fragment itself is built by `slide-devices.ts` and styled by
+     `deviceCssBlock()`, which the renderer splices into every document — so
+     everything below is PLACEMENT and nothing below is paint. That split is
+     deliberate: one device library, six kinds, one sheet, and a template
+     that decides only where the object sits on ITS plate.
+
+     `:empty` hides the slot outright, which is the same guard
+     `.brand-badge` and `.brand-handle` carry at the foot of this sheet and
+     it matters more here. On the `photo` path the slot is stripped to an
+     empty div (`DEVICE_SLOT_LAYOUTS` excludes `photo`), and a `margin-top`
+     on an empty box is a 40px hole in the composition that the dead-space
+     clause reads as real. Empty slots must collapse, not merely render
+     nothing.
+
+     The object is capped so it cannot become the plate. A figure device sets
+     its numeral at 200px through `--ts`, which at `l` is 236px, and the
+     statement above it is the subject on this archetype — RFC-20 §11.1's
+     whole finding is that an unbounded painted element gets scored as
+     whatever the clause reading it was built to find. `max-inline-size` and
+     the reduced figure scale keep it an OBJECT: it can be the second thing
+     the eye lands on and it cannot be the first. `headline-focus.html` makes
+     the opposite choice on purpose, because there the numeral IS the
+     statement. */
+  body:has(.bg:empty) .sl-device { margin-top: calc(40px * var(--ts, 1)); }
+  .sl-device:empty { display: none; }
+  /* The device library's own margin is for a plate where the device leads.
+     Here it follows the body, and the slot above already spaces it. */
+  .sl-device .dv { margin-block-start: 0; }
+  .sl-device .dv-figure { font-size: calc(128px * var(--ts, 1)); }
+  .sl-device .dv-figure--mid { font-size: calc(104px * var(--ts, 1)); }
+  .sl-device .dv-figure--small { font-size: calc(80px * var(--ts, 1)); }
+  .sl-device .dv-label { max-inline-size: calc(620px * var(--ts, 1)); }
 
   /* ── TWIN SLOTS: THE MARKED COPY AND ITS PLAIN FALLBACK (RFC-17 §5.4). ──
      `cover.html`'s twin-slot block is the canonical note — why a pair rather
@@ -500,9 +580,19 @@
   <div class="bg"><img src="{{image:hero}}" onerror="this.remove()" alt="" /></div>
   <div class="scrim"></div>
   <div class="copy">
-    <div class="copy-art">
+    <div class="sl-field">
       <div class="headline" id="headline"><span class="mk-runs">{{html:headlineRuns}}</span><span class="mk-plain">{{headline}}</span></div>
       <div class="body-text"><span class="mk-runs">{{html:bodyRuns}}</span><span class="mk-plain">{{body}}</span></div>
+      <!-- THE BOUNDED OBJECT (RFC-20 §11.4). Only `text_only` ever fills this
+           slot: `DEVICE_SLOT_LAYOUTS` deliberately excludes `photo`, whose
+           subject is its photograph, so on the hero path the slot strips to
+           an empty div and `:empty` hides it. It sits AFTER the body rather
+           than above the statement, which is the opposite of
+           `headline-focus.html` and deliberate: there the numeral IS the
+           statement, here the statement is, and the figure is what proves
+           it. Reading order top to bottom: claim, explanation, evidence,
+           source. -->
+      <div class="sl-device">{{html:device}}</div>
       <div class="stat-band"></div>
     </div>
   </div>

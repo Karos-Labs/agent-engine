@@ -148,6 +148,51 @@
     letter-spacing: 0.22em; text-transform: uppercase; color: var(--accent);
   }
   .sc-rail { block-size: 2px; background: color-mix(in srgb, var(--fg) 48%, transparent); margin-block-start: calc(24px * var(--ts, 1)); }
+  /* ── RFC-20 §5.0 (the Ground Rule) AND §11.5, WHICH PULL OPPOSITE WAYS,
+        RESOLVED BY ASKING THE GUARD A DIFFERENT QUESTION. ──
+
+     THE GROUND RULE says furniture may not paint on a plate with no content:
+     with every slot empty this file reported `largestEmptyRectShare` 64.99%
+     against G2's 90% bar, because a full-measure hairline across a blank
+     plate splits its empty rectangle in two. A plate that cannot report
+     itself blank cannot be told apart from a neglected one.
+
+     §11.5 says the OPPOSITE thing about the same rail. Guarded on
+     `.eyebrow`, a POPULATED plate whose writer supplied no kicker loses the
+     rail too — and then measures a 0.2750 rectangle at `(0,0 → 1080,340)`,
+     the band between the top of the plate and the first content. RFC-20
+     §11.5 recorded that as open with the note *"the guard is right; the
+     composition owes the top of the plate something"*, and left it unfixed
+     because there was no basis to pick a composition without a render.
+
+     **BOTH ARE RIGHT, AND THE EYEBROW WAS THE WRONG THING TO ASK ABOUT.**
+     The question the Ground Rule actually asks is *does this plate carry
+     content* — not *did this particular optional slot arrive*. Asked of the
+     plate's own subject, one selector answers both: an empty plate has no
+     subject, so nothing paints and G2 is satisfied; a populated plate has
+     one whether or not it has a kicker, so the rail paints, breaks the top
+     band, and §11.5's rectangle closes.
+
+     WHICH SLOT IS "THE SUBJECT" IS PER-FILE and is named at each guard: the
+     figure on a stat callout, the labels on a comparison card, the takeaway
+     on a closer. Never the eyebrow, and never the ground, which is the
+     distinction this whole part of RFC-20 is about.
+
+     THE USER'S OWN INSTRUCTION, 2026-09-15: *use the position of
+     `largestEmptyRect` to prevent the hole in the middle.* Position is
+     exactly what separates these two cases — same rail, same 2px, and the
+     difference between furniture on a blank plate and a rule that closes a
+     340px band is where it sits relative to content. */
+  /* THE SUBJECT OF A STAT CALLOUT IS ITS FIGURE. `#figure` rather than
+     `> span:not(:empty)` because this slot is not a mark host — the emphasis
+     system wraps only headline and body hosts in twin spans — so a bare
+     `:not(:empty)` is the right reader here and the same one `.stat-band`
+     below already uses. */
+  body:not(:has(#figure:not(:empty))) .sc-rail { display: none; }
+  /* AND THE RAIL KEEPS ITS BOX WHEN THE EYEBROW IS MISSING. `display: none`
+     on the rail would let `.sc-head` collapse to nothing and hand the 24px
+     back to the gap below it, which is the band this is closing. */
+  body:has(#figure:not(:empty)) .eyebrow:empty + .sc-rail { margin-block-start: calc(56px * var(--ts, 1)); }
 
   /* ── The stat slab. A FILLED, low-colour-count region is what the
         measurement calls a drawn device, and this one is about 40% of the
@@ -276,6 +321,14 @@
 
   /* The one full-strength accent mark inside the slab. */
   .stat-band { inline-size: calc(200px * var(--ts, 1)); block-size: calc(14px * var(--ts, 1)); background: var(--accent); margin-block-start: calc(8px * var(--ts, 1)); }
+  /* The Ground Rule again — see `.sc-rail` above for the whole argument.
+     This bar belongs to the figure: with no figure there is no slab for it
+     to mark, and an unguarded 200x14 solid in the middle of a blank plate is
+     half of what took G2's empty-plate rectangle to 64.99%.
+     `headline-focus.html` guards its own `.stat-band` on the same principle,
+     and here the guard reads the same slot the rail's does, so the plate
+     draws completely or not at all. */
+  body:not(:has(#figure:not(:empty))) .stat-band { display: none; }
 
   .num-label {
     font-family: var(--f-display); font-weight: 500; font-size: calc(54px * var(--ts, 1));

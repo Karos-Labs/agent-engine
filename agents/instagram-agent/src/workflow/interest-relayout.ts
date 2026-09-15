@@ -1,6 +1,7 @@
 import { MIN_CLAIM_MATCH, type ImageSelection, type InstagramCopyOutput, type InstagramSlideCopy, type InstagramSlideLayout } from "./types.js";
 import { fallbackArchetypePreferences, type SlideStyleOverride } from "./slides-data.js";
 import type { InterestFailureKind, InterestFinding } from "./interest-floor.js";
+import { clampWords, deviceFromText, figuresInText, MAX_DEVICE_LABEL_LENGTH, sentencesOf, type RelayoutFigureDevice } from "./bounded-object.js";
 
 /**
  * The free re-layout — RFC-14 item L, stage 1 of the interest floor's remedy.
@@ -81,28 +82,25 @@ export type FontScale = "s" | "m" | "l";
 const FONT_SCALE_LADDER: readonly FontScale[] = ["s", "m", "l"];
 
 /**
- * The one device shape a free remedy can build: a figure, its label, and the
- * source that figure came from.
+ * ── THE FIGURE READERS MOVED, AND THIS IS WHERE THEY WENT. ──
  *
- * Structurally a `SlideDevice`'s `figure` member (item M's
- * `SlideDeviceSchema`), declared here so this module does not have to wait on
- * that schema to typecheck — the workflow's own assignment of this object
- * onto the slide is where the two shapes actually have to agree, and that is
- * the call site the compiler checks.
+ * `RelayoutFigureDevice`, `figuresInText`, `deviceFromText` and the
+ * word-boundary guard the `B2B` incident bought now live in
+ * `bounded-object.ts`, because RFC-20 §11.4's compose-time limb needs them
+ * and `slides-data.ts` cannot import THIS module back (it is imported by it).
  *
- * The caps are item M's schema caps, enforced here so a plan can never carry
- * a value the schema would reject: a figure never breaks mid-number, so a
- * 13-character "value" is not a figure, it is a sentence.
+ * They are re-exported unchanged so every caller and every test that named
+ * them here still resolves: a module split is a place to put code, not a
+ * reason to rewrite call sites.
  */
-export interface RelayoutFigureDevice {
-  kind: "figure";
-  /** ≤ 12 chars, verbatim from the source text — "42%", "4.2x", "$1.8B". */
-  value: string;
-  /** ≤ 80 chars. Wraps beneath the figure, in the text face. */
-  label: string;
-  /** ≤ 120 chars. Item M's rule: every figure names its source. */
-  source: string;
-}
+export {
+  deviceFromText,
+  figuresInText,
+  MAX_DEVICE_LABEL_LENGTH,
+  MAX_DEVICE_SOURCE_LENGTH,
+  MAX_DEVICE_VALUE_LENGTH,
+  type RelayoutFigureDevice,
+} from "./bounded-object.js";
 
 /**
  * A promoted picture can never be recorded as EVIDENCE for the cover's claim,
@@ -238,186 +236,6 @@ export interface RelayoutFactCard {
 export interface InterestRelayoutOptions {
   /** The per-slide typography in force this attempt, as `assembleSlidesData` receives it. Absent slides are at the default `"m"`. */
   styleOverrides?: ReadonlyMap<number, SlideStyleOverride> | undefined;
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Reading figures out of prose
-// ─────────────────────────────────────────────────────────────────────────
-
-/**
- * A figure token anywhere in a sentence, captured VERBATIM so it can be set
- * as a device value unchanged.
- *
- * Local rather than reusing `LEADS_WITH_FIGURE` (`visual-qa-pre-checks.ts`):
- * that regex is `^`-anchored and exists to answer a different question ("does
- * this slide OPEN with a number"), and it carries no `g` flag on purpose. And
- * local rather than reusing `claimFigures` (`fact-cards.ts`): that one works
- * on NORMALISED text and returns lossy identity keys ("42 pct"), which is
- * right for deduping claims and wrong for typesetting — a device value has to
- * be the string a reader sees.
- *
- * `(?:19|20)\d{2}` with no unit is skipped below for the reason
- * `claimFigures` skips it: "2026 was the year…" is a date, not a statistic.
- * The digit run cannot END on a separator (`\d(?:[\d.,]*\d)?`), so "2," in
- * "5 rounds to 2, a 60% drop" yields the figure `2` and not `2,` — a device
- * value is typeset verbatim, and a trailing comma would ship.
- */
-const FIGURE_IN_TEXT = /(?:[$€£₪]\s?)?\d(?:[\d.,]*\d)?\s?(?:%|[kKmMbB]\b|x\b|million|billion|bn\b|אלף|מיליון|מיליארד)?/gu;
-
-/**
- * ── THE WORD-BOUNDARY GUARD, AND THE INCIDENT THAT BOUGHT IT ──
- *
- * Prep run `pubsub-21839432908803804`, 2026-09-14. The cover failed clause C,
- * the free re-layout planner reached for `deviceFromText` to fill the hole,
- * and the regex above matched the **`2` inside `B2B`**. What shipped was a
- * display numeral reading `2`, a label reading *"Inbound pipeline loss isn't a
- * product problem B B marketing teams are losing"* — the claim with the digit
- * cut out of the middle of the word — and `salesforce.com` printed under it as
- * the source.
- *
- * **A fabricated statistic, sourced to a real company, on the cover.** That is
- * worse than an ugly slide: every other defect in this system makes a post
- * look bad, and this one makes it WRONG, with a citation.
- *
- * `\d` matches a digit wherever it sits, so every alphanumeric token was a
- * candidate: `B2B`, `Web3`, `5G`, `S3`, `H1`, `GPT-4`, `COVID-19`. The regex
- * was written to find "a figure token anywhere in a sentence" and it did
- * exactly that; what it never asked is whether the digits were a NUMBER or
- * part of a NAME.
- *
- * Checked on the match's neighbours rather than folded into the pattern,
- * because the pattern is already at the limit of what a reader can verify by
- * eye, and because a rejected candidate should be explainable in one line.
- */
-function isStandaloneFigure(text: string, match: RegExpMatchArray): boolean {
-  const start = match.index ?? 0;
-  // The END OF THE TRIMMED MATCH, not of the match. `FIGURE_IN_TEXT`'s
-  // `\s?` before the unit group consumes a trailing space when no unit
-  // follows, so `match[0]` for "5 rounds" is `"5 "` and the raw end lands
-  // on the `r`. Read that way the guard rejected every bare count followed
-  // by a word -- which is most of them -- and the unit tests caught it.
-  const end = start + match[0].replace(/\s+$/u, "").length;
-  const before = text.slice(Math.max(0, start - 2), start);
-  const after = text.slice(end, end + 1);
-  // Glued to a word on the left: `B2B`, `Web3`, `S3`, `H1`.
-  if (/[\p{L}\p{N}]$/u.test(before)) return false;
-  // Hyphenated onto a name: `GPT-4`, `COVID-19`. The hyphen alone is not
-  // enough to reject — "5 rounds to 2 - a 60% drop" is a real figure — so the
-  // letter BEFORE the hyphen is what decides.
-  if (/[\p{L}\p{N}][-\u2010-\u2015]$/u.test(before)) return false;
-  // A letter immediately after a figure the unit group did not claim: `5G`,
-  // `3D`, `4K`. `$1.8B` and `4.2x` are unaffected — their unit is consumed by
-  // the match, so `after` is whatever follows the unit.
-  if (/[\p{L}\p{N}]/u.test(after)) return false;
-  return true;
-}
-
-/** Item M's schema cap on a device value: past 12 characters it is not a figure. */
-export const MAX_DEVICE_VALUE_LENGTH = 12;
-/** Item M's schema cap on a device label. */
-export const MAX_DEVICE_LABEL_LENGTH = 80;
-/** Item M's schema cap on a device source. */
-export const MAX_DEVICE_SOURCE_LENGTH = 120;
-
-interface FoundFigure {
-  /** The verbatim token, trimmed — what gets typeset. */
-  value: string;
-  /** The match exactly as it appeared, including a trailing space the unit group did not consume. Used to cut the figure out of its sentence by POSITION. */
-  raw: string;
-  /** Where `raw` started in the text it was found in. */
-  index: number;
-  /** A figure carrying a unit is a stronger device than a bare count. */
-  hasUnit: boolean;
-}
-
-/**
- * Every usable figure in `text`, strongest first: units before bare counts,
- * then first occurrence. Years without a unit and tokens over
- * `MAX_DEVICE_VALUE_LENGTH` are dropped rather than truncated — half a number
- * is worse than no device.
- */
-export function figuresInText(text: string): FoundFigure[] {
-  const found: FoundFigure[] = [];
-  // A fresh regex per call: a module-level `g` regex carries `lastIndex`
-  // between calls, which is the classic every-other-call miss.
-  const pattern = new RegExp(FIGURE_IN_TEXT.source, "gu");
-  for (const match of text.matchAll(pattern)) {
-    const value = match[0].trim();
-    if (value.length === 0 || value.length > MAX_DEVICE_VALUE_LENGTH) continue;
-    // The digits have to BE a number, not sit inside a name. See the incident
-    // above `isStandaloneFigure`.
-    if (!isStandaloneFigure(text, match)) continue;
-    const hasUnit = /[%$€£₪xkKmM]|million|billion|bn|אלף|מיליון|מיליארד/u.test(value);
-    if (!hasUnit && /^(?:19|20)\d{2}$/u.test(value)) continue;
-    found.push({ value, raw: match[0], index: match.index, hasUnit });
-  }
-  return found.sort((a, b) => Number(b.hasUnit) - Number(a.hasUnit) || a.index - b.index);
-}
-
-/**
- * The sentences of `text` with the offset each one starts at.
- *
- * Offsets, not just strings, because the figure has to be cut out of its
- * label by POSITION. Cutting it by `String.replace(value, …)` looked
- * equivalent and was not: on "In 2024 we saved 4 hours a week" the figure is
- * `4`, and replacing the first `"4"` mangles the year into `202` and leaves
- * the real figure in the label.
- */
-function sentencesWithOffsets(text: string): Array<{ text: string; start: number }> {
-  const out: Array<{ text: string; start: number }> = [];
-  let cursor = 0;
-  for (const piece of sentencesOf(text)) {
-    const start = text.indexOf(piece, cursor);
-    if (start < 0) continue;
-    out.push({ text: piece, start });
-    cursor = start + piece.length;
-  }
-  return out;
-}
-
-/** Sentence boundaries that hold for both Latin and Hebrew copy — `.`/`!`/`?` plus the Arabic-script question mark `؟` (Hebrew copy uses Latin punctuation), and the line break the writer's bodies often use. */
-const SENTENCE_SPLIT = /(?<=[.!?؟])\s+|\n+/u;
-
-function sentencesOf(text: string): string[] {
-  return text
-    .split(SENTENCE_SPLIT)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-}
-
-/** Trim to `max` characters at a word boundary, so a label never ends mid-word. */
-function clampWords(text: string, max: number): string {
-  const collapsed = text.replace(/\s+/gu, " ").trim();
-  if (collapsed.length <= max) return collapsed;
-  const cut = collapsed.slice(0, max);
-  const lastSpace = cut.lastIndexOf(" ");
-  return (lastSpace > max * 0.5 ? cut.slice(0, lastSpace) : cut).replace(/[\s,;:.]+$/u, "");
-}
-
-/**
- * A device built from one figure found in `text`, labelled with the rest of
- * that figure's own sentence and sourced from `source`.
- *
- * Returns `undefined` rather than a partial device whenever any of the three
- * fields cannot be filled honestly: no figure, nothing left to label it with,
- * or no source. Item M's rule is that every figure names its source, and a
- * device with a manufactured label is exactly the "technically correct and
- * empty" this whole item exists to refuse.
- */
-export function deviceFromText(text: string, source: string): RelayoutFigureDevice | undefined {
-  const figure = figuresInText(text)[0];
-  if (figure === undefined) return undefined;
-  // The label is the figure's own sentence with the figure cut out BY
-  // POSITION — see `sentencesWithOffsets` for the defect that made positions
-  // necessary.
-  const sentence = sentencesWithOffsets(text).find((s) => figure.index >= s.start && figure.index < s.start + s.text.length);
-  const scope = sentence ?? { text, start: 0 };
-  const localIndex = figure.index - scope.start;
-  const label = clampWords(`${scope.text.slice(0, localIndex)} ${scope.text.slice(localIndex + figure.raw.length)}`, MAX_DEVICE_LABEL_LENGTH);
-  if (label.length === 0) return undefined;
-  const trimmedSource = clampWords(source, MAX_DEVICE_SOURCE_LENGTH);
-  if (trimmedSource.length === 0) return undefined;
-  return { kind: "figure", value: figure.value, label, source: trimmedSource };
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -810,7 +628,18 @@ function remedyFor(
       //    `KIND_PRIORITY`'s ordering safe: a device is never TRIED ahead of
       //    a switch on an archetype that cannot render it, because it is
       //    never offered there at all.
-      if (device !== undefined && DEVICE_SLOT_ARCHETYPES.has(current)) {
+      //
+      //    ── AND NEVER WHERE THE PLATE ALREADY CARRIES ONE (RFC-20 §11.4). ──
+      //
+      //    `bounded-object.ts` composes exactly this device, from exactly
+      //    this text and exactly this source, BEFORE the first render, for
+      //    `headline_focus` and `text_only`. So on those two archetypes the
+      //    limb above could only ever re-offer a device the plate is already
+      //    wearing — which is the byte-identical re-render the paragraph
+      //    above spends six lines refusing, arrived at from the other
+      //    direction. The caller passes the COMPOSED copy for this reason,
+      //    so `slide.device` here is what the pixels actually carried.
+      if (device !== undefined && DEVICE_SLOT_ARCHETYPES.has(current) && slide.device === undefined) {
         return { kind: "attach-device", slide: slideN, device, reason: `slide ${slideN} already states the figure ${device.value}; setting it as a device instead of prose` };
       }
 

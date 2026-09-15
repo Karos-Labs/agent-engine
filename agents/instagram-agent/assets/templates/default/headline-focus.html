@@ -262,25 +262,57 @@
      band only at the head, a short statement left the bottom quarter of the
      plate as bare texture and the plate read bottom-empty. Bands at both ends
      frame the statement instead of hanging above it. */
-  .copy-art {
+  /* ── 2026-09-15: THE HATCH IS DELETED AND THE ACCENT GEOMETRY IS KEPT
+        (RFC-20 §11.4). ──
+
+     Everything above this line is the record of a texture that no longer
+     exists, and it is kept because the ARITHMETIC in it is still true and
+     the next person to reach for a field texture needs it. What changed is
+     not the arithmetic; it is what the plate carries instead.
+
+     The third layer — a 45-degree hairline at 8% of `--fg` on a 14px pitch,
+     covering the whole field — is gone. Three reasons, and none of them is
+     that it looked bad on its own:
+
+       * `docs/instagram-restraint-reference.md` rule 1, harvested from the
+         accounts that ship this format professionally: *one ground per post,
+         flat; texture only at near-ground value; never a field you can read
+         as a pattern.*
+       * RFC-20 §11.1's class finding: an unearned full-frame painted layer
+         is scored by some clause as the evidence that clause was built to
+         find. This one was scored as CONTENT — quieting it from 22% to 8%
+         moved `contentOccupiedShare` on plates whose copy never changed.
+       * The clause that required it is gone (PR #124 demoted clause D's
+         occupancy limb to reporting-only), so the texture was paying a bill
+         nobody sends any more.
+
+     THE TWO ACCENT BANDS STAY, and the distinction is the one the reference
+     draws in its rule 4 — *colour is information or punctuation, never a
+     surface.* A 300px band at the field's head and a 200px band at its foot
+     are bounded marks that frame the statement; they are confined by
+     `background-size`/`-position` to those two bands and cover no part of
+     the field between them. That is punctuation. A hairline over the whole
+     field was a surface.
+
+     The plate's SUBJECT is now the statement itself plus the bounded object
+     in `.hf-device` (`bounded-object.ts`), which is what §11.4 asked for and
+     what §4 recorded the reference doing. */
+  .hf-field {
     background-image:
       repeating-linear-gradient(45deg,
         var(--accent) 0 3px, transparent 3px 46px),
       repeating-linear-gradient(45deg,
-        var(--accent) 0 3px, transparent 3px 46px),
-      repeating-linear-gradient(45deg,
-        color-mix(in srgb, var(--fg) 8%, transparent) 0 2px,
-        transparent 2px 14px);
-    background-size: 100% 300px, 100% 200px, auto;
-    background-repeat: no-repeat, no-repeat, repeat;
-    background-position: 0 0, 0 100%, 0 0;
+        var(--accent) 0 3px, transparent 3px 46px);
+    background-size: 100% 300px, 100% 200px;
+    background-repeat: no-repeat, no-repeat;
+    background-position: 0 0, 0 100%;
   }
   /* The guard. No statement, no field — see the block above. Asked of the
      statement's CHILDREN, because `.hf-headline` is a twin-slot pair now (see
      the twin-slot block below) and a host with two element children can never
      match `:empty`. Left as `#headline:empty` the guard would have gone
      permanently silent and an empty plate would have kept the field paint. */
-  body:not(:has(#headline > span:not(:empty))) .copy-art { background-image: none; }
+  body:not(:has(#headline > span:not(:empty))) .hf-field { background-image: none; }
 
   /* ── THE ALTERNATIVE GROUND: A LARGE TYPOGRAPHIC MARK ON A DASH SCREEN. ──
 
@@ -378,14 +410,22 @@
      than on two diagonal bands. A diagonal band is the grid variant's
      signature; giving the glyph variant a horizontal cap means the two
      grounds differ in their accent geometry as well as in their texture. */
-  body.gr-glyph .copy-art {
-    background-image:
-      linear-gradient(to bottom, var(--accent) 0 calc(10px * var(--ts, 1)), transparent 0),
-      radial-gradient(ellipse 5px 1.3px at 50% 50%,
-        color-mix(in srgb, var(--fg) 22%, transparent) 0 100%, transparent 100%);
-    background-size: 100% 100%, 17px 7px;
-    background-repeat: no-repeat, repeat;
-    background-position: 0 0, 0 0;
+  /* The dash screen is deleted for the same three reasons as the grid
+     variant's hatch — see that block. Its 17x7 tile density was measured
+     four times and the note above is kept for whoever needs the arithmetic;
+     what the measuring was FOR was taking the plate off clause D's "flat and
+     idle", and clause D no longer refuses anything.
+
+     The single solid accent rule capping the field's head stays, and it is
+     now the whole of the glyph variant's accent geometry against the grid
+     variant's two diagonal bands. The two grounds therefore still differ in
+     their accent GEOMETRY, which the block above says is the point of having
+     two — and they no longer differ by wearing two different wallpapers. */
+  body.gr-glyph .hf-field {
+    background-image: linear-gradient(to bottom, var(--accent) 0 calc(10px * var(--ts, 1)), transparent 0);
+    background-size: 100% 100%;
+    background-repeat: no-repeat;
+    background-position: 0 0;
   }
   .ground-glyph { display: none; }
   /* Furniture, but furniture that paints ink, so it answers to the same rule:
@@ -631,7 +671,7 @@
     <div class="kicker">{{kicker}}</div>
     <div class="hf-rail"></div>
   </div>
-  <div class="hf-field copy-art">
+  <div class="hf-field">
     <div class="copy">
       <div class="hf-device">{{html:device}}</div>
       <div class="hf-headline" id="headline"><span class="mk-runs">{{html:headlineRuns}}</span><span class="mk-plain">{{headline}}</span></div>

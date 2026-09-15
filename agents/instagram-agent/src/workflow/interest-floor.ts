@@ -1903,10 +1903,66 @@ export function checkInterestFloor(
   // this has no flat-background limb — it does not need one. "There is
   // nothing here to read" is a defect whatever the ground is doing, and a
   // busy ground is exactly the case the conjunction in D lets through.
+  //
+  // ── 2026-09-15: THE DOM LIMB DECIDES, AND THE PIXEL LIMB REPORTS. ──
+  //
+  // This clause had two limbs and they asked the same question twice, once
+  // off the pixels (`contentOccupiedShare`) and once off the document
+  // (`probe.textBoxShare`). Three measurements say the DOM limb is the one
+  // that should carry the refusal, and none of them is a preference.
+  //
+  // **1. The pixel limb is not colour-agnostic, and the owner required that
+  // it be.** His instruction, 2026-09-14: *"every company has completely
+  // different brand colours — make sure the metrics are agnostic to colour
+  // and rest on the absence of elements, structure and contrast rather than
+  // on thresholds fitted to one palette."* Measured on PR #124 across four
+  // brand palettes from 4.54:1 to 17.4:1: on a QUIET plate
+  // `contentOccupiedShare` spreads **0.032** with the brand and nothing else
+  // changed. The floor it is compared against is **0.06**. A threshold whose
+  // palette spread is half its own value is not a threshold; it is a coin
+  // weighted by the client's brand book. Every mask in `slide-metrics.ts` is
+  // cut at an ABSOLUTE distance, and on a plate whose ink is glyph
+  // antialiasing the length of that ramp IS the ground-to-ink distance.
+  //
+  // **2. The pixel limb was measuring the decoration.** `.copy-art`'s hatch
+  // at 22% took a plate whose only content was a two-line headline to
+  // `contentOccupiedShare` 0.3128; the same plate at 10% reads 0.0379, which
+  // is the type alone. The whole alpha sweep is in
+  // `CONTENT_OCCUPIED_SHARE_FLOOR`'s own comment. RFC-20 §11.1 states the
+  // class: *any full-frame painted layer that a plate has not earned will be
+  // scored by some clause as the evidence that clause was built to look for.*
+  // This is that sentence about this clause. **The hatch is deleted now
+  // (§11.4), so the number this limb reads has lost the thing that was
+  // holding it up** — and the honest response to that is to stop gating on
+  // it, not to re-fit it to the plate that is left.
+  //
+  // **3. The DOM limb separates far better.** `textBoxShare` is the summed
+  // area of the text-bearing leaf boxes: a populated slide's copy lockup
+  // alone measures 0.1-0.4 and a render whose copy never arrived measures 0,
+  // because every template hides its empty slots. That is a 10-40x band
+  // against `PROBE_TEXT_BOX_SHARE_FLOOR`, where the pixel limb's own debt row
+  // sat at 0.0414 against 0.06 — inside its palette spread.
+  //
+  // WHAT THIS COSTS, STATED RATHER THAN GLOSSED. `PROBE_TEXT_BOX_SHARE_FLOOR`
+  // was calibrated as ONE OF TWO limbs and deliberately biased toward false
+  // PASSES (its own comment says so). Carrying the refusal alone, it is a
+  // weaker clause than the pair was, and **that constant is not raised here
+  // to compensate** — RFC-20 §5.6 rule 4 forbids moving a floor to suit a
+  // plate, and it forbids it in this direction too. What ships instead is the
+  // measurement that would let it move honestly: the gate-zero sweep now
+  // prints `textBoxShare` on every row and summarises its band per role, so
+  // the next pass sets this floor from a table rather than from an argument.
+  //
+  // THE PIXEL LIMB IS KEPT AS A FALLBACK, not deleted, for the one case the
+  // DOM cannot answer: a caller with no probe. `checkInterestFloor` takes
+  // `probe` as optional and several call sites pass none, and a clause that
+  // silently stops running for them would be worse than a palette-dependent
+  // one. On that path the finding says which limb spoke.
   const contentFloor = CONTENT_OCCUPIED_SHARE_FLOOR[role];
   const typeShare = probe?.textBoxShare;
   const noType = typeShare !== undefined && typeShare < PROBE_TEXT_BOX_SHARE_FLOOR;
-  if (metrics.contentOccupiedShare < contentFloor || noType) {
+  const noContentPixels = typeShare === undefined && metrics.contentOccupiedShare < contentFloor;
+  if (noType || noContentPixels) {
     findings.push({
       slide,
       role,
@@ -1921,8 +1977,9 @@ export function checkInterestFloor(
       threshold: noType ? PROBE_TEXT_BOX_SHARE_FLOOR : contentFloor,
       sentence: noType
         ? `${where} — the document carries no text box at all (${pct(typeShare ?? 0)} of the plate, floor ${pct(PROBE_TEXT_BOX_SHARE_FLOOR)}) while ${pct(metrics.occupiedShare)} of the frame is painted: the ground layers rendered and the copy did not.`
-        : `${where} — only ${pct(metrics.contentOccupiedShare)} of the frame carries anything to read (floor ${pct(contentFloor)} for ${roleNoun(role)}), ` +
-          `against ${pct(metrics.occupiedShare)} of the frame carrying a mark of any kind: the difference is ground decoration, and the largest region with no content in it covers ${pct(metrics.largestEmptyContentRectShare)}.`,
+        : `${where} — measured on the PIXELS because this render carried no DOM probe: only ${pct(metrics.contentOccupiedShare)} of the frame carries anything to read ` +
+          `(floor ${pct(contentFloor)} for ${roleNoun(role)}), against ${pct(metrics.occupiedShare)} of the frame carrying a mark of any kind, and the largest region with no content in it covers ${pct(metrics.largestEmptyContentRectShare)}. ` +
+          `This limb is palette-dependent (spread 0.032 across brand palettes) and runs only when the probe is absent.`,
       steer:
         `Slide ${slide} is a decorated empty plate: its ground treatment is painting and its content is not. ` +
         `Check that the headline and body actually reached it, then give it something a reader can take away — ${deviceSteer("a device built from its own figure")}, a second content element — or merge it into ${slide > 1 ? `slide ${slide - 1}` : "the next slide"}.`,
