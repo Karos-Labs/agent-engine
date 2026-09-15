@@ -15,7 +15,7 @@ import { composeBoundedObjects } from "../src/workflow/bounded-object.js";
 import { rolesForSlideCount, skeletonSignature } from "../src/workflow/skeleton-memory.js";
 import { FULL_BLEED_IMAGE_LAYOUTS, assembleSlidesData } from "../src/workflow/slides-data.js";
 import type { TrendScoutOutput } from "@agent-engine/workflow";
-import type { BrandTokens, ImageCandidate, ImageVettingOutput, InstagramCopyOutput, ResearchFact, ResearchOutput, StyleConfig, VisualQaOutput } from "../src/workflow/types.js";
+import type { BrandTokens, ImageCandidate, ImageSelection, ImageVettingOutput, InstagramCopyOutput, ResearchFact, ResearchOutput, StyleConfig, VisualQaOutput } from "../src/workflow/types.js";
 import type { SlideMetrics, SlideProbe } from "../src/workflow/interest-floor.js";
 import { SKELETON_BELIEF_KEY, type SkeletonHistory } from "../src/workflow/skeleton-memory.js";
 import { DEFAULT_CAROUSEL_LANE } from "../src/workflow/create-instagram-agent-workflow.js";
