@@ -3049,7 +3049,13 @@ describe.skipIf(!isChromiumInstalled())("RFC-21 §2.9: the one-line plate is sep
       // to be read against measured contrast rather than as a constant.
       const coccSpread = Math.max(spreadOf("l", (r) => r.m.contentOccupiedShare), spreadOf("s", (r) => r.m.contentOccupiedShare));
       expect(coccSpread, "contentOccupiedShare is palette-dependent, which is known — this bound is where it stops being tolerable").toBeLessThan(0.2);
-      expect(coccSpread, "contentOccupiedShare stopped moving with the palette — re-read the tolerances before deleting this").toBeGreaterThan(0.05);
+      // 0.02, not the 0.05 this was written at. The spread was 0.157 when the
+      // plate carried a 22% texture and is 0.032 now that it carries an 8% one:
+      // a quieter plate has less ink for the absolute tolerance to mis-measure,
+      // so the ABSOLUTE spread narrows even as the metric stays contrast-
+      // dependent. The bound moves with the measurement and the reason is
+      // recorded, which is the difference between re-calibrating and relaxing.
+      expect(coccSpread, "contentOccupiedShare stopped moving with the palette — re-read the tolerances before deleting this").toBeGreaterThan(0.02);
       // The margin that makes the spread survivable TODAY: even the worst
       // palette clears clause G's tightest floor several times over. This is
       // the line that goes red first if a future template gets sparser.
