@@ -4,20 +4,7 @@ import type { AgentTool, AgentToolRegistry } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import { CANDIDATES_PER_PHOTO_SLIDE, RUN_BUDGET_BELIEF_KEY } from "../src/workflow/run-budget.js";
-import {
-  goodRelevanceVerdict,
-  goodTrendScoutOutput,
-  fakeRenderCarousel,
-  fakeRouterSequence,
-  finalTurn,
-  goodCopyOutput,
-  goodImageCandidatePool,
-  goodResearchOutput,
-  goodVisualQaOutput,
-  makePromptStore,
-  setupTestEnvironment,
-  type TestEnvironment,
-} from "./test-helpers.js";
+import { fakeRenderCarousel, fakeRouterSequence, finalTurn, goodCopyOutput, goodImageCandidatePool, goodRelevanceVerdict, goodResearchOutput, goodTrendScoutOutput, goodVisualQaOutput, makePromptStore, pictureSlidesOfGoodCopy, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 
@@ -130,7 +117,10 @@ describe("05b-source-images", () => {
     // not from the topic — that is the whole reason the step sits inside the
     // retry loop rather than before it.
     const needs = seen?.["needs"] as { n: number; query: string }[];
-    expect(needs.map((n) => n.n)).toEqual(copy.slides.map((s) => s.n));
+    // The slides that asked for a picture, which is no longer every slide: the
+    // imagery band demotes the last two of this all-photo fixture at 04m2,
+    // before 05b asks any harvester for anything.
+    expect(needs.map((n) => n.n)).toEqual(pictureSlidesOfGoodCopy(copy));
     // Phase 3, item R: the retrieval query is `retrievalQueryFor(...)`, not
     // the raw need. This fixture's slides carry the LEGACY bare string, and
     // the rule for one is "the first eight words" — a keyword index cannot
@@ -138,7 +128,10 @@ describe("05b-source-images", () => {
     // forty lines on it. A slide whose writer supplied `searchTerms` sends
     // those instead; a full scene brief never reaches a keyword search.
     expect(needs.map((n) => n.query)).toEqual(
-      copy.slides.map((s) => String(s.visualNeed).split(/\s+/).slice(0, 8).join(" ")),
+      // The same slides the needs above came from, for the same reason.
+      copy.slides
+        .filter((s) => pictureSlidesOfGoodCopy(copy).includes(s.n))
+        .map((s) => String(s.visualNeed).split(/\s+/).slice(0, 8).join(" ")),
     );
     expect(seen?.["repoRoot"]).toBe(env.repoRoot);
     // Run-scoped, so two concurrent runs cannot overwrite each other's files.
@@ -376,6 +369,11 @@ describe("05b-source-images", () => {
   });
 
   it("downgrades to text-only when generation cannot fill the gap either, and says so", async () => {
+    // The LAST slide that still asks for a picture. This was a literal 5,
+    // which the imagery band turned into a slide that never asked for one and
+    // so could never be downgraded for want of it. Derived, so the case keeps
+    // meaning "a picture slide whose picture cannot be found".
+    const UNFILLABLE = pictureSlidesOfGoodCopy().at(-1)!;
     const copy = goodCopyOutput();
     const pool = goodImageCandidatePool();
 
@@ -388,7 +386,7 @@ describe("05b-source-images", () => {
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
       finalTurn(copy),
-      finalTurn(selectionsWithGaps(copy, pool[0]!.path, [5])),
+      finalTurn(selectionsWithGaps(copy, pool[0]!.path, [UNFILLABLE])),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
 
@@ -405,7 +403,7 @@ describe("05b-source-images", () => {
       (s) => s.stepId === "07a-downgrade-unfillable-slides-attempt-1",
     );
     const output = downgradeStep?.output as { downgraded: number[]; reason: string } | undefined;
-    expect(output?.downgraded).toEqual([5]);
+    expect(output?.downgraded).toEqual([UNFILLABLE]);
     expect(output?.reason).toContain("no candidate matched this visual need");
   });
 

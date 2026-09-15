@@ -732,3 +732,101 @@ imagery, not on a scrim.
 So the defect is unchanged and still open — clearing it honestly means re-sweeping clause E's own floor on a tree
 where the scrim no longer counts, which is a phase — but the plates it can mislead about are now the exception
 rather than the default. **Recorded here so the next pass sees both halves at once.**
+
+# 14. The composition principles (owner, 2026-09-15)
+
+The owner's second message that day was not a defect report. It was a check on the DIRECTION, and its concern
+was the opposite of the one that produced §13:
+
+> *"שני דברים שאני רוצה לוודא לגבי הכיוון, כדי שלא נינעל על שטאנץ מרובע"* — two things I want to check about the
+> direction, so we do not lock ourselves into a rigid die-stamp.
+
+Every gate this phase added makes the system MORE prescriptive. The ruling below is the bound on that, and it
+is why §14.2 is a section about what the system must NOT fix.
+
+## 14.1 Four principles, and what already enforced each one
+
+| Principle | Status when the ruling landed | Where it lives |
+| --- | --- | --- |
+| A strong hook: a bold visual plus a short headline that stops the scroll | **Already enforced** | `default:cover-carries-device` refuses slide 1 with neither a photograph nor a figure device, before a render is spent. `headline_focus` and `text_only` are refused on slide 1 outright. |
+| Short and readable: 20 to 30 words a slide, the detail to the caption | **Nothing counted words** | NEW: `slide-word-budget.ts`, step `07h2`. |
+| A balanced visual dose: pictures on 3 to 5 slides, the rest on typography, figures and graphic objects | **Floor only, and it counted the wrong thing** | `imagery-floor.ts` gained a ceiling and `FULL_BLEED_IMAGE_LAYOUTS`. |
+| A close that asks for something | **Already enforced** | `default:closer-carries-cta`, graded: code can prove a CTA is present and cannot prove one absent, so a last slide that does not close goes to the judge with a note. |
+
+Two of the four needed nothing. That is worth recording as plainly as the two that did: the answer to *"is the
+system built to these principles"* was already yes for the hook and the close, and the honest report is which
+half was missing rather than a claim that all of it was new work.
+
+### The word budget, and the defect it actually closes
+
+The copy prompt has asked for this in prose since v1 — §5, verbatim: *"Keep both tight; a carousel slide is not a
+paragraph."* No number, and nothing counted. That is the unenforced-instruction-dressed-as-enforced shape this
+repository keeps finding at the bottom of a defect, and here it had a second consequence worse than long copy.
+
+**The system's automatic remedy for too much copy was to make the type smaller.** Three mechanisms, all
+downstream of the writer: `slide.html`'s fit script steps a long headline down at 36 and 66 characters;
+`interest-relayout.ts` answers a `text-wall` or `clipped` finding by dropping the slide's `fontScale` one step
+(x0.85); and on a Hebrew run `scriptTypographyFor` multiplies again (x0.94). Compounded, a 31px body is 24.8
+design px, and an Instagram feed image is drawn at roughly 400 CSS px on a phone. **The owner's complaint from the
+same week — ״הכתב הקטן שלא קריא״ — and the long-copy complaint are one defect seen at two ends of the pipeline.**
+
+So `07h2` counts words on the ASSEMBLED slides and refuses over 30, before a render is spent and before anything
+has shrunk to fit. Counted on what RENDERS and never on the copy object, because `contentFor` emits a different
+field set per archetype and two of them never render `headline`/`body` at all: a `quote_card` renders
+`quoteText` + `attribution`, a `list_takeaway` renders its headline and its rows. A structured block — one list
+row, one comparison column — is capped at 20 rather than summed, because a reader takes a row in at a glance and
+charging the sum would refuse every prompt-compliant list.
+
+Four of the six canonical fixture slides were 31 to 33 words and were TRIMMED. RFC-20 §5.7's posture covers this:
+the number is not moved to make something pass, and a fixture that violates a new rule is the fixture that is wrong.
+
+### The imagery ceiling, and the counting bug it exposed
+
+§13 built a floor of 3. The ruling is a RANGE, and the missing half was not only the ceiling.
+
+`MIN_PICTURE_SLIDES` counted `HERO_IMAGE_LAYOUTS`, which had just been widened from two archetypes to six when
+the four panels got their bounded `.sc-figure-band`. So a carousel of three panels carrying three 300px bands and
+no photograph anywhere MET the floor: **the count said three and a reader would say none.** Widening the SOURCING
+set had quietly widened the floor's own definition of a picture, which nothing asked it to do.
+
+`FULL_BLEED_IMAGE_LAYOUTS` (`photo`, `cover`) is the composition set and both bounds now read it. The band on a
+panel is an accent on a typographic plate and counts toward neither end — which is also the second half of the
+owner's own sentence, *"the rest lean on clean typography, data or graphic objects"*.
+
+The ceiling is `ceilingFor(slides)` = `max(3, min(5, slides - 2))`, not a flat 5. The flat version was written
+first, with a doc comment arguing a ratio would change nothing a reader could see; the suite refuted it within
+the hour. `goodCopyOutput()` is six slides and every one is a `photo`, and a flat 5 let it through having removed
+exactly one picture. Five of six is not a mix. The outer `max` keeps the ceiling off the floor on a short post,
+so the two ends can never disagree about the same carousel.
+
+## 14.2 What must NOT be fixed: no arc, and no fixed set of eight
+
+> *"אל תנעל את רצף השקופיות... אנחנו לא רוצים להיתקע לנצח על אותן 8 תבניות קשיחות, אחרת כל הפוסטים ייראו אותו
+> דבר."* — Do not lock the slide sequence... we do not want to be stuck forever on the same 8 rigid templates, or
+> every post will look the same.
+
+**Verified, and nothing was changed, because the architecture already answers both halves.**
+
+**No narrative arc.** Exactly two positions are fixed and they are the two the owner's own principles name: slide
+1 must stop the scroll and the last slide must close. Everything between is the writer's to order. Prompt §7 says
+so and now says so explicitly (*"There is no required narrative shape"*), the slide count is *"whatever the
+payload needs"* from 1 to 8, and §21 pushes the other way as well — `recentSkeletons` refuses a sequence that
+repeats last week's, so a fixed arc would fail a gate of its own.
+
+**Beyond the eight.** Three mechanisms, all live:
+
+1. **`layout: "custom"`** (prompt §20) — the writer authors the slide's own markup and CSS at run time, for a
+   shape none of the eight has: a diagonal split, a nested comparison, a five-point grid. Up to two per carousel,
+   safety-gated, and refused for novelty rather than a shape gap.
+2. **Auto-promotion** (`custom-archetype-memory.ts`) — a design that ships twice with no reviewer edit becomes
+   that client's permanent archetype, with no human step: `AUTO_PROMOTE_CLEAN_SHIPS = 2`, actor
+   `auto:two-clean-ships`.
+3. **The Template Studio** (`template-studio.ts`) — 4 to 6 templates generated PER CLIENT at setup, each one that
+   client's own implementation of a routable archetype, refused unless it renders and MEASURES well through an
+   eight-gate battery whose sixth gate is the interest floor itself.
+
+**One limb is dormant and it is recorded here rather than changed.** Studio rows are stored `enabled: false` and
+resolve as `awaiting-approval`, so in production every client still renders the bundled eight and the live
+variation channel is the `custom` path above. That is a deliberate design (a generated template should not ship
+unreviewed) with an undesigned consequence (nothing turns them on). Naming it is the honest answer to *"is the
+system built for this"*: the machinery exists, one client-facing step does not.

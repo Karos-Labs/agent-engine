@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { enforceImageryFloor, MIN_IMAGE_CAPABLE_SLIDES } from "../src/workflow/imagery-floor.js";
-import { HERO_IMAGE_LAYOUTS } from "../src/workflow/slides-data.js";
+import { ceilingFor, enforceImageryBand, MAX_PICTURE_SLIDES, MIN_PICTURE_SLIDES, MIN_QUIET_SLIDES } from "../src/workflow/imagery-floor.js";
+import { FULL_BLEED_IMAGE_LAYOUTS, HERO_IMAGE_LAYOUTS } from "../src/workflow/slides-data.js";
 import type { InstagramCopyOutput, InstagramSlideLayout } from "../src/workflow/types.js";
 import { goodCopyOutput } from "./test-helpers.js";
 
@@ -33,9 +33,11 @@ function carousel(...layouts: InstagramSlideLayout[]): InstagramCopyOutput {
 }
 
 const layoutsOf = (copy: InstagramCopyOutput): InstagramSlideLayout[] => copy.slides.map((s) => s.layout ?? "photo");
+/** What the BAND counts: a plate whose picture IS the plate. See `FULL_BLEED_IMAGE_LAYOUTS` for why that is a different set from the one sourcing reads. */
+const pictures = (copy: InstagramCopyOutput): number => layoutsOf(copy).filter((l) => FULL_BLEED_IMAGE_LAYOUTS.has(l)).length;
 const capable = (copy: InstagramCopyOutput): number => layoutsOf(copy).filter((l) => HERO_IMAGE_LAYOUTS.has(l)).length;
 
-describe("enforceImageryFloor", () => {
+describe("enforceImageryBand", () => {
   it("promotes text_only to photo until the floor is met — the thepitchbydeel carousel, which shipped zero pictures", () => {
     // The real one, read off `pubsub-21559620763659451`'s deliverable: one
     // stat callout, three heroless `slide.html`, a comparison, a quote, a
@@ -48,9 +50,9 @@ describe("enforceImageryFloor", () => {
     const shipped = carousel("headline_focus", "text_only", "custom", "text_only", "headline_focus", "text_only", "closer", "custom");
     expect(capable(shipped), "the fixture is not the imageless carousel this case is about").toBe(0);
 
-    const out = enforceImageryFloor(shipped);
+    const out = enforceImageryBand(shipped);
     expect(out.before).toBe(0);
-    expect(out.after).toBe(MIN_IMAGE_CAPABLE_SLIDES);
+    expect(out.after).toBe(MIN_PICTURE_SLIDES);
     expect(out.shortfallReason).toBeUndefined();
     // Lowest slide number first: an early photograph is what earns the swipe.
     expect(out.promotions.map((p) => p.slide)).toEqual([2, 4, 6]);
@@ -63,7 +65,7 @@ describe("enforceImageryFloor", () => {
     // that also REMOVED pictures would be a composition rule, and this is not
     // one.
     const composed = carousel("cover", "photo", "text_only", "photo", "stat_callout", "photo", "text_only", "closer");
-    const out = enforceImageryFloor(composed);
+    const out = enforceImageryBand(composed);
     expect(out.promotions).toEqual([]);
     expect(out.copy).toBe(composed);
     expect(layoutsOf(out.copy)).toEqual(layoutsOf(composed));
@@ -71,11 +73,11 @@ describe("enforceImageryFloor", () => {
 
   it("stops the moment the floor is met, and never promotes one slide more than it needs", () => {
     const one = carousel("cover", "text_only", "text_only", "text_only", "text_only", "text_only", "text_only", "closer");
-    const out = enforceImageryFloor(one);
+    const out = enforceImageryBand(one);
     // One capable slide already (the cover), so exactly two promotions.
     expect(out.before).toBe(1);
     expect(out.promotions.map((p) => p.slide)).toEqual([2, 3]);
-    expect(out.after).toBe(MIN_IMAGE_CAPABLE_SLIDES);
+    expect(out.after).toBe(MIN_PICTURE_SLIDES);
     expect(layoutsOf(out.copy).filter((l) => l === "text_only")).toHaveLength(4);
   });
 
@@ -86,7 +88,7 @@ describe("enforceImageryFloor", () => {
     // `quote_card` an attribution, a `list_takeaway` its rows; converting one
     // into a photograph throws away the content that made it that shape.
     const structured = carousel("headline_focus", "custom", "headline_focus", "closer", "custom", "closer", "cover", "custom");
-    const out = enforceImageryFloor(structured);
+    const out = enforceImageryBand(structured);
     expect(out.promotions).toEqual([]);
     expect(layoutsOf(out.copy)).toEqual(layoutsOf(structured));
   });
@@ -96,7 +98,7 @@ describe("enforceImageryFloor", () => {
     // the honest answer is to say so, not to convert a quote card. The run
     // continues — this module never holds anything.
     const dense = carousel("headline_focus", "closer", "custom", "headline_focus", "custom", "closer", "headline_focus", "text_only");
-    const out = enforceImageryFloor(dense);
+    const out = enforceImageryBand(dense);
     expect(out.promotions.map((p) => p.slide)).toEqual([8]);
     expect(out.after).toBe(1);
     expect(out.shortfallReason).toMatch(/only 1 of 3/u);
@@ -106,14 +108,14 @@ describe("enforceImageryFloor", () => {
   it("returns a NEW copy and mutates nothing, because the draft it is handed is checkpointed", () => {
     const before = carousel("headline_focus", "text_only", "text_only", "text_only", "headline_focus", "closer", "custom", "custom");
     const snapshot = JSON.stringify(before);
-    const out = enforceImageryFloor(before);
+    const out = enforceImageryBand(before);
     expect(JSON.stringify(before), "a resumed run would see a different input from the one that was recorded").toBe(snapshot);
     expect(out.copy).not.toBe(before);
   });
 
   it("is idempotent: running it twice promotes nothing the second time", () => {
-    const once = enforceImageryFloor(carousel("headline_focus", "text_only", "text_only", "text_only", "headline_focus", "closer", "custom", "custom"));
-    const twice = enforceImageryFloor(once.copy);
+    const once = enforceImageryBand(carousel("headline_focus", "text_only", "text_only", "text_only", "headline_focus", "closer", "custom", "custom"));
+    const twice = enforceImageryBand(once.copy);
     expect(once.promotions.length).toBeGreaterThan(0);
     expect(twice.promotions).toEqual([]);
   });
@@ -126,19 +128,144 @@ describe("enforceImageryFloor", () => {
     // direction (`budgets-adapt-never-hold`); the composition floor is a
     // different question and gets its own number, from the restraint
     // reference's own count of roughly every third plate.
-    expect(MIN_IMAGE_CAPABLE_SLIDES).toBe(3);
+    expect(MIN_PICTURE_SLIDES).toBe(3);
     const eight = carousel("cover", "text_only", "text_only", "text_only", "text_only", "text_only", "text_only", "closer");
-    expect(enforceImageryFloor(eight).after, "the floor became a target — every carousel is now mostly photographs").toBe(3);
+    expect(enforceImageryBand(eight).after, "the floor became a target — every carousel is now mostly photographs").toBe(3);
   });
 
   it("takes the floor as a parameter, so the sweep above is a real range and not one number twice", () => {
     const eight = carousel("text_only", "text_only", "text_only", "text_only", "text_only", "text_only", "text_only", "text_only");
     for (const floor of [0, 1, 2, 3, 5, 8]) {
-      expect(enforceImageryFloor(eight, floor).promotions, `floor ${floor}`).toHaveLength(floor);
+      expect(enforceImageryBand(eight, floor).promotions, `floor ${floor}`).toHaveLength(floor);
     }
     // And past what the carousel can supply it reports rather than throws.
-    const over = enforceImageryFloor(eight, 99);
+    const over = enforceImageryBand(eight, 99);
     expect(over.promotions).toHaveLength(8);
     expect(over.shortfallReason).toBeDefined();
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // THE CEILING. The owner's rule is a RANGE - images in 3 to 5 slides across
+  // the post - and until 2026-09-15 this module had only a bottom. The
+  // karoslabs run it was written about shipped five of eight, inside the band;
+  // nothing stopped the next draft choosing eight, which is the one-rhythm
+  // post the copy prompt warns against in its own words.
+  // ───────────────────────────────────────────────────────────────────────
+
+  it("demotes photo back to text_only when a draft reaches for a picture on nearly every plate", () => {
+    const saturated = carousel("cover", "photo", "photo", "photo", "photo", "photo", "photo", "closer");
+    expect(pictures(saturated), "the fixture is not the over-photographed carousel this case is about").toBe(7);
+
+    const out = enforceImageryBand(saturated);
+    expect(out.before).toBe(7);
+    expect(out.after).toBe(MAX_PICTURE_SLIDES);
+    expect(out.promotions).toEqual([]);
+    expect(out.excessReason).toBeUndefined();
+    // HIGHEST slide number first, the mirror of the promotion's rule: an early
+    // photograph earns the swipe, so the pictures that go are the late ones.
+    // Reported ascending, because a reviewer reads a carousel forwards.
+    expect(out.demotions.map((d) => d.slide)).toEqual([6, 7]);
+    expect(layoutsOf(out.copy)).toEqual(["cover", "photo", "photo", "photo", "photo", "text_only", "text_only", "closer"]);
+  });
+
+  it("LEAVES EVERY COUNT INSIDE THE BAND COMPLETELY ALONE, by identity", () => {
+    // 3, 4 and 5 are the counts the owner asked for, and on all three this
+    // module is a no-op. Identity rather than deep equality: the caller's
+    // ledger tells a change from a no-op by whether it got a new object back,
+    // and a step that rewrote the copy every run would checkpoint a new draft
+    // on every attempt.
+    const cases: ReadonlyArray<readonly [number, InstagramCopyOutput]> = [
+      [3, carousel("cover", "photo", "text_only", "photo", "stat_callout", "headline_focus", "text_only", "closer")],
+      [4, carousel("cover", "photo", "photo", "photo", "stat_callout", "headline_focus", "text_only", "closer")],
+      [5, carousel("cover", "photo", "photo", "photo", "photo", "headline_focus", "text_only", "closer")],
+    ];
+    for (const [n, cs] of cases) {
+      expect(pictures(cs), `fixture for ${n}`).toBe(n);
+      const out = enforceImageryBand(cs);
+      expect(out.copy, `${n} pictures is inside the band and must not be rewritten`).toBe(cs);
+      expect(out.promotions, `${n}`).toEqual([]);
+      expect(out.demotions, `${n}`).toEqual([]);
+      expect(out.after, `${n}`).toBe(n);
+    }
+  });
+
+  it("NEVER demotes the cover, because slide 1 is the hook and the cover rule requires a picture or a device on it", () => {
+    // Driven past what demotion can reach by asking for a ceiling of zero: the
+    // two `photo` slides go and the `cover` stays, whatever the ceiling says.
+    // `default:cover-carries-device` fails a slide 1 with neither a photograph
+    // nor a figure device, so demoting it would return to 05 on every attempt
+    // for a picture no redraft can produce.
+    const out = enforceImageryBand(carousel("cover", "photo", "photo"), 0, 0);
+    expect(out.demotions.map((d) => d.slide)).toEqual([2, 3]);
+    expect(layoutsOf(out.copy)[0]).toBe("cover");
+    expect(out.after).toBe(1);
+    expect(out.excessReason).toMatch(/still 1 picture slides against a ceiling of 0/u);
+    expect(out.excessReason).toMatch(/the hook/u);
+  });
+
+  it("never demotes a designed panel, whose bounded band is not what this bound counts", () => {
+    // All four panel archetypes are in `HERO_IMAGE_LAYOUTS` and none is in
+    // `FULL_BLEED_IMAGE_LAYOUTS`, so a carousel of them is neither over the
+    // ceiling nor touched by it. That is the distinction the two sets exist
+    // for: a 300px band beside a figure is an accent on a typographic plate,
+    // and counting it as a photograph is what let a carousel of three banded
+    // panels meet a floor a reader would say it missed.
+    const panels = carousel("stat_callout", "quote_card", "comparison_card", "list_takeaway", "headline_focus", "closer", "custom", "custom");
+    expect(panels.slides.filter((sl) => HERO_IMAGE_LAYOUTS.has(sl.layout!)).length, "all four panels can source a band").toBe(4);
+    expect(pictures(panels), "and not one of them is a picture plate").toBe(0);
+    const out = enforceImageryBand(panels, 0);
+    expect(out.demotions).toEqual([]);
+    expect(out.promotions).toEqual([]);
+  });
+
+  it("the ceiling KEEPS A REST, so a six-slide post is not five photographs and one survivor", () => {
+    // The table in `ceilingFor`, asserted rather than described. The first
+    // draft of the constant was an absolute 5 and argued that a ratio would
+    // change nothing a reader could see; `goodCopyOutput()` is six slides and
+    // every one of them is a `photo`, which proved otherwise. That is why this
+    // case exists, and it is why the suite is the thing that found it.
+    expect(ceilingFor(8)).toBe(5);
+    expect(ceilingFor(7)).toBe(5);
+    expect(ceilingFor(6)).toBe(4);
+    expect(ceilingFor(5)).toBe(3);
+    // THE FLOOR TAKES TIES. Below five slides `slides - MIN_QUIET_SLIDES` drops
+    // under the floor, and a ceiling under the floor is a gate that argues with
+    // itself: promote to 3, demote to 2, and whichever ran last wins. The outer
+    // `max` in `ceilingFor` is what makes a short post simply never over it.
+    expect(ceilingFor(4)).toBe(MIN_PICTURE_SLIDES);
+    expect(ceilingFor(3)).toBe(MIN_PICTURE_SLIDES);
+    expect(ceilingFor(1)).toBe(MIN_PICTURE_SLIDES);
+    expect(MIN_QUIET_SLIDES).toBe(2);
+
+    // And it BITES: six photo slides on a six-slide carousel come back with
+    // four pictures and two quiet plates, not five and one.
+    const six = enforceImageryBand(carousel("cover", "photo", "photo", "photo", "photo", "photo"));
+    expect(six.before).toBe(6);
+    expect(six.after).toBe(4);
+    expect(six.demotions.map((d) => d.slide)).toEqual([5, 6]);
+  });
+
+  it("the band is 3 to 5, and the two ends cannot fight", () => {
+    expect(MIN_PICTURE_SLIDES).toBe(3);
+    expect(MAX_PICTURE_SLIDES).toBe(5);
+    expect(MIN_PICTURE_SLIDES, "a floor at or above the ceiling would make one of them unreachable").toBeLessThan(MAX_PICTURE_SLIDES);
+
+    // A single pass, so the result is idempotent by construction at BOTH ends:
+    // promotion stops AT the floor and the floor is under the ceiling, so a
+    // promotion can never overshoot into a demotion on the next run.
+    const bare = carousel("text_only", "text_only", "text_only", "text_only", "text_only", "text_only", "text_only", "text_only");
+    const once = enforceImageryBand(bare);
+    const twice = enforceImageryBand(once.copy);
+    expect(once.after).toBe(MIN_PICTURE_SLIDES);
+    expect(twice.promotions).toEqual([]);
+    expect(twice.demotions).toEqual([]);
+    expect(twice.copy).toBe(once.copy);
+
+    const saturated = carousel("photo", "photo", "photo", "photo", "photo", "photo", "photo", "photo");
+    const cut = enforceImageryBand(saturated);
+    const cutTwice = enforceImageryBand(cut.copy);
+    expect(cut.after).toBe(MAX_PICTURE_SLIDES);
+    expect(cutTwice.demotions).toEqual([]);
+    expect(cutTwice.promotions).toEqual([]);
   });
 });

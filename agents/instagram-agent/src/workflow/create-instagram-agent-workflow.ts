@@ -181,7 +181,8 @@ import {
   type InterestFloorReport,
 } from "./interest-floor.js";
 import { composeBoundedObjects, type BoundedObjectDecision } from "./bounded-object.js";
-import { enforceImageryFloor, MIN_IMAGE_CAPABLE_SLIDES, type ImageryPromotion } from "./imagery-floor.js";
+import { checkSlideWordBudget, formatWordBudgetFindings, MAX_WORDS_PER_SLIDE } from "./slide-word-budget.js";
+import { ceilingFor, enforceImageryBand, MIN_PICTURE_SLIDES, type ImageryDemotion, type ImageryPromotion } from "./imagery-floor.js";
 import { planInterestRelayout, type InterestRelayoutPlan } from "./interest-relayout.js";
 // RFC-19 §4 item 17 — the deterministic headline fact cards `04b` falls back to, and the one hold it keeps.
 import { headlineFallbackResearch, NO_READABLE_SOURCE } from "./research-fallback.js";
@@ -5120,6 +5121,17 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        */
       imageryPromotions?: ImageryPromotion[];
       /**
+       * The other end of the band: which slides gave a photograph back, so the
+       * post could carry the typography and the figures the owner's rule asks
+       * for alongside the pictures.
+       *
+       * A demotion is not a loss of information the way a failed promotion is:
+       * the slide keeps its whole statement and lands on the plate the bounded
+       * object was built for. Absent rather than empty on a draft the writer
+       * composed inside the band.
+       */
+      imageryDemotions?: ImageryDemotion[];
+      /**
        * RFC-19 (Phase 6) — every QUALITY GATE that refused the attempt that actually shipped.
        *
        * Absent, never empty, on a clean run: the marker's own asymmetry (`self-check-degrade.ts`). Present
@@ -5785,8 +5797,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        * degrades to plain type, and none of it can hold or fail a run.
        */
       let emphasisIssues: EmphasisIssue[] = [];
-      /** RFC-21 — which slides the imagery floor promoted this run, for the draft report. Empty on a post the writer composed with enough pictures. */
+      /** RFC-21 — which slides the imagery band promoted this run, for the draft report. Empty on a post the writer composed with enough pictures. */
       let imageryPromotions: ImageryPromotion[] = [];
+      /** RFC-21 — and which it demoted, for a draft that reached for a photograph on nearly every plate. */
+      let imageryDemotions: ImageryDemotion[] = [];
       /**
        * RFC-20 §11.4 — what the bounded object did to this run's statement
        * plates, from the LAST assembly, which is the one that rendered.
@@ -6208,7 +6222,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         recordSalvage(attempt, 1, copy);
       }
 
-      // ── 04m2: THE IMAGERY FLOOR — before anything asks for a picture. ──
+      // ── 04m2: THE IMAGERY BAND — before anything asks for a picture. ──
       //
       // MEASURED on two real prep runs, same agent, same week, same budget:
       // `karoslabs` pubsub-21551118258353204 shipped 5 of 8 slides with a hero
@@ -6227,31 +6241,56 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // writer chose. Placed after sourcing it would promote slides nothing
       // would ever fill.
       //
-      // $0.00 and deterministic — it changes one enum on one slide. It only
-      // ever ADDS, so a draft that chose its own photographs is untouched, and
-      // it promotes only `text_only`, which resolves to the same template as
-      // `photo` and differs from it by nothing but whether an image was found.
-      const imagery = enforceImageryFloor(copy);
-      if (imagery.promotions.length > 0) {
+      // $0.00 and deterministic — it changes one enum on one slide, in either
+      // direction, and it promotes or demotes only `text_only`/`photo`, which
+      // resolve to the same template and differ by nothing but whether an image
+      // was found.
+      //
+      // BOTH ENDS since 2026-09-15, on the owner's rule: *"images in 3 to 5
+      // slides across the post, and the rest lean on clean typography, data or
+      // graphic objects."* The floor was only ever a bottom, so nothing stopped
+      // a draft choosing eight photographs — the one-rhythm post the copy prompt
+      // warns against. Between 3 and 5 this step is a no-op and returns the copy
+      // object by identity.
+      const imagery = enforceImageryBand(copy);
+      if (imagery.promotions.length > 0 || imagery.demotions.length > 0) {
         copy = imagery.copy;
         imageryPromotions = imagery.promotions;
-        try {
-          await tools["ledger.appendEvent"]?.execute(
-            {
-              runId: wf.runId,
-              eventId: `${wf.runId}__imagery-floor-attempt-${attempt}`,
-              level: "info",
-              message:
-                `attempt ${attempt}: the imagery floor promoted ${imagery.promotions.length} text_only slide(s) to photo ` +
-                `(${imagery.before} -> ${imagery.after} image-capable of ${MIN_IMAGE_CAPABLE_SLIDES} required): ` +
-                imagery.promotions.map((p) => `slide ${p.slide}`).join(", ") +
-                (imagery.shortfallReason !== undefined ? ` — SHORT: ${imagery.shortfallReason}` : ""),
-            },
-            { ctx },
-          );
-        } catch (error) {
-          console.error("04m2-imagery-floor: could not record the promotion", error);
-        }
+        imageryDemotions = imagery.demotions;
+        // ── CHECKPOINTED, because a resumed run must not write it twice. ──
+        //
+        // `enforceImageryBand` is pure and `copy` is rebuilt identically on a
+        // resume, so the DECISION replays for free; the ledger write is the one
+        // side effect, and outside a step it re-executes every time the engine
+        // replays this leg. `resume-idempotency.test.ts` compares the whole
+        // tool-call census before and after a resume and caught it at
+        // `ledger.appendEvent: 5 -> 6` the first time this step had anything to
+        // report — the floor only ever fired on fixtures that needed no
+        // promotion, so the same shape had been latent here since 04m2 was
+        // written.
+        await wf.step.code(rev(`04m2-imagery-band-attempt-${attempt}`), async () => {
+          try {
+            await tools["ledger.appendEvent"]?.execute(
+              {
+                runId: wf.runId,
+                eventId: `${wf.runId}__imagery-band-attempt-${attempt}`,
+                level: "info",
+                message:
+                  `attempt ${attempt}: the imagery band ` +
+                  (imagery.promotions.length > 0
+                    ? `promoted ${imagery.promotions.length} text_only slide(s) to photo: ${imagery.promotions.map((p) => `slide ${p.slide}`).join(", ")}`
+                    : `demoted ${imagery.demotions.length} photo slide(s) to text_only: ${imagery.demotions.map((d) => `slide ${d.slide}`).join(", ")}`) +
+                  ` (${imagery.before} -> ${imagery.after} picture slides, band ${MIN_PICTURE_SLIDES}-${ceilingFor(copy.slides.length)})` +
+                  (imagery.shortfallReason !== undefined ? ` — SHORT: ${imagery.shortfallReason}` : "") +
+                  (imagery.excessReason !== undefined ? ` — OVER: ${imagery.excessReason}` : ""),
+              },
+              { ctx },
+            );
+          } catch (error) {
+            console.error("04m2-imagery-band: could not record the change", error);
+          }
+          return { promotions: imagery.promotions, demotions: imagery.demotions, before: imagery.before, after: imagery.after };
+        });
       }
 
       // ── 04n: bind the concept to ONE slide — or discard it, silently and for free (RFC-16 §2.3/§2.4) ──
@@ -8661,6 +8700,51 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         }
       }
 
+      // ── 07h2: THE WORD BUDGET — short and readable, counted. ──
+      //
+      // The owner's rule, 2026-09-15: *"קצר וקריא: מגבלת מילים של עד 20-30
+      // מילים לשקופית (הפירוט המלא שייך לקפשן)."* Short and readable, up to
+      // 20-30 words a slide, and the full detail belongs to the caption.
+      //
+      // UNCONDITIONAL, unlike `07h` above, and that placement is the claim.
+      // `renderRuleSource === "client"` replaces the four house LAYOUT rules
+      // with the client's, which is right: how a slide is composed is theirs to
+      // specify. Whether the copy on it can be read at feed size is not a
+      // layout preference, and `checkCraftHygiene` at `07b` is unconditional
+      // for exactly the same reason.
+      //
+      // FREE, and earlier than the pixels. Clause F (`TEXT_SHARE_CEILING`)
+      // already refuses a plate that measures as a wall of text, but it costs a
+      // render to find out and the relayout ladder answers it by dropping the
+      // slide's `fontScale` a step - which is how long copy became unreadable
+      // type. Counting the words here catches the same defect before a render
+      // is spent and before anything has shrunk to fit.
+      //
+      // Never a hold: on the final attempt the finding goes to the judge and
+      // the reviewer, the same road every other quality finding in this step
+      // takes.
+      const wordBudget = await wf.step.code(rev(`07h2-word-budget-attempt-${attempt}`), () =>
+        checkSlideWordBudget(slidesDataAttempt, copy),
+      );
+      if (wordBudget.length > 0) {
+        if (!isFinalAttempt) {
+          returnToCopyWith(
+            `slide word budget exceeded on attempt ${attempt} (no render spent, limit ${MAX_WORDS_PER_SLIDE} words a slide): ` +
+              formatWordBudgetFindings(wordBudget),
+          );
+          continue;
+        }
+        recordSelfCheckFinding({
+          gate: "render-rules",
+          step: rev(`07h2-word-budget-attempt-${attempt}`),
+          kind: "house-rule",
+          detail: `the slide word budget was exceeded on the final attempt: ${formatWordBudgetFindings(wordBudget)}`,
+          remedy: "waived",
+          remedyNote: "left to the visual-QA judge and the human reviewer rather than held",
+          slide: wordBudget[0]!.slide,
+        });
+      }
+
       // ── 07k: the cross-run variety check (Phase 2, item P) ──
       //
       // The owner's second complaint: "בנוסף בגלל שזה חזרתי זה נראה AI" — the
@@ -9786,10 +9870,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // and full of `refused` rows is the interesting case and the one a
         // reviewer reading a clause-C or clause-G finding needs next.
         ...(boundedObjectDecisions.length > 0 ? { boundedObjects: boundedObjectDecisions } : {}),
-        // RFC-21 — which slides the imagery floor promoted. ABSENT rather than
-        // empty on a post whose writer chose enough pictures, which is the same
-        // asymmetry every other marker on this object uses.
+        // RFC-21 — which slides the imagery band moved, and which way. ABSENT
+        // rather than empty on a post whose writer chose a mix already inside
+        // the band, which is the same asymmetry every other marker on this
+        // object uses.
         ...(imageryPromotions.length > 0 ? { imageryPromotions } : {}),
+        ...(imageryDemotions.length > 0 ? { imageryDemotions } : {}),
         // RFC-19 — ABSENT, never empty, when nothing refused. The asymmetry is the contract: a marker
         // attached to every clean post is the "silently shipping a bad post" failure in reverse.
         ...(finalSelfCheckFindings.length > 0

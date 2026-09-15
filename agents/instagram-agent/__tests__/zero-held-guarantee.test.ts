@@ -2,23 +2,7 @@ import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import type { AgentTool, AgentToolRegistry } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
-import {
-  goodRelevanceVerdict,
-  goodTrendScoutOutput,
-  boringSlideMetrics,
-  fakeRenderCarousel,
-  fakeRouterSequence,
-  finalTurn,
-  goodCopyOutput,
-  goodImageCandidatePool,
-  goodImageVettingOutput,
-  goodResearchOutput,
-  goodVisualQaOutput,
-  makePromptStore,
-  setupTestEnvironment,
-  type FakeRenderCarouselOptions,
-  type TestEnvironment,
-} from "./test-helpers.js";
+import { boringSlideMetrics, fakeRenderCarousel, type FakeRenderCarouselOptions, fakeRouterSequence, finalTurn, goodCopyOutput, goodImageCandidatePool, goodImageVettingOutput, goodRelevanceVerdict, goodResearchOutput, goodTrendScoutOutput, goodVisualQaOutput, makePromptStore, pictureSlidesOfGoodCopy, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 import { RUN_BUDGET_BELIEF_KEY } from "../src/workflow/run-budget.js";
@@ -156,7 +140,11 @@ describe("zero-held guarantee: a picture problem never costs the post", () => {
     const downgrade = steps.find((s) => s.stepId === "07a-downgrade-unfillable-slides-attempt-1")?.output as
       | { downgraded: number[] }
       | undefined;
-    expect(downgrade?.downgraded).toEqual(copy.slides.map((s) => s.n));
+    // The slides that asked for a picture. A slide the imagery band had
+    // already made typographic never asked for one, so it cannot be
+    // DOWNGRADED for want of it; the guarantee this case is about, that every
+    // picture slide ships as type rather than holding the post, is unchanged.
+    expect(downgrade?.downgraded).toEqual(pictureSlidesOfGoodCopy(copy));
     expect(steps.map((s) => s.stepId)).toContain("09b-deliver-and-log");
 
     const slidesData = steps.find((s) => s.stepId === "07c-emit-slides-data-attempt-1")?.output as

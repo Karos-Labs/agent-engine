@@ -2,7 +2,7 @@ import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import type { AgentToolRegistry } from "@agent-engine/core";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
-import { fakeRenderCarousel, fakeRouterSequence, goodCopyOutput, goodImageCandidatePool, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import { fakeRenderCarousel, fakeRouterSequence, goodCopyOutput, goodImageCandidatePool, makePromptStore, pictureSlidesOfGoodCopy, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 import { happyTurns } from "./turns.js";
 
 const params = { runId: "instagram_run_novimg", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
@@ -93,6 +93,8 @@ describe("06-vet-images: no viable image ships text-only rather than holding (gu
     expect(result.status).toBe("completed");
     const stepRecords = await durableStore.listSteps("instagram_run_novimg_all");
     const downgradeStep = stepRecords.find((s) => s.stepId === "07a-downgrade-unfillable-slides-attempt-1");
-    expect((downgradeStep?.output as { downgraded: number[] } | undefined)?.downgraded).toEqual([1, 2, 3, 4, 5, 6]);
+    // The slides that asked for a picture: the imagery band demoted 5 and 6
+    // before sourcing ran, so they were never candidates for a downgrade.
+    expect((downgradeStep?.output as { downgraded: number[] } | undefined)?.downgraded).toEqual(pictureSlidesOfGoodCopy());
   });
 });

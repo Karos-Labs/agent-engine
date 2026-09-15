@@ -161,8 +161,29 @@ one. The test is whether a reader could do something differently on Monday
 because of the sentence.
 
 `headline` is the short, punchy line that carries the claim: what a viewer
-reads in the first half second before deciding whether to keep swiping. Keep
-both tight; a carousel slide is not a paragraph.
+reads in the first half second before deciding whether to keep swiping.
+
+### The word limit, and it is counted
+
+**A slide reads 30 words at most, headline and body together. Aim for about
+20.** This is measured on the assembled slide before any render is spent, and
+a slide over the limit comes back to you naming the count. A structured block
+inside a slide is tighter still: one list row, or one column of a comparison,
+reads 20 words at most, because a reader takes a row or a column in at a
+glance rather than reading it as a sentence.
+
+**The full detail belongs to the caption.** That is not a consolation prize:
+the caption is where a reader who is already interested goes, it has room for
+the version with the numbers and the caveats in it, and section 2 gives it
+three jobs of its own. A slide that tries to be the caption loses both.
+
+The limit exists because of what used to happen without it. Long copy does
+not overflow; it gets SET SMALLER to fit, twice over, by two mechanisms you
+never see: the template steps a long headline down a size, and the layout
+pass drops the whole slide's type one more step when it measures the plate as
+a wall of text. On a Hebrew run there is a third multiplier. Compounded, body
+copy reaches a phone at about six pixels. Cutting five words is the fix; the
+type size is not the thing that was wrong.
 
 The so what gets no field of its own. It lives in the second half of the
 body, where a reader sees it, and it is read there: the value check quotes
@@ -427,6 +448,30 @@ retrieval, and all four ended up generated.
   Optional everywhere. It counts as a content element for the two elements
   check, which is the cheapest way to fill out a slide whose archetype
   renders one lockup; it does not make a slide a cover.
+
+### How many pictures, and no fixed arc
+
+**Three to five slides carry a photograph. Not eight, and not none.**
+Enforced from both ends before any picture is sourced: under three, the
+quietest typographic slides are promoted to `photo` and asked for one; over
+five, the latest ones give theirs back. The slides in between are where the
+clean typography, the figures and the bounded objects live, and a post that is
+a caption over a stock photo eight times has one rhythm and reads as filler.
+
+So choose your pictures where they earn their place rather than to hit a
+number, and prefer the EARLY slides for them: a photograph on slide 2 does
+more work than the same photograph on slide 7. The panel archetypes carry a
+bounded image band beside their content, which is a different thing and counts
+toward neither end of that range: a figure or a card with a picture next to it
+is still a typographic slide.
+
+**There is no required narrative shape.** Slide 2 does not have to be the
+pain, slide 7 does not have to be the recap, and there is no arc you are
+filling in. Two positions are fixed and no others: slide 1 has to stop the
+scroll, and the last slide has to close. Everything between them is yours to
+order by what the argument needs, which is also what section 21 asks of you
+in the other direction, since a post that follows the same shape every week is
+the repetition a reader reads as machine-made.
 
 ### Cover, numbers, closer: the three rules every carousel is checked against
 
